@@ -1,0 +1,2 @@
+# zazaSwitcher
+Steam account switcher
