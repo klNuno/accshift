@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCacheDuration } from "$lib/settings";
 
 const CACHE_KEY = "zazaswitcher_avatars";
-const CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 days in ms
 
 interface CachedAvatar {
   url: string;
@@ -31,7 +31,7 @@ export function getCachedAvatar(steamId: string): { url: string; expired: boolea
 
   if (!cached) return null;
 
-  const expired = Date.now() - cached.timestamp > CACHE_DURATION;
+  const expired = Date.now() - cached.timestamp > getCacheDuration();
   return { url: cached.url, expired };
 }
 
