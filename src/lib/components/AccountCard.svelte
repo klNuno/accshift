@@ -2,25 +2,25 @@
   import { onMount } from "svelte";
   import { getCachedAvatar, fetchAvatar } from "$lib/avatarCache";
 
-  let { account, isActive, onSwitch, refreshAvatar = false }: {
+  let { account, isActive, onSwitch, refreshAvatar = false, onContextMenu }: {
     account: { steam_id: string; account_name: string; persona_name: string };
     isActive: boolean;
     onSwitch: () => void;
     refreshAvatar?: boolean;
+    onContextMenu: (e: MouseEvent) => void;
   } = $props();
 
   let avatarUrl = $state<string | null>(null);
   let isLoading = $state(false);
-  let isRefreshing = $state(false); // true = show blurred old image + loader
+  let isRefreshing = $state(false);
+  let showConfirm = $state(false);
+  let cardRef = $state<HTMLButtonElement | null>(null);
 
-  // Load avatar with cache logic
   async function loadAvatar(forceRefresh = false) {
     const cached = getCachedAvatar(account.steam_id);
 
     if (cached && !forceRefresh) {
       avatarUrl = cached.url;
-
-      // If cache expired, refresh in background with blur effect
       if (cached.expired) {
         isRefreshing = true;
         const newUrl = await fetchAvatar(account.steam_id);
@@ -28,14 +28,12 @@
         isRefreshing = false;
       }
     } else if (cached && forceRefresh) {
-      // Force refresh: show blurred old image + loader
       avatarUrl = cached.url;
       isRefreshing = true;
       const newUrl = await fetchAvatar(account.steam_id);
       if (newUrl) avatarUrl = newUrl;
       isRefreshing = false;
     } else {
-      // No cache: show loader, fetch fresh
       isLoading = true;
       const url = await fetchAvatar(account.steam_id);
       avatarUrl = url;
@@ -45,9 +43,17 @@
 
   onMount(() => {
     loadAvatar();
+
+    // Dismiss play overlay on any click outside this card
+    function onDocClick(e: MouseEvent) {
+      if (showConfirm && cardRef && !cardRef.contains(e.target as Node)) {
+        showConfirm = false;
+      }
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
   });
 
-  // Watch for refreshAvatar prop changes (after switching account)
   $effect(() => {
     if (refreshAvatar) {
       loadAvatar(true);
@@ -57,31 +63,56 @@
   function getInitials(name: string): string {
     return name.slice(0, 2).toUpperCase();
   }
+
+  function handleClick() {
+    if (isActive) return;
+
+    if (showConfirm) {
+      showConfirm = false;
+      onSwitch();
+    } else {
+      showConfirm = true;
+    }
+  }
+
+  function handleContextMenu(e: MouseEvent) {
+    e.preventDefault();
+    showConfirm = false;
+    onContextMenu(e);
+  }
 </script>
 
 <button
-  onclick={onSwitch}
-  disabled={isActive}
+  bind:this={cardRef}
+  onclick={handleClick}
+  oncontextmenu={handleContextMenu}
   class="card"
   class:active={isActive}
 >
   <div class="avatar" class:active={isActive}>
     {#if isLoading}
-      <!-- Initial loading: no image yet -->
       <div class="loader"></div>
     {:else if avatarUrl}
-      <!-- Image with optional blur during refresh -->
       <img
         src={avatarUrl}
         alt={account.persona_name}
-        class:blurred={isRefreshing}
+        class:blurred={isRefreshing || showConfirm}
       />
       {#if isRefreshing}
         <div class="loader overlay"></div>
       {/if}
     {:else}
-      <!-- Fallback: initials -->
-      <span class="initials">{getInitials(account.persona_name || account.account_name)}</span>
+      <span class="initials" class:blurred-text={showConfirm}>
+        {getInitials(account.persona_name || account.account_name)}
+      </span>
+    {/if}
+
+    {#if showConfirm}
+      <div class="play-overlay">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="#fafafa">
+          <path d="M8 5v14l11-7z" />
+        </svg>
+      </div>
     {/if}
   </div>
 
@@ -104,6 +135,7 @@
     border: none;
     cursor: pointer;
     transition: all 150ms ease-out;
+    color: inherit;
   }
 
   .card:not(.active):hover {
@@ -143,13 +175,32 @@
   }
 
   .avatar img.blurred {
-    filter: blur(8px);
+    filter: blur(6px) brightness(0.5);
   }
 
   .avatar .initials {
     font-size: 24px;
     font-weight: 600;
     color: #fafafa;
+    transition: filter 300ms ease-out;
+  }
+
+  .avatar .initials.blurred-text {
+    filter: blur(4px) brightness(0.5);
+  }
+
+  .play-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: fadeIn 150ms ease-out;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: scale(0.8); }
+    to { opacity: 1; transform: scale(1); }
   }
 
   .loader {

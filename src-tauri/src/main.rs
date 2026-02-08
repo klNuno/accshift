@@ -93,6 +93,12 @@ async fn fetch_avatar_url(steam_id: &str) -> Option<String> {
     None
 }
 
+/// Convert SteamID64 to account ID (lower 32 bits)
+fn steam_id_to_account_id(steam_id64: &str) -> Option<u32> {
+    let id: u64 = steam_id64.parse().ok()?;
+    Some((id & 0xFFFFFFFF) as u32)
+}
+
 /// Get all Steam accounts from loginusers.vdf
 #[tauri::command]
 fn get_steam_accounts() -> Result<Vec<SteamAccount>, String> {
@@ -174,6 +180,153 @@ fn switch_account(username: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Launch Steam login dialog to add a new account
+#[tauri::command]
+fn add_account() -> Result<(), String> {
+    let steam_path = get_steam_path()?;
+    let steam_exe = steam_path.join("steam.exe");
+
+    // Close Steam
+    let _ = Command::new("taskkill")
+        .args(["/F", "/IM", "steam.exe"])
+        .output();
+
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+
+    // Clear AutoLoginUser to force login prompt
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let steam_key = hkcu
+        .open_subkey_with_flags("Software\\Valve\\Steam", KEY_WRITE)
+        .map_err(|e| format!("Failed to open Steam registry key for writing: {}", e))?;
+
+    steam_key
+        .set_value("AutoLoginUser", &"")
+        .map_err(|e| format!("Failed to clear AutoLoginUser: {}", e))?;
+
+    // Launch Steam (will show login dialog)
+    Command::new(&steam_exe)
+        .spawn()
+        .map_err(|e| format!("Failed to start Steam: {}", e))?;
+
+    Ok(())
+}
+
+/// Set PersonaState in localconfig.vdf for a given account
+fn set_persona_state(steam_path: &PathBuf, account_id: u32, state: &str) {
+    let config_path = steam_path
+        .join("userdata")
+        .join(account_id.to_string())
+        .join("config")
+        .join("localconfig.vdf");
+
+    if let Ok(content) = fs::read_to_string(&config_path) {
+        let mut result = String::new();
+        let mut found = false;
+
+        for line in content.lines() {
+            if !found && line.contains("\"PersonaState\"") {
+                if let Some(pos) = line.rfind('"') {
+                    if let Some(start) = line[..pos].rfind('"') {
+                        let mut new_line = line[..start + 1].to_string();
+                        new_line.push_str(state);
+                        new_line.push_str(&line[pos..]);
+                        result.push_str(&new_line);
+                        result.push('\n');
+                        found = true;
+                        continue;
+                    }
+                }
+            }
+            result.push_str(line);
+            result.push('\n');
+        }
+
+        if found {
+            let _ = fs::write(&config_path, result);
+        }
+    }
+}
+
+/// Switch to account and launch Steam in a specific mode (online/invisible)
+#[tauri::command]
+fn switch_account_mode(username: String, steam_id: String, mode: String) -> Result<(), String> {
+    let steam_path = get_steam_path()?;
+    let steam_exe = steam_path.join("steam.exe");
+
+    // Close Steam
+    let _ = Command::new("taskkill")
+        .args(["/F", "/IM", "steam.exe"])
+        .output();
+
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+
+    // Update registry
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let steam_key = hkcu
+        .open_subkey_with_flags("Software\\Valve\\Steam", KEY_WRITE)
+        .map_err(|e| format!("Failed to open Steam registry key for writing: {}", e))?;
+
+    steam_key
+        .set_value("AutoLoginUser", &username)
+        .map_err(|e| format!("Failed to set AutoLoginUser: {}", e))?;
+
+    steam_key
+        .set_value("RememberPassword", &1u32)
+        .map_err(|e| format!("Failed to set RememberPassword: {}", e))?;
+
+    // Set PersonaState in localconfig.vdf (1 = online, 7 = invisible)
+    if let Some(account_id) = steam_id_to_account_id(&steam_id) {
+        let state = match mode.as_str() {
+            "invisible" => "7",
+            _ => "1",
+        };
+        set_persona_state(&steam_path, account_id, state);
+    }
+
+    // Launch Steam
+    Command::new(&steam_exe)
+        .spawn()
+        .map_err(|e| format!("Failed to start Steam: {}", e))?;
+
+    Ok(())
+}
+
+/// Open the userdata folder for a specific account in file explorer
+#[tauri::command]
+fn open_userdata(steam_id: String) -> Result<(), String> {
+    let steam_path = get_steam_path()?;
+    let account_id = steam_id_to_account_id(&steam_id)
+        .ok_or_else(|| "Invalid SteamID64".to_string())?;
+
+    let userdata_path = steam_path.join("userdata").join(account_id.to_string());
+
+    if !userdata_path.exists() {
+        return Err(format!("Userdata folder not found: {}", userdata_path.display()));
+    }
+
+    // Canonicalize to get a proper Windows backslash path
+    let canonical = userdata_path.canonicalize()
+        .map_err(|e| format!("Failed to resolve path: {}", e))?;
+
+    Command::new("explorer")
+        .arg(canonical)
+        .spawn()
+        .map_err(|e| format!("Failed to open folder: {}", e))?;
+
+    Ok(())
+}
+
+/// Window controls
+#[tauri::command]
+fn minimize_window(window: tauri::Window) {
+    let _ = window.minimize();
+}
+
+#[tauri::command]
+fn close_window(window: tauri::Window) {
+    let _ = window.close();
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -181,7 +334,12 @@ fn main() {
             get_steam_accounts,
             get_current_account,
             switch_account,
-            get_avatar
+            switch_account_mode,
+            get_avatar,
+            add_account,
+            open_userdata,
+            minimize_window,
+            close_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,15 +1,4 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
-  <!-- Background -->
   <rect width="128" height="128" rx="28" fill="#09090b"/>
-
-  <!-- User icon top -->
-  <circle cx="64" cy="38" r="14" fill="#fafafa"/>
-  <path d="M40 68 C40 54 88 54 88 68" stroke="#fafafa" stroke-width="6" stroke-linecap="round" fill="none"/>
-
-  <!-- Switch arrows -->
-  <path d="M32 82 L32 100 L48 100" stroke="#a1a1aa" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-  <path d="M28 86 L32 82 L36 86" stroke="#a1a1aa" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-
-  <path d="M96 100 L96 82 L80 82" stroke="#a1a1aa" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-  <path d="M92 96 L96 100 L100 96" stroke="#a1a1aa" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <text x="64" y="82" font-family="system-ui, -apple-system, sans-serif" font-size="56" font-weight="700" fill="#fafafa" text-anchor="middle">zS</text>
 </svg>
