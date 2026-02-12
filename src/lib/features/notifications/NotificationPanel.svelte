@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { getNotifications, clearNotifications, type AppNotification } from "$lib/notifications";
+  import { getNotifications, clearNotifications } from "./store";
+  import type { AppNotification } from "./types";
 
   let { onClose }: { onClose: () => void } = $props();
 
@@ -85,8 +86,8 @@
     max-height: 400px;
     display: flex;
     flex-direction: column;
-    background: #1c1c1f;
-    border: 1px solid #27272a;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 8px;
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
     animation: slideIn 150ms ease-out;
@@ -102,14 +103,14 @@
     align-items: center;
     justify-content: space-between;
     padding: 12px 16px;
-    border-bottom: 1px solid #27272a;
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
   .title {
     font-size: 13px;
     font-weight: 600;
-    color: #fafafa;
+    color: var(--fg);
   }
 
   .header-actions {
@@ -123,15 +124,15 @@
     border: none;
     border-radius: 4px;
     background: transparent;
-    color: #a1a1aa;
+    color: var(--fg-muted);
     font-size: 11px;
     cursor: pointer;
     transition: all 100ms;
   }
 
   .clear-btn:hover {
-    background: #27272a;
-    color: #fafafa;
+    background: var(--bg-muted);
+    color: var(--fg);
   }
 
   .close-btn {
@@ -143,14 +144,14 @@
     border: none;
     border-radius: 4px;
     background: transparent;
-    color: #a1a1aa;
+    color: var(--fg-muted);
     cursor: pointer;
     transition: all 100ms;
   }
 
   .close-btn:hover {
-    background: #27272a;
-    color: #fafafa;
+    background: var(--bg-muted);
+    color: var(--fg);
   }
 
   .body {
@@ -162,7 +163,7 @@
     padding: 24px;
     text-align: center;
     font-size: 12px;
-    color: #71717a;
+    color: var(--fg-subtle);
   }
 
   .notif-item {
@@ -172,18 +173,18 @@
   }
 
   .notif-item:hover {
-    background: #27272a;
+    background: var(--bg-muted);
   }
 
   .notif-message {
     font-size: 12px;
-    color: #fafafa;
+    color: var(--fg);
     margin: 0 0 4px;
     line-height: 1.4;
   }
 
   .notif-time {
     font-size: 10px;
-    color: #71717a;
+    color: var(--fg-subtle);
   }
 </style>
