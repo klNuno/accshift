@@ -1,10 +1,6 @@
-const STORAGE_KEY = "zazaswitcher_notifications";
+import type { AppNotification } from "./types";
 
-export interface AppNotification {
-  id: string;
-  message: string;
-  timestamp: number;
-}
+const STORAGE_KEY = "zazaswitcher_notifications";
 
 function load(): AppNotification[] {
   try {

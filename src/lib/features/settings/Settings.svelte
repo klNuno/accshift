@@ -1,12 +1,25 @@
 <script lang="ts">
-  import { getSettings, saveSettings } from "$lib/settings";
+  import { getSettings, saveSettings, ALL_PLATFORMS } from "./store";
 
-  let { onClose }: { onClose: () => void } = $props();
+  let { onClose, onPlatformsChanged }: {
+    onClose: () => void;
+    onPlatformsChanged?: () => void;
+  } = $props();
 
   let settings = $state(getSettings());
 
+  function togglePlatform(id: string) {
+    if (settings.enabledPlatforms.includes(id)) {
+      if (settings.enabledPlatforms.length <= 1) return;
+      settings.enabledPlatforms = settings.enabledPlatforms.filter(p => p !== id);
+    } else {
+      settings.enabledPlatforms = [...settings.enabledPlatforms, id];
+    }
+  }
+
   function save() {
     saveSettings(settings);
+    onPlatformsChanged?.();
     onClose();
   }
 
@@ -32,6 +45,27 @@
     </div>
 
     <div class="body">
+      <div class="section-label">Platforms</div>
+      <div class="platforms">
+        {#each ALL_PLATFORMS as platform}
+          <button
+            class="platform-row"
+            onclick={() => togglePlatform(platform.id)}
+          >
+            <span class="platform-name">{platform.name}</span>
+            <div
+              class="toggle"
+              class:active={settings.enabledPlatforms.includes(platform.id)}
+              style={settings.enabledPlatforms.includes(platform.id) ? `background: ${platform.accent};` : ""}
+            >
+              <div class="toggle-knob"></div>
+            </div>
+          </button>
+        {/each}
+      </div>
+
+      <div class="divider"></div>
+
       <div class="field">
         <label class="label" for="cache-days">Avatar refresh delay</label>
         <div class="input-row">
@@ -76,8 +110,8 @@
 
   .panel {
     width: 320px;
-    background: #1c1c1f;
-    border: 1px solid #27272a;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 8px;
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
     animation: slideIn 150ms ease-out;
@@ -93,13 +127,13 @@
     align-items: center;
     justify-content: space-between;
     padding: 12px 16px;
-    border-bottom: 1px solid #27272a;
+    border-bottom: 1px solid var(--border);
   }
 
   .title {
     font-size: 13px;
     font-weight: 600;
-    color: #fafafa;
+    color: var(--fg);
   }
 
   .close-btn {
@@ -111,18 +145,84 @@
     border: none;
     border-radius: 4px;
     background: transparent;
-    color: #a1a1aa;
+    color: var(--fg-muted);
     cursor: pointer;
     transition: all 100ms;
   }
 
   .close-btn:hover {
-    background: #27272a;
-    color: #fafafa;
+    background: var(--bg-muted);
+    color: var(--fg);
   }
 
   .body {
     padding: 16px;
+  }
+
+  .section-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fg-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+  }
+
+  .platforms {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .platform-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    cursor: pointer;
+    transition: background 100ms;
+  }
+
+  .platform-row:hover {
+    background: var(--bg-muted);
+  }
+
+  .platform-name {
+    font-size: 13px;
+    color: var(--fg);
+  }
+
+  .toggle {
+    width: 34px;
+    height: 18px;
+    border-radius: 9px;
+    background: var(--bg-elevated);
+    position: relative;
+    transition: background 150ms;
+  }
+
+  .toggle.active .toggle-knob {
+    transform: translateX(16px);
+  }
+
+  .toggle-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--fg);
+    transition: transform 150ms;
+  }
+
+  .divider {
+    height: 1px;
+    background: var(--border);
+    margin: 16px 0;
   }
 
   .field {
@@ -134,7 +234,7 @@
   .label {
     font-size: 12px;
     font-weight: 500;
-    color: #fafafa;
+    color: var(--fg);
   }
 
   .input-row {
@@ -146,27 +246,27 @@
   .input {
     width: 64px;
     padding: 6px 8px;
-    border: 1px solid #27272a;
+    border: 1px solid var(--border);
     border-radius: 4px;
-    background: #09090b;
-    color: #fafafa;
+    background: var(--bg);
+    color: var(--fg);
     font-size: 13px;
     outline: none;
     transition: border-color 120ms;
   }
 
   .input:focus {
-    border-color: #3f3f46;
+    border-color: var(--bg-elevated);
   }
 
   .suffix {
     font-size: 12px;
-    color: #a1a1aa;
+    color: var(--fg-muted);
   }
 
   .hint {
     font-size: 11px;
-    color: #71717a;
+    color: var(--fg-subtle);
     margin: 0;
   }
 
@@ -175,31 +275,31 @@
     justify-content: flex-end;
     gap: 8px;
     padding: 12px 16px;
-    border-top: 1px solid #27272a;
+    border-top: 1px solid var(--border);
   }
 
   .btn-secondary {
     padding: 6px 12px;
-    border: 1px solid #27272a;
+    border: 1px solid var(--border);
     border-radius: 4px;
     background: transparent;
-    color: #a1a1aa;
+    color: var(--fg-muted);
     font-size: 12px;
     cursor: pointer;
     transition: all 100ms;
   }
 
   .btn-secondary:hover {
-    background: #27272a;
-    color: #fafafa;
+    background: var(--bg-muted);
+    color: var(--fg);
   }
 
   .btn-primary {
     padding: 6px 12px;
     border: none;
     border-radius: 4px;
-    background: #fafafa;
-    color: #09090b;
+    background: var(--fg);
+    color: var(--bg);
     font-size: 12px;
     font-weight: 500;
     cursor: pointer;

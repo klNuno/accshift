@@ -23,11 +23,11 @@
     left: 50%;
     transform: translateX(-50%);
     padding: 8px 16px;
-    background: #27272a;
-    color: #fafafa;
+    background: var(--bg-muted);
+    color: var(--fg);
     font-size: 12px;
     border-radius: 6px;
-    border: 1px solid #3f3f46;
+    border: 1px solid var(--bg-elevated);
     z-index: 200;
     animation: toastIn 150ms ease-out;
     pointer-events: none;

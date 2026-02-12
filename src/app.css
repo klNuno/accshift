@@ -11,14 +11,25 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   color-scheme: dark;
+
+  --bg: #09090b;
+  --bg-card: #1c1c1f;
+  --bg-card-hover: #252528;
+  --bg-muted: #27272a;
+  --bg-elevated: #3f3f46;
+  --fg: #fafafa;
+  --fg-muted: #a1a1aa;
+  --fg-subtle: #71717a;
+  --border: #27272a;
+  --danger: #dc2626;
 }
 
 body {
   margin: 0;
   height: 100vh;
   overflow: hidden;
-  background-color: #09090b;
-  color: #fafafa;
+  background-color: var(--bg);
+  color: var(--fg);
 }
 
 #app {
@@ -36,10 +47,10 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #27272a;
+  background: var(--bg-muted);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3f3f46;
+  background: var(--bg-elevated);
 }

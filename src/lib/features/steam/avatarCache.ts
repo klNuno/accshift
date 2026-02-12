@@ -1,5 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
-import { getCacheDuration } from "$lib/settings";
+import { getAvatar } from "./steamService";
+import { getCacheDuration } from "../settings/store";
 
 const CACHE_KEY = "zazaswitcher_avatars";
 
@@ -43,7 +43,7 @@ export function setCachedAvatar(steamId: string, url: string) {
 
 export async function fetchAvatar(steamId: string): Promise<string | null> {
   try {
-    const url = await invoke<string | null>("get_avatar", { steamId });
+    const url = await getAvatar(steamId);
     if (url) {
       setCachedAvatar(steamId, url);
     }

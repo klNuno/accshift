@@ -1,50 +1,31 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getCachedAvatar, fetchAvatar } from "$lib/avatarCache";
+  import type { PlatformAccount } from "../platform";
 
-  let { account, isActive, onSwitch, refreshAvatar = false, onContextMenu }: {
-    account: { steam_id: string; account_name: string; persona_name: string };
+  let {
+    account,
+    isActive,
+    onSwitch,
+    onContextMenu,
+    isDragged = false,
+    avatarUrl = null,
+    isLoadingAvatar = false,
+    isRefreshingAvatar = false,
+  }: {
+    account: PlatformAccount;
     isActive: boolean;
     onSwitch: () => void;
-    refreshAvatar?: boolean;
     onContextMenu: (e: MouseEvent) => void;
+    isDragged?: boolean;
+    avatarUrl?: string | null;
+    isLoadingAvatar?: boolean;
+    isRefreshingAvatar?: boolean;
   } = $props();
 
-  let avatarUrl = $state<string | null>(null);
-  let isLoading = $state(false);
-  let isRefreshing = $state(false);
   let showConfirm = $state(false);
-  let cardRef = $state<HTMLButtonElement | null>(null);
-
-  async function loadAvatar(forceRefresh = false) {
-    const cached = getCachedAvatar(account.steam_id);
-
-    if (cached && !forceRefresh) {
-      avatarUrl = cached.url;
-      if (cached.expired) {
-        isRefreshing = true;
-        const newUrl = await fetchAvatar(account.steam_id);
-        if (newUrl) avatarUrl = newUrl;
-        isRefreshing = false;
-      }
-    } else if (cached && forceRefresh) {
-      avatarUrl = cached.url;
-      isRefreshing = true;
-      const newUrl = await fetchAvatar(account.steam_id);
-      if (newUrl) avatarUrl = newUrl;
-      isRefreshing = false;
-    } else {
-      isLoading = true;
-      const url = await fetchAvatar(account.steam_id);
-      avatarUrl = url;
-      isLoading = false;
-    }
-  }
+  let cardRef = $state<HTMLDivElement | null>(null);
 
   onMount(() => {
-    loadAvatar();
-
-    // Dismiss play overlay on any click outside this card
     function onDocClick(e: MouseEvent) {
       if (showConfirm && cardRef && !cardRef.contains(e.target as Node)) {
         showConfirm = false;
@@ -55,9 +36,7 @@
   });
 
   $effect(() => {
-    if (refreshAvatar) {
-      loadAvatar(true);
-    }
+    if (isDragged) showConfirm = false;
   });
 
   function getInitials(name: string): string {
@@ -65,8 +44,7 @@
   }
 
   function handleClick() {
-    if (isActive) return;
-
+    if (isActive || isDragged) return;
     if (showConfirm) {
       showConfirm = false;
       onSwitch();
@@ -77,39 +55,43 @@
 
   function handleContextMenu(e: MouseEvent) {
     e.preventDefault();
+    e.stopPropagation();
     showConfirm = false;
     onContextMenu(e);
   }
 </script>
 
-<button
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
   bind:this={cardRef}
   onclick={handleClick}
   oncontextmenu={handleContextMenu}
+  data-account-id={account.id}
   class="card"
   class:active={isActive}
+  class:dragging={isDragged}
 >
   <div class="avatar" class:active={isActive}>
-    {#if isLoading}
+    {#if isLoadingAvatar}
       <div class="loader"></div>
     {:else if avatarUrl}
       <img
         src={avatarUrl}
-        alt={account.persona_name}
-        class:blurred={isRefreshing || showConfirm}
+        alt={account.displayName}
+        class:blurred={isRefreshingAvatar || showConfirm}
       />
-      {#if isRefreshing}
+      {#if isRefreshingAvatar}
         <div class="loader overlay"></div>
       {/if}
     {:else}
       <span class="initials" class:blurred-text={showConfirm}>
-        {getInitials(account.persona_name || account.account_name)}
+        {getInitials(account.displayName || account.username)}
       </span>
     {/if}
 
-    {#if showConfirm}
+    {#if showConfirm && !isDragged}
       <div class="play-overlay">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="#fafafa">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="var(--fg)">
           <path d="M8 5v14l11-7z" />
         </svg>
       </div>
@@ -117,13 +99,13 @@
   </div>
 
   <div class="name">
-    {account.persona_name || account.account_name}
+    {account.displayName || account.username}
   </div>
 
   <div class="username">
-    {account.account_name}
+    {account.username}
   </div>
-</button>
+</div>
 
 <style>
   .card {
@@ -131,15 +113,16 @@
     padding: 12px;
     border-radius: 8px;
     text-align: center;
-    background: #1c1c1f;
+    background: var(--bg-card);
     border: none;
     cursor: pointer;
     transition: all 150ms ease-out;
     color: inherit;
+    user-select: none;
   }
 
   .card:not(.active):hover {
-    background: #252528;
+    background: var(--bg-card-hover);
     transform: scale(1.02);
   }
 
@@ -148,9 +131,14 @@
   }
 
   .card.active {
-    background: #252528;
+    background: var(--bg-card-hover);
     outline: 2px solid rgba(255, 255, 255, 0.4);
     cursor: default;
+  }
+
+  .card.dragging {
+    opacity: 0.4;
+    transform: scale(0.95);
   }
 
   .avatar {
@@ -163,8 +151,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #27272a;
+    background: var(--bg-muted);
     transition: background 150ms;
+    pointer-events: none;
   }
 
   .avatar img {
@@ -181,7 +170,7 @@
   .avatar .initials {
     font-size: 24px;
     font-weight: 600;
-    color: #fafafa;
+    color: var(--fg);
     transition: filter 300ms ease-out;
   }
 
@@ -206,8 +195,8 @@
   .loader {
     width: 20px;
     height: 20px;
-    border: 2px solid #3f3f46;
-    border-top-color: #fafafa;
+    border: 2px solid var(--bg-elevated);
+    border-top-color: var(--fg);
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
   }
@@ -220,7 +209,7 @@
   }
 
   .card:not(.active):hover .avatar {
-    background: #3f3f46;
+    background: var(--bg-elevated);
   }
 
   .avatar.active {
@@ -230,18 +219,20 @@
   .name {
     font-size: 12px;
     font-weight: 500;
-    color: #fafafa;
+    color: var(--fg);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    pointer-events: none;
   }
 
   .username {
     font-size: 10px;
-    color: #a1a1aa;
+    color: var(--fg-muted);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    pointer-events: none;
   }
 
   @keyframes spin {

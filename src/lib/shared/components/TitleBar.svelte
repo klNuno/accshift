@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import type { PlatformDef } from "../../features/settings/types";
 
   let {
     onRefresh,
@@ -11,6 +12,7 @@
     activeTab = "steam",
     onTabChange,
     accentColor,
+    enabledPlatforms,
   }: {
     onRefresh: () => void;
     onAddAccount: () => void;
@@ -20,7 +22,13 @@
     activeTab: string;
     onTabChange: (tab: string) => void;
     accentColor: string;
+    enabledPlatforms: PlatformDef[];
   } = $props();
+
+  const LOGO_PATHS: Record<string, string> = {
+    steam: "M11.979 0C5.678 0 .511 4.86.022 11.037l6.432 2.658c.545-.371 1.203-.59 1.912-.59.063 0 .125.004.188.006l2.861-4.142V8.91c0-2.495 2.028-4.524 4.524-4.524 2.494 0 4.524 2.031 4.524 4.527s-2.03 4.525-4.524 4.525h-.105l-4.076 2.911c0 .052.004.105.004.159 0 1.875-1.515 3.396-3.39 3.396-1.635 0-3.016-1.173-3.331-2.727L.436 15.27C1.862 20.307 6.486 24 11.979 24c6.627 0 11.999-5.373 11.999-12S18.605 0 11.979 0zM7.54 18.21l-1.473-.61c.262.543.714.999 1.314 1.25 1.297.539 2.793-.076 3.332-1.375.263-.63.264-1.319.005-1.949s-.75-1.121-1.377-1.383c-.624-.26-1.29-.249-1.878-.03l1.523.63c.956.4 1.409 1.5 1.009 2.455-.397.957-1.497 1.41-2.454 1.012H7.54zm11.415-9.303c0-1.662-1.353-3.015-3.015-3.015-1.665 0-3.015 1.353-3.015 3.015 0 1.665 1.35 3.015 3.015 3.015 1.663 0 3.015-1.35 3.015-3.015zm-5.273-.005c0-1.252 1.013-2.266 2.265-2.266 1.249 0 2.266 1.014 2.266 2.266 0 1.251-1.017 2.265-2.266 2.265-1.253 0-2.265-1.014-2.265-2.265z",
+    riot: "M13.458.86 0 7.093l3.353 12.761 2.552-.313-.701-8.024.838-.373 1.447 8.202 4.361-.535-.775-8.857.83-.37 1.591 9.025 4.412-.542-.849-9.708.84-.374 1.74 9.87L24 17.318V3.5Zm.316 19.356.222 1.256L24 23.14v-4.18l-10.22 1.256Z",
+  };
 
   function startDrag(e: MouseEvent) {
     if ((e.target as HTMLElement).closest("button")) return;
@@ -37,7 +45,6 @@
 </script>
 
 <div class="titlebar" onmousedown={startDrag}>
-  <!-- Left: app name + actions -->
   <div class="left">
     <span class="app-name">zazaSwitcher</span>
 
@@ -63,36 +70,28 @@
     </button>
   </div>
 
-  <!-- Center: platform tabs -->
-  <div class="tabs">
-    <button
-      class="tab"
-      class:active={activeTab === "steam"}
-      onclick={() => onTabChange("steam")}
-      title="Steam"
-      style={activeTab === "steam" ? `color: ${accentColor};` : ""}
-    >
-      <!-- Steam logo -->
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 2a10 10 0 0 0-9.96 9.04l5.35 2.21a2.83 2.83 0 0 1 1.6-.5l.01 0 2.39-3.46v-.05a3.78 3.78 0 1 1 3.78 3.78h-.09l-3.4 2.43a2.85 2.85 0 0 1-2.84 2.74 2.85 2.85 0 0 1-2.82-2.42L2.26 14.5A10 10 0 1 0 12 2zm-4.96 14.88a2.14 2.14 0 0 0 1.22 2.73 2.14 2.14 0 0 0 2.74-1.22 2.14 2.14 0 0 0-1.22-2.74l-1.17-.48c.36-.27.8-.43 1.28-.43a2.14 2.14 0 1 1-2.14 2.14l-.71.0zm8.72-7.63a2.52 2.52 0 1 0-2.52-2.52 2.52 2.52 0 0 0 2.52 2.52z"/>
-      </svg>
-    </button>
+  {#if enabledPlatforms.length > 1}
+    <div class="tabs">
+      {#each enabledPlatforms as platform}
+        <button
+          class="tab"
+          class:active={activeTab === platform.id}
+          onclick={() => onTabChange(platform.id)}
+          title={platform.name}
+          style={activeTab === platform.id ? `color: ${platform.accent};` : ""}
+        >
+          {#if LOGO_PATHS[platform.id]}
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d={LOGO_PATHS[platform.id]} />
+            </svg>
+          {:else}
+            <span class="tab-text">{platform.name.slice(0, 2)}</span>
+          {/if}
+        </button>
+      {/each}
+    </div>
+  {/if}
 
-    <button
-      class="tab"
-      class:active={activeTab === "riot"}
-      onclick={() => onTabChange("riot")}
-      title="Riot Games"
-      style={activeTab === "riot" ? `color: ${accentColor};` : ""}
-    >
-      <!-- Riot fist logo (simplified) -->
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M3.06 7.04L7.5 4.5l6 1.5 4.5-1.5 3 2.25-1.5 10.5-3 1.5H9l-2.25 1.5H4.5l-.75-3L3.06 7.04zM9 15h7.5l1.13-7.5L13.5 6l-6-1.5-2.81 1.6L5.25 15l.75 1.5h.75L9 15z"/>
-      </svg>
-    </button>
-  </div>
-
-  <!-- Right: notifications + window controls -->
   <div class="right">
     <button class="btn notif-btn" onclick={onOpenNotifications} title="Notifications">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -126,10 +125,11 @@
     align-items: center;
     justify-content: space-between;
     padding: 0 4px 0 12px;
-    background: #09090b;
+    background: var(--bg);
     user-select: none;
     -webkit-user-select: none;
-    border-bottom: 1px solid #1c1c1f;
+    border-bottom: 1px solid var(--bg-card);
+    position: relative;
   }
 
   .left {
@@ -142,11 +142,15 @@
   .app-name {
     font-size: 12px;
     font-weight: 500;
-    color: #a1a1aa;
+    color: var(--fg-muted);
     margin-right: 4px;
   }
 
   .tabs {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
     display: flex;
     align-items: center;
     gap: 2px;
@@ -167,12 +171,17 @@
   }
 
   .tab:hover {
-    background: #1c1c1f;
-    color: #a1a1aa;
+    background: var(--bg-card);
+    color: var(--fg-muted);
   }
 
   .tab.active {
-    background: #1c1c1f;
+    background: var(--bg-card);
+  }
+
+  .tab-text {
+    font-size: 11px;
+    font-weight: 600;
   }
 
   .btn {
@@ -184,14 +193,14 @@
     border: none;
     border-radius: 4px;
     background: transparent;
-    color: #a1a1aa;
+    color: var(--fg-muted);
     cursor: pointer;
     transition: all 120ms ease-out;
   }
 
   .btn:hover {
-    background: #27272a;
-    color: #fafafa;
+    background: var(--bg-muted);
+    color: var(--fg);
   }
 
   .btn:active {
@@ -227,18 +236,18 @@
     height: 36px;
     border: none;
     background: transparent;
-    color: #a1a1aa;
+    color: var(--fg-muted);
     cursor: pointer;
     transition: background 120ms;
   }
 
   .win-btn:hover {
-    background: #27272a;
-    color: #fafafa;
+    background: var(--bg-muted);
+    color: var(--fg);
   }
 
   .win-btn.close:hover {
-    background: #dc2626;
-    color: #fafafa;
+    background: var(--danger);
+    color: var(--fg);
   }
 </style>
