@@ -91,7 +91,7 @@
 
     {#if showConfirm && !isDragged}
       <div class="play-overlay">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="var(--fg)">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="var(--fg)">
           <path d="M8 5v14l11-7z" />
         </svg>
       </div>
@@ -109,8 +109,8 @@
 
 <style>
   .card {
-    width: 120px;
-    padding: 12px;
+    width: 100px;
+    padding: 8px;
     border-radius: 8px;
     text-align: center;
     background: var(--bg-card);
@@ -143,9 +143,9 @@
 
   .avatar {
     position: relative;
-    width: 80px;
-    height: 80px;
-    margin: 0 auto 10px;
+    width: 68px;
+    height: 68px;
+    margin: 0 auto 8px;
     border-radius: 6px;
     overflow: hidden;
     display: flex;
@@ -168,7 +168,7 @@
   }
 
   .avatar .initials {
-    font-size: 24px;
+    font-size: 20px;
     font-weight: 600;
     color: var(--fg);
     transition: filter 300ms ease-out;

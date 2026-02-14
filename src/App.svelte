@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { flip } from "svelte/animate";
   import AccountCard from "$lib/shared/components/AccountCard.svelte";
   import TitleBar from "$lib/shared/components/TitleBar.svelte";
   import ContextMenu from "$lib/shared/components/ContextMenu.svelte";
@@ -23,6 +24,9 @@
     createFolder, deleteFolder, renameFolder,
   } from "$lib/features/folders/store";
   import { createDragManager } from "$lib/shared/dragAndDrop.svelte";
+  import ViewToggle from "$lib/shared/components/ViewToggle.svelte";
+  import ListView from "$lib/shared/components/ListView.svelte";
+  import { getViewMode, setViewMode, type ViewMode } from "$lib/shared/viewMode";
 
   // Register platform adapters
   registerPlatform(steamAdapter);
@@ -77,13 +81,21 @@
   let toastMessage = $state<string | null>(null);
   let notifCount = $state(getUnreadCount());
 
+  // View mode
+  let viewMode = $state<ViewMode>(getViewMode());
+  function handleViewModeChange(mode: ViewMode) {
+    viewMode = mode;
+    setViewMode(mode);
+    if (mode === "grid") setTimeout(calculatePadding, 0);
+  }
+
   // Grid centering
   let wrapperRef = $state<HTMLDivElement | null>(null);
   let paddingLeft = $state(0);
   let isResizing = $state(false);
   let resizeTimeout: number;
-  const CARD_WIDTH = 120;
-  const GAP = 12;
+  const CARD_WIDTH = 100;
+  const GAP = 10;
 
   // Drag & drop
   const drag = createDragManager({
@@ -93,6 +105,25 @@
     getAccountItems: () => accountItems,
     getWrapperRef: () => wrapperRef,
     onRefresh: refreshCurrentItems,
+  });
+
+  // Display arrays reordered for drag preview
+  let displayFolderItems = $derived.by(() => {
+    if (!drag.isDragging || !drag.dragItem || drag.dragItem.type !== "folder" || drag.previewIndex === null) {
+      return folderItems;
+    }
+    const arr = folderItems.filter(i => i.id !== drag.dragItem!.id);
+    arr.splice(Math.min(drag.previewIndex, arr.length), 0, drag.dragItem);
+    return arr;
+  });
+
+  let displayAccountItems = $derived.by(() => {
+    if (!drag.isDragging || !drag.dragItem || drag.dragItem.type !== "account" || drag.previewIndex === null) {
+      return accountItems;
+    }
+    const arr = accountItems.filter(i => i.id !== drag.dragItem!.id);
+    arr.splice(Math.min(drag.previewIndex, arr.length), 0, drag.dragItem);
+    return arr;
   });
 
   function calculatePadding() {
@@ -286,12 +317,15 @@
     class="content"
     oncontextmenu={(e) => { e.preventDefault(); contextMenu = { x: e.clientX, y: e.clientY, isBackground: true }; }}
   >
-    <Breadcrumb
-      platformName={adapter.name}
-      path={folderPath}
-      onNavigate={navigateTo}
-      {accentColor}
-    />
+    <div class="toolbar-row">
+      <Breadcrumb
+        platformName={adapter.name}
+        path={folderPath}
+        onNavigate={navigateTo}
+        {accentColor}
+      />
+      <ViewToggle mode={viewMode} onChange={handleViewModeChange} />
+    </div>
 
     {#if error}
       <div class="error-banner">{error}</div>
@@ -307,9 +341,31 @@
         <p>No {adapter.name} accounts found</p>
         <p class="text-sm mt-1 opacity-70">Make sure {adapter.name} is installed and you have logged in at least once.</p>
       </div>
+    {:else if viewMode === "list"}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div bind:this={wrapperRef} class="list-wrapper" class:is-dragging={drag.isDragging} onmousedown={drag.handleGridMouseDown}>
+        <ListView
+          {folderItems}
+          {accountItems}
+          accounts={accountMap}
+          {currentFolderId}
+          {currentAccount}
+          {avatarStates}
+          {accentColor}
+          dragItem={drag.dragItem}
+          dragOverFolderId={drag.dragOverFolderId}
+          dragOverBack={drag.dragOverBack}
+          onNavigate={(id) => navigateTo(id)}
+          onGoBack={goBack}
+          onSwitch={switchAccount}
+          onAccountContextMenu={(e, account) => { contextMenu = { x: e.clientX, y: e.clientY, account }; }}
+          onFolderContextMenu={(e, folder) => { contextMenu = { x: e.clientX, y: e.clientY, folder }; }}
+          {getFolder}
+        />
+      </div>
     {:else}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div bind:this={wrapperRef} class="w-full" onmousedown={drag.handleGridMouseDown}>
+      <div bind:this={wrapperRef} class="w-full" class:is-dragging={drag.isDragging} onmousedown={drag.handleGridMouseDown}>
         <div
           class="grid-container"
           style="padding-left: {paddingLeft}px; {isResizing ? '' : 'transition: padding-left 200ms ease-out;'}"
@@ -318,34 +374,38 @@
             <BackCard onBack={goBack} isDragOver={drag.dragOverBack} />
           {/if}
 
-          {#each folderItems as item (item.id)}
+          {#each displayFolderItems as item (item.id)}
             {@const folder = getFolder(item.id)}
-            {#if folder}
-              <FolderCard
-                {folder}
-                onOpen={() => navigateTo(folder.id)}
-                onContextMenu={(e) => { contextMenu = { x: e.clientX, y: e.clientY, folder }; }}
-                isDragOver={drag.dragOverFolderId === folder.id}
-                isDragged={drag.dragItem?.type === "folder" && drag.dragItem?.id === folder.id}
-              />
-            {/if}
+            <div animate:flip={{ duration: 200 }}>
+              {#if folder}
+                <FolderCard
+                  {folder}
+                  onOpen={() => navigateTo(folder.id)}
+                  onContextMenu={(e) => { contextMenu = { x: e.clientX, y: e.clientY, folder }; }}
+                  isDragOver={drag.dragOverFolderId === folder.id}
+                  isDragged={drag.dragItem?.type === "folder" && drag.dragItem?.id === folder.id}
+                />
+              {/if}
+            </div>
           {/each}
 
-          {#each accountItems as item (item.id)}
+          {#each displayAccountItems as item (item.id)}
             {@const account = accountMap[item.id]}
-            {#if account}
-              {@const avatarState = avatarStates[account.id]}
-              <AccountCard
-                {account}
-                isActive={account.username === currentAccount}
-                onSwitch={() => switchAccount(account)}
-                onContextMenu={(e) => { contextMenu = { x: e.clientX, y: e.clientY, account }; }}
-                avatarUrl={avatarState?.url}
-                isLoadingAvatar={avatarState?.loading ?? true}
-                isRefreshingAvatar={avatarState?.refreshing ?? false}
-                isDragged={drag.dragItem?.type === "account" && drag.dragItem?.id === account.id}
-              />
-            {/if}
+            {@const avatarState = account ? avatarStates[account.id] : null}
+            <div animate:flip={{ duration: 200 }}>
+              {#if account}
+                <AccountCard
+                  {account}
+                  isActive={account.username === currentAccount}
+                  onSwitch={() => switchAccount(account)}
+                  onContextMenu={(e) => { contextMenu = { x: e.clientX, y: e.clientY, account }; }}
+                  avatarUrl={avatarState?.url}
+                  isLoadingAvatar={avatarState?.loading ?? true}
+                  isRefreshingAvatar={avatarState?.refreshing ?? false}
+                  isDragged={drag.dragItem?.type === "account" && drag.dragItem?.id === account.id}
+                />
+              {/if}
+            </div>
           {/each}
         </div>
       </div>
@@ -427,12 +487,37 @@
     overflow-y: auto;
     background: var(--bg);
     color: var(--fg);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .toolbar-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding-bottom: 8px;
+  }
+
+  .toolbar-row :global(.breadcrumb) {
+    padding-bottom: 0;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .list-wrapper {
+    flex: 1;
+    min-height: 0;
   }
 
   .grid-container {
     display: flex;
     flex-wrap: wrap;
-    gap: 12px;
+    gap: 10px;
+  }
+
+  .is-dragging :global(.card:not(.dragging):hover) {
+    transform: none !important;
   }
 
   .error-banner {
