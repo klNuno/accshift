@@ -1,6 +1,6 @@
 import type { AppNotification } from "./types";
 
-const STORAGE_KEY = "zazaswitcher_notifications";
+const STORAGE_KEY = "accshift_notifications";
 
 function load(): AppNotification[] {
   try {

@@ -7,4 +7,5 @@ export interface PlatformDef {
 export interface AppSettings {
   avatarCacheDays: number;
   enabledPlatforms: string[];
+  inactivityBlurSeconds: number;
 }

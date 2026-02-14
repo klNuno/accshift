@@ -46,7 +46,7 @@
 
 <div class="titlebar" onmousedown={startDrag}>
   <div class="left">
-    <span class="app-name">zazaSwitcher</span>
+    <span class="app-name">Accshift</span>
 
     <button class="btn" onclick={onRefresh} title="Refresh">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
