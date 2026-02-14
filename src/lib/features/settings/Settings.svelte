@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onMount } from "svelte";
+  import { invoke } from "@tauri-apps/api/core";
   import { getSettings, saveSettings, ALL_PLATFORMS } from "./store";
 
   let { onClose, onPlatformsChanged }: {
@@ -7,6 +9,15 @@
   } = $props();
 
   let settings = $state(getSettings());
+  let apiKey = $state("");
+
+  onMount(async () => {
+    try {
+      apiKey = await invoke<string>("get_api_key");
+    } catch {
+      apiKey = "";
+    }
+  });
 
   function togglePlatform(id: string) {
     if (settings.enabledPlatforms.includes(id)) {
@@ -17,8 +28,13 @@
     }
   }
 
-  function save() {
+  async function save() {
     saveSettings(settings);
+    try {
+      await invoke("set_api_key", { key: apiKey });
+    } catch (e) {
+      console.error("Failed to save API key:", e);
+    }
     onPlatformsChanged?.();
     onClose();
   }
@@ -30,76 +46,95 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="overlay" onclick={onClose}>
-  <div class="panel" onclick={(e) => e.stopPropagation()}>
-    <div class="header">
-      <span class="title">Settings</span>
-      <button class="close-btn" onclick={onClose}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18" />
-          <line x1="6" y1="6" x2="18" y2="18" />
-        </svg>
-      </button>
-    </div>
-
-    <div class="body">
-      <div class="section-label">Platforms</div>
-      <div class="platforms">
-        {#each ALL_PLATFORMS as platform}
-          <button
-            class="platform-row"
-            onclick={() => togglePlatform(platform.id)}
-          >
-            <span class="platform-name">{platform.name}</span>
-            <div
-              class="toggle"
-              class:active={settings.enabledPlatforms.includes(platform.id)}
-              style={settings.enabledPlatforms.includes(platform.id) ? `background: ${platform.accent};` : ""}
-            >
-              <div class="toggle-knob"></div>
-            </div>
-          </button>
-        {/each}
-      </div>
-
-      <div class="divider"></div>
-
-      <div class="field">
-        <label class="label" for="cache-days">Avatar refresh delay</label>
-        <div class="input-row">
-          <input
-            id="cache-days"
-            type="number"
-            min="1"
-            max="90"
-            bind:value={settings.avatarCacheDays}
-            class="input"
-          />
-          <span class="suffix">days</span>
-        </div>
-        <p class="hint">Cached profile pictures will refresh after this period.</p>
-      </div>
-    </div>
-
-    <div class="footer">
+<div class="settings-panel">
+  <div class="header">
+    <span class="title">Settings</span>
+    <div class="header-actions">
       <button class="btn-secondary" onclick={onClose}>Cancel</button>
       <button class="btn-primary" onclick={save}>Save</button>
+    </div>
+  </div>
+
+  <div class="body">
+    <div class="section-label">Platforms</div>
+    <div class="platforms">
+      {#each ALL_PLATFORMS as platform}
+        <button
+          class="platform-row"
+          onclick={() => togglePlatform(platform.id)}
+        >
+          <span class="platform-name">{platform.name}</span>
+          <div
+            class="toggle"
+            class:active={settings.enabledPlatforms.includes(platform.id)}
+            style={settings.enabledPlatforms.includes(platform.id) ? `background: ${platform.accent};` : ""}
+          >
+            <div class="toggle-knob"></div>
+          </div>
+        </button>
+      {/each}
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="field">
+      <label class="label" for="cache-days">Avatar refresh delay</label>
+      <div class="input-row">
+        <input
+          id="cache-days"
+          type="number"
+          min="0"
+          max="90"
+          bind:value={settings.avatarCacheDays}
+          class="input"
+        />
+        <span class="suffix">days</span>
+      </div>
+      <p class="hint">Cached profile pictures will refresh after this period. 0 = refresh on every launch.</p>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="field">
+      <label class="label" for="blur-seconds">Inactivity blur</label>
+      <div class="input-row">
+        <input
+          id="blur-seconds"
+          type="number"
+          min="0"
+          max="3600"
+          bind:value={settings.inactivityBlurSeconds}
+          class="input"
+        />
+        <span class="suffix">seconds</span>
+      </div>
+      <p class="hint">Blur app content after inactivity. 0 to disable.</p>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="field">
+      <label class="label" for="api-key">Steam API Key</label>
+      <div class="input-row">
+        <input
+          id="api-key"
+          type="password"
+          bind:value={apiKey}
+          class="input input-wide"
+          placeholder="Optional"
+        />
+      </div>
+      <p class="hint">Optional. Enables community & game ban detection.</p>
     </div>
   </div>
 </div>
 
 <style>
-  .overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 80;
+  .settings-panel {
+    flex: 1;
     display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(4px);
+    flex-direction: column;
+    overflow-y: auto;
     animation: fadeIn 120ms ease-out;
   }
 
@@ -108,26 +143,13 @@
     to { opacity: 1; }
   }
 
-  .panel {
-    width: 320px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
-    animation: slideIn 150ms ease-out;
-  }
-
-  @keyframes slideIn {
-    from { opacity: 0; transform: scale(0.96) translateY(8px); }
-    to { opacity: 1; transform: scale(1) translateY(0); }
-  }
-
   .header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 16px;
+    padding-bottom: 12px;
     border-bottom: 1px solid var(--border);
+    margin-bottom: 12px;
   }
 
   .title {
@@ -136,27 +158,13 @@
     color: var(--fg);
   }
 
-  .close-btn {
+  .header-actions {
     display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    border: none;
-    border-radius: 4px;
-    background: transparent;
-    color: var(--fg-muted);
-    cursor: pointer;
-    transition: all 100ms;
-  }
-
-  .close-btn:hover {
-    background: var(--bg-muted);
-    color: var(--fg);
+    gap: 6px;
   }
 
   .body {
-    padding: 16px;
+    flex: 1;
   }
 
   .section-label {
@@ -259,6 +267,11 @@
     border-color: var(--bg-elevated);
   }
 
+  .input-wide {
+    width: 100%;
+    flex: 1;
+  }
+
   .suffix {
     font-size: 12px;
     color: var(--fg-muted);
@@ -270,21 +283,13 @@
     margin: 0;
   }
 
-  .footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    padding: 12px 16px;
-    border-top: 1px solid var(--border);
-  }
-
   .btn-secondary {
-    padding: 6px 12px;
+    padding: 5px 10px;
     border: 1px solid var(--border);
     border-radius: 4px;
     background: transparent;
     color: var(--fg-muted);
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
     transition: all 100ms;
   }
@@ -295,12 +300,12 @@
   }
 
   .btn-primary {
-    padding: 6px 12px;
+    padding: 5px 10px;
     border: none;
     border-radius: 4px;
     background: var(--fg);
     color: var(--bg);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 500;
     cursor: pointer;
     transition: all 100ms;

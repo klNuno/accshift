@@ -1,6 +1,6 @@
 import type { PlatformDef, AppSettings } from "./types";
 
-const SETTINGS_KEY = "zazaswitcher_settings";
+const SETTINGS_KEY = "accshift_settings";
 
 export const ALL_PLATFORMS: PlatformDef[] = [
   { id: "steam", name: "Steam", accent: "#3b82f6" },
@@ -10,6 +10,7 @@ export const ALL_PLATFORMS: PlatformDef[] = [
 const DEFAULTS: AppSettings = {
   avatarCacheDays: 7,
   enabledPlatforms: ["steam"],
+  inactivityBlurSeconds: 60,
 };
 
 export function getSettings(): AppSettings {
@@ -33,5 +34,6 @@ export function saveSettings(settings: AppSettings) {
 
 export function getCacheDuration(): number {
   const settings = getSettings();
+  if (settings.avatarCacheDays === 0) return 0;
   return settings.avatarCacheDays * 24 * 60 * 60 * 1000;
 }

@@ -11,7 +11,6 @@
   import Breadcrumb from "$lib/features/folders/Breadcrumb.svelte";
   import FolderCard from "$lib/features/folders/FolderCard.svelte";
   import BackCard from "$lib/features/folders/BackCard.svelte";
-  import { addNotification, getUnreadCount } from "$lib/features/notifications/store";
   import { getSettings, ALL_PLATFORMS } from "$lib/features/settings/store";
   import type { PlatformDef } from "$lib/features/settings/types";
   import type { PlatformAccount } from "$lib/shared/platform";
@@ -27,6 +26,9 @@
   import ViewToggle from "$lib/shared/components/ViewToggle.svelte";
   import ListView from "$lib/shared/components/ListView.svelte";
   import { getViewMode, setViewMode, type ViewMode } from "$lib/shared/viewMode";
+  import { createInactivityBlur } from "$lib/shared/useInactivityBlur.svelte";
+  import { createGridLayout } from "$lib/shared/useGridLayout.svelte";
+  import { createAccountLoader } from "$lib/shared/useAccountLoader.svelte";
 
   // Register platform adapters
   registerPlatform(steamAdapter);
@@ -42,18 +44,10 @@
   );
   let adapter = $derived(getPlatform(activeTab));
 
-  // Accounts
-  let accounts = $state<PlatformAccount[]>([]);
-  let accountMap = $derived<Record<string, PlatformAccount>>(
-    Object.fromEntries(accounts.map(a => [a.id, a]))
-  );
-  let currentAccount = $state("");
-  let loading = $state(true);
-  let switching = $state(false);
-  let error = $state<string | null>(null);
-
-  // Avatar state (per account)
-  let avatarStates = $state<Record<string, { url: string | null; loading: boolean; refreshing: boolean }>>({});
+  // Composables
+  const blur = createInactivityBlur();
+  const grid = createGridLayout();
+  const loader = createAccountLoader(() => adapter, () => activeTab);
 
   // Folder navigation
   let currentFolderId = $state<string | null>(null);
@@ -79,23 +73,14 @@
   let showNotifications = $state(false);
   let inputDialog = $state<InputDialogConfig | null>(null);
   let toastMessage = $state<string | null>(null);
-  let notifCount = $state(getUnreadCount());
 
   // View mode
   let viewMode = $state<ViewMode>(getViewMode());
   function handleViewModeChange(mode: ViewMode) {
     viewMode = mode;
     setViewMode(mode);
-    if (mode === "grid") setTimeout(calculatePadding, 0);
+    if (mode === "grid") setTimeout(grid.calculatePadding, 0);
   }
-
-  // Grid centering
-  let wrapperRef = $state<HTMLDivElement | null>(null);
-  let paddingLeft = $state(0);
-  let isResizing = $state(false);
-  let resizeTimeout: number;
-  const CARD_WIDTH = 100;
-  const GAP = 10;
 
   // Drag & drop
   const drag = createDragManager({
@@ -103,7 +88,7 @@
     getActiveTab: () => activeTab,
     getFolderItems: () => folderItems,
     getAccountItems: () => accountItems,
-    getWrapperRef: () => wrapperRef,
+    getWrapperRef: () => grid.wrapperRef,
     onRefresh: refreshCurrentItems,
   });
 
@@ -126,21 +111,6 @@
     return arr;
   });
 
-  function calculatePadding() {
-    if (!wrapperRef) return;
-    const availableWidth = wrapperRef.clientWidth;
-    const cardsPerRow = Math.floor((availableWidth + GAP) / (CARD_WIDTH + GAP));
-    if (cardsPerRow < 1) return;
-    const totalCardsWidth = cardsPerRow * CARD_WIDTH + (cardsPerRow - 1) * GAP;
-    paddingLeft = Math.floor((availableWidth - totalCardsWidth) / 2);
-  }
-
-  function handleResize() {
-    isResizing = true;
-    clearTimeout(resizeTimeout);
-    resizeTimeout = setTimeout(() => { isResizing = false; calculatePadding(); }, 200);
-  }
-
   function showToast(msg: string) { toastMessage = msg; }
 
   async function copyToClipboard(text: string, label: string) {
@@ -148,84 +118,19 @@
     showToast(`${label} copied`);
   }
 
-  // Avatar loading
-  async function loadAvatarsForAccounts(accts: PlatformAccount[]) {
-    if (!adapter?.getAvatarUrl) return;
-    for (const account of accts) {
-      const cached = adapter.getCachedAvatar?.(account.id);
-      if (cached) {
-        avatarStates[account.id] = { url: cached.url, loading: false, refreshing: cached.expired };
-        if (cached.expired) {
-          const newUrl = await adapter.getAvatarUrl(account.id);
-          avatarStates[account.id] = { url: newUrl || cached.url, loading: false, refreshing: false };
-        }
-      } else {
-        avatarStates[account.id] = { url: null, loading: true, refreshing: false };
-        const url = await adapter.getAvatarUrl(account.id);
-        avatarStates[account.id] = { url, loading: false, refreshing: false };
-      }
-    }
-  }
-
-  function checkAvatarChanges(oldAccounts: PlatformAccount[]) {
-    if (!adapter?.getCachedAvatar) return;
-    for (const account of oldAccounts) {
-      const cached = adapter.getCachedAvatar(account.id);
-      if (cached && cached.expired) {
-        addNotification(`Profile picture updated for ${account.displayName || account.username}`);
-        notifCount = getUnreadCount();
-      }
-    }
-  }
-
-  async function loadAccounts() {
-    if (!adapter) return;
-    loading = true;
-    error = null;
-    try {
-      const oldAccounts = [...accounts];
-      accounts = await adapter.loadAccounts();
-      currentAccount = await adapter.getCurrentAccount();
-      syncAccounts(accounts.map(a => a.id), activeTab);
+  function loadAccounts() {
+    loader.load(() => {
+      syncAccounts(loader.accounts.map(a => a.id), activeTab);
       refreshCurrentItems();
-      if (oldAccounts.length > 0) checkAvatarChanges(oldAccounts);
-      loadAvatarsForAccounts(accounts);
-    } catch (e) {
-      error = String(e);
-    }
-    loading = false;
-    setTimeout(calculatePadding, 0);
-  }
-
-  async function switchAccount(account: PlatformAccount) {
-    if (!adapter || switching || account.username === currentAccount) return;
-    switching = true;
-    error = null;
-    try {
-      await adapter.switchAccount(account);
-      currentAccount = account.username;
-      // Refresh avatar for the switched account
-      if (adapter.getAvatarUrl) {
-        avatarStates[account.id] = { ...avatarStates[account.id], refreshing: true };
-        const newUrl = await adapter.getAvatarUrl(account.id);
-        avatarStates[account.id] = { url: newUrl || avatarStates[account.id]?.url, loading: false, refreshing: false };
-      }
-    } catch (e) {
-      error = String(e);
-    }
-    switching = false;
-  }
-
-  async function addAccount() {
-    if (!adapter) return;
-    try { await adapter.addAccount(); } catch (e) { error = String(e); }
+      setTimeout(grid.calculatePadding, 0);
+    });
   }
 
   // Navigation
   function navigateTo(folderId: string | null) {
     currentFolderId = folderId;
     refreshCurrentItems();
-    setTimeout(calculatePadding, 0);
+    setTimeout(grid.calculatePadding, 0);
   }
 
   function goBack() {
@@ -237,7 +142,8 @@
   function handleTabChange(tab: string) {
     activeTab = tab;
     currentFolderId = null;
-    if (getPlatform(tab)) { loadAccounts(); } else { refreshCurrentItems(); loading = false; setTimeout(calculatePadding, 0); }
+    showSettings = false;
+    if (getPlatform(tab)) { loadAccounts(); } else { refreshCurrentItems(); setTimeout(grid.calculatePadding, 0); }
   }
 
   // Dialogs
@@ -281,40 +187,55 @@
     if (getPlatform(activeTab)) { loadAccounts(); } else { refreshCurrentItems(); }
   }
 
+  function handleSettingsClose() {
+    showSettings = false;
+    settings = getSettings();
+    blur.start();
+  }
+
   onMount(() => {
     loadAccounts();
-    window.addEventListener("resize", handleResize);
+    blur.start();
+    blur.attachListeners();
+    window.addEventListener("resize", grid.handleResize);
     document.addEventListener("mousemove", drag.handleDocMouseMove);
     document.addEventListener("mouseup", drag.handleDocMouseUp);
     document.addEventListener("click", drag.handleCaptureClick, true);
   });
 
   onDestroy(() => {
-    window.removeEventListener("resize", handleResize);
+    window.removeEventListener("resize", grid.handleResize);
     document.removeEventListener("mousemove", drag.handleDocMouseMove);
     document.removeEventListener("mouseup", drag.handleDocMouseUp);
     document.removeEventListener("click", drag.handleCaptureClick, true);
-    clearTimeout(resizeTimeout);
+    blur.detachListeners();
+    blur.stop();
+    grid.destroy();
   });
 </script>
 
 <div class="app-shell" style="border-color: {accentColor}20;">
 <TitleBar
   onRefresh={loadAccounts}
-  onAddAccount={addAccount}
-  onOpenSettings={() => showSettings = true}
-  onOpenNotifications={() => { showNotifications = true; notifCount = 0; }}
-  {notifCount}
+  onAddAccount={loader.addNew}
+  onOpenSettings={() => showSettings = !showSettings}
+  onOpenNotifications={() => { showNotifications = true; loader.notifCount = 0; }}
+  notifCount={loader.notifCount}
   {activeTab}
   onTabChange={handleTabChange}
   {accentColor}
   {enabledPlatforms}
 />
 
-{#if adapter}
+{#if showSettings}
+  <main class="content">
+    <Settings onClose={handleSettingsClose} onPlatformsChanged={handlePlatformsChanged} />
+  </main>
+{:else if adapter}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <main
     class="content"
+    class:blurred={blur.isBlurred}
     oncontextmenu={(e) => { e.preventDefault(); contextMenu = { x: e.clientX, y: e.clientY, isBackground: true }; }}
   >
     <div class="toolbar-row">
@@ -327,37 +248,38 @@
       <ViewToggle mode={viewMode} onChange={handleViewModeChange} />
     </div>
 
-    {#if error}
-      <div class="error-banner">{error}</div>
+    {#if loader.error}
+      <div class="error-banner">{loader.error}</div>
     {/if}
 
-    {#if loading}
+    {#if loader.loading}
       <div class="center-msg">
         <div class="spinner" style="border-top-color: {accentColor};"></div>
         <p class="text-sm">Loading...</p>
       </div>
-    {:else if accounts.length === 0}
+    {:else if loader.accounts.length === 0}
       <div class="center-msg">
         <p>No {adapter.name} accounts found</p>
         <p class="text-sm mt-1 opacity-70">Make sure {adapter.name} is installed and you have logged in at least once.</p>
       </div>
     {:else if viewMode === "list"}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div bind:this={wrapperRef} class="list-wrapper" class:is-dragging={drag.isDragging} onmousedown={drag.handleGridMouseDown}>
+      <div bind:this={grid.wrapperRef} class="list-wrapper" class:is-dragging={drag.isDragging} onmousedown={drag.handleGridMouseDown}>
         <ListView
-          {folderItems}
-          {accountItems}
-          accounts={accountMap}
+          folderItems={displayFolderItems}
+          accountItems={displayAccountItems}
+          accounts={loader.accountMap}
           {currentFolderId}
-          {currentAccount}
-          {avatarStates}
+          currentAccount={loader.currentAccount}
+          avatarStates={loader.avatarStates}
+          banStates={loader.banStates}
           {accentColor}
           dragItem={drag.dragItem}
           dragOverFolderId={drag.dragOverFolderId}
           dragOverBack={drag.dragOverBack}
           onNavigate={(id) => navigateTo(id)}
           onGoBack={goBack}
-          onSwitch={switchAccount}
+          onSwitch={loader.switchTo}
           onAccountContextMenu={(e, account) => { contextMenu = { x: e.clientX, y: e.clientY, account }; }}
           onFolderContextMenu={(e, folder) => { contextMenu = { x: e.clientX, y: e.clientY, folder }; }}
           {getFolder}
@@ -365,10 +287,10 @@
       </div>
     {:else}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div bind:this={wrapperRef} class="w-full" class:is-dragging={drag.isDragging} onmousedown={drag.handleGridMouseDown}>
+      <div bind:this={grid.wrapperRef} class="w-full" class:is-dragging={drag.isDragging} onmousedown={drag.handleGridMouseDown}>
         <div
           class="grid-container"
-          style="padding-left: {paddingLeft}px; {isResizing ? '' : 'transition: padding-left 200ms ease-out;'}"
+          style="padding-left: {grid.paddingLeft}px; {grid.isResizing ? '' : 'transition: padding-left 200ms ease-out;'}"
         >
           {#if currentFolderId}
             <BackCard onBack={goBack} isDragOver={drag.dragOverBack} />
@@ -390,19 +312,20 @@
           {/each}
 
           {#each displayAccountItems as item (item.id)}
-            {@const account = accountMap[item.id]}
-            {@const avatarState = account ? avatarStates[account.id] : null}
+            {@const account = loader.accountMap[item.id]}
+            {@const avatarState = account ? loader.avatarStates[account.id] : null}
             <div animate:flip={{ duration: 200 }}>
               {#if account}
                 <AccountCard
                   {account}
-                  isActive={account.username === currentAccount}
-                  onSwitch={() => switchAccount(account)}
+                  isActive={account.username === loader.currentAccount}
+                  onSwitch={() => loader.switchTo(account)}
                   onContextMenu={(e) => { contextMenu = { x: e.clientX, y: e.clientY, account }; }}
                   avatarUrl={avatarState?.url}
                   isLoadingAvatar={avatarState?.loading ?? true}
                   isRefreshingAvatar={avatarState?.refreshing ?? false}
                   isDragged={drag.dragItem?.type === "account" && drag.dragItem?.id === account.id}
+                  banInfo={loader.banStates[account.id]}
                 />
               {/if}
             </div>
@@ -411,7 +334,7 @@
       </div>
     {/if}
 
-    {#if switching}
+    {#if loader.switching}
       <div class="switching-overlay">
         <div class="switching-card">
           <div class="spinner" style="border-top-color: {accentColor};"></div>
@@ -459,10 +382,6 @@
   />
 {/if}
 
-{#if showSettings}
-  <Settings onClose={() => showSettings = false} onPlatformsChanged={handlePlatformsChanged} />
-{/if}
-
 {#if showNotifications}
   <NotificationPanel onClose={() => showNotifications = false} />
 {/if}
@@ -489,6 +408,12 @@
     color: var(--fg);
     display: flex;
     flex-direction: column;
+    transition: filter 0.3s ease-out;
+  }
+
+  .content.blurred {
+    filter: blur(20px);
+    transition: filter 2s ease-in;
   }
 
   .toolbar-row {

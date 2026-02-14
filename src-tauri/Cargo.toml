@@ -1,7 +1,7 @@
 [package]
-name = "zazaswitcher"
+name = "accshift"
 version = "0.1.0"
-description = "Steam Account Switcher"
+description = "Account Switcher"
 authors = ["you"]
 edition = "2021"
 
@@ -14,7 +14,7 @@ tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 winreg = "0.52"
-reqwest = { version = "0.11", features = ["rustls-tls"] }
+reqwest = { version = "0.11", features = ["rustls-tls", "json"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 thiserror = "1"
 

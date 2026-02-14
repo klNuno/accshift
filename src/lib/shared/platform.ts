@@ -21,8 +21,19 @@ export interface PlatformAdapter {
     showToast: (msg: string) => void;
   }): ContextMenuItem[];
 
-  getAvatarUrl?(accountId: string): Promise<string | null>;
-  getCachedAvatar?(accountId: string): { url: string; expired: boolean } | null;
+  getProfileInfo?(accountId: string): Promise<{
+    avatar_url: string | null;
+    display_name: string | null;
+    vac_banned: boolean;
+    trade_ban_state: string;
+  } | null>;
+  getCachedProfile?(accountId: string): {
+    url: string;
+    displayName?: string;
+    vacBanned?: boolean;
+    tradeBanState?: string;
+    expired: boolean;
+  } | null;
 }
 
 const adapters = new Map<string, PlatformAdapter>();

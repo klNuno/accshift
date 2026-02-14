@@ -2,6 +2,8 @@
   import { onMount } from "svelte";
   import type { PlatformAccount } from "../platform";
 
+  import type { BanInfo } from "$lib/features/steam/types";
+
   let {
     account,
     isActive,
@@ -11,6 +13,7 @@
     avatarUrl = null,
     isLoadingAvatar = false,
     isRefreshingAvatar = false,
+    banInfo = undefined,
   }: {
     account: PlatformAccount;
     isActive: boolean;
@@ -20,10 +23,21 @@
     avatarUrl?: string | null;
     isLoadingAvatar?: boolean;
     isRefreshingAvatar?: boolean;
+    banInfo?: BanInfo;
   } = $props();
 
   let showConfirm = $state(false);
   let cardRef = $state<HTMLDivElement | null>(null);
+  let nameRef = $state<HTMLDivElement | null>(null);
+  let isOverflowing = $state(false);
+
+  // Ban outline color
+  let banOutlineColor = $derived.by(() => {
+    if (!banInfo) return "";
+    if (banInfo.vac_banned || banInfo.number_of_game_bans > 0) return "rgba(239, 68, 68, 0.6)";
+    if (banInfo.community_banned || (banInfo.economy_ban && banInfo.economy_ban !== "none")) return "rgba(234, 179, 8, 0.6)";
+    return "";
+  });
 
   onMount(() => {
     function onDocClick(e: MouseEvent) {
@@ -32,7 +46,20 @@
       }
     }
     document.addEventListener("mousedown", onDocClick);
+    checkOverflow();
     return () => document.removeEventListener("mousedown", onDocClick);
+  });
+
+  function checkOverflow() {
+    if (nameRef) {
+      isOverflowing = nameRef.scrollWidth > nameRef.clientWidth;
+    }
+  }
+
+  $effect(() => {
+    // Re-check overflow when displayName changes
+    account.displayName;
+    setTimeout(checkOverflow, 0);
   });
 
   $effect(() => {
@@ -70,6 +97,8 @@
   class="card"
   class:active={isActive}
   class:dragging={isDragged}
+  class:ban-red={banOutlineColor.includes("239")}
+  class:ban-yellow={banOutlineColor.includes("234")}
 >
   <div class="avatar" class:active={isActive}>
     {#if isLoadingAvatar}
@@ -98,13 +127,29 @@
     {/if}
   </div>
 
-  <div class="name">
-    {account.displayName || account.username}
+  <div class="name" class:marquee={isOverflowing}>
+    <span bind:this={nameRef} class="name-inner">
+      {account.displayName || account.username}
+    </span>
   </div>
 
   <div class="username">
     {account.username}
   </div>
+
+  {#if banInfo}
+    <div class="ban-badges">
+      {#if banInfo.vac_banned}
+        <span class="ban-badge vac">VAC</span>
+      {/if}
+      {#if banInfo.community_banned}
+        <span class="ban-badge community">BANNED</span>
+      {/if}
+      {#if banInfo.number_of_game_bans > 0}
+        <span class="ban-badge game">GAME BAN</span>
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -134,6 +179,22 @@
     background: var(--bg-card-hover);
     outline: 2px solid rgba(255, 255, 255, 0.4);
     cursor: default;
+  }
+
+  .card.ban-red {
+    outline: 2px solid rgba(239, 68, 68, 0.6);
+  }
+
+  .card.ban-yellow:not(.ban-red) {
+    outline: 2px solid rgba(234, 179, 8, 0.6);
+  }
+
+  .card.active.ban-red {
+    outline: 2px solid rgba(239, 68, 68, 0.6);
+  }
+
+  .card.active.ban-yellow:not(.ban-red) {
+    outline: 2px solid rgba(234, 179, 8, 0.6);
   }
 
   .card.dragging {
@@ -217,13 +278,34 @@
   }
 
   .name {
+    overflow: hidden;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+
+  .name-inner {
+    display: inline-block;
     font-size: 12px;
     font-weight: 500;
     color: var(--fg);
     white-space: nowrap;
+  }
+
+  .name:not(.marquee) .name-inner {
+    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
-    pointer-events: none;
+  }
+
+  .card:hover .name.marquee .name-inner {
+    animation: marquee 3s linear infinite;
+  }
+
+  @keyframes marquee {
+    0% { transform: translateX(0); }
+    10% { transform: translateX(0); }
+    90% { transform: translateX(calc(-100% + 84px)); }
+    100% { transform: translateX(calc(-100% + 84px)); }
   }
 
   .username {
@@ -233,6 +315,40 @@
     overflow: hidden;
     text-overflow: ellipsis;
     pointer-events: none;
+  }
+
+  .ban-badges {
+    display: flex;
+    justify-content: center;
+    gap: 3px;
+    margin-top: 2px;
+    flex-wrap: wrap;
+    pointer-events: none;
+  }
+
+  .ban-badge {
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    line-height: 1.2;
+    text-transform: uppercase;
+  }
+
+  .ban-badge.vac {
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+  }
+
+  .ban-badge.community {
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+  }
+
+  .ban-badge.game {
+    background: rgba(251, 146, 60, 0.2);
+    color: #fb923c;
   }
 
   @keyframes spin {

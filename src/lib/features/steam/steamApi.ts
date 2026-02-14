@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { SteamAccount } from "./types";
+import type { SteamAccount, ProfileInfo, BanInfo } from "./types";
 
 export async function getAccounts(): Promise<SteamAccount[]> {
   return invoke<SteamAccount[]>("get_steam_accounts");
@@ -21,10 +21,22 @@ export async function addAccount(): Promise<void> {
   await invoke("add_account");
 }
 
-export async function getAvatar(steamId: string): Promise<string | null> {
-  return invoke<string | null>("get_avatar", { steamId });
-}
-
 export async function openUserdata(steamId: string): Promise<void> {
   await invoke("open_userdata", { steamId });
+}
+
+export async function getProfileInfo(steamId: string): Promise<ProfileInfo | null> {
+  return invoke<ProfileInfo | null>("get_profile_info", { steamId });
+}
+
+export async function getPlayerBans(steamIds: string[]): Promise<BanInfo[]> {
+  return invoke<BanInfo[]>("get_player_bans", { steamIds });
+}
+
+export async function getApiKey(): Promise<string> {
+  return invoke<string>("get_api_key");
+}
+
+export async function setApiKey(key: string): Promise<void> {
+  await invoke("set_api_key", { key });
 }

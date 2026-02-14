@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { PlatformAccount } from "../platform";
+  import type { BanInfo } from "$lib/features/steam/types";
 
   let {
     account,
@@ -7,12 +8,14 @@
     avatarUrl = null,
     accentColor = "#3b82f6",
     onSwitch,
+    banInfo = undefined,
   }: {
     account: PlatformAccount;
     isActive?: boolean;
     avatarUrl?: string | null;
     accentColor?: string;
     onSwitch: () => void;
+    banInfo?: BanInfo;
   } = $props();
 
   function getInitials(name: string): string {
@@ -31,6 +34,20 @@
 
   <div class="display-name">{account.displayName || account.username}</div>
   <div class="username">{account.username}</div>
+
+  {#if banInfo}
+    <div class="ban-badges">
+      {#if banInfo.vac_banned}
+        <span class="ban-badge vac">VAC</span>
+      {/if}
+      {#if banInfo.community_banned}
+        <span class="ban-badge community">BANNED</span>
+      {/if}
+      {#if banInfo.number_of_game_bans > 0}
+        <span class="ban-badge game">GAME BAN</span>
+      {/if}
+    </div>
+  {/if}
 
   {#if isActive}
     <div class="status">Currently active</div>
@@ -128,5 +145,37 @@
 
   .switch-btn:active {
     filter: brightness(0.9);
+  }
+
+  .ban-badges {
+    display: flex;
+    gap: 4px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .ban-badge {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    text-transform: uppercase;
+  }
+
+  .ban-badge.vac {
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+  }
+
+  .ban-badge.community {
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+  }
+
+  .ban-badge.game {
+    background: rgba(251, 146, 60, 0.2);
+    color: #fb923c;
   }
 </style>

@@ -2,7 +2,7 @@ import type { ContextMenuItem } from "../../shared/types";
 import type { PlatformAccount } from "../../shared/platform";
 import { toProfileUrl } from "./steamIdUtils";
 import { encodeFriendCode } from "./friendCode";
-import { openUserdata, switchAccountMode } from "./steamService";
+import { openUserdata, switchAccountMode } from "./steamApi";
 
 export function getSteamContextMenuItems(
   account: PlatformAccount,

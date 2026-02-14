@@ -1,14 +1,24 @@
 import type { FolderInfo, ItemRef, FolderStore } from "./types";
 
-const STORE_KEY = "zazaswitcher_folders";
+const STORE_KEY = "accshift_folders";
+const CURRENT_VERSION = 1;
+
+function migrateStore(store: FolderStore): FolderStore {
+  if (!store.version) {
+    // v0 -> v1: add version field
+    store.version = CURRENT_VERSION;
+  }
+  return store;
+}
 
 function getStore(): FolderStore {
   try {
     const data = localStorage.getItem(STORE_KEY);
-    if (!data) return { folders: [], itemOrder: {} };
-    return JSON.parse(data);
+    if (!data) return { version: CURRENT_VERSION, folders: [], itemOrder: {} };
+    const store = JSON.parse(data) as FolderStore;
+    return migrateStore(store);
   } catch {
-    return { folders: [], itemOrder: {} };
+    return { version: CURRENT_VERSION, folders: [], itemOrder: {} };
   }
 }
 

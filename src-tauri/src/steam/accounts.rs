@@ -6,6 +6,9 @@ use crate::error::AppError;
 use super::registry::{get_steam_path, set_auto_login_user, clear_auto_login_user};
 use super::vdf::{parse_vdf, set_persona_state};
 
+const MAX_KILL_WAIT_MS: u64 = 5000;
+const KILL_POLL_INTERVAL_MS: u64 = 500;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SteamAccount {
     pub steam_id: String,
@@ -18,11 +21,37 @@ fn steam_id_to_account_id(steam_id64: &str) -> Option<u32> {
     Some((id & 0xFFFFFFFF) as u32)
 }
 
-fn kill_steam() {
+fn is_steam_running() -> bool {
+    let output = Command::new("tasklist")
+        .args(["/FI", "IMAGENAME eq steam.exe", "/NH"])
+        .output();
+    match output {
+        Ok(o) => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            stdout.to_lowercase().contains("steam.exe")
+        }
+        Err(_) => false,
+    }
+}
+
+fn kill_steam() -> Result<(), AppError> {
+    if !is_steam_running() {
+        return Ok(());
+    }
+
     let _ = Command::new("taskkill")
         .args(["/F", "/IM", "steam.exe"])
         .output();
-    std::thread::sleep(std::time::Duration::from_millis(1500));
+
+    let max_polls = MAX_KILL_WAIT_MS / KILL_POLL_INTERVAL_MS;
+    for _ in 0..max_polls {
+        std::thread::sleep(std::time::Duration::from_millis(KILL_POLL_INTERVAL_MS));
+        if !is_steam_running() {
+            return Ok(());
+        }
+    }
+
+    Err(AppError::KillSteamTimeout)
 }
 
 fn launch_steam(steam_path: &std::path::PathBuf) -> Result<(), AppError> {
@@ -57,21 +86,21 @@ pub fn get_accounts() -> Result<Vec<SteamAccount>, AppError> {
 
 pub fn switch_account(username: &str) -> Result<(), AppError> {
     let steam_path = get_steam_path()?;
-    kill_steam();
+    kill_steam()?;
     set_auto_login_user(username)?;
     launch_steam(&steam_path)
 }
 
 pub fn add_account() -> Result<(), AppError> {
     let steam_path = get_steam_path()?;
-    kill_steam();
+    kill_steam()?;
     clear_auto_login_user()?;
     launch_steam(&steam_path)
 }
 
 pub fn switch_account_mode(username: &str, steam_id: &str, mode: &str) -> Result<(), AppError> {
     let steam_path = get_steam_path()?;
-    kill_steam();
+    kill_steam()?;
     set_auto_login_user(username)?;
 
     if let Some(account_id) = steam_id_to_account_id(steam_id) {
