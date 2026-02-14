@@ -8,6 +8,7 @@ export interface DragState {
   dragOverFolderId: string | null;
   dragOverBack: boolean;
   isDragging: boolean;
+  previewIndex: number | null;
 }
 
 export interface DragManagerOptions {
@@ -24,8 +25,17 @@ export function createDragManager(options: DragManagerOptions) {
   let dragOverFolderId = $state<string | null>(null);
   let dragOverBack = $state(false);
   let isDragging = $state(false);
-  let pendingDrag = $state<{ item: ItemRef; startX: number; startY: number } | null>(null);
+  let previewIndex = $state<number | null>(null);
+  let pendingDrag = $state<{ item: ItemRef; startX: number; startY: number; sourceEl: HTMLElement } | null>(null);
   let eatNextClick = false;
+  let ghostEl: HTMLElement | null = null;
+  let ghostOffsetX = 0;
+  let ghostOffsetY = 0;
+
+  // Recorded slot positions at drag start (avoids DOM feedback loop)
+  let slotRects: DOMRect[] = [];
+  let dragOldIndex = -1;
+  let dragIsListMode = false;
 
   function handleGridMouseDown(e: MouseEvent) {
     if (e.button !== 0) return;
@@ -41,7 +51,7 @@ export function createDragManager(options: DragManagerOptions) {
     }
     if (!item) return;
 
-    pendingDrag = { item, startX: e.clientX, startY: e.clientY };
+    pendingDrag = { item, startX: e.clientX, startY: e.clientY, sourceEl: card };
   }
 
   function handleDocMouseMove(e: MouseEvent) {
@@ -54,6 +64,42 @@ export function createDragManager(options: DragManagerOptions) {
       if (Math.abs(dx) + Math.abs(dy) < DRAG_THRESHOLD) return;
       isDragging = true;
       dragItem = pendingDrag.item;
+
+      // Record slot positions before any reorder happens
+      const wrapperRef = options.getWrapperRef();
+      const gridEl = wrapperRef?.querySelector(".grid-container, .list-container") as HTMLElement;
+      if (gridEl) {
+        dragIsListMode = gridEl.classList.contains("list-container");
+        const selector = dragItem.type === "folder" ? "[data-folder-id]" : "[data-account-id]";
+        const cards = Array.from(gridEl.querySelectorAll(selector)) as HTMLElement[];
+        slotRects = cards.map(el => el.getBoundingClientRect());
+        const items = dragItem.type === "folder" ? options.getFolderItems() : options.getAccountItems();
+        dragOldIndex = items.findIndex(i => i.id === dragItem!.id);
+      }
+
+      // Create ghost element
+      const sourceRect = pendingDrag.sourceEl.getBoundingClientRect();
+      ghostOffsetX = e.clientX - sourceRect.left;
+      ghostOffsetY = e.clientY - sourceRect.top;
+      ghostEl = pendingDrag.sourceEl.cloneNode(true) as HTMLElement;
+      ghostEl.style.position = "fixed";
+      ghostEl.style.left = `${sourceRect.left}px`;
+      ghostEl.style.top = `${sourceRect.top}px`;
+      ghostEl.style.width = `${sourceRect.width}px`;
+      ghostEl.style.pointerEvents = "none";
+      ghostEl.style.zIndex = "9999";
+      ghostEl.style.opacity = "0.85";
+      ghostEl.style.transform = "scale(1.05)";
+      ghostEl.style.boxShadow = "0 8px 24px rgba(0,0,0,0.5)";
+      ghostEl.style.transition = "none";
+      ghostEl.style.margin = "0";
+      document.body.appendChild(ghostEl);
+    }
+
+    // Update ghost position
+    if (ghostEl) {
+      ghostEl.style.left = `${e.clientX - ghostOffsetX}px`;
+      ghostEl.style.top = `${e.clientY - ghostOffsetY}px`;
     }
 
     const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
@@ -68,12 +114,33 @@ export function createDragManager(options: DragManagerOptions) {
     if (hover?.dataset.backCard) {
       dragOverBack = true;
       dragOverFolderId = null;
+      previewIndex = null;
     } else if (hover?.dataset.folderId && !(dragItem?.type === "folder" && dragItem?.id === hover.dataset.folderId)) {
       dragOverFolderId = hover.dataset.folderId!;
       dragOverBack = false;
+      previewIndex = null;
     } else {
       dragOverFolderId = null;
       dragOverBack = false;
+      // Compute preview reorder index from recorded slot positions
+      if (slotRects.length > 0 && dragOldIndex >= 0) {
+        let bestIdx = 0;
+        let bestDist = Infinity;
+        for (let i = 0; i < slotRects.length; i++) {
+          const r = slotRects[i];
+          const dist = (e.clientX - (r.left + r.width / 2)) ** 2 + (e.clientY - (r.top + r.height / 2)) ** 2;
+          if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+        }
+        const r = slotRects[bestIdx];
+        let dropIdx: number;
+        if (dragIsListMode) {
+          dropIdx = e.clientY > r.top + r.height / 2 ? bestIdx + 1 : bestIdx;
+        } else {
+          dropIdx = e.clientX > r.left + r.width / 2 ? bestIdx + 1 : bestIdx;
+        }
+        const insertAt = dropIdx > dragOldIndex ? dropIdx - 1 : dropIdx;
+        previewIndex = Math.max(0, Math.min(insertAt, slotRects.length - 1));
+      }
     }
   }
 
@@ -96,67 +163,40 @@ export function createDragManager(options: DragManagerOptions) {
         if (!(dragItem.type === "folder" && dragItem.id === dragOverFolderId)) {
           moveItem(dragItem, currentFolderId, dragOverFolderId, activeTab);
         }
-      } else {
-        performReorder(e.clientX, e.clientY);
+      } else if (previewIndex !== null) {
+        // Apply the preview reorder
+        const folderItems = options.getFolderItems();
+        const accountItems = options.getAccountItems();
+        if (dragItem.type === "folder") {
+          const newFolders = folderItems.filter(i => i.id !== dragItem!.id);
+          newFolders.splice(Math.min(previewIndex, newFolders.length), 0, dragItem);
+          reorderItems(currentFolderId, activeTab, [...newFolders, ...accountItems]);
+        } else {
+          const newAccounts = accountItems.filter(i => i.id !== dragItem!.id);
+          newAccounts.splice(Math.min(previewIndex, newAccounts.length), 0, dragItem);
+          reorderItems(currentFolderId, activeTab, [...folderItems, ...newAccounts]);
+        }
       }
       options.onRefresh();
     }
 
+    // Remove ghost
+    if (ghostEl) {
+      ghostEl.remove();
+      ghostEl = null;
+    }
+
     eatNextClick = true;
+    // Safety: if no click event fires (mousedown/mouseup on different targets), reset the flag
+    setTimeout(() => { eatNextClick = false; }, 0);
     dragItem = null;
     dragOverFolderId = null;
     dragOverBack = false;
     isDragging = false;
     pendingDrag = null;
-  }
-
-  function performReorder(x: number, y: number) {
-    if (!dragItem) return;
-    const wrapperRef = options.getWrapperRef();
-    const gridEl = wrapperRef?.querySelector(".grid-container") as HTMLElement;
-    if (!gridEl) return;
-
-    const currentFolderId = options.getCurrentFolderId();
-    const activeTab = options.getActiveTab();
-    const folderItems = options.getFolderItems();
-    const accountItems = options.getAccountItems();
-
-    if (dragItem.type === "folder") {
-      const folderCards = Array.from(gridEl.querySelectorAll(":scope > [data-folder-id]")) as HTMLElement[];
-      const dropIdx = findDropIndex(x, y, folderCards);
-      const newFolders = [...folderItems];
-      const oldIdx = newFolders.findIndex(i => i.id === dragItem!.id);
-      if (oldIdx === -1) return;
-      newFolders.splice(oldIdx, 1);
-      let insertAt = dropIdx > oldIdx ? dropIdx - 1 : dropIdx;
-      insertAt = Math.max(0, Math.min(insertAt, newFolders.length));
-      newFolders.splice(insertAt, 0, dragItem);
-      reorderItems(currentFolderId, activeTab, [...newFolders, ...accountItems]);
-    } else {
-      const accountCards = Array.from(gridEl.querySelectorAll(":scope > [data-account-id]")) as HTMLElement[];
-      const dropIdx = findDropIndex(x, y, accountCards);
-      const newAccounts = [...accountItems];
-      const oldIdx = newAccounts.findIndex(i => i.id === dragItem!.id);
-      if (oldIdx === -1) return;
-      newAccounts.splice(oldIdx, 1);
-      let insertAt = dropIdx > oldIdx ? dropIdx - 1 : dropIdx;
-      insertAt = Math.max(0, Math.min(insertAt, newAccounts.length));
-      newAccounts.splice(insertAt, 0, dragItem);
-      reorderItems(currentFolderId, activeTab, [...folderItems, ...newAccounts]);
-    }
-  }
-
-  function findDropIndex(x: number, y: number, cards: HTMLElement[]): number {
-    if (cards.length === 0) return 0;
-    let bestIdx = 0;
-    let bestDist = Infinity;
-    for (let i = 0; i < cards.length; i++) {
-      const r = cards[i].getBoundingClientRect();
-      const dist = (x - (r.left + r.width / 2)) ** 2 + (y - (r.top + r.height / 2)) ** 2;
-      if (dist < bestDist) { bestDist = dist; bestIdx = i; }
-    }
-    const r = cards[bestIdx].getBoundingClientRect();
-    return x > r.left + r.width / 2 ? bestIdx + 1 : bestIdx;
+    previewIndex = null;
+    slotRects = [];
+    dragOldIndex = -1;
   }
 
   function handleCaptureClick(e: MouseEvent) {
@@ -172,6 +212,7 @@ export function createDragManager(options: DragManagerOptions) {
     get dragOverFolderId() { return dragOverFolderId; },
     get dragOverBack() { return dragOverBack; },
     get isDragging() { return isDragging; },
+    get previewIndex() { return previewIndex; },
     handleGridMouseDown,
     handleDocMouseMove,
     handleDocMouseUp,

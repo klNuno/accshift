@@ -12,7 +12,7 @@
   data-back-card="true"
 >
   <div class="icon-wrap">
-    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M19 12H5" />
       <path d="M12 19l-7-7 7-7" />
     </svg>
@@ -22,8 +22,8 @@
 
 <style>
   .card {
-    width: 120px;
-    padding: 12px;
+    width: 100px;
+    padding: 8px;
     border-radius: 8px;
     text-align: center;
     background: var(--bg-card);
@@ -52,9 +52,9 @@
   }
 
   .icon-wrap {
-    width: 80px;
-    height: 80px;
-    margin-bottom: 10px;
+    width: 68px;
+    height: 68px;
+    margin-bottom: 8px;
     border-radius: 6px;
     display: flex;
     align-items: center;
