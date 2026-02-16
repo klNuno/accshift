@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { flip } from "svelte/animate";
+  import { fly } from "svelte/transition";
   import AccountCard from "$lib/shared/components/AccountCard.svelte";
   import TitleBar from "$lib/shared/components/TitleBar.svelte";
   import ContextMenu from "$lib/shared/components/ContextMenu.svelte";
   import InputDialog from "$lib/shared/components/InputDialog.svelte";
   import Settings from "$lib/features/settings/Settings.svelte";
   import Toast from "$lib/features/notifications/Toast.svelte";
-  import NotificationPanel from "$lib/features/notifications/NotificationPanel.svelte";
+  import { getToasts, addToast, removeToast } from "$lib/features/notifications/store.svelte";
   import Breadcrumb from "$lib/features/folders/Breadcrumb.svelte";
   import FolderCard from "$lib/features/folders/FolderCard.svelte";
   import BackCard from "$lib/features/folders/BackCard.svelte";
@@ -70,9 +71,11 @@
 
   // Panels & dialogs
   let showSettings = $state(false);
-  let showNotifications = $state(false);
   let inputDialog = $state<InputDialogConfig | null>(null);
-  let toastMessage = $state<string | null>(null);
+
+  // Toasts
+  let toasts = $derived(getToasts());
+
 
   // View mode
   let viewMode = $state<ViewMode>(getViewMode());
@@ -111,20 +114,21 @@
     return arr;
   });
 
-  function showToast(msg: string) { toastMessage = msg; }
+  function showToast(msg: string) { addToast(msg); }
 
   async function copyToClipboard(text: string, label: string) {
     await navigator.clipboard.writeText(text);
     showToast(`${label} copied`);
   }
 
-  function loadAccounts() {
+  function loadAccounts(silent = false, showRefreshedToast = false) {
     loader.load(() => {
       syncAccounts(loader.accounts.map(a => a.id), activeTab);
       refreshCurrentItems();
       setTimeout(grid.calculatePadding, 0);
-    });
+    }, silent, showRefreshedToast);
   }
+
 
   // Navigation
   function navigateTo(folderId: string | null) {
@@ -143,7 +147,7 @@
     activeTab = tab;
     currentFolderId = null;
     showSettings = false;
-    if (getPlatform(tab)) { loadAccounts(); } else { refreshCurrentItems(); setTimeout(grid.calculatePadding, 0); }
+    if (getPlatform(tab)) { loadAccounts(true); } else { refreshCurrentItems(); setTimeout(grid.calculatePadding, 0); }
   }
 
   // Dialogs
@@ -216,14 +220,11 @@
 
 <div class="app-shell" style="border-color: {accentColor}20;">
 <TitleBar
-  onRefresh={loadAccounts}
+  onRefresh={() => loadAccounts(false, true)}
   onAddAccount={loader.addNew}
   onOpenSettings={() => showSettings = !showSettings}
-  onOpenNotifications={() => { showNotifications = true; loader.notifCount = 0; }}
-  notifCount={loader.notifCount}
   {activeTab}
   onTabChange={handleTabChange}
-  {accentColor}
   {enabledPlatforms}
 />
 
@@ -382,15 +383,29 @@
   />
 {/if}
 
-{#if showNotifications}
-  <NotificationPanel onClose={() => showNotifications = false} />
-{/if}
-
-{#if toastMessage}
-  <Toast message={toastMessage} onDone={() => toastMessage = null} />
-{/if}
+  <div class="toast-container">
+    {#each toasts as toast (toast.id)}
+      <div
+        animate:flip={{ duration: 200 }}
+        in:fly={{ y: 20, duration: 300 }}
+        out:fly={{ y: 20, duration: 300 }}
+      >
+        <Toast message={toast.message} onDone={() => removeToast(toast.id)} />
+      </div>
+    {/each}
+  </div>
 
 <style>
+  .toast-container {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    z-index: 200;
+  }
+
   .app-shell {
     height: 100vh;
     display: flex;

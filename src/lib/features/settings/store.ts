@@ -9,6 +9,7 @@ export const ALL_PLATFORMS: PlatformDef[] = [
 
 const DEFAULTS: AppSettings = {
   avatarCacheDays: 7,
+  banCheckDays: 7,
   enabledPlatforms: ["steam"],
   inactivityBlurSeconds: 60,
 };

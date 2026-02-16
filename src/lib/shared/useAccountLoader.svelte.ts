@@ -1,9 +1,12 @@
 import type { PlatformAdapter, PlatformAccount } from "./platform";
 import type { BanInfo } from "../features/steam/types";
-import { addNotification, getUnreadCount } from "../features/notifications/store";
+import { addToast } from "../features/notifications/store.svelte";
 import { getPlayerBans } from "../features/steam/steamApi";
 
+import { getSettings } from "../features/settings/store";
+
 const BATCH_SIZE = 5;
+const BAN_CHECK_KEY = "accshift_last_ban_check";
 
 export function createAccountLoader(getAdapter: () => PlatformAdapter | undefined, getActiveTab: () => string) {
   let accounts = $state<PlatformAccount[]>([]);
@@ -16,7 +19,6 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
   let error = $state<string | null>(null);
   let avatarStates = $state<Record<string, { url: string | null; loading: boolean; refreshing: boolean }>>({});
   let banStates = $state<Record<string, BanInfo>>({});
-  let notifCount = $state(getUnreadCount());
 
   async function refreshProfile(adapter: PlatformAdapter, account: PlatformAccount) {
     if (!adapter.getProfileInfo) return;
@@ -31,8 +33,8 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
         const idx = accounts.findIndex(a => a.id === account.id);
         if (idx !== -1) {
           accounts[idx] = { ...accounts[idx], displayName: profile.display_name };
-          addNotification(`Display name changed: ${account.displayName} \u2192 ${profile.display_name}`);
-          notifCount = getUnreadCount();
+          // Optional: Toast for name change? User didn't ask for it specifically, but it's useful.
+          // addToast(`Name changed: ${account.displayName} -> ${profile.display_name}`);
         }
       }
     } else {
@@ -44,7 +46,11 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
     }
   }
 
-  async function loadProfilesForAccounts(accts: PlatformAccount[]) {
+  async function loadProfilesForAccounts(
+    accts: PlatformAccount[],
+    silent = false,
+    showRefreshedToast = false
+  ) {
     const adapter = getAdapter();
     if (!adapter) return;
 
@@ -63,10 +69,7 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
       }
     }
 
-    if (needsRefresh.length > 0) {
-      addNotification(`Refreshing profiles for ${needsRefresh.length} account${needsRefresh.length > 1 ? "s" : ""}...`);
-      notifCount = getUnreadCount();
-    }
+    // Don't toast "Refreshing...", just do it.
 
     // Parallel loading in batches
     let refreshedCount = 0;
@@ -78,16 +81,23 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
       }));
     }
 
-    if (refreshedCount > 0) {
-      addNotification(`Profiles refreshed for ${refreshedCount} account${refreshedCount > 1 ? "s" : ""}.`);
-      notifCount = getUnreadCount();
+    if (showRefreshedToast && !silent && refreshedCount > 0) {
+      addToast(`${refreshedCount} account${refreshedCount > 1 ? 's' : ''} refreshed`);
     }
   }
 
-  async function fetchBanStates(accts: PlatformAccount[]) {
+  async function fetchBanStates(accts: PlatformAccount[], silent = false) {
     if (getActiveTab() !== "steam" || accts.length === 0) return;
-    addNotification(`Checking ban status for ${accts.length} account${accts.length > 1 ? "s" : ""}...`);
-    notifCount = getUnreadCount();
+
+    const lastCheck = localStorage.getItem(BAN_CHECK_KEY);
+    const now = Date.now();
+    const delayMs = getSettings().banCheckDays * 24 * 60 * 60 * 1000;
+    
+    if (lastCheck && now - parseInt(lastCheck) < delayMs) {
+      // Skip check
+      return;
+    }
+
     try {
       const steamIds = accts.map(a => a.id);
       const bans = await getPlayerBans(steamIds);
@@ -98,20 +108,26 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
           bannedCount++;
         }
       }
+      
+      // Update timestamp only on success
+      localStorage.setItem(BAN_CHECK_KEY, now.toString());
+
       if (bannedCount > 0) {
-        addNotification(`Ban check complete: ${bannedCount} account${bannedCount > 1 ? "s" : ""} with bans detected.`);
-      } else {
-        addNotification("Ban check complete: no bans detected.");
+        addToast(`Ban check: ${bannedCount} accounts with bans`);
+      } else if (!silent) {
+        addToast("Ban check complete");
       }
-      notifCount = getUnreadCount();
     } catch (e) {
-      addNotification(`Ban check failed: ${String(e)}`);
-      notifCount = getUnreadCount();
+      addToast(`Ban check failed: ${String(e)}`);
       console.error("Failed to fetch ban states:", e);
     }
   }
 
-  async function load(onAfterLoad?: () => void) {
+  async function load(
+    onAfterLoad?: () => void,
+    silent = false,
+    showRefreshedToast = false
+  ) {
     const adapter = getAdapter();
     if (!adapter) return;
     loading = true;
@@ -120,8 +136,8 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
       accounts = await adapter.loadAccounts();
       currentAccount = await adapter.getCurrentAccount();
       onAfterLoad?.();
-      loadProfilesForAccounts(accounts);
-      fetchBanStates(accounts);
+      loadProfilesForAccounts(accounts, silent, showRefreshedToast);
+      fetchBanStates(accounts, silent);
     } catch (e) {
       error = String(e);
     }
@@ -147,6 +163,7 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
       }
     } catch (e) {
       error = String(e);
+      addToast(error); // Toast errors on switch
     }
     switching = false;
   }
@@ -154,7 +171,10 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
   async function addNew() {
     const adapter = getAdapter();
     if (!adapter) return;
-    try { await adapter.addAccount(); } catch (e) { error = String(e); }
+    try { await adapter.addAccount(); } catch (e) { 
+      error = String(e);
+      addToast(error);
+    }
   }
 
   return {
@@ -167,8 +187,7 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
     get error() { return error; },
     get avatarStates() { return avatarStates; },
     get banStates() { return banStates; },
-    get notifCount() { return notifCount; },
-    set notifCount(v: number) { notifCount = v; },
+    // notifCount removed
     load,
     switchTo,
     addNew,
