@@ -36,8 +36,12 @@
       console.error("Failed to save API key:", e);
     }
     onPlatformsChanged?.();
-    onClose();
   }
+
+  $effect(() => {
+    // Auto-save whenever settings or apiKey changes
+    save();
+  });
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") onClose();
@@ -49,10 +53,12 @@
 <div class="settings-panel">
   <div class="header">
     <span class="title">Settings</span>
-    <div class="header-actions">
-      <button class="btn-secondary" onclick={onClose}>Cancel</button>
-      <button class="btn-primary" onclick={save}>Save</button>
-    </div>
+    <button class="close-btn" onclick={onClose} title="Close">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18" />
+        <line x1="6" y1="6" x2="18" y2="18" />
+      </svg>
+    </button>
   </div>
 
   <div class="body">
@@ -91,6 +97,24 @@
         <span class="suffix">days</span>
       </div>
       <p class="hint">Cached profile pictures will refresh after this period. 0 = refresh on every launch.</p>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="field">
+      <label class="label" for="ban-check-days">Ban check delay</label>
+      <div class="input-row">
+        <input
+          id="ban-check-days"
+          type="number"
+          min="0"
+          max="90"
+          bind:value={settings.banCheckDays}
+          class="input"
+        />
+        <span class="suffix">days</span>
+      </div>
+      <p class="hint">Check game bans every X days. 0 = check on every launch.</p>
     </div>
 
     <div class="divider"></div>
@@ -158,9 +182,23 @@
     color: var(--fg);
   }
 
-  .header-actions {
+  .close-btn {
     display: flex;
-    gap: 6px;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--fg-muted);
+    cursor: pointer;
+    transition: all 100ms;
+  }
+
+  .close-btn:hover {
+    background: var(--bg-muted);
+    color: var(--fg);
   }
 
   .body {
@@ -281,41 +319,5 @@
     font-size: 11px;
     color: var(--fg-subtle);
     margin: 0;
-  }
-
-  .btn-secondary {
-    padding: 5px 10px;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: transparent;
-    color: var(--fg-muted);
-    font-size: 11px;
-    cursor: pointer;
-    transition: all 100ms;
-  }
-
-  .btn-secondary:hover {
-    background: var(--bg-muted);
-    color: var(--fg);
-  }
-
-  .btn-primary {
-    padding: 5px 10px;
-    border: none;
-    border-radius: 4px;
-    background: var(--fg);
-    color: var(--bg);
-    font-size: 11px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 100ms;
-  }
-
-  .btn-primary:hover {
-    background: #d4d4d8;
-  }
-
-  .btn-primary:active {
-    transform: scale(0.97);
   }
 </style>

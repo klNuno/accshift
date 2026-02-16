@@ -7,7 +7,10 @@
   } = $props();
 
   onMount(() => {
-    const timer = setTimeout(onDone, 2000);
+    const timer = setTimeout(() => {
+      // Trigger removal which will be handled by the parent list's transition
+      onDone();
+    }, 3000);
     return () => clearTimeout(timer);
   });
 </script>
@@ -18,23 +21,15 @@
 
 <style>
   .toast {
-    position: fixed;
-    bottom: 16px;
-    left: 50%;
-    transform: translateX(-50%);
     padding: 8px 16px;
     background: var(--bg-muted);
     color: var(--fg);
     font-size: 12px;
     border-radius: 6px;
     border: 1px solid var(--bg-elevated);
-    z-index: 200;
-    animation: toastIn 150ms ease-out;
+    /* Animation handled by svelte transition in parent */
     pointer-events: none;
-  }
-
-  @keyframes toastIn {
-    from { opacity: 0; transform: translateX(-50%) translateY(8px); }
-    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+    margin-top: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   }
 </style>

@@ -7,21 +7,15 @@
     onRefresh,
     onAddAccount,
     onOpenSettings,
-    onOpenNotifications,
-    notifCount = 0,
     activeTab = "steam",
     onTabChange,
-    accentColor,
     enabledPlatforms,
   }: {
     onRefresh: () => void;
     onAddAccount: () => void;
     onOpenSettings: () => void;
-    onOpenNotifications: () => void;
-    notifCount?: number;
     activeTab: string;
     onTabChange: (tab: string) => void;
-    accentColor: string;
     enabledPlatforms: PlatformDef[];
   } = $props();
 
@@ -93,16 +87,6 @@
   {/if}
 
   <div class="right">
-    <button class="btn notif-btn" onclick={onOpenNotifications} title="Notifications">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
-        <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
-      </svg>
-      {#if notifCount > 0}
-        <span class="notif-dot" style="background: {accentColor};"></span>
-      {/if}
-    </button>
-
     <button class="win-btn" onclick={minimize} title="Minimize">
       <svg width="12" height="12" viewBox="0 0 12 12">
         <rect x="1" y="5.5" width="10" height="1" fill="currentColor" />
@@ -205,19 +189,6 @@
 
   .btn:active {
     transform: scale(0.92);
-  }
-
-  .notif-btn {
-    position: relative;
-  }
-
-  .notif-dot {
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
   }
 
   .right {

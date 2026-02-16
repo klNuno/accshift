@@ -6,6 +6,7 @@ export interface PlatformDef {
 
 export interface AppSettings {
   avatarCacheDays: number;
+  banCheckDays: number;
   enabledPlatforms: string[];
   inactivityBlurSeconds: number;
 }
