@@ -80,10 +80,9 @@
   const grid = createGridLayout();
   const loader = createAccountLoader(() => adapter, () => activeTab);
 
-  // Folder navigation
+  // Navigation
+  type AppHistoryEntry = { tab: string; folderId: string | null; showSettings: boolean };
   let currentFolderId = $state<string | null>(null);
-  let folderHistory = $state<(string | null)[]>([null]);
-  let folderHistoryIndex = $state(0);
   let folderPath = $derived(getFolderPath(currentFolderId));
   let currentItems = $state<ItemRef[]>([]);
   let folderItems = $derived(currentItems.filter(i => i.type === "folder"));
@@ -222,53 +221,38 @@
 
 
   // Navigation
+  function applyAppState(entry: AppHistoryEntry) {
+    const tabChanged = activeTab !== entry.tab;
+    const settingsClosing = showSettings && !entry.showSettings;
+    activeTab = entry.tab;
+    currentFolderId = entry.folderId;
+    showSettings = entry.showSettings;
+    if (settingsClosing) {
+      settings = getSettings();
+      blur.start();
+      if (!afkListenersAttached) { blur.attachListeners(); afkListenersAttached = true; }
+    }
+    if (tabChanged && getPlatform(entry.tab)) { loadAccounts(true); } else { refreshCurrentItems(); setTimeout(grid.calculatePadding, 0); }
+    searchQuery = "";
+  }
+
+  function handlePopState(e: PopStateEvent) {
+    if (e.state) applyAppState(e.state as AppHistoryEntry);
+  }
+
   function navigateTo(folderId: string | null, options: { trackHistory?: boolean } = {}) {
     const { trackHistory = true } = options;
-    if (trackHistory) {
-      const currentEntry = folderHistory[folderHistoryIndex] ?? null;
-      if (currentEntry !== folderId) {
-        const nextHistory = folderHistory.slice(0, folderHistoryIndex + 1);
-        nextHistory.push(folderId);
-        folderHistory = nextHistory;
-        folderHistoryIndex = nextHistory.length - 1;
-      }
-    }
+    if (trackHistory) history.pushState({ tab: activeTab, folderId, showSettings: false }, "");
     currentFolderId = folderId;
+    showSettings = false;
     refreshCurrentItems();
     setTimeout(grid.calculatePadding, 0);
   }
 
-  function navigateHistory(delta: number) {
-    const targetIndex = folderHistoryIndex + delta;
-    if (targetIndex < 0 || targetIndex >= folderHistory.length) return;
-    folderHistoryIndex = targetIndex;
-    navigateTo(folderHistory[targetIndex] ?? null, { trackHistory: false });
-  }
-
-  function goBack() {
-    if (!currentFolderId) return;
-    const current = getFolder(currentFolderId);
-    navigateTo(current?.parentId ?? null);
-  }
-
-  function handleMouseSideButtons(e: MouseEvent) {
-    if (showSettings) return;
-    if (e.button === 3) {
-      e.preventDefault();
-      e.stopPropagation();
-      navigateHistory(-1);
-    } else if (e.button === 4) {
-      e.preventDefault();
-      e.stopPropagation();
-      navigateHistory(1);
-    }
-  }
-
   function handleTabChange(tab: string) {
+    history.pushState({ tab, folderId: null, showSettings: false }, "");
     activeTab = tab;
     currentFolderId = null;
-    folderHistory = [null];
-    folderHistoryIndex = 0;
     showSettings = false;
     if (getPlatform(tab)) { loadAccounts(true); } else { refreshCurrentItems(); setTimeout(grid.calculatePadding, 0); }
     searchQuery = "";
@@ -370,8 +354,7 @@
     settings = getSettings();
     if (!settings.enabledPlatforms.includes(activeTab)) activeTab = getInitialActiveTab(settings);
     currentFolderId = null;
-    folderHistory = [null];
-    folderHistoryIndex = 0;
+    history.replaceState({ tab: activeTab, folderId: null, showSettings: false }, "");
     if (getPlatform(activeTab)) { loadAccounts(); } else { refreshCurrentItems(); }
   }
 
@@ -407,6 +390,12 @@
     }
   });
 
+  $effect(() => {
+    const theme = settings.theme === "light" ? "light" : "dark";
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+  });
+
   function unlockWithPin() {
     if (!settings.pinCode) {
       isPinLocked = false;
@@ -438,13 +427,13 @@
       pinError = "";
       setTimeout(() => pinInputRef?.focus(), 0);
     }
+    history.replaceState({ tab: activeTab, folderId: null, showSettings: false }, "");
     window.addEventListener("resize", grid.handleResize);
     document.addEventListener("mousemove", drag.handleDocMouseMove);
     document.addEventListener("scroll", drag.handleDocScroll, true);
     document.addEventListener("mouseup", drag.handleDocMouseUp);
     document.addEventListener("click", drag.handleCaptureClick, true);
-    window.addEventListener("mousedown", handleMouseSideButtons, true);
-    window.addEventListener("auxclick", handleMouseSideButtons, true);
+    window.addEventListener("popstate", handlePopState);
   });
 
   onDestroy(() => {
@@ -453,8 +442,7 @@
     document.removeEventListener("scroll", drag.handleDocScroll, true);
     document.removeEventListener("mouseup", drag.handleDocMouseUp);
     document.removeEventListener("click", drag.handleCaptureClick, true);
-    window.removeEventListener("mousedown", handleMouseSideButtons, true);
-    window.removeEventListener("auxclick", handleMouseSideButtons, true);
+    window.removeEventListener("popstate", handlePopState);
     if (afkListenersAttached) blur.detachListeners();
     blur.stop();
     grid.destroy();
@@ -467,7 +455,7 @@
     <TitleBar
       onRefresh={() => loadAccounts(false, true)}
       onAddAccount={loader.addNew}
-      onOpenSettings={() => showSettings = !showSettings}
+      onOpenSettings={() => { if (!showSettings) history.pushState({ tab: activeTab, folderId: currentFolderId, showSettings: true }, ""); showSettings = !showSettings; }}
       {activeTab}
       onTabChange={handleTabChange}
       {enabledPlatforms}
@@ -537,7 +525,7 @@
           dragOverFolderId={drag.dragOverFolderId}
           dragOverBack={drag.dragOverBack}
           onNavigate={(id) => navigateTo(id)}
-          onGoBack={goBack}
+          onGoBack={() => history.back()}
           onSwitch={loader.switchTo}
           onAccountContextMenu={(e, account) => { contextMenu = { x: e.clientX, y: e.clientY, account }; }}
           onFolderContextMenu={(e, folder) => { contextMenu = { x: e.clientX, y: e.clientY, folder }; }}
@@ -557,7 +545,7 @@
           style="padding-left: {grid.paddingLeft}px; {grid.isResizing ? '' : 'transition: padding-left 200ms ease-out;'}"
         >
           {#if currentFolderId && !isSearching}
-            <BackCard onBack={goBack} isDragOver={drag.dragOverBack} />
+            <BackCard onBack={() => history.back()} isDragOver={drag.dragOverBack} />
           {/if}
 
           {#each displayFolderItems as item (item.id)}
@@ -747,7 +735,7 @@
     white-space: nowrap;
     transform: translate(-50%, -50%);
     user-select: none;
-    color: #fff;
+    color: var(--afk-text);
     opacity: 0.35;
     max-width: 92vw;
     text-align: center;
