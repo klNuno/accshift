@@ -22,6 +22,9 @@
   }
 
   function normalizeSettings() {
+    if (settings.theme !== "light" && settings.theme !== "dark") {
+      settings.theme = "dark";
+    }
     settings.avatarCacheDays = clampInt(settings.avatarCacheDays, 0, 90, 7);
     settings.banCheckDays = clampInt(settings.banCheckDays, 0, 90, 7);
     settings.inactivityBlurSeconds = clampInt(settings.inactivityBlurSeconds, 0, 3600, 60);
@@ -85,6 +88,7 @@
     settings.avatarCacheDays;
     settings.banCheckDays;
     settings.inactivityBlurSeconds;
+    settings.theme;
     settings.steamRunAsAdmin;
     settings.steamLaunchOptions;
     settings.showUsernames;
@@ -129,6 +133,18 @@
   </div>
 
   <div class="settings-grid">
+    <section class="card">
+      <h3>Appearance</h3>
+      <ToggleSetting
+        label="Light mode"
+        enabled={settings.theme === "light"}
+        accent="#f59e0b"
+        onLabel="On"
+        offLabel="Off"
+        onToggle={() => settings.theme = settings.theme === "light" ? "dark" : "light"}
+      />
+    </section>
+
     <section class="card">
       <h3>Platforms</h3>
       <div class="platforms">

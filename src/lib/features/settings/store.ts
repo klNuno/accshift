@@ -8,6 +8,7 @@ export const ALL_PLATFORMS: PlatformDef[] = [
 ];
 
 const DEFAULTS: AppSettings = {
+  theme: "dark",
   avatarCacheDays: 7,
   banCheckDays: 7,
   enabledPlatforms: ["steam"],

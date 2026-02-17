@@ -10,20 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [
-      {
-        "title": "Accshift",
-        "width": 900,
-        "height": 450,
-        "resizable": true,
-        "fullscreen": false,
-        "center": true,
-        "minWidth": 400,
-        "minHeight": 300,
-        "decorations": false,
-        "transparent": false
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": "default-src 'self'; img-src 'self' https://avatars.steamstatic.com https://avatars.akamai.steamstatic.com https://steamcdn-a.akamaihd.net; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'"
     }
