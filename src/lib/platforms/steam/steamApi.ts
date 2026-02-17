@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { SteamAccount, ProfileInfo, BanInfo, CopyableGame } from "./types";
-import { getSettings } from "../settings/store";
+import { getSettings } from "../../features/settings/store";
 
 function getSteamLaunchConfig() {
   const settings = getSettings();

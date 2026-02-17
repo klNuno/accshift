@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getSettings, saveSettings, ALL_PLATFORMS } from "./store";
+  import { addToast } from "../notifications/store.svelte";
   import ToggleSetting from "./ToggleSetting.svelte";
 
   let { onClose, onPlatformsChanged }: {
@@ -15,6 +16,8 @@
   let steamPath = $state("");
   let hydrated = $state(false);
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastSavedToastAt = 0;
+  const SAVE_TOAST_COOLDOWN_MS = 1500;
 
   function clampInt(value: number, min: number, max: number, fallback: number): number {
     if (!Number.isFinite(value)) return fallback;
@@ -45,6 +48,11 @@
     try {
       await invoke("set_api_key", { key: apiKey.trim() });
       await invoke("set_steam_path", { path: steamPath.trim() });
+      const now = Date.now();
+      if (now - lastSavedToastAt >= SAVE_TOAST_COOLDOWN_MS) {
+        addToast("Settings saved");
+        lastSavedToastAt = now;
+      }
       onPlatformsChanged?.();
     } catch (e) {
       console.error("Failed to save API key:", e);

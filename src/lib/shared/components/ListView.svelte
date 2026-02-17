@@ -2,7 +2,7 @@
   import { flip } from "svelte/animate";
   import type { PlatformAccount } from "../platform";
   import type { ItemRef, FolderInfo } from "../../features/folders/types";
-  import type { BanInfo } from "../../features/steam/types";
+  import type { BanInfo } from "../../platforms/steam/types";
   import ListRow from "./ListRow.svelte";
   import PreviewPanel from "./PreviewPanel.svelte";
 

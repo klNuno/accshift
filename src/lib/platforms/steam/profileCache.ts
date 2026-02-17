@@ -1,5 +1,5 @@
 import { getProfileInfo } from "./steamApi";
-import { getCacheDuration } from "../settings/store";
+import { getCacheDuration } from "../../features/settings/store";
 import type { ProfileInfo } from "./types";
 
 const CACHE_KEY = "accshift_avatars";
