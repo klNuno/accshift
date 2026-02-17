@@ -91,7 +91,7 @@
           <ListRow
             {account}
             showUsername={showUsernames}
-            {showLastLogin}
+            showLastLogin={false}
             lastLoginAt={account.lastLoginAt}
             isActive={account.username === currentAccount}
             isSelected={selectedAccountId === account.id}

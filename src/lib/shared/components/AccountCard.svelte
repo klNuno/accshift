@@ -37,8 +37,10 @@
 
   let showConfirm = $state(false);
   let cardRef = $state<HTMLDivElement | null>(null);
-  let nameRef = $state<HTMLDivElement | null>(null);
+  let nameContainerRef = $state<HTMLDivElement | null>(null);
+  let nameRef = $state<HTMLSpanElement | null>(null);
   let isOverflowing = $state(false);
+  let marqueeShiftPx = $state(0);
 
   // Ban outline color
   let banOutlineColor = $derived.by(() => {
@@ -55,19 +57,26 @@
       }
     }
     document.addEventListener("mousedown", onDocClick);
+    window.addEventListener("resize", checkOverflow);
     checkOverflow();
-    return () => document.removeEventListener("mousedown", onDocClick);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      window.removeEventListener("resize", checkOverflow);
+    };
   });
 
   function checkOverflow() {
-    if (nameRef) {
-      isOverflowing = nameRef.scrollWidth > nameRef.clientWidth;
+    if (nameRef && nameContainerRef) {
+      const overflowPx = Math.max(0, nameRef.scrollWidth - nameContainerRef.clientWidth);
+      marqueeShiftPx = overflowPx;
+      isOverflowing = overflowPx > 2;
     }
   }
 
   $effect(() => {
     // Re-check overflow when displayName changes
     account.displayName;
+    account.username;
     setTimeout(checkOverflow, 0);
   });
 
@@ -138,7 +147,7 @@
     {/if}
   </div>
 
-  <div class="name" class:marquee={isOverflowing}>
+  <div class="name" bind:this={nameContainerRef} class:marquee={isOverflowing} style={`--marquee-shift:${marqueeShiftPx}px;`}>
     <span bind:this={nameRef} class="name-inner">
       {account.displayName || account.username}
     </span>
@@ -322,14 +331,14 @@
   }
 
   .card:hover .name.marquee .name-inner {
-    animation: marquee 3s linear infinite;
+    animation: marquee 1.6s linear infinite;
   }
 
   @keyframes marquee {
     0% { transform: translateX(0); }
     10% { transform: translateX(0); }
-    90% { transform: translateX(calc(-100% + 84px)); }
-    100% { transform: translateX(calc(-100% + 84px)); }
+    90% { transform: translateX(calc(-1 * var(--marquee-shift, 0px))); }
+    100% { transform: translateX(calc(-1 * var(--marquee-shift, 0px))); }
   }
 
   .username {

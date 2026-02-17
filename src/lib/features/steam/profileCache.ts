@@ -3,6 +3,7 @@ import { getCacheDuration } from "../settings/store";
 import type { ProfileInfo } from "./types";
 
 const CACHE_KEY = "accshift_avatars";
+const SESSION_START_MS = Date.now();
 
 interface CachedProfile {
   url: string;
@@ -42,7 +43,9 @@ export function getCachedProfile(steamId: string): {
   if (!cached) return null;
 
   const duration = getCacheDuration();
-  const expired = duration === 0 || Date.now() - cached.timestamp > duration;
+  const expired = duration === 0
+    ? cached.timestamp < SESSION_START_MS
+    : Date.now() - cached.timestamp > duration;
   return {
     url: cached.url,
     displayName: cached.displayName,
