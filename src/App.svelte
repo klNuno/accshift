@@ -17,6 +17,7 @@
   import type { PlatformAccount } from "$lib/shared/platform";
   import { registerPlatform, getPlatform } from "$lib/shared/platform";
   import { steamAdapter } from "$lib/features/steam/adapter";
+  import { copyGameSettings, getCopyableGames } from "$lib/features/steam/steamApi";
   import type { ContextMenuItem, InputDialogConfig } from "$lib/shared/types";
   import type { ItemRef, FolderInfo } from "$lib/features/folders/types";
   import {
@@ -30,16 +31,48 @@
   import { createInactivityBlur } from "$lib/shared/useInactivityBlur.svelte";
   import { createGridLayout } from "$lib/shared/useGridLayout.svelte";
   import { createAccountLoader } from "$lib/shared/useAccountLoader.svelte";
+  import {
+    ACCOUNT_CARD_COLOR_PRESETS,
+    getAccountCardColor as getStoredAccountCardColor,
+    setAccountCardColor,
+  } from "$lib/shared/accountCardColors";
+  import {
+    getFolderCardColor as getStoredFolderCardColor,
+    setFolderCardColor,
+  } from "$lib/shared/folderCardColors";
 
   // Register platform adapters
   registerPlatform(steamAdapter);
+  const INACTIVITY_FONTS = [
+    { family: "\"Oswald\", \"Arial Narrow\", sans-serif", weight: 700 },
+    { family: "\"Anton\", \"Arial Narrow\", sans-serif", weight: 400 },
+    { family: "\"Bebas Neue\", \"Arial Narrow\", sans-serif", weight: 400 },
+    { family: "\"Cinzel\", Georgia, serif", weight: 700 },
+    { family: "\"Playfair Display\", Georgia, serif", weight: 700 },
+    { family: "\"Cormorant Garamond\", Georgia, serif", weight: 700 },
+    { family: "\"Great Vibes\", cursive", weight: 400 },
+    { family: "\"Allura\", cursive", weight: 400 },
+    { family: "\"Parisienne\", cursive", weight: 400 },
+    { family: "\"Dancing Script\", cursive", weight: 700 },
+    { family: "\"Satisfy\", cursive", weight: 400 },
+    { family: "\"Marck Script\", cursive", weight: 400 },
+    { family: "\"Kalam\", cursive", weight: 700 },
+  ];
+  function getInitialActiveTab(s: ReturnType<typeof getSettings>): string {
+    if (s.enabledPlatforms.includes(s.defaultPlatformId)) return s.defaultPlatformId;
+    return s.enabledPlatforms[0] || "steam";
+  }
+  const startupPinLocked = (() => {
+    const s = getSettings();
+    return Boolean(s.pinEnabled && s.pinCode);
+  })();
 
   // Platform management
   let settings = $state(getSettings());
   let enabledPlatforms = $derived<PlatformDef[]>(
     ALL_PLATFORMS.filter(p => settings.enabledPlatforms.includes(p.id))
   );
-  let activeTab = $state(getSettings().enabledPlatforms[0] || "steam");
+  let activeTab = $state(getInitialActiveTab(getSettings()));
   let accentColor = $derived(
     ALL_PLATFORMS.find(p => p.id === activeTab)?.accent || "#3b82f6"
   );
@@ -56,6 +89,8 @@
   let currentItems = $state<ItemRef[]>([]);
   let folderItems = $derived(currentItems.filter(i => i.type === "folder"));
   let accountItems = $derived(currentItems.filter(i => i.type === "account"));
+  let searchQuery = $state("");
+  let isSearching = $derived(searchQuery.trim().length > 0);
 
   function refreshCurrentItems() {
     currentItems = getItemsInFolder(currentFolderId, activeTab);
@@ -72,6 +107,18 @@
   // Panels & dialogs
   let showSettings = $state(false);
   let inputDialog = $state<InputDialogConfig | null>(null);
+  let isAccountSelectionView = $derived(!showSettings && !!adapter);
+  let inactivityFontIndex = $state(Math.floor(Math.random() * INACTIVITY_FONTS.length));
+  let inactivityTextFont = $derived(INACTIVITY_FONTS[inactivityFontIndex] ?? INACTIVITY_FONTS[0]);
+  let wasInactive = $state(false);
+  let cardColorVersion = $state(0);
+  let isPinLocked = $state(startupPinLocked);
+  let isPinUnlocking = $state(false);
+  let pinAttempt = $state("");
+  let pinError = $state("");
+  let pinInputRef = $state<HTMLInputElement | null>(null);
+  let afkListenersAttached = $state(false);
+  let afkEnabled = $derived(Boolean(settings.pinEnabled && settings.pinCode));
 
   // Toasts
   let toasts = $derived(getToasts());
@@ -97,6 +144,7 @@
 
   // Display arrays reordered for drag preview
   let displayFolderItems = $derived.by(() => {
+    if (isSearching) return [] as ItemRef[];
     if (!drag.isDragging || !drag.dragItem || drag.dragItem.type !== "folder" || drag.previewIndex === null) {
       return folderItems;
     }
@@ -105,16 +153,59 @@
     return arr;
   });
 
+  let filteredAccountItems = $derived.by(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return accountItems;
+    return loader.accounts
+      .filter((account) =>
+        account.username.toLowerCase().includes(q) ||
+        (account.displayName || "").toLowerCase().includes(q)
+      )
+      .map((account) => ({ type: "account" as const, id: account.id }));
+  });
+
   let displayAccountItems = $derived.by(() => {
+    if (isSearching) return filteredAccountItems;
     if (!drag.isDragging || !drag.dragItem || drag.dragItem.type !== "account" || drag.previewIndex === null) {
-      return accountItems;
+      return filteredAccountItems;
     }
-    const arr = accountItems.filter(i => i.id !== drag.dragItem!.id);
+    const arr = filteredAccountItems.filter(i => i.id !== drag.dragItem!.id);
     arr.splice(Math.min(drag.previewIndex, arr.length), 0, drag.dragItem);
     return arr;
   });
 
   function showToast(msg: string) { addToast(msg); }
+
+  function getCurrentSteamAccountId(): string | null {
+    if (activeTab !== "steam") return null;
+    const raw = (loader.currentAccount || "").trim();
+    if (/^\d{17}$/.test(raw)) return raw;
+    const needle = raw.toLowerCase();
+    const current = loader.accounts.find((a) =>
+      a.username.trim().toLowerCase() === needle ||
+      (a.displayName || "").trim().toLowerCase() === needle
+    );
+    return current?.id ?? null;
+  }
+
+  function pickRandomFontIndex(): number {
+    if (INACTIVITY_FONTS.length <= 1) return 0;
+    let next = inactivityFontIndex;
+    while (next === inactivityFontIndex) {
+      next = Math.floor(Math.random() * INACTIVITY_FONTS.length);
+    }
+    return next;
+  }
+
+  function getAccountCardColor(accountId: string): string {
+    cardColorVersion;
+    return getStoredAccountCardColor(accountId);
+  }
+
+  function getFolderCardColor(folderId: string): string {
+    cardColorVersion;
+    return getStoredFolderCardColor(folderId);
+  }
 
   async function copyToClipboard(text: string, label: string) {
     await navigator.clipboard.writeText(text);
@@ -148,6 +239,7 @@
     currentFolderId = null;
     showSettings = false;
     if (getPlatform(tab)) { loadAccounts(true); } else { refreshCurrentItems(); setTimeout(grid.calculatePadding, 0); }
+    searchQuery = "";
   }
 
   // Dialogs
@@ -169,12 +261,70 @@
   function getContextMenuItems(): ContextMenuItem[] {
     if (!contextMenu) return [];
     if (contextMenu.account && adapter) {
-      return adapter.getContextMenuItems(contextMenu.account, { copyToClipboard, showToast });
+      const account = contextMenu.account;
+      const currentColor = getAccountCardColor(account.id);
+      const items: ContextMenuItem[] = [
+        ...adapter.getContextMenuItems(account, { copyToClipboard, showToast }),
+      ];
+
+      if (activeTab === "steam") {
+        const targetSteamId = getCurrentSteamAccountId();
+        if (targetSteamId && targetSteamId !== account.id) {
+          items.push({ separator: true });
+          items.push({
+            label: "Copy settings from",
+            submenuLoader: async () => {
+              const games = await getCopyableGames(account.id, targetSteamId);
+              return games.map((game) => ({
+                label: game.name,
+                action: async () => {
+                  try {
+                    await copyGameSettings(account.id, targetSteamId, game.app_id);
+                    showToast(`Copied ${game.name} settings to current account`);
+                  } catch (e) {
+                    showToast(String(e));
+                  }
+                },
+              }));
+            },
+          });
+        }
+      }
+
+      items.push({ separator: true });
+      items.push({
+        label: "Card color",
+        swatches: ACCOUNT_CARD_COLOR_PRESETS.map((preset) => ({
+          id: preset.id,
+          label: preset.label,
+          color: preset.color,
+          active: currentColor === preset.color,
+          action: () => {
+            setAccountCardColor(account.id, preset.color);
+            cardColorVersion += 1;
+          },
+        })),
+      });
+      return items;
     }
     if (contextMenu.folder) {
       const folder = contextMenu.folder;
+      const currentColor = getFolderCardColor(folder.id);
       return [
         { label: "Rename", action: () => showRenameFolderDialog(folder) },
+        {
+          label: "Folder color",
+          swatches: ACCOUNT_CARD_COLOR_PRESETS.map((preset) => ({
+            id: preset.id,
+            label: preset.label,
+            color: preset.color,
+            active: currentColor === preset.color,
+            action: () => {
+              setFolderCardColor(folder.id, preset.color);
+              cardColorVersion += 1;
+            },
+          })),
+        },
         { label: "Delete folder", action: () => { deleteFolder(folder.id); refreshCurrentItems(); } },
       ];
     }
@@ -186,7 +336,7 @@
 
   function handlePlatformsChanged() {
     settings = getSettings();
-    if (!settings.enabledPlatforms.includes(activeTab)) activeTab = settings.enabledPlatforms[0] || "steam";
+    if (!settings.enabledPlatforms.includes(activeTab)) activeTab = getInitialActiveTab(settings);
     currentFolderId = null;
     if (getPlatform(activeTab)) { loadAccounts(); } else { refreshCurrentItems(); }
   }
@@ -194,13 +344,71 @@
   function handleSettingsClose() {
     showSettings = false;
     settings = getSettings();
-    blur.start();
+    if (afkEnabled) {
+      blur.start();
+      if (!afkListenersAttached) {
+        blur.attachListeners();
+        afkListenersAttached = true;
+      }
+    } else {
+      if (afkListenersAttached) {
+        blur.detachListeners();
+        afkListenersAttached = false;
+      }
+      blur.stop();
+      blur.resetActivity();
+    }
+  }
+
+  $effect(() => {
+    const inactive = afkEnabled && blur.isBlurred && isAccountSelectionView;
+    if (inactive && !wasInactive) {
+      inactivityFontIndex = pickRandomFontIndex();
+    }
+    wasInactive = inactive;
+  });
+
+  $effect(() => {
+    if (!settings.pinEnabled || !settings.pinCode) {
+      isPinLocked = false;
+      pinAttempt = "";
+      pinError = "";
+    }
+  });
+
+  function unlockWithPin() {
+    if (!settings.pinCode) {
+      isPinLocked = false;
+      return;
+    }
+    if (pinAttempt.trim() === settings.pinCode.trim()) {
+      isPinUnlocking = true;
+      pinAttempt = "";
+      pinError = "";
+      setTimeout(() => {
+        isPinLocked = false;
+        isPinUnlocking = false;
+        blur.resetActivity();
+      }, 240);
+      return;
+    }
+    pinError = "Invalid PIN";
+    pinAttempt = "";
+    setTimeout(() => pinInputRef?.focus(), 0);
   }
 
   onMount(() => {
     loadAccounts();
-    blur.start();
-    blur.attachListeners();
+    if (afkEnabled) {
+      blur.start();
+      blur.attachListeners();
+      afkListenersAttached = true;
+    }
+    if (isPinLocked) {
+      pinAttempt = "";
+      pinError = "";
+      setTimeout(() => pinInputRef?.focus(), 0);
+    }
     window.addEventListener("resize", grid.handleResize);
     document.addEventListener("mousemove", drag.handleDocMouseMove);
     document.addEventListener("mouseup", drag.handleDocMouseUp);
@@ -212,21 +420,23 @@
     document.removeEventListener("mousemove", drag.handleDocMouseMove);
     document.removeEventListener("mouseup", drag.handleDocMouseUp);
     document.removeEventListener("click", drag.handleCaptureClick, true);
-    blur.detachListeners();
+    if (afkListenersAttached) blur.detachListeners();
     blur.stop();
     grid.destroy();
   });
 </script>
 
-<div class="app-shell" style="border-color: {accentColor}20;">
-<TitleBar
-  onRefresh={() => loadAccounts(false, true)}
-  onAddAccount={loader.addNew}
-  onOpenSettings={() => showSettings = !showSettings}
-  {activeTab}
-  onTabChange={handleTabChange}
-  {enabledPlatforms}
-/>
+<div class="app-frame" class:inactive-blur={(afkEnabled && blur.isBlurred && isAccountSelectionView) || isPinLocked || isPinUnlocking}>
+  <div class="app-stage" class:locked={isPinLocked}>
+    <div class="app-shell">
+    <TitleBar
+      onRefresh={() => loadAccounts(false, true)}
+      onAddAccount={loader.addNew}
+      onOpenSettings={() => showSettings = !showSettings}
+      {activeTab}
+      onTabChange={handleTabChange}
+      {enabledPlatforms}
+    />
 
 {#if showSettings}
   <main class="content">
@@ -236,7 +446,7 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <main
     class="content"
-    class:blurred={blur.isBlurred}
+    class:blurred={(afkEnabled && blur.isBlurred && isAccountSelectionView) || isPinLocked || isPinUnlocking}
     oncontextmenu={(e) => { e.preventDefault(); contextMenu = { x: e.clientX, y: e.clientY, isBackground: true }; }}
   >
     <div class="toolbar-row">
@@ -245,6 +455,12 @@
         path={folderPath}
         onNavigate={navigateTo}
         {accentColor}
+      />
+      <input
+        class="search-input"
+        type="search"
+        placeholder="Search account..."
+        bind:value={searchQuery}
       />
       <ViewToggle mode={viewMode} onChange={handleViewModeChange} />
     </div>
@@ -265,11 +481,18 @@
       </div>
     {:else if viewMode === "list"}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div bind:this={grid.wrapperRef} class="list-wrapper" class:is-dragging={drag.isDragging} onmousedown={drag.handleGridMouseDown}>
+      <div
+        bind:this={grid.wrapperRef}
+        class="list-wrapper"
+        class:is-dragging={drag.isDragging}
+        onmousedown={(e) => !isSearching && drag.handleGridMouseDown(e)}
+      >
         <ListView
           folderItems={displayFolderItems}
           accountItems={displayAccountItems}
           accounts={loader.accountMap}
+          showUsernames={settings.showUsernames}
+          showLastLogin={settings.showLastLogin}
           {currentFolderId}
           currentAccount={loader.currentAccount}
           avatarStates={loader.avatarStates}
@@ -288,12 +511,17 @@
       </div>
     {:else}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div bind:this={grid.wrapperRef} class="w-full" class:is-dragging={drag.isDragging} onmousedown={drag.handleGridMouseDown}>
+      <div
+        bind:this={grid.wrapperRef}
+        class="w-full"
+        class:is-dragging={drag.isDragging}
+        onmousedown={(e) => !isSearching && drag.handleGridMouseDown(e)}
+      >
         <div
           class="grid-container"
           style="padding-left: {grid.paddingLeft}px; {grid.isResizing ? '' : 'transition: padding-left 200ms ease-out;'}"
         >
-          {#if currentFolderId}
+          {#if currentFolderId && !isSearching}
             <BackCard onBack={goBack} isDragOver={drag.dragOverBack} />
           {/if}
 
@@ -303,6 +531,7 @@
               {#if folder}
                 <FolderCard
                   {folder}
+                  cardColor={getFolderCardColor(folder.id)}
                   onOpen={() => navigateTo(folder.id)}
                   onContextMenu={(e) => { contextMenu = { x: e.clientX, y: e.clientY, folder }; }}
                   isDragOver={drag.dragOverFolderId === folder.id}
@@ -319,6 +548,10 @@
               {#if account}
                 <AccountCard
                   {account}
+                  cardColor={getAccountCardColor(account.id)}
+                  showUsername={settings.showUsernames}
+                  showLastLogin={settings.showLastLogin}
+                  lastLoginAt={account.lastLoginAt}
                   isActive={account.username === loader.currentAccount}
                   onSwitch={() => loader.switchTo(account)}
                   onContextMenu={(e) => { contextMenu = { x: e.clientX, y: e.clientY, account }; }}
@@ -362,40 +595,129 @@
     </div>
   </main>
 {/if}
-</div>
+    </div>
 
-{#if contextMenu}
-  <ContextMenu
-    items={getContextMenuItems()}
-    x={contextMenu.x}
-    y={contextMenu.y}
-    onClose={() => contextMenu = null}
-  />
-{/if}
+    {#if contextMenu}
+      <ContextMenu
+        items={getContextMenuItems()}
+        x={contextMenu.x}
+        y={contextMenu.y}
+        onClose={() => contextMenu = null}
+      />
+    {/if}
 
-{#if inputDialog}
-  <InputDialog
-    title={inputDialog.title}
-    placeholder={inputDialog.placeholder}
-    initialValue={inputDialog.initialValue}
-    onConfirm={inputDialog.onConfirm}
-    onCancel={() => inputDialog = null}
-  />
-{/if}
+    {#if inputDialog}
+      <InputDialog
+        title={inputDialog.title}
+        placeholder={inputDialog.placeholder}
+        initialValue={inputDialog.initialValue}
+        onConfirm={inputDialog.onConfirm}
+        onCancel={() => inputDialog = null}
+      />
+    {/if}
 
-  <div class="toast-container">
-    {#each toasts as toast (toast.id)}
-      <div
-        animate:flip={{ duration: 200 }}
-        in:fly={{ y: 20, duration: 300 }}
-        out:fly={{ y: 20, duration: 300 }}
-      >
-        <Toast message={toast.message} onDone={() => removeToast(toast.id)} />
-      </div>
-    {/each}
+    <div class="toast-container">
+      {#each toasts as toast (toast.id)}
+        <div
+          animate:flip={{ duration: 200 }}
+          in:fly={{ y: 20, duration: 300 }}
+          out:fly={{ y: 20, duration: 300 }}
+        >
+          <Toast message={toast.message} onDone={() => removeToast(toast.id)} />
+        </div>
+      {/each}
+    </div>
   </div>
 
+  <div
+    class="inactive-overlay"
+    class:visible={afkEnabled && blur.isBlurred && isAccountSelectionView && !isPinLocked && !isPinUnlocking}
+    aria-hidden={!(afkEnabled && blur.isBlurred && isAccountSelectionView && !isPinLocked && !isPinUnlocking)}
+  >
+    <span class="accshift-text" style={`font-family: ${inactivityTextFont.family}; font-weight: ${inactivityTextFont.weight};`}>ACCSHIFT</span>
+  </div>
+
+  {#if isPinLocked || isPinUnlocking}
+    <div class="pin-lock-overlay" class:unlocking={isPinUnlocking}>
+      <div class="pin-card">
+        <h3>App Locked</h3>
+        <p>Enter PIN to unlock</p>
+        <input
+          bind:this={pinInputRef}
+          bind:value={pinAttempt}
+          class="pin-input"
+          type="password"
+          placeholder="PIN code"
+          onkeydown={(e) => e.key === "Enter" && unlockWithPin()}
+        />
+        {#if pinError}
+          <span class="pin-error">{pinError}</span>
+        {/if}
+        <button class="pin-btn" onclick={unlockWithPin}>Unlock</button>
+      </div>
+    </div>
+  {/if}
+</div>
+
 <style>
+  .app-frame {
+    position: relative;
+    height: 100vh;
+    padding: 0;
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+
+  .app-stage {
+    height: 100%;
+    transition: filter 220ms ease-in-out;
+  }
+
+  .app-stage.locked {
+    pointer-events: none;
+  }
+
+  .app-frame.inactive-blur .app-stage {
+    filter: grayscale(1);
+    transition: filter 2600ms ease-in-out;
+  }
+
+  .inactive-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 320ms ease-in-out;
+    transition-delay: 120ms;
+    z-index: 300;
+  }
+
+  .inactive-overlay.visible {
+    opacity: 1;
+    transition: opacity 3000ms ease-in-out;
+    transition-delay: 1800ms;
+  }
+
+  .accshift-text {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    font-style: normal;
+    font-size: clamp(28px, min(14vw, 24vh), 170px);
+    line-height: 1;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    transform: translate(-50%, -50%);
+    user-select: none;
+    color: #fff;
+    opacity: 0.5;
+    max-width: 92vw;
+    text-align: center;
+  }
+
   .toast-container {
     position: fixed;
     bottom: 16px;
@@ -407,10 +729,12 @@
   }
 
   .app-shell {
-    height: 100vh;
+    height: 100%;
     display: flex;
     flex-direction: column;
     border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
     box-sizing: border-box;
     transition: border-color 300ms ease-out;
   }
@@ -423,12 +747,12 @@
     color: var(--fg);
     display: flex;
     flex-direction: column;
-    transition: filter 0.3s ease-out;
+    transition: filter 0.3s ease-in-out;
   }
 
   .content.blurred {
     filter: blur(20px);
-    transition: filter 2s ease-in;
+    transition: filter 2600ms ease-in-out;
   }
 
   .toolbar-row {
@@ -443,6 +767,21 @@
     padding-bottom: 0;
     flex: 1;
     min-width: 0;
+  }
+
+  .search-input {
+    width: min(240px, 38vw);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--fg);
+    font-size: 12px;
+    padding: 7px 10px;
+    outline: none;
+  }
+
+  .search-input:focus {
+    border-color: color-mix(in srgb, var(--fg) 35%, var(--border));
   }
 
   .list-wrapper {
@@ -507,6 +846,83 @@
     border-top-color: #3b82f6;
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
+  }
+
+  .pin-lock-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.35);
+    opacity: 1;
+    transition: opacity 240ms ease-in-out;
+    pointer-events: auto;
+  }
+
+  .pin-lock-overlay.unlocking {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .pin-card {
+    width: min(320px, 86vw);
+    padding: 18px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.45);
+    transition: transform 240ms ease-in-out, opacity 240ms ease-in-out;
+  }
+
+  .pin-lock-overlay.unlocking .pin-card {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+
+  .pin-card h3 {
+    margin: 0;
+    font-size: 15px;
+  }
+
+  .pin-card p {
+    margin: 0;
+    font-size: 12px;
+    color: var(--fg-muted);
+  }
+
+  .pin-input {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--fg);
+    font-size: 13px;
+    padding: 9px 10px;
+    outline: none;
+  }
+
+  .pin-input:focus {
+    border-color: #eab308;
+  }
+
+  .pin-error {
+    font-size: 11px;
+    color: #f87171;
+  }
+
+  .pin-btn {
+    border: none;
+    border-radius: 8px;
+    background: #eab308;
+    color: #09090b;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 9px 10px;
+    cursor: pointer;
   }
 
   @keyframes spin {

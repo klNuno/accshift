@@ -1,7 +1,7 @@
 import type { PlatformAdapter, PlatformAccount } from "./platform";
 import type { BanInfo } from "../features/steam/types";
 import { addToast } from "../features/notifications/store.svelte";
-import { getPlayerBans } from "../features/steam/steamApi";
+import { getApiKey, getPlayerBans } from "../features/steam/steamApi";
 
 import { getSettings } from "../features/settings/store";
 
@@ -92,6 +92,11 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
     const lastCheck = localStorage.getItem(BAN_CHECK_KEY);
     const now = Date.now();
     const delayMs = getSettings().banCheckDays * 24 * 60 * 60 * 1000;
+
+    const apiKey = (await getApiKey().catch(() => "")).trim();
+    if (!apiKey) {
+      return;
+    }
     
     if (lastCheck && now - parseInt(lastCheck) < delayMs) {
       // Skip check
@@ -101,6 +106,7 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
     try {
       const steamIds = accts.map(a => a.id);
       const bans = await getPlayerBans(steamIds);
+      if (bans.length === 0) return;
       let bannedCount = 0;
       for (const ban of bans) {
         banStates[ban.steam_id] = ban;
@@ -114,8 +120,6 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
 
       if (bannedCount > 0) {
         addToast(`Ban check: ${bannedCount} accounts with bans`);
-      } else if (!silent) {
-        addToast("Ban check complete");
       }
     } catch (e) {
       addToast(`Ban check failed: ${String(e)}`);

@@ -6,6 +6,8 @@ use tauri::Manager;
 pub struct AppConfig {
     #[serde(default)]
     pub steam_api_key: String,
+    #[serde(default)]
+    pub steam_path_override: String,
 }
 
 pub fn load_config(app_handle: &tauri::AppHandle) -> AppConfig {

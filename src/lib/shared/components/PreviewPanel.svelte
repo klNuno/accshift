@@ -1,11 +1,15 @@
 <script lang="ts">
   import type { PlatformAccount } from "../platform";
   import type { BanInfo } from "$lib/features/steam/types";
+  import { formatRelativeTimeCompact } from "$lib/shared/time";
 
   let {
     account,
     isActive = false,
     avatarUrl = null,
+    showUsername = true,
+    showLastLogin = false,
+    lastLoginAt = null,
     accentColor = "#3b82f6",
     onSwitch,
     banInfo = undefined,
@@ -13,6 +17,9 @@
     account: PlatformAccount;
     isActive?: boolean;
     avatarUrl?: string | null;
+    showUsername?: boolean;
+    showLastLogin?: boolean;
+    lastLoginAt?: number | null;
     accentColor?: string;
     onSwitch: () => void;
     banInfo?: BanInfo;
@@ -33,7 +40,12 @@
   </div>
 
   <div class="display-name">{account.displayName || account.username}</div>
-  <div class="username">{account.username}</div>
+  {#if showUsername}
+    <div class="username">{account.username}</div>
+  {/if}
+  {#if showLastLogin}
+    <div class="meta">{formatRelativeTimeCompact(lastLoginAt)}</div>
+  {/if}
 
   {#if banInfo}
     <div class="ban-badges">
@@ -111,6 +123,13 @@
   .username {
     font-size: 12px;
     color: var(--fg-muted);
+    margin-top: 2px;
+    text-align: center;
+  }
+
+  .meta {
+    font-size: 11px;
+    color: var(--fg-subtle);
     margin-top: 2px;
     text-align: center;
   }
