@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PlatformAccount } from "../platform";
-  import type { BanInfo } from "$lib/features/steam/types";
+  import type { BanInfo } from "$lib/platforms/steam/types";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
 
   let {

@@ -16,8 +16,8 @@
   import type { PlatformDef } from "$lib/features/settings/types";
   import type { PlatformAccount } from "$lib/shared/platform";
   import { registerPlatform, getPlatform } from "$lib/shared/platform";
-  import { steamAdapter } from "$lib/features/steam/adapter";
-  import { copyGameSettings, getCopyableGames } from "$lib/features/steam/steamApi";
+  import { steamAdapter } from "$lib/platforms/steam/adapter";
+  import { copyGameSettings, getCopyableGames } from "$lib/platforms/steam/steamApi";
   import type { ContextMenuItem, InputDialogConfig } from "$lib/shared/types";
   import type { ItemRef, FolderInfo } from "$lib/features/folders/types";
   import {
@@ -27,6 +27,7 @@
   import { createDragManager } from "$lib/shared/dragAndDrop.svelte";
   import ViewToggle from "$lib/shared/components/ViewToggle.svelte";
   import ListView from "$lib/shared/components/ListView.svelte";
+  import WaveText from "$lib/shared/components/WaveText.svelte";
   import { getViewMode, setViewMode, type ViewMode } from "$lib/shared/viewMode";
   import { createInactivityBlur } from "$lib/shared/useInactivityBlur.svelte";
   import { createGridLayout } from "$lib/shared/useGridLayout.svelte";
@@ -43,21 +44,6 @@
 
   // Register platform adapters
   registerPlatform(steamAdapter);
-  const INACTIVITY_FONTS = [
-    { family: "\"Oswald\", \"Arial Narrow\", sans-serif", weight: 700 },
-    { family: "\"Anton\", \"Arial Narrow\", sans-serif", weight: 400 },
-    { family: "\"Bebas Neue\", \"Arial Narrow\", sans-serif", weight: 400 },
-    { family: "\"Cinzel\", Georgia, serif", weight: 700 },
-    { family: "\"Playfair Display\", Georgia, serif", weight: 700 },
-    { family: "\"Cormorant Garamond\", Georgia, serif", weight: 700 },
-    { family: "\"Great Vibes\", cursive", weight: 400 },
-    { family: "\"Allura\", cursive", weight: 400 },
-    { family: "\"Parisienne\", cursive", weight: 400 },
-    { family: "\"Dancing Script\", cursive", weight: 700 },
-    { family: "\"Satisfy\", cursive", weight: 400 },
-    { family: "\"Marck Script\", cursive", weight: 400 },
-    { family: "\"Kalam\", cursive", weight: 700 },
-  ];
   function getInitialActiveTab(s: ReturnType<typeof getSettings>): string {
     if (s.enabledPlatforms.includes(s.defaultPlatformId)) return s.defaultPlatformId;
     return s.enabledPlatforms[0] || "steam";
@@ -106,8 +92,6 @@
   let showSettings = $state(false);
   let inputDialog = $state<InputDialogConfig | null>(null);
   let isAccountSelectionView = $derived(!showSettings && !!adapter);
-  let inactivityFontIndex = $state(Math.floor(Math.random() * INACTIVITY_FONTS.length));
-  let inactivityTextFont = $derived(INACTIVITY_FONTS[inactivityFontIndex] ?? INACTIVITY_FONTS[0]);
   let wasInactive = $state(false);
   let cardColorVersion = $state(0);
   let isPinLocked = $state(startupPinLocked);
@@ -118,6 +102,12 @@
   let afkListenersAttached = $state(false);
   let pinLockEnabled = $derived(Boolean(settings.pinEnabled && settings.pinCode));
   let inactivityEnabled = $derived(settings.inactivityBlurSeconds > 0);
+  let afkOverlayVisible = $derived(
+    inactivityEnabled && blur.isBlurred && isAccountSelectionView && !isPinLocked && !isPinUnlocking
+  );
+  const AFK_TEXT_FADE_MS = 900;
+  let afkWaveActive = $state(false);
+  let afkWaveStopTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Toasts
   let toasts = $derived(getToasts());
@@ -187,15 +177,6 @@
     return current?.id ?? null;
   }
 
-  function pickRandomFontIndex(): number {
-    if (INACTIVITY_FONTS.length <= 1) return 0;
-    let next = inactivityFontIndex;
-    while (next === inactivityFontIndex) {
-      next = Math.floor(Math.random() * INACTIVITY_FONTS.length);
-    }
-    return next;
-  }
-
   function getAccountCardColor(accountId: string): string {
     cardColorVersion;
     return getStoredAccountCardColor(accountId);
@@ -211,12 +192,12 @@
     showToast(`${label} copied`);
   }
 
-  function loadAccounts(silent = false, showRefreshedToast = false) {
+  function loadAccounts(silent = false, showRefreshedToast = false, forceRefresh = false) {
     loader.load(() => {
       syncAccounts(loader.accounts.map(a => a.id), activeTab);
       refreshCurrentItems();
       setTimeout(grid.calculatePadding, 0);
-    }, silent, showRefreshedToast);
+    }, silent, showRefreshedToast, forceRefresh);
   }
 
 
@@ -371,7 +352,6 @@
   $effect(() => {
     const inactive = inactivityEnabled && blur.isBlurred && isAccountSelectionView;
     if (inactive && !wasInactive) {
-      inactivityFontIndex = pickRandomFontIndex();
       if (pinLockEnabled) {
         isPinLocked = true;
         pinAttempt = "";
@@ -380,6 +360,23 @@
       }
     }
     wasInactive = inactive;
+  });
+
+  $effect(() => {
+    const visible = afkOverlayVisible;
+    if (afkWaveStopTimer) {
+      clearTimeout(afkWaveStopTimer);
+      afkWaveStopTimer = null;
+    }
+    if (visible) {
+      afkWaveActive = true;
+      return;
+    }
+    if (!afkWaveActive) return;
+    afkWaveStopTimer = setTimeout(() => {
+      afkWaveActive = false;
+      afkWaveStopTimer = null;
+    }, AFK_TEXT_FADE_MS);
   });
 
   $effect(() => {
@@ -437,6 +434,10 @@
   });
 
   onDestroy(() => {
+    if (afkWaveStopTimer) {
+      clearTimeout(afkWaveStopTimer);
+      afkWaveStopTimer = null;
+    }
     window.removeEventListener("resize", grid.handleResize);
     document.removeEventListener("mousemove", drag.handleDocMouseMove);
     document.removeEventListener("scroll", drag.handleDocScroll, true);
@@ -453,7 +454,7 @@
   <div class="app-stage" class:locked={isPinLocked}>
     <div class="app-shell">
     <TitleBar
-      onRefresh={() => loadAccounts(false, true)}
+      onRefresh={() => loadAccounts(false, true, true)}
       onAddAccount={loader.addNew}
       onOpenSettings={() => { if (!showSettings) history.pushState({ tab: activeTab, folderId: currentFolderId, showSettings: true }, ""); showSettings = !showSettings; }}
       {activeTab}
@@ -652,12 +653,14 @@
     </div>
   </div>
 
-    <div
+  <div
     class="inactive-overlay"
-    class:visible={inactivityEnabled && blur.isBlurred && isAccountSelectionView && !isPinLocked && !isPinUnlocking}
-    aria-hidden={!(inactivityEnabled && blur.isBlurred && isAccountSelectionView && !isPinLocked && !isPinUnlocking)}
+    class:visible={afkOverlayVisible}
+    aria-hidden={!afkOverlayVisible}
   >
-    <span class="accshift-text" style={`font-family: ${inactivityTextFont.family}; font-weight: ${inactivityTextFont.weight};`}>ACCSHIFT</span>
+    <span class="accshift-text">
+      <WaveText text="ACCSHIFT" active={afkWaveActive} respectReducedMotion={false} />
+    </span>
   </div>
 
   {#if isPinLocked || isPinUnlocking}
@@ -713,15 +716,15 @@
     justify-content: center;
     pointer-events: none;
     opacity: 0;
-    transition: opacity 320ms ease-in-out;
-    transition-delay: 120ms;
+    transition: opacity 900ms ease-in-out;
+    transition-delay: 0ms;
     z-index: 300;
   }
 
   .inactive-overlay.visible {
     opacity: 1;
-    transition: opacity 3000ms ease-in-out;
-    transition-delay: 1800ms;
+    transition: opacity 900ms ease-in-out;
+    transition-delay: 0ms;
   }
 
   .accshift-text {
@@ -729,16 +732,23 @@
     left: 50%;
     top: 50%;
     font-style: normal;
-    font-size: clamp(28px, min(14vw, 24vh), 170px);
+    font-size: clamp(28px, min(13vw, 20vh), 170px);
     line-height: 1;
     letter-spacing: -0.01em;
     white-space: nowrap;
     transform: translate(-50%, -50%);
     user-select: none;
     color: var(--afk-text);
-    opacity: 0.35;
+    opacity: 0;
     max-width: 92vw;
     text-align: center;
+    transition: opacity 900ms ease-in-out;
+    transition-delay: 0ms;
+  }
+
+  .inactive-overlay.visible .accshift-text {
+    opacity: 0.92;
+    transition-delay: 2500ms;
   }
 
   .toast-container {
@@ -763,6 +773,7 @@
     flex: 1;
     padding: 10px 16px 16px;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     background: var(--bg);
     color: var(--fg);
     display: flex;
@@ -791,12 +802,14 @@
 
   .search-input {
     width: min(240px, 38vw);
+    height: 30px;
+    box-sizing: border-box;
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--bg-card);
     color: var(--fg);
     font-size: 12px;
-    padding: 7px 10px;
+    padding: 0 10px;
     outline: none;
   }
 

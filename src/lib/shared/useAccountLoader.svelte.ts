@@ -1,7 +1,7 @@
 import type { PlatformAdapter, PlatformAccount } from "./platform";
-import type { BanInfo } from "../features/steam/types";
+import type { BanInfo } from "../platforms/steam/types";
 import { addToast } from "../features/notifications/store.svelte";
-import { getApiKey, getPlayerBans } from "../features/steam/steamApi";
+import { getApiKey, getPlayerBans } from "../platforms/steam/steamApi";
 
 import { getSettings } from "../features/settings/store";
 
@@ -50,18 +50,21 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
   async function loadProfilesForAccounts(
     accts: PlatformAccount[],
     silent = false,
-    showRefreshedToast = false
+    showRefreshedToast = false,
+    forceRefresh = false
   ) {
     const adapter = getAdapter();
     if (!adapter) return;
+    const forceAvatarRefresh = forceRefresh && getSettings().avatarCacheDays === 0;
 
     // Separate into cached (just need display) and needs-refresh
     const needsRefresh: PlatformAccount[] = [];
     for (const account of accts) {
       const cached = adapter.getCachedProfile?.(account.id);
       if (cached) {
-        avatarStates[account.id] = { url: cached.url, loading: false, refreshing: cached.expired };
-        if (cached.expired) {
+        const shouldRefresh = cached.expired || forceAvatarRefresh;
+        avatarStates[account.id] = { url: cached.url, loading: false, refreshing: shouldRefresh };
+        if (shouldRefresh) {
           needsRefresh.push(account);
         }
       } else if (adapter.getProfileInfo) {
@@ -87,12 +90,13 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
     }
   }
 
-  async function fetchBanStates(accts: PlatformAccount[], silent = false) {
+  async function fetchBanStates(accts: PlatformAccount[], silent = false, forceRefresh = false) {
     if (getActiveTab() !== "steam" || accts.length === 0) return;
 
     const lastCheck = localStorage.getItem(BAN_CHECK_KEY);
     const now = Date.now();
     const delayDays = getSettings().banCheckDays;
+    const forceBanRefresh = forceRefresh && delayDays === 0;
 
     const apiKey = (await getApiKey().catch(() => "")).trim();
     if (!apiKey) {
@@ -100,7 +104,7 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
     }
 
     if (delayDays === 0) {
-      if (banCheckedThisSession) return;
+      if (banCheckedThisSession && !forceBanRefresh) return;
     } else {
       const delayMs = delayDays * 24 * 60 * 60 * 1000;
       if (lastCheck && now - parseInt(lastCheck, 10) < delayMs) {
@@ -138,7 +142,8 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
   async function load(
     onAfterLoad?: () => void,
     silent = false,
-    showRefreshedToast = false
+    showRefreshedToast = false,
+    forceRefresh = false
   ) {
     const adapter = getAdapter();
     if (!adapter) return;
@@ -148,8 +153,8 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
       accounts = await adapter.loadAccounts();
       currentAccount = await adapter.getCurrentAccount();
       onAfterLoad?.();
-      loadProfilesForAccounts(accounts, silent, showRefreshedToast);
-      fetchBanStates(accounts, silent);
+      loadProfilesForAccounts(accounts, silent, showRefreshedToast, forceRefresh);
+      fetchBanStates(accounts, silent, forceRefresh);
     } catch (e) {
       error = String(e);
     }

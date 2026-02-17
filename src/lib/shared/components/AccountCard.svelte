@@ -3,7 +3,7 @@
   import type { PlatformAccount } from "../platform";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
 
-  import type { BanInfo } from "$lib/features/steam/types";
+  import type { BanInfo } from "$lib/platforms/steam/types";
 
   let {
     account,
