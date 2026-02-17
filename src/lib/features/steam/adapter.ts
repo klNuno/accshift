@@ -10,6 +10,7 @@ function toAccount(s: SteamAccount): PlatformAccount {
     id: s.steam_id,
     displayName: s.persona_name,
     username: s.account_name,
+    lastLoginAt: s.last_login_at ?? null,
   };
 }
 

@@ -10,6 +10,8 @@
     folderItems = [],
     accountItems = [],
     accounts,
+    showUsernames = true,
+    showLastLogin = false,
     currentFolderId = null,
     currentAccount = "",
     avatarStates = {},
@@ -28,6 +30,8 @@
     folderItems: ItemRef[];
     accountItems: ItemRef[];
     accounts: Record<string, PlatformAccount>;
+    showUsernames?: boolean;
+    showLastLogin?: boolean;
     currentFolderId: string | null;
     currentAccount: string;
     avatarStates: Record<string, { url: string | null; loading: boolean; refreshing: boolean }>;
@@ -86,6 +90,9 @@
         {#if account}
           <ListRow
             {account}
+            showUsername={showUsernames}
+            {showLastLogin}
+            lastLoginAt={account.lastLoginAt}
             isActive={account.username === currentAccount}
             isSelected={selectedAccountId === account.id}
             avatarUrl={avatarStates[account.id]?.url}
@@ -103,6 +110,9 @@
     {#if selectedAccount}
       <PreviewPanel
         account={selectedAccount}
+        showUsername={showUsernames}
+        {showLastLogin}
+        lastLoginAt={selectedAccount.lastLoginAt}
         isActive={selectedAccount.username === currentAccount}
         avatarUrl={avatarStates[selectedAccount.id]?.url}
         banInfo={banStates[selectedAccount.id]}

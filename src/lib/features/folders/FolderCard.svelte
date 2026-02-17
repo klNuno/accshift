@@ -1,12 +1,13 @@
 <script lang="ts">
   import type { FolderInfo } from "./types";
 
-  let { folder, onOpen, onContextMenu, isDragOver = false, isDragged = false }: {
+  let { folder, onOpen, onContextMenu, isDragOver = false, isDragged = false, cardColor = "" }: {
     folder: FolderInfo;
     onOpen: () => void;
     onContextMenu: (e: MouseEvent) => void;
     isDragOver?: boolean;
     isDragged?: boolean;
+    cardColor?: string;
   } = $props();
 
   function handleContextMenu(e: MouseEvent) {
@@ -21,9 +22,11 @@
   class="card"
   class:drag-over={isDragOver}
   class:dragging={isDragged}
+  class:custom-color={!!cardColor}
   onclick={onOpen}
   oncontextmenu={handleContextMenu}
   data-folder-id={folder.id}
+  style={cardColor ? `--folder-custom-color: ${cardColor};` : ""}
 >
   <div class="icon-wrap">
     <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -54,6 +57,15 @@
   .card:hover {
     background: var(--bg-card-hover);
     transform: scale(1.02);
+  }
+
+  .card.custom-color {
+    background: color-mix(in srgb, var(--folder-custom-color) 24%, var(--bg-card));
+    outline: 1px solid color-mix(in srgb, var(--folder-custom-color) 55%, transparent);
+  }
+
+  .card.custom-color:hover {
+    background: color-mix(in srgb, var(--folder-custom-color) 32%, var(--bg-card-hover));
   }
 
   .card:active {

@@ -2,6 +2,7 @@ export interface SteamAccount {
   steam_id: string;
   account_name: string;
   persona_name: string;
+  last_login_at?: number | null;
 }
 
 export interface ProfileInfo {
@@ -19,4 +20,9 @@ export interface BanInfo {
   days_since_last_ban: number;
   number_of_game_bans: number;
   economy_ban: string;
+}
+
+export interface CopyableGame {
+  app_id: string;
+  name: string;
 }

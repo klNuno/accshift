@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { PlatformAccount } from "../platform";
+  import { formatRelativeTimeCompact } from "$lib/shared/time";
 
   import type { BanInfo } from "$lib/features/steam/types";
 
@@ -14,6 +15,10 @@
     isLoadingAvatar = false,
     isRefreshingAvatar = false,
     banInfo = undefined,
+    cardColor = "",
+    showUsername = true,
+    showLastLogin = false,
+    lastLoginAt = null,
   }: {
     account: PlatformAccount;
     isActive: boolean;
@@ -24,6 +29,10 @@
     isLoadingAvatar?: boolean;
     isRefreshingAvatar?: boolean;
     banInfo?: BanInfo;
+    cardColor?: string;
+    showUsername?: boolean;
+    showLastLogin?: boolean;
+    lastLoginAt?: number | null;
   } = $props();
 
   let showConfirm = $state(false);
@@ -94,7 +103,9 @@
   onclick={handleClick}
   oncontextmenu={handleContextMenu}
   data-account-id={account.id}
+  style={cardColor ? `--card-custom-color: ${cardColor};` : ""}
   class="card"
+  class:custom-color={!!cardColor}
   class:active={isActive}
   class:dragging={isDragged}
   class:ban-red={banOutlineColor.includes("239")}
@@ -133,9 +144,12 @@
     </span>
   </div>
 
-  <div class="username">
-    {account.username}
-  </div>
+  {#if showUsername}
+    <div class="username">{account.username}</div>
+  {/if}
+  {#if showLastLogin}
+    <div class="last-login">{formatRelativeTimeCompact(lastLoginAt)}</div>
+  {/if}
 
   {#if banInfo}
     <div class="ban-badges">
@@ -156,6 +170,7 @@
   .card {
     width: 100px;
     padding: 8px;
+    box-sizing: border-box;
     border-radius: 8px;
     text-align: center;
     background: var(--bg-card);
@@ -169,6 +184,15 @@
   .card:not(.active):hover {
     background: var(--bg-card-hover);
     transform: scale(1.02);
+  }
+
+  .card.custom-color {
+    background: color-mix(in srgb, var(--card-custom-color) 24%, var(--bg-card));
+    outline: 1px solid color-mix(in srgb, var(--card-custom-color) 55%, transparent);
+  }
+
+  .card.custom-color:not(.active):hover {
+    background: color-mix(in srgb, var(--card-custom-color) 32%, var(--bg-card-hover));
   }
 
   .card:not(.active):active {
@@ -311,6 +335,16 @@
   .username {
     font-size: 10px;
     color: var(--fg-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+  }
+
+  .last-login {
+    margin-top: 1px;
+    font-size: 9px;
+    color: var(--fg-subtle);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

@@ -4,6 +4,7 @@ export interface PlatformAccount {
   id: string;
   displayName: string;
   username: string;
+  lastLoginAt?: number | null;
 }
 
 export interface PlatformAdapter {

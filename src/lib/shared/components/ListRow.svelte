@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { PlatformAccount } from "../platform";
   import type { FolderInfo } from "../../features/folders/types";
+  import { formatRelativeTimeCompact } from "$lib/shared/time";
 
   let {
     account = null,
@@ -11,6 +12,9 @@
     isDragged = false,
     isDragOver = false,
     avatarUrl = null,
+    showUsername = true,
+    showLastLogin = false,
+    lastLoginAt = null,
     onClick,
     onContextMenu = (_e: MouseEvent) => {},
     onDblClick = () => {},
@@ -23,6 +27,9 @@
     isDragged?: boolean;
     isDragOver?: boolean;
     avatarUrl?: string | null;
+    showUsername?: boolean;
+    showLastLogin?: boolean;
+    lastLoginAt?: number | null;
     onClick: () => void;
     onContextMenu?: (e: MouseEvent) => void;
     onDblClick?: () => void;
@@ -82,7 +89,12 @@
     </div>
     <div class="info">
       <span class="name-text">{account.displayName || account.username}</span>
-      <span class="username-text">{account.username}</span>
+      {#if showUsername}
+        <span class="username-text">{account.username}</span>
+      {/if}
+      {#if showLastLogin}
+        <span class="meta-text">{formatRelativeTimeCompact(lastLoginAt)}</span>
+      {/if}
     </div>
     {#if isActive}
       <div class="active-badge">Active</div>
@@ -183,6 +195,14 @@
   .username-text {
     font-size: 10px;
     color: var(--fg-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .meta-text {
+    font-size: 10px;
+    color: var(--fg-subtle);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
