@@ -5,6 +5,7 @@ export interface PlatformDef {
 }
 
 export interface AppSettings {
+  theme: "dark" | "light";
   avatarCacheDays: number;
   banCheckDays: number;
   enabledPlatforms: string[];

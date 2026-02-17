@@ -16,6 +16,27 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(client)
+        .setup(|app| {
+            let _win = tauri::WebviewWindowBuilder::new(
+                app,
+                "main",
+                tauri::WebviewUrl::App("index.html".into()),
+            )
+            .title("Accshift")
+            .inner_size(900.0, 450.0)
+            .min_inner_size(400.0, 300.0)
+            .center()
+            .decorations(false)
+            .resizable(true)
+            .on_navigation(|url| {
+                // Only allow our app URLs — blocks WebView2 back/forward navigation
+                let scheme = url.scheme();
+                scheme == "tauri" || scheme == "http" || scheme == "https"
+            })
+            .build()?;
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::get_steam_accounts,
             commands::get_current_account,
