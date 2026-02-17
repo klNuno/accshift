@@ -62,10 +62,7 @@
     if (s.enabledPlatforms.includes(s.defaultPlatformId)) return s.defaultPlatformId;
     return s.enabledPlatforms[0] || "steam";
   }
-  const startupPinLocked = (() => {
-    const s = getSettings();
-    return Boolean(s.pinEnabled && s.pinCode);
-  })();
+  const startupPinLocked = false;
 
   // Platform management
   let settings = $state(getSettings());
@@ -85,6 +82,8 @@
 
   // Folder navigation
   let currentFolderId = $state<string | null>(null);
+  let folderHistory = $state<(string | null)[]>([null]);
+  let folderHistoryIndex = $state(0);
   let folderPath = $derived(getFolderPath(currentFolderId));
   let currentItems = $state<ItemRef[]>([]);
   let folderItems = $derived(currentItems.filter(i => i.type === "folder"));
@@ -118,7 +117,8 @@
   let pinError = $state("");
   let pinInputRef = $state<HTMLInputElement | null>(null);
   let afkListenersAttached = $state(false);
-  let afkEnabled = $derived(Boolean(settings.pinEnabled && settings.pinCode));
+  let pinLockEnabled = $derived(Boolean(settings.pinEnabled && settings.pinCode));
+  let inactivityEnabled = $derived(settings.inactivityBlurSeconds > 0);
 
   // Toasts
   let toasts = $derived(getToasts());
@@ -222,10 +222,27 @@
 
 
   // Navigation
-  function navigateTo(folderId: string | null) {
+  function navigateTo(folderId: string | null, options: { trackHistory?: boolean } = {}) {
+    const { trackHistory = true } = options;
+    if (trackHistory) {
+      const currentEntry = folderHistory[folderHistoryIndex] ?? null;
+      if (currentEntry !== folderId) {
+        const nextHistory = folderHistory.slice(0, folderHistoryIndex + 1);
+        nextHistory.push(folderId);
+        folderHistory = nextHistory;
+        folderHistoryIndex = nextHistory.length - 1;
+      }
+    }
     currentFolderId = folderId;
     refreshCurrentItems();
     setTimeout(grid.calculatePadding, 0);
+  }
+
+  function navigateHistory(delta: number) {
+    const targetIndex = folderHistoryIndex + delta;
+    if (targetIndex < 0 || targetIndex >= folderHistory.length) return;
+    folderHistoryIndex = targetIndex;
+    navigateTo(folderHistory[targetIndex] ?? null, { trackHistory: false });
   }
 
   function goBack() {
@@ -234,9 +251,24 @@
     navigateTo(current?.parentId ?? null);
   }
 
+  function handleMouseSideButtons(e: MouseEvent) {
+    if (showSettings) return;
+    if (e.button === 3) {
+      e.preventDefault();
+      e.stopPropagation();
+      navigateHistory(-1);
+    } else if (e.button === 4) {
+      e.preventDefault();
+      e.stopPropagation();
+      navigateHistory(1);
+    }
+  }
+
   function handleTabChange(tab: string) {
     activeTab = tab;
     currentFolderId = null;
+    folderHistory = [null];
+    folderHistoryIndex = 0;
     showSettings = false;
     if (getPlatform(tab)) { loadAccounts(true); } else { refreshCurrentItems(); setTimeout(grid.calculatePadding, 0); }
     searchQuery = "";
@@ -338,32 +370,31 @@
     settings = getSettings();
     if (!settings.enabledPlatforms.includes(activeTab)) activeTab = getInitialActiveTab(settings);
     currentFolderId = null;
+    folderHistory = [null];
+    folderHistoryIndex = 0;
     if (getPlatform(activeTab)) { loadAccounts(); } else { refreshCurrentItems(); }
   }
 
   function handleSettingsClose() {
     showSettings = false;
     settings = getSettings();
-    if (afkEnabled) {
-      blur.start();
-      if (!afkListenersAttached) {
-        blur.attachListeners();
-        afkListenersAttached = true;
-      }
-    } else {
-      if (afkListenersAttached) {
-        blur.detachListeners();
-        afkListenersAttached = false;
-      }
-      blur.stop();
-      blur.resetActivity();
+    blur.start();
+    if (!afkListenersAttached) {
+      blur.attachListeners();
+      afkListenersAttached = true;
     }
   }
 
   $effect(() => {
-    const inactive = afkEnabled && blur.isBlurred && isAccountSelectionView;
+    const inactive = inactivityEnabled && blur.isBlurred && isAccountSelectionView;
     if (inactive && !wasInactive) {
       inactivityFontIndex = pickRandomFontIndex();
+      if (pinLockEnabled) {
+        isPinLocked = true;
+        pinAttempt = "";
+        pinError = "";
+        setTimeout(() => pinInputRef?.focus(), 0);
+      }
     }
     wasInactive = inactive;
   });
@@ -399,11 +430,9 @@
 
   onMount(() => {
     loadAccounts();
-    if (afkEnabled) {
-      blur.start();
-      blur.attachListeners();
-      afkListenersAttached = true;
-    }
+    blur.start();
+    blur.attachListeners();
+    afkListenersAttached = true;
     if (isPinLocked) {
       pinAttempt = "";
       pinError = "";
@@ -414,6 +443,8 @@
     document.addEventListener("scroll", drag.handleDocScroll, true);
     document.addEventListener("mouseup", drag.handleDocMouseUp);
     document.addEventListener("click", drag.handleCaptureClick, true);
+    window.addEventListener("mousedown", handleMouseSideButtons, true);
+    window.addEventListener("auxclick", handleMouseSideButtons, true);
   });
 
   onDestroy(() => {
@@ -422,13 +453,15 @@
     document.removeEventListener("scroll", drag.handleDocScroll, true);
     document.removeEventListener("mouseup", drag.handleDocMouseUp);
     document.removeEventListener("click", drag.handleCaptureClick, true);
+    window.removeEventListener("mousedown", handleMouseSideButtons, true);
+    window.removeEventListener("auxclick", handleMouseSideButtons, true);
     if (afkListenersAttached) blur.detachListeners();
     blur.stop();
     grid.destroy();
   });
 </script>
 
-<div class="app-frame" class:inactive-blur={(afkEnabled && blur.isBlurred && isAccountSelectionView) || isPinLocked || isPinUnlocking}>
+<div class="app-frame" class:inactive-blur={(inactivityEnabled && blur.isBlurred && isAccountSelectionView) || isPinLocked || isPinUnlocking}>
   <div class="app-stage" class:locked={isPinLocked}>
     <div class="app-shell">
     <TitleBar
@@ -448,7 +481,7 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <main
     class="content"
-    class:blurred={(afkEnabled && blur.isBlurred && isAccountSelectionView) || isPinLocked || isPinUnlocking}
+    class:blurred={(inactivityEnabled && blur.isBlurred && isAccountSelectionView) || isPinLocked || isPinUnlocking}
     oncontextmenu={(e) => { e.preventDefault(); contextMenu = { x: e.clientX, y: e.clientY, isBackground: true }; }}
   >
     <div class="toolbar-row">
@@ -631,10 +664,10 @@
     </div>
   </div>
 
-  <div
+    <div
     class="inactive-overlay"
-    class:visible={afkEnabled && blur.isBlurred && isAccountSelectionView && !isPinLocked && !isPinUnlocking}
-    aria-hidden={!(afkEnabled && blur.isBlurred && isAccountSelectionView && !isPinLocked && !isPinUnlocking)}
+    class:visible={inactivityEnabled && blur.isBlurred && isAccountSelectionView && !isPinLocked && !isPinUnlocking}
+    aria-hidden={!(inactivityEnabled && blur.isBlurred && isAccountSelectionView && !isPinLocked && !isPinUnlocking)}
   >
     <span class="accshift-text" style={`font-family: ${inactivityTextFont.family}; font-weight: ${inactivityTextFont.weight};`}>ACCSHIFT</span>
   </div>
@@ -715,7 +748,7 @@
     transform: translate(-50%, -50%);
     user-select: none;
     color: #fff;
-    opacity: 0.5;
+    opacity: 0.35;
     max-width: 92vw;
     text-align: center;
   }
@@ -734,11 +767,8 @@
     height: 100%;
     display: flex;
     flex-direction: column;
-    border: 1px solid var(--border);
-    border-radius: 12px;
     overflow: hidden;
     box-sizing: border-box;
-    transition: border-color 300ms ease-out;
   }
 
   .content {

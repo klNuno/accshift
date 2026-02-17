@@ -14,7 +14,6 @@
   let apiKey = $state("");
   let steamPath = $state("");
   let hydrated = $state(false);
-  let saveState = $state<"saved" | "saving" | "error">("saved");
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
   function clampInt(value: number, min: number, max: number, fallback: number): number {
@@ -43,18 +42,15 @@
     try {
       await invoke("set_api_key", { key: apiKey.trim() });
       await invoke("set_steam_path", { path: steamPath.trim() });
-      saveState = "saved";
       onPlatformsChanged?.();
     } catch (e) {
       console.error("Failed to save API key:", e);
-      saveState = "error";
     }
   }
 
   function queueSave() {
     if (!hydrated) return;
     if (saveTimer) clearTimeout(saveTimer);
-    saveState = "saving";
     saveTimer = setTimeout(() => {
       void persistNow();
     }, 220);
@@ -69,7 +65,6 @@
       steamPath = "";
     } finally {
       hydrated = true;
-      saveState = "saved";
     }
   });
 
@@ -122,12 +117,8 @@
   <div class="header">
     <div class="title-wrap">
       <span class="title">Settings</span>
-      <span class="subtitle">Auto-save is enabled</span>
     </div>
     <div class="header-actions">
-      <span class="save-pill" class:error={saveState === "error"}>
-        {#if saveState === "saving"}Saving...{:else if saveState === "error"}Save failed{:else}Saved{/if}
-      </span>
       <button class="close-btn" onclick={onClose} title="Close">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="18" y1="6" x2="6" y2="18" />
@@ -140,7 +131,6 @@
   <div class="settings-grid">
     <section class="card">
       <h3>Platforms</h3>
-      <p>Pick the launchers shown in the tab switcher.</p>
       <div class="platforms">
         {#each ALL_PLATFORMS as platform}
           <button class="platform-chip" onclick={() => togglePlatform(platform.id)} style={`--chip-accent:${platform.accent};`}>
@@ -169,41 +159,59 @@
 
     <section class="card">
       <h3>Data Refresh</h3>
-      <p>Control how often avatars and ban data refresh.</p>
 
       <label class="field">
         <div class="row">
           <span>Avatar refresh</span>
-          <strong>{settings.avatarCacheDays}d</strong>
+          <span class="hint">0 = each launch</span>
         </div>
-        <input type="range" min="0" max="90" step="1" bind:value={settings.avatarCacheDays} />
+        <input
+          type="number"
+          min="0"
+          max="90"
+          step="1"
+          bind:value={settings.avatarCacheDays}
+          class="text-input number-input"
+        />
       </label>
 
       <label class="field">
         <div class="row">
           <span>Ban check delay</span>
-          <strong>{settings.banCheckDays}d</strong>
+          <span class="hint">0 = each launch</span>
         </div>
-        <input type="range" min="0" max="90" step="1" bind:value={settings.banCheckDays} />
+        <input
+          type="number"
+          min="0"
+          max="90"
+          step="1"
+          bind:value={settings.banCheckDays}
+          class="text-input number-input"
+        />
       </label>
     </section>
 
     <section class="card">
       <h3>Privacy</h3>
-      <p>Inactivity effect timing.</p>
       <label class="field">
         <div class="row">
           <span>Inactivity timeout</span>
-          <strong>{settings.inactivityBlurSeconds}s</strong>
+          <span class="hint">0 = disabled</span>
         </div>
-        <input type="range" min="0" max="3600" step="5" bind:value={settings.inactivityBlurSeconds} />
+        <input
+          type="number"
+          min="0"
+          max="3600"
+          step="5"
+          bind:value={settings.inactivityBlurSeconds}
+          class="text-input number-input"
+        />
       </label>
 
     </section>
 
     <section class="card">
       <h3>Security</h3>
-      <p>Lock app when it goes AFK.</p>
       <ToggleSetting
         label="PIN lock on AFK"
         enabled={settings.pinEnabled}
@@ -234,7 +242,6 @@
     {#if steamEnabled}
       <section class="card">
         <h3>Steam</h3>
-        <p>Steam-specific launch and API settings.</p>
 
         <ToggleSetting
           label="Run Steam as admin"
@@ -339,30 +346,10 @@
     color: var(--fg);
   }
 
-  .subtitle {
-    font-size: 11px;
-    color: var(--fg-subtle);
-  }
-
   .header-actions {
     display: flex;
     align-items: center;
     gap: 8px;
-  }
-
-  .save-pill {
-    font-size: 11px;
-    color: #34d399;
-    background: rgba(16, 185, 129, 0.12);
-    border: 1px solid rgba(16, 185, 129, 0.25);
-    border-radius: 999px;
-    padding: 2px 8px;
-  }
-
-  .save-pill.error {
-    color: #f87171;
-    background: rgba(239, 68, 68, 0.12);
-    border-color: rgba(239, 68, 68, 0.25);
   }
 
   .close-btn {
@@ -404,12 +391,6 @@
     font-size: 13px;
     font-weight: 650;
     color: var(--fg);
-  }
-
-  .card p {
-    margin: 0;
-    font-size: 11px;
-    color: var(--fg-subtle);
   }
 
   .platforms {
@@ -483,10 +464,9 @@
     font-weight: 600;
   }
 
-  input[type="range"] {
-    width: 100%;
-    accent-color: #3b82f6;
-    margin: 0;
+  .hint {
+    font-size: 11px;
+    color: var(--fg-subtle);
   }
 
   .text-input {
@@ -507,6 +487,10 @@
   .input-row {
     display: flex;
     gap: 8px;
+  }
+
+  .number-input {
+    width: 100%;
   }
 
   .browse-btn {

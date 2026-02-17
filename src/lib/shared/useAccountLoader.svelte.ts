@@ -19,6 +19,7 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
   let error = $state<string | null>(null);
   let avatarStates = $state<Record<string, { url: string | null; loading: boolean; refreshing: boolean }>>({});
   let banStates = $state<Record<string, BanInfo>>({});
+  let banCheckedThisSession = false;
 
   async function refreshProfile(adapter: PlatformAdapter, account: PlatformAccount) {
     if (!adapter.getProfileInfo) return;
@@ -91,16 +92,20 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
 
     const lastCheck = localStorage.getItem(BAN_CHECK_KEY);
     const now = Date.now();
-    const delayMs = getSettings().banCheckDays * 24 * 60 * 60 * 1000;
+    const delayDays = getSettings().banCheckDays;
 
     const apiKey = (await getApiKey().catch(() => "")).trim();
     if (!apiKey) {
       return;
     }
-    
-    if (lastCheck && now - parseInt(lastCheck) < delayMs) {
-      // Skip check
-      return;
+
+    if (delayDays === 0) {
+      if (banCheckedThisSession) return;
+    } else {
+      const delayMs = delayDays * 24 * 60 * 60 * 1000;
+      if (lastCheck && now - parseInt(lastCheck, 10) < delayMs) {
+        return;
+      }
     }
 
     try {
@@ -117,6 +122,9 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
       
       // Update timestamp only on success
       localStorage.setItem(BAN_CHECK_KEY, now.toString());
+      if (delayDays === 0) {
+        banCheckedThisSession = true;
+      }
 
       if (bannedCount > 0) {
         addToast(`Ban check: ${bannedCount} accounts with bans`);
