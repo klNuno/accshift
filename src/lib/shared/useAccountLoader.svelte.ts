@@ -1,12 +1,72 @@
 import type { PlatformAdapter, PlatformAccount } from "./platform";
 import type { BanInfo } from "../platforms/steam/types";
-import { addToast } from "../features/notifications/store.svelte";
+import { addToast, removeToast } from "../features/notifications/store.svelte";
 import { getApiKey, getPlayerBans } from "../platforms/steam/steamApi";
 
 import { getSettings } from "../features/settings/store";
 
 const BATCH_SIZE = 5;
-const BAN_CHECK_KEY = "accshift_last_ban_check";
+const BAN_CHECK_STATE_KEY = "accshift_ban_check_state_v2";
+const BAN_INFO_CACHE_KEY = "accshift_ban_info_cache_v1";
+const BAN_ERROR_TOAST_COOLDOWN_MS = 30000;
+
+interface BanCheckState {
+  lastSuccessAt: number;
+  checkedSteamIds: string[];
+}
+
+function readBanCheckState(): BanCheckState | null {
+  try {
+    const raw = localStorage.getItem(BAN_CHECK_STATE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<BanCheckState>;
+    const lastSuccessAt = Number(parsed.lastSuccessAt);
+    const checkedSteamIds = Array.isArray(parsed.checkedSteamIds)
+      ? parsed.checkedSteamIds.filter((id): id is string => typeof id === "string")
+      : [];
+    if (!Number.isFinite(lastSuccessAt) || lastSuccessAt < 0) return null;
+    return {
+      lastSuccessAt,
+      checkedSteamIds: Array.from(new Set(checkedSteamIds)),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeBanCheckState(state: BanCheckState) {
+  localStorage.setItem(BAN_CHECK_STATE_KEY, JSON.stringify(state));
+}
+
+function isBanInfo(value: unknown): value is BanInfo {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Partial<BanInfo>;
+  return typeof v.steam_id === "string"
+    && typeof v.community_banned === "boolean"
+    && typeof v.vac_banned === "boolean"
+    && typeof v.number_of_vac_bans === "number"
+    && typeof v.days_since_last_ban === "number"
+    && typeof v.number_of_game_bans === "number"
+    && typeof v.economy_ban === "string";
+}
+
+function readBanInfoCache(): Record<string, BanInfo> {
+  try {
+    const raw = localStorage.getItem(BAN_INFO_CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object") return {};
+
+    const entries = Object.entries(parsed).filter(([, value]) => isBanInfo(value));
+    return Object.fromEntries(entries.map(([key, value]) => [key, value as BanInfo]));
+  } catch {
+    return {};
+  }
+}
+
+function writeBanInfoCache(bans: Record<string, BanInfo>) {
+  localStorage.setItem(BAN_INFO_CACHE_KEY, JSON.stringify(bans));
+}
 
 export function createAccountLoader(getAdapter: () => PlatformAdapter | undefined, getActiveTab: () => string) {
   let accounts = $state<PlatformAccount[]>([]);
@@ -18,8 +78,10 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
   let switching = $state(false);
   let error = $state<string | null>(null);
   let avatarStates = $state<Record<string, { url: string | null; loading: boolean; refreshing: boolean }>>({});
-  let banStates = $state<Record<string, BanInfo>>({});
-  let banCheckedThisSession = false;
+  let banStates = $state<Record<string, BanInfo>>(readBanInfoCache());
+  let sessionBanCheckedIds = new Set<string>();
+  let lastBanErrorToastAt = 0;
+  let activeBanCheckToastId: string | null = null;
 
   async function refreshProfile(adapter: PlatformAdapter, account: PlatformAccount) {
     if (!adapter.getProfileInfo) return;
@@ -49,13 +111,11 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
 
   async function loadProfilesForAccounts(
     accts: PlatformAccount[],
-    silent = false,
-    showRefreshedToast = false,
     forceRefresh = false
   ) {
     const adapter = getAdapter();
     if (!adapter) return;
-    const forceAvatarRefresh = forceRefresh && getSettings().avatarCacheDays === 0;
+    const forceAvatarRefresh = forceRefresh;
 
     // Separate into cached (just need display) and needs-refresh
     const needsRefresh: PlatformAccount[] = [];
@@ -76,66 +136,143 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
     // Don't toast "Refreshing...", just do it.
 
     // Parallel loading in batches
-    let refreshedCount = 0;
     for (let i = 0; i < needsRefresh.length; i += BATCH_SIZE) {
       const batch = needsRefresh.slice(i, i + BATCH_SIZE);
       await Promise.all(batch.map(async (account) => {
         await refreshProfile(adapter, account);
-        refreshedCount++;
       }));
-    }
-
-    if (showRefreshedToast && !silent && refreshedCount > 0) {
-      addToast(`${refreshedCount} account${refreshedCount > 1 ? 's' : ''} refreshed`);
     }
   }
 
   async function fetchBanStates(accts: PlatformAccount[], silent = false, forceRefresh = false) {
     if (getActiveTab() !== "steam" || accts.length === 0) return;
 
-    const lastCheck = localStorage.getItem(BAN_CHECK_KEY);
-    const now = Date.now();
     const delayDays = getSettings().banCheckDays;
-    const forceBanRefresh = forceRefresh && delayDays === 0;
+    const forceBanRefresh = forceRefresh;
+    const steamIds = Array.from(new Set(accts.map(a => a.id)));
+    if (steamIds.length === 0) return;
 
-    const apiKey = (await getApiKey().catch(() => "")).trim();
+    const apiKey = (await getApiKey().catch((e) => {
+      console.error("[ban-check] failed to read API key:", e);
+      return "";
+    })).trim();
     if (!apiKey) {
+      console.info("[ban-check] skipped: missing Steam API key");
       return;
     }
 
-    if (delayDays === 0) {
-      if (banCheckedThisSession && !forceBanRefresh) return;
+    const now = Date.now();
+    const cachedState = readBanCheckState();
+    const delayMs = delayDays * 24 * 60 * 60 * 1000;
+    const withinDelayWindow = delayDays > 0
+      && !!cachedState
+      && now - cachedState.lastSuccessAt < delayMs;
+    const cachedCheckedIds = new Set(cachedState?.checkedSteamIds ?? []);
+
+    let idsToFetch: string[] = [];
+    if (forceBanRefresh) {
+      idsToFetch = steamIds;
+    } else if (delayDays === 0) {
+      idsToFetch = steamIds.filter(id => !sessionBanCheckedIds.has(id));
+    } else if (withinDelayWindow) {
+      idsToFetch = steamIds.filter(id => !cachedCheckedIds.has(id));
     } else {
-      const delayMs = delayDays * 24 * 60 * 60 * 1000;
-      if (lastCheck && now - parseInt(lastCheck, 10) < delayMs) {
-        return;
-      }
+      idsToFetch = steamIds;
+    }
+    if (idsToFetch.length === 0) {
+      console.info("[ban-check] skipped: no accounts to check", {
+        totalAccounts: steamIds.length,
+        delayDays,
+        forceBanRefresh,
+      });
+      return;
     }
 
+    let checkingToastId: string | null = null;
+    if (!silent) {
+      if (activeBanCheckToastId) {
+        removeToast(activeBanCheckToastId);
+      }
+      activeBanCheckToastId = addToast("Checking bans...", { durationMs: null });
+      checkingToastId = activeBanCheckToastId;
+    }
+
+    console.info("[ban-check] started", {
+      totalAccounts: steamIds.length,
+      idsToFetch: idsToFetch.length,
+      delayDays,
+      forceBanRefresh,
+      withinDelayWindow,
+    });
+
     try {
-      const steamIds = accts.map(a => a.id);
-      const bans = await getPlayerBans(steamIds);
-      if (bans.length === 0) return;
+      const bans = await getPlayerBans(idsToFetch);
       let bannedCount = 0;
+      const returnedIds = new Set<string>();
+      let malformedRows = 0;
       for (const ban of bans) {
+        if (typeof ban.steam_id !== "string" || ban.steam_id.length === 0) {
+          malformedRows++;
+          continue;
+        }
         banStates[ban.steam_id] = ban;
+        returnedIds.add(ban.steam_id);
         if (ban.vac_banned || ban.community_banned || ban.number_of_game_bans > 0) {
           bannedCount++;
         }
       }
-      
-      // Update timestamp only on success
-      localStorage.setItem(BAN_CHECK_KEY, now.toString());
-      if (delayDays === 0) {
-        banCheckedThisSession = true;
+      if (malformedRows > 0) {
+        console.error("[ban-check] malformed ban rows without steam_id", {
+          malformedRows,
+          totalRows: bans.length,
+          sampleRow: bans[0] ?? null,
+        });
+      }
+      for (const steamId of idsToFetch) {
+        sessionBanCheckedIds.add(steamId);
+      }
+      if (returnedIds.size !== idsToFetch.length) {
+        const missingIds = idsToFetch.filter(steamId => !returnedIds.has(steamId));
+        console.warn("[ban-check] missing results for some Steam IDs", {
+          expected: idsToFetch.length,
+          received: returnedIds.size,
+          missingIds,
+        });
       }
 
-      if (bannedCount > 0) {
+      if (delayDays > 0) {
+        const mergedCheckedIds = forceBanRefresh || !withinDelayWindow
+          ? steamIds
+          : Array.from(new Set([...(cachedState?.checkedSteamIds ?? []), ...idsToFetch]));
+        writeBanCheckState({
+          lastSuccessAt: now,
+          checkedSteamIds: mergedCheckedIds,
+        });
+      } else {
+        localStorage.removeItem(BAN_CHECK_STATE_KEY);
+      }
+      writeBanInfoCache(Object.fromEntries(Object.entries(banStates)));
+
+      if (!silent && bannedCount > 0) {
         addToast(`Ban check: ${bannedCount} accounts with bans`);
       }
+
+      console.info("[ban-check] completed", {
+        checkedAccounts: idsToFetch.length,
+        returnedRows: bans.length,
+        bannedCount,
+      });
     } catch (e) {
-      addToast(`Ban check failed: ${String(e)}`);
-      console.error("Failed to fetch ban states:", e);
+      if (!silent && now - lastBanErrorToastAt >= BAN_ERROR_TOAST_COOLDOWN_MS) {
+        addToast(`Ban check failed: ${String(e)}`);
+        lastBanErrorToastAt = now;
+      }
+      console.error("[ban-check] failed to fetch ban states:", e);
+    } finally {
+      if (checkingToastId && activeBanCheckToastId === checkingToastId) {
+        removeToast(checkingToastId);
+        activeBanCheckToastId = null;
+      }
     }
   }
 
@@ -143,7 +280,8 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
     onAfterLoad?: () => void,
     silent = false,
     showRefreshedToast = false,
-    forceRefresh = false
+    forceRefresh = false,
+    checkBans = false
   ) {
     const adapter = getAdapter();
     if (!adapter) return;
@@ -152,9 +290,15 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
     try {
       accounts = await adapter.loadAccounts();
       currentAccount = await adapter.getCurrentAccount();
+      if (showRefreshedToast && !silent) {
+        const count = accounts.length;
+        addToast(`${count} ${count === 1 ? "account" : "accounts"} refreshed`);
+      }
       onAfterLoad?.();
-      loadProfilesForAccounts(accounts, silent, showRefreshedToast, forceRefresh);
-      fetchBanStates(accounts, silent, forceRefresh);
+      void loadProfilesForAccounts(accounts, forceRefresh);
+      if (checkBans) {
+        void fetchBanStates(accounts, silent, forceRefresh);
+      }
     } catch (e) {
       error = String(e);
     }
@@ -163,7 +307,7 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
 
   async function switchTo(account: PlatformAccount) {
     const adapter = getAdapter();
-    if (!adapter || switching || account.username === currentAccount) return;
+    if (!adapter || switching) return;
     switching = true;
     error = null;
     try {

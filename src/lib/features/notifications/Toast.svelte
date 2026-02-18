@@ -1,16 +1,20 @@
 <script lang="ts">
   import { onMount } from "svelte";
 
-  let { message, onDone }: {
+  let { message, durationMs = 3000, onDone }: {
     message: string;
+    durationMs?: number | null;
     onDone: () => void;
   } = $props();
 
   onMount(() => {
+    if (durationMs == null || !Number.isFinite(durationMs) || durationMs <= 0) {
+      return;
+    }
     const timer = setTimeout(() => {
       // Trigger removal which will be handled by the parent list's transition
       onDone();
-    }, 3000);
+    }, durationMs);
     return () => clearTimeout(timer);
   });
 </script>

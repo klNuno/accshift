@@ -96,6 +96,7 @@
             isActive={account.username === currentAccount}
             isSelected={selectedAccountId === account.id}
             avatarUrl={avatarStates[account.id]?.url}
+            banInfo={banStates[account.id]}
             onClick={() => selectAccount(account.id)}
             onDblClick={() => onSwitch(account)}
             onContextMenu={(e) => onAccountContextMenu(e, account)}
