@@ -172,7 +172,7 @@ export function createDragManager(options: DragManagerOptions) {
     updateDragAt(lastClientX, lastClientY);
   }
 
-  function handleDocMouseUp(e: MouseEvent) {
+  function handleDocMouseUp() {
     if (!pendingDrag) return;
 
     if (!isDragging) {
