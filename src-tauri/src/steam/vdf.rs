@@ -47,6 +47,9 @@ pub fn parse_vdf(content: &str) -> HashMap<String, HashMap<String, String>> {
 }
 
 pub fn set_persona_state(steam_path: &PathBuf, account_id: u32, state: &str) {
+    if !["0", "1", "2", "3", "4", "5", "6", "7"].contains(&state) {
+        return;
+    }
     let config_path = steam_path
         .join("userdata")
         .join(account_id.to_string())

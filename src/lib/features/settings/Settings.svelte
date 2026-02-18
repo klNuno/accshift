@@ -1,5 +1,9 @@
 <script lang="ts">
+  import { onDestroy, onMount } from "svelte";
+  import { invoke } from "@tauri-apps/api/core";
   import { getSettings, saveSettings, ALL_PLATFORMS } from "./store";
+  import { addToast } from "../notifications/store.svelte";
+  import ToggleSetting from "./ToggleSetting.svelte";
 
   let { onClose, onPlatformsChanged }: {
     onClose: () => void;
@@ -7,6 +11,121 @@
   } = $props();
 
   let settings = $state(getSettings());
+  let steamEnabled = $derived(settings.enabledPlatforms.includes("steam"));
+  let apiKey = $state("");
+  let steamPath = $state("");
+  let avatarCacheDaysInput = $state("");
+  let banCheckDaysInput = $state("");
+  let inactivityBlurSecondsInput = $state("");
+  let hydrated = $state(false);
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastSavedToastAt = 0;
+  let lastPersistedSnapshot = "";
+  const SAVE_TOAST_COOLDOWN_MS = 1500;
+
+  function clampInt(value: number, min: number, max: number, fallback: number): number {
+    if (!Number.isFinite(value)) return fallback;
+    return Math.min(max, Math.max(min, Math.round(value)));
+  }
+
+  function normalizeSettings() {
+    if (settings.theme !== "light" && settings.theme !== "dark") {
+      settings.theme = "dark";
+    }
+    settings.avatarCacheDays = clampInt(settings.avatarCacheDays, 0, 90, 7);
+    settings.banCheckDays = clampInt(settings.banCheckDays, 0, 90, 7);
+    settings.inactivityBlurSeconds = clampInt(settings.inactivityBlurSeconds, 0, 3600, 60);
+    settings.steamLaunchOptions = (settings.steamLaunchOptions || "").trim();
+    settings.pinCode = (settings.pinCode || "").trim();
+    if (!ALL_PLATFORMS.some(p => p.id === settings.defaultPlatformId)) {
+      settings.defaultPlatformId = "steam";
+    }
+    if (!settings.enabledPlatforms.length) settings.enabledPlatforms = ["steam"];
+    if (!settings.enabledPlatforms.includes(settings.defaultPlatformId)) {
+      settings.defaultPlatformId = settings.enabledPlatforms[0];
+    }
+  }
+
+  function buildPersistSnapshot(): string {
+    return JSON.stringify({
+      settings,
+      apiKey: apiKey.trim(),
+      steamPath: steamPath.trim(),
+    });
+  }
+
+  function refreshNumericInputsFromSettings() {
+    avatarCacheDaysInput = String(settings.avatarCacheDays);
+    banCheckDaysInput = String(settings.banCheckDays);
+    inactivityBlurSecondsInput = String(settings.inactivityBlurSeconds);
+  }
+
+  function commitAvatarCacheDays() {
+    settings.avatarCacheDays = clampInt(Number(avatarCacheDaysInput), 0, 90, settings.avatarCacheDays);
+    avatarCacheDaysInput = String(settings.avatarCacheDays);
+  }
+
+  function commitBanCheckDays() {
+    settings.banCheckDays = clampInt(Number(banCheckDaysInput), 0, 90, settings.banCheckDays);
+    banCheckDaysInput = String(settings.banCheckDays);
+  }
+
+  function commitInactivityBlurSeconds() {
+    settings.inactivityBlurSeconds = clampInt(Number(inactivityBlurSecondsInput), 0, 3600, settings.inactivityBlurSeconds);
+    inactivityBlurSecondsInput = String(settings.inactivityBlurSeconds);
+  }
+
+  async function persistNow() {
+    normalizeSettings();
+    const snapshot = buildPersistSnapshot();
+    if (snapshot === lastPersistedSnapshot) return;
+
+    saveSettings(settings);
+    try {
+      await invoke("set_api_key", { key: apiKey.trim() });
+      await invoke("set_steam_path", { path: steamPath.trim() });
+      lastPersistedSnapshot = snapshot;
+      const now = Date.now();
+      if (now - lastSavedToastAt >= SAVE_TOAST_COOLDOWN_MS) {
+        addToast("Settings saved");
+        lastSavedToastAt = now;
+      }
+      onPlatformsChanged?.();
+    } catch (e) {
+      console.error("Failed to save API key:", e);
+    }
+  }
+
+  function queueSave() {
+    if (!hydrated) return;
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      void persistNow();
+    }, 220);
+  }
+
+  onMount(async () => {
+    try {
+      apiKey = await invoke<string>("get_api_key");
+    } catch {
+      apiKey = "";
+    }
+
+    try {
+      steamPath = await invoke<string>("get_steam_path");
+    } catch {
+      steamPath = "";
+    } finally {
+      normalizeSettings();
+      refreshNumericInputsFromSettings();
+      lastPersistedSnapshot = buildPersistSnapshot();
+      hydrated = true;
+    }
+  });
+
+  onDestroy(() => {
+    if (saveTimer) clearTimeout(saveTimer);
+  });
 
   function togglePlatform(id: string) {
     if (settings.enabledPlatforms.includes(id)) {
@@ -17,10 +136,30 @@
     }
   }
 
-  function save() {
-    saveSettings(settings);
-    onPlatformsChanged?.();
-    onClose();
+  $effect(() => {
+    settings.avatarCacheDays;
+    settings.banCheckDays;
+    settings.inactivityBlurSeconds;
+    settings.theme;
+    settings.steamRunAsAdmin;
+    settings.steamLaunchOptions;
+    settings.showUsernames;
+    settings.showLastLogin;
+    settings.defaultPlatformId;
+    settings.pinEnabled;
+    settings.pinCode;
+    settings.enabledPlatforms.join(",");
+    apiKey;
+    steamPath;
+    queueSave();
+  });
+
+  async function chooseSteamFolder() {
+    try {
+      steamPath = await invoke<string>("select_steam_path");
+    } catch {
+      // User canceled the picker or the native dialog failed.
+    }
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -30,124 +169,291 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="overlay" onclick={onClose}>
-  <div class="panel" onclick={(e) => e.stopPropagation()}>
-    <div class="header">
+<div class="settings-panel">
+  <div class="header">
+    <div class="title-wrap">
       <span class="title">Settings</span>
-      <button class="close-btn" onclick={onClose}>
+    </div>
+    <div class="header-actions">
+      <button class="close-btn" onclick={onClose} title="Close">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="18" y1="6" x2="6" y2="18" />
           <line x1="6" y1="6" x2="18" y2="18" />
         </svg>
       </button>
     </div>
+  </div>
 
-    <div class="body">
-      <div class="section-label">Platforms</div>
+  <div class="settings-grid">
+    <section class="card">
+      <h3>Appearance</h3>
+      <ToggleSetting
+        label="Light mode"
+        enabled={settings.theme === "light"}
+        accent="#f59e0b"
+        onLabel="On"
+        offLabel="Off"
+        onToggle={() => settings.theme = settings.theme === "light" ? "dark" : "light"}
+      />
+    </section>
+
+    <section class="card">
+      <h3>Platforms</h3>
       <div class="platforms">
         {#each ALL_PLATFORMS as platform}
-          <button
-            class="platform-row"
-            onclick={() => togglePlatform(platform.id)}
-          >
-            <span class="platform-name">{platform.name}</span>
-            <div
-              class="toggle"
-              class:active={settings.enabledPlatforms.includes(platform.id)}
-              style={settings.enabledPlatforms.includes(platform.id) ? `background: ${platform.accent};` : ""}
-            >
-              <div class="toggle-knob"></div>
+          <button class="platform-chip" onclick={() => togglePlatform(platform.id)} style={`--chip-accent:${platform.accent};`}>
+            <span>{platform.name}</span>
+            <div class="toggle" class:active={settings.enabledPlatforms.includes(platform.id)}>
+              <div class="knob"></div>
             </div>
           </button>
         {/each}
       </div>
 
-      <div class="divider"></div>
-
       <div class="field">
-        <label class="label" for="cache-days">Avatar refresh delay</label>
-        <div class="input-row">
-          <input
-            id="cache-days"
-            type="number"
-            min="1"
-            max="90"
-            bind:value={settings.avatarCacheDays}
-            class="input"
-          />
-          <span class="suffix">days</span>
+        <div class="row">
+          <span>Default on startup</span>
+          <strong>{ALL_PLATFORMS.find(p => p.id === settings.defaultPlatformId)?.name || settings.defaultPlatformId}</strong>
         </div>
-        <p class="hint">Cached profile pictures will refresh after this period.</p>
+        <select class="text-input" bind:value={settings.defaultPlatformId}>
+          {#each ALL_PLATFORMS as platform}
+            <option value={platform.id} disabled={!settings.enabledPlatforms.includes(platform.id)}>
+              {platform.name}{!settings.enabledPlatforms.includes(platform.id) ? " (disabled)" : ""}
+            </option>
+          {/each}
+        </select>
       </div>
-    </div>
+    </section>
 
-    <div class="footer">
-      <button class="btn-secondary" onclick={onClose}>Cancel</button>
-      <button class="btn-primary" onclick={save}>Save</button>
-    </div>
+    <section class="card">
+      <h3>Data Refresh</h3>
+
+      <label class="field">
+        <div class="row">
+          <span>Avatar refresh</span>
+          <span class="hint">0 = each launch</span>
+        </div>
+        <input
+          type="number"
+          min="0"
+          max="90"
+          step="1"
+          value={avatarCacheDaysInput}
+          oninput={(e) => avatarCacheDaysInput = (e.currentTarget as HTMLInputElement).value}
+          onblur={commitAvatarCacheDays}
+          onkeydown={(e) => {
+            if (e.key === "Enter") {
+              commitAvatarCacheDays();
+              (e.currentTarget as HTMLInputElement).blur();
+            }
+          }}
+          class="text-input number-input"
+        />
+      </label>
+
+      <label class="field">
+        <div class="row">
+          <span>Ban check delay</span>
+          <span class="hint">0 = each launch</span>
+        </div>
+        <input
+          type="number"
+          min="0"
+          max="90"
+          step="1"
+          value={banCheckDaysInput}
+          oninput={(e) => banCheckDaysInput = (e.currentTarget as HTMLInputElement).value}
+          onblur={commitBanCheckDays}
+          onkeydown={(e) => {
+            if (e.key === "Enter") {
+              commitBanCheckDays();
+              (e.currentTarget as HTMLInputElement).blur();
+            }
+          }}
+          class="text-input number-input"
+        />
+      </label>
+    </section>
+
+    <section class="card">
+      <h3>Privacy</h3>
+      <label class="field">
+        <div class="row">
+          <span>Inactivity timeout</span>
+          <span class="hint">0 = disabled</span>
+        </div>
+        <input
+          type="number"
+          min="0"
+          max="3600"
+          step="5"
+          value={inactivityBlurSecondsInput}
+          oninput={(e) => inactivityBlurSecondsInput = (e.currentTarget as HTMLInputElement).value}
+          onblur={commitInactivityBlurSeconds}
+          onkeydown={(e) => {
+            if (e.key === "Enter") {
+              commitInactivityBlurSeconds();
+              (e.currentTarget as HTMLInputElement).blur();
+            }
+          }}
+          class="text-input number-input"
+        />
+      </label>
+
+    </section>
+
+    <section class="card">
+      <h3>Security</h3>
+      <ToggleSetting
+        label="PIN lock on AFK"
+        enabled={settings.pinEnabled}
+        accent="#eab308"
+        onLabel="Enabled"
+        offLabel="Disabled"
+        onToggle={() => settings.pinEnabled = !settings.pinEnabled}
+      />
+
+      {#if settings.pinEnabled}
+        <div class="field">
+          <div class="row">
+            <span>PIN code</span>
+            <strong>{settings.pinCode ? "Configured" : "Missing"}</strong>
+          </div>
+          <input
+            id="pin-code"
+            type="password"
+            bind:value={settings.pinCode}
+            class="text-input"
+            placeholder="4-8 digits"
+            maxlength="16"
+          />
+        </div>
+      {/if}
+    </section>
+
+    {#if steamEnabled}
+      <section class="card">
+        <h3>Steam</h3>
+
+        <ToggleSetting
+          label="Run Steam as admin"
+          enabled={settings.steamRunAsAdmin}
+          onLabel="Enabled"
+          offLabel="Disabled"
+          onToggle={() => settings.steamRunAsAdmin = !settings.steamRunAsAdmin}
+        />
+
+        <ToggleSetting
+          label="Show usernames"
+          enabled={settings.showUsernames}
+          onLabel="Visible"
+          offLabel="Hidden"
+          onToggle={() => settings.showUsernames = !settings.showUsernames}
+        />
+
+        <ToggleSetting
+          label="Visible last login"
+          enabled={settings.showLastLogin}
+          onLabel="On"
+          offLabel="Off"
+          onToggle={() => settings.showLastLogin = !settings.showLastLogin}
+        />
+
+        <div class="field">
+          <div class="row">
+            <span>Launch options</span>
+            <strong>{settings.steamLaunchOptions ? "Custom" : "None"}</strong>
+          </div>
+          <input
+            id="steam-launch-options"
+            type="text"
+            bind:value={settings.steamLaunchOptions}
+            class="text-input"
+            placeholder="-silent -vgui"
+          />
+        </div>
+
+        <div class="field">
+          <div class="row">
+            <span>Steam folder</span>
+            <strong>{steamPath ? "Custom" : "Registry"}</strong>
+          </div>
+          <div class="input-row">
+            <input
+              id="steam-folder"
+              type="text"
+              bind:value={steamPath}
+              class="text-input"
+              placeholder="C:\Program Files (x86)\Steam"
+            />
+            <button class="browse-btn" type="button" onclick={chooseSteamFolder}>Choose...</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="row">
+            <span>Steam Web API key</span>
+            <strong>{apiKey.trim() ? "Configured" : "Missing"}</strong>
+          </div>
+          <input id="api-key" type="password" bind:value={apiKey} class="text-input" placeholder="Paste your Steam Web API key" />
+        </div>
+      </section>
+    {/if}
   </div>
 </div>
 
 <style>
-  .overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 80;
+  .settings-panel {
+    flex: 1;
     display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(4px);
-    animation: fadeIn 120ms ease-out;
+    flex-direction: column;
+    gap: 12px;
+    overflow-y: auto;
+    animation: fadeIn 140ms ease-out;
   }
 
   @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
-  .panel {
-    width: 320px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
-    animation: slideIn 150ms ease-out;
-  }
-
-  @keyframes slideIn {
-    from { opacity: 0; transform: scale(0.96) translateY(8px); }
-    to { opacity: 1; transform: scale(1) translateY(0); }
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 
   .header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 16px;
+    gap: 12px;
+    padding-bottom: 10px;
     border-bottom: 1px solid var(--border);
   }
 
+  .title-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
   .title {
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 14px;
+    font-weight: 700;
     color: var(--fg);
   }
 
-  .close-btn {
+  .header-actions {
     display: flex;
     align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
+    gap: 8px;
+  }
+
+  .close-btn {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
     border: none;
-    border-radius: 4px;
+    border-radius: 6px;
     background: transparent;
     color: var(--fg-muted);
     cursor: pointer;
-    transition: all 100ms;
   }
 
   .close-btn:hover {
@@ -155,162 +461,142 @@
     color: var(--fg);
   }
 
-  .body {
-    padding: 16px;
+  .settings-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 10px;
+    padding-bottom: 8px;
   }
 
-  .section-label {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--fg-subtle);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 8px;
+  .card {
+    background: color-mix(in srgb, var(--bg-card) 84%, #000 16%);
+    border: 1px solid color-mix(in srgb, var(--border) 80%, #fff 20%);
+    border-radius: 10px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .card h3 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 650;
+    color: var(--fg);
   }
 
   .platforms {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 6px;
   }
 
-  .platform-row {
+  .platform-chip {
+    width: 100%;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 10px;
-    border: none;
-    border-radius: 6px;
-    background: transparent;
-    cursor: pointer;
-    transition: background 100ms;
-  }
-
-  .platform-row:hover {
-    background: var(--bg-muted);
-  }
-
-  .platform-name {
-    font-size: 13px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--bg) 88%, #fff 12%);
     color: var(--fg);
+    padding: 9px 10px;
+    cursor: pointer;
+    transition: border-color 120ms ease-out, background 120ms ease-out;
+  }
+
+  .platform-chip:hover {
+    border-color: color-mix(in srgb, var(--chip-accent) 55%, var(--border));
+    background: color-mix(in srgb, var(--bg-card) 84%, #fff 16%);
   }
 
   .toggle {
-    width: 34px;
-    height: 18px;
-    border-radius: 9px;
+    width: 36px;
+    height: 20px;
+    border-radius: 999px;
     background: var(--bg-elevated);
-    position: relative;
-    transition: background 150ms;
+    padding: 2px;
+    transition: background 120ms ease-out;
   }
 
-  .toggle.active .toggle-knob {
-    transform: translateX(16px);
+  .toggle.active {
+    background: var(--chip-accent);
   }
 
-  .toggle-knob {
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 14px;
-    height: 14px;
+  .knob {
+    width: 16px;
+    height: 16px;
     border-radius: 50%;
-    background: var(--fg);
-    transition: transform 150ms;
+    background: #fff;
+    transition: transform 120ms ease-out;
   }
 
-  .divider {
-    height: 1px;
-    background: var(--border);
-    margin: 16px 0;
+  .toggle.active .knob {
+    transform: translateX(16px);
   }
 
   .field {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-  }
-
-  .label {
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--fg);
-  }
-
-  .input-row {
-    display: flex;
-    align-items: center;
     gap: 8px;
   }
 
-  .input {
-    width: 64px;
-    padding: 6px 8px;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--bg);
-    color: var(--fg);
-    font-size: 13px;
-    outline: none;
-    transition: border-color 120ms;
-  }
-
-  .input:focus {
-    border-color: var(--bg-elevated);
-  }
-
-  .suffix {
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
     font-size: 12px;
     color: var(--fg-muted);
+  }
+
+  .row strong {
+    font-size: 12px;
+    color: var(--fg);
+    font-weight: 600;
   }
 
   .hint {
     font-size: 11px;
     color: var(--fg-subtle);
-    margin: 0;
   }
 
-  .footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    padding: 12px 16px;
-    border-top: 1px solid var(--border);
-  }
-
-  .btn-secondary {
-    padding: 6px 12px;
+  .text-input {
+    width: 100%;
     border: 1px solid var(--border);
-    border-radius: 4px;
-    background: transparent;
-    color: var(--fg-muted);
-    font-size: 12px;
-    cursor: pointer;
-    transition: all 100ms;
-  }
-
-  .btn-secondary:hover {
-    background: var(--bg-muted);
+    border-radius: 8px;
+    background: var(--bg);
     color: var(--fg);
-  }
-
-  .btn-primary {
-    padding: 6px 12px;
-    border: none;
-    border-radius: 4px;
-    background: var(--fg);
-    color: var(--bg);
     font-size: 12px;
-    font-weight: 500;
+    padding: 9px 10px;
+    outline: none;
+  }
+
+  .text-input:focus {
+    border-color: #3b82f6;
+  }
+
+  .input-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .number-input {
+    width: 100%;
+  }
+
+  .browse-btn {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--fg);
+    font-size: 12px;
+    padding: 0 12px;
     cursor: pointer;
-    transition: all 100ms;
+    white-space: nowrap;
   }
 
-  .btn-primary:hover {
-    background: #d4d4d8;
-  }
-
-  .btn-primary:active {
-    transform: scale(0.97);
+  .browse-btn:hover {
+    background: var(--bg-card-hover);
   }
 </style>

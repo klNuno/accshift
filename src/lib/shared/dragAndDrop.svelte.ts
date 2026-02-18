@@ -27,15 +27,86 @@ export function createDragManager(options: DragManagerOptions) {
   let isDragging = $state(false);
   let previewIndex = $state<number | null>(null);
   let pendingDrag = $state<{ item: ItemRef; startX: number; startY: number; sourceEl: HTMLElement } | null>(null);
+  // Swallow the click generated right after a drag so we do not trigger card actions.
   let eatNextClick = false;
   let ghostEl: HTMLElement | null = null;
   let ghostOffsetX = 0;
   let ghostOffsetY = 0;
+  let lastClientX = 0;
+  let lastClientY = 0;
+  let hasPointer = false;
 
-  // Recorded slot positions at drag start (avoids DOM feedback loop)
+  // Snapshot card slots at drag start to keep preview calculations stable while DOM reorders.
   let slotRects: DOMRect[] = [];
   let dragOldIndex = -1;
   let dragIsListMode = false;
+
+  function refreshSlotRects() {
+    if (!dragItem) return;
+    const wrapperRef = options.getWrapperRef();
+    const gridEl = wrapperRef?.querySelector(".grid-container, .list-container") as HTMLElement | null;
+    if (!gridEl) {
+      slotRects = [];
+      dragOldIndex = -1;
+      return;
+    }
+    dragIsListMode = gridEl.classList.contains("list-container");
+    const selector = dragItem.type === "folder" ? "[data-folder-id]" : "[data-account-id]";
+    const cards = Array.from(gridEl.querySelectorAll(selector)) as HTMLElement[];
+    slotRects = cards.map(el => el.getBoundingClientRect());
+    const items = dragItem.type === "folder" ? options.getFolderItems() : options.getAccountItems();
+    dragOldIndex = items.findIndex(i => i.id === dragItem!.id);
+  }
+
+  function updateDragAt(clientX: number, clientY: number) {
+    if (!isDragging) return;
+
+    if (ghostEl) {
+      ghostEl.style.left = `${clientX - ghostOffsetX}px`;
+      ghostEl.style.top = `${clientY - ghostOffsetY}px`;
+    }
+
+    const el = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+    if (!el) {
+      dragOverFolderId = null;
+      dragOverBack = false;
+      previewIndex = null;
+      return;
+    }
+
+    const hover = el.closest("[data-folder-id], [data-back-card], [data-account-id]") as HTMLElement | null;
+
+    if (hover?.dataset.backCard) {
+      dragOverBack = true;
+      dragOverFolderId = null;
+      previewIndex = null;
+    } else if (hover?.dataset.folderId && !(dragItem?.type === "folder" && dragItem?.id === hover.dataset.folderId)) {
+      dragOverFolderId = hover.dataset.folderId!;
+      dragOverBack = false;
+      previewIndex = null;
+    } else {
+      dragOverFolderId = null;
+      dragOverBack = false;
+      if (slotRects.length > 0 && dragOldIndex >= 0) {
+        let bestIdx = 0;
+        let bestDist = Infinity;
+        for (let i = 0; i < slotRects.length; i++) {
+          const r = slotRects[i];
+          const dist = (clientX - (r.left + r.width / 2)) ** 2 + (clientY - (r.top + r.height / 2)) ** 2;
+          if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+        }
+        const r = slotRects[bestIdx];
+        let dropIdx: number;
+        if (dragIsListMode) {
+          dropIdx = clientY > r.top + r.height / 2 ? bestIdx + 1 : bestIdx;
+        } else {
+          dropIdx = clientX > r.left + r.width / 2 ? bestIdx + 1 : bestIdx;
+        }
+        const insertAt = dropIdx > dragOldIndex ? dropIdx - 1 : dropIdx;
+        previewIndex = Math.max(0, Math.min(insertAt, slotRects.length - 1));
+      }
+    }
+  }
 
   function handleGridMouseDown(e: MouseEvent) {
     if (e.button !== 0) return;
@@ -51,11 +122,17 @@ export function createDragManager(options: DragManagerOptions) {
     }
     if (!item) return;
 
+    lastClientX = e.clientX;
+    lastClientY = e.clientY;
+    hasPointer = true;
     pendingDrag = { item, startX: e.clientX, startY: e.clientY, sourceEl: card };
   }
 
   function handleDocMouseMove(e: MouseEvent) {
     if (!pendingDrag) return;
+    lastClientX = e.clientX;
+    lastClientY = e.clientY;
+    hasPointer = true;
 
     const dx = e.clientX - pendingDrag.startX;
     const dy = e.clientY - pendingDrag.startY;
@@ -65,19 +142,10 @@ export function createDragManager(options: DragManagerOptions) {
       isDragging = true;
       dragItem = pendingDrag.item;
 
-      // Record slot positions before any reorder happens
-      const wrapperRef = options.getWrapperRef();
-      const gridEl = wrapperRef?.querySelector(".grid-container, .list-container") as HTMLElement;
-      if (gridEl) {
-        dragIsListMode = gridEl.classList.contains("list-container");
-        const selector = dragItem.type === "folder" ? "[data-folder-id]" : "[data-account-id]";
-        const cards = Array.from(gridEl.querySelectorAll(selector)) as HTMLElement[];
-        slotRects = cards.map(el => el.getBoundingClientRect());
-        const items = dragItem.type === "folder" ? options.getFolderItems() : options.getAccountItems();
-        dragOldIndex = items.findIndex(i => i.id === dragItem!.id);
-      }
+      // Capture slot positions once, before preview reorders mutate the DOM layout.
+      refreshSlotRects();
 
-      // Create ghost element
+      // Render a floating clone so the dragged card stays visible under the cursor.
       const sourceRect = pendingDrag.sourceEl.getBoundingClientRect();
       ghostOffsetX = e.clientX - sourceRect.left;
       ghostOffsetY = e.clientY - sourceRect.top;
@@ -96,55 +164,16 @@ export function createDragManager(options: DragManagerOptions) {
       document.body.appendChild(ghostEl);
     }
 
-    // Update ghost position
-    if (ghostEl) {
-      ghostEl.style.left = `${e.clientX - ghostOffsetX}px`;
-      ghostEl.style.top = `${e.clientY - ghostOffsetY}px`;
-    }
-
-    const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
-    if (!el) {
-      dragOverFolderId = null;
-      dragOverBack = false;
-      return;
-    }
-
-    const hover = el.closest("[data-folder-id], [data-back-card], [data-account-id]") as HTMLElement | null;
-
-    if (hover?.dataset.backCard) {
-      dragOverBack = true;
-      dragOverFolderId = null;
-      previewIndex = null;
-    } else if (hover?.dataset.folderId && !(dragItem?.type === "folder" && dragItem?.id === hover.dataset.folderId)) {
-      dragOverFolderId = hover.dataset.folderId!;
-      dragOverBack = false;
-      previewIndex = null;
-    } else {
-      dragOverFolderId = null;
-      dragOverBack = false;
-      // Compute preview reorder index from recorded slot positions
-      if (slotRects.length > 0 && dragOldIndex >= 0) {
-        let bestIdx = 0;
-        let bestDist = Infinity;
-        for (let i = 0; i < slotRects.length; i++) {
-          const r = slotRects[i];
-          const dist = (e.clientX - (r.left + r.width / 2)) ** 2 + (e.clientY - (r.top + r.height / 2)) ** 2;
-          if (dist < bestDist) { bestDist = dist; bestIdx = i; }
-        }
-        const r = slotRects[bestIdx];
-        let dropIdx: number;
-        if (dragIsListMode) {
-          dropIdx = e.clientY > r.top + r.height / 2 ? bestIdx + 1 : bestIdx;
-        } else {
-          dropIdx = e.clientX > r.left + r.width / 2 ? bestIdx + 1 : bestIdx;
-        }
-        const insertAt = dropIdx > dragOldIndex ? dropIdx - 1 : dropIdx;
-        previewIndex = Math.max(0, Math.min(insertAt, slotRects.length - 1));
-      }
-    }
+    updateDragAt(e.clientX, e.clientY);
   }
 
-  function handleDocMouseUp(e: MouseEvent) {
+  function handleDocScroll() {
+    if (!isDragging || !hasPointer) return;
+    refreshSlotRects();
+    updateDragAt(lastClientX, lastClientY);
+  }
+
+  function handleDocMouseUp() {
     if (!pendingDrag) return;
 
     if (!isDragging) {
@@ -164,7 +193,7 @@ export function createDragManager(options: DragManagerOptions) {
           moveItem(dragItem, currentFolderId, dragOverFolderId, activeTab);
         }
       } else if (previewIndex !== null) {
-        // Apply the preview reorder
+        // Commit the same order shown by the preview.
         const folderItems = options.getFolderItems();
         const accountItems = options.getAccountItems();
         if (dragItem.type === "folder") {
@@ -180,14 +209,14 @@ export function createDragManager(options: DragManagerOptions) {
       options.onRefresh();
     }
 
-    // Remove ghost
+    // Always cleanup drag ghost when the interaction ends.
     if (ghostEl) {
       ghostEl.remove();
       ghostEl = null;
     }
 
     eatNextClick = true;
-    // Safety: if no click event fires (mousedown/mouseup on different targets), reset the flag
+    // If no click event is emitted, clear the guard on the next tick.
     setTimeout(() => { eatNextClick = false; }, 0);
     dragItem = null;
     dragOverFolderId = null;
@@ -197,6 +226,7 @@ export function createDragManager(options: DragManagerOptions) {
     previewIndex = null;
     slotRects = [];
     dragOldIndex = -1;
+    hasPointer = false;
   }
 
   function handleCaptureClick(e: MouseEvent) {
@@ -215,6 +245,7 @@ export function createDragManager(options: DragManagerOptions) {
     get previewIndex() { return previewIndex; },
     handleGridMouseDown,
     handleDocMouseMove,
+    handleDocScroll,
     handleDocMouseUp,
     handleCaptureClick,
   };

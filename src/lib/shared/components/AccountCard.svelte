@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { PlatformAccount } from "../platform";
+  import { formatRelativeTimeCompact } from "$lib/shared/time";
+
+  import type { BanInfo } from "$lib/platforms/steam/types";
 
   let {
     account,
@@ -11,6 +14,11 @@
     avatarUrl = null,
     isLoadingAvatar = false,
     isRefreshingAvatar = false,
+    banInfo = undefined,
+    cardColor = "",
+    showUsername = true,
+    showLastLogin = false,
+    lastLoginAt = null,
   }: {
     account: PlatformAccount;
     isActive: boolean;
@@ -20,10 +28,45 @@
     avatarUrl?: string | null;
     isLoadingAvatar?: boolean;
     isRefreshingAvatar?: boolean;
+    banInfo?: BanInfo;
+    cardColor?: string;
+    showUsername?: boolean;
+    showLastLogin?: boolean;
+    lastLoginAt?: number | null;
   } = $props();
 
   let showConfirm = $state(false);
   let cardRef = $state<HTMLDivElement | null>(null);
+  let nameContainerRef = $state<HTMLDivElement | null>(null);
+  let nameRef = $state<HTMLSpanElement | null>(null);
+  let isOverflowing = $state(false);
+  let marqueeShiftPx = $state(0);
+
+  // Visual severity hint for ban state.
+  let banOutlineColor = $derived.by(() => {
+    if (!banInfo) return "";
+    if (banInfo.vac_banned || banInfo.number_of_game_bans > 0) return "rgba(239, 68, 68, 0.6)";
+    if (banInfo.community_banned || (banInfo.economy_ban && banInfo.economy_ban !== "none")) return "rgba(234, 179, 8, 0.6)";
+    return "";
+  });
+  let hasBanWarning = $derived.by(() =>
+    Boolean(banInfo && (banInfo.community_banned || banInfo.vac_banned || banInfo.number_of_game_bans > 0))
+  );
+  let banHoverMessage = $derived.by(() => {
+    if (!banInfo) return "";
+    const lines: string[] = [];
+    if (banInfo.community_banned) {
+      lines.push("Community ban");
+    }
+    if (banInfo.vac_banned) {
+      const vacCount = Math.max(1, banInfo.number_of_vac_bans || 0);
+      lines.push(`${vacCount} VAC ban${vacCount > 1 ? "s" : ""}`);
+    }
+    if (banInfo.number_of_game_bans > 0) {
+      lines.push(`${banInfo.number_of_game_bans} game ban${banInfo.number_of_game_bans > 1 ? "s" : ""}`);
+    }
+    return lines.join("\n");
+  });
 
   onMount(() => {
     function onDocClick(e: MouseEvent) {
@@ -32,7 +75,27 @@
       }
     }
     document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
+    window.addEventListener("resize", checkOverflow);
+    checkOverflow();
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      window.removeEventListener("resize", checkOverflow);
+    };
+  });
+
+  function checkOverflow() {
+    if (nameRef && nameContainerRef) {
+      const overflowPx = Math.max(0, nameRef.scrollWidth - nameContainerRef.clientWidth);
+      marqueeShiftPx = overflowPx;
+      isOverflowing = overflowPx > 2;
+    }
+  }
+
+  $effect(() => {
+    // Recalculate marquee width when name fields change.
+    account.displayName;
+    account.username;
+    setTimeout(checkOverflow, 0);
   });
 
   $effect(() => {
@@ -44,7 +107,7 @@
   }
 
   function handleClick() {
-    if (isActive || isDragged) return;
+    if (isDragged) return;
     if (showConfirm) {
       showConfirm = false;
       onSwitch();
@@ -59,58 +122,74 @@
     showConfirm = false;
     onContextMenu(e);
   }
+
 </script>
 
+<!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   bind:this={cardRef}
   onclick={handleClick}
   oncontextmenu={handleContextMenu}
   data-account-id={account.id}
+  style={cardColor ? `--card-custom-color: ${cardColor};` : ""}
   class="card"
+  class:custom-color={!!cardColor}
   class:active={isActive}
   class:dragging={isDragged}
+  class:ban-red={banOutlineColor.includes("239")}
+  class:ban-yellow={banOutlineColor.includes("234")}
+  title={hasBanWarning ? banHoverMessage : undefined}
 >
   <div class="avatar" class:active={isActive}>
-    {#if isLoadingAvatar}
-      <div class="loader"></div>
-    {:else if avatarUrl}
-      <img
-        src={avatarUrl}
-        alt={account.displayName}
-        class:blurred={isRefreshingAvatar || showConfirm}
-      />
-      {#if isRefreshingAvatar}
-        <div class="loader overlay"></div>
+    <div class="avatar-media">
+      {#if isLoadingAvatar}
+        <div class="loader"></div>
+      {:else if avatarUrl}
+        <img
+          src={avatarUrl}
+          alt={account.displayName}
+          class:blurred={isRefreshingAvatar || showConfirm}
+        />
+        {#if isRefreshingAvatar}
+          <div class="loader overlay"></div>
+        {/if}
+      {:else}
+        <span class="initials" class:blurred-text={showConfirm}>
+          {getInitials(account.displayName || account.username)}
+        </span>
       {/if}
-    {:else}
-      <span class="initials" class:blurred-text={showConfirm}>
-        {getInitials(account.displayName || account.username)}
-      </span>
-    {/if}
 
     {#if showConfirm && !isDragged}
-      <div class="play-overlay">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="var(--fg)">
-          <path d="M8 5v14l11-7z" />
-        </svg>
-      </div>
-    {/if}
+        <div class="play-overlay">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="var(--fg)">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+        </div>
+      {/if}
+    </div>
   </div>
 
-  <div class="name">
-    {account.displayName || account.username}
+  <div class="name" bind:this={nameContainerRef} class:marquee={isOverflowing} style={`--marquee-shift:${marqueeShiftPx}px;`}>
+    <span bind:this={nameRef} class="name-inner">
+      {account.displayName || account.username}
+    </span>
   </div>
 
-  <div class="username">
-    {account.username}
-  </div>
+  {#if showUsername}
+    <div class="username">{account.username}</div>
+  {/if}
+  {#if showLastLogin}
+    <div class="last-login">{formatRelativeTimeCompact(lastLoginAt)}</div>
+  {/if}
+
 </div>
 
 <style>
   .card {
     width: 100px;
     padding: 8px;
+    box-sizing: border-box;
     border-radius: 8px;
     text-align: center;
     background: var(--bg-card);
@@ -126,6 +205,15 @@
     transform: scale(1.02);
   }
 
+  .card.custom-color {
+    background: color-mix(in srgb, var(--card-custom-color) 24%, var(--bg-card));
+    outline: 1px solid color-mix(in srgb, var(--card-custom-color) 55%, transparent);
+  }
+
+  .card.custom-color:not(.active):hover {
+    background: color-mix(in srgb, var(--card-custom-color) 32%, var(--bg-card-hover));
+  }
+
   .card:not(.active):active {
     transform: scale(0.98);
   }
@@ -133,7 +221,23 @@
   .card.active {
     background: var(--bg-card-hover);
     outline: 2px solid rgba(255, 255, 255, 0.4);
-    cursor: default;
+    cursor: pointer;
+  }
+
+  .card.ban-red {
+    outline: 2px solid rgba(239, 68, 68, 0.6);
+  }
+
+  .card.ban-yellow:not(.ban-red) {
+    outline: 2px solid rgba(234, 179, 8, 0.6);
+  }
+
+  .card.active.ban-red {
+    outline: 2px solid rgba(239, 68, 68, 0.6);
+  }
+
+  .card.active.ban-yellow:not(.ban-red) {
+    outline: 2px solid rgba(234, 179, 8, 0.6);
   }
 
   .card.dragging {
@@ -147,34 +251,44 @@
     height: 68px;
     margin: 0 auto 8px;
     border-radius: 6px;
-    overflow: hidden;
     display: flex;
     align-items: center;
     justify-content: center;
     background: var(--bg-muted);
     transition: background 150ms;
-    pointer-events: none;
+    pointer-events: auto;
   }
 
-  .avatar img {
+  .avatar-media {
+    width: 100%;
+    height: 100%;
+    border-radius: inherit;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+
+  .avatar-media img {
     width: 100%;
     height: 100%;
     object-fit: cover;
     transition: filter 300ms ease-out;
   }
 
-  .avatar img.blurred {
+  .avatar-media img.blurred {
     filter: blur(6px) brightness(0.5);
   }
 
-  .avatar .initials {
+  .avatar-media .initials {
     font-size: 20px;
     font-weight: 600;
     color: var(--fg);
     transition: filter 300ms ease-out;
   }
 
-  .avatar .initials.blurred-text {
+  .avatar-media .initials.blurred-text {
     filter: blur(4px) brightness(0.5);
   }
 
@@ -217,18 +331,49 @@
   }
 
   .name {
+    overflow: hidden;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+
+  .name-inner {
+    display: inline-block;
     font-size: 12px;
     font-weight: 500;
     color: var(--fg);
+    white-space: nowrap;
+  }
+
+  .name:not(.marquee) .name-inner {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .card:hover .name.marquee .name-inner {
+    animation: marquee 1.6s linear infinite;
+  }
+
+  @keyframes marquee {
+    0% { transform: translateX(0); }
+    10% { transform: translateX(0); }
+    90% { transform: translateX(calc(-1 * var(--marquee-shift, 0px))); }
+    100% { transform: translateX(calc(-1 * var(--marquee-shift, 0px))); }
+  }
+
+  .username {
+    font-size: 10px;
+    color: var(--fg-muted);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     pointer-events: none;
   }
 
-  .username {
-    font-size: 10px;
-    color: var(--fg-muted);
+  .last-login {
+    margin-top: 1px;
+    font-size: 9px;
+    color: var(--fg-subtle);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

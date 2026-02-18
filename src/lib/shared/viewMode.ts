@@ -1,6 +1,6 @@
 export type ViewMode = "grid" | "list";
 
-const STORAGE_KEY = "zazaswitcher_viewMode";
+const STORAGE_KEY = "accshift_viewMode";
 
 export function getViewMode(): ViewMode {
   const stored = localStorage.getItem(STORAGE_KEY);

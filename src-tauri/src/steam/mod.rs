@@ -1,4 +1,5 @@
 pub mod registry;
 pub mod vdf;
 pub mod accounts;
-pub mod avatar;
+pub mod profile;
+pub mod bans;

@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { flip } from "svelte/animate";
   import type { PlatformAccount } from "../platform";
   import type { ItemRef, FolderInfo } from "../../features/folders/types";
+  import type { BanInfo } from "../../platforms/steam/types";
   import ListRow from "./ListRow.svelte";
   import PreviewPanel from "./PreviewPanel.svelte";
 
@@ -8,9 +10,12 @@
     folderItems = [],
     accountItems = [],
     accounts,
+    showUsernames = true,
+    showLastLogin = false,
     currentFolderId = null,
     currentAccount = "",
     avatarStates = {},
+    banStates = {},
     accentColor = "#3b82f6",
     dragItem = null,
     dragOverFolderId = null,
@@ -25,9 +30,12 @@
     folderItems: ItemRef[];
     accountItems: ItemRef[];
     accounts: Record<string, PlatformAccount>;
+    showUsernames?: boolean;
+    showLastLogin?: boolean;
     currentFolderId: string | null;
     currentAccount: string;
     avatarStates: Record<string, { url: string | null; loading: boolean; refreshing: boolean }>;
+    banStates?: Record<string, BanInfo>;
     accentColor?: string;
     dragItem?: ItemRef | null;
     dragOverFolderId?: string | null;
@@ -63,31 +71,39 @@
 
     {#each folderItems as item (item.id)}
       {@const folder = getFolder(item.id)}
-      {#if folder}
-        <ListRow
-          {folder}
-          onClick={() => onNavigate(folder.id)}
-          onContextMenu={(e) => onFolderContextMenu(e, folder)}
-          isDragOver={dragOverFolderId === folder.id}
-          isDragged={dragItem?.type === "folder" && dragItem?.id === folder.id}
-        />
-      {/if}
+      <div animate:flip={{ duration: 200 }}>
+        {#if folder}
+          <ListRow
+            {folder}
+            onClick={() => onNavigate(folder.id)}
+            onContextMenu={(e) => onFolderContextMenu(e, folder)}
+            isDragOver={dragOverFolderId === folder.id}
+            isDragged={dragItem?.type === "folder" && dragItem?.id === folder.id}
+          />
+        {/if}
+      </div>
     {/each}
 
     {#each accountItems as item (item.id)}
       {@const account = accounts[item.id]}
-      {#if account}
-        <ListRow
-          {account}
-          isActive={account.username === currentAccount}
-          isSelected={selectedAccountId === account.id}
-          avatarUrl={avatarStates[account.id]?.url}
-          onClick={() => selectAccount(account.id)}
-          onDblClick={() => onSwitch(account)}
-          onContextMenu={(e) => onAccountContextMenu(e, account)}
-          isDragged={dragItem?.type === "account" && dragItem?.id === account.id}
-        />
-      {/if}
+      <div animate:flip={{ duration: 200 }}>
+        {#if account}
+          <ListRow
+            {account}
+            showUsername={showUsernames}
+            showLastLogin={false}
+            lastLoginAt={account.lastLoginAt}
+            isActive={account.username === currentAccount}
+            isSelected={selectedAccountId === account.id}
+            avatarUrl={avatarStates[account.id]?.url}
+            banInfo={banStates[account.id]}
+            onClick={() => selectAccount(account.id)}
+            onDblClick={() => onSwitch(account)}
+            onContextMenu={(e) => onAccountContextMenu(e, account)}
+            isDragged={dragItem?.type === "account" && dragItem?.id === account.id}
+          />
+        {/if}
+      </div>
     {/each}
   </div>
 
@@ -95,8 +111,12 @@
     {#if selectedAccount}
       <PreviewPanel
         account={selectedAccount}
+        showUsername={showUsernames}
+        {showLastLogin}
+        lastLoginAt={selectedAccount.lastLoginAt}
         isActive={selectedAccount.username === currentAccount}
         avatarUrl={avatarStates[selectedAccount.id]?.url}
+        banInfo={banStates[selectedAccount.id]}
         {accentColor}
         onSwitch={() => onSwitch(selectedAccount!)}
       />
