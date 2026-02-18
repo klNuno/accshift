@@ -31,17 +31,16 @@ export function removeToast(id: string) {
   }
 }
 
-// Compatibility for existing calls, rerouted to toasts
+// Backward-compatible alias for older call sites.
 export function addNotification(message: string) {
   addToast(message);
 }
 
-// Deprecated/No-op functions to avoid breaking imports immediately, 
-// though we should clean them up.
+// Temporary no-op exports kept to avoid breaking stale imports.
 export function getUnreadCount(): number {
   return 0;
 }
 
 export function clearNotifications() {
-  // no-op
+  // Intentionally empty.
 }

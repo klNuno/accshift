@@ -29,10 +29,17 @@ fn validate_username(name: &str) -> Result<(), String> {
 fn resolve_steam_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
     let cfg = config::load_config(app_handle);
     let override_path = cfg.steam_path_override.trim();
-    if !override_path.is_empty() {
-        return Ok(PathBuf::from(override_path));
+    let steam_path = if !override_path.is_empty() {
+        PathBuf::from(override_path)
+    } else {
+        registry::get_steam_path().map_err(|e| e.to_string())?
+    };
+
+    if !steam_path.exists() || !steam_path.join("steam.exe").exists() {
+        return Err("Could not locate Steam installation".into());
     }
-    registry::get_steam_path().map_err(|e| e.to_string())
+
+    Ok(steam_path)
 }
 
 #[tauri::command]

@@ -42,7 +42,7 @@
   let isOverflowing = $state(false);
   let marqueeShiftPx = $state(0);
 
-  // Ban outline color
+  // Visual severity hint for ban state.
   let banOutlineColor = $derived.by(() => {
     if (!banInfo) return "";
     if (banInfo.vac_banned || banInfo.number_of_game_bans > 0) return "rgba(239, 68, 68, 0.6)";
@@ -92,7 +92,7 @@
   }
 
   $effect(() => {
-    // Re-check overflow when displayName changes
+    // Recalculate marquee width when name fields change.
     account.displayName;
     account.username;
     setTimeout(checkOverflow, 0);

@@ -273,6 +273,9 @@ pub fn get_current_account_name(steam_path: &PathBuf) -> Result<String, AppError
 
 pub fn get_accounts(steam_path: &PathBuf) -> Result<Vec<SteamAccount>, AppError> {
     let loginusers_path = steam_path.join("config").join("loginusers.vdf");
+    if !loginusers_path.exists() {
+        return Ok(Vec::new());
+    }
 
     let content = fs::read_to_string(&loginusers_path)
         .map_err(|e| AppError::FileRead(e.to_string()))?;

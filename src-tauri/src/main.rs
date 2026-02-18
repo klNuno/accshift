@@ -1,4 +1,4 @@
-// Prevents additional console window on Windows in release, DO NOT REMOVE!!
+// Keep this to hide the extra console window in Windows release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
@@ -29,7 +29,7 @@ fn main() {
             .decorations(false)
             .resizable(true)
             .on_navigation(|url| {
-                // Only allow our app URLs — blocks WebView2 back/forward navigation
+                // Only allow app URLs to prevent WebView2 back/forward navigation.
                 let scheme = url.scheme();
                 scheme == "tauri" || scheme == "http" || scheme == "https"
             })

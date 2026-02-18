@@ -107,9 +107,13 @@
   onMount(async () => {
     try {
       apiKey = await invoke<string>("get_api_key");
-      steamPath = await invoke<string>("get_steam_path");
     } catch {
       apiKey = "";
+    }
+
+    try {
+      steamPath = await invoke<string>("get_steam_path");
+    } catch {
       steamPath = "";
     } finally {
       normalizeSettings();
@@ -154,7 +158,7 @@
     try {
       steamPath = await invoke<string>("select_steam_path");
     } catch {
-      // user canceled or dialog failed
+      // User canceled the picker or the native dialog failed.
     }
   }
 

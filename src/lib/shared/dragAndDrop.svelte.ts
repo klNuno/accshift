@@ -27,6 +27,7 @@ export function createDragManager(options: DragManagerOptions) {
   let isDragging = $state(false);
   let previewIndex = $state<number | null>(null);
   let pendingDrag = $state<{ item: ItemRef; startX: number; startY: number; sourceEl: HTMLElement } | null>(null);
+  // Swallow the click generated right after a drag so we do not trigger card actions.
   let eatNextClick = false;
   let ghostEl: HTMLElement | null = null;
   let ghostOffsetX = 0;
@@ -35,7 +36,7 @@ export function createDragManager(options: DragManagerOptions) {
   let lastClientY = 0;
   let hasPointer = false;
 
-  // Recorded slot positions at drag start (avoids DOM feedback loop)
+  // Snapshot card slots at drag start to keep preview calculations stable while DOM reorders.
   let slotRects: DOMRect[] = [];
   let dragOldIndex = -1;
   let dragIsListMode = false;
@@ -141,10 +142,10 @@ export function createDragManager(options: DragManagerOptions) {
       isDragging = true;
       dragItem = pendingDrag.item;
 
-      // Record slot positions before any reorder happens
+      // Capture slot positions once, before preview reorders mutate the DOM layout.
       refreshSlotRects();
 
-      // Create ghost element
+      // Render a floating clone so the dragged card stays visible under the cursor.
       const sourceRect = pendingDrag.sourceEl.getBoundingClientRect();
       ghostOffsetX = e.clientX - sourceRect.left;
       ghostOffsetY = e.clientY - sourceRect.top;
@@ -192,7 +193,7 @@ export function createDragManager(options: DragManagerOptions) {
           moveItem(dragItem, currentFolderId, dragOverFolderId, activeTab);
         }
       } else if (previewIndex !== null) {
-        // Apply the preview reorder
+        // Commit the same order shown by the preview.
         const folderItems = options.getFolderItems();
         const accountItems = options.getAccountItems();
         if (dragItem.type === "folder") {
@@ -208,14 +209,14 @@ export function createDragManager(options: DragManagerOptions) {
       options.onRefresh();
     }
 
-    // Remove ghost
+    // Always cleanup drag ghost when the interaction ends.
     if (ghostEl) {
       ghostEl.remove();
       ghostEl = null;
     }
 
     eatNextClick = true;
-    // Safety: if no click event fires (mousedown/mouseup on different targets), reset the flag
+    // If no click event is emitted, clear the guard on the next tick.
     setTimeout(() => { eatNextClick = false; }, 0);
     dragItem = null;
     dragOverFolderId = null;
