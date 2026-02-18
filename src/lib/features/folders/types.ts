@@ -11,6 +11,7 @@ export interface ItemRef {
 }
 
 export interface FolderStore {
+  version?: number;
   folders: FolderInfo[];
   itemOrder: Record<string, ItemRef[]>;
 }

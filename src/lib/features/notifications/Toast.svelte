@@ -1,13 +1,20 @@
 <script lang="ts">
   import { onMount } from "svelte";
 
-  let { message, onDone }: {
+  let { message, durationMs = 3000, onDone }: {
     message: string;
+    durationMs?: number | null;
     onDone: () => void;
   } = $props();
 
   onMount(() => {
-    const timer = setTimeout(onDone, 2000);
+    if (durationMs == null || !Number.isFinite(durationMs) || durationMs <= 0) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      // Parent list handles the exit transition after removal.
+      onDone();
+    }, durationMs);
     return () => clearTimeout(timer);
   });
 </script>
@@ -18,23 +25,15 @@
 
 <style>
   .toast {
-    position: fixed;
-    bottom: 16px;
-    left: 50%;
-    transform: translateX(-50%);
     padding: 8px 16px;
     background: var(--bg-muted);
     color: var(--fg);
     font-size: 12px;
     border-radius: 6px;
     border: 1px solid var(--bg-elevated);
-    z-index: 200;
-    animation: toastIn 150ms ease-out;
+    /* Animation comes from the parent transition. */
     pointer-events: none;
-  }
-
-  @keyframes toastIn {
-    from { opacity: 0; transform: translateX(-50%) translateY(8px); }
-    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+    margin-top: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   }
 </style>

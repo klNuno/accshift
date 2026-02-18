@@ -2,32 +2,35 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum AppError {
-    #[error("Failed to open Steam registry key: {0}")]
+    #[error("Could not locate Steam installation")]
     RegistryOpen(String),
 
-    #[error("Failed to read SteamPath: {0}")]
+    #[error("Could not read Steam configuration")]
     RegistryRead(String),
 
-    #[error("Failed to write registry: {0}")]
+    #[error("Could not write Steam configuration")]
     RegistryWrite(String),
 
-    #[error("Failed to read file: {0}")]
+    #[error("Could not read Steam login data")]
     FileRead(String),
 
-    #[error("Failed to start Steam: {0}")]
+    #[error("Could not start Steam")]
     ProcessStart(String),
 
     #[error("Invalid SteamID64")]
     InvalidSteamId,
 
-    #[error("Userdata folder not found: {0}")]
+    #[error("User data folder not found")]
     UserdataNotFound(String),
 
-    #[error("Failed to resolve path: {0}")]
+    #[error("Could not resolve path")]
     PathResolve(String),
 
-    #[error("Failed to open folder: {0}")]
+    #[error("Could not open folder")]
     FolderOpen(String),
+
+    #[error("Steam is still running")]
+    KillSteamTimeout,
 }
 
 impl From<AppError> for String {

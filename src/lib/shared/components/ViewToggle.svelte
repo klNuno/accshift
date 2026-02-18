@@ -7,7 +7,7 @@
   } = $props();
 </script>
 
-<div class="toggle">
+<div class="view-toggle">
   <button
     class="btn"
     class:active={mode === "grid"}
@@ -36,12 +36,14 @@
 </div>
 
 <style>
-  .toggle {
+  .view-toggle {
     display: flex;
     gap: 2px;
     background: var(--bg-muted);
-    border-radius: 5px;
+    border-radius: 8px;
     padding: 2px;
+    height: 30px;
+    box-sizing: border-box;
   }
 
   .btn {
@@ -49,8 +51,9 @@
     background: transparent;
     color: var(--fg-muted);
     cursor: pointer;
-    padding: 3px 6px;
-    border-radius: 3px;
+    padding: 0 8px;
+    height: 100%;
+    border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: center;

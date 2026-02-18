@@ -2,6 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
+@font-face {
+  font-family: "VT323";
+  src: url("/fonts/VT323-Regular.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
 :root {
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
@@ -22,6 +30,22 @@
   --fg-subtle: #71717a;
   --border: #27272a;
   --danger: #dc2626;
+  --afk-text: #ffffff;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f1f1f3;
+  --bg-card: #d8d8de;
+  --bg-card-hover: #cfcfd7;
+  --bg-muted: #c4c4ce;
+  --bg-elevated: #aeaebc;
+  --fg: #0b0b0f;
+  --fg-muted: #2b2b36;
+  --fg-subtle: #4e4e5d;
+  --border: #b8b8c5;
+  --danger: #dc2626;
+  --afk-text: #000000;
 }
 
 body {

@@ -1,23 +1,55 @@
 <script lang="ts">
   import type { PlatformAccount } from "../platform";
+  import type { BanInfo } from "$lib/platforms/steam/types";
+  import { formatRelativeTimeCompact } from "$lib/shared/time";
 
   let {
     account,
     isActive = false,
     avatarUrl = null,
+    showUsername = true,
+    showLastLogin = false,
+    lastLoginAt = null,
     accentColor = "#3b82f6",
     onSwitch,
+    banInfo = undefined,
   }: {
     account: PlatformAccount;
     isActive?: boolean;
     avatarUrl?: string | null;
+    showUsername?: boolean;
+    showLastLogin?: boolean;
+    lastLoginAt?: number | null;
     accentColor?: string;
     onSwitch: () => void;
+    banInfo?: BanInfo;
   } = $props();
 
   function getInitials(name: string): string {
     return name.slice(0, 2).toUpperCase();
   }
+
+  type BanWarningTone = "red" | "orange";
+  interface BanWarningChip {
+    tone: BanWarningTone;
+    text: string;
+  }
+
+  let banWarnings = $derived.by(() => {
+    if (!banInfo) return [] as BanWarningChip[];
+    const chips: BanWarningChip[] = [];
+    if (banInfo.community_banned) {
+      chips.push({ tone: "orange", text: "Community ban" });
+    }
+    if (banInfo.vac_banned) {
+      const vacCount = Math.max(1, banInfo.number_of_vac_bans || 0);
+      chips.push({ tone: "red", text: `${vacCount} VAC ban${vacCount > 1 ? "s" : ""}` });
+    }
+    if (banInfo.number_of_game_bans > 0) {
+      chips.push({ tone: "red", text: `${banInfo.number_of_game_bans} game ban${banInfo.number_of_game_bans > 1 ? "s" : ""}` });
+    }
+    return chips;
+  });
 </script>
 
 <div class="preview">
@@ -30,22 +62,36 @@
   </div>
 
   <div class="display-name">{account.displayName || account.username}</div>
-  <div class="username">{account.username}</div>
+  {#if showUsername}
+    <div class="username">{account.username}</div>
+  {/if}
+  {#if showLastLogin}
+    <div class="meta">{formatRelativeTimeCompact(lastLoginAt)}</div>
+  {/if}
+
+  {#if banWarnings.length > 0}
+    <div class="ban-badges">
+      {#each banWarnings as warning, index (`${warning.tone}-${warning.text}-${index}`)}
+        <span class="ban-badge" class:red={warning.tone === "red"} class:orange={warning.tone === "orange"}>
+          {warning.text}
+        </span>
+      {/each}
+    </div>
+  {/if}
 
   {#if isActive}
     <div class="status">Currently active</div>
-  {:else}
-    <button
-      class="switch-btn"
-      style="background: {accentColor};"
-      onclick={onSwitch}
-    >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M8 5v14l11-7z" />
-      </svg>
-      Switch Account
-    </button>
   {/if}
+  <button
+    class="switch-btn"
+    style="background: {accentColor};"
+    onclick={onSwitch}
+  >
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M8 5v14l11-7z" />
+    </svg>
+    {isActive ? "Switch Again" : "Switch Account"}
+  </button>
 </div>
 
 <style>
@@ -98,6 +144,13 @@
     text-align: center;
   }
 
+  .meta {
+    font-size: 11px;
+    color: var(--fg-subtle);
+    margin-top: 2px;
+    text-align: center;
+  }
+
   .status {
     margin-top: 16px;
     font-size: 11px;
@@ -128,5 +181,32 @@
 
   .switch-btn:active {
     filter: brightness(0.9);
+  }
+
+  .ban-badges {
+    display: flex;
+    gap: 4px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .ban-badge {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    text-transform: uppercase;
+  }
+
+  .ban-badge.red {
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+  }
+
+  .ban-badge.orange {
+    background: rgba(251, 146, 60, 0.2);
+    color: #fb923c;
   }
 </style>
