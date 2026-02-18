@@ -12,7 +12,7 @@
       return;
     }
     const timer = setTimeout(() => {
-      // Trigger removal which will be handled by the parent list's transition
+      // Parent list handles the exit transition after removal.
       onDone();
     }, durationMs);
     return () => clearTimeout(timer);
@@ -31,7 +31,7 @@
     font-size: 12px;
     border-radius: 6px;
     border: 1px solid var(--bg-elevated);
-    /* Animation handled by svelte transition in parent */
+    /* Animation comes from the parent transition. */
     pointer-events: none;
     margin-top: 8px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);

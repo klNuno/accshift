@@ -42,7 +42,7 @@
     setFolderCardColor,
   } from "$lib/shared/folderCardColors";
 
-  // Register platform adapters
+  // Platform registration
   registerPlatform(steamAdapter);
   function getInitialActiveTab(s: ReturnType<typeof getSettings>): string {
     if (s.enabledPlatforms.includes(s.defaultPlatformId)) return s.defaultPlatformId;
@@ -51,7 +51,7 @@
   const startupSettings = getSettings();
   const startupPinLocked = Boolean(startupSettings.pinEnabled && startupSettings.pinCode?.trim());
 
-  // Platform management
+  // Platform state
   let settings = $state(startupSettings);
   let enabledPlatforms = $derived<PlatformDef[]>(
     ALL_PLATFORMS.filter(p => settings.enabledPlatforms.includes(p.id))
@@ -62,12 +62,12 @@
   );
   let adapter = $derived(getPlatform(activeTab));
 
-  // Composables
+  // Shared controllers
   const blur = createInactivityBlur();
   const grid = createGridLayout();
   const loader = createAccountLoader(() => adapter, () => activeTab);
 
-  // Navigation
+  // Navigation state
   type AppHistoryEntry = { tab: string; folderId: string | null; showSettings: boolean };
   let currentFolderId = $state<string | null>(null);
   let folderPath = $derived(getFolderPath(currentFolderId));
@@ -81,7 +81,7 @@
     currentItems = getItemsInFolder(currentFolderId, activeTab);
   }
 
-  // Context menu
+  // Context menu state
   let contextMenu = $state<{
     x: number; y: number;
     account?: PlatformAccount;
@@ -89,7 +89,7 @@
     isBackground?: boolean;
   } | null>(null);
 
-  // Panels & dialogs
+  // Panel and dialog state
   let showSettings = $state(false);
   let inputDialog = $state<InputDialogConfig | null>(null);
   let isAccountSelectionView = $derived(!showSettings && !!adapter);
@@ -108,11 +108,11 @@
   let afkWaveActive = $state(false);
   let afkWaveStopTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Toasts
+  // Toast state
   let toasts = $derived(getToasts());
 
 
-  // View mode
+  // Layout mode
   let viewMode = $state<ViewMode>(getViewMode());
   function handleViewModeChange(mode: ViewMode) {
     viewMode = mode;
@@ -120,7 +120,7 @@
     if (mode === "grid") setTimeout(grid.calculatePadding, 0);
   }
 
-  // Drag & drop
+  // Drag-and-drop manager
   const drag = createDragManager({
     getCurrentFolderId: () => currentFolderId,
     getActiveTab: () => activeTab,
@@ -130,7 +130,7 @@
     onRefresh: refreshCurrentItems,
   });
 
-  // Display arrays reordered for drag preview
+  // Derived item lists used by drag preview
   let displayFolderItems = $derived.by(() => {
     if (isSearching) return [] as ItemRef[];
     if (!drag.isDragging || !drag.dragItem || drag.dragItem.type !== "folder" || drag.previewIndex === null) {
@@ -205,7 +205,7 @@
   }
 
 
-  // Navigation
+  // Navigation helpers
   function applyAppState(entry: AppHistoryEntry) {
     const tabChanged = activeTab !== entry.tab;
     const settingsClosing = showSettings && !entry.showSettings;
@@ -243,7 +243,7 @@
     searchQuery = "";
   }
 
-  // Dialogs
+  // Dialog helpers
   function showNewFolderDialog() {
     inputDialog = {
       title: "New folder", placeholder: "Folder name", initialValue: "",
@@ -258,7 +258,7 @@
     };
   }
 
-  // Context menus
+  // Context menu items
   function getContextMenuItems(): ContextMenuItem[] {
     if (!contextMenu) return [];
     if (contextMenu.account && adapter) {

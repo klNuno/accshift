@@ -9,6 +9,7 @@ const BATCH_SIZE = 5;
 const BAN_CHECK_STATE_KEY = "accshift_ban_check_state_v2";
 const BAN_INFO_CACHE_KEY = "accshift_ban_info_cache_v1";
 const BAN_ERROR_TOAST_COOLDOWN_MS = 30000;
+const LOAD_TOAST_COOLDOWN_MS = 30000;
 
 interface BanCheckState {
   lastSuccessAt: number;
@@ -68,7 +69,14 @@ function writeBanInfoCache(bans: Record<string, BanInfo>) {
   localStorage.setItem(BAN_INFO_CACHE_KEY, JSON.stringify(bans));
 }
 
+function isSteamPathMissingError(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  return normalized.includes("could not locate steam installation")
+    || normalized.includes("could not read steam configuration");
+}
+
 export function createAccountLoader(getAdapter: () => PlatformAdapter | undefined, getActiveTab: () => string) {
+  // Centralized UI state for account loading, switching, avatars, and Steam ban checks.
   let accounts = $state<PlatformAccount[]>([]);
   let accountMap = $derived<Record<string, PlatformAccount>>(
     Object.fromEntries(accounts.map(a => [a.id, a]))
@@ -82,6 +90,8 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
   let sessionBanCheckedIds = new Set<string>();
   let lastBanErrorToastAt = 0;
   let activeBanCheckToastId: string | null = null;
+  let lastSteamPathToastAt = 0;
+  let lastNoAccountsToastAt = 0;
 
   async function refreshProfile(adapter: PlatformAdapter, account: PlatformAccount) {
     if (!adapter.getProfileInfo) return;
@@ -96,8 +106,6 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
         const idx = accounts.findIndex(a => a.id === account.id);
         if (idx !== -1) {
           accounts[idx] = { ...accounts[idx], displayName: profile.display_name };
-          // Optional: Toast for name change? User didn't ask for it specifically, but it's useful.
-          // addToast(`Name changed: ${account.displayName} -> ${profile.display_name}`);
         }
       }
     } else {
@@ -117,7 +125,7 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
     if (!adapter) return;
     const forceAvatarRefresh = forceRefresh;
 
-    // Separate into cached (just need display) and needs-refresh
+    // Use cached avatars immediately, then refresh only stale/missing entries.
     const needsRefresh: PlatformAccount[] = [];
     for (const account of accts) {
       const cached = adapter.getCachedProfile?.(account.id);
@@ -133,9 +141,7 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
       }
     }
 
-    // Don't toast "Refreshing...", just do it.
-
-    // Parallel loading in batches
+    // Keep requests bounded to avoid API/UI spikes on large account lists.
     for (let i = 0; i < needsRefresh.length; i += BATCH_SIZE) {
       const batch = needsRefresh.slice(i, i + BATCH_SIZE);
       await Promise.all(batch.map(async (account) => {
@@ -169,6 +175,10 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
       && now - cachedState.lastSuccessAt < delayMs;
     const cachedCheckedIds = new Set(cachedState?.checkedSteamIds ?? []);
 
+    // Refresh policy:
+    // - forceRefresh: always fetch all accounts
+    // - delayDays = 0: fetch once per session
+    // - delayDays > 0: fetch only unchecked IDs inside the delay window
     let idsToFetch: string[] = [];
     if (forceBanRefresh) {
       idsToFetch = steamIds;
@@ -290,7 +300,13 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
     try {
       accounts = await adapter.loadAccounts();
       currentAccount = await adapter.getCurrentAccount();
-      if (showRefreshedToast && !silent) {
+      if (getActiveTab() === "steam" && accounts.length === 0) {
+        const now = Date.now();
+        if (now - lastNoAccountsToastAt >= LOAD_TOAST_COOLDOWN_MS) {
+          addToast("No Steam accounts found. Sign in to Steam at least once, then refresh.");
+          lastNoAccountsToastAt = now;
+        }
+      } else if (showRefreshedToast && !silent) {
         const count = accounts.length;
         addToast(`${count} ${count === 1 ? "account" : "accounts"} refreshed`);
       }
@@ -300,7 +316,17 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
         void fetchBanStates(accounts, silent, forceRefresh);
       }
     } catch (e) {
-      error = String(e);
+      const message = String(e);
+      error = message;
+      accounts = [];
+      currentAccount = "";
+      if (getActiveTab() === "steam" && isSteamPathMissingError(message)) {
+        const now = Date.now();
+        if (now - lastSteamPathToastAt >= LOAD_TOAST_COOLDOWN_MS) {
+          addToast("Steam folder was not found. Set it manually in Settings > Steam folder.");
+          lastSteamPathToastAt = now;
+        }
+      }
     }
     loading = false;
   }
@@ -324,7 +350,7 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
       }
     } catch (e) {
       error = String(e);
-      addToast(error); // Toast errors on switch
+      addToast(error);
     }
     switching = false;
   }
@@ -348,7 +374,6 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
     get error() { return error; },
     get avatarStates() { return avatarStates; },
     get banStates() { return banStates; },
-    // notifCount removed
     load,
     switchTo,
     addNew,

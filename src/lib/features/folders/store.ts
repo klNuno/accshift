@@ -5,7 +5,7 @@ const CURRENT_VERSION = 1;
 
 function migrateStore(store: FolderStore): FolderStore {
   if (!store.version) {
-    // v0 -> v1: add version field
+    // Upgrade legacy payloads that did not store a schema version.
     store.version = CURRENT_VERSION;
   }
   return store;
