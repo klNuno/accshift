@@ -48,14 +48,15 @@
     if (s.enabledPlatforms.includes(s.defaultPlatformId)) return s.defaultPlatformId;
     return s.enabledPlatforms[0] || "steam";
   }
-  const startupPinLocked = false;
+  const startupSettings = getSettings();
+  const startupPinLocked = Boolean(startupSettings.pinEnabled && startupSettings.pinCode?.trim());
 
   // Platform management
-  let settings = $state(getSettings());
+  let settings = $state(startupSettings);
   let enabledPlatforms = $derived<PlatformDef[]>(
     ALL_PLATFORMS.filter(p => settings.enabledPlatforms.includes(p.id))
   );
-  let activeTab = $state(getInitialActiveTab(getSettings()));
+  let activeTab = $state(getInitialActiveTab(startupSettings));
   let accentColor = $derived(
     ALL_PLATFORMS.find(p => p.id === activeTab)?.accent || "#3b82f6"
   );
@@ -92,7 +93,6 @@
   let showSettings = $state(false);
   let inputDialog = $state<InputDialogConfig | null>(null);
   let isAccountSelectionView = $derived(!showSettings && !!adapter);
-  let wasInactive = $state(false);
   let cardColorVersion = $state(0);
   let isPinLocked = $state(startupPinLocked);
   let isPinUnlocking = $state(false);
@@ -100,7 +100,6 @@
   let pinError = $state("");
   let pinInputRef = $state<HTMLInputElement | null>(null);
   let afkListenersAttached = $state(false);
-  let pinLockEnabled = $derived(Boolean(settings.pinEnabled && settings.pinCode));
   let inactivityEnabled = $derived(settings.inactivityBlurSeconds > 0);
   let afkOverlayVisible = $derived(
     inactivityEnabled && blur.isBlurred && isAccountSelectionView && !isPinLocked && !isPinUnlocking
@@ -192,12 +191,17 @@
     showToast(`${label} copied`);
   }
 
-  function loadAccounts(silent = false, showRefreshedToast = false, forceRefresh = false) {
+  function loadAccounts(
+    silent = false,
+    showRefreshedToast = false,
+    forceRefresh = false,
+    checkBans = false
+  ) {
     loader.load(() => {
       syncAccounts(loader.accounts.map(a => a.id), activeTab);
       refreshCurrentItems();
       setTimeout(grid.calculatePadding, 0);
-    }, silent, showRefreshedToast, forceRefresh);
+    }, silent, showRefreshedToast, forceRefresh, checkBans);
   }
 
 
@@ -350,19 +354,6 @@
   }
 
   $effect(() => {
-    const inactive = inactivityEnabled && blur.isBlurred && isAccountSelectionView;
-    if (inactive && !wasInactive) {
-      if (pinLockEnabled) {
-        isPinLocked = true;
-        pinAttempt = "";
-        pinError = "";
-        setTimeout(() => pinInputRef?.focus(), 0);
-      }
-    }
-    wasInactive = inactive;
-  });
-
-  $effect(() => {
     const visible = afkOverlayVisible;
     if (afkWaveStopTimer) {
       clearTimeout(afkWaveStopTimer);
@@ -415,7 +406,7 @@
   }
 
   onMount(() => {
-    loadAccounts();
+    loadAccounts(false, false, false, true);
     blur.start();
     blur.attachListeners();
     afkListenersAttached = true;
@@ -454,7 +445,7 @@
   <div class="app-stage" class:locked={isPinLocked}>
     <div class="app-shell">
     <TitleBar
-      onRefresh={() => loadAccounts(false, true, true)}
+      onRefresh={() => loadAccounts(false, true, false, true)}
       onAddAccount={loader.addNew}
       onOpenSettings={() => { if (!showSettings) history.pushState({ tab: activeTab, folderId: currentFolderId, showSettings: true }, ""); showSettings = !showSettings; }}
       {activeTab}
@@ -647,7 +638,7 @@
           in:fly={{ y: 20, duration: 300 }}
           out:fly={{ y: 20, duration: 300 }}
         >
-          <Toast message={toast.message} onDone={() => removeToast(toast.id)} />
+          <Toast message={toast.message} durationMs={toast.durationMs} onDone={() => removeToast(toast.id)} />
         </div>
       {/each}
     </div>

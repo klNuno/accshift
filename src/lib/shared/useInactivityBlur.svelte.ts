@@ -3,19 +3,47 @@ import { getSettings } from "../features/settings/store";
 export function createInactivityBlur() {
   let lastActivity = Date.now();
   let isBlurred = $state(false);
-  let intervalId: number | undefined;
-  let lastActivityUpdate = 0;
+  let blurTimeoutId: number | undefined;
+
+  function clearBlurTimeout() {
+    if (blurTimeoutId !== undefined) {
+      clearTimeout(blurTimeoutId);
+      blurTimeoutId = undefined;
+    }
+  }
+
+  function scheduleBlurCheck() {
+    clearBlurTimeout();
+    const thresholdMs = getSettings().inactivityBlurSeconds * 1000;
+    if (thresholdMs <= 0) {
+      isBlurred = false;
+      return;
+    }
+
+    const elapsedMs = Date.now() - lastActivity;
+    const remainingMs = Math.max(0, thresholdMs - elapsedMs);
+    blurTimeoutId = setTimeout(() => {
+      const settings = getSettings();
+      if (settings.inactivityBlurSeconds <= 0) {
+        isBlurred = false;
+        return;
+      }
+
+      if (Date.now() - lastActivity >= settings.inactivityBlurSeconds * 1000) {
+        isBlurred = true;
+        return;
+      }
+
+      scheduleBlurCheck();
+    }, remainingMs) as unknown as number;
+  }
 
   function resetActivity() {
-    const now = Date.now();
-    // Throttle: update lastActivity at most once per second, except for unblur which is immediate
+    lastActivity = Date.now();
     if (isBlurred) {
-      lastActivity = now;
       isBlurred = false;
-    } else if (now - lastActivityUpdate > 1000) {
-      lastActivity = now;
-      lastActivityUpdate = now;
     }
+    scheduleBlurCheck();
   }
 
   function start() {
@@ -25,23 +53,12 @@ export function createInactivityBlur() {
       isBlurred = false;
       return;
     }
-    intervalId = setInterval(() => {
-      const s = getSettings();
-      if (s.inactivityBlurSeconds === 0) {
-        isBlurred = false;
-        return;
-      }
-      if (!isBlurred && Date.now() - lastActivity > s.inactivityBlurSeconds * 1000) {
-        isBlurred = true;
-      }
-    }, 1000) as unknown as number;
+    lastActivity = Date.now();
+    scheduleBlurCheck();
   }
 
   function stop() {
-    if (intervalId !== undefined) {
-      clearInterval(intervalId);
-      intervalId = undefined;
-    }
+    clearBlurTimeout();
   }
 
   function attachListeners() {
