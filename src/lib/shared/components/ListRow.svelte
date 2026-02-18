@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { PlatformAccount } from "../platform";
   import type { FolderInfo } from "../../features/folders/types";
+  import type { BanInfo } from "../../platforms/steam/types";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
 
   let {
@@ -12,6 +13,7 @@
     isDragged = false,
     isDragOver = false,
     avatarUrl = null,
+    banInfo = undefined,
     showUsername = true,
     showLastLogin = false,
     lastLoginAt = null,
@@ -27,6 +29,7 @@
     isDragged?: boolean;
     isDragOver?: boolean;
     avatarUrl?: string | null;
+    banInfo?: BanInfo;
     showUsername?: boolean;
     showLastLogin?: boolean;
     lastLoginAt?: number | null;
@@ -44,8 +47,33 @@
     e.stopPropagation();
     onContextMenu(e);
   }
+
+  let hasRedWarning = $derived.by(() =>
+    Boolean(banInfo && (banInfo.vac_banned || banInfo.number_of_game_bans > 0))
+  );
+
+  let hasOrangeWarning = $derived.by(() =>
+    Boolean(banInfo && banInfo.community_banned)
+  );
+
+  let banHoverMessage = $derived.by(() => {
+    if (!banInfo) return "";
+    const lines: string[] = [];
+    if (banInfo.community_banned) {
+      lines.push("Community ban");
+    }
+    if (banInfo.vac_banned) {
+      const vacCount = Math.max(1, banInfo.number_of_vac_bans || 0);
+      lines.push(`${vacCount} VAC ban${vacCount > 1 ? "s" : ""}`);
+    }
+    if (banInfo.number_of_game_bans > 0) {
+      lines.push(`${banInfo.number_of_game_bans} game ban${banInfo.number_of_game_bans > 1 ? "s" : ""}`);
+    }
+    return lines.join("\n");
+  });
 </script>
 
+<!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="row"
@@ -53,12 +81,15 @@
   class:active={isActive}
   class:dragging={isDragged}
   class:drag-over={isDragOver}
+  class:ban-red={hasRedWarning}
+  class:ban-orange={hasOrangeWarning}
   onclick={onClick}
   ondblclick={onDblClick}
   oncontextmenu={handleContextMenu}
   data-account-id={account?.id}
   data-folder-id={folder?.id}
   data-back-card={isBack ? "true" : undefined}
+  title={account && banHoverMessage ? banHoverMessage : undefined}
 >
   {#if isBack}
     <div class="icon back-icon">
@@ -80,7 +111,7 @@
       <span class="name-text">{folder.name}</span>
     </div>
   {:else if account}
-    <div class="avatar">
+    <div class="avatar" class:ban-red={hasRedWarning} class:ban-orange={hasOrangeWarning}>
       {#if avatarUrl}
         <img src={avatarUrl} alt={account.displayName} />
       {:else}
@@ -96,6 +127,16 @@
         <span class="meta-text">{formatRelativeTimeCompact(lastLoginAt)}</span>
       {/if}
     </div>
+    {#if hasRedWarning || hasOrangeWarning}
+      <div class="warnings">
+        {#if hasRedWarning}
+          <span class="warning warning-red">!</span>
+        {/if}
+        {#if hasOrangeWarning}
+          <span class="warning warning-orange">!</span>
+        {/if}
+      </div>
+    {/if}
     {#if isActive}
       <div class="active-badge">Active</div>
     {/if}
@@ -137,6 +178,14 @@
     background: rgba(59, 130, 246, 0.1);
   }
 
+  .row.ban-red {
+    border-color: rgba(239, 68, 68, 0.45);
+  }
+
+  .row.ban-orange:not(.ban-red) {
+    border-color: rgba(234, 179, 8, 0.45);
+  }
+
   .avatar {
     width: 32px;
     height: 32px;
@@ -148,6 +197,18 @@
     background: var(--bg-muted);
     flex-shrink: 0;
     pointer-events: none;
+  }
+
+  .avatar.ban-red {
+    outline: 2px solid rgba(239, 68, 68, 0.65);
+  }
+
+  .avatar.ban-orange {
+    box-shadow: 0 0 0 2px rgba(234, 179, 8, 0.7);
+  }
+
+  .avatar.ban-red.ban-orange {
+    box-shadow: 0 0 0 4px rgba(234, 179, 8, 0.45);
   }
 
   .avatar img {
@@ -209,7 +270,7 @@
   }
 
   .active-badge {
-    margin-left: auto;
+    margin-left: 6px;
     font-size: 9px;
     font-weight: 600;
     text-transform: uppercase;
@@ -217,5 +278,37 @@
     letter-spacing: 0.5px;
     flex-shrink: 0;
     pointer-events: none;
+  }
+
+  .warnings {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    pointer-events: none;
+  }
+
+  .warning {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1;
+  }
+
+  .warning-red {
+    background: rgba(239, 68, 68, 0.24);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.55);
+  }
+
+  .warning-orange {
+    background: rgba(251, 146, 60, 0.24);
+    color: #fdba74;
+    border: 1px solid rgba(251, 146, 60, 0.55);
   }
 </style>

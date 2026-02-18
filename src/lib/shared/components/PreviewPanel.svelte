@@ -28,6 +28,28 @@
   function getInitials(name: string): string {
     return name.slice(0, 2).toUpperCase();
   }
+
+  type BanWarningTone = "red" | "orange";
+  interface BanWarningChip {
+    tone: BanWarningTone;
+    text: string;
+  }
+
+  let banWarnings = $derived.by(() => {
+    if (!banInfo) return [] as BanWarningChip[];
+    const chips: BanWarningChip[] = [];
+    if (banInfo.community_banned) {
+      chips.push({ tone: "orange", text: "Community ban" });
+    }
+    if (banInfo.vac_banned) {
+      const vacCount = Math.max(1, banInfo.number_of_vac_bans || 0);
+      chips.push({ tone: "red", text: `${vacCount} VAC ban${vacCount > 1 ? "s" : ""}` });
+    }
+    if (banInfo.number_of_game_bans > 0) {
+      chips.push({ tone: "red", text: `${banInfo.number_of_game_bans} game ban${banInfo.number_of_game_bans > 1 ? "s" : ""}` });
+    }
+    return chips;
+  });
 </script>
 
 <div class="preview">
@@ -47,34 +69,29 @@
     <div class="meta">{formatRelativeTimeCompact(lastLoginAt)}</div>
   {/if}
 
-  {#if banInfo}
+  {#if banWarnings.length > 0}
     <div class="ban-badges">
-      {#if banInfo.vac_banned}
-        <span class="ban-badge vac">VAC</span>
-      {/if}
-      {#if banInfo.community_banned}
-        <span class="ban-badge community">BANNED</span>
-      {/if}
-      {#if banInfo.number_of_game_bans > 0}
-        <span class="ban-badge game">GAME BAN</span>
-      {/if}
+      {#each banWarnings as warning, index (`${warning.tone}-${warning.text}-${index}`)}
+        <span class="ban-badge" class:red={warning.tone === "red"} class:orange={warning.tone === "orange"}>
+          {warning.text}
+        </span>
+      {/each}
     </div>
   {/if}
 
   {#if isActive}
     <div class="status">Currently active</div>
-  {:else}
-    <button
-      class="switch-btn"
-      style="background: {accentColor};"
-      onclick={onSwitch}
-    >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M8 5v14l11-7z" />
-      </svg>
-      Switch Account
-    </button>
   {/if}
+  <button
+    class="switch-btn"
+    style="background: {accentColor};"
+    onclick={onSwitch}
+  >
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M8 5v14l11-7z" />
+    </svg>
+    {isActive ? "Switch Again" : "Switch Account"}
+  </button>
 </div>
 
 <style>
@@ -183,17 +200,12 @@
     text-transform: uppercase;
   }
 
-  .ban-badge.vac {
+  .ban-badge.red {
     background: rgba(239, 68, 68, 0.2);
     color: #f87171;
   }
 
-  .ban-badge.community {
-    background: rgba(239, 68, 68, 0.2);
-    color: #f87171;
-  }
-
-  .ban-badge.game {
+  .ban-badge.orange {
     background: rgba(251, 146, 60, 0.2);
     color: #fb923c;
   }

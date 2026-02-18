@@ -3,6 +3,7 @@ use crate::steam::accounts::{self, SteamAccount, CopyableGame};
 use crate::steam::bans::{self, BanInfo};
 use crate::steam::profile::{self, ProfileInfo};
 use crate::steam::registry;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -209,14 +210,21 @@ pub async fn get_player_bans(
     steam_ids: Vec<String>,
     client: tauri::State<'_, reqwest::Client>,
 ) -> Result<Vec<BanInfo>, String> {
-    for id in &steam_ids {
-        validate_steam_id(id)?;
+    let mut seen = HashSet::new();
+    let mut unique_steam_ids: Vec<String> = Vec::new();
+
+    for id in steam_ids {
+        validate_steam_id(&id)?;
+        if seen.insert(id.clone()) {
+            unique_steam_ids.push(id);
+        }
     }
-    let api_key = config::load_config(&app_handle).steam_api_key;
+
+    let api_key = config::load_config(&app_handle).steam_api_key.trim().to_string();
     if api_key.is_empty() {
         return Ok(vec![]);
     }
-    bans::fetch_player_bans(&client, &api_key, steam_ids).await
+    bans::fetch_player_bans(&client, &api_key, unique_steam_ids).await
 }
 
 #[tauri::command]
