@@ -14,9 +14,13 @@
   let steamEnabled = $derived(settings.enabledPlatforms.includes("steam"));
   let apiKey = $state("");
   let steamPath = $state("");
+  let avatarCacheDaysInput = $state("");
+  let banCheckDaysInput = $state("");
+  let inactivityBlurSecondsInput = $state("");
   let hydrated = $state(false);
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let lastSavedToastAt = 0;
+  let lastPersistedSnapshot = "";
   const SAVE_TOAST_COOLDOWN_MS = 1500;
 
   function clampInt(value: number, min: number, max: number, fallback: number): number {
@@ -42,12 +46,45 @@
     }
   }
 
+  function buildPersistSnapshot(): string {
+    return JSON.stringify({
+      settings,
+      apiKey: apiKey.trim(),
+      steamPath: steamPath.trim(),
+    });
+  }
+
+  function refreshNumericInputsFromSettings() {
+    avatarCacheDaysInput = String(settings.avatarCacheDays);
+    banCheckDaysInput = String(settings.banCheckDays);
+    inactivityBlurSecondsInput = String(settings.inactivityBlurSeconds);
+  }
+
+  function commitAvatarCacheDays() {
+    settings.avatarCacheDays = clampInt(Number(avatarCacheDaysInput), 0, 90, settings.avatarCacheDays);
+    avatarCacheDaysInput = String(settings.avatarCacheDays);
+  }
+
+  function commitBanCheckDays() {
+    settings.banCheckDays = clampInt(Number(banCheckDaysInput), 0, 90, settings.banCheckDays);
+    banCheckDaysInput = String(settings.banCheckDays);
+  }
+
+  function commitInactivityBlurSeconds() {
+    settings.inactivityBlurSeconds = clampInt(Number(inactivityBlurSecondsInput), 0, 3600, settings.inactivityBlurSeconds);
+    inactivityBlurSecondsInput = String(settings.inactivityBlurSeconds);
+  }
+
   async function persistNow() {
     normalizeSettings();
+    const snapshot = buildPersistSnapshot();
+    if (snapshot === lastPersistedSnapshot) return;
+
     saveSettings(settings);
     try {
       await invoke("set_api_key", { key: apiKey.trim() });
       await invoke("set_steam_path", { path: steamPath.trim() });
+      lastPersistedSnapshot = snapshot;
       const now = Date.now();
       if (now - lastSavedToastAt >= SAVE_TOAST_COOLDOWN_MS) {
         addToast("Settings saved");
@@ -75,6 +112,9 @@
       apiKey = "";
       steamPath = "";
     } finally {
+      normalizeSettings();
+      refreshNumericInputsFromSettings();
+      lastPersistedSnapshot = buildPersistSnapshot();
       hydrated = true;
     }
   });
@@ -194,7 +234,15 @@
           min="0"
           max="90"
           step="1"
-          bind:value={settings.avatarCacheDays}
+          value={avatarCacheDaysInput}
+          oninput={(e) => avatarCacheDaysInput = (e.currentTarget as HTMLInputElement).value}
+          onblur={commitAvatarCacheDays}
+          onkeydown={(e) => {
+            if (e.key === "Enter") {
+              commitAvatarCacheDays();
+              (e.currentTarget as HTMLInputElement).blur();
+            }
+          }}
           class="text-input number-input"
         />
       </label>
@@ -209,7 +257,15 @@
           min="0"
           max="90"
           step="1"
-          bind:value={settings.banCheckDays}
+          value={banCheckDaysInput}
+          oninput={(e) => banCheckDaysInput = (e.currentTarget as HTMLInputElement).value}
+          onblur={commitBanCheckDays}
+          onkeydown={(e) => {
+            if (e.key === "Enter") {
+              commitBanCheckDays();
+              (e.currentTarget as HTMLInputElement).blur();
+            }
+          }}
           class="text-input number-input"
         />
       </label>
@@ -227,7 +283,15 @@
           min="0"
           max="3600"
           step="5"
-          bind:value={settings.inactivityBlurSeconds}
+          value={inactivityBlurSecondsInput}
+          oninput={(e) => inactivityBlurSecondsInput = (e.currentTarget as HTMLInputElement).value}
+          onblur={commitInactivityBlurSeconds}
+          onkeydown={(e) => {
+            if (e.key === "Enter") {
+              commitInactivityBlurSeconds();
+              (e.currentTarget as HTMLInputElement).blur();
+            }
+          }}
           class="text-input number-input"
         />
       </label>
