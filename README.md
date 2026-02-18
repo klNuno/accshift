@@ -1,19 +1,38 @@
-# Accshift
-Fast desktop account switcher for Steam on Windows, built with Tauri 2 and Svelte 5.
+# accshift
+Fast multi-platform desktop account switcher, built with Tauri 2 and Svelte 5.
 
-[![Release](https://img.shields.io/github/v/release/klNuno/zazaSwitcher?display_name=tag)](https://github.com/klNuno/zazaSwitcher/releases)
-[![License](https://img.shields.io/github/license/klNuno/zazaSwitcher)](./LICENSE)
-[![Stars](https://img.shields.io/github/stars/klNuno/zazaSwitcher)](https://github.com/klNuno/zazaSwitcher/stargazers)
-[![Issues](https://img.shields.io/github/issues/klNuno/zazaSwitcher)](https://github.com/klNuno/zazaSwitcher/issues)
+[![Release](https://img.shields.io/github/v/release/klNuno/accshift?display_name=tag)](https://github.com/klNuno/accshift/releases)
+[![License](https://img.shields.io/github/license/klNuno/accshift)](./LICENSE)
+[![Stars](https://img.shields.io/github/stars/klNuno/accshift)](https://github.com/klNuno/accshift/stargazers)
+[![Issues](https://img.shields.io/github/issues/klNuno/accshift)](https://github.com/klNuno/accshift/issues)
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows)](#requirements)
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-24C8DB?logo=tauri)](https://tauri.app/)
 [![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte)](https://svelte.dev/)
+
+## Links
+- Releases: [github.com/klNuno/accshift/releases](https://github.com/klNuno/accshift/releases)
+- Issues: [github.com/klNuno/accshift/issues](https://github.com/klNuno/accshift/issues)
+- License: [LICENSE](./LICENSE)
 
 ## What It Does
 - Switches Steam accounts quickly from a single UI.
 - Organizes accounts with folders and drag-and-drop.
 - Supports profile/avatar refresh and ban checks (Steam Web API).
 - Includes configurable startup mode, launch options, and optional PIN lock.
+
+## Current Status
+### OS Support
+| OS | Status |
+| --- | --- |
+| Windows | ✅ Supported |
+| Linux | ❌ Not tested |
+| macOS | ❌ Not tested |
+
+### Platform Support
+| Platform | Status |
+| --- | --- |
+| Steam | ✅ Supported |
+| Riot Games | ❌ Not supported yet |
 
 ## Requirements
 - Windows 10/11
@@ -25,7 +44,7 @@ Fast desktop account switcher for Steam on Windows, built with Tauri 2 and Svelt
 ## Installation
 ### From Releases
 Download the latest installer from:
-`https://github.com/klNuno/zazaSwitcher/releases`
+`https://github.com/klNuno/accshift/releases`
 
 ### From Source
 ```bash
@@ -71,21 +90,8 @@ src-tauri/src/
     profile.rs
 ```
 
-## Roadmap
-- Add more platform adapters (Riot and others).
-- Improve account metadata sync and diagnostics.
-- Add CI workflows and automated tests.
-
-## Contributing
-Issues and pull requests are welcome.
-
-Recommended flow:
-1. Open an issue to discuss the change.
-2. Create a branch from `main`.
-3. Submit a pull request with context, screenshots, and test notes.
-
 ## License
-MIT. See `LICENSE`.
+MIT. See [LICENSE](./LICENSE).
 
 ## Disclaimer
-This project is not affiliated with Valve or Steam.
+This project is not affiliated with Valve or Riot Games.
