@@ -9,8 +9,13 @@
     onCancel: () => void;
   } = $props();
 
-  let value = $state(initialValue);
+  let value = $state("");
   let inputRef = $state<HTMLInputElement | null>(null);
+
+  $effect(() => {
+    initialValue;
+    value = initialValue;
+  });
 
   onMount(() => {
     inputRef?.focus();

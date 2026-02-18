@@ -11,8 +11,8 @@
 
   let menuRef = $state<HTMLDivElement | null>(null);
   let submenuRef = $state<HTMLDivElement | null>(null);
-  let adjustedX = $state(x);
-  let adjustedY = $state(y);
+  let adjustedX = $state(0);
+  let adjustedY = $state(0);
   let submenuItems = $state<ContextMenuItem[] | null>(null);
   let submenuTop = $state(0);
   let submenuLeft = $state(0);
@@ -54,6 +54,12 @@
   }
 
   onMount(() => {
+    void positionMenu();
+  });
+
+  $effect(() => {
+    x;
+    y;
     void positionMenu();
   });
 

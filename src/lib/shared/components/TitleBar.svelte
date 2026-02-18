@@ -37,6 +37,7 @@
   }
 </script>
 
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="titlebar" onmousedown={startDrag}>
   <div class="left">
     <button class="btn" onclick={onRefresh} title="Refresh">
