@@ -352,7 +352,7 @@
         />
 
         <ToggleSetting
-          label="Visible last login"
+          label="Show last login"
           enabled={settings.showLastLogin}
           onLabel="On"
           offLabel="Off"
