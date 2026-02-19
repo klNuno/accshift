@@ -62,11 +62,15 @@
   </div>
 
   <div class="display-name">{account.displayName || account.username}</div>
-  {#if showUsername}
-    <div class="username">{account.username}</div>
-  {/if}
-  {#if showLastLogin}
-    <div class="meta">{formatRelativeTimeCompact(lastLoginAt)}</div>
+  {#if showUsername || showLastLogin}
+    <div class="meta-stack">
+      {#if showUsername}
+        <span class="username">{account.username}</span>
+      {/if}
+      {#if showLastLogin}
+        <span class="meta">{formatRelativeTimeCompact(lastLoginAt)}</span>
+      {/if}
+    </div>
   {/if}
 
   {#if banWarnings.length > 0}
@@ -137,18 +141,27 @@
     word-break: break-word;
   }
 
-  .username {
+  .meta-stack {
+    margin-top: 4px;
+    max-width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
     font-size: 12px;
-    color: var(--fg-muted);
-    margin-top: 2px;
+    line-height: 1.2;
     text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .username {
+    color: var(--fg-muted);
   }
 
   .meta {
-    font-size: 11px;
-    color: var(--fg-subtle);
-    margin-top: 2px;
-    text-align: center;
+    font-weight: 500;
+    color: color-mix(in srgb, var(--fg-subtle) 40%, var(--fg) 60%);
   }
 
   .status {

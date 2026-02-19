@@ -176,11 +176,15 @@
     </span>
   </div>
 
-  {#if showUsername}
-    <div class="username">{account.username}</div>
-  {/if}
-  {#if showLastLogin}
-    <div class="last-login">{formatRelativeTimeCompact(lastLoginAt)}</div>
+  {#if showUsername || showLastLogin}
+    <div class="meta-stack">
+      {#if showUsername}
+        <div class="username">{account.username}</div>
+      {/if}
+      {#if showLastLogin}
+        <div class="last-login">{formatRelativeTimeCompact(lastLoginAt)}</div>
+      {/if}
+    </div>
   {/if}
 
 </div>
@@ -341,6 +345,7 @@
     font-size: 12px;
     font-weight: 500;
     color: var(--fg);
+    line-height: 1.2;
     white-space: nowrap;
   }
 
@@ -361,23 +366,30 @@
     100% { transform: translateX(calc(-1 * var(--marquee-shift, 0px))); }
   }
 
-  .username {
+  .meta-stack {
+    margin-top: 1px;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
     font-size: 10px;
+    line-height: 1.2;
+    pointer-events: none;
+  }
+
+  .username {
     color: var(--fg-muted);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    pointer-events: none;
   }
 
   .last-login {
-    margin-top: 1px;
-    font-size: 9px;
-    color: var(--fg-subtle);
+    font-size: 10px;
+    font-weight: 500;
+    color: color-mix(in srgb, var(--fg-subtle) 40%, var(--fg) 60%);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    pointer-events: none;
   }
 
   @keyframes spin {

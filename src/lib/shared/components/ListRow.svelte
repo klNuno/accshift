@@ -120,11 +120,15 @@
     </div>
     <div class="info">
       <span class="name-text">{account.displayName || account.username}</span>
-      {#if showUsername}
-        <span class="username-text">{account.username}</span>
-      {/if}
-      {#if showLastLogin}
-        <span class="meta-text">{formatRelativeTimeCompact(lastLoginAt)}</span>
+      {#if showUsername || showLastLogin}
+        <span class="meta-stack">
+          {#if showUsername}
+            <span class="username-text">{account.username}</span>
+          {/if}
+          {#if showLastLogin}
+            <span class="meta-text">{formatRelativeTimeCompact(lastLoginAt)}</span>
+          {/if}
+        </span>
       {/if}
     </div>
     {#if hasRedWarning || hasOrangeWarning}
@@ -240,7 +244,7 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
-    gap: 1px;
+    gap: 0;
     pointer-events: none;
   }
 
@@ -253,20 +257,24 @@
     text-overflow: ellipsis;
   }
 
-  .username-text {
+  .meta-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
     font-size: 10px;
-    color: var(--fg-muted);
+    line-height: 1.2;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
+  .username-text {
+    color: var(--fg-muted);
+  }
+
   .meta-text {
-    font-size: 10px;
-    color: var(--fg-subtle);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    font-weight: 500;
+    color: color-mix(in srgb, var(--fg-subtle) 40%, var(--fg) 60%);
   }
 
   .active-badge {
