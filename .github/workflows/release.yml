@@ -4,12 +4,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Tag to release (example: v0.1.1)"
-        required: true
-        type: string
 
 permissions:
   contents: write
@@ -23,14 +17,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Resolve release tag
         id: release_tag
         shell: pwsh
         run: |
-          $inputTag = "${{ github.event.inputs.tag }}"
-          $tag = if (-not [string]::IsNullOrWhiteSpace($inputTag)) { $inputTag } else { "${env:GITHUB_REF_NAME}" }
+          $tag = "${env:GITHUB_REF_NAME}"
 
           if (-not $tag.StartsWith("v")) {
             throw "Invalid tag '$tag'. Expected format: vX.Y.Z"
