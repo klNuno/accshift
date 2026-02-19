@@ -3,6 +3,7 @@ use crate::steam::accounts::{self, SteamAccount, CopyableGame};
 use crate::steam::bans::{self, BanInfo};
 use crate::steam::profile::{self, ProfileInfo};
 use crate::steam::registry;
+use serde::Serialize;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Command;
@@ -42,6 +43,13 @@ fn resolve_steam_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> 
     Ok(steam_path)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartupSnapshot {
+    pub accounts: Vec<SteamAccount>,
+    pub current_account: String,
+}
+
 #[tauri::command]
 pub fn get_api_key(app_handle: tauri::AppHandle) -> String {
     config::load_config(&app_handle).steam_api_key
@@ -60,6 +68,28 @@ pub fn get_steam_accounts(app_handle: tauri::AppHandle) -> Result<Vec<SteamAccou
     accounts::get_accounts(&steam_path).map_err(|e| {
         eprintln!("Error: {:?}", e);
         e.to_string()
+    })
+}
+
+#[tauri::command]
+pub fn get_startup_snapshot(app_handle: tauri::AppHandle) -> Result<StartupSnapshot, String> {
+    let steam_path = resolve_steam_path(&app_handle)?;
+    let (accounts, current_from_file) = accounts::get_accounts_snapshot(&steam_path).map_err(|e| {
+        eprintln!("Error: {:?}", e);
+        e.to_string()
+    })?;
+    let current_account = {
+        let from_registry = registry::get_auto_login_user().unwrap_or_default();
+        if from_registry.trim().is_empty() {
+            current_from_file
+        } else {
+            from_registry
+        }
+    };
+
+    Ok(StartupSnapshot {
+        accounts,
+        current_account,
     })
 }
 

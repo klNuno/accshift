@@ -6,7 +6,6 @@
   import TitleBar from "$lib/shared/components/TitleBar.svelte";
   import ContextMenu from "$lib/shared/components/ContextMenu.svelte";
   import InputDialog from "$lib/shared/components/InputDialog.svelte";
-  import Settings from "$lib/features/settings/Settings.svelte";
   import Toast from "$lib/features/notifications/Toast.svelte";
   import { getToasts, addToast, removeToast } from "$lib/features/notifications/store.svelte";
   import Breadcrumb from "$lib/features/folders/Breadcrumb.svelte";
@@ -41,6 +40,7 @@
     getFolderCardColor as getStoredFolderCardColor,
     setFolderCardColor,
   } from "$lib/shared/folderCardColors";
+  type SettingsComponentType = (typeof import("$lib/features/settings/Settings.svelte"))["default"];
 
   // Platform registration
   registerPlatform(steamAdapter);
@@ -91,6 +91,8 @@
 
   // Panel and dialog state
   let showSettings = $state(false);
+  let SettingsPanel = $state<SettingsComponentType | null>(null);
+  let settingsLoadPromise: Promise<void> | null = null;
   let inputDialog = $state<InputDialogConfig | null>(null);
   let isAccountSelectionView = $derived(!showSettings && !!adapter);
   let cardColorVersion = $state(0);
@@ -191,17 +193,55 @@
     showToast(`${label} copied`);
   }
 
+  function loadSettingsComponent() {
+    if (SettingsPanel) return Promise.resolve();
+    if (!settingsLoadPromise) {
+      settingsLoadPromise = import("$lib/features/settings/Settings.svelte")
+        .then((mod) => {
+          SettingsPanel = mod.default;
+        })
+        .catch((e) => {
+          console.error("Failed to load settings panel:", e);
+          addToast("Failed to load settings panel");
+          settingsLoadPromise = null;
+        });
+    }
+    return settingsLoadPromise;
+  }
+
+  function scheduleIdle(task: () => void) {
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+      const requestIdle = (
+        window as Window & {
+          requestIdleCallback: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+        }
+      ).requestIdleCallback;
+      requestIdle(() => task(), { timeout: 1200 });
+      return;
+    }
+    setTimeout(task, 600);
+  }
+
   function loadAccounts(
     silent = false,
     showRefreshedToast = false,
     forceRefresh = false,
-    checkBans = false
+    checkBans = false,
+    deferBackground = true,
   ) {
     loader.load(() => {
       syncAccounts(loader.accounts.map(a => a.id), activeTab);
       refreshCurrentItems();
       setTimeout(grid.calculatePadding, 0);
-    }, silent, showRefreshedToast, forceRefresh, checkBans);
+    }, silent, showRefreshedToast, forceRefresh, checkBans, deferBackground);
+  }
+
+  function toggleSettingsPanel() {
+    if (!showSettings) {
+      history.pushState({ tab: activeTab, folderId: currentFolderId, showSettings: true }, "");
+      void loadSettingsComponent();
+    }
+    showSettings = !showSettings;
   }
 
 
@@ -212,6 +252,9 @@
     activeTab = entry.tab;
     currentFolderId = entry.folderId;
     showSettings = entry.showSettings;
+    if (entry.showSettings) {
+      void loadSettingsComponent();
+    }
     if (settingsClosing) {
       settings = getSettings();
       blur.start();
@@ -406,7 +449,8 @@
   }
 
   onMount(() => {
-    loadAccounts(false, false, false, true);
+    loadAccounts(false, false, false, true, true);
+    scheduleIdle(() => { void loadSettingsComponent(); });
     blur.start();
     blur.attachListeners();
     afkListenersAttached = true;
@@ -447,7 +491,7 @@
     <TitleBar
       onRefresh={() => loadAccounts(false, true, false, true)}
       onAddAccount={loader.addNew}
-      onOpenSettings={() => { if (!showSettings) history.pushState({ tab: activeTab, folderId: currentFolderId, showSettings: true }, ""); showSettings = !showSettings; }}
+      onOpenSettings={toggleSettingsPanel}
       {activeTab}
       onTabChange={handleTabChange}
       {enabledPlatforms}
@@ -455,7 +499,14 @@
 
 {#if showSettings}
   <main class="content">
-    <Settings onClose={handleSettingsClose} onPlatformsChanged={handlePlatformsChanged} />
+    {#if SettingsPanel}
+      <SettingsPanel onClose={handleSettingsClose} onPlatformsChanged={handlePlatformsChanged} />
+    {:else}
+      <div class="center-msg">
+        <div class="spinner" style="border-top-color: {accentColor};"></div>
+        <p class="text-sm">Loading settings...</p>
+      </div>
+    {/if}
   </main>
 {:else if adapter}
   <!-- svelte-ignore a11y_no_static_element_interactions -->

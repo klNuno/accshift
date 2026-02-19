@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { SteamAccount, ProfileInfo, BanInfo, CopyableGame } from "./types";
+import type { SteamAccount, ProfileInfo, BanInfo, CopyableGame, SteamStartupSnapshot } from "./types";
 import { getSettings } from "../../features/settings/store";
 
 function getSteamLaunchConfig() {
@@ -16,6 +16,10 @@ export async function getAccounts(): Promise<SteamAccount[]> {
 
 export async function getCurrentAccount(): Promise<string> {
   return invoke<string>("get_current_account");
+}
+
+export async function getStartupSnapshot(): Promise<SteamStartupSnapshot> {
+  return invoke<SteamStartupSnapshot>("get_startup_snapshot");
 }
 
 export async function switchAccount(username: string): Promise<void> {

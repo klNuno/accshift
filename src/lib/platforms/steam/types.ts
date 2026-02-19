@@ -5,6 +5,11 @@ export interface SteamAccount {
   last_login_at?: number | null;
 }
 
+export interface SteamStartupSnapshot {
+  accounts: SteamAccount[];
+  currentAccount: string;
+}
+
 export interface ProfileInfo {
   avatar_url: string | null;
   display_name: string | null;

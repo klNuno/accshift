@@ -13,20 +13,44 @@ export const ACCOUNT_CARD_COLOR_PRESETS = [
 ] as const;
 
 type CardColorMap = Record<string, string>;
+let cachedMap: CardColorMap | null = null;
+const SAFE_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
+function isSafeColor(color: string): boolean {
+  return SAFE_COLOR_RE.test(color);
+}
+
+function sanitizeMap(value: unknown): CardColorMap {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out: CardColorMap = {};
+  for (const [key, rawColor] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof key !== "string" || key.trim().length === 0) continue;
+    if (typeof rawColor !== "string") continue;
+    if (!isSafeColor(rawColor)) continue;
+    out[key] = rawColor;
+  }
+  return out;
+}
 
 function readMap(): CardColorMap {
+  if (cachedMap) return cachedMap;
+
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as CardColorMap;
-    if (!parsed || typeof parsed !== "object") return {};
-    return parsed;
+    if (!raw) {
+      cachedMap = {};
+      return cachedMap;
+    }
+    cachedMap = sanitizeMap(JSON.parse(raw));
+    return cachedMap;
   } catch {
-    return {};
+    cachedMap = {};
+    return cachedMap;
   }
 }
 
 function writeMap(data: CardColorMap) {
+  cachedMap = data;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 
@@ -36,7 +60,7 @@ export function getAccountCardColor(accountId: string): string {
 
 export function setAccountCardColor(accountId: string, color: string) {
   const data = readMap();
-  if (!color) {
+  if (!color || !isSafeColor(color)) {
     delete data[accountId];
   } else {
     data[accountId] = color;

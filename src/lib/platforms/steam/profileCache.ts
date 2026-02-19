@@ -17,16 +17,65 @@ interface ProfileCache {
   [steamId: string]: CachedProfile;
 }
 
+let cachedProfiles: ProfileCache | null = null;
+
+function isSafeAvatarUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function sanitizeCachedProfile(value: unknown): CachedProfile | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Partial<CachedProfile>;
+  if (typeof raw.url !== "string" || raw.url.trim().length === 0 || !isSafeAvatarUrl(raw.url)) return null;
+  const timestamp = Number(raw.timestamp);
+  if (!Number.isFinite(timestamp) || timestamp < 0) return null;
+  return {
+    url: raw.url,
+    displayName: typeof raw.displayName === "string" ? raw.displayName : undefined,
+    vacBanned: typeof raw.vacBanned === "boolean" ? raw.vacBanned : undefined,
+    tradeBanState: typeof raw.tradeBanState === "string" ? raw.tradeBanState : undefined,
+    timestamp,
+  };
+}
+
 function getCache(): ProfileCache {
+  if (cachedProfiles) return cachedProfiles;
+
   try {
     const data = localStorage.getItem(CACHE_KEY);
-    return data ? JSON.parse(data) : {};
+    if (!data) {
+      cachedProfiles = {};
+      return cachedProfiles;
+    }
+    const parsed = JSON.parse(data) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object") {
+      cachedProfiles = {};
+      return cachedProfiles;
+    }
+
+    const out: ProfileCache = {};
+    for (const [steamId, cached] of Object.entries(parsed)) {
+      if (typeof steamId !== "string" || steamId.trim().length === 0) continue;
+      const sanitized = sanitizeCachedProfile(cached);
+      if (sanitized) {
+        out[steamId] = sanitized;
+      }
+    }
+    cachedProfiles = out;
+    return cachedProfiles;
   } catch {
-    return {};
+    cachedProfiles = {};
+    return cachedProfiles;
   }
 }
 
 function saveCache(cache: ProfileCache) {
+  cachedProfiles = cache;
   localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
 }
 
@@ -59,6 +108,7 @@ export function setCachedProfile(
   steamId: string,
   data: { url: string; displayName?: string; vacBanned?: boolean; tradeBanState?: string },
 ) {
+  if (!isSafeAvatarUrl(data.url)) return;
   const cache = getCache();
   cache[steamId] = {
     url: data.url,

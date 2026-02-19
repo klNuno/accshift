@@ -2,6 +2,65 @@ import type { FolderInfo, ItemRef, FolderStore } from "./types";
 
 const STORE_KEY = "accshift_folders";
 const CURRENT_VERSION = 1;
+let cachedStore: FolderStore | null = null;
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function sanitizeFolder(value: unknown): FolderInfo | null {
+  const raw = asRecord(value);
+  const id = typeof raw.id === "string" ? raw.id.trim() : "";
+  const name = typeof raw.name === "string" ? raw.name.trim() : "";
+  const platform = typeof raw.platform === "string" ? raw.platform.trim() : "";
+  const parentIdRaw = raw.parentId;
+  const parentId = parentIdRaw === null
+    ? null
+    : typeof parentIdRaw === "string" && parentIdRaw.trim().length > 0
+      ? parentIdRaw.trim()
+      : null;
+
+  if (!id || !name || !platform) return null;
+
+  return { id, name, parentId, platform };
+}
+
+function sanitizeItemRef(value: unknown): ItemRef | null {
+  const raw = asRecord(value);
+  const type = raw.type;
+  const id = typeof raw.id === "string" ? raw.id.trim() : "";
+  if (!id) return null;
+  if (type !== "account" && type !== "folder") return null;
+  return { type, id };
+}
+
+function sanitizeStore(value: unknown): FolderStore {
+  const raw = asRecord(value);
+  const foldersRaw = Array.isArray(raw.folders) ? raw.folders : [];
+  const folders = foldersRaw
+    .map(sanitizeFolder)
+    .filter((folder): folder is FolderInfo => folder !== null);
+  const validFolderIds = new Set(folders.map((folder) => folder.id));
+  const itemOrder: Record<string, ItemRef[]> = {};
+  const itemOrderRaw = asRecord(raw.itemOrder);
+
+  for (const [key, entry] of Object.entries(itemOrderRaw)) {
+    if (typeof key !== "string" || key.trim().length === 0) continue;
+    if (!Array.isArray(entry)) continue;
+    const refs = entry
+      .map(sanitizeItemRef)
+      .filter((item): item is ItemRef => item !== null)
+      .filter((item) => item.type !== "folder" || validFolderIds.has(item.id));
+    itemOrder[key] = refs;
+  }
+
+  return {
+    version: CURRENT_VERSION,
+    folders,
+    itemOrder,
+  };
+}
 
 function migrateStore(store: FolderStore): FolderStore {
   if (!store.version) {
@@ -12,17 +71,26 @@ function migrateStore(store: FolderStore): FolderStore {
 }
 
 function getStore(): FolderStore {
+  if (cachedStore) return cachedStore;
+
   try {
     const data = localStorage.getItem(STORE_KEY);
-    if (!data) return { version: CURRENT_VERSION, folders: [], itemOrder: {} };
-    const store = JSON.parse(data) as FolderStore;
-    return migrateStore(store);
+    if (!data) {
+      cachedStore = { version: CURRENT_VERSION, folders: [], itemOrder: {} };
+      return cachedStore;
+    }
+    const store = sanitizeStore(JSON.parse(data));
+    cachedStore = migrateStore(store);
+    return cachedStore;
   } catch {
-    return { version: CURRENT_VERSION, folders: [], itemOrder: {} };
+    cachedStore = { version: CURRENT_VERSION, folders: [], itemOrder: {} };
+    return cachedStore;
   }
 }
 
 function saveStore(store: FolderStore) {
+  store.version = CURRENT_VERSION;
+  cachedStore = store;
   localStorage.setItem(STORE_KEY, JSON.stringify(store));
 }
 

@@ -17,7 +17,7 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .manage(client)
         .setup(|app| {
-            let _win = tauri::WebviewWindowBuilder::new(
+            let mut window_builder = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
                 tauri::WebviewUrl::App("index.html".into()),
@@ -32,13 +32,19 @@ fn main() {
                 // Only allow app URLs to prevent WebView2 back/forward navigation.
                 let scheme = url.scheme();
                 scheme == "tauri" || scheme == "http" || scheme == "https"
-            })
-            .build()?;
+            });
+
+            if let Some(icon) = app.default_window_icon() {
+                window_builder = window_builder.icon(icon.clone())?;
+            }
+
+            let _win = window_builder.build()?;
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_steam_accounts,
+            commands::get_startup_snapshot,
             commands::get_current_account,
             commands::switch_account,
             commands::switch_account_mode,

@@ -1,6 +1,10 @@
 # accshift
 Fast multi-platform desktop account switcher, built with Tauri 2 and Svelte 5.
 
+<p align="center">
+  <img src="./public/vite.svg" alt="accshift logo" width="140" />
+</p>
+
 [![Release](https://img.shields.io/github/v/release/klNuno/accshift?display_name=tag)](https://github.com/klNuno/accshift/releases)
 [![License](https://img.shields.io/github/license/klNuno/accshift)](./LICENSE)
 [![Stars](https://img.shields.io/github/stars/klNuno/accshift)](https://github.com/klNuno/accshift/stargazers)
