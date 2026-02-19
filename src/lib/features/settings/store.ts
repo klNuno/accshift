@@ -21,24 +21,81 @@ const DEFAULTS: AppSettings = {
   pinEnabled: false,
   pinCode: "",
 };
+const PLATFORM_IDS = new Set(ALL_PLATFORMS.map((platform) => platform.id));
+let cachedSettings: AppSettings | null = null;
 
-export function getSettings(): AppSettings {
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(numeric)));
+}
+
+function sanitizeSettings(value: unknown): AppSettings {
+  const raw = asRecord(value);
+  const enabledPlatformsRaw = Array.isArray(raw.enabledPlatforms) ? raw.enabledPlatforms : [];
+  const enabledPlatforms = Array.from(new Set(
+    enabledPlatformsRaw
+      .filter((platformId): platformId is string => typeof platformId === "string")
+      .filter((platformId) => PLATFORM_IDS.has(platformId))
+  ));
+  const normalizedEnabledPlatforms = enabledPlatforms.length > 0
+    ? enabledPlatforms
+    : [...DEFAULTS.enabledPlatforms];
+
+  const defaultPlatformIdRaw = typeof raw.defaultPlatformId === "string" ? raw.defaultPlatformId : DEFAULTS.defaultPlatformId;
+  const defaultPlatformId = normalizedEnabledPlatforms.includes(defaultPlatformIdRaw)
+    ? defaultPlatformIdRaw
+    : normalizedEnabledPlatforms[0];
+
+  return {
+    theme: raw.theme === "light" ? "light" : "dark",
+    avatarCacheDays: clampInt(raw.avatarCacheDays, 0, 90, DEFAULTS.avatarCacheDays),
+    banCheckDays: clampInt(raw.banCheckDays, 0, 90, DEFAULTS.banCheckDays),
+    enabledPlatforms: normalizedEnabledPlatforms,
+    defaultPlatformId,
+    inactivityBlurSeconds: clampInt(raw.inactivityBlurSeconds, 0, 3600, DEFAULTS.inactivityBlurSeconds),
+    steamRunAsAdmin: Boolean(raw.steamRunAsAdmin),
+    steamLaunchOptions: typeof raw.steamLaunchOptions === "string" ? raw.steamLaunchOptions.trim().slice(0, 256) : "",
+    showUsernames: raw.showUsernames !== false,
+    showLastLogin: Boolean(raw.showLastLogin),
+    pinEnabled: Boolean(raw.pinEnabled),
+    pinCode: typeof raw.pinCode === "string" ? raw.pinCode.trim().slice(0, 32) : "",
+  };
+}
+
+function cloneSettings(settings: AppSettings): AppSettings {
+  return {
+    ...settings,
+    enabledPlatforms: [...settings.enabledPlatforms],
+  };
+}
+
+function loadSettingsFromStorage(): AppSettings {
   try {
     const data = localStorage.getItem(SETTINGS_KEY);
-    if (!data) return { ...DEFAULTS };
-    const parsed = JSON.parse(data);
-    return {
-      ...DEFAULTS,
-      ...parsed,
-      enabledPlatforms: parsed.enabledPlatforms || DEFAULTS.enabledPlatforms,
-    };
+    if (!data) return cloneSettings(DEFAULTS);
+    return sanitizeSettings(JSON.parse(data));
   } catch {
-    return { ...DEFAULTS };
+    return cloneSettings(DEFAULTS);
   }
 }
 
+export function getSettings(): AppSettings {
+  if (!cachedSettings) {
+    cachedSettings = loadSettingsFromStorage();
+  }
+  return cloneSettings(cachedSettings);
+}
+
 export function saveSettings(settings: AppSettings) {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  const sanitized = sanitizeSettings(settings);
+  cachedSettings = sanitized;
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(sanitized));
 }
 
 export function getCacheDuration(): number {

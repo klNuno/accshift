@@ -14,6 +14,10 @@ export interface PlatformAdapter {
 
   loadAccounts(): Promise<PlatformAccount[]>;
   getCurrentAccount(): Promise<string>;
+  getStartupSnapshot?(): Promise<{
+    accounts: PlatformAccount[];
+    currentAccount: string;
+  }>;
   switchAccount(account: PlatformAccount): Promise<void>;
   addAccount(): Promise<void>;
 

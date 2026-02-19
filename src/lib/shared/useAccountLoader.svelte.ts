@@ -75,6 +75,19 @@ function isSteamPathMissingError(message: string): boolean {
     || normalized.includes("could not read steam configuration");
 }
 
+function deferBackgroundTask(task: () => void) {
+  if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+    const requestIdle = (
+      window as Window & {
+        requestIdleCallback: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+      }
+    ).requestIdleCallback;
+    requestIdle(() => task(), { timeout: 600 });
+    return;
+  }
+  setTimeout(task, 0);
+}
+
 export function createAccountLoader(getAdapter: () => PlatformAdapter | undefined, getActiveTab: () => string) {
   // Centralized UI state for account loading, switching, avatars, and Steam ban checks.
   let accounts = $state<PlatformAccount[]>([]);
@@ -92,6 +105,7 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
   let activeBanCheckToastId: string | null = null;
   let lastSteamPathToastAt = 0;
   let lastNoAccountsToastAt = 0;
+  let latestLoadId = 0;
 
   async function refreshProfile(adapter: PlatformAdapter, account: PlatformAccount) {
     if (!adapter.getProfileInfo) return;
@@ -291,15 +305,23 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
     silent = false,
     showRefreshedToast = false,
     forceRefresh = false,
-    checkBans = false
+    checkBans = false,
+    deferBackground = false,
   ) {
     const adapter = getAdapter();
     if (!adapter) return;
+    const loadId = ++latestLoadId;
     loading = true;
     error = null;
     try {
-      accounts = await adapter.loadAccounts();
-      currentAccount = await adapter.getCurrentAccount();
+      if (adapter.getStartupSnapshot) {
+        const snapshot = await adapter.getStartupSnapshot();
+        accounts = snapshot.accounts;
+        currentAccount = snapshot.currentAccount;
+      } else {
+        accounts = await adapter.loadAccounts();
+        currentAccount = await adapter.getCurrentAccount();
+      }
       if (getActiveTab() === "steam" && accounts.length === 0) {
         const now = Date.now();
         if (now - lastNoAccountsToastAt >= LOAD_TOAST_COOLDOWN_MS) {
@@ -311,9 +333,18 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
         addToast(`${count} ${count === 1 ? "account" : "accounts"} refreshed`);
       }
       onAfterLoad?.();
-      void loadProfilesForAccounts(accounts, forceRefresh);
-      if (checkBans) {
-        void fetchBanStates(accounts, silent, forceRefresh);
+      const loadedAccounts = [...accounts];
+      const runBackgroundTasks = () => {
+        if (loadId !== latestLoadId) return;
+        void loadProfilesForAccounts(loadedAccounts, forceRefresh);
+        if (checkBans) {
+          void fetchBanStates(loadedAccounts, silent, forceRefresh);
+        }
+      };
+      if (deferBackground) {
+        deferBackgroundTask(runBackgroundTasks);
+      } else {
+        runBackgroundTasks();
       }
     } catch (e) {
       const message = String(e);

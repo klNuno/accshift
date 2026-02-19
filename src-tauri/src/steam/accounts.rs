@@ -29,6 +29,14 @@ pub struct CopyableGame {
     pub name: String,
 }
 
+struct ParsedLoginUser {
+    steam_id: String,
+    account_name: String,
+    persona_name: String,
+    last_login_at: Option<u64>,
+    is_most_recent: bool,
+}
+
 fn steam_id_to_account_id(steam_id64: &str) -> Option<u32> {
     let id: u64 = steam_id64.parse().ok()?;
     Some((id & 0xFFFFFFFF) as u32)
@@ -235,32 +243,20 @@ fn load_app_names(steam_path: &PathBuf) -> HashMap<String, String> {
 }
 
 pub fn get_current_account_name(steam_path: &PathBuf) -> Result<String, AppError> {
-    let loginusers_path = steam_path.join("config").join("loginusers.vdf");
-    let Ok(content) = fs::read_to_string(loginusers_path) else {
-        return Ok(String::new());
-    };
-
-    let parsed = parse_vdf(&content);
+    let users = parse_login_users(steam_path)?;
     let mut fallback: Option<(u64, String)> = None;
 
-    for (_, data) in parsed {
-        let account_name = data.get("accountname").cloned().unwrap_or_default();
+    for user in users {
+        let account_name = user.account_name;
         if account_name.is_empty() {
             continue;
         }
 
-        if data
-            .get("mostrecent")
-            .map(|v| v == "1")
-            .unwrap_or(false)
-        {
+        if user.is_most_recent {
             return Ok(account_name);
         }
 
-        let timestamp = data
-            .get("timestamp")
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(0);
+        let timestamp = user.last_login_at.unwrap_or(0);
 
         match &fallback {
             Some((prev_ts, _)) if *prev_ts >= timestamp => {}
@@ -272,6 +268,47 @@ pub fn get_current_account_name(steam_path: &PathBuf) -> Result<String, AppError
 }
 
 pub fn get_accounts(steam_path: &PathBuf) -> Result<Vec<SteamAccount>, AppError> {
+    let (accounts, _) = get_accounts_snapshot(steam_path)?;
+    Ok(accounts)
+}
+
+pub fn get_accounts_snapshot(steam_path: &PathBuf) -> Result<(Vec<SteamAccount>, String), AppError> {
+    let users = parse_login_users(steam_path)?;
+
+    let mut current_account = String::new();
+    let mut fallback: Option<(u64, String)> = None;
+    let mut accounts: Vec<SteamAccount> = Vec::with_capacity(users.len());
+
+    for user in users {
+        if !user.account_name.is_empty() {
+            if user.is_most_recent {
+                current_account = user.account_name.clone();
+            } else {
+                let timestamp = user.last_login_at.unwrap_or(0);
+                match &fallback {
+                    Some((prev_ts, _)) if *prev_ts >= timestamp => {}
+                    _ => fallback = Some((timestamp, user.account_name.clone())),
+                }
+            }
+        }
+
+        accounts.push(SteamAccount {
+            steam_id: user.steam_id,
+            account_name: user.account_name,
+            persona_name: user.persona_name,
+            last_login_at: user.last_login_at,
+        });
+    }
+
+    if current_account.is_empty() {
+        current_account = fallback.map(|(_, name)| name).unwrap_or_default();
+    }
+
+    accounts.sort_by(|a, b| a.account_name.cmp(&b.account_name));
+    Ok((accounts, current_account))
+}
+
+fn parse_login_users(steam_path: &PathBuf) -> Result<Vec<ParsedLoginUser>, AppError> {
     let loginusers_path = steam_path.join("config").join("loginusers.vdf");
     if !loginusers_path.exists() {
         return Ok(Vec::new());
@@ -282,18 +319,18 @@ pub fn get_accounts(steam_path: &PathBuf) -> Result<Vec<SteamAccount>, AppError>
 
     let parsed = parse_vdf(&content);
 
-    let mut accounts: Vec<SteamAccount> = parsed
+    let users: Vec<ParsedLoginUser> = parsed
         .into_iter()
-        .map(|(steam_id, data)| SteamAccount {
+        .map(|(steam_id, data)| ParsedLoginUser {
             steam_id,
             account_name: data.get("accountname").cloned().unwrap_or_default(),
             persona_name: data.get("personaname").cloned().unwrap_or_default(),
             last_login_at: data.get("timestamp").and_then(|ts| ts.parse::<u64>().ok()),
+            is_most_recent: data.get("mostrecent").map(|v| v == "1").unwrap_or(false),
         })
         .collect();
 
-    accounts.sort_by(|a, b| a.account_name.cmp(&b.account_name));
-    Ok(accounts)
+    Ok(users)
 }
 
 pub fn switch_account(

@@ -28,6 +28,14 @@ export const steamAdapter: PlatformAdapter = {
     return service.getCurrentAccount();
   },
 
+  async getStartupSnapshot() {
+    const snapshot = await service.getStartupSnapshot();
+    return {
+      accounts: snapshot.accounts.map(toAccount),
+      currentAccount: snapshot.currentAccount,
+    };
+  },
+
   async switchAccount(account: PlatformAccount): Promise<void> {
     await service.switchAccount(account.username);
   },
