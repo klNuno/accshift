@@ -5,6 +5,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (example: v0.1.1)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -16,6 +21,28 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Resolve release tag
+        id: release_tag
+        shell: pwsh
+        run: |
+          $inputTag = "${{ github.event.inputs.tag }}"
+          $tag = if (-not [string]::IsNullOrWhiteSpace($inputTag)) { $inputTag } else { "${env:GITHUB_REF_NAME}" }
+
+          if (-not $tag.StartsWith("v")) {
+            throw "Invalid tag '$tag'. Expected format: vX.Y.Z"
+          }
+
+          $version = $tag.TrimStart("v")
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "Invalid tag '$tag'. Version is empty."
+          }
+
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -37,10 +64,7 @@ jobs:
       - name: Validate versions against tag
         shell: pwsh
         run: |
-          $tag = "${env:GITHUB_REF_NAME}".TrimStart("v")
-          if ([string]::IsNullOrWhiteSpace($tag)) {
-            throw "Tag is empty. Expected format: vX.Y.Z"
-          }
+          $tag = "${{ steps.release_tag.outputs.version }}"
 
           $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $tauriVersion = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
@@ -79,11 +103,57 @@ jobs:
           $lines | Set-Content -Path $outFile -Encoding ascii
           Get-Content $outFile
 
-      - name: Create GitHub release (draft)
+      - name: Generate release changelog
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.release_tag.outputs.tag }}"
+          $prevTag = ""
+          try {
+            $prevTag = (git describe --tags --abbrev=0 "$tag^" 2>$null).Trim()
+          } catch {
+            $prevTag = ""
+          }
+
+          $range = if ([string]::IsNullOrWhiteSpace($prevTag)) { $tag } else { "$prevTag..$tag" }
+          $raw = git log --reverse --pretty=format:"@@@%n%s%n%b" $range
+          $entries = $raw -split "@@@\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_.Trim()) }
+
+          $notes = New-Object System.Collections.Generic.List[string]
+          $notes.Add("## Changelog")
+          $notes.Add("")
+
+          foreach ($entry in $entries) {
+            $lines = $entry -split "\r?\n"
+            $subject = $lines[0].Trim()
+            if ([string]::IsNullOrWhiteSpace($subject)) {
+              continue
+            }
+
+            $notes.Add("- $subject")
+            $bodyLines = $lines |
+              Select-Object -Skip 1 |
+              ForEach-Object { $_.Trim() } |
+              Where-Object { $_ -like "- *" }
+
+            foreach ($bodyLine in $bodyLines) {
+              $notes.Add("  $bodyLine")
+            }
+          }
+
+          if ($notes.Count -le 2) {
+            $notes.Add("- No changelog entries found.")
+          }
+
+          Set-Content -Path RELEASE_NOTES.md -Value $notes -Encoding utf8
+          Get-Content RELEASE_NOTES.md
+
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          draft: true
-          generate_release_notes: true
+          tag_name: ${{ steps.release_tag.outputs.tag }}
+          draft: false
+          generate_release_notes: false
+          body_path: RELEASE_NOTES.md
           files: |
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
