@@ -14,7 +14,9 @@ fn main() {
         .expect("failed to create HTTP client");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(client)
         .setup(|app| {
             let mut window_builder = tauri::WebviewWindowBuilder::new(
