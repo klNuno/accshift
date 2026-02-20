@@ -17,10 +17,9 @@
   import BackCard from "$lib/features/folders/BackCard.svelte";
   import { getSettings, ALL_PLATFORMS } from "$lib/features/settings/store";
   import type { PlatformDef } from "$lib/features/settings/types";
-  import type { PlatformAccount } from "$lib/shared/platform";
+  import type { PlatformAccount, PlatformContextMenuConfirmConfig } from "$lib/shared/platform";
   import { registerPlatform, getPlatform } from "$lib/shared/platform";
   import { steamAdapter } from "$lib/platforms/steam/adapter";
-  import { copyGameSettings, forgetAccount as forgetSteamAccount, getCopyableGames } from "$lib/platforms/steam/steamApi";
   import type { ContextMenuItem, InputDialogConfig } from "$lib/shared/types";
   import type { ItemRef, FolderInfo } from "$lib/features/folders/types";
   import {
@@ -45,12 +44,7 @@
     setFolderCardColor,
   } from "$lib/shared/folderCardColors";
   type SettingsComponentType = (typeof import("$lib/features/settings/Settings.svelte"))["default"];
-  type ConfirmDialogConfig = {
-    title: string;
-    message: string;
-    confirmLabel?: string;
-    onConfirm: () => void | Promise<void>;
-  };
+  type ConfirmDialogConfig = PlatformContextMenuConfirmConfig;
 
   // Platform registration
   registerPlatform(steamAdapter);
@@ -205,11 +199,12 @@
 
   function showToast(msg: string) { addToast(msg); }
 
-  function getCurrentSteamAccountId(): string | null {
-    if (activeTab !== "steam") return null;
+  function getCurrentContextAccountId(): string | null {
     const raw = (loader.currentAccount || "").trim();
-    if (/^\d{17}$/.test(raw)) return raw;
+    if (!raw) return null;
     const needle = raw.toLowerCase();
+    const direct = loader.accounts.find((a) => a.id.trim().toLowerCase() === needle);
+    if (direct) return direct.id;
     const current = loader.accounts.find((a) =>
       a.username.trim().toLowerCase() === needle ||
       (a.displayName || "").trim().toLowerCase() === needle
@@ -347,55 +342,16 @@
       const account = contextMenu.account;
       const currentColor = getAccountCardColor(account.id);
       const items: ContextMenuItem[] = [
-        ...adapter.getContextMenuItems(account, { copyToClipboard, showToast }),
-      ];
-
-      if (activeTab === "steam") {
-        const targetSteamId = getCurrentSteamAccountId();
-        if (targetSteamId && targetSteamId !== account.id) {
-          items.push({ separator: true });
-          items.push({
-            label: "Copy settings from",
-            submenuLoader: async () => {
-              const games = await getCopyableGames(account.id, targetSteamId);
-              return games.map((game) => ({
-                label: game.name,
-                action: async () => {
-                  try {
-                    await copyGameSettings(account.id, targetSteamId, game.app_id);
-                    showToast(`Copied ${game.name} settings to current account`);
-                  } catch (e) {
-                    showToast(String(e));
-                  }
-                },
-              }));
-            },
-          });
-        }
-
-        items.push({ separator: true });
-        items.push({
-          label: "Forget",
-          action: () => {
-            const display = (account.displayName || account.username).trim() || account.username;
-            confirmDialog = {
-              title: `Forget "${display}"?`,
-              message:
-                "This will remove this account from your Steam account list on this PC.",
-              confirmLabel: "Forget",
-              onConfirm: async () => {
-                try {
-                  await forgetSteamAccount(account.id);
-                  showToast(`Forgot ${account.username}`);
-                  loadAccounts(true);
-                } catch (e) {
-                  showToast(String(e));
-                }
-              },
-            };
+        ...adapter.getContextMenuItems(account, {
+          copyToClipboard,
+          showToast,
+          getCurrentAccountId: getCurrentContextAccountId,
+          refreshAccounts: () => loadAccounts(true),
+          confirmAction: (config) => {
+            confirmDialog = config;
           },
-        });
-      }
+        }),
+      ];
 
       items.push({ separator: true });
       items.push({

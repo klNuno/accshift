@@ -1,4 +1,4 @@
-import type { PlatformAdapter, PlatformAccount } from "../../shared/platform";
+import type { PlatformAdapter, PlatformAccount, PlatformContextMenuCallbacks } from "../../shared/platform";
 import type { ContextMenuItem } from "../../shared/types";
 import * as service from "./steamApi";
 import { getCachedProfile, fetchProfile } from "./profileCache";
@@ -46,7 +46,7 @@ export const steamAdapter: PlatformAdapter = {
 
   getContextMenuItems(
     account: PlatformAccount,
-    callbacks: { copyToClipboard: (text: string, label: string) => void; showToast: (msg: string) => void }
+    callbacks: PlatformContextMenuCallbacks
   ): ContextMenuItem[] {
     return getSteamContextMenuItems(account, callbacks);
   },

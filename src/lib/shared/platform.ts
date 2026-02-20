@@ -7,6 +7,21 @@ export interface PlatformAccount {
   lastLoginAt?: number | null;
 }
 
+export interface PlatformContextMenuConfirmConfig {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  onConfirm: () => void | Promise<void>;
+}
+
+export interface PlatformContextMenuCallbacks {
+  copyToClipboard: (text: string, label: string) => void | Promise<void>;
+  showToast: (msg: string) => void;
+  getCurrentAccountId: () => string | null;
+  refreshAccounts: () => void;
+  confirmAction: (config: PlatformContextMenuConfirmConfig) => void;
+}
+
 export interface PlatformAdapter {
   id: string;
   name: string;
@@ -21,10 +36,7 @@ export interface PlatformAdapter {
   switchAccount(account: PlatformAccount): Promise<void>;
   addAccount(): Promise<void>;
 
-  getContextMenuItems(account: PlatformAccount, callbacks: {
-    copyToClipboard: (text: string, label: string) => void;
-    showToast: (msg: string) => void;
-  }): ContextMenuItem[];
+  getContextMenuItems(account: PlatformAccount, callbacks: PlatformContextMenuCallbacks): ContextMenuItem[];
 
   getProfileInfo?(accountId: string): Promise<{
     avatar_url: string | null;
