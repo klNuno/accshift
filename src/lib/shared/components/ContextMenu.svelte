@@ -181,9 +181,34 @@
         <div class="submenu-state">No games found</div>
       {:else}
         {#each submenuItems as sub}
-          <button class="menu-item" onclick={() => { sub.action?.(); onClose(); }}>
-            {sub.label}
-          </button>
+          {#if sub.separator}
+            <div class="separator"></div>
+          {:else if sub.swatches}
+            <div class="swatch-group submenu-swatch-group">
+              <div class="swatch-label">{sub.label}</div>
+              <div class="swatch-row">
+                {#each sub.swatches as sw}
+                  <button
+                    class="swatch"
+                    class:active={sw.active}
+                    title={sw.label}
+                    aria-label={sw.label}
+                    onclick={() => { sw.action(); onClose(); }}
+                  >
+                    {#if sw.color}
+                      <span class="swatch-fill" style={`background:${sw.color};`}></span>
+                    {:else}
+                      <span class="swatch-fill default"></span>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {:else}
+            <button class="menu-item" onclick={() => { sub.action?.(); onClose(); }}>
+              {sub.label}
+            </button>
+          {/if}
         {/each}
       {/if}
     </div>
@@ -193,7 +218,7 @@
 <style>
   .context-menu {
     position: fixed;
-    z-index: 100;
+    z-index: 1200;
     min-width: 220px;
     padding: 4px;
     background: var(--bg-card);
@@ -296,6 +321,10 @@
     border: 1px solid var(--border);
     border-radius: 6px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  }
+
+  .submenu-swatch-group {
+    padding-top: 4px;
   }
 
   .submenu-state {

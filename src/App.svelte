@@ -40,6 +40,11 @@
     setAccountCardColor,
   } from "$lib/shared/accountCardColors";
   import {
+    getAccountCardNote as getStoredAccountCardNote,
+    setAccountCardNote,
+    clearAccountCardNote,
+  } from "$lib/shared/accountCardNotes";
+  import {
     getFolderCardColor as getStoredFolderCardColor,
     setFolderCardColor,
   } from "$lib/shared/folderCardColors";
@@ -101,6 +106,7 @@
   let confirmDialog = $state<ConfirmDialogConfig | null>(null);
   let isAccountSelectionView = $derived(!showSettings && !!adapter);
   let cardColorVersion = $state(0);
+  let cardNoteVersion = $state(0);
   let isPinLocked = $state(startupPinLocked);
   let isPinUnlocking = $state(false);
   let pinAttempt = $state("");
@@ -211,10 +217,16 @@
     );
     return current?.id ?? null;
   }
+  let currentAccountId = $derived(getCurrentContextAccountId());
 
   function getAccountCardColor(accountId: string): string {
     cardColorVersion;
     return getStoredAccountCardColor(accountId);
+  }
+
+  function getAccountNote(accountId: string): string {
+    cardNoteVersion;
+    return getStoredAccountCardNote(accountId);
   }
 
   function getFolderCardColor(folderId: string): string {
@@ -354,18 +366,44 @@
       ];
 
       items.push({ separator: true });
+      const existingNote = getAccountNote(account.id);
       items.push({
-        label: "Card color",
-        swatches: ACCOUNT_CARD_COLOR_PRESETS.map((preset) => ({
-          id: preset.id,
-          label: preset.label,
-          color: preset.color,
-          active: currentColor === preset.color,
-          action: () => {
-            setAccountCardColor(account.id, preset.color);
-            cardColorVersion += 1;
+        label: "Edit card and color",
+        submenu: [
+          {
+            label: existingNote ? "Edit note" : "Add note",
+            action: () => {
+              inputDialog = {
+                title: "Card note",
+                placeholder: "Write a short note",
+                initialValue: existingNote,
+                allowEmpty: true,
+                onConfirm: (note) => {
+                  if (note.trim()) {
+                    setAccountCardNote(account.id, note);
+                  } else {
+                    clearAccountCardNote(account.id);
+                  }
+                  cardNoteVersion += 1;
+                  inputDialog = null;
+                },
+              };
+            },
           },
-        })),
+          {
+            label: "Card color",
+            swatches: ACCOUNT_CARD_COLOR_PRESETS.map((preset) => ({
+              id: preset.id,
+              label: preset.label,
+              color: preset.color,
+              active: currentColor === preset.color,
+              action: () => {
+                setAccountCardColor(account.id, preset.color);
+                cardColorVersion += 1;
+              },
+            })),
+          },
+        ],
       });
       return items;
     }
@@ -655,9 +693,10 @@
           showUsernames={settings.showUsernames}
           showLastLogin={settings.showLastLogin}
           {currentFolderId}
-          currentAccount={loader.currentAccount}
+          {currentAccountId}
           avatarStates={loader.avatarStates}
           banStates={loader.banStates}
+          {getAccountNote}
           {accentColor}
           dragItem={drag.dragItem}
           dragOverFolderId={drag.dragOverFolderId}
@@ -710,10 +749,12 @@
                 <AccountCard
                   {account}
                   cardColor={getAccountCardColor(account.id)}
+                  note={getAccountNote(account.id)}
+                  showNoteInline={settings.showCardNotesInline}
                   showUsername={settings.showUsernames}
                   showLastLogin={settings.showLastLogin}
                   lastLoginAt={account.lastLoginAt}
-                  isActive={account.username === loader.currentAccount}
+                  isActive={account.id === currentAccountId}
                   onSwitch={() => loader.switchTo(account)}
                   onContextMenu={(e) => { contextMenu = { x: e.clientX, y: e.clientY, account }; }}
                   avatarUrl={avatarState?.url}
@@ -772,6 +813,7 @@
         title={inputDialog.title}
         placeholder={inputDialog.placeholder}
         initialValue={inputDialog.initialValue}
+        allowEmpty={inputDialog.allowEmpty}
         onConfirm={inputDialog.onConfirm}
         onCancel={() => inputDialog = null}
       />

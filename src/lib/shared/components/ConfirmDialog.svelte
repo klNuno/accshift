@@ -41,7 +41,7 @@
   .overlay {
     position: fixed;
     inset: 0;
-    z-index: 90;
+    z-index: 1100;
     display: flex;
     align-items: center;
     justify-content: center;

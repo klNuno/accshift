@@ -48,7 +48,6 @@ export function getSteamContextMenuItems(
 
   const targetSteamId = callbacks.getCurrentAccountId();
   if (targetSteamId && targetSteamId !== account.id) {
-    items.push({ separator: true });
     items.push({
       label: "Copy settings from",
       submenuLoader: async () => {
