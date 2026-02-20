@@ -40,10 +40,15 @@
   let nameContainerRef = $state<HTMLDivElement | null>(null);
   let nameRef = $state<HTMLSpanElement | null>(null);
   let isOverflowing = $state(false);
+  let isHovered = $state(false);
   let marqueeShiftPx = $state(0);
-  let marqueeDurationMs = $state(0);
+  let marqueeMoveDurationMs = $state(0);
+  let marqueeOffsetPx = $state(0);
+  let marqueePauseTimer: ReturnType<typeof setTimeout> | null = null;
+  let marqueeDirection = $state<"to-end" | "to-start">("to-end");
 
   const MARQUEE_SPEED_PX_PER_SEC = 42;
+  const MARQUEE_PAUSE_MS = 2000;
 
   // Visual severity hint for ban state.
   let banOutlineColor = $derived.by(() => {
@@ -83,17 +88,72 @@
     return () => {
       document.removeEventListener("mousedown", onDocClick);
       window.removeEventListener("resize", checkOverflow);
+      clearMarqueePauseTimer();
     };
   });
+
+  function clearMarqueePauseTimer() {
+    if (!marqueePauseTimer) return;
+    clearTimeout(marqueePauseTimer);
+    marqueePauseTimer = null;
+  }
+
+  function stopMarquee() {
+    clearMarqueePauseTimer();
+    marqueeOffsetPx = 0;
+    marqueeDirection = "to-end";
+  }
+
+  function stepMarquee() {
+    if (!isHovered || !isOverflowing || marqueeMoveDurationMs <= 0) return;
+    marqueeOffsetPx = marqueeDirection === "to-end" ? -marqueeShiftPx : 0;
+  }
+
+  function startMarquee() {
+    stopMarquee();
+    if (!isOverflowing || marqueeMoveDurationMs <= 0) return;
+    marqueeDirection = "to-end";
+    requestAnimationFrame(() => {
+      if (!isHovered || !isOverflowing) return;
+      stepMarquee();
+    });
+  }
+
+  function handleNameTransitionEnd(e: TransitionEvent) {
+    if (e.propertyName !== "transform") return;
+    if (!isHovered || !isOverflowing || marqueeMoveDurationMs <= 0) return;
+
+    clearMarqueePauseTimer();
+    marqueePauseTimer = setTimeout(() => {
+      if (!isHovered || !isOverflowing || marqueeMoveDurationMs <= 0) return;
+      marqueeDirection = marqueeDirection === "to-end" ? "to-start" : "to-end";
+      stepMarquee();
+    }, MARQUEE_PAUSE_MS);
+  }
+
+  function handleMouseEnter() {
+    isHovered = true;
+    startMarquee();
+  }
+
+  function handleMouseLeave() {
+    isHovered = false;
+    stopMarquee();
+  }
 
   function checkOverflow() {
     if (nameRef && nameContainerRef) {
       const overflowPx = Math.max(0, nameRef.scrollWidth - nameContainerRef.clientWidth);
       marqueeShiftPx = overflowPx;
       isOverflowing = overflowPx > 2;
-      marqueeDurationMs = overflowPx > 0
+      marqueeMoveDurationMs = overflowPx > 0
         ? Math.round((overflowPx / MARQUEE_SPEED_PX_PER_SEC) * 1000)
         : 0;
+      if (!isOverflowing) {
+        stopMarquee();
+      } else if (isHovered) {
+        startMarquee();
+      }
     }
   }
 
@@ -137,6 +197,8 @@
   bind:this={cardRef}
   onclick={handleClick}
   oncontextmenu={handleContextMenu}
+  onmouseenter={handleMouseEnter}
+  onmouseleave={handleMouseLeave}
   data-account-id={account.id}
   style={cardColor ? `--card-custom-color: ${cardColor};` : ""}
   class="card"
@@ -181,9 +243,10 @@
     class="name"
     bind:this={nameContainerRef}
     class:marquee={isOverflowing}
-    style={`--marquee-shift:${marqueeShiftPx}px;--marquee-duration:${marqueeDurationMs}ms;`}
+    class:marquee-active={isHovered && isOverflowing}
+    style={`--marquee-duration:${marqueeMoveDurationMs}ms;--marquee-offset:${marqueeOffsetPx}px;`}
   >
-    <span bind:this={nameRef} class="name-inner">
+    <span bind:this={nameRef} class="name-inner" ontransitionend={handleNameTransitionEnd}>
       {account.displayName || account.username}
     </span>
   </div>
@@ -369,6 +432,8 @@
     color: var(--fg);
     line-height: 1.2;
     white-space: nowrap;
+    transform: translateX(var(--marquee-offset, 0px));
+    transition: none;
   }
 
   .name:not(.marquee) .name-inner {
@@ -377,13 +442,8 @@
     text-overflow: ellipsis;
   }
 
-  .card:hover .name.marquee .name-inner {
-    animation: marquee var(--marquee-duration, 1600ms) linear infinite;
-  }
-
-  @keyframes marquee {
-    0% { transform: translateX(0); }
-    100% { transform: translateX(calc(-1 * var(--marquee-shift, 0px))); }
+  .name.marquee-active .name-inner {
+    transition: transform var(--marquee-duration, 1600ms) linear;
   }
 
   .meta-stack {
