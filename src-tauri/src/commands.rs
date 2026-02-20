@@ -179,6 +179,24 @@ pub async fn add_account(
 }
 
 #[tauri::command]
+pub async fn forget_account(
+    app_handle: tauri::AppHandle,
+    steam_id: String,
+) -> Result<(), String> {
+    validate_steam_id(&steam_id)?;
+    let steam_path = resolve_steam_path(&app_handle)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        accounts::forget_account(&steam_path, &steam_id)
+    })
+    .await
+    .map_err(|e| format!("Forget account task failed: {e}"))?
+    .map_err(|e| {
+        eprintln!("Error: {:?}", e);
+        e.to_string()
+    })
+}
+
+#[tauri::command]
 pub fn open_userdata(app_handle: tauri::AppHandle, steam_id: String) -> Result<(), String> {
     validate_steam_id(&steam_id)?;
     let steam_path = resolve_steam_path(&app_handle)?;

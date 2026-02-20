@@ -9,6 +9,7 @@
   import TitleBar from "$lib/shared/components/TitleBar.svelte";
   import ContextMenu from "$lib/shared/components/ContextMenu.svelte";
   import InputDialog from "$lib/shared/components/InputDialog.svelte";
+  import ConfirmDialog from "$lib/shared/components/ConfirmDialog.svelte";
   import Toast from "$lib/features/notifications/Toast.svelte";
   import { getToasts, addToast, removeToast } from "$lib/features/notifications/store.svelte";
   import Breadcrumb from "$lib/features/folders/Breadcrumb.svelte";
@@ -19,7 +20,7 @@
   import type { PlatformAccount } from "$lib/shared/platform";
   import { registerPlatform, getPlatform } from "$lib/shared/platform";
   import { steamAdapter } from "$lib/platforms/steam/adapter";
-  import { copyGameSettings, getCopyableGames } from "$lib/platforms/steam/steamApi";
+  import { copyGameSettings, forgetAccount as forgetSteamAccount, getCopyableGames } from "$lib/platforms/steam/steamApi";
   import type { ContextMenuItem, InputDialogConfig } from "$lib/shared/types";
   import type { ItemRef, FolderInfo } from "$lib/features/folders/types";
   import {
@@ -44,6 +45,12 @@
     setFolderCardColor,
   } from "$lib/shared/folderCardColors";
   type SettingsComponentType = (typeof import("$lib/features/settings/Settings.svelte"))["default"];
+  type ConfirmDialogConfig = {
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    onConfirm: () => void | Promise<void>;
+  };
 
   // Platform registration
   registerPlatform(steamAdapter);
@@ -97,6 +104,7 @@
   let SettingsPanel = $state<SettingsComponentType | null>(null);
   let settingsLoadPromise: Promise<void> | null = null;
   let inputDialog = $state<InputDialogConfig | null>(null);
+  let confirmDialog = $state<ConfirmDialogConfig | null>(null);
   let isAccountSelectionView = $derived(!showSettings && !!adapter);
   let cardColorVersion = $state(0);
   let isPinLocked = $state(startupPinLocked);
@@ -364,6 +372,29 @@
             },
           });
         }
+
+        items.push({ separator: true });
+        items.push({
+          label: "Forget",
+          action: () => {
+            const display = (account.displayName || account.username).trim() || account.username;
+            confirmDialog = {
+              title: `Forget "${display}"?`,
+              message:
+                "This will remove this account from your Steam account list on this PC.",
+              confirmLabel: "Forget",
+              onConfirm: async () => {
+                try {
+                  await forgetSteamAccount(account.id);
+                  showToast(`Forgot ${account.username}`);
+                  loadAccounts(true);
+                } catch (e) {
+                  showToast(String(e));
+                }
+              },
+            };
+          },
+        });
       }
 
       items.push({ separator: true });
@@ -787,6 +818,20 @@
         initialValue={inputDialog.initialValue}
         onConfirm={inputDialog.onConfirm}
         onCancel={() => inputDialog = null}
+      />
+    {/if}
+
+    {#if confirmDialog}
+      <ConfirmDialog
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        confirmLabel={confirmDialog.confirmLabel || "Confirm"}
+        onConfirm={() => {
+          const action = confirmDialog?.onConfirm;
+          confirmDialog = null;
+          void action?.();
+        }}
+        onCancel={() => confirmDialog = null}
       />
     {/if}
 
