@@ -4,6 +4,7 @@ node_modules/
 # Build outputs
 dist/
 src-tauri/target/
+src-tauri/keys/
 
 # IDE
 .vscode/
