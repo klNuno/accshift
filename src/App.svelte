@@ -104,11 +104,16 @@
   let pinAttempt = $state("");
   let pinError = $state("");
   let pinInputRef = $state<HTMLInputElement | null>(null);
+  let pageVisible = $state(true);
   let afkListenersAttached = $state(false);
   let inactivityEnabled = $derived(settings.inactivityBlurSeconds > 0);
+  let isObscured = $derived(
+    (inactivityEnabled && blur.isBlurred && isAccountSelectionView) || isPinLocked || isPinUnlocking
+  );
   let afkOverlayVisible = $derived(
     inactivityEnabled && blur.isBlurred && isAccountSelectionView && !isPinLocked && !isPinUnlocking
   );
+  let motionPaused = $derived(!pageVisible);
   const AFK_TEXT_FADE_MS = 900;
   let afkWaveActive = $state(false);
   let afkWaveStopTimer: ReturnType<typeof setTimeout> | null = null;
@@ -518,6 +523,10 @@
     setTimeout(() => pinInputRef?.focus(), 0);
   }
 
+  function handleVisibilityChange() {
+    pageVisible = document.visibilityState !== "hidden";
+  }
+
   onMount(() => {
     void getVersion()
       .then((v) => {
@@ -538,6 +547,8 @@
       pinError = "";
       setTimeout(() => pinInputRef?.focus(), 0);
     }
+    handleVisibilityChange();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     history.replaceState({ tab: activeTab, folderId: null, showSettings: false }, "");
     window.addEventListener("resize", grid.handleResize);
     document.addEventListener("mousemove", drag.handleDocMouseMove);
@@ -561,6 +572,7 @@
     document.removeEventListener("scroll", drag.handleDocScroll, true);
     document.removeEventListener("mouseup", drag.handleDocMouseUp);
     document.removeEventListener("click", drag.handleCaptureClick, true);
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
     window.removeEventListener("popstate", handlePopState);
     if (afkListenersAttached) blur.detachListeners();
     blur.stop();
@@ -568,7 +580,7 @@
   });
 </script>
 
-<div class="app-frame" class:inactive-blur={(inactivityEnabled && blur.isBlurred && isAccountSelectionView) || isPinLocked || isPinUnlocking}>
+<div class="app-frame" class:motion-paused={motionPaused}>
   <div class="app-stage" class:locked={isPinLocked}>
     <div class="app-shell">
     <TitleBar
@@ -592,6 +604,7 @@
         <span>{afkVersionLabel}</span>
       {/if}
     </div>
+    <div class="inactivity-frost" class:visible={isObscured} aria-hidden={!isObscured}></div>
 
 {#if showSettings}
   <main class="content">
@@ -608,7 +621,6 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <main
     class="content"
-    class:blurred={(inactivityEnabled && blur.isBlurred && isAccountSelectionView) || isPinLocked || isPinUnlocking}
     oncontextmenu={(e) => { e.preventDefault(); contextMenu = { x: e.clientX, y: e.clientY, isBackground: true }; }}
   >
     <div class="toolbar-row">
@@ -797,7 +809,7 @@
     aria-hidden={!afkOverlayVisible}
   >
     <span class="accshift-text">
-      <WaveText text="ACCSHIFT" active={afkWaveActive} respectReducedMotion={false} />
+      <WaveText text="ACCSHIFT" active={afkWaveActive && !motionPaused} respectReducedMotion={false} />
     </span>
   </div>
 
@@ -834,16 +846,10 @@
 
   .app-stage {
     height: 100%;
-    transition: filter 220ms ease-in-out;
   }
 
   .app-stage.locked {
     pointer-events: none;
-  }
-
-  .app-frame.inactive-blur .app-stage {
-    filter: grayscale(1);
-    transition: filter 2600ms ease-in-out;
   }
 
   .inactive-overlay {
@@ -908,6 +914,32 @@
     position: relative;
   }
 
+  .inactivity-frost {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 36px;
+    bottom: 0;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 40;
+    background:
+      linear-gradient(
+        to bottom,
+        color-mix(in srgb, var(--bg) 48%, transparent),
+        color-mix(in srgb, var(--bg) 62%, transparent)
+      );
+    backdrop-filter: blur(10px) saturate(85%);
+    -webkit-backdrop-filter: blur(10px) saturate(85%);
+    transition: opacity 220ms ease-out;
+  }
+
+  .inactivity-frost.visible {
+    opacity: 1;
+    transition-duration: 620ms;
+    transition-timing-function: ease-in-out;
+  }
+
   .afk-version-strip {
     position: absolute;
     left: 50%;
@@ -949,12 +981,6 @@
     color: var(--fg);
     display: flex;
     flex-direction: column;
-    transition: filter 0.3s ease-in-out;
-  }
-
-  .content.blurred {
-    filter: blur(20px);
-    transition: filter 2600ms ease-in-out;
   }
 
   .toolbar-row {
@@ -1127,6 +1153,12 @@
     font-weight: 700;
     padding: 9px 10px;
     cursor: pointer;
+  }
+
+  .app-frame.motion-paused :global(.spinner),
+  .app-frame.motion-paused :global(.loader),
+  .app-frame.motion-paused :global(.name.marquee .name-inner) {
+    animation-play-state: paused !important;
   }
 
   @keyframes spin {

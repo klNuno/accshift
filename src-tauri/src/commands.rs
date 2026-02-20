@@ -108,7 +108,7 @@ pub fn get_current_account(app_handle: tauri::AppHandle) -> Result<String, Strin
 }
 
 #[tauri::command]
-pub fn switch_account(
+pub async fn switch_account(
     app_handle: tauri::AppHandle,
     username: String,
     run_as_admin: bool,
@@ -116,14 +116,19 @@ pub fn switch_account(
 ) -> Result<(), String> {
     validate_username(&username)?;
     let steam_path = resolve_steam_path(&app_handle)?;
-    accounts::switch_account(&steam_path, &username, run_as_admin, &launch_options).map_err(|e| {
+    tauri::async_runtime::spawn_blocking(move || {
+        accounts::switch_account(&steam_path, &username, run_as_admin, &launch_options)
+    })
+    .await
+    .map_err(|e| format!("Switch account task failed: {e}"))?
+    .map_err(|e| {
         eprintln!("Error: {:?}", e);
         e.to_string()
     })
 }
 
 #[tauri::command]
-pub fn switch_account_mode(
+pub async fn switch_account_mode(
     app_handle: tauri::AppHandle,
     username: String,
     steam_id: String,
@@ -137,20 +142,37 @@ pub fn switch_account_mode(
         return Err("Invalid mode".into());
     }
     let steam_path = resolve_steam_path(&app_handle)?;
-    accounts::switch_account_mode(&steam_path, &username, &steam_id, &mode, run_as_admin, &launch_options).map_err(|e| {
+    tauri::async_runtime::spawn_blocking(move || {
+        accounts::switch_account_mode(
+            &steam_path,
+            &username,
+            &steam_id,
+            &mode,
+            run_as_admin,
+            &launch_options,
+        )
+    })
+    .await
+    .map_err(|e| format!("Switch account mode task failed: {e}"))?
+    .map_err(|e| {
         eprintln!("Error: {:?}", e);
         e.to_string()
     })
 }
 
 #[tauri::command]
-pub fn add_account(
+pub async fn add_account(
     app_handle: tauri::AppHandle,
     run_as_admin: bool,
     launch_options: String,
 ) -> Result<(), String> {
     let steam_path = resolve_steam_path(&app_handle)?;
-    accounts::add_account(&steam_path, run_as_admin, &launch_options).map_err(|e| {
+    tauri::async_runtime::spawn_blocking(move || {
+        accounts::add_account(&steam_path, run_as_admin, &launch_options)
+    })
+    .await
+    .map_err(|e| format!("Add account task failed: {e}"))?
+    .map_err(|e| {
         eprintln!("Error: {:?}", e);
         e.to_string()
     })
@@ -267,6 +289,15 @@ pub async fn get_player_bans(
 #[tauri::command]
 pub fn minimize_window(window: tauri::Window) {
     let _ = window.minimize();
+}
+
+#[tauri::command]
+pub fn toggle_maximize_window(window: tauri::Window) {
+    if matches!(window.is_maximized(), Ok(true)) {
+        let _ = window.unmaximize();
+    } else {
+        let _ = window.maximize();
+    }
 }
 
 #[tauri::command]

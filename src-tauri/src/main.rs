@@ -19,13 +19,16 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(client)
         .setup(|app| {
+            let (start_width, start_height) =
+                config::load_window_size(app.handle()).unwrap_or((900.0, 450.0));
+
             let mut window_builder = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
                 tauri::WebviewUrl::App("index.html".into()),
             )
             .title("Accshift")
-            .inner_size(900.0, 450.0)
+            .inner_size(start_width, start_height)
             .min_inner_size(400.0, 300.0)
             .center()
             .decorations(false)
@@ -40,7 +43,23 @@ fn main() {
                 window_builder = window_builder.icon(icon.clone())?;
             }
 
-            let _win = window_builder.build()?;
+            let win = window_builder.build()?;
+            let app_handle = app.handle().clone();
+            let win_for_events = win.clone();
+            win.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { .. } = event {
+                    if matches!(win_for_events.is_maximized(), Ok(true)) {
+                        return;
+                    }
+                    if let Ok(size) = win_for_events.inner_size() {
+                        let _ = config::save_window_size(
+                            &app_handle,
+                            f64::from(size.width),
+                            f64::from(size.height),
+                        );
+                    }
+                }
+            });
 
             Ok(())
         })
@@ -62,6 +81,7 @@ fn main() {
             commands::set_steam_path,
             commands::select_steam_path,
             commands::minimize_window,
+            commands::toggle_maximize_window,
             commands::close_window,
         ])
         .run(tauri::generate_context!())

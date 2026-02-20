@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "accshift"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "reqwest 0.11.27",
  "serde",
@@ -5667,3 +5667,4 @@ name = "zmij"
 version = "1.0.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfcd145825aace48cff44a8844de64bf75feec3080e0aa5cdbde72961ae51a65"
+

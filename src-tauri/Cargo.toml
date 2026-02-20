@@ -1,6 +1,6 @@
 [package]
 name = "accshift"
-version = "0.2.6"
+version = "0.2.7"
 description = "Account Switcher"
 authors = ["you"]
 edition = "2021"
@@ -25,3 +25,4 @@ codegen-units = 1
 lto = true
 opt-level = "s"
 strip = true
+

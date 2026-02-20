@@ -40,6 +40,10 @@
     invoke("minimize_window");
   }
 
+  function toggleMaximize() {
+    invoke("toggle_maximize_window");
+  }
+
   function close() {
     invoke("close_window");
   }
@@ -107,6 +111,12 @@
     <button class="win-btn" onclick={minimize} title="Minimize">
       <svg width="12" height="12" viewBox="0 0 12 12">
         <rect x="1" y="5.5" width="10" height="1" fill="currentColor" />
+      </svg>
+    </button>
+
+    <button class="win-btn" onclick={toggleMaximize} title="Maximize">
+      <svg width="12" height="12" viewBox="0 0 12 12">
+        <rect x="1.6" y="1.6" width="8.8" height="8.8" fill="none" stroke="currentColor" stroke-width="1.2" />
       </svg>
     </button>
 

@@ -37,6 +37,9 @@
     settings.inactivityBlurSeconds = clampInt(settings.inactivityBlurSeconds, 0, 3600, 60);
     settings.steamLaunchOptions = (settings.steamLaunchOptions || "").trim();
     settings.pinCode = (settings.pinCode || "").trim();
+    if (!settings.pinEnabled) {
+      settings.pinCode = "";
+    }
     if (!ALL_PLATFORMS.some(p => p.id === settings.defaultPlatformId)) {
       settings.defaultPlatformId = "steam";
     }
@@ -310,7 +313,12 @@
         accent="#eab308"
         onLabel="Enabled"
         offLabel="Disabled"
-        onToggle={() => settings.pinEnabled = !settings.pinEnabled}
+        onToggle={() => {
+          settings.pinEnabled = !settings.pinEnabled;
+          if (!settings.pinEnabled) {
+            settings.pinCode = "";
+          }
+        }}
       />
 
       {#if settings.pinEnabled}

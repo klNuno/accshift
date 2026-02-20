@@ -372,12 +372,21 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
       currentAccount = account.username;
       if (adapter.getProfileInfo) {
         avatarStates[account.id] = { ...avatarStates[account.id], refreshing: true };
-        const profile = await adapter.getProfileInfo(account.id);
-        if (profile) {
-          avatarStates[account.id] = { url: profile.avatar_url || avatarStates[account.id]?.url, loading: false, refreshing: false };
-        } else {
-          avatarStates[account.id] = { ...avatarStates[account.id], refreshing: false };
-        }
+        void adapter.getProfileInfo(account.id)
+          .then((profile) => {
+            if (profile) {
+              avatarStates[account.id] = {
+                url: profile.avatar_url || avatarStates[account.id]?.url,
+                loading: false,
+                refreshing: false,
+              };
+            } else {
+              avatarStates[account.id] = { ...avatarStates[account.id], refreshing: false };
+            }
+          })
+          .catch(() => {
+            avatarStates[account.id] = { ...avatarStates[account.id], refreshing: false };
+          });
       }
     } catch (e) {
       error = String(e);
