@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::collections::{HashMap, HashSet};
 
 use crate::error::AppError;
-use super::registry::{set_auto_login_user, clear_auto_login_user};
+use super::registry::{clear_auto_login_user, set_auto_login_user};
 use super::vdf::{parse_vdf, set_persona_state};
 
 const MAX_KILL_WAIT_MS: u64 = 5000;
@@ -333,6 +333,55 @@ fn parse_login_users(steam_path: &PathBuf) -> Result<Vec<ParsedLoginUser>, AppEr
     Ok(users)
 }
 
+fn remove_loginuser_entry(content: &str, steam_id: &str) -> (String, bool) {
+    let mut out: Vec<&str> = Vec::new();
+    let mut depth: i32 = 0;
+    let mut skipping = false;
+    let mut skip_depth: i32 = 0;
+    let mut removed = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        if skipping {
+            if trimmed == "{" {
+                depth += 1;
+                continue;
+            }
+            if trimmed == "}" {
+                depth -= 1;
+                if depth == skip_depth {
+                    skipping = false;
+                }
+                continue;
+            }
+            continue;
+        }
+
+        let parts: Vec<&str> = trimmed.split('"').collect();
+        if depth == 1 && parts.len() >= 2 && parts[1] == steam_id {
+            skipping = true;
+            skip_depth = depth;
+            removed = true;
+            continue;
+        }
+
+        out.push(line);
+        if trimmed == "{" {
+            depth += 1;
+        } else if trimmed == "}" {
+            depth -= 1;
+        }
+    }
+
+    let mut rebuilt = out.join("\n");
+    if content.ends_with('\n') {
+        rebuilt.push('\n');
+    }
+
+    (rebuilt, removed)
+}
+
 pub fn switch_account(
     steam_path: &PathBuf,
     username: &str,
@@ -352,6 +401,23 @@ pub fn add_account(
     kill_steam()?;
     clear_auto_login_user()?;
     launch_steam(&steam_path, run_as_admin, launch_options)
+}
+
+pub fn forget_account(steam_path: &PathBuf, steam_id: &str) -> Result<(), AppError> {
+    kill_steam()?;
+
+    // Remove account entry from loginusers.vdf.
+    let loginusers_path = steam_path.join("config").join("loginusers.vdf");
+    if loginusers_path.exists() {
+        let content = fs::read_to_string(&loginusers_path)
+            .map_err(|e| AppError::FileRead(e.to_string()))?;
+        let (updated, removed) = remove_loginuser_entry(&content, steam_id);
+        if removed {
+            fs::write(&loginusers_path, updated).map_err(|e| AppError::FileRead(e.to_string()))?;
+        }
+    }
+
+    Ok(())
 }
 
 pub fn switch_account_mode(

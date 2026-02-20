@@ -70,6 +70,7 @@ fn main() {
             commands::switch_account,
             commands::switch_account_mode,
             commands::add_account,
+            commands::forget_account,
             commands::open_userdata,
             commands::copy_game_settings,
             commands::get_copyable_games,

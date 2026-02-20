@@ -37,6 +37,10 @@ export async function addAccount(): Promise<void> {
   await invoke("add_account", cfg);
 }
 
+export async function forgetAccount(steamId: string): Promise<void> {
+  await invoke("forget_account", { steamId });
+}
+
 export async function openUserdata(steamId: string): Promise<void> {
   await invoke("open_userdata", { steamId });
 }
