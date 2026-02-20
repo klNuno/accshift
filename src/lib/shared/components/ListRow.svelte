@@ -113,7 +113,7 @@
   {:else if account}
     <div class="avatar" class:ban-red={hasRedWarning} class:ban-orange={hasOrangeWarning}>
       {#if avatarUrl}
-        <img src={avatarUrl} alt={account.displayName} />
+        <img src={avatarUrl} alt={account.displayName} draggable={false} />
       {:else}
         <span class="initials">{getInitials(account.displayName || account.username)}</span>
       {/if}
@@ -219,6 +219,8 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
+    -webkit-user-drag: none;
+    user-select: none;
   }
 
   .avatar .initials {

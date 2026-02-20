@@ -51,6 +51,10 @@ function sanitizeSettings(value: unknown): AppSettings {
   const defaultPlatformId = normalizedEnabledPlatforms.includes(defaultPlatformIdRaw)
     ? defaultPlatformIdRaw
     : normalizedEnabledPlatforms[0];
+  const pinEnabled = Boolean(raw.pinEnabled);
+  const pinCode = pinEnabled && typeof raw.pinCode === "string"
+    ? raw.pinCode.trim().slice(0, 32)
+    : "";
 
   return {
     theme: raw.theme === "light" ? "light" : "dark",
@@ -63,8 +67,8 @@ function sanitizeSettings(value: unknown): AppSettings {
     steamLaunchOptions: typeof raw.steamLaunchOptions === "string" ? raw.steamLaunchOptions.trim().slice(0, 256) : "",
     showUsernames: raw.showUsernames !== false,
     showLastLogin: Boolean(raw.showLastLogin),
-    pinEnabled: Boolean(raw.pinEnabled),
-    pinCode: typeof raw.pinCode === "string" ? raw.pinCode.trim().slice(0, 32) : "",
+    pinEnabled,
+    pinCode,
   };
 }
 

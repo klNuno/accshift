@@ -149,6 +149,7 @@
         <img
           src={avatarUrl}
           alt={account.displayName}
+          draggable={false}
           class:blurred={isRefreshingAvatar || showConfirm}
         />
         {#if isRefreshingAvatar}
@@ -260,7 +261,7 @@
     justify-content: center;
     background: var(--bg-muted);
     transition: background 150ms;
-    pointer-events: auto;
+    pointer-events: none;
   }
 
   .avatar-media {
@@ -279,6 +280,8 @@
     height: 100%;
     object-fit: cover;
     transition: filter 300ms ease-out;
+    -webkit-user-drag: none;
+    user-select: none;
   }
 
   .avatar-media img.blurred {
@@ -303,6 +306,7 @@
     align-items: center;
     justify-content: center;
     animation: fadeIn 150ms ease-out;
+    pointer-events: none;
   }
 
   @keyframes fadeIn {
