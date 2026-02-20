@@ -1,7 +1,7 @@
 {
   "name": "accshift",
   "private": true,
-  "version": "0.2.7",
+  "version": "0.2.8",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -27,4 +27,6 @@
     "vite": "^6.0.0"
   }
 }
+
+
 
