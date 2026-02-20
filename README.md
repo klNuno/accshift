@@ -36,7 +36,8 @@
     </tr>
     <tr>
       <td>Riot Games</td>
-      <td>❌ Not supported yet</td>
+      <td>🚧 Planned</td>
+      <td>🚧 Planned</td>
     </tr>
   </tbody>
 </table>
@@ -59,11 +60,11 @@
     </tr>
     <tr>
       <td>Linux</td>
-      <td>❌ Not tested</td>
+      <td>🚧 Planned</td>
     </tr>
     <tr>
       <td>macOS</td>
-      <td>❌ Not tested</td>
+      <td>🚧 Planned</td>
     </tr>
   </tbody>
 </table>
