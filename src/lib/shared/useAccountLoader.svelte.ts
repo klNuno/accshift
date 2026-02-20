@@ -398,7 +398,8 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
   async function addNew() {
     const adapter = getAdapter();
     if (!adapter) return;
-    try { await adapter.addAccount(); } catch (e) { 
+    currentAccount = "";
+    try { await adapter.addAccount(); } catch (e) {
       error = String(e);
       addToast(error);
     }
