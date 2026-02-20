@@ -41,6 +41,9 @@
   let nameRef = $state<HTMLSpanElement | null>(null);
   let isOverflowing = $state(false);
   let marqueeShiftPx = $state(0);
+  let marqueeDurationMs = $state(0);
+
+  const MARQUEE_SPEED_PX_PER_SEC = 42;
 
   // Visual severity hint for ban state.
   let banOutlineColor = $derived.by(() => {
@@ -88,6 +91,9 @@
       const overflowPx = Math.max(0, nameRef.scrollWidth - nameContainerRef.clientWidth);
       marqueeShiftPx = overflowPx;
       isOverflowing = overflowPx > 2;
+      marqueeDurationMs = overflowPx > 0
+        ? Math.round((overflowPx / MARQUEE_SPEED_PX_PER_SEC) * 1000)
+        : 0;
     }
   }
 
@@ -171,7 +177,12 @@
     </div>
   </div>
 
-  <div class="name" bind:this={nameContainerRef} class:marquee={isOverflowing} style={`--marquee-shift:${marqueeShiftPx}px;`}>
+  <div
+    class="name"
+    bind:this={nameContainerRef}
+    class:marquee={isOverflowing}
+    style={`--marquee-shift:${marqueeShiftPx}px;--marquee-duration:${marqueeDurationMs}ms;`}
+  >
     <span bind:this={nameRef} class="name-inner">
       {account.displayName || account.username}
     </span>
@@ -224,9 +235,16 @@
   }
 
   .card.active {
-    background: var(--bg-card-hover);
     outline: 2px solid rgba(255, 255, 255, 0.4);
     cursor: pointer;
+  }
+
+  .card.active:not(.custom-color) {
+    background: var(--bg-card-hover);
+  }
+
+  .card.custom-color.active {
+    background: color-mix(in srgb, var(--card-custom-color) 24%, var(--bg-card));
   }
 
   .card.ban-red {
@@ -360,13 +378,11 @@
   }
 
   .card:hover .name.marquee .name-inner {
-    animation: marquee 1.6s linear infinite;
+    animation: marquee var(--marquee-duration, 1600ms) linear infinite;
   }
 
   @keyframes marquee {
     0% { transform: translateX(0); }
-    10% { transform: translateX(0); }
-    90% { transform: translateX(calc(-1 * var(--marquee-shift, 0px))); }
     100% { transform: translateX(calc(-1 * var(--marquee-shift, 0px))); }
   }
 
