@@ -2,6 +2,9 @@
   import { onMount, onDestroy } from "svelte";
   import { flip } from "svelte/animate";
   import { fly } from "svelte/transition";
+  import { getVersion } from "@tauri-apps/api/app";
+  import { check } from "@tauri-apps/plugin-updater";
+  import { relaunch } from "@tauri-apps/plugin-process";
   import AccountCard from "$lib/shared/components/AccountCard.svelte";
   import TitleBar from "$lib/shared/components/TitleBar.svelte";
   import ContextMenu from "$lib/shared/components/ContextMenu.svelte";
@@ -109,6 +112,27 @@
   const AFK_TEXT_FADE_MS = 900;
   let afkWaveActive = $state(false);
   let afkWaveStopTimer: ReturnType<typeof setTimeout> | null = null;
+  let updateCheckTimer: ReturnType<typeof setTimeout> | null = null;
+  let updateCheckStarted = false;
+
+  type PendingUpdate = NonNullable<Awaited<ReturnType<typeof check>>>;
+  type UpdateState = "idle" | "checking" | "downloading" | "ready";
+  let updateState = $state<UpdateState>("idle");
+  let updateVersion = $state("");
+  let pendingUpdate = $state<PendingUpdate | null>(null);
+  let appVersion = $state("");
+
+  function semverCore(version: string): string {
+    const match = version.match(/\d+\.\d+\.\d+/);
+    return match ? match[0] : version;
+  }
+
+  let updateCtaLabel = $derived(updateState === "ready" ? "Update available" : null);
+  let updateCtaTitle = $derived(
+    updateVersion ? `Restart to apply update ${updateVersion}` : "Restart to apply update"
+  );
+  let updateCtaDisabled = $derived(false);
+  let afkVersionLabel = $derived(afkOverlayVisible && appVersion ? appVersion : null);
 
   // Toast state
   let toasts = $derived(getToasts());
@@ -396,6 +420,46 @@
     }
   }
 
+  async function startBackgroundUpdateFlow() {
+    if (import.meta.env.DEV) return;
+    if (updateCheckStarted) return;
+    updateCheckStarted = true;
+    updateState = "checking";
+
+    try {
+      const update = await check();
+      if (!update) {
+        updateState = "idle";
+        return;
+      }
+
+      pendingUpdate = update;
+      updateVersion = update.version;
+      updateState = "downloading";
+
+      await update.downloadAndInstall();
+
+      updateState = "ready";
+      addToast(updateVersion ? `Update ${updateVersion} ready` : "Update ready");
+    } catch (e) {
+      console.error("Updater check/download failed:", e);
+      pendingUpdate = null;
+      updateVersion = "";
+      updateState = "idle";
+    }
+  }
+
+  async function applyReadyUpdate() {
+    if (updateState !== "ready" || !pendingUpdate) return;
+
+    try {
+      await relaunch();
+    } catch (e) {
+      console.error("Failed to restart for update:", e);
+      addToast("Could not restart to apply update");
+    }
+  }
+
   $effect(() => {
     const visible = afkOverlayVisible;
     if (afkWaveStopTimer) {
@@ -449,8 +513,17 @@
   }
 
   onMount(() => {
+    void getVersion()
+      .then((v) => {
+        appVersion = semverCore(v);
+      })
+      .catch((e) => {
+        console.error("Failed to read app version:", e);
+      });
+
     loadAccounts(false, false, false, true, true);
     scheduleIdle(() => { void loadSettingsComponent(); });
+    updateCheckTimer = setTimeout(() => { void startBackgroundUpdateFlow(); }, 3500);
     blur.start();
     blur.attachListeners();
     afkListenersAttached = true;
@@ -473,6 +546,10 @@
       clearTimeout(afkWaveStopTimer);
       afkWaveStopTimer = null;
     }
+    if (updateCheckTimer) {
+      clearTimeout(updateCheckTimer);
+      updateCheckTimer = null;
+    }
     window.removeEventListener("resize", grid.handleResize);
     document.removeEventListener("mousemove", drag.handleDocMouseMove);
     document.removeEventListener("scroll", drag.handleDocScroll, true);
@@ -492,6 +569,11 @@
       onRefresh={() => loadAccounts(false, true, false, true)}
       onAddAccount={loader.addNew}
       onOpenSettings={toggleSettingsPanel}
+      onApplyUpdate={applyReadyUpdate}
+      updateCtaLabel={updateCtaLabel}
+      updateCtaTitle={updateCtaTitle}
+      updateCtaDisabled={updateCtaDisabled}
+      afkVersionLabel={afkVersionLabel}
       {activeTab}
       onTabChange={handleTabChange}
       {enabledPlatforms}

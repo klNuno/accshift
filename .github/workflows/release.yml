@@ -71,7 +71,19 @@ jobs:
             throw "Version mismatch. tag=$tag package.json=$packageVersion tauri.conf.json=$tauriVersion Cargo.toml=$cargoVersion"
           }
 
+      - name: Validate updater signing key secret
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw "Missing GitHub secret TAURI_SIGNING_PRIVATE_KEY. Auto-update artifacts cannot be signed."
+          }
+
       - name: Build Tauri bundles
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build
 
       - name: Generate SHA256 checksums
@@ -216,6 +228,55 @@ jobs:
           $notesText >> $env:GITHUB_OUTPUT
           "EOF" >> $env:GITHUB_OUTPUT
 
+      - name: Generate updater manifest
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.release_tag.outputs.tag }}"
+          $version = "${{ steps.release_tag.outputs.version }}"
+          $repo = "${{ github.repository }}"
+          $bundleDir = "src-tauri/target/release/bundle"
+
+          $primaryAsset = Get-ChildItem "$bundleDir/nsis/*.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $primaryAsset) {
+            $primaryAsset = Get-ChildItem "$bundleDir/msi/*.msi" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $primaryAsset) {
+            throw "Could not find a release installer asset (.exe or .msi) to reference in latest.json"
+          }
+
+          $sigPath = "$($primaryAsset.FullName).sig"
+          if (-not (Test-Path $sigPath)) {
+            throw "Missing updater signature file for $($primaryAsset.Name): $sigPath"
+          }
+
+          $signature = (Get-Content $sigPath -Raw).Trim()
+          if ([string]::IsNullOrWhiteSpace($signature)) {
+            throw "Signature file is empty: $sigPath"
+          }
+
+          $notes = (Get-Content RELEASE_NOTES.md -Raw).Trim()
+          if ([string]::IsNullOrWhiteSpace($notes)) {
+            $notes = "No changelog entries found."
+          }
+
+          $assetUrl = "https://github.com/$repo/releases/download/$tag/$($primaryAsset.Name)"
+
+          $manifest = @{
+            version = $version
+            notes = $notes
+            pub_date = (Get-Date).ToUniversalTime().ToString("o")
+            platforms = @{
+              "windows-x86_64" = @{
+                signature = $signature
+                url = $assetUrl
+              }
+            }
+          }
+
+          $manifestPath = Join-Path $bundleDir "latest.json"
+          $manifest | ConvertTo-Json -Depth 8 | Set-Content -Path $manifestPath -Encoding utf8
+          Get-Content $manifestPath
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -225,5 +286,8 @@ jobs:
           body: ${{ steps.changelog.outputs.body }}
           files: |
             src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.sig
             src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/msi/*.sig
             src-tauri/target/release/bundle/SHA256SUMS.txt
+            src-tauri/target/release/bundle/latest.json
