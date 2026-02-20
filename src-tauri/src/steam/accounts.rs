@@ -3,17 +3,30 @@ use std::fs;
 use std::process::Command;
 use std::path::{Path, PathBuf};
 use std::collections::{HashMap, HashSet};
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 
 use crate::error::AppError;
 use super::registry::{clear_auto_login_user, set_auto_login_user};
 use super::vdf::{parse_vdf, set_persona_state};
 
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 const MAX_KILL_WAIT_MS: u64 = 5000;
 const KILL_POLL_INTERVAL_MS: u64 = 500;
 const NON_GAME_APP_IDS: &[&str] = &[
     "7",   // Steam client internals
     "760", // Steam community / screenshots
 ];
+
+fn hidden_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SteamAccount {
@@ -43,7 +56,7 @@ fn steam_id_to_account_id(steam_id64: &str) -> Option<u32> {
 }
 
 fn is_steam_running() -> bool {
-    let output = Command::new("tasklist")
+    let output = hidden_command("tasklist")
         .args(["/FI", "IMAGENAME eq steam.exe", "/NH"])
         .output();
     match output {
@@ -60,7 +73,7 @@ fn kill_steam() -> Result<(), AppError> {
         return Ok(());
     }
 
-    let _ = Command::new("taskkill")
+    let _ = hidden_command("taskkill")
         .args(["/F", "/IM", "steam.exe"])
         .output();
 
@@ -105,12 +118,12 @@ fn launch_steam(
             "Start-Process -FilePath '{}' -Verb RunAs{}",
             exe, arg_list
         );
-        Command::new("powershell")
+        hidden_command("powershell")
             .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps])
             .spawn()
             .map_err(|e| AppError::ProcessStart(e.to_string()))?;
     } else {
-        Command::new(&steam_exe)
+        hidden_command(&steam_exe)
             .args(args)
             .spawn()
             .map_err(|e| AppError::ProcessStart(e.to_string()))?;
