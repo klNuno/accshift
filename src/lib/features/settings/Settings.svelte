@@ -165,6 +165,14 @@
     }
   }
 
+  async function openSteamApiKeyPage() {
+    try {
+      await invoke("open_steam_api_key_page");
+    } catch {
+      addToast("Could not open Steam API key page");
+    }
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") onClose();
   }
@@ -401,7 +409,10 @@
         <div class="field">
           <div class="row">
             <span>Steam Web API key</span>
-            <strong>{apiKey.trim() ? "Configured" : "Missing"}</strong>
+            <div class="row-actions">
+              <button class="inline-link-btn" type="button" onclick={openSteamApiKeyPage}>Get key</button>
+              <strong>{apiKey.trim() ? "Configured" : "Missing"}</strong>
+            </div>
           </div>
           <input id="api-key" type="password" bind:value={apiKey} class="text-input" placeholder="Paste your Steam Web API key" />
         </div>
@@ -562,6 +573,26 @@
     font-size: 12px;
     color: var(--fg);
     font-weight: 600;
+  }
+
+  .row-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .inline-link-btn {
+    border: none;
+    background: transparent;
+    color: #60a5fa;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .inline-link-btn:hover {
+    color: #93c5fd;
+    text-decoration: underline;
   }
 
   .hint {

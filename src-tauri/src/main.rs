@@ -81,6 +81,7 @@ fn main() {
             commands::get_steam_path,
             commands::set_steam_path,
             commands::select_steam_path,
+            commands::open_steam_api_key_page,
             commands::minimize_window,
             commands::toggle_maximize_window,
             commands::close_window,
