@@ -133,13 +133,13 @@
     line-height: 0.9;
     letter-spacing: 0.03em;
     text-transform: uppercase;
-    color: rgba(248, 251, 255, 0.35);
+    color: color-mix(in srgb, var(--afk-text) 35%, transparent);
     text-shadow:
-      0 0 1px rgba(255, 255, 255, 0.5),
-      0 0 4px rgba(255, 255, 255, 0.38),
-      0 0 16px rgba(255, 255, 255, 0.75),
-      0 0 34px rgba(255, 255, 255, 0.58),
-      0 0 52px rgba(255, 255, 255, 0.42);
+      0 0 1px color-mix(in srgb, var(--afk-text) 50%, transparent),
+      0 0 4px color-mix(in srgb, var(--afk-text) 38%, transparent),
+      0 0 16px color-mix(in srgb, var(--afk-text) 75%, transparent),
+      0 0 34px color-mix(in srgb, var(--afk-text) 58%, transparent),
+      0 0 52px color-mix(in srgb, var(--afk-text) 42%, transparent);
   }
 
   .wave-char {
