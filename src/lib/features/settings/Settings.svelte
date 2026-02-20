@@ -148,6 +148,7 @@
     settings.steamLaunchOptions;
     settings.showUsernames;
     settings.showLastLogin;
+    settings.showCardNotesInline;
     settings.defaultPlatformId;
     settings.pinEnabled;
     settings.pinCode;
@@ -373,6 +374,14 @@
           onLabel="On"
           offLabel="Off"
           onToggle={() => settings.showLastLogin = !settings.showLastLogin}
+        />
+
+        <ToggleSetting
+          label="Show notes under cards"
+          enabled={settings.showCardNotesInline}
+          onLabel="Inline"
+          offLabel="Tooltip"
+          onToggle={() => settings.showCardNotesInline = !settings.showCardNotesInline}
         />
 
         <div class="field">

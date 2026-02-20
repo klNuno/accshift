@@ -18,6 +18,7 @@ const DEFAULTS: AppSettings = {
   steamLaunchOptions: "",
   showUsernames: true,
   showLastLogin: false,
+  showCardNotesInline: false,
   pinEnabled: false,
   pinCode: "",
 };
@@ -67,6 +68,7 @@ function sanitizeSettings(value: unknown): AppSettings {
     steamLaunchOptions: typeof raw.steamLaunchOptions === "string" ? raw.steamLaunchOptions.trim().slice(0, 256) : "",
     showUsernames: raw.showUsernames !== false,
     showLastLogin: Boolean(raw.showLastLogin),
+    showCardNotesInline: Boolean(raw.showCardNotesInline),
     pinEnabled,
     pinCode,
   };

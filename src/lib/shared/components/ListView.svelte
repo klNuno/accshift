@@ -13,9 +13,10 @@
     showUsernames = true,
     showLastLogin = false,
     currentFolderId = null,
-    currentAccount = "",
+    currentAccountId = null,
     avatarStates = {},
     banStates = {},
+    getAccountNote = () => "",
     accentColor = "#3b82f6",
     dragItem = null,
     dragOverFolderId = null,
@@ -33,9 +34,10 @@
     showUsernames?: boolean;
     showLastLogin?: boolean;
     currentFolderId: string | null;
-    currentAccount: string;
+    currentAccountId?: string | null;
     avatarStates: Record<string, { url: string | null; loading: boolean; refreshing: boolean }>;
     banStates?: Record<string, BanInfo>;
+    getAccountNote?: (accountId: string) => string;
     accentColor?: string;
     dragItem?: ItemRef | null;
     dragOverFolderId?: string | null;
@@ -93,7 +95,7 @@
             showUsername={showUsernames}
             showLastLogin={false}
             lastLoginAt={account.lastLoginAt}
-            isActive={account.username === currentAccount}
+            isActive={account.id === currentAccountId}
             isSelected={selectedAccountId === account.id}
             avatarUrl={avatarStates[account.id]?.url}
             banInfo={banStates[account.id]}
@@ -114,8 +116,9 @@
         showUsername={showUsernames}
         {showLastLogin}
         lastLoginAt={selectedAccount.lastLoginAt}
-        isActive={selectedAccount.username === currentAccount}
+        isActive={selectedAccount.id === currentAccountId}
         avatarUrl={avatarStates[selectedAccount.id]?.url}
+        accountNote={getAccountNote(selectedAccount.id)}
         banInfo={banStates[selectedAccount.id]}
         {accentColor}
         onSwitch={() => onSwitch(selectedAccount!)}

@@ -10,6 +10,7 @@
     showUsername = true,
     showLastLogin = false,
     lastLoginAt = null,
+    accountNote = "",
     accentColor = "#3b82f6",
     onSwitch,
     banInfo = undefined,
@@ -20,6 +21,7 @@
     showUsername?: boolean;
     showLastLogin?: boolean;
     lastLoginAt?: number | null;
+    accountNote?: string;
     accentColor?: string;
     onSwitch: () => void;
     banInfo?: BanInfo;
@@ -80,6 +82,13 @@
           {warning.text}
         </span>
       {/each}
+    </div>
+  {/if}
+
+  {#if accountNote}
+    <div class="note-block">
+      <span class="note-label">Note</span>
+      <p class="note-text">{accountNote}</p>
     </div>
   {/if}
 
@@ -171,6 +180,35 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
     font-weight: 600;
+  }
+
+  .note-block {
+    margin-top: 10px;
+    width: 100%;
+    max-width: 100%;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg-muted) 74%, transparent);
+    box-sizing: border-box;
+  }
+
+  .note-label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .note-text {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.35;
+    color: var(--fg);
+    word-break: break-word;
   }
 
   .switch-btn {

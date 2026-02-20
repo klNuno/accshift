@@ -15,6 +15,7 @@ export interface AppSettings {
   steamLaunchOptions: string;
   showUsernames: boolean;
   showLastLogin: boolean;
+  showCardNotesInline: boolean;
   pinEnabled: boolean;
   pinCode: string;
 }
