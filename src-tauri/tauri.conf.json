@@ -50,7 +50,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "ZFc1MGNuVnpkR1ZrSUdOdmJXMWxiblE2SUcxcGJtbHphV2R1SUhCMVlteHBZeUJyWlhrNklEWTVRamd4T1VZMlJqSkZNalU1TlRNS1VsZFNWRmRsVEhrNWFHMDBZVlZsYTBSSVEyNW9aR2xNYzJ0V1JWVk1UVVFyU0c5NmJVdGlRMlpMTkZsU1JrcG1TMXBHY1ZsS1N6Y0s=",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY5QjgxOUY2RjJFMjU5NTMKUldSVFdlTHk5aG00YVVla0RIQ25oZGlMc2tWRVVMTUQrSG96bUtiQ2ZLNFlSRkpmS1pGcVlKSzcK",
       "endpoints": [
         "https://github.com/klNuno/accshift/releases/latest/download/latest.json"
       ],
@@ -60,6 +60,7 @@
     }
   }
 }
+
 
 
 
