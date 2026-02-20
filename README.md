@@ -1,49 +1,76 @@
-# accshift
-Fast multi-platform desktop account switcher, built with Tauri 2 and Svelte 5.
+<h1 align="center">accshift</h1>
+<p align="center">Fast multi-platform desktop account switcher, built with Tauri 2 and Svelte 5.</p>
 
 <p align="center">
   <img src="./public/vite.svg" alt="accshift logo" width="140" />
 </p>
 
-[![Release](https://img.shields.io/github/v/release/klNuno/accshift?display_name=tag)](https://github.com/klNuno/accshift/releases)
-[![License](https://img.shields.io/github/license/klNuno/accshift)](./LICENSE)
-[![Stars](https://img.shields.io/github/stars/klNuno/accshift)](https://github.com/klNuno/accshift/stargazers)
-[![Issues](https://img.shields.io/github/issues/klNuno/accshift)](https://github.com/klNuno/accshift/issues)
-[![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows)](#requirements)
-[![Tauri](https://img.shields.io/badge/Tauri-2.x-24C8DB?logo=tauri)](https://tauri.app/)
-[![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte)](https://svelte.dev/)
+<p align="center">
+  <a href="https://github.com/klNuno/accshift/releases"><img src="https://img.shields.io/github/v/release/klNuno/accshift?display_name=tag" alt="Release" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/github/license/klNuno/accshift" alt="License" /></a>
+  <a href="https://github.com/klNuno/accshift/stargazers"><img src="https://img.shields.io/github/stars/klNuno/accshift" alt="Stars" /></a>
+  <a href="https://github.com/klNuno/accshift/issues"><img src="https://img.shields.io/github/issues/klNuno/accshift" alt="Issues" /></a>
+  <a href="#current-status"><img src="https://img.shields.io/badge/platform-Windows-0078D6?logo=windows" alt="Platform" /></a>
+  <a href="https://tauri.app/"><img src="https://img.shields.io/badge/Tauri-2.x-24C8DB?logo=tauri" alt="Tauri" /></a>
+  <a href="https://svelte.dev/"><img src="https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte" alt="Svelte" /></a>
+</p>
 
-## Links
-- Releases: [github.com/klNuno/accshift/releases](https://github.com/klNuno/accshift/releases)
-- Issues: [github.com/klNuno/accshift/issues](https://github.com/klNuno/accshift/issues)
-- License: [LICENSE](./LICENSE)
-
-## What It Does
-- Switches Steam accounts quickly from a single UI.
-- Organizes accounts with folders and drag-and-drop.
-- Supports profile/avatar refresh and ban checks (Steam Web API).
-- Includes configurable startup mode, launch options, and optional PIN lock.
 
 ## Current Status
-### OS Support
-| OS | Status |
-| --- | --- |
-| Windows | ✅ Supported |
-| Linux | ❌ Not tested |
-| macOS | ❌ Not tested |
+<table>
+  <tr>
+    <td valign="top" width="50%">
 
-### Platform Support
-| Platform | Status |
-| --- | --- |
-| Steam | ✅ Supported |
-| Riot Games | ❌ Not supported yet |
+<p><strong>Platform Support</strong></p>
+<table>
+  <thead>
+    <tr>
+      <th>Platform</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Steam</td>
+      <td>✅ Supported</td>
+    </tr>
+    <tr>
+      <td>Riot Games</td>
+      <td>❌ Not supported yet</td>
+    </tr>
+  </tbody>
+</table>
 
-## Requirements
-- Windows 10/11
-- Node.js 20+
-- pnpm 9+
-- Rust stable toolchain
-- Visual Studio Build Tools (for Tauri builds on Windows)
+  </td>
+    <td valign="top" width="50%">
+
+<p><strong>OS Support</strong></p>
+<table>
+  <thead>
+    <tr>
+      <th>OS</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Windows</td>
+      <td>✅ Supported</td>
+    </tr>
+    <tr>
+      <td>Linux</td>
+      <td>❌ Not tested</td>
+    </tr>
+    <tr>
+      <td>macOS</td>
+      <td>❌ Not tested</td>
+    </tr>
+  </tbody>
+</table>
+
+  </td>
+  </tr>
+</table>
 
 ## Installation
 ### From Releases
