@@ -107,32 +107,99 @@ jobs:
           }
 
           $range = if ([string]::IsNullOrWhiteSpace($prevTag)) { $tag } else { "$prevTag..$tag" }
-          $raw = git log --reverse --pretty=format:"@@@%n%s%n%b" $range
-          $entries = $raw -split "@@@\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_.Trim()) }
 
-          $notes = New-Object System.Collections.Generic.List[string]
-          $notes.Add("## Changelog")
-          $notes.Add("")
+          # PowerShell returns command output as a string array; join once, then split by separators.
+          $recordSeparator = [char]0x1e
+          $fieldSeparator = [char]0x1f
+          $raw = (git log --reverse --pretty=format:"%s%x1f%b%x1e" $range) -join "`n"
+          $records = $raw -split $recordSeparator | Where-Object { -not [string]::IsNullOrWhiteSpace($_.Trim()) }
 
-          foreach ($entry in $entries) {
-            $lines = $entry -split "\r?\n"
-            $subject = $lines[0].Trim()
+          function Normalize-Subject {
+            param([string]$Subject)
+
+            $normalized = $Subject.Trim()
+            $normalized = $normalized -replace '^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([^)]+\))?!?:\s*', ''
+            if ([string]::IsNullOrWhiteSpace($normalized)) {
+              return $Subject.Trim()
+            }
+
+            return $normalized
+          }
+
+          function Get-SectionName {
+            param(
+              [string]$Subject,
+              [string]$NormalizedSubject
+            )
+
+            $lowerSubject = $Subject.ToLowerInvariant()
+            $lowerNormalized = $NormalizedSubject.ToLowerInvariant()
+
+            if ($lowerSubject -match '^(fix|hotfix)(\([^)]+\))?!?:' -or $lowerNormalized -match '^(fix|hotfix|bugfix)\b') {
+              return "Fixes"
+            }
+
+            return "Changes"
+          }
+
+          $grouped = @{
+            "Changes" = New-Object System.Collections.Generic.List[object]
+            "Fixes" = New-Object System.Collections.Generic.List[object]
+          }
+
+          foreach ($record in $records) {
+            $parts = $record.Split($fieldSeparator, 2)
+            if ($parts.Count -lt 1) {
+              continue
+            }
+
+            $subject = $parts[0].Trim()
             if ([string]::IsNullOrWhiteSpace($subject)) {
               continue
             }
 
-            $notes.Add("- $subject")
-            $bodyLines = $lines |
-              Select-Object -Skip 1 |
-              ForEach-Object { $_.Trim() } |
-              Where-Object { $_ -like "- *" }
-
-            foreach ($bodyLine in $bodyLines) {
-              $notes.Add("  $bodyLine")
+            $body = if ($parts.Count -ge 2) { $parts[1] } else { "" }
+            $details = @()
+            if (-not [string]::IsNullOrWhiteSpace($body)) {
+              $details = $body -split "\r?\n" |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { $_ -like "- *" } |
+                ForEach-Object { $_.Substring(2).Trim() }
             }
+
+            $entry = [PSCustomObject]@{
+              Subject = Normalize-Subject -Subject $subject
+              Details = $details
+            }
+
+            $section = Get-SectionName -Subject $subject -NormalizedSubject $entry.Subject
+            $grouped[$section].Add($entry)
           }
 
-          if ($notes.Count -le 2) {
+          $notes = New-Object System.Collections.Generic.List[string]
+
+          foreach ($section in @("Changes", "Fixes")) {
+            if ($grouped[$section].Count -eq 0) {
+              continue
+            }
+
+            $notes.Add("## $section")
+            $notes.Add("")
+
+            foreach ($entry in $grouped[$section]) {
+              if ($entry.Details.Count -gt 0) {
+                $notes.Add("- $($entry.Subject): $($entry.Details -join '; ')")
+              } else {
+                $notes.Add("- $($entry.Subject)")
+              }
+            }
+
+            $notes.Add("")
+          }
+
+          if ($notes.Count -eq 0) {
+            $notes.Add("## Changes")
+            $notes.Add("")
             $notes.Add("- No changelog entries found.")
           }
 
@@ -143,7 +210,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release_tag.outputs.tag }}
-          draft: false
+          draft: true
           generate_release_notes: false
           body_path: RELEASE_NOTES.md
           files: |
