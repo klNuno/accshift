@@ -116,7 +116,7 @@
   let updateCheckStarted = false;
 
   type PendingUpdate = NonNullable<Awaited<ReturnType<typeof check>>>;
-  type UpdateState = "idle" | "checking" | "downloading" | "ready";
+  type UpdateState = "idle" | "checking" | "downloading" | "ready" | "applying";
   let updateState = $state<UpdateState>("idle");
   let updateVersion = $state("");
   let pendingUpdate = $state<PendingUpdate | null>(null);
@@ -127,11 +127,13 @@
     return match ? match[0] : version;
   }
 
-  let updateCtaLabel = $derived(updateState === "ready" ? "Update available" : null);
+  let updateCtaLabel = $derived(
+    updateState === "ready" ? "Update available" : updateState === "applying" ? "Installing..." : null
+  );
   let updateCtaTitle = $derived(
     updateVersion ? `Restart to apply update ${updateVersion}` : "Restart to apply update"
   );
-  let updateCtaDisabled = $derived(false);
+  let updateCtaDisabled = $derived(updateState === "applying");
   let afkVersionLabel = $derived(afkOverlayVisible && appVersion ? appVersion : null);
 
   // Toast state
@@ -437,7 +439,7 @@
       updateVersion = update.version;
       updateState = "downloading";
 
-      await update.downloadAndInstall();
+      await update.download();
 
       updateState = "ready";
       addToast(updateVersion ? `Update ${updateVersion} ready` : "Update ready");
@@ -453,8 +455,11 @@
     if (updateState !== "ready" || !pendingUpdate) return;
 
     try {
+      updateState = "applying";
+      await pendingUpdate.install();
       await relaunch();
     } catch (e) {
+      updateState = "ready";
       console.error("Failed to restart for update:", e);
       addToast("Could not restart to apply update");
     }
