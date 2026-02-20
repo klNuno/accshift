@@ -289,7 +289,7 @@
     <div class="meta-stack">
       {#if showUsername}
         <div class="username">
-          {#if noteText}
+          {#if noteText && !showNoteInline}
             <span class="note-info-icon" aria-label="Note attached">i</span>
           {/if}
           <span class="username-text">{account.username}</span>
@@ -519,7 +519,10 @@
   }
 
   .note {
-    margin-top: 1px;
+    margin-top: 0;
+    display: block;
+    width: 100%;
+    max-width: 100%;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
@@ -531,10 +534,10 @@
   }
 
   .meta-stack {
-    margin-top: 1px;
+    margin-top: 4px;
     display: flex;
     flex-direction: column;
-    gap: 0;
+    gap: 2px;
     font-size: 10px;
     line-height: 1.2;
     pointer-events: none;
@@ -546,7 +549,10 @@
     align-items: center;
     justify-content: center;
     gap: 4px;
+    width: 100%;
+    max-width: 100%;
     min-width: 0;
+    overflow: hidden;
   }
 
   .note-info-icon {
@@ -565,6 +571,7 @@
   }
 
   .username-text {
+    display: block;
     min-width: 0;
     white-space: nowrap;
     overflow: hidden;
@@ -572,6 +579,9 @@
   }
 
   .last-login {
+    display: block;
+    width: 100%;
+    max-width: 100%;
     font-size: 10px;
     font-weight: 500;
     color: color-mix(in srgb, var(--fg-subtle) 40%, var(--fg) 60%);
