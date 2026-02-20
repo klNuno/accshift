@@ -286,8 +286,5 @@ jobs:
           body: ${{ steps.changelog.outputs.body }}
           files: |
             src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/nsis/*.sig
             src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/bundle/msi/*.sig
-            src-tauri/target/release/bundle/SHA256SUMS.txt
             src-tauri/target/release/bundle/latest.json

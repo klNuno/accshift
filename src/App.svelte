@@ -467,6 +467,7 @@
       afkWaveStopTimer = null;
     }
     if (visible) {
+      if (contextMenu) contextMenu = null;
       afkWaveActive = true;
       return;
     }
@@ -573,11 +574,19 @@
       updateCtaLabel={updateCtaLabel}
       updateCtaTitle={updateCtaTitle}
       updateCtaDisabled={updateCtaDisabled}
-      afkVersionLabel={afkVersionLabel}
       {activeTab}
       onTabChange={handleTabChange}
       {enabledPlatforms}
     />
+    <div
+      class="afk-version-strip"
+      class:visible={Boolean(afkVersionLabel)}
+      aria-hidden={!afkVersionLabel}
+    >
+      {#if afkVersionLabel}
+        <span>{afkVersionLabel}</span>
+      {/if}
+    </div>
 
 {#if showSettings}
   <main class="content">
@@ -891,6 +900,39 @@
     flex-direction: column;
     overflow: hidden;
     box-sizing: border-box;
+    position: relative;
+  }
+
+  .afk-version-strip {
+    position: absolute;
+    left: 50%;
+    top: 44px;
+    transform: translate(-50%, -8px);
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-select: none;
+    opacity: 0;
+    transition: opacity 1200ms ease-in-out, transform 1200ms ease-in-out;
+    transition-delay: 0ms;
+    z-index: 320;
+  }
+
+  .afk-version-strip.visible {
+    opacity: 0.25;
+    transform: translate(-50%, 0);
+    transition-delay: 2500ms;
+  }
+
+  .afk-version-strip span {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    line-height: 1;
+    color: var(--afk-text);
+    text-shadow:
+      0 0 10px color-mix(in srgb, var(--afk-text) 40%, transparent),
+      0 0 24px color-mix(in srgb, var(--afk-text) 34%, transparent);
   }
 
   .content {
