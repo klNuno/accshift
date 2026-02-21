@@ -1,7 +1,10 @@
 <script lang="ts">
-  let { onBack, isDragOver = false }: {
+  import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
+
+  let { onBack, isDragOver = false, locale = DEFAULT_LOCALE }: {
     onBack: () => void;
     isDragOver?: boolean;
+    locale?: Locale;
   } = $props();
 </script>
 
@@ -17,7 +20,7 @@
       <path d="M12 19l-7-7 7-7" />
     </svg>
   </div>
-  <div class="name">Back</div>
+  <div class="name">{translate(locale, "common.back")}</div>
 </button>
 
 <style>

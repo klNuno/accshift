@@ -1,4 +1,5 @@
 import type { PlatformDef, AppSettings } from "./types";
+import { DEFAULT_LOCALE, detectPreferredLocale, normalizeLocale } from "$lib/i18n";
 
 const SETTINGS_KEY = "accshift_settings";
 
@@ -8,7 +9,9 @@ export const ALL_PLATFORMS: PlatformDef[] = [
 ];
 
 const DEFAULTS: AppSettings = {
+  language: DEFAULT_LOCALE,
   theme: "dark",
+  uiScalePercent: 100,
   avatarCacheDays: 7,
   banCheckDays: 7,
   enabledPlatforms: ["steam"],
@@ -18,6 +21,7 @@ const DEFAULTS: AppSettings = {
   steamLaunchOptions: "",
   showUsernames: true,
   showLastLogin: false,
+  showCardNotesInline: false,
   pinEnabled: false,
   pinCode: "",
 };
@@ -37,6 +41,7 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
 
 function sanitizeSettings(value: unknown): AppSettings {
   const raw = asRecord(value);
+  const hasLanguage = Object.prototype.hasOwnProperty.call(raw, "language");
   const enabledPlatformsRaw = Array.isArray(raw.enabledPlatforms) ? raw.enabledPlatforms : [];
   const enabledPlatforms = Array.from(new Set(
     enabledPlatformsRaw
@@ -57,7 +62,9 @@ function sanitizeSettings(value: unknown): AppSettings {
     : "";
 
   return {
+    language: hasLanguage ? normalizeLocale(raw.language) : detectPreferredLocale(),
     theme: raw.theme === "light" ? "light" : "dark",
+    uiScalePercent: clampInt(raw.uiScalePercent, 75, 150, DEFAULTS.uiScalePercent),
     avatarCacheDays: clampInt(raw.avatarCacheDays, 0, 90, DEFAULTS.avatarCacheDays),
     banCheckDays: clampInt(raw.banCheckDays, 0, 90, DEFAULTS.banCheckDays),
     enabledPlatforms: normalizedEnabledPlatforms,
@@ -67,6 +74,7 @@ function sanitizeSettings(value: unknown): AppSettings {
     steamLaunchOptions: typeof raw.steamLaunchOptions === "string" ? raw.steamLaunchOptions.trim().slice(0, 256) : "",
     showUsernames: raw.showUsernames !== false,
     showLastLogin: Boolean(raw.showLastLogin),
+    showCardNotesInline: Boolean(raw.showCardNotesInline),
     pinEnabled,
     pinCode,
   };
@@ -82,10 +90,10 @@ function cloneSettings(settings: AppSettings): AppSettings {
 function loadSettingsFromStorage(): AppSettings {
   try {
     const data = localStorage.getItem(SETTINGS_KEY);
-    if (!data) return cloneSettings(DEFAULTS);
+    if (!data) return sanitizeSettings({});
     return sanitizeSettings(JSON.parse(data));
   } catch {
-    return cloneSettings(DEFAULTS);
+    return sanitizeSettings({});
   }
 }
 

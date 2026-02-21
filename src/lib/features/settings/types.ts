@@ -1,3 +1,5 @@
+import type { Locale } from "$lib/i18n";
+
 export interface PlatformDef {
   id: string;
   name: string;
@@ -5,7 +7,9 @@ export interface PlatformDef {
 }
 
 export interface AppSettings {
+  language: Locale;
   theme: "dark" | "light";
+  uiScalePercent: number;
   avatarCacheDays: number;
   banCheckDays: number;
   enabledPlatforms: string[];
@@ -15,6 +19,7 @@ export interface AppSettings {
   steamLaunchOptions: string;
   showUsernames: boolean;
   showLastLogin: boolean;
+  showCardNotesInline: boolean;
   pinEnabled: boolean;
   pinCode: string;
 }
