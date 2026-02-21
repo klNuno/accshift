@@ -39,7 +39,7 @@
       <td>🚧 Planned</td>
     </tr>
     <tr>
-      <td>Steam</td>
+      <td>Epic Games</td>
       <td>🚧 Planned</td>
     </tr>
   </tbody>
