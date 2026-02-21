@@ -80,7 +80,24 @@
   // Shared controllers
   const blur = createInactivityBlur();
   const grid = createGridLayout();
-  const loader = createAccountLoader(() => adapter, () => activeTab);
+  const loader = createAccountLoader(
+    () => adapter,
+    () => activeTab,
+    () => {
+      const q = searchQuery.trim().toLowerCase();
+      if (q) {
+        return loader.accounts
+          .filter((account) =>
+            account.username.toLowerCase().includes(q) ||
+            (account.displayName || "").toLowerCase().includes(q)
+          )
+          .map((account) => account.id);
+      }
+      return currentItems
+        .filter((item): item is ItemRef => item.type === "account")
+        .map((item) => item.id);
+    }
+  );
 
   // Navigation state
   type AppHistoryEntry = { tab: string; folderId: string | null; showSettings: boolean };
@@ -213,6 +230,15 @@
     const arr = filteredAccountItems.filter(i => i.id !== drag.dragItem!.id);
     arr.splice(Math.min(drag.previewIndex, arr.length), 0, drag.dragItem);
     return arr;
+  });
+
+  $effect(() => {
+    if (showSettings || !adapter || loader.loading) return;
+    const visibleIds = (isSearching ? filteredAccountItems : currentItems.filter((item) => item.type === "account"))
+      .map((item) => item.id);
+    if (visibleIds.length === 0) return;
+    visibleIds.join(",");
+    loader.primeVisibleAccounts(true, false, true, true);
   });
 
   function showToast(msg: string) { addToast(msg); }

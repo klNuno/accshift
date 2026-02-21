@@ -88,7 +88,11 @@ function deferBackgroundTask(task: () => void) {
   setTimeout(task, 0);
 }
 
-export function createAccountLoader(getAdapter: () => PlatformAdapter | undefined, getActiveTab: () => string) {
+export function createAccountLoader(
+  getAdapter: () => PlatformAdapter | undefined,
+  getActiveTab: () => string,
+  getVisibleAccountIds?: () => string[],
+) {
   // Centralized UI state for account loading, switching, avatars, and Steam ban checks.
   let accounts = $state<PlatformAccount[]>([]);
   let accountMap = $derived<Record<string, PlatformAccount>>(
@@ -106,6 +110,22 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
   let lastSteamPathToastAt = 0;
   let lastNoAccountsToastAt = 0;
   let latestLoadId = 0;
+
+  function resolveVisibleAccounts(source: PlatformAccount[]): PlatformAccount[] {
+    if (!getVisibleAccountIds) return source;
+    const requestedIds = getVisibleAccountIds();
+    if (!requestedIds.length) return [];
+    const byId = new Map(source.map((account) => [account.id, account]));
+    const out: PlatformAccount[] = [];
+    const seen = new Set<string>();
+    for (const id of requestedIds) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const account = byId.get(id);
+      if (account) out.push(account);
+    }
+    return out;
+  }
 
   async function refreshProfile(adapter: PlatformAdapter, account: PlatformAccount) {
     if (!adapter.getProfileInfo) return;
@@ -333,13 +353,9 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
         addToast(`${count} ${count === 1 ? "account" : "accounts"} refreshed`);
       }
       onAfterLoad?.();
-      const loadedAccounts = [...accounts];
       const runBackgroundTasks = () => {
         if (loadId !== latestLoadId) return;
-        void loadProfilesForAccounts(loadedAccounts, forceRefresh);
-        if (checkBans) {
-          void fetchBanStates(loadedAccounts, silent, forceRefresh);
-        }
+        primeVisibleAccounts(checkBans, forceRefresh, silent, false);
       };
       if (deferBackground) {
         deferBackgroundTask(runBackgroundTasks);
@@ -405,6 +421,27 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
     }
   }
 
+  function primeVisibleAccounts(
+    checkBans = false,
+    forceRefresh = false,
+    silent = true,
+    deferBackground = true,
+  ) {
+    const visibleAccounts = resolveVisibleAccounts(accounts);
+    if (visibleAccounts.length === 0) return;
+    const run = () => {
+      void loadProfilesForAccounts(visibleAccounts, forceRefresh);
+      if (checkBans) {
+        void fetchBanStates(visibleAccounts, silent, forceRefresh);
+      }
+    };
+    if (deferBackground) {
+      deferBackgroundTask(run);
+    } else {
+      run();
+    }
+  }
+
   return {
     get accounts() { return accounts; },
     set accounts(v: PlatformAccount[]) { accounts = v; },
@@ -418,5 +455,6 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
     load,
     switchTo,
     addNew,
+    primeVisibleAccounts,
   };
 }
