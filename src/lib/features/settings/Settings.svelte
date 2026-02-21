@@ -14,6 +14,7 @@
   let steamEnabled = $derived(settings.enabledPlatforms.includes("steam"));
   let apiKey = $state("");
   let steamPath = $state("");
+  let uiScalePercentInput = $state("");
   let avatarCacheDaysInput = $state("");
   let banCheckDaysInput = $state("");
   let inactivityBlurSecondsInput = $state("");
@@ -32,6 +33,7 @@
     if (settings.theme !== "light" && settings.theme !== "dark") {
       settings.theme = "dark";
     }
+    settings.uiScalePercent = clampInt(settings.uiScalePercent, 75, 150, 100);
     settings.avatarCacheDays = clampInt(settings.avatarCacheDays, 0, 90, 7);
     settings.banCheckDays = clampInt(settings.banCheckDays, 0, 90, 7);
     settings.inactivityBlurSeconds = clampInt(settings.inactivityBlurSeconds, 0, 3600, 60);
@@ -58,9 +60,15 @@
   }
 
   function refreshNumericInputsFromSettings() {
+    uiScalePercentInput = String(settings.uiScalePercent);
     avatarCacheDaysInput = String(settings.avatarCacheDays);
     banCheckDaysInput = String(settings.banCheckDays);
     inactivityBlurSecondsInput = String(settings.inactivityBlurSeconds);
+  }
+
+  function commitUiScalePercent() {
+    settings.uiScalePercent = clampInt(Number(uiScalePercentInput), 75, 150, settings.uiScalePercent);
+    uiScalePercentInput = String(settings.uiScalePercent);
   }
 
   function commitAvatarCacheDays() {
@@ -149,6 +157,7 @@
     settings.showUsernames;
     settings.showLastLogin;
     settings.showCardNotesInline;
+    settings.uiScalePercent;
     settings.defaultPlatformId;
     settings.pinEnabled;
     settings.pinCode;
@@ -199,6 +208,28 @@
   <div class="settings-grid">
     <section class="card">
       <h3>Appearance</h3>
+      <label class="field">
+        <div class="row">
+          <span>UI zoom</span>
+          <strong>{settings.uiScalePercent}%</strong>
+        </div>
+        <input
+          type="number"
+          min="75"
+          max="150"
+          step="5"
+          value={uiScalePercentInput}
+          oninput={(e) => uiScalePercentInput = (e.currentTarget as HTMLInputElement).value}
+          onblur={commitUiScalePercent}
+          onkeydown={(e) => {
+            if (e.key === "Enter") {
+              commitUiScalePercent();
+              (e.currentTarget as HTMLInputElement).blur();
+            }
+          }}
+          class="text-input number-input"
+        />
+      </label>
       <ToggleSetting
         label="Light mode"
         enabled={settings.theme === "light"}

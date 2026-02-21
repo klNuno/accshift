@@ -9,6 +9,7 @@ export const ALL_PLATFORMS: PlatformDef[] = [
 
 const DEFAULTS: AppSettings = {
   theme: "dark",
+  uiScalePercent: 100,
   avatarCacheDays: 7,
   banCheckDays: 7,
   enabledPlatforms: ["steam"],
@@ -59,6 +60,7 @@ function sanitizeSettings(value: unknown): AppSettings {
 
   return {
     theme: raw.theme === "light" ? "light" : "dark",
+    uiScalePercent: clampInt(raw.uiScalePercent, 75, 150, DEFAULTS.uiScalePercent),
     avatarCacheDays: clampInt(raw.avatarCacheDays, 0, 90, DEFAULTS.avatarCacheDays),
     banCheckDays: clampInt(raw.banCheckDays, 0, 90, DEFAULTS.banCheckDays),
     enabledPlatforms: normalizedEnabledPlatforms,

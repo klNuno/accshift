@@ -6,6 +6,7 @@ export interface PlatformDef {
 
 export interface AppSettings {
   theme: "dark" | "light";
+  uiScalePercent: number;
   avatarCacheDays: number;
   banCheckDays: number;
   enabledPlatforms: string[];

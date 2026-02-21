@@ -15,7 +15,7 @@
   import Breadcrumb from "$lib/features/folders/Breadcrumb.svelte";
   import FolderCard from "$lib/features/folders/FolderCard.svelte";
   import BackCard from "$lib/features/folders/BackCard.svelte";
-  import { getSettings, ALL_PLATFORMS } from "$lib/features/settings/store";
+  import { getSettings, saveSettings, ALL_PLATFORMS } from "$lib/features/settings/store";
   import type { PlatformDef } from "$lib/features/settings/types";
   import type { PlatformAccount, PlatformContextMenuConfirmConfig } from "$lib/shared/platform";
   import { registerPlatform, getPlatform } from "$lib/shared/platform";
@@ -69,6 +69,12 @@
   let accentColor = $derived(
     ALL_PLATFORMS.find(p => p.id === activeTab)?.accent || "#3b82f6"
   );
+  let uiZoomFactor = $derived(Math.min(1.5, Math.max(0.75, settings.uiScalePercent / 100)));
+  let appStageStyle = $derived.by(() => {
+    const zoom = uiZoomFactor;
+    if (Math.abs(zoom - 1) < 0.0001) return "";
+    return `transform: scale(${zoom}); transform-origin: top left; width: calc(100% / ${zoom}); height: calc(100% / ${zoom});`;
+  });
   let adapter = $derived(getPlatform(activeTab));
 
   // Shared controllers
@@ -126,7 +132,13 @@
   let afkWaveActive = $state(false);
   let afkWaveStopTimer: ReturnType<typeof setTimeout> | null = null;
   let updateCheckTimer: ReturnType<typeof setTimeout> | null = null;
+  let zoomPersistTimer: ReturnType<typeof setTimeout> | null = null;
+  let wheelZoomAccumulator = 0;
   let updateCheckStarted = false;
+  const UI_SCALE_STEP_PERCENT = 5;
+  const UI_SCALE_MIN_PERCENT = 75;
+  const UI_SCALE_MAX_PERCENT = 150;
+  const WHEEL_ZOOM_THRESHOLD = 80;
 
   type PendingUpdate = NonNullable<Awaited<ReturnType<typeof check>>>;
   type UpdateState = "idle" | "checking" | "downloading" | "ready" | "applying";
@@ -204,6 +216,56 @@
   });
 
   function showToast(msg: string) { addToast(msg); }
+
+  function clampUiScalePercent(value: number): number {
+    const rounded = Math.round(value / UI_SCALE_STEP_PERCENT) * UI_SCALE_STEP_PERCENT;
+    return Math.min(UI_SCALE_MAX_PERCENT, Math.max(UI_SCALE_MIN_PERCENT, rounded));
+  }
+
+  function persistUiScalePercent(value: number) {
+    const latest = getSettings();
+    const next = clampUiScalePercent(value);
+    if (latest.uiScalePercent === next) return;
+    latest.uiScalePercent = next;
+    saveSettings(latest);
+  }
+
+  function queuePersistUiScalePercent(value: number) {
+    if (zoomPersistTimer) clearTimeout(zoomPersistTimer);
+    zoomPersistTimer = setTimeout(() => {
+      persistUiScalePercent(value);
+      zoomPersistTimer = null;
+    }, 180);
+  }
+
+  function setUiScalePercent(value: number) {
+    const next = clampUiScalePercent(value);
+    if (next === settings.uiScalePercent) return;
+    settings.uiScalePercent = next;
+    queuePersistUiScalePercent(next);
+  }
+
+  function handleCtrlWheelZoom(e: WheelEvent) {
+    if (!e.ctrlKey) {
+      wheelZoomAccumulator = 0;
+      return;
+    }
+    e.preventDefault();
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerHeight : 1;
+    wheelZoomAccumulator += e.deltaY * unit;
+    if (Math.abs(wheelZoomAccumulator) < WHEEL_ZOOM_THRESHOLD) return;
+    const direction = wheelZoomAccumulator < 0 ? 1 : -1;
+    wheelZoomAccumulator = 0;
+    setUiScalePercent(settings.uiScalePercent + direction * UI_SCALE_STEP_PERCENT);
+  }
+
+  function handleZoomKeydown(e: KeyboardEvent) {
+    if (!e.ctrlKey && !e.metaKey) return;
+    if (e.key !== "0") return;
+    e.preventDefault();
+    wheelZoomAccumulator = 0;
+    setUiScalePercent(100);
+  }
 
   function getCurrentContextAccountId(): string | null {
     const raw = (loader.currentAccount || "").trim();
@@ -514,6 +576,11 @@
   });
 
   $effect(() => {
+    settings.uiScalePercent;
+    setTimeout(grid.calculatePadding, 0);
+  });
+
+  $effect(() => {
     if (!settings.pinEnabled || !settings.pinCode) {
       isPinLocked = false;
       pinAttempt = "";
@@ -580,6 +647,8 @@
     document.addEventListener("scroll", drag.handleDocScroll, true);
     document.addEventListener("mouseup", drag.handleDocMouseUp);
     document.addEventListener("click", drag.handleCaptureClick, true);
+    window.addEventListener("wheel", handleCtrlWheelZoom, { passive: false });
+    window.addEventListener("keydown", handleZoomKeydown);
     window.addEventListener("popstate", handlePopState);
   });
 
@@ -592,11 +661,17 @@
       clearTimeout(updateCheckTimer);
       updateCheckTimer = null;
     }
+    if (zoomPersistTimer) {
+      clearTimeout(zoomPersistTimer);
+      zoomPersistTimer = null;
+    }
     window.removeEventListener("resize", grid.handleResize);
     document.removeEventListener("mousemove", drag.handleDocMouseMove);
     document.removeEventListener("scroll", drag.handleDocScroll, true);
     document.removeEventListener("mouseup", drag.handleDocMouseUp);
     document.removeEventListener("click", drag.handleCaptureClick, true);
+    window.removeEventListener("wheel", handleCtrlWheelZoom);
+    window.removeEventListener("keydown", handleZoomKeydown);
     document.removeEventListener("visibilitychange", handleVisibilityChange);
     window.removeEventListener("popstate", handlePopState);
     if (afkListenersAttached) blur.detachListeners();
@@ -606,7 +681,7 @@
 </script>
 
 <div class="app-frame" class:motion-paused={motionPaused}>
-  <div class="app-stage" class:locked={isPinLocked}>
+  <div class="app-stage" class:locked={isPinLocked} style={appStageStyle}>
     <div class="app-shell">
     <TitleBar
       onRefresh={() => loadAccounts(false, true, false, true)}
