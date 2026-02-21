@@ -1,4 +1,5 @@
 import type { ContextMenuItem } from "./types";
+import type { MessageKey, TranslationParams } from "$lib/i18n";
 
 export interface PlatformAccount {
   id: string;
@@ -20,6 +21,7 @@ export interface PlatformContextMenuCallbacks {
   getCurrentAccountId: () => string | null;
   refreshAccounts: () => void;
   confirmAction: (config: PlatformContextMenuConfirmConfig) => void;
+  t: (key: MessageKey, params?: TranslationParams) => string;
 }
 
 export interface PlatformAdapter {

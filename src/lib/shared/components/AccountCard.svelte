@@ -2,6 +2,7 @@
   import { onMount, tick } from "svelte";
   import type { PlatformAccount } from "../platform";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
+  import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
 
   import type { BanInfo } from "$lib/platforms/steam/types";
 
@@ -21,6 +22,7 @@
     showLastLogin = false,
     lastLoginAt = null,
     note = "",
+    locale = DEFAULT_LOCALE,
   }: {
     account: PlatformAccount;
     isActive: boolean;
@@ -37,6 +39,7 @@
     showLastLogin?: boolean;
     lastLoginAt?: number | null;
     note?: string;
+    locale?: Locale;
   } = $props();
 
   let showConfirm = $state(false);
@@ -58,6 +61,24 @@
   const TOOLTIP_GAP_PX = 6;
   const VIEWPORT_EDGE_GAP_PX = 4;
   const noteText = $derived(note.trim());
+  function formatBanTooltipEnglish(info: BanInfo): string {
+    const lines: string[] = [];
+    if (info.community_banned) {
+      lines.push("Community ban");
+    }
+    if (info.vac_banned) {
+      const vacCount = Math.max(1, info.number_of_vac_bans || 0);
+      lines.push(`${vacCount} VAC ban${vacCount > 1 ? "s" : ""}`);
+    }
+    if (info.number_of_game_bans > 0) {
+      lines.push(`${info.number_of_game_bans} game ban${info.number_of_game_bans > 1 ? "s" : ""}`);
+    }
+    return lines.join("\n");
+  }
+  let banHoverMessage = $derived.by(() => {
+    if (!banInfo) return "";
+    return formatBanTooltipEnglish(banInfo);
+  });
 
   // Visual severity hint for ban state.
   let banOutlineColor = $derived.by(() => {
@@ -238,6 +259,7 @@
   class:dragging={isDragged}
   class:ban-red={banOutlineColor.includes("239")}
   class:ban-yellow={banOutlineColor.includes("234")}
+  title={banHoverMessage || undefined}
 >
   {#if showNoteTooltip}
     <div class="note-tooltip" bind:this={tooltipRef} style={noteTooltipStyle} role="tooltip">{noteText}</div>
@@ -290,7 +312,7 @@
       {#if showUsername}
         <div class="username">
           {#if noteText && !showNoteInline}
-            <span class="note-info-icon" aria-label="Note attached">i</span>
+            <span class="note-info-icon" aria-label={translate(locale, "card.noteAttached")}>i</span>
           {/if}
           <span class="username-text">{account.username}</span>
         </div>
@@ -299,7 +321,7 @@
         <div class="note">{noteText}</div>
       {/if}
       {#if showLastLogin}
-        <div class="last-login">{formatRelativeTimeCompact(lastLoginAt)}</div>
+        <div class="last-login">{formatRelativeTimeCompact(lastLoginAt, locale)}</div>
       {/if}
     </div>
   {/if}

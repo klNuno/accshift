@@ -1,3 +1,5 @@
+import type { Locale } from "$lib/i18n";
+
 export interface PlatformDef {
   id: string;
   name: string;
@@ -5,6 +7,7 @@ export interface PlatformDef {
 }
 
 export interface AppSettings {
+  language: Locale;
   theme: "dark" | "light";
   uiScalePercent: number;
   avatarCacheDays: number;

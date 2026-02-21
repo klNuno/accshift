@@ -2,6 +2,7 @@
   import type { PlatformAccount } from "../platform";
   import type { BanInfo } from "$lib/platforms/steam/types";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
+  import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
 
   let {
     account,
@@ -12,6 +13,7 @@
     lastLoginAt = null,
     accountNote = "",
     accentColor = "#3b82f6",
+    locale = DEFAULT_LOCALE,
     onSwitch,
     banInfo = undefined,
   }: {
@@ -23,6 +25,7 @@
     lastLoginAt?: number | null;
     accountNote?: string;
     accentColor?: string;
+    locale?: Locale;
     onSwitch: () => void;
     banInfo?: BanInfo;
   } = $props();
@@ -41,14 +44,24 @@
     if (!banInfo) return [] as BanWarningChip[];
     const chips: BanWarningChip[] = [];
     if (banInfo.community_banned) {
-      chips.push({ tone: "orange", text: "Community ban" });
+      chips.push({ tone: "orange", text: translate(locale, "ban.community") });
     }
     if (banInfo.vac_banned) {
       const vacCount = Math.max(1, banInfo.number_of_vac_bans || 0);
-      chips.push({ tone: "red", text: `${vacCount} VAC ban${vacCount > 1 ? "s" : ""}` });
+      chips.push({
+        tone: "red",
+        text: translate(locale, vacCount > 1 ? "ban.vac.multiple" : "ban.vac.single", { count: vacCount }),
+      });
     }
     if (banInfo.number_of_game_bans > 0) {
-      chips.push({ tone: "red", text: `${banInfo.number_of_game_bans} game ban${banInfo.number_of_game_bans > 1 ? "s" : ""}` });
+      chips.push({
+        tone: "red",
+        text: translate(
+          locale,
+          banInfo.number_of_game_bans > 1 ? "ban.game.multiple" : "ban.game.single",
+          { count: banInfo.number_of_game_bans }
+        ),
+      });
     }
     return chips;
   });
@@ -70,7 +83,7 @@
         <span class="username">{account.username}</span>
       {/if}
       {#if showLastLogin}
-        <span class="meta">{formatRelativeTimeCompact(lastLoginAt)}</span>
+        <span class="meta">{formatRelativeTimeCompact(lastLoginAt, locale)}</span>
       {/if}
     </div>
   {/if}
@@ -87,13 +100,13 @@
 
   {#if accountNote}
     <div class="note-block">
-      <span class="note-label">Note</span>
+      <span class="note-label">{translate(locale, "preview.noteLabel")}</span>
       <p class="note-text">{accountNote}</p>
     </div>
   {/if}
 
   {#if isActive}
-    <div class="status">Currently active</div>
+    <div class="status">{translate(locale, "preview.currentlyActive")}</div>
   {/if}
   <button
     class="switch-btn"
@@ -103,7 +116,7 @@
     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
       <path d="M8 5v14l11-7z" />
     </svg>
-    {isActive ? "Switch Again" : "Switch Account"}
+    {isActive ? translate(locale, "preview.switchAgain") : translate(locale, "preview.switchAccount")}
   </button>
 </div>
 

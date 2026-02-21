@@ -1,12 +1,14 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
   import type { ContextMenuItem } from "../types";
+  import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
 
-  let { items, x, y, onClose }: {
+  let { items, x, y, onClose, locale = DEFAULT_LOCALE }: {
     items: ContextMenuItem[];
     x: number;
     y: number;
     onClose: () => void;
+    locale?: Locale;
   } = $props();
 
   let menuRef = $state<HTMLDivElement | null>(null);
@@ -174,11 +176,11 @@
   {#if hoveredSubmenuIndex !== null}
     <div class="submenu" bind:this={submenuRef} style={`top:${submenuTop}px; left:${submenuLeft}px;`}>
       {#if submenuLoading}
-        <div class="submenu-state">Loading...</div>
+        <div class="submenu-state">{translate(locale, "context.loading")}</div>
       {:else if submenuError}
         <div class="submenu-state error">{submenuError}</div>
       {:else if !submenuItems || submenuItems.length === 0}
-        <div class="submenu-state">No games found</div>
+        <div class="submenu-state">{translate(locale, "context.noGamesFound")}</div>
       {:else}
         {#each submenuItems as sub}
           {#if sub.separator}

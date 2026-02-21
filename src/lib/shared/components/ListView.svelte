@@ -5,6 +5,7 @@
   import type { BanInfo } from "../../platforms/steam/types";
   import ListRow from "./ListRow.svelte";
   import PreviewPanel from "./PreviewPanel.svelte";
+  import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
 
   let {
     folderItems = [],
@@ -18,6 +19,7 @@
     banStates = {},
     getAccountNote = () => "",
     accentColor = "#3b82f6",
+    locale = DEFAULT_LOCALE,
     dragItem = null,
     dragOverFolderId = null,
     dragOverBack = false,
@@ -39,6 +41,7 @@
     banStates?: Record<string, BanInfo>;
     getAccountNote?: (accountId: string) => string;
     accentColor?: string;
+    locale?: Locale;
     dragItem?: ItemRef | null;
     dragOverFolderId?: string | null;
     dragOverBack?: boolean;
@@ -66,6 +69,7 @@
     {#if currentFolderId}
       <ListRow
         isBack={true}
+        {locale}
         onClick={onGoBack}
         isDragOver={dragOverBack}
       />
@@ -79,6 +83,7 @@
             {folder}
             onClick={() => onNavigate(folder.id)}
             onContextMenu={(e) => onFolderContextMenu(e, folder)}
+            {locale}
             isDragOver={dragOverFolderId === folder.id}
             isDragged={dragItem?.type === "folder" && dragItem?.id === folder.id}
           />
@@ -102,6 +107,7 @@
             onClick={() => selectAccount(account.id)}
             onDblClick={() => onSwitch(account)}
             onContextMenu={(e) => onAccountContextMenu(e, account)}
+            {locale}
             isDragged={dragItem?.type === "account" && dragItem?.id === account.id}
           />
         {/if}
@@ -121,11 +127,12 @@
         accountNote={getAccountNote(selectedAccount.id)}
         banInfo={banStates[selectedAccount.id]}
         {accentColor}
+        {locale}
         onSwitch={() => onSwitch(selectedAccount!)}
       />
     {:else}
       <div class="no-selection">
-        <span class="no-selection-text">Select an account to preview</span>
+        <span class="no-selection-text">{translate(locale, "list.selectAccountPreview")}</span>
       </div>
     {/if}
   </div>

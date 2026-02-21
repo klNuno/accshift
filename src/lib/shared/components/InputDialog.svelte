@@ -1,13 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
 
-  let { title, placeholder = "", initialValue = "", allowEmpty = false, onConfirm, onCancel }: {
+  let { title, placeholder = "", initialValue = "", allowEmpty = false, onConfirm, onCancel, locale = DEFAULT_LOCALE }: {
     title: string;
     placeholder?: string;
     initialValue?: string;
     allowEmpty?: boolean;
     onConfirm: (value: string) => void;
     onCancel: () => void;
+    locale?: Locale;
   } = $props();
 
   let value = $state("");
@@ -49,8 +51,8 @@
       {placeholder}
     />
     <div class="actions">
-      <button class="btn-cancel" onclick={onCancel}>Cancel</button>
-      <button class="btn-ok" onclick={handleSubmit} disabled={!allowEmpty && !value.trim()}>OK</button>
+      <button class="btn-cancel" onclick={onCancel}>{translate(locale, "common.cancel")}</button>
+      <button class="btn-ok" onclick={handleSubmit} disabled={!allowEmpty && !value.trim()}>{translate(locale, "common.ok")}</button>
     </div>
   </div>
 </div>

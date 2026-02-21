@@ -48,6 +48,7 @@
     getFolderCardColor as getStoredFolderCardColor,
     setFolderCardColor,
   } from "$lib/shared/folderCardColors";
+  import { DEFAULT_LOCALE, translate, type MessageKey, type TranslationParams } from "$lib/i18n";
   type SettingsComponentType = (typeof import("$lib/features/settings/Settings.svelte"))["default"];
   type ConfirmDialogConfig = PlatformContextMenuConfirmConfig;
 
@@ -62,6 +63,8 @@
 
   // Platform state
   let settings = $state(startupSettings);
+  let locale = $derived(settings.language ?? DEFAULT_LOCALE);
+  const t = (key: MessageKey, params?: TranslationParams) => translate(locale, key, params);
   let enabledPlatforms = $derived<PlatformDef[]>(
     ALL_PLATFORMS.filter(p => settings.enabledPlatforms.includes(p.id))
   );
@@ -96,7 +99,8 @@
       return currentItems
         .filter((item): item is ItemRef => item.type === "account")
         .map((item) => item.id);
-    }
+    },
+    (key, params) => translate(settings.language ?? DEFAULT_LOCALE, key, params)
   );
 
   // Navigation state
@@ -156,6 +160,17 @@
   const UI_SCALE_MIN_PERCENT = 75;
   const UI_SCALE_MAX_PERCENT = 150;
   const WHEEL_ZOOM_THRESHOLD = 80;
+  const COLOR_LABEL_KEYS = {
+    none: "color.none",
+    slate: "color.slate",
+    blue: "color.blue",
+    cyan: "color.cyan",
+    emerald: "color.emerald",
+    amber: "color.amber",
+    rose: "color.rose",
+    violet: "color.violet",
+    zinc: "color.zinc",
+  } as const;
 
   type PendingUpdate = NonNullable<Awaited<ReturnType<typeof check>>>;
   type UpdateState = "idle" | "checking" | "downloading" | "ready" | "applying";
@@ -170,10 +185,10 @@
   }
 
   let updateCtaLabel = $derived(
-    updateState === "ready" ? "Update available" : updateState === "applying" ? "Installing..." : null
+    updateState === "ready" ? t("update.ctaAvailable") : updateState === "applying" ? t("update.ctaInstalling") : null
   );
   let updateCtaTitle = $derived(
-    updateVersion ? `Restart to apply update ${updateVersion}` : "Restart to apply update"
+    updateVersion ? t("update.restartToApplyVersion", { version: updateVersion }) : t("update.restartToApply")
   );
   let updateCtaDisabled = $derived(updateState === "applying");
   let afkVersionLabel = $derived(afkOverlayVisible && appVersion ? appVersion : null);
@@ -324,7 +339,7 @@
 
   async function copyToClipboard(text: string, label: string) {
     await navigator.clipboard.writeText(text);
-    showToast(`${label} copied`);
+    showToast(t("toast.copied", { label }));
   }
 
   function loadSettingsComponent() {
@@ -336,7 +351,7 @@
         })
         .catch((e) => {
           console.error("Failed to load settings panel:", e);
-          addToast("Failed to load settings panel");
+          addToast(t("toast.failedLoadSettingsPanel"));
           settingsLoadPromise = null;
         });
     }
@@ -423,14 +438,14 @@
   // Dialog helpers
   function showNewFolderDialog() {
     inputDialog = {
-      title: "New folder", placeholder: "Folder name", initialValue: "",
+      title: t("dialog.newFolderTitle"), placeholder: t("dialog.folderNamePlaceholder"), initialValue: "",
       onConfirm: (name) => { createFolder(name, currentFolderId, activeTab); refreshCurrentItems(); inputDialog = null; },
     };
   }
 
   function showRenameFolderDialog(folder: FolderInfo) {
     inputDialog = {
-      title: "Rename folder", placeholder: "Folder name", initialValue: folder.name,
+      title: t("dialog.renameFolderTitle"), placeholder: t("dialog.folderNamePlaceholder"), initialValue: folder.name,
       onConfirm: (name) => { renameFolder(folder.id, name); refreshCurrentItems(); inputDialog = null; },
     };
   }
@@ -450,20 +465,21 @@
           confirmAction: (config) => {
             confirmDialog = config;
           },
+          t,
         }),
       ];
 
       items.push({ separator: true });
       const existingNote = getAccountNote(account.id);
       items.push({
-        label: "Edit card and color",
+        label: t("context.menu.editCardAndColor"),
         submenu: [
           {
-            label: existingNote ? "Edit note" : "Add note",
+            label: existingNote ? t("context.menu.editNote") : t("context.menu.addNote"),
             action: () => {
               inputDialog = {
-                title: "Card note",
-                placeholder: "Write a short note",
+                title: t("dialog.cardNoteTitle"),
+                placeholder: t("dialog.cardNotePlaceholder"),
                 initialValue: existingNote,
                 allowEmpty: true,
                 onConfirm: (note) => {
@@ -479,10 +495,10 @@
             },
           },
           {
-            label: "Card color",
+            label: t("context.menu.cardColor"),
             swatches: ACCOUNT_CARD_COLOR_PRESETS.map((preset) => ({
               id: preset.id,
-              label: preset.label,
+              label: t(COLOR_LABEL_KEYS[preset.id]),
               color: preset.color,
               active: currentColor === preset.color,
               action: () => {
@@ -499,12 +515,12 @@
       const folder = contextMenu.folder;
       const currentColor = getFolderCardColor(folder.id);
       return [
-        { label: "Rename", action: () => showRenameFolderDialog(folder) },
+        { label: t("context.menu.rename"), action: () => showRenameFolderDialog(folder) },
         {
-          label: "Folder color",
+          label: t("context.menu.folderColor"),
           swatches: ACCOUNT_CARD_COLOR_PRESETS.map((preset) => ({
             id: preset.id,
-            label: preset.label,
+            label: t(COLOR_LABEL_KEYS[preset.id]),
             color: preset.color,
             active: currentColor === preset.color,
             action: () => {
@@ -513,11 +529,11 @@
             },
           })),
         },
-        { label: "Delete folder", action: () => { deleteFolder(folder.id); refreshCurrentItems(); } },
+        { label: t("context.menu.deleteFolder"), action: () => { deleteFolder(folder.id); refreshCurrentItems(); } },
       ];
     }
     if (contextMenu.isBackground) {
-      return [{ label: "New folder", action: () => showNewFolderDialog() }];
+      return [{ label: t("context.menu.newFolder"), action: () => showNewFolderDialog() }];
     }
     return [];
   }
@@ -560,7 +576,7 @@
       await update.download();
 
       updateState = "ready";
-      addToast(updateVersion ? `Update ${updateVersion} ready` : "Update ready");
+      addToast(updateVersion ? t("update.readyToastVersion", { version: updateVersion }) : t("update.readyToast"));
     } catch (e) {
       console.error("Updater check/download failed:", e);
       pendingUpdate = null;
@@ -579,7 +595,7 @@
     } catch (e) {
       updateState = "ready";
       console.error("Failed to restart for update:", e);
-      addToast("Could not restart to apply update");
+      addToast(t("update.restartFailed"));
     }
   }
 
@@ -618,6 +634,7 @@
     const theme = settings.theme === "light" ? "light" : "dark";
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
+    document.documentElement.lang = locale;
   });
 
   function unlockWithPin() {
@@ -636,7 +653,7 @@
       }, 240);
       return;
     }
-    pinError = "Invalid PIN";
+    pinError = t("pin.invalid");
     pinAttempt = "";
     setTimeout(() => pinInputRef?.focus(), 0);
   }
@@ -720,6 +737,7 @@
       {activeTab}
       onTabChange={handleTabChange}
       {enabledPlatforms}
+      {locale}
     />
     <div
       class="afk-version-strip"
@@ -739,7 +757,7 @@
     {:else}
       <div class="center-msg">
         <div class="spinner" style="border-top-color: {accentColor};"></div>
-        <p class="text-sm">Loading settings...</p>
+        <p class="text-sm">{t("app.loadingSettings")}</p>
       </div>
     {/if}
   </main>
@@ -759,10 +777,10 @@
       <input
         class="search-input"
         type="search"
-        placeholder="Search account..."
+        placeholder={t("app.searchPlaceholder")}
         bind:value={searchQuery}
       />
-      <ViewToggle mode={viewMode} onChange={handleViewModeChange} />
+      <ViewToggle mode={viewMode} onChange={handleViewModeChange} {locale} />
     </div>
 
     {#if loader.error}
@@ -772,12 +790,12 @@
     {#if loader.loading}
       <div class="center-msg">
         <div class="spinner" style="border-top-color: {accentColor};"></div>
-        <p class="text-sm">Loading...</p>
+        <p class="text-sm">{t("app.loading")}</p>
       </div>
     {:else if loader.accounts.length === 0}
       <div class="center-msg">
-        <p>No {adapter.name} accounts found</p>
-        <p class="text-sm mt-1 opacity-70">Make sure {adapter.name} is installed and you have logged in at least once.</p>
+        <p>{t("app.noAccountsFound", { platform: adapter.name })}</p>
+        <p class="text-sm mt-1 opacity-70">{t("app.noAccountsHint", { platform: adapter.name })}</p>
       </div>
     {:else if viewMode === "list"}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -808,6 +826,7 @@
           onAccountContextMenu={(e, account) => { contextMenu = { x: e.clientX, y: e.clientY, account }; }}
           onFolderContextMenu={(e, folder) => { contextMenu = { x: e.clientX, y: e.clientY, folder }; }}
           {getFolder}
+          {locale}
         />
       </div>
     {:else}
@@ -823,7 +842,7 @@
           style="padding-left: {grid.paddingLeft}px; {grid.isResizing ? '' : 'transition: padding-left 200ms ease-out;'}"
         >
           {#if currentFolderId && !isSearching}
-            <BackCard onBack={() => history.back()} isDragOver={drag.dragOverBack} />
+            <BackCard onBack={() => history.back()} isDragOver={drag.dragOverBack} {locale} />
           {/if}
 
           {#each displayFolderItems as item (item.id)}
@@ -855,6 +874,7 @@
                   showUsername={settings.showUsernames}
                   showLastLogin={settings.showLastLogin}
                   lastLoginAt={account.lastLoginAt}
+                  {locale}
                   isActive={account.id === currentAccountId}
                   onSwitch={() => loader.switchTo(account)}
                   onContextMenu={(e) => { contextMenu = { x: e.clientX, y: e.clientY, account }; }}
@@ -875,8 +895,8 @@
       <div class="switching-overlay">
         <div class="switching-card">
           <div class="spinner" style="border-top-color: {accentColor};"></div>
-          <p class="text-sm font-medium">Switching account...</p>
-          <p class="text-xs" style="color: var(--fg-muted);">{adapter.name} is restarting</p>
+          <p class="text-sm font-medium">{t("app.switchingAccount")}</p>
+          <p class="text-xs" style="color: var(--fg-muted);">{t("app.platformRestarting", { platform: adapter.name })}</p>
         </div>
       </div>
     {/if}
@@ -894,7 +914,7 @@
       {accentColor}
     />
     <div class="center-msg">
-      <p class="text-sm">{ALL_PLATFORMS.find(p => p.id === activeTab)?.name || activeTab} - Coming soon</p>
+      <p class="text-sm">{t("app.comingSoon", { platform: ALL_PLATFORMS.find(p => p.id === activeTab)?.name || activeTab })}</p>
     </div>
   </main>
 {/if}
@@ -905,6 +925,7 @@
         items={getContextMenuItems()}
         x={contextMenu.x}
         y={contextMenu.y}
+        {locale}
         onClose={() => contextMenu = null}
       />
     {/if}
@@ -915,6 +936,7 @@
         placeholder={inputDialog.placeholder}
         initialValue={inputDialog.initialValue}
         allowEmpty={inputDialog.allowEmpty}
+        {locale}
         onConfirm={inputDialog.onConfirm}
         onCancel={() => inputDialog = null}
       />
@@ -924,7 +946,8 @@
       <ConfirmDialog
         title={confirmDialog.title}
         message={confirmDialog.message}
-        confirmLabel={confirmDialog.confirmLabel || "Confirm"}
+        confirmLabel={confirmDialog.confirmLabel || t("common.confirm")}
+        {locale}
         onConfirm={() => {
           const action = confirmDialog?.onConfirm;
           confirmDialog = null;
@@ -960,20 +983,20 @@
   {#if isPinLocked || isPinUnlocking}
     <div class="pin-lock-overlay" class:unlocking={isPinUnlocking}>
       <div class="pin-card">
-        <h3>App Locked</h3>
-        <p>Enter PIN to unlock</p>
+        <h3>{t("pin.lockedTitle")}</h3>
+        <p>{t("pin.lockedPrompt")}</p>
         <input
           bind:this={pinInputRef}
           bind:value={pinAttempt}
           class="pin-input"
           type="password"
-          placeholder="PIN code"
+          placeholder={t("pin.placeholder")}
           onkeydown={(e) => e.key === "Enter" && unlockWithPin()}
         />
         {#if pinError}
           <span class="pin-error">{pinError}</span>
         {/if}
-        <button class="pin-btn" onclick={unlockWithPin}>Unlock</button>
+        <button class="pin-btn" onclick={unlockWithPin}>{t("pin.unlock")}</button>
       </div>
     </div>
   {/if}

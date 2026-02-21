@@ -2,6 +2,7 @@ import type { PlatformAdapter, PlatformAccount } from "./platform";
 import type { BanInfo } from "../platforms/steam/types";
 import { addToast, removeToast } from "../features/notifications/store.svelte";
 import { getApiKey, getPlayerBans } from "../platforms/steam/steamApi";
+import { DEFAULT_LOCALE, translate, type MessageKey, type TranslationParams } from "$lib/i18n";
 
 import { getSettings } from "../features/settings/store";
 
@@ -92,6 +93,7 @@ export function createAccountLoader(
   getAdapter: () => PlatformAdapter | undefined,
   getActiveTab: () => string,
   getVisibleAccountIds?: () => string[],
+  translateMessage?: (key: MessageKey, params?: TranslationParams) => string,
 ) {
   // Centralized UI state for account loading, switching, avatars, and Steam ban checks.
   let accounts = $state<PlatformAccount[]>([]);
@@ -110,6 +112,8 @@ export function createAccountLoader(
   let lastSteamPathToastAt = 0;
   let lastNoAccountsToastAt = 0;
   let latestLoadId = 0;
+  const t = (key: MessageKey, params?: TranslationParams) =>
+    translateMessage?.(key, params) ?? translate(DEFAULT_LOCALE, key, params);
 
   function resolveVisibleAccounts(source: PlatformAccount[]): PlatformAccount[] {
     if (!getVisibleAccountIds) return source;
@@ -237,7 +241,7 @@ export function createAccountLoader(
       if (activeBanCheckToastId) {
         removeToast(activeBanCheckToastId);
       }
-      activeBanCheckToastId = addToast("Checking bans...", { durationMs: null });
+      activeBanCheckToastId = addToast(t("toast.banChecking"), { durationMs: null });
       checkingToastId = activeBanCheckToastId;
     }
 
@@ -298,7 +302,11 @@ export function createAccountLoader(
       writeBanInfoCache(Object.fromEntries(Object.entries(banStates)));
 
       if (!silent && bannedCount > 0) {
-        addToast(`Ban check: ${bannedCount} accounts with bans`);
+        addToast(
+          t(bannedCount > 1 ? "toast.banCheckSummary.multiple" : "toast.banCheckSummary.single", {
+            count: bannedCount,
+          })
+        );
       }
 
       console.info("[ban-check] completed", {
@@ -308,7 +316,7 @@ export function createAccountLoader(
       });
     } catch (e) {
       if (!silent && now - lastBanErrorToastAt >= BAN_ERROR_TOAST_COOLDOWN_MS) {
-        addToast(`Ban check failed: ${String(e)}`);
+        addToast(t("toast.banCheckFailed", { error: String(e) }));
         lastBanErrorToastAt = now;
       }
       console.error("[ban-check] failed to fetch ban states:", e);
@@ -345,12 +353,16 @@ export function createAccountLoader(
       if (getActiveTab() === "steam" && accounts.length === 0) {
         const now = Date.now();
         if (now - lastNoAccountsToastAt >= LOAD_TOAST_COOLDOWN_MS) {
-          addToast("No Steam accounts found. Sign in to Steam at least once, then refresh.");
+          addToast(t("toast.noSteamAccountsFound"));
           lastNoAccountsToastAt = now;
         }
       } else if (showRefreshedToast && !silent) {
         const count = accounts.length;
-        addToast(`${count} ${count === 1 ? "account" : "accounts"} refreshed`);
+        addToast(
+          t(count === 1 ? "toast.accountsRefreshed.single" : "toast.accountsRefreshed.multiple", {
+            count,
+          })
+        );
       }
       onAfterLoad?.();
       const runBackgroundTasks = () => {
@@ -370,7 +382,7 @@ export function createAccountLoader(
       if (getActiveTab() === "steam" && isSteamPathMissingError(message)) {
         const now = Date.now();
         if (now - lastSteamPathToastAt >= LOAD_TOAST_COOLDOWN_MS) {
-          addToast("Steam folder was not found. Set it manually in Settings > Steam folder.");
+          addToast(t("toast.steamFolderNotFound"));
           lastSteamPathToastAt = now;
         }
       }

@@ -1,13 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
 
-  let { title, message, confirmLabel = "Confirm", cancelLabel = "Cancel", onConfirm, onCancel }: {
+  let { title, message, confirmLabel = "", cancelLabel = "", onConfirm, onCancel, locale = DEFAULT_LOCALE }: {
     title: string;
     message: string;
     confirmLabel?: string;
     cancelLabel?: string;
     onConfirm: () => void;
     onCancel: () => void;
+    locale?: Locale;
   } = $props();
 
   let confirmRef = $state<HTMLButtonElement | null>(null);
@@ -31,8 +33,8 @@
     <span class="title">{title}</span>
     <p class="message">{message}</p>
     <div class="actions">
-      <button class="btn-cancel" onclick={onCancel}>{cancelLabel}</button>
-      <button bind:this={confirmRef} class="btn-confirm" onclick={onConfirm}>{confirmLabel}</button>
+      <button class="btn-cancel" onclick={onCancel}>{cancelLabel || translate(locale, "common.cancel")}</button>
+      <button bind:this={confirmRef} class="btn-confirm" onclick={onConfirm}>{confirmLabel || translate(locale, "common.confirm")}</button>
     </div>
   </div>
 </div>

@@ -1,9 +1,11 @@
 <script lang="ts">
   import type { ViewMode } from "../viewMode";
+  import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
 
-  let { mode, onChange }: {
+  let { mode, onChange, locale = DEFAULT_LOCALE }: {
     mode: ViewMode;
     onChange: (mode: ViewMode) => void;
+    locale?: Locale;
   } = $props();
 </script>
 
@@ -11,7 +13,7 @@
   <button
     class="btn"
     class:active={mode === "grid"}
-    title="Grid view"
+    title={translate(locale, "view.grid")}
     onclick={() => onChange("grid")}
   >
     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
@@ -24,7 +26,7 @@
   <button
     class="btn"
     class:active={mode === "list"}
-    title="List view"
+    title={translate(locale, "view.list")}
     onclick={() => onChange("list")}
   >
     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
