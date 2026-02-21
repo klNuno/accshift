@@ -7,6 +7,20 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Command;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+fn hidden_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
 
 fn validate_steam_id(id: &str) -> Result<(), String> {
     if id.len() != 17 || !id.chars().all(|c| c.is_ascii_digit()) {
@@ -16,11 +30,9 @@ fn validate_steam_id(id: &str) -> Result<(), String> {
 }
 
 fn validate_username(name: &str) -> Result<(), String> {
-    if name.is_empty()
-        || name.len() > 64
-        || !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    if name.trim().is_empty()
+        || name.len() > 128
+        || name.chars().any(|c| c == '\0' || c.is_control())
     {
         return Err("Invalid username".into());
     }
@@ -261,7 +273,7 @@ pub fn set_steam_path(app_handle: tauri::AppHandle, path: String) -> Result<(), 
 #[tauri::command]
 pub fn select_steam_path() -> Result<String, String> {
     let script = "$shell = New-Object -ComObject Shell.Application; $folder = $shell.BrowseForFolder(0, 'Select Steam folder', 0, 0); if ($folder) { $folder.Self.Path }";
-    let output = Command::new("powershell")
+    let output = hidden_command("powershell")
         .args(["-NoProfile", "-Command", script])
         .output()
         .map_err(|e| e.to_string())?;
@@ -270,6 +282,19 @@ pub fn select_steam_path() -> Result<String, String> {
         return Err("Folder selection canceled".into());
     }
     Ok(path)
+}
+
+#[tauri::command]
+pub fn open_steam_api_key_page() -> Result<(), String> {
+    hidden_command("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "Start-Process 'https://steamcommunity.com/dev/apikey'",
+        ])
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]

@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import type { PlatformAccount } from "../platform";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
+  import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
 
   import type { BanInfo } from "$lib/platforms/steam/types";
 
@@ -17,8 +18,11 @@
     banInfo = undefined,
     cardColor = "",
     showUsername = true,
+    showNoteInline = false,
     showLastLogin = false,
     lastLoginAt = null,
+    note = "",
+    locale = DEFAULT_LOCALE,
   }: {
     account: PlatformAccount;
     isActive: boolean;
@@ -31,12 +35,16 @@
     banInfo?: BanInfo;
     cardColor?: string;
     showUsername?: boolean;
+    showNoteInline?: boolean;
     showLastLogin?: boolean;
     lastLoginAt?: number | null;
+    note?: string;
+    locale?: Locale;
   } = $props();
 
   let showConfirm = $state(false);
   let cardRef = $state<HTMLDivElement | null>(null);
+  let tooltipRef = $state<HTMLDivElement | null>(null);
   let nameContainerRef = $state<HTMLDivElement | null>(null);
   let nameRef = $state<HTMLSpanElement | null>(null);
   let isOverflowing = $state(false);
@@ -46,9 +54,31 @@
   let marqueeOffsetPx = $state(0);
   let marqueePauseTimer: ReturnType<typeof setTimeout> | null = null;
   let marqueeDirection = $state<"to-end" | "to-start">("to-end");
+  let noteTooltipStyle = $state("");
 
   const MARQUEE_SPEED_PX_PER_SEC = 42;
   const MARQUEE_PAUSE_MS = 2000;
+  const TOOLTIP_GAP_PX = 6;
+  const VIEWPORT_EDGE_GAP_PX = 4;
+  const noteText = $derived(note.trim());
+  function formatBanTooltipEnglish(info: BanInfo): string {
+    const lines: string[] = [];
+    if (info.community_banned) {
+      lines.push("Community ban");
+    }
+    if (info.vac_banned) {
+      const vacCount = Math.max(1, info.number_of_vac_bans || 0);
+      lines.push(`${vacCount} VAC ban${vacCount > 1 ? "s" : ""}`);
+    }
+    if (info.number_of_game_bans > 0) {
+      lines.push(`${info.number_of_game_bans} game ban${info.number_of_game_bans > 1 ? "s" : ""}`);
+    }
+    return lines.join("\n");
+  }
+  let banHoverMessage = $derived.by(() => {
+    if (!banInfo) return "";
+    return formatBanTooltipEnglish(banInfo);
+  });
 
   // Visual severity hint for ban state.
   let banOutlineColor = $derived.by(() => {
@@ -57,24 +87,8 @@
     if (banInfo.community_banned || (banInfo.economy_ban && banInfo.economy_ban !== "none")) return "rgba(234, 179, 8, 0.6)";
     return "";
   });
-  let hasBanWarning = $derived.by(() =>
-    Boolean(banInfo && (banInfo.community_banned || banInfo.vac_banned || banInfo.number_of_game_bans > 0))
-  );
-  let banHoverMessage = $derived.by(() => {
-    if (!banInfo) return "";
-    const lines: string[] = [];
-    if (banInfo.community_banned) {
-      lines.push("Community ban");
-    }
-    if (banInfo.vac_banned) {
-      const vacCount = Math.max(1, banInfo.number_of_vac_bans || 0);
-      lines.push(`${vacCount} VAC ban${vacCount > 1 ? "s" : ""}`);
-    }
-    if (banInfo.number_of_game_bans > 0) {
-      lines.push(`${banInfo.number_of_game_bans} game ban${banInfo.number_of_game_bans > 1 ? "s" : ""}`);
-    }
-    return lines.join("\n");
-  });
+  let hasInlineNote = $derived(Boolean(showNoteInline && noteText));
+  let showNoteTooltip = $derived(Boolean(isHovered && !isDragged && noteText && !showNoteInline));
 
   onMount(() => {
     function onDocClick(e: MouseEvent) {
@@ -84,10 +98,14 @@
     }
     document.addEventListener("mousedown", onDocClick);
     window.addEventListener("resize", checkOverflow);
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
     checkOverflow();
     return () => {
       document.removeEventListener("mousedown", onDocClick);
       window.removeEventListener("resize", checkOverflow);
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
       clearMarqueePauseTimer();
     };
   });
@@ -134,11 +152,40 @@
   function handleMouseEnter() {
     isHovered = true;
     startMarquee();
+    void positionNoteTooltip();
   }
 
   function handleMouseLeave() {
     isHovered = false;
     stopMarquee();
+  }
+
+  function handleViewportChange() {
+    if (!showNoteTooltip) return;
+    void positionNoteTooltip();
+  }
+
+  async function positionNoteTooltip() {
+    if (!showNoteTooltip) return;
+    await tick();
+    if (!cardRef || !tooltipRef) return;
+
+    const cardRect = cardRef.getBoundingClientRect();
+    const tooltipRect = tooltipRef.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    let leftInViewport = cardRect.right - tooltipRect.width;
+    leftInViewport = Math.max(VIEWPORT_EDGE_GAP_PX, leftInViewport);
+    leftInViewport = Math.min(leftInViewport, viewportWidth - tooltipRect.width - VIEWPORT_EDGE_GAP_PX);
+
+    let topInViewport = cardRect.bottom + TOOLTIP_GAP_PX;
+    if (topInViewport + tooltipRect.height > viewportHeight - VIEWPORT_EDGE_GAP_PX) {
+      topInViewport = cardRect.top - tooltipRect.height - TOOLTIP_GAP_PX;
+    }
+    topInViewport = Math.max(VIEWPORT_EDGE_GAP_PX, topInViewport);
+
+    noteTooltipStyle = `left:${leftInViewport - cardRect.left}px;top:${topInViewport - cardRect.top}px;`;
   }
 
   function checkOverflow() {
@@ -166,6 +213,11 @@
 
   $effect(() => {
     if (isDragged) showConfirm = false;
+  });
+
+  $effect(() => {
+    if (!showNoteTooltip) return;
+    void positionNoteTooltip();
   });
 
   function getInitials(name: string): string {
@@ -207,8 +259,12 @@
   class:dragging={isDragged}
   class:ban-red={banOutlineColor.includes("239")}
   class:ban-yellow={banOutlineColor.includes("234")}
-  title={hasBanWarning ? banHoverMessage : undefined}
+  title={banHoverMessage || undefined}
 >
+  {#if showNoteTooltip}
+    <div class="note-tooltip" bind:this={tooltipRef} style={noteTooltipStyle} role="tooltip">{noteText}</div>
+  {/if}
+
   <div class="avatar" class:active={isActive}>
     <div class="avatar-media">
       {#if isLoadingAvatar}
@@ -251,13 +307,21 @@
     </span>
   </div>
 
-  {#if showUsername || showLastLogin}
+  {#if showUsername || hasInlineNote || showLastLogin}
     <div class="meta-stack">
       {#if showUsername}
-        <div class="username">{account.username}</div>
+        <div class="username">
+          {#if noteText && !showNoteInline}
+            <span class="note-info-icon" aria-label={translate(locale, "card.noteAttached")}>i</span>
+          {/if}
+          <span class="username-text">{account.username}</span>
+        </div>
+      {/if}
+      {#if hasInlineNote}
+        <div class="note">{noteText}</div>
       {/if}
       {#if showLastLogin}
-        <div class="last-login">{formatRelativeTimeCompact(lastLoginAt)}</div>
+        <div class="last-login">{formatRelativeTimeCompact(lastLoginAt, locale)}</div>
       {/if}
     </div>
   {/if}
@@ -266,6 +330,9 @@
 
 <style>
   .card {
+    position: relative;
+    overflow: visible;
+    z-index: 1;
     width: 100px;
     padding: 8px;
     box-sizing: border-box;
@@ -274,7 +341,7 @@
     background: var(--bg-card);
     border: none;
     cursor: pointer;
-    transition: all 150ms ease-out;
+    transition: background 150ms ease-out, transform 150ms ease-out, box-shadow 150ms ease-out, outline-color 120ms ease-out;
     color: inherit;
     user-select: none;
   }
@@ -282,6 +349,7 @@
   .card:not(.active):hover {
     background: var(--bg-card-hover);
     transform: scale(1.02);
+    z-index: 24;
   }
 
   .card.custom-color {
@@ -298,8 +366,11 @@
   }
 
   .card.active {
-    outline: 2px solid rgba(255, 255, 255, 0.4);
+    box-shadow:
+      0 0 0 2px rgba(255, 255, 255, 0.62),
+      0 0 0 4px rgba(9, 9, 11, 0.45);
     cursor: pointer;
+    z-index: 18;
   }
 
   .card.active:not(.custom-color) {
@@ -308,6 +379,9 @@
 
   .card.custom-color.active {
     background: color-mix(in srgb, var(--card-custom-color) 24%, var(--bg-card));
+    box-shadow:
+      0 0 0 2px rgba(255, 255, 255, 0.72),
+      0 0 0 5px color-mix(in srgb, var(--card-custom-color) 50%, rgba(9, 9, 11, 0.62));
   }
 
   .card.ban-red {
@@ -329,6 +403,26 @@
   .card.dragging {
     opacity: 0.4;
     transform: scale(0.95);
+    z-index: 8;
+  }
+
+  .note-tooltip {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: min(190px, calc(100vw - 8px));
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg-card) 92%, #000 8%);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+    font-size: 10px;
+    line-height: 1.3;
+    color: var(--fg);
+    text-align: left;
+    word-break: break-word;
+    pointer-events: none;
+    z-index: 30;
   }
 
   .avatar {
@@ -446,11 +540,26 @@
     transition: transform var(--marquee-duration, 1600ms) linear;
   }
 
+  .note {
+    margin-top: 0;
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    pointer-events: none;
+    font-size: 9px;
+    font-weight: 500;
+    color: var(--fg);
+    line-height: 1.2;
+  }
+
   .meta-stack {
-    margin-top: 1px;
+    margin-top: 4px;
     display: flex;
     flex-direction: column;
-    gap: 0;
+    gap: 2px;
     font-size: 10px;
     line-height: 1.2;
     pointer-events: none;
@@ -458,12 +567,43 @@
 
   .username {
     color: var(--fg-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .note-info-icon {
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.92);
+    color: #fff;
+    font-size: 8px;
+    font-weight: 700;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+  }
+
+  .username-text {
+    display: block;
+    min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
   .last-login {
+    display: block;
+    width: 100%;
+    max-width: 100%;
     font-size: 10px;
     font-weight: 500;
     color: color-mix(in srgb, var(--fg-subtle) 40%, var(--fg) 60%);

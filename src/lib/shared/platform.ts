@@ -1,10 +1,27 @@
 import type { ContextMenuItem } from "./types";
+import type { MessageKey, TranslationParams } from "$lib/i18n";
 
 export interface PlatformAccount {
   id: string;
   displayName: string;
   username: string;
   lastLoginAt?: number | null;
+}
+
+export interface PlatformContextMenuConfirmConfig {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  onConfirm: () => void | Promise<void>;
+}
+
+export interface PlatformContextMenuCallbacks {
+  copyToClipboard: (text: string, label: string) => void | Promise<void>;
+  showToast: (msg: string) => void;
+  getCurrentAccountId: () => string | null;
+  refreshAccounts: () => void;
+  confirmAction: (config: PlatformContextMenuConfirmConfig) => void;
+  t: (key: MessageKey, params?: TranslationParams) => string;
 }
 
 export interface PlatformAdapter {
@@ -21,10 +38,7 @@ export interface PlatformAdapter {
   switchAccount(account: PlatformAccount): Promise<void>;
   addAccount(): Promise<void>;
 
-  getContextMenuItems(account: PlatformAccount, callbacks: {
-    copyToClipboard: (text: string, label: string) => void;
-    showToast: (msg: string) => void;
-  }): ContextMenuItem[];
+  getContextMenuItems(account: PlatformAccount, callbacks: PlatformContextMenuCallbacks): ContextMenuItem[];
 
   getProfileInfo?(accountId: string): Promise<{
     avatar_url: string | null;

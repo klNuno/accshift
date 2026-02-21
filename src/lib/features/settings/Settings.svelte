@@ -4,6 +4,14 @@
   import { getSettings, saveSettings, ALL_PLATFORMS } from "./store";
   import { addToast } from "../notifications/store.svelte";
   import ToggleSetting from "./ToggleSetting.svelte";
+  import {
+    DEFAULT_LOCALE,
+    LANGUAGE_OPTIONS,
+    normalizeLocale,
+    translate,
+    type MessageKey,
+    type TranslationParams,
+  } from "$lib/i18n";
 
   let { onClose, onPlatformsChanged }: {
     onClose: () => void;
@@ -14,6 +22,7 @@
   let steamEnabled = $derived(settings.enabledPlatforms.includes("steam"));
   let apiKey = $state("");
   let steamPath = $state("");
+  let uiScalePercentInput = $state("");
   let avatarCacheDaysInput = $state("");
   let banCheckDaysInput = $state("");
   let inactivityBlurSecondsInput = $state("");
@@ -22,6 +31,14 @@
   let lastSavedToastAt = 0;
   let lastPersistedSnapshot = "";
   const SAVE_TOAST_COOLDOWN_MS = 1500;
+  const languageLabelByCode: Record<string, MessageKey> = {
+    en: "language.english",
+    fr: "language.french",
+  };
+
+  function t(key: MessageKey, params?: TranslationParams): string {
+    return translate(settings.language ?? DEFAULT_LOCALE, key, params);
+  }
 
   function clampInt(value: number, min: number, max: number, fallback: number): number {
     if (!Number.isFinite(value)) return fallback;
@@ -32,6 +49,8 @@
     if (settings.theme !== "light" && settings.theme !== "dark") {
       settings.theme = "dark";
     }
+    settings.language = normalizeLocale(settings.language);
+    settings.uiScalePercent = clampInt(settings.uiScalePercent, 75, 150, 100);
     settings.avatarCacheDays = clampInt(settings.avatarCacheDays, 0, 90, 7);
     settings.banCheckDays = clampInt(settings.banCheckDays, 0, 90, 7);
     settings.inactivityBlurSeconds = clampInt(settings.inactivityBlurSeconds, 0, 3600, 60);
@@ -58,9 +77,15 @@
   }
 
   function refreshNumericInputsFromSettings() {
+    uiScalePercentInput = String(settings.uiScalePercent);
     avatarCacheDaysInput = String(settings.avatarCacheDays);
     banCheckDaysInput = String(settings.banCheckDays);
     inactivityBlurSecondsInput = String(settings.inactivityBlurSeconds);
+  }
+
+  function commitUiScalePercent() {
+    settings.uiScalePercent = clampInt(Number(uiScalePercentInput), 75, 150, settings.uiScalePercent);
+    uiScalePercentInput = String(settings.uiScalePercent);
   }
 
   function commitAvatarCacheDays() {
@@ -90,7 +115,7 @@
       lastPersistedSnapshot = snapshot;
       const now = Date.now();
       if (now - lastSavedToastAt >= SAVE_TOAST_COOLDOWN_MS) {
-        addToast("Settings saved");
+        addToast(t("settings.saved"));
         lastSavedToastAt = now;
       }
       onPlatformsChanged?.();
@@ -144,10 +169,13 @@
     settings.banCheckDays;
     settings.inactivityBlurSeconds;
     settings.theme;
+    settings.language;
     settings.steamRunAsAdmin;
     settings.steamLaunchOptions;
     settings.showUsernames;
     settings.showLastLogin;
+    settings.showCardNotesInline;
+    settings.uiScalePercent;
     settings.defaultPlatformId;
     settings.pinEnabled;
     settings.pinCode;
@@ -165,6 +193,14 @@
     }
   }
 
+  async function openSteamApiKeyPage() {
+    try {
+      await invoke("open_steam_api_key_page");
+    } catch {
+      addToast(t("settings.openApiKeyFailed"));
+    }
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") onClose();
   }
@@ -175,10 +211,10 @@
 <div class="settings-panel">
   <div class="header">
     <div class="title-wrap">
-      <span class="title">Settings</span>
+      <span class="title">{t("settings.title")}</span>
     </div>
     <div class="header-actions">
-      <button class="close-btn" onclick={onClose} title="Close">
+      <button class="close-btn" onclick={onClose} title={t("common.close")}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="18" y1="6" x2="6" y2="18" />
           <line x1="6" y1="6" x2="18" y2="18" />
@@ -189,19 +225,54 @@
 
   <div class="settings-grid">
     <section class="card">
-      <h3>Appearance</h3>
+      <h3>{t("settings.appearance")}</h3>
+      <div class="field">
+        <div class="row">
+          <span>{t("settings.language")}</span>
+          <strong>
+            {t(languageLabelByCode[settings.language] ?? "language.english")}
+          </strong>
+        </div>
+        <select class="text-input" bind:value={settings.language}>
+          {#each LANGUAGE_OPTIONS as option}
+            <option value={option.code}>{t(option.labelKey)}</option>
+          {/each}
+        </select>
+      </div>
+      <label class="field">
+        <div class="row">
+          <span>{t("settings.uiZoom")}</span>
+          <strong>{settings.uiScalePercent}%</strong>
+        </div>
+        <input
+          type="number"
+          min="75"
+          max="150"
+          step="5"
+          value={uiScalePercentInput}
+          oninput={(e) => uiScalePercentInput = (e.currentTarget as HTMLInputElement).value}
+          onblur={commitUiScalePercent}
+          onkeydown={(e) => {
+            if (e.key === "Enter") {
+              commitUiScalePercent();
+              (e.currentTarget as HTMLInputElement).blur();
+            }
+          }}
+          class="text-input number-input"
+        />
+      </label>
       <ToggleSetting
-        label="Light mode"
+        label={t("settings.lightMode")}
         enabled={settings.theme === "light"}
         accent="#f59e0b"
-        onLabel="On"
-        offLabel="Off"
+        onLabel={t("common.on")}
+        offLabel={t("common.off")}
         onToggle={() => settings.theme = settings.theme === "light" ? "dark" : "light"}
       />
     </section>
 
     <section class="card">
-      <h3>Platforms</h3>
+      <h3>{t("settings.platforms")}</h3>
       <div class="platforms">
         {#each ALL_PLATFORMS as platform}
           <button class="platform-chip" onclick={() => togglePlatform(platform.id)} style={`--chip-accent:${platform.accent};`}>
@@ -215,13 +286,13 @@
 
       <div class="field">
         <div class="row">
-          <span>Default on startup</span>
+          <span>{t("settings.defaultOnStartup")}</span>
           <strong>{ALL_PLATFORMS.find(p => p.id === settings.defaultPlatformId)?.name || settings.defaultPlatformId}</strong>
         </div>
         <select class="text-input" bind:value={settings.defaultPlatformId}>
           {#each ALL_PLATFORMS as platform}
             <option value={platform.id} disabled={!settings.enabledPlatforms.includes(platform.id)}>
-              {platform.name}{!settings.enabledPlatforms.includes(platform.id) ? " (disabled)" : ""}
+              {platform.name}{!settings.enabledPlatforms.includes(platform.id) ? ` ${t("settings.platformDisabledSuffix")}` : ""}
             </option>
           {/each}
         </select>
@@ -229,12 +300,12 @@
     </section>
 
     <section class="card">
-      <h3>Data Refresh</h3>
+      <h3>{t("settings.dataRefresh")}</h3>
 
       <label class="field">
         <div class="row">
-          <span>Avatar refresh</span>
-          <span class="hint">0 = each launch</span>
+          <span>{t("settings.avatarRefresh")}</span>
+          <span class="hint">{t("settings.zeroEachLaunch")}</span>
         </div>
         <input
           type="number"
@@ -256,8 +327,8 @@
 
       <label class="field">
         <div class="row">
-          <span>Ban check delay</span>
-          <span class="hint">0 = each launch</span>
+          <span>{t("settings.banCheckDelay")}</span>
+          <span class="hint">{t("settings.zeroEachLaunch")}</span>
         </div>
         <input
           type="number"
@@ -279,11 +350,11 @@
     </section>
 
     <section class="card">
-      <h3>Privacy</h3>
+      <h3>{t("settings.privacy")}</h3>
       <label class="field">
         <div class="row">
-          <span>Inactivity timeout</span>
-          <span class="hint">0 = disabled</span>
+          <span>{t("settings.inactivityTimeout")}</span>
+          <span class="hint">{t("settings.zeroDisabled")}</span>
         </div>
         <input
           type="number"
@@ -306,13 +377,13 @@
     </section>
 
     <section class="card">
-      <h3>Security</h3>
+      <h3>{t("settings.security")}</h3>
       <ToggleSetting
-        label="PIN lock on AFK"
+        label={t("settings.pinLockOnAfk")}
         enabled={settings.pinEnabled}
         accent="#eab308"
-        onLabel="Enabled"
-        offLabel="Disabled"
+        onLabel={t("common.enabled")}
+        offLabel={t("common.disabled")}
         onToggle={() => {
           settings.pinEnabled = !settings.pinEnabled;
           if (!settings.pinEnabled) {
@@ -324,15 +395,15 @@
       {#if settings.pinEnabled}
         <div class="field">
           <div class="row">
-            <span>PIN code</span>
-            <strong>{settings.pinCode ? "Configured" : "Missing"}</strong>
+            <span>{t("settings.pinCode")}</span>
+            <strong>{settings.pinCode ? t("common.configured") : t("common.missing")}</strong>
           </div>
           <input
             id="pin-code"
             type="password"
             bind:value={settings.pinCode}
             class="text-input"
-            placeholder="4-8 digits"
+            placeholder={t("settings.pinPlaceholder")}
             maxlength="16"
           />
         </div>
@@ -340,37 +411,45 @@
     </section>
 
     {#if steamEnabled}
-      <section class="card">
-        <h3>Steam</h3>
+      <section class="card steam-card">
+        <h3>{t("settings.steam")}</h3>
 
         <ToggleSetting
-          label="Run Steam as admin"
+          label={t("settings.runSteamAsAdmin")}
           enabled={settings.steamRunAsAdmin}
-          onLabel="Enabled"
-          offLabel="Disabled"
+          onLabel={t("common.enabled")}
+          offLabel={t("common.disabled")}
           onToggle={() => settings.steamRunAsAdmin = !settings.steamRunAsAdmin}
         />
 
         <ToggleSetting
-          label="Show usernames"
+          label={t("settings.showUsernames")}
           enabled={settings.showUsernames}
-          onLabel="Visible"
-          offLabel="Hidden"
+          onLabel={t("common.visible")}
+          offLabel={t("common.hidden")}
           onToggle={() => settings.showUsernames = !settings.showUsernames}
         />
 
         <ToggleSetting
-          label="Show last login"
+          label={t("settings.showLastLogin")}
           enabled={settings.showLastLogin}
-          onLabel="On"
-          offLabel="Off"
+          onLabel={t("common.on")}
+          offLabel={t("common.off")}
           onToggle={() => settings.showLastLogin = !settings.showLastLogin}
+        />
+
+        <ToggleSetting
+          label={t("settings.showNotesUnderCards")}
+          enabled={settings.showCardNotesInline}
+          onLabel={t("common.inline")}
+          offLabel={t("common.tooltip")}
+          onToggle={() => settings.showCardNotesInline = !settings.showCardNotesInline}
         />
 
         <div class="field">
           <div class="row">
-            <span>Launch options</span>
-            <strong>{settings.steamLaunchOptions ? "Custom" : "None"}</strong>
+            <span>{t("settings.launchOptions")}</span>
+            <strong>{settings.steamLaunchOptions ? t("common.custom") : t("common.none")}</strong>
           </div>
           <input
             id="steam-launch-options"
@@ -383,8 +462,8 @@
 
         <div class="field">
           <div class="row">
-            <span>Steam folder</span>
-            <strong>{steamPath ? "Custom" : "Registry"}</strong>
+            <span>{t("settings.steamFolder")}</span>
+            <strong>{steamPath ? t("common.custom") : t("settings.steamFolderRegistry")}</strong>
           </div>
           <div class="input-row">
             <input
@@ -394,16 +473,19 @@
               class="text-input"
               placeholder="C:\Program Files (x86)\Steam"
             />
-            <button class="browse-btn" type="button" onclick={chooseSteamFolder}>Choose...</button>
+            <button class="browse-btn" type="button" onclick={chooseSteamFolder}>{t("common.choose")}</button>
           </div>
         </div>
 
         <div class="field">
           <div class="row">
-            <span>Steam Web API key</span>
-            <strong>{apiKey.trim() ? "Configured" : "Missing"}</strong>
+            <span>{t("settings.steamWebApiKey")}</span>
+            <div class="row-actions">
+              <button class="inline-link-btn" type="button" onclick={openSteamApiKeyPage}>{t("settings.getKey")}</button>
+              <strong>{apiKey.trim() ? t("common.configured") : t("common.missing")}</strong>
+            </div>
           </div>
-          <input id="api-key" type="password" bind:value={apiKey} class="text-input" placeholder="Paste your Steam Web API key" />
+          <input id="api-key" type="password" bind:value={apiKey} class="text-input" placeholder={t("settings.pasteApiKey")} />
         </div>
       </section>
     {/if}
@@ -450,6 +532,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    padding-right: 8px;
   }
 
   .close-btn {
@@ -471,9 +554,19 @@
 
   .settings-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     gap: 10px;
     padding-bottom: 8px;
+  }
+
+  .steam-card {
+    grid-column: span 2;
+  }
+
+  @media (max-width: 980px) {
+    .steam-card {
+      grid-column: span 1;
+    }
   }
 
   .card {
@@ -562,6 +655,26 @@
     font-size: 12px;
     color: var(--fg);
     font-weight: 600;
+  }
+
+  .row-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .inline-link-btn {
+    border: none;
+    background: transparent;
+    color: #60a5fa;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .inline-link-btn:hover {
+    color: #93c5fd;
+    text-decoration: underline;
   }
 
   .hint {

@@ -2,6 +2,7 @@ import type { PlatformAdapter, PlatformAccount } from "./platform";
 import type { BanInfo } from "../platforms/steam/types";
 import { addToast, removeToast } from "../features/notifications/store.svelte";
 import { getApiKey, getPlayerBans } from "../platforms/steam/steamApi";
+import { DEFAULT_LOCALE, translate, type MessageKey, type TranslationParams } from "$lib/i18n";
 
 import { getSettings } from "../features/settings/store";
 
@@ -88,7 +89,12 @@ function deferBackgroundTask(task: () => void) {
   setTimeout(task, 0);
 }
 
-export function createAccountLoader(getAdapter: () => PlatformAdapter | undefined, getActiveTab: () => string) {
+export function createAccountLoader(
+  getAdapter: () => PlatformAdapter | undefined,
+  getActiveTab: () => string,
+  getVisibleAccountIds?: () => string[],
+  translateMessage?: (key: MessageKey, params?: TranslationParams) => string,
+) {
   // Centralized UI state for account loading, switching, avatars, and Steam ban checks.
   let accounts = $state<PlatformAccount[]>([]);
   let accountMap = $derived<Record<string, PlatformAccount>>(
@@ -106,6 +112,24 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
   let lastSteamPathToastAt = 0;
   let lastNoAccountsToastAt = 0;
   let latestLoadId = 0;
+  const t = (key: MessageKey, params?: TranslationParams) =>
+    translateMessage?.(key, params) ?? translate(DEFAULT_LOCALE, key, params);
+
+  function resolveVisibleAccounts(source: PlatformAccount[]): PlatformAccount[] {
+    if (!getVisibleAccountIds) return source;
+    const requestedIds = getVisibleAccountIds();
+    if (!requestedIds.length) return [];
+    const byId = new Map(source.map((account) => [account.id, account]));
+    const out: PlatformAccount[] = [];
+    const seen = new Set<string>();
+    for (const id of requestedIds) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const account = byId.get(id);
+      if (account) out.push(account);
+    }
+    return out;
+  }
 
   async function refreshProfile(adapter: PlatformAdapter, account: PlatformAccount) {
     if (!adapter.getProfileInfo) return;
@@ -217,7 +241,7 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
       if (activeBanCheckToastId) {
         removeToast(activeBanCheckToastId);
       }
-      activeBanCheckToastId = addToast("Checking bans...", { durationMs: null });
+      activeBanCheckToastId = addToast(t("toast.banChecking"), { durationMs: null });
       checkingToastId = activeBanCheckToastId;
     }
 
@@ -278,7 +302,11 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
       writeBanInfoCache(Object.fromEntries(Object.entries(banStates)));
 
       if (!silent && bannedCount > 0) {
-        addToast(`Ban check: ${bannedCount} accounts with bans`);
+        addToast(
+          t(bannedCount > 1 ? "toast.banCheckSummary.multiple" : "toast.banCheckSummary.single", {
+            count: bannedCount,
+          })
+        );
       }
 
       console.info("[ban-check] completed", {
@@ -288,7 +316,7 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
       });
     } catch (e) {
       if (!silent && now - lastBanErrorToastAt >= BAN_ERROR_TOAST_COOLDOWN_MS) {
-        addToast(`Ban check failed: ${String(e)}`);
+        addToast(t("toast.banCheckFailed", { error: String(e) }));
         lastBanErrorToastAt = now;
       }
       console.error("[ban-check] failed to fetch ban states:", e);
@@ -325,21 +353,21 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
       if (getActiveTab() === "steam" && accounts.length === 0) {
         const now = Date.now();
         if (now - lastNoAccountsToastAt >= LOAD_TOAST_COOLDOWN_MS) {
-          addToast("No Steam accounts found. Sign in to Steam at least once, then refresh.");
+          addToast(t("toast.noSteamAccountsFound"));
           lastNoAccountsToastAt = now;
         }
       } else if (showRefreshedToast && !silent) {
         const count = accounts.length;
-        addToast(`${count} ${count === 1 ? "account" : "accounts"} refreshed`);
+        addToast(
+          t(count === 1 ? "toast.accountsRefreshed.single" : "toast.accountsRefreshed.multiple", {
+            count,
+          })
+        );
       }
       onAfterLoad?.();
-      const loadedAccounts = [...accounts];
       const runBackgroundTasks = () => {
         if (loadId !== latestLoadId) return;
-        void loadProfilesForAccounts(loadedAccounts, forceRefresh);
-        if (checkBans) {
-          void fetchBanStates(loadedAccounts, silent, forceRefresh);
-        }
+        primeVisibleAccounts(checkBans, forceRefresh, silent, false);
       };
       if (deferBackground) {
         deferBackgroundTask(runBackgroundTasks);
@@ -354,7 +382,7 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
       if (getActiveTab() === "steam" && isSteamPathMissingError(message)) {
         const now = Date.now();
         if (now - lastSteamPathToastAt >= LOAD_TOAST_COOLDOWN_MS) {
-          addToast("Steam folder was not found. Set it manually in Settings > Steam folder.");
+          addToast(t("toast.steamFolderNotFound"));
           lastSteamPathToastAt = now;
         }
       }
@@ -398,9 +426,31 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
   async function addNew() {
     const adapter = getAdapter();
     if (!adapter) return;
-    try { await adapter.addAccount(); } catch (e) { 
+    currentAccount = "";
+    try { await adapter.addAccount(); } catch (e) {
       error = String(e);
       addToast(error);
+    }
+  }
+
+  function primeVisibleAccounts(
+    checkBans = false,
+    forceRefresh = false,
+    silent = true,
+    deferBackground = true,
+  ) {
+    const visibleAccounts = resolveVisibleAccounts(accounts);
+    if (visibleAccounts.length === 0) return;
+    const run = () => {
+      void loadProfilesForAccounts(visibleAccounts, forceRefresh);
+      if (checkBans) {
+        void fetchBanStates(visibleAccounts, silent, forceRefresh);
+      }
+    };
+    if (deferBackground) {
+      deferBackgroundTask(run);
+    } else {
+      run();
     }
   }
 
@@ -417,5 +467,6 @@ export function createAccountLoader(getAdapter: () => PlatformAdapter | undefine
     load,
     switchTo,
     addNew,
+    primeVisibleAccounts,
   };
 }

@@ -3,6 +3,7 @@
   import type { FolderInfo } from "../../features/folders/types";
   import type { BanInfo } from "../../platforms/steam/types";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
+  import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
 
   let {
     account = null,
@@ -17,6 +18,7 @@
     showUsername = true,
     showLastLogin = false,
     lastLoginAt = null,
+    locale = DEFAULT_LOCALE,
     onClick,
     onContextMenu = (_e: MouseEvent) => {},
     onDblClick = () => {},
@@ -33,6 +35,7 @@
     showUsername?: boolean;
     showLastLogin?: boolean;
     lastLoginAt?: number | null;
+    locale?: Locale;
     onClick: () => void;
     onContextMenu?: (e: MouseEvent) => void;
     onDblClick?: () => void;
@@ -48,6 +51,21 @@
     onContextMenu(e);
   }
 
+  function formatBanTooltipEnglish(info: BanInfo): string {
+    const lines: string[] = [];
+    if (info.community_banned) {
+      lines.push("Community ban");
+    }
+    if (info.vac_banned) {
+      const vacCount = Math.max(1, info.number_of_vac_bans || 0);
+      lines.push(`${vacCount} VAC ban${vacCount > 1 ? "s" : ""}`);
+    }
+    if (info.number_of_game_bans > 0) {
+      lines.push(`${info.number_of_game_bans} game ban${info.number_of_game_bans > 1 ? "s" : ""}`);
+    }
+    return lines.join("\n");
+  }
+
   let hasRedWarning = $derived.by(() =>
     Boolean(banInfo && (banInfo.vac_banned || banInfo.number_of_game_bans > 0))
   );
@@ -58,18 +76,7 @@
 
   let banHoverMessage = $derived.by(() => {
     if (!banInfo) return "";
-    const lines: string[] = [];
-    if (banInfo.community_banned) {
-      lines.push("Community ban");
-    }
-    if (banInfo.vac_banned) {
-      const vacCount = Math.max(1, banInfo.number_of_vac_bans || 0);
-      lines.push(`${vacCount} VAC ban${vacCount > 1 ? "s" : ""}`);
-    }
-    if (banInfo.number_of_game_bans > 0) {
-      lines.push(`${banInfo.number_of_game_bans} game ban${banInfo.number_of_game_bans > 1 ? "s" : ""}`);
-    }
-    return lines.join("\n");
+    return formatBanTooltipEnglish(banInfo);
   });
 </script>
 
@@ -99,7 +106,7 @@
       </svg>
     </div>
     <div class="info">
-      <span class="name-text">Back</span>
+      <span class="name-text">{translate(locale, "common.back")}</span>
     </div>
   {:else if folder}
     <div class="icon folder-icon">
@@ -126,7 +133,7 @@
             <span class="username-text">{account.username}</span>
           {/if}
           {#if showLastLogin}
-            <span class="meta-text">{formatRelativeTimeCompact(lastLoginAt)}</span>
+            <span class="meta-text">{formatRelativeTimeCompact(lastLoginAt, locale)}</span>
           {/if}
         </span>
       {/if}
@@ -142,7 +149,7 @@
       </div>
     {/if}
     {#if isActive}
-      <div class="active-badge">Active</div>
+      <div class="active-badge">{translate(locale, "common.active")}</div>
     {/if}
   {/if}
 </div>
