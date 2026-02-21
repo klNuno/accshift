@@ -31,6 +31,7 @@
   let lastSavedToastAt = 0;
   let lastPersistedSnapshot = "";
   const SAVE_TOAST_COOLDOWN_MS = 1500;
+  const PIN_CODE_LENGTH = 4;
   const languageLabelByCode: Record<string, MessageKey> = {
     en: "language.english",
     fr: "language.french",
@@ -45,6 +46,10 @@
     return Math.min(max, Math.max(min, Math.round(value)));
   }
 
+  function sanitizePinCodeInput(value: string): string {
+    return value.replace(/\D/g, "").slice(0, PIN_CODE_LENGTH);
+  }
+
   function normalizeSettings() {
     if (settings.theme !== "light" && settings.theme !== "dark") {
       settings.theme = "dark";
@@ -55,7 +60,7 @@
     settings.banCheckDays = clampInt(settings.banCheckDays, 0, 90, 7);
     settings.inactivityBlurSeconds = clampInt(settings.inactivityBlurSeconds, 0, 3600, 60);
     settings.steamLaunchOptions = (settings.steamLaunchOptions || "").trim();
-    settings.pinCode = (settings.pinCode || "").trim();
+    settings.pinCode = sanitizePinCodeInput(settings.pinCode || "");
     if (!settings.pinEnabled) {
       settings.pinCode = "";
     }
@@ -396,7 +401,7 @@
         <div class="field">
           <div class="row">
             <span>{t("settings.pinCode")}</span>
-            <strong>{settings.pinCode ? t("common.configured") : t("common.missing")}</strong>
+            <strong>{settings.pinCode.length === PIN_CODE_LENGTH ? t("common.configured") : t("common.missing")}</strong>
           </div>
           <input
             id="pin-code"
@@ -404,7 +409,10 @@
             bind:value={settings.pinCode}
             class="text-input"
             placeholder={t("settings.pinPlaceholder")}
-            maxlength="16"
+            maxlength={PIN_CODE_LENGTH}
+            inputmode="numeric"
+            pattern="[0-9]*"
+            oninput={(e) => settings.pinCode = sanitizePinCodeInput((e.currentTarget as HTMLInputElement).value)}
           />
         </div>
       {/if}

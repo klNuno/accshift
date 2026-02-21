@@ -18,7 +18,7 @@ export const EN_MESSAGES = {
 
   "pin.lockedTitle": "App Locked",
   "pin.lockedPrompt": "Enter PIN to unlock",
-  "pin.placeholder": "PIN code",
+  "pin.placeholder": "4-digit PIN",
   "pin.unlock": "Unlock",
   "pin.invalid": "Invalid PIN",
 
@@ -69,7 +69,7 @@ export const EN_MESSAGES = {
   "settings.security": "Security",
   "settings.pinLockOnAfk": "PIN lock on AFK",
   "settings.pinCode": "PIN code",
-  "settings.pinPlaceholder": "4-8 digits",
+  "settings.pinPlaceholder": "4 digits",
   "settings.steam": "Steam",
   "settings.runSteamAsAdmin": "Run Steam as admin",
   "settings.showUsernames": "Show usernames",
@@ -187,7 +187,7 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
 
   "pin.lockedTitle": "Application verrouillée",
   "pin.lockedPrompt": "Entre le PIN pour déverrouiller",
-  "pin.placeholder": "Code PIN",
+  "pin.placeholder": "PIN 4 chiffres",
   "pin.unlock": "Déverrouiller",
   "pin.invalid": "PIN invalide",
 
@@ -238,7 +238,7 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.security": "Sécurité",
   "settings.pinLockOnAfk": "Verrou PIN en AFK",
   "settings.pinCode": "Code PIN",
-  "settings.pinPlaceholder": "4-8 chiffres",
+  "settings.pinPlaceholder": "4 chiffres",
   "settings.steam": "Steam",
   "settings.runSteamAsAdmin": "Lancer Steam en admin",
   "settings.showUsernames": "Afficher les usernames",

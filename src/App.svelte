@@ -54,12 +54,16 @@
 
   // Platform registration
   registerPlatform(steamAdapter);
+  const PIN_CODE_LENGTH = 4;
   function getInitialActiveTab(s: ReturnType<typeof getSettings>): string {
     if (s.enabledPlatforms.includes(s.defaultPlatformId)) return s.defaultPlatformId;
     return s.enabledPlatforms[0] || "steam";
   }
+  function isValidPinCode(value: string): boolean {
+    return value.replace(/\D/g, "").length === PIN_CODE_LENGTH;
+  }
   const startupSettings = getSettings();
-  const startupPinLocked = Boolean(startupSettings.pinEnabled && startupSettings.pinCode?.trim());
+  const startupPinLocked = Boolean(startupSettings.pinEnabled && isValidPinCode(startupSettings.pinCode || ""));
 
   // Platform state
   let settings = $state(startupSettings);
@@ -182,6 +186,10 @@
   function semverCore(version: string): string {
     const match = version.match(/\d+\.\d+\.\d+/);
     return match ? match[0] : version;
+  }
+
+  function sanitizePinDigits(value: string): string {
+    return value.replace(/\D/g, "").slice(0, PIN_CODE_LENGTH);
   }
 
   let updateCtaLabel = $derived(
@@ -623,10 +631,23 @@
   });
 
   $effect(() => {
-    if (!settings.pinEnabled || !settings.pinCode) {
+    const hasValidPinCode = sanitizePinDigits(settings.pinCode || "").length === PIN_CODE_LENGTH;
+    if (!settings.pinEnabled || !hasValidPinCode) {
       isPinLocked = false;
       pinAttempt = "";
       pinError = "";
+    }
+  });
+
+  $effect(() => {
+    const sanitizedAttempt = sanitizePinDigits(pinAttempt);
+    if (sanitizedAttempt !== pinAttempt) {
+      pinAttempt = sanitizedAttempt;
+      return;
+    }
+    if (!isPinLocked || isPinUnlocking) return;
+    if (sanitizedAttempt.length === PIN_CODE_LENGTH) {
+      unlockWithPin();
     }
   });
 
@@ -638,11 +659,13 @@
   });
 
   function unlockWithPin() {
-    if (!settings.pinCode) {
+    const expectedPin = sanitizePinDigits(settings.pinCode || "");
+    if (expectedPin.length !== PIN_CODE_LENGTH) {
       isPinLocked = false;
       return;
     }
-    if (pinAttempt.trim() === settings.pinCode.trim()) {
+    const attemptPin = sanitizePinDigits(pinAttempt);
+    if (attemptPin === expectedPin) {
       isPinUnlocking = true;
       pinAttempt = "";
       pinError = "";
@@ -991,12 +1014,14 @@
           class="pin-input"
           type="password"
           placeholder={t("pin.placeholder")}
-          onkeydown={(e) => e.key === "Enter" && unlockWithPin()}
+          maxlength={PIN_CODE_LENGTH}
+          inputmode="numeric"
+          pattern="[0-9]*"
+          autocomplete="one-time-code"
         />
         {#if pinError}
           <span class="pin-error">{pinError}</span>
         {/if}
-        <button class="pin-btn" onclick={unlockWithPin}>{t("pin.unlock")}</button>
       </div>
     </div>
   {/if}
@@ -1297,7 +1322,9 @@
     border-radius: 8px;
     background: var(--bg);
     color: var(--fg);
-    font-size: 13px;
+    font-size: 16px;
+    text-align: center;
+    letter-spacing: 0.22em;
     padding: 9px 10px;
     outline: none;
   }
@@ -1309,17 +1336,6 @@
   .pin-error {
     font-size: 11px;
     color: #f87171;
-  }
-
-  .pin-btn {
-    border: none;
-    border-radius: 8px;
-    background: #eab308;
-    color: #09090b;
-    font-size: 12px;
-    font-weight: 700;
-    padding: 9px 10px;
-    cursor: pointer;
   }
 
   .app-frame.motion-paused :global(.spinner),

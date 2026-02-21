@@ -27,6 +27,7 @@ const DEFAULTS: AppSettings = {
 };
 const PLATFORM_IDS = new Set(ALL_PLATFORMS.map((platform) => platform.id));
 let cachedSettings: AppSettings | null = null;
+const PIN_CODE_LENGTH = 4;
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -37,6 +38,11 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
   const numeric = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return Math.min(max, Math.max(min, Math.round(numeric)));
+}
+
+function sanitizePinCode(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.replace(/\D/g, "").slice(0, PIN_CODE_LENGTH);
 }
 
 function sanitizeSettings(value: unknown): AppSettings {
@@ -57,9 +63,7 @@ function sanitizeSettings(value: unknown): AppSettings {
     ? defaultPlatformIdRaw
     : normalizedEnabledPlatforms[0];
   const pinEnabled = Boolean(raw.pinEnabled);
-  const pinCode = pinEnabled && typeof raw.pinCode === "string"
-    ? raw.pinCode.trim().slice(0, 32)
-    : "";
+  const pinCode = pinEnabled ? sanitizePinCode(raw.pinCode) : "";
 
   return {
     language: hasLanguage ? normalizeLocale(raw.language) : detectPreferredLocale(),
