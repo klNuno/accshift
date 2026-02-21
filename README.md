@@ -37,6 +37,9 @@
     <tr>
       <td>Riot Games</td>
       <td>🚧 Planned</td>
+    </tr>
+    <tr>
+      <td>Steam</td>
       <td>🚧 Planned</td>
     </tr>
   </tbody>
