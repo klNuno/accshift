@@ -30,11 +30,9 @@ fn validate_steam_id(id: &str) -> Result<(), String> {
 }
 
 fn validate_username(name: &str) -> Result<(), String> {
-    if name.is_empty()
-        || name.len() > 64
-        || !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    if name.trim().is_empty()
+        || name.len() > 128
+        || name.chars().any(|c| c == '\0' || c.is_control())
     {
         return Err("Invalid username".into());
     }
