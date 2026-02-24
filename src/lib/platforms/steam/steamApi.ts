@@ -61,12 +61,12 @@ export async function getPlayerBans(steamIds: string[]): Promise<BanInfo[]> {
   return invoke<BanInfo[]>("get_player_bans", { steamIds });
 }
 
-export async function getApiKey(): Promise<string> {
-  return invoke<string>("get_api_key");
-}
-
 export async function setApiKey(key: string): Promise<void> {
   await invoke("set_api_key", { key });
+}
+
+export async function hasApiKey(): Promise<boolean> {
+  return invoke<boolean>("has_api_key");
 }
 
 export async function getSteamPath(): Promise<string> {

@@ -4,8 +4,10 @@ use tauri::Manager;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct AppConfig {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub steam_api_key: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub steam_api_key_encrypted: String,
     #[serde(default)]
     pub steam_path_override: String,
     #[serde(default)]
@@ -55,7 +57,11 @@ pub fn load_window_size(app_handle: &tauri::AppHandle) -> Option<(f64, f64)> {
     }
 }
 
-pub fn save_window_size(app_handle: &tauri::AppHandle, width: f64, height: f64) -> Result<(), String> {
+pub fn save_window_size(
+    app_handle: &tauri::AppHandle,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
     if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
         return Ok(());
     }

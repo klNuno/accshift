@@ -1,5 +1,6 @@
 import type { PlatformDef, AppSettings } from "./types";
 import { DEFAULT_LOCALE, detectPreferredLocale, normalizeLocale } from "$lib/i18n";
+import { isValidPinHash } from "$lib/shared/pin";
 
 const SETTINGS_KEY = "accshift_settings";
 
@@ -23,11 +24,10 @@ const DEFAULTS: AppSettings = {
   showLastLogin: false,
   showCardNotesInline: false,
   pinEnabled: false,
-  pinCode: "",
+  pinHash: "",
 };
 const PLATFORM_IDS = new Set(ALL_PLATFORMS.map((platform) => platform.id));
 let cachedSettings: AppSettings | null = null;
-const PIN_CODE_LENGTH = 4;
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -40,9 +40,10 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
   return Math.min(max, Math.max(min, Math.round(numeric)));
 }
 
-function sanitizePinCode(value: unknown): string {
+function sanitizePinHash(value: unknown): string {
   if (typeof value !== "string") return "";
-  return value.replace(/\D/g, "").slice(0, PIN_CODE_LENGTH);
+  const normalized = value.trim().toLowerCase();
+  return isValidPinHash(normalized) ? normalized : "";
 }
 
 function sanitizeSettings(value: unknown): AppSettings {
@@ -63,7 +64,7 @@ function sanitizeSettings(value: unknown): AppSettings {
     ? defaultPlatformIdRaw
     : normalizedEnabledPlatforms[0];
   const pinEnabled = Boolean(raw.pinEnabled);
-  const pinCode = pinEnabled ? sanitizePinCode(raw.pinCode) : "";
+  const pinHash = pinEnabled ? sanitizePinHash(raw.pinHash) : "";
 
   return {
     language: hasLanguage ? normalizeLocale(raw.language) : detectPreferredLocale(),
@@ -80,7 +81,7 @@ function sanitizeSettings(value: unknown): AppSettings {
     showLastLogin: Boolean(raw.showLastLogin),
     showCardNotesInline: Boolean(raw.showCardNotesInline),
     pinEnabled,
-    pinCode,
+    pinHash,
   };
 }
 

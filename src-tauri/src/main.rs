@@ -76,7 +76,7 @@ fn main() {
             commands::get_copyable_games,
             commands::get_profile_info,
             commands::get_player_bans,
-            commands::get_api_key,
+            commands::has_api_key,
             commands::set_api_key,
             commands::get_steam_path,
             commands::set_steam_path,
