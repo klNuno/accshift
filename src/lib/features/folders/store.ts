@@ -211,33 +211,69 @@ export function reorderItems(folderId: string | null, platform: string, items: I
   saveStore(store);
 }
 
+function collectFolderTreeIds(store: FolderStore, rootFolderId: string): Set<string> {
+  const ids = new Set<string>();
+  const stack = [rootFolderId];
+  while (stack.length > 0) {
+    const currentId = stack.pop();
+    if (!currentId || ids.has(currentId)) continue;
+    ids.add(currentId);
+    for (const folder of store.folders) {
+      if (folder.parentId === currentId) {
+        stack.push(folder.id);
+      }
+    }
+  }
+  return ids;
+}
+
+function collectNestedAccountItems(
+  store: FolderStore,
+  folderId: string,
+  folderIdsToDelete: Set<string>,
+): ItemRef[] {
+  const out: ItemRef[] = [];
+  const items = store.itemOrder[folderId] || [];
+  for (const item of items) {
+    if (item.type === "account") {
+      out.push(item);
+      continue;
+    }
+    if (folderIdsToDelete.has(item.id)) {
+      out.push(...collectNestedAccountItems(store, item.id, folderIdsToDelete));
+    }
+  }
+  return out;
+}
+
 export function deleteFolder(folderId: string) {
   const store = getStore();
   const folder = store.folders.find(f => f.id === folderId);
   if (!folder) return;
 
   const parentKey = folder.parentId || getRootKey(folder.platform);
-  const items = store.itemOrder[folderId] || [];
   if (!store.itemOrder[parentKey]) store.itemOrder[parentKey] = [];
+  const folderIdsToDelete = collectFolderTreeIds(store, folderId);
+  const movedAccounts = collectNestedAccountItems(store, folderId, folderIdsToDelete);
 
   const parentItems = store.itemOrder[parentKey];
   const folderIdx = parentItems.findIndex(i => i.type === "folder" && i.id === folderId);
   if (folderIdx >= 0) {
-    parentItems.splice(folderIdx, 1, ...items);
+    parentItems.splice(folderIdx, 1, ...movedAccounts);
   } else {
-    parentItems.push(...items);
+    parentItems.push(...movedAccounts);
   }
 
-  const subFolders = store.folders.filter(f => f.parentId === folderId);
-  for (const sub of subFolders) {
-    const subItems = store.itemOrder[sub.id] || [];
-    store.itemOrder[parentKey].push(...subItems);
-    delete store.itemOrder[sub.id];
-    store.folders = store.folders.filter(f => f.id !== sub.id);
+  for (const key of Object.keys(store.itemOrder)) {
+    store.itemOrder[key] = (store.itemOrder[key] || []).filter(
+      (item) => item.type !== "folder" || !folderIdsToDelete.has(item.id)
+    );
   }
 
-  delete store.itemOrder[folderId];
-  store.folders = store.folders.filter(f => f.id !== folderId);
+  for (const id of folderIdsToDelete) {
+    delete store.itemOrder[id];
+  }
+  store.folders = store.folders.filter(f => !folderIdsToDelete.has(f.id));
 
   saveStore(store);
 }

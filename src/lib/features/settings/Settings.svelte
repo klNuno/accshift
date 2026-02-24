@@ -12,6 +12,7 @@
     type MessageKey,
     type TranslationParams,
   } from "$lib/i18n";
+  import { hashPinCode, sanitizePinDigits } from "$lib/shared/pin";
 
   let { onClose, onPlatformsChanged }: {
     onClose: () => void;
@@ -21,7 +22,10 @@
   let settings = $state(getSettings());
   let steamEnabled = $derived(settings.enabledPlatforms.includes("steam"));
   let apiKey = $state("");
+  let apiKeyConfigured = $state(false);
+  let apiKeyTouched = $state(false);
   let steamPath = $state("");
+  let pinCodeInput = $state("");
   let uiScalePercentInput = $state("");
   let avatarCacheDaysInput = $state("");
   let banCheckDaysInput = $state("");
@@ -46,10 +50,6 @@
     return Math.min(max, Math.max(min, Math.round(value)));
   }
 
-  function sanitizePinCodeInput(value: string): string {
-    return value.replace(/\D/g, "").slice(0, PIN_CODE_LENGTH);
-  }
-
   function normalizeSettings() {
     if (settings.theme !== "light" && settings.theme !== "dark") {
       settings.theme = "dark";
@@ -60,9 +60,8 @@
     settings.banCheckDays = clampInt(settings.banCheckDays, 0, 90, 7);
     settings.inactivityBlurSeconds = clampInt(settings.inactivityBlurSeconds, 0, 3600, 60);
     settings.steamLaunchOptions = (settings.steamLaunchOptions || "").trim();
-    settings.pinCode = sanitizePinCodeInput(settings.pinCode || "");
     if (!settings.pinEnabled) {
-      settings.pinCode = "";
+      settings.pinHash = "";
     }
     if (!ALL_PLATFORMS.some(p => p.id === settings.defaultPlatformId)) {
       settings.defaultPlatformId = "steam";
@@ -74,9 +73,11 @@
   }
 
   function buildPersistSnapshot(): string {
+    const pendingApiKey = apiKeyTouched ? apiKey.trim() : "";
     return JSON.stringify({
       settings,
-      apiKey: apiKey.trim(),
+      pendingApiKey,
+      apiKeyConfigured,
       steamPath: steamPath.trim(),
     });
   }
@@ -110,14 +111,25 @@
 
   async function persistNow() {
     normalizeSettings();
+    const sanitizedPinInput = sanitizePinDigits(pinCodeInput);
+    if (settings.pinEnabled && sanitizedPinInput.length === PIN_CODE_LENGTH) {
+      settings.pinHash = await hashPinCode(sanitizedPinInput);
+      pinCodeInput = "";
+    }
     const snapshot = buildPersistSnapshot();
     if (snapshot === lastPersistedSnapshot) return;
 
     saveSettings(settings);
     try {
-      await invoke("set_api_key", { key: apiKey.trim() });
+      if (apiKeyTouched) {
+        const trimmedApiKey = apiKey.trim();
+        await invoke("set_api_key", { key: trimmedApiKey });
+        apiKeyConfigured = trimmedApiKey.length > 0;
+        apiKeyTouched = false;
+        apiKey = "";
+      }
       await invoke("set_steam_path", { path: steamPath.trim() });
-      lastPersistedSnapshot = snapshot;
+      lastPersistedSnapshot = buildPersistSnapshot();
       const now = Date.now();
       if (now - lastSavedToastAt >= SAVE_TOAST_COOLDOWN_MS) {
         addToast(t("settings.saved"));
@@ -125,7 +137,7 @@
       }
       onPlatformsChanged?.();
     } catch (e) {
-      console.error("Failed to save API key:", e);
+      console.error("Failed to save settings:", e);
     }
   }
 
@@ -139,9 +151,12 @@
 
   onMount(async () => {
     try {
-      apiKey = await invoke<string>("get_api_key");
+      apiKeyConfigured = await invoke<boolean>("has_api_key");
     } catch {
+      apiKeyConfigured = false;
+    } finally {
       apiKey = "";
+      apiKeyTouched = false;
     }
 
     try {
@@ -183,9 +198,12 @@
     settings.uiScalePercent;
     settings.defaultPlatformId;
     settings.pinEnabled;
-    settings.pinCode;
+    settings.pinHash;
+    pinCodeInput;
     settings.enabledPlatforms.join(",");
     apiKey;
+    apiKeyConfigured;
+    apiKeyTouched;
     steamPath;
     queueSave();
   });
@@ -392,7 +410,8 @@
         onToggle={() => {
           settings.pinEnabled = !settings.pinEnabled;
           if (!settings.pinEnabled) {
-            settings.pinCode = "";
+            settings.pinHash = "";
+            pinCodeInput = "";
           }
         }}
       />
@@ -401,18 +420,18 @@
         <div class="field">
           <div class="row">
             <span>{t("settings.pinCode")}</span>
-            <strong>{settings.pinCode.length === PIN_CODE_LENGTH ? t("common.configured") : t("common.missing")}</strong>
+            <strong>{settings.pinHash ? t("common.configured") : t("common.missing")}</strong>
           </div>
           <input
             id="pin-code"
             type="password"
-            bind:value={settings.pinCode}
+            bind:value={pinCodeInput}
             class="text-input"
             placeholder={t("settings.pinPlaceholder")}
             maxlength={PIN_CODE_LENGTH}
             inputmode="numeric"
             pattern="[0-9]*"
-            oninput={(e) => settings.pinCode = sanitizePinCodeInput((e.currentTarget as HTMLInputElement).value)}
+            oninput={(e) => pinCodeInput = sanitizePinDigits((e.currentTarget as HTMLInputElement).value)}
           />
         </div>
       {/if}
@@ -490,10 +509,20 @@
             <span>{t("settings.steamWebApiKey")}</span>
             <div class="row-actions">
               <button class="inline-link-btn" type="button" onclick={openSteamApiKeyPage}>{t("settings.getKey")}</button>
-              <strong>{apiKey.trim() ? t("common.configured") : t("common.missing")}</strong>
+              <strong>{apiKey.trim() || apiKeyConfigured ? t("common.configured") : t("common.missing")}</strong>
             </div>
           </div>
-          <input id="api-key" type="password" bind:value={apiKey} class="text-input" placeholder={t("settings.pasteApiKey")} />
+          <input
+            id="api-key"
+            type="password"
+            bind:value={apiKey}
+            class="text-input"
+            placeholder={t("settings.pasteApiKey")}
+            oninput={(e) => {
+              apiKey = (e.currentTarget as HTMLInputElement).value;
+              apiKeyTouched = true;
+            }}
+          />
         </div>
       </section>
     {/if}

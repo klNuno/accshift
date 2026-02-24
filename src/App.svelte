@@ -49,6 +49,7 @@
     setFolderCardColor,
   } from "$lib/shared/folderCardColors";
   import { DEFAULT_LOCALE, translate, type MessageKey, type TranslationParams } from "$lib/i18n";
+  import { hashPinCode, sanitizePinDigits, isValidPinHash } from "$lib/shared/pin";
   type SettingsComponentType = (typeof import("$lib/features/settings/Settings.svelte"))["default"];
   type ConfirmDialogConfig = PlatformContextMenuConfirmConfig;
 
@@ -59,11 +60,8 @@
     if (s.enabledPlatforms.includes(s.defaultPlatformId)) return s.defaultPlatformId;
     return s.enabledPlatforms[0] || "steam";
   }
-  function isValidPinCode(value: string): boolean {
-    return value.replace(/\D/g, "").length === PIN_CODE_LENGTH;
-  }
   const startupSettings = getSettings();
-  const startupPinLocked = Boolean(startupSettings.pinEnabled && isValidPinCode(startupSettings.pinCode || ""));
+  const startupPinLocked = Boolean(startupSettings.pinEnabled && isValidPinHash(startupSettings.pinHash || ""));
 
   // Platform state
   let settings = $state(startupSettings);
@@ -186,10 +184,6 @@
   function semverCore(version: string): string {
     const match = version.match(/\d+\.\d+\.\d+/);
     return match ? match[0] : version;
-  }
-
-  function sanitizePinDigits(value: string): string {
-    return value.replace(/\D/g, "").slice(0, PIN_CODE_LENGTH);
   }
 
   let updateCtaLabel = $derived(
@@ -631,7 +625,7 @@
   });
 
   $effect(() => {
-    const hasValidPinCode = sanitizePinDigits(settings.pinCode || "").length === PIN_CODE_LENGTH;
+    const hasValidPinCode = isValidPinHash(settings.pinHash || "");
     if (!settings.pinEnabled || !hasValidPinCode) {
       isPinLocked = false;
       pinAttempt = "";
@@ -658,27 +652,34 @@
     document.documentElement.lang = locale;
   });
 
-  function unlockWithPin() {
-    const expectedPin = sanitizePinDigits(settings.pinCode || "");
-    if (expectedPin.length !== PIN_CODE_LENGTH) {
+  async function unlockWithPin() {
+    const expectedPinHash = settings.pinHash || "";
+    if (!isValidPinHash(expectedPinHash)) {
       isPinLocked = false;
       return;
     }
     const attemptPin = sanitizePinDigits(pinAttempt);
-    if (attemptPin === expectedPin) {
-      isPinUnlocking = true;
-      pinAttempt = "";
-      pinError = "";
-      setTimeout(() => {
-        isPinLocked = false;
-        isPinUnlocking = false;
-        blur.resetActivity();
-      }, 240);
+    if (attemptPin.length !== PIN_CODE_LENGTH) return;
+    isPinUnlocking = true;
+    pinError = "";
+    const attemptHash = await hashPinCode(attemptPin);
+    if (!attemptHash) {
+      isPinUnlocking = false;
       return;
     }
-    pinError = t("pin.invalid");
+    if (attemptHash !== expectedPinHash) {
+      isPinUnlocking = false;
+      pinError = t("pin.invalid");
+      pinAttempt = "";
+      setTimeout(() => pinInputRef?.focus(), 0);
+      return;
+    }
     pinAttempt = "";
-    setTimeout(() => pinInputRef?.focus(), 0);
+    setTimeout(() => {
+      isPinLocked = false;
+      isPinUnlocking = false;
+      blur.resetActivity();
+    }, 240);
   }
 
   function handleVisibilityChange() {

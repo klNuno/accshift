@@ -21,5 +21,5 @@ export interface AppSettings {
   showLastLogin: boolean;
   showCardNotesInline: boolean;
   pinEnabled: boolean;
-  pinCode: string;
+  pinHash: string;
 }

@@ -1,14 +1,14 @@
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::process::Command;
-use std::path::{Path, PathBuf};
 use std::collections::{HashMap, HashSet};
+use std::fs;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use crate::error::AppError;
 use super::registry::{clear_auto_login_user, set_auto_login_user};
 use super::vdf::{parse_vdf, set_persona_state};
+use crate::error::AppError;
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -89,10 +89,44 @@ fn kill_steam() -> Result<(), AppError> {
 }
 
 fn parse_launch_options(launch_options: &str) -> Vec<String> {
-    launch_options
-        .split_whitespace()
-        .map(|s| s.to_string())
-        .collect()
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes: Option<char> = None;
+    let mut escaped = false;
+
+    for ch in launch_options.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' if in_quotes != Some('\'') => {
+                escaped = true;
+            }
+            '"' | '\'' => match in_quotes {
+                Some(quote) if quote == ch => in_quotes = None,
+                Some(_) => current.push(ch),
+                None => in_quotes = Some(ch),
+            },
+            c if c.is_whitespace() && in_quotes.is_none() => {
+                if !current.is_empty() {
+                    args.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if escaped {
+        current.push('\\');
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+
+    args
 }
 
 fn launch_steam(
@@ -114,10 +148,7 @@ fn launch_steam(
                 .join(", ");
             format!(" -ArgumentList @({})", joined)
         };
-        let ps = format!(
-            "Start-Process -FilePath '{}' -Verb RunAs{}",
-            exe, arg_list
-        );
+        let ps = format!("Start-Process -FilePath '{}' -Verb RunAs{}", exe, arg_list);
         hidden_command("powershell")
             .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps])
             .spawn()
@@ -133,7 +164,10 @@ fn launch_steam(
 
 fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), AppError> {
     if !source.exists() {
-        return Err(AppError::FileRead(format!("Source folder not found: {}", source.display())));
+        return Err(AppError::FileRead(format!(
+            "Source folder not found: {}",
+            source.display()
+        )));
     }
     fs::create_dir_all(target).map_err(|e| AppError::FileRead(e.to_string()))?;
     for entry in fs::read_dir(source).map_err(|e| AppError::FileRead(e.to_string()))? {
@@ -285,7 +319,9 @@ pub fn get_accounts(steam_path: &PathBuf) -> Result<Vec<SteamAccount>, AppError>
     Ok(accounts)
 }
 
-pub fn get_accounts_snapshot(steam_path: &PathBuf) -> Result<(Vec<SteamAccount>, String), AppError> {
+pub fn get_accounts_snapshot(
+    steam_path: &PathBuf,
+) -> Result<(Vec<SteamAccount>, String), AppError> {
     let users = parse_login_users(steam_path)?;
 
     let mut current_account = String::new();
@@ -327,8 +363,8 @@ fn parse_login_users(steam_path: &PathBuf) -> Result<Vec<ParsedLoginUser>, AppEr
         return Ok(Vec::new());
     }
 
-    let content = fs::read_to_string(&loginusers_path)
-        .map_err(|e| AppError::FileRead(e.to_string()))?;
+    let content =
+        fs::read_to_string(&loginusers_path).map_err(|e| AppError::FileRead(e.to_string()))?;
 
     let parsed = parse_vdf(&content);
 
@@ -422,8 +458,8 @@ pub fn forget_account(steam_path: &PathBuf, steam_id: &str) -> Result<(), AppErr
     // Remove account entry from loginusers.vdf.
     let loginusers_path = steam_path.join("config").join("loginusers.vdf");
     if loginusers_path.exists() {
-        let content = fs::read_to_string(&loginusers_path)
-            .map_err(|e| AppError::FileRead(e.to_string()))?;
+        let content =
+            fs::read_to_string(&loginusers_path).map_err(|e| AppError::FileRead(e.to_string()))?;
         let (updated, removed) = remove_loginuser_entry(&content, steam_id);
         if removed {
             fs::write(&loginusers_path, updated).map_err(|e| AppError::FileRead(e.to_string()))?;
@@ -459,10 +495,13 @@ pub fn open_userdata_with_path(steam_path: &PathBuf, steam_id: &str) -> Result<(
     let userdata_path = steam_user_data_path(steam_path, steam_id)?;
 
     if !userdata_path.exists() {
-        return Err(AppError::UserdataNotFound(userdata_path.display().to_string()));
+        return Err(AppError::UserdataNotFound(
+            userdata_path.display().to_string(),
+        ));
     }
 
-    let canonical = userdata_path.canonicalize()
+    let canonical = userdata_path
+        .canonicalize()
         .map_err(|e| AppError::PathResolve(e.to_string()))?;
 
     Command::new("explorer")
@@ -521,4 +560,30 @@ pub fn get_copyable_games(
 
     games.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(games)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_launch_options;
+
+    #[test]
+    fn parse_launch_options_keeps_quoted_groups() {
+        let args = parse_launch_options("-silent -applaunch 730 \"-novid -fullscreen\"");
+        assert_eq!(
+            args,
+            vec!["-silent", "-applaunch", "730", "-novid -fullscreen"]
+        );
+    }
+
+    #[test]
+    fn parse_launch_options_handles_single_quotes() {
+        let args = parse_launch_options("-foo 'bar baz' -qux");
+        assert_eq!(args, vec!["-foo", "bar baz", "-qux"]);
+    }
+
+    #[test]
+    fn parse_launch_options_handles_escaped_spaces() {
+        let args = parse_launch_options("-foo bar\\ baz");
+        assert_eq!(args, vec!["-foo", "bar baz"]);
+    }
 }

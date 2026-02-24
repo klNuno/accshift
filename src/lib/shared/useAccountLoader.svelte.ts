@@ -1,7 +1,7 @@
 import type { PlatformAdapter, PlatformAccount } from "./platform";
 import type { BanInfo } from "../platforms/steam/types";
 import { addToast, removeToast } from "../features/notifications/store.svelte";
-import { getApiKey, getPlayerBans } from "../platforms/steam/steamApi";
+import { getPlayerBans, hasApiKey } from "../platforms/steam/steamApi";
 import { DEFAULT_LOCALE, translate, type MessageKey, type TranslationParams } from "$lib/i18n";
 
 import { getSettings } from "../features/settings/store";
@@ -196,11 +196,11 @@ export function createAccountLoader(
     const steamIds = Array.from(new Set(accts.map(a => a.id)));
     if (steamIds.length === 0) return;
 
-    const apiKey = (await getApiKey().catch((e) => {
-      console.error("[ban-check] failed to read API key:", e);
-      return "";
-    })).trim();
-    if (!apiKey) {
+    const hasApiKeyConfigured = await hasApiKey().catch((e) => {
+      console.error("[ban-check] failed to detect API key availability:", e);
+      return false;
+    });
+    if (!hasApiKeyConfigured) {
       console.info("[ban-check] skipped: missing Steam API key");
       return;
     }
