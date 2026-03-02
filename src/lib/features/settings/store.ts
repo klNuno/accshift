@@ -1,28 +1,34 @@
 import type { PlatformDef, AppSettings } from "./types";
 import { DEFAULT_LOCALE, detectPreferredLocale, normalizeLocale } from "$lib/i18n";
 import { isValidPinHash } from "$lib/shared/pin";
+import { PLATFORM_DEFS } from "$lib/platforms/registry";
 
 const SETTINGS_KEY = "accshift_settings";
 
-export const ALL_PLATFORMS: PlatformDef[] = [
-  { id: "steam", name: "Steam", accent: "#3b82f6" },
-  { id: "riot", name: "Riot Games", accent: "#ef4444" },
-];
+export const ALL_PLATFORMS: PlatformDef[] = PLATFORM_DEFS;
 
 const DEFAULTS: AppSettings = {
   language: DEFAULT_LOCALE,
   theme: "dark",
   uiScalePercent: 100,
-  avatarCacheDays: 7,
-  banCheckDays: 7,
+  dataRefresh: {
+    avatarCacheDays: 7,
+    banCheckDays: 7,
+  },
   enabledPlatforms: ["steam"],
   defaultPlatformId: "steam",
   inactivityBlurSeconds: 60,
-  steamRunAsAdmin: false,
-  steamLaunchOptions: "",
-  showUsernames: true,
-  showLastLogin: false,
-  showCardNotesInline: false,
+  platformSettings: {
+    steam: {
+      runAsAdmin: false,
+      launchOptions: "",
+    },
+  },
+  accountDisplay: {
+    showUsernames: true,
+    showLastLogin: false,
+    showCardNotesInline: false,
+  },
   pinEnabled: false,
   pinHash: "",
 };
@@ -48,6 +54,10 @@ function sanitizePinHash(value: unknown): string {
 
 function sanitizeSettings(value: unknown): AppSettings {
   const raw = asRecord(value);
+  const rawDataRefresh = asRecord(raw.dataRefresh);
+  const rawPlatformSettings = asRecord(raw.platformSettings);
+  const rawSteamSettings = asRecord(rawPlatformSettings.steam);
+  const rawAccountDisplay = asRecord(raw.accountDisplay);
   const hasLanguage = Object.prototype.hasOwnProperty.call(raw, "language");
   const enabledPlatformsRaw = Array.isArray(raw.enabledPlatforms) ? raw.enabledPlatforms : [];
   const enabledPlatforms = Array.from(new Set(
@@ -70,16 +80,36 @@ function sanitizeSettings(value: unknown): AppSettings {
     language: hasLanguage ? normalizeLocale(raw.language) : detectPreferredLocale(),
     theme: raw.theme === "light" ? "light" : "dark",
     uiScalePercent: clampInt(raw.uiScalePercent, 75, 150, DEFAULTS.uiScalePercent),
-    avatarCacheDays: clampInt(raw.avatarCacheDays, 0, 90, DEFAULTS.avatarCacheDays),
-    banCheckDays: clampInt(raw.banCheckDays, 0, 90, DEFAULTS.banCheckDays),
+    dataRefresh: {
+      avatarCacheDays: clampInt(
+        rawDataRefresh.avatarCacheDays ?? raw.avatarCacheDays,
+        0,
+        90,
+        DEFAULTS.dataRefresh.avatarCacheDays,
+      ),
+      banCheckDays: clampInt(
+        rawDataRefresh.banCheckDays ?? raw.banCheckDays,
+        0,
+        90,
+        DEFAULTS.dataRefresh.banCheckDays,
+      ),
+    },
     enabledPlatforms: normalizedEnabledPlatforms,
     defaultPlatformId,
     inactivityBlurSeconds: clampInt(raw.inactivityBlurSeconds, 0, 3600, DEFAULTS.inactivityBlurSeconds),
-    steamRunAsAdmin: Boolean(raw.steamRunAsAdmin),
-    steamLaunchOptions: typeof raw.steamLaunchOptions === "string" ? raw.steamLaunchOptions.trim().slice(0, 256) : "",
-    showUsernames: raw.showUsernames !== false,
-    showLastLogin: Boolean(raw.showLastLogin),
-    showCardNotesInline: Boolean(raw.showCardNotesInline),
+    platformSettings: {
+      steam: {
+        runAsAdmin: Boolean(rawSteamSettings.runAsAdmin ?? raw.steamRunAsAdmin),
+        launchOptions: typeof (rawSteamSettings.launchOptions ?? raw.steamLaunchOptions) === "string"
+          ? String(rawSteamSettings.launchOptions ?? raw.steamLaunchOptions).trim().slice(0, 256)
+          : "",
+      },
+    },
+    accountDisplay: {
+      showUsernames: rawAccountDisplay.showUsernames !== false && raw.showUsernames !== false,
+      showLastLogin: Boolean(rawAccountDisplay.showLastLogin ?? raw.showLastLogin),
+      showCardNotesInline: Boolean(rawAccountDisplay.showCardNotesInline ?? raw.showCardNotesInline),
+    },
     pinEnabled,
     pinHash,
   };
@@ -88,6 +118,17 @@ function sanitizeSettings(value: unknown): AppSettings {
 function cloneSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
+    dataRefresh: {
+      ...settings.dataRefresh,
+    },
+    platformSettings: {
+      steam: {
+        ...settings.platformSettings.steam,
+      },
+    },
+    accountDisplay: {
+      ...settings.accountDisplay,
+    },
     enabledPlatforms: [...settings.enabledPlatforms],
   };
 }
@@ -117,6 +158,6 @@ export function saveSettings(settings: AppSettings) {
 
 export function getCacheDuration(): number {
   const settings = getSettings();
-  if (settings.avatarCacheDays === 0) return 0;
-  return settings.avatarCacheDays * 24 * 60 * 60 * 1000;
+  if (settings.dataRefresh.avatarCacheDays === 0) return 0;
+  return settings.dataRefresh.avatarCacheDays * 24 * 60 * 60 * 1000;
 }

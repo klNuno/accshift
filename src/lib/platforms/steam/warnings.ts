@@ -163,7 +163,7 @@ export async function loadSteamWarningStates(
     return toWarningMap(cachedBans, t);
   }
 
-  const delayDays = getSettings().banCheckDays;
+  const delayDays = getSettings().dataRefresh.banCheckDays;
   const now = Date.now();
   const cachedState = readBanCheckState();
   const delayMs = delayDays * 24 * 60 * 60 * 1000;

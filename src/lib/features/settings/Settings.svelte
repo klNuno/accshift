@@ -4,6 +4,7 @@
   import { getSettings, saveSettings, ALL_PLATFORMS } from "./store";
   import { addToast } from "../notifications/store.svelte";
   import ToggleSetting from "./ToggleSetting.svelte";
+  import SteamSettingsSection from "$lib/platforms/steam/SteamSettingsSection.svelte";
   import {
     DEFAULT_LOCALE,
     LANGUAGE_OPTIONS,
@@ -60,10 +61,10 @@
     }
     settings.language = normalizeLocale(settings.language);
     settings.uiScalePercent = clampInt(settings.uiScalePercent, 75, 150, 100);
-    settings.avatarCacheDays = clampInt(settings.avatarCacheDays, 0, 90, 7);
-    settings.banCheckDays = clampInt(settings.banCheckDays, 0, 90, 7);
+    settings.dataRefresh.avatarCacheDays = clampInt(settings.dataRefresh.avatarCacheDays, 0, 90, 7);
+    settings.dataRefresh.banCheckDays = clampInt(settings.dataRefresh.banCheckDays, 0, 90, 7);
     settings.inactivityBlurSeconds = clampInt(settings.inactivityBlurSeconds, 0, 3600, 60);
-    settings.steamLaunchOptions = (settings.steamLaunchOptions || "").trim();
+    settings.platformSettings.steam.launchOptions = (settings.platformSettings.steam.launchOptions || "").trim();
     if (!settings.pinEnabled) {
       settings.pinHash = "";
     }
@@ -88,8 +89,8 @@
 
   function refreshNumericInputsFromSettings() {
     uiScalePercentInput = String(settings.uiScalePercent);
-    avatarCacheDaysInput = String(settings.avatarCacheDays);
-    banCheckDaysInput = String(settings.banCheckDays);
+    avatarCacheDaysInput = String(settings.dataRefresh.avatarCacheDays);
+    banCheckDaysInput = String(settings.dataRefresh.banCheckDays);
     inactivityBlurSecondsInput = String(settings.inactivityBlurSeconds);
   }
 
@@ -99,13 +100,23 @@
   }
 
   function commitAvatarCacheDays() {
-    settings.avatarCacheDays = clampInt(Number(avatarCacheDaysInput), 0, 90, settings.avatarCacheDays);
-    avatarCacheDaysInput = String(settings.avatarCacheDays);
+    settings.dataRefresh.avatarCacheDays = clampInt(
+      Number(avatarCacheDaysInput),
+      0,
+      90,
+      settings.dataRefresh.avatarCacheDays,
+    );
+    avatarCacheDaysInput = String(settings.dataRefresh.avatarCacheDays);
   }
 
   function commitBanCheckDays() {
-    settings.banCheckDays = clampInt(Number(banCheckDaysInput), 0, 90, settings.banCheckDays);
-    banCheckDaysInput = String(settings.banCheckDays);
+    settings.dataRefresh.banCheckDays = clampInt(
+      Number(banCheckDaysInput),
+      0,
+      90,
+      settings.dataRefresh.banCheckDays,
+    );
+    banCheckDaysInput = String(settings.dataRefresh.banCheckDays);
   }
 
   function commitInactivityBlurSeconds() {
@@ -189,16 +200,16 @@
   }
 
   $effect(() => {
-    settings.avatarCacheDays;
-    settings.banCheckDays;
+    settings.dataRefresh.avatarCacheDays;
+    settings.dataRefresh.banCheckDays;
     settings.inactivityBlurSeconds;
     settings.theme;
     settings.language;
-    settings.steamRunAsAdmin;
-    settings.steamLaunchOptions;
-    settings.showUsernames;
-    settings.showLastLogin;
-    settings.showCardNotesInline;
+    settings.platformSettings.steam.runAsAdmin;
+    settings.platformSettings.steam.launchOptions;
+    settings.accountDisplay.showUsernames;
+    settings.accountDisplay.showLastLogin;
+    settings.accountDisplay.showCardNotesInline;
     settings.uiScalePercent;
     settings.defaultPlatformId;
     settings.pinEnabled;
@@ -488,93 +499,19 @@
     </section>
 
     {#if steamEnabled}
-      <section class="card steam-card">
-        <h3>{t("settings.steam")}</h3>
-
-        <ToggleSetting
-          label={t("settings.runSteamAsAdmin")}
-          enabled={settings.steamRunAsAdmin}
-          onLabel={t("common.enabled")}
-          offLabel={t("common.disabled")}
-          onToggle={() => settings.steamRunAsAdmin = !settings.steamRunAsAdmin}
-        />
-
-        <ToggleSetting
-          label={t("settings.showUsernames")}
-          enabled={settings.showUsernames}
-          onLabel={t("common.visible")}
-          offLabel={t("common.hidden")}
-          onToggle={() => settings.showUsernames = !settings.showUsernames}
-        />
-
-        <ToggleSetting
-          label={t("settings.showLastLogin")}
-          enabled={settings.showLastLogin}
-          onLabel={t("common.on")}
-          offLabel={t("common.off")}
-          onToggle={() => settings.showLastLogin = !settings.showLastLogin}
-        />
-
-        <ToggleSetting
-          label={t("settings.showNotesUnderCards")}
-          enabled={settings.showCardNotesInline}
-          onLabel={t("common.inline")}
-          offLabel={t("common.tooltip")}
-          onToggle={() => settings.showCardNotesInline = !settings.showCardNotesInline}
-        />
-
-        <div class="field">
-          <div class="row">
-            <span>{t("settings.launchOptions")}</span>
-            <strong>{settings.steamLaunchOptions ? t("common.custom") : t("common.none")}</strong>
-          </div>
-          <input
-            id="steam-launch-options"
-            type="text"
-            bind:value={settings.steamLaunchOptions}
-            class="text-input"
-            placeholder="-silent -vgui"
-          />
-        </div>
-
-        <div class="field">
-          <div class="row">
-            <span>{t("settings.steamFolder")}</span>
-            <strong>{steamPath ? t("common.custom") : t("settings.steamFolderRegistry")}</strong>
-          </div>
-          <div class="input-row">
-            <input
-              id="steam-folder"
-              type="text"
-              bind:value={steamPath}
-              class="text-input"
-              placeholder="C:\Program Files (x86)\Steam"
-            />
-            <button class="browse-btn" type="button" onclick={chooseSteamFolder}>{t("common.choose")}</button>
-          </div>
-        </div>
-
-        <div class="field">
-          <div class="row">
-            <span>{t("settings.steamWebApiKey")}</span>
-            <div class="row-actions">
-              <button class="inline-link-btn" type="button" onclick={openSteamApiKeyPage}>{t("settings.getKey")}</button>
-              <strong>{apiKey.trim() || apiKeyConfigured ? t("common.configured") : t("common.missing")}</strong>
-            </div>
-          </div>
-          <input
-            id="api-key"
-            type="password"
-            bind:value={apiKey}
-            class="text-input"
-            placeholder={t("settings.pasteApiKey")}
-            oninput={(e) => {
-              apiKey = (e.currentTarget as HTMLInputElement).value;
-              apiKeyTouched = true;
-            }}
-          />
-        </div>
-      </section>
+      <SteamSettingsSection
+        {settings}
+        bind:steamPath
+        bind:apiKey
+        {apiKeyConfigured}
+        onChooseSteamFolder={chooseSteamFolder}
+        onOpenSteamApiKeyPage={openSteamApiKeyPage}
+        onApiKeyInput={(value) => {
+          apiKey = value;
+          apiKeyTouched = true;
+        }}
+        {t}
+      />
     {/if}
   </div>
 </div>
@@ -644,16 +581,6 @@
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     gap: 10px;
     padding-bottom: 8px;
-  }
-
-  .steam-card {
-    grid-column: span 2;
-  }
-
-  @media (max-width: 980px) {
-    .steam-card {
-      grid-column: span 1;
-    }
   }
 
   .card {
@@ -744,26 +671,6 @@
     font-weight: 600;
   }
 
-  .row-actions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .inline-link-btn {
-    border: none;
-    background: transparent;
-    color: #60a5fa;
-    font-size: 12px;
-    cursor: pointer;
-    padding: 0;
-  }
-
-  .inline-link-btn:hover {
-    color: #93c5fd;
-    text-decoration: underline;
-  }
-
   .inline-action-btn {
     display: inline-flex;
     align-items: center;
@@ -826,21 +733,6 @@
 
   .number-input {
     width: 100%;
-  }
-
-  .browse-btn {
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--bg-card);
-    color: var(--fg);
-    font-size: 12px;
-    padding: 0 12px;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .browse-btn:hover {
-    background: var(--bg-card-hover);
   }
 
   @keyframes spin {

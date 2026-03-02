@@ -18,8 +18,8 @@
   import { getSettings, saveSettings, ALL_PLATFORMS } from "$lib/features/settings/store";
   import type { PlatformDef } from "$lib/features/settings/types";
   import type { PlatformAccount, PlatformContextMenuConfirmConfig } from "$lib/shared/platform";
-  import { registerPlatform, getPlatform } from "$lib/shared/platform";
-  import { steamAdapter } from "$lib/platforms/steam/adapter";
+  import { getPlatform } from "$lib/shared/platform";
+  import { getPlatformDefinition, registerBuiltinPlatforms } from "$lib/platforms/registry";
   import type { ContextMenuItem, InputDialogConfig } from "$lib/shared/types";
   import { buildAccountContextMenuItems } from "$lib/shared/contextMenu/accountMenuBuilder";
   import type { ItemRef, FolderInfo } from "$lib/features/folders/types";
@@ -55,7 +55,7 @@
   type ConfirmDialogConfig = PlatformContextMenuConfirmConfig;
 
   // Platform registration
-  registerPlatform(steamAdapter);
+  registerBuiltinPlatforms();
   const PIN_CODE_LENGTH = 4;
   function getInitialActiveTab(s: ReturnType<typeof getSettings>): string {
     if (s.enabledPlatforms.includes(s.defaultPlatformId)) return s.defaultPlatformId;
@@ -73,7 +73,7 @@
   );
   let activeTab = $state(getInitialActiveTab(startupSettings));
   let accentColor = $derived(
-    ALL_PLATFORMS.find(p => p.id === activeTab)?.accent || "#3b82f6"
+    getPlatformDefinition(activeTab)?.accent || "#3b82f6"
   );
   let uiZoomFactor = $derived(Math.min(1.5, Math.max(0.75, settings.uiScalePercent / 100)));
   let appStageStyle = $derived.by(() => {
@@ -832,8 +832,8 @@
           folderItems={displayFolderItems}
           accountItems={displayAccountItems}
           accounts={loader.accountMap}
-          showUsernames={settings.showUsernames}
-          showLastLogin={settings.showLastLogin}
+          showUsernames={settings.accountDisplay.showUsernames}
+          showLastLogin={settings.accountDisplay.showLastLogin}
           {currentFolderId}
           {currentAccountId}
           avatarStates={loader.avatarStates}
@@ -893,9 +893,9 @@
                   {account}
                   cardColor={getAccountCardColor(account.id)}
                   note={getAccountNote(account.id)}
-                  showNoteInline={settings.showCardNotesInline}
-                  showUsername={settings.showUsernames}
-                  showLastLogin={settings.showLastLogin}
+                  showNoteInline={settings.accountDisplay.showCardNotesInline}
+                  showUsername={settings.accountDisplay.showUsernames}
+                  showLastLogin={settings.accountDisplay.showLastLogin}
                   lastLoginAt={account.lastLoginAt}
                   {locale}
                   isActive={account.id === currentAccountId}
@@ -931,13 +931,13 @@
     oncontextmenu={(e) => { e.preventDefault(); contextMenu = { x: e.clientX, y: e.clientY, isBackground: true }; }}
   >
     <Breadcrumb
-      platformName={ALL_PLATFORMS.find(p => p.id === activeTab)?.name || activeTab}
+      platformName={getPlatformDefinition(activeTab)?.name || activeTab}
       path={folderPath}
       onNavigate={navigateTo}
       {accentColor}
     />
     <div class="center-msg">
-      <p class="text-sm">{t("app.comingSoon", { platform: ALL_PLATFORMS.find(p => p.id === activeTab)?.name || activeTab })}</p>
+      <p class="text-sm">{t("app.comingSoon", { platform: getPlatformDefinition(activeTab)?.name || activeTab })}</p>
     </div>
   </main>
 {/if}

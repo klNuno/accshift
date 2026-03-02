@@ -5,8 +5,8 @@ import { getSettings } from "../../features/settings/store";
 function getSteamLaunchConfig() {
   const settings = getSettings();
   return {
-    runAsAdmin: !!settings.steamRunAsAdmin,
-    launchOptions: (settings.steamLaunchOptions || "").trim(),
+    runAsAdmin: !!settings.platformSettings.steam.runAsAdmin,
+    launchOptions: (settings.platformSettings.steam.launchOptions || "").trim(),
   };
 }
 

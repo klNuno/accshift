@@ -6,20 +6,36 @@ export interface PlatformDef {
   accent: string;
 }
 
+export interface DataRefreshSettings {
+  avatarCacheDays: number;
+  banCheckDays: number;
+}
+
+export interface AccountDisplaySettings {
+  showUsernames: boolean;
+  showLastLogin: boolean;
+  showCardNotesInline: boolean;
+}
+
+export interface SteamPlatformSettings {
+  runAsAdmin: boolean;
+  launchOptions: string;
+}
+
+export interface PlatformSettings {
+  steam: SteamPlatformSettings;
+}
+
 export interface AppSettings {
   language: Locale;
   theme: "dark" | "light";
   uiScalePercent: number;
-  avatarCacheDays: number;
-  banCheckDays: number;
+  dataRefresh: DataRefreshSettings;
   enabledPlatforms: string[];
   defaultPlatformId: string;
   inactivityBlurSeconds: number;
-  steamRunAsAdmin: boolean;
-  steamLaunchOptions: string;
-  showUsernames: boolean;
-  showLastLogin: boolean;
-  showCardNotesInline: boolean;
+  platformSettings: PlatformSettings;
+  accountDisplay: AccountDisplaySettings;
   pinEnabled: boolean;
   pinHash: string;
 }
