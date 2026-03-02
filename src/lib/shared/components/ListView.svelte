@@ -1,8 +1,8 @@
 <script lang="ts">
   import { flip } from "svelte/animate";
   import type { PlatformAccount } from "../platform";
+  import type { AccountWarningPresentation } from "../accountWarnings";
   import type { ItemRef, FolderInfo } from "../../features/folders/types";
-  import type { BanInfo } from "../../platforms/steam/types";
   import ListRow from "./ListRow.svelte";
   import PreviewPanel from "./PreviewPanel.svelte";
   import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
@@ -16,7 +16,7 @@
     currentFolderId = null,
     currentAccountId = null,
     avatarStates = {},
-    banStates = {},
+    warningStates = {},
     getAccountNote = () => "",
     accentColor = "#3b82f6",
     locale = DEFAULT_LOCALE,
@@ -38,7 +38,7 @@
     currentFolderId: string | null;
     currentAccountId?: string | null;
     avatarStates: Record<string, { url: string | null; loading: boolean; refreshing: boolean }>;
-    banStates?: Record<string, BanInfo>;
+    warningStates?: Record<string, AccountWarningPresentation>;
     getAccountNote?: (accountId: string) => string;
     accentColor?: string;
     locale?: Locale;
@@ -103,7 +103,7 @@
             isActive={account.id === currentAccountId}
             isSelected={selectedAccountId === account.id}
             avatarUrl={avatarStates[account.id]?.url}
-            banInfo={banStates[account.id]}
+            warningInfo={warningStates[account.id]}
             onClick={() => selectAccount(account.id)}
             onDblClick={() => onSwitch(account)}
             onContextMenu={(e) => onAccountContextMenu(e, account)}
@@ -125,7 +125,7 @@
         isActive={selectedAccount.id === currentAccountId}
         avatarUrl={avatarStates[selectedAccount.id]?.url}
         accountNote={getAccountNote(selectedAccount.id)}
-        banInfo={banStates[selectedAccount.id]}
+        warningInfo={warningStates[selectedAccount.id]}
         {accentColor}
         {locale}
         onSwitch={() => onSwitch(selectedAccount!)}

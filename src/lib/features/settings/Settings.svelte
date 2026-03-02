@@ -14,9 +14,11 @@
   } from "$lib/i18n";
   import { hashPinCode, sanitizePinDigits } from "$lib/shared/pin";
 
-  let { onClose, onPlatformsChanged }: {
+  let { onClose, onPlatformsChanged, onRefreshAvatarsNow = () => {}, onRefreshBansNow = () => {} }: {
     onClose: () => void;
     onPlatformsChanged?: () => void;
+    onRefreshAvatarsNow?: () => void;
+    onRefreshBansNow?: () => void;
   } = $props();
 
   let settings = $state(getSettings());
@@ -325,51 +327,61 @@
     <section class="card">
       <h3>{t("settings.dataRefresh")}</h3>
 
-      <label class="field">
+      <div class="field">
         <div class="row">
           <span>{t("settings.avatarRefresh")}</span>
           <span class="hint">{t("settings.zeroEachLaunch")}</span>
         </div>
-        <input
-          type="number"
-          min="0"
-          max="90"
-          step="1"
-          value={avatarCacheDaysInput}
-          oninput={(e) => avatarCacheDaysInput = (e.currentTarget as HTMLInputElement).value}
-          onblur={commitAvatarCacheDays}
-          onkeydown={(e) => {
-            if (e.key === "Enter") {
-              commitAvatarCacheDays();
-              (e.currentTarget as HTMLInputElement).blur();
-            }
-          }}
-          class="text-input number-input"
-        />
-      </label>
+        <div class="input-row">
+          <input
+            type="number"
+            min="0"
+            max="90"
+            step="1"
+            value={avatarCacheDaysInput}
+            oninput={(e) => avatarCacheDaysInput = (e.currentTarget as HTMLInputElement).value}
+            onblur={commitAvatarCacheDays}
+            onkeydown={(e) => {
+              if (e.key === "Enter") {
+                commitAvatarCacheDays();
+                (e.currentTarget as HTMLInputElement).blur();
+              }
+            }}
+            class="text-input number-input"
+          />
+          <button class="inline-action-btn" type="button" onclick={onRefreshAvatarsNow}>
+            {t("settings.refreshNow")}
+          </button>
+        </div>
+      </div>
 
-      <label class="field">
+      <div class="field">
         <div class="row">
           <span>{t("settings.banCheckDelay")}</span>
           <span class="hint">{t("settings.zeroEachLaunch")}</span>
         </div>
-        <input
-          type="number"
-          min="0"
-          max="90"
-          step="1"
-          value={banCheckDaysInput}
-          oninput={(e) => banCheckDaysInput = (e.currentTarget as HTMLInputElement).value}
-          onblur={commitBanCheckDays}
-          onkeydown={(e) => {
-            if (e.key === "Enter") {
-              commitBanCheckDays();
-              (e.currentTarget as HTMLInputElement).blur();
-            }
-          }}
-          class="text-input number-input"
-        />
-      </label>
+        <div class="input-row">
+          <input
+            type="number"
+            min="0"
+            max="90"
+            step="1"
+            value={banCheckDaysInput}
+            oninput={(e) => banCheckDaysInput = (e.currentTarget as HTMLInputElement).value}
+            onblur={commitBanCheckDays}
+            onkeydown={(e) => {
+              if (e.key === "Enter") {
+                commitBanCheckDays();
+                (e.currentTarget as HTMLInputElement).blur();
+              }
+            }}
+            class="text-input number-input"
+          />
+          <button class="inline-action-btn" type="button" onclick={onRefreshBansNow}>
+            {t("settings.refreshNow")}
+          </button>
+        </div>
+      </div>
     </section>
 
     <section class="card">
@@ -712,6 +724,23 @@
   .inline-link-btn:hover {
     color: #93c5fd;
     text-decoration: underline;
+  }
+
+  .inline-action-btn {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-card);
+    color: var(--fg);
+    font-size: 11px;
+    line-height: 1;
+    padding: 5px 9px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+
+  .inline-action-btn:hover {
+    background: var(--bg-card-hover);
   }
 
   .hint {

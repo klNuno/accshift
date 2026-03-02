@@ -76,17 +76,17 @@ function isSteamPathMissingError(message: string): boolean {
     || normalized.includes("could not read steam configuration");
 }
 
-function deferBackgroundTask(task: () => void) {
+function deferBackgroundTask(task: () => void | Promise<void>) {
   if (typeof window !== "undefined" && "requestIdleCallback" in window) {
     const requestIdle = (
       window as Window & {
         requestIdleCallback: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
       }
     ).requestIdleCallback;
-    requestIdle(() => task(), { timeout: 600 });
+    requestIdle(() => { void task(); }, { timeout: 600 });
     return;
   }
-  setTimeout(task, 0);
+  setTimeout(() => { void task(); }, 0);
 }
 
 export function createAccountLoader(
@@ -367,7 +367,7 @@ export function createAccountLoader(
       onAfterLoad?.();
       const runBackgroundTasks = () => {
         if (loadId !== latestLoadId) return;
-        primeVisibleAccounts(checkBans, forceRefresh, silent, false);
+        void refreshVisibleAccounts(checkBans, forceRefresh, silent, false);
       };
       if (deferBackground) {
         deferBackgroundTask(runBackgroundTasks);
@@ -433,25 +433,32 @@ export function createAccountLoader(
     }
   }
 
-  function primeVisibleAccounts(
+  async function refreshVisibleAccounts(
     checkBans = false,
     forceRefresh = false,
     silent = true,
     deferBackground = true,
-  ) {
+  ): Promise<number> {
     const visibleAccounts = resolveVisibleAccounts(accounts);
-    if (visibleAccounts.length === 0) return;
-    const run = () => {
-      void loadProfilesForAccounts(visibleAccounts, forceRefresh);
+    if (visibleAccounts.length === 0) return 0;
+    const run = async () => {
+      const tasks: Promise<unknown>[] = [
+        loadProfilesForAccounts(visibleAccounts, forceRefresh),
+      ];
       if (checkBans) {
-        void fetchBanStates(visibleAccounts, silent, forceRefresh);
+        tasks.push(fetchBanStates(visibleAccounts, silent, forceRefresh));
       }
+      await Promise.all(tasks);
+      return visibleAccounts.length;
     };
     if (deferBackground) {
-      deferBackgroundTask(run);
-    } else {
-      run();
+      return new Promise((resolve) => {
+        deferBackgroundTask(async () => {
+          resolve(await run());
+        });
+      });
     }
+    return run();
   }
 
   return {
@@ -467,6 +474,7 @@ export function createAccountLoader(
     load,
     switchTo,
     addNew,
-    primeVisibleAccounts,
+    primeVisibleAccounts: refreshVisibleAccounts,
+    refreshVisibleAccounts,
   };
 }

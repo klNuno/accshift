@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PlatformAccount } from "../platform";
-  import type { BanInfo } from "$lib/platforms/steam/types";
+  import type { AccountWarningPresentation } from "../accountWarnings";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
   import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
 
@@ -15,7 +15,7 @@
     accentColor = "#3b82f6",
     locale = DEFAULT_LOCALE,
     onSwitch,
-    banInfo = undefined,
+    warningInfo = undefined,
   }: {
     account: PlatformAccount;
     isActive?: boolean;
@@ -27,43 +27,15 @@
     accentColor?: string;
     locale?: Locale;
     onSwitch: () => void;
-    banInfo?: BanInfo;
+    warningInfo?: AccountWarningPresentation;
   } = $props();
 
   function getInitials(name: string): string {
     return name.slice(0, 2).toUpperCase();
   }
 
-  type BanWarningTone = "red" | "orange";
-  interface BanWarningChip {
-    tone: BanWarningTone;
-    text: string;
-  }
-
   let banWarnings = $derived.by(() => {
-    if (!banInfo) return [] as BanWarningChip[];
-    const chips: BanWarningChip[] = [];
-    if (banInfo.community_banned) {
-      chips.push({ tone: "orange", text: translate(locale, "ban.community") });
-    }
-    if (banInfo.vac_banned) {
-      const vacCount = Math.max(1, banInfo.number_of_vac_bans || 0);
-      chips.push({
-        tone: "red",
-        text: translate(locale, vacCount > 1 ? "ban.vac.multiple" : "ban.vac.single", { count: vacCount }),
-      });
-    }
-    if (banInfo.number_of_game_bans > 0) {
-      chips.push({
-        tone: "red",
-        text: translate(
-          locale,
-          banInfo.number_of_game_bans > 1 ? "ban.game.multiple" : "ban.game.single",
-          { count: banInfo.number_of_game_bans }
-        ),
-      });
-    }
-    return chips;
+    return warningInfo?.chips ?? [];
   });
 </script>
 

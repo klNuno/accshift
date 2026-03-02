@@ -31,10 +31,12 @@
   import ViewToggle from "$lib/shared/components/ViewToggle.svelte";
   import ListView from "$lib/shared/components/ListView.svelte";
   import WaveText from "$lib/shared/components/WaveText.svelte";
+  import type { AccountWarningPresentation } from "$lib/shared/accountWarnings";
   import { getViewMode, setViewMode, type ViewMode } from "$lib/shared/viewMode";
   import { createInactivityBlur } from "$lib/shared/useInactivityBlur.svelte";
   import { createGridLayout } from "$lib/shared/useGridLayout.svelte";
   import { createAccountLoader } from "$lib/shared/useAccountLoader.svelte";
+  import { toSteamAccountWarningPresentation } from "$lib/platforms/steam/warnings";
   import {
     ACCOUNT_CARD_COLOR_PRESETS,
     getAccountCardColor as getStoredAccountCardColor,
@@ -250,6 +252,16 @@
     return arr;
   });
 
+  let warningStates = $derived.by<Record<string, AccountWarningPresentation>>(() => {
+    const warnings: Record<string, AccountWarningPresentation> = {};
+    if (activeTab !== "steam") return warnings;
+    for (const [accountId, banInfo] of Object.entries(loader.banStates)) {
+      const warning = toSteamAccountWarningPresentation(banInfo, t);
+      if (warning) warnings[accountId] = warning;
+    }
+    return warnings;
+  });
+
   $effect(() => {
     if (showSettings || !adapter || loader.loading) return;
     const visibleIds = (isSearching ? filteredAccountItems : currentItems.filter((item) => item.type === "account"))
@@ -386,6 +398,26 @@
       refreshCurrentItems();
       setTimeout(grid.calculatePadding, 0);
     }, silent, showRefreshedToast, forceRefresh, checkBans, deferBackground);
+  }
+
+  async function refreshAvatarsNow() {
+    if (!adapter) return;
+    try {
+      const count = await loader.refreshVisibleAccounts(false, true, true, false);
+      showToast(t("toast.avatarRefreshComplete", { count }));
+    } catch (e) {
+      showToast(String(e));
+    }
+  }
+
+  async function refreshBansNow() {
+    if (!adapter) return;
+    try {
+      const count = await loader.refreshVisibleAccounts(true, true, true, false);
+      showToast(t("toast.banRefreshComplete", { count }));
+    } catch (e) {
+      showToast(String(e));
+    }
   }
 
   function toggleSettingsPanel() {
@@ -764,7 +796,12 @@
 {#if showSettings}
   <main class="content">
     {#if SettingsPanel}
-      <SettingsPanel onClose={handleSettingsClose} onPlatformsChanged={handlePlatformsChanged} />
+      <SettingsPanel
+        onClose={handleSettingsClose}
+        onPlatformsChanged={handlePlatformsChanged}
+        onRefreshAvatarsNow={refreshAvatarsNow}
+        onRefreshBansNow={refreshBansNow}
+      />
     {:else}
       <div class="center-msg">
         <div class="spinner" style="border-top-color: {accentColor};"></div>
@@ -825,7 +862,7 @@
           {currentFolderId}
           {currentAccountId}
           avatarStates={loader.avatarStates}
-          banStates={loader.banStates}
+          warningStates={warningStates}
           {getAccountNote}
           {accentColor}
           dragItem={drag.dragItem}
@@ -893,7 +930,7 @@
                   isLoadingAvatar={avatarState?.loading ?? true}
                   isRefreshingAvatar={avatarState?.refreshing ?? false}
                   isDragged={drag.dragItem?.type === "account" && drag.dragItem?.id === account.id}
-                  banInfo={loader.banStates[account.id]}
+                  warningInfo={warningStates[account.id]}
                 />
               {/if}
             </div>

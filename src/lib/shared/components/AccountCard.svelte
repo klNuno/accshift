@@ -1,10 +1,9 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import type { PlatformAccount } from "../platform";
+  import type { AccountWarningPresentation } from "../accountWarnings";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
   import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
-
-  import type { BanInfo } from "$lib/platforms/steam/types";
 
   let {
     account,
@@ -15,7 +14,7 @@
     avatarUrl = null,
     isLoadingAvatar = false,
     isRefreshingAvatar = false,
-    banInfo = undefined,
+    warningInfo = undefined,
     cardColor = "",
     showUsername = true,
     showNoteInline = false,
@@ -32,7 +31,7 @@
     avatarUrl?: string | null;
     isLoadingAvatar?: boolean;
     isRefreshingAvatar?: boolean;
-    banInfo?: BanInfo;
+    warningInfo?: AccountWarningPresentation;
     cardColor?: string;
     showUsername?: boolean;
     showNoteInline?: boolean;
@@ -61,32 +60,12 @@
   const TOOLTIP_GAP_PX = 6;
   const VIEWPORT_EDGE_GAP_PX = 4;
   const noteText = $derived(note.trim());
-  function formatBanTooltipEnglish(info: BanInfo): string {
-    const lines: string[] = [];
-    if (info.community_banned) {
-      lines.push("Community ban");
-    }
-    if (info.vac_banned) {
-      const vacCount = Math.max(1, info.number_of_vac_bans || 0);
-      lines.push(`${vacCount} VAC ban${vacCount > 1 ? "s" : ""}`);
-    }
-    if (info.number_of_game_bans > 0) {
-      lines.push(`${info.number_of_game_bans} game ban${info.number_of_game_bans > 1 ? "s" : ""}`);
-    }
-    return lines.join("\n");
-  }
   let banHoverMessage = $derived.by(() => {
-    if (!banInfo) return "";
-    return formatBanTooltipEnglish(banInfo);
+    return warningInfo?.tooltipText || "";
   });
 
-  // Visual severity hint for ban state.
-  let banOutlineColor = $derived.by(() => {
-    if (!banInfo) return "";
-    if (banInfo.vac_banned || banInfo.number_of_game_bans > 0) return "rgba(239, 68, 68, 0.6)";
-    if (banInfo.community_banned || (banInfo.economy_ban && banInfo.economy_ban !== "none")) return "rgba(234, 179, 8, 0.6)";
-    return "";
-  });
+  let hasRedWarning = $derived(warningInfo?.cardOutlineTone === "red");
+  let hasOrangeWarning = $derived(warningInfo?.cardOutlineTone === "orange");
   let hasInlineNote = $derived(Boolean(showNoteInline && noteText));
   let showNoteTooltip = $derived(Boolean(isHovered && !isDragged && noteText && !showNoteInline));
 
@@ -257,8 +236,8 @@
   class:custom-color={!!cardColor}
   class:active={isActive}
   class:dragging={isDragged}
-  class:ban-red={banOutlineColor.includes("239")}
-  class:ban-yellow={banOutlineColor.includes("234")}
+  class:ban-red={hasRedWarning}
+  class:ban-yellow={hasOrangeWarning}
   title={banHoverMessage || undefined}
 >
   {#if showNoteTooltip}

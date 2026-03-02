@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { PlatformAccount } from "../platform";
+  import type { AccountWarningPresentation } from "../accountWarnings";
   import type { FolderInfo } from "../../features/folders/types";
-  import type { BanInfo } from "../../platforms/steam/types";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
   import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
 
@@ -14,7 +14,7 @@
     isDragged = false,
     isDragOver = false,
     avatarUrl = null,
-    banInfo = undefined,
+    warningInfo = undefined,
     showUsername = true,
     showLastLogin = false,
     lastLoginAt = null,
@@ -31,7 +31,7 @@
     isDragged?: boolean;
     isDragOver?: boolean;
     avatarUrl?: string | null;
-    banInfo?: BanInfo;
+    warningInfo?: AccountWarningPresentation;
     showUsername?: boolean;
     showLastLogin?: boolean;
     lastLoginAt?: number | null;
@@ -51,32 +51,12 @@
     onContextMenu(e);
   }
 
-  function formatBanTooltipEnglish(info: BanInfo): string {
-    const lines: string[] = [];
-    if (info.community_banned) {
-      lines.push("Community ban");
-    }
-    if (info.vac_banned) {
-      const vacCount = Math.max(1, info.number_of_vac_bans || 0);
-      lines.push(`${vacCount} VAC ban${vacCount > 1 ? "s" : ""}`);
-    }
-    if (info.number_of_game_bans > 0) {
-      lines.push(`${info.number_of_game_bans} game ban${info.number_of_game_bans > 1 ? "s" : ""}`);
-    }
-    return lines.join("\n");
-  }
+  let hasRedWarning = $derived(Boolean(warningInfo?.listHasRed));
 
-  let hasRedWarning = $derived.by(() =>
-    Boolean(banInfo && (banInfo.vac_banned || banInfo.number_of_game_bans > 0))
-  );
-
-  let hasOrangeWarning = $derived.by(() =>
-    Boolean(banInfo && banInfo.community_banned)
-  );
+  let hasOrangeWarning = $derived(Boolean(warningInfo?.listHasOrange));
 
   let banHoverMessage = $derived.by(() => {
-    if (!banInfo) return "";
-    return formatBanTooltipEnglish(banInfo);
+    return warningInfo?.tooltipText || "";
   });
 </script>
 
