@@ -1,9 +1,12 @@
 use crate::config;
 use crate::os;
+use crate::platforms::{
+    AddAccountRequest, CopyGameSettingsRequest, PlatformFuture, PlatformService,
+    PlatformStartupSnapshot, SwitchAccountModeRequest, SwitchAccountRequest,
+};
 use crate::steam::accounts::{self, CopyableGame, SteamAccount};
 use crate::steam::bans::{self, BanInfo};
 use crate::steam::profile::{self, ProfileInfo};
-use serde::Serialize;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -72,12 +75,9 @@ fn resolve_steam_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> 
     Ok(steam_path)
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StartupSnapshot {
-    pub accounts: Vec<SteamAccount>,
-    pub current_account: String,
-}
+pub struct SteamPlatformService;
+
+pub static STEAM_PLATFORM_SERVICE: SteamPlatformService = SteamPlatformService;
 
 pub fn set_api_key(app_handle: tauri::AppHandle, key: String) -> Result<(), String> {
     let trimmed = key.trim();
@@ -105,7 +105,7 @@ pub fn get_accounts(app_handle: tauri::AppHandle) -> Result<Vec<SteamAccount>, S
     })
 }
 
-pub fn get_startup_snapshot(app_handle: tauri::AppHandle) -> Result<StartupSnapshot, String> {
+pub fn get_startup_snapshot(app_handle: tauri::AppHandle) -> Result<PlatformStartupSnapshot, String> {
     let steam_path = resolve_steam_path(&app_handle)?;
     let (accounts, current_from_file) =
         accounts::get_accounts_snapshot(&steam_path).map_err(|e| {
@@ -121,7 +121,7 @@ pub fn get_startup_snapshot(app_handle: tauri::AppHandle) -> Result<StartupSnaps
         }
     };
 
-    Ok(StartupSnapshot {
+    Ok(PlatformStartupSnapshot {
         accounts,
         current_account,
     })
@@ -287,7 +287,7 @@ pub fn open_steam_api_key_page() -> Result<(), String> {
 
 pub async fn get_profile_info(
     steam_id: String,
-    client: tauri::State<'_, reqwest::Client>,
+    client: reqwest::Client,
 ) -> Result<Option<ProfileInfo>, String> {
     validate_steam_id(&steam_id)?;
     Ok(profile::fetch_profile_info(&client, &steam_id).await)
@@ -296,7 +296,7 @@ pub async fn get_profile_info(
 pub async fn get_player_bans(
     app_handle: tauri::AppHandle,
     steam_ids: Vec<String>,
-    client: tauri::State<'_, reqwest::Client>,
+    client: reqwest::Client,
 ) -> Result<Vec<BanInfo>, String> {
     let mut seen = HashSet::new();
     let mut unique_steam_ids: Vec<String> = Vec::new();
@@ -319,4 +319,152 @@ pub async fn get_player_bans(
         return Ok(vec![]);
     }
     bans::fetch_player_bans(&client, &api_key, unique_steam_ids).await
+}
+
+impl PlatformService for SteamPlatformService {
+    fn id(&self) -> &'static str {
+        "steam"
+    }
+
+    fn set_api_key(&self, app_handle: tauri::AppHandle, key: String) -> Result<(), String> {
+        set_api_key(app_handle, key)
+    }
+
+    fn has_api_key(&self, app_handle: tauri::AppHandle) -> bool {
+        has_api_key(app_handle)
+    }
+
+    fn get_accounts(&self, app_handle: tauri::AppHandle) -> Result<Vec<SteamAccount>, String> {
+        get_accounts(app_handle)
+    }
+
+    fn get_startup_snapshot(
+        &self,
+        app_handle: tauri::AppHandle,
+    ) -> Result<PlatformStartupSnapshot, String> {
+        get_startup_snapshot(app_handle)
+    }
+
+    fn get_current_account(&self, app_handle: tauri::AppHandle) -> Result<String, String> {
+        get_current_account(app_handle)
+    }
+
+    fn switch_account<'a>(
+        &'a self,
+        app_handle: tauri::AppHandle,
+        request: SwitchAccountRequest,
+    ) -> PlatformFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            switch_account(
+                app_handle,
+                request.username,
+                request.run_as_admin,
+                request.launch_options,
+            )
+            .await
+        })
+    }
+
+    fn switch_account_mode<'a>(
+        &'a self,
+        app_handle: tauri::AppHandle,
+        request: SwitchAccountModeRequest,
+    ) -> PlatformFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            switch_account_mode(
+                app_handle,
+                request.username,
+                request.steam_id,
+                request.mode,
+                request.run_as_admin,
+                request.launch_options,
+            )
+            .await
+        })
+    }
+
+    fn add_account<'a>(
+        &'a self,
+        app_handle: tauri::AppHandle,
+        request: AddAccountRequest,
+    ) -> PlatformFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            add_account(app_handle, request.run_as_admin, request.launch_options).await
+        })
+    }
+
+    fn forget_account<'a>(
+        &'a self,
+        app_handle: tauri::AppHandle,
+        steam_id: String,
+    ) -> PlatformFuture<'a, Result<(), String>> {
+        Box::pin(async move { forget_account(app_handle, steam_id).await })
+    }
+
+    fn open_userdata(
+        &self,
+        app_handle: tauri::AppHandle,
+        steam_id: String,
+    ) -> Result<(), String> {
+        open_userdata(app_handle, steam_id)
+    }
+
+    fn copy_game_settings(
+        &self,
+        app_handle: tauri::AppHandle,
+        request: CopyGameSettingsRequest,
+    ) -> Result<(), String> {
+        copy_game_settings(
+            app_handle,
+            request.from_steam_id,
+            request.to_steam_id,
+            request.app_id,
+        )
+    }
+
+    fn get_copyable_games(
+        &self,
+        app_handle: tauri::AppHandle,
+        from_steam_id: String,
+        to_steam_id: String,
+    ) -> Result<Vec<CopyableGame>, String> {
+        get_copyable_games(app_handle, from_steam_id, to_steam_id)
+    }
+
+    fn get_installation_path(&self, app_handle: tauri::AppHandle) -> Result<String, String> {
+        get_steam_path(app_handle)
+    }
+
+    fn set_installation_path(
+        &self,
+        app_handle: tauri::AppHandle,
+        path: String,
+    ) -> Result<(), String> {
+        set_steam_path(app_handle, path)
+    }
+
+    fn select_installation_path(&self) -> Result<String, String> {
+        select_steam_path()
+    }
+
+    fn open_api_key_page(&self) -> Result<(), String> {
+        open_steam_api_key_page()
+    }
+
+    fn get_profile_info<'a>(
+        &'a self,
+        steam_id: String,
+        client: reqwest::Client,
+    ) -> PlatformFuture<'a, Result<Option<ProfileInfo>, String>> {
+        Box::pin(async move { get_profile_info(steam_id, client).await })
+    }
+
+    fn get_player_bans<'a>(
+        &'a self,
+        app_handle: tauri::AppHandle,
+        steam_ids: Vec<String>,
+        client: reqwest::Client,
+    ) -> PlatformFuture<'a, Result<Vec<BanInfo>, String>> {
+        Box::pin(async move { get_player_bans(app_handle, steam_ids, client).await })
+    }
 }

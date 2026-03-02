@@ -1,28 +1,33 @@
-use crate::platforms::steam as steam_platform;
+use crate::platforms::{
+    require_service, AddAccountRequest, CopyGameSettingsRequest, SwitchAccountModeRequest,
+    SwitchAccountRequest,
+};
 
 #[tauri::command]
 pub fn set_api_key(app_handle: tauri::AppHandle, key: String) -> Result<(), String> {
-    steam_platform::set_api_key(app_handle, key)
+    require_service("steam")?.set_api_key(app_handle, key)
 }
 
 #[tauri::command]
 pub fn has_api_key(app_handle: tauri::AppHandle) -> bool {
-    steam_platform::has_api_key(app_handle)
+    require_service("steam")
+        .map(|service| service.has_api_key(app_handle))
+        .unwrap_or(false)
 }
 
 #[tauri::command]
 pub fn get_steam_accounts(app_handle: tauri::AppHandle) -> Result<Vec<crate::steam::accounts::SteamAccount>, String> {
-    steam_platform::get_accounts(app_handle)
+    require_service("steam")?.get_accounts(app_handle)
 }
 
 #[tauri::command]
-pub fn get_startup_snapshot(app_handle: tauri::AppHandle) -> Result<steam_platform::StartupSnapshot, String> {
-    steam_platform::get_startup_snapshot(app_handle)
+pub fn get_startup_snapshot(app_handle: tauri::AppHandle) -> Result<crate::platforms::PlatformStartupSnapshot, String> {
+    require_service("steam")?.get_startup_snapshot(app_handle)
 }
 
 #[tauri::command]
 pub fn get_current_account(app_handle: tauri::AppHandle) -> Result<String, String> {
-    steam_platform::get_current_account(app_handle)
+    require_service("steam")?.get_current_account(app_handle)
 }
 
 #[tauri::command]
@@ -32,7 +37,16 @@ pub async fn switch_account(
     run_as_admin: bool,
     launch_options: String,
 ) -> Result<(), String> {
-    steam_platform::switch_account(app_handle, username, run_as_admin, launch_options).await
+    require_service("steam")?
+        .switch_account(
+            app_handle,
+            SwitchAccountRequest {
+                username,
+                run_as_admin,
+                launch_options,
+            },
+        )
+        .await
 }
 
 #[tauri::command]
@@ -44,7 +58,18 @@ pub async fn switch_account_mode(
     run_as_admin: bool,
     launch_options: String,
 ) -> Result<(), String> {
-    steam_platform::switch_account_mode(app_handle, username, steam_id, mode, run_as_admin, launch_options).await
+    require_service("steam")?
+        .switch_account_mode(
+            app_handle,
+            SwitchAccountModeRequest {
+                username,
+                steam_id,
+                mode,
+                run_as_admin,
+                launch_options,
+            },
+        )
+        .await
 }
 
 #[tauri::command]
@@ -53,17 +78,25 @@ pub async fn add_account(
     run_as_admin: bool,
     launch_options: String,
 ) -> Result<(), String> {
-    steam_platform::add_account(app_handle, run_as_admin, launch_options).await
+    require_service("steam")?
+        .add_account(
+            app_handle,
+            AddAccountRequest {
+                run_as_admin,
+                launch_options,
+            },
+        )
+        .await
 }
 
 #[tauri::command]
 pub async fn forget_account(app_handle: tauri::AppHandle, steam_id: String) -> Result<(), String> {
-    steam_platform::forget_account(app_handle, steam_id).await
+    require_service("steam")?.forget_account(app_handle, steam_id).await
 }
 
 #[tauri::command]
 pub fn open_userdata(app_handle: tauri::AppHandle, steam_id: String) -> Result<(), String> {
-    steam_platform::open_userdata(app_handle, steam_id)
+    require_service("steam")?.open_userdata(app_handle, steam_id)
 }
 
 #[tauri::command]
@@ -73,7 +106,15 @@ pub fn copy_game_settings(
     to_steam_id: String,
     app_id: String,
 ) -> Result<(), String> {
-    steam_platform::copy_game_settings(app_handle, from_steam_id, to_steam_id, app_id)
+    require_service("steam")?
+        .copy_game_settings(
+            app_handle,
+            CopyGameSettingsRequest {
+                from_steam_id,
+                to_steam_id,
+                app_id,
+            },
+        )
 }
 
 #[tauri::command]
@@ -82,27 +123,27 @@ pub fn get_copyable_games(
     from_steam_id: String,
     to_steam_id: String,
 ) -> Result<Vec<crate::steam::accounts::CopyableGame>, String> {
-    steam_platform::get_copyable_games(app_handle, from_steam_id, to_steam_id)
+    require_service("steam")?.get_copyable_games(app_handle, from_steam_id, to_steam_id)
 }
 
 #[tauri::command]
 pub fn get_steam_path(app_handle: tauri::AppHandle) -> Result<String, String> {
-    steam_platform::get_steam_path(app_handle)
+    require_service("steam")?.get_installation_path(app_handle)
 }
 
 #[tauri::command]
 pub fn set_steam_path(app_handle: tauri::AppHandle, path: String) -> Result<(), String> {
-    steam_platform::set_steam_path(app_handle, path)
+    require_service("steam")?.set_installation_path(app_handle, path)
 }
 
 #[tauri::command]
 pub fn select_steam_path() -> Result<String, String> {
-    steam_platform::select_steam_path()
+    require_service("steam")?.select_installation_path()
 }
 
 #[tauri::command]
 pub fn open_steam_api_key_page() -> Result<(), String> {
-    steam_platform::open_steam_api_key_page()
+    require_service("steam")?.open_api_key_page()
 }
 
 #[tauri::command]
@@ -110,7 +151,9 @@ pub async fn get_profile_info(
     steam_id: String,
     client: tauri::State<'_, reqwest::Client>,
 ) -> Result<Option<crate::steam::profile::ProfileInfo>, String> {
-    steam_platform::get_profile_info(steam_id, client).await
+    require_service("steam")?
+        .get_profile_info(steam_id, client.inner().clone())
+        .await
 }
 
 #[tauri::command]
@@ -119,7 +162,9 @@ pub async fn get_player_bans(
     steam_ids: Vec<String>,
     client: tauri::State<'_, reqwest::Client>,
 ) -> Result<Vec<crate::steam::bans::BanInfo>, String> {
-    steam_platform::get_player_bans(app_handle, steam_ids, client).await
+    require_service("steam")?
+        .get_player_bans(app_handle, steam_ids, client.inner().clone())
+        .await
 }
 
 #[tauri::command]
