@@ -42,6 +42,14 @@ export const steamAdapter: PlatformAdapter = {
     };
   },
 
+  isCurrentAccount(account, currentAccount) {
+    const needle = currentAccount.trim().toLowerCase();
+    return needle.length > 0 && (
+      account.id.trim().toLowerCase() === needle
+      || account.username.trim().toLowerCase() === needle
+    );
+  },
+
   async switchAccount(account: PlatformAccount): Promise<void> {
     await service.switchAccount(account.username);
   },

@@ -310,19 +310,7 @@
     setUiScalePercent(100);
   }
 
-  function getCurrentContextAccountId(): string | null {
-    const raw = (loader.currentAccount || "").trim();
-    if (!raw) return null;
-    const needle = raw.toLowerCase();
-    const direct = loader.accounts.find((a) => a.id.trim().toLowerCase() === needle);
-    if (direct) return direct.id;
-    const current = loader.accounts.find((a) =>
-      a.username.trim().toLowerCase() === needle ||
-      (a.displayName || "").trim().toLowerCase() === needle
-    );
-    return current?.id ?? null;
-  }
-  let currentAccountId = $derived(getCurrentContextAccountId());
+  let currentAccountId = $derived(loader.currentAccountId);
 
   function getAccountCardColor(accountId: string): string {
     cardColorVersion;
@@ -483,7 +471,7 @@
         platformCallbacks: {
           copyToClipboard,
           showToast,
-          getCurrentAccountId: getCurrentContextAccountId,
+          getCurrentAccountId: () => loader.currentAccountId,
           refreshAccounts: () => loadAccounts(true),
           confirmAction: (config) => {
             confirmDialog = config;

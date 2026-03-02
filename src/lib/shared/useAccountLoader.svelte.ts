@@ -30,6 +30,20 @@ export function createAccountLoader(
     Object.fromEntries(accounts.map(a => [a.id, a]))
   );
   let currentAccount = $state("");
+  let currentAccountId = $derived.by(() => {
+    const raw = currentAccount.trim();
+    if (!raw) return null;
+    const needle = raw.toLowerCase();
+    const direct = accounts.find((account) => account.id.trim().toLowerCase() === needle);
+    if (direct) return direct.id;
+    const adapter = getAdapter();
+    const matched = accounts.find((account) =>
+      adapter?.isCurrentAccount?.(account, raw)
+      || account.username.trim().toLowerCase() === needle
+      || (account.displayName || "").trim().toLowerCase() === needle
+    );
+    return matched?.id ?? null;
+  });
   let loading = $state(true);
   let switching = $state(false);
   let error = $state<string | null>(null);
@@ -272,6 +286,7 @@ export function createAccountLoader(
     set accounts(v: PlatformAccount[]) { accounts = v; },
     get accountMap() { return accountMap; },
     get currentAccount() { return currentAccount; },
+    get currentAccountId() { return currentAccountId; },
     get loading() { return loading; },
     get switching() { return switching; },
     get error() { return error; },

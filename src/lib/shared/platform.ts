@@ -56,6 +56,7 @@ export interface PlatformAdapter {
     accounts: PlatformAccount[];
     currentAccount: string;
   }>;
+  isCurrentAccount?(account: PlatformAccount, currentAccount: string): boolean;
   switchAccount(account: PlatformAccount): Promise<void>;
   addAccount(): Promise<void>;
 
