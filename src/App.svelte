@@ -21,6 +21,7 @@
   import { registerPlatform, getPlatform } from "$lib/shared/platform";
   import { steamAdapter } from "$lib/platforms/steam/adapter";
   import type { ContextMenuItem, InputDialogConfig } from "$lib/shared/types";
+  import { buildAccountContextMenuItems } from "$lib/shared/contextMenu/accountMenuBuilder";
   import type { ItemRef, FolderInfo } from "$lib/features/folders/types";
   import {
     getItemsInFolder, syncAccounts, getFolderPath, getFolder,
@@ -457,9 +458,10 @@
     if (!contextMenu) return [];
     if (contextMenu.account && adapter) {
       const account = contextMenu.account;
-      const currentColor = getAccountCardColor(account.id);
-      const items: ContextMenuItem[] = [
-        ...adapter.getContextMenuItems(account, {
+      return buildAccountContextMenuItems({
+        account,
+        adapter,
+        platformCallbacks: {
           copyToClipboard,
           showToast,
           getCurrentAccountId: getCurrentContextAccountId,
@@ -468,50 +470,35 @@
             confirmDialog = config;
           },
           t,
-        }),
-      ];
-
-      items.push({ separator: true });
-      const existingNote = getAccountNote(account.id);
-      items.push({
-        label: t("context.menu.editCardAndColor"),
-        submenu: [
-          {
-            label: existingNote ? t("context.menu.editNote") : t("context.menu.addNote"),
-            action: () => {
-              inputDialog = {
-                title: t("dialog.cardNoteTitle"),
-                placeholder: t("dialog.cardNotePlaceholder"),
-                initialValue: existingNote,
-                allowEmpty: true,
-                onConfirm: (note) => {
-                  if (note.trim()) {
-                    setAccountCardNote(account.id, note);
-                  } else {
-                    clearAccountCardNote(account.id);
-                  }
-                  cardNoteVersion += 1;
-                  inputDialog = null;
-                },
-              };
-            },
-          },
-          {
-            label: t("context.menu.cardColor"),
-            swatches: ACCOUNT_CARD_COLOR_PRESETS.map((preset) => ({
-              id: preset.id,
-              label: t(COLOR_LABEL_KEYS[preset.id]),
-              color: preset.color,
-              active: currentColor === preset.color,
-              action: () => {
-                setAccountCardColor(account.id, preset.color);
-                cardColorVersion += 1;
+        },
+        appearanceCallbacks: {
+          t,
+          getCurrentColor: () => getAccountCardColor(account.id),
+          getExistingNote: () => getAccountNote(account.id),
+          getColorLabel: (presetId) => t(COLOR_LABEL_KEYS[presetId]),
+          openNoteEditor: (initialNote) => {
+            inputDialog = {
+              title: t("dialog.cardNoteTitle"),
+              placeholder: t("dialog.cardNotePlaceholder"),
+              initialValue: initialNote,
+              allowEmpty: true,
+              onConfirm: (note) => {
+                if (note.trim()) {
+                  setAccountCardNote(account.id, note);
+                } else {
+                  clearAccountCardNote(account.id);
+                }
+                cardNoteVersion += 1;
+                inputDialog = null;
               },
-            })),
+            };
           },
-        ],
+          setColor: (color) => {
+            setAccountCardColor(account.id, color);
+            cardColorVersion += 1;
+          },
+        },
       });
-      return items;
     }
     if (contextMenu.folder) {
       const folder = contextMenu.folder;

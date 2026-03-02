@@ -1,4 +1,4 @@
-import type { ContextMenuItem } from "./types";
+import type { ContextMenuAction } from "./contextMenu/types";
 import type { MessageKey, TranslationParams } from "$lib/i18n";
 
 export interface PlatformAccount {
@@ -38,7 +38,7 @@ export interface PlatformAdapter {
   switchAccount(account: PlatformAccount): Promise<void>;
   addAccount(): Promise<void>;
 
-  getContextMenuItems(account: PlatformAccount, callbacks: PlatformContextMenuCallbacks): ContextMenuItem[];
+  getContextMenuActions(account: PlatformAccount, callbacks: PlatformContextMenuCallbacks): ContextMenuAction[];
 
   getProfileInfo?(accountId: string): Promise<{
     avatar_url: string | null;

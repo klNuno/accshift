@@ -1,5 +1,5 @@
 import type { PlatformAdapter, PlatformAccount, PlatformContextMenuCallbacks } from "../../shared/platform";
-import type { ContextMenuItem } from "../../shared/types";
+import type { ContextMenuAction } from "../../shared/contextMenu/types";
 import * as service from "./steamApi";
 import { getCachedProfile, fetchProfile } from "./profileCache";
 import { getSteamContextMenuItems } from "./contextMenu";
@@ -44,10 +44,10 @@ export const steamAdapter: PlatformAdapter = {
     await service.addAccount();
   },
 
-  getContextMenuItems(
+  getContextMenuActions(
     account: PlatformAccount,
     callbacks: PlatformContextMenuCallbacks
-  ): ContextMenuItem[] {
+  ): ContextMenuAction[] {
     return getSteamContextMenuItems(account, callbacks);
   },
 
