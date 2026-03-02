@@ -1,4 +1,5 @@
 import type { ContextMenuAction } from "./contextMenu/types";
+import type { AccountWarningPresentation } from "./accountWarnings";
 import type { MessageKey, TranslationParams } from "$lib/i18n";
 
 export interface PlatformAccount {
@@ -22,6 +23,15 @@ export interface PlatformContextMenuCallbacks {
   refreshAccounts: () => void;
   confirmAction: (config: PlatformContextMenuConfirmConfig) => void;
   t: (key: MessageKey, params?: TranslationParams) => string;
+}
+
+export interface PlatformUiCallbacks {
+  t: (key: MessageKey, params?: TranslationParams) => string;
+}
+
+export interface PlatformWarningLoadOptions extends PlatformUiCallbacks {
+  forceRefresh?: boolean;
+  silent?: boolean;
 }
 
 export interface PlatformAdapter {
@@ -53,6 +63,13 @@ export interface PlatformAdapter {
     tradeBanState?: string;
     expired: boolean;
   } | null;
+  getCachedWarningStates?(callbacks: PlatformUiCallbacks): Record<string, AccountWarningPresentation>;
+  loadWarningStates?(
+    accounts: PlatformAccount[],
+    options: PlatformWarningLoadOptions
+  ): Promise<Record<string, AccountWarningPresentation>>;
+  getNoAccountsToastMessage?(callbacks: PlatformUiCallbacks): string | null;
+  getLoadErrorToastMessage?(message: string, callbacks: PlatformUiCallbacks): string | null;
 }
 
 const adapters = new Map<string, PlatformAdapter>();

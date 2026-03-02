@@ -31,12 +31,10 @@
   import ViewToggle from "$lib/shared/components/ViewToggle.svelte";
   import ListView from "$lib/shared/components/ListView.svelte";
   import WaveText from "$lib/shared/components/WaveText.svelte";
-  import type { AccountWarningPresentation } from "$lib/shared/accountWarnings";
   import { getViewMode, setViewMode, type ViewMode } from "$lib/shared/viewMode";
   import { createInactivityBlur } from "$lib/shared/useInactivityBlur.svelte";
   import { createGridLayout } from "$lib/shared/useGridLayout.svelte";
   import { createAccountLoader } from "$lib/shared/useAccountLoader.svelte";
-  import { toSteamAccountWarningPresentation } from "$lib/platforms/steam/warnings";
   import {
     ACCOUNT_CARD_COLOR_PRESETS,
     getAccountCardColor as getStoredAccountCardColor,
@@ -90,7 +88,6 @@
   const grid = createGridLayout();
   const loader = createAccountLoader(
     () => adapter,
-    () => activeTab,
     () => {
       const q = searchQuery.trim().toLowerCase();
       if (q) {
@@ -250,16 +247,6 @@
     const arr = filteredAccountItems.filter(i => i.id !== drag.dragItem!.id);
     arr.splice(Math.min(drag.previewIndex, arr.length), 0, drag.dragItem);
     return arr;
-  });
-
-  let warningStates = $derived.by<Record<string, AccountWarningPresentation>>(() => {
-    const warnings: Record<string, AccountWarningPresentation> = {};
-    if (activeTab !== "steam") return warnings;
-    for (const [accountId, banInfo] of Object.entries(loader.banStates)) {
-      const warning = toSteamAccountWarningPresentation(banInfo, t);
-      if (warning) warnings[accountId] = warning;
-    }
-    return warnings;
   });
 
   $effect(() => {
@@ -862,7 +849,7 @@
           {currentFolderId}
           {currentAccountId}
           avatarStates={loader.avatarStates}
-          warningStates={warningStates}
+          warningStates={loader.warningStates}
           {getAccountNote}
           {accentColor}
           dragItem={drag.dragItem}
@@ -930,7 +917,7 @@
                   isLoadingAvatar={avatarState?.loading ?? true}
                   isRefreshingAvatar={avatarState?.refreshing ?? false}
                   isDragged={drag.dragItem?.type === "account" && drag.dragItem?.id === account.id}
-                  warningInfo={warningStates[account.id]}
+                  warningInfo={loader.warningStates[account.id]}
                 />
               {/if}
             </div>

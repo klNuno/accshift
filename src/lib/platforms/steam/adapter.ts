@@ -3,6 +3,7 @@ import type { ContextMenuAction } from "../../shared/contextMenu/types";
 import * as service from "./steamApi";
 import { getCachedProfile, fetchProfile } from "./profileCache";
 import { getSteamContextMenuItems } from "./contextMenu";
+import { getCachedSteamWarningStates, loadSteamWarningStates } from "./warnings";
 import type { SteamAccount, ProfileInfo } from "./types";
 
 function toAccount(s: SteamAccount): PlatformAccount {
@@ -57,5 +58,28 @@ export const steamAdapter: PlatformAdapter = {
 
   getCachedProfile(accountId: string) {
     return getCachedProfile(accountId);
+  },
+
+  getCachedWarningStates(callbacks) {
+    return getCachedSteamWarningStates(callbacks);
+  },
+
+  async loadWarningStates(accounts, options) {
+    return loadSteamWarningStates(accounts, options);
+  },
+
+  getNoAccountsToastMessage(callbacks) {
+    return callbacks.t("toast.noSteamAccountsFound");
+  },
+
+  getLoadErrorToastMessage(message, callbacks) {
+    const normalized = message.trim().toLowerCase();
+    if (
+      normalized.includes("could not locate steam installation")
+      || normalized.includes("could not read steam configuration")
+    ) {
+      return callbacks.t("toast.steamFolderNotFound");
+    }
+    return null;
   },
 };
