@@ -2,18 +2,62 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use tauri::Manager;
 
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct SteamConfig {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub api_key: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub api_key_encrypted: String,
+    #[serde(default)]
+    pub path_override: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct AppConfig {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub steam_api_key: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub steam_api_key_encrypted: String,
-    #[serde(default)]
-    pub steam_path_override: String,
+    #[serde(default, skip_serializing_if = "is_default_steam_config")]
+    pub steam: SteamConfig,
     #[serde(default)]
     pub window_width: Option<f64>,
     #[serde(default)]
     pub window_height: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct RawAppConfig {
+    #[serde(default)]
+    steam: Option<SteamConfig>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    steam_api_key: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    steam_api_key_encrypted: String,
+    #[serde(default)]
+    steam_path_override: String,
+    #[serde(default)]
+    window_width: Option<f64>,
+    #[serde(default)]
+    window_height: Option<f64>,
+}
+
+fn is_default_steam_config(value: &SteamConfig) -> bool {
+    value.api_key.is_empty() && value.api_key_encrypted.is_empty() && value.path_override.is_empty()
+}
+
+fn normalize_config(raw: RawAppConfig) -> AppConfig {
+    let mut steam = raw.steam.unwrap_or_default();
+    if steam.api_key.is_empty() {
+        steam.api_key = raw.steam_api_key;
+    }
+    if steam.api_key_encrypted.is_empty() {
+        steam.api_key_encrypted = raw.steam_api_key_encrypted;
+    }
+    if steam.path_override.is_empty() {
+        steam.path_override = raw.steam_path_override;
+    }
+    AppConfig {
+        steam,
+        window_width: raw.window_width,
+        window_height: raw.window_height,
+    }
 }
 
 pub fn load_config(app_handle: &tauri::AppHandle) -> AppConfig {
@@ -24,7 +68,9 @@ pub fn load_config(app_handle: &tauri::AppHandle) -> AppConfig {
         .join("config.json");
 
     match fs::read_to_string(&path) {
-        Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
+        Ok(data) => serde_json::from_str::<RawAppConfig>(&data)
+            .map(normalize_config)
+            .unwrap_or_default(),
         Err(_) => AppConfig::default(),
     }
 }

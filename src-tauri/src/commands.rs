@@ -60,18 +60,18 @@ fn decrypt_api_key(encrypted_api_key: &str) -> Result<String, String> {
 
 fn read_api_key(app_handle: &tauri::AppHandle) -> Result<String, String> {
     let mut cfg = config::load_config(app_handle);
-    let encrypted = cfg.steam_api_key_encrypted.trim();
+    let encrypted = cfg.steam.api_key_encrypted.trim();
     if !encrypted.is_empty() {
         return decrypt_api_key(encrypted).map(|v| v.trim().to_string());
     }
 
-    let legacy = cfg.steam_api_key.trim().to_string();
+    let legacy = cfg.steam.api_key.trim().to_string();
     if legacy.is_empty() {
         return Ok(String::new());
     }
 
-    cfg.steam_api_key_encrypted = encrypt_api_key(&legacy)?;
-    cfg.steam_api_key = String::new();
+    cfg.steam.api_key_encrypted = encrypt_api_key(&legacy)?;
+    cfg.steam.api_key = String::new();
     config::save_config(app_handle, &cfg)?;
     Ok(legacy)
 }
@@ -95,7 +95,7 @@ fn validate_username(name: &str) -> Result<(), String> {
 
 fn resolve_steam_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
     let cfg = config::load_config(app_handle);
-    let override_path = cfg.steam_path_override.trim();
+    let override_path = cfg.steam.path_override.trim();
     let steam_path = if !override_path.is_empty() {
         PathBuf::from(override_path)
     } else {
@@ -120,8 +120,8 @@ pub struct StartupSnapshot {
 pub fn set_api_key(app_handle: tauri::AppHandle, key: String) -> Result<(), String> {
     let trimmed = key.trim();
     let mut cfg = config::load_config(&app_handle);
-    cfg.steam_api_key = String::new();
-    cfg.steam_api_key_encrypted = if trimmed.is_empty() {
+    cfg.steam.api_key = String::new();
+    cfg.steam.api_key_encrypted = if trimmed.is_empty() {
         String::new()
     } else {
         encrypt_api_key(trimmed)?
@@ -310,8 +310,8 @@ pub fn get_copyable_games(
 #[tauri::command]
 pub fn get_steam_path(app_handle: tauri::AppHandle) -> Result<String, String> {
     let cfg = config::load_config(&app_handle);
-    if !cfg.steam_path_override.trim().is_empty() {
-        return Ok(cfg.steam_path_override);
+    if !cfg.steam.path_override.trim().is_empty() {
+        return Ok(cfg.steam.path_override);
     }
     resolve_steam_path(&app_handle).map(|p| p.to_string_lossy().to_string())
 }
@@ -321,9 +321,9 @@ pub fn set_steam_path(app_handle: tauri::AppHandle, path: String) -> Result<(), 
     let trimmed = path.trim();
     let mut cfg = config::load_config(&app_handle);
     if trimmed.is_empty() {
-        cfg.steam_path_override = String::new();
+        cfg.steam.path_override = String::new();
     } else {
-        cfg.steam_path_override = trimmed.to_string();
+        cfg.steam.path_override = trimmed.to_string();
     }
     config::save_config(&app_handle, &cfg)
 }
