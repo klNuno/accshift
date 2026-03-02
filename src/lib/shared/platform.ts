@@ -49,6 +49,7 @@ export interface PlatformAdapter {
   id: string;
   name: string;
   accent: string;
+  reloadAfterAdd?: boolean;
 
   loadAccounts(): Promise<PlatformAccount[]>;
   getCurrentAccount(): Promise<string>;

@@ -1,5 +1,6 @@
 import type { PlatformDef } from "$lib/features/settings/types";
 import { getPlatform, registerPlatform } from "$lib/shared/platform";
+import { riotAdapter } from "./riot/adapter";
 import { steamAdapter } from "./steam/adapter";
 
 export const PLATFORM_DEFS: PlatformDef[] = [
@@ -7,7 +8,7 @@ export const PLATFORM_DEFS: PlatformDef[] = [
   { id: "riot", name: "Riot Games", accent: "#ef4444" },
 ];
 
-const BUILTIN_ADAPTERS = [steamAdapter];
+const BUILTIN_ADAPTERS = [steamAdapter, riotAdapter];
 let registered = false;
 
 export function registerBuiltinPlatforms() {

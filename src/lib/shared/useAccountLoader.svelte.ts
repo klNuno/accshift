@@ -249,6 +249,10 @@ export function createAccountLoader(
     try { await adapter.addAccount(); } catch (e) {
       error = String(e);
       addToast(error);
+      return;
+    }
+    if (adapter.reloadAfterAdd) {
+      await load(undefined, true, false, false, false, false);
     }
   }
 
