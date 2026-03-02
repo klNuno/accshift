@@ -35,7 +35,7 @@ export function createAccountLoader(
   let error = $state<string | null>(null);
   let avatarStates = $state<Record<string, { url: string | null; loading: boolean; refreshing: boolean }>>({});
   let warningStates = $state<Record<string, AccountWarningPresentation>>({});
-  let lastSteamPathToastAt = 0;
+  let lastLoadErrorToastAt = 0;
   let lastNoAccountsToastAt = 0;
   let latestLoadId = 0;
   const t = (key: MessageKey, params?: TranslationParams) =>
@@ -57,28 +57,41 @@ export function createAccountLoader(
     return out;
   }
 
-  async function refreshProfile(adapter: PlatformAdapter, account: PlatformAccount) {
-    if (!adapter.getProfileInfo) return;
-    const profile = await adapter.getProfileInfo(account.id);
+  function updateAvatarState(accountId: string, next: Partial<{ url: string | null; loading: boolean; refreshing: boolean }>) {
+    avatarStates[accountId] = {
+      url: avatarStates[accountId]?.url ?? null,
+      loading: avatarStates[accountId]?.loading ?? false,
+      refreshing: avatarStates[accountId]?.refreshing ?? false,
+      ...next,
+    };
+  }
+
+  function applyProfileUpdate(account: PlatformAccount, profile: Awaited<ReturnType<NonNullable<PlatformAdapter["getProfileInfo"]>>>) {
     if (profile) {
-      avatarStates[account.id] = {
+      updateAvatarState(account.id, {
         url: profile.avatarUrl || avatarStates[account.id]?.url || null,
         loading: false,
         refreshing: false,
-      };
+      });
       if (profile.displayName && profile.displayName !== account.displayName) {
         const idx = accounts.findIndex(a => a.id === account.id);
         if (idx !== -1) {
           accounts[idx] = { ...accounts[idx], displayName: profile.displayName };
         }
       }
-    } else {
-      avatarStates[account.id] = {
-        url: avatarStates[account.id]?.url || null,
-        loading: false,
-        refreshing: false,
-      };
+      return;
     }
+    updateAvatarState(account.id, {
+      url: avatarStates[account.id]?.url || null,
+      loading: false,
+      refreshing: false,
+    });
+  }
+
+  async function refreshProfile(adapter: PlatformAdapter, account: PlatformAccount) {
+    if (!adapter.getProfileInfo) return;
+    const profile = await adapter.getProfileInfo(account.id);
+    applyProfileUpdate(account, profile);
   }
 
   async function loadProfilesForAccounts(
@@ -95,12 +108,12 @@ export function createAccountLoader(
       const cached = adapter.getCachedProfile?.(account.id);
       if (cached) {
         const shouldRefresh = cached.expired || forceAvatarRefresh;
-        avatarStates[account.id] = { url: cached.url, loading: false, refreshing: shouldRefresh };
+        updateAvatarState(account.id, { url: cached.url, loading: false, refreshing: shouldRefresh });
         if (shouldRefresh) {
           needsRefresh.push(account);
         }
       } else if (adapter.getProfileInfo) {
-        avatarStates[account.id] = { url: null, loading: true, refreshing: false };
+        updateAvatarState(account.id, { url: null, loading: true, refreshing: false });
         needsRefresh.push(account);
       }
     }
@@ -181,9 +194,9 @@ export function createAccountLoader(
       const errorToast = adapter.getLoadErrorToastMessage?.(message, { t });
       if (errorToast) {
         const now = Date.now();
-        if (now - lastSteamPathToastAt >= LOAD_TOAST_COOLDOWN_MS) {
+        if (now - lastLoadErrorToastAt >= LOAD_TOAST_COOLDOWN_MS) {
           addToast(errorToast);
-          lastSteamPathToastAt = now;
+          lastLoadErrorToastAt = now;
         }
       }
     }
@@ -199,21 +212,13 @@ export function createAccountLoader(
       await adapter.switchAccount(account);
       currentAccount = account.username;
       if (adapter.getProfileInfo) {
-        avatarStates[account.id] = { ...avatarStates[account.id], refreshing: true };
+        updateAvatarState(account.id, { refreshing: true });
         void adapter.getProfileInfo(account.id)
           .then((profile) => {
-            if (profile) {
-              avatarStates[account.id] = {
-                url: profile.avatarUrl || avatarStates[account.id]?.url,
-                loading: false,
-                refreshing: false,
-              };
-            } else {
-              avatarStates[account.id] = { ...avatarStates[account.id], refreshing: false };
-            }
+            applyProfileUpdate(account, profile);
           })
           .catch(() => {
-            avatarStates[account.id] = { ...avatarStates[account.id], refreshing: false };
+            updateAvatarState(account.id, { refreshing: false });
           });
       }
     } catch (e) {
