@@ -14,11 +14,11 @@
   } from "$lib/i18n";
   import { hashPinCode, sanitizePinDigits } from "$lib/shared/pin";
 
-  let { onClose, onPlatformsChanged, onRefreshAvatarsNow = () => {}, onRefreshBansNow = () => {} }: {
+  let { onClose, onPlatformsChanged, onRefreshAvatarsNow = async () => {}, onRefreshBansNow = async () => {} }: {
     onClose: () => void;
     onPlatformsChanged?: () => void;
-    onRefreshAvatarsNow?: () => void;
-    onRefreshBansNow?: () => void;
+    onRefreshAvatarsNow?: () => void | Promise<void>;
+    onRefreshBansNow?: () => void | Promise<void>;
   } = $props();
 
   let settings = $state(getSettings());
@@ -32,6 +32,8 @@
   let avatarCacheDaysInput = $state("");
   let banCheckDaysInput = $state("");
   let inactivityBlurSecondsInput = $state("");
+  let avatarRefreshLoading = $state(false);
+  let banRefreshLoading = $state(false);
   let hydrated = $state(false);
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let lastSavedToastAt = 0;
@@ -226,6 +228,26 @@
     }
   }
 
+  async function handleRefreshAvatarsNow() {
+    if (avatarRefreshLoading) return;
+    avatarRefreshLoading = true;
+    try {
+      await onRefreshAvatarsNow();
+    } finally {
+      avatarRefreshLoading = false;
+    }
+  }
+
+  async function handleRefreshBansNow() {
+    if (banRefreshLoading) return;
+    banRefreshLoading = true;
+    try {
+      await onRefreshBansNow();
+    } finally {
+      banRefreshLoading = false;
+    }
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") onClose();
   }
@@ -349,8 +371,16 @@
             }}
             class="text-input number-input"
           />
-          <button class="inline-action-btn" type="button" onclick={onRefreshAvatarsNow}>
-            {t("settings.refreshNow")}
+          <button
+            class="inline-action-btn"
+            type="button"
+            onclick={handleRefreshAvatarsNow}
+            disabled={avatarRefreshLoading}
+          >
+            {#if avatarRefreshLoading}
+              <span class="inline-action-spinner" aria-hidden="true"></span>
+            {/if}
+            <span>{t("settings.refreshNow")}</span>
           </button>
         </div>
       </div>
@@ -377,8 +407,16 @@
             }}
             class="text-input number-input"
           />
-          <button class="inline-action-btn" type="button" onclick={onRefreshBansNow}>
-            {t("settings.refreshNow")}
+          <button
+            class="inline-action-btn"
+            type="button"
+            onclick={handleRefreshBansNow}
+            disabled={banRefreshLoading}
+          >
+            {#if banRefreshLoading}
+              <span class="inline-action-spinner" aria-hidden="true"></span>
+            {/if}
+            <span>{t("settings.refreshNow")}</span>
           </button>
         </div>
       </div>
@@ -727,6 +765,10 @@
   }
 
   .inline-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
     border: 1px solid var(--border);
     border-radius: 999px;
     background: var(--bg-card);
@@ -741,6 +783,20 @@
 
   .inline-action-btn:hover {
     background: var(--bg-card-hover);
+  }
+
+  .inline-action-btn:disabled {
+    opacity: 0.75;
+    cursor: default;
+  }
+
+  .inline-action-spinner {
+    width: 11px;
+    height: 11px;
+    border: 2px solid color-mix(in srgb, var(--fg) 18%, transparent);
+    border-top-color: var(--fg);
+    border-radius: 999px;
+    animation: spin 0.7s linear infinite;
   }
 
   .hint {
@@ -785,5 +841,9 @@
 
   .browse-btn:hover {
     background: var(--bg-card-hover);
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 </style>
