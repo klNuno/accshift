@@ -4,6 +4,7 @@
 mod commands;
 mod config;
 mod error;
+mod os;
 mod steam;
 
 fn main() {

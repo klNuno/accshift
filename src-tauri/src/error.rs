@@ -31,6 +31,9 @@ pub enum AppError {
 
     #[error("Steam is still running")]
     KillSteamTimeout,
+
+    #[error("{0}")]
+    UnsupportedOperatingSystem(String),
 }
 
 impl From<AppError> for String {

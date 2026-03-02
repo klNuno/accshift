@@ -1,61 +1,24 @@
 use crate::config;
+use crate::os;
 use crate::steam::accounts::{self, CopyableGame, SteamAccount};
 use crate::steam::bans::{self, BanInfo};
 use crate::steam::profile::{self, ProfileInfo};
-use crate::steam::registry;
 use serde::Serialize;
 use std::collections::HashSet;
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
-use std::process::Command;
-
-#[cfg(target_os = "windows")]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
-const API_KEY_ENCRYPT_SCRIPT: &str =
-    "$secure = ConvertTo-SecureString $env:ACCSHIFT_SECRET -AsPlainText -Force; ConvertFrom-SecureString $secure";
-const API_KEY_DECRYPT_SCRIPT: &str =
-    "$secure = ConvertTo-SecureString $env:ACCSHIFT_SECRET; $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure); try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }";
-
-fn hidden_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
-    let mut cmd = Command::new(program);
-    #[cfg(target_os = "windows")]
-    {
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    cmd
-}
-
-fn run_powershell_with_secret(script: &str, secret: &str) -> Result<String, String> {
-    let output = hidden_command("powershell")
-        .env("ACCSHIFT_SECRET", secret)
-        .args(["-NoProfile", "-Command", script])
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if err.is_empty() {
-            "PowerShell command failed".into()
-        } else {
-            err
-        });
-    }
-    let out = String::from_utf8_lossy(&output.stdout);
-    Ok(out.trim_end_matches(&['\r', '\n'][..]).to_string())
-}
 
 fn encrypt_api_key(api_key: &str) -> Result<String, String> {
     if api_key.trim().is_empty() {
         return Ok(String::new());
     }
-    run_powershell_with_secret(API_KEY_ENCRYPT_SCRIPT, api_key)
+    os::encrypt_secret(api_key).map_err(|e| e.to_string())
 }
 
 fn decrypt_api_key(encrypted_api_key: &str) -> Result<String, String> {
     if encrypted_api_key.trim().is_empty() {
         return Ok(String::new());
     }
-    run_powershell_with_secret(API_KEY_DECRYPT_SCRIPT, encrypted_api_key)
+    os::decrypt_secret(encrypted_api_key).map_err(|e| e.to_string())
 }
 
 fn read_api_key(app_handle: &tauri::AppHandle) -> Result<String, String> {
@@ -99,10 +62,10 @@ fn resolve_steam_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> 
     let steam_path = if !override_path.is_empty() {
         PathBuf::from(override_path)
     } else {
-        registry::get_steam_path().map_err(|e| e.to_string())?
+        os::steam_installation_path().map_err(|e| e.to_string())?
     };
 
-    if !steam_path.exists() || !steam_path.join("steam.exe").exists() {
+    if !steam_path.exists() || !steam_path.join(os::steam_executable_name()).exists() {
         return Err("Could not locate Steam installation".into());
     }
 
@@ -154,7 +117,7 @@ pub fn get_startup_snapshot(app_handle: tauri::AppHandle) -> Result<StartupSnaps
             e.to_string()
         })?;
     let current_account = {
-        let from_registry = registry::get_auto_login_user().unwrap_or_default();
+        let from_registry = os::get_auto_login_user().unwrap_or_default();
         if from_registry.trim().is_empty() {
             current_from_file
         } else {
@@ -170,7 +133,7 @@ pub fn get_startup_snapshot(app_handle: tauri::AppHandle) -> Result<StartupSnaps
 
 #[tauri::command]
 pub fn get_current_account(app_handle: tauri::AppHandle) -> Result<String, String> {
-    let from_registry = registry::get_auto_login_user().unwrap_or_default();
+    let from_registry = os::get_auto_login_user().unwrap_or_default();
     if !from_registry.trim().is_empty() {
         return Ok(from_registry);
     }
@@ -330,29 +293,12 @@ pub fn set_steam_path(app_handle: tauri::AppHandle, path: String) -> Result<(), 
 
 #[tauri::command]
 pub fn select_steam_path() -> Result<String, String> {
-    let script = "$shell = New-Object -ComObject Shell.Application; $folder = $shell.BrowseForFolder(0, 'Select Steam folder', 0, 0); if ($folder) { $folder.Self.Path }";
-    let output = hidden_command("powershell")
-        .args(["-NoProfile", "-Command", script])
-        .output()
-        .map_err(|e| e.to_string())?;
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() {
-        return Err("Folder selection canceled".into());
-    }
-    Ok(path)
+    os::select_folder("Select Steam folder").map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn open_steam_api_key_page() -> Result<(), String> {
-    hidden_command("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Start-Process 'https://steamcommunity.com/dev/apikey'",
-        ])
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    os::open_url("https://steamcommunity.com/dev/apikey").map_err(|e| e.to_string())
 }
 
 #[tauri::command]
