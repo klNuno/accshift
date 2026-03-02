@@ -34,6 +34,17 @@ export interface PlatformWarningLoadOptions extends PlatformUiCallbacks {
   silent?: boolean;
 }
 
+export interface PlatformProfileInfo {
+  avatarUrl: string | null;
+  displayName?: string | null;
+}
+
+export interface CachedPlatformProfile {
+  url: string;
+  displayName?: string;
+  expired: boolean;
+}
+
 export interface PlatformAdapter {
   id: string;
   name: string;
@@ -50,19 +61,8 @@ export interface PlatformAdapter {
 
   getContextMenuActions(account: PlatformAccount, callbacks: PlatformContextMenuCallbacks): ContextMenuAction[];
 
-  getProfileInfo?(accountId: string): Promise<{
-    avatar_url: string | null;
-    display_name: string | null;
-    vac_banned: boolean;
-    trade_ban_state: string;
-  } | null>;
-  getCachedProfile?(accountId: string): {
-    url: string;
-    displayName?: string;
-    vacBanned?: boolean;
-    tradeBanState?: string;
-    expired: boolean;
-  } | null;
+  getProfileInfo?(accountId: string): Promise<PlatformProfileInfo | null>;
+  getCachedProfile?(accountId: string): CachedPlatformProfile | null;
   getCachedWarningStates?(callbacks: PlatformUiCallbacks): Record<string, AccountWarningPresentation>;
   loadWarningStates?(
     accounts: PlatformAccount[],

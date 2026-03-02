@@ -62,14 +62,14 @@ export function createAccountLoader(
     const profile = await adapter.getProfileInfo(account.id);
     if (profile) {
       avatarStates[account.id] = {
-        url: profile.avatar_url || avatarStates[account.id]?.url || null,
+        url: profile.avatarUrl || avatarStates[account.id]?.url || null,
         loading: false,
         refreshing: false,
       };
-      if (profile.display_name && profile.display_name !== account.displayName) {
+      if (profile.displayName && profile.displayName !== account.displayName) {
         const idx = accounts.findIndex(a => a.id === account.id);
         if (idx !== -1) {
-          accounts[idx] = { ...accounts[idx], displayName: profile.display_name };
+          accounts[idx] = { ...accounts[idx], displayName: profile.displayName };
         }
       }
     } else {
@@ -204,7 +204,7 @@ export function createAccountLoader(
           .then((profile) => {
             if (profile) {
               avatarStates[account.id] = {
-                url: profile.avatar_url || avatarStates[account.id]?.url,
+                url: profile.avatarUrl || avatarStates[account.id]?.url,
                 loading: false,
                 refreshing: false,
               };

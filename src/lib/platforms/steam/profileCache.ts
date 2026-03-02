@@ -8,8 +8,6 @@ const SESSION_START_MS = Date.now();
 interface CachedProfile {
   url: string;
   displayName?: string;
-  vacBanned?: boolean;
-  tradeBanState?: string;
   timestamp: number;
 }
 
@@ -37,8 +35,6 @@ function sanitizeCachedProfile(value: unknown): CachedProfile | null {
   return {
     url: raw.url,
     displayName: typeof raw.displayName === "string" ? raw.displayName : undefined,
-    vacBanned: typeof raw.vacBanned === "boolean" ? raw.vacBanned : undefined,
-    tradeBanState: typeof raw.tradeBanState === "string" ? raw.tradeBanState : undefined,
     timestamp,
   };
 }
@@ -82,8 +78,6 @@ function saveCache(cache: ProfileCache) {
 export function getCachedProfile(steamId: string): {
   url: string;
   displayName?: string;
-  vacBanned?: boolean;
-  tradeBanState?: string;
   expired: boolean;
 } | null {
   const cache = getCache();
@@ -98,23 +92,19 @@ export function getCachedProfile(steamId: string): {
   return {
     url: cached.url,
     displayName: cached.displayName,
-    vacBanned: cached.vacBanned,
-    tradeBanState: cached.tradeBanState,
     expired,
   };
 }
 
 export function setCachedProfile(
   steamId: string,
-  data: { url: string; displayName?: string; vacBanned?: boolean; tradeBanState?: string },
+  data: { url: string; displayName?: string },
 ) {
   if (!isSafeAvatarUrl(data.url)) return;
   const cache = getCache();
   cache[steamId] = {
     url: data.url,
     displayName: data.displayName,
-    vacBanned: data.vacBanned,
-    tradeBanState: data.tradeBanState,
     timestamp: Date.now(),
   };
   saveCache(cache);
@@ -129,8 +119,6 @@ export async function fetchProfile(
       setCachedProfile(steamId, {
         url: info.avatar_url,
         displayName: info.display_name ?? undefined,
-        vacBanned: info.vac_banned,
-        tradeBanState: info.trade_ban_state,
       });
     }
     return info;

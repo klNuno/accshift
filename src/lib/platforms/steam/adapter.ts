@@ -1,10 +1,15 @@
-import type { PlatformAdapter, PlatformAccount, PlatformContextMenuCallbacks } from "../../shared/platform";
+import type {
+  PlatformAdapter,
+  PlatformAccount,
+  PlatformContextMenuCallbacks,
+  PlatformProfileInfo,
+} from "../../shared/platform";
 import type { ContextMenuAction } from "../../shared/contextMenu/types";
 import * as service from "./steamApi";
 import { getCachedProfile, fetchProfile } from "./profileCache";
 import { getSteamContextMenuItems } from "./contextMenu";
 import { getCachedSteamWarningStates, loadSteamWarningStates } from "./warnings";
-import type { SteamAccount, ProfileInfo } from "./types";
+import type { SteamAccount } from "./types";
 
 function toAccount(s: SteamAccount): PlatformAccount {
   return {
@@ -52,8 +57,13 @@ export const steamAdapter: PlatformAdapter = {
     return getSteamContextMenuItems(account, callbacks);
   },
 
-  async getProfileInfo(accountId: string): Promise<ProfileInfo | null> {
-    return fetchProfile(accountId);
+  async getProfileInfo(accountId: string): Promise<PlatformProfileInfo | null> {
+    const profile = await fetchProfile(accountId);
+    if (!profile) return null;
+    return {
+      avatarUrl: profile.avatar_url,
+      displayName: profile.display_name,
+    };
   },
 
   getCachedProfile(accountId: string) {
