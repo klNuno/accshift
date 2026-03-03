@@ -11,15 +11,32 @@ import { getRiotContextMenuItems } from "./contextMenu";
 import { getCachedRiotProfile, getRiotProfile } from "./profile";
 import type { RiotProfile } from "./types";
 
+function getRiotAlias(profile: RiotProfile): string {
+  const name = profile.account_name.trim();
+  const tagLine = profile.account_tag_line.trim();
+  if (!name) return "";
+  return tagLine ? `${name}#${tagLine}` : name;
+}
+
 function profileStatusLabel(profile: RiotProfile): string {
   return profile.snapshot_state === "ready" ? "Session captured" : "Capture required";
+}
+
+function profileSecondaryLabel(profile: RiotProfile): string {
+  const status = profileStatusLabel(profile);
+  const label = profile.label.trim();
+  const alias = getRiotAlias(profile);
+  if (!label || !alias || label === alias) {
+    return status;
+  }
+  return `${label} · ${status}`;
 }
 
 function toAccount(profile: RiotProfile): PlatformAccount {
   return {
     id: profile.id,
-    displayName: profile.label,
-    username: profileStatusLabel(profile),
+    displayName: getRiotAlias(profile) || profile.label,
+    username: profileSecondaryLabel(profile),
     lastLoginAt: profile.last_used_at ?? profile.last_captured_at ?? null,
   };
 }

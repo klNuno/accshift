@@ -1,6 +1,17 @@
 import type { CachedPlatformProfile, PlatformProfileInfo } from "$lib/shared/platform";
 import { getCachedRiotProfileMeta } from "./accountCache";
 
+function getProfileDisplayName(profile: {
+  label: string;
+  account_name: string;
+  account_tag_line: string;
+}): string {
+  const name = profile.account_name.trim();
+  const tagLine = profile.account_tag_line.trim();
+  if (!name) return profile.label;
+  return tagLine ? `${name}#${tagLine}` : name;
+}
+
 function createAvatarSvg(accountId: string, displayName: string): string {
   const initials = displayName
     .split(/\s+/)
@@ -27,9 +38,10 @@ function createAvatarSvg(accountId: string, displayName: string): string {
 export function getRiotProfile(profileId: string): PlatformProfileInfo | null {
   const profile = getCachedRiotProfileMeta(profileId);
   if (!profile) return null;
+  const displayName = getProfileDisplayName(profile);
   return {
-    avatarUrl: createAvatarSvg(profile.id, profile.label),
-    displayName: profile.label,
+    avatarUrl: createAvatarSvg(profile.id, displayName),
+    displayName,
   };
 }
 
