@@ -185,3 +185,35 @@ pub fn toggle_maximize_window(window: tauri::Window) {
 pub fn close_window(window: tauri::Window) {
     let _ = window.close();
 }
+
+#[tauri::command]
+pub fn get_riot_accounts(app_handle: tauri::AppHandle) -> Result<Vec<crate::config::RiotAccountConfig>, String> {
+    crate::platforms::riot::get_accounts(app_handle)
+}
+
+#[tauri::command]
+pub fn get_riot_startup_snapshot(
+    app_handle: tauri::AppHandle,
+) -> Result<crate::platforms::riot::RiotStartupSnapshot, String> {
+    crate::platforms::riot::get_startup_snapshot(app_handle)
+}
+
+#[tauri::command]
+pub fn get_current_riot_account(app_handle: tauri::AppHandle) -> Result<String, String> {
+    crate::platforms::riot::get_current_account(app_handle)
+}
+
+#[tauri::command]
+pub fn add_riot_account(app_handle: tauri::AppHandle) -> Result<(), String> {
+    crate::platforms::riot::add_account(app_handle)
+}
+
+#[tauri::command]
+pub fn switch_riot_account(app_handle: tauri::AppHandle, account_id: String) -> Result<(), String> {
+    crate::platforms::riot::switch_account(app_handle, account_id)
+}
+
+#[tauri::command]
+pub fn forget_riot_account(app_handle: tauri::AppHandle, account_id: String) -> Result<(), String> {
+    crate::platforms::riot::forget_account(app_handle, account_id)
+}

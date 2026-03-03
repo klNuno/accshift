@@ -6,6 +6,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 pub mod steam;
+pub mod riot;
 
 pub type PlatformFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 

@@ -87,6 +87,12 @@ fn main() {
             commands::minimize_window,
             commands::toggle_maximize_window,
             commands::close_window,
+            commands::get_riot_accounts,
+            commands::get_riot_startup_snapshot,
+            commands::get_current_riot_account,
+            commands::add_riot_account,
+            commands::switch_riot_account,
+            commands::forget_riot_account,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
