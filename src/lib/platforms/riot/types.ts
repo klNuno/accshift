@@ -1,13 +1,15 @@
-export interface RiotAccount {
+export type RiotSnapshotState = "awaiting_capture" | "ready";
+
+export interface RiotProfile {
   id: string;
-  username: string;
-  display_name: string;
-  region: string;
-  tag_line: string;
-  last_login_at?: number | null;
+  label: string;
+  snapshot_state: RiotSnapshotState | string;
+  notes: string;
+  last_captured_at?: number | null;
+  last_used_at?: number | null;
 }
 
 export interface RiotStartupSnapshot {
-  accounts: RiotAccount[];
-  currentAccount: string;
+  profiles: RiotProfile[];
+  currentProfile: string;
 }

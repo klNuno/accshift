@@ -1,26 +1,30 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { RiotAccount, RiotStartupSnapshot } from "./types";
+import type { RiotProfile, RiotStartupSnapshot } from "./types";
 
-export async function getAccounts(): Promise<RiotAccount[]> {
-  return invoke<RiotAccount[]>("get_riot_accounts");
+export async function getProfiles(): Promise<RiotProfile[]> {
+  return invoke<RiotProfile[]>("get_riot_profiles");
 }
 
-export async function getCurrentAccount(): Promise<string> {
-  return invoke<string>("get_current_riot_account");
+export async function getCurrentProfile(): Promise<string> {
+  return invoke<string>("get_current_riot_profile");
 }
 
 export async function getStartupSnapshot(): Promise<RiotStartupSnapshot> {
   return invoke<RiotStartupSnapshot>("get_riot_startup_snapshot");
 }
 
-export async function addAccount(): Promise<void> {
-  await invoke("add_riot_account");
+export async function createProfile(): Promise<void> {
+  await invoke("create_riot_profile");
 }
 
-export async function switchAccount(accountId: string): Promise<void> {
-  await invoke("switch_riot_account", { accountId });
+export async function captureProfile(profileId: string): Promise<void> {
+  await invoke("capture_riot_profile", { profileId });
 }
 
-export async function forgetAccount(accountId: string): Promise<void> {
-  await invoke("forget_riot_account", { accountId });
+export async function switchProfile(profileId: string): Promise<void> {
+  await invoke("switch_riot_profile", { profileId });
+}
+
+export async function forgetProfile(profileId: string): Promise<void> {
+  await invoke("forget_riot_profile", { profileId });
 }

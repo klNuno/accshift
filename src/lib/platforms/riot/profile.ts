@@ -1,5 +1,5 @@
 import type { CachedPlatformProfile, PlatformProfileInfo } from "$lib/shared/platform";
-import { getCachedRiotAccount } from "./accountCache";
+import { getCachedRiotProfileMeta } from "./accountCache";
 
 function createAvatarSvg(accountId: string, displayName: string): string {
   const initials = displayName
@@ -24,21 +24,21 @@ function createAvatarSvg(accountId: string, displayName: string): string {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-export function getRiotProfile(accountId: string): PlatformProfileInfo | null {
-  const account = getCachedRiotAccount(accountId);
-  if (!account) return null;
+export function getRiotProfile(profileId: string): PlatformProfileInfo | null {
+  const profile = getCachedRiotProfileMeta(profileId);
+  if (!profile) return null;
   return {
-    avatarUrl: createAvatarSvg(account.id, account.display_name),
-    displayName: account.display_name,
+    avatarUrl: createAvatarSvg(profile.id, profile.label),
+    displayName: profile.label,
   };
 }
 
-export function getCachedRiotProfile(accountId: string): CachedPlatformProfile | null {
-  const profile = getRiotProfile(accountId);
-  if (!profile?.avatarUrl) return null;
+export function getCachedRiotProfile(profileId: string): CachedPlatformProfile | null {
+  const preview = getRiotProfile(profileId);
+  if (!preview?.avatarUrl) return null;
   return {
-    url: profile.avatarUrl,
-    displayName: profile.displayName ?? undefined,
+    url: preview.avatarUrl,
+    displayName: preview.displayName ?? undefined,
     expired: false,
   };
 }

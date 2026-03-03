@@ -1,22 +1,22 @@
-import type { RiotAccount } from "./types";
+import type { RiotProfile } from "./types";
 
-const riotAccounts = new Map<string, RiotAccount>();
+const riotProfiles = new Map<string, RiotProfile>();
 
-export function rememberRiotAccounts(accounts: RiotAccount[]) {
-  riotAccounts.clear();
-  for (const account of accounts) {
-    riotAccounts.set(account.id, account);
+export function rememberRiotProfiles(profiles: RiotProfile[]) {
+  riotProfiles.clear();
+  for (const profile of profiles) {
+    riotProfiles.set(profile.id, profile);
   }
 }
 
-export function rememberRiotAccount(account: RiotAccount) {
-  riotAccounts.set(account.id, account);
+export function rememberRiotProfile(profile: RiotProfile) {
+  riotProfiles.set(profile.id, profile);
 }
 
-export function getCachedRiotAccount(accountId: string): RiotAccount | null {
-  return riotAccounts.get(accountId) ?? null;
+export function getCachedRiotProfileMeta(profileId: string): RiotProfile | null {
+  return riotProfiles.get(profileId) ?? null;
 }
 
-export function forgetCachedRiotAccount(accountId: string) {
-  riotAccounts.delete(accountId);
+export function forgetCachedRiotProfile(profileId: string) {
+  riotProfiles.delete(profileId);
 }

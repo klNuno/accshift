@@ -1,31 +1,26 @@
 import type { ContextMenuAction } from "$lib/shared/contextMenu/types";
 import type { PlatformAccount, PlatformContextMenuCallbacks } from "$lib/shared/platform";
-import { forgetAccount } from "./riotApi";
-import { forgetCachedRiotAccount, getCachedRiotAccount } from "./accountCache";
+import { captureProfile, forgetProfile } from "./riotApi";
+import { forgetCachedRiotProfile, getCachedRiotProfileMeta } from "./accountCache";
 
 export function getRiotContextMenuItems(
   account: PlatformAccount,
   callbacks: PlatformContextMenuCallbacks,
 ): ContextMenuAction[] {
-  const region = getCachedRiotAccount(account.id)?.region || "Unknown";
+  const profile = getCachedRiotProfileMeta(account.id);
+  const captureLabel = profile?.snapshot_state === "ready"
+    ? callbacks.t("riot.recaptureSession")
+    : callbacks.t("riot.captureSession");
   return [
     {
-      id: `riot.copy.id.${account.id}`,
-      group: "platform.copy",
-      label: callbacks.t("riot.copyRiotId"),
-      action: () => callbacks.copyToClipboard(account.id, callbacks.t("riot.copyLabelRiotId")),
-    },
-    {
-      id: `riot.copy.handle.${account.id}`,
-      group: "platform.copy",
-      label: callbacks.t("riot.copyHandle"),
-      action: () => callbacks.copyToClipboard(account.username, callbacks.t("riot.copyLabelHandle")),
-    },
-    {
-      id: `riot.copy.region.${account.id}`,
-      group: "platform.copy",
-      label: callbacks.t("riot.copyRegion"),
-      action: () => callbacks.copyToClipboard(region, callbacks.t("riot.copyLabelRegion")),
+      id: `riot.capture.${account.id}`,
+      group: "platform.primary",
+      label: captureLabel,
+      action: async () => {
+        await captureProfile(account.id);
+        callbacks.showToast(callbacks.t("riot.capturedSession", { profile: account.displayName }));
+        callbacks.refreshAccounts();
+      },
     },
     {
       id: `riot.forget.${account.id}`,
@@ -38,9 +33,9 @@ export function getRiotContextMenuItems(
           message: callbacks.t("riot.forgetConfirmMessage"),
           confirmLabel: callbacks.t("riot.forget"),
           onConfirm: async () => {
-            await forgetAccount(account.id);
-            forgetCachedRiotAccount(account.id);
-            callbacks.showToast(callbacks.t("riot.forgotAccount", { username: account.username }));
+            await forgetProfile(account.id);
+            forgetCachedRiotProfile(account.id);
+            callbacks.showToast(callbacks.t("riot.forgotProfile", { profile: account.displayName }));
             callbacks.refreshAccounts();
           },
         });

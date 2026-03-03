@@ -6,17 +6,21 @@ import type {
 } from "$lib/shared/platform";
 import type { ContextMenuAction } from "$lib/shared/contextMenu/types";
 import * as service from "./riotApi";
-import { rememberRiotAccounts } from "./accountCache";
+import { rememberRiotProfiles } from "./accountCache";
 import { getRiotContextMenuItems } from "./contextMenu";
 import { getCachedRiotProfile, getRiotProfile } from "./profile";
-import type { RiotAccount } from "./types";
+import type { RiotProfile } from "./types";
 
-function toAccount(account: RiotAccount): PlatformAccount {
+function profileStatusLabel(profile: RiotProfile): string {
+  return profile.snapshot_state === "ready" ? "Session captured" : "Capture required";
+}
+
+function toAccount(profile: RiotProfile): PlatformAccount {
   return {
-    id: account.id,
-    displayName: account.display_name,
-    username: account.username,
-    lastLoginAt: account.last_login_at ?? null,
+    id: profile.id,
+    displayName: profile.label,
+    username: profileStatusLabel(profile),
+    lastLoginAt: profile.last_used_at ?? profile.last_captured_at ?? null,
   };
 }
 
@@ -27,21 +31,21 @@ export const riotAdapter: PlatformAdapter = {
   reloadAfterAdd: true,
 
   async loadAccounts(): Promise<PlatformAccount[]> {
-    const accounts = await service.getAccounts();
-    rememberRiotAccounts(accounts);
-    return accounts.map(toAccount);
+    const profiles = await service.getProfiles();
+    rememberRiotProfiles(profiles);
+    return profiles.map(toAccount);
   },
 
   async getCurrentAccount(): Promise<string> {
-    return service.getCurrentAccount();
+    return service.getCurrentProfile();
   },
 
   async getStartupSnapshot() {
     const snapshot = await service.getStartupSnapshot();
-    rememberRiotAccounts(snapshot.accounts);
+    rememberRiotProfiles(snapshot.profiles);
     return {
-      accounts: snapshot.accounts.map(toAccount),
-      currentAccount: snapshot.currentAccount,
+      accounts: snapshot.profiles.map(toAccount),
+      currentAccount: snapshot.currentProfile,
     };
   },
 
@@ -51,11 +55,11 @@ export const riotAdapter: PlatformAdapter = {
   },
 
   async switchAccount(account: PlatformAccount): Promise<void> {
-    await service.switchAccount(account.id);
+    await service.switchProfile(account.id);
   },
 
   async addAccount(): Promise<void> {
-    await service.addAccount();
+    await service.createProfile();
   },
 
   getContextMenuActions(
@@ -74,6 +78,6 @@ export const riotAdapter: PlatformAdapter = {
   },
 
   getNoAccountsToastMessage(callbacks) {
-    return callbacks.t("toast.noRiotAccountsDetected");
+    return callbacks.t("toast.noRiotProfilesFound");
   },
 };
