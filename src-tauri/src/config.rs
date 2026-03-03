@@ -17,6 +17,12 @@ pub struct RiotProfileConfig {
     pub id: String,
     pub label: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub account_name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub account_tag_line: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub account_puuid: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub snapshot_state: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub notes: String,
@@ -72,6 +78,12 @@ struct RawRiotProfileConfig {
     id: String,
     #[serde(default)]
     label: String,
+    #[serde(default)]
+    account_name: String,
+    #[serde(default)]
+    account_tag_line: String,
+    #[serde(default)]
+    account_puuid: String,
     #[serde(default)]
     snapshot_state: String,
     #[serde(default)]
@@ -138,9 +150,26 @@ fn normalize_riot_profile(raw: RawRiotProfileConfig) -> RiotProfileConfig {
         raw.snapshot_state.trim().to_string()
     };
 
+    let account_name = if raw.account_name.trim().is_empty() {
+        raw.display_name.trim().to_string()
+    } else {
+        raw.account_name.trim().to_string()
+    };
+
+    let account_tag_line = if raw.account_tag_line.trim().is_empty() {
+        raw.tag_line.trim().to_string()
+    } else {
+        raw.account_tag_line.trim().to_string()
+    };
+
+    let account_puuid = raw.account_puuid.trim().to_string();
+
     RiotProfileConfig {
         id: raw.id,
         label,
+        account_name,
+        account_tag_line,
+        account_puuid,
         snapshot_state,
         notes: raw.notes,
         last_captured_at: raw.last_captured_at.or(raw.last_login_at),
