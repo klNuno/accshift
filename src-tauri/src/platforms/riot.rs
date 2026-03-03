@@ -257,12 +257,26 @@ pub fn add_account(app_handle: tauri::AppHandle) -> Result<(), String> {
     let mut accounts = cfg.riot.accounts;
     let existing_ids: std::collections::HashSet<&str> =
         accounts.iter().map(|account| account.id.as_str()).collect();
-    let Some((subject, last_seen_at)) = detected
-        .into_iter()
+    let detected_current = detected.first().cloned();
+    let next_subject = detected
+        .iter()
         .find(|(subject, _)| !existing_ids.contains(subject.as_str()))
-    else {
-        return Err("No new Riot account detected locally. Sign in to another Riot account first, then try again.".into());
+        .cloned()
+        .or(detected_current);
+
+    let Some((subject, last_seen_at)) = next_subject else {
+        return Err("No Riot account detected locally. Open Riot Client on the account first, then try again.".into());
     };
+
+    if let Some(index) = accounts.iter().position(|account| account.id == subject) {
+        accounts[index].region = region.clone();
+        accounts[index].tag_line = region.clone();
+        accounts[index].last_login_at = Some(last_seen_at);
+        cfg.riot.current_account_id = subject;
+        accounts.sort_by_key(|account| std::cmp::Reverse(account.last_login_at.unwrap_or(0)));
+        cfg.riot.accounts = accounts;
+        return config::save_config(&app_handle, &cfg);
+    }
 
     let account = build_account_from_subject(&subject, last_seen_at, &region);
     cfg.riot.current_account_id = account.id.clone();
