@@ -187,8 +187,8 @@ pub fn close_window(window: tauri::Window) {
 }
 
 #[tauri::command]
-pub fn get_riot_accounts(app_handle: tauri::AppHandle) -> Result<Vec<crate::config::RiotAccountConfig>, String> {
-    crate::platforms::riot::get_accounts(app_handle)
+pub fn get_riot_profiles(app_handle: tauri::AppHandle) -> Result<Vec<crate::config::RiotProfileConfig>, String> {
+    crate::platforms::riot::get_profiles(app_handle)
 }
 
 #[tauri::command]
@@ -199,21 +199,26 @@ pub fn get_riot_startup_snapshot(
 }
 
 #[tauri::command]
-pub fn get_current_riot_account(app_handle: tauri::AppHandle) -> Result<String, String> {
-    crate::platforms::riot::get_current_account(app_handle)
+pub fn get_current_riot_profile(app_handle: tauri::AppHandle) -> Result<String, String> {
+    crate::platforms::riot::get_current_profile(app_handle)
 }
 
 #[tauri::command]
-pub fn add_riot_account(app_handle: tauri::AppHandle) -> Result<(), String> {
-    crate::platforms::riot::add_account(app_handle)
+pub fn create_riot_profile(app_handle: tauri::AppHandle) -> Result<(), String> {
+    crate::platforms::riot::create_profile(app_handle)
 }
 
 #[tauri::command]
-pub fn switch_riot_account(app_handle: tauri::AppHandle, account_id: String) -> Result<(), String> {
-    crate::platforms::riot::switch_account(app_handle, account_id)
+pub fn capture_riot_profile(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
+    crate::platforms::riot::capture_profile(app_handle, profile_id)
 }
 
 #[tauri::command]
-pub fn forget_riot_account(app_handle: tauri::AppHandle, account_id: String) -> Result<(), String> {
-    crate::platforms::riot::forget_account(app_handle, account_id)
+pub fn switch_riot_profile(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
+    crate::platforms::riot::switch_profile(app_handle, profile_id)
+}
+
+#[tauri::command]
+pub fn forget_riot_profile(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
+    crate::platforms::riot::forget_profile(app_handle, profile_id)
 }
