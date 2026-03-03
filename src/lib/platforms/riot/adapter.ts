@@ -2,17 +2,23 @@ import type {
   PlatformAdapter,
   PlatformAccount,
   PlatformContextMenuCallbacks,
+  PlatformProfileInfo,
 } from "$lib/shared/platform";
 import type { ContextMenuAction } from "$lib/shared/contextMenu/types";
-import {
-  addRiotAccount,
-  getCachedRiotProfile,
-  getRiotAccounts,
-  getRiotProfile,
-  getRiotStartupSnapshot,
-  switchRiotAccount,
-} from "./mockStore";
+import * as service from "./riotApi";
+import { rememberRiotAccounts } from "./accountCache";
 import { getRiotContextMenuItems } from "./contextMenu";
+import { getCachedRiotProfile, getRiotProfile } from "./profile";
+import type { RiotAccount } from "./types";
+
+function toAccount(account: RiotAccount): PlatformAccount {
+  return {
+    id: account.id,
+    displayName: account.display_name,
+    username: account.username,
+    lastLoginAt: account.last_login_at ?? null,
+  };
+}
 
 export const riotAdapter: PlatformAdapter = {
   id: "riot",
@@ -21,15 +27,22 @@ export const riotAdapter: PlatformAdapter = {
   reloadAfterAdd: true,
 
   async loadAccounts(): Promise<PlatformAccount[]> {
-    return getRiotAccounts();
+    const accounts = await service.getAccounts();
+    rememberRiotAccounts(accounts);
+    return accounts.map(toAccount);
   },
 
   async getCurrentAccount(): Promise<string> {
-    return getRiotStartupSnapshot().currentAccount;
+    return service.getCurrentAccount();
   },
 
   async getStartupSnapshot() {
-    return getRiotStartupSnapshot();
+    const snapshot = await service.getStartupSnapshot();
+    rememberRiotAccounts(snapshot.accounts);
+    return {
+      accounts: snapshot.accounts.map(toAccount),
+      currentAccount: snapshot.currentAccount,
+    };
   },
 
   isCurrentAccount(account, currentAccount) {
@@ -38,11 +51,11 @@ export const riotAdapter: PlatformAdapter = {
   },
 
   async switchAccount(account: PlatformAccount): Promise<void> {
-    switchRiotAccount(account.id);
+    await service.switchAccount(account.id);
   },
 
   async addAccount(): Promise<void> {
-    addRiotAccount();
+    await service.addAccount();
   },
 
   getContextMenuActions(
@@ -52,11 +65,15 @@ export const riotAdapter: PlatformAdapter = {
     return getRiotContextMenuItems(account, callbacks);
   },
 
-  async getProfileInfo(accountId: string) {
+  async getProfileInfo(accountId: string): Promise<PlatformProfileInfo | null> {
     return getRiotProfile(accountId);
   },
 
   getCachedProfile(accountId: string) {
     return getCachedRiotProfile(accountId);
+  },
+
+  getNoAccountsToastMessage(callbacks) {
+    return callbacks.t("toast.noRiotAccountsDetected");
   },
 };

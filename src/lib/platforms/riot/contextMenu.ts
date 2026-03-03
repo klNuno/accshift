@@ -1,12 +1,13 @@
 import type { ContextMenuAction } from "$lib/shared/contextMenu/types";
 import type { PlatformAccount, PlatformContextMenuCallbacks } from "$lib/shared/platform";
-import { forgetRiotAccount, getRiotRegion } from "./mockStore";
+import { forgetAccount } from "./riotApi";
+import { forgetCachedRiotAccount, getCachedRiotAccount } from "./accountCache";
 
 export function getRiotContextMenuItems(
   account: PlatformAccount,
   callbacks: PlatformContextMenuCallbacks,
 ): ContextMenuAction[] {
-  const region = getRiotRegion(account.id) ?? "Unknown";
+  const region = getCachedRiotAccount(account.id)?.region || "Unknown";
   return [
     {
       id: `riot.copy.id.${account.id}`,
@@ -37,7 +38,8 @@ export function getRiotContextMenuItems(
           message: callbacks.t("riot.forgetConfirmMessage"),
           confirmLabel: callbacks.t("riot.forget"),
           onConfirm: async () => {
-            forgetRiotAccount(account.id);
+            await forgetAccount(account.id);
+            forgetCachedRiotAccount(account.id);
             callbacks.showToast(callbacks.t("riot.forgotAccount", { username: account.username }));
             callbacks.refreshAccounts();
           },

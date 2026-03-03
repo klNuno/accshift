@@ -137,6 +137,7 @@ export const EN_MESSAGES = {
   "toast.accountsRefreshed.single": "{count} account refreshed",
   "toast.accountsRefreshed.multiple": "{count} accounts refreshed",
   "toast.steamFolderNotFound": "Steam folder was not found. Set it manually in Settings > Steam folder.",
+  "toast.noRiotAccountsDetected": "No Riot accounts detected yet. Open Riot Client on an account, then add it.",
 
   "steam.launchOnline": "Launch online",
   "steam.launchInvisible": "Launch invisible",
@@ -159,9 +160,9 @@ export const EN_MESSAGES = {
   "riot.copyLabelRiotId": "Riot ID",
   "riot.copyLabelHandle": "Handle",
   "riot.copyLabelRegion": "Region",
-  "riot.forget": "Remove mock account",
+  "riot.forget": "Remove account",
   "riot.forgetConfirmTitle": "Remove \"{display}\"?",
-  "riot.forgetConfirmMessage": "This only removes the local mock Riot account from Accshift.",
+  "riot.forgetConfirmMessage": "This only removes the local Riot account from Accshift.",
   "riot.forgotAccount": "Removed {username}",
 
   "color.none": "Default",
@@ -319,6 +320,7 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "toast.accountsRefreshed.single": "{count} compte rafraîchi",
   "toast.accountsRefreshed.multiple": "{count} comptes rafraîchis",
   "toast.steamFolderNotFound": "Dossier Steam introuvable. Configure-le manuellement dans Paramètres > Dossier Steam.",
+  "toast.noRiotAccountsDetected": "Aucun compte Riot détecté pour l'instant. Ouvre le client Riot sur un compte puis ajoute-le.",
 
   "steam.launchOnline": "Lancer en ligne",
   "steam.launchInvisible": "Lancer en invisible",
@@ -341,9 +343,9 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "riot.copyLabelRiotId": "Identifiant Riot",
   "riot.copyLabelHandle": "Handle",
   "riot.copyLabelRegion": "Région",
-  "riot.forget": "Supprimer le compte mock",
+  "riot.forget": "Supprimer le compte",
   "riot.forgetConfirmTitle": "Supprimer \"{display}\" ?",
-  "riot.forgetConfirmMessage": "Cela retire seulement le compte Riot mock local d'Accshift.",
+  "riot.forgetConfirmMessage": "Cela retire seulement le compte Riot local d'Accshift.",
   "riot.forgotAccount": "{username} supprimé",
 
   "color.none": "Défaut",
