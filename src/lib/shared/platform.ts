@@ -1,4 +1,5 @@
-import type { ContextMenuItem } from "./types";
+import type { ContextMenuAction } from "./contextMenu/types";
+import type { AccountWarningPresentation } from "./accountWarnings";
 import type { MessageKey, TranslationParams } from "$lib/i18n";
 
 export interface PlatformAccount {
@@ -24,10 +25,51 @@ export interface PlatformContextMenuCallbacks {
   t: (key: MessageKey, params?: TranslationParams) => string;
 }
 
+export interface PlatformUiCallbacks {
+  t: (key: MessageKey, params?: TranslationParams) => string;
+}
+
+export interface PlatformWarningLoadOptions extends PlatformUiCallbacks {
+  forceRefresh?: boolean;
+  silent?: boolean;
+}
+
+export interface PlatformProfileInfo {
+  avatarUrl: string | null;
+  displayName?: string | null;
+  avatarLoading?: boolean;
+}
+
+export interface CachedPlatformProfile {
+  url: string;
+  displayName?: string;
+  expired: boolean;
+}
+
+export type PlatformAddFlowState =
+  | "waiting_for_client"
+  | "waiting_for_login"
+  | "capturing"
+  | "ready"
+  | "failed";
+
+export interface PlatformAddFlowStatus {
+  setupId: string;
+  state: PlatformAddFlowState | string;
+  accountId?: string;
+  accountDisplayName?: string;
+  errorMessage?: string;
+}
+
+export interface PlatformAddAccountResult {
+  setupStatus?: PlatformAddFlowStatus | null;
+}
+
 export interface PlatformAdapter {
   id: string;
   name: string;
   accent: string;
+  reloadAfterAdd?: boolean;
 
   loadAccounts(): Promise<PlatformAccount[]>;
   getCurrentAccount(): Promise<string>;
@@ -35,24 +77,23 @@ export interface PlatformAdapter {
     accounts: PlatformAccount[];
     currentAccount: string;
   }>;
+  isCurrentAccount?(account: PlatformAccount, currentAccount: string): boolean;
   switchAccount(account: PlatformAccount): Promise<void>;
-  addAccount(): Promise<void>;
+  addAccount(): Promise<void | PlatformAddAccountResult>;
+  pollAddFlow?(setupId: string): Promise<PlatformAddFlowStatus>;
+  cancelAddFlow?(setupId: string): Promise<void>;
 
-  getContextMenuItems(account: PlatformAccount, callbacks: PlatformContextMenuCallbacks): ContextMenuItem[];
+  getContextMenuActions(account: PlatformAccount, callbacks: PlatformContextMenuCallbacks): ContextMenuAction[];
 
-  getProfileInfo?(accountId: string): Promise<{
-    avatar_url: string | null;
-    display_name: string | null;
-    vac_banned: boolean;
-    trade_ban_state: string;
-  } | null>;
-  getCachedProfile?(accountId: string): {
-    url: string;
-    displayName?: string;
-    vacBanned?: boolean;
-    tradeBanState?: string;
-    expired: boolean;
-  } | null;
+  getProfileInfo?(accountId: string): Promise<PlatformProfileInfo | null>;
+  getCachedProfile?(accountId: string): CachedPlatformProfile | null;
+  getCachedWarningStates?(callbacks: PlatformUiCallbacks): Record<string, AccountWarningPresentation>;
+  loadWarningStates?(
+    accounts: PlatformAccount[],
+    options: PlatformWarningLoadOptions
+  ): Promise<Record<string, AccountWarningPresentation>>;
+  getNoAccountsToastMessage?(callbacks: PlatformUiCallbacks): string | null;
+  getLoadErrorToastMessage?(message: string, callbacks: PlatformUiCallbacks): string | null;
 }
 
 const adapters = new Map<string, PlatformAdapter>();

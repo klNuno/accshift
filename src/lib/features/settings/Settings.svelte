@@ -4,6 +4,8 @@
   import { getSettings, saveSettings, ALL_PLATFORMS } from "./store";
   import { addToast } from "../notifications/store.svelte";
   import ToggleSetting from "./ToggleSetting.svelte";
+  import SteamSettingsSection from "$lib/platforms/steam/SteamSettingsSection.svelte";
+  import { getPlatformDefinition } from "$lib/platforms/registry";
   import {
     DEFAULT_LOCALE,
     LANGUAGE_OPTIONS,
@@ -14,9 +16,12 @@
   } from "$lib/i18n";
   import { hashPinCode, sanitizePinDigits } from "$lib/shared/pin";
 
-  let { onClose, onPlatformsChanged }: {
+  let { onClose, onPlatformsChanged, onRefreshAvatarsNow = async () => {}, onRefreshBansNow = async () => {}, runtimeOs = "unknown" }: {
     onClose: () => void;
     onPlatformsChanged?: () => void;
+    onRefreshAvatarsNow?: () => void | Promise<void>;
+    onRefreshBansNow?: () => void | Promise<void>;
+    runtimeOs?: "windows" | "linux" | "macos" | "unknown";
   } = $props();
 
   let settings = $state(getSettings());
@@ -30,6 +35,8 @@
   let avatarCacheDaysInput = $state("");
   let banCheckDaysInput = $state("");
   let inactivityBlurSecondsInput = $state("");
+  let avatarRefreshLoading = $state(false);
+  let banRefreshLoading = $state(false);
   let hydrated = $state(false);
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let lastSavedToastAt = 0;
@@ -56,10 +63,10 @@
     }
     settings.language = normalizeLocale(settings.language);
     settings.uiScalePercent = clampInt(settings.uiScalePercent, 75, 150, 100);
-    settings.avatarCacheDays = clampInt(settings.avatarCacheDays, 0, 90, 7);
-    settings.banCheckDays = clampInt(settings.banCheckDays, 0, 90, 7);
+    settings.dataRefresh.avatarCacheDays = clampInt(settings.dataRefresh.avatarCacheDays, 0, 90, 7);
+    settings.dataRefresh.banCheckDays = clampInt(settings.dataRefresh.banCheckDays, 0, 90, 7);
     settings.inactivityBlurSeconds = clampInt(settings.inactivityBlurSeconds, 0, 3600, 60);
-    settings.steamLaunchOptions = (settings.steamLaunchOptions || "").trim();
+    settings.platformSettings.steam.launchOptions = (settings.platformSettings.steam.launchOptions || "").trim();
     if (!settings.pinEnabled) {
       settings.pinHash = "";
     }
@@ -69,6 +76,10 @@
     if (!settings.enabledPlatforms.length) settings.enabledPlatforms = ["steam"];
     if (!settings.enabledPlatforms.includes(settings.defaultPlatformId)) {
       settings.defaultPlatformId = settings.enabledPlatforms[0];
+    }
+    const selectableEnabled = settings.enabledPlatforms.filter((platformId) => isPlatformSelectable(platformId));
+    if (selectableEnabled.length > 0 && !selectableEnabled.includes(settings.defaultPlatformId)) {
+      settings.defaultPlatformId = selectableEnabled[0];
     }
   }
 
@@ -84,8 +95,8 @@
 
   function refreshNumericInputsFromSettings() {
     uiScalePercentInput = String(settings.uiScalePercent);
-    avatarCacheDaysInput = String(settings.avatarCacheDays);
-    banCheckDaysInput = String(settings.banCheckDays);
+    avatarCacheDaysInput = String(settings.dataRefresh.avatarCacheDays);
+    banCheckDaysInput = String(settings.dataRefresh.banCheckDays);
     inactivityBlurSecondsInput = String(settings.inactivityBlurSeconds);
   }
 
@@ -95,13 +106,23 @@
   }
 
   function commitAvatarCacheDays() {
-    settings.avatarCacheDays = clampInt(Number(avatarCacheDaysInput), 0, 90, settings.avatarCacheDays);
-    avatarCacheDaysInput = String(settings.avatarCacheDays);
+    settings.dataRefresh.avatarCacheDays = clampInt(
+      Number(avatarCacheDaysInput),
+      0,
+      90,
+      settings.dataRefresh.avatarCacheDays,
+    );
+    avatarCacheDaysInput = String(settings.dataRefresh.avatarCacheDays);
   }
 
   function commitBanCheckDays() {
-    settings.banCheckDays = clampInt(Number(banCheckDaysInput), 0, 90, settings.banCheckDays);
-    banCheckDaysInput = String(settings.banCheckDays);
+    settings.dataRefresh.banCheckDays = clampInt(
+      Number(banCheckDaysInput),
+      0,
+      90,
+      settings.dataRefresh.banCheckDays,
+    );
+    banCheckDaysInput = String(settings.dataRefresh.banCheckDays);
   }
 
   function commitInactivityBlurSeconds() {
@@ -175,26 +196,49 @@
     if (saveTimer) clearTimeout(saveTimer);
   });
 
+  function isPlatformOsCompatible(platformId: string): boolean {
+    const definition = getPlatformDefinition(platformId);
+    if (!definition) return false;
+    return definition.supportedOs.includes(runtimeOs);
+  }
+
+  function isPlatformSelectable(platformId: string): boolean {
+    const definition = getPlatformDefinition(platformId);
+    if (!definition) return false;
+    return definition.implemented && isPlatformOsCompatible(platformId);
+  }
+
+  function platformAvailabilityLabel(platformId: string): string {
+    const definition = getPlatformDefinition(platformId);
+    if (!definition) return t("settings.platformNotImplemented");
+    if (!definition.implemented) return t("settings.platformNotImplemented");
+    if (!isPlatformOsCompatible(platformId)) return t("settings.platformUnsupportedOs");
+    return "";
+  }
+
   function togglePlatform(id: string) {
     if (settings.enabledPlatforms.includes(id)) {
-      if (settings.enabledPlatforms.length <= 1) return;
+      const selectableEnabled = settings.enabledPlatforms.filter((platformId) => isPlatformSelectable(platformId));
+      if (selectableEnabled.length <= 1 && selectableEnabled.includes(id)) return;
       settings.enabledPlatforms = settings.enabledPlatforms.filter(p => p !== id);
     } else {
+      if (!isPlatformSelectable(id)) return;
       settings.enabledPlatforms = [...settings.enabledPlatforms, id];
     }
   }
 
   $effect(() => {
-    settings.avatarCacheDays;
-    settings.banCheckDays;
+    settings.dataRefresh.avatarCacheDays;
+    settings.dataRefresh.banCheckDays;
     settings.inactivityBlurSeconds;
     settings.theme;
     settings.language;
-    settings.steamRunAsAdmin;
-    settings.steamLaunchOptions;
-    settings.showUsernames;
-    settings.showLastLogin;
-    settings.showCardNotesInline;
+    settings.platformSettings.steam.runAsAdmin;
+    settings.platformSettings.steam.launchOptions;
+    settings.accountDisplay.showUsernames;
+    settings.accountDisplay.showLastLogin;
+    settings.accountDisplay.showCardNotesInline;
+    settings.accountDisplay.showRiotLastLogin;
     settings.uiScalePercent;
     settings.defaultPlatformId;
     settings.pinEnabled;
@@ -221,6 +265,26 @@
       await invoke("open_steam_api_key_page");
     } catch {
       addToast(t("settings.openApiKeyFailed"));
+    }
+  }
+
+  async function handleRefreshAvatarsNow() {
+    if (avatarRefreshLoading) return;
+    avatarRefreshLoading = true;
+    try {
+      await onRefreshAvatarsNow();
+    } finally {
+      avatarRefreshLoading = false;
+    }
+  }
+
+  async function handleRefreshBansNow() {
+    if (banRefreshLoading) return;
+    banRefreshLoading = true;
+    try {
+      await onRefreshBansNow();
+    } finally {
+      banRefreshLoading = false;
     }
   }
 
@@ -298,9 +362,25 @@
       <h3>{t("settings.platforms")}</h3>
       <div class="platforms">
         {#each ALL_PLATFORMS as platform}
-          <button class="platform-chip" onclick={() => togglePlatform(platform.id)} style={`--chip-accent:${platform.accent};`}>
-            <span>{platform.name}</span>
-            <div class="toggle" class:active={settings.enabledPlatforms.includes(platform.id)}>
+          {@const isSelectable = isPlatformSelectable(platform.id)}
+          {@const isEnabled = settings.enabledPlatforms.includes(platform.id)}
+          {@const isLocked = !isSelectable && !isEnabled}
+          {@const statusLabel = platformAvailabilityLabel(platform.id)}
+          <button
+            class="platform-chip"
+            class:disabled={isLocked}
+            onclick={() => togglePlatform(platform.id)}
+            style={`--chip-accent:${platform.accent};`}
+            disabled={isLocked}
+            title={statusLabel || platform.name}
+          >
+            <span class="platform-main">
+              <span>{platform.name}</span>
+              {#if statusLabel}
+                <span class="platform-status">{statusLabel}</span>
+              {/if}
+            </span>
+            <div class="toggle" class:active={isEnabled}>
               <div class="knob"></div>
             </div>
           </button>
@@ -314,8 +394,9 @@
         </div>
         <select class="text-input" bind:value={settings.defaultPlatformId}>
           {#each ALL_PLATFORMS as platform}
-            <option value={platform.id} disabled={!settings.enabledPlatforms.includes(platform.id)}>
-              {platform.name}{!settings.enabledPlatforms.includes(platform.id) ? ` ${t("settings.platformDisabledSuffix")}` : ""}
+            {@const disabled = !settings.enabledPlatforms.includes(platform.id) || !isPlatformSelectable(platform.id)}
+            <option value={platform.id} {disabled}>
+              {platform.name}{disabled ? ` ${t("settings.platformDisabledSuffix")}` : ""}
             </option>
           {/each}
         </select>
@@ -323,53 +404,35 @@
     </section>
 
     <section class="card">
-      <h3>{t("settings.dataRefresh")}</h3>
-
-      <label class="field">
-        <div class="row">
-          <span>{t("settings.avatarRefresh")}</span>
-          <span class="hint">{t("settings.zeroEachLaunch")}</span>
-        </div>
-        <input
-          type="number"
-          min="0"
-          max="90"
-          step="1"
-          value={avatarCacheDaysInput}
-          oninput={(e) => avatarCacheDaysInput = (e.currentTarget as HTMLInputElement).value}
-          onblur={commitAvatarCacheDays}
-          onkeydown={(e) => {
-            if (e.key === "Enter") {
-              commitAvatarCacheDays();
-              (e.currentTarget as HTMLInputElement).blur();
-            }
-          }}
-          class="text-input number-input"
-        />
-      </label>
-
-      <label class="field">
-        <div class="row">
-          <span>{t("settings.banCheckDelay")}</span>
-          <span class="hint">{t("settings.zeroEachLaunch")}</span>
-        </div>
-        <input
-          type="number"
-          min="0"
-          max="90"
-          step="1"
-          value={banCheckDaysInput}
-          oninput={(e) => banCheckDaysInput = (e.currentTarget as HTMLInputElement).value}
-          onblur={commitBanCheckDays}
-          onkeydown={(e) => {
-            if (e.key === "Enter") {
-              commitBanCheckDays();
-              (e.currentTarget as HTMLInputElement).blur();
-            }
-          }}
-          class="text-input number-input"
-        />
-      </label>
+      <h3>{t("settings.accountDisplay")}</h3>
+      <ToggleSetting
+        label={t("settings.showUsernames")}
+        enabled={settings.accountDisplay.showUsernames}
+        onLabel={t("common.visible")}
+        offLabel={t("common.hidden")}
+        onToggle={() => settings.accountDisplay.showUsernames = !settings.accountDisplay.showUsernames}
+      />
+      <ToggleSetting
+        label={t("settings.showSteamLastLogin")}
+        enabled={settings.accountDisplay.showLastLogin}
+        onLabel={t("common.on")}
+        offLabel={t("common.off")}
+        onToggle={() => settings.accountDisplay.showLastLogin = !settings.accountDisplay.showLastLogin}
+      />
+      <ToggleSetting
+        label={t("settings.showRiotLastLogin")}
+        enabled={settings.accountDisplay.showRiotLastLogin}
+        onLabel={t("common.on")}
+        offLabel={t("common.off")}
+        onToggle={() => settings.accountDisplay.showRiotLastLogin = !settings.accountDisplay.showRiotLastLogin}
+      />
+      <ToggleSetting
+        label={t("settings.showNotesUnderCards")}
+        enabled={settings.accountDisplay.showCardNotesInline}
+        onLabel={t("common.inline")}
+        offLabel={t("common.tooltip")}
+        onToggle={() => settings.accountDisplay.showCardNotesInline = !settings.accountDisplay.showCardNotesInline}
+      />
     </section>
 
     <section class="card">
@@ -438,93 +501,29 @@
     </section>
 
     {#if steamEnabled}
-      <section class="card steam-card">
-        <h3>{t("settings.steam")}</h3>
-
-        <ToggleSetting
-          label={t("settings.runSteamAsAdmin")}
-          enabled={settings.steamRunAsAdmin}
-          onLabel={t("common.enabled")}
-          offLabel={t("common.disabled")}
-          onToggle={() => settings.steamRunAsAdmin = !settings.steamRunAsAdmin}
-        />
-
-        <ToggleSetting
-          label={t("settings.showUsernames")}
-          enabled={settings.showUsernames}
-          onLabel={t("common.visible")}
-          offLabel={t("common.hidden")}
-          onToggle={() => settings.showUsernames = !settings.showUsernames}
-        />
-
-        <ToggleSetting
-          label={t("settings.showLastLogin")}
-          enabled={settings.showLastLogin}
-          onLabel={t("common.on")}
-          offLabel={t("common.off")}
-          onToggle={() => settings.showLastLogin = !settings.showLastLogin}
-        />
-
-        <ToggleSetting
-          label={t("settings.showNotesUnderCards")}
-          enabled={settings.showCardNotesInline}
-          onLabel={t("common.inline")}
-          offLabel={t("common.tooltip")}
-          onToggle={() => settings.showCardNotesInline = !settings.showCardNotesInline}
-        />
-
-        <div class="field">
-          <div class="row">
-            <span>{t("settings.launchOptions")}</span>
-            <strong>{settings.steamLaunchOptions ? t("common.custom") : t("common.none")}</strong>
-          </div>
-          <input
-            id="steam-launch-options"
-            type="text"
-            bind:value={settings.steamLaunchOptions}
-            class="text-input"
-            placeholder="-silent -vgui"
-          />
-        </div>
-
-        <div class="field">
-          <div class="row">
-            <span>{t("settings.steamFolder")}</span>
-            <strong>{steamPath ? t("common.custom") : t("settings.steamFolderRegistry")}</strong>
-          </div>
-          <div class="input-row">
-            <input
-              id="steam-folder"
-              type="text"
-              bind:value={steamPath}
-              class="text-input"
-              placeholder="C:\Program Files (x86)\Steam"
-            />
-            <button class="browse-btn" type="button" onclick={chooseSteamFolder}>{t("common.choose")}</button>
-          </div>
-        </div>
-
-        <div class="field">
-          <div class="row">
-            <span>{t("settings.steamWebApiKey")}</span>
-            <div class="row-actions">
-              <button class="inline-link-btn" type="button" onclick={openSteamApiKeyPage}>{t("settings.getKey")}</button>
-              <strong>{apiKey.trim() || apiKeyConfigured ? t("common.configured") : t("common.missing")}</strong>
-            </div>
-          </div>
-          <input
-            id="api-key"
-            type="password"
-            bind:value={apiKey}
-            class="text-input"
-            placeholder={t("settings.pasteApiKey")}
-            oninput={(e) => {
-              apiKey = (e.currentTarget as HTMLInputElement).value;
-              apiKeyTouched = true;
-            }}
-          />
-        </div>
-      </section>
+      <SteamSettingsSection
+        {settings}
+        bind:steamPath
+        bind:apiKey
+        {apiKeyConfigured}
+        {avatarCacheDaysInput}
+        {banCheckDaysInput}
+        {avatarRefreshLoading}
+        {banRefreshLoading}
+        onChooseSteamFolder={chooseSteamFolder}
+        onOpenSteamApiKeyPage={openSteamApiKeyPage}
+        onApiKeyInput={(value) => {
+          apiKey = value;
+          apiKeyTouched = true;
+        }}
+        onAvatarCacheDaysInput={(value) => avatarCacheDaysInput = value}
+        onBanCheckDaysInput={(value) => banCheckDaysInput = value}
+        onCommitAvatarCacheDays={commitAvatarCacheDays}
+        onCommitBanCheckDays={commitBanCheckDays}
+        onRefreshAvatarsNow={handleRefreshAvatarsNow}
+        onRefreshBansNow={handleRefreshBansNow}
+        {t}
+      />
     {/if}
   </div>
 </div>
@@ -596,16 +595,6 @@
     padding-bottom: 8px;
   }
 
-  .steam-card {
-    grid-column: span 2;
-  }
-
-  @media (max-width: 980px) {
-    .steam-card {
-      grid-column: span 1;
-    }
-  }
-
   .card {
     background: color-mix(in srgb, var(--bg-card) 84%, #000 16%);
     border: 1px solid color-mix(in srgb, var(--border) 80%, #fff 20%);
@@ -643,9 +632,31 @@
     transition: border-color 120ms ease-out, background 120ms ease-out;
   }
 
+  .platform-main {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+
+  .platform-status {
+    font-size: 10px;
+    color: var(--fg-subtle);
+  }
+
   .platform-chip:hover {
     border-color: color-mix(in srgb, var(--chip-accent) 55%, var(--border));
     background: color-mix(in srgb, var(--bg-card) 84%, #fff 16%);
+  }
+
+  .platform-chip.disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .platform-chip.disabled:hover {
+    border-color: var(--border);
+    background: color-mix(in srgb, var(--bg) 88%, #fff 12%);
   }
 
   .toggle {
@@ -694,26 +705,6 @@
     font-weight: 600;
   }
 
-  .row-actions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .inline-link-btn {
-    border: none;
-    background: transparent;
-    color: #60a5fa;
-    font-size: 12px;
-    cursor: pointer;
-    padding: 0;
-  }
-
-  .inline-link-btn:hover {
-    color: #93c5fd;
-    text-decoration: underline;
-  }
-
   .hint {
     font-size: 11px;
     color: var(--fg-subtle);
@@ -734,27 +725,8 @@
     border-color: #3b82f6;
   }
 
-  .input-row {
-    display: flex;
-    gap: 8px;
-  }
-
   .number-input {
     width: 100%;
   }
 
-  .browse-btn {
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--bg-card);
-    color: var(--fg);
-    font-size: 12px;
-    padding: 0 12px;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .browse-btn:hover {
-    background: var(--bg-card-hover);
-  }
 </style>

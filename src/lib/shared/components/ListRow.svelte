@@ -1,9 +1,10 @@
 <script lang="ts">
   import type { PlatformAccount } from "../platform";
+  import type { AccountWarningPresentation } from "../accountWarnings";
   import type { FolderInfo } from "../../features/folders/types";
-  import type { BanInfo } from "../../platforms/steam/types";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
-  import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
+  import { getAvatarGradientStyle, getAvatarInitials, getAvatarSeed } from "$lib/shared/avatarFallback";
+  import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
 
   let {
     account = null,
@@ -14,9 +15,12 @@
     isDragged = false,
     isDragOver = false,
     avatarUrl = null,
-    banInfo = undefined,
+    isLoadingAvatar = false,
+    allowMetaWrap = false,
+    warningInfo = undefined,
     showUsername = true,
     showLastLogin = false,
+    lastLoginUnknownKey = "time.unknown",
     lastLoginAt = null,
     locale = DEFAULT_LOCALE,
     onClick,
@@ -31,9 +35,12 @@
     isDragged?: boolean;
     isDragOver?: boolean;
     avatarUrl?: string | null;
-    banInfo?: BanInfo;
+    isLoadingAvatar?: boolean;
+    allowMetaWrap?: boolean;
+    warningInfo?: AccountWarningPresentation;
     showUsername?: boolean;
     showLastLogin?: boolean;
+    lastLoginUnknownKey?: MessageKey;
     lastLoginAt?: number | null;
     locale?: Locale;
     onClick: () => void;
@@ -41,42 +48,23 @@
     onDblClick?: () => void;
   } = $props();
 
-  function getInitials(name: string): string {
-    return name.slice(0, 2).toUpperCase();
-  }
-
   function handleContextMenu(e: MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
     onContextMenu(e);
   }
 
-  function formatBanTooltipEnglish(info: BanInfo): string {
-    const lines: string[] = [];
-    if (info.community_banned) {
-      lines.push("Community ban");
-    }
-    if (info.vac_banned) {
-      const vacCount = Math.max(1, info.number_of_vac_bans || 0);
-      lines.push(`${vacCount} VAC ban${vacCount > 1 ? "s" : ""}`);
-    }
-    if (info.number_of_game_bans > 0) {
-      lines.push(`${info.number_of_game_bans} game ban${info.number_of_game_bans > 1 ? "s" : ""}`);
-    }
-    return lines.join("\n");
-  }
+  let hasRedWarning = $derived(Boolean(warningInfo?.listHasRed));
 
-  let hasRedWarning = $derived.by(() =>
-    Boolean(banInfo && (banInfo.vac_banned || banInfo.number_of_game_bans > 0))
-  );
-
-  let hasOrangeWarning = $derived.by(() =>
-    Boolean(banInfo && banInfo.community_banned)
-  );
+  let hasOrangeWarning = $derived(Boolean(warningInfo?.listHasOrange));
+  let hasUsername = $derived(Boolean(showUsername && account?.username.trim()));
+  let avatarSeed = $derived.by(() => {
+    if (!account) return "";
+    return getAvatarSeed(account.displayName, account.username, account.id);
+  });
 
   let banHoverMessage = $derived.by(() => {
-    if (!banInfo) return "";
-    return formatBanTooltipEnglish(banInfo);
+    return warningInfo?.tooltipText || "";
   });
 </script>
 
@@ -118,22 +106,29 @@
       <span class="name-text">{folder.name}</span>
     </div>
   {:else if account}
-    <div class="avatar" class:ban-red={hasRedWarning} class:ban-orange={hasOrangeWarning}>
-      {#if avatarUrl}
+    <div
+      class="avatar"
+      class:ban-red={hasRedWarning}
+      class:ban-orange={hasOrangeWarning}
+      style={!avatarUrl && !isLoadingAvatar ? getAvatarGradientStyle(avatarSeed) : ""}
+    >
+      {#if isLoadingAvatar}
+        <div class="loader"></div>
+      {:else if avatarUrl}
         <img src={avatarUrl} alt={account.displayName} draggable={false} />
       {:else}
-        <span class="initials">{getInitials(account.displayName || account.username)}</span>
+        <span class="initials">{getAvatarInitials(account.displayName || account.username)}</span>
       {/if}
     </div>
     <div class="info">
       <span class="name-text">{account.displayName || account.username}</span>
-      {#if showUsername || showLastLogin}
-        <span class="meta-stack">
-          {#if showUsername}
+      {#if hasUsername || showLastLogin}
+        <span class="meta-stack" class:wrap={allowMetaWrap}>
+          {#if hasUsername}
             <span class="username-text">{account.username}</span>
           {/if}
           {#if showLastLogin}
-            <span class="meta-text">{formatRelativeTimeCompact(lastLoginAt, locale)}</span>
+            <span class="meta-text">{formatRelativeTimeCompact(lastLoginAt, locale, lastLoginUnknownKey)}</span>
           {/if}
         </span>
       {/if}
@@ -277,6 +272,13 @@
     text-overflow: ellipsis;
   }
 
+  .meta-stack.wrap {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    line-height: 1.3;
+  }
+
   .username-text {
     color: var(--fg-muted);
   }
@@ -284,6 +286,19 @@
   .meta-text {
     font-weight: 500;
     color: color-mix(in srgb, var(--fg-subtle) 40%, var(--fg) 60%);
+  }
+
+  .loader {
+    width: 15px;
+    height: 15px;
+    border-radius: 999px;
+    border: 2px solid color-mix(in srgb, var(--fg) 24%, transparent);
+    border-top-color: var(--fg);
+    animation: spin 0.75s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 
   .active-badge {

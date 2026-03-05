@@ -1,9 +1,17 @@
-import type { PlatformAdapter, PlatformAccount, PlatformContextMenuCallbacks } from "../../shared/platform";
-import type { ContextMenuItem } from "../../shared/types";
+import type {
+  PlatformAdapter,
+  PlatformAddAccountResult,
+  PlatformAddFlowStatus,
+  PlatformAccount,
+  PlatformContextMenuCallbacks,
+  PlatformProfileInfo,
+} from "../../shared/platform";
+import type { ContextMenuAction } from "../../shared/contextMenu/types";
 import * as service from "./steamApi";
 import { getCachedProfile, fetchProfile } from "./profileCache";
 import { getSteamContextMenuItems } from "./contextMenu";
-import type { SteamAccount, ProfileInfo } from "./types";
+import { getCachedSteamWarningStates, loadSteamWarningStates } from "./warnings";
+import type { SteamAccount } from "./types";
 
 function toAccount(s: SteamAccount): PlatformAccount {
   return {
@@ -36,26 +44,71 @@ export const steamAdapter: PlatformAdapter = {
     };
   },
 
+  isCurrentAccount(account, currentAccount) {
+    const needle = currentAccount.trim().toLowerCase();
+    return needle.length > 0 && (
+      account.id.trim().toLowerCase() === needle
+      || account.username.trim().toLowerCase() === needle
+    );
+  },
+
   async switchAccount(account: PlatformAccount): Promise<void> {
     await service.switchAccount(account.username);
   },
 
-  async addAccount(): Promise<void> {
-    await service.addAccount();
+  async addAccount(): Promise<PlatformAddAccountResult> {
+    const setupStatus = await service.beginAccountSetup();
+    return { setupStatus };
   },
 
-  getContextMenuItems(
+  async pollAddFlow(setupId: string): Promise<PlatformAddFlowStatus> {
+    return service.getAccountSetupStatus(setupId);
+  },
+
+  async cancelAddFlow(setupId: string): Promise<void> {
+    await service.cancelAccountSetup(setupId);
+  },
+
+  getContextMenuActions(
     account: PlatformAccount,
     callbacks: PlatformContextMenuCallbacks
-  ): ContextMenuItem[] {
+  ): ContextMenuAction[] {
     return getSteamContextMenuItems(account, callbacks);
   },
 
-  async getProfileInfo(accountId: string): Promise<ProfileInfo | null> {
-    return fetchProfile(accountId);
+  async getProfileInfo(accountId: string): Promise<PlatformProfileInfo | null> {
+    const profile = await fetchProfile(accountId);
+    if (!profile) return null;
+    return {
+      avatarUrl: profile.avatar_url,
+      displayName: profile.display_name,
+    };
   },
 
   getCachedProfile(accountId: string) {
     return getCachedProfile(accountId);
+  },
+
+  getCachedWarningStates(callbacks) {
+    return getCachedSteamWarningStates(callbacks);
+  },
+
+  async loadWarningStates(accounts, options) {
+    return loadSteamWarningStates(accounts, options);
+  },
+
+  getNoAccountsToastMessage(callbacks) {
+    return callbacks.t("toast.noSteamAccountsFound");
+  },
+
+  getLoadErrorToastMessage(message, callbacks) {
+    const normalized = message.trim().toLowerCase();
+    if (
+      normalized.includes("could not locate steam installation")
+      || normalized.includes("could not read steam configuration")
+    ) {
+      return callbacks.t("toast.steamFolderNotFound");
+    }
+    return null;
   },
 };

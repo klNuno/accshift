@@ -1,32 +1,18 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-use super::registry::{clear_auto_login_user, set_auto_login_user};
 use super::vdf::{parse_vdf, set_persona_state};
 use crate::error::AppError;
+use crate::os;
 
-#[cfg(target_os = "windows")]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
 const MAX_KILL_WAIT_MS: u64 = 5000;
 const KILL_POLL_INTERVAL_MS: u64 = 500;
 const NON_GAME_APP_IDS: &[&str] = &[
     "7",   // Steam client internals
     "760", // Steam community / screenshots
 ];
-
-fn hidden_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
-    let mut cmd = Command::new(program);
-    #[cfg(target_os = "windows")]
-    {
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    cmd
-}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SteamAccount {
@@ -56,16 +42,7 @@ fn steam_id_to_account_id(steam_id64: &str) -> Option<u32> {
 }
 
 fn is_steam_running() -> bool {
-    let output = hidden_command("tasklist")
-        .args(["/FI", "IMAGENAME eq steam.exe", "/NH"])
-        .output();
-    match output {
-        Ok(o) => {
-            let stdout = String::from_utf8_lossy(&o.stdout);
-            stdout.to_lowercase().contains("steam.exe")
-        }
-        Err(_) => false,
-    }
+    os::is_process_running(os::steam_process_name())
 }
 
 fn kill_steam() -> Result<(), AppError> {
@@ -73,9 +50,7 @@ fn kill_steam() -> Result<(), AppError> {
         return Ok(());
     }
 
-    let _ = hidden_command("taskkill")
-        .args(["/F", "/IM", "steam.exe"])
-        .output();
+    let _ = os::kill_process(os::steam_process_name());
 
     let max_polls = MAX_KILL_WAIT_MS / KILL_POLL_INTERVAL_MS;
     for _ in 0..max_polls {
@@ -134,32 +109,8 @@ fn launch_steam(
     run_as_admin: bool,
     launch_options: &str,
 ) -> Result<(), AppError> {
-    let steam_exe = steam_path.join("steam.exe");
     let args = parse_launch_options(launch_options);
-    if run_as_admin {
-        let exe = steam_exe.to_string_lossy().replace('\'', "''");
-        let arg_list = if args.is_empty() {
-            String::new()
-        } else {
-            let joined = args
-                .iter()
-                .map(|a| format!("'{}'", a.replace('\'', "''")))
-                .collect::<Vec<String>>()
-                .join(", ");
-            format!(" -ArgumentList @({})", joined)
-        };
-        let ps = format!("Start-Process -FilePath '{}' -Verb RunAs{}", exe, arg_list);
-        hidden_command("powershell")
-            .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps])
-            .spawn()
-            .map_err(|e| AppError::ProcessStart(e.to_string()))?;
-    } else {
-        hidden_command(&steam_exe)
-            .args(args)
-            .spawn()
-            .map_err(|e| AppError::ProcessStart(e.to_string()))?;
-    }
-    Ok(())
+    os::launch_steam(steam_path, run_as_admin, &args)
 }
 
 fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), AppError> {
@@ -438,7 +389,7 @@ pub fn switch_account(
     launch_options: &str,
 ) -> Result<(), AppError> {
     kill_steam()?;
-    set_auto_login_user(username)?;
+    os::set_auto_login_user(username)?;
     launch_steam(&steam_path, run_as_admin, launch_options)
 }
 
@@ -448,7 +399,7 @@ pub fn add_account(
     launch_options: &str,
 ) -> Result<(), AppError> {
     kill_steam()?;
-    clear_auto_login_user()?;
+    os::clear_auto_login_user()?;
     launch_steam(&steam_path, run_as_admin, launch_options)
 }
 
@@ -478,7 +429,7 @@ pub fn switch_account_mode(
     launch_options: &str,
 ) -> Result<(), AppError> {
     kill_steam()?;
-    set_auto_login_user(username)?;
+    os::set_auto_login_user(username)?;
 
     if let Some(account_id) = steam_id_to_account_id(steam_id) {
         let state = match mode {
@@ -504,12 +455,7 @@ pub fn open_userdata_with_path(steam_path: &PathBuf, steam_id: &str) -> Result<(
         .canonicalize()
         .map_err(|e| AppError::PathResolve(e.to_string()))?;
 
-    Command::new("explorer")
-        .arg(canonical)
-        .spawn()
-        .map_err(|e| AppError::FolderOpen(e.to_string()))?;
-
-    Ok(())
+    os::open_folder(&canonical)
 }
 
 pub fn copy_game_settings(
