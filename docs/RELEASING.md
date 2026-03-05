@@ -19,7 +19,7 @@ Use the same version in all files:
 - `src-tauri/tauri.conf.json`
 - `src-tauri/Cargo.toml`
 
-Example: `0.2.0`
+Example: `0.5.1`
 
 ## 2. Commit and push
 Commit the version bump and push to `main`.
@@ -32,8 +32,8 @@ Tag format must be `vX.Y.Z` and must match file versions.
 
 Example:
 ```powershell
-git tag v0.2.0
-git push origin v0.2.0
+git tag -a v0.5.1 -m "Release v0.5.1"
+git push origin v0.5.1
 ```
 
 ## 5. Release workflow output
