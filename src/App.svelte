@@ -757,9 +757,21 @@
   }
 
   async function refreshAvatarsNow() {
-    if (!adapter || activeTab !== "steam") return;
+    const steamAdapter = getPlatform("steam");
+    if (!steamAdapter?.getProfileInfo) return;
     try {
-      const count = await loader.refreshVisibleAccounts(false, true, true, false);
+      const steamAccounts = await steamAdapter.loadAccounts();
+      if (steamAccounts.length === 0) {
+        showToast(t("toast.noSteamAccountsFound"));
+        return;
+      }
+      await Promise.all(steamAccounts.map((account) =>
+        steamAdapter.getProfileInfo!(account.id).catch(() => null)
+      ));
+      const count = steamAccounts.length;
+      if (activeTab === "steam") {
+        loadAccounts(true, false, true, false, false);
+      }
       showToast(t("toast.avatarRefreshComplete", { count }));
     } catch (e) {
       showToast(String(e));
@@ -767,9 +779,19 @@
   }
 
   async function refreshBansNow() {
-    if (!adapter || activeTab !== "steam") return;
+    const steamAdapter = getPlatform("steam");
+    if (!steamAdapter?.loadWarningStates) return;
     try {
-      const count = await loader.refreshVisibleAccounts(true, true, true, false);
+      const steamAccounts = await steamAdapter.loadAccounts();
+      if (steamAccounts.length === 0) {
+        showToast(t("toast.noSteamAccountsFound"));
+        return;
+      }
+      await steamAdapter.loadWarningStates(steamAccounts, { forceRefresh: true, silent: false, t });
+      const count = steamAccounts.length;
+      if (activeTab === "steam") {
+        loadAccounts(true, false, false, true, false);
+      }
       showToast(t("toast.banRefreshComplete", { count }));
     } catch (e) {
       showToast(String(e));
@@ -1229,7 +1251,6 @@
         onRefreshAvatarsNow={refreshAvatarsNow}
         onRefreshBansNow={refreshBansNow}
         {runtimeOs}
-        activePlatformId={activeTab}
       />
     {:else}
       <div class="center-msg">

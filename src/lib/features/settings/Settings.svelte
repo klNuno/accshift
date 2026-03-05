@@ -16,18 +16,16 @@
   } from "$lib/i18n";
   import { hashPinCode, sanitizePinDigits } from "$lib/shared/pin";
 
-  let { onClose, onPlatformsChanged, onRefreshAvatarsNow = async () => {}, onRefreshBansNow = async () => {}, runtimeOs = "unknown", activePlatformId = "steam" }: {
+  let { onClose, onPlatformsChanged, onRefreshAvatarsNow = async () => {}, onRefreshBansNow = async () => {}, runtimeOs = "unknown" }: {
     onClose: () => void;
     onPlatformsChanged?: () => void;
     onRefreshAvatarsNow?: () => void | Promise<void>;
     onRefreshBansNow?: () => void | Promise<void>;
     runtimeOs?: "windows" | "linux" | "macos" | "unknown";
-    activePlatformId?: string;
   } = $props();
 
   let settings = $state(getSettings());
   let steamEnabled = $derived(settings.enabledPlatforms.includes("steam"));
-  let steamToolsEnabled = $derived(activePlatformId === "steam");
   let apiKey = $state("");
   let apiKeyConfigured = $state(false);
   let apiKeyTouched = $state(false);
@@ -507,7 +505,6 @@
         {settings}
         bind:steamPath
         bind:apiKey
-        showSteamTools={steamToolsEnabled}
         {apiKeyConfigured}
         {avatarCacheDaysInput}
         {banCheckDaysInput}

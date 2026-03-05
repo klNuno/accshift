@@ -83,7 +83,7 @@ export function createAccountLoader(
   function applyProfileUpdate(account: PlatformAccount, profile: Awaited<ReturnType<NonNullable<PlatformAdapter["getProfileInfo"]>>>) {
     if (profile) {
       updateAvatarState(account.id, {
-        url: profile.avatarUrl || avatarStates[account.id]?.url || null,
+        url: profile.avatarUrl,
         loading: profile.avatarLoading ?? false,
         refreshing: false,
       });

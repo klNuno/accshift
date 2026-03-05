@@ -6,25 +6,20 @@ function normalizeSeed(seed: string): string {
     .replace(/\s+/g, " ");
 }
 
-function hashSeed(seed: string): number {
-  // Simple, deterministic FNV-1a hash.
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < seed.length; i += 1) {
-    hash ^= seed.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return hash >>> 0;
+function reverseText(text: string): string {
+  return Array.from(text).reverse().join("");
 }
 
-function mix32(hash: number): number {
-  // Tiny avalanche step to decorrelate close seeds.
-  let x = hash >>> 0;
-  x ^= x >>> 16;
-  x = Math.imul(x, 0x85ebca6b);
-  x ^= x >>> 13;
-  x = Math.imul(x, 0xc2b2ae35);
-  x ^= x >>> 16;
-  return x >>> 0;
+function bitCycleHash(text: string, mult: number, modulo: number, seed: number): number {
+  let acc = seed % modulo;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    for (let b = 0; b < 16; b += 1) {
+      const bit = (code >> b) & 1;
+      acc = (acc * mult + bit + b) % modulo;
+    }
+  }
+  return acc;
 }
 
 export function getAvatarInitials(name: string): string {
@@ -40,23 +35,26 @@ export function getAvatarInitials(name: string): string {
   return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
 }
 
-export function getAvatarSeed(displayName: string, username: string, accountId: string): string {
+export function getAvatarSeed(
+  displayName: string,
+  username: string,
+  accountId: string,
+): string {
   const primary = (displayName || username || "").trim();
-  if (!primary) return accountId;
-  return `${primary}::${accountId}`;
+  const stable = primary || "unknown";
+  const reversed = reverseText(stable);
+  return `${stable}::${accountId}::${reversed}`;
 }
 
 export function getAvatarGradientStyle(seed: string): string {
   const normalized = normalizeSeed(seed || "?");
-  const mixed = mix32(hashSeed(normalized));
-
-  const hue = Math.floor((mixed / 0xffffffff) * 360);
-  const hue2 = (hue + 137) % 360;
-  const sat = 70 + ((mixed >>> 24) % 14); // 70..83
-  const light = 45 + ((mixed >>> 16) % 10); // 45..54
+  const base = bitCycleHash(normalized, 33, 997, 17);
+  const fade = bitCycleHash(normalized, 29, 991, 53);
+  const hue = (base * 47) % 360;
+  const hueFade = (hue + ((fade * 61) % 181) + 37) % 360;
 
   return [
-    `background-color:hsl(${hue} ${sat}% ${Math.max(32, light - 8)}%)`,
-    `background-image:linear-gradient(145deg,hsl(${hue} ${sat}% ${Math.min(66, light + 8)}%),hsl(${hue2} ${Math.max(55, sat - 8)}% ${Math.max(34, light - 6)}%))`,
+    `background-color:hsl(${hue} 72% 43%)`,
+    `background-image:linear-gradient(145deg,hsl(${hue} 80% 56%),hsl(${hueFade} 66% 38%))`,
   ].join(";");
 }
