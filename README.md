@@ -29,6 +29,8 @@
 - Async add-account setup flow for Steam and Riot with pending card + polling.
 - OS-aware platform availability in the UI (unsupported/planned platforms are disabled).
 - Optional Riot "last login" display (manual, disabled by default).
+- Riot setup/switch now avoids killing active game processes (LoL/Valorant must be closed first).
+- Steam avatar refresh keeps the previous avatar when remote data is empty/invalid.
 
 ## Installation
 ### From Releases
@@ -57,6 +59,7 @@ pnpm tauri dev
 - Riot profile metadata and session snapshots are stored locally in the app data directory.
 - Snapshot files are used only for local restore/switch flows and are not uploaded by accshift.
 - Riot snapshot data is currently not encrypted at rest.
+- Riot setup/switch only terminates Riot client processes, not game binaries.
 - Steam API keys are encrypted at rest using OS-level secret storage.
 
 ## Project Structure
