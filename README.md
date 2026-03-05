@@ -24,14 +24,6 @@
 | Battle.net | 🚧 Planned | 🚧 Planned | 🚧 Planned |
 | Epic Games | 🚧 Planned | 🚧 Planned | 🚧 Planned |
 
-## Highlights
-- Windows support for Steam and Riot Games account management.
-- Async add-account setup flow for Steam and Riot with pending card + polling.
-- OS-aware platform availability in the UI (unsupported/planned platforms are disabled).
-- Optional Riot "last login" display (manual, disabled by default).
-- Riot setup/switch now avoids killing active game processes (LoL/Valorant must be closed first).
-- Steam avatar refresh keeps the previous avatar when remote data is empty/invalid.
-
 ## Installation
 ### From Releases
 Download the latest installer from:
@@ -100,4 +92,4 @@ src-tauri/src/
 MIT. See [LICENSE](./LICENSE).
 
 ## Disclaimer
-This project is not affiliated with Valve or Riot Games.
+This project is not affiliated with Valve or Riot Games. Use it at your own risk.
