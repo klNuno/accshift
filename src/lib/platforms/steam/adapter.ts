@@ -13,6 +13,15 @@ import { getSteamContextMenuItems } from "./contextMenu";
 import { getCachedSteamWarningStates, loadSteamWarningStates } from "./warnings";
 import type { SteamAccount } from "./types";
 
+function isSafeAvatarUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 function toAccount(s: SteamAccount): PlatformAccount {
   return {
     id: s.steam_id,
@@ -79,8 +88,12 @@ export const steamAdapter: PlatformAdapter = {
   async getProfileInfo(accountId: string): Promise<PlatformProfileInfo | null> {
     const profile = await fetchProfile(accountId);
     if (!profile) return null;
+    const avatarUrl = (profile.avatar_url ?? "").trim();
+    if (!avatarUrl || !isSafeAvatarUrl(avatarUrl)) {
+      return null;
+    }
     return {
-      avatarUrl: profile.avatar_url,
+      avatarUrl,
       displayName: profile.display_name,
     };
   },
