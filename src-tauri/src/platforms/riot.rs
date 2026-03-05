@@ -17,13 +17,16 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-const RIOT_PROCESS_NAMES: &[&str] = &[
+const RIOT_CLIENT_PROCESS_NAMES: &[&str] = &[
     "RiotClientServices.exe",
     "RiotClientUx.exe",
     "RiotClientUxRender.exe",
     "LeagueClient.exe",
     "LeagueClientUx.exe",
     "LeagueClientUxRender.exe",
+];
+
+const RIOT_GAME_PROCESS_NAMES: &[&str] = &[
     "LeagueofLegends.exe",
     "VALORANT-Win64-Shipping.exe",
 ];
@@ -174,18 +177,37 @@ fn env_path(name: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("Missing environment variable: {name}"))
 }
 
-fn is_any_riot_process_running() -> bool {
-    RIOT_PROCESS_NAMES
+fn is_any_process_running(process_names: &[&str]) -> bool {
+    process_names
         .iter()
         .any(|process_name| os::is_process_running(process_name))
 }
 
-fn kill_riot_processes() {
+fn running_process_names(process_names: &'static [&'static str]) -> Vec<&'static str> {
+    process_names
+        .iter()
+        .copied()
+        .filter(|process_name| os::is_process_running(process_name))
+        .collect()
+}
+
+fn ensure_no_riot_game_running(action: &str) -> Result<(), String> {
+    let running_games = running_process_names(RIOT_GAME_PROCESS_NAMES);
+    if running_games.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "Close Riot game processes before {action}: {}",
+        running_games.join(", ")
+    ))
+}
+
+fn kill_riot_client_processes() {
     for _ in 0..4 {
-        for process_name in RIOT_PROCESS_NAMES {
+        for process_name in RIOT_CLIENT_PROCESS_NAMES {
             let _ = os::kill_process(process_name);
         }
-        if !is_any_riot_process_running() {
+        if !is_any_process_running(RIOT_CLIENT_PROCESS_NAMES) {
             break;
         }
         thread::sleep(std::time::Duration::from_millis(450));
@@ -193,9 +215,9 @@ fn kill_riot_processes() {
 }
 
 fn prepare_clean_riot_launch(app_handle: &tauri::AppHandle) -> Result<(), String> {
-    kill_riot_processes();
+    kill_riot_client_processes();
     clear_live_riot_setup_state(app_handle)?;
-    kill_riot_processes();
+    kill_riot_client_processes();
     thread::sleep(std::time::Duration::from_millis(250));
     Ok(())
 }
@@ -920,6 +942,7 @@ pub fn get_current_profile(app_handle: tauri::AppHandle) -> Result<String, Strin
 }
 
 pub fn begin_profile_setup(app_handle: tauri::AppHandle) -> Result<RiotProfileSetupStatus, String> {
+    ensure_no_riot_game_running("starting Riot account setup")?;
     let client_path = resolve_riot_client_path(&app_handle)?;
     let mut cfg = config::load_config(&app_handle);
 
@@ -1025,6 +1048,7 @@ pub fn capture_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resu
 }
 
 pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
+    ensure_no_riot_game_running("switching Riot account")?;
     let client_path = resolve_riot_client_path(&app_handle)?;
     let target_id = normalize_profile_id(&profile_id)?;
     let current_live_identity = detect_live_identity().ok();
@@ -1063,7 +1087,7 @@ pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
         }
     }
 
-    kill_riot_processes();
+    kill_riot_client_processes();
     let restored = restore_live_snapshot(&app_handle, &target_id)?;
     cfg.riot.current_profile_id = target_id.clone();
     let next_state = if restored {
