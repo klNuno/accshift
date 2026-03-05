@@ -6,7 +6,7 @@
   import { hasCardExtensionContent } from "$lib/shared/cardExtension";
   import CardExtensionPanel from "./CardExtensionPanel.svelte";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
-  import { getAvatarGradientStyle, getAvatarInitials } from "$lib/shared/avatarFallback";
+  import { getAvatarGradientStyle, getAvatarInitials, getAvatarSeed } from "$lib/shared/avatarFallback";
   import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
 
   let {
@@ -77,6 +77,7 @@
   const EXTENSION_VIEWPORT_GAP_PX = 12;
   const noteText = $derived(note.trim());
   const hasUsername = $derived(Boolean(showUsername && account.username.trim()));
+  const avatarSeed = $derived(getAvatarSeed(account.displayName, account.username, account.id));
   const hasRedWarning = $derived(warningInfo?.cardOutlineTone === "red");
   const hasOrangeWarning = $derived(warningInfo?.cardOutlineTone === "orange");
   const hasInlineNote = $derived(Boolean(showNoteInline && noteText));
@@ -239,7 +240,7 @@
     <div
       class="avatar"
       class:active={isActive}
-      style={!avatarUrl && !isLoadingAvatar ? getAvatarGradientStyle(account.id) : ""}
+      style={!avatarUrl && !isLoadingAvatar ? getAvatarGradientStyle(avatarSeed) : ""}
     >
       <div class="avatar-media">
         {#if isLoadingAvatar}

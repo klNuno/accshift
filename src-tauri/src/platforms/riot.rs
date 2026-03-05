@@ -788,7 +788,6 @@ fn capture_profile_into_snapshot(
     profile_id: &str,
     identity: Option<&RiotDetectedIdentity>,
 ) -> Result<(), String> {
-    kill_riot_processes();
     backup_live_snapshot(app_handle, profile_id)?;
     cfg.riot.current_profile_id = profile_id.to_string();
     update_profile_state(

@@ -3,7 +3,7 @@
   import type { AccountWarningPresentation } from "../accountWarnings";
   import type { FolderInfo } from "../../features/folders/types";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
-  import { getAvatarGradientStyle, getAvatarInitials } from "$lib/shared/avatarFallback";
+  import { getAvatarGradientStyle, getAvatarInitials, getAvatarSeed } from "$lib/shared/avatarFallback";
   import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
 
   let {
@@ -15,6 +15,8 @@
     isDragged = false,
     isDragOver = false,
     avatarUrl = null,
+    isLoadingAvatar = false,
+    allowMetaWrap = false,
     warningInfo = undefined,
     showUsername = true,
     showLastLogin = false,
@@ -33,6 +35,8 @@
     isDragged?: boolean;
     isDragOver?: boolean;
     avatarUrl?: string | null;
+    isLoadingAvatar?: boolean;
+    allowMetaWrap?: boolean;
     warningInfo?: AccountWarningPresentation;
     showUsername?: boolean;
     showLastLogin?: boolean;
@@ -54,6 +58,10 @@
 
   let hasOrangeWarning = $derived(Boolean(warningInfo?.listHasOrange));
   let hasUsername = $derived(Boolean(showUsername && account?.username.trim()));
+  let avatarSeed = $derived.by(() => {
+    if (!account) return "";
+    return getAvatarSeed(account.displayName, account.username, account.id);
+  });
 
   let banHoverMessage = $derived.by(() => {
     return warningInfo?.tooltipText || "";
@@ -102,9 +110,11 @@
       class="avatar"
       class:ban-red={hasRedWarning}
       class:ban-orange={hasOrangeWarning}
-      style={!avatarUrl ? getAvatarGradientStyle(account.id) : ""}
+      style={!avatarUrl && !isLoadingAvatar ? getAvatarGradientStyle(avatarSeed) : ""}
     >
-      {#if avatarUrl}
+      {#if isLoadingAvatar}
+        <div class="loader"></div>
+      {:else if avatarUrl}
         <img src={avatarUrl} alt={account.displayName} draggable={false} />
       {:else}
         <span class="initials">{getAvatarInitials(account.displayName || account.username)}</span>
@@ -113,7 +123,7 @@
     <div class="info">
       <span class="name-text">{account.displayName || account.username}</span>
       {#if hasUsername || showLastLogin}
-        <span class="meta-stack">
+        <span class="meta-stack" class:wrap={allowMetaWrap}>
           {#if hasUsername}
             <span class="username-text">{account.username}</span>
           {/if}
@@ -262,6 +272,13 @@
     text-overflow: ellipsis;
   }
 
+  .meta-stack.wrap {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    line-height: 1.3;
+  }
+
   .username-text {
     color: var(--fg-muted);
   }
@@ -269,6 +286,19 @@
   .meta-text {
     font-weight: 500;
     color: color-mix(in srgb, var(--fg-subtle) 40%, var(--fg) 60%);
+  }
+
+  .loader {
+    width: 15px;
+    height: 15px;
+    border-radius: 999px;
+    border: 2px solid color-mix(in srgb, var(--fg) 24%, transparent);
+    border-top-color: var(--fg);
+    animation: spin 0.75s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 
   .active-badge {

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { PlatformAddFlowStatus } from "$lib/shared/platform";
+import { toPlatformAddFlowStatus } from "$lib/platforms/addFlow";
 import type { RiotProfile, RiotStartupSnapshot } from "./types";
 
 interface RiotSetupStatusPayload {
@@ -8,16 +9,6 @@ interface RiotSetupStatusPayload {
   accountId?: string;
   accountDisplayName?: string;
   errorMessage?: string;
-}
-
-function toPlatformAddFlowStatus(payload: RiotSetupStatusPayload): PlatformAddFlowStatus {
-  return {
-    setupId: payload.profileId,
-    state: payload.state,
-    accountId: payload.accountId,
-    accountDisplayName: payload.accountDisplayName,
-    errorMessage: payload.errorMessage,
-  };
 }
 
 export async function getProfiles(): Promise<RiotProfile[]> {
@@ -34,12 +25,12 @@ export async function getStartupSnapshot(): Promise<RiotStartupSnapshot> {
 
 export async function beginProfileSetup(): Promise<PlatformAddFlowStatus> {
   const payload = await invoke<RiotSetupStatusPayload>("begin_riot_profile_setup");
-  return toPlatformAddFlowStatus(payload);
+  return toPlatformAddFlowStatus(payload.profileId, payload);
 }
 
 export async function getProfileSetupStatus(profileId: string): Promise<PlatformAddFlowStatus> {
   const payload = await invoke<RiotSetupStatusPayload>("get_riot_profile_setup_status", { profileId });
-  return toPlatformAddFlowStatus(payload);
+  return toPlatformAddFlowStatus(payload.profileId, payload);
 }
 
 export async function cancelProfileSetup(profileId: string): Promise<void> {

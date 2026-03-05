@@ -8,18 +8,40 @@
     steamPath = $bindable(),
     apiKey = $bindable(),
     apiKeyConfigured = false,
+    showSteamTools = true,
+    avatarCacheDaysInput = "",
+    banCheckDaysInput = "",
+    avatarRefreshLoading = false,
+    banRefreshLoading = false,
     onChooseSteamFolder,
     onOpenSteamApiKeyPage,
     onApiKeyInput = () => {},
+    onAvatarCacheDaysInput = () => {},
+    onBanCheckDaysInput = () => {},
+    onCommitAvatarCacheDays = () => {},
+    onCommitBanCheckDays = () => {},
+    onRefreshAvatarsNow = async () => {},
+    onRefreshBansNow = async () => {},
     t,
   }: {
     settings: AppSettings;
     steamPath: string;
     apiKey: string;
     apiKeyConfigured?: boolean;
+    showSteamTools?: boolean;
+    avatarCacheDaysInput?: string;
+    banCheckDaysInput?: string;
+    avatarRefreshLoading?: boolean;
+    banRefreshLoading?: boolean;
     onChooseSteamFolder: () => void | Promise<void>;
     onOpenSteamApiKeyPage: () => void | Promise<void>;
     onApiKeyInput?: (value: string) => void;
+    onAvatarCacheDaysInput?: (value: string) => void;
+    onBanCheckDaysInput?: (value: string) => void;
+    onCommitAvatarCacheDays?: () => void;
+    onCommitBanCheckDays?: () => void;
+    onRefreshAvatarsNow?: () => void | Promise<void>;
+    onRefreshBansNow?: () => void | Promise<void>;
     t: (key: MessageKey, params?: TranslationParams) => string;
   } = $props();
 </script>
@@ -83,6 +105,74 @@
       oninput={(e) => onApiKeyInput((e.currentTarget as HTMLInputElement).value)}
     />
   </div>
+
+  {#if showSteamTools}
+    <div class="field">
+      <div class="row">
+        <span>{t("settings.avatarRefresh")}</span>
+        <span>{t("settings.zeroEachLaunch")}</span>
+      </div>
+      <div class="input-row">
+        <input
+          type="number"
+          min="0"
+          max="90"
+          step="1"
+          value={avatarCacheDaysInput}
+          oninput={(e) => onAvatarCacheDaysInput((e.currentTarget as HTMLInputElement).value)}
+          onblur={onCommitAvatarCacheDays}
+          onkeydown={(e) => {
+            if (e.key === "Enter") {
+              onCommitAvatarCacheDays();
+              (e.currentTarget as HTMLInputElement).blur();
+            }
+          }}
+          class="text-input number-input"
+        />
+        <button
+          class="browse-btn"
+          type="button"
+          onclick={onRefreshAvatarsNow}
+          disabled={avatarRefreshLoading}
+        >
+          {t("settings.refreshNow")}
+        </button>
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="row">
+        <span>{t("settings.banCheckDelay")}</span>
+        <span>{t("settings.zeroEachLaunch")}</span>
+      </div>
+      <div class="input-row">
+        <input
+          type="number"
+          min="0"
+          max="90"
+          step="1"
+          value={banCheckDaysInput}
+          oninput={(e) => onBanCheckDaysInput((e.currentTarget as HTMLInputElement).value)}
+          onblur={onCommitBanCheckDays}
+          onkeydown={(e) => {
+            if (e.key === "Enter") {
+              onCommitBanCheckDays();
+              (e.currentTarget as HTMLInputElement).blur();
+            }
+          }}
+          class="text-input number-input"
+        />
+        <button
+          class="browse-btn"
+          type="button"
+          onclick={onRefreshBansNow}
+          disabled={banRefreshLoading}
+        >
+          {t("settings.refreshNow")}
+        </button>
+      </div>
+    </div>
+  {/if}
 </section>
 
 <style>

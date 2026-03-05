@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { PlatformAddFlowStatus } from "$lib/shared/platform";
+import { toPlatformAddFlowStatus } from "$lib/platforms/addFlow";
 import type { SteamAccount, ProfileInfo, BanInfo, CopyableGame, SteamStartupSnapshot } from "./types";
 import { getSettings } from "../../features/settings/store";
 
@@ -9,16 +10,6 @@ interface SteamSetupStatusPayload {
   accountId?: string;
   accountDisplayName?: string;
   errorMessage?: string;
-}
-
-function toPlatformAddFlowStatus(payload: SteamSetupStatusPayload): PlatformAddFlowStatus {
-  return {
-    setupId: payload.setupId,
-    state: payload.state,
-    accountId: payload.accountId,
-    accountDisplayName: payload.accountDisplayName,
-    errorMessage: payload.errorMessage,
-  };
 }
 
 function getSteamLaunchConfig() {
@@ -59,12 +50,12 @@ export async function addAccount(): Promise<void> {
 export async function beginAccountSetup(): Promise<PlatformAddFlowStatus> {
   const cfg = getSteamLaunchConfig();
   const payload = await invoke<SteamSetupStatusPayload>("begin_steam_account_setup", cfg);
-  return toPlatformAddFlowStatus(payload);
+  return toPlatformAddFlowStatus(payload.setupId, payload);
 }
 
 export async function getAccountSetupStatus(setupId: string): Promise<PlatformAddFlowStatus> {
   const payload = await invoke<SteamSetupStatusPayload>("get_steam_account_setup_status", { setupId });
-  return toPlatformAddFlowStatus(payload);
+  return toPlatformAddFlowStatus(payload.setupId, payload);
 }
 
 export async function cancelAccountSetup(setupId: string): Promise<void> {

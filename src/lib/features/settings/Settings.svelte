@@ -16,16 +16,18 @@
   } from "$lib/i18n";
   import { hashPinCode, sanitizePinDigits } from "$lib/shared/pin";
 
-  let { onClose, onPlatformsChanged, onRefreshAvatarsNow = async () => {}, onRefreshBansNow = async () => {}, runtimeOs = "unknown" }: {
+  let { onClose, onPlatformsChanged, onRefreshAvatarsNow = async () => {}, onRefreshBansNow = async () => {}, runtimeOs = "unknown", activePlatformId = "steam" }: {
     onClose: () => void;
     onPlatformsChanged?: () => void;
     onRefreshAvatarsNow?: () => void | Promise<void>;
     onRefreshBansNow?: () => void | Promise<void>;
     runtimeOs?: "windows" | "linux" | "macos" | "unknown";
+    activePlatformId?: string;
   } = $props();
 
   let settings = $state(getSettings());
   let steamEnabled = $derived(settings.enabledPlatforms.includes("steam"));
+  let steamToolsEnabled = $derived(activePlatformId === "steam");
   let apiKey = $state("");
   let apiKeyConfigured = $state(false);
   let apiKeyTouched = $state(false);
@@ -436,82 +438,6 @@
     </section>
 
     <section class="card">
-      <h3>{t("settings.dataRefresh")}</h3>
-
-      <div class="field">
-        <div class="row">
-          <span>{t("settings.avatarRefresh")}</span>
-          <span class="hint">{t("settings.zeroEachLaunch")}</span>
-        </div>
-        <div class="input-row">
-          <input
-            type="number"
-            min="0"
-            max="90"
-            step="1"
-            value={avatarCacheDaysInput}
-            oninput={(e) => avatarCacheDaysInput = (e.currentTarget as HTMLInputElement).value}
-            onblur={commitAvatarCacheDays}
-            onkeydown={(e) => {
-              if (e.key === "Enter") {
-                commitAvatarCacheDays();
-                (e.currentTarget as HTMLInputElement).blur();
-              }
-            }}
-            class="text-input number-input"
-          />
-          <button
-            class="inline-action-btn"
-            type="button"
-            onclick={handleRefreshAvatarsNow}
-            disabled={avatarRefreshLoading}
-          >
-            {#if avatarRefreshLoading}
-              <span class="inline-action-spinner" aria-hidden="true"></span>
-            {/if}
-            <span>{t("settings.refreshNow")}</span>
-          </button>
-        </div>
-      </div>
-
-      <div class="field">
-        <div class="row">
-          <span>{t("settings.banCheckDelay")}</span>
-          <span class="hint">{t("settings.zeroEachLaunch")}</span>
-        </div>
-        <div class="input-row">
-          <input
-            type="number"
-            min="0"
-            max="90"
-            step="1"
-            value={banCheckDaysInput}
-            oninput={(e) => banCheckDaysInput = (e.currentTarget as HTMLInputElement).value}
-            onblur={commitBanCheckDays}
-            onkeydown={(e) => {
-              if (e.key === "Enter") {
-                commitBanCheckDays();
-                (e.currentTarget as HTMLInputElement).blur();
-              }
-            }}
-            class="text-input number-input"
-          />
-          <button
-            class="inline-action-btn"
-            type="button"
-            onclick={handleRefreshBansNow}
-            disabled={banRefreshLoading}
-          >
-            {#if banRefreshLoading}
-              <span class="inline-action-spinner" aria-hidden="true"></span>
-            {/if}
-            <span>{t("settings.refreshNow")}</span>
-          </button>
-        </div>
-      </div>
-    </section>
-
-    <section class="card">
       <h3>{t("settings.privacy")}</h3>
       <label class="field">
         <div class="row">
@@ -581,13 +507,24 @@
         {settings}
         bind:steamPath
         bind:apiKey
+        showSteamTools={steamToolsEnabled}
         {apiKeyConfigured}
+        {avatarCacheDaysInput}
+        {banCheckDaysInput}
+        {avatarRefreshLoading}
+        {banRefreshLoading}
         onChooseSteamFolder={chooseSteamFolder}
         onOpenSteamApiKeyPage={openSteamApiKeyPage}
         onApiKeyInput={(value) => {
           apiKey = value;
           apiKeyTouched = true;
         }}
+        onAvatarCacheDaysInput={(value) => avatarCacheDaysInput = value}
+        onBanCheckDaysInput={(value) => banCheckDaysInput = value}
+        onCommitAvatarCacheDays={commitAvatarCacheDays}
+        onCommitBanCheckDays={commitBanCheckDays}
+        onRefreshAvatarsNow={handleRefreshAvatarsNow}
+        onRefreshBansNow={handleRefreshBansNow}
         {t}
       />
     {/if}
@@ -771,41 +708,6 @@
     font-weight: 600;
   }
 
-  .inline-action-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: var(--bg-card);
-    color: var(--fg);
-    font-size: 11px;
-    line-height: 1;
-    padding: 5px 9px;
-    cursor: pointer;
-    white-space: nowrap;
-    flex: 0 0 auto;
-  }
-
-  .inline-action-btn:hover {
-    background: var(--bg-card-hover);
-  }
-
-  .inline-action-btn:disabled {
-    opacity: 0.75;
-    cursor: default;
-  }
-
-  .inline-action-spinner {
-    width: 11px;
-    height: 11px;
-    border: 2px solid color-mix(in srgb, var(--fg) 18%, transparent);
-    border-top-color: var(--fg);
-    border-radius: 999px;
-    animation: spin 0.7s linear infinite;
-  }
-
   .hint {
     font-size: 11px;
     color: var(--fg-subtle);
@@ -826,16 +728,8 @@
     border-color: #3b82f6;
   }
 
-  .input-row {
-    display: flex;
-    gap: 8px;
-  }
-
   .number-input {
     width: 100%;
   }
 
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
 </style>

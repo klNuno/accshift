@@ -20,15 +20,8 @@
       {#if section.title}
         <div class="section-title">{section.title}</div>
       {/if}
-      {#if section.loading}
-        <div class="loading-row">
-          <span class="spinner" aria-hidden="true"></span>
-          {#if section.text}
-            <span>{section.text}</span>
-          {/if}
-        </div>
-      {:else if section.text}
-        <div class="section-text">{section.text}</div>
+      {#if section.text}
+        <div class="section-text" class:loading-text={section.loading}>{section.text}</div>
       {/if}
       {#if section.lines?.length}
         <div class="section-lines">
@@ -116,12 +109,15 @@
   }
 
   .section-text,
-  .section-line,
-  .loading-row {
+  .section-line {
     font-size: 11px;
     line-height: 1.45;
     color: var(--fg);
     word-break: break-word;
+  }
+
+  .section-text.loading-text {
+    opacity: 0.9;
   }
 
   .section-lines {
@@ -179,23 +175,4 @@
     border: 1px solid rgba(148, 163, 184, 0.3);
   }
 
-  .loading-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .spinner {
-    width: 12px;
-    height: 12px;
-    border: 2px solid color-mix(in srgb, var(--fg) 20%, transparent);
-    border-top-color: var(--fg);
-    border-radius: 999px;
-    animation: spin 0.7s linear infinite;
-    flex: 0 0 auto;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
 </style>

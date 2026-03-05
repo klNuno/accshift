@@ -21,6 +21,7 @@
     getAccountNote = () => "",
     accentColor = "#3b82f6",
     locale = DEFAULT_LOCALE,
+    pendingSetupId = null,
     dragItem = null,
     dragOverFolderId = null,
     dragOverBack = false,
@@ -45,6 +46,7 @@
     getAccountNote?: (accountId: string) => string;
     accentColor?: string;
     locale?: Locale;
+    pendingSetupId?: string | null;
     dragItem?: ItemRef | null;
     dragOverFolderId?: string | null;
     dragOverBack?: boolean;
@@ -97,6 +99,7 @@
 
     {#each accountItems as item (item.id)}
       {@const account = accounts[item.id]}
+      {@const isPendingSetup = pendingSetupId === item.id}
       <div animate:flip={{ duration: 200 }}>
         {#if account}
           <ListRow
@@ -108,12 +111,17 @@
             isActive={account.id === currentAccountId}
             isSelected={selectedAccountId === account.id}
             avatarUrl={avatarStates[account.id]?.url}
+            isLoadingAvatar={isPendingSetup}
+            allowMetaWrap={isPendingSetup}
             warningInfo={warningStates[account.id]}
             onClick={() => {
               onAccountActivate(account);
               selectAccount(account.id);
             }}
-            onDblClick={() => onSwitch(account)}
+            onDblClick={() => {
+              if (isPendingSetup) return;
+              onSwitch(account);
+            }}
             onContextMenu={(e) => onAccountContextMenu(e, account)}
             {locale}
             isDragged={dragItem?.type === "account" && dragItem?.id === account.id}
@@ -125,6 +133,7 @@
 
   <div class="preview-panel">
     {#if selectedAccount}
+      {@const selectedIsPendingSetup = pendingSetupId === selectedAccount.id}
       <PreviewPanel
         account={selectedAccount}
         showUsername={showUsernames}
@@ -133,11 +142,17 @@
         lastLoginAt={selectedAccount.lastLoginAt}
         isActive={selectedAccount.id === currentAccountId}
         avatarUrl={avatarStates[selectedAccount.id]?.url}
+        isLoadingAvatar={selectedIsPendingSetup}
+        showSwitchButton={!selectedIsPendingSetup}
+        allowMetaWrap={selectedIsPendingSetup}
         accountNote={getAccountNote(selectedAccount.id)}
         warningInfo={warningStates[selectedAccount.id]}
         {accentColor}
         {locale}
-        onSwitch={() => onSwitch(selectedAccount!)}
+        onSwitch={() => {
+          if (selectedIsPendingSetup) return;
+          onSwitch(selectedAccount!);
+        }}
       />
     {:else}
       <div class="no-selection">

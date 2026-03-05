@@ -757,7 +757,7 @@
   }
 
   async function refreshAvatarsNow() {
-    if (!adapter) return;
+    if (!adapter || activeTab !== "steam") return;
     try {
       const count = await loader.refreshVisibleAccounts(false, true, true, false);
       showToast(t("toast.avatarRefreshComplete", { count }));
@@ -767,7 +767,7 @@
   }
 
   async function refreshBansNow() {
-    if (!adapter) return;
+    if (!adapter || activeTab !== "steam") return;
     try {
       const count = await loader.refreshVisibleAccounts(true, true, true, false);
       showToast(t("toast.banRefreshComplete", { count }));
@@ -927,7 +927,12 @@
       ];
     }
     if (contextMenu.isBackground) {
-      return [{ label: t("context.menu.newFolder"), action: () => showNewFolderDialog() }];
+      const items: ContextMenuItem[] = [];
+      if (activeTabUsable && adapter) {
+        items.push({ label: t("context.menu.refresh"), action: () => loadAccounts(false, true, false, true) });
+      }
+      items.push({ label: t("context.menu.newFolder"), action: () => showNewFolderDialog() });
+      return items;
     }
     return [];
   }
@@ -1224,6 +1229,7 @@
         onRefreshAvatarsNow={refreshAvatarsNow}
         onRefreshBansNow={refreshBansNow}
         {runtimeOs}
+        activePlatformId={activeTab}
       />
     {:else}
       <div class="center-msg">
@@ -1294,6 +1300,7 @@
             showUsernames={settings.accountDisplay.showUsernames}
             showLastLogin={showLastLoginForActiveTab}
             {lastLoginUnknownKey}
+            pendingSetupId={pendingSetupAccount?.id ?? null}
             {currentFolderId}
             {currentAccountId}
           avatarStates={loader.avatarStates}
@@ -1379,8 +1386,8 @@
                   cardColor={getAccountCardColor(account.id)}
                   note={getAccountNote(account.id)}
                   showNoteInline={settings.accountDisplay.showCardNotesInline}
-                  showUsername={settings.accountDisplay.showUsernames}
-                  showLastLogin={showLastLoginForActiveTab}
+                  showUsername={isPendingSetupAccount(account.id) ? false : settings.accountDisplay.showUsernames}
+                  showLastLogin={isPendingSetupAccount(account.id) ? false : showLastLoginForActiveTab}
                   lastLoginAt={account.lastLoginAt}
                   {lastLoginUnknownKey}
                   {locale}
