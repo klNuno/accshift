@@ -5,14 +5,28 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
+
+use crate::os;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+const RIOT_PROCESS_NAMES: &[&str] = &[
+    "RiotClientServices.exe",
+    "RiotClientUx.exe",
+    "RiotClientUxRender.exe",
+    "LeagueClient.exe",
+    "LeagueClientUx.exe",
+    "LeagueClientUxRender.exe",
+    "LeagueofLegends.exe",
+    "VALORANT-Win64-Shipping.exe",
+];
 
 #[derive(Clone, Copy)]
 enum RiotPathBase {
@@ -87,11 +101,28 @@ const RIOT_SNAPSHOT_ITEMS: &[RiotSnapshotItem] = &[
     },
 ];
 
+const RIOT_SETUP_RESET_ITEMS: &[&str] = &[
+    "RiotGamesPrivateSettings.yaml",
+    "LeagueRiotGamesPrivateSettings.yaml",
+    "Sessions",
+    "RiotClientConfig",
+];
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RiotStartupSnapshot {
     pub profiles: Vec<RiotProfileConfig>,
     pub current_profile: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RiotProfileSetupStatus {
+    pub profile_id: String,
+    pub state: String,
+    pub account_id: String,
+    pub account_display_name: String,
+    pub error_message: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,12 +133,19 @@ struct RiotAliasResponse {
     tag_line: String,
 }
 
+#[derive(Debug)]
+struct RiotLoginStatus {
+    phase: String,
+    persist: bool,
+}
+
 struct RiotLocalApiAccess {
     protocol: String,
     port: u16,
     password: String,
 }
 
+#[derive(Clone)]
 struct RiotDetectedIdentity {
     account_name: String,
     account_tag_line: String,
@@ -136,26 +174,37 @@ fn env_path(name: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("Missing environment variable: {name}"))
 }
 
-fn hidden_taskkill(process_name: &str) {
-    let _ = hidden_command("taskkill")
-        .args(["/F", "/IM", process_name, "/T"])
-        .output();
+fn is_any_riot_process_running() -> bool {
+    RIOT_PROCESS_NAMES
+        .iter()
+        .any(|process_name| os::is_process_running(process_name))
 }
 
 fn kill_riot_processes() {
-    for process_name in [
-        "RiotClientServices.exe",
-        "RiotClientUx.exe",
-        "RiotClientUxRender.exe",
-        "LeagueClient.exe",
-        "LeagueClientUx.exe",
-        "LeagueClientUxRender.exe",
-        "LeagueofLegends.exe",
-        "VALORANT-Win64-Shipping.exe",
-    ] {
-        hidden_taskkill(process_name);
+    for _ in 0..4 {
+        for process_name in RIOT_PROCESS_NAMES {
+            let _ = os::kill_process(process_name);
+        }
+        if !is_any_riot_process_running() {
+            break;
+        }
+        thread::sleep(std::time::Duration::from_millis(450));
     }
-    std::thread::sleep(std::time::Duration::from_millis(500));
+}
+
+fn prepare_clean_riot_launch(app_handle: &tauri::AppHandle) -> Result<(), String> {
+    kill_riot_processes();
+    clear_live_riot_setup_state(app_handle)?;
+    kill_riot_processes();
+    thread::sleep(std::time::Duration::from_millis(250));
+    Ok(())
+}
+
+fn spawn_riot_setup_launch(app_handle: tauri::AppHandle, client_path: PathBuf) {
+    thread::spawn(move || {
+        let _ = prepare_clean_riot_launch(&app_handle);
+        let _ = launch_riot_client(&client_path);
+    });
 }
 
 fn detect_installation_path_from_installs() -> Option<String> {
@@ -366,87 +415,65 @@ fn apply_detected_identity(profile: &mut RiotProfileConfig, identity: &RiotDetec
     }
 }
 
-fn maybe_sync_current_profile_identity(app_handle: &tauri::AppHandle, cfg: &mut config::AppConfig) {
-    let current_id = current_profile_id(cfg);
-    if current_id.is_empty() {
-        return;
-    }
-
-    let Ok(identity) = detect_live_identity() else {
-        return;
-    };
-
-    let Some(profile) = cfg.riot.profiles.iter_mut().find(|profile| profile.id == current_id) else {
-        return;
-    };
-
-    let old_label = profile.label.clone();
-    let old_name = profile.account_name.clone();
-    let old_tag = profile.account_tag_line.clone();
-    let old_puuid = profile.account_puuid.clone();
-    apply_detected_identity(profile, &identity);
-
-    if old_label != profile.label
-        || old_name != profile.account_name
-        || old_tag != profile.account_tag_line
-        || old_puuid != profile.account_puuid
-    {
-        let _ = config::save_config(app_handle, cfg);
+fn make_setup_status(
+    profile: &RiotProfileConfig,
+    state: &str,
+    error_message: impl Into<String>,
+) -> RiotProfileSetupStatus {
+    RiotProfileSetupStatus {
+        profile_id: profile.id.clone(),
+        state: state.to_string(),
+        account_id: profile.id.clone(),
+        account_display_name: current_account_alias(profile),
+        error_message: error_message.into(),
     }
 }
 
-fn detect_live_identity() -> Result<RiotDetectedIdentity, String> {
-    let access = read_riot_local_api_access()?;
+async fn fetch_local_json(access: &RiotLocalApiAccess, path: &str) -> Result<Value, String> {
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .build()
         .map_err(|e| format!("Could not build Riot local API client: {e}"))?;
 
+    let url = format!("{}://127.0.0.1:{}{}", access.protocol, access.port, path);
+    let response = client
+        .get(url)
+        .basic_auth("riot", Some(access.password.as_str()))
+        .send()
+        .await
+        .map_err(|e| format!("Could not query Riot local endpoint {path}: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Riot local endpoint {path} returned {}",
+            response.status()
+        ));
+    }
+
+    response
+        .json::<Value>()
+        .await
+        .map_err(|e| format!("Could not parse Riot local response {path}: {e}"))
+}
+
+fn detect_live_identity_with_access(access: &RiotLocalApiAccess) -> Result<RiotDetectedIdentity, String> {
+    let access = RiotLocalApiAccess {
+        protocol: access.protocol.clone(),
+        port: access.port,
+        password: access.password.clone(),
+    };
+
     tauri::async_runtime::block_on(async move {
-        let alias_url = format!(
-            "{}://127.0.0.1:{}/player-account/aliases/v1/active",
-            access.protocol, access.port
-        );
-        let userinfo_url = format!(
-            "{}://127.0.0.1:{}/riot-client-auth/v1/userinfo",
-            access.protocol, access.port
-        );
-
-        let alias_response = client
-            .get(alias_url)
-            .basic_auth("riot", Some(access.password.as_str()))
-            .send()
-            .await
-            .map_err(|e| format!("Could not query Riot alias endpoint: {e}"))?;
-        if !alias_response.status().is_success() {
-            return Err(format!(
-                "Riot alias endpoint returned {}",
-                alias_response.status()
-            ));
-        }
-        let alias = alias_response
-            .json::<RiotAliasResponse>()
-            .await
+        let alias_json = fetch_local_json(&access, "/player-account/aliases/v1/active").await?;
+        let alias: RiotAliasResponse = serde_json::from_value(alias_json)
             .map_err(|e| format!("Could not parse Riot alias response: {e}"))?;
-
-        let userinfo_response = client
-            .get(userinfo_url)
-            .basic_auth("riot", Some(access.password.as_str()))
-            .send()
-            .await
-            .map_err(|e| format!("Could not query Riot user info endpoint: {e}"))?;
-
-        let userinfo = if userinfo_response.status().is_success() {
-            userinfo_response
-                .json::<Value>()
-                .await
-                .map_err(|e| format!("Could not parse Riot user info response: {e}"))?
-        } else {
-            Value::Null
-        };
 
         let account_name = trim_or_empty(&alias.game_name);
         let account_tag_line = trim_or_empty(&alias.tag_line);
+
+        let userinfo = fetch_local_json(&access, "/riot-client-auth/v1/userinfo")
+            .await
+            .unwrap_or(Value::Null);
         let account_puuid = userinfo
             .get("sub")
             .and_then(Value::as_str)
@@ -465,10 +492,34 @@ fn detect_live_identity() -> Result<RiotDetectedIdentity, String> {
     })
 }
 
-fn backup_live_snapshot(
-    app_handle: &tauri::AppHandle,
-    profile_id: &str,
-) -> Result<(), String> {
+fn detect_live_identity() -> Result<RiotDetectedIdentity, String> {
+    let access = read_riot_local_api_access()?;
+    detect_live_identity_with_access(&access)
+}
+
+fn read_live_login_status(access: &RiotLocalApiAccess) -> Result<RiotLoginStatus, String> {
+    let access = RiotLocalApiAccess {
+        protocol: access.protocol.clone(),
+        port: access.port,
+        password: access.password.clone(),
+    };
+
+    tauri::async_runtime::block_on(async move {
+        let value = fetch_local_json(&access, "/riot-login/v1/status").await?;
+        let phase = value
+            .get("phase")
+            .and_then(Value::as_str)
+            .map(trim_or_empty)
+            .unwrap_or_default();
+        let persist = value
+            .get("persist")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        Ok(RiotLoginStatus { phase, persist })
+    })
+}
+
+fn backup_live_snapshot(app_handle: &tauri::AppHandle, profile_id: &str) -> Result<(), String> {
     let install_dir = resolve_riot_client_path(app_handle)
         .ok()
         .and_then(|path| path.parent().map(Path::to_path_buf));
@@ -494,10 +545,7 @@ fn backup_live_snapshot(
                     copy_optional_file(&source_path, &target_path)?;
                     captured_any = true;
                 } else if !item.optional {
-                    return Err(format!(
-                        "Required Riot session file not found: {}",
-                        source_path.display()
-                    ));
+                    return Err(format!("Required Riot session file not found: {}", source_path.display()));
                 }
             }
         }
@@ -516,6 +564,24 @@ fn clear_live_riot_state(app_handle: &tauri::AppHandle) -> Result<(), String> {
         .and_then(|path| path.parent().map(Path::to_path_buf));
 
     for item in RIOT_SNAPSHOT_ITEMS {
+        let Some(path) = live_path_for(item, install_dir.as_deref())? else {
+            continue;
+        };
+        remove_path_if_exists(&path)?;
+    }
+
+    Ok(())
+}
+
+fn clear_live_riot_setup_state(app_handle: &tauri::AppHandle) -> Result<(), String> {
+    let install_dir = resolve_riot_client_path(app_handle)
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf));
+
+    for item in RIOT_SNAPSHOT_ITEMS {
+        if !RIOT_SETUP_RESET_ITEMS.contains(&item.snapshot_name) {
+            continue;
+        }
         let Some(path) = live_path_for(item, install_dir.as_deref())? else {
             continue;
         };
@@ -571,10 +637,7 @@ fn next_profile_label(profiles: &[RiotProfileConfig]) -> String {
     let mut next_index = profiles.len() + 1;
     loop {
         let candidate = format!("Riot Profile {next_index}");
-        if !profiles
-            .iter()
-            .any(|profile| profile.label.eq_ignore_ascii_case(&candidate))
-        {
+        if !profiles.iter().any(|profile| profile.label.eq_ignore_ascii_case(&candidate)) {
             return candidate;
         }
         next_index += 1;
@@ -583,20 +646,43 @@ fn next_profile_label(profiles: &[RiotProfileConfig]) -> String {
 
 fn current_profile_id(cfg: &config::AppConfig) -> String {
     let configured = cfg.riot.current_profile_id.trim();
-    if !configured.is_empty()
-        && cfg
-            .riot
-            .profiles
-            .iter()
-            .any(|profile| profile.id == configured)
-    {
+    if !configured.is_empty() && cfg.riot.profiles.iter().any(|profile| profile.id == configured) {
         return configured.to_string();
+    }
+    cfg.riot.profiles.first().map(|profile| profile.id.clone()).unwrap_or_default()
+}
+
+fn is_visible_profile(profile: &RiotProfileConfig) -> bool {
+    profile.snapshot_state != "setup_pending"
+}
+
+fn visible_profiles(cfg: &config::AppConfig) -> Vec<RiotProfileConfig> {
+    cfg.riot
+        .profiles
+        .iter()
+        .filter(|profile| is_visible_profile(profile))
+        .cloned()
+        .collect()
+}
+
+fn visible_current_profile_id(cfg: &config::AppConfig) -> String {
+    let current_id = current_profile_id(cfg);
+    if current_id.is_empty() {
+        return current_id;
     }
     cfg.riot
         .profiles
-        .first()
+        .iter()
+        .find(|profile| profile.id == current_id && is_visible_profile(profile))
         .map(|profile| profile.id.clone())
         .unwrap_or_default()
+}
+
+fn find_pending_setup_profile(cfg: &config::AppConfig) -> Option<&RiotProfileConfig> {
+    cfg.riot
+        .profiles
+        .iter()
+        .find(|profile| profile.snapshot_state == "setup_pending")
 }
 
 fn update_profile_state(
@@ -607,12 +693,7 @@ fn update_profile_state(
     used_at: Option<Option<u64>>,
     identity: Option<&RiotDetectedIdentity>,
 ) -> Result<(), String> {
-    let Some(profile) = cfg
-        .riot
-        .profiles
-        .iter_mut()
-        .find(|profile| profile.id == profile_id)
-    else {
+    let Some(profile) = cfg.riot.profiles.iter_mut().find(|profile| profile.id == profile_id) else {
         return Err("Riot profile not found".into());
     };
 
@@ -631,30 +712,139 @@ fn update_profile_state(
     Ok(())
 }
 
+fn capture_profile_into_snapshot(
+    app_handle: &tauri::AppHandle,
+    cfg: &mut config::AppConfig,
+    profile_id: &str,
+    identity: Option<&RiotDetectedIdentity>,
+) -> Result<(), String> {
+    kill_riot_processes();
+    backup_live_snapshot(app_handle, profile_id)?;
+    cfg.riot.current_profile_id = profile_id.to_string();
+    update_profile_state(
+        cfg,
+        profile_id,
+        Some("ready"),
+        Some(Some(now_unix_ms())),
+        Some(Some(now_unix_ms())),
+        identity,
+    )?;
+    config::save_config(app_handle, cfg)
+}
+
+fn get_profile_setup_status_internal(
+    app_handle: &tauri::AppHandle,
+    cfg: &mut config::AppConfig,
+    profile_id: &str,
+) -> Result<RiotProfileSetupStatus, String> {
+    let Some(profile) = cfg.riot.profiles.iter().find(|profile| profile.id == profile_id).cloned() else {
+        return Err("Riot profile not found".into());
+    };
+
+    if profile.snapshot_state == "ready" {
+        return Ok(make_setup_status(&profile, "ready", ""));
+    }
+
+    let access = match read_riot_local_api_access() {
+        Ok(access) => access,
+        Err(_) => return Ok(make_setup_status(&profile, "waiting_for_client", "")),
+    };
+
+    let identity = detect_live_identity_with_access(&access).ok();
+    if let Some(identity) = identity.as_ref() {
+        if let Some(target) = cfg.riot.profiles.iter_mut().find(|entry| entry.id == profile_id) {
+            apply_detected_identity(target, identity);
+        }
+    }
+
+    let login_status = match read_live_login_status(&access) {
+        Ok(status) => status,
+        Err(_) => {
+            let _ = config::save_config(app_handle, cfg);
+            let updated = cfg
+                .riot
+                .profiles
+                .iter()
+                .find(|entry| entry.id == profile_id)
+                .cloned()
+                .unwrap_or(profile);
+            return Ok(make_setup_status(&updated, "waiting_for_client", ""));
+        }
+    };
+
+    if login_status.phase.eq_ignore_ascii_case("logged_in") && login_status.persist {
+        if let Some(identity) = identity.as_ref() {
+            if let Some(target) = cfg.riot.profiles.iter_mut().find(|entry| entry.id == profile_id) {
+                target.snapshot_state = "capturing".into();
+            }
+            config::save_config(app_handle, cfg)?;
+            capture_profile_into_snapshot(app_handle, cfg, profile_id, Some(identity))?;
+            let updated = cfg
+                .riot
+                .profiles
+                .iter()
+                .find(|entry| entry.id == profile_id)
+                .cloned()
+                .unwrap_or(profile);
+            return Ok(make_setup_status(&updated, "ready", ""));
+        }
+
+        let updated = cfg
+            .riot
+            .profiles
+            .iter()
+            .find(|entry| entry.id == profile_id)
+            .cloned()
+            .unwrap_or(profile);
+        let _ = config::save_config(app_handle, cfg);
+        return Ok(make_setup_status(
+            &updated,
+            "waiting_for_login",
+            "Riot account detected but alias is not ready yet.",
+        ));
+    }
+
+    let updated = cfg
+        .riot
+        .profiles
+        .iter()
+        .find(|entry| entry.id == profile_id)
+        .cloned()
+        .unwrap_or(profile);
+    let _ = config::save_config(app_handle, cfg);
+    Ok(make_setup_status(&updated, "waiting_for_login", ""))
+}
+
 pub fn get_profiles(app_handle: tauri::AppHandle) -> Result<Vec<RiotProfileConfig>, String> {
-    let mut cfg = config::load_config(&app_handle);
-    maybe_sync_current_profile_identity(&app_handle, &mut cfg);
-    Ok(cfg.riot.profiles)
+    let cfg = config::load_config(&app_handle);
+    Ok(visible_profiles(&cfg))
 }
 
 pub fn get_startup_snapshot(app_handle: tauri::AppHandle) -> Result<RiotStartupSnapshot, String> {
-    let mut cfg = config::load_config(&app_handle);
-    maybe_sync_current_profile_identity(&app_handle, &mut cfg);
-    let current_profile = current_profile_id(&cfg);
+    let cfg = config::load_config(&app_handle);
+    let current_profile = visible_current_profile_id(&cfg);
     Ok(RiotStartupSnapshot {
-        profiles: cfg.riot.profiles,
+        profiles: visible_profiles(&cfg),
         current_profile,
     })
 }
 
 pub fn get_current_profile(app_handle: tauri::AppHandle) -> Result<String, String> {
     let cfg = config::load_config(&app_handle);
-    Ok(current_profile_id(&cfg))
+    Ok(visible_current_profile_id(&cfg))
 }
 
-pub fn create_profile(app_handle: tauri::AppHandle) -> Result<(), String> {
+pub fn begin_profile_setup(app_handle: tauri::AppHandle) -> Result<RiotProfileSetupStatus, String> {
     let client_path = resolve_riot_client_path(&app_handle)?;
     let mut cfg = config::load_config(&app_handle);
+
+    if let Some(existing) = find_pending_setup_profile(&cfg).cloned() {
+        cfg.riot.current_profile_id = existing.id.clone();
+        config::save_config(&app_handle, &cfg)?;
+        spawn_riot_setup_launch(app_handle.clone(), client_path);
+        return Ok(make_setup_status(&existing, "waiting_for_client", ""));
+    }
+
     let profile_id = format!("riot-profile-{}", now_unix_ms());
     let label = next_profile_label(&cfg.riot.profiles);
 
@@ -664,7 +854,7 @@ pub fn create_profile(app_handle: tauri::AppHandle) -> Result<(), String> {
         account_name: String::new(),
         account_tag_line: String::new(),
         account_puuid: String::new(),
-        snapshot_state: "awaiting_capture".into(),
+        snapshot_state: "setup_pending".into(),
         notes: String::new(),
         last_captured_at: None,
         last_used_at: Some(now_unix_ms()),
@@ -673,9 +863,57 @@ pub fn create_profile(app_handle: tauri::AppHandle) -> Result<(), String> {
     config::save_config(&app_handle, &cfg)?;
 
     profile_snapshot_dir(&app_handle, &profile_id)?;
-    kill_riot_processes();
-    clear_live_riot_state(&app_handle)?;
-    launch_riot_client(&client_path)
+    spawn_riot_setup_launch(app_handle.clone(), client_path);
+    let created = cfg
+        .riot
+        .profiles
+        .iter()
+        .find(|profile| profile.id == profile_id)
+        .cloned()
+        .ok_or_else(|| "Riot profile not found".to_string())?;
+    Ok(make_setup_status(&created, "waiting_for_client", ""))
+}
+
+pub fn get_profile_setup_status(
+    app_handle: tauri::AppHandle,
+    profile_id: String,
+) -> Result<RiotProfileSetupStatus, String> {
+    let profile_id = profile_id.trim().to_string();
+    let mut cfg = config::load_config(&app_handle);
+    get_profile_setup_status_internal(&app_handle, &mut cfg, &profile_id)
+}
+
+pub fn cancel_profile_setup(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
+    let profile_id = profile_id.trim().to_string();
+    let mut cfg = config::load_config(&app_handle);
+    let should_remove = cfg
+        .riot
+        .profiles
+        .iter()
+        .any(|profile| profile.id == profile_id && profile.snapshot_state == "setup_pending");
+
+    if !should_remove {
+        return Ok(());
+    }
+
+    cfg.riot.profiles.retain(|profile| profile.id != profile_id);
+    if cfg.riot.current_profile_id == profile_id {
+        cfg.riot.current_profile_id = cfg
+            .riot
+            .profiles
+            .first()
+            .map(|profile| profile.id.clone())
+            .unwrap_or_default();
+    }
+    config::save_config(&app_handle, &cfg)?;
+
+    let snapshot_dir = app_profiles_root(&app_handle)?.join(profile_id);
+    if snapshot_dir.exists() {
+        fs::remove_dir_all(&snapshot_dir)
+            .map_err(|e| format!("Could not remove Riot profile snapshot {}: {e}", snapshot_dir.display()))?;
+    }
+
+    Ok(())
 }
 
 pub fn capture_profile(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
@@ -686,25 +924,14 @@ pub fn capture_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resu
         return Err("Riot profile not found".into());
     }
 
-    kill_riot_processes();
-    backup_live_snapshot(&app_handle, &profile_id)?;
-    cfg.riot.current_profile_id = profile_id.clone();
-    update_profile_state(
-        &mut cfg,
-        &profile_id,
-        Some("ready"),
-        Some(Some(now_unix_ms())),
-        Some(Some(now_unix_ms())),
-        live_identity.as_ref(),
-    )?;
-    config::save_config(&app_handle, &cfg)
+    capture_profile_into_snapshot(&app_handle, &mut cfg, &profile_id, live_identity.as_ref())
 }
 
 pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
     let client_path = resolve_riot_client_path(&app_handle)?;
+    let target_id = profile_id.trim().to_string();
     let current_live_identity = detect_live_identity().ok();
     let mut cfg = config::load_config(&app_handle);
-    let target_id = profile_id.trim().to_string();
     if !cfg.riot.profiles.iter().any(|profile| profile.id == target_id) {
         return Err("Riot profile not found".into());
     }
@@ -719,15 +946,15 @@ pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
             .map(|profile| profile.snapshot_state == "ready")
             .unwrap_or(false);
         if current_ready {
-            let _ = backup_live_snapshot(&app_handle, &current_id);
-            let _ = update_profile_state(
+            backup_live_snapshot(&app_handle, &current_id)?;
+            update_profile_state(
                 &mut cfg,
                 &current_id,
                 Some("ready"),
                 Some(Some(now_unix_ms())),
                 None,
                 current_live_identity.as_ref(),
-            );
+            )?;
         }
     }
 
@@ -744,7 +971,8 @@ pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
         None,
     )?;
     config::save_config(&app_handle, &cfg)?;
-    launch_riot_client(&client_path)
+    launch_riot_client(&client_path)?;
+    Ok(())
 }
 
 pub fn forget_profile(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
@@ -762,12 +990,8 @@ pub fn forget_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
 
     let snapshot_dir = app_profiles_root(&app_handle)?.join(profile_id);
     if snapshot_dir.exists() {
-        fs::remove_dir_all(&snapshot_dir).map_err(|e| {
-            format!(
-                "Could not remove Riot profile snapshot {}: {e}",
-                snapshot_dir.display()
-            )
-        })?;
+        fs::remove_dir_all(&snapshot_dir)
+            .map_err(|e| format!("Could not remove Riot profile snapshot {}: {e}", snapshot_dir.display()))?;
     }
 
     Ok(())

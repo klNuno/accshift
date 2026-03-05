@@ -17,7 +17,11 @@
   import BackCard from "$lib/features/folders/BackCard.svelte";
   import { getSettings, saveSettings, ALL_PLATFORMS } from "$lib/features/settings/store";
   import type { PlatformDef } from "$lib/features/settings/types";
-  import type { PlatformAccount, PlatformContextMenuConfirmConfig } from "$lib/shared/platform";
+  import type {
+    PlatformAccount,
+    PlatformAddFlowStatus,
+    PlatformContextMenuConfirmConfig,
+  } from "$lib/shared/platform";
   import { getPlatform } from "$lib/shared/platform";
   import { getPlatformDefinition, registerBuiltinPlatforms } from "$lib/platforms/registry";
   import type { ContextMenuItem, InputDialogConfig } from "$lib/shared/types";
@@ -40,6 +44,8 @@
     getAccountCardColor as getStoredAccountCardColor,
     setAccountCardColor,
   } from "$lib/shared/accountCardColors";
+  import type { CardExtensionContent } from "$lib/shared/cardExtension";
+  import { warningChipsToExtensionChips } from "$lib/shared/cardExtension";
   import {
     getAccountCardNote as getStoredAccountCardNote,
     setAccountCardNote,
@@ -133,6 +139,11 @@
   let settingsLoadPromise: Promise<void> | null = null;
   let inputDialog = $state<InputDialogConfig | null>(null);
   let confirmDialog = $state<ConfirmDialogConfig | null>(null);
+  let platformAddFlow = $state<{
+    platformId: string;
+    status: PlatformAddFlowStatus;
+  } | null>(null);
+  let platformAddFlowTimer: ReturnType<typeof setTimeout> | null = null;
   let isAccountSelectionView = $derived(!showSettings && !!adapter);
   let cardColorVersion = $state(0);
   let cardNoteVersion = $state(0);
@@ -249,6 +260,45 @@
     return arr;
   });
 
+  let pendingSetupAccount = $derived.by(() => {
+    if (!platformAddFlow) return null;
+    if (activeTab !== platformAddFlow.platformId) return null;
+    if (isSearching || currentFolderId) return null;
+    if (platformAddFlow.status.state === "ready") return null;
+    const setupId = platformAddFlow.status.setupId.trim();
+    if (!setupId) return null;
+    const detectedName = (platformAddFlow.status.accountDisplayName || "").trim();
+    return {
+      id: setupId,
+      displayName: detectedName || "Riot Account",
+      username: detectedName ? t("riot.setupConnected") : t("riot.setupWaitingForLogin"),
+      lastLoginAt: null,
+    } satisfies PlatformAccount;
+  });
+
+  let displayAccountItemsWithPending = $derived.by(() => {
+    const pending = pendingSetupAccount;
+    if (!pending) return displayAccountItems;
+    if (displayAccountItems.some((item) => item.type === "account" && item.id === pending.id)) {
+      return displayAccountItems;
+    }
+    return [...displayAccountItems, { type: "account" as const, id: pending.id }];
+  });
+
+  let renderedAccountMap = $derived.by(() => {
+    const pending = pendingSetupAccount;
+    if (!pending) return loader.accountMap;
+    return {
+      ...loader.accountMap,
+      [pending.id]: pending,
+    };
+  });
+
+  let renderedAccountCount = $derived.by(() => {
+    const pending = pendingSetupAccount;
+    return loader.accounts.length + (pending && !loader.accountMap[pending.id] ? 1 : 0);
+  });
+
   $effect(() => {
     if (showSettings || !adapter || loader.loading) return;
     const visibleIds = (isSearching ? filteredAccountItems : currentItems.filter((item) => item.type === "account"))
@@ -259,6 +309,101 @@
   });
 
   function showToast(msg: string) { addToast(msg); }
+
+  function clearPlatformAddFlowTimer() {
+    if (!platformAddFlowTimer) return;
+    clearTimeout(platformAddFlowTimer);
+    platformAddFlowTimer = null;
+  }
+
+  function stopPlatformAddFlow() {
+    clearPlatformAddFlowTimer();
+    platformAddFlow = null;
+  }
+
+  async function cancelPlatformAddFlow() {
+    const flow = platformAddFlow;
+    const flowAdapter = flow ? getPlatform(flow.platformId) : undefined;
+    if (!flow || !flowAdapter?.cancelAddFlow) {
+      stopPlatformAddFlow();
+      return;
+    }
+    try {
+      await flowAdapter.cancelAddFlow(flow.status.setupId);
+    } catch (e) {
+      showToast(String(e));
+    }
+    stopPlatformAddFlow();
+    if (activeTab === flow.platformId) {
+      loadAccounts(true);
+    }
+  }
+
+  async function cancelPlatformAddFlowIfConflicting(targetPlatformId: string, targetAccountId?: string) {
+    const flow = platformAddFlow;
+    if (!flow) return;
+    if (flow.platformId !== targetPlatformId) return;
+    if (targetAccountId && flow.status.setupId === targetAccountId) return;
+    await cancelPlatformAddFlow();
+  }
+
+  function schedulePlatformAddFlowPoll() {
+    clearPlatformAddFlowTimer();
+    platformAddFlowTimer = setTimeout(() => {
+      void pollPlatformAddFlow();
+    }, 1500);
+  }
+
+  async function pollPlatformAddFlow() {
+    const flow = platformAddFlow;
+    const flowAdapter = flow ? getPlatform(flow.platformId) : undefined;
+    if (!flow || !flowAdapter?.pollAddFlow) {
+      stopPlatformAddFlow();
+      return;
+    }
+
+    try {
+      const nextStatus = await flowAdapter.pollAddFlow(flow.status.setupId);
+      if (!platformAddFlow || platformAddFlow.status.setupId !== flow.status.setupId) return;
+      platformAddFlow = { ...platformAddFlow, status: nextStatus };
+
+      if (nextStatus.state === "ready") {
+        if (activeTab === flow.platformId) {
+          loadAccounts(true, false, false, false, false);
+        }
+        showToast(
+          nextStatus.accountDisplayName
+            ? t("riot.setupReadyWithProfile", { profile: nextStatus.accountDisplayName })
+            : t("riot.setupReady")
+        );
+        stopPlatformAddFlow();
+        return;
+      }
+
+      if (nextStatus.state === "failed") {
+        return;
+      }
+
+      schedulePlatformAddFlowPoll();
+    } catch (e) {
+      if (!platformAddFlow || platformAddFlow.status.setupId !== flow.status.setupId) return;
+      platformAddFlow = {
+        ...platformAddFlow,
+        status: {
+          ...platformAddFlow.status,
+          state: "failed",
+          errorMessage: String(e),
+        },
+      };
+    }
+  }
+
+  function startPlatformAddFlow(platformId: string, status: PlatformAddFlowStatus) {
+    platformAddFlow = { platformId, status };
+    if (status.state !== "ready" && status.state !== "failed") {
+      schedulePlatformAddFlowPoll();
+    }
+  }
 
   function clampUiScalePercent(value: number): number {
     const rounded = Math.round(value / UI_SCALE_STEP_PERCENT) * UI_SCALE_STEP_PERCENT;
@@ -327,6 +472,132 @@
     return getStoredFolderCardColor(folderId);
   }
 
+  function createRiotDetectedSection(display: string): CardExtensionContent["sections"][number] | null {
+    if (!display) return null;
+    return {
+      title: t("riot.setupDetected"),
+      text: display,
+      chips: [{ text: t("riot.setupConnected"), tone: "green" as const }],
+    };
+  }
+
+  function createWarningExtensionSection(accountId: string): CardExtensionContent["sections"][number] | null {
+    const warningInfo = loader.warningStates[accountId];
+    const warningChips = warningChipsToExtensionChips(warningInfo?.chips);
+    const warningLines = warningInfo?.tooltipText
+      ? warningInfo.tooltipText.split("\n").map((line) => line.trim()).filter(Boolean)
+      : [];
+
+    if (warningLines.length === 0 && warningChips.length === 0) {
+      return null;
+    }
+
+    return {
+      title: t("card.extensionWarnings"),
+      text: warningChips.length > 0 ? undefined : warningLines.join(" • "),
+      lines: warningChips.length > 0 ? [] : warningLines,
+      chips: warningChips,
+    };
+  }
+
+  function createNoteExtensionSection(accountId: string): CardExtensionContent["sections"][number] | null {
+    if (settings.accountDisplay.showCardNotesInline) return null;
+    const note = getAccountNote(accountId).trim();
+    if (!note) return null;
+    return {
+      title: t("card.extensionNote"),
+      lines: [note],
+      chips: [{ text: t("card.noteAttached"), tone: "slate" }],
+    };
+  }
+
+  function getRiotSetupContent(accountId: string): CardExtensionContent | null {
+    if (!platformAddFlow || platformAddFlow.platformId !== "riot") return null;
+    const setupId = platformAddFlow.status.setupId.trim();
+    if (!setupId || setupId !== accountId) return null;
+
+    const display = (platformAddFlow.status.accountDisplayName || "").trim();
+    const error = (platformAddFlow.status.errorMessage || "").trim();
+    const detectedSection = createRiotDetectedSection(display);
+
+    switch (platformAddFlow.status.state) {
+      case "waiting_for_client":
+        return {
+          sections: [
+            {
+              text: t("riot.setupWaitingForClient"),
+              loading: true,
+            },
+            {
+              lines: [t("riot.setupStaySignedIn")],
+            },
+          ],
+        };
+      case "capturing":
+        return {
+          sections: [
+            {
+              text: t("riot.setupCapturing"),
+              loading: true,
+            },
+            ...(detectedSection ? [detectedSection] : []),
+          ],
+        };
+      case "failed":
+        return {
+          sections: [
+            {
+              title: t("riot.setupFailed"),
+              text: t("riot.setupFailedMessage"),
+            },
+            ...(error ? [{
+              lines: [error],
+              chips: [{ text: t("common.close"), tone: "red" as const }],
+            }] : []),
+          ],
+        };
+      case "ready":
+        return null;
+      case "waiting_for_login":
+      default:
+        return {
+          sections: [
+            {
+              text: t("riot.setupWaitingForLogin"),
+              loading: true,
+            },
+            ...(detectedSection ? [detectedSection] : [{ lines: [t("riot.setupStaySignedIn")] }]),
+          ],
+        };
+    }
+  }
+
+  function getAccountExtensionContent(account: PlatformAccount): CardExtensionContent | null {
+    const riotSetupContent = getRiotSetupContent(account.id);
+    if (riotSetupContent) return riotSetupContent;
+
+    const sections: CardExtensionContent["sections"] = [];
+    const warningSection = createWarningExtensionSection(account.id);
+    const noteSection = createNoteExtensionSection(account.id);
+    if (warningSection) sections.push(warningSection);
+    if (noteSection) sections.push(noteSection);
+
+    return sections.length > 0 ? { sections } : null;
+  }
+
+  function isAccountExtensionForcedOpen(accountId: string): boolean {
+    return Boolean(
+      platformAddFlow
+      && platformAddFlow.platformId === activeTab
+      && platformAddFlow.status.setupId === accountId
+      && platformAddFlow.status.state !== "ready"
+    );
+  }
+
+  function isPendingSetupAccount(accountId: string): boolean {
+    return Boolean(pendingSetupAccount && pendingSetupAccount.id === accountId);
+  }
+
   async function copyToClipboard(text: string, label: string) {
     await navigator.clipboard.writeText(text);
     showToast(t("toast.copied", { label }));
@@ -375,6 +646,15 @@
     }, silent, showRefreshedToast, forceRefresh, checkBans, deferBackground);
   }
 
+  async function handleAddAccount() {
+    if (!adapter) return;
+    const platformId = adapter.id;
+    const result = await loader.addNew();
+    if (result?.setupStatus) {
+      startPlatformAddFlow(platformId, result.setupStatus);
+    }
+  }
+
   async function refreshAvatarsNow() {
     if (!adapter) return;
     try {
@@ -395,7 +675,10 @@
     }
   }
 
-  function toggleSettingsPanel() {
+  async function toggleSettingsPanel() {
+    if (!showSettings) {
+      await cancelPlatformAddFlow();
+    }
     if (!showSettings) {
       history.pushState({ tab: activeTab, folderId: currentFolderId, showSettings: true }, "");
       void loadSettingsComponent();
@@ -406,6 +689,12 @@
 
   // Navigation helpers
   function applyAppState(entry: AppHistoryEntry) {
+    if (
+      platformAddFlow
+      && (entry.showSettings || entry.tab !== platformAddFlow.platformId || entry.folderId !== currentFolderId)
+    ) {
+      void cancelPlatformAddFlow();
+    }
     const tabChanged = activeTab !== entry.tab;
     const settingsClosing = showSettings && !entry.showSettings;
     activeTab = entry.tab;
@@ -427,8 +716,9 @@
     if (e.state) applyAppState(e.state as AppHistoryEntry);
   }
 
-  function navigateTo(folderId: string | null, options: { trackHistory?: boolean } = {}) {
+  async function navigateTo(folderId: string | null, options: { trackHistory?: boolean } = {}) {
     const { trackHistory = true } = options;
+    await cancelPlatformAddFlowIfConflicting(activeTab);
     if (trackHistory) history.pushState({ tab: activeTab, folderId, showSettings: false }, "");
     currentFolderId = folderId;
     showSettings = false;
@@ -436,7 +726,8 @@
     setTimeout(grid.calculatePadding, 0);
   }
 
-  function handleTabChange(tab: string) {
+  async function handleTabChange(tab: string) {
+    await cancelPlatformAddFlow();
     history.pushState({ tab, folderId: null, showSettings: false }, "");
     activeTab = tab;
     currentFolderId = null;
@@ -535,6 +826,9 @@
   }
 
   function handlePlatformsChanged() {
+    if (platformAddFlow) {
+      void cancelPlatformAddFlow();
+    }
     settings = getSettings();
     if (!settings.enabledPlatforms.includes(activeTab)) activeTab = getInitialActiveTab(settings);
     currentFolderId = null;
@@ -726,6 +1020,7 @@
       clearTimeout(zoomPersistTimer);
       zoomPersistTimer = null;
     }
+    clearPlatformAddFlowTimer();
     window.removeEventListener("resize", grid.handleResize);
     document.removeEventListener("mousemove", drag.handleDocMouseMove);
     document.removeEventListener("scroll", drag.handleDocScroll, true);
@@ -744,10 +1039,10 @@
 <div class="app-frame" class:motion-paused={motionPaused}>
   <div class="app-stage" class:locked={isPinLocked} style={appStageStyle}>
     <div class="app-shell">
-    <TitleBar
-      onRefresh={() => loadAccounts(false, true, false, true)}
-      onAddAccount={loader.addNew}
-      onOpenSettings={toggleSettingsPanel}
+      <TitleBar
+        onRefresh={() => loadAccounts(false, true, false, true)}
+        onAddAccount={() => { void handleAddAccount(); }}
+        onOpenSettings={toggleSettingsPanel}
       onApplyUpdate={applyReadyUpdate}
       updateCtaLabel={updateCtaLabel}
       updateCtaTitle={updateCtaTitle}
@@ -788,13 +1083,17 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <main
     class="content"
-    oncontextmenu={(e) => { e.preventDefault(); contextMenu = { x: e.clientX, y: e.clientY, isBackground: true }; }}
+    oncontextmenu={(e) => {
+      e.preventDefault();
+      void cancelPlatformAddFlowIfConflicting(activeTab);
+      contextMenu = { x: e.clientX, y: e.clientY, isBackground: true };
+    }}
   >
     <div class="toolbar-row">
       <Breadcrumb
         platformName={adapter.name}
         path={folderPath}
-        onNavigate={navigateTo}
+        onNavigate={(folderId) => { void navigateTo(folderId); }}
         {accentColor}
       />
       <input
@@ -810,12 +1109,12 @@
       <div class="error-banner">{loader.error}</div>
     {/if}
 
-    {#if loader.loading}
+    {#if loader.loading && !pendingSetupAccount}
       <div class="center-msg">
         <div class="spinner" style="border-top-color: {accentColor};"></div>
         <p class="text-sm">{t("app.loading")}</p>
       </div>
-    {:else if loader.accounts.length === 0}
+    {:else if renderedAccountCount === 0}
       <div class="center-msg">
         <p>{t("app.noAccountsFound", { platform: adapter.name })}</p>
         <p class="text-sm mt-1 opacity-70">{t("app.noAccountsHint", { platform: adapter.name })}</p>
@@ -830,8 +1129,8 @@
       >
         <ListView
           folderItems={displayFolderItems}
-          accountItems={displayAccountItems}
-          accounts={loader.accountMap}
+          accountItems={displayAccountItemsWithPending}
+          accounts={renderedAccountMap}
           showUsernames={settings.accountDisplay.showUsernames}
           showLastLogin={settings.accountDisplay.showLastLogin}
           {currentFolderId}
@@ -843,11 +1142,26 @@
           dragItem={drag.dragItem}
           dragOverFolderId={drag.dragOverFolderId}
           dragOverBack={drag.dragOverBack}
-          onNavigate={(id) => navigateTo(id)}
-          onGoBack={() => history.back()}
-          onSwitch={loader.switchTo}
-          onAccountContextMenu={(e, account) => { contextMenu = { x: e.clientX, y: e.clientY, account }; }}
-          onFolderContextMenu={(e, folder) => { contextMenu = { x: e.clientX, y: e.clientY, folder }; }}
+          onNavigate={(id) => { void navigateTo(id); }}
+          onGoBack={() => {
+            void cancelPlatformAddFlowIfConflicting(activeTab);
+            history.back();
+          }}
+          onAccountActivate={(account) => { void cancelPlatformAddFlowIfConflicting(activeTab, account.id); }}
+          onSwitch={(account) => {
+            if (isPendingSetupAccount(account.id)) return;
+            void cancelPlatformAddFlowIfConflicting(activeTab, account.id);
+            void loader.switchTo(account);
+          }}
+          onAccountContextMenu={(e, account) => {
+            if (isPendingSetupAccount(account.id)) return;
+            void cancelPlatformAddFlowIfConflicting(activeTab, account.id);
+            contextMenu = { x: e.clientX, y: e.clientY, account };
+          }}
+          onFolderContextMenu={(e, folder) => {
+            void cancelPlatformAddFlowIfConflicting(activeTab);
+            contextMenu = { x: e.clientX, y: e.clientY, folder };
+          }}
           {getFolder}
           {locale}
         />
@@ -865,7 +1179,14 @@
           style="padding-left: {grid.paddingLeft}px; {grid.isResizing ? '' : 'transition: padding-left 200ms ease-out;'}"
         >
           {#if currentFolderId && !isSearching}
-            <BackCard onBack={() => history.back()} isDragOver={drag.dragOverBack} {locale} />
+            <BackCard
+              onBack={() => {
+                void cancelPlatformAddFlowIfConflicting(activeTab);
+                history.back();
+              }}
+              isDragOver={drag.dragOverBack}
+              {locale}
+            />
           {/if}
 
           {#each displayFolderItems as item (item.id)}
@@ -875,8 +1196,11 @@
                 <FolderCard
                   {folder}
                   cardColor={getFolderCardColor(folder.id)}
-                  onOpen={() => navigateTo(folder.id)}
-                  onContextMenu={(e) => { contextMenu = { x: e.clientX, y: e.clientY, folder }; }}
+                  onOpen={() => { void navigateTo(folder.id); }}
+                  onContextMenu={(e) => {
+                    void cancelPlatformAddFlowIfConflicting(activeTab);
+                    contextMenu = { x: e.clientX, y: e.clientY, folder };
+                  }}
                   isDragOver={drag.dragOverFolderId === folder.id}
                   isDragged={drag.dragItem?.type === "folder" && drag.dragItem?.id === folder.id}
                 />
@@ -884,8 +1208,8 @@
             </div>
           {/each}
 
-          {#each displayAccountItems as item (item.id)}
-            {@const account = loader.accountMap[item.id]}
+          {#each displayAccountItemsWithPending as item (item.id)}
+            {@const account = renderedAccountMap[item.id]}
             {@const avatarState = account ? loader.avatarStates[account.id] : null}
             <div animate:flip={{ duration: 200 }}>
               {#if account}
@@ -899,13 +1223,26 @@
                   lastLoginAt={account.lastLoginAt}
                   {locale}
                   isActive={account.id === currentAccountId}
-                  onSwitch={() => loader.switchTo(account)}
-                  onContextMenu={(e) => { contextMenu = { x: e.clientX, y: e.clientY, account }; }}
+                  onSwitch={() => {
+                    if (isPendingSetupAccount(account.id)) return;
+                    void cancelPlatformAddFlowIfConflicting(activeTab, account.id);
+                    void loader.switchTo(account);
+                  }}
+                  onContextMenu={(e) => {
+                    if (isPendingSetupAccount(account.id)) return;
+                    void cancelPlatformAddFlowIfConflicting(activeTab, account.id);
+                    contextMenu = { x: e.clientX, y: e.clientY, account };
+                  }}
+                  onActivate={() => { void cancelPlatformAddFlowIfConflicting(activeTab, account.id); }}
                   avatarUrl={avatarState?.url}
-                  isLoadingAvatar={avatarState?.loading ?? true}
+                  isLoadingAvatar={isPendingSetupAccount(account.id) ? true : (avatarState?.loading ?? true)}
                   isRefreshingAvatar={avatarState?.refreshing ?? false}
                   isDragged={drag.dragItem?.type === "account" && drag.dragItem?.id === account.id}
-                  warningInfo={loader.warningStates[account.id]}
+                  warningInfo={isPendingSetupAccount(account.id) ? undefined : loader.warningStates[account.id]}
+                  extensionContent={getAccountExtensionContent(account)}
+                  forceExtensionOpen={isAccountExtensionForcedOpen(account.id)}
+                  disableExtension={drag.isDragging}
+                  disableHoverExtension={Boolean(platformAddFlow && platformAddFlow.status.setupId !== account.id)}
                 />
               {/if}
             </div>
@@ -928,12 +1265,16 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <main
     class="content"
-    oncontextmenu={(e) => { e.preventDefault(); contextMenu = { x: e.clientX, y: e.clientY, isBackground: true }; }}
+    oncontextmenu={(e) => {
+      e.preventDefault();
+      void cancelPlatformAddFlowIfConflicting(activeTab);
+      contextMenu = { x: e.clientX, y: e.clientY, isBackground: true };
+    }}
   >
     <Breadcrumb
       platformName={getPlatformDefinition(activeTab)?.name || activeTab}
       path={folderPath}
-      onNavigate={navigateTo}
+      onNavigate={(folderId) => { void navigateTo(folderId); }}
       {accentColor}
     />
     <div class="center-msg">
