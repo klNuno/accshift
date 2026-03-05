@@ -1,6 +1,6 @@
 export interface ContextMenuItem {
   label?: string;
-  action?: () => void;
+  action?: () => void | Promise<void>;
   separator?: true;
   submenu?: ContextMenuItem[];
   submenuLoader?: () => Promise<ContextMenuItem[]>;
@@ -9,7 +9,7 @@ export interface ContextMenuItem {
     label: string;
     color: string;
     active?: boolean;
-    action: () => void;
+    action: () => void | Promise<void>;
   }>;
 }
 

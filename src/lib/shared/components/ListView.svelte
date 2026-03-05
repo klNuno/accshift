@@ -1,11 +1,11 @@
 <script lang="ts">
   import { flip } from "svelte/animate";
   import type { PlatformAccount } from "../platform";
+  import type { AccountWarningPresentation } from "../accountWarnings";
   import type { ItemRef, FolderInfo } from "../../features/folders/types";
-  import type { BanInfo } from "../../platforms/steam/types";
   import ListRow from "./ListRow.svelte";
   import PreviewPanel from "./PreviewPanel.svelte";
-  import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
+  import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
 
   let {
     folderItems = [],
@@ -13,19 +13,22 @@
     accounts,
     showUsernames = true,
     showLastLogin = false,
+    lastLoginUnknownKey = "time.unknown",
     currentFolderId = null,
     currentAccountId = null,
     avatarStates = {},
-    banStates = {},
+    warningStates = {},
     getAccountNote = () => "",
     accentColor = "#3b82f6",
     locale = DEFAULT_LOCALE,
+    pendingSetupId = null,
     dragItem = null,
     dragOverFolderId = null,
     dragOverBack = false,
     onNavigate,
     onGoBack,
     onSwitch,
+    onAccountActivate = () => {},
     onAccountContextMenu,
     onFolderContextMenu,
     getFolder,
@@ -35,19 +38,22 @@
     accounts: Record<string, PlatformAccount>;
     showUsernames?: boolean;
     showLastLogin?: boolean;
+    lastLoginUnknownKey?: MessageKey;
     currentFolderId: string | null;
     currentAccountId?: string | null;
     avatarStates: Record<string, { url: string | null; loading: boolean; refreshing: boolean }>;
-    banStates?: Record<string, BanInfo>;
+    warningStates?: Record<string, AccountWarningPresentation>;
     getAccountNote?: (accountId: string) => string;
     accentColor?: string;
     locale?: Locale;
+    pendingSetupId?: string | null;
     dragItem?: ItemRef | null;
     dragOverFolderId?: string | null;
     dragOverBack?: boolean;
     onNavigate: (folderId: string) => void;
     onGoBack: () => void;
     onSwitch: (account: PlatformAccount) => void;
+    onAccountActivate?: (account: PlatformAccount) => void;
     onAccountContextMenu: (e: MouseEvent, account: PlatformAccount) => void;
     onFolderContextMenu: (e: MouseEvent, folder: FolderInfo) => void;
     getFolder: (id: string) => FolderInfo | undefined;
@@ -93,19 +99,29 @@
 
     {#each accountItems as item (item.id)}
       {@const account = accounts[item.id]}
+      {@const isPendingSetup = pendingSetupId === item.id}
       <div animate:flip={{ duration: 200 }}>
         {#if account}
           <ListRow
             {account}
             showUsername={showUsernames}
             {showLastLogin}
+            {lastLoginUnknownKey}
             lastLoginAt={account.lastLoginAt}
             isActive={account.id === currentAccountId}
             isSelected={selectedAccountId === account.id}
             avatarUrl={avatarStates[account.id]?.url}
-            banInfo={banStates[account.id]}
-            onClick={() => selectAccount(account.id)}
-            onDblClick={() => onSwitch(account)}
+            isLoadingAvatar={isPendingSetup}
+            allowMetaWrap={isPendingSetup}
+            warningInfo={warningStates[account.id]}
+            onClick={() => {
+              onAccountActivate(account);
+              selectAccount(account.id);
+            }}
+            onDblClick={() => {
+              if (isPendingSetup) return;
+              onSwitch(account);
+            }}
             onContextMenu={(e) => onAccountContextMenu(e, account)}
             {locale}
             isDragged={dragItem?.type === "account" && dragItem?.id === account.id}
@@ -117,18 +133,26 @@
 
   <div class="preview-panel">
     {#if selectedAccount}
+      {@const selectedIsPendingSetup = pendingSetupId === selectedAccount.id}
       <PreviewPanel
         account={selectedAccount}
         showUsername={showUsernames}
         {showLastLogin}
+        {lastLoginUnknownKey}
         lastLoginAt={selectedAccount.lastLoginAt}
         isActive={selectedAccount.id === currentAccountId}
         avatarUrl={avatarStates[selectedAccount.id]?.url}
+        isLoadingAvatar={selectedIsPendingSetup}
+        showSwitchButton={!selectedIsPendingSetup}
+        allowMetaWrap={selectedIsPendingSetup}
         accountNote={getAccountNote(selectedAccount.id)}
-        banInfo={banStates[selectedAccount.id]}
+        warningInfo={warningStates[selectedAccount.id]}
         {accentColor}
         {locale}
-        onSwitch={() => onSwitch(selectedAccount!)}
+        onSwitch={() => {
+          if (selectedIsPendingSetup) return;
+          onSwitch(selectedAccount!);
+        }}
       />
     {:else}
       <div class="no-selection">

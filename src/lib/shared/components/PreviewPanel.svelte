@@ -1,75 +1,63 @@
 <script lang="ts">
   import type { PlatformAccount } from "../platform";
-  import type { BanInfo } from "$lib/platforms/steam/types";
+  import type { AccountWarningPresentation } from "../accountWarnings";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
-  import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
+  import { getAvatarGradientStyle, getAvatarSeed } from "$lib/shared/avatarFallback";
+  import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
 
   let {
     account,
     isActive = false,
     avatarUrl = null,
+    isLoadingAvatar = false,
     showUsername = true,
     showLastLogin = false,
+    allowMetaWrap = false,
+    showSwitchButton = true,
+    lastLoginUnknownKey = "time.unknown",
     lastLoginAt = null,
     accountNote = "",
     accentColor = "#3b82f6",
     locale = DEFAULT_LOCALE,
     onSwitch,
-    banInfo = undefined,
+    warningInfo = undefined,
   }: {
     account: PlatformAccount;
     isActive?: boolean;
     avatarUrl?: string | null;
+    isLoadingAvatar?: boolean;
     showUsername?: boolean;
     showLastLogin?: boolean;
+    allowMetaWrap?: boolean;
+    showSwitchButton?: boolean;
+    lastLoginUnknownKey?: MessageKey;
     lastLoginAt?: number | null;
     accountNote?: string;
     accentColor?: string;
     locale?: Locale;
     onSwitch: () => void;
-    banInfo?: BanInfo;
+    warningInfo?: AccountWarningPresentation;
   } = $props();
 
   function getInitials(name: string): string {
     return name.slice(0, 2).toUpperCase();
   }
 
-  type BanWarningTone = "red" | "orange";
-  interface BanWarningChip {
-    tone: BanWarningTone;
-    text: string;
-  }
-
+  let hasUsername = $derived(Boolean(showUsername && account.username.trim()));
+  let avatarSeed = $derived(getAvatarSeed(account.displayName, account.username, account.id));
   let banWarnings = $derived.by(() => {
-    if (!banInfo) return [] as BanWarningChip[];
-    const chips: BanWarningChip[] = [];
-    if (banInfo.community_banned) {
-      chips.push({ tone: "orange", text: translate(locale, "ban.community") });
-    }
-    if (banInfo.vac_banned) {
-      const vacCount = Math.max(1, banInfo.number_of_vac_bans || 0);
-      chips.push({
-        tone: "red",
-        text: translate(locale, vacCount > 1 ? "ban.vac.multiple" : "ban.vac.single", { count: vacCount }),
-      });
-    }
-    if (banInfo.number_of_game_bans > 0) {
-      chips.push({
-        tone: "red",
-        text: translate(
-          locale,
-          banInfo.number_of_game_bans > 1 ? "ban.game.multiple" : "ban.game.single",
-          { count: banInfo.number_of_game_bans }
-        ),
-      });
-    }
-    return chips;
+    return warningInfo?.chips ?? [];
   });
 </script>
 
 <div class="preview">
-  <div class="avatar-large">
-    {#if avatarUrl}
+  <div
+    class="avatar-large"
+    style={!avatarUrl && !isLoadingAvatar ? getAvatarGradientStyle(avatarSeed) : ""}
+  >
+    {#if isLoadingAvatar}
+      <div class="loader"></div>
+    {:else if avatarUrl}
       <img src={avatarUrl} alt={account.displayName} />
     {:else}
       <span class="initials">{getInitials(account.displayName || account.username)}</span>
@@ -77,13 +65,13 @@
   </div>
 
   <div class="display-name">{account.displayName || account.username}</div>
-  {#if showUsername || showLastLogin}
-    <div class="meta-stack">
-      {#if showUsername}
+  {#if hasUsername || showLastLogin}
+    <div class="meta-stack" class:wrap={allowMetaWrap}>
+      {#if hasUsername}
         <span class="username">{account.username}</span>
       {/if}
       {#if showLastLogin}
-        <span class="meta">{formatRelativeTimeCompact(lastLoginAt, locale)}</span>
+        <span class="meta">{formatRelativeTimeCompact(lastLoginAt, locale, lastLoginUnknownKey)}</span>
       {/if}
     </div>
   {/if}
@@ -108,16 +96,18 @@
   {#if isActive}
     <div class="status">{translate(locale, "preview.currentlyActive")}</div>
   {/if}
-  <button
-    class="switch-btn"
-    style="background: {accentColor};"
-    onclick={onSwitch}
-  >
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M8 5v14l11-7z" />
-    </svg>
-    {isActive ? translate(locale, "preview.switchAgain") : translate(locale, "preview.switchAccount")}
-  </button>
+  {#if showSwitchButton}
+    <button
+      class="switch-btn"
+      style="background: {accentColor};"
+      onclick={onSwitch}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M8 5v14l11-7z" />
+      </svg>
+      {isActive ? translate(locale, "preview.switchAgain") : translate(locale, "preview.switchAccount")}
+    </button>
+  {/if}
 </div>
 
 <style>
@@ -175,6 +165,13 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .meta-stack.wrap {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    line-height: 1.3;
   }
 
   .username {
@@ -245,6 +242,19 @@
 
   .switch-btn:active {
     filter: brightness(0.9);
+  }
+
+  .loader {
+    width: 42px;
+    height: 42px;
+    border-radius: 999px;
+    border: 4px solid color-mix(in srgb, var(--fg) 24%, transparent);
+    border-top-color: var(--fg);
+    animation: spin 0.75s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 
   .ban-badges {

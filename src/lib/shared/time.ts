@@ -1,7 +1,11 @@
-import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
+import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
 
-export function formatRelativeTimeFromUnixSeconds(timestamp?: number | null, locale: Locale = DEFAULT_LOCALE): string {
-  if (!timestamp || !Number.isFinite(timestamp) || timestamp <= 0) return translate(locale, "time.unknown");
+export function formatRelativeTimeFromUnixSeconds(
+  timestamp?: number | null,
+  locale: Locale = DEFAULT_LOCALE,
+  unknownKey: MessageKey = "time.unknown",
+): string {
+  if (!timestamp || !Number.isFinite(timestamp) || timestamp <= 0) return translate(locale, unknownKey);
   const thenMs = timestamp * 1000;
   const nowMs = Date.now();
   const deltaMs = Math.max(0, nowMs - thenMs);
@@ -22,7 +26,11 @@ export function formatRelativeTimeFromUnixSeconds(timestamp?: number | null, loc
   return translate(locale, d > 1 ? "time.daysAgo" : "time.dayAgo", { count: d });
 }
 
-export function formatRelativeTimeCompact(timestamp?: number | null, locale: Locale = DEFAULT_LOCALE): string {
-  const base = formatRelativeTimeFromUnixSeconds(timestamp, locale);
+export function formatRelativeTimeCompact(
+  timestamp?: number | null,
+  locale: Locale = DEFAULT_LOCALE,
+  unknownKey: MessageKey = "time.unknown",
+): string {
+  const base = formatRelativeTimeFromUnixSeconds(timestamp, locale, unknownKey);
   return translate(locale, "time.compactWrapper", { value: base });
 }

@@ -1,4 +1,4 @@
-import type { ContextMenuItem } from "../../shared/types";
+import type { ContextMenuAction } from "../../shared/contextMenu/types";
 import type { PlatformAccount, PlatformContextMenuCallbacks } from "../../shared/platform";
 import { toProfileUrl } from "./steamIdUtils";
 import { encodeFriendCode } from "./friendCode";
@@ -7,22 +7,29 @@ import { copyGameSettings, forgetAccount, getCopyableGames, openUserdata, switch
 export function getSteamContextMenuItems(
   account: PlatformAccount,
   callbacks: PlatformContextMenuCallbacks
-): ContextMenuItem[] {
-  const items: ContextMenuItem[] = [
+): ContextMenuAction[] {
+  const items: ContextMenuAction[] = [
     {
+      id: `steam.launch.online.${account.id}`,
+      group: "platform.primary",
       label: callbacks.t("steam.launchOnline"),
       action: () => switchAccountMode(account.username, account.id, "online"),
     },
     {
+      id: `steam.launch.invisible.${account.id}`,
+      group: "platform.primary",
       label: callbacks.t("steam.launchInvisible"),
       action: () => switchAccountMode(account.username, account.id, "invisible"),
     },
-    { separator: true },
     {
+      id: `steam.copy.id64.${account.id}`,
+      group: "platform.copy",
       label: callbacks.t("steam.copySteamId64"),
       action: () => callbacks.copyToClipboard(account.id, callbacks.t("steam.copyLabelSteamId64")),
     },
     {
+      id: `steam.copy.friendCode.${account.id}`,
+      group: "platform.copy",
       label: callbacks.t("steam.copyFriendCode"),
       action: () => {
         const code = encodeFriendCode(account.id);
@@ -30,11 +37,14 @@ export function getSteamContextMenuItems(
       },
     },
     {
+      id: `steam.copy.profileUrl.${account.id}`,
+      group: "platform.copy",
       label: callbacks.t("steam.copyProfileUrl"),
       action: () => callbacks.copyToClipboard(toProfileUrl(account.id), callbacks.t("steam.copyLabelProfileUrl")),
     },
-    { separator: true },
     {
+      id: `steam.open.userdata.${account.id}`,
+      group: "platform.data",
       label: callbacks.t("steam.openUserdataFolder"),
       action: async () => {
         try {
@@ -49,10 +59,13 @@ export function getSteamContextMenuItems(
   const targetSteamId = callbacks.getCurrentAccountId();
   if (targetSteamId && targetSteamId !== account.id) {
     items.push({
+      id: `steam.copy.settings.${account.id}`,
+      group: "platform.data",
       label: callbacks.t("steam.copySettingsFrom"),
       submenuLoader: async () => {
         const games = await getCopyableGames(account.id, targetSteamId);
         return games.map((game) => ({
+          id: `steam.copy.settings.${account.id}.${game.app_id}`,
           label: game.name,
           action: async () => {
             try {
@@ -67,8 +80,9 @@ export function getSteamContextMenuItems(
     });
   }
 
-  items.push({ separator: true });
   items.push({
+    id: `steam.forget.${account.id}`,
+    group: "platform.danger",
     label: callbacks.t("steam.forget"),
     action: () => {
       const display = (account.displayName || account.username).trim() || account.username;
