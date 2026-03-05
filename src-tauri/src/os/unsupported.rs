@@ -2,7 +2,9 @@ use crate::error::AppError;
 use std::path::{Path, PathBuf};
 
 fn unsupported(feature: &str) -> AppError {
-    AppError::UnsupportedOperatingSystem(format!("{feature} is not supported on this operating system"))
+    AppError::UnsupportedOperatingSystem(format!(
+        "{feature} is not supported on this operating system"
+    ))
 }
 
 pub fn encrypt_secret(_secret: &str) -> Result<String, AppError> {

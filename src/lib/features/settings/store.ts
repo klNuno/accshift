@@ -27,6 +27,7 @@ const DEFAULTS: AppSettings = {
   accountDisplay: {
     showUsernames: true,
     showLastLogin: false,
+    showRiotLastLogin: false,
     showCardNotesInline: false,
   },
   pinEnabled: false,
@@ -108,6 +109,7 @@ function sanitizeSettings(value: unknown): AppSettings {
     accountDisplay: {
       showUsernames: rawAccountDisplay.showUsernames !== false && raw.showUsernames !== false,
       showLastLogin: Boolean(rawAccountDisplay.showLastLogin ?? raw.showLastLogin),
+      showRiotLastLogin: Boolean(rawAccountDisplay.showRiotLastLogin),
       showCardNotesInline: Boolean(rawAccountDisplay.showCardNotesInline ?? raw.showCardNotesInline),
     },
     pinEnabled,

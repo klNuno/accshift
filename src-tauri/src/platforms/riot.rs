@@ -255,18 +255,50 @@ fn app_profiles_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(root)
 }
 
-fn profile_snapshot_dir(app_handle: &tauri::AppHandle, profile_id: &str) -> Result<PathBuf, String> {
-    let dir = app_profiles_root(app_handle)?.join(profile_id);
-    fs::create_dir_all(&dir).map_err(|e| format!("Could not create Riot profile snapshot dir: {e}"))?;
+fn is_valid_profile_id(profile_id: &str) -> bool {
+    let trimmed = profile_id.trim();
+    !trimmed.is_empty()
+        && trimmed.len() <= 128
+        && trimmed
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
+fn normalize_profile_id(profile_id: &str) -> Result<String, String> {
+    let trimmed = profile_id.trim();
+    if !is_valid_profile_id(trimmed) {
+        return Err("Invalid Riot profile id".into());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn profile_snapshot_path(
+    app_handle: &tauri::AppHandle,
+    profile_id: &str,
+) -> Result<PathBuf, String> {
+    let profile_id = normalize_profile_id(profile_id)?;
+    Ok(app_profiles_root(app_handle)?.join(profile_id))
+}
+
+fn profile_snapshot_dir(
+    app_handle: &tauri::AppHandle,
+    profile_id: &str,
+) -> Result<PathBuf, String> {
+    let dir = profile_snapshot_path(app_handle, profile_id)?;
+    fs::create_dir_all(&dir)
+        .map_err(|e| format!("Could not create Riot profile snapshot dir: {e}"))?;
     Ok(dir)
 }
 
 fn clear_directory(path: &Path) -> Result<(), String> {
     if !path.exists() {
-        fs::create_dir_all(path).map_err(|e| format!("Could not create directory {}: {e}", path.display()))?;
+        fs::create_dir_all(path)
+            .map_err(|e| format!("Could not create directory {}: {e}", path.display()))?;
         return Ok(());
     }
-    for entry in fs::read_dir(path).map_err(|e| format!("Could not read directory {}: {e}", path.display()))? {
+    for entry in fs::read_dir(path)
+        .map_err(|e| format!("Could not read directory {}: {e}", path.display()))?
+    {
         let entry = entry.map_err(|e| format!("Could not read directory entry: {e}"))?;
         let entry_path = entry.path();
         if entry_path.is_dir() {
@@ -285,9 +317,11 @@ fn remove_path_if_exists(path: &Path) -> Result<(), String> {
         return Ok(());
     }
     if path.is_dir() {
-        fs::remove_dir_all(path).map_err(|e| format!("Could not remove directory {}: {e}", path.display()))?;
+        fs::remove_dir_all(path)
+            .map_err(|e| format!("Could not remove directory {}: {e}", path.display()))?;
     } else {
-        fs::remove_file(path).map_err(|e| format!("Could not remove file {}: {e}", path.display()))?;
+        fs::remove_file(path)
+            .map_err(|e| format!("Could not remove file {}: {e}", path.display()))?;
     }
     Ok(())
 }
@@ -302,8 +336,11 @@ fn copy_dir_recursive(source: &Path, target: &Path, ignored_names: &[&str]) -> R
     if !source.exists() {
         return Ok(());
     }
-    fs::create_dir_all(target).map_err(|e| format!("Could not create directory {}: {e}", target.display()))?;
-    for entry in fs::read_dir(source).map_err(|e| format!("Could not read directory {}: {e}", source.display()))? {
+    fs::create_dir_all(target)
+        .map_err(|e| format!("Could not create directory {}: {e}", target.display()))?;
+    for entry in fs::read_dir(source)
+        .map_err(|e| format!("Could not read directory {}: {e}", source.display()))?
+    {
         let entry = entry.map_err(|e| format!("Could not read directory entry: {e}"))?;
         let src_path = entry.path();
         let file_name = entry.file_name();
@@ -327,9 +364,11 @@ fn copy_optional_file(source: &Path, target: &Path) -> Result<(), String> {
         return Ok(());
     }
     if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
     }
-    fs::copy(source, target).map_err(|e| format!("Could not copy file {}: {e}", source.display()))?;
+    fs::copy(source, target)
+        .map_err(|e| format!("Could not copy file {}: {e}", source.display()))?;
     Ok(())
 }
 
@@ -337,7 +376,10 @@ fn snapshot_has_settings(snapshot_dir: &Path) -> bool {
     snapshot_dir.join("RiotGamesPrivateSettings.yaml").exists()
 }
 
-fn live_path_for(item: &RiotSnapshotItem, install_dir: Option<&Path>) -> Result<Option<PathBuf>, String> {
+fn live_path_for(
+    item: &RiotSnapshotItem,
+    install_dir: Option<&Path>,
+) -> Result<Option<PathBuf>, String> {
     let relative = item.relative_path.replace('/', "\\");
     match item.base {
         RiotPathBase::LocalAppData => Ok(Some(env_path("LOCALAPPDATA")?.join(relative))),
@@ -356,8 +398,12 @@ fn riot_lockfile_path() -> Result<PathBuf, String> {
 
 fn read_riot_local_api_access() -> Result<RiotLocalApiAccess, String> {
     let lockfile_path = riot_lockfile_path()?;
-    let content = fs::read_to_string(&lockfile_path)
-        .map_err(|e| format!("Could not read Riot lockfile {}: {e}", lockfile_path.display()))?;
+    let content = fs::read_to_string(&lockfile_path).map_err(|e| {
+        format!(
+            "Could not read Riot lockfile {}: {e}",
+            lockfile_path.display()
+        )
+    })?;
     let parts: Vec<&str> = content.trim().split(':').collect();
     if parts.len() < 5 {
         return Err("Riot lockfile format is invalid".into());
@@ -404,7 +450,8 @@ fn apply_detected_identity(profile: &mut RiotProfileConfig, identity: &RiotDetec
     let next_alias = format_account_alias(&identity.account_name, &identity.account_tag_line);
     let should_sync_label = profile.label.trim().is_empty()
         || is_generated_profile_label(profile.label.trim())
-        || (!previous_alias.is_empty() && profile.label.trim().eq_ignore_ascii_case(&previous_alias));
+        || (!previous_alias.is_empty()
+            && profile.label.trim().eq_ignore_ascii_case(&previous_alias));
 
     profile.account_name = trim_or_empty(&identity.account_name);
     profile.account_tag_line = trim_or_empty(&identity.account_tag_line);
@@ -456,7 +503,9 @@ async fn fetch_local_json(access: &RiotLocalApiAccess, path: &str) -> Result<Val
         .map_err(|e| format!("Could not parse Riot local response {path}: {e}"))
 }
 
-fn detect_live_identity_with_access(access: &RiotLocalApiAccess) -> Result<RiotDetectedIdentity, String> {
+fn detect_live_identity_with_access(
+    access: &RiotLocalApiAccess,
+) -> Result<RiotDetectedIdentity, String> {
     let access = RiotLocalApiAccess {
         protocol: access.protocol.clone(),
         port: access.port,
@@ -545,7 +594,10 @@ fn backup_live_snapshot(app_handle: &tauri::AppHandle, profile_id: &str) -> Resu
                     copy_optional_file(&source_path, &target_path)?;
                     captured_any = true;
                 } else if !item.optional {
-                    return Err(format!("Required Riot session file not found: {}", source_path.display()));
+                    return Err(format!(
+                        "Required Riot session file not found: {}",
+                        source_path.display()
+                    ));
                 }
             }
         }
@@ -637,7 +689,10 @@ fn next_profile_label(profiles: &[RiotProfileConfig]) -> String {
     let mut next_index = profiles.len() + 1;
     loop {
         let candidate = format!("Riot Profile {next_index}");
-        if !profiles.iter().any(|profile| profile.label.eq_ignore_ascii_case(&candidate)) {
+        if !profiles
+            .iter()
+            .any(|profile| profile.label.eq_ignore_ascii_case(&candidate))
+        {
             return candidate;
         }
         next_index += 1;
@@ -646,10 +701,20 @@ fn next_profile_label(profiles: &[RiotProfileConfig]) -> String {
 
 fn current_profile_id(cfg: &config::AppConfig) -> String {
     let configured = cfg.riot.current_profile_id.trim();
-    if !configured.is_empty() && cfg.riot.profiles.iter().any(|profile| profile.id == configured) {
+    if !configured.is_empty()
+        && cfg
+            .riot
+            .profiles
+            .iter()
+            .any(|profile| profile.id == configured)
+    {
         return configured.to_string();
     }
-    cfg.riot.profiles.first().map(|profile| profile.id.clone()).unwrap_or_default()
+    cfg.riot
+        .profiles
+        .first()
+        .map(|profile| profile.id.clone())
+        .unwrap_or_default()
 }
 
 fn is_visible_profile(profile: &RiotProfileConfig) -> bool {
@@ -693,7 +758,12 @@ fn update_profile_state(
     used_at: Option<Option<u64>>,
     identity: Option<&RiotDetectedIdentity>,
 ) -> Result<(), String> {
-    let Some(profile) = cfg.riot.profiles.iter_mut().find(|profile| profile.id == profile_id) else {
+    let Some(profile) = cfg
+        .riot
+        .profiles
+        .iter_mut()
+        .find(|profile| profile.id == profile_id)
+    else {
         return Err("Riot profile not found".into());
     };
 
@@ -737,7 +807,13 @@ fn get_profile_setup_status_internal(
     cfg: &mut config::AppConfig,
     profile_id: &str,
 ) -> Result<RiotProfileSetupStatus, String> {
-    let Some(profile) = cfg.riot.profiles.iter().find(|profile| profile.id == profile_id).cloned() else {
+    let Some(profile) = cfg
+        .riot
+        .profiles
+        .iter()
+        .find(|profile| profile.id == profile_id)
+        .cloned()
+    else {
         return Err("Riot profile not found".into());
     };
 
@@ -752,7 +828,12 @@ fn get_profile_setup_status_internal(
 
     let identity = detect_live_identity_with_access(&access).ok();
     if let Some(identity) = identity.as_ref() {
-        if let Some(target) = cfg.riot.profiles.iter_mut().find(|entry| entry.id == profile_id) {
+        if let Some(target) = cfg
+            .riot
+            .profiles
+            .iter_mut()
+            .find(|entry| entry.id == profile_id)
+        {
             apply_detected_identity(target, identity);
         }
     }
@@ -774,7 +855,12 @@ fn get_profile_setup_status_internal(
 
     if login_status.phase.eq_ignore_ascii_case("logged_in") && login_status.persist {
         if let Some(identity) = identity.as_ref() {
-            if let Some(target) = cfg.riot.profiles.iter_mut().find(|entry| entry.id == profile_id) {
+            if let Some(target) = cfg
+                .riot
+                .profiles
+                .iter_mut()
+                .find(|entry| entry.id == profile_id)
+            {
                 target.snapshot_state = "capturing".into();
             }
             config::save_config(app_handle, cfg)?;
@@ -878,13 +964,16 @@ pub fn get_profile_setup_status(
     app_handle: tauri::AppHandle,
     profile_id: String,
 ) -> Result<RiotProfileSetupStatus, String> {
-    let profile_id = profile_id.trim().to_string();
+    let profile_id = normalize_profile_id(&profile_id)?;
     let mut cfg = config::load_config(&app_handle);
     get_profile_setup_status_internal(&app_handle, &mut cfg, &profile_id)
 }
 
-pub fn cancel_profile_setup(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
-    let profile_id = profile_id.trim().to_string();
+pub fn cancel_profile_setup(
+    app_handle: tauri::AppHandle,
+    profile_id: String,
+) -> Result<(), String> {
+    let profile_id = normalize_profile_id(&profile_id)?;
     let mut cfg = config::load_config(&app_handle);
     let should_remove = cfg
         .riot
@@ -907,20 +996,29 @@ pub fn cancel_profile_setup(app_handle: tauri::AppHandle, profile_id: String) ->
     }
     config::save_config(&app_handle, &cfg)?;
 
-    let snapshot_dir = app_profiles_root(&app_handle)?.join(profile_id);
+    let snapshot_dir = profile_snapshot_path(&app_handle, &profile_id)?;
     if snapshot_dir.exists() {
-        fs::remove_dir_all(&snapshot_dir)
-            .map_err(|e| format!("Could not remove Riot profile snapshot {}: {e}", snapshot_dir.display()))?;
+        fs::remove_dir_all(&snapshot_dir).map_err(|e| {
+            format!(
+                "Could not remove Riot profile snapshot {}: {e}",
+                snapshot_dir.display()
+            )
+        })?;
     }
 
     Ok(())
 }
 
 pub fn capture_profile(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
-    let profile_id = profile_id.trim().to_string();
+    let profile_id = normalize_profile_id(&profile_id)?;
     let live_identity = detect_live_identity().ok();
     let mut cfg = config::load_config(&app_handle);
-    if !cfg.riot.profiles.iter().any(|profile| profile.id == profile_id) {
+    if !cfg
+        .riot
+        .profiles
+        .iter()
+        .any(|profile| profile.id == profile_id)
+    {
         return Err("Riot profile not found".into());
     }
 
@@ -929,15 +1027,23 @@ pub fn capture_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resu
 
 pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
     let client_path = resolve_riot_client_path(&app_handle)?;
-    let target_id = profile_id.trim().to_string();
+    let target_id = normalize_profile_id(&profile_id)?;
     let current_live_identity = detect_live_identity().ok();
     let mut cfg = config::load_config(&app_handle);
-    if !cfg.riot.profiles.iter().any(|profile| profile.id == target_id) {
+    if !cfg
+        .riot
+        .profiles
+        .iter()
+        .any(|profile| profile.id == target_id)
+    {
         return Err("Riot profile not found".into());
     }
 
     if !cfg.riot.current_profile_id.trim().is_empty() && cfg.riot.current_profile_id != target_id {
         let current_id = cfg.riot.current_profile_id.clone();
+        if !is_valid_profile_id(&current_id) {
+            return Err("Invalid Riot profile id in config".into());
+        }
         let current_ready = cfg
             .riot
             .profiles
@@ -961,7 +1067,11 @@ pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
     kill_riot_processes();
     let restored = restore_live_snapshot(&app_handle, &target_id)?;
     cfg.riot.current_profile_id = target_id.clone();
-    let next_state = if restored { "ready" } else { "awaiting_capture" };
+    let next_state = if restored {
+        "ready"
+    } else {
+        "awaiting_capture"
+    };
     update_profile_state(
         &mut cfg,
         &target_id,
@@ -976,8 +1086,11 @@ pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
 }
 
 pub fn forget_profile(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
+    let profile_id = normalize_profile_id(&profile_id)?;
     let mut cfg = config::load_config(&app_handle);
-    cfg.riot.profiles.retain(|profile| profile.id != profile_id);
+    cfg.riot
+        .profiles
+        .retain(|profile| profile.id != profile_id.as_str());
     if cfg.riot.current_profile_id == profile_id {
         cfg.riot.current_profile_id = cfg
             .riot
@@ -988,10 +1101,14 @@ pub fn forget_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
     }
     config::save_config(&app_handle, &cfg)?;
 
-    let snapshot_dir = app_profiles_root(&app_handle)?.join(profile_id);
+    let snapshot_dir = profile_snapshot_path(&app_handle, &profile_id)?;
     if snapshot_dir.exists() {
-        fs::remove_dir_all(&snapshot_dir)
-            .map_err(|e| format!("Could not remove Riot profile snapshot {}: {e}", snapshot_dir.display()))?;
+        fs::remove_dir_all(&snapshot_dir).map_err(|e| {
+            format!(
+                "Could not remove Riot profile snapshot {}: {e}",
+                snapshot_dir.display()
+            )
+        })?;
     }
 
     Ok(())

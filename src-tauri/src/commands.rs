@@ -4,6 +4,11 @@ use crate::platforms::{
 };
 
 #[tauri::command]
+pub fn get_runtime_os() -> String {
+    std::env::consts::OS.to_string()
+}
+
+#[tauri::command]
 pub fn set_api_key(app_handle: tauri::AppHandle, key: String) -> Result<(), String> {
     require_service("steam")?.set_api_key(app_handle, key)
 }
@@ -16,12 +21,16 @@ pub fn has_api_key(app_handle: tauri::AppHandle) -> bool {
 }
 
 #[tauri::command]
-pub fn get_steam_accounts(app_handle: tauri::AppHandle) -> Result<Vec<crate::steam::accounts::SteamAccount>, String> {
+pub fn get_steam_accounts(
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<crate::steam::accounts::SteamAccount>, String> {
     require_service("steam")?.get_accounts(app_handle)
 }
 
 #[tauri::command]
-pub fn get_startup_snapshot(app_handle: tauri::AppHandle) -> Result<crate::platforms::PlatformStartupSnapshot, String> {
+pub fn get_startup_snapshot(
+    app_handle: tauri::AppHandle,
+) -> Result<crate::platforms::PlatformStartupSnapshot, String> {
     require_service("steam")?.get_startup_snapshot(app_handle)
 }
 
@@ -90,8 +99,35 @@ pub async fn add_account(
 }
 
 #[tauri::command]
+pub fn begin_steam_account_setup(
+    app_handle: tauri::AppHandle,
+    run_as_admin: bool,
+    launch_options: String,
+) -> Result<crate::platforms::steam::SteamAccountSetupStatus, String> {
+    crate::platforms::steam::begin_account_setup(app_handle, run_as_admin, launch_options)
+}
+
+#[tauri::command]
+pub fn get_steam_account_setup_status(
+    app_handle: tauri::AppHandle,
+    setup_id: String,
+) -> Result<crate::platforms::steam::SteamAccountSetupStatus, String> {
+    crate::platforms::steam::get_account_setup_status(app_handle, setup_id)
+}
+
+#[tauri::command]
+pub fn cancel_steam_account_setup(
+    app_handle: tauri::AppHandle,
+    setup_id: String,
+) -> Result<(), String> {
+    crate::platforms::steam::cancel_account_setup(app_handle, setup_id)
+}
+
+#[tauri::command]
 pub async fn forget_account(app_handle: tauri::AppHandle, steam_id: String) -> Result<(), String> {
-    require_service("steam")?.forget_account(app_handle, steam_id).await
+    require_service("steam")?
+        .forget_account(app_handle, steam_id)
+        .await
 }
 
 #[tauri::command]
@@ -106,15 +142,14 @@ pub fn copy_game_settings(
     to_steam_id: String,
     app_id: String,
 ) -> Result<(), String> {
-    require_service("steam")?
-        .copy_game_settings(
-            app_handle,
-            CopyGameSettingsRequest {
-                from_steam_id,
-                to_steam_id,
-                app_id,
-            },
-        )
+    require_service("steam")?.copy_game_settings(
+        app_handle,
+        CopyGameSettingsRequest {
+            from_steam_id,
+            to_steam_id,
+            app_id,
+        },
+    )
 }
 
 #[tauri::command]
@@ -187,7 +222,9 @@ pub fn close_window(window: tauri::Window) {
 }
 
 #[tauri::command]
-pub fn get_riot_profiles(app_handle: tauri::AppHandle) -> Result<Vec<crate::config::RiotProfileConfig>, String> {
+pub fn get_riot_profiles(
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<crate::config::RiotProfileConfig>, String> {
     crate::platforms::riot::get_profiles(app_handle)
 }
 
@@ -227,7 +264,10 @@ pub fn cancel_riot_profile_setup(
 }
 
 #[tauri::command]
-pub fn capture_riot_profile(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
+pub fn capture_riot_profile(
+    app_handle: tauri::AppHandle,
+    profile_id: String,
+) -> Result<(), String> {
     crate::platforms::riot::capture_profile(app_handle, profile_id)
 }
 

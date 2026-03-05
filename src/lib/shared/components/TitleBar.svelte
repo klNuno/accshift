@@ -12,6 +12,9 @@
     activeTab = "steam",
     onTabChange,
     enabledPlatforms,
+    unavailablePlatformIds = new Set<string>(),
+    canRefresh = true,
+    canAddAccount = true,
     updateCtaLabel = null,
     updateCtaTitle = "Restart to apply update",
     updateCtaDisabled = false,
@@ -24,6 +27,9 @@
     activeTab: string;
     onTabChange: (tab: string) => void;
     enabledPlatforms: PlatformDef[];
+    unavailablePlatformIds?: Set<string>;
+    canRefresh?: boolean;
+    canAddAccount?: boolean;
     updateCtaLabel?: string | null;
     updateCtaTitle?: string;
     updateCtaDisabled?: boolean;
@@ -55,14 +61,14 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="titlebar" onmousedown={startDrag}>
   <div class="left">
-    <button class="btn" onclick={onRefresh} title={translate(locale, "titlebar.refresh")}>
+    <button class="btn" onclick={onRefresh} title={translate(locale, "titlebar.refresh")} disabled={!canRefresh}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
         <path d="M21 3v5h-5" />
       </svg>
     </button>
 
-    <button class="btn" onclick={onAddAccount} title={translate(locale, "titlebar.addAccount")}>
+    <button class="btn" onclick={onAddAccount} title={translate(locale, "titlebar.addAccount")} disabled={!canAddAccount}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <line x1="12" y1="5" x2="12" y2="19" />
         <line x1="5" y1="12" x2="19" y2="12" />
@@ -80,12 +86,15 @@
   {#if enabledPlatforms.length > 1}
     <div class="tabs">
       {#each enabledPlatforms as platform}
+        {@const unavailable = unavailablePlatformIds.has(platform.id)}
         <button
           class="tab"
           class:active={activeTab === platform.id}
+          class:disabled={unavailable}
           onclick={() => onTabChange(platform.id)}
-          title={platform.name}
+          title={unavailable ? `${platform.name} (${translate(locale, "settings.platformUnsupportedOs")})` : platform.name}
           style={activeTab === platform.id ? `color: ${platform.accent};` : ""}
+          disabled={unavailable}
         >
           {#if LOGO_PATHS[platform.id]}
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -182,6 +191,16 @@
     color: var(--fg-muted);
   }
 
+  .tab.disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .tab.disabled:hover {
+    background: transparent;
+    color: #52525b;
+  }
+
   .tab.active {
     background: var(--bg-card);
   }
@@ -212,6 +231,16 @@
 
   .btn:active {
     transform: scale(0.92);
+  }
+
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .btn:disabled:hover {
+    background: transparent;
+    color: var(--fg-muted);
   }
 
   .right {

@@ -4,8 +4,27 @@ import { riotAdapter } from "./riot/adapter";
 import { steamAdapter } from "./steam/adapter";
 
 export const PLATFORM_DEFS: PlatformDef[] = [
-  { id: "steam", name: "Steam", accent: "#3b82f6" },
-  { id: "riot", name: "Riot Games", accent: "#ef4444" },
+  {
+    id: "steam",
+    name: "Steam",
+    accent: "#3b82f6",
+    implemented: true,
+    supportedOs: ["windows"],
+  },
+  {
+    id: "riot",
+    name: "Riot Games",
+    accent: "#ef4444",
+    implemented: true,
+    supportedOs: ["windows"],
+  },
+  {
+    id: "battle-net",
+    name: "Battle.net",
+    accent: "#60a5fa",
+    implemented: false,
+    supportedOs: ["windows"],
+  },
 ];
 
 const BUILTIN_ADAPTERS = [steamAdapter, riotAdapter];

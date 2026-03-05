@@ -17,64 +17,12 @@
 
 
 ## Current Status
-<table>
-  <tr>
-    <td valign="top" width="50%">
-
-<p><strong>Platform Support</strong></p>
-<table>
-  <thead>
-    <tr>
-      <th>Platform</th>
-      <th>Status</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>Steam</td>
-      <td>✅ Supported</td>
-    </tr>
-    <tr>
-      <td>Riot Games</td>
-      <td>🚧 Planned</td>
-    </tr>
-    <tr>
-      <td>Epic Games</td>
-      <td>🚧 Planned</td>
-    </tr>
-  </tbody>
-</table>
-
-  </td>
-    <td valign="top" width="50%">
-
-<p><strong>OS Support</strong></p>
-<table>
-  <thead>
-    <tr>
-      <th>OS</th>
-      <th>Status</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>Windows</td>
-      <td>✅ Supported</td>
-    </tr>
-    <tr>
-      <td>Linux</td>
-      <td>🚧 Planned</td>
-    </tr>
-    <tr>
-      <td>macOS</td>
-      <td>🚧 Planned</td>
-    </tr>
-  </tbody>
-</table>
-
-  </td>
-  </tr>
-</table>
+| Platform | Windows | Linux | macOS |
+| --- | --- | --- | --- |
+| Steam | ✅ Supported | ⛔ Not supported yet | ⛔ Not supported yet |
+| Riot Games | ✅ Supported | ⛔ Not supported yet | ⛔ Not supported yet |
+| Battle.net | 🚧 Planned | 🚧 Planned | 🚧 Planned |
+| Epic Games | 🚧 Planned | 🚧 Planned | 🚧 Planned |
 
 ## Installation
 ### From Releases

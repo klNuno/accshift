@@ -3,6 +3,7 @@
   import { flip } from "svelte/animate";
   import { fly } from "svelte/transition";
   import { getVersion } from "@tauri-apps/api/app";
+  import { invoke } from "@tauri-apps/api/core";
   import { check } from "@tauri-apps/plugin-updater";
   import { relaunch } from "@tauri-apps/plugin-process";
   import AccountCard from "$lib/shared/components/AccountCard.svelte";
@@ -16,7 +17,7 @@
   import FolderCard from "$lib/features/folders/FolderCard.svelte";
   import BackCard from "$lib/features/folders/BackCard.svelte";
   import { getSettings, saveSettings, ALL_PLATFORMS } from "$lib/features/settings/store";
-  import type { PlatformDef } from "$lib/features/settings/types";
+  import type { PlatformDef, RuntimeOs } from "$lib/features/settings/types";
   import type {
     PlatformAccount,
     PlatformAddFlowStatus,
@@ -63,8 +64,24 @@
   // Platform registration
   registerBuiltinPlatforms();
   const PIN_CODE_LENGTH = 4;
-  function getInitialActiveTab(s: ReturnType<typeof getSettings>): string {
-    if (s.enabledPlatforms.includes(s.defaultPlatformId)) return s.defaultPlatformId;
+  function isPlatformCompatibleWithOs(platform: PlatformDef | undefined, runtimeOs: RuntimeOs): boolean {
+    if (!platform) return false;
+    return platform.supportedOs.includes(runtimeOs);
+  }
+
+  function isPlatformUsable(platformId: string, runtimeOs: RuntimeOs): boolean {
+    const platform = ALL_PLATFORMS.find((entry) => entry.id === platformId);
+    return Boolean(platform?.implemented && isPlatformCompatibleWithOs(platform, runtimeOs));
+  }
+
+  function getInitialActiveTab(s: ReturnType<typeof getSettings>, runtimeOs: RuntimeOs): string {
+    if (s.enabledPlatforms.includes(s.defaultPlatformId) && isPlatformUsable(s.defaultPlatformId, runtimeOs)) {
+      return s.defaultPlatformId;
+    }
+    const firstEnabledUsable = s.enabledPlatforms.find((platformId) => isPlatformUsable(platformId, runtimeOs));
+    if (firstEnabledUsable) return firstEnabledUsable;
+    const firstUsable = ALL_PLATFORMS.find((platform) => isPlatformUsable(platform.id, runtimeOs));
+    if (firstUsable) return firstUsable.id;
     return s.enabledPlatforms[0] || "steam";
   }
   const startupSettings = getSettings();
@@ -72,12 +89,27 @@
 
   // Platform state
   let settings = $state(startupSettings);
+  let runtimeOs = $state<RuntimeOs>("unknown");
   let locale = $derived(settings.language ?? DEFAULT_LOCALE);
   const t = (key: MessageKey, params?: TranslationParams) => translate(locale, key, params);
   let enabledPlatforms = $derived<PlatformDef[]>(
     ALL_PLATFORMS.filter(p => settings.enabledPlatforms.includes(p.id))
   );
-  let activeTab = $state(getInitialActiveTab(startupSettings));
+  let compatiblePlatforms = $derived<PlatformDef[]>(
+    ALL_PLATFORMS.filter((platform) => isPlatformUsable(platform.id, runtimeOs))
+  );
+  let activeTab = $state(getInitialActiveTab(startupSettings, "unknown"));
+  let activePlatformDef = $derived(getPlatformDefinition(activeTab));
+  let activeTabUsable = $derived(isPlatformUsable(activeTab, runtimeOs));
+  let unavailablePlatformIds = $derived.by(() => {
+    const ids = new Set<string>();
+    for (const platform of enabledPlatforms) {
+      if (!isPlatformUsable(platform.id, runtimeOs)) {
+        ids.add(platform.id);
+      }
+    }
+    return ids;
+  });
   let accentColor = $derived(
     getPlatformDefinition(activeTab)?.accent || "#3b82f6"
   );
@@ -87,7 +119,7 @@
     if (Math.abs(zoom - 1) < 0.0001) return "";
     return `transform: scale(${zoom}); transform-origin: top left; width: calc(100% / ${zoom}); height: calc(100% / ${zoom});`;
   });
-  let adapter = $derived(getPlatform(activeTab));
+  let adapter = $derived(activeTabUsable ? getPlatform(activeTab) : undefined);
 
   // Shared controllers
   const blur = createInactivityBlur();
@@ -268,10 +300,13 @@
     const setupId = platformAddFlow.status.setupId.trim();
     if (!setupId) return null;
     const detectedName = (platformAddFlow.status.accountDisplayName || "").trim();
+    const isSteamFlow = platformAddFlow.platformId === "steam";
     return {
       id: setupId,
-      displayName: detectedName || "Riot Account",
-      username: detectedName ? t("riot.setupConnected") : t("riot.setupWaitingForLogin"),
+      displayName: detectedName || (isSteamFlow ? t("steam.setupPendingLabel") : t("riot.setupPendingLabel")),
+      username: detectedName
+        ? (isSteamFlow ? t("steam.setupConnected") : t("riot.setupConnected"))
+        : (isSteamFlow ? t("steam.setupWaitingForLogin") : t("riot.setupWaitingForLogin")),
       lastLoginAt: null,
     } satisfies PlatformAccount;
   });
@@ -371,11 +406,10 @@
         if (activeTab === flow.platformId) {
           loadAccounts(true, false, false, false, false);
         }
-        showToast(
-          nextStatus.accountDisplayName
-            ? t("riot.setupReadyWithProfile", { profile: nextStatus.accountDisplayName })
-            : t("riot.setupReady")
-        );
+        const isSteamFlow = flow.platformId === "steam";
+        showToast(nextStatus.accountDisplayName
+          ? t(isSteamFlow ? "steam.setupReadyWithProfile" : "riot.setupReadyWithProfile", { profile: nextStatus.accountDisplayName })
+          : t(isSteamFlow ? "steam.setupReady" : "riot.setupReady"));
         stopPlatformAddFlow();
         return;
       }
@@ -456,6 +490,14 @@
   }
 
   let currentAccountId = $derived(loader.currentAccountId);
+  let showLastLoginForActiveTab = $derived(
+    activeTab === "riot"
+      ? settings.accountDisplay.showRiotLastLogin
+      : settings.accountDisplay.showLastLogin
+  );
+  let lastLoginUnknownKey = $derived<MessageKey>(
+    activeTab === "riot" ? "time.neverConnected" : "time.unknown"
+  );
 
   function getAccountCardColor(accountId: string): string {
     cardColorVersion;
@@ -478,6 +520,15 @@
       title: t("riot.setupDetected"),
       text: display,
       chips: [{ text: t("riot.setupConnected"), tone: "green" as const }],
+    };
+  }
+
+  function createSteamDetectedSection(display: string): CardExtensionContent["sections"][number] | null {
+    if (!display) return null;
+    return {
+      title: t("steam.setupDetected"),
+      text: display,
+      chips: [{ text: t("steam.setupConnected"), tone: "green" as const }],
     };
   }
 
@@ -572,7 +623,57 @@
     }
   }
 
+  function getSteamSetupContent(accountId: string): CardExtensionContent | null {
+    if (!platformAddFlow || platformAddFlow.platformId !== "steam") return null;
+    const setupId = platformAddFlow.status.setupId.trim();
+    if (!setupId || setupId !== accountId) return null;
+
+    const display = (platformAddFlow.status.accountDisplayName || "").trim();
+    const error = (platformAddFlow.status.errorMessage || "").trim();
+    const detectedSection = createSteamDetectedSection(display);
+
+    switch (platformAddFlow.status.state) {
+      case "waiting_for_client":
+        return {
+          sections: [
+            {
+              text: t("steam.setupWaitingForClient"),
+              loading: true,
+            },
+          ],
+        };
+      case "failed":
+        return {
+          sections: [
+            {
+              title: t("steam.setupFailed"),
+              text: t("steam.setupFailedMessage"),
+            },
+            ...(error ? [{
+              lines: [error],
+              chips: [{ text: t("common.close"), tone: "red" as const }],
+            }] : []),
+          ],
+        };
+      case "ready":
+        return null;
+      case "waiting_for_login":
+      default:
+        return {
+          sections: [
+            {
+              text: t("steam.setupWaitingForLogin"),
+              loading: true,
+            },
+            ...(detectedSection ? [detectedSection] : []),
+          ],
+        };
+    }
+  }
+
   function getAccountExtensionContent(account: PlatformAccount): CardExtensionContent | null {
+    const steamSetupContent = getSteamSetupContent(account.id);
+    if (steamSetupContent) return steamSetupContent;
     const riotSetupContent = getRiotSetupContent(account.id);
     if (riotSetupContent) return riotSetupContent;
 
@@ -708,7 +809,12 @@
       blur.start();
       if (!afkListenersAttached) { blur.attachListeners(); afkListenersAttached = true; }
     }
-    if (tabChanged && getPlatform(entry.tab)) { loadAccounts(true); } else { refreshCurrentItems(); setTimeout(grid.calculatePadding, 0); }
+    if (tabChanged && isPlatformUsable(entry.tab, runtimeOs) && getPlatform(entry.tab)) {
+      loadAccounts(true);
+    } else {
+      refreshCurrentItems();
+      setTimeout(grid.calculatePadding, 0);
+    }
     searchQuery = "";
   }
 
@@ -727,12 +833,13 @@
   }
 
   async function handleTabChange(tab: string) {
+    if (!isPlatformUsable(tab, runtimeOs)) return;
     await cancelPlatformAddFlow();
     history.pushState({ tab, folderId: null, showSettings: false }, "");
     activeTab = tab;
     currentFolderId = null;
     showSettings = false;
-    if (getPlatform(tab)) { loadAccounts(true); } else { refreshCurrentItems(); setTimeout(grid.calculatePadding, 0); }
+    if (isPlatformUsable(tab, runtimeOs) && getPlatform(tab)) { loadAccounts(true); } else { refreshCurrentItems(); setTimeout(grid.calculatePadding, 0); }
     searchQuery = "";
   }
 
@@ -830,10 +937,12 @@
       void cancelPlatformAddFlow();
     }
     settings = getSettings();
-    if (!settings.enabledPlatforms.includes(activeTab)) activeTab = getInitialActiveTab(settings);
+    if (!settings.enabledPlatforms.includes(activeTab) || !isPlatformUsable(activeTab, runtimeOs)) {
+      activeTab = getInitialActiveTab(settings, runtimeOs);
+    }
     currentFolderId = null;
     history.replaceState({ tab: activeTab, folderId: null, showSettings: false }, "");
-    if (getPlatform(activeTab)) { loadAccounts(); } else { refreshCurrentItems(); }
+    if (isPlatformUsable(activeTab, runtimeOs) && getPlatform(activeTab)) { loadAccounts(); } else { refreshCurrentItems(); }
   }
 
   function handleSettingsClose() {
@@ -940,6 +1049,17 @@
     document.documentElement.lang = locale;
   });
 
+  $effect(() => {
+    runtimeOs;
+    settings.enabledPlatforms.join(",");
+    if (isPlatformUsable(activeTab, runtimeOs)) return;
+    const fallbackTab = getInitialActiveTab(settings, runtimeOs);
+    if (fallbackTab !== activeTab) {
+      activeTab = fallbackTab;
+      currentFolderId = null;
+    }
+  });
+
   async function unlockWithPin() {
     const expectedPinHash = settings.pinHash || "";
     if (!isValidPinHash(expectedPinHash)) {
@@ -975,6 +1095,30 @@
   }
 
   onMount(() => {
+    void invoke<string>("get_runtime_os")
+      .then((osName) => {
+        runtimeOs = osName === "windows" || osName === "linux" || osName === "macos"
+          ? osName
+          : "unknown";
+        const nextTab = getInitialActiveTab(settings, runtimeOs);
+        if (nextTab !== activeTab) {
+          activeTab = nextTab;
+        }
+        if (isPlatformUsable(activeTab, runtimeOs) && getPlatform(activeTab)) {
+          loadAccounts(false, false, false, true, true);
+        } else {
+          refreshCurrentItems();
+        }
+      })
+      .catch(() => {
+        runtimeOs = "unknown";
+        if (isPlatformUsable(activeTab, runtimeOs) && getPlatform(activeTab)) {
+          loadAccounts(false, false, false, true, true);
+        } else {
+          refreshCurrentItems();
+        }
+      });
+
     void getVersion()
       .then((v) => {
         appVersion = semverCore(v);
@@ -983,7 +1127,6 @@
         console.error("Failed to read app version:", e);
       });
 
-    loadAccounts(false, false, false, true, true);
     scheduleIdle(() => { void loadSettingsComponent(); });
     updateCheckTimer = setTimeout(() => { void startBackgroundUpdateFlow(); }, 3500);
     blur.start();
@@ -1040,8 +1183,14 @@
   <div class="app-stage" class:locked={isPinLocked} style={appStageStyle}>
     <div class="app-shell">
       <TitleBar
-        onRefresh={() => loadAccounts(false, true, false, true)}
-        onAddAccount={() => { void handleAddAccount(); }}
+        onRefresh={() => {
+          if (!activeTabUsable) return;
+          loadAccounts(false, true, false, true);
+        }}
+        onAddAccount={() => {
+          if (!activeTabUsable) return;
+          void handleAddAccount();
+        }}
         onOpenSettings={toggleSettingsPanel}
       onApplyUpdate={applyReadyUpdate}
       updateCtaLabel={updateCtaLabel}
@@ -1050,6 +1199,9 @@
       {activeTab}
       onTabChange={handleTabChange}
       {enabledPlatforms}
+      {unavailablePlatformIds}
+      canRefresh={activeTabUsable}
+      canAddAccount={activeTabUsable}
       {locale}
     />
     <div
@@ -1071,6 +1223,7 @@
         onPlatformsChanged={handlePlatformsChanged}
         onRefreshAvatarsNow={refreshAvatarsNow}
         onRefreshBansNow={refreshBansNow}
+        {runtimeOs}
       />
     {:else}
       <div class="center-msg">
@@ -1078,6 +1231,13 @@
         <p class="text-sm">{t("app.loadingSettings")}</p>
       </div>
     {/if}
+  </main>
+{:else if compatiblePlatforms.length === 0}
+  <main class="content">
+    <div class="center-msg">
+      <p>{t("app.noCompatiblePlatforms")}</p>
+      <p class="text-sm mt-1 opacity-70">{t("app.noCompatiblePlatformsHint")}</p>
+    </div>
   </main>
 {:else if adapter}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1127,14 +1287,15 @@
         class:is-dragging={drag.isDragging}
         onmousedown={(e) => !isSearching && drag.handleGridMouseDown(e)}
       >
-        <ListView
-          folderItems={displayFolderItems}
-          accountItems={displayAccountItemsWithPending}
-          accounts={renderedAccountMap}
-          showUsernames={settings.accountDisplay.showUsernames}
-          showLastLogin={settings.accountDisplay.showLastLogin}
-          {currentFolderId}
-          {currentAccountId}
+          <ListView
+            folderItems={displayFolderItems}
+            accountItems={displayAccountItemsWithPending}
+            accounts={renderedAccountMap}
+            showUsernames={settings.accountDisplay.showUsernames}
+            showLastLogin={showLastLoginForActiveTab}
+            {lastLoginUnknownKey}
+            {currentFolderId}
+            {currentAccountId}
           avatarStates={loader.avatarStates}
           warningStates={loader.warningStates}
           {getAccountNote}
@@ -1219,8 +1380,9 @@
                   note={getAccountNote(account.id)}
                   showNoteInline={settings.accountDisplay.showCardNotesInline}
                   showUsername={settings.accountDisplay.showUsernames}
-                  showLastLogin={settings.accountDisplay.showLastLogin}
+                  showLastLogin={showLastLoginForActiveTab}
                   lastLoginAt={account.lastLoginAt}
+                  {lastLoginUnknownKey}
                   {locale}
                   isActive={account.id === currentAccountId}
                   onSwitch={() => {
@@ -1278,7 +1440,11 @@
       {accentColor}
     />
     <div class="center-msg">
-      <p class="text-sm">{t("app.comingSoon", { platform: getPlatformDefinition(activeTab)?.name || activeTab })}</p>
+      <p class="text-sm">
+        {activePlatformDef?.implemented
+          ? t("app.platformUnsupportedOs", { platform: activePlatformDef?.name || activeTab })
+          : t("app.comingSoon", { platform: activePlatformDef?.name || activeTab })}
+      </p>
     </div>
   </main>
 {/if}

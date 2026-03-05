@@ -5,6 +5,7 @@
   import { addToast } from "../notifications/store.svelte";
   import ToggleSetting from "./ToggleSetting.svelte";
   import SteamSettingsSection from "$lib/platforms/steam/SteamSettingsSection.svelte";
+  import { getPlatformDefinition } from "$lib/platforms/registry";
   import {
     DEFAULT_LOCALE,
     LANGUAGE_OPTIONS,
@@ -15,11 +16,12 @@
   } from "$lib/i18n";
   import { hashPinCode, sanitizePinDigits } from "$lib/shared/pin";
 
-  let { onClose, onPlatformsChanged, onRefreshAvatarsNow = async () => {}, onRefreshBansNow = async () => {} }: {
+  let { onClose, onPlatformsChanged, onRefreshAvatarsNow = async () => {}, onRefreshBansNow = async () => {}, runtimeOs = "unknown" }: {
     onClose: () => void;
     onPlatformsChanged?: () => void;
     onRefreshAvatarsNow?: () => void | Promise<void>;
     onRefreshBansNow?: () => void | Promise<void>;
+    runtimeOs?: "windows" | "linux" | "macos" | "unknown";
   } = $props();
 
   let settings = $state(getSettings());
@@ -74,6 +76,10 @@
     if (!settings.enabledPlatforms.length) settings.enabledPlatforms = ["steam"];
     if (!settings.enabledPlatforms.includes(settings.defaultPlatformId)) {
       settings.defaultPlatformId = settings.enabledPlatforms[0];
+    }
+    const selectableEnabled = settings.enabledPlatforms.filter((platformId) => isPlatformSelectable(platformId));
+    if (selectableEnabled.length > 0 && !selectableEnabled.includes(settings.defaultPlatformId)) {
+      settings.defaultPlatformId = selectableEnabled[0];
     }
   }
 
@@ -190,11 +196,33 @@
     if (saveTimer) clearTimeout(saveTimer);
   });
 
+  function isPlatformOsCompatible(platformId: string): boolean {
+    const definition = getPlatformDefinition(platformId);
+    if (!definition) return false;
+    return definition.supportedOs.includes(runtimeOs);
+  }
+
+  function isPlatformSelectable(platformId: string): boolean {
+    const definition = getPlatformDefinition(platformId);
+    if (!definition) return false;
+    return definition.implemented && isPlatformOsCompatible(platformId);
+  }
+
+  function platformAvailabilityLabel(platformId: string): string {
+    const definition = getPlatformDefinition(platformId);
+    if (!definition) return t("settings.platformNotImplemented");
+    if (!definition.implemented) return t("settings.platformNotImplemented");
+    if (!isPlatformOsCompatible(platformId)) return t("settings.platformUnsupportedOs");
+    return "";
+  }
+
   function togglePlatform(id: string) {
     if (settings.enabledPlatforms.includes(id)) {
-      if (settings.enabledPlatforms.length <= 1) return;
+      const selectableEnabled = settings.enabledPlatforms.filter((platformId) => isPlatformSelectable(platformId));
+      if (selectableEnabled.length <= 1 && selectableEnabled.includes(id)) return;
       settings.enabledPlatforms = settings.enabledPlatforms.filter(p => p !== id);
     } else {
+      if (!isPlatformSelectable(id)) return;
       settings.enabledPlatforms = [...settings.enabledPlatforms, id];
     }
   }
@@ -210,6 +238,7 @@
     settings.accountDisplay.showUsernames;
     settings.accountDisplay.showLastLogin;
     settings.accountDisplay.showCardNotesInline;
+    settings.accountDisplay.showRiotLastLogin;
     settings.uiScalePercent;
     settings.defaultPlatformId;
     settings.pinEnabled;
@@ -333,9 +362,25 @@
       <h3>{t("settings.platforms")}</h3>
       <div class="platforms">
         {#each ALL_PLATFORMS as platform}
-          <button class="platform-chip" onclick={() => togglePlatform(platform.id)} style={`--chip-accent:${platform.accent};`}>
-            <span>{platform.name}</span>
-            <div class="toggle" class:active={settings.enabledPlatforms.includes(platform.id)}>
+          {@const isSelectable = isPlatformSelectable(platform.id)}
+          {@const isEnabled = settings.enabledPlatforms.includes(platform.id)}
+          {@const isLocked = !isSelectable && !isEnabled}
+          {@const statusLabel = platformAvailabilityLabel(platform.id)}
+          <button
+            class="platform-chip"
+            class:disabled={isLocked}
+            onclick={() => togglePlatform(platform.id)}
+            style={`--chip-accent:${platform.accent};`}
+            disabled={isLocked}
+            title={statusLabel || platform.name}
+          >
+            <span class="platform-main">
+              <span>{platform.name}</span>
+              {#if statusLabel}
+                <span class="platform-status">{statusLabel}</span>
+              {/if}
+            </span>
+            <div class="toggle" class:active={isEnabled}>
               <div class="knob"></div>
             </div>
           </button>
@@ -349,12 +394,45 @@
         </div>
         <select class="text-input" bind:value={settings.defaultPlatformId}>
           {#each ALL_PLATFORMS as platform}
-            <option value={platform.id} disabled={!settings.enabledPlatforms.includes(platform.id)}>
-              {platform.name}{!settings.enabledPlatforms.includes(platform.id) ? ` ${t("settings.platformDisabledSuffix")}` : ""}
+            {@const disabled = !settings.enabledPlatforms.includes(platform.id) || !isPlatformSelectable(platform.id)}
+            <option value={platform.id} {disabled}>
+              {platform.name}{disabled ? ` ${t("settings.platformDisabledSuffix")}` : ""}
             </option>
           {/each}
         </select>
       </div>
+    </section>
+
+    <section class="card">
+      <h3>{t("settings.accountDisplay")}</h3>
+      <ToggleSetting
+        label={t("settings.showUsernames")}
+        enabled={settings.accountDisplay.showUsernames}
+        onLabel={t("common.visible")}
+        offLabel={t("common.hidden")}
+        onToggle={() => settings.accountDisplay.showUsernames = !settings.accountDisplay.showUsernames}
+      />
+      <ToggleSetting
+        label={t("settings.showSteamLastLogin")}
+        enabled={settings.accountDisplay.showLastLogin}
+        onLabel={t("common.on")}
+        offLabel={t("common.off")}
+        onToggle={() => settings.accountDisplay.showLastLogin = !settings.accountDisplay.showLastLogin}
+      />
+      <ToggleSetting
+        label={t("settings.showRiotLastLogin")}
+        enabled={settings.accountDisplay.showRiotLastLogin}
+        onLabel={t("common.on")}
+        offLabel={t("common.off")}
+        onToggle={() => settings.accountDisplay.showRiotLastLogin = !settings.accountDisplay.showRiotLastLogin}
+      />
+      <ToggleSetting
+        label={t("settings.showNotesUnderCards")}
+        enabled={settings.accountDisplay.showCardNotesInline}
+        onLabel={t("common.inline")}
+        offLabel={t("common.tooltip")}
+        onToggle={() => settings.accountDisplay.showCardNotesInline = !settings.accountDisplay.showCardNotesInline}
+      />
     </section>
 
     <section class="card">
@@ -620,9 +698,31 @@
     transition: border-color 120ms ease-out, background 120ms ease-out;
   }
 
+  .platform-main {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+
+  .platform-status {
+    font-size: 10px;
+    color: var(--fg-subtle);
+  }
+
   .platform-chip:hover {
     border-color: color-mix(in srgb, var(--chip-accent) 55%, var(--border));
     background: color-mix(in srgb, var(--bg-card) 84%, #fff 16%);
+  }
+
+  .platform-chip.disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .platform-chip.disabled:hover {
+    border-color: var(--border);
+    background: color-mix(in srgb, var(--bg) 88%, #fff 12%);
   }
 
   .toggle {

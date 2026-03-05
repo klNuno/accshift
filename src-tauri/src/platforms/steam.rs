@@ -7,8 +7,58 @@ use crate::platforms::{
 use crate::steam::accounts::{self, CopyableGame, SteamAccount};
 use crate::steam::bans::{self, BanInfo};
 use crate::steam::profile::{self, ProfileInfo};
-use std::collections::HashSet;
+use serde::Serialize;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
+use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SteamAccountSetupStatus {
+    pub setup_id: String,
+    pub state: String,
+    pub account_id: String,
+    pub account_display_name: String,
+    pub error_message: String,
+}
+
+#[derive(Clone)]
+struct SteamAccountSetupJob {
+    steam_path: PathBuf,
+    known_account_ids: HashSet<String>,
+    launch_started: bool,
+    error_message: Option<String>,
+}
+
+fn now_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn steam_setup_jobs() -> &'static Mutex<HashMap<String, SteamAccountSetupJob>> {
+    static JOBS: OnceLock<Mutex<HashMap<String, SteamAccountSetupJob>>> = OnceLock::new();
+    JOBS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn setup_status(
+    setup_id: &str,
+    state: &str,
+    account_id: impl Into<String>,
+    account_display_name: impl Into<String>,
+    error_message: impl Into<String>,
+) -> SteamAccountSetupStatus {
+    SteamAccountSetupStatus {
+        setup_id: setup_id.to_string(),
+        state: state.to_string(),
+        account_id: account_id.into(),
+        account_display_name: account_display_name.into(),
+        error_message: error_message.into(),
+    }
+}
 
 fn encrypt_api_key(api_key: &str) -> Result<String, String> {
     if api_key.trim().is_empty() {
@@ -105,7 +155,9 @@ pub fn get_accounts(app_handle: tauri::AppHandle) -> Result<Vec<SteamAccount>, S
     })
 }
 
-pub fn get_startup_snapshot(app_handle: tauri::AppHandle) -> Result<PlatformStartupSnapshot, String> {
+pub fn get_startup_snapshot(
+    app_handle: tauri::AppHandle,
+) -> Result<PlatformStartupSnapshot, String> {
     let steam_path = resolve_steam_path(&app_handle)?;
     let (accounts, current_from_file) =
         accounts::get_accounts_snapshot(&steam_path).map_err(|e| {
@@ -206,6 +258,119 @@ pub async fn add_account(
         eprintln!("Error: {:?}", e);
         e.to_string()
     })
+}
+
+pub fn begin_account_setup(
+    app_handle: tauri::AppHandle,
+    run_as_admin: bool,
+    launch_options: String,
+) -> Result<SteamAccountSetupStatus, String> {
+    let steam_path = resolve_steam_path(&app_handle)?;
+    let known_accounts = accounts::get_accounts(&steam_path).map_err(|e| {
+        eprintln!("Error: {:?}", e);
+        e.to_string()
+    })?;
+    let known_account_ids = known_accounts
+        .into_iter()
+        .map(|account| account.steam_id)
+        .collect::<HashSet<_>>();
+    let setup_id = format!("steam-setup-{}", now_unix_ms());
+
+    {
+        let mut jobs = steam_setup_jobs()
+            .lock()
+            .map_err(|_| "Steam setup storage is unavailable".to_string())?;
+        jobs.insert(
+            setup_id.clone(),
+            SteamAccountSetupJob {
+                steam_path: steam_path.clone(),
+                known_account_ids,
+                launch_started: false,
+                error_message: None,
+            },
+        );
+    }
+
+    let setup_id_for_job = setup_id.clone();
+    thread::spawn(move || {
+        let launch_result = accounts::add_account(&steam_path, run_as_admin, &launch_options)
+            .map_err(|e| e.to_string());
+        if let Ok(mut jobs) = steam_setup_jobs().lock() {
+            if let Some(job) = jobs.get_mut(&setup_id_for_job) {
+                job.launch_started = true;
+                if let Err(error) = launch_result {
+                    job.error_message = Some(error);
+                }
+            }
+        }
+    });
+
+    Ok(setup_status(&setup_id, "waiting_for_client", "", "", ""))
+}
+
+pub fn get_account_setup_status(
+    _app_handle: tauri::AppHandle,
+    setup_id: String,
+) -> Result<SteamAccountSetupStatus, String> {
+    let setup_id = setup_id.trim().to_string();
+    if setup_id.is_empty() {
+        return Err("Invalid Steam setup id".into());
+    }
+
+    let job = {
+        let jobs = steam_setup_jobs()
+            .lock()
+            .map_err(|_| "Steam setup storage is unavailable".to_string())?;
+        jobs.get(&setup_id).cloned()
+    };
+
+    let Some(job) = job else {
+        return Err("Steam setup not found".into());
+    };
+
+    if let Some(error) = job.error_message {
+        return Ok(setup_status(&setup_id, "failed", "", "", error));
+    }
+
+    if !job.launch_started {
+        return Ok(setup_status(&setup_id, "waiting_for_client", "", "", ""));
+    }
+
+    let accounts = accounts::get_accounts(&job.steam_path).map_err(|e| {
+        eprintln!("Error: {:?}", e);
+        e.to_string()
+    })?;
+    let maybe_added = accounts
+        .into_iter()
+        .filter(|account| !job.known_account_ids.contains(&account.steam_id))
+        .max_by_key(|account| account.last_login_at.unwrap_or(0));
+
+    if let Some(account) = maybe_added {
+        if let Ok(mut jobs) = steam_setup_jobs().lock() {
+            jobs.remove(&setup_id);
+        }
+        return Ok(setup_status(
+            &setup_id,
+            "ready",
+            account.steam_id,
+            account.persona_name,
+            "",
+        ));
+    }
+
+    Ok(setup_status(&setup_id, "waiting_for_login", "", "", ""))
+}
+
+pub fn cancel_account_setup(_app_handle: tauri::AppHandle, setup_id: String) -> Result<(), String> {
+    let setup_id = setup_id.trim();
+    if setup_id.is_empty() {
+        return Ok(());
+    }
+    let mut jobs = steam_setup_jobs()
+        .lock()
+        .map_err(|_| "Steam setup storage is unavailable".to_string())?;
+    jobs.remove(setup_id);
+    Ok(())
 }
 
 pub async fn forget_account(app_handle: tauri::AppHandle, steam_id: String) -> Result<(), String> {
@@ -401,11 +566,7 @@ impl PlatformService for SteamPlatformService {
         Box::pin(async move { forget_account(app_handle, steam_id).await })
     }
 
-    fn open_userdata(
-        &self,
-        app_handle: tauri::AppHandle,
-        steam_id: String,
-    ) -> Result<(), String> {
+    fn open_userdata(&self, app_handle: tauri::AppHandle, steam_id: String) -> Result<(), String> {
         open_userdata(app_handle, steam_id)
     }
 

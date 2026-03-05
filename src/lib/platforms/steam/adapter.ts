@@ -1,5 +1,7 @@
 import type {
   PlatformAdapter,
+  PlatformAddAccountResult,
+  PlatformAddFlowStatus,
   PlatformAccount,
   PlatformContextMenuCallbacks,
   PlatformProfileInfo,
@@ -54,8 +56,17 @@ export const steamAdapter: PlatformAdapter = {
     await service.switchAccount(account.username);
   },
 
-  async addAccount(): Promise<void> {
-    await service.addAccount();
+  async addAccount(): Promise<PlatformAddAccountResult> {
+    const setupStatus = await service.beginAccountSetup();
+    return { setupStatus };
+  },
+
+  async pollAddFlow(setupId: string): Promise<PlatformAddFlowStatus> {
+    return service.getAccountSetupStatus(setupId);
+  },
+
+  async cancelAddFlow(setupId: string): Promise<void> {
+    await service.cancelAccountSetup(setupId);
   },
 
   getContextMenuActions(

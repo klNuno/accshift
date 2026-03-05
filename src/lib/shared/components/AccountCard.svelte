@@ -7,7 +7,7 @@
   import CardExtensionPanel from "./CardExtensionPanel.svelte";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
   import { getAvatarGradientStyle, getAvatarInitials } from "$lib/shared/avatarFallback";
-  import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
+  import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
 
   let {
     account,
@@ -28,6 +28,7 @@
     showUsername = true,
     showNoteInline = false,
     showLastLogin = false,
+    lastLoginUnknownKey = "time.unknown",
     lastLoginAt = null,
     note = "",
     locale = DEFAULT_LOCALE,
@@ -50,6 +51,7 @@
     showUsername?: boolean;
     showNoteInline?: boolean;
     showLastLogin?: boolean;
+    lastLoginUnknownKey?: MessageKey;
     lastLoginAt?: number | null;
     note?: string;
     locale?: Locale;
@@ -298,7 +300,7 @@
           <div class="note">{noteText}</div>
         {/if}
         {#if showLastLogin}
-          <div class="last-login">{formatRelativeTimeCompact(lastLoginAt, locale)}</div>
+          <div class="last-login">{formatRelativeTimeCompact(lastLoginAt, locale, lastLoginUnknownKey)}</div>
         {/if}
       </div>
     {/if}

@@ -4,7 +4,7 @@
   import type { FolderInfo } from "../../features/folders/types";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
   import { getAvatarGradientStyle, getAvatarInitials } from "$lib/shared/avatarFallback";
-  import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
+  import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
 
   let {
     account = null,
@@ -18,6 +18,7 @@
     warningInfo = undefined,
     showUsername = true,
     showLastLogin = false,
+    lastLoginUnknownKey = "time.unknown",
     lastLoginAt = null,
     locale = DEFAULT_LOCALE,
     onClick,
@@ -35,6 +36,7 @@
     warningInfo?: AccountWarningPresentation;
     showUsername?: boolean;
     showLastLogin?: boolean;
+    lastLoginUnknownKey?: MessageKey;
     lastLoginAt?: number | null;
     locale?: Locale;
     onClick: () => void;
@@ -116,7 +118,7 @@
             <span class="username-text">{account.username}</span>
           {/if}
           {#if showLastLogin}
-            <span class="meta-text">{formatRelativeTimeCompact(lastLoginAt, locale)}</span>
+            <span class="meta-text">{formatRelativeTimeCompact(lastLoginAt, locale, lastLoginUnknownKey)}</span>
           {/if}
         </span>
       {/if}

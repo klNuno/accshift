@@ -66,12 +66,16 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::get_runtime_os,
             commands::get_steam_accounts,
             commands::get_startup_snapshot,
             commands::get_current_account,
             commands::switch_account,
             commands::switch_account_mode,
             commands::add_account,
+            commands::begin_steam_account_setup,
+            commands::get_steam_account_setup_status,
+            commands::cancel_steam_account_setup,
             commands::forget_account,
             commands::open_userdata,
             commands::copy_game_settings,

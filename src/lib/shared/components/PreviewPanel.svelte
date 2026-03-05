@@ -2,7 +2,7 @@
   import type { PlatformAccount } from "../platform";
   import type { AccountWarningPresentation } from "../accountWarnings";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
-  import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
+  import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
 
   let {
     account,
@@ -10,6 +10,7 @@
     avatarUrl = null,
     showUsername = true,
     showLastLogin = false,
+    lastLoginUnknownKey = "time.unknown",
     lastLoginAt = null,
     accountNote = "",
     accentColor = "#3b82f6",
@@ -22,6 +23,7 @@
     avatarUrl?: string | null;
     showUsername?: boolean;
     showLastLogin?: boolean;
+    lastLoginUnknownKey?: MessageKey;
     lastLoginAt?: number | null;
     accountNote?: string;
     accentColor?: string;
@@ -56,7 +58,7 @@
         <span class="username">{account.username}</span>
       {/if}
       {#if showLastLogin}
-        <span class="meta">{formatRelativeTimeCompact(lastLoginAt, locale)}</span>
+        <span class="meta">{formatRelativeTimeCompact(lastLoginAt, locale, lastLoginUnknownKey)}</span>
       {/if}
     </div>
   {/if}

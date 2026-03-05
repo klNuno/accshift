@@ -5,7 +5,7 @@
   import type { ItemRef, FolderInfo } from "../../features/folders/types";
   import ListRow from "./ListRow.svelte";
   import PreviewPanel from "./PreviewPanel.svelte";
-  import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
+  import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
 
   let {
     folderItems = [],
@@ -13,6 +13,7 @@
     accounts,
     showUsernames = true,
     showLastLogin = false,
+    lastLoginUnknownKey = "time.unknown",
     currentFolderId = null,
     currentAccountId = null,
     avatarStates = {},
@@ -36,6 +37,7 @@
     accounts: Record<string, PlatformAccount>;
     showUsernames?: boolean;
     showLastLogin?: boolean;
+    lastLoginUnknownKey?: MessageKey;
     currentFolderId: string | null;
     currentAccountId?: string | null;
     avatarStates: Record<string, { url: string | null; loading: boolean; refreshing: boolean }>;
@@ -101,6 +103,7 @@
             {account}
             showUsername={showUsernames}
             {showLastLogin}
+            {lastLoginUnknownKey}
             lastLoginAt={account.lastLoginAt}
             isActive={account.id === currentAccountId}
             isSelected={selectedAccountId === account.id}
@@ -126,6 +129,7 @@
         account={selectedAccount}
         showUsername={showUsernames}
         {showLastLogin}
+        {lastLoginUnknownKey}
         lastLoginAt={selectedAccount.lastLoginAt}
         isActive={selectedAccount.id === currentAccountId}
         avatarUrl={avatarStates[selectedAccount.id]?.url}

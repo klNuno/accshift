@@ -47,11 +47,12 @@ function profileSecondaryLabel(profile: RiotProfile): string {
 }
 
 function toAccount(profile: RiotProfile): PlatformAccount {
+  const lastLoginUnixMs = profile.last_used_at ?? profile.last_captured_at ?? null;
   return {
     id: profile.id,
     displayName: getRiotAlias(profile) || profile.label,
     username: profileSecondaryLabel(profile),
-    lastLoginAt: profile.last_used_at ?? profile.last_captured_at ?? null,
+    lastLoginAt: lastLoginUnixMs ? Math.floor(lastLoginUnixMs / 1000) : null,
   };
 }
 

@@ -141,7 +141,10 @@ fn normalize_riot_profile(raw: RawRiotProfileConfig) -> RiotProfileConfig {
     };
 
     let snapshot_state = if raw.snapshot_state.trim().is_empty() {
-        if raw.last_login_at.is_some() || !raw.region.trim().is_empty() || !raw.tag_line.trim().is_empty() {
+        if raw.last_login_at.is_some()
+            || !raw.region.trim().is_empty()
+            || !raw.tag_line.trim().is_empty()
+        {
             "ready".to_string()
         } else {
             "awaiting_capture".to_string()
@@ -190,7 +193,10 @@ fn normalize_riot_config(raw: Option<RawRiotConfig>) -> RiotConfig {
 
     RiotConfig {
         path_override: raw.path_override,
-        profiles: source_profiles.into_iter().map(normalize_riot_profile).collect(),
+        profiles: source_profiles
+            .into_iter()
+            .map(normalize_riot_profile)
+            .collect(),
         current_profile_id: if raw.current_profile_id.trim().is_empty() {
             raw.current_account_id
         } else {

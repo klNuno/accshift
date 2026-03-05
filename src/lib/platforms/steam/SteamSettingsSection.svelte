@@ -35,30 +35,6 @@
     onToggle={() => settings.platformSettings.steam.runAsAdmin = !settings.platformSettings.steam.runAsAdmin}
   />
 
-  <ToggleSetting
-    label={t("settings.showUsernames")}
-    enabled={settings.accountDisplay.showUsernames}
-    onLabel={t("common.visible")}
-    offLabel={t("common.hidden")}
-    onToggle={() => settings.accountDisplay.showUsernames = !settings.accountDisplay.showUsernames}
-  />
-
-  <ToggleSetting
-    label={t("settings.showLastLogin")}
-    enabled={settings.accountDisplay.showLastLogin}
-    onLabel={t("common.on")}
-    offLabel={t("common.off")}
-    onToggle={() => settings.accountDisplay.showLastLogin = !settings.accountDisplay.showLastLogin}
-  />
-
-  <ToggleSetting
-    label={t("settings.showNotesUnderCards")}
-    enabled={settings.accountDisplay.showCardNotesInline}
-    onLabel={t("common.inline")}
-    offLabel={t("common.tooltip")}
-    onToggle={() => settings.accountDisplay.showCardNotesInline = !settings.accountDisplay.showCardNotesInline}
-  />
-
   <div class="field">
     <div class="row">
       <span>{t("settings.launchOptions")}</span>

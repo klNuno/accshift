@@ -1,9 +1,13 @@
 import type { Locale } from "$lib/i18n";
 
+export type RuntimeOs = "windows" | "linux" | "macos" | "unknown";
+
 export interface PlatformDef {
   id: string;
   name: string;
   accent: string;
+  implemented: boolean;
+  supportedOs: RuntimeOs[];
 }
 
 export interface DataRefreshSettings {
@@ -14,6 +18,7 @@ export interface DataRefreshSettings {
 export interface AccountDisplaySettings {
   showUsernames: boolean;
   showLastLogin: boolean;
+  showRiotLastLogin: boolean;
   showCardNotesInline: boolean;
 }
 

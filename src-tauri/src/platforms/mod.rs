@@ -5,8 +5,8 @@ use serde::Serialize;
 use std::future::Future;
 use std::pin::Pin;
 
-pub mod steam;
 pub mod riot;
+pub mod steam;
 
 pub type PlatformFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -76,11 +76,7 @@ pub trait PlatformService: Sync {
         app_handle: tauri::AppHandle,
         steam_id: String,
     ) -> PlatformFuture<'a, Result<(), String>>;
-    fn open_userdata(
-        &self,
-        app_handle: tauri::AppHandle,
-        steam_id: String,
-    ) -> Result<(), String>;
+    fn open_userdata(&self, app_handle: tauri::AppHandle, steam_id: String) -> Result<(), String>;
     fn copy_game_settings(
         &self,
         app_handle: tauri::AppHandle,
