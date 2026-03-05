@@ -26,6 +26,7 @@
     onNavigate,
     onGoBack,
     onSwitch,
+    onAccountActivate = () => {},
     onAccountContextMenu,
     onFolderContextMenu,
     getFolder,
@@ -48,6 +49,7 @@
     onNavigate: (folderId: string) => void;
     onGoBack: () => void;
     onSwitch: (account: PlatformAccount) => void;
+    onAccountActivate?: (account: PlatformAccount) => void;
     onAccountContextMenu: (e: MouseEvent, account: PlatformAccount) => void;
     onFolderContextMenu: (e: MouseEvent, folder: FolderInfo) => void;
     getFolder: (id: string) => FolderInfo | undefined;
@@ -104,7 +106,10 @@
             isSelected={selectedAccountId === account.id}
             avatarUrl={avatarStates[account.id]?.url}
             warningInfo={warningStates[account.id]}
-            onClick={() => selectAccount(account.id)}
+            onClick={() => {
+              onAccountActivate(account);
+              selectAccount(account.id);
+            }}
             onDblClick={() => onSwitch(account)}
             onContextMenu={(e) => onAccountContextMenu(e, account)}
             {locale}

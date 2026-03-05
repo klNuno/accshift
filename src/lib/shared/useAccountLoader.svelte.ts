@@ -84,7 +84,7 @@ export function createAccountLoader(
     if (profile) {
       updateAvatarState(account.id, {
         url: profile.avatarUrl || avatarStates[account.id]?.url || null,
-        loading: false,
+        loading: profile.avatarLoading ?? false,
         refreshing: false,
       });
       if (profile.displayName && profile.displayName !== account.displayName) {
@@ -246,14 +246,21 @@ export function createAccountLoader(
     const adapter = getAdapter();
     if (!adapter) return;
     currentAccount = "";
-    try { await adapter.addAccount(); } catch (e) {
+    let result: Awaited<ReturnType<PlatformAdapter["addAccount"]>>;
+    try {
+      result = await adapter.addAccount();
+    } catch (e) {
       error = String(e);
       addToast(error);
       return;
     }
+    if (result?.setupStatus) {
+      return result;
+    }
     if (adapter.reloadAfterAdd) {
       await load(undefined, true, false, false, false, false);
     }
+    return result;
   }
 
   async function refreshVisibleAccounts(

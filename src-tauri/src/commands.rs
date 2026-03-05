@@ -204,8 +204,26 @@ pub fn get_current_riot_profile(app_handle: tauri::AppHandle) -> Result<String, 
 }
 
 #[tauri::command]
-pub fn create_riot_profile(app_handle: tauri::AppHandle) -> Result<(), String> {
-    crate::platforms::riot::create_profile(app_handle)
+pub fn begin_riot_profile_setup(
+    app_handle: tauri::AppHandle,
+) -> Result<crate::platforms::riot::RiotProfileSetupStatus, String> {
+    crate::platforms::riot::begin_profile_setup(app_handle)
+}
+
+#[tauri::command]
+pub fn get_riot_profile_setup_status(
+    app_handle: tauri::AppHandle,
+    profile_id: String,
+) -> Result<crate::platforms::riot::RiotProfileSetupStatus, String> {
+    crate::platforms::riot::get_profile_setup_status(app_handle, profile_id)
+}
+
+#[tauri::command]
+pub fn cancel_riot_profile_setup(
+    app_handle: tauri::AppHandle,
+    profile_id: String,
+) -> Result<(), String> {
+    crate::platforms::riot::cancel_profile_setup(app_handle, profile_id)
 }
 
 #[tauri::command]

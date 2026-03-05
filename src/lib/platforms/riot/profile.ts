@@ -3,11 +3,11 @@ import { getCachedRiotProfileMeta } from "./accountCache";
 
 function getProfileDisplayName(profile: {
   label: string;
-  account_name: string;
-  account_tag_line: string;
+  account_name?: string;
+  account_tag_line?: string;
 }): string {
-  const name = profile.account_name.trim();
-  const tagLine = profile.account_tag_line.trim();
+  const name = (profile.account_name ?? "").trim();
+  const tagLine = (profile.account_tag_line ?? "").trim();
   if (!name) return profile.label;
   return tagLine ? `${name}#${tagLine}` : name;
 }
@@ -39,9 +39,11 @@ export function getRiotProfile(profileId: string): PlatformProfileInfo | null {
   const profile = getCachedRiotProfileMeta(profileId);
   if (!profile) return null;
   const displayName = getProfileDisplayName(profile);
+  const avatarLoading = profile.snapshot_state === "setup_pending" || profile.snapshot_state === "capturing";
   return {
-    avatarUrl: createAvatarSvg(profile.id, displayName),
+    avatarUrl: avatarLoading ? null : createAvatarSvg(profile.id, displayName),
     displayName,
+    avatarLoading,
   };
 }
 

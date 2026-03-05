@@ -34,6 +34,7 @@
     return name.slice(0, 2).toUpperCase();
   }
 
+  let hasUsername = $derived(Boolean(showUsername && account.username.trim()));
   let banWarnings = $derived.by(() => {
     return warningInfo?.chips ?? [];
   });
@@ -49,9 +50,9 @@
   </div>
 
   <div class="display-name">{account.displayName || account.username}</div>
-  {#if showUsername || showLastLogin}
+  {#if hasUsername || showLastLogin}
     <div class="meta-stack">
-      {#if showUsername}
+      {#if hasUsername}
         <span class="username">{account.username}</span>
       {/if}
       {#if showLastLogin}

@@ -1,11 +1,11 @@
-export type RiotSnapshotState = "awaiting_capture" | "ready";
+export type RiotSnapshotState = "setup_pending" | "awaiting_capture" | "capturing" | "ready";
 
 export interface RiotProfile {
   id: string;
   label: string;
-  account_name: string;
-  account_tag_line: string;
-  account_puuid: string;
+  account_name?: string;
+  account_tag_line?: string;
+  account_puuid?: string;
   snapshot_state: RiotSnapshotState | string;
   notes: string;
   last_captured_at?: number | null;

@@ -1,5 +1,7 @@
 import type {
   PlatformAdapter,
+  PlatformAddFlowStatus,
+  PlatformAddAccountResult,
   PlatformAccount,
   PlatformContextMenuCallbacks,
   PlatformProfileInfo,
@@ -12,20 +14,32 @@ import { getCachedRiotProfile, getRiotProfile } from "./profile";
 import type { RiotProfile } from "./types";
 
 function getRiotAlias(profile: RiotProfile): string {
-  const name = profile.account_name.trim();
-  const tagLine = profile.account_tag_line.trim();
+  const name = (profile.account_name ?? "").trim();
+  const tagLine = (profile.account_tag_line ?? "").trim();
   if (!name) return "";
   return tagLine ? `${name}#${tagLine}` : name;
 }
 
 function profileStatusLabel(profile: RiotProfile): string {
-  return profile.snapshot_state === "ready" ? "Session captured" : "Capture required";
+  switch (profile.snapshot_state) {
+    case "setup_pending":
+      return "Waiting for connection";
+    case "capturing":
+      return "Saving session";
+    default:
+      return profile.snapshot_state === "ready" ? "" : "Capture required";
+  }
 }
 
 function profileSecondaryLabel(profile: RiotProfile): string {
+  if (profile.snapshot_state === "ready") {
+    return "";
+  }
+
   const status = profileStatusLabel(profile);
-  const label = profile.label.trim();
+  const label = (profile.label ?? "").trim();
   const alias = getRiotAlias(profile);
+
   if (!label || !alias || label === alias) {
     return status;
   }
@@ -45,7 +59,6 @@ export const riotAdapter: PlatformAdapter = {
   id: "riot",
   name: "Riot Games",
   accent: "#ef4444",
-  reloadAfterAdd: true,
 
   async loadAccounts(): Promise<PlatformAccount[]> {
     const profiles = await service.getProfiles();
@@ -75,8 +88,17 @@ export const riotAdapter: PlatformAdapter = {
     await service.switchProfile(account.id);
   },
 
-  async addAccount(): Promise<void> {
-    await service.createProfile();
+  async addAccount(): Promise<PlatformAddAccountResult> {
+    const setupStatus = await service.beginProfileSetup();
+    return { setupStatus };
+  },
+
+  async pollAddFlow(setupId: string): Promise<PlatformAddFlowStatus> {
+    return service.getProfileSetupStatus(setupId);
+  },
+
+  async cancelAddFlow(setupId: string): Promise<void> {
+    await service.cancelProfileSetup(setupId);
   },
 
   getContextMenuActions(

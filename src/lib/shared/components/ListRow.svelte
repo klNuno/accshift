@@ -3,6 +3,7 @@
   import type { AccountWarningPresentation } from "../accountWarnings";
   import type { FolderInfo } from "../../features/folders/types";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
+  import { getAvatarGradientStyle, getAvatarInitials } from "$lib/shared/avatarFallback";
   import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
 
   let {
@@ -41,10 +42,6 @@
     onDblClick?: () => void;
   } = $props();
 
-  function getInitials(name: string): string {
-    return name.slice(0, 2).toUpperCase();
-  }
-
   function handleContextMenu(e: MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
@@ -54,6 +51,7 @@
   let hasRedWarning = $derived(Boolean(warningInfo?.listHasRed));
 
   let hasOrangeWarning = $derived(Boolean(warningInfo?.listHasOrange));
+  let hasUsername = $derived(Boolean(showUsername && account?.username.trim()));
 
   let banHoverMessage = $derived.by(() => {
     return warningInfo?.tooltipText || "";
@@ -98,18 +96,23 @@
       <span class="name-text">{folder.name}</span>
     </div>
   {:else if account}
-    <div class="avatar" class:ban-red={hasRedWarning} class:ban-orange={hasOrangeWarning}>
+    <div
+      class="avatar"
+      class:ban-red={hasRedWarning}
+      class:ban-orange={hasOrangeWarning}
+      style={!avatarUrl ? getAvatarGradientStyle(account.id) : ""}
+    >
       {#if avatarUrl}
         <img src={avatarUrl} alt={account.displayName} draggable={false} />
       {:else}
-        <span class="initials">{getInitials(account.displayName || account.username)}</span>
+        <span class="initials">{getAvatarInitials(account.displayName || account.username)}</span>
       {/if}
     </div>
     <div class="info">
       <span class="name-text">{account.displayName || account.username}</span>
-      {#if showUsername || showLastLogin}
+      {#if hasUsername || showLastLogin}
         <span class="meta-stack">
-          {#if showUsername}
+          {#if hasUsername}
             <span class="username-text">{account.username}</span>
           {/if}
           {#if showLastLogin}

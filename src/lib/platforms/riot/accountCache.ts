@@ -9,10 +9,6 @@ export function rememberRiotProfiles(profiles: RiotProfile[]) {
   }
 }
 
-export function rememberRiotProfile(profile: RiotProfile) {
-  riotProfiles.set(profile.id, profile);
-}
-
 export function getCachedRiotProfileMeta(profileId: string): RiotProfile | null {
   return riotProfiles.get(profileId) ?? null;
 }

@@ -37,12 +37,32 @@ export interface PlatformWarningLoadOptions extends PlatformUiCallbacks {
 export interface PlatformProfileInfo {
   avatarUrl: string | null;
   displayName?: string | null;
+  avatarLoading?: boolean;
 }
 
 export interface CachedPlatformProfile {
   url: string;
   displayName?: string;
   expired: boolean;
+}
+
+export type PlatformAddFlowState =
+  | "waiting_for_client"
+  | "waiting_for_login"
+  | "capturing"
+  | "ready"
+  | "failed";
+
+export interface PlatformAddFlowStatus {
+  setupId: string;
+  state: PlatformAddFlowState | string;
+  accountId?: string;
+  accountDisplayName?: string;
+  errorMessage?: string;
+}
+
+export interface PlatformAddAccountResult {
+  setupStatus?: PlatformAddFlowStatus | null;
 }
 
 export interface PlatformAdapter {
@@ -59,7 +79,9 @@ export interface PlatformAdapter {
   }>;
   isCurrentAccount?(account: PlatformAccount, currentAccount: string): boolean;
   switchAccount(account: PlatformAccount): Promise<void>;
-  addAccount(): Promise<void>;
+  addAccount(): Promise<void | PlatformAddAccountResult>;
+  pollAddFlow?(setupId: string): Promise<PlatformAddFlowStatus>;
+  cancelAddFlow?(setupId: string): Promise<void>;
 
   getContextMenuActions(account: PlatformAccount, callbacks: PlatformContextMenuCallbacks): ContextMenuAction[];
 

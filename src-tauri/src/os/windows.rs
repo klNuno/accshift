@@ -135,7 +135,7 @@ pub fn is_process_running(process_name: &str) -> bool {
 
 pub fn kill_process(process_name: &str) -> Result<(), AppError> {
     hidden_command("taskkill")
-        .args(["/F", "/IM", process_name])
+        .args(["/F", "/IM", process_name, "/T"])
         .output()
         .map_err(|e| AppError::ProcessStart(e.to_string()))?;
     Ok(())
