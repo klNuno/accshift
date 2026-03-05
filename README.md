@@ -24,6 +24,12 @@
 | Battle.net | 🚧 Planned | 🚧 Planned | 🚧 Planned |
 | Epic Games | 🚧 Planned | 🚧 Planned | 🚧 Planned |
 
+## Highlights
+- Windows support for Steam and Riot Games account management.
+- Async add-account setup flow for Steam and Riot with pending card + polling.
+- OS-aware platform availability in the UI (unsupported/planned platforms are disabled).
+- Optional Riot "last login" display (manual, disabled by default).
+
 ## Installation
 ### From Releases
 Download the latest installer from:
@@ -47,6 +53,12 @@ pnpm tauri dev
 - Requests are chunked and cached to reduce unnecessary API calls.
 - Manual refresh can force a full refresh when needed.
 
+## Riot Data & Security
+- Riot profile metadata and session snapshots are stored locally in the app data directory.
+- Snapshot files are used only for local restore/switch flows and are not uploaded by accshift.
+- Riot snapshot data is currently not encrypted at rest.
+- Steam API keys are encrypted at rest using OS-level secret storage.
+
 ## Project Structure
 ```text
 src/lib/
@@ -55,11 +67,16 @@ src/lib/
     notifications/
     settings/
   platforms/
+    riot/
+      adapter.ts
+      riotApi.ts
+      types.ts
     steam/
       adapter.ts
       steamApi.ts
       profileCache.ts
       types.ts
+    registry.ts
   shared/
     components/
     platform.ts
@@ -67,6 +84,9 @@ src/lib/
 
 src-tauri/src/
   commands.rs
+  platforms/
+    riot.rs
+    steam.rs
   steam/
     accounts.rs
     bans.rs
