@@ -17,12 +17,29 @@
 
 
 ## Current Status
-| Platform | Windows | Linux | macOS |
+| Platform | Windows | macOS | Linux |
 | --- | --- | --- | --- |
-| Steam | ✅ Supported | ⛔ Not supported yet | ⛔ Not supported yet |
-| Riot Games | ✅ Supported | ⛔ Not supported yet | ⛔ Not supported yet |
-| Battle.net | 🚧 Planned | 🚧 Planned | 🚧 Planned |
-| Epic Games | 🚧 Planned | 🚧 Planned | 🚧 Planned |
+| Steam | ✅ Done | 🚧 Possible | 🚧 Possible |
+| Riot Games | ✅ Done | 🚧 Possible | ⛔ Not feasible |
+| Battle.net | 🚧 Possible | 🚧 Possible | ⛔ Not feasible |
+| Epic Games | 🚧 Possible | 🚧 Possible | 🚧 Possible |
+| Ubisoft Connect | 🚧 Possible | 🚧 Possible | 🚧 Possible |
+| Roblox | 🚧 Possible | 🚧 Possible | ⛔ Not feasible |
+| EA app | 🚧 Possible | 🚧 Possible | ⛔ Not feasible |
+| Discord | 🚧 Possible | 🚧 Possible | 🚧 Possible |
+| Rockstar Launcher | 🚧 Possible | ⛔ Not feasible | 🚧 Possible |
+| GeForce Now | 🚧 Possible | 🚧 Possible | 🚧 Possible |
+| HoYoverse / HoYoPlay | 🚧 Possible | ⛔ Not feasible | ⛔ Not feasible |
+| Minecraft Launcher | 🚧 Possible | 🚧 Possible | 🚧 Possible |
+
+Status:
+- `✅ Done`: already implemented
+- `🚧 Possible`: feasible and planned (priority to requested platforms from users)
+- `⛔ Not feasible`: not realistic/supported for this OS
+
+Note: some `🚧 Possible` entries on macOS/Linux may rely on compatibility layers (Wine/Proton/Heroic).
+
+Users can propose new platforms through GitHub Issues.
 
 ## Installation
 ### From Releases
