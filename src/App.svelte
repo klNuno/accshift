@@ -403,6 +403,9 @@
       platformAddFlow = { ...platformAddFlow, status: nextStatus };
 
       if (nextStatus.state === "ready") {
+        if (flow.platformId === "steam" && nextStatus.accountId) {
+          void getPlatform("steam")?.getProfileInfo?.(nextStatus.accountId).catch(() => null);
+        }
         if (activeTab === flow.platformId) {
           loadAccounts(true, false, false, false, false);
         }

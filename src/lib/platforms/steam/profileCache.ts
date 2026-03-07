@@ -4,6 +4,8 @@ import type { ProfileInfo } from "./types";
 
 const CACHE_KEY = "accshift_avatars";
 const SESSION_START_MS = Date.now();
+const PROFILE_FETCH_ATTEMPTS = 4;
+const PROFILE_FETCH_RETRY_DELAY_MS = 750;
 
 interface CachedProfile {
   url: string;
@@ -16,6 +18,7 @@ interface ProfileCache {
 }
 
 let cachedProfiles: ProfileCache | null = null;
+const inFlightProfiles = new Map<string, Promise<ProfileInfo | null>>();
 
 function isSafeAvatarUrl(value: string): boolean {
   try {
@@ -75,6 +78,49 @@ function saveCache(cache: ProfileCache) {
   localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
 }
 
+function hasSafeAvatarUrl(profile: ProfileInfo | null): profile is ProfileInfo & { avatar_url: string } {
+  const avatarUrl = profile?.avatar_url?.trim() ?? "";
+  return avatarUrl.length > 0 && isSafeAvatarUrl(avatarUrl);
+}
+
+function cacheProfile(profile: ProfileInfo, steamId: string) {
+  if (!hasSafeAvatarUrl(profile)) return;
+  setCachedProfile(steamId, {
+    url: profile.avatar_url,
+    displayName: profile.display_name ?? undefined,
+  });
+}
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function fetchProfileWithRetries(steamId: string): Promise<ProfileInfo | null> {
+  let lastProfile: ProfileInfo | null = null;
+
+  for (let attempt = 0; attempt < PROFILE_FETCH_ATTEMPTS; attempt += 1) {
+    try {
+      const profile = await getProfileInfo(steamId);
+      if (profile) {
+        lastProfile = profile;
+        cacheProfile(profile, steamId);
+        if (hasSafeAvatarUrl(profile)) {
+          return profile;
+        }
+      }
+    } catch {
+    }
+
+    if (attempt < PROFILE_FETCH_ATTEMPTS - 1) {
+      await delay(PROFILE_FETCH_RETRY_DELAY_MS);
+    }
+  }
+
+  return lastProfile;
+}
+
 export function getCachedProfile(steamId: string): {
   url: string;
   displayName?: string;
@@ -113,16 +159,17 @@ export function setCachedProfile(
 export async function fetchProfile(
   steamId: string,
 ): Promise<ProfileInfo | null> {
-  try {
-    const info = await getProfileInfo(steamId);
-    if (info && info.avatar_url) {
-      setCachedProfile(steamId, {
-        url: info.avatar_url,
-        displayName: info.display_name ?? undefined,
-      });
-    }
-    return info;
-  } catch {
-    return null;
+  const existing = inFlightProfiles.get(steamId);
+  if (existing) {
+    return existing;
   }
+
+  const task = fetchProfileWithRetries(steamId)
+    .catch(() => null)
+    .finally(() => {
+      inFlightProfiles.delete(steamId);
+    });
+
+  inFlightProfiles.set(steamId, task);
+  return task;
 }
