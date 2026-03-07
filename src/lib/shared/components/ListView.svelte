@@ -100,6 +100,7 @@
     {#each accountItems as item (item.id)}
       {@const account = accounts[item.id]}
       {@const isPendingSetup = pendingSetupId === item.id}
+      {@const avatarState = account ? avatarStates[account.id] : undefined}
       <div animate:flip={{ duration: 200 }}>
         {#if account}
           <ListRow
@@ -110,8 +111,8 @@
             lastLoginAt={account.lastLoginAt}
             isActive={account.id === currentAccountId}
             isSelected={selectedAccountId === account.id}
-            avatarUrl={avatarStates[account.id]?.url}
-            isLoadingAvatar={isPendingSetup}
+            avatarUrl={avatarState?.url}
+            isLoadingAvatar={isPendingSetup || (avatarState?.loading ?? true)}
             allowMetaWrap={isPendingSetup}
             warningInfo={warningStates[account.id]}
             onClick={() => {
@@ -134,6 +135,7 @@
   <div class="preview-panel">
     {#if selectedAccount}
       {@const selectedIsPendingSetup = pendingSetupId === selectedAccount.id}
+      {@const selectedAvatarState = avatarStates[selectedAccount.id]}
       <PreviewPanel
         account={selectedAccount}
         showUsername={showUsernames}
@@ -141,8 +143,8 @@
         {lastLoginUnknownKey}
         lastLoginAt={selectedAccount.lastLoginAt}
         isActive={selectedAccount.id === currentAccountId}
-        avatarUrl={avatarStates[selectedAccount.id]?.url}
-        isLoadingAvatar={selectedIsPendingSetup}
+        avatarUrl={selectedAvatarState?.url}
+        isLoadingAvatar={selectedIsPendingSetup || (selectedAvatarState?.loading ?? true)}
         showSwitchButton={!selectedIsPendingSetup}
         allowMetaWrap={selectedIsPendingSetup}
         accountNote={getAccountNote(selectedAccount.id)}

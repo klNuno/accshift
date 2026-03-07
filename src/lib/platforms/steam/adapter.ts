@@ -87,13 +87,14 @@ export const steamAdapter: PlatformAdapter = {
 
   async getProfileInfo(accountId: string): Promise<PlatformProfileInfo | null> {
     const profile = await fetchProfile(accountId);
-    if (!profile) return null;
-    const avatarUrl = (profile.avatar_url ?? "").trim();
-    if (!avatarUrl || !isSafeAvatarUrl(avatarUrl)) {
-      return null;
+    if (!profile) {
+      return {
+        avatarUrl: null,
+      };
     }
+    const avatarUrl = (profile.avatar_url ?? "").trim();
     return {
-      avatarUrl,
+      avatarUrl: avatarUrl && isSafeAvatarUrl(avatarUrl) ? avatarUrl : null,
       displayName: profile.display_name,
     };
   },
