@@ -16,20 +16,18 @@
   import Breadcrumb from "$lib/features/folders/Breadcrumb.svelte";
   import FolderCard from "$lib/features/folders/FolderCard.svelte";
   import BackCard from "$lib/features/folders/BackCard.svelte";
-  import { getSettings, saveSettings, ALL_PLATFORMS } from "$lib/features/settings/store";
-  import type { PlatformDef, RuntimeOs } from "$lib/features/settings/types";
+  import { getSettings, saveSettings } from "$lib/features/settings/store";
+  import type { RuntimeOs } from "$lib/features/settings/types";
   import type {
     PlatformAccount,
-    PlatformAddFlowStatus,
     PlatformContextMenuConfirmConfig,
   } from "$lib/shared/platform";
   import { getPlatform } from "$lib/shared/platform";
-  import { getPlatformDefinition, registerBuiltinPlatforms } from "$lib/platforms/registry";
   import type { ContextMenuItem, InputDialogConfig } from "$lib/shared/types";
   import { buildAccountContextMenuItems } from "$lib/shared/contextMenu/accountMenuBuilder";
   import type { ItemRef, FolderInfo } from "$lib/features/folders/types";
   import {
-    getItemsInFolder, syncAccounts, getFolderPath, getFolder,
+    syncAccounts, getFolder,
     createFolder, deleteFolder, renameFolder,
   } from "$lib/features/folders/store";
   import { createDragManager } from "$lib/shared/dragAndDrop.svelte";
@@ -58,76 +56,32 @@
   } from "$lib/shared/folderCardColors";
   import { DEFAULT_LOCALE, translate, type MessageKey, type TranslationParams } from "$lib/i18n";
   import { hashPinCode, sanitizePinDigits, isValidPinHash } from "$lib/shared/pin";
+  import {
+    createPlatformShellState,
+    getInitialActiveTab,
+    isPlatformUsable,
+  } from "$lib/app/platformShell.svelte";
+  import {
+    createFolderNavigation,
+    type AppHistoryEntry,
+  } from "$lib/app/folderNavigation.svelte";
+  import { createPlatformAddFlowController } from "$lib/app/platformAddFlow.svelte";
   type SettingsComponentType = (typeof import("$lib/features/settings/Settings.svelte"))["default"];
   type ConfirmDialogConfig = PlatformContextMenuConfirmConfig;
 
-  // Platform registration
-  registerBuiltinPlatforms();
   const PIN_CODE_LENGTH = 4;
-  function isPlatformCompatibleWithOs(platform: PlatformDef | undefined, runtimeOs: RuntimeOs): boolean {
-    if (!platform) return false;
-    return platform.supportedOs.includes(runtimeOs);
-  }
-
-  function isPlatformUsable(platformId: string, runtimeOs: RuntimeOs): boolean {
-    const platform = ALL_PLATFORMS.find((entry) => entry.id === platformId);
-    return Boolean(platform?.implemented && isPlatformCompatibleWithOs(platform, runtimeOs));
-  }
-
-  function getInitialActiveTab(s: ReturnType<typeof getSettings>, runtimeOs: RuntimeOs): string {
-    if (s.enabledPlatforms.includes(s.defaultPlatformId) && isPlatformUsable(s.defaultPlatformId, runtimeOs)) {
-      return s.defaultPlatformId;
-    }
-    const firstEnabledUsable = s.enabledPlatforms.find((platformId) => isPlatformUsable(platformId, runtimeOs));
-    if (firstEnabledUsable) return firstEnabledUsable;
-    const firstUsable = ALL_PLATFORMS.find((platform) => isPlatformUsable(platform.id, runtimeOs));
-    if (firstUsable) return firstUsable.id;
-    return s.enabledPlatforms[0] || "steam";
-  }
-  const startupSettings = getSettings();
-  const startupPinLocked = Boolean(startupSettings.pinEnabled && isValidPinHash(startupSettings.pinHash || ""));
-
-  // Platform state
-  let settings = $state(startupSettings);
-  let runtimeOs = $state<RuntimeOs>("unknown");
-  let locale = $derived(settings.language ?? DEFAULT_LOCALE);
-  const t = (key: MessageKey, params?: TranslationParams) => translate(locale, key, params);
-  let enabledPlatforms = $derived<PlatformDef[]>(
-    ALL_PLATFORMS.filter(p => settings.enabledPlatforms.includes(p.id))
-  );
-  let compatiblePlatforms = $derived<PlatformDef[]>(
-    ALL_PLATFORMS.filter((platform) => isPlatformUsable(platform.id, runtimeOs))
-  );
-  let activeTab = $state(getInitialActiveTab(startupSettings, "unknown"));
-  let activePlatformDef = $derived(getPlatformDefinition(activeTab));
-  let activeTabUsable = $derived(isPlatformUsable(activeTab, runtimeOs));
-  let unavailablePlatformIds = $derived.by(() => {
-    const ids = new Set<string>();
-    for (const platform of enabledPlatforms) {
-      if (!isPlatformUsable(platform.id, runtimeOs)) {
-        ids.add(platform.id);
-      }
-    }
-    return ids;
-  });
-  let accentColor = $derived(
-    getPlatformDefinition(activeTab)?.accent || "#3b82f6"
-  );
-  let uiZoomFactor = $derived(Math.min(1.5, Math.max(0.75, settings.uiScalePercent / 100)));
-  let appStageStyle = $derived.by(() => {
-    const zoom = uiZoomFactor;
-    if (Math.abs(zoom - 1) < 0.0001) return "";
-    return `transform: scale(${zoom}); transform-origin: top left; width: calc(100% / ${zoom}); height: calc(100% / ${zoom});`;
-  });
-  let adapter = $derived(activeTabUsable ? getPlatform(activeTab) : undefined);
+  const shell = createPlatformShellState();
+  const startupPinLocked = Boolean(shell.settings.pinEnabled && isValidPinHash(shell.settings.pinHash || ""));
+  const t = (key: MessageKey, params?: TranslationParams) => translate(shell.locale, key, params);
 
   // Shared controllers
   const blur = createInactivityBlur();
   const grid = createGridLayout();
+  const navigation = createFolderNavigation(() => shell.activeTab);
   const loader = createAccountLoader(
-    () => adapter,
+    () => shell.adapter,
     () => {
-      const q = searchQuery.trim().toLowerCase();
+      const q = navigation.searchQuery.trim().toLowerCase();
       if (q) {
         return loader.accounts
           .filter((account) =>
@@ -136,26 +90,12 @@
           )
           .map((account) => account.id);
       }
-      return currentItems
+      return navigation.currentItems
         .filter((item): item is ItemRef => item.type === "account")
         .map((item) => item.id);
     },
-    (key, params) => translate(settings.language ?? DEFAULT_LOCALE, key, params)
+    (key, params) => translate(shell.settings.language ?? DEFAULT_LOCALE, key, params)
   );
-
-  // Navigation state
-  type AppHistoryEntry = { tab: string; folderId: string | null; showSettings: boolean };
-  let currentFolderId = $state<string | null>(null);
-  let folderPath = $derived(getFolderPath(currentFolderId));
-  let currentItems = $state<ItemRef[]>([]);
-  let folderItems = $derived(currentItems.filter(i => i.type === "folder"));
-  let accountItems = $derived(currentItems.filter(i => i.type === "account"));
-  let searchQuery = $state("");
-  let isSearching = $derived(searchQuery.trim().length > 0);
-
-  function refreshCurrentItems() {
-    currentItems = getItemsInFolder(currentFolderId, activeTab);
-  }
 
   // Context menu state
   let contextMenu = $state<{
@@ -171,12 +111,32 @@
   let settingsLoadPromise: Promise<void> | null = null;
   let inputDialog = $state<InputDialogConfig | null>(null);
   let confirmDialog = $state<ConfirmDialogConfig | null>(null);
-  let platformAddFlow = $state<{
-    platformId: string;
-    status: PlatformAddFlowStatus;
-  } | null>(null);
-  let platformAddFlowTimer: ReturnType<typeof setTimeout> | null = null;
-  let isAccountSelectionView = $derived(!showSettings && !!adapter);
+  const addFlow = createPlatformAddFlowController({
+    getActiveTab: () => shell.activeTab,
+    getCurrentFolderId: () => navigation.currentFolderId,
+    getIsSearching: () => navigation.isSearching,
+    t,
+    showToast: (message) => addToast(message),
+    loadAccounts,
+  });
+  let settings = $derived(shell.settings);
+  let runtimeOs = $derived(shell.runtimeOs);
+  let locale = $derived(shell.locale);
+  let enabledPlatforms = $derived(shell.enabledPlatforms);
+  let compatiblePlatforms = $derived(shell.compatiblePlatforms);
+  let activeTab = $derived(shell.activeTab);
+  let activePlatformDef = $derived(shell.activePlatformDef);
+  let activeTabUsable = $derived(shell.activeTabUsable);
+  let unavailablePlatformIds = $derived(shell.unavailablePlatformIds);
+  let accentColor = $derived(shell.accentColor);
+  let appStageStyle = $derived(shell.appStageStyle);
+  let adapter = $derived(shell.adapter);
+  let folderPath = $derived(navigation.folderPath);
+  let currentFolderId = $derived(navigation.currentFolderId);
+  let isSearching = $derived(navigation.isSearching);
+  let pendingSetupAccount = $derived(addFlow.pendingSetupAccount);
+  let platformAddFlow = $derived(addFlow.flow);
+  let isAccountSelectionView = $derived(!showSettings && !!shell.adapter);
   let cardColorVersion = $state(0);
   let cardNoteVersion = $state(0);
   let isPinLocked = $state(startupPinLocked);
@@ -186,7 +146,7 @@
   let pinInputRef = $state<HTMLInputElement | null>(null);
   let pageVisible = $state(true);
   let afkListenersAttached = $state(false);
-  let inactivityEnabled = $derived(settings.inactivityBlurSeconds > 0);
+  let inactivityEnabled = $derived(shell.settings.inactivityBlurSeconds > 0);
   let isObscured = $derived(
     (inactivityEnabled && blur.isBlurred && isAccountSelectionView) || isPinLocked || isPinUnlocking
   );
@@ -252,28 +212,28 @@
 
   // Drag-and-drop manager
   const drag = createDragManager({
-    getCurrentFolderId: () => currentFolderId,
-    getActiveTab: () => activeTab,
-    getFolderItems: () => folderItems,
-    getAccountItems: () => accountItems,
+    getCurrentFolderId: () => navigation.currentFolderId,
+    getActiveTab: () => shell.activeTab,
+    getFolderItems: () => navigation.folderItems,
+    getAccountItems: () => navigation.accountItems,
     getWrapperRef: () => grid.wrapperRef,
-    onRefresh: refreshCurrentItems,
+    onRefresh: navigation.refreshCurrentItems,
   });
 
   // Derived item lists used by drag preview
   let displayFolderItems = $derived.by(() => {
-    if (isSearching) return [] as ItemRef[];
+    if (navigation.isSearching) return [] as ItemRef[];
     if (!drag.isDragging || !drag.dragItem || drag.dragItem.type !== "folder" || drag.previewIndex === null) {
-      return folderItems;
+      return navigation.folderItems;
     }
-    const arr = folderItems.filter(i => i.id !== drag.dragItem!.id);
+    const arr = navigation.folderItems.filter(i => i.id !== drag.dragItem!.id);
     arr.splice(Math.min(drag.previewIndex, arr.length), 0, drag.dragItem);
     return arr;
   });
 
   let filteredAccountItems = $derived.by(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return accountItems;
+    const q = navigation.searchQuery.trim().toLowerCase();
+    if (!q) return navigation.accountItems;
     return loader.accounts
       .filter((account) =>
         account.username.toLowerCase().includes(q) ||
@@ -283,7 +243,7 @@
   });
 
   let displayAccountItems = $derived.by(() => {
-    if (isSearching) return filteredAccountItems;
+    if (navigation.isSearching) return filteredAccountItems;
     if (!drag.isDragging || !drag.dragItem || drag.dragItem.type !== "account" || drag.previewIndex === null) {
       return filteredAccountItems;
     }
@@ -292,27 +252,8 @@
     return arr;
   });
 
-  let pendingSetupAccount = $derived.by(() => {
-    if (!platformAddFlow) return null;
-    if (activeTab !== platformAddFlow.platformId) return null;
-    if (isSearching || currentFolderId) return null;
-    if (platformAddFlow.status.state === "ready") return null;
-    const setupId = platformAddFlow.status.setupId.trim();
-    if (!setupId) return null;
-    const detectedName = (platformAddFlow.status.accountDisplayName || "").trim();
-    const isSteamFlow = platformAddFlow.platformId === "steam";
-    return {
-      id: setupId,
-      displayName: detectedName || (isSteamFlow ? t("steam.setupPendingLabel") : t("riot.setupPendingLabel")),
-      username: detectedName
-        ? (isSteamFlow ? t("steam.setupConnected") : t("riot.setupConnected"))
-        : (isSteamFlow ? t("steam.setupWaitingForLogin") : t("riot.setupWaitingForLogin")),
-      lastLoginAt: null,
-    } satisfies PlatformAccount;
-  });
-
   let displayAccountItemsWithPending = $derived.by(() => {
-    const pending = pendingSetupAccount;
+    const pending = addFlow.pendingSetupAccount;
     if (!pending) return displayAccountItems;
     if (displayAccountItems.some((item) => item.type === "account" && item.id === pending.id)) {
       return displayAccountItems;
@@ -321,7 +262,7 @@
   });
 
   let renderedAccountMap = $derived.by(() => {
-    const pending = pendingSetupAccount;
+    const pending = addFlow.pendingSetupAccount;
     if (!pending) return loader.accountMap;
     return {
       ...loader.accountMap,
@@ -330,13 +271,13 @@
   });
 
   let renderedAccountCount = $derived.by(() => {
-    const pending = pendingSetupAccount;
+    const pending = addFlow.pendingSetupAccount;
     return loader.accounts.length + (pending && !loader.accountMap[pending.id] ? 1 : 0);
   });
 
   $effect(() => {
-    if (showSettings || !adapter || loader.loading) return;
-    const visibleIds = (isSearching ? filteredAccountItems : currentItems.filter((item) => item.type === "account"))
+    if (showSettings || !shell.adapter || loader.loading) return;
+    const visibleIds = (navigation.isSearching ? filteredAccountItems : navigation.currentItems.filter((item) => item.type === "account"))
       .map((item) => item.id);
     if (visibleIds.length === 0) return;
     visibleIds.join(",");
@@ -345,101 +286,8 @@
 
   function showToast(msg: string) { addToast(msg); }
 
-  function clearPlatformAddFlowTimer() {
-    if (!platformAddFlowTimer) return;
-    clearTimeout(platformAddFlowTimer);
-    platformAddFlowTimer = null;
-  }
-
-  function stopPlatformAddFlow() {
-    clearPlatformAddFlowTimer();
-    platformAddFlow = null;
-  }
-
-  async function cancelPlatformAddFlow() {
-    const flow = platformAddFlow;
-    const flowAdapter = flow ? getPlatform(flow.platformId) : undefined;
-    if (!flow || !flowAdapter?.cancelAddFlow) {
-      stopPlatformAddFlow();
-      return;
-    }
-    try {
-      await flowAdapter.cancelAddFlow(flow.status.setupId);
-    } catch (e) {
-      showToast(String(e));
-    }
-    stopPlatformAddFlow();
-    if (activeTab === flow.platformId) {
-      loadAccounts(true);
-    }
-  }
-
   async function cancelPlatformAddFlowIfConflicting(targetPlatformId: string, targetAccountId?: string) {
-    const flow = platformAddFlow;
-    if (!flow) return;
-    if (flow.platformId !== targetPlatformId) return;
-    if (targetAccountId && flow.status.setupId === targetAccountId) return;
-    await cancelPlatformAddFlow();
-  }
-
-  function schedulePlatformAddFlowPoll() {
-    clearPlatformAddFlowTimer();
-    platformAddFlowTimer = setTimeout(() => {
-      void pollPlatformAddFlow();
-    }, 1500);
-  }
-
-  async function pollPlatformAddFlow() {
-    const flow = platformAddFlow;
-    const flowAdapter = flow ? getPlatform(flow.platformId) : undefined;
-    if (!flow || !flowAdapter?.pollAddFlow) {
-      stopPlatformAddFlow();
-      return;
-    }
-
-    try {
-      const nextStatus = await flowAdapter.pollAddFlow(flow.status.setupId);
-      if (!platformAddFlow || platformAddFlow.status.setupId !== flow.status.setupId) return;
-      platformAddFlow = { ...platformAddFlow, status: nextStatus };
-
-      if (nextStatus.state === "ready") {
-        if (flow.platformId === "steam" && nextStatus.accountId) {
-          void getPlatform("steam")?.getProfileInfo?.(nextStatus.accountId).catch(() => null);
-        }
-        if (activeTab === flow.platformId) {
-          loadAccounts(true, false, false, false, false);
-        }
-        const isSteamFlow = flow.platformId === "steam";
-        showToast(nextStatus.accountDisplayName
-          ? t(isSteamFlow ? "steam.setupReadyWithProfile" : "riot.setupReadyWithProfile", { profile: nextStatus.accountDisplayName })
-          : t(isSteamFlow ? "steam.setupReady" : "riot.setupReady"));
-        stopPlatformAddFlow();
-        return;
-      }
-
-      if (nextStatus.state === "failed") {
-        return;
-      }
-
-      schedulePlatformAddFlowPoll();
-    } catch (e) {
-      if (!platformAddFlow || platformAddFlow.status.setupId !== flow.status.setupId) return;
-      platformAddFlow = {
-        ...platformAddFlow,
-        status: {
-          ...platformAddFlow.status,
-          state: "failed",
-          errorMessage: String(e),
-        },
-      };
-    }
-  }
-
-  function startPlatformAddFlow(platformId: string, status: PlatformAddFlowStatus) {
-    platformAddFlow = { platformId, status };
-    if (status.state !== "ready" && status.state !== "failed") {
-      schedulePlatformAddFlowPoll();
-    }
+    await addFlow.cancelIfConflicting(targetPlatformId, targetAccountId);
   }
 
   function clampUiScalePercent(value: number): number {
@@ -465,8 +313,8 @@
 
   function setUiScalePercent(value: number) {
     const next = clampUiScalePercent(value);
-    if (next === settings.uiScalePercent) return;
-    settings.uiScalePercent = next;
+    if (next === shell.settings.uiScalePercent) return;
+    shell.settings.uiScalePercent = next;
     queuePersistUiScalePercent(next);
   }
 
@@ -481,7 +329,7 @@
     if (Math.abs(wheelZoomAccumulator) < WHEEL_ZOOM_THRESHOLD) return;
     const direction = wheelZoomAccumulator < 0 ? 1 : -1;
     wheelZoomAccumulator = 0;
-    setUiScalePercent(settings.uiScalePercent + direction * UI_SCALE_STEP_PERCENT);
+    setUiScalePercent(shell.settings.uiScalePercent + direction * UI_SCALE_STEP_PERCENT);
   }
 
   function handleZoomKeydown(e: KeyboardEvent) {
@@ -494,12 +342,12 @@
 
   let currentAccountId = $derived(loader.currentAccountId);
   let showLastLoginForActiveTab = $derived(
-    activeTab === "riot"
-      ? settings.accountDisplay.showRiotLastLogin
-      : settings.accountDisplay.showLastLogin
+    shell.activeTab === "riot"
+      ? shell.settings.accountDisplay.showRiotLastLogin
+      : shell.settings.accountDisplay.showLastLogin
   );
   let lastLoginUnknownKey = $derived<MessageKey>(
-    activeTab === "riot" ? "time.neverConnected" : "time.unknown"
+    shell.activeTab === "riot" ? "time.neverConnected" : "time.unknown"
   );
 
   function getAccountCardColor(accountId: string): string {
@@ -515,24 +363,6 @@
   function getFolderCardColor(folderId: string): string {
     cardColorVersion;
     return getStoredFolderCardColor(folderId);
-  }
-
-  function createRiotDetectedSection(display: string): CardExtensionContent["sections"][number] | null {
-    if (!display) return null;
-    return {
-      title: t("riot.setupDetected"),
-      text: display,
-      chips: [{ text: t("riot.setupConnected"), tone: "green" as const }],
-    };
-  }
-
-  function createSteamDetectedSection(display: string): CardExtensionContent["sections"][number] | null {
-    if (!display) return null;
-    return {
-      title: t("steam.setupDetected"),
-      text: display,
-      chips: [{ text: t("steam.setupConnected"), tone: "green" as const }],
-    };
   }
 
   function createWarningExtensionSection(accountId: string): CardExtensionContent["sections"][number] | null {
@@ -555,7 +385,7 @@
   }
 
   function createNoteExtensionSection(accountId: string): CardExtensionContent["sections"][number] | null {
-    if (settings.accountDisplay.showCardNotesInline) return null;
+    if (shell.settings.accountDisplay.showCardNotesInline) return null;
     const note = getAccountNote(accountId).trim();
     if (!note) return null;
     return {
@@ -565,120 +395,9 @@
     };
   }
 
-  function getRiotSetupContent(accountId: string): CardExtensionContent | null {
-    if (!platformAddFlow || platformAddFlow.platformId !== "riot") return null;
-    const setupId = platformAddFlow.status.setupId.trim();
-    if (!setupId || setupId !== accountId) return null;
-
-    const display = (platformAddFlow.status.accountDisplayName || "").trim();
-    const error = (platformAddFlow.status.errorMessage || "").trim();
-    const detectedSection = createRiotDetectedSection(display);
-
-    switch (platformAddFlow.status.state) {
-      case "waiting_for_client":
-        return {
-          sections: [
-            {
-              text: t("riot.setupWaitingForClient"),
-              loading: true,
-            },
-            {
-              lines: [t("riot.setupStaySignedIn")],
-            },
-          ],
-        };
-      case "capturing":
-        return {
-          sections: [
-            {
-              text: t("riot.setupCapturing"),
-              loading: true,
-            },
-            ...(detectedSection ? [detectedSection] : []),
-          ],
-        };
-      case "failed":
-        return {
-          sections: [
-            {
-              title: t("riot.setupFailed"),
-              text: t("riot.setupFailedMessage"),
-            },
-            ...(error ? [{
-              lines: [error],
-              chips: [{ text: t("common.close"), tone: "red" as const }],
-            }] : []),
-          ],
-        };
-      case "ready":
-        return null;
-      case "waiting_for_login":
-      default:
-        return {
-          sections: [
-            {
-              text: t("riot.setupWaitingForLogin"),
-              loading: true,
-            },
-            ...(detectedSection ? [detectedSection] : [{ lines: [t("riot.setupStaySignedIn")] }]),
-          ],
-        };
-    }
-  }
-
-  function getSteamSetupContent(accountId: string): CardExtensionContent | null {
-    if (!platformAddFlow || platformAddFlow.platformId !== "steam") return null;
-    const setupId = platformAddFlow.status.setupId.trim();
-    if (!setupId || setupId !== accountId) return null;
-
-    const display = (platformAddFlow.status.accountDisplayName || "").trim();
-    const error = (platformAddFlow.status.errorMessage || "").trim();
-    const detectedSection = createSteamDetectedSection(display);
-
-    switch (platformAddFlow.status.state) {
-      case "waiting_for_client":
-        return {
-          sections: [
-            {
-              text: t("steam.setupWaitingForClient"),
-              loading: true,
-            },
-          ],
-        };
-      case "failed":
-        return {
-          sections: [
-            {
-              title: t("steam.setupFailed"),
-              text: t("steam.setupFailedMessage"),
-            },
-            ...(error ? [{
-              lines: [error],
-              chips: [{ text: t("common.close"), tone: "red" as const }],
-            }] : []),
-          ],
-        };
-      case "ready":
-        return null;
-      case "waiting_for_login":
-      default:
-        return {
-          sections: [
-            {
-              text: t("steam.setupWaitingForLogin"),
-              loading: true,
-            },
-            ...(detectedSection ? [detectedSection] : []),
-          ],
-        };
-    }
-  }
-
   function getAccountExtensionContent(account: PlatformAccount): CardExtensionContent | null {
-    const steamSetupContent = getSteamSetupContent(account.id);
-    if (steamSetupContent) return steamSetupContent;
-    const riotSetupContent = getRiotSetupContent(account.id);
-    if (riotSetupContent) return riotSetupContent;
+    const setupContent = addFlow.getSetupExtensionContent(account.id);
+    if (setupContent) return setupContent;
 
     const sections: CardExtensionContent["sections"] = [];
     const warningSection = createWarningExtensionSection(account.id);
@@ -690,16 +409,11 @@
   }
 
   function isAccountExtensionForcedOpen(accountId: string): boolean {
-    return Boolean(
-      platformAddFlow
-      && platformAddFlow.platformId === activeTab
-      && platformAddFlow.status.setupId === accountId
-      && platformAddFlow.status.state !== "ready"
-    );
+    return addFlow.isForcedOpen(accountId);
   }
 
   function isPendingSetupAccount(accountId: string): boolean {
-    return Boolean(pendingSetupAccount && pendingSetupAccount.id === accountId);
+    return addFlow.isPendingSetupAccount(accountId);
   }
 
   async function copyToClipboard(text: string, label: string) {
@@ -744,18 +458,18 @@
     deferBackground = true,
   ) {
     loader.load(() => {
-      syncAccounts(loader.accounts.map(a => a.id), activeTab);
-      refreshCurrentItems();
+      syncAccounts(loader.accounts.map(a => a.id), shell.activeTab);
+      navigation.refreshCurrentItems();
       setTimeout(grid.calculatePadding, 0);
     }, silent, showRefreshedToast, forceRefresh, checkBans, deferBackground);
   }
 
   async function handleAddAccount() {
-    if (!adapter) return;
-    const platformId = adapter.id;
+    if (!shell.adapter) return;
+    const platformId = shell.adapter.id;
     const result = await loader.addNew();
     if (result?.setupStatus) {
-      startPlatformAddFlow(platformId, result.setupStatus);
+      addFlow.start(platformId, result.setupStatus);
     }
   }
 
@@ -772,7 +486,7 @@
         steamAdapter.getProfileInfo!(account.id).catch(() => null)
       ));
       const count = steamAccounts.length;
-      if (activeTab === "steam") {
+      if (shell.activeTab === "steam") {
         loadAccounts(true, false, true, false, false);
       }
       showToast(t("toast.avatarRefreshComplete", { count }));
@@ -792,7 +506,7 @@
       }
       await steamAdapter.loadWarningStates(steamAccounts, { forceRefresh: true, silent: false, t });
       const count = steamAccounts.length;
-      if (activeTab === "steam") {
+      if (shell.activeTab === "steam") {
         loadAccounts(true, false, false, true, false);
       }
       showToast(t("toast.banRefreshComplete", { count }));
@@ -803,10 +517,10 @@
 
   async function toggleSettingsPanel() {
     if (!showSettings) {
-      await cancelPlatformAddFlow();
+      await addFlow.cancel();
     }
     if (!showSettings) {
-      history.pushState({ tab: activeTab, folderId: currentFolderId, showSettings: true }, "");
+      history.pushState({ tab: shell.activeTab, folderId: navigation.currentFolderId, showSettings: true }, "");
       void loadSettingsComponent();
     }
     showSettings = !showSettings;
@@ -816,31 +530,31 @@
   // Navigation helpers
   function applyAppState(entry: AppHistoryEntry) {
     if (
-      platformAddFlow
-      && (entry.showSettings || entry.tab !== platformAddFlow.platformId || entry.folderId !== currentFolderId)
+      addFlow.flow
+      && (entry.showSettings || entry.tab !== addFlow.flow.platformId || entry.folderId !== navigation.currentFolderId)
     ) {
-      void cancelPlatformAddFlow();
+      void addFlow.cancel();
     }
-    const tabChanged = activeTab !== entry.tab;
+    const tabChanged = shell.activeTab !== entry.tab;
     const settingsClosing = showSettings && !entry.showSettings;
-    activeTab = entry.tab;
-    currentFolderId = entry.folderId;
+    shell.setActiveTab(entry.tab);
+    navigation.currentFolderId = entry.folderId;
     showSettings = entry.showSettings;
     if (entry.showSettings) {
       void loadSettingsComponent();
     }
     if (settingsClosing) {
-      settings = getSettings();
+      shell.refreshSettings();
       blur.start();
       if (!afkListenersAttached) { blur.attachListeners(); afkListenersAttached = true; }
     }
-    if (tabChanged && isPlatformUsable(entry.tab, runtimeOs) && getPlatform(entry.tab)) {
+    if (tabChanged && isPlatformUsable(entry.tab, shell.runtimeOs) && getPlatform(entry.tab)) {
       loadAccounts(true);
     } else {
-      refreshCurrentItems();
+      navigation.refreshCurrentItems();
       setTimeout(grid.calculatePadding, 0);
     }
-    searchQuery = "";
+    navigation.searchQuery = "";
   }
 
   function handlePopState(e: PopStateEvent) {
@@ -849,48 +563,48 @@
 
   async function navigateTo(folderId: string | null, options: { trackHistory?: boolean } = {}) {
     const { trackHistory = true } = options;
-    await cancelPlatformAddFlowIfConflicting(activeTab);
-    if (trackHistory) history.pushState({ tab: activeTab, folderId, showSettings: false }, "");
-    currentFolderId = folderId;
+    await addFlow.cancelIfConflicting(shell.activeTab);
+    if (trackHistory) history.pushState({ tab: shell.activeTab, folderId, showSettings: false }, "");
+    navigation.currentFolderId = folderId;
     showSettings = false;
-    refreshCurrentItems();
+    navigation.refreshCurrentItems();
     setTimeout(grid.calculatePadding, 0);
   }
 
   async function handleTabChange(tab: string) {
-    if (!isPlatformUsable(tab, runtimeOs)) return;
-    await cancelPlatformAddFlow();
+    if (!isPlatformUsable(tab, shell.runtimeOs)) return;
+    await addFlow.cancel();
     history.pushState({ tab, folderId: null, showSettings: false }, "");
-    activeTab = tab;
-    currentFolderId = null;
+    shell.setActiveTab(tab);
+    navigation.currentFolderId = null;
     showSettings = false;
-    if (isPlatformUsable(tab, runtimeOs) && getPlatform(tab)) { loadAccounts(true); } else { refreshCurrentItems(); setTimeout(grid.calculatePadding, 0); }
-    searchQuery = "";
+    if (isPlatformUsable(tab, shell.runtimeOs) && getPlatform(tab)) { loadAccounts(true); } else { navigation.refreshCurrentItems(); setTimeout(grid.calculatePadding, 0); }
+    navigation.searchQuery = "";
   }
 
   // Dialog helpers
   function showNewFolderDialog() {
     inputDialog = {
       title: t("dialog.newFolderTitle"), placeholder: t("dialog.folderNamePlaceholder"), initialValue: "",
-      onConfirm: (name) => { createFolder(name, currentFolderId, activeTab); refreshCurrentItems(); inputDialog = null; },
+      onConfirm: (name) => { createFolder(name, navigation.currentFolderId, shell.activeTab); navigation.refreshCurrentItems(); inputDialog = null; },
     };
   }
 
   function showRenameFolderDialog(folder: FolderInfo) {
     inputDialog = {
       title: t("dialog.renameFolderTitle"), placeholder: t("dialog.folderNamePlaceholder"), initialValue: folder.name,
-      onConfirm: (name) => { renameFolder(folder.id, name); refreshCurrentItems(); inputDialog = null; },
+      onConfirm: (name) => { renameFolder(folder.id, name); navigation.refreshCurrentItems(); inputDialog = null; },
     };
   }
 
   // Context menu items
   function getContextMenuItems(): ContextMenuItem[] {
     if (!contextMenu) return [];
-    if (contextMenu.account && adapter) {
+    if (contextMenu.account && shell.adapter) {
       const account = contextMenu.account;
       return buildAccountContextMenuItems({
         account,
-        adapter,
+        adapter: shell.adapter,
         platformCallbacks: {
           copyToClipboard,
           showToast,
@@ -948,12 +662,12 @@
             },
           })),
         },
-        { label: t("context.menu.deleteFolder"), action: () => { deleteFolder(folder.id); refreshCurrentItems(); } },
+        { label: t("context.menu.deleteFolder"), action: () => { deleteFolder(folder.id); navigation.refreshCurrentItems(); } },
       ];
     }
     if (contextMenu.isBackground) {
       const items: ContextMenuItem[] = [];
-      if (activeTabUsable && adapter) {
+      if (shell.activeTabUsable && shell.adapter) {
         items.push({ label: t("context.menu.refresh"), action: () => loadAccounts(false, true, false, true) });
       }
       items.push({ label: t("context.menu.newFolder"), action: () => showNewFolderDialog() });
@@ -963,21 +677,21 @@
   }
 
   function handlePlatformsChanged() {
-    if (platformAddFlow) {
-      void cancelPlatformAddFlow();
+    if (addFlow.flow) {
+      void addFlow.cancel();
     }
-    settings = getSettings();
-    if (!settings.enabledPlatforms.includes(activeTab) || !isPlatformUsable(activeTab, runtimeOs)) {
-      activeTab = getInitialActiveTab(settings, runtimeOs);
+    shell.refreshSettings();
+    if (!shell.settings.enabledPlatforms.includes(shell.activeTab) || !isPlatformUsable(shell.activeTab, shell.runtimeOs)) {
+      shell.setActiveTab(getInitialActiveTab(shell.settings, shell.runtimeOs));
     }
-    currentFolderId = null;
-    history.replaceState({ tab: activeTab, folderId: null, showSettings: false }, "");
-    if (isPlatformUsable(activeTab, runtimeOs) && getPlatform(activeTab)) { loadAccounts(); } else { refreshCurrentItems(); }
+    navigation.currentFolderId = null;
+    history.replaceState({ tab: shell.activeTab, folderId: null, showSettings: false }, "");
+    if (isPlatformUsable(shell.activeTab, shell.runtimeOs) && getPlatform(shell.activeTab)) { loadAccounts(); } else { navigation.refreshCurrentItems(); }
   }
 
   function handleSettingsClose() {
     showSettings = false;
-    settings = getSettings();
+    shell.refreshSettings();
     blur.start();
     if (!afkListenersAttached) {
       blur.attachListeners();
@@ -1047,13 +761,13 @@
   });
 
   $effect(() => {
-    settings.uiScalePercent;
+    shell.settings.uiScalePercent;
     setTimeout(grid.calculatePadding, 0);
   });
 
   $effect(() => {
-    const hasValidPinCode = isValidPinHash(settings.pinHash || "");
-    if (!settings.pinEnabled || !hasValidPinCode) {
+    const hasValidPinCode = isValidPinHash(shell.settings.pinHash || "");
+    if (!shell.settings.pinEnabled || !hasValidPinCode) {
       isPinLocked = false;
       pinAttempt = "";
       pinError = "";
@@ -1073,25 +787,25 @@
   });
 
   $effect(() => {
-    const theme = settings.theme === "light" ? "light" : "dark";
+    const theme = shell.settings.theme === "light" ? "light" : "dark";
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
-    document.documentElement.lang = locale;
+    document.documentElement.lang = shell.locale;
   });
 
   $effect(() => {
-    runtimeOs;
-    settings.enabledPlatforms.join(",");
-    if (isPlatformUsable(activeTab, runtimeOs)) return;
-    const fallbackTab = getInitialActiveTab(settings, runtimeOs);
-    if (fallbackTab !== activeTab) {
-      activeTab = fallbackTab;
-      currentFolderId = null;
+    shell.runtimeOs;
+    shell.settings.enabledPlatforms.join(",");
+    if (isPlatformUsable(shell.activeTab, shell.runtimeOs)) return;
+    const fallbackTab = getInitialActiveTab(shell.settings, shell.runtimeOs);
+    if (fallbackTab !== shell.activeTab) {
+      shell.setActiveTab(fallbackTab);
+      navigation.currentFolderId = null;
     }
   });
 
   async function unlockWithPin() {
-    const expectedPinHash = settings.pinHash || "";
+    const expectedPinHash = shell.settings.pinHash || "";
     if (!isValidPinHash(expectedPinHash)) {
       isPinLocked = false;
       return;
@@ -1127,25 +841,26 @@
   onMount(() => {
     void invoke<string>("get_runtime_os")
       .then((osName) => {
-        runtimeOs = osName === "windows" || osName === "linux" || osName === "macos"
+        const normalizedOs: RuntimeOs = osName === "windows" || osName === "linux" || osName === "macos"
           ? osName
           : "unknown";
-        const nextTab = getInitialActiveTab(settings, runtimeOs);
-        if (nextTab !== activeTab) {
-          activeTab = nextTab;
+        shell.setRuntimeOs(normalizedOs);
+        const nextTab = getInitialActiveTab(shell.settings, shell.runtimeOs);
+        if (nextTab !== shell.activeTab) {
+          shell.setActiveTab(nextTab);
         }
-        if (isPlatformUsable(activeTab, runtimeOs) && getPlatform(activeTab)) {
+        if (isPlatformUsable(shell.activeTab, shell.runtimeOs) && getPlatform(shell.activeTab)) {
           loadAccounts(false, false, false, true, true);
         } else {
-          refreshCurrentItems();
+          navigation.refreshCurrentItems();
         }
       })
       .catch(() => {
-        runtimeOs = "unknown";
-        if (isPlatformUsable(activeTab, runtimeOs) && getPlatform(activeTab)) {
+        shell.setRuntimeOs("unknown");
+        if (isPlatformUsable(shell.activeTab, shell.runtimeOs) && getPlatform(shell.activeTab)) {
           loadAccounts(false, false, false, true, true);
         } else {
-          refreshCurrentItems();
+          navigation.refreshCurrentItems();
         }
       });
 
@@ -1169,7 +884,7 @@
     }
     handleVisibilityChange();
     document.addEventListener("visibilitychange", handleVisibilityChange);
-    history.replaceState({ tab: activeTab, folderId: null, showSettings: false }, "");
+    history.replaceState({ tab: shell.activeTab, folderId: null, showSettings: false }, "");
     window.addEventListener("resize", grid.handleResize);
     document.addEventListener("mousemove", drag.handleDocMouseMove);
     document.addEventListener("scroll", drag.handleDocScroll, true);
@@ -1193,7 +908,7 @@
       clearTimeout(zoomPersistTimer);
       zoomPersistTimer = null;
     }
-    clearPlatformAddFlowTimer();
+    addFlow.clearTimer();
     window.removeEventListener("resize", grid.handleResize);
     document.removeEventListener("mousemove", drag.handleDocMouseMove);
     document.removeEventListener("scroll", drag.handleDocScroll, true);
@@ -1290,7 +1005,8 @@
         class="search-input"
         type="search"
         placeholder={t("app.searchPlaceholder")}
-        bind:value={searchQuery}
+        value={navigation.searchQuery}
+        oninput={(e) => navigation.searchQuery = (e.currentTarget as HTMLInputElement).value}
       />
       <ViewToggle mode={viewMode} onChange={handleViewModeChange} {locale} />
     </div>
@@ -1465,7 +1181,7 @@
     }}
   >
     <Breadcrumb
-      platformName={getPlatformDefinition(activeTab)?.name || activeTab}
+      platformName={activePlatformDef?.name || activeTab}
       path={folderPath}
       onNavigate={(folderId) => { void navigateTo(folderId); }}
       {accentColor}
