@@ -28,6 +28,7 @@ const OVERWATCH_PROCESS_NAMES: &[&str] = &["Overwatch.exe"];
 const OVERWATCH_GAME_ID: &str = "overwatch";
 const OVERWATCH_GAME_NAME: &str = "Overwatch";
 const OVERWATCH_SNAPSHOT_MISSING_ERROR: &str = "battle_net_overwatch_snapshot_missing";
+const OVERWATCH_IGNORED_SNAPSHOT_NAMES: &[&str] = &["Logs", "CrashMail"];
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -195,25 +196,15 @@ fn directory_has_entries(path: &Path) -> bool {
         .is_some()
 }
 
-fn overwatch_settings_candidates() -> Vec<PathBuf> {
+fn overwatch_root_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
     if let Ok(user_profile) = env::var("USERPROFILE") {
-        candidates.push(
-            PathBuf::from(&user_profile)
-                .join("Documents")
-                .join("Overwatch")
-                .join("Settings"),
-        );
+        candidates.push(PathBuf::from(&user_profile).join("Documents").join("Overwatch"));
     }
 
     if let Ok(one_drive) = env::var("OneDrive") {
-        candidates.push(
-            PathBuf::from(&one_drive)
-                .join("Documents")
-                .join("Overwatch")
-                .join("Settings"),
-        );
+        candidates.push(PathBuf::from(&one_drive).join("Documents").join("Overwatch"));
     }
 
     let mut seen = HashSet::new();
@@ -221,17 +212,17 @@ fn overwatch_settings_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-fn existing_overwatch_settings_dir() -> Option<PathBuf> {
-    overwatch_settings_candidates()
+fn existing_overwatch_root_dir() -> Option<PathBuf> {
+    overwatch_root_candidates()
         .into_iter()
         .find(|candidate| candidate.exists() && candidate.is_dir())
 }
 
-fn preferred_overwatch_settings_dir() -> Result<PathBuf, String> {
-    overwatch_settings_candidates()
+fn preferred_overwatch_root_dir() -> Result<PathBuf, String> {
+    overwatch_root_candidates()
         .into_iter()
         .next()
-        .ok_or_else(|| "Could not resolve Overwatch settings directory".to_string())
+        .ok_or_else(|| "Could not resolve Overwatch directory".to_string())
 }
 
 fn has_overwatch_snapshot(app_handle: &tauri::AppHandle, email: &str) -> bool {
@@ -243,11 +234,11 @@ fn has_overwatch_snapshot(app_handle: &tauri::AppHandle, email: &str) -> bool {
 fn capture_overwatch_snapshot(app_handle: &tauri::AppHandle, email: &str) -> Result<bool, String> {
     ensure_no_overwatch_running("switching Battle.net accounts")?;
 
-    let Some(live_settings_dir) = existing_overwatch_settings_dir() else {
+    let Some(live_root_dir) = existing_overwatch_root_dir() else {
         log_battle_net_event(
             app_handle,
             "warn",
-            "Skipped Overwatch snapshot capture because no live settings directory was found",
+            "Skipped Overwatch snapshot capture because no live Overwatch directory was found",
             format!("email={email}"),
         );
         return Ok(false);
@@ -269,12 +260,12 @@ fn capture_overwatch_snapshot(app_handle: &tauri::AppHandle, email: &str) -> Res
         "Capturing Overwatch snapshot for Battle.net account",
         format!(
             "email={email}; source={}; target={}",
-            live_settings_dir.display(),
+            live_root_dir.display(),
             snapshot_dir.display()
         ),
     );
 
-    fs_utils::copy_dir_recursive(&live_settings_dir, &snapshot_dir, &[])?;
+    fs_utils::copy_dir_recursive(&live_root_dir, &snapshot_dir, OVERWATCH_IGNORED_SNAPSHOT_NAMES)?;
 
     log_battle_net_event(
         app_handle,
@@ -304,11 +295,11 @@ fn copy_overwatch_snapshot_to_live(
         return Err(OVERWATCH_SNAPSHOT_MISSING_ERROR.to_string());
     }
 
-    let target_dir = preferred_overwatch_settings_dir()?;
+    let target_dir = preferred_overwatch_root_dir()?;
     if let Some(parent) = target_dir.parent() {
         fs::create_dir_all(parent).map_err(|e| {
             format!(
-                "Could not create Overwatch settings parent {}: {e}",
+                "Could not create Overwatch parent {}: {e}",
                 parent.display()
             )
         })?;
@@ -317,7 +308,7 @@ fn copy_overwatch_snapshot_to_live(
     if target_dir.exists() {
         fs::remove_dir_all(&target_dir).map_err(|e| {
             format!(
-                "Could not replace Overwatch settings {}: {e}",
+                "Could not replace Overwatch directory {}: {e}",
                 target_dir.display()
             )
         })?;
@@ -334,15 +325,31 @@ fn copy_overwatch_snapshot_to_live(
         ),
     );
 
-    fs_utils::copy_dir_recursive(&snapshot_dir, &target_dir, &[])?;
+    fs_utils::copy_dir_recursive(&snapshot_dir, &target_dir, OVERWATCH_IGNORED_SNAPSHOT_NAMES)?;
+
+    let target_snapshot_dir = battle_net_overwatch_snapshot_dir(app_handle, to_email)?;
+    if target_snapshot_dir.exists() {
+        fs::remove_dir_all(&target_snapshot_dir).map_err(|e| {
+            format!(
+                "Could not replace Battle.net target snapshot {}: {e}",
+                target_snapshot_dir.display()
+            )
+        })?;
+    }
+    fs_utils::copy_dir_recursive(
+        &snapshot_dir,
+        &target_snapshot_dir,
+        OVERWATCH_IGNORED_SNAPSHOT_NAMES,
+    )?;
 
     log_battle_net_event(
         app_handle,
         "info",
         "Copied Overwatch settings between Battle.net accounts",
         format!(
-            "from={from_email}; to={to_email}; target={}",
-            target_dir.display()
+            "from={from_email}; to={to_email}; target={}; targetSnapshot={}",
+            target_dir.display(),
+            target_snapshot_dir.display()
         ),
     );
 

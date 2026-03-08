@@ -30,6 +30,99 @@ fn trim_text(value: &str, max_bytes: usize) -> String {
     value[..end].to_string()
 }
 
+fn replace_case_insensitive(haystack: &str, needle: &str, replacement: &str) -> String {
+    if needle.is_empty() {
+        return haystack.to_string();
+    }
+
+    let lower_haystack = haystack.to_ascii_lowercase();
+    let lower_needle = needle.to_ascii_lowercase();
+    let mut out = String::with_capacity(haystack.len());
+    let mut search_start = 0usize;
+
+    while let Some(relative_index) = lower_haystack[search_start..].find(&lower_needle) {
+        let start = search_start + relative_index;
+        let end = start + needle.len();
+        out.push_str(&haystack[search_start..start]);
+        out.push_str(replacement);
+        search_start = end;
+    }
+
+    out.push_str(&haystack[search_start..]);
+    out
+}
+
+fn redact_email_like_tokens(value: &str) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    let mut out = String::with_capacity(value.len());
+    let mut cursor = 0usize;
+
+    while cursor < chars.len() {
+        if chars[cursor] != '@' {
+            out.push(chars[cursor]);
+            cursor += 1;
+            continue;
+        }
+
+        let mut left = cursor;
+        while left > 0 {
+            let ch = chars[left - 1];
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '%' | '+' | '-') {
+                left -= 1;
+            } else {
+                break;
+            }
+        }
+
+        let mut right = cursor + 1;
+        let mut saw_domain_dot = false;
+        while right < chars.len() {
+            let ch = chars[right];
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-') {
+                if ch == '.' {
+                    saw_domain_dot = true;
+                }
+                right += 1;
+            } else {
+                break;
+            }
+        }
+
+        let local_len = cursor.saturating_sub(left);
+        let domain_len = right.saturating_sub(cursor + 1);
+        if local_len == 0 || domain_len < 3 || !saw_domain_dot {
+            out.push(chars[cursor]);
+            cursor += 1;
+            continue;
+        }
+
+        out.push_str("<email>");
+        cursor = right;
+    }
+
+    out
+}
+
+fn sanitize_log_text(value: &str) -> String {
+    let mut sanitized = redact_email_like_tokens(value);
+
+    for (env_key, placeholder) in [
+        ("USERPROFILE", "%USERPROFILE%"),
+        ("OneDrive", "%ONEDRIVE%"),
+        ("APPDATA", "%APPDATA%"),
+        ("LOCALAPPDATA", "%LOCALAPPDATA%"),
+        ("PROGRAMDATA", "%PROGRAMDATA%"),
+        ("TEMP", "%TEMP%"),
+        ("TMP", "%TEMP%"),
+    ] {
+        if let Ok(path) = std::env::var(env_key) {
+            sanitized = replace_case_insensitive(&sanitized, &path, placeholder);
+        }
+    }
+
+    sanitized
+}
+
 fn ensure_log_parent(path: &Path) -> Result<(), String> {
     let parent = path
         .parent()
@@ -109,10 +202,10 @@ pub fn append_app_log(
 
     let record = serde_json::json!({
         "tsMs": now_unix_ms(),
-        "level": trim_text(level, 32),
-        "source": trim_text(source, 128),
-        "message": trim_text(message, MAX_MESSAGE_BYTES),
-        "details": details.map(|value| trim_text(value, MAX_DETAILS_BYTES)),
+        "level": trim_text(&sanitize_log_text(level), 32),
+        "source": trim_text(&sanitize_log_text(source), 128),
+        "message": trim_text(&sanitize_log_text(message), MAX_MESSAGE_BYTES),
+        "details": details.map(|value| trim_text(&sanitize_log_text(value), MAX_DETAILS_BYTES)),
     });
 
     let mut file = OpenOptions::new()
