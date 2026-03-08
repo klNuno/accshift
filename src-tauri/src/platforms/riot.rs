@@ -8,6 +8,7 @@ use std::process::Command;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
+use uuid::Uuid;
 
 use crate::os;
 
@@ -110,6 +111,7 @@ const RIOT_SETUP_RESET_ITEMS: &[&str] = &[
     "Sessions",
     "RiotClientConfig",
 ];
+const RIOT_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -790,6 +792,60 @@ fn next_profile_label(profiles: &[RiotProfileConfig]) -> String {
     }
 }
 
+fn riot_setup_expired(last_touched_at: Option<u64>) -> bool {
+    let Some(last_touched_at) = last_touched_at else {
+        return true;
+    };
+    now_unix_ms().saturating_sub(last_touched_at) > RIOT_SETUP_TTL_MS
+}
+
+fn cleanup_expired_pending_profiles(
+    app_handle: &tauri::AppHandle,
+    cfg: &mut config::AppConfig,
+) -> Result<(), String> {
+    let expired_ids = cfg
+        .riot
+        .profiles
+        .iter()
+        .filter(|profile| profile.snapshot_state == "setup_pending")
+        .filter(|profile| riot_setup_expired(profile.last_used_at))
+        .map(|profile| profile.id.clone())
+        .collect::<Vec<_>>();
+
+    if expired_ids.is_empty() {
+        return Ok(());
+    }
+
+    cfg.riot
+        .profiles
+        .retain(|profile| !expired_ids.iter().any(|id| id == &profile.id));
+
+    if expired_ids.iter().any(|id| id == &cfg.riot.current_profile_id) {
+        cfg.riot.current_profile_id = cfg
+            .riot
+            .profiles
+            .first()
+            .map(|profile| profile.id.clone())
+            .unwrap_or_default();
+    }
+
+    config::save_config(app_handle, cfg)?;
+
+    for profile_id in expired_ids {
+        let snapshot_dir = profile_snapshot_path(app_handle, &profile_id)?;
+        if snapshot_dir.exists() {
+            fs::remove_dir_all(&snapshot_dir).map_err(|e| {
+                format!(
+                    "Could not remove expired Riot profile snapshot {}: {e}",
+                    snapshot_dir.display()
+                )
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
 fn current_profile_id(cfg: &config::AppConfig) -> String {
     let configured = cfg.riot.current_profile_id.trim();
     if !configured.is_empty()
@@ -1005,12 +1061,14 @@ fn get_profile_setup_status_internal(
 }
 
 pub fn get_profiles(app_handle: tauri::AppHandle) -> Result<Vec<RiotProfileConfig>, String> {
-    let cfg = config::load_config(&app_handle);
+    let mut cfg = config::load_config(&app_handle);
+    cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
     Ok(visible_profiles(&cfg))
 }
 
 pub fn get_startup_snapshot(app_handle: tauri::AppHandle) -> Result<RiotStartupSnapshot, String> {
-    let cfg = config::load_config(&app_handle);
+    let mut cfg = config::load_config(&app_handle);
+    cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
     let current_profile = visible_current_profile_id(&cfg);
     Ok(RiotStartupSnapshot {
         profiles: visible_profiles(&cfg),
@@ -1019,7 +1077,8 @@ pub fn get_startup_snapshot(app_handle: tauri::AppHandle) -> Result<RiotStartupS
 }
 
 pub fn get_current_profile(app_handle: tauri::AppHandle) -> Result<String, String> {
-    let cfg = config::load_config(&app_handle);
+    let mut cfg = config::load_config(&app_handle);
+    cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
     Ok(visible_current_profile_id(&cfg))
 }
 
@@ -1027,6 +1086,7 @@ pub fn begin_profile_setup(app_handle: tauri::AppHandle) -> Result<RiotProfileSe
     ensure_no_riot_game_running("starting Riot account setup")?;
     let client_path = resolve_riot_client_path(&app_handle)?;
     let mut cfg = config::load_config(&app_handle);
+    cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
 
     if let Some(existing) = find_pending_setup_profile(&cfg).cloned() {
         cfg.riot.current_profile_id = existing.id.clone();
@@ -1035,7 +1095,7 @@ pub fn begin_profile_setup(app_handle: tauri::AppHandle) -> Result<RiotProfileSe
         return Ok(make_setup_status(&existing, "waiting_for_client", ""));
     }
 
-    let profile_id = format!("riot-profile-{}", now_unix_ms());
+    let profile_id = format!("riot-profile-{}", Uuid::new_v4());
     let label = next_profile_label(&cfg.riot.profiles);
 
     cfg.riot.profiles.push(RiotProfileConfig {
@@ -1070,6 +1130,16 @@ pub fn get_profile_setup_status(
 ) -> Result<RiotProfileSetupStatus, String> {
     let profile_id = normalize_profile_id(&profile_id)?;
     let mut cfg = config::load_config(&app_handle);
+    cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
+    let _ = update_profile_state(
+        &mut cfg,
+        &profile_id,
+        None,
+        None,
+        Some(Some(now_unix_ms())),
+        None,
+    );
+    let _ = config::save_config(&app_handle, &cfg);
     get_profile_setup_status_internal(&app_handle, &mut cfg, &profile_id)
 }
 
@@ -1079,6 +1149,7 @@ pub fn cancel_profile_setup(
 ) -> Result<(), String> {
     let profile_id = normalize_profile_id(&profile_id)?;
     let mut cfg = config::load_config(&app_handle);
+    cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
     let should_remove = cfg
         .riot
         .profiles

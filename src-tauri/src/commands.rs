@@ -9,6 +9,39 @@ pub fn get_runtime_os() -> String {
 }
 
 #[tauri::command]
+pub fn log_app_event(
+    app_handle: tauri::AppHandle,
+    level: String,
+    source: String,
+    message: String,
+    details: Option<String>,
+) -> Result<(), String> {
+    crate::logging::append_app_log(&app_handle, &level, &source, &message, details.as_deref())
+}
+
+#[tauri::command]
+pub fn get_log_file_path(app_handle: tauri::AppHandle) -> Result<String, String> {
+    crate::logging::log_file_path(&app_handle)
+        .map(|path| path.display().to_string())
+}
+
+#[tauri::command]
+pub fn finish_boot(
+    app_handle: tauri::AppHandle,
+    boot_state: tauri::State<'_, crate::app_runtime::BootState>,
+    source: String,
+) -> Result<(), String> {
+    let was_first_completion = boot_state.mark_completed();
+    let message = if was_first_completion {
+        "Boot completed"
+    } else {
+        "Boot completion requested again"
+    };
+    let _ = crate::logging::append_app_log(&app_handle, "info", &source, message, None);
+    crate::app_runtime::show_main_window(&app_handle)
+}
+
+#[tauri::command]
 pub fn set_api_key(app_handle: tauri::AppHandle, key: String) -> Result<(), String> {
     require_service("steam")?.set_api_key(app_handle, key)
 }

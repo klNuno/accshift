@@ -1,9 +1,13 @@
 // Keep this to hide the extra console window in Windows release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use tauri::Manager;
+
+mod app_runtime;
 mod commands;
 mod config;
 mod error;
+mod logging;
 mod os;
 mod platforms;
 mod steam;
@@ -19,8 +23,18 @@ fn main() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(app_runtime::BootState::default())
         .manage(client)
         .setup(|app| {
+            logging::install_panic_hook(app.handle().clone());
+            let _ = logging::append_app_log(
+                &app.handle().clone(),
+                "info",
+                "backend.startup",
+                "App setup started",
+                None,
+            );
+
             let (start_width, start_height) =
                 config::load_window_size(app.handle()).unwrap_or((900.0, 450.0));
 
@@ -32,14 +46,23 @@ fn main() {
             .title("Accshift")
             .inner_size(start_width, start_height)
             .min_inner_size(400.0, 300.0)
+            .visible(false)
             .background_color(tauri::webview::Color(9, 9, 11, 255))
             .center()
             .decorations(false)
             .resizable(true)
             .on_navigation(|url| {
-                // Only allow app URLs to prevent WebView2 back/forward navigation.
+                // Only allow app URLs in production. In dev, allow local Vite URLs only.
                 let scheme = url.scheme();
-                scheme == "tauri" || scheme == "http" || scheme == "https"
+                if scheme == "tauri" {
+                    return true;
+                }
+
+                if cfg!(debug_assertions) && matches!(scheme, "http" | "https") {
+                    return matches!(url.host_str(), Some("localhost" | "127.0.0.1"));
+                }
+
+                false
             });
 
             if let Some(icon) = app.default_window_icon() {
@@ -64,9 +87,31 @@ fn main() {
                 }
             });
 
+            let fallback_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(5000));
+
+                let boot_state = fallback_handle.state::<app_runtime::BootState>();
+                if boot_state.is_completed() {
+                    return;
+                }
+
+                let _ = logging::append_app_log(
+                    &fallback_handle,
+                    "warn",
+                    "backend.boot-failsafe",
+                    "Rust failsafe triggered after 5000ms; forcing main window visibility",
+                    None,
+                );
+                let _ = app_runtime::show_main_window(&fallback_handle);
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::log_app_event,
+            commands::get_log_file_path,
+            commands::finish_boot,
             commands::get_runtime_os,
             commands::get_steam_accounts,
             commands::get_startup_snapshot,

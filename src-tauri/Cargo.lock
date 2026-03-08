@@ -16,6 +16,7 @@ dependencies = [
  "tauri-plugin-shell",
  "tauri-plugin-updater",
  "thiserror 1.0.69",
+ "uuid",
  "winreg 0.52.0",
 ]
 

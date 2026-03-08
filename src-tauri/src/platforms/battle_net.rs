@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+use uuid::Uuid;
 #[cfg(target_os = "windows")]
 use winreg::HKEY;
 #[cfg(target_os = "windows")]
@@ -18,6 +19,7 @@ const BATTLE_NET_PROCESS_NAMES: &[&str] = &["Battle.net.exe", "Battle.net Launch
 const BATTLE_NET_EXECUTABLE_CANDIDATES: &[&str] =
     &["Battle.net\\Battle.net Launcher.exe", "Battle.net\\Battle.net.exe"];
 const BATTLE_NET_EXECUTABLE_NAMES: &[&str] = &["Battle.net Launcher.exe", "Battle.net.exe"];
+const BATTLE_NET_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -47,6 +49,7 @@ pub struct BattleNetAccountSetupStatus {
 #[derive(Clone)]
 struct BattleNetAccountSetupJob {
     known_account_keys: HashSet<String>,
+    last_touched_at: u64,
 }
 
 fn now_unix_ms() -> u64 {
@@ -59,6 +62,14 @@ fn now_unix_ms() -> u64 {
 fn battle_net_setup_jobs() -> &'static Mutex<HashMap<String, BattleNetAccountSetupJob>> {
     static JOBS: OnceLock<Mutex<HashMap<String, BattleNetAccountSetupJob>>> = OnceLock::new();
     JOBS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn battle_net_setup_expired(last_touched_at: u64) -> bool {
+    now_unix_ms().saturating_sub(last_touched_at) > BATTLE_NET_SETUP_TTL_MS
+}
+
+fn purge_expired_battle_net_setup_jobs(jobs: &mut HashMap<String, BattleNetAccountSetupJob>) {
+    jobs.retain(|_, job| !battle_net_setup_expired(job.last_touched_at));
 }
 
 fn setup_status(
@@ -684,7 +695,8 @@ pub fn switch_account(app_handle: tauri::AppHandle, email: String) -> Result<(),
 
 pub fn begin_account_setup(app_handle: tauri::AppHandle) -> Result<BattleNetAccountSetupStatus, String> {
     let known_accounts = known_account_emails(&app_handle).unwrap_or_default();
-    let setup_id = format!("battle-net-setup-{}", now_unix_ms());
+    let setup_id = format!("battle-net-setup-{}", Uuid::new_v4());
+    let created_at = now_unix_ms();
     let known_account_keys = known_accounts
         .iter()
         .map(|account| normalize_account_key(account))
@@ -693,9 +705,13 @@ pub fn begin_account_setup(app_handle: tauri::AppHandle) -> Result<BattleNetAcco
     let mut jobs = battle_net_setup_jobs()
         .lock()
         .map_err(|_| "Battle.net setup storage is unavailable".to_string())?;
+    purge_expired_battle_net_setup_jobs(&mut jobs);
     jobs.insert(
         setup_id.clone(),
-        BattleNetAccountSetupJob { known_account_keys },
+        BattleNetAccountSetupJob {
+            known_account_keys,
+            last_touched_at: created_at,
+        },
     );
     drop(jobs);
 
@@ -710,14 +726,15 @@ pub fn get_account_setup_status(
     setup_id: String,
 ) -> Result<BattleNetAccountSetupStatus, String> {
     let job = {
-        let jobs = battle_net_setup_jobs()
+        let mut jobs = battle_net_setup_jobs()
             .lock()
             .map_err(|_| "Battle.net setup storage is unavailable".to_string())?;
-        jobs.get(&setup_id).cloned()
-    };
-
-    let Some(job) = job else {
-        return Err("Battle.net setup session not found".into());
+        purge_expired_battle_net_setup_jobs(&mut jobs);
+        let Some(job) = jobs.get_mut(&setup_id) else {
+            return Err("Battle.net setup session not found".into());
+        };
+        job.last_touched_at = now_unix_ms();
+        job.clone()
     };
 
     let accounts = read_saved_accounts().unwrap_or_default();
@@ -749,6 +766,7 @@ pub fn cancel_account_setup(setup_id: String) -> Result<(), String> {
     let mut jobs = battle_net_setup_jobs()
         .lock()
         .map_err(|_| "Battle.net setup storage is unavailable".to_string())?;
+    purge_expired_battle_net_setup_jobs(&mut jobs);
     jobs.remove(&setup_id);
     Ok(())
 }
