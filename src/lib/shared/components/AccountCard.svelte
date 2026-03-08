@@ -322,10 +322,11 @@
   .card {
     position: relative;
     z-index: 2;
-    width: 100px;
-    padding: 8px;
+    width: var(--grid-card-width);
+    min-height: var(--grid-card-min-height);
+    padding: var(--grid-card-padding);
     box-sizing: border-box;
-    border-radius: 8px;
+    border-radius: var(--grid-card-radius);
     text-align: center;
     background: var(--bg-card);
     border: none;
@@ -396,8 +397,8 @@
 
   .avatar {
     position: relative;
-    width: 68px;
-    height: 68px;
+    width: var(--grid-card-avatar-size);
+    height: var(--grid-card-avatar-size);
     margin: 0 auto 8px;
     border-radius: 6px;
     display: flex;
