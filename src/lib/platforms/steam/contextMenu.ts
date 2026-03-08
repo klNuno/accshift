@@ -2,7 +2,14 @@ import type { ContextMenuAction } from "../../shared/contextMenu/types";
 import type { PlatformAccount, PlatformContextMenuCallbacks } from "../../shared/platform";
 import { toProfileUrl } from "./steamIdUtils";
 import { encodeFriendCode } from "./friendCode";
-import { copyGameSettings, forgetAccount, getCopyableGames, openUserdata, switchAccountMode } from "./steamApi";
+import {
+  clearIntegratedBrowserCache,
+  copyGameSettings,
+  forgetAccount,
+  getCopyableGames,
+  openUserdata,
+  switchAccountMode,
+} from "./steamApi";
 
 export function getSteamContextMenuItems(
   account: PlatformAccount,
@@ -55,6 +62,29 @@ export function getSteamContextMenuItems(
       },
     },
   ];
+
+  if (callbacks.getCurrentAccountId() === account.id) {
+    items.push({
+      id: `steam.clear.browserCache.${account.id}`,
+      group: "platform.data",
+      label: callbacks.t("steam.clearIntegratedBrowserCache"),
+      action: () => {
+        callbacks.confirmAction({
+          title: callbacks.t("steam.clearIntegratedBrowserCacheConfirmTitle"),
+          message: callbacks.t("steam.clearIntegratedBrowserCacheConfirmMessage"),
+          confirmLabel: callbacks.t("steam.clearIntegratedBrowserCache"),
+          onConfirm: async () => {
+            try {
+              await clearIntegratedBrowserCache();
+              callbacks.showToast(callbacks.t("steam.clearedIntegratedBrowserCache"));
+            } catch (e) {
+              callbacks.showToast(String(e));
+            }
+          },
+        });
+      },
+    });
+  }
 
   const targetSteamId = callbacks.getCurrentAccountId();
   if (targetSteamId && targetSteamId !== account.id) {

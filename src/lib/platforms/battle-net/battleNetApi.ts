@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { PlatformAddFlowStatus } from "$lib/shared/platform";
 import { toPlatformAddFlowStatus } from "$lib/platforms/addFlow";
-import type { BattleNetAccount, BattleNetStartupSnapshot } from "./types";
+import type { BattleNetAccount, BattleNetCopyableGame, BattleNetStartupSnapshot } from "./types";
 
 interface BattleNetSetupStatusPayload {
   setupId: string;
@@ -43,4 +43,12 @@ export async function cancelAccountSetup(setupId: string): Promise<void> {
 
 export async function forgetAccount(email: string): Promise<void> {
   await invoke("forget_battle_net_account", { email });
+}
+
+export async function copyGameSettings(fromEmail: string, toEmail: string, gameId: string): Promise<void> {
+  await invoke("copy_battle_net_game_settings", { fromEmail, toEmail, gameId });
+}
+
+export async function getCopyableGames(fromEmail: string, toEmail: string): Promise<BattleNetCopyableGame[]> {
+  return invoke<BattleNetCopyableGame[]>("get_battle_net_copyable_games", { fromEmail, toEmail });
 }

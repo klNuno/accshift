@@ -204,6 +204,7 @@
   let pendingUpdate = $state<PendingUpdate | null>(null);
   let appVersion = $state("");
   let loadingAdapterFor = $state<string | null>(null);
+  let lastPreparedVisibleKey = "";
 
   function semverCore(version: string): string {
     const match = version.match(/\d+\.\d+\.\d+/);
@@ -327,7 +328,10 @@
     const visibleIds = (navigation.isSearching ? filteredAccountItems : navigation.currentItems.filter((item) => item.type === "account"))
       .map((item) => item.id);
     if (visibleIds.length === 0) return;
-    visibleIds.join(",");
+    const visibleKey = `${shell.activeTab}:${navigation.isSearching ? "search" : "folder"}:${visibleIds.join(",")}`;
+    if (visibleKey === lastPreparedVisibleKey) return;
+    lastPreparedVisibleKey = visibleKey;
+    loader.prepareVisibleAccounts();
     loader.primeVisibleAccounts(true, false, true, true);
   });
 
@@ -606,6 +610,9 @@
     }
     const tabChanged = shell.activeTab !== entry.tab;
     const settingsClosing = showSettings && !entry.showSettings;
+    if (tabChanged) {
+      loader.clearForPlatformChange();
+    }
     shell.setActiveTab(entry.tab);
     navigation.currentFolderId = entry.folderId;
     showSettings = entry.showSettings;
@@ -621,6 +628,7 @@
       loadAccounts(true);
     } else {
       navigation.refreshCurrentItems();
+      loader.prepareVisibleAccounts();
       queueGridPadding();
     }
     navigation.searchQuery = "";
@@ -643,6 +651,7 @@
     navigation.currentFolderId = parentFolderId;
     showSettings = false;
     navigation.refreshCurrentItems();
+    loader.prepareVisibleAccounts();
     navigation.searchQuery = "";
     queueGridPadding();
   }
@@ -654,6 +663,7 @@
     navigation.currentFolderId = folderId;
     showSettings = false;
     navigation.refreshCurrentItems();
+    loader.prepareVisibleAccounts();
     queueGridPadding();
   }
 
@@ -661,6 +671,8 @@
     if (!isPlatformUsable(tab, shell.runtimeOs)) return;
     await addFlow.cancel();
     history.pushState({ tab, folderId: null, showSettings: false }, "");
+    lastPreparedVisibleKey = "";
+    loader.clearForPlatformChange();
     shell.setActiveTab(tab);
     navigation.currentFolderId = null;
     showSettings = false;
@@ -911,6 +923,7 @@
     if (isPlatformUsable(shell.activeTab, shell.runtimeOs)) return;
     const fallbackTab = getInitialActiveTab(shell.settings, shell.runtimeOs);
     if (fallbackTab !== shell.activeTab) {
+      loader.clearForPlatformChange();
       shell.setActiveTab(fallbackTab);
       navigation.currentFolderId = null;
     }

@@ -21,8 +21,7 @@ pub fn log_app_event(
 
 #[tauri::command]
 pub fn get_log_file_path(app_handle: tauri::AppHandle) -> Result<String, String> {
-    crate::logging::log_file_path(&app_handle)
-        .map(|path| path.display().to_string())
+    crate::logging::log_file_path(&app_handle).map(|path| path.display().to_string())
 }
 
 #[tauri::command]
@@ -166,6 +165,11 @@ pub async fn forget_account(app_handle: tauri::AppHandle, steam_id: String) -> R
 #[tauri::command]
 pub fn open_userdata(app_handle: tauri::AppHandle, steam_id: String) -> Result<(), String> {
     require_service("steam")?.open_userdata(app_handle, steam_id)
+}
+
+#[tauri::command]
+pub fn clear_steam_integrated_browser_cache(app_handle: tauri::AppHandle) -> Result<(), String> {
+    crate::platforms::steam::clear_integrated_browser_cache(app_handle)
 }
 
 #[tauri::command]
@@ -349,7 +353,10 @@ pub fn get_current_battle_net_account() -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn switch_battle_net_account(app_handle: tauri::AppHandle, email: String) -> Result<(), String> {
+pub fn switch_battle_net_account(
+    app_handle: tauri::AppHandle,
+    email: String,
+) -> Result<(), String> {
     crate::platforms::battle_net::switch_account(app_handle, email)
 }
 
@@ -374,7 +381,10 @@ pub fn cancel_battle_net_account_setup(setup_id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn forget_battle_net_account(app_handle: tauri::AppHandle, email: String) -> Result<(), String> {
+pub fn forget_battle_net_account(
+    app_handle: tauri::AppHandle,
+    email: String,
+) -> Result<(), String> {
     crate::platforms::battle_net::forget_account(app_handle, email)
 }
 
@@ -391,4 +401,23 @@ pub fn set_battle_net_path(app_handle: tauri::AppHandle, path: String) -> Result
 #[tauri::command]
 pub fn select_battle_net_path() -> Result<String, String> {
     crate::platforms::battle_net::select_battle_net_path()
+}
+
+#[tauri::command]
+pub fn copy_battle_net_game_settings(
+    app_handle: tauri::AppHandle,
+    from_email: String,
+    to_email: String,
+    game_id: String,
+) -> Result<(), String> {
+    crate::platforms::battle_net::copy_game_settings(app_handle, from_email, to_email, game_id)
+}
+
+#[tauri::command]
+pub fn get_battle_net_copyable_games(
+    app_handle: tauri::AppHandle,
+    from_email: String,
+    to_email: String,
+) -> Result<Vec<crate::platforms::battle_net::BattleNetCopyableGame>, String> {
+    crate::platforms::battle_net::get_copyable_games(app_handle, from_email, to_email)
 }

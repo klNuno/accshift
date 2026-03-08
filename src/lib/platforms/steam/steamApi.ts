@@ -70,6 +70,10 @@ export async function openUserdata(steamId: string): Promise<void> {
   await invoke("open_userdata", { steamId });
 }
 
+export async function clearIntegratedBrowserCache(): Promise<void> {
+  await invoke("clear_steam_integrated_browser_cache");
+}
+
 export async function copyGameSettings(fromSteamId: string, toSteamId: string, appId: string): Promise<void> {
   await invoke("copy_game_settings", { fromSteamId, toSteamId, appId });
 }
