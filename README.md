@@ -72,6 +72,13 @@ pnpm tauri dev
 - Riot setup/switch only terminates Riot client processes, not game binaries.
 - Steam API keys are encrypted at rest using OS-level secret storage.
 
+## Recent Security Hardening
+- Add-account setup identifiers are random UUIDs instead of timestamp-based IDs.
+- Pending Steam, Riot, and Battle.net setup flows expire automatically after a short inactivity window.
+- The local PIN lock now adds a short delay after a failed attempt to reduce trivial retry spam.
+- The main desktop webview blocks external navigation in production.
+- The desktop CSP no longer enables `unsafe-eval`.
+
 ## Battle.net Notes
 - Battle.net account discovery is based on the local launcher configuration plus accshift local metadata.
 - Display names use the native BattleTag when it becomes available locally.
