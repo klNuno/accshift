@@ -42,12 +42,34 @@ pub struct RiotConfig {
     pub current_profile_id: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct BattleNetConfig {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub path_override: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accounts: Vec<BattleNetAccountConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct BattleNetAccountConfig {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub email: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<u64>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default, skip_serializing_if = "is_default_steam_config")]
     pub steam: SteamConfig,
     #[serde(default, skip_serializing_if = "is_default_riot_config")]
     pub riot: RiotConfig,
+    #[serde(
+        default,
+        skip_serializing_if = "is_default_battle_net_config",
+        rename = "battleNet"
+    )]
+    pub battle_net: BattleNetConfig,
     #[serde(default)]
     pub window_width: Option<f64>,
     #[serde(default)]
@@ -60,6 +82,8 @@ struct RawAppConfig {
     steam: Option<SteamConfig>,
     #[serde(default)]
     riot: Option<RawRiotConfig>,
+    #[serde(default, rename = "battleNet", alias = "battle_net")]
+    battle_net: Option<BattleNetConfig>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     steam_api_key: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -126,6 +150,10 @@ fn is_default_riot_config(value: &RiotConfig) -> bool {
     value.path_override.is_empty()
         && value.profiles.is_empty()
         && value.current_profile_id.is_empty()
+}
+
+fn is_default_battle_net_config(value: &BattleNetConfig) -> bool {
+    value.path_override.is_empty() && value.accounts.is_empty()
 }
 
 fn normalize_riot_profile(raw: RawRiotProfileConfig) -> RiotProfileConfig {
@@ -217,9 +245,11 @@ fn normalize_config(raw: RawAppConfig) -> AppConfig {
         steam.path_override = raw.steam_path_override;
     }
     let riot = normalize_riot_config(raw.riot);
+    let battle_net = raw.battle_net.unwrap_or_default();
     AppConfig {
         steam,
         riot,
+        battle_net,
         window_width: raw.window_width,
         window_height: raw.window_height,
     }

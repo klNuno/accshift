@@ -28,17 +28,39 @@ type PlatformAddFlowDeps = {
   ) => void;
 };
 
+function getSetupKey(
+  platformId: string,
+  kind:
+    | "pendingLabel"
+    | "waitingForClient"
+    | "waitingForLogin"
+    | "detected"
+    | "connected"
+    | "ready"
+    | "readyWithProfile"
+    | "failed"
+    | "failedMessage",
+): MessageKey {
+  switch (platformId) {
+    case "battle-net":
+      return `battlenet.setup${kind[0].toUpperCase()}${kind.slice(1)}` as MessageKey;
+    case "steam":
+      return `steam.setup${kind[0].toUpperCase()}${kind.slice(1)}` as MessageKey;
+    default:
+      return `riot.setup${kind[0].toUpperCase()}${kind.slice(1)}` as MessageKey;
+  }
+}
+
 function createDetectedSection(
   platformId: string,
   display: string,
   t: Translator,
 ): CardExtensionContent["sections"][number] | null {
   if (!display) return null;
-  const isSteam = platformId === "steam";
   return {
-    title: t(isSteam ? "steam.setupDetected" : "riot.setupDetected"),
+    title: t(getSetupKey(platformId, "detected")),
     text: display,
-    chips: [{ text: t(isSteam ? "steam.setupConnected" : "riot.setupConnected"), tone: "green" as const }],
+    chips: [{ text: t(getSetupKey(platformId, "connected")), tone: "green" as const }],
   };
 }
 
@@ -61,13 +83,12 @@ export function createPlatformAddFlowController({
     const setupId = flow.status.setupId.trim();
     if (!setupId) return null;
     const detectedName = (flow.status.accountDisplayName || "").trim();
-    const isSteam = flow.platformId === "steam";
     return {
       id: setupId,
-      displayName: detectedName || (isSteam ? t("steam.setupPendingLabel") : t("riot.setupPendingLabel")),
+      displayName: detectedName || t(getSetupKey(flow.platformId, "pendingLabel")),
       username: detectedName
-        ? (isSteam ? t("steam.setupConnected") : t("riot.setupConnected"))
-        : (isSteam ? t("steam.setupWaitingForLogin") : t("riot.setupWaitingForLogin")),
+        ? t(getSetupKey(flow.platformId, "connected"))
+        : t(getSetupKey(flow.platformId, "waitingForLogin")),
       lastLoginAt: null,
     } satisfies PlatformAccount;
   });
@@ -136,10 +157,9 @@ export function createPlatformAddFlowController({
         if (getActiveTab() === current.platformId) {
           loadAccounts(true, false, false, false, false);
         }
-        const isSteam = current.platformId === "steam";
         showToast(nextStatus.accountDisplayName
-          ? t(isSteam ? "steam.setupReadyWithProfile" : "riot.setupReadyWithProfile", { profile: nextStatus.accountDisplayName })
-          : t(isSteam ? "steam.setupReady" : "riot.setupReady"));
+          ? t(getSetupKey(current.platformId, "readyWithProfile"), { profile: nextStatus.accountDisplayName })
+          : t(getSetupKey(current.platformId, "ready")));
         stop();
         return;
       }
@@ -231,12 +251,55 @@ export function createPlatformAddFlowController({
       }
     }
 
+    if (flow.platformId === "battle-net") {
+      switch (flow.status.state) {
+        case "waiting_for_client":
+          return {
+            sections: [
+              {
+                text: t("battlenet.setupWaitingForClient"),
+                loading: true,
+              },
+            ],
+          };
+        case "failed":
+          return {
+            sections: [
+              {
+                title: t("battlenet.setupFailed"),
+                text: t("battlenet.setupFailedMessage"),
+              },
+              ...(error ? [{
+                lines: [error],
+                chips: [{ text: t("common.close"), tone: "red" as const }],
+              }] : []),
+            ],
+          };
+        case "ready":
+          return null;
+        case "waiting_for_login":
+        default:
+          return {
+            sections: [
+              {
+                text: t("battlenet.setupWaitingForLogin"),
+                loading: true,
+              },
+              ...(detectedSection ? [detectedSection] : []),
+              {
+                lines: [t("battlenet.setupKeepMeLoggedIn")],
+              },
+            ],
+          };
+      }
+    }
+
     switch (flow.status.state) {
       case "waiting_for_client":
         return {
           sections: [
             {
-              text: t("steam.setupWaitingForClient"),
+              text: t(getSetupKey("steam", "waitingForClient")),
               loading: true,
             },
           ],
@@ -245,8 +308,8 @@ export function createPlatformAddFlowController({
         return {
           sections: [
             {
-              title: t("steam.setupFailed"),
-              text: t("steam.setupFailedMessage"),
+              title: t(getSetupKey("steam", "failed")),
+              text: t(getSetupKey("steam", "failedMessage")),
             },
             ...(error ? [{
               lines: [error],
@@ -261,7 +324,7 @@ export function createPlatformAddFlowController({
         return {
           sections: [
             {
-              text: t("steam.setupWaitingForLogin"),
+              text: t(getSetupKey("steam", "waitingForLogin")),
               loading: true,
             },
             ...(detectedSection ? [detectedSection] : []),

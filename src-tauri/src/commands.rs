@@ -280,3 +280,46 @@ pub fn switch_riot_profile(app_handle: tauri::AppHandle, profile_id: String) -> 
 pub fn forget_riot_profile(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
     crate::platforms::riot::forget_profile(app_handle, profile_id)
 }
+
+#[tauri::command]
+pub fn get_battle_net_accounts(
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<crate::platforms::battle_net::BattleNetAccount>, String> {
+    crate::platforms::battle_net::get_accounts(app_handle)
+}
+
+#[tauri::command]
+pub fn get_battle_net_startup_snapshot(
+    app_handle: tauri::AppHandle,
+) -> Result<crate::platforms::battle_net::BattleNetStartupSnapshot, String> {
+    crate::platforms::battle_net::get_startup_snapshot(app_handle)
+}
+
+#[tauri::command]
+pub fn get_current_battle_net_account() -> Result<String, String> {
+    crate::platforms::battle_net::get_current_account()
+}
+
+#[tauri::command]
+pub fn switch_battle_net_account(app_handle: tauri::AppHandle, email: String) -> Result<(), String> {
+    crate::platforms::battle_net::switch_account(app_handle, email)
+}
+
+#[tauri::command]
+pub fn begin_battle_net_account_setup(
+    app_handle: tauri::AppHandle,
+) -> Result<crate::platforms::battle_net::BattleNetAccountSetupStatus, String> {
+    crate::platforms::battle_net::begin_account_setup(app_handle)
+}
+
+#[tauri::command]
+pub fn get_battle_net_account_setup_status(
+    app_handle: tauri::AppHandle,
+    setup_id: String,
+) -> Result<crate::platforms::battle_net::BattleNetAccountSetupStatus, String> {
+    crate::platforms::battle_net::get_account_setup_status(app_handle, setup_id)
+}
+
+#[tauri::command]
+pub fn cancel_battle_net_account_setup(setup_id: String) -> Result<(), String> {
+    crate::platforms::battle_net::cancel_account_setup(setup_id)

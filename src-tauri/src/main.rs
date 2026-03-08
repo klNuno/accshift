@@ -100,6 +100,14 @@ fn main() {
             commands::capture_riot_profile,
             commands::switch_riot_profile,
             commands::forget_riot_profile,
+            commands::get_battle_net_accounts,
+            commands::get_battle_net_startup_snapshot,
+            commands::get_current_battle_net_account,
+            commands::switch_battle_net_account,
+            commands::begin_battle_net_account_setup,
+            commands::get_battle_net_account_setup_status,
+            commands::cancel_battle_net_account_setup,
+            commands::forget_battle_net_account,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

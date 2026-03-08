@@ -63,6 +63,10 @@ pub fn select_folder(_title: &str) -> Result<String, AppError> {
     Err(unsupported("Folder picker"))
 }
 
+pub fn select_file(_title: &str, _filter: &str) -> Result<String, AppError> {
+    Err(unsupported("File picker"))
+}
+
 pub fn open_url(_url: &str) -> Result<(), AppError> {
     Err(unsupported("URL opening"))
 }

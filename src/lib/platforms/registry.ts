@@ -1,5 +1,6 @@
 import type { PlatformDef } from "$lib/features/settings/types";
 import { getPlatform, registerPlatform } from "$lib/shared/platform";
+import { battleNetAdapter } from "./battle-net/adapter";
 import { riotAdapter } from "./riot/adapter";
 import { steamAdapter } from "./steam/adapter";
 
@@ -22,12 +23,12 @@ export const PLATFORM_DEFS: PlatformDef[] = [
     id: "battle-net",
     name: "Battle.net",
     accent: "#60a5fa",
-    implemented: false,
+    implemented: true,
     supportedOs: ["windows"],
   },
 ];
 
-const BUILTIN_ADAPTERS = [steamAdapter, riotAdapter];
+const BUILTIN_ADAPTERS = [steamAdapter, riotAdapter, battleNetAdapter];
 let registered = false;
 
 export function registerBuiltinPlatforms() {
