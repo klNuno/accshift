@@ -21,7 +21,7 @@
 | --- | --- | --- | --- |
 | Steam | ✅ Done | 🚧 Possible | 🚧 Possible |
 | Riot Games | ✅ Done | 🚧 Possible | ⛔ Not feasible |
-| Battle.net | 🚧 Possible | 🚧 Possible | ⛔ Not feasible |
+| Battle.net | ✅ Done | 🚧 Possible | ⛔ Not feasible |
 | Epic Games | 🚧 Possible | 🚧 Possible | 🚧 Possible |
 | Ubisoft Connect | 🚧 Possible | 🚧 Possible | 🚧 Possible |
 | Roblox | 🚧 Possible | 🚧 Possible | ⛔ Not feasible |
@@ -67,9 +67,27 @@ pnpm tauri dev
 ## Riot Data & Security
 - Riot profile metadata and session snapshots are stored locally in the app data directory.
 - Snapshot files are used only for local restore/switch flows and are not uploaded by accshift.
+- Riot account switching relies on a locally saved Riot session on this PC.
 - Riot snapshot data is currently not encrypted at rest.
 - Riot setup/switch only terminates Riot client processes, not game binaries.
 - Steam API keys are encrypted at rest using OS-level secret storage.
+
+## Recent Security Hardening
+- Add-account setup identifiers are random UUIDs instead of timestamp-based IDs.
+- Pending Steam, Riot, and Battle.net setup flows expire automatically after a short inactivity window.
+- The local PIN lock now adds a short delay after a failed attempt to reduce trivial retry spam.
+- The main desktop webview blocks external navigation in production.
+- The desktop CSP no longer enables `unsafe-eval`.
+
+## Battle.net Notes
+- Battle.net account discovery is based on the local launcher configuration plus accshift local metadata.
+- Display names use the native BattleTag when it becomes available locally.
+- The add-account flow currently works by restarting the launcher and forcing a fresh login selection flow.
+- Battle.net switching is designed for local desktop use on the same Windows machine.
+
+## Installation Path Overrides
+- Steam folder, Riot client executable, and Battle.net executable can all be overridden in Settings.
+- If auto-detection fails, configure the launcher path manually from the platform settings tab.
 
 ## Project Structure
 ```text
@@ -79,6 +97,10 @@ src/lib/
     notifications/
     settings/
   platforms/
+    battle-net/
+      adapter.ts
+      battleNetApi.ts
+      types.ts
     riot/
       adapter.ts
       riotApi.ts
@@ -97,6 +119,7 @@ src/lib/
 src-tauri/src/
   commands.rs
   platforms/
+    battle_net.rs
     riot.rs
     steam.rs
   steam/
@@ -109,4 +132,4 @@ src-tauri/src/
 MIT. See [LICENSE](./LICENSE).
 
 ## Disclaimer
-This project is not affiliated with Valve or Riot Games. Use it at your own risk.
+This project is not affiliated with Valve, Blizzard, or Riot Games. Use it at your own risk.

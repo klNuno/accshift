@@ -9,6 +9,39 @@ pub fn get_runtime_os() -> String {
 }
 
 #[tauri::command]
+pub fn log_app_event(
+    app_handle: tauri::AppHandle,
+    level: String,
+    source: String,
+    message: String,
+    details: Option<String>,
+) -> Result<(), String> {
+    crate::logging::append_app_log(&app_handle, &level, &source, &message, details.as_deref())
+}
+
+#[tauri::command]
+pub fn get_log_file_path(app_handle: tauri::AppHandle) -> Result<String, String> {
+    crate::logging::log_file_path(&app_handle)
+        .map(|path| path.display().to_string())
+}
+
+#[tauri::command]
+pub fn finish_boot(
+    app_handle: tauri::AppHandle,
+    boot_state: tauri::State<'_, crate::app_runtime::BootState>,
+    source: String,
+) -> Result<(), String> {
+    let was_first_completion = boot_state.mark_completed();
+    let message = if was_first_completion {
+        "Boot completed"
+    } else {
+        "Boot completion requested again"
+    };
+    let _ = crate::logging::append_app_log(&app_handle, "info", &source, message, None);
+    crate::app_runtime::show_main_window(&app_handle)
+}
+
+#[tauri::command]
 pub fn set_api_key(app_handle: tauri::AppHandle, key: String) -> Result<(), String> {
     require_service("steam")?.set_api_key(app_handle, key)
 }
@@ -279,4 +312,83 @@ pub fn switch_riot_profile(app_handle: tauri::AppHandle, profile_id: String) -> 
 #[tauri::command]
 pub fn forget_riot_profile(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
     crate::platforms::riot::forget_profile(app_handle, profile_id)
+}
+
+#[tauri::command]
+pub fn get_riot_path(app_handle: tauri::AppHandle) -> Result<String, String> {
+    crate::platforms::riot::get_riot_path(app_handle)
+}
+
+#[tauri::command]
+pub fn set_riot_path(app_handle: tauri::AppHandle, path: String) -> Result<(), String> {
+    crate::platforms::riot::set_riot_path(app_handle, path)
+}
+
+#[tauri::command]
+pub fn select_riot_path() -> Result<String, String> {
+    crate::platforms::riot::select_riot_path()
+}
+
+#[tauri::command]
+pub fn get_battle_net_accounts(
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<crate::platforms::battle_net::BattleNetAccount>, String> {
+    crate::platforms::battle_net::get_accounts(app_handle)
+}
+
+#[tauri::command]
+pub fn get_battle_net_startup_snapshot(
+    app_handle: tauri::AppHandle,
+) -> Result<crate::platforms::battle_net::BattleNetStartupSnapshot, String> {
+    crate::platforms::battle_net::get_startup_snapshot(app_handle)
+}
+
+#[tauri::command]
+pub fn get_current_battle_net_account() -> Result<String, String> {
+    crate::platforms::battle_net::get_current_account()
+}
+
+#[tauri::command]
+pub fn switch_battle_net_account(app_handle: tauri::AppHandle, email: String) -> Result<(), String> {
+    crate::platforms::battle_net::switch_account(app_handle, email)
+}
+
+#[tauri::command]
+pub fn begin_battle_net_account_setup(
+    app_handle: tauri::AppHandle,
+) -> Result<crate::platforms::battle_net::BattleNetAccountSetupStatus, String> {
+    crate::platforms::battle_net::begin_account_setup(app_handle)
+}
+
+#[tauri::command]
+pub fn get_battle_net_account_setup_status(
+    app_handle: tauri::AppHandle,
+    setup_id: String,
+) -> Result<crate::platforms::battle_net::BattleNetAccountSetupStatus, String> {
+    crate::platforms::battle_net::get_account_setup_status(app_handle, setup_id)
+}
+
+#[tauri::command]
+pub fn cancel_battle_net_account_setup(setup_id: String) -> Result<(), String> {
+    crate::platforms::battle_net::cancel_account_setup(setup_id)
+}
+
+#[tauri::command]
+pub fn forget_battle_net_account(app_handle: tauri::AppHandle, email: String) -> Result<(), String> {
+    crate::platforms::battle_net::forget_account(app_handle, email)
+}
+
+#[tauri::command]
+pub fn get_battle_net_path(app_handle: tauri::AppHandle) -> Result<String, String> {
+    crate::platforms::battle_net::get_battle_net_path(app_handle)
+}
+
+#[tauri::command]
+pub fn set_battle_net_path(app_handle: tauri::AppHandle, path: String) -> Result<(), String> {
+    crate::platforms::battle_net::set_battle_net_path(app_handle, path)
+}
+
+#[tauri::command]
+pub fn select_battle_net_path() -> Result<String, String> {
+    crate::platforms::battle_net::select_battle_net_path()
 }

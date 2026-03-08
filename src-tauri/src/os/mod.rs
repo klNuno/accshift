@@ -67,6 +67,10 @@ pub fn select_folder(title: &str) -> Result<String, AppError> {
     imp::select_folder(title)
 }
 
+pub fn select_file(title: &str, filter: &str) -> Result<String, AppError> {
+    imp::select_file(title, filter)
+}
+
 pub fn open_url(url: &str) -> Result<(), AppError> {
     imp::open_url(url)
 }

@@ -19,6 +19,7 @@
     avatarStates = {},
     warningStates = {},
     getAccountNote = () => "",
+    getAccountCardColor = () => "",
     accentColor = "#3b82f6",
     locale = DEFAULT_LOCALE,
     pendingSetupId = null,
@@ -44,6 +45,7 @@
     avatarStates: Record<string, { url: string | null; loading: boolean; refreshing: boolean }>;
     warningStates?: Record<string, AccountWarningPresentation>;
     getAccountNote?: (accountId: string) => string;
+    getAccountCardColor?: (accountId: string) => string;
     accentColor?: string;
     locale?: Locale;
     pendingSetupId?: string | null;
@@ -76,6 +78,7 @@
       <ListRow
         isBack={true}
         {locale}
+        {accentColor}
         onClick={onGoBack}
         isDragOver={dragOverBack}
       />
@@ -87,6 +90,7 @@
         {#if folder}
           <ListRow
             {folder}
+            {accentColor}
             onClick={() => onNavigate(folder.id)}
             onContextMenu={(e) => onFolderContextMenu(e, folder)}
             {locale}
@@ -105,6 +109,7 @@
         {#if account}
           <ListRow
             {account}
+            {accentColor}
             showUsername={showUsernames}
             {showLastLogin}
             {lastLoginUnknownKey}
@@ -112,9 +117,10 @@
             isActive={account.id === currentAccountId}
             isSelected={selectedAccountId === account.id}
             avatarUrl={avatarState?.url}
-            isLoadingAvatar={isPendingSetup || (avatarState?.loading ?? true)}
+            isLoadingAvatar={isPendingSetup || (avatarState?.loading ?? false)}
             allowMetaWrap={isPendingSetup}
             warningInfo={warningStates[account.id]}
+            cardColor={getAccountCardColor(account.id)}
             onClick={() => {
               onAccountActivate(account);
               selectAccount(account.id);
@@ -144,10 +150,11 @@
         lastLoginAt={selectedAccount.lastLoginAt}
         isActive={selectedAccount.id === currentAccountId}
         avatarUrl={selectedAvatarState?.url}
-        isLoadingAvatar={selectedIsPendingSetup || (selectedAvatarState?.loading ?? true)}
+        isLoadingAvatar={selectedIsPendingSetup || (selectedAvatarState?.loading ?? false)}
         showSwitchButton={!selectedIsPendingSetup}
         allowMetaWrap={selectedIsPendingSetup}
         accountNote={getAccountNote(selectedAccount.id)}
+        cardColor={getAccountCardColor(selectedAccount.id)}
         warningInfo={warningStates[selectedAccount.id]}
         {accentColor}
         {locale}

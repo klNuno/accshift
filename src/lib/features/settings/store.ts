@@ -11,6 +11,8 @@ const DEFAULTS: AppSettings = {
   language: DEFAULT_LOCALE,
   theme: "dark",
   uiScalePercent: 100,
+  suspendGraphicsWhenMinimized: true,
+  minimizeOnAccountSwitch: false,
   dataRefresh: {
     avatarCacheDays: 7,
     banCheckDays: 7,
@@ -28,6 +30,7 @@ const DEFAULTS: AppSettings = {
     showUsernames: true,
     showLastLogin: false,
     showRiotLastLogin: false,
+    showBattleNetLastLogin: true,
     showCardNotesInline: false,
   },
   pinEnabled: false,
@@ -81,6 +84,8 @@ function sanitizeSettings(value: unknown): AppSettings {
     language: hasLanguage ? normalizeLocale(raw.language) : detectPreferredLocale(),
     theme: raw.theme === "light" ? "light" : "dark",
     uiScalePercent: clampInt(raw.uiScalePercent, 75, 150, DEFAULTS.uiScalePercent),
+    suspendGraphicsWhenMinimized: raw.suspendGraphicsWhenMinimized !== false,
+    minimizeOnAccountSwitch: Boolean(raw.minimizeOnAccountSwitch),
     dataRefresh: {
       avatarCacheDays: clampInt(
         rawDataRefresh.avatarCacheDays ?? raw.avatarCacheDays,
@@ -110,6 +115,7 @@ function sanitizeSettings(value: unknown): AppSettings {
       showUsernames: rawAccountDisplay.showUsernames !== false && raw.showUsernames !== false,
       showLastLogin: Boolean(rawAccountDisplay.showLastLogin ?? raw.showLastLogin),
       showRiotLastLogin: Boolean(rawAccountDisplay.showRiotLastLogin),
+      showBattleNetLastLogin: rawAccountDisplay.showBattleNetLastLogin !== false,
       showCardNotesInline: Boolean(rawAccountDisplay.showCardNotesInline ?? raw.showCardNotesInline),
     },
     pinEnabled,

@@ -13,6 +13,9 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
+use uuid::Uuid;
+
+const STEAM_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -30,6 +33,7 @@ struct SteamAccountSetupJob {
     known_account_ids: HashSet<String>,
     launch_started: bool,
     error_message: Option<String>,
+    last_touched_at: u64,
 }
 
 fn now_unix_ms() -> u64 {
@@ -42,6 +46,14 @@ fn now_unix_ms() -> u64 {
 fn steam_setup_jobs() -> &'static Mutex<HashMap<String, SteamAccountSetupJob>> {
     static JOBS: OnceLock<Mutex<HashMap<String, SteamAccountSetupJob>>> = OnceLock::new();
     JOBS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn steam_setup_expired(last_touched_at: u64) -> bool {
+    now_unix_ms().saturating_sub(last_touched_at) > STEAM_SETUP_TTL_MS
+}
+
+fn purge_expired_steam_setup_jobs(jobs: &mut HashMap<String, SteamAccountSetupJob>) {
+    jobs.retain(|_, job| !steam_setup_expired(job.last_touched_at));
 }
 
 fn setup_status(
@@ -274,12 +286,14 @@ pub fn begin_account_setup(
         .into_iter()
         .map(|account| account.steam_id)
         .collect::<HashSet<_>>();
-    let setup_id = format!("steam-setup-{}", now_unix_ms());
+    let setup_id = format!("steam-setup-{}", Uuid::new_v4());
+    let created_at = now_unix_ms();
 
     {
         let mut jobs = steam_setup_jobs()
             .lock()
             .map_err(|_| "Steam setup storage is unavailable".to_string())?;
+        purge_expired_steam_setup_jobs(&mut jobs);
         jobs.insert(
             setup_id.clone(),
             SteamAccountSetupJob {
@@ -287,6 +301,7 @@ pub fn begin_account_setup(
                 known_account_ids,
                 launch_started: false,
                 error_message: None,
+                last_touched_at: created_at,
             },
         );
     }
@@ -318,14 +333,15 @@ pub fn get_account_setup_status(
     }
 
     let job = {
-        let jobs = steam_setup_jobs()
+        let mut jobs = steam_setup_jobs()
             .lock()
             .map_err(|_| "Steam setup storage is unavailable".to_string())?;
-        jobs.get(&setup_id).cloned()
-    };
-
-    let Some(job) = job else {
-        return Err("Steam setup not found".into());
+        purge_expired_steam_setup_jobs(&mut jobs);
+        let Some(job) = jobs.get_mut(&setup_id) else {
+            return Err("Steam setup not found".into());
+        };
+        job.last_touched_at = now_unix_ms();
+        job.clone()
     };
 
     if let Some(error) = job.error_message {
@@ -369,6 +385,7 @@ pub fn cancel_account_setup(_app_handle: tauri::AppHandle, setup_id: String) -> 
     let mut jobs = steam_setup_jobs()
         .lock()
         .map_err(|_| "Steam setup storage is unavailable".to_string())?;
+    purge_expired_steam_setup_jobs(&mut jobs);
     jobs.remove(setup_id);
     Ok(())
 }

@@ -8,6 +8,7 @@ use std::process::Command;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
+use uuid::Uuid;
 
 use crate::os;
 
@@ -110,6 +111,7 @@ const RIOT_SETUP_RESET_ITEMS: &[&str] = &[
     "Sessions",
     "RiotClientConfig",
 ];
+const RIOT_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -392,6 +394,75 @@ fn copy_optional_file(source: &Path, target: &Path) -> Result<(), String> {
     fs::copy(source, target)
         .map_err(|e| format!("Could not copy file {}: {e}", source.display()))?;
     Ok(())
+}
+
+fn directory_has_entries(path: &Path, ignored_names: &[&str]) -> Result<bool, String> {
+    if !path.exists() || !path.is_dir() {
+        return Ok(false);
+    }
+
+    for entry in fs::read_dir(path)
+        .map_err(|e| format!("Could not read directory {}: {e}", path.display()))?
+    {
+        let entry = entry.map_err(|e| format!("Could not read directory entry: {e}"))?;
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        if should_ignore_name(&file_name, ignored_names) {
+            continue;
+        }
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
+fn riot_setup_capture_ready(app_handle: &tauri::AppHandle) -> Result<bool, String> {
+    let install_dir = resolve_riot_client_path(app_handle)
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf));
+
+    let required_settings = live_path_for(&RIOT_SNAPSHOT_ITEMS[0], install_dir.as_deref())?
+        .ok_or_else(|| "Could not resolve Riot settings path".to_string())?;
+    if !required_settings.exists() {
+        return Ok(false);
+    }
+
+    let settings_metadata = fs::metadata(&required_settings).map_err(|e| {
+        format!(
+            "Could not read Riot settings metadata {}: {e}",
+            required_settings.display()
+        )
+    })?;
+    if settings_metadata.len() == 0 {
+        return Ok(false);
+    }
+
+    let sessions_path = live_path_for(&RIOT_SNAPSHOT_ITEMS[2], install_dir.as_deref())?
+        .ok_or_else(|| "Could not resolve Riot sessions path".to_string())?;
+    let config_path = live_path_for(&RIOT_SNAPSHOT_ITEMS[3], install_dir.as_deref())?
+        .ok_or_else(|| "Could not resolve Riot config path".to_string())?;
+
+    let has_sessions = directory_has_entries(&sessions_path, &[])?;
+    let has_config = directory_has_entries(&config_path, &["lockfile"])?;
+
+    Ok(has_sessions || has_config)
+}
+
+fn wait_for_riot_setup_capture_ready(
+    app_handle: &tauri::AppHandle,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+) -> Result<bool, String> {
+    let max_attempts = std::cmp::max(1, timeout_ms / poll_interval_ms);
+    for attempt in 0..max_attempts {
+        if riot_setup_capture_ready(app_handle)? {
+            return Ok(true);
+        }
+        if attempt + 1 < max_attempts {
+            thread::sleep(std::time::Duration::from_millis(poll_interval_ms));
+        }
+    }
+    Ok(false)
 }
 
 fn snapshot_has_settings(snapshot_dir: &Path) -> bool {
@@ -721,6 +792,60 @@ fn next_profile_label(profiles: &[RiotProfileConfig]) -> String {
     }
 }
 
+fn riot_setup_expired(last_touched_at: Option<u64>) -> bool {
+    let Some(last_touched_at) = last_touched_at else {
+        return true;
+    };
+    now_unix_ms().saturating_sub(last_touched_at) > RIOT_SETUP_TTL_MS
+}
+
+fn cleanup_expired_pending_profiles(
+    app_handle: &tauri::AppHandle,
+    cfg: &mut config::AppConfig,
+) -> Result<(), String> {
+    let expired_ids = cfg
+        .riot
+        .profiles
+        .iter()
+        .filter(|profile| profile.snapshot_state == "setup_pending")
+        .filter(|profile| riot_setup_expired(profile.last_used_at))
+        .map(|profile| profile.id.clone())
+        .collect::<Vec<_>>();
+
+    if expired_ids.is_empty() {
+        return Ok(());
+    }
+
+    cfg.riot
+        .profiles
+        .retain(|profile| !expired_ids.iter().any(|id| id == &profile.id));
+
+    if expired_ids.iter().any(|id| id == &cfg.riot.current_profile_id) {
+        cfg.riot.current_profile_id = cfg
+            .riot
+            .profiles
+            .first()
+            .map(|profile| profile.id.clone())
+            .unwrap_or_default();
+    }
+
+    config::save_config(app_handle, cfg)?;
+
+    for profile_id in expired_ids {
+        let snapshot_dir = profile_snapshot_path(app_handle, &profile_id)?;
+        if snapshot_dir.exists() {
+            fs::remove_dir_all(&snapshot_dir).map_err(|e| {
+                format!(
+                    "Could not remove expired Riot profile snapshot {}: {e}",
+                    snapshot_dir.display()
+                )
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
 fn current_profile_id(cfg: &config::AppConfig) -> String {
     let configured = cfg.riot.current_profile_id.trim();
     if !configured.is_empty()
@@ -876,6 +1001,19 @@ fn get_profile_setup_status_internal(
 
     if login_status.phase.eq_ignore_ascii_case("logged_in") && login_status.persist {
         if let Some(identity) = identity.as_ref() {
+            let capture_ready =
+                wait_for_riot_setup_capture_ready(app_handle, 1800, 300).unwrap_or(false);
+            if !capture_ready {
+                let _ = config::save_config(app_handle, cfg);
+                let updated = cfg
+                    .riot
+                    .profiles
+                    .iter()
+                    .find(|entry| entry.id == profile_id)
+                    .cloned()
+                    .unwrap_or(profile);
+                return Ok(make_setup_status(&updated, "waiting_for_login", ""));
+            }
             if let Some(target) = cfg
                 .riot
                 .profiles
@@ -923,12 +1061,14 @@ fn get_profile_setup_status_internal(
 }
 
 pub fn get_profiles(app_handle: tauri::AppHandle) -> Result<Vec<RiotProfileConfig>, String> {
-    let cfg = config::load_config(&app_handle);
+    let mut cfg = config::load_config(&app_handle);
+    cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
     Ok(visible_profiles(&cfg))
 }
 
 pub fn get_startup_snapshot(app_handle: tauri::AppHandle) -> Result<RiotStartupSnapshot, String> {
-    let cfg = config::load_config(&app_handle);
+    let mut cfg = config::load_config(&app_handle);
+    cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
     let current_profile = visible_current_profile_id(&cfg);
     Ok(RiotStartupSnapshot {
         profiles: visible_profiles(&cfg),
@@ -937,7 +1077,8 @@ pub fn get_startup_snapshot(app_handle: tauri::AppHandle) -> Result<RiotStartupS
 }
 
 pub fn get_current_profile(app_handle: tauri::AppHandle) -> Result<String, String> {
-    let cfg = config::load_config(&app_handle);
+    let mut cfg = config::load_config(&app_handle);
+    cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
     Ok(visible_current_profile_id(&cfg))
 }
 
@@ -945,6 +1086,7 @@ pub fn begin_profile_setup(app_handle: tauri::AppHandle) -> Result<RiotProfileSe
     ensure_no_riot_game_running("starting Riot account setup")?;
     let client_path = resolve_riot_client_path(&app_handle)?;
     let mut cfg = config::load_config(&app_handle);
+    cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
 
     if let Some(existing) = find_pending_setup_profile(&cfg).cloned() {
         cfg.riot.current_profile_id = existing.id.clone();
@@ -953,7 +1095,7 @@ pub fn begin_profile_setup(app_handle: tauri::AppHandle) -> Result<RiotProfileSe
         return Ok(make_setup_status(&existing, "waiting_for_client", ""));
     }
 
-    let profile_id = format!("riot-profile-{}", now_unix_ms());
+    let profile_id = format!("riot-profile-{}", Uuid::new_v4());
     let label = next_profile_label(&cfg.riot.profiles);
 
     cfg.riot.profiles.push(RiotProfileConfig {
@@ -988,6 +1130,16 @@ pub fn get_profile_setup_status(
 ) -> Result<RiotProfileSetupStatus, String> {
     let profile_id = normalize_profile_id(&profile_id)?;
     let mut cfg = config::load_config(&app_handle);
+    cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
+    let _ = update_profile_state(
+        &mut cfg,
+        &profile_id,
+        None,
+        None,
+        Some(Some(now_unix_ms())),
+        None,
+    );
+    let _ = config::save_config(&app_handle, &cfg);
     get_profile_setup_status_internal(&app_handle, &mut cfg, &profile_id)
 }
 
@@ -997,6 +1149,7 @@ pub fn cancel_profile_setup(
 ) -> Result<(), String> {
     let profile_id = normalize_profile_id(&profile_id)?;
     let mut cfg = config::load_config(&app_handle);
+    cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
     let should_remove = cfg
         .riot
         .profiles
@@ -1135,4 +1288,26 @@ pub fn forget_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
     }
 
     Ok(())
+}
+
+pub fn get_riot_path(app_handle: tauri::AppHandle) -> Result<String, String> {
+    let cfg = config::load_config(&app_handle);
+    if !cfg.riot.path_override.trim().is_empty() {
+        return Ok(cfg.riot.path_override);
+    }
+    resolve_riot_client_path(&app_handle).map(|path| path.to_string_lossy().to_string())
+}
+
+pub fn set_riot_path(app_handle: tauri::AppHandle, path: String) -> Result<(), String> {
+    let mut cfg = config::load_config(&app_handle);
+    cfg.riot.path_override = path.trim().to_string();
+    config::save_config(&app_handle, &cfg)
+}
+
+pub fn select_riot_path() -> Result<String, String> {
+    os::select_file(
+        "Select Riot Client executable",
+        "Executable files (*.exe)|*.exe|All files (*.*)|*.*",
+    )
+    .map_err(|e| e.to_string())
 }

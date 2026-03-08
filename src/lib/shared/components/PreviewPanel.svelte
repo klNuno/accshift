@@ -2,7 +2,7 @@
   import type { PlatformAccount } from "../platform";
   import type { AccountWarningPresentation } from "../accountWarnings";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
-  import { getAvatarGradientStyle, getAvatarSeed } from "$lib/shared/avatarFallback";
+  import { getAvatarGradientStyle, getAvatarInitials, getAvatarSeed } from "$lib/shared/avatarFallback";
   import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
 
   let {
@@ -17,6 +17,7 @@
     lastLoginUnknownKey = "time.unknown",
     lastLoginAt = null,
     accountNote = "",
+    cardColor = "",
     accentColor = "#3b82f6",
     locale = DEFAULT_LOCALE,
     onSwitch,
@@ -33,24 +34,25 @@
     lastLoginUnknownKey?: MessageKey;
     lastLoginAt?: number | null;
     accountNote?: string;
+    cardColor?: string;
     accentColor?: string;
     locale?: Locale;
     onSwitch: () => void;
     warningInfo?: AccountWarningPresentation;
   } = $props();
 
-  function getInitials(name: string): string {
-    return name.slice(0, 2).toUpperCase();
-  }
-
   let hasUsername = $derived(Boolean(showUsername && account.username.trim()));
-  let avatarSeed = $derived(getAvatarSeed(account.displayName, account.username, account.id));
   let banWarnings = $derived.by(() => {
     return warningInfo?.chips ?? [];
   });
+  let avatarSeed = $derived(getAvatarSeed(account.displayName || "", account.username || "", account.id));
 </script>
 
-<div class="preview">
+<div
+  class="preview"
+  class:custom-color={!!cardColor}
+  style={cardColor ? `--preview-custom-color: ${cardColor};` : ""}
+>
   <div
     class="avatar-large"
     style={!avatarUrl && !isLoadingAvatar ? getAvatarGradientStyle(avatarSeed) : ""}
@@ -60,7 +62,7 @@
     {:else if avatarUrl}
       <img src={avatarUrl} alt={account.displayName} />
     {:else}
-      <span class="initials">{getInitials(account.displayName || account.username)}</span>
+      <span class="initials">{getAvatarInitials(account.displayName || account.username)}</span>
     {/if}
   </div>
 
@@ -119,6 +121,14 @@
     padding: 24px 16px;
     height: 100%;
     box-sizing: border-box;
+  }
+
+  .preview.custom-color {
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--preview-custom-color) 14%, var(--bg-card)),
+      color-mix(in srgb, var(--preview-custom-color) 8%, transparent)
+    );
   }
 
   .avatar-large {
