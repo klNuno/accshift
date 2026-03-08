@@ -18,10 +18,12 @@
     isLoadingAvatar = false,
     allowMetaWrap = false,
     warningInfo = undefined,
+    cardColor = "",
     showUsername = true,
     showLastLogin = false,
     lastLoginUnknownKey = "time.unknown",
     lastLoginAt = null,
+    accentColor = "#3b82f6",
     locale = DEFAULT_LOCALE,
     onClick,
     onContextMenu = (_e: MouseEvent) => {},
@@ -38,10 +40,12 @@
     isLoadingAvatar?: boolean;
     allowMetaWrap?: boolean;
     warningInfo?: AccountWarningPresentation;
+    cardColor?: string;
     showUsername?: boolean;
     showLastLogin?: boolean;
     lastLoginUnknownKey?: MessageKey;
     lastLoginAt?: number | null;
+    accentColor?: string;
     locale?: Locale;
     onClick: () => void;
     onContextMenu?: (e: MouseEvent) => void;
@@ -78,6 +82,7 @@
   class:drag-over={isDragOver}
   class:ban-red={hasRedWarning}
   class:ban-orange={hasOrangeWarning}
+  class:custom-color={!!account && !!cardColor}
   onclick={onClick}
   ondblclick={onDblClick}
   oncontextmenu={handleContextMenu}
@@ -85,6 +90,7 @@
   data-folder-id={folder?.id}
   data-back-card={isBack ? "true" : undefined}
   title={account && banHoverMessage ? banHoverMessage : undefined}
+  style={`--drag-accent: ${accentColor};${account && cardColor ? ` --row-custom-color: ${cardColor};` : ""}`}
 >
   {#if isBack}
     <div class="icon back-icon">
@@ -166,13 +172,31 @@
     background: var(--bg-card-hover);
   }
 
+  .row.custom-color {
+    background: color-mix(in srgb, var(--row-custom-color) 18%, var(--bg-card));
+    border-color: color-mix(in srgb, var(--row-custom-color) 36%, transparent);
+  }
+
+  .row.custom-color:hover {
+    background: color-mix(in srgb, var(--row-custom-color) 24%, var(--bg-card-hover));
+  }
+
   .row.selected {
     background: var(--bg-card);
     border-color: rgba(255, 255, 255, 0.1);
   }
 
+  .row.selected.custom-color {
+    background: color-mix(in srgb, var(--row-custom-color) 22%, var(--bg-card));
+    border-color: color-mix(in srgb, var(--row-custom-color) 40%, rgba(255, 255, 255, 0.14));
+  }
+
   .row.active {
     background: var(--bg-card-hover);
+  }
+
+  .row.active.custom-color {
+    background: color-mix(in srgb, var(--row-custom-color) 24%, var(--bg-card-hover));
   }
 
   .row.dragging {
@@ -180,8 +204,8 @@
   }
 
   .row.drag-over {
-    border-color: #3b82f6;
-    background: rgba(59, 130, 246, 0.1);
+    border-color: var(--drag-accent, #3b82f6);
+    background: color-mix(in srgb, var(--drag-accent, #3b82f6) 10%, transparent);
   }
 
   .row.ban-red {

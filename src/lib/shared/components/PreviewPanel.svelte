@@ -17,6 +17,7 @@
     lastLoginUnknownKey = "time.unknown",
     lastLoginAt = null,
     accountNote = "",
+    cardColor = "",
     accentColor = "#3b82f6",
     locale = DEFAULT_LOCALE,
     onSwitch,
@@ -33,6 +34,7 @@
     lastLoginUnknownKey?: MessageKey;
     lastLoginAt?: number | null;
     accountNote?: string;
+    cardColor?: string;
     accentColor?: string;
     locale?: Locale;
     onSwitch: () => void;
@@ -50,7 +52,11 @@
   });
 </script>
 
-<div class="preview">
+<div
+  class="preview"
+  class:custom-color={!!cardColor}
+  style={cardColor ? `--preview-custom-color: ${cardColor};` : ""}
+>
   <div
     class="avatar-large"
     style={!avatarUrl && !isLoadingAvatar ? getAvatarGradientStyle(avatarSeed) : ""}
@@ -119,6 +125,14 @@
     padding: 24px 16px;
     height: 100%;
     box-sizing: border-box;
+  }
+
+  .preview.custom-color {
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--preview-custom-color) 14%, var(--bg-card)),
+      color-mix(in srgb, var(--preview-custom-color) 8%, transparent)
+    );
   }
 
   .avatar-large {

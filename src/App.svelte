@@ -36,6 +36,7 @@
   import WaveText from "$lib/shared/components/WaveText.svelte";
   import { getViewMode, setViewMode, type ViewMode } from "$lib/shared/viewMode";
   import { createInactivityBlur } from "$lib/shared/useInactivityBlur.svelte";
+  import { createWindowActivity } from "$lib/shared/useWindowActivity.svelte";
   import { createGridLayout } from "$lib/shared/useGridLayout.svelte";
   import { createAccountLoader } from "$lib/shared/useAccountLoader.svelte";
   import {
@@ -76,6 +77,7 @@
 
   // Shared controllers
   const blur = createInactivityBlur();
+  const windowActivity = createWindowActivity();
   const grid = createGridLayout();
   const navigation = createFolderNavigation(() => shell.activeTab);
   const loader = createAccountLoader(
@@ -85,6 +87,7 @@
       if (q) {
         return loader.accounts
           .filter((account) =>
+            account.id.toLowerCase().includes(q) ||
             account.username.toLowerCase().includes(q) ||
             (account.displayName || "").toLowerCase().includes(q)
           )
@@ -144,17 +147,29 @@
   let pinAttempt = $state("");
   let pinError = $state("");
   let pinInputRef = $state<HTMLInputElement | null>(null);
-  let pageVisible = $state(true);
   let afkListenersAttached = $state(false);
+  let windowForeground = $derived(windowActivity.isForeground);
+  let windowRenderable = $derived(windowActivity.isPageVisible && !windowActivity.isMinimized);
+  let windowMinimized = $derived(windowActivity.isMinimized);
+  let renderSuspended = $derived(
+    shell.settings.suspendGraphicsWhenMinimized && windowMinimized
+  );
   let inactivityEnabled = $derived(shell.settings.inactivityBlurSeconds > 0);
   let isObscured = $derived(
     (inactivityEnabled && blur.isBlurred && isAccountSelectionView) || isPinLocked || isPinUnlocking
   );
   let afkOverlayVisible = $derived(
-    inactivityEnabled && blur.isBlurred && isAccountSelectionView && !isPinLocked && !isPinUnlocking
+    inactivityEnabled
+    && blur.isBlurred
+    && isAccountSelectionView
+    && !isPinLocked
+    && !isPinUnlocking
+    && windowRenderable
+    && !renderSuspended
   );
-  let motionPaused = $derived(!pageVisible);
+  let motionPaused = $derived(!windowRenderable || renderSuspended);
   const AFK_TEXT_FADE_MS = 900;
+  const AFK_TEXT_REVEAL_DELAY_MS = 2500;
   let afkWaveActive = $state(false);
   let afkWaveStopTimer: ReturnType<typeof setTimeout> | null = null;
   let updateCheckTimer: ReturnType<typeof setTimeout> | null = null;
@@ -236,6 +251,7 @@
     if (!q) return navigation.accountItems;
     return loader.accounts
       .filter((account) =>
+        account.id.toLowerCase().includes(q) ||
         account.username.toLowerCase().includes(q) ||
         (account.displayName || "").toLowerCase().includes(q)
       )
@@ -276,7 +292,7 @@
   });
 
   $effect(() => {
-    if (showSettings || !shell.adapter || loader.loading) return;
+    if (showSettings || !shell.adapter || loader.loading || !windowForeground || renderSuspended) return;
     const visibleIds = (navigation.isSearching ? filteredAccountItems : navigation.currentItems.filter((item) => item.type === "account"))
       .map((item) => item.id);
     if (visibleIds.length === 0) return;
@@ -340,10 +356,26 @@
     setUiScalePercent(100);
   }
 
+  async function handleAccountSwitch(account: PlatformAccount) {
+    if (shell.settings.minimizeOnAccountSwitch) {
+      try {
+        await invoke("minimize_window");
+      } catch (e) {
+        console.error("Failed to minimize window before switching account:", e);
+      }
+    }
+    await loader.switchTo(account);
+  }
+
   let currentAccountId = $derived(loader.currentAccountId);
+  let showUsernamesForActiveTab = $derived(
+    shell.activeTab === "steam" && settings.accountDisplay.showUsernames
+  );
   let showLastLoginForActiveTab = $derived(
     shell.activeTab === "riot"
       ? shell.settings.accountDisplay.showRiotLastLogin
+      : shell.activeTab === "battle-net"
+        ? shell.settings.accountDisplay.showBattleNetLastLogin
       : shell.settings.accountDisplay.showLastLogin
   );
   let lastLoginUnknownKey = $derived<MessageKey>(
@@ -561,6 +593,23 @@
     if (e.state) applyAppState(e.state as AppHistoryEntry);
   }
 
+  function getParentFolderId(): string | null {
+    if (!navigation.currentFolderId) return null;
+    return getFolder(navigation.currentFolderId)?.parentId ?? null;
+  }
+
+  async function navigateToParentFolder() {
+    if (!navigation.currentFolderId) return;
+    await addFlow.cancelIfConflicting(shell.activeTab);
+    const parentFolderId = getParentFolderId();
+    history.replaceState({ tab: shell.activeTab, folderId: parentFolderId, showSettings: false }, "");
+    navigation.currentFolderId = parentFolderId;
+    showSettings = false;
+    navigation.refreshCurrentItems();
+    navigation.searchQuery = "";
+    setTimeout(grid.calculatePadding, 0);
+  }
+
   async function navigateTo(folderId: string | null, options: { trackHistory?: boolean } = {}) {
     const { trackHistory = true } = options;
     await addFlow.cancelIfConflicting(shell.activeTab);
@@ -699,6 +748,10 @@
     }
   }
 
+  function handleSettingsUpdated() {
+    shell.refreshSettings();
+  }
+
   async function startBackgroundUpdateFlow() {
     if (import.meta.env.DEV) return;
     if (updateCheckStarted) return;
@@ -758,6 +811,27 @@
       afkWaveActive = false;
       afkWaveStopTimer = null;
     }, AFK_TEXT_FADE_MS);
+  });
+
+  $effect(() => {
+    if (!renderSuspended) return;
+    if (contextMenu) {
+      contextMenu = null;
+    }
+  });
+
+  $effect(() => {
+    if (renderSuspended) {
+      if (afkListenersAttached) {
+        blur.detachListeners();
+        afkListenersAttached = false;
+      }
+      return;
+    }
+    if (!afkListenersAttached) {
+      blur.attachListeners();
+      afkListenersAttached = true;
+    }
   });
 
   $effect(() => {
@@ -834,43 +908,39 @@
     }, 240);
   }
 
-  function handleVisibilityChange() {
-    pageVisible = document.visibilityState !== "hidden";
+  async function initializeAppShell() {
+    const [runtimeOsResult, versionResult] = await Promise.allSettled([
+      invoke<string>("get_runtime_os"),
+      getVersion(),
+    ]);
+
+    const normalizedOs: RuntimeOs = runtimeOsResult.status === "fulfilled"
+      && (runtimeOsResult.value === "windows" || runtimeOsResult.value === "linux" || runtimeOsResult.value === "macos")
+      ? runtimeOsResult.value
+      : "unknown";
+
+    shell.setRuntimeOs(normalizedOs);
+    const nextTab = getInitialActiveTab(shell.settings, shell.runtimeOs);
+    if (nextTab !== shell.activeTab) {
+      shell.setActiveTab(nextTab);
+    }
+
+    if (versionResult.status === "fulfilled") {
+      appVersion = semverCore(versionResult.value);
+    } else {
+      console.error("Failed to read app version:", versionResult.reason);
+    }
+
+    if (isPlatformUsable(shell.activeTab, shell.runtimeOs) && getPlatform(shell.activeTab)) {
+      loadAccounts(false, false, false, false, true);
+    } else {
+      navigation.refreshCurrentItems();
+    }
   }
 
   onMount(() => {
-    void invoke<string>("get_runtime_os")
-      .then((osName) => {
-        const normalizedOs: RuntimeOs = osName === "windows" || osName === "linux" || osName === "macos"
-          ? osName
-          : "unknown";
-        shell.setRuntimeOs(normalizedOs);
-        const nextTab = getInitialActiveTab(shell.settings, shell.runtimeOs);
-        if (nextTab !== shell.activeTab) {
-          shell.setActiveTab(nextTab);
-        }
-        if (isPlatformUsable(shell.activeTab, shell.runtimeOs) && getPlatform(shell.activeTab)) {
-          loadAccounts(false, false, false, true, true);
-        } else {
-          navigation.refreshCurrentItems();
-        }
-      })
-      .catch(() => {
-        shell.setRuntimeOs("unknown");
-        if (isPlatformUsable(shell.activeTab, shell.runtimeOs) && getPlatform(shell.activeTab)) {
-          loadAccounts(false, false, false, true, true);
-        } else {
-          navigation.refreshCurrentItems();
-        }
-      });
-
-    void getVersion()
-      .then((v) => {
-        appVersion = semverCore(v);
-      })
-      .catch((e) => {
-        console.error("Failed to read app version:", e);
-      });
+    void initializeAppShell();
+    void windowActivity.start();
 
     scheduleIdle(() => { void loadSettingsComponent(); });
     updateCheckTimer = setTimeout(() => { void startBackgroundUpdateFlow(); }, 3500);
@@ -882,8 +952,6 @@
       pinError = "";
       setTimeout(() => pinInputRef?.focus(), 0);
     }
-    handleVisibilityChange();
-    document.addEventListener("visibilitychange", handleVisibilityChange);
     history.replaceState({ tab: shell.activeTab, folderId: null, showSettings: false }, "");
     window.addEventListener("resize", grid.handleResize);
     document.addEventListener("mousemove", drag.handleDocMouseMove);
@@ -916,17 +984,22 @@
     document.removeEventListener("click", drag.handleCaptureClick, true);
     window.removeEventListener("wheel", handleCtrlWheelZoom);
     window.removeEventListener("keydown", handleZoomKeydown);
-    document.removeEventListener("visibilitychange", handleVisibilityChange);
     window.removeEventListener("popstate", handlePopState);
     if (afkListenersAttached) blur.detachListeners();
     blur.stop();
+    windowActivity.stop();
     grid.destroy();
   });
 </script>
 
-<div class="app-frame" class:motion-paused={motionPaused}>
+<div
+  class="app-frame"
+  class:motion-paused={motionPaused}
+  style={`--afk-reveal-delay:${AFK_TEXT_REVEAL_DELAY_MS}ms;`}
+>
   <div class="app-stage" class:locked={isPinLocked} style={appStageStyle}>
     <div class="app-shell">
+      {#if !renderSuspended}
       <TitleBar
         onRefresh={() => {
           if (!activeTabUsable) return;
@@ -966,6 +1039,7 @@
       <SettingsPanel
         onClose={handleSettingsClose}
         onPlatformsChanged={handlePlatformsChanged}
+        onSettingsUpdated={handleSettingsUpdated}
         onRefreshAvatarsNow={refreshAvatarsNow}
         onRefreshBansNow={refreshBansNow}
         {runtimeOs}
@@ -1037,7 +1111,7 @@
             folderItems={displayFolderItems}
             accountItems={displayAccountItemsWithPending}
             accounts={renderedAccountMap}
-            showUsernames={settings.accountDisplay.showUsernames}
+            showUsernames={showUsernamesForActiveTab}
             showLastLogin={showLastLoginForActiveTab}
             {lastLoginUnknownKey}
             pendingSetupId={pendingSetupAccount?.id ?? null}
@@ -1046,6 +1120,7 @@
           avatarStates={loader.avatarStates}
           warningStates={loader.warningStates}
           {getAccountNote}
+          {getAccountCardColor}
           {accentColor}
           dragItem={drag.dragItem}
           dragOverFolderId={drag.dragOverFolderId}
@@ -1053,13 +1128,13 @@
           onNavigate={(id) => { void navigateTo(id); }}
           onGoBack={() => {
             void cancelPlatformAddFlowIfConflicting(activeTab);
-            history.back();
+            void navigateToParentFolder();
           }}
           onAccountActivate={(account) => { void cancelPlatformAddFlowIfConflicting(activeTab, account.id); }}
           onSwitch={(account) => {
             if (isPendingSetupAccount(account.id)) return;
             void cancelPlatformAddFlowIfConflicting(activeTab, account.id);
-            void loader.switchTo(account);
+            void handleAccountSwitch(account);
           }}
           onAccountContextMenu={(e, account) => {
             if (isPendingSetupAccount(account.id)) return;
@@ -1090,9 +1165,10 @@
             <BackCard
               onBack={() => {
                 void cancelPlatformAddFlowIfConflicting(activeTab);
-                history.back();
+                void navigateToParentFolder();
               }}
               isDragOver={drag.dragOverBack}
+              {accentColor}
               {locale}
             />
           {/if}
@@ -1104,6 +1180,7 @@
                 <FolderCard
                   {folder}
                   cardColor={getFolderCardColor(folder.id)}
+                  {accentColor}
                   onOpen={() => { void navigateTo(folder.id); }}
                   onContextMenu={(e) => {
                     void cancelPlatformAddFlowIfConflicting(activeTab);
@@ -1126,7 +1203,7 @@
                   cardColor={getAccountCardColor(account.id)}
                   note={getAccountNote(account.id)}
                   showNoteInline={settings.accountDisplay.showCardNotesInline}
-                  showUsername={isPendingSetupAccount(account.id) ? false : settings.accountDisplay.showUsernames}
+                  showUsername={isPendingSetupAccount(account.id) ? false : showUsernamesForActiveTab}
                   showLastLogin={isPendingSetupAccount(account.id) ? false : showLastLoginForActiveTab}
                   lastLoginAt={account.lastLoginAt}
                   {lastLoginUnknownKey}
@@ -1135,7 +1212,7 @@
                   onSwitch={() => {
                     if (isPendingSetupAccount(account.id)) return;
                     void cancelPlatformAddFlowIfConflicting(activeTab, account.id);
-                    void loader.switchTo(account);
+                    void handleAccountSwitch(account);
                   }}
                   onContextMenu={(e) => {
                     if (isPendingSetupAccount(account.id)) return;
@@ -1144,7 +1221,7 @@
                   }}
                   onActivate={() => { void cancelPlatformAddFlowIfConflicting(activeTab, account.id); }}
                   avatarUrl={avatarState?.url}
-                  isLoadingAvatar={isPendingSetupAccount(account.id) ? true : (avatarState?.loading ?? true)}
+                  isLoadingAvatar={isPendingSetupAccount(account.id) ? true : (avatarState?.loading ?? false)}
                   isRefreshingAvatar={avatarState?.refreshing ?? false}
                   isDragged={drag.dragItem?.type === "account" && drag.dragItem?.id === account.id}
                   warningInfo={isPendingSetupAccount(account.id) ? undefined : loader.warningStates[account.id]}
@@ -1195,7 +1272,6 @@
     </div>
   </main>
 {/if}
-    </div>
 
     {#if contextMenu}
       <ContextMenu
@@ -1245,40 +1321,49 @@
         </div>
       {/each}
     </div>
+      {/if}
   </div>
 
-  <div
-    class="inactive-overlay"
-    class:visible={afkOverlayVisible}
-    aria-hidden={!afkOverlayVisible}
-  >
-    <span class="accshift-text">
-      <WaveText text="ACCSHIFT" active={afkWaveActive && !motionPaused} respectReducedMotion={false} />
-    </span>
-  </div>
-
-  {#if isPinLocked || isPinUnlocking}
-    <div class="pin-lock-overlay" class:unlocking={isPinUnlocking}>
-      <div class="pin-card">
-        <h3>{t("pin.lockedTitle")}</h3>
-        <p>{t("pin.lockedPrompt")}</p>
-        <input
-          bind:this={pinInputRef}
-          bind:value={pinAttempt}
-          class="pin-input"
-          type="password"
-          placeholder={t("pin.placeholder")}
-          maxlength={PIN_CODE_LENGTH}
-          inputmode="numeric"
-          pattern="[0-9]*"
-          autocomplete="one-time-code"
-        />
-        {#if pinError}
-          <span class="pin-error">{pinError}</span>
-        {/if}
+    {#if !renderSuspended}
+      <div
+        class="inactive-overlay"
+        class:visible={afkOverlayVisible}
+        aria-hidden={!afkOverlayVisible}
+      >
+        <span class="accshift-text">
+          <WaveText
+            text="ACCSHIFT"
+            active={afkWaveActive && !motionPaused}
+            respectReducedMotion={false}
+            startDelayMs={AFK_TEXT_REVEAL_DELAY_MS}
+          />
+        </span>
       </div>
-    </div>
-  {/if}
+
+      {#if isPinLocked || isPinUnlocking}
+        <div class="pin-lock-overlay" class:unlocking={isPinUnlocking}>
+          <div class="pin-card">
+            <h3>{t("pin.lockedTitle")}</h3>
+            <p>{t("pin.lockedPrompt")}</p>
+            <input
+              bind:this={pinInputRef}
+              bind:value={pinAttempt}
+              class="pin-input"
+              type="password"
+              placeholder={t("pin.placeholder")}
+              maxlength={PIN_CODE_LENGTH}
+              inputmode="numeric"
+              pattern="[0-9]*"
+              autocomplete="one-time-code"
+            />
+            {#if pinError}
+              <span class="pin-error">{pinError}</span>
+            {/if}
+          </div>
+        </div>
+      {/if}
+    {/if}
+</div>
 </div>
 
 <style>
@@ -1338,7 +1423,7 @@
 
   .inactive-overlay.visible .accshift-text {
     opacity: 0.92;
-    transition-delay: 2500ms;
+    transition-delay: var(--afk-reveal-delay, 2500ms);
   }
 
   .toast-container {
@@ -1403,7 +1488,7 @@
   .afk-version-strip.visible {
     opacity: 0.25;
     transform: translate(-50%, 0);
-    transition-delay: 2500ms;
+    transition-delay: var(--afk-reveal-delay, 2500ms);
   }
 
   .afk-version-strip span {

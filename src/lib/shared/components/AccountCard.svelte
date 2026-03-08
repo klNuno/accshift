@@ -331,14 +331,15 @@
     background: var(--bg-card);
     border: none;
     cursor: pointer;
-    transition: background 150ms ease-out, transform 150ms ease-out, box-shadow 150ms ease-out, outline-color 120ms ease-out;
+    transition: background 180ms ease-out, transform 180ms ease-out, box-shadow 180ms ease-out, outline-color 120ms ease-out;
     color: inherit;
     user-select: none;
   }
 
   .card:not(.active):hover {
     background: var(--bg-card-hover);
-    transform: scale(1.02);
+    transform: translateY(-2px);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.18);
   }
 
   .card.custom-color {
@@ -351,7 +352,7 @@
   }
 
   .card:not(.active):active {
-    transform: scale(0.98);
+    transform: translateY(0) scale(0.985);
   }
 
   .card.active {
@@ -405,7 +406,7 @@
     align-items: center;
     justify-content: center;
     background: var(--bg-muted);
-    transition: background 150ms;
+    transition: background 150ms, transform 180ms ease-out;
     pointer-events: none;
   }
 
@@ -424,7 +425,7 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    transition: filter 300ms ease-out;
+    transition: transform 220ms ease-out, filter 300ms ease-out;
     -webkit-user-drag: none;
     user-select: none;
   }
@@ -480,6 +481,11 @@
 
   .card:not(.active):hover .avatar {
     background: var(--bg-elevated);
+    transform: translateY(-1px);
+  }
+
+  .card:not(.active):hover .avatar-media img {
+    transform: scale(1.04);
   }
 
   .avatar.active {
