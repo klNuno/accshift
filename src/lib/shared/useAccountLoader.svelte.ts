@@ -237,14 +237,21 @@ export function createAccountLoader(
     error = null;
     try {
       warningStates = adapter.getCachedWarningStates?.({ t }) ?? {};
+      let nextAccounts: PlatformAccount[];
+      let nextCurrentAccount: string;
       if (adapter.getStartupSnapshot) {
         const snapshot = await adapter.getStartupSnapshot();
-        accounts = snapshot.accounts;
-        currentAccount = snapshot.currentAccount;
+        if (loadId !== latestLoadId) return;
+        nextAccounts = snapshot.accounts;
+        nextCurrentAccount = snapshot.currentAccount;
       } else {
-        accounts = await adapter.loadAccounts();
-        currentAccount = await adapter.getCurrentAccount();
+        nextAccounts = await adapter.loadAccounts();
+        if (loadId !== latestLoadId) return;
+        nextCurrentAccount = await adapter.getCurrentAccount();
+        if (loadId !== latestLoadId) return;
       }
+      accounts = nextAccounts;
+      currentAccount = nextCurrentAccount;
       seedAvatarStatesForAccounts(resolveVisibleAccounts(accounts), forceRefresh);
       if (accounts.length === 0) {
         const now = Date.now();
@@ -272,6 +279,7 @@ export function createAccountLoader(
         runBackgroundTasks();
       }
     } catch (e) {
+      if (loadId !== latestLoadId) return;
       const message = String(e);
       error = message;
       accounts = [];
@@ -286,6 +294,7 @@ export function createAccountLoader(
         }
       }
     }
+    if (loadId !== latestLoadId) return;
     loading = false;
   }
 
@@ -370,6 +379,16 @@ export function createAccountLoader(
     return visibleAccounts.length;
   }
 
+  function clearForPlatformChange() {
+    latestLoadId += 1;
+    accounts = [];
+    currentAccount = "";
+    loading = true;
+    error = null;
+    avatarStates = {};
+    warningStates = {};
+  }
+
   return {
     get accounts() { return accounts; },
     set accounts(v: PlatformAccount[]) { accounts = v; },
@@ -384,6 +403,7 @@ export function createAccountLoader(
     load,
     switchTo,
     addNew,
+    clearForPlatformChange,
     prepareVisibleAccounts,
     primeVisibleAccounts: refreshVisibleAccounts,
     refreshVisibleAccounts,

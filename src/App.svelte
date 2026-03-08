@@ -610,6 +610,9 @@
     }
     const tabChanged = shell.activeTab !== entry.tab;
     const settingsClosing = showSettings && !entry.showSettings;
+    if (tabChanged) {
+      loader.clearForPlatformChange();
+    }
     shell.setActiveTab(entry.tab);
     navigation.currentFolderId = entry.folderId;
     showSettings = entry.showSettings;
@@ -669,6 +672,7 @@
     await addFlow.cancel();
     history.pushState({ tab, folderId: null, showSettings: false }, "");
     lastPreparedVisibleKey = "";
+    loader.clearForPlatformChange();
     shell.setActiveTab(tab);
     navigation.currentFolderId = null;
     showSettings = false;
@@ -919,6 +923,7 @@
     if (isPlatformUsable(shell.activeTab, shell.runtimeOs)) return;
     const fallbackTab = getInitialActiveTab(shell.settings, shell.runtimeOs);
     if (fallbackTab !== shell.activeTab) {
+      loader.clearForPlatformChange();
       shell.setActiveTab(fallbackTab);
       navigation.currentFolderId = null;
     }
