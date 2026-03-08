@@ -411,6 +411,13 @@ pub fn open_userdata(app_handle: tauri::AppHandle, steam_id: String) -> Result<(
     })
 }
 
+pub fn clear_integrated_browser_cache(_app_handle: tauri::AppHandle) -> Result<(), String> {
+    accounts::clear_integrated_browser_cache().map_err(|e| {
+        eprintln!("Error: {:?}", e);
+        e.to_string()
+    })
+}
+
 pub fn copy_game_settings(
     app_handle: tauri::AppHandle,
     from_steam_id: String,

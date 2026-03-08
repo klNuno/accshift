@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use super::vdf::{parse_vdf, set_persona_state};
 use crate::error::AppError;
+use crate::fs_utils;
 use crate::os;
 
 const MAX_KILL_WAIT_MS: u64 = 5000;
@@ -45,22 +46,39 @@ fn is_steam_running() -> bool {
     os::is_process_running(os::steam_process_name())
 }
 
+fn wait_for_process_exit(process_name: &str) -> Result<(), AppError> {
+    if !os::is_process_running(process_name) {
+        return Ok(());
+    }
+    let max_polls = MAX_KILL_WAIT_MS / KILL_POLL_INTERVAL_MS;
+    for _ in 0..max_polls {
+        std::thread::sleep(std::time::Duration::from_millis(KILL_POLL_INTERVAL_MS));
+        if !os::is_process_running(process_name) {
+            return Ok(());
+        }
+    }
+    Err(AppError::KillSteamTimeout)
+}
+
+fn kill_process_tree_if_running(process_name: &str) -> Result<(), AppError> {
+    if !os::is_process_running(process_name) {
+        return Ok(());
+    }
+    let _ = os::kill_process(process_name);
+    wait_for_process_exit(process_name)
+}
+
 fn kill_steam() -> Result<(), AppError> {
     if !is_steam_running() {
         return Ok(());
     }
 
-    let _ = os::kill_process(os::steam_process_name());
+    kill_process_tree_if_running(os::steam_process_name())
+}
 
-    let max_polls = MAX_KILL_WAIT_MS / KILL_POLL_INTERVAL_MS;
-    for _ in 0..max_polls {
-        std::thread::sleep(std::time::Duration::from_millis(KILL_POLL_INTERVAL_MS));
-        if !is_steam_running() {
-            return Ok(());
-        }
-    }
-
-    Err(AppError::KillSteamTimeout)
+fn kill_steam_client_processes() -> Result<(), AppError> {
+    kill_process_tree_if_running(os::steam_process_name())?;
+    kill_process_tree_if_running(os::steam_web_helper_process_name())
 }
 
 fn parse_launch_options(launch_options: &str) -> Vec<String> {
@@ -111,27 +129,6 @@ fn launch_steam(
 ) -> Result<(), AppError> {
     let args = parse_launch_options(launch_options);
     os::launch_steam(steam_path, run_as_admin, &args)
-}
-
-fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), AppError> {
-    if !source.exists() {
-        return Err(AppError::FileRead(format!(
-            "Source folder not found: {}",
-            source.display()
-        )));
-    }
-    fs::create_dir_all(target).map_err(|e| AppError::FileRead(e.to_string()))?;
-    for entry in fs::read_dir(source).map_err(|e| AppError::FileRead(e.to_string()))? {
-        let entry = entry.map_err(|e| AppError::FileRead(e.to_string()))?;
-        let src_path = entry.path();
-        let dst_path = target.join(entry.file_name());
-        if src_path.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path)?;
-        } else {
-            fs::copy(&src_path, &dst_path).map_err(|e| AppError::FileRead(e.to_string()))?;
-        }
-    }
-    Ok(())
 }
 
 fn steam_user_data_path(steam_path: &PathBuf, steam_id: &str) -> Result<PathBuf, AppError> {
@@ -481,7 +478,7 @@ pub fn copy_game_settings(
         fs::remove_dir_all(&target).map_err(|e| AppError::FileRead(e.to_string()))?;
     }
 
-    copy_dir_recursive(&source, &target)
+    fs_utils::copy_dir_recursive(&source, &target, &[]).map_err(AppError::FileRead)
 }
 
 pub fn get_copyable_games(
@@ -506,6 +503,22 @@ pub fn get_copyable_games(
 
     games.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(games)
+}
+
+pub fn clear_integrated_browser_cache() -> Result<(), AppError> {
+    kill_steam_client_processes()?;
+
+    let local_app_data = std::env::var("LOCALAPPDATA")
+        .map_err(|e| AppError::FileRead(format!("Could not resolve LOCALAPPDATA: {e}")))?;
+    let htmlcache_path = PathBuf::from(local_app_data)
+        .join("Steam")
+        .join("htmlcache");
+
+    if htmlcache_path.exists() {
+        fs::remove_dir_all(&htmlcache_path).map_err(|e| AppError::FileRead(e.to_string()))?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

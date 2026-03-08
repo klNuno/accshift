@@ -38,7 +38,7 @@
     box-shadow: inset 0 0 0 1px transparent;
     appearance: none;
     cursor: pointer;
-    transition: transform 150ms ease-out, background 150ms ease-out, outline-color 150ms ease-out, box-shadow 150ms ease-out;
+    transition: background 180ms ease-out, transform 180ms ease-out, box-shadow 180ms ease-out, outline-color 120ms ease-out;
     color: inherit;
     display: flex;
     flex-direction: column;
@@ -48,13 +48,14 @@
   }
 
   .card:hover {
-    background: color-mix(in srgb, var(--bg-card) 30%, transparent);
+    background: var(--bg-card-hover);
     outline-color: color-mix(in srgb, var(--fg-subtle) 45%, transparent);
-    transform: scale(1.02);
+    transform: translateY(-2px);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.18);
   }
 
   .card:active {
-    transform: scale(0.98);
+    transform: translateY(0) scale(0.985);
   }
 
   .card.drag-over {
@@ -73,13 +74,14 @@
     justify-content: center;
     background: color-mix(in srgb, var(--bg-muted) 52%, transparent);
     color: var(--fg-muted);
-    transition: all 150ms;
+    transition: background 150ms, transform 180ms ease-out, color 150ms ease-out;
     pointer-events: none;
   }
 
   .card:hover .icon-wrap {
-    background: color-mix(in srgb, var(--bg-elevated) 72%, transparent);
+    background: var(--bg-elevated);
     color: var(--fg);
+    transform: translateY(-1px);
   }
 
   .name {

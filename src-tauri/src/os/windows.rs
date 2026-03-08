@@ -76,6 +76,10 @@ pub fn steam_process_name() -> &'static str {
     "steam.exe"
 }
 
+pub fn steam_web_helper_process_name() -> &'static str {
+    "steamwebhelper.exe"
+}
+
 pub fn set_auto_login_user(username: &str) -> Result<(), AppError> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let steam_key = hkcu

@@ -8,3 +8,8 @@ export interface BattleNetStartupSnapshot {
   accounts: BattleNetAccount[];
   currentAccount: string;
 }
+
+export interface BattleNetCopyableGame {
+  appId: string;
+  name: string;
+}

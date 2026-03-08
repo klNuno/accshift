@@ -2,6 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use tauri::Manager;
 
+pub const DEFAULT_WINDOW_WIDTH: f64 = 900.0;
+pub const DEFAULT_WINDOW_HEIGHT: f64 = 450.0;
+pub const MIN_WINDOW_WIDTH: f64 = 400.0;
+pub const MIN_WINDOW_HEIGHT: f64 = 300.0;
+const WINDOW_SIZE_EPSILON: f64 = 1.0;
+
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct SteamConfig {
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -293,7 +299,12 @@ pub fn load_window_size(app_handle: &tauri::AppHandle) -> Option<(f64, f64)> {
     let cfg = load_config(app_handle);
     let width = cfg.window_width?;
     let height = cfg.window_height?;
-    if width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0 {
+    if width.is_finite()
+        && height.is_finite()
+        && width > 0.0
+        && height > 0.0
+        && !is_suspicious_min_window_size(width, height)
+    {
         Some((width, height))
     } else {
         None
@@ -309,8 +320,17 @@ pub fn save_window_size(
         return Ok(());
     }
 
+    if is_suspicious_min_window_size(width, height) {
+        return Ok(());
+    }
+
     let mut cfg = load_config(app_handle);
     cfg.window_width = Some(width);
     cfg.window_height = Some(height);
     save_config(app_handle, &cfg)
+}
+
+fn is_suspicious_min_window_size(width: f64, height: f64) -> bool {
+    width <= MIN_WINDOW_WIDTH + WINDOW_SIZE_EPSILON
+        && height <= MIN_WINDOW_HEIGHT + WINDOW_SIZE_EPSILON
 }

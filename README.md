@@ -128,8 +128,5 @@ src-tauri/src/
     profile.rs
 ```
 
-## License
-MIT. See [LICENSE](./LICENSE).
-
 ## Disclaimer
 This project is not affiliated with Valve, Blizzard, or Riot Games. Use it at your own risk.
