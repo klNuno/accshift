@@ -6,7 +6,7 @@ export const PLATFORM_DEFS: PlatformDef[] = [
   {
     id: "steam",
     name: "Steam",
-    accent: "#3b82f6",
+    accent: "#2563eb",
     implemented: true,
     supportedOs: ["windows"],
   },
@@ -20,7 +20,7 @@ export const PLATFORM_DEFS: PlatformDef[] = [
   {
     id: "battle-net",
     name: "Battle.net",
-    accent: "#60a5fa",
+    accent: "#38bdf8",
     implemented: true,
     supportedOs: ["windows"],
   },

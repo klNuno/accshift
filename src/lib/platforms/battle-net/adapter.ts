@@ -36,7 +36,7 @@ function toAccount(account: BattleNetAccount): PlatformAccount {
 export const battleNetAdapter: PlatformAdapter = {
   id: "battle-net",
   name: "Battle.net",
-  accent: "#60a5fa",
+  accent: "#38bdf8",
 
   async loadAccounts(): Promise<PlatformAccount[]> {
     const accounts = await service.getAccounts();

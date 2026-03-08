@@ -34,7 +34,7 @@ function toAccount(s: SteamAccount): PlatformAccount {
 export const steamAdapter: PlatformAdapter = {
   id: "steam",
   name: "Steam",
-  accent: "#3b82f6",
+  accent: "#2563eb",
 
   async loadAccounts(): Promise<PlatformAccount[]> {
     const accounts = await service.getAccounts();

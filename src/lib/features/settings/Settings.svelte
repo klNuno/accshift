@@ -72,10 +72,11 @@
   const SAVE_TOAST_COOLDOWN_MS = 1500;
   const PIN_CODE_LENGTH = 4;
   const NEUTRAL_TAB_ACCENT = "#71717a";
+  const NEUTRAL_CONTROL_ACCENT = NEUTRAL_TAB_ACCENT;
   const STEAM_TAB_ACCENT = getPlatformDefinition("steam")?.accent ?? NEUTRAL_TAB_ACCENT;
   const RIOT_TAB_ACCENT = getPlatformDefinition("riot")?.accent ?? "#ef4444";
   const RIOT_DISPLAY_ACCENT = getPlatformDefinition("riot")?.accent ?? "#ef4444";
-  const BATTLE_NET_TAB_ACCENT = getPlatformDefinition("battle-net")?.accent ?? "#60a5fa";
+  const BATTLE_NET_TAB_ACCENT = getPlatformDefinition("battle-net")?.accent ?? NEUTRAL_TAB_ACCENT;
   const languageLabelByCode: Record<string, MessageKey> = {
     en: "language.english",
     fr: "language.french",
@@ -571,7 +572,7 @@
           <ToggleSetting
             label={t("settings.lightMode")}
             enabled={settings.theme === "light"}
-            accent="#f59e0b"
+            accent={NEUTRAL_CONTROL_ACCENT}
             onLabel={t("common.on")}
             offLabel={t("common.off")}
             onToggle={() => settings.theme = settings.theme === "light" ? "dark" : "light"}
@@ -594,7 +595,7 @@
           <ToggleSetting
             label={t("settings.suspendGraphicsWhenMinimized")}
             enabled={settings.suspendGraphicsWhenMinimized}
-            accent="#10b981"
+            accent={NEUTRAL_CONTROL_ACCENT}
             onLabel={t("common.enabled")}
             offLabel={t("common.disabled")}
             onToggle={() => settings.suspendGraphicsWhenMinimized = !settings.suspendGraphicsWhenMinimized}
@@ -602,7 +603,7 @@
           <ToggleSetting
             label={t("settings.minimizeOnAccountSwitch")}
             enabled={settings.minimizeOnAccountSwitch}
-            accent="#0ea5e9"
+            accent={NEUTRAL_CONTROL_ACCENT}
             onLabel={t("common.enabled")}
             offLabel={t("common.disabled")}
             onToggle={() => settings.minimizeOnAccountSwitch = !settings.minimizeOnAccountSwitch}
@@ -696,7 +697,7 @@
           <ToggleSetting
             label={t("settings.pinLockOnAfk")}
             enabled={settings.pinEnabled}
-            accent="#eab308"
+            accent={NEUTRAL_CONTROL_ACCENT}
             onLabel={t("common.enabled")}
             offLabel={t("common.disabled")}
             onToggle={() => {
@@ -1141,7 +1142,7 @@
   }
 
   .text-input:focus {
-    border-color: #3b82f6;
+    border-color: color-mix(in srgb, var(--fg-muted) 55%, var(--border));
   }
 
   .select-input {
