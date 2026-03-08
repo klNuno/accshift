@@ -6,7 +6,15 @@ export function getBattleNetContextMenuItems(
   account: PlatformAccount,
   callbacks: PlatformContextMenuCallbacks,
 ): ContextMenuAction[] {
+  const username = (account.displayName || account.username || account.id).trim() || account.id;
+
   return [
+    {
+      id: `battle-net.copy.username.${account.id}`,
+      group: "platform.primary",
+      label: callbacks.t("battlenet.copyUsername"),
+      action: () => callbacks.copyToClipboard(username, callbacks.t("battlenet.copyLabelUsername")),
+    },
     {
       id: `battle-net.copy.email.${account.id}`,
       group: "platform.primary",
