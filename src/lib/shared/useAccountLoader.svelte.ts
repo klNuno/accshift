@@ -224,7 +224,7 @@ export function createAccountLoader(
     error = null;
     try {
       await adapter.switchAccount(account);
-      currentAccount = account.username;
+      currentAccount = account.id;
       if (adapter.getProfileInfo) {
         updateAvatarState(account.id, { refreshing: true });
         void adapter.getProfileInfo(account.id)

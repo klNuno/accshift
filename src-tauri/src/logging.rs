@@ -1,0 +1,139 @@
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use tauri::Manager;
+
+const LOG_DIR_NAME: &str = "logs";
+const LOG_FILE_NAME: &str = "app.log";
+const PREVIOUS_LOG_FILE_NAME: &str = "app.previous.log";
+const MAX_LOG_FILE_BYTES: u64 = 1_024 * 1_024;
+const MAX_MESSAGE_BYTES: usize = 512;
+const MAX_DETAILS_BYTES: usize = 16_384;
+
+static LOG_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn log_lock() -> &'static Mutex<()> {
+    LOG_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn trim_text(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) && end > 0 {
+        end -= 1;
+    }
+    value[..end].to_string()
+}
+
+fn ensure_log_parent(path: &Path) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Log file path has no parent directory".to_string())?;
+    fs::create_dir_all(parent).map_err(|reason| format!("Could not create log directory: {reason}"))?;
+    Ok(())
+}
+
+fn rotate_log_if_needed(path: &Path) -> Result<(), String> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(_) => return Ok(()),
+    };
+
+    if metadata.len() < MAX_LOG_FILE_BYTES {
+        return Ok(());
+    }
+
+    let previous_path = path.with_file_name(PREVIOUS_LOG_FILE_NAME);
+    if previous_path.exists() {
+        let _ = fs::remove_file(&previous_path);
+    }
+
+    fs::rename(path, &previous_path)
+        .map_err(|reason| format!("Could not rotate log file {}: {reason}", path.display()))?;
+    Ok(())
+}
+
+fn now_unix_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}
+
+pub fn log_file_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let base_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|reason| format!("Could not resolve app data directory: {reason}"))?;
+
+    Ok(base_dir.join(LOG_DIR_NAME).join(LOG_FILE_NAME))
+}
+
+pub fn append_app_log(
+    app_handle: &tauri::AppHandle,
+    level: &str,
+    source: &str,
+    message: &str,
+    details: Option<&str>,
+) -> Result<(), String> {
+    let _guard = log_lock()
+        .lock()
+        .map_err(|_| "Log file lock is poisoned".to_string())?;
+
+    let path = log_file_path(app_handle)?;
+    ensure_log_parent(&path)?;
+    rotate_log_if_needed(&path)?;
+
+    let record = serde_json::json!({
+        "tsMs": now_unix_ms(),
+        "level": trim_text(level, 32),
+        "source": trim_text(source, 128),
+        "message": trim_text(message, MAX_MESSAGE_BYTES),
+        "details": details.map(|value| trim_text(value, MAX_DETAILS_BYTES)),
+    });
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|reason| format!("Could not open log file {}: {reason}", path.display()))?;
+
+    writeln!(file, "{record}")
+        .map_err(|reason| format!("Could not write log file {}: {reason}", path.display()))?;
+
+    Ok(())
+}
+
+pub fn install_panic_hook(app_handle: tauri::AppHandle) {
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        let location = panic_info
+            .location()
+            .map(|location| format!("{}:{}:{}", location.file(), location.line(), location.column()))
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let payload = if let Some(payload) = panic_info.payload().downcast_ref::<&str>() {
+            (*payload).to_string()
+        } else if let Some(payload) = panic_info.payload().downcast_ref::<String>() {
+            payload.clone()
+        } else {
+            "unknown panic payload".to_string()
+        };
+
+        let _ = append_app_log(
+            &app_handle,
+            "error",
+            "rust.panic",
+            &payload,
+            Some(&location),
+        );
+
+        previous_hook(panic_info);
+    }));
+}

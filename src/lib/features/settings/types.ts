@@ -19,6 +19,7 @@ export interface AccountDisplaySettings {
   showUsernames: boolean;
   showLastLogin: boolean;
   showRiotLastLogin: boolean;
+  showBattleNetLastLogin: boolean;
   showCardNotesInline: boolean;
 }
 
@@ -35,6 +36,8 @@ export interface AppSettings {
   language: Locale;
   theme: "dark" | "light";
   uiScalePercent: number;
+  suspendGraphicsWhenMinimized: boolean;
+  minimizeOnAccountSwitch: boolean;
   dataRefresh: DataRefreshSettings;
   enabledPlatforms: string[];
   defaultPlatformId: string;

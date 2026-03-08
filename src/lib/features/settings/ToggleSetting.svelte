@@ -2,7 +2,7 @@
   let {
     label,
     enabled = false,
-    accent = "#3b82f6",
+    accent = "#71717a",
     onLabel = "On",
     offLabel = "Off",
     onToggle,

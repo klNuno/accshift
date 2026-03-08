@@ -1,13 +1,12 @@
 import type { PlatformDef } from "$lib/features/settings/types";
 import { getPlatform, registerPlatform } from "$lib/shared/platform";
-import { riotAdapter } from "./riot/adapter";
-import { steamAdapter } from "./steam/adapter";
+import type { PlatformAdapter } from "$lib/shared/platform";
 
 export const PLATFORM_DEFS: PlatformDef[] = [
   {
     id: "steam",
     name: "Steam",
-    accent: "#3b82f6",
+    accent: "#2563eb",
     implemented: true,
     supportedOs: ["windows"],
   },
@@ -21,23 +20,45 @@ export const PLATFORM_DEFS: PlatformDef[] = [
   {
     id: "battle-net",
     name: "Battle.net",
-    accent: "#60a5fa",
-    implemented: false,
+    accent: "#38bdf8",
+    implemented: true,
     supportedOs: ["windows"],
   },
 ];
 
-const BUILTIN_ADAPTERS = [steamAdapter, riotAdapter];
-let registered = false;
+const PLATFORM_LOADERS: Record<string, () => Promise<PlatformAdapter>> = {
+  steam: () => import("./steam/adapter").then((mod) => mod.steamAdapter),
+  riot: () => import("./riot/adapter").then((mod) => mod.riotAdapter),
+  "battle-net": () => import("./battle-net/adapter").then((mod) => mod.battleNetAdapter),
+};
 
-export function registerBuiltinPlatforms() {
-  if (registered) return;
-  for (const adapter of BUILTIN_ADAPTERS) {
-    if (!getPlatform(adapter.id)) {
-      registerPlatform(adapter);
-    }
+const platformLoadTasks = new Map<string, Promise<PlatformAdapter>>();
+
+export async function ensurePlatformLoaded(platformId: string): Promise<PlatformAdapter | undefined> {
+  const existing = getPlatform(platformId);
+  if (existing) return existing;
+
+  const loadPlatform = PLATFORM_LOADERS[platformId];
+  if (!loadPlatform) return undefined;
+
+  const pending = platformLoadTasks.get(platformId);
+  if (pending) {
+    return pending;
   }
-  registered = true;
+
+  const task = loadPlatform()
+    .then((adapter) => {
+      if (!getPlatform(adapter.id)) {
+        registerPlatform(adapter);
+      }
+      return adapter;
+    })
+    .finally(() => {
+      platformLoadTasks.delete(platformId);
+    });
+
+  platformLoadTasks.set(platformId, task);
+  return task;
 }
 
 export function getPlatformDefinition(platformId: string): PlatformDef | undefined {

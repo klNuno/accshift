@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy } from "svelte";
   import type { PlatformAccount } from "../platform";
   import type { AccountWarningPresentation } from "../accountWarnings";
   import type { CardExtensionContent } from "$lib/shared/cardExtension";
@@ -68,6 +68,7 @@
   let marqueeMoveDurationMs = $state(0);
   let marqueeOffsetPx = $state(0);
   let marqueePauseTimer: ReturnType<typeof setTimeout> | null = null;
+  let overflowCheckFrame: number | null = null;
   let marqueeDirection = $state<"to-end" | "to-start">("to-end");
 
   const MARQUEE_SPEED_PX_PER_SEC = 42;
@@ -77,7 +78,6 @@
   const EXTENSION_VIEWPORT_GAP_PX = 12;
   const noteText = $derived(note.trim());
   const hasUsername = $derived(Boolean(showUsername && account.username.trim()));
-  const avatarSeed = $derived(getAvatarSeed(account.displayName, account.username, account.id));
   const hasRedWarning = $derived(warningInfo?.cardOutlineTone === "red");
   const hasOrangeWarning = $derived(warningInfo?.cardOutlineTone === "orange");
   const hasInlineNote = $derived(Boolean(showNoteInline && noteText));
@@ -85,21 +85,14 @@
   const isExtensionVisible = $derived(
     Boolean(hasExtension && !isDragged && !disableExtension && (forceExtensionOpen || (!disableHoverExtension && isHovered)))
   );
+  const avatarSeed = $derived(getAvatarSeed(account.displayName || "", account.username || "", account.id));
 
-  onMount(() => {
-    function onDocClick(e: MouseEvent) {
-      if (showConfirm && cardRef && !cardRef.contains(e.target as Node)) {
-        showConfirm = false;
-      }
+  onDestroy(() => {
+    clearMarqueePauseTimer();
+    if (overflowCheckFrame !== null) {
+      cancelAnimationFrame(overflowCheckFrame);
+      overflowCheckFrame = null;
     }
-    document.addEventListener("mousedown", onDocClick);
-    window.addEventListener("resize", checkOverflow);
-    checkOverflow();
-    return () => {
-      document.removeEventListener("mousedown", onDocClick);
-      window.removeEventListener("resize", checkOverflow);
-      clearMarqueePauseTimer();
-    };
   });
 
   function clearMarqueePauseTimer() {
@@ -112,6 +105,14 @@
     clearMarqueePauseTimer();
     marqueeOffsetPx = 0;
     marqueeDirection = "to-end";
+  }
+
+  function queueOverflowCheck() {
+    if (overflowCheckFrame !== null) cancelAnimationFrame(overflowCheckFrame);
+    overflowCheckFrame = requestAnimationFrame(() => {
+      overflowCheckFrame = null;
+      checkOverflow();
+    });
   }
 
   function stepMarquee() {
@@ -152,7 +153,7 @@
   function handleMouseEnter() {
     isHovered = true;
     updatePanelSide();
-    startMarquee();
+    queueOverflowCheck();
   }
 
   function handleMouseLeave() {
@@ -179,7 +180,14 @@
   $effect(() => {
     account.displayName;
     account.username;
-    setTimeout(checkOverflow, 0);
+    if (isHovered) {
+      queueOverflowCheck();
+      return;
+    }
+    isOverflowing = false;
+    marqueeShiftPx = 0;
+    marqueeMoveDurationMs = 0;
+    marqueeOffsetPx = 0;
   });
 
   $effect(() => {
@@ -190,6 +198,19 @@
     if (forceExtensionOpen) {
       updatePanelSide();
     }
+  });
+
+  $effect(() => {
+    if (!showConfirm || !cardRef || typeof document === "undefined") return;
+    function onDocClick(e: MouseEvent) {
+      if (cardRef && !cardRef.contains(e.target as Node)) {
+        showConfirm = false;
+      }
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+    };
   });
 
   function handleClick() {
@@ -322,22 +343,24 @@
   .card {
     position: relative;
     z-index: 2;
-    width: 100px;
-    padding: 8px;
+    width: var(--grid-card-width);
+    min-height: var(--grid-card-min-height);
+    padding: var(--grid-card-padding);
     box-sizing: border-box;
-    border-radius: 8px;
+    border-radius: var(--grid-card-radius);
     text-align: center;
     background: var(--bg-card);
     border: none;
     cursor: pointer;
-    transition: background 150ms ease-out, transform 150ms ease-out, box-shadow 150ms ease-out, outline-color 120ms ease-out;
+    transition: background 180ms ease-out, transform 180ms ease-out, box-shadow 180ms ease-out, outline-color 120ms ease-out;
     color: inherit;
     user-select: none;
   }
 
   .card:not(.active):hover {
     background: var(--bg-card-hover);
-    transform: scale(1.02);
+    transform: translateY(-2px);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.18);
   }
 
   .card.custom-color {
@@ -350,7 +373,7 @@
   }
 
   .card:not(.active):active {
-    transform: scale(0.98);
+    transform: translateY(0) scale(0.985);
   }
 
   .card.active {
@@ -396,15 +419,15 @@
 
   .avatar {
     position: relative;
-    width: 68px;
-    height: 68px;
+    width: var(--grid-card-avatar-size);
+    height: var(--grid-card-avatar-size);
     margin: 0 auto 8px;
     border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
     background: var(--bg-muted);
-    transition: background 150ms;
+    transition: background 150ms, transform 180ms ease-out;
     pointer-events: none;
   }
 
@@ -423,7 +446,7 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    transition: filter 300ms ease-out;
+    transition: transform 220ms ease-out, filter 300ms ease-out;
     -webkit-user-drag: none;
     user-select: none;
   }
@@ -479,6 +502,11 @@
 
   .card:not(.active):hover .avatar {
     background: var(--bg-elevated);
+    transform: translateY(-1px);
+  }
+
+  .card:not(.active):hover .avatar-media img {
+    transform: scale(1.04);
   }
 
   .avatar.active {

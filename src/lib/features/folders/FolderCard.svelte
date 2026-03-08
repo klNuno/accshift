@@ -1,13 +1,14 @@
 <script lang="ts">
   import type { FolderInfo } from "./types";
 
-  let { folder, onOpen, onContextMenu, isDragOver = false, isDragged = false, cardColor = "" }: {
+  let { folder, onOpen, onContextMenu, isDragOver = false, isDragged = false, cardColor = "", accentColor = "#3b82f6" }: {
     folder: FolderInfo;
     onOpen: () => void;
     onContextMenu: (e: MouseEvent) => void;
     isDragOver?: boolean;
     isDragged?: boolean;
     cardColor?: string;
+    accentColor?: string;
   } = $props();
 
   function handleContextMenu(e: MouseEvent) {
@@ -27,7 +28,7 @@
   onclick={onOpen}
   oncontextmenu={handleContextMenu}
   data-folder-id={folder.id}
-  style={cardColor ? `--folder-custom-color: ${cardColor};` : ""}
+  style={`--drag-accent: ${accentColor};${cardColor ? ` --folder-custom-color: ${cardColor};` : ""}`}
 >
   <div class="icon-wrap">
     <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -39,34 +40,38 @@
 
 <style>
   .card {
-    width: 100px;
-    padding: 8px;
-    border-radius: 8px;
+    width: var(--grid-card-width);
+    min-height: var(--grid-card-min-height);
+    padding: var(--grid-card-padding);
+    border-radius: var(--grid-card-radius);
     text-align: center;
-    background: var(--bg-card);
-    border: 2px solid transparent;
+    background: transparent;
+    border: none;
+    outline: 1px solid transparent;
+    box-shadow: inset 0 0 0 1px transparent;
     cursor: pointer;
-    transition: all 150ms ease-out;
+    transition: transform 150ms ease-out, background 150ms ease-out, outline-color 150ms ease-out, box-shadow 150ms ease-out;
     color: inherit;
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: flex-start;
     box-sizing: border-box;
     user-select: none;
   }
 
   .card:hover {
-    background: var(--bg-card-hover);
+    background: color-mix(in srgb, var(--bg-card) 30%, transparent);
+    outline-color: color-mix(in srgb, var(--folder-custom-color, var(--fg-subtle)) 45%, transparent);
     transform: scale(1.02);
   }
 
   .card.custom-color {
-    background: color-mix(in srgb, var(--folder-custom-color) 24%, var(--bg-card));
-    outline: 1px solid color-mix(in srgb, var(--folder-custom-color) 55%, transparent);
+    color: color-mix(in srgb, var(--folder-custom-color) 55%, var(--fg));
   }
 
   .card.custom-color:hover {
-    background: color-mix(in srgb, var(--folder-custom-color) 32%, var(--bg-card-hover));
+    background: color-mix(in srgb, var(--folder-custom-color) 10%, transparent);
   }
 
   .card:active {
@@ -74,8 +79,9 @@
   }
 
   .card.drag-over {
-    border-color: #3b82f6;
-    background: rgba(59, 130, 246, 0.1);
+    box-shadow: inset 0 0 0 1px var(--drag-accent, #3b82f6);
+    outline-color: color-mix(in srgb, var(--drag-accent, #3b82f6) 55%, transparent);
+    background: color-mix(in srgb, var(--drag-accent, #3b82f6) 10%, transparent);
   }
 
   .card.dragging {
@@ -84,21 +90,21 @@
   }
 
   .icon-wrap {
-    width: 68px;
-    height: 68px;
+    width: var(--grid-card-avatar-size);
+    height: var(--grid-card-avatar-size);
     margin-bottom: 8px;
     border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--bg-muted);
+    background: color-mix(in srgb, var(--bg-muted) 52%, transparent);
     color: var(--fg-muted);
     transition: all 150ms;
     pointer-events: none;
   }
 
   .card:hover .icon-wrap {
-    background: var(--bg-elevated);
+    background: color-mix(in srgb, var(--bg-elevated) 72%, transparent);
     color: var(--fg);
   }
 

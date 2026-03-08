@@ -6,6 +6,7 @@ export function createGridLayout() {
   let paddingLeft = $state(0);
   let isResizing = $state(false);
   let resizeTimeout: number;
+  let frameId: number | null = null;
 
   function calculatePadding() {
     if (!wrapperRef) return;
@@ -16,14 +17,30 @@ export function createGridLayout() {
     paddingLeft = Math.floor((availableWidth - totalCardsWidth) / 2);
   }
 
+  function queueCalculatePadding() {
+    if (frameId !== null) cancelAnimationFrame(frameId);
+    frameId = requestAnimationFrame(() => {
+      frameId = null;
+      calculatePadding();
+    });
+  }
+
   function handleResize() {
     isResizing = true;
     clearTimeout(resizeTimeout);
-    resizeTimeout = setTimeout(() => { isResizing = false; calculatePadding(); }, 200);
+    queueCalculatePadding();
+    resizeTimeout = setTimeout(() => {
+      isResizing = false;
+      queueCalculatePadding();
+    }, 120);
   }
 
   function destroy() {
     clearTimeout(resizeTimeout);
+    if (frameId !== null) {
+      cancelAnimationFrame(frameId);
+      frameId = null;
+    }
   }
 
   return {
@@ -32,6 +49,7 @@ export function createGridLayout() {
     get paddingLeft() { return paddingLeft; },
     get isResizing() { return isResizing; },
     calculatePadding,
+    queueCalculatePadding,
     handleResize,
     destroy,
   };

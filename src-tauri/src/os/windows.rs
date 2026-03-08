@@ -198,6 +198,24 @@ pub fn select_folder(title: &str) -> Result<String, AppError> {
     Ok(path)
 }
 
+pub fn select_file(title: &str, filter: &str) -> Result<String, AppError> {
+    let output = hidden_command("powershell")
+        .env("ACCSHIFT_FILE_TITLE", title)
+        .env("ACCSHIFT_FILE_FILTER", filter)
+        .args([
+            "-NoProfile",
+            "-Command",
+            "Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.OpenFileDialog; $dialog.Title = $env:ACCSHIFT_FILE_TITLE; $dialog.Filter = $env:ACCSHIFT_FILE_FILTER; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $dialog.FileName }",
+        ])
+        .output()
+        .map_err(|e| AppError::FolderOpen(e.to_string()))?;
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() {
+        return Err(AppError::FolderOpen("File selection canceled".into()));
+    }
+    Ok(path)
+}
+
 pub fn open_url(url: &str) -> Result<(), AppError> {
     hidden_command("powershell")
         .args(["-NoProfile", "-Command", "Start-Process", url])

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
 
   let {
     text = "",
@@ -8,6 +8,7 @@
     speed = 0.3,
     phaseStep = 0.7,
     respectReducedMotion = true,
+    startDelayMs = 0,
   }: {
     text?: string;
     active?: boolean;
@@ -15,51 +16,103 @@
     speed?: number;
     phaseStep?: number;
     respectReducedMotion?: boolean;
+    startDelayMs?: number;
   } = $props();
 
   let letters = $derived(Array.from(text));
-  let offsets = $state<number[]>([]);
-
+  let letterRefs: Array<HTMLSpanElement | null> = [];
   let mounted = false;
   let reduceMotion = false;
   let mediaQuery: MediaQueryList | null = null;
   let rafId: number | null = null;
+  let startTimerId: number | null = null;
   let startMs = 0;
+  let phaseOffsets: number[] = [];
+
+  function captureLetter(node: HTMLSpanElement, index: number) {
+    letterRefs[index] = node;
+    return {
+      destroy() {
+        if (letterRefs[index] === node) {
+          letterRefs[index] = null;
+        }
+      },
+    };
+  }
+
+  function isMotionBlocked(): boolean {
+    return respectReducedMotion && reduceMotion;
+  }
 
   function applyRestState() {
-    offsets = Array.from({ length: letters.length }, () => 0);
+    for (const letterRef of letterRefs) {
+      if (!letterRef) continue;
+      letterRef.style.transform = "translate3d(0, 0px, 0)";
+      letterRef.style.willChange = "";
+    }
+  }
+
+  function clearStartTimer() {
+    if (startTimerId !== null) {
+      clearTimeout(startTimerId);
+      startTimerId = null;
+    }
   }
 
   function stopAnimation() {
+    clearStartTimer();
     if (rafId !== null) {
       cancelAnimationFrame(rafId);
       rafId = null;
     }
+    startMs = 0;
     applyRestState();
   }
 
   function frame(now: number) {
-    const blockedByMotionPref = respectReducedMotion && reduceMotion;
-    if (!mounted || !active || blockedByMotionPref) {
+    if (!mounted || !active || isMotionBlocked()) {
       stopAnimation();
       return;
     }
 
-    if (startMs === 0) startMs = now;
+    if (startMs === 0) startMs = now - startDelayMs;
     const t = (now - startMs) / 1000;
     const omega = speed * Math.PI * 2;
-    offsets = Array.from({ length: letters.length }, (_, i) =>
-      Math.sin((t * omega) + (i * phaseStep)) * amplitude
-    );
+    for (let i = 0; i < letterRefs.length; i += 1) {
+      const letterRef = letterRefs[i];
+      if (!letterRef) continue;
+      const offset = Math.sin((t * omega) + (phaseOffsets[i] ?? 0)) * amplitude;
+      letterRef.style.transform = `translate3d(0, ${offset}px, 0)`;
+    }
 
     rafId = requestAnimationFrame(frame);
   }
 
   function startAnimation() {
-    const blockedByMotionPref = respectReducedMotion && reduceMotion;
-    if (rafId !== null || !mounted || !active || blockedByMotionPref) return;
-    startMs = 0;
-    rafId = requestAnimationFrame(frame);
+    if (rafId !== null || startTimerId !== null || !mounted || !active || isMotionBlocked()) return;
+
+    const beginAnimation = () => {
+      if (!mounted || !active || isMotionBlocked()) {
+        applyRestState();
+        return;
+      }
+      for (const letterRef of letterRefs) {
+        if (!letterRef) continue;
+        letterRef.style.willChange = "transform";
+      }
+      startMs = 0;
+      rafId = requestAnimationFrame(frame);
+    };
+
+    if (startDelayMs > 0) {
+      startTimerId = window.setTimeout(() => {
+        startTimerId = null;
+        beginAnimation();
+      }, startDelayMs);
+      return;
+    }
+
+    beginAnimation();
   }
 
   function handleReduceMotionChange(e: MediaQueryListEvent) {
@@ -67,21 +120,32 @@
   }
 
   $effect(() => {
-    text;
-    offsets = Array.from({ length: Array.from(text).length }, () => 0);
+    letters;
+    phaseStep;
+    letterRefs.length = letters.length;
+    phaseOffsets = Array.from({ length: letters.length }, (_, i) => i * phaseStep);
   });
 
   $effect(() => {
     active;
     reduceMotion;
     respectReducedMotion;
+    startDelayMs;
     if (!mounted) return;
-    const blockedByMotionPref = respectReducedMotion && reduceMotion;
-    if (active && !blockedByMotionPref) {
+    if (active && !isMotionBlocked()) {
       startAnimation();
     } else {
       stopAnimation();
     }
+  });
+
+  $effect(() => {
+    text;
+    if (!mounted) return;
+    void tick().then(() => {
+      if (!mounted || rafId !== null || startTimerId !== null) return;
+      applyRestState();
+    });
   });
 
   onMount(() => {
@@ -95,8 +159,7 @@
         mediaQuery.addListener(handleReduceMotionChange);
       }
     }
-    const blockedByMotionPref = respectReducedMotion && reduceMotion;
-    if (active && !blockedByMotionPref) startAnimation();
+    if (active && !isMotionBlocked()) startAnimation();
   });
 
   onDestroy(() => {
@@ -115,7 +178,7 @@
   {#each letters as ch, i (i)}
     <span
       class="wave-char"
-      style={`transform: translateY(${(offsets[i] ?? 0).toFixed(2)}px);`}
+      use:captureLetter={i}
     >
       {ch === " " ? "\u00A0" : ch}
     </span>
@@ -144,7 +207,6 @@
 
   .wave-char {
     display: inline-block;
-    will-change: transform;
-    transform: translateY(0px);
+    transform: translate3d(0, 0px, 0);
   }
 </style>
