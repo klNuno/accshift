@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy } from "svelte";
   import type { PlatformAccount } from "../platform";
   import type { AccountWarningPresentation } from "../accountWarnings";
   import type { CardExtensionContent } from "$lib/shared/cardExtension";
@@ -68,6 +68,7 @@
   let marqueeMoveDurationMs = $state(0);
   let marqueeOffsetPx = $state(0);
   let marqueePauseTimer: ReturnType<typeof setTimeout> | null = null;
+  let overflowCheckFrame: number | null = null;
   let marqueeDirection = $state<"to-end" | "to-start">("to-end");
 
   const MARQUEE_SPEED_PX_PER_SEC = 42;
@@ -77,7 +78,6 @@
   const EXTENSION_VIEWPORT_GAP_PX = 12;
   const noteText = $derived(note.trim());
   const hasUsername = $derived(Boolean(showUsername && account.username.trim()));
-  const avatarSeed = $derived(getAvatarSeed(account.displayName, account.username, account.id));
   const hasRedWarning = $derived(warningInfo?.cardOutlineTone === "red");
   const hasOrangeWarning = $derived(warningInfo?.cardOutlineTone === "orange");
   const hasInlineNote = $derived(Boolean(showNoteInline && noteText));
@@ -85,21 +85,14 @@
   const isExtensionVisible = $derived(
     Boolean(hasExtension && !isDragged && !disableExtension && (forceExtensionOpen || (!disableHoverExtension && isHovered)))
   );
+  const avatarSeed = $derived(getAvatarSeed(account.displayName || "", account.username || "", account.id));
 
-  onMount(() => {
-    function onDocClick(e: MouseEvent) {
-      if (showConfirm && cardRef && !cardRef.contains(e.target as Node)) {
-        showConfirm = false;
-      }
+  onDestroy(() => {
+    clearMarqueePauseTimer();
+    if (overflowCheckFrame !== null) {
+      cancelAnimationFrame(overflowCheckFrame);
+      overflowCheckFrame = null;
     }
-    document.addEventListener("mousedown", onDocClick);
-    window.addEventListener("resize", checkOverflow);
-    checkOverflow();
-    return () => {
-      document.removeEventListener("mousedown", onDocClick);
-      window.removeEventListener("resize", checkOverflow);
-      clearMarqueePauseTimer();
-    };
   });
 
   function clearMarqueePauseTimer() {
@@ -112,6 +105,14 @@
     clearMarqueePauseTimer();
     marqueeOffsetPx = 0;
     marqueeDirection = "to-end";
+  }
+
+  function queueOverflowCheck() {
+    if (overflowCheckFrame !== null) cancelAnimationFrame(overflowCheckFrame);
+    overflowCheckFrame = requestAnimationFrame(() => {
+      overflowCheckFrame = null;
+      checkOverflow();
+    });
   }
 
   function stepMarquee() {
@@ -152,7 +153,7 @@
   function handleMouseEnter() {
     isHovered = true;
     updatePanelSide();
-    startMarquee();
+    queueOverflowCheck();
   }
 
   function handleMouseLeave() {
@@ -179,7 +180,14 @@
   $effect(() => {
     account.displayName;
     account.username;
-    setTimeout(checkOverflow, 0);
+    if (isHovered) {
+      queueOverflowCheck();
+      return;
+    }
+    isOverflowing = false;
+    marqueeShiftPx = 0;
+    marqueeMoveDurationMs = 0;
+    marqueeOffsetPx = 0;
   });
 
   $effect(() => {
@@ -190,6 +198,19 @@
     if (forceExtensionOpen) {
       updatePanelSide();
     }
+  });
+
+  $effect(() => {
+    if (!showConfirm || !cardRef || typeof document === "undefined") return;
+    function onDocClick(e: MouseEvent) {
+      if (cardRef && !cardRef.contains(e.target as Node)) {
+        showConfirm = false;
+      }
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+    };
   });
 
   function handleClick() {

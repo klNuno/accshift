@@ -1,7 +1,7 @@
 import { getSettings, ALL_PLATFORMS } from "$lib/features/settings/store";
 import type { AppSettings, PlatformDef, RuntimeOs } from "$lib/features/settings/types";
 import { getPlatform } from "$lib/shared/platform";
-import { getPlatformDefinition, registerBuiltinPlatforms } from "$lib/platforms/registry";
+import { getPlatformDefinition } from "$lib/platforms/registry";
 import { DEFAULT_LOCALE } from "$lib/i18n";
 
 export function isPlatformCompatibleWithOs(platform: PlatformDef | undefined, runtimeOs: RuntimeOs): boolean {
@@ -26,11 +26,10 @@ export function getInitialActiveTab(settings: AppSettings, runtimeOs: RuntimeOs)
 }
 
 export function createPlatformShellState() {
-  registerBuiltinPlatforms();
-
   const startupSettings = getSettings();
   let settings = $state(startupSettings);
   let runtimeOs = $state<RuntimeOs>("unknown");
+  let adapterEpoch = $state(0);
   let locale = $derived(settings.language ?? DEFAULT_LOCALE);
   let enabledPlatforms = $derived<PlatformDef[]>(
     ALL_PLATFORMS.filter((platform) => settings.enabledPlatforms.includes(platform.id))
@@ -57,7 +56,10 @@ export function createPlatformShellState() {
     if (Math.abs(zoom - 1) < 0.0001) return "";
     return `transform: scale(${zoom}); transform-origin: top left; width: calc(100% / ${zoom}); height: calc(100% / ${zoom});`;
   });
-  let adapter = $derived(activeTabUsable ? getPlatform(activeTab) : undefined);
+  let adapter = $derived.by(() => {
+    adapterEpoch;
+    return activeTabUsable ? getPlatform(activeTab) : undefined;
+  });
 
   function refreshSettings() {
     settings = getSettings();
@@ -69,6 +71,10 @@ export function createPlatformShellState() {
 
   function setActiveTab(next: string) {
     activeTab = next;
+  }
+
+  function adapterRegistryChanged() {
+    adapterEpoch += 1;
   }
 
   function ensureActiveTab(): boolean {
@@ -97,6 +103,7 @@ export function createPlatformShellState() {
     refreshSettings,
     setRuntimeOs,
     setActiveTab,
+    adapterRegistryChanged,
     ensureActiveTab,
   };
 }

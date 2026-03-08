@@ -62,14 +62,10 @@
 
   let hasOrangeWarning = $derived(Boolean(warningInfo?.listHasOrange));
   let hasUsername = $derived(Boolean(showUsername && account?.username.trim()));
-  let avatarSeed = $derived.by(() => {
-    if (!account) return "";
-    return getAvatarSeed(account.displayName, account.username, account.id);
-  });
-
   let banHoverMessage = $derived.by(() => {
     return warningInfo?.tooltipText || "";
   });
+  let avatarSeed = $derived(account ? getAvatarSeed(account.displayName || "", account.username || "", account.id) : "");
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->

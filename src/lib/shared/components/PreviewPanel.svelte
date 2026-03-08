@@ -2,7 +2,7 @@
   import type { PlatformAccount } from "../platform";
   import type { AccountWarningPresentation } from "../accountWarnings";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
-  import { getAvatarGradientStyle, getAvatarSeed } from "$lib/shared/avatarFallback";
+  import { getAvatarGradientStyle, getAvatarInitials, getAvatarSeed } from "$lib/shared/avatarFallback";
   import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
 
   let {
@@ -41,15 +41,11 @@
     warningInfo?: AccountWarningPresentation;
   } = $props();
 
-  function getInitials(name: string): string {
-    return name.slice(0, 2).toUpperCase();
-  }
-
   let hasUsername = $derived(Boolean(showUsername && account.username.trim()));
-  let avatarSeed = $derived(getAvatarSeed(account.displayName, account.username, account.id));
   let banWarnings = $derived.by(() => {
     return warningInfo?.chips ?? [];
   });
+  let avatarSeed = $derived(getAvatarSeed(account.displayName || "", account.username || "", account.id));
 </script>
 
 <div
@@ -66,7 +62,7 @@
     {:else if avatarUrl}
       <img src={avatarUrl} alt={account.displayName} />
     {:else}
-      <span class="initials">{getInitials(account.displayName || account.username)}</span>
+      <span class="initials">{getAvatarInitials(account.displayName || account.username)}</span>
     {/if}
   </div>
 

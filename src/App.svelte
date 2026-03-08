@@ -72,6 +72,7 @@
   type ConfirmDialogConfig = PlatformContextMenuConfirmConfig;
 
   const PIN_CODE_LENGTH = 4;
+  const PIN_FAILURE_DELAY_MS = 1200;
   const shell = createPlatformShellState();
   const startupPinLocked = Boolean(shell.settings.pinEnabled && isValidPinHash(shell.settings.pinHash || ""));
   const t = (key: MessageKey, params?: TranslationParams) => translate(shell.locale, key, params);
@@ -145,9 +146,11 @@
   let cardNoteVersion = $state(0);
   let isPinLocked = $state(startupPinLocked);
   let isPinUnlocking = $state(false);
+  let isPinRetryLocked = $state(false);
   let pinAttempt = $state("");
   let pinError = $state("");
   let pinInputRef = $state<HTMLInputElement | null>(null);
+  let pinRetryTimer: ReturnType<typeof setTimeout> | null = null;
   let afkListenersAttached = $state(false);
   let windowForeground = $derived(windowActivity.isForeground);
   let windowRenderable = $derived(windowActivity.isPageVisible && !windowActivity.isMinimized);
@@ -157,7 +160,7 @@
   );
   let inactivityEnabled = $derived(shell.settings.inactivityBlurSeconds > 0);
   let isObscured = $derived(
-    (inactivityEnabled && blur.isBlurred && isAccountSelectionView) || isPinLocked || isPinUnlocking
+    (inactivityEnabled && blur.isBlurred && isAccountSelectionView) || isPinLocked || isPinUnlocking || isPinRetryLocked
   );
   let afkOverlayVisible = $derived(
     inactivityEnabled
@@ -165,6 +168,7 @@
     && isAccountSelectionView
     && !isPinLocked
     && !isPinUnlocking
+    && !isPinRetryLocked
     && windowRenderable
     && !renderSuspended
   );
@@ -218,8 +222,6 @@
 
   // Toast state
   let toasts = $derived(getToasts());
-  const skeletonItems = Array.from({ length: 10 }, (_, i) => i);
-  const listSkeletonItems = Array.from({ length: 8 }, (_, i) => i);
 
   function queueGridPadding() {
     grid.queueCalculatePadding();
@@ -878,6 +880,7 @@
     const hasValidPinCode = isValidPinHash(shell.settings.pinHash || "");
     if (!shell.settings.pinEnabled || !hasValidPinCode) {
       isPinLocked = false;
+      isPinRetryLocked = false;
       pinAttempt = "";
       pinError = "";
     }
@@ -889,7 +892,7 @@
       pinAttempt = sanitizedAttempt;
       return;
     }
-    if (!isPinLocked || isPinUnlocking) return;
+    if (!isPinLocked || isPinUnlocking || isPinRetryLocked) return;
     if (sanitizedAttempt.length === PIN_CODE_LENGTH) {
       unlockWithPin();
     }
@@ -920,7 +923,7 @@
       return;
     }
     const attemptPin = sanitizePinDigits(pinAttempt);
-    if (attemptPin.length !== PIN_CODE_LENGTH) return;
+    if (attemptPin.length !== PIN_CODE_LENGTH || isPinRetryLocked) return;
     isPinUnlocking = true;
     pinError = "";
     const attemptHash = await hashPinCode(attemptPin);
@@ -930,9 +933,17 @@
     }
     if (attemptHash !== expectedPinHash) {
       isPinUnlocking = false;
+      isPinRetryLocked = true;
       pinError = t("pin.invalid");
       pinAttempt = "";
-      setTimeout(() => pinInputRef?.focus(), 0);
+      if (pinRetryTimer) {
+        clearTimeout(pinRetryTimer);
+      }
+      pinRetryTimer = setTimeout(() => {
+        pinRetryTimer = null;
+        isPinRetryLocked = false;
+        setTimeout(() => pinInputRef?.focus(), 0);
+      }, PIN_FAILURE_DELAY_MS);
       return;
     }
     pinAttempt = "";
@@ -993,6 +1004,7 @@
     blur.attachListeners();
     afkListenersAttached = true;
     if (isPinLocked) {
+      isPinRetryLocked = false;
       pinAttempt = "";
       pinError = "";
       setTimeout(() => pinInputRef?.focus(), 0);
@@ -1016,6 +1028,10 @@
     if (updateCheckTimer) {
       clearTimeout(updateCheckTimer);
       updateCheckTimer = null;
+    }
+    if (pinRetryTimer) {
+      clearTimeout(pinRetryTimer);
+      pinRetryTimer = null;
     }
     if (zoomPersistTimer) {
       clearTimeout(zoomPersistTimer);
@@ -1141,29 +1157,10 @@
       <div class="error-banner">{loader.error}</div>
     {/if}
 
-    {#if loader.loading && !pendingSetupAccount}
-      <div class:view-skeleton-list={viewMode === "list"} class:view-skeleton-grid={viewMode !== "list"}>
-        {#if viewMode === "list"}
-          {#each listSkeletonItems as item (item)}
-            <div class="list-skeleton-row">
-              <div class="list-skeleton-avatar shimmer"></div>
-              <div class="list-skeleton-texts">
-                <div class="list-skeleton-line shimmer"></div>
-                <div class="list-skeleton-line short shimmer"></div>
-              </div>
-            </div>
-          {/each}
-        {:else}
-          <div class="grid-skeleton" style="padding-left: {grid.paddingLeft}px;">
-            {#each skeletonItems as item (item)}
-              <div class="grid-skeleton-card">
-                <div class="grid-skeleton-avatar shimmer"></div>
-                <div class="grid-skeleton-line shimmer"></div>
-                <div class="grid-skeleton-line short shimmer"></div>
-              </div>
-            {/each}
-          </div>
-        {/if}
+    {#if loader.loading && renderedAccountCount === 0 && !pendingSetupAccount}
+      <div class="center-msg">
+        <div class="spinner" style="border-top-color: {accentColor};"></div>
+        <p class="text-sm">{t("app.loading")}</p>
       </div>
     {:else if renderedAccountCount === 0}
       <div class="center-msg">
@@ -1411,7 +1408,7 @@
         </span>
       </div>
 
-      {#if isPinLocked || isPinUnlocking}
+      {#if isPinLocked || isPinUnlocking || isPinRetryLocked}
         <div class="pin-lock-overlay" class:unlocking={isPinUnlocking}>
           <div class="pin-card">
             <h3>{t("pin.lockedTitle")}</h3>
@@ -1426,6 +1423,7 @@
               inputmode="numeric"
               pattern="[0-9]*"
               autocomplete="one-time-code"
+              disabled={isPinUnlocking || isPinRetryLocked}
             />
             {#if pinError}
               <span class="pin-error">{pinError}</span>
@@ -1647,115 +1645,6 @@
     justify-content: center;
     padding: 48px 0;
     color: var(--fg-muted);
-  }
-
-  .view-skeleton-list,
-  .view-skeleton-grid {
-    flex: 1;
-    min-height: 0;
-  }
-
-  .list-skeleton-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    height: 45px;
-    padding: 0 10px;
-    border-radius: 6px;
-    margin-bottom: 2px;
-  }
-
-  .list-skeleton-avatar,
-  .grid-skeleton-avatar {
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--bg-card-hover) 86%, var(--bg-muted));
-    flex-shrink: 0;
-  }
-
-  .list-skeleton-avatar {
-    width: 32px;
-    height: 32px;
-  }
-
-  .list-skeleton-texts {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    min-width: 0;
-    flex: 1;
-  }
-
-  .list-skeleton-line,
-  .grid-skeleton-line {
-    height: 10px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--bg-card-hover) 82%, var(--bg-elevated));
-  }
-
-  .list-skeleton-line {
-    width: min(180px, 38%);
-  }
-
-  .list-skeleton-line.short {
-    width: min(120px, 24%);
-  }
-
-  .grid-skeleton {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-
-  .grid-skeleton-card {
-    width: var(--grid-card-width);
-    min-height: var(--grid-card-min-height);
-    padding: var(--grid-card-padding);
-    border-radius: var(--grid-card-radius);
-    box-sizing: border-box;
-    background: color-mix(in srgb, var(--bg-card) 92%, transparent);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-  }
-
-  .grid-skeleton-avatar {
-    width: var(--grid-card-avatar-size);
-    height: var(--grid-card-avatar-size);
-    margin-bottom: 8px;
-  }
-
-  .grid-skeleton-line {
-    width: 78%;
-    margin-top: 2px;
-  }
-
-  .grid-skeleton-line.short {
-    width: 56%;
-  }
-
-  .shimmer {
-    position: relative;
-    overflow: hidden;
-  }
-
-  .shimmer::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    transform: translateX(-100%);
-    background: linear-gradient(
-      90deg,
-      transparent 0%,
-      color-mix(in srgb, var(--fg) 8%, transparent) 48%,
-      transparent 100%
-    );
-    animation: shimmer-slide 1.15s ease-in-out infinite;
-  }
-
-  @keyframes shimmer-slide {
-    to {
-      transform: translateX(100%);
-    }
   }
 
   .switching-overlay {
