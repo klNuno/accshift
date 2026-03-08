@@ -31,6 +31,10 @@ pub fn steam_process_name() -> &'static str {
     imp::steam_process_name()
 }
 
+pub fn steam_web_helper_process_name() -> &'static str {
+    imp::steam_web_helper_process_name()
+}
+
 pub fn get_auto_login_user() -> Result<String, AppError> {
     imp::get_auto_login_user()
 }

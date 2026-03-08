@@ -9,7 +9,6 @@ use tauri::Manager;
 const LOG_DIR_NAME: &str = "logs";
 const LOG_FILE_NAME: &str = "app.log";
 const PREVIOUS_LOG_FILE_NAME: &str = "app.previous.log";
-const MAX_LOG_FILE_BYTES: u64 = 1_024 * 1_024;
 const MAX_MESSAGE_BYTES: usize = 512;
 const MAX_DETAILS_BYTES: usize = 16_384;
 
@@ -35,27 +34,8 @@ fn ensure_log_parent(path: &Path) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| "Log file path has no parent directory".to_string())?;
-    fs::create_dir_all(parent).map_err(|reason| format!("Could not create log directory: {reason}"))?;
-    Ok(())
-}
-
-fn rotate_log_if_needed(path: &Path) -> Result<(), String> {
-    let metadata = match fs::metadata(path) {
-        Ok(metadata) => metadata,
-        Err(_) => return Ok(()),
-    };
-
-    if metadata.len() < MAX_LOG_FILE_BYTES {
-        return Ok(());
-    }
-
-    let previous_path = path.with_file_name(PREVIOUS_LOG_FILE_NAME);
-    if previous_path.exists() {
-        let _ = fs::remove_file(&previous_path);
-    }
-
-    fs::rename(path, &previous_path)
-        .map_err(|reason| format!("Could not rotate log file {}: {reason}", path.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|reason| format!("Could not create log directory: {reason}"))?;
     Ok(())
 }
 
@@ -75,6 +55,44 @@ pub fn log_file_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(base_dir.join(LOG_DIR_NAME).join(LOG_FILE_NAME))
 }
 
+fn previous_log_file_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let current_path = log_file_path(app_handle)?;
+    Ok(current_path.with_file_name(PREVIOUS_LOG_FILE_NAME))
+}
+
+pub fn begin_log_session(app_handle: &tauri::AppHandle) -> Result<(), String> {
+    let _guard = log_lock()
+        .lock()
+        .map_err(|_| "Log file lock is poisoned".to_string())?;
+
+    let current_path = log_file_path(app_handle)?;
+    ensure_log_parent(&current_path)?;
+
+    let previous_path = previous_log_file_path(app_handle)?;
+    if previous_path.exists() {
+        let _ = fs::remove_file(&previous_path);
+    }
+
+    if current_path.exists() {
+        fs::rename(&current_path, &previous_path).map_err(|reason| {
+            format!(
+                "Could not move current log {} to previous log {}: {reason}",
+                current_path.display(),
+                previous_path.display()
+            )
+        })?;
+    }
+
+    fs::write(&current_path, "").map_err(|reason| {
+        format!(
+            "Could not initialize log file {}: {reason}",
+            current_path.display()
+        )
+    })?;
+
+    Ok(())
+}
+
 pub fn append_app_log(
     app_handle: &tauri::AppHandle,
     level: &str,
@@ -88,7 +106,6 @@ pub fn append_app_log(
 
     let path = log_file_path(app_handle)?;
     ensure_log_parent(&path)?;
-    rotate_log_if_needed(&path)?;
 
     let record = serde_json::json!({
         "tsMs": now_unix_ms(),
@@ -115,7 +132,14 @@ pub fn install_panic_hook(app_handle: tauri::AppHandle) {
     std::panic::set_hook(Box::new(move |panic_info| {
         let location = panic_info
             .location()
-            .map(|location| format!("{}:{}:{}", location.file(), location.line(), location.column()))
+            .map(|location| {
+                format!(
+                    "{}:{}:{}",
+                    location.file(),
+                    location.line(),
+                    location.column()
+                )
+            })
             .unwrap_or_else(|| "unknown".to_string());
 
         let payload = if let Some(payload) = panic_info.payload().downcast_ref::<&str>() {

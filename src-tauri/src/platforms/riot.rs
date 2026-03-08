@@ -1,4 +1,5 @@
 use crate::config::{self, RiotProfileConfig};
+use crate::fs_utils;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::ffi::OsStr;
@@ -27,10 +28,7 @@ const RIOT_CLIENT_PROCESS_NAMES: &[&str] = &[
     "LeagueClientUxRender.exe",
 ];
 
-const RIOT_GAME_PROCESS_NAMES: &[&str] = &[
-    "LeagueofLegends.exe",
-    "VALORANT-Win64-Shipping.exe",
-];
+const RIOT_GAME_PROCESS_NAMES: &[&str] = &["LeagueofLegends.exe", "VALORANT-Win64-Shipping.exe"];
 
 #[derive(Clone, Copy)]
 enum RiotPathBase {
@@ -350,52 +348,6 @@ fn remove_path_if_exists(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn should_ignore_name(name: &str, ignored_names: &[&str]) -> bool {
-    ignored_names
-        .iter()
-        .any(|ignored| ignored.eq_ignore_ascii_case(name))
-}
-
-fn copy_dir_recursive(source: &Path, target: &Path, ignored_names: &[&str]) -> Result<(), String> {
-    if !source.exists() {
-        return Ok(());
-    }
-    fs::create_dir_all(target)
-        .map_err(|e| format!("Could not create directory {}: {e}", target.display()))?;
-    for entry in fs::read_dir(source)
-        .map_err(|e| format!("Could not read directory {}: {e}", source.display()))?
-    {
-        let entry = entry.map_err(|e| format!("Could not read directory entry: {e}"))?;
-        let src_path = entry.path();
-        let file_name = entry.file_name();
-        let file_name = file_name.to_string_lossy();
-        if should_ignore_name(&file_name, ignored_names) {
-            continue;
-        }
-        let dst_path = target.join(file_name.as_ref());
-        if src_path.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path, ignored_names)?;
-        } else {
-            fs::copy(&src_path, &dst_path)
-                .map_err(|e| format!("Could not copy file {}: {e}", src_path.display()))?;
-        }
-    }
-    Ok(())
-}
-
-fn copy_optional_file(source: &Path, target: &Path) -> Result<(), String> {
-    if !source.exists() {
-        return Ok(());
-    }
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-    }
-    fs::copy(source, target)
-        .map_err(|e| format!("Could not copy file {}: {e}", source.display()))?;
-    Ok(())
-}
-
 fn directory_has_entries(path: &Path, ignored_names: &[&str]) -> Result<bool, String> {
     if !path.exists() || !path.is_dir() {
         return Ok(false);
@@ -407,7 +359,10 @@ fn directory_has_entries(path: &Path, ignored_names: &[&str]) -> Result<bool, St
         let entry = entry.map_err(|e| format!("Could not read directory entry: {e}"))?;
         let file_name = entry.file_name();
         let file_name = file_name.to_string_lossy();
-        if should_ignore_name(&file_name, ignored_names) {
+        if ignored_names
+            .iter()
+            .any(|ignored| ignored.eq_ignore_ascii_case(&file_name))
+        {
             continue;
         }
         return Ok(true);
@@ -678,13 +633,13 @@ fn backup_live_snapshot(app_handle: &tauri::AppHandle, profile_id: &str) -> Resu
         match item.kind {
             RiotSnapshotKind::Directory => {
                 if source_path.exists() {
-                    copy_dir_recursive(&source_path, &target_path, item.ignored_names)?;
+                    fs_utils::copy_dir_recursive(&source_path, &target_path, item.ignored_names)?;
                     captured_any = true;
                 }
             }
             RiotSnapshotKind::File => {
                 if source_path.exists() {
-                    copy_optional_file(&source_path, &target_path)?;
+                    fs_utils::copy_optional_file(&source_path, &target_path)?;
                     captured_any = true;
                 } else if !item.optional {
                     return Err(format!(
@@ -754,12 +709,12 @@ fn restore_live_snapshot(app_handle: &tauri::AppHandle, profile_id: &str) -> Res
         match item.kind {
             RiotSnapshotKind::Directory => {
                 if source_path.exists() {
-                    copy_dir_recursive(&source_path, &target_path, item.ignored_names)?;
+                    fs_utils::copy_dir_recursive(&source_path, &target_path, item.ignored_names)?;
                 }
             }
             RiotSnapshotKind::File => {
                 if source_path.exists() {
-                    copy_optional_file(&source_path, &target_path)?;
+                    fs_utils::copy_optional_file(&source_path, &target_path)?;
                 } else if !item.optional {
                     return Ok(false);
                 }
@@ -820,7 +775,10 @@ fn cleanup_expired_pending_profiles(
         .profiles
         .retain(|profile| !expired_ids.iter().any(|id| id == &profile.id));
 
-    if expired_ids.iter().any(|id| id == &cfg.riot.current_profile_id) {
+    if expired_ids
+        .iter()
+        .any(|id| id == &cfg.riot.current_profile_id)
+    {
         cfg.riot.current_profile_id = cfg
             .riot
             .profiles

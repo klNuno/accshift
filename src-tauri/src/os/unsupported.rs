@@ -27,6 +27,10 @@ pub fn steam_process_name() -> &'static str {
     "steam"
 }
 
+pub fn steam_web_helper_process_name() -> &'static str {
+    "steamwebhelper"
+}
+
 pub fn get_auto_login_user() -> Result<String, AppError> {
     Err(unsupported("Steam auto-login lookup"))
 }
