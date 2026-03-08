@@ -1,5 +1,6 @@
 export interface BattleNetAccount {
   email: string;
+  battleTag?: string;
   lastLoginAt?: number | null;
 }
 

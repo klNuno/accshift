@@ -54,6 +54,8 @@ pub struct BattleNetConfig {
 pub struct BattleNetAccountConfig {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub email: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub battle_tag: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_used_at: Option<u64>,
 }

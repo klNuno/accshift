@@ -32,6 +32,7 @@ fn main() {
             .title("Accshift")
             .inner_size(start_width, start_height)
             .min_inner_size(400.0, 300.0)
+            .background_color(tauri::webview::Color(9, 9, 11, 255))
             .center()
             .decorations(false)
             .resizable(true)
@@ -100,6 +101,9 @@ fn main() {
             commands::capture_riot_profile,
             commands::switch_riot_profile,
             commands::forget_riot_profile,
+            commands::get_riot_path,
+            commands::set_riot_path,
+            commands::select_riot_path,
             commands::get_battle_net_accounts,
             commands::get_battle_net_startup_snapshot,
             commands::get_current_battle_net_account,
@@ -108,6 +112,9 @@ fn main() {
             commands::get_battle_net_account_setup_status,
             commands::cancel_battle_net_account_setup,
             commands::forget_battle_net_account,
+            commands::get_battle_net_path,
+            commands::set_battle_net_path,
+            commands::select_battle_net_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

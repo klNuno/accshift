@@ -394,6 +394,75 @@ fn copy_optional_file(source: &Path, target: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn directory_has_entries(path: &Path, ignored_names: &[&str]) -> Result<bool, String> {
+    if !path.exists() || !path.is_dir() {
+        return Ok(false);
+    }
+
+    for entry in fs::read_dir(path)
+        .map_err(|e| format!("Could not read directory {}: {e}", path.display()))?
+    {
+        let entry = entry.map_err(|e| format!("Could not read directory entry: {e}"))?;
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        if should_ignore_name(&file_name, ignored_names) {
+            continue;
+        }
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
+fn riot_setup_capture_ready(app_handle: &tauri::AppHandle) -> Result<bool, String> {
+    let install_dir = resolve_riot_client_path(app_handle)
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf));
+
+    let required_settings = live_path_for(&RIOT_SNAPSHOT_ITEMS[0], install_dir.as_deref())?
+        .ok_or_else(|| "Could not resolve Riot settings path".to_string())?;
+    if !required_settings.exists() {
+        return Ok(false);
+    }
+
+    let settings_metadata = fs::metadata(&required_settings).map_err(|e| {
+        format!(
+            "Could not read Riot settings metadata {}: {e}",
+            required_settings.display()
+        )
+    })?;
+    if settings_metadata.len() == 0 {
+        return Ok(false);
+    }
+
+    let sessions_path = live_path_for(&RIOT_SNAPSHOT_ITEMS[2], install_dir.as_deref())?
+        .ok_or_else(|| "Could not resolve Riot sessions path".to_string())?;
+    let config_path = live_path_for(&RIOT_SNAPSHOT_ITEMS[3], install_dir.as_deref())?
+        .ok_or_else(|| "Could not resolve Riot config path".to_string())?;
+
+    let has_sessions = directory_has_entries(&sessions_path, &[])?;
+    let has_config = directory_has_entries(&config_path, &["lockfile"])?;
+
+    Ok(has_sessions || has_config)
+}
+
+fn wait_for_riot_setup_capture_ready(
+    app_handle: &tauri::AppHandle,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+) -> Result<bool, String> {
+    let max_attempts = std::cmp::max(1, timeout_ms / poll_interval_ms);
+    for attempt in 0..max_attempts {
+        if riot_setup_capture_ready(app_handle)? {
+            return Ok(true);
+        }
+        if attempt + 1 < max_attempts {
+            thread::sleep(std::time::Duration::from_millis(poll_interval_ms));
+        }
+    }
+    Ok(false)
+}
+
 fn snapshot_has_settings(snapshot_dir: &Path) -> bool {
     snapshot_dir.join("RiotGamesPrivateSettings.yaml").exists()
 }
@@ -876,6 +945,19 @@ fn get_profile_setup_status_internal(
 
     if login_status.phase.eq_ignore_ascii_case("logged_in") && login_status.persist {
         if let Some(identity) = identity.as_ref() {
+            let capture_ready =
+                wait_for_riot_setup_capture_ready(app_handle, 1800, 300).unwrap_or(false);
+            if !capture_ready {
+                let _ = config::save_config(app_handle, cfg);
+                let updated = cfg
+                    .riot
+                    .profiles
+                    .iter()
+                    .find(|entry| entry.id == profile_id)
+                    .cloned()
+                    .unwrap_or(profile);
+                return Ok(make_setup_status(&updated, "waiting_for_login", ""));
+            }
             if let Some(target) = cfg
                 .riot
                 .profiles
@@ -1135,4 +1217,26 @@ pub fn forget_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
     }
 
     Ok(())
+}
+
+pub fn get_riot_path(app_handle: tauri::AppHandle) -> Result<String, String> {
+    let cfg = config::load_config(&app_handle);
+    if !cfg.riot.path_override.trim().is_empty() {
+        return Ok(cfg.riot.path_override);
+    }
+    resolve_riot_client_path(&app_handle).map(|path| path.to_string_lossy().to_string())
+}
+
+pub fn set_riot_path(app_handle: tauri::AppHandle, path: String) -> Result<(), String> {
+    let mut cfg = config::load_config(&app_handle);
+    cfg.riot.path_override = path.trim().to_string();
+    config::save_config(&app_handle, &cfg)
+}
+
+pub fn select_riot_path() -> Result<String, String> {
+    os::select_file(
+        "Select Riot Client executable",
+        "Executable files (*.exe)|*.exe|All files (*.*)|*.*",
+    )
+    .map_err(|e| e.to_string())
 }

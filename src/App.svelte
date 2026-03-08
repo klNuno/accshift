@@ -62,6 +62,7 @@
     getInitialActiveTab,
     isPlatformUsable,
   } from "$lib/app/platformShell.svelte";
+  import { ensurePlatformLoaded } from "$lib/platforms/registry";
   import {
     createFolderNavigation,
     type AppHistoryEntry,
@@ -198,6 +199,7 @@
   let updateVersion = $state("");
   let pendingUpdate = $state<PendingUpdate | null>(null);
   let appVersion = $state("");
+  let loadingAdapterFor = $state<string | null>(null);
 
   function semverCore(version: string): string {
     const match = version.match(/\d+\.\d+\.\d+/);
@@ -212,9 +214,36 @@
   );
   let updateCtaDisabled = $derived(updateState === "applying");
   let afkVersionLabel = $derived(afkOverlayVisible && appVersion ? appVersion : null);
+  let adapterLoading = $derived(loadingAdapterFor === shell.activeTab && !adapter);
 
   // Toast state
   let toasts = $derived(getToasts());
+  const skeletonItems = Array.from({ length: 10 }, (_, i) => i);
+  const listSkeletonItems = Array.from({ length: 8 }, (_, i) => i);
+
+  function queueGridPadding() {
+    grid.queueCalculatePadding();
+  }
+
+  async function ensureAdapterReady(platformId: string) {
+    const existing = getPlatform(platformId);
+    if (existing) return existing;
+    const affectsVisibleUi = platformId === shell.activeTab;
+    if (affectsVisibleUi) {
+      loadingAdapterFor = platformId;
+    }
+    try {
+      const loaded = await ensurePlatformLoaded(platformId);
+      if (loaded) {
+        shell.adapterRegistryChanged();
+      }
+      return loaded;
+    } finally {
+      if (loadingAdapterFor === platformId) {
+        loadingAdapterFor = null;
+      }
+    }
+  }
 
 
   // Layout mode
@@ -222,7 +251,7 @@
   function handleViewModeChange(mode: ViewMode) {
     viewMode = mode;
     setViewMode(mode);
-    if (mode === "grid") setTimeout(grid.calculatePadding, 0);
+    if (mode === "grid") queueGridPadding();
   }
 
   // Drag-and-drop manager
@@ -427,18 +456,33 @@
     };
   }
 
-  function getAccountExtensionContent(account: PlatformAccount): CardExtensionContent | null {
-    const setupContent = addFlow.getSetupExtensionContent(account.id);
-    if (setupContent) return setupContent;
+  let accountExtensionContentById = $derived.by(() => {
+    locale;
+    cardNoteVersion;
+    settings.accountDisplay.showCardNotesInline;
+    const pending = addFlow.pendingSetupAccount;
+    const accountIds = new Set(loader.accounts.map((account) => account.id));
+    if (pending) accountIds.add(pending.id);
 
-    const sections: CardExtensionContent["sections"] = [];
-    const warningSection = createWarningExtensionSection(account.id);
-    const noteSection = createNoteExtensionSection(account.id);
-    if (warningSection) sections.push(warningSection);
-    if (noteSection) sections.push(noteSection);
+    const contentById: Record<string, CardExtensionContent | null> = {};
+    for (const accountId of accountIds) {
+      const setupContent = addFlow.getSetupExtensionContent(accountId);
+      if (setupContent) {
+        contentById[accountId] = setupContent;
+        continue;
+      }
 
-    return sections.length > 0 ? { sections } : null;
-  }
+      const sections: CardExtensionContent["sections"] = [];
+      const warningSection = createWarningExtensionSection(accountId);
+      const noteSection = createNoteExtensionSection(accountId);
+      if (warningSection) sections.push(warningSection);
+      if (noteSection) sections.push(noteSection);
+
+      contentById[accountId] = sections.length > 0 ? { sections } : null;
+    }
+
+    return contentById;
+  });
 
   function isAccountExtensionForcedOpen(accountId: string): boolean {
     return addFlow.isForcedOpen(accountId);
@@ -469,36 +513,27 @@
     return settingsLoadPromise;
   }
 
-  function scheduleIdle(task: () => void) {
-    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-      const requestIdle = (
-        window as Window & {
-          requestIdleCallback: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
-        }
-      ).requestIdleCallback;
-      requestIdle(() => task(), { timeout: 1200 });
-      return;
-    }
-    setTimeout(task, 600);
-  }
-
-  function loadAccounts(
+  async function loadAccounts(
     silent = false,
     showRefreshedToast = false,
     forceRefresh = false,
     checkBans = false,
     deferBackground = true,
   ) {
-    loader.load(() => {
+    if (!isPlatformUsable(shell.activeTab, shell.runtimeOs)) return;
+    const adapterReady = await ensureAdapterReady(shell.activeTab);
+    if (!adapterReady) return;
+    return loader.load(() => {
       syncAccounts(loader.accounts.map(a => a.id), shell.activeTab);
       navigation.refreshCurrentItems();
-      setTimeout(grid.calculatePadding, 0);
+      queueGridPadding();
     }, silent, showRefreshedToast, forceRefresh, checkBans, deferBackground);
   }
 
   async function handleAddAccount() {
-    if (!shell.adapter) return;
-    const platformId = shell.adapter.id;
+    const adapterReady = await ensureAdapterReady(shell.activeTab);
+    if (!adapterReady) return;
+    const platformId = adapterReady.id;
     const result = await loader.addNew();
     if (result?.setupStatus) {
       addFlow.start(platformId, result.setupStatus);
@@ -506,7 +541,7 @@
   }
 
   async function refreshAvatarsNow() {
-    const steamAdapter = getPlatform("steam");
+    const steamAdapter = await ensureAdapterReady("steam");
     if (!steamAdapter?.getProfileInfo) return;
     try {
       const steamAccounts = await steamAdapter.loadAccounts();
@@ -528,7 +563,7 @@
   }
 
   async function refreshBansNow() {
-    const steamAdapter = getPlatform("steam");
+    const steamAdapter = await ensureAdapterReady("steam");
     if (!steamAdapter?.loadWarningStates) return;
     try {
       const steamAccounts = await steamAdapter.loadAccounts();
@@ -580,11 +615,11 @@
       blur.start();
       if (!afkListenersAttached) { blur.attachListeners(); afkListenersAttached = true; }
     }
-    if (tabChanged && isPlatformUsable(entry.tab, shell.runtimeOs) && getPlatform(entry.tab)) {
+    if (tabChanged && isPlatformUsable(entry.tab, shell.runtimeOs)) {
       loadAccounts(true);
     } else {
       navigation.refreshCurrentItems();
-      setTimeout(grid.calculatePadding, 0);
+      queueGridPadding();
     }
     navigation.searchQuery = "";
   }
@@ -607,7 +642,7 @@
     showSettings = false;
     navigation.refreshCurrentItems();
     navigation.searchQuery = "";
-    setTimeout(grid.calculatePadding, 0);
+    queueGridPadding();
   }
 
   async function navigateTo(folderId: string | null, options: { trackHistory?: boolean } = {}) {
@@ -617,7 +652,7 @@
     navigation.currentFolderId = folderId;
     showSettings = false;
     navigation.refreshCurrentItems();
-    setTimeout(grid.calculatePadding, 0);
+    queueGridPadding();
   }
 
   async function handleTabChange(tab: string) {
@@ -627,7 +662,7 @@
     shell.setActiveTab(tab);
     navigation.currentFolderId = null;
     showSettings = false;
-    if (isPlatformUsable(tab, shell.runtimeOs) && getPlatform(tab)) { loadAccounts(true); } else { navigation.refreshCurrentItems(); setTimeout(grid.calculatePadding, 0); }
+    if (isPlatformUsable(tab, shell.runtimeOs)) { loadAccounts(true); } else { navigation.refreshCurrentItems(); queueGridPadding(); }
     navigation.searchQuery = "";
   }
 
@@ -735,7 +770,7 @@
     }
     navigation.currentFolderId = null;
     history.replaceState({ tab: shell.activeTab, folderId: null, showSettings: false }, "");
-    if (isPlatformUsable(shell.activeTab, shell.runtimeOs) && getPlatform(shell.activeTab)) { loadAccounts(); } else { navigation.refreshCurrentItems(); }
+    if (isPlatformUsable(shell.activeTab, shell.runtimeOs)) { loadAccounts(); } else { navigation.refreshCurrentItems(); }
   }
 
   function handleSettingsClose() {
@@ -836,7 +871,7 @@
 
   $effect(() => {
     shell.settings.uiScalePercent;
-    setTimeout(grid.calculatePadding, 0);
+    queueGridPadding();
   });
 
   $effect(() => {
@@ -909,14 +944,23 @@
   }
 
   async function initializeAppShell() {
-    const [runtimeOsResult, versionResult] = await Promise.allSettled([
-      invoke<string>("get_runtime_os"),
-      getVersion(),
-    ]);
+    const versionTask = getVersion()
+      .then((version) => {
+        appVersion = semverCore(version);
+      })
+      .catch((reason) => {
+        console.error("Failed to read app version:", reason);
+      });
 
-    const normalizedOs: RuntimeOs = runtimeOsResult.status === "fulfilled"
-      && (runtimeOsResult.value === "windows" || runtimeOsResult.value === "linux" || runtimeOsResult.value === "macos")
-      ? runtimeOsResult.value
+    const runtimeOsResult = await invoke<string>("get_runtime_os")
+      .catch((reason) => {
+        console.error("Failed to read runtime OS:", reason);
+        return "unknown";
+      });
+
+    const normalizedOs: RuntimeOs =
+      (runtimeOsResult === "windows" || runtimeOsResult === "linux" || runtimeOsResult === "macos")
+      ? runtimeOsResult
       : "unknown";
 
     shell.setRuntimeOs(normalizedOs);
@@ -925,24 +969,25 @@
       shell.setActiveTab(nextTab);
     }
 
-    if (versionResult.status === "fulfilled") {
-      appVersion = semverCore(versionResult.value);
-    } else {
-      console.error("Failed to read app version:", versionResult.reason);
-    }
-
-    if (isPlatformUsable(shell.activeTab, shell.runtimeOs) && getPlatform(shell.activeTab)) {
-      loadAccounts(false, false, false, false, true);
+    if (isPlatformUsable(shell.activeTab, shell.runtimeOs)) {
+      await loadAccounts(false, false, false, false, true);
     } else {
       navigation.refreshCurrentItems();
+      queueGridPadding();
     }
+
+    void versionTask;
   }
 
   onMount(() => {
-    void initializeAppShell();
+    void initializeAppShell()
+      .finally(() => {
+        requestAnimationFrame(() => {
+          window.dispatchEvent(new CustomEvent("accshift:boot-ready"));
+        });
+      });
     void windowActivity.start();
 
-    scheduleIdle(() => { void loadSettingsComponent(); });
     updateCheckTimer = setTimeout(() => { void startBackgroundUpdateFlow(); }, 3500);
     blur.start();
     blur.attachListeners();
@@ -1018,8 +1063,8 @@
       onTabChange={handleTabChange}
       {enabledPlatforms}
       {unavailablePlatformIds}
-      canRefresh={activeTabUsable}
-      canAddAccount={activeTabUsable}
+      canRefresh={activeTabUsable && !adapterLoading}
+      canAddAccount={activeTabUsable && !adapterLoading}
       {locale}
     />
     <div
@@ -1058,6 +1103,13 @@
       <p class="text-sm mt-1 opacity-70">{t("app.noCompatiblePlatformsHint")}</p>
     </div>
   </main>
+{:else if activeTabUsable && (adapterLoading || !adapter)}
+  <main class="content">
+    <div class="center-msg">
+      <div class="spinner" style="border-top-color: {accentColor};"></div>
+      <p class="text-sm">{t("app.loading")}</p>
+    </div>
+  </main>
 {:else if adapter}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <main
@@ -1090,9 +1142,28 @@
     {/if}
 
     {#if loader.loading && !pendingSetupAccount}
-      <div class="center-msg">
-        <div class="spinner" style="border-top-color: {accentColor};"></div>
-        <p class="text-sm">{t("app.loading")}</p>
+      <div class:view-skeleton-list={viewMode === "list"} class:view-skeleton-grid={viewMode !== "list"}>
+        {#if viewMode === "list"}
+          {#each listSkeletonItems as item (item)}
+            <div class="list-skeleton-row">
+              <div class="list-skeleton-avatar shimmer"></div>
+              <div class="list-skeleton-texts">
+                <div class="list-skeleton-line shimmer"></div>
+                <div class="list-skeleton-line short shimmer"></div>
+              </div>
+            </div>
+          {/each}
+        {:else}
+          <div class="grid-skeleton" style="padding-left: {grid.paddingLeft}px;">
+            {#each skeletonItems as item (item)}
+              <div class="grid-skeleton-card">
+                <div class="grid-skeleton-avatar shimmer"></div>
+                <div class="grid-skeleton-line shimmer"></div>
+                <div class="grid-skeleton-line short shimmer"></div>
+              </div>
+            {/each}
+          </div>
+        {/if}
       </div>
     {:else if renderedAccountCount === 0}
       <div class="center-msg">
@@ -1225,7 +1296,7 @@
                   isRefreshingAvatar={avatarState?.refreshing ?? false}
                   isDragged={drag.dragItem?.type === "account" && drag.dragItem?.id === account.id}
                   warningInfo={isPendingSetupAccount(account.id) ? undefined : loader.warningStates[account.id]}
-                  extensionContent={getAccountExtensionContent(account)}
+                  extensionContent={accountExtensionContentById[account.id] ?? null}
                   forceExtensionOpen={isAccountExtensionForcedOpen(account.id)}
                   disableExtension={drag.isDragging}
                   disableHoverExtension={Boolean(platformAddFlow && platformAddFlow.status.setupId !== account.id)}
@@ -1576,6 +1647,115 @@
     justify-content: center;
     padding: 48px 0;
     color: var(--fg-muted);
+  }
+
+  .view-skeleton-list,
+  .view-skeleton-grid {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .list-skeleton-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 45px;
+    padding: 0 10px;
+    border-radius: 6px;
+    margin-bottom: 2px;
+  }
+
+  .list-skeleton-avatar,
+  .grid-skeleton-avatar {
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--bg-card-hover) 86%, var(--bg-muted));
+    flex-shrink: 0;
+  }
+
+  .list-skeleton-avatar {
+    width: 32px;
+    height: 32px;
+  }
+
+  .list-skeleton-texts {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .list-skeleton-line,
+  .grid-skeleton-line {
+    height: 10px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--bg-card-hover) 82%, var(--bg-elevated));
+  }
+
+  .list-skeleton-line {
+    width: min(180px, 38%);
+  }
+
+  .list-skeleton-line.short {
+    width: min(120px, 24%);
+  }
+
+  .grid-skeleton {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .grid-skeleton-card {
+    width: var(--grid-card-width);
+    min-height: var(--grid-card-min-height);
+    padding: var(--grid-card-padding);
+    border-radius: var(--grid-card-radius);
+    box-sizing: border-box;
+    background: color-mix(in srgb, var(--bg-card) 92%, transparent);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .grid-skeleton-avatar {
+    width: var(--grid-card-avatar-size);
+    height: var(--grid-card-avatar-size);
+    margin-bottom: 8px;
+  }
+
+  .grid-skeleton-line {
+    width: 78%;
+    margin-top: 2px;
+  }
+
+  .grid-skeleton-line.short {
+    width: 56%;
+  }
+
+  .shimmer {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in srgb, var(--fg) 8%, transparent) 48%,
+      transparent 100%
+    );
+    animation: shimmer-slide 1.15s ease-in-out infinite;
+  }
+
+  @keyframes shimmer-slide {
+    to {
+      transform: translateX(100%);
+    }
   }
 
   .switching-overlay {

@@ -1,8 +1,6 @@
 import type { PlatformDef } from "$lib/features/settings/types";
 import { getPlatform, registerPlatform } from "$lib/shared/platform";
-import { battleNetAdapter } from "./battle-net/adapter";
-import { riotAdapter } from "./riot/adapter";
-import { steamAdapter } from "./steam/adapter";
+import type { PlatformAdapter } from "$lib/shared/platform";
 
 export const PLATFORM_DEFS: PlatformDef[] = [
   {
@@ -28,17 +26,39 @@ export const PLATFORM_DEFS: PlatformDef[] = [
   },
 ];
 
-const BUILTIN_ADAPTERS = [steamAdapter, riotAdapter, battleNetAdapter];
-let registered = false;
+const PLATFORM_LOADERS: Record<string, () => Promise<PlatformAdapter>> = {
+  steam: () => import("./steam/adapter").then((mod) => mod.steamAdapter),
+  riot: () => import("./riot/adapter").then((mod) => mod.riotAdapter),
+  "battle-net": () => import("./battle-net/adapter").then((mod) => mod.battleNetAdapter),
+};
 
-export function registerBuiltinPlatforms() {
-  if (registered) return;
-  for (const adapter of BUILTIN_ADAPTERS) {
-    if (!getPlatform(adapter.id)) {
-      registerPlatform(adapter);
-    }
+const platformLoadTasks = new Map<string, Promise<PlatformAdapter>>();
+
+export async function ensurePlatformLoaded(platformId: string): Promise<PlatformAdapter | undefined> {
+  const existing = getPlatform(platformId);
+  if (existing) return existing;
+
+  const loadPlatform = PLATFORM_LOADERS[platformId];
+  if (!loadPlatform) return undefined;
+
+  const pending = platformLoadTasks.get(platformId);
+  if (pending) {
+    return pending;
   }
-  registered = true;
+
+  const task = loadPlatform()
+    .then((adapter) => {
+      if (!getPlatform(adapter.id)) {
+        registerPlatform(adapter);
+      }
+      return adapter;
+    })
+    .finally(() => {
+      platformLoadTasks.delete(platformId);
+    });
+
+  platformLoadTasks.set(platformId, task);
+  return task;
 }
 
 export function getPlatformDefinition(platformId: string): PlatformDef | undefined {

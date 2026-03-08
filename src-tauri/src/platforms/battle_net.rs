@@ -1,4 +1,5 @@
 use crate::config::{self, BattleNetAccountConfig};
+use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -22,6 +23,7 @@ const BATTLE_NET_EXECUTABLE_NAMES: &[&str] = &["Battle.net Launcher.exe", "Battl
 #[serde(rename_all = "camelCase")]
 pub struct BattleNetAccount {
     pub email: String,
+    pub battle_tag: String,
     pub last_login_at: Option<u64>,
 }
 
@@ -46,25 +48,6 @@ pub struct BattleNetAccountSetupStatus {
 struct BattleNetAccountSetupJob {
     known_account_keys: HashSet<String>,
 }
-
-enum BattleNetSetupResetTarget {
-    File(&'static str, &'static [&'static str]),
-    Directory(&'static str, &'static [&'static str]),
-}
-
-const BATTLE_NET_SETUP_RESET_TARGETS: &[BattleNetSetupResetTarget] = &[
-    BattleNetSetupResetTarget::File(
-        "cookie.bin",
-        &["LOCALAPPDATA", "Blizzard Entertainment", "ClientSdk"],
-    ),
-    BattleNetSetupResetTarget::Directory("Cache", &["APPDATA", "Battle.net"]),
-    BattleNetSetupResetTarget::Directory("BrowserCache", &["APPDATA", "Battle.net"]),
-    BattleNetSetupResetTarget::Directory("BrowserCaches", &["APPDATA", "Battle.net"]),
-    BattleNetSetupResetTarget::Directory("Cache", &["LOCALAPPDATA", "Battle.net"]),
-    BattleNetSetupResetTarget::Directory("BrowserCache", &["LOCALAPPDATA", "Battle.net"]),
-    BattleNetSetupResetTarget::Directory("BrowserCaches", &["LOCALAPPDATA", "Battle.net"]),
-    BattleNetSetupResetTarget::Directory("Blizzard", &["TEMP"]),
-];
 
 fn now_unix_ms() -> u64 {
     SystemTime::now()
@@ -110,6 +93,111 @@ fn battle_net_display_name(email: &str) -> String {
         .filter(|value| !value.is_empty())
         .unwrap_or(trimmed);
     candidate.to_string()
+}
+
+fn battle_net_cached_data_path() -> Result<PathBuf, String> {
+    let local_app_data =
+        env::var("LOCALAPPDATA").map_err(|_| "LOCALAPPDATA is not available".to_string())?;
+    Ok(PathBuf::from(local_app_data)
+        .join("Battle.net")
+        .join("CachedData.db"))
+}
+
+fn latest_opened_account_id_from_logs() -> Result<Option<u64>, String> {
+    let local_app_data =
+        env::var("LOCALAPPDATA").map_err(|_| "LOCALAPPDATA is not available".to_string())?;
+    let log_dir = PathBuf::from(local_app_data).join("Battle.net").join("Logs");
+    if !log_dir.exists() {
+        return Ok(None);
+    }
+
+    let mut newest_logs = fs::read_dir(&log_dir)
+        .map_err(|e| format!("Could not read Battle.net logs {}: {e}", log_dir.display()))?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let file_name = path.file_name()?.to_str()?;
+            if !file_name.starts_with("battle.net-") || !file_name.ends_with(".log") {
+                return None;
+            }
+            let modified = entry.metadata().ok()?.modified().ok()?;
+            Some((modified, path))
+        })
+        .collect::<Vec<_>>();
+
+    newest_logs.sort_by(|a, b| b.0.cmp(&a.0));
+
+    for (_, path) in newest_logs.into_iter().take(8) {
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+
+        for line in content.lines().rev() {
+            let needle = "Opened database at: ";
+            let Some(idx) = line.find(needle) else {
+                continue;
+            };
+            let db_path = line[idx + needle.len()..].trim();
+            let marker = "\\Account\\";
+            let Some(account_idx) = db_path.rfind(marker) else {
+                continue;
+            };
+            let suffix = &db_path[account_idx + marker.len()..];
+            let Some((account_id, _)) = suffix.split_once("\\account.db") else {
+                continue;
+            };
+            if let Ok(parsed) = account_id.trim().parse::<u64>() {
+                return Ok(Some(parsed));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+fn current_battle_tag_from_cache() -> Result<Option<String>, String> {
+    let Some(account_id_lo) = latest_opened_account_id_from_logs()? else {
+        return Ok(None);
+    };
+
+    let db_path = battle_net_cached_data_path()?;
+    if !db_path.exists() {
+        return Ok(None);
+    }
+
+    let connection = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(|e| format!("Could not open Battle.net cached data: {e}"))?;
+
+    let mut statement = connection
+        .prepare(
+            "SELECT battle_tag
+             FROM login_cache
+             WHERE account_id_lo = ?1
+             ORDER BY rowid DESC
+             LIMIT 1",
+        )
+        .map_err(|e| format!("Could not query Battle.net login cache: {e}"))?;
+
+    let mut rows = statement
+        .query([account_id_lo])
+        .map_err(|e| format!("Could not read Battle.net login cache: {e}"))?;
+
+    let Some(row) = rows
+        .next()
+        .map_err(|e| format!("Could not iterate Battle.net login cache: {e}"))?
+    else {
+        return Ok(None);
+    };
+
+    let battle_tag = row
+        .get::<_, String>(0)
+        .map_err(|e| format!("Could not decode Battle.net battle tag: {e}"))?;
+    let trimmed = battle_tag.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(trimmed.to_string()))
 }
 
 fn normalize_account_key(email: &str) -> String {
@@ -186,8 +274,38 @@ fn read_saved_accounts() -> Result<Vec<String>, String> {
     Ok(extract_saved_account_names(&value))
 }
 
-fn read_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<BattleNetAccount>, String> {
+fn known_account_emails(app_handle: &tauri::AppHandle) -> Result<Vec<String>, String> {
     let saved_accounts = read_saved_accounts()?;
+    let cfg = config::load_config(app_handle);
+    let mut accounts = Vec::new();
+    let mut seen = HashSet::new();
+
+    for email in saved_accounts {
+        let key = normalize_account_key(&email);
+        if email.trim().is_empty() || !seen.insert(key) {
+            continue;
+        }
+        accounts.push(email);
+    }
+
+    for account in cfg.battle_net.accounts {
+        let email = account.email.trim().to_string();
+        let key = normalize_account_key(&email);
+        if email.is_empty() || !seen.insert(key) {
+            continue;
+        }
+        accounts.push(email);
+    }
+
+    Ok(accounts)
+}
+
+fn read_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<BattleNetAccount>, String> {
+    if let Some(current_email) = read_saved_accounts()?.into_iter().next() {
+        let _ = remember_account_usage(app_handle, &current_email);
+    }
+
+    let account_emails = known_account_emails(app_handle)?;
     let cfg = config::load_config(app_handle);
     let metadata_by_key = cfg
         .battle_net
@@ -202,9 +320,14 @@ fn read_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<BattleNetAccount>,
         })
         .collect::<HashMap<_, _>>();
 
-    Ok(saved_accounts
+    Ok(account_emails
         .into_iter()
         .map(|email| BattleNetAccount {
+            battle_tag: metadata_by_key
+                .get(&normalize_account_key(&email))
+                .map(|account| account.battle_tag.trim().to_string())
+                .filter(|battle_tag| !battle_tag.is_empty())
+                .unwrap_or_default(),
             last_login_at: metadata_by_key
                 .get(&normalize_account_key(&email))
                 .and_then(|account| account.last_used_at),
@@ -225,6 +348,7 @@ fn remember_account_usage(app_handle: &tauri::AppHandle, email: &str) -> Result<
     let key = normalize_account_key(&email);
     let mut cfg = config::load_config(app_handle);
     let now = now_unix_ms();
+    let current_battle_tag = current_battle_tag_from_cache().ok().flatten();
 
     if let Some(existing) = cfg
         .battle_net
@@ -233,10 +357,14 @@ fn remember_account_usage(app_handle: &tauri::AppHandle, email: &str) -> Result<
         .find(|account| normalize_account_key(&account.email) == key)
     {
         existing.email = email;
+        if let Some(battle_tag) = current_battle_tag {
+            existing.battle_tag = battle_tag;
+        }
         existing.last_used_at = Some(now);
     } else {
         cfg.battle_net.accounts.push(BattleNetAccountConfig {
             email,
+            battle_tag: current_battle_tag.unwrap_or_default(),
             last_used_at: Some(now),
         });
     }
@@ -308,59 +436,35 @@ fn kill_battle_net() {
     }
 }
 
-fn env_joined_path(root_env: &str, segments: &[&str]) -> Option<PathBuf> {
-    let mut path = PathBuf::from(env::var_os(root_env)?);
-    for segment in segments {
-        path.push(segment);
-    }
-    Some(path)
-}
-
-fn remove_path_if_exists(path: &Path) -> Result<(), String> {
-    if !path.exists() {
-        return Ok(());
-    }
-    if path.is_dir() {
-        fs::remove_dir_all(path)
-            .map_err(|e| format!("Could not remove directory {}: {e}", path.display()))?;
-    } else {
-        fs::remove_file(path)
-            .map_err(|e| format!("Could not remove file {}: {e}", path.display()))?;
-    }
-    Ok(())
-}
-
-fn clear_battle_net_setup_state() -> Result<(), String> {
-    for target in BATTLE_NET_SETUP_RESET_TARGETS {
-        let path = match target {
-            BattleNetSetupResetTarget::File(name, segments) => {
-                let Some(mut path) = env_joined_path(segments[0], &segments[1..]) else {
-                    continue;
-                };
-                path.push(name);
-                path
-            }
-            BattleNetSetupResetTarget::Directory(name, segments) => {
-                let Some(mut path) = env_joined_path(segments[0], &segments[1..]) else {
-                    continue;
-                };
-                if !name.is_empty() {
-                    path.push(name);
-                }
-                path
-            }
-        };
-        let _ = remove_path_if_exists(&path);
-    }
-    Ok(())
-}
-
 fn normalize_registry_path(raw: &str) -> String {
     let mut value = raw.trim().trim_matches('"').to_string();
     if let Some((head, _)) = value.split_once(",") {
         value = head.trim().trim_matches('"').to_string();
     }
     value
+}
+
+fn preferred_launcher_path(path: PathBuf) -> PathBuf {
+    let is_battle_net_exe = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.eq_ignore_ascii_case("Battle.net.exe"))
+        .unwrap_or(false);
+
+    if !is_battle_net_exe {
+        return path;
+    }
+
+    let Some(parent) = path.parent() else {
+        return path;
+    };
+
+    let launcher = parent.join("Battle.net Launcher.exe");
+    if launcher.exists() && launcher.is_file() {
+        return launcher;
+    }
+
+    path
 }
 
 fn candidate_from_registry_value(raw: &str) -> Option<PathBuf> {
@@ -372,7 +476,7 @@ fn candidate_from_registry_value(raw: &str) -> Option<PathBuf> {
     let path = PathBuf::from(&normalized);
     if path.exists() {
         if path.is_file() {
-            return Some(path);
+            return Some(preferred_launcher_path(path));
         }
         for executable in BATTLE_NET_EXECUTABLE_NAMES {
             let candidate = path.join(executable);
@@ -526,7 +630,11 @@ fn resolve_battle_net_executable(app_handle: &tauri::AppHandle) -> Result<PathBu
 
 fn launch_battle_net(app_handle: &tauri::AppHandle) -> Result<(), String> {
     let executable = resolve_battle_net_executable(app_handle)?;
-    Command::new(&executable)
+    let mut command = Command::new(&executable);
+    if let Some(install_dir) = executable.parent() {
+        command.current_dir(install_dir);
+    }
+    command
         .spawn()
         .map_err(|e| format!("Could not launch Battle.net {}: {e}", executable.display()))?;
     Ok(())
@@ -550,7 +658,7 @@ pub fn get_current_account() -> Result<String, String> {
 
 pub fn switch_account(app_handle: tauri::AppHandle, email: String) -> Result<(), String> {
     let target_email = validate_account_email(&email)?;
-    let accounts = read_saved_accounts()?;
+    let accounts = known_account_emails(&app_handle)?;
 
     let Some(target) = accounts
         .iter()
@@ -575,7 +683,7 @@ pub fn switch_account(app_handle: tauri::AppHandle, email: String) -> Result<(),
 }
 
 pub fn begin_account_setup(app_handle: tauri::AppHandle) -> Result<BattleNetAccountSetupStatus, String> {
-    let known_accounts = read_saved_accounts().unwrap_or_default();
+    let known_accounts = known_account_emails(&app_handle).unwrap_or_default();
     let setup_id = format!("battle-net-setup-{}", now_unix_ms());
     let known_account_keys = known_accounts
         .iter()
@@ -592,7 +700,7 @@ pub fn begin_account_setup(app_handle: tauri::AppHandle) -> Result<BattleNetAcco
     drop(jobs);
 
     kill_battle_net();
-    clear_battle_net_setup_state()?;
+    write_saved_accounts(&[])?;
     launch_battle_net(&app_handle)?;
     Ok(setup_status(&setup_id, "waiting_for_client", "", "", ""))
 }

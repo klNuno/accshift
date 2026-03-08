@@ -282,6 +282,21 @@ pub fn forget_riot_profile(app_handle: tauri::AppHandle, profile_id: String) -> 
 }
 
 #[tauri::command]
+pub fn get_riot_path(app_handle: tauri::AppHandle) -> Result<String, String> {
+    crate::platforms::riot::get_riot_path(app_handle)
+}
+
+#[tauri::command]
+pub fn set_riot_path(app_handle: tauri::AppHandle, path: String) -> Result<(), String> {
+    crate::platforms::riot::set_riot_path(app_handle, path)
+}
+
+#[tauri::command]
+pub fn select_riot_path() -> Result<String, String> {
+    crate::platforms::riot::select_riot_path()
+}
+
+#[tauri::command]
 pub fn get_battle_net_accounts(
     app_handle: tauri::AppHandle,
 ) -> Result<Vec<crate::platforms::battle_net::BattleNetAccount>, String> {
@@ -323,3 +338,24 @@ pub fn get_battle_net_account_setup_status(
 #[tauri::command]
 pub fn cancel_battle_net_account_setup(setup_id: String) -> Result<(), String> {
     crate::platforms::battle_net::cancel_account_setup(setup_id)
+}
+
+#[tauri::command]
+pub fn forget_battle_net_account(app_handle: tauri::AppHandle, email: String) -> Result<(), String> {
+    crate::platforms::battle_net::forget_account(app_handle, email)
+}
+
+#[tauri::command]
+pub fn get_battle_net_path(app_handle: tauri::AppHandle) -> Result<String, String> {
+    crate::platforms::battle_net::get_battle_net_path(app_handle)
+}
+
+#[tauri::command]
+pub fn set_battle_net_path(app_handle: tauri::AppHandle, path: String) -> Result<(), String> {
+    crate::platforms::battle_net::set_battle_net_path(app_handle, path)
+}
+
+#[tauri::command]
+pub fn select_battle_net_path() -> Result<String, String> {
+    crate::platforms::battle_net::select_battle_net_path()
+}

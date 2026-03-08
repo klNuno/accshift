@@ -16,10 +16,18 @@ function getBattleNetDisplayName(email: string): string {
   return candidate || trimmed;
 }
 
+function getBattleNetLabel(account: BattleNetAccount): string {
+  const battleTag = (account.battleTag ?? "").trim();
+  if (battleTag) {
+    return battleTag.split("#")[0]?.trim() || battleTag;
+  }
+  return getBattleNetDisplayName(account.email);
+}
+
 function toAccount(account: BattleNetAccount): PlatformAccount {
   return {
     id: account.email,
-    displayName: getBattleNetDisplayName(account.email),
+    displayName: getBattleNetLabel(account),
     username: "",
     lastLoginAt: account.lastLoginAt ?? null,
   };
