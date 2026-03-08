@@ -204,6 +204,7 @@
   let pendingUpdate = $state<PendingUpdate | null>(null);
   let appVersion = $state("");
   let loadingAdapterFor = $state<string | null>(null);
+  let lastPreparedVisibleKey = "";
 
   function semverCore(version: string): string {
     const match = version.match(/\d+\.\d+\.\d+/);
@@ -327,7 +328,10 @@
     const visibleIds = (navigation.isSearching ? filteredAccountItems : navigation.currentItems.filter((item) => item.type === "account"))
       .map((item) => item.id);
     if (visibleIds.length === 0) return;
-    visibleIds.join(",");
+    const visibleKey = `${shell.activeTab}:${navigation.isSearching ? "search" : "folder"}:${visibleIds.join(",")}`;
+    if (visibleKey === lastPreparedVisibleKey) return;
+    lastPreparedVisibleKey = visibleKey;
+    loader.prepareVisibleAccounts();
     loader.primeVisibleAccounts(true, false, true, true);
   });
 
@@ -621,6 +625,7 @@
       loadAccounts(true);
     } else {
       navigation.refreshCurrentItems();
+      loader.prepareVisibleAccounts();
       queueGridPadding();
     }
     navigation.searchQuery = "";
@@ -643,6 +648,7 @@
     navigation.currentFolderId = parentFolderId;
     showSettings = false;
     navigation.refreshCurrentItems();
+    loader.prepareVisibleAccounts();
     navigation.searchQuery = "";
     queueGridPadding();
   }
@@ -654,6 +660,7 @@
     navigation.currentFolderId = folderId;
     showSettings = false;
     navigation.refreshCurrentItems();
+    loader.prepareVisibleAccounts();
     queueGridPadding();
   }
 
@@ -661,6 +668,7 @@
     if (!isPlatformUsable(tab, shell.runtimeOs)) return;
     await addFlow.cancel();
     history.pushState({ tab, folderId: null, showSettings: false }, "");
+    lastPreparedVisibleKey = "";
     shell.setActiveTab(tab);
     navigation.currentFolderId = null;
     showSettings = false;
