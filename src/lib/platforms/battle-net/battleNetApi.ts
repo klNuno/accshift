@@ -52,3 +52,15 @@ export async function copyGameSettings(fromEmail: string, toEmail: string, gameI
 export async function getCopyableGames(fromEmail: string, toEmail: string): Promise<BattleNetCopyableGame[]> {
   return invoke<BattleNetCopyableGame[]>("get_battle_net_copyable_games", { fromEmail, toEmail });
 }
+
+export async function getBattleNetPath(): Promise<string> {
+  return invoke<string>("get_battle_net_path");
+}
+
+export async function setBattleNetPath(path: string): Promise<void> {
+  await invoke("set_battle_net_path", { path });
+}
+
+export async function selectBattleNetPath(): Promise<string> {
+  return invoke<string>("select_battle_net_path");
+}

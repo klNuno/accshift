@@ -48,3 +48,15 @@ export async function switchProfile(profileId: string): Promise<void> {
 export async function forgetProfile(profileId: string): Promise<void> {
   await invoke("forget_riot_profile", { profileId });
 }
+
+export async function getRiotPath(): Promise<string> {
+  return invoke<string>("get_riot_path");
+}
+
+export async function setRiotPath(path: string): Promise<void> {
+  await invoke("set_riot_path", { path });
+}
+
+export async function selectRiotPath(): Promise<string> {
+  return invoke<string>("select_riot_path");
+}

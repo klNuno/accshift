@@ -28,13 +28,23 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Svelte check
+        run: pnpm check:frontend
+
       - name: Build frontend
         run: pnpm build
 
+      - name: Cargo fmt
+        run: pnpm fmt:check
+
+      - name: Cargo clippy
+        run: pnpm clippy
+
       - name: Cargo check
-        working-directory: src-tauri
-        run: cargo check
+        run: pnpm check:rust

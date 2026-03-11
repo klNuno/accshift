@@ -79,7 +79,7 @@ export interface PlatformAdapter {
   }>;
   isCurrentAccount?(account: PlatformAccount, currentAccount: string): boolean;
   switchAccount(account: PlatformAccount): Promise<void>;
-  addAccount(): Promise<void | PlatformAddAccountResult>;
+  addAccount(): Promise<PlatformAddAccountResult>;
   pollAddFlow?(setupId: string): Promise<PlatformAddFlowStatus>;
   cancelAddFlow?(setupId: string): Promise<void>;
 

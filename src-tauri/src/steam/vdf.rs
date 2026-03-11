@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 
 pub fn parse_vdf(content: &str) -> HashMap<String, HashMap<String, String>> {
     let mut accounts: HashMap<String, HashMap<String, String>> = HashMap::new();
@@ -46,7 +46,7 @@ pub fn parse_vdf(content: &str) -> HashMap<String, HashMap<String, String>> {
     accounts
 }
 
-pub fn set_persona_state(steam_path: &PathBuf, account_id: u32, state: &str) {
+pub fn set_persona_state(steam_path: &Path, account_id: u32, state: &str) {
     if !["0", "1", "2", "3", "4", "5", "6", "7"].contains(&state) {
         return;
     }
