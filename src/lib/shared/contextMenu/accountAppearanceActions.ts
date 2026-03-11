@@ -5,14 +5,16 @@ import type { ContextMenuAction } from "./types";
 
 const DEFAULT_COLOR_LABEL_KEYS = {
   none: "color.none",
-  slate: "color.slate",
   blue: "color.blue",
   cyan: "color.cyan",
-  emerald: "color.emerald",
-  amber: "color.amber",
-  rose: "color.rose",
+  green: "color.green",
+  lime: "color.lime",
+  yellow: "color.yellow",
+  orange: "color.orange",
+  red: "color.red",
+  pink: "color.pink",
   violet: "color.violet",
-  zinc: "color.zinc",
+  gray: "color.gray",
 } as const satisfies Record<(typeof ACCOUNT_CARD_COLOR_PRESETS)[number]["id"], MessageKey>;
 
 export interface AccountAppearanceActionCallbacks {
@@ -48,13 +50,15 @@ export function getAccountAppearanceContextActions(
           id: `account.appearance.color.${account.id}`,
           kind: "swatches",
           label: callbacks.t("context.menu.cardColor"),
-          swatches: ACCOUNT_CARD_COLOR_PRESETS.map((preset) => ({
-            id: preset.id,
-            label: getColorLabel(preset.id),
-            color: preset.color,
-            active: currentColor === preset.color,
-            action: () => callbacks.setColor(preset.color),
-          })),
+          swatches: [
+            ...ACCOUNT_CARD_COLOR_PRESETS.map((preset) => ({
+              id: preset.id,
+              label: getColorLabel(preset.id),
+              color: preset.color,
+              active: currentColor === preset.color,
+              action: () => callbacks.setColor(preset.color),
+            })),
+          ],
         },
       ],
     },
