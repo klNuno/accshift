@@ -62,6 +62,7 @@
     getInitialActiveTab,
     isPlatformUsable,
   } from "$lib/app/platformShell.svelte";
+  import { applyThemeToDocument } from "$lib/theme/themes";
   import { ensurePlatformLoaded } from "$lib/platforms/registry";
   import {
     createFolderNavigation,
@@ -464,7 +465,6 @@
     return {
       title: t("card.extensionNote"),
       lines: [note],
-      chips: [{ text: t("card.noteAttached"), tone: "slate" }],
     };
   }
 
@@ -919,9 +919,7 @@
   });
 
   $effect(() => {
-    const theme = shell.settings.theme === "light" ? "light" : "dark";
-    document.documentElement.dataset.theme = theme;
-    document.documentElement.style.colorScheme = theme;
+    applyThemeToDocument(shell.activeTheme, shell.settings.backgroundOpacity);
     document.documentElement.lang = shell.locale;
   });
 
@@ -1080,7 +1078,7 @@
   style={`--afk-reveal-delay:${AFK_TEXT_REVEAL_DELAY_MS}ms;`}
 >
   <div class="app-stage" class:locked={isPinLocked} style={appStageStyle}>
-    <div class="app-shell">
+    <div class="app-shell" class:obscured={isObscured}>
       {#if !renderSuspended}
       <TitleBar
         onRefresh={() => {
@@ -1104,15 +1102,6 @@
       canAddAccount={activeTabUsable && !adapterLoading}
       {locale}
     />
-    <div
-      class="afk-version-strip"
-      class:visible={Boolean(afkVersionLabel)}
-      aria-hidden={!afkVersionLabel}
-    >
-      {#if afkVersionLabel}
-        <span>{afkVersionLabel}</span>
-      {/if}
-    </div>
     <div class="inactivity-frost" class:visible={isObscured} aria-hidden={!isObscured}></div>
 
 {#if showSettings}
@@ -1413,6 +1402,16 @@
       {/if}
   </div>
 
+  <div
+    class="afk-version-strip"
+    class:visible={Boolean(afkVersionLabel)}
+    aria-hidden={!afkVersionLabel}
+  >
+    {#if afkVersionLabel}
+      <span>{afkVersionLabel}</span>
+    {/if}
+  </div>
+
     {#if !renderSuspended}
       <div
         class="inactive-overlay"
@@ -1533,14 +1532,18 @@
     overflow: hidden;
     box-sizing: border-box;
     position: relative;
+    transition: filter 320ms ease-out, transform 320ms ease-out, opacity 220ms ease-out;
+    will-change: filter, transform;
+  }
+
+  .app-shell.obscured {
+    filter: blur(10px) saturate(82%);
+    transform: scale(1.01);
   }
 
   .inactivity-frost {
     position: absolute;
-    left: 0;
-    right: 0;
-    top: 36px;
-    bottom: 0;
+    inset: 0;
     opacity: 0;
     pointer-events: none;
     z-index: 40;
@@ -1550,8 +1553,6 @@
         color-mix(in srgb, var(--bg) 48%, transparent),
         color-mix(in srgb, var(--bg) 62%, transparent)
       );
-    backdrop-filter: blur(10px) saturate(85%);
-    -webkit-backdrop-filter: blur(10px) saturate(85%);
     transition: opacity 220ms ease-out;
   }
 
@@ -1564,8 +1565,8 @@
   .afk-version-strip {
     position: absolute;
     left: 50%;
-    top: 44px;
-    transform: translate(-50%, -8px);
+    bottom: 18px;
+    transform: translate(-50%, 8px);
     pointer-events: none;
     user-select: none;
     -webkit-user-select: none;
@@ -1597,6 +1598,7 @@
     flex: 1;
     padding: 10px 16px 16px;
     overflow-y: auto;
+    overflow-x: hidden;
     scrollbar-gutter: stable;
     background: var(--bg);
     color: var(--fg);

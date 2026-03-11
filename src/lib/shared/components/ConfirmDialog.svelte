@@ -60,7 +60,7 @@
   .dialog {
     width: min(360px, calc(100vw - 24px));
     padding: 16px;
-    background: var(--bg-card);
+    background: var(--bg-overlay);
     border: 1px solid var(--border);
     border-radius: 8px;
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);

@@ -6,6 +6,7 @@
   import ToggleSetting from "./ToggleSetting.svelte";
   import SteamSettingsSection from "$lib/platforms/steam/SteamSettingsSection.svelte";
   import { getPlatformDefinition } from "$lib/platforms/registry";
+  import { getThemeDefinition } from "$lib/theme/themes";
   import {
     DEFAULT_LOCALE,
     LANGUAGE_OPTIONS,
@@ -52,6 +53,7 @@
   let battleNetPath = $state("");
   let pinCodeInput = $state("");
   let uiScalePercentInput = $state("");
+  let backgroundOpacityInput = $state("");
   let avatarCacheDaysInput = $state("");
   let banCheckDaysInput = $state("");
   let inactivityBlurSecondsInput = $state("");
@@ -81,7 +83,6 @@
     en: "language.english",
     fr: "language.french",
   };
-
   const tabConfig: SettingsTabDef[] = [
     { id: "general", labelKey: "settings.general", accent: NEUTRAL_TAB_ACCENT },
     { id: "platforms", labelKey: "settings.platforms", accent: NEUTRAL_TAB_ACCENT },
@@ -116,10 +117,9 @@
   }
 
   function normalizeSettings() {
-    if (settings.theme !== "light" && settings.theme !== "dark") {
-      settings.theme = "dark";
-    }
+    settings.themeId = getThemeDefinition(settings.themeId).id;
     settings.language = normalizeLocale(settings.language);
+    settings.backgroundOpacity = clampInt(settings.backgroundOpacity, 0, 100, 100);
     settings.uiScalePercent = clampInt(settings.uiScalePercent, 75, 150, 100);
     settings.suspendGraphicsWhenMinimized = settings.suspendGraphicsWhenMinimized !== false;
     settings.minimizeOnAccountSwitch = Boolean(settings.minimizeOnAccountSwitch);
@@ -157,6 +157,7 @@
 
   function refreshNumericInputsFromSettings() {
     uiScalePercentInput = String(settings.uiScalePercent);
+    backgroundOpacityInput = String(settings.backgroundOpacity);
     avatarCacheDaysInput = String(settings.dataRefresh.avatarCacheDays);
     banCheckDaysInput = String(settings.dataRefresh.banCheckDays);
     inactivityBlurSecondsInput = String(settings.inactivityBlurSeconds);
@@ -165,6 +166,11 @@
   function commitUiScalePercent() {
     settings.uiScalePercent = clampInt(Number(uiScalePercentInput), 75, 150, settings.uiScalePercent);
     uiScalePercentInput = String(settings.uiScalePercent);
+  }
+
+  function commitBackgroundOpacity() {
+    settings.backgroundOpacity = clampInt(Number(backgroundOpacityInput), 0, 100, settings.backgroundOpacity);
+    backgroundOpacityInput = String(settings.backgroundOpacity);
   }
 
   function commitAvatarCacheDays() {
@@ -434,7 +440,8 @@
     settings.dataRefresh.avatarCacheDays;
     settings.dataRefresh.banCheckDays;
     settings.inactivityBlurSeconds;
-    settings.theme;
+    settings.themeId;
+    settings.backgroundOpacity;
     settings.suspendGraphicsWhenMinimized;
     settings.minimizeOnAccountSwitch;
     settings.language;
@@ -570,13 +577,32 @@
           </label>
 
           <ToggleSetting
-            label={t("settings.lightMode")}
-            enabled={settings.theme === "light"}
+            label={t("settings.theme")}
+            enabled={settings.themeId === "light"}
             accent={NEUTRAL_CONTROL_ACCENT}
-            onLabel={t("common.on")}
-            offLabel={t("common.off")}
-            onToggle={() => settings.theme = settings.theme === "light" ? "dark" : "light"}
+            onLabel={t("theme.light")}
+            offLabel={t("theme.dark")}
+            onToggle={() => settings.themeId = settings.themeId === "light" ? "dark" : "light"}
           />
+
+          <label class="field">
+            <div class="row">
+              <span>{t("settings.backgroundOpacity")}</span>
+              <strong>{settings.backgroundOpacity}%</strong>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              step="5"
+              bind:value={backgroundOpacityInput}
+              oninput={(e) => {
+                backgroundOpacityInput = (e.currentTarget as HTMLInputElement).value;
+                commitBackgroundOpacity();
+              }}
+              class="slider-input"
+            />
+          </label>
         </section>
 
         <section class="card">
@@ -996,6 +1022,7 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    overflow-x: hidden;
     padding-right: 4px;
     padding-bottom: 8px;
   }
@@ -1004,6 +1031,7 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     gap: 12px;
+    min-width: 0;
   }
 
   .card {
@@ -1045,7 +1073,7 @@
     justify-content: space-between;
     border: 1px solid var(--border);
     border-radius: 10px;
-    background: color-mix(in srgb, var(--bg) 88%, #fff 12%);
+    background: color-mix(in srgb, var(--bg-card) 88%, #fff 12%);
     color: var(--fg);
     padding: 10px 12px;
     cursor: pointer;
@@ -1076,7 +1104,7 @@
 
   .platform-chip.disabled:hover {
     border-color: var(--border);
-    background: color-mix(in srgb, var(--bg) 88%, #fff 12%);
+    background: color-mix(in srgb, var(--bg-card) 88%, #fff 12%);
   }
 
   .toggle {
@@ -1134,7 +1162,7 @@
     width: 100%;
     border: 1px solid var(--border);
     border-radius: 8px;
-    background: var(--bg);
+    background: var(--bg-solid);
     color: var(--fg);
     font-size: 12px;
     padding: 9px 10px;
@@ -1162,6 +1190,11 @@
 
   .number-input {
     width: 100%;
+  }
+
+  .slider-input {
+    width: 100%;
+    accent-color: var(--fg);
   }
 
   .input-row {

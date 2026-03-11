@@ -78,7 +78,7 @@
   .dialog {
     width: 280px;
     padding: 16px;
-    background: var(--bg-card);
+    background: var(--bg-overlay);
     border: 1px solid var(--border);
     border-radius: 8px;
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
@@ -104,7 +104,7 @@
     padding: 8px 10px;
     border: 1px solid var(--border);
     border-radius: 4px;
-    background: var(--bg);
+    background: var(--bg-solid);
     color: var(--fg);
     font-size: 13px;
     outline: none;
@@ -143,7 +143,7 @@
     border: none;
     border-radius: 4px;
     background: var(--fg);
-    color: var(--bg);
+    color: var(--bg-solid);
     font-size: 12px;
     font-weight: 500;
     cursor: pointer;

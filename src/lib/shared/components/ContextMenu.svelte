@@ -223,7 +223,7 @@
     z-index: 1200;
     min-width: 220px;
     padding: 4px;
-    background: var(--bg-card);
+    background: var(--bg-overlay);
     border: 1px solid var(--border);
     border-radius: 6px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
@@ -290,7 +290,7 @@
     padding: 0;
     border-radius: 4px;
     border: 1px solid var(--border);
-    background: var(--bg);
+    background: var(--bg-solid);
     cursor: pointer;
     display: grid;
     place-items: center;
@@ -319,7 +319,7 @@
     max-height: calc(100vh - 8px);
     overflow-y: auto;
     padding: 4px;
-    background: var(--bg-card);
+    background: var(--bg-overlay);
     border: 1px solid var(--border);
     border-radius: 6px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);

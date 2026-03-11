@@ -20,11 +20,15 @@
   -moz-osx-font-smoothing: grayscale;
   color-scheme: dark;
 
-  --bg: #09090b;
+  --bg-rgb: 9 9 11;
+  --bg-opacity: 1;
+  --bg: rgb(var(--bg-rgb) / var(--bg-opacity));
+  --bg-solid: rgb(var(--bg-rgb));
   --bg-card: #1c1c1f;
   --bg-card-hover: #252528;
   --bg-muted: #27272a;
   --bg-elevated: #3f3f46;
+  --bg-overlay: #1c1c1f;
   --fg: #fafafa;
   --fg-muted: #a1a1aa;
   --fg-subtle: #71717a;
@@ -38,27 +42,21 @@
   --grid-card-avatar-size: 68px;
 }
 
-[data-theme="light"] {
-  color-scheme: light;
-  --bg: #f1f1f3;
-  --bg-card: #d8d8de;
-  --bg-card-hover: #cfcfd7;
-  --bg-muted: #c4c4ce;
-  --bg-elevated: #aeaebc;
-  --fg: #0b0b0f;
-  --fg-muted: #2b2b36;
-  --fg-subtle: #4e4e5d;
-  --border: #b8b8c5;
-  --danger: #dc2626;
-  --afk-text: #000000;
-}
-
 body {
   margin: 0;
   height: 100vh;
   overflow: hidden;
-  background-color: var(--bg);
+  background-color: transparent;
   color: var(--fg);
+  width: 100%;
+  overflow-x: hidden;
+}
+
+html,
+#app {
+  width: 100%;
+  background-color: transparent;
+  overflow-x: hidden;
 }
 
 #app {
