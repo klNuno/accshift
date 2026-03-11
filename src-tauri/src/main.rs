@@ -62,17 +62,12 @@ fn main() {
                 // Only allow app URLs in production. In dev, allow local Vite URLs only.
                 let scheme = url.scheme();
                 let host = url.host_str();
-                let allowed = if scheme == "tauri" {
-                    true
-                } else if matches!(scheme, "http" | "https")
-                    && matches!(host, Some("tauri.localhost"))
-                {
-                    true
-                } else if cfg!(debug_assertions) && matches!(scheme, "http" | "https") {
-                    matches!(host, Some("localhost" | "127.0.0.1"))
-                } else {
-                    false
-                };
+                let is_http = matches!(scheme, "http" | "https");
+                let allowed = scheme == "tauri"
+                    || (is_http && matches!(host, Some("tauri.localhost")))
+                    || (cfg!(debug_assertions)
+                        && is_http
+                        && matches!(host, Some("localhost" | "127.0.0.1")));
 
                 let _ = logging::append_app_log(
                     &navigation_log_handle,
@@ -83,7 +78,7 @@ fn main() {
                     } else {
                         "Navigation blocked"
                     },
-                    Some(&url.to_string()),
+                    Some(url.as_ref()),
                 );
 
                 allowed
@@ -166,7 +161,6 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::log_app_event,
-            commands::get_log_file_path,
             commands::finish_boot,
             commands::get_runtime_os,
             commands::get_steam_accounts,
@@ -174,7 +168,6 @@ fn main() {
             commands::get_current_account,
             commands::switch_account,
             commands::switch_account_mode,
-            commands::add_account,
             commands::begin_steam_account_setup,
             commands::get_steam_account_setup_status,
             commands::cancel_steam_account_setup,

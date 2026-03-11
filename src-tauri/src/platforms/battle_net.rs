@@ -200,11 +200,19 @@ fn overwatch_root_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
     if let Ok(user_profile) = env::var("USERPROFILE") {
-        candidates.push(PathBuf::from(&user_profile).join("Documents").join("Overwatch"));
+        candidates.push(
+            PathBuf::from(&user_profile)
+                .join("Documents")
+                .join("Overwatch"),
+        );
     }
 
     if let Ok(one_drive) = env::var("OneDrive") {
-        candidates.push(PathBuf::from(&one_drive).join("Documents").join("Overwatch"));
+        candidates.push(
+            PathBuf::from(&one_drive)
+                .join("Documents")
+                .join("Overwatch"),
+        );
     }
 
     let mut seen = HashSet::new();
@@ -265,7 +273,11 @@ fn capture_overwatch_snapshot(app_handle: &tauri::AppHandle, email: &str) -> Res
         ),
     );
 
-    fs_utils::copy_dir_recursive(&live_root_dir, &snapshot_dir, OVERWATCH_IGNORED_SNAPSHOT_NAMES)?;
+    fs_utils::copy_dir_recursive(
+        &live_root_dir,
+        &snapshot_dir,
+        OVERWATCH_IGNORED_SNAPSHOT_NAMES,
+    )?;
 
     log_battle_net_event(
         app_handle,

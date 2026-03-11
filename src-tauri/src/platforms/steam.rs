@@ -1,8 +1,8 @@
 use crate::config;
 use crate::os;
 use crate::platforms::{
-    AddAccountRequest, CopyGameSettingsRequest, PlatformFuture, PlatformService,
-    PlatformStartupSnapshot, SwitchAccountModeRequest, SwitchAccountRequest,
+    CopyGameSettingsRequest, PlatformFuture, PlatformService, PlatformStartupSnapshot,
+    SwitchAccountModeRequest, SwitchAccountRequest,
 };
 use crate::steam::accounts::{self, CopyableGame, SteamAccount};
 use crate::steam::bans::{self, BanInfo};
@@ -249,23 +249,6 @@ pub async fn switch_account_mode(
     })
     .await
     .map_err(|e| format!("Switch account mode task failed: {e}"))?
-    .map_err(|e| {
-        eprintln!("Error: {:?}", e);
-        e.to_string()
-    })
-}
-
-pub async fn add_account(
-    app_handle: tauri::AppHandle,
-    run_as_admin: bool,
-    launch_options: String,
-) -> Result<(), String> {
-    let steam_path = resolve_steam_path(&app_handle)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        accounts::add_account(&steam_path, run_as_admin, &launch_options)
-    })
-    .await
-    .map_err(|e| format!("Add account task failed: {e}"))?
     .map_err(|e| {
         eprintln!("Error: {:?}", e);
         e.to_string()
@@ -569,16 +552,6 @@ impl PlatformService for SteamPlatformService {
                 request.launch_options,
             )
             .await
-        })
-    }
-
-    fn add_account<'a>(
-        &'a self,
-        app_handle: tauri::AppHandle,
-        request: AddAccountRequest,
-    ) -> PlatformFuture<'a, Result<(), String>> {
-        Box::pin(async move {
-            add_account(app_handle, request.run_as_admin, request.launch_options).await
         })
     }
 

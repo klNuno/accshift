@@ -42,11 +42,6 @@ export async function switchAccountMode(username: string, steamId: string, mode:
   await invoke("switch_account_mode", { username, steamId, mode, ...cfg });
 }
 
-export async function addAccount(): Promise<void> {
-  const cfg = getSteamLaunchConfig();
-  await invoke("add_account", cfg);
-}
-
 export async function beginAccountSetup(): Promise<PlatformAddFlowStatus> {
   const cfg = getSteamLaunchConfig();
   const payload = await invoke<SteamSetupStatusPayload>("begin_steam_account_setup", cfg);
@@ -108,4 +103,8 @@ export async function setSteamPath(path: string): Promise<void> {
 
 export async function selectSteamPath(): Promise<string> {
   return invoke<string>("select_steam_path");
+}
+
+export async function openSteamApiKeyPage(): Promise<void> {
+  await invoke("open_steam_api_key_page");
 }
