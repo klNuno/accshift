@@ -21,14 +21,14 @@ export function getBattleNetContextMenuItems(
   const items: ContextMenuAction[] = [
     {
       id: `battle-net.copy.username.${account.id}`,
-      group: "platform.primary",
-      label: callbacks.t("battlenet.copyUsername"),
+      group: "platform.copy",
+      label: callbacks.t("battlenet.copyLabelUsername"),
       action: () => callbacks.copyToClipboard(username, callbacks.t("battlenet.copyLabelUsername")),
     },
     {
       id: `battle-net.copy.email.${account.id}`,
-      group: "platform.primary",
-      label: callbacks.t("battlenet.copyEmail"),
+      group: "platform.copy",
+      label: callbacks.t("battlenet.copyLabelEmail"),
       action: () => callbacks.copyToClipboard(account.id, callbacks.t("battlenet.copyLabelEmail")),
     },
   ];
