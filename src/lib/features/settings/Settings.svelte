@@ -559,20 +559,16 @@
               <strong>{settings.uiScalePercent}%</strong>
             </div>
             <input
-              type="number"
+              type="range"
               min="75"
               max="150"
               step="5"
-              value={uiScalePercentInput}
-              oninput={(e) => uiScalePercentInput = (e.currentTarget as HTMLInputElement).value}
-              onblur={commitUiScalePercent}
-              onkeydown={(e) => {
-                if (e.key === "Enter") {
-                  commitUiScalePercent();
-                  (e.currentTarget as HTMLInputElement).blur();
-                }
+              bind:value={uiScalePercentInput}
+              oninput={(e) => {
+                uiScalePercentInput = (e.currentTarget as HTMLInputElement).value;
+                commitUiScalePercent();
               }}
-              class="text-input number-input"
+              class="slider-input"
             />
           </label>
 

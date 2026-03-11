@@ -380,10 +380,6 @@
     right: 0;
   }
 
-  .extension-hitbox.visible {
-    pointer-events: auto;
-  }
-
   .extension-surface {
     position: absolute;
     inset: 0;
@@ -399,6 +395,7 @@
       outline-color 120ms ease-out;
     box-shadow: none;
     overflow: hidden;
+    pointer-events: none;
   }
 
   .extension-surface.right {
