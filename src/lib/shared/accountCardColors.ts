@@ -2,14 +2,16 @@ const STORAGE_KEY = "accshift_account_card_colors";
 
 export const ACCOUNT_CARD_COLOR_PRESETS = [
   { id: "none", color: "" },
-  { id: "slate", color: "#64748b" },
   { id: "blue", color: "#3b82f6" },
   { id: "cyan", color: "#06b6d4" },
-  { id: "emerald", color: "#10b981" },
-  { id: "amber", color: "#f59e0b" },
-  { id: "rose", color: "#f43f5e" },
+  { id: "green", color: "#10b981" },
+  { id: "lime", color: "#84cc16" },
+  { id: "yellow", color: "#f59e0b" },
+  { id: "orange", color: "#f97316" },
+  { id: "red", color: "#f43f5e" },
+  { id: "pink", color: "#ec4899" },
   { id: "violet", color: "#8b5cf6" },
-  { id: "zinc", color: "#71717a" },
+  { id: "gray", color: "#71717a" },
 ] as const;
 
 type CardColorMap = Record<string, string>;

@@ -187,14 +187,16 @@
   const WHEEL_ZOOM_THRESHOLD = 80;
   const COLOR_LABEL_KEYS = {
     none: "color.none",
-    slate: "color.slate",
     blue: "color.blue",
     cyan: "color.cyan",
-    emerald: "color.emerald",
-    amber: "color.amber",
-    rose: "color.rose",
+    green: "color.green",
+    lime: "color.lime",
+    yellow: "color.yellow",
+    orange: "color.orange",
+    red: "color.red",
+    pink: "color.pink",
     violet: "color.violet",
-    zinc: "color.zinc",
+    gray: "color.gray",
   } as const;
 
   type PendingUpdate = NonNullable<Awaited<ReturnType<typeof check>>>;
@@ -430,6 +432,10 @@
   function getFolderCardColor(folderId: string): string {
     cardColorVersion;
     return getStoredFolderCardColor(folderId);
+  }
+
+  function closeContextMenu() {
+    contextMenu = null;
   }
 
   function createWarningExtensionSection(accountId: string): CardExtensionContent["sections"][number] | null {
@@ -749,16 +755,18 @@
         { label: t("context.menu.rename"), action: () => showRenameFolderDialog(folder) },
         {
           label: t("context.menu.folderColor"),
-          swatches: ACCOUNT_CARD_COLOR_PRESETS.map((preset) => ({
-            id: preset.id,
-            label: t(COLOR_LABEL_KEYS[preset.id]),
-            color: preset.color,
-            active: currentColor === preset.color,
-            action: () => {
-              setFolderCardColor(folder.id, preset.color);
-              cardColorVersion += 1;
-            },
-          })),
+          swatches: [
+            ...ACCOUNT_CARD_COLOR_PRESETS.map((preset) => ({
+              id: preset.id,
+              label: t(COLOR_LABEL_KEYS[preset.id]),
+              color: preset.color,
+              active: currentColor === preset.color,
+              action: () => {
+                setFolderCardColor(folder.id, preset.color);
+                cardColorVersion += 1;
+              },
+            })),
+          ],
         },
         { label: t("context.menu.deleteFolder"), action: () => { deleteFolder(folder.id); navigation.refreshCurrentItems(); } },
       ];
@@ -1217,7 +1225,7 @@
             void cancelPlatformAddFlowIfConflicting(activeTab, account.id);
             void handleAccountSwitch(account);
           }}
-          onAccountContextMenu={(e, account) => {
+      onAccountContextMenu={(e, account) => {
             if (isPendingSetupAccount(account.id)) return;
             void cancelPlatformAddFlowIfConflicting(activeTab, account.id);
             contextMenu = { x: e.clientX, y: e.clientY, account };
@@ -1360,7 +1368,7 @@
         x={contextMenu.x}
         y={contextMenu.y}
         {locale}
-        onClose={() => contextMenu = null}
+        onClose={closeContextMenu}
       />
     {/if}
 
