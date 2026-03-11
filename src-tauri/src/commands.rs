@@ -1,6 +1,5 @@
 use crate::platforms::{
-    require_service, AddAccountRequest, CopyGameSettingsRequest, SwitchAccountModeRequest,
-    SwitchAccountRequest,
+    require_service, CopyGameSettingsRequest, SwitchAccountModeRequest, SwitchAccountRequest,
 };
 
 #[tauri::command]
@@ -17,11 +16,6 @@ pub fn log_app_event(
     details: Option<String>,
 ) -> Result<(), String> {
     crate::logging::append_app_log(&app_handle, &level, &source, &message, details.as_deref())
-}
-
-#[tauri::command]
-pub fn get_log_file_path(app_handle: tauri::AppHandle) -> Result<String, String> {
-    crate::logging::log_file_path(&app_handle).map(|path| path.display().to_string())
 }
 
 #[tauri::command]
@@ -106,23 +100,6 @@ pub async fn switch_account_mode(
                 username,
                 steam_id,
                 mode,
-                run_as_admin,
-                launch_options,
-            },
-        )
-        .await
-}
-
-#[tauri::command]
-pub async fn add_account(
-    app_handle: tauri::AppHandle,
-    run_as_admin: bool,
-    launch_options: String,
-) -> Result<(), String> {
-    require_service("steam")?
-        .add_account(
-            app_handle,
-            AddAccountRequest {
                 run_as_admin,
                 launch_options,
             },

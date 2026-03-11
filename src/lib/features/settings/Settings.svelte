@@ -1,10 +1,23 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
   import { getSettings, saveSettings, ALL_PLATFORMS } from "./store";
   import { addToast } from "../notifications/store.svelte";
   import ToggleSetting from "./ToggleSetting.svelte";
   import SteamSettingsSection from "$lib/platforms/steam/SteamSettingsSection.svelte";
+  import {
+    getSteamPath,
+    hasApiKey,
+    openSteamApiKeyPage as openSteamApiKeyPageInBrowser,
+    selectSteamPath,
+    setApiKey,
+    setSteamPath,
+  } from "$lib/platforms/steam/steamApi";
+  import { getRiotPath, selectRiotPath, setRiotPath } from "$lib/platforms/riot/riotApi";
+  import {
+    getBattleNetPath,
+    selectBattleNetPath,
+    setBattleNetPath,
+  } from "$lib/platforms/battle-net/battleNetApi";
   import { getPlatformDefinition } from "$lib/platforms/registry";
   import { getThemeDefinition } from "$lib/theme/themes";
   import {
@@ -231,19 +244,19 @@
     try {
       if (apiKeyTouched) {
         const trimmedApiKey = apiKey.trim();
-        await invoke("set_api_key", { key: trimmedApiKey });
+        await setApiKey(trimmedApiKey);
         apiKeyConfigured = trimmedApiKey.length > 0;
         apiKeyTouched = false;
         apiKey = "";
       }
       if (steamPathChanged) {
-        await invoke("set_steam_path", { path: nextSteamPath });
+        await setSteamPath(nextSteamPath);
       }
       if (riotPathChanged) {
-        await invoke("set_riot_path", { path: nextRiotPath });
+        await setRiotPath(nextRiotPath);
       }
       if (battleNetPathChanged) {
-        await invoke("set_battle_net_path", { path: nextBattleNetPath });
+        await setBattleNetPath(nextBattleNetPath);
       }
       lastPersistedSnapshot = buildPersistSnapshot();
       lastPlatformSnapshot = nextPlatformSnapshot;
@@ -345,7 +358,7 @@
 
   async function chooseSteamFolder() {
     try {
-      steamPath = await invoke<string>("select_steam_path");
+      steamPath = await selectSteamPath();
     } catch {
       // User canceled the picker or the native dialog failed.
     }
@@ -353,7 +366,7 @@
 
   async function chooseRiotPath() {
     try {
-      riotPath = await invoke<string>("select_riot_path");
+      riotPath = await selectRiotPath();
     } catch {
       // User canceled the picker or the native dialog failed.
     }
@@ -361,7 +374,7 @@
 
   async function chooseBattleNetPath() {
     try {
-      battleNetPath = await invoke<string>("select_battle_net_path");
+      battleNetPath = await selectBattleNetPath();
     } catch {
       // User canceled the picker or the native dialog failed.
     }
@@ -369,7 +382,7 @@
 
   async function openSteamApiKeyPage() {
     try {
-      await invoke("open_steam_api_key_page");
+      await openSteamApiKeyPageInBrowser();
     } catch {
       addToast(t("settings.openApiKeyFailed"));
     }
@@ -401,10 +414,10 @@
 
   onMount(async () => {
     const [apiKeyResult, steamPathResult, riotPathResult, battleNetPathResult] = await Promise.allSettled([
-      invoke<boolean>("has_api_key"),
-      invoke<string>("get_steam_path"),
-      invoke<string>("get_riot_path"),
-      invoke<string>("get_battle_net_path"),
+      hasApiKey(),
+      getSteamPath(),
+      getRiotPath(),
+      getBattleNetPath(),
     ]);
 
     apiKeyConfigured = apiKeyResult.status === "fulfilled" ? apiKeyResult.value : false;

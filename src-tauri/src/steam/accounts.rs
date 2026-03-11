@@ -123,7 +123,7 @@ fn parse_launch_options(launch_options: &str) -> Vec<String> {
 }
 
 fn launch_steam(
-    steam_path: &std::path::PathBuf,
+    steam_path: &Path,
     run_as_admin: bool,
     launch_options: &str,
 ) -> Result<(), AppError> {
@@ -131,7 +131,7 @@ fn launch_steam(
     os::launch_steam(steam_path, run_as_admin, &args)
 }
 
-fn steam_user_data_path(steam_path: &PathBuf, steam_id: &str) -> Result<PathBuf, AppError> {
+fn steam_user_data_path(steam_path: &Path, steam_id: &str) -> Result<PathBuf, AppError> {
     let account_id = steam_id_to_account_id(steam_id).ok_or(AppError::InvalidSteamId)?;
     Ok(steam_path.join("userdata").join(account_id.to_string()))
 }
@@ -174,8 +174,8 @@ fn unescape_vdf_path(input: &str) -> String {
     input.replace("\\\\", "\\")
 }
 
-fn load_library_paths(steam_path: &PathBuf) -> Vec<PathBuf> {
-    let mut paths = vec![steam_path.clone()];
+fn load_library_paths(steam_path: &Path) -> Vec<PathBuf> {
+    let mut paths = vec![steam_path.to_path_buf()];
     let libraryfolders_path = steam_path.join("steamapps").join("libraryfolders.vdf");
     let Ok(content) = fs::read_to_string(libraryfolders_path) else {
         return paths;
@@ -200,7 +200,7 @@ fn load_library_paths(steam_path: &PathBuf) -> Vec<PathBuf> {
     paths
 }
 
-fn load_app_names(steam_path: &PathBuf) -> HashMap<String, String> {
+fn load_app_names(steam_path: &Path) -> HashMap<String, String> {
     let mut names = HashMap::new();
     for library_root in load_library_paths(steam_path) {
         let steamapps = if library_root
@@ -237,7 +237,7 @@ fn load_app_names(steam_path: &PathBuf) -> HashMap<String, String> {
     names
 }
 
-pub fn get_current_account_name(steam_path: &PathBuf) -> Result<String, AppError> {
+pub fn get_current_account_name(steam_path: &Path) -> Result<String, AppError> {
     let users = parse_login_users(steam_path)?;
     let mut fallback: Option<(u64, String)> = None;
 
@@ -262,14 +262,12 @@ pub fn get_current_account_name(steam_path: &PathBuf) -> Result<String, AppError
     Ok(fallback.map(|(_, name)| name).unwrap_or_default())
 }
 
-pub fn get_accounts(steam_path: &PathBuf) -> Result<Vec<SteamAccount>, AppError> {
+pub fn get_accounts(steam_path: &Path) -> Result<Vec<SteamAccount>, AppError> {
     let (accounts, _) = get_accounts_snapshot(steam_path)?;
     Ok(accounts)
 }
 
-pub fn get_accounts_snapshot(
-    steam_path: &PathBuf,
-) -> Result<(Vec<SteamAccount>, String), AppError> {
+pub fn get_accounts_snapshot(steam_path: &Path) -> Result<(Vec<SteamAccount>, String), AppError> {
     let users = parse_login_users(steam_path)?;
 
     let mut current_account = String::new();
@@ -305,7 +303,7 @@ pub fn get_accounts_snapshot(
     Ok((accounts, current_account))
 }
 
-fn parse_login_users(steam_path: &PathBuf) -> Result<Vec<ParsedLoginUser>, AppError> {
+fn parse_login_users(steam_path: &Path) -> Result<Vec<ParsedLoginUser>, AppError> {
     let loginusers_path = steam_path.join("config").join("loginusers.vdf");
     if !loginusers_path.exists() {
         return Ok(Vec::new());
@@ -380,27 +378,27 @@ fn remove_loginuser_entry(content: &str, steam_id: &str) -> (String, bool) {
 }
 
 pub fn switch_account(
-    steam_path: &PathBuf,
+    steam_path: &Path,
     username: &str,
     run_as_admin: bool,
     launch_options: &str,
 ) -> Result<(), AppError> {
     kill_steam()?;
     os::set_auto_login_user(username)?;
-    launch_steam(&steam_path, run_as_admin, launch_options)
+    launch_steam(steam_path, run_as_admin, launch_options)
 }
 
 pub fn add_account(
-    steam_path: &PathBuf,
+    steam_path: &Path,
     run_as_admin: bool,
     launch_options: &str,
 ) -> Result<(), AppError> {
     kill_steam()?;
     os::clear_auto_login_user()?;
-    launch_steam(&steam_path, run_as_admin, launch_options)
+    launch_steam(steam_path, run_as_admin, launch_options)
 }
 
-pub fn forget_account(steam_path: &PathBuf, steam_id: &str) -> Result<(), AppError> {
+pub fn forget_account(steam_path: &Path, steam_id: &str) -> Result<(), AppError> {
     kill_steam()?;
 
     // Remove account entry from loginusers.vdf.
@@ -418,7 +416,7 @@ pub fn forget_account(steam_path: &PathBuf, steam_id: &str) -> Result<(), AppErr
 }
 
 pub fn switch_account_mode(
-    steam_path: &PathBuf,
+    steam_path: &Path,
     username: &str,
     steam_id: &str,
     mode: &str,
@@ -433,13 +431,13 @@ pub fn switch_account_mode(
             "invisible" => "7",
             _ => "1",
         };
-        set_persona_state(&steam_path, account_id, state);
+        set_persona_state(steam_path, account_id, state);
     }
 
-    launch_steam(&steam_path, run_as_admin, launch_options)
+    launch_steam(steam_path, run_as_admin, launch_options)
 }
 
-pub fn open_userdata_with_path(steam_path: &PathBuf, steam_id: &str) -> Result<(), AppError> {
+pub fn open_userdata_with_path(steam_path: &Path, steam_id: &str) -> Result<(), AppError> {
     let userdata_path = steam_user_data_path(steam_path, steam_id)?;
 
     if !userdata_path.exists() {
@@ -456,7 +454,7 @@ pub fn open_userdata_with_path(steam_path: &PathBuf, steam_id: &str) -> Result<(
 }
 
 pub fn copy_game_settings(
-    steam_path: &PathBuf,
+    steam_path: &Path,
     from_steam_id: &str,
     to_steam_id: &str,
     app_id: &str,
@@ -482,7 +480,7 @@ pub fn copy_game_settings(
 }
 
 pub fn get_copyable_games(
-    steam_path: &PathBuf,
+    steam_path: &Path,
     from_steam_id: &str,
     _to_steam_id: &str,
 ) -> Result<Vec<CopyableGame>, AppError> {

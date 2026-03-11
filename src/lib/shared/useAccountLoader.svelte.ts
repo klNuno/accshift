@@ -335,7 +335,7 @@ export function createAccountLoader(
       addToast(error);
       return;
     }
-    if (result?.setupStatus) {
+    if (result.setupStatus) {
       return result;
     }
     if (adapter.reloadAfterAdd) {

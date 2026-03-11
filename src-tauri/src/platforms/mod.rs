@@ -28,12 +28,6 @@ pub struct SwitchAccountModeRequest {
 }
 
 #[derive(Debug, Clone)]
-pub struct AddAccountRequest {
-    pub run_as_admin: bool,
-    pub launch_options: String,
-}
-
-#[derive(Debug, Clone)]
 pub struct CopyGameSettingsRequest {
     pub from_steam_id: String,
     pub to_steam_id: String,
@@ -66,11 +60,6 @@ pub trait PlatformService: Sync {
         &'a self,
         app_handle: tauri::AppHandle,
         request: SwitchAccountModeRequest,
-    ) -> PlatformFuture<'a, Result<(), String>>;
-    fn add_account<'a>(
-        &'a self,
-        app_handle: tauri::AppHandle,
-        request: AddAccountRequest,
     ) -> PlatformFuture<'a, Result<(), String>>;
     fn forget_account<'a>(
         &'a self,

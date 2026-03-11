@@ -6,6 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "check": "pnpm check:frontend && pnpm check:rust",
+    "check:frontend": "svelte-check --tsconfig ./tsconfig.json",
+    "check:rust": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "fmt:check": "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
+    "clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
     "preview": "vite preview",
     "tauri": "tauri"
   },
