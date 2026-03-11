@@ -1,27 +1,26 @@
 <script lang="ts">
   import type { CardExtensionContent, CardExtensionSection } from "$lib/shared/cardExtension";
 
-  let {
-    content,
-    side = "right",
-  }: {
-    content: CardExtensionContent;
-    side?: "left" | "right";
-  } = $props();
+  let { content }: { content: CardExtensionContent } = $props();
 
   function sectionKey(section: CardExtensionSection, index: number) {
     return `${section.title ?? section.text ?? "section"}-${index}`;
   }
 </script>
 
-<div class="panel" class:left={side === "left"} class:right={side === "right"}>
+<div class="details">
   {#each content.sections as section, index (sectionKey(section, index))}
-    <section class="section">
+    <section class="section" class:loading={section.loading}>
       {#if section.title}
         <div class="section-title">{section.title}</div>
       {/if}
       {#if section.text}
-        <div class="section-text" class:loading-text={section.loading}>{section.text}</div>
+        <div class="section-text-row">
+          {#if section.loading}
+            <span class="status-dot" aria-hidden="true"></span>
+          {/if}
+          <div class="section-text">{section.text}</div>
+        </div>
       {/if}
       {#if section.lines?.length}
         <div class="section-lines">
@@ -42,55 +41,26 @@
 </div>
 
 <style>
-  .panel {
-    position: absolute;
-    top: -6px;
-    width: 176px;
-    min-height: 100%;
-    border-radius: 18px;
-    border: 1px solid color-mix(in srgb, var(--border) 78%, #fff 22%);
-    background:
-      linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 94%, #fff 6%), color-mix(in srgb, var(--bg-card) 88%, #000 12%));
-    box-shadow:
-      0 22px 44px rgba(0, 0, 0, 0.24),
-      0 6px 14px rgba(0, 0, 0, 0.16);
-    padding: 14px 12px 14px 52px;
+  .details {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    height: 100%;
+    padding: 10px 4px 10px 10px;
     box-sizing: border-box;
-    z-index: -1;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    justify-content: center;
+    gap: 10px;
     pointer-events: none;
-  }
-
-  .panel.right {
-    left: calc(100% - 18px);
-  }
-
-  .panel.left {
-    right: calc(100% - 18px);
-    padding: 14px 52px 14px 12px;
-  }
-
-  .panel::before {
-    content: "";
-    position: absolute;
-    inset: 10px auto 10px 18px;
-    width: 1px;
-    background: color-mix(in srgb, var(--border) 82%, transparent);
-    opacity: 0.8;
-  }
-
-  .panel.left::before {
-    inset: 10px 18px 10px auto;
   }
 
   .section {
     display: flex;
     flex-direction: column;
-    gap: 7px;
+    gap: 6px;
     min-width: 0;
-    padding-bottom: 10px;
+    padding-bottom: 8px;
     border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   }
 
@@ -108,16 +78,47 @@
     color: var(--fg-subtle);
   }
 
+  .section-text-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    margin-top: 5px;
+    border-radius: 999px;
+    flex: 0 0 auto;
+    background: color-mix(in srgb, var(--card-custom-color, #60a5fa) 52%, #ffffff);
+    opacity: 0.9;
+    animation: pulseDot 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulseDot {
+    0%, 100% {
+      transform: scale(0.9);
+      opacity: 0.72;
+    }
+    50% {
+      transform: scale(1.05);
+      opacity: 1;
+    }
+  }
+
   .section-text,
   .section-line {
     font-size: 11px;
     line-height: 1.45;
     color: var(--fg);
     word-break: break-word;
+    overflow-wrap: anywhere;
+    min-width: 0;
   }
 
-  .section-text.loading-text {
-    opacity: 0.9;
+  .section.loading .section-text {
+    color: color-mix(in srgb, var(--fg) 88%, var(--fg-muted) 12%);
   }
 
   .section-lines {
@@ -174,5 +175,4 @@
     color: #cbd5e1;
     border: 1px solid rgba(148, 163, 184, 0.3);
   }
-
 </style>
