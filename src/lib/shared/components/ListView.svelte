@@ -175,8 +175,10 @@
   .list-layout {
     display: flex;
     gap: 1px;
+    width: 100%;
     height: 100%;
     min-height: 0;
+    min-width: 0;
     background: var(--border);
     border-radius: 8px;
     overflow: hidden;

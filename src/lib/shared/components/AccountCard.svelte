@@ -73,8 +73,7 @@
 
   const MARQUEE_SPEED_PX_PER_SEC = 42;
   const MARQUEE_PAUSE_MS = 2000;
-  const EXTENSION_WIDTH_PX = 176;
-  const EXTENSION_OVERLAP_PX = 18;
+  const EXTENSION_DETAIL_WIDTH_PX = 156;
   const EXTENSION_VIEWPORT_GAP_PX = 12;
   const noteText = $derived(note.trim());
   const hasUsername = $derived(Boolean(showUsername && account.username.trim()));
@@ -146,7 +145,7 @@
     if (!cardRef) return;
     const rect = cardRef.getBoundingClientRect();
     const roomOnRight = window.innerWidth - rect.right;
-    const needed = EXTENSION_WIDTH_PX - EXTENSION_OVERLAP_PX + EXTENSION_VIEWPORT_GAP_PX;
+    const needed = EXTENSION_DETAIL_WIDTH_PX + EXTENSION_VIEWPORT_GAP_PX;
     panelSide = roomOnRight >= needed ? "right" : "left";
   }
 
@@ -238,11 +237,33 @@
 <div
   class="card-shell"
   class:extension-visible={isExtensionVisible}
+  style={cardColor ? `--card-custom-color: ${cardColor};` : ""}
   onmouseenter={handleMouseEnter}
   onmouseleave={handleMouseLeave}
 >
-  {#if isExtensionVisible && extensionContent}
-    <CardExtensionPanel content={extensionContent} side={panelSide} />
+  {#if hasExtension && extensionContent}
+    <div
+      class="extension-hitbox"
+      class:visible={isExtensionVisible}
+      class:left={panelSide === "left"}
+      class:right={panelSide === "right"}
+      aria-hidden={!isExtensionVisible}
+    >
+      <div
+        class="extension-surface"
+        class:visible={isExtensionVisible}
+        class:active={isActive}
+        class:custom-color={!!cardColor}
+        class:ban-red={hasRedWarning}
+        class:ban-yellow={hasOrangeWarning}
+        class:left={panelSide === "left"}
+        class:right={panelSide === "right"}
+      >
+        <div class="details-wrap">
+          <CardExtensionPanel content={extensionContent} />
+        </div>
+      </div>
+    </div>
   {/if}
 
   <div
@@ -250,7 +271,6 @@
     onclick={handleClick}
     oncontextmenu={handleContextMenu}
     data-account-id={account.id}
-    style={cardColor ? `--card-custom-color: ${cardColor};` : ""}
     class="card"
     class:custom-color={!!cardColor}
     class:active={isActive}
@@ -332,12 +352,116 @@
 <style>
   .card-shell {
     position: relative;
+    width: var(--grid-card-width);
+    min-width: var(--grid-card-width);
     overflow: visible;
     isolation: isolate;
+    flex: 0 0 auto;
   }
 
   .card-shell.extension-visible {
     z-index: 24;
+  }
+
+  .extension-hitbox {
+    position: absolute;
+    top: -2px;
+    bottom: -2px;
+    width: calc(var(--grid-card-width) + 156px);
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .extension-hitbox.right {
+    left: 0;
+  }
+
+  .extension-hitbox.left {
+    right: 0;
+  }
+
+  .extension-hitbox.visible {
+    pointer-events: auto;
+  }
+
+  .extension-surface {
+    position: absolute;
+    inset: 0;
+    border-radius: var(--grid-card-radius);
+    background: var(--bg-overlay);
+    opacity: 0;
+    transform: translateY(2px) scaleX(0.96);
+    transition:
+      opacity 140ms ease-out,
+      transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 180ms ease-out,
+      background 180ms ease-out,
+      outline-color 120ms ease-out;
+    box-shadow: none;
+    overflow: hidden;
+  }
+
+  .extension-surface.right {
+    transform-origin: left center;
+  }
+
+  .extension-surface.left {
+    transform-origin: right center;
+  }
+
+  .extension-surface.visible {
+    opacity: 1;
+    transform: translateY(0) scaleX(1);
+    box-shadow: 0 14px 28px rgba(0, 0, 0, 0.18);
+  }
+
+  .card-shell:hover .extension-surface.visible {
+    transform: translateY(-2px) scaleX(1);
+    box-shadow: 0 18px 32px rgba(0, 0, 0, 0.2);
+  }
+
+  .extension-surface.custom-color {
+    background: color-mix(in srgb, var(--card-custom-color) 18%, var(--bg-overlay));
+  }
+
+  .extension-surface.active.visible {
+    box-shadow:
+      0 0 0 2px rgba(255, 255, 255, 0.62),
+      0 0 0 4px rgba(9, 9, 11, 0.45),
+      0 14px 28px rgba(0, 0, 0, 0.18);
+  }
+
+  .extension-surface.custom-color.active.visible {
+    box-shadow:
+      0 0 0 2px rgba(255, 255, 255, 0.72),
+      0 0 0 5px color-mix(in srgb, var(--card-custom-color) 50%, rgba(9, 9, 11, 0.62)),
+      0 14px 28px rgba(0, 0, 0, 0.18);
+  }
+
+  .extension-surface.ban-red.visible {
+    outline: 2px solid rgba(239, 68, 68, 0.6);
+  }
+
+  .extension-surface.ban-yellow.visible:not(.ban-red) {
+    outline: 2px solid rgba(234, 179, 8, 0.6);
+  }
+
+  .details-wrap {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 156px;
+    box-sizing: border-box;
+  }
+
+  .extension-surface.right .details-wrap {
+    right: 0;
+    border-left: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  }
+
+  .extension-surface.left .details-wrap {
+    left: 0;
+    border-right: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
   }
 
   .card {
@@ -363,12 +487,22 @@
     box-shadow: 0 12px 24px rgba(0, 0, 0, 0.18);
   }
 
+  .card-shell:hover .card:not(.active):not(.dragging) {
+    background: var(--bg-card-hover);
+    transform: translateY(-2px);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.18);
+  }
+
   .card.custom-color {
     background: color-mix(in srgb, var(--card-custom-color) 24%, var(--bg-card));
     outline: 1px solid color-mix(in srgb, var(--card-custom-color) 55%, transparent);
   }
 
   .card.custom-color:not(.active):hover {
+    background: color-mix(in srgb, var(--card-custom-color) 32%, var(--bg-card-hover));
+  }
+
+  .card-shell:hover .card.custom-color:not(.active):not(.dragging) {
     background: color-mix(in srgb, var(--card-custom-color) 32%, var(--bg-card-hover));
   }
 
@@ -506,6 +640,15 @@
   }
 
   .card:not(.active):hover .avatar-media img {
+    transform: scale(1.04);
+  }
+
+  .card-shell:hover .card:not(.active):not(.dragging) .avatar {
+    background: var(--bg-elevated);
+    transform: translateY(-1px);
+  }
+
+  .card-shell:hover .card:not(.active):not(.dragging) .avatar-media img {
     transform: scale(1.04);
   }
 
