@@ -29,15 +29,21 @@ export function getSteamContextMenuItems(
       action: () => switchAccountMode(account.username, account.id, "invisible"),
     },
     {
+      id: `steam.copy.username.${account.id}`,
+      group: "platform.copy",
+      label: callbacks.t("steam.copyLabelUsername"),
+      action: () => callbacks.copyToClipboard(account.username, callbacks.t("steam.copyLabelUsername")),
+    },
+    {
       id: `steam.copy.id64.${account.id}`,
       group: "platform.copy",
-      label: callbacks.t("steam.copySteamId64"),
+      label: callbacks.t("steam.copyLabelSteamId64"),
       action: () => callbacks.copyToClipboard(account.id, callbacks.t("steam.copyLabelSteamId64")),
     },
     {
       id: `steam.copy.friendCode.${account.id}`,
       group: "platform.copy",
-      label: callbacks.t("steam.copyFriendCode"),
+      label: callbacks.t("steam.copyLabelFriendCode"),
       action: () => {
         const code = encodeFriendCode(account.id);
         callbacks.copyToClipboard(code, callbacks.t("steam.copyLabelFriendCode"));
@@ -46,7 +52,7 @@ export function getSteamContextMenuItems(
     {
       id: `steam.copy.profileUrl.${account.id}`,
       group: "platform.copy",
-      label: callbacks.t("steam.copyProfileUrl"),
+      label: callbacks.t("steam.copyLabelProfileUrl"),
       action: () => callbacks.copyToClipboard(toProfileUrl(account.id), callbacks.t("steam.copyLabelProfileUrl")),
     },
     {
