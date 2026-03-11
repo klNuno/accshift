@@ -2,6 +2,7 @@ import type { PlatformDef, AppSettings } from "./types";
 import { DEFAULT_LOCALE, detectPreferredLocale, normalizeLocale } from "$lib/i18n";
 import { isValidPinHash } from "$lib/shared/pin";
 import { PLATFORM_DEFS } from "$lib/platforms/registry";
+import { getThemeDefinition } from "$lib/theme/themes";
 
 const SETTINGS_KEY = "accshift_settings";
 
@@ -9,7 +10,8 @@ export const ALL_PLATFORMS: PlatformDef[] = PLATFORM_DEFS;
 
 const DEFAULTS: AppSettings = {
   language: DEFAULT_LOCALE,
-  theme: "dark",
+  themeId: "dark",
+  backgroundOpacity: 100,
   uiScalePercent: 100,
   suspendGraphicsWhenMinimized: true,
   minimizeOnAccountSwitch: false,
@@ -82,7 +84,14 @@ function sanitizeSettings(value: unknown): AppSettings {
 
   return {
     language: hasLanguage ? normalizeLocale(raw.language) : detectPreferredLocale(),
-    theme: raw.theme === "light" ? "light" : "dark",
+    themeId: getThemeDefinition(
+      typeof raw.themeId === "string"
+        ? raw.themeId
+        : raw.theme === "light"
+          ? "light"
+          : DEFAULTS.themeId
+    ).id,
+    backgroundOpacity: clampInt(raw.backgroundOpacity, 0, 100, DEFAULTS.backgroundOpacity),
     uiScalePercent: clampInt(raw.uiScalePercent, 75, 150, DEFAULTS.uiScalePercent),
     suspendGraphicsWhenMinimized: raw.suspendGraphicsWhenMinimized !== false,
     minimizeOnAccountSwitch: Boolean(raw.minimizeOnAccountSwitch),

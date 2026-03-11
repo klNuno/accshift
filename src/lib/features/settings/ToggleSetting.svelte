@@ -39,7 +39,7 @@
     justify-content: space-between;
     border: 1px solid var(--border);
     border-radius: 8px;
-    background: color-mix(in srgb, var(--bg) 88%, #fff 12%);
+    background: color-mix(in srgb, var(--bg-card) 88%, #fff 12%);
     color: var(--fg);
     padding: 9px 10px;
     cursor: pointer;

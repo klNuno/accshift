@@ -3,6 +3,7 @@ import type { AppSettings, PlatformDef, RuntimeOs } from "$lib/features/settings
 import { getPlatform } from "$lib/shared/platform";
 import { getPlatformDefinition } from "$lib/platforms/registry";
 import { DEFAULT_LOCALE } from "$lib/i18n";
+import { getThemeDefinition } from "$lib/theme/themes";
 
 export function isPlatformCompatibleWithOs(platform: PlatformDef | undefined, runtimeOs: RuntimeOs): boolean {
   if (!platform) return false;
@@ -50,6 +51,7 @@ export function createPlatformShellState() {
     return ids;
   });
   let accentColor = $derived(getPlatformDefinition(activeTab)?.accent || "#3b82f6");
+  let activeTheme = $derived(getThemeDefinition(settings.themeId));
   let uiZoomFactor = $derived(Math.min(1.5, Math.max(0.75, settings.uiScalePercent / 100)));
   let appStageStyle = $derived.by(() => {
     const zoom = uiZoomFactor;
@@ -97,6 +99,7 @@ export function createPlatformShellState() {
     get activeTabUsable() { return activeTabUsable; },
     get unavailablePlatformIds() { return unavailablePlatformIds; },
     get accentColor() { return accentColor; },
+    get activeTheme() { return activeTheme; },
     get uiZoomFactor() { return uiZoomFactor; },
     get appStageStyle() { return appStageStyle; },
     get adapter() { return adapter; },

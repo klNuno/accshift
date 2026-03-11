@@ -34,7 +34,8 @@ export interface PlatformSettings {
 
 export interface AppSettings {
   language: Locale;
-  theme: "dark" | "light";
+  themeId: string;
+  backgroundOpacity: number;
   uiScalePercent: number;
   suspendGraphicsWhenMinimized: boolean;
   minimizeOnAccountSwitch: boolean;

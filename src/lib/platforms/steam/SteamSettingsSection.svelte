@@ -244,7 +244,7 @@
     width: 100%;
     border: 1px solid var(--border);
     border-radius: 8px;
-    background: var(--bg);
+    background: var(--bg-solid);
     color: var(--fg);
     font-size: 12px;
     padding: 9px 10px;
