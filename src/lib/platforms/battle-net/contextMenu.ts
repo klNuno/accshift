@@ -1,5 +1,9 @@
 import type { ContextMenuAction } from "$lib/shared/contextMenu/types";
 import type { PlatformAccount, PlatformContextMenuCallbacks } from "$lib/shared/platform";
+import {
+  confirmSafeContextAction,
+  createSafeContextAction,
+} from "$lib/shared/contextMenu/actions";
 import { copyGameSettings, forgetAccount, getCopyableGames } from "./battleNetApi";
 
 function battleNetCopyErrorMessage(
@@ -44,37 +48,40 @@ export function getBattleNetContextMenuItems(
         return games.map((game) => ({
           id: `battle-net.copy.settings.${account.id}.${game.appId}`,
           label: game.name,
-          action: async () => {
-            try {
+          action: createSafeContextAction(
+            callbacks,
+            async () => {
               await copyGameSettings(account.id, targetAccountId, game.appId);
               callbacks.showToast(callbacks.t("battlenet.copiedSettingsToCurrent", { game: game.name }));
-            } catch (error) {
-              callbacks.showToast(battleNetCopyErrorMessage(error, callbacks));
-            }
-          },
+            },
+            battleNetCopyErrorMessage,
+          ),
         }));
       },
     });
   }
 
   items.push({
-      id: `battle-net.forget.${account.id}`,
-      group: "platform.danger",
-      label: callbacks.t("battlenet.forget"),
-      action: () => {
-        const display = (account.displayName || account.id).trim() || account.id;
-        callbacks.confirmAction({
+    id: `battle-net.forget.${account.id}`,
+    group: "platform.danger",
+    label: callbacks.t("battlenet.forget"),
+    action: () => {
+      const display = (account.displayName || account.id).trim() || account.id;
+      confirmSafeContextAction(
+        callbacks,
+        {
           title: callbacks.t("battlenet.forgetConfirmTitle", { display }),
           message: callbacks.t("battlenet.forgetConfirmMessage"),
           confirmLabel: callbacks.t("battlenet.forget"),
-          onConfirm: async () => {
-            await forgetAccount(account.id);
-            callbacks.showToast(callbacks.t("battlenet.forgotAccount", { email: display }));
-            callbacks.refreshAccounts();
-          },
-        });
-      },
-    });
+        },
+        async () => {
+          await forgetAccount(account.id);
+          callbacks.showToast(callbacks.t("battlenet.forgotAccount", { email: display }));
+          callbacks.refreshAccounts();
+        },
+      );
+    },
+  });
 
   return items;
 }

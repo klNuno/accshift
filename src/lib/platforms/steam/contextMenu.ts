@@ -1,5 +1,9 @@
 import type { ContextMenuAction } from "../../shared/contextMenu/types";
 import type { PlatformAccount, PlatformContextMenuCallbacks } from "../../shared/platform";
+import {
+  confirmSafeContextAction,
+  createSafeContextAction,
+} from "../../shared/contextMenu/actions";
 import { toProfileUrl } from "./steamIdUtils";
 import { encodeFriendCode } from "./friendCode";
 import {
@@ -20,13 +24,19 @@ export function getSteamContextMenuItems(
       id: `steam.launch.online.${account.id}`,
       group: "platform.primary",
       label: callbacks.t("steam.launchOnline"),
-      action: () => switchAccountMode(account.username, account.id, "online"),
+      action: createSafeContextAction(
+        callbacks,
+        () => switchAccountMode(account.username, account.id, "online"),
+      ),
     },
     {
       id: `steam.launch.invisible.${account.id}`,
       group: "platform.primary",
       label: callbacks.t("steam.launchInvisible"),
-      action: () => switchAccountMode(account.username, account.id, "invisible"),
+      action: createSafeContextAction(
+        callbacks,
+        () => switchAccountMode(account.username, account.id, "invisible"),
+      ),
     },
     {
       id: `steam.copy.username.${account.id}`,
@@ -59,13 +69,7 @@ export function getSteamContextMenuItems(
       id: `steam.open.userdata.${account.id}`,
       group: "platform.data",
       label: callbacks.t("steam.openUserdataFolder"),
-      action: async () => {
-        try {
-          await openUserdata(account.id);
-        } catch (e) {
-          callbacks.showToast(String(e));
-        }
-      },
+      action: createSafeContextAction(callbacks, () => openUserdata(account.id)),
     },
   ];
 
@@ -75,19 +79,18 @@ export function getSteamContextMenuItems(
       group: "platform.data",
       label: callbacks.t("steam.clearIntegratedBrowserCache"),
       action: () => {
-        callbacks.confirmAction({
+        confirmSafeContextAction(
+          callbacks,
+          {
           title: callbacks.t("steam.clearIntegratedBrowserCacheConfirmTitle"),
           message: callbacks.t("steam.clearIntegratedBrowserCacheConfirmMessage"),
           confirmLabel: callbacks.t("steam.clearIntegratedBrowserCache"),
-          onConfirm: async () => {
-            try {
-              await clearIntegratedBrowserCache();
-              callbacks.showToast(callbacks.t("steam.clearedIntegratedBrowserCache"));
-            } catch (e) {
-              callbacks.showToast(String(e));
-            }
           },
-        });
+          async () => {
+            await clearIntegratedBrowserCache();
+            callbacks.showToast(callbacks.t("steam.clearedIntegratedBrowserCache"));
+          },
+        );
       },
     });
   }
@@ -103,14 +106,10 @@ export function getSteamContextMenuItems(
         return games.map((game) => ({
           id: `steam.copy.settings.${account.id}.${game.app_id}`,
           label: game.name,
-          action: async () => {
-            try {
-              await copyGameSettings(account.id, targetSteamId, game.app_id);
-              callbacks.showToast(callbacks.t("steam.copiedSettingsToCurrent", { game: game.name }));
-            } catch (e) {
-              callbacks.showToast(String(e));
-            }
-          },
+          action: createSafeContextAction(callbacks, async () => {
+            await copyGameSettings(account.id, targetSteamId, game.app_id);
+            callbacks.showToast(callbacks.t("steam.copiedSettingsToCurrent", { game: game.name }));
+          }),
         }));
       },
     });
@@ -122,20 +121,19 @@ export function getSteamContextMenuItems(
     label: callbacks.t("steam.forget"),
     action: () => {
       const display = (account.displayName || account.username).trim() || account.username;
-      callbacks.confirmAction({
-        title: callbacks.t("steam.forgetConfirmTitle", { display }),
-        message: callbacks.t("steam.forgetConfirmMessage"),
-        confirmLabel: callbacks.t("steam.forget"),
-        onConfirm: async () => {
-          try {
-            await forgetAccount(account.id);
-            callbacks.showToast(callbacks.t("steam.forgotAccount", { username: account.username }));
-            callbacks.refreshAccounts();
-          } catch (e) {
-            callbacks.showToast(String(e));
-          }
+      confirmSafeContextAction(
+        callbacks,
+        {
+          title: callbacks.t("steam.forgetConfirmTitle", { display }),
+          message: callbacks.t("steam.forgetConfirmMessage"),
+          confirmLabel: callbacks.t("steam.forget"),
         },
-      });
+        async () => {
+          await forgetAccount(account.id);
+          callbacks.showToast(callbacks.t("steam.forgotAccount", { username: account.username }));
+          callbacks.refreshAccounts();
+        },
+      );
     },
   });
 
