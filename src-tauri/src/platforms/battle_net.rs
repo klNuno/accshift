@@ -1,5 +1,6 @@
 use crate::config::{self, BattleNetAccountConfig};
 use crate::fs_utils;
+use crate::platforms::{log_platform_error, log_platform_info, log_platform_warn};
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -128,18 +129,33 @@ fn log_battle_net_event(
     message: &str,
     details: impl Into<String>,
 ) {
-    let details = details.into();
-    let _ = crate::logging::append_app_log(
+    crate::platforms::log_platform_event(
         app_handle,
         level,
         "battle_net.overwatch",
         message,
-        if details.is_empty() {
-            None
-        } else {
-            Some(details.as_str())
-        },
+        details,
     );
+}
+
+fn build_battle_net_switch_details(target_email: Option<&str>) -> String {
+    let current_account = read_saved_accounts()
+        .ok()
+        .and_then(|accounts| accounts.into_iter().next())
+        .unwrap_or_default();
+    let running_processes = BATTLE_NET_PROCESS_NAMES
+        .iter()
+        .copied()
+        .filter(|name| crate::os::is_process_running(name))
+        .collect::<Vec<_>>();
+
+    serde_json::json!({
+        "targetEmail": target_email,
+        "currentAccount": current_account,
+        "launcherRunning": is_battle_net_running(),
+        "runningProcesses": running_processes,
+    })
+    .to_string()
 }
 
 fn is_any_process_running(process_names: &[&str]) -> bool {
@@ -942,6 +958,12 @@ pub fn get_current_account() -> Result<String, String> {
 
 pub fn switch_account(app_handle: tauri::AppHandle, email: String) -> Result<(), String> {
     let target_email = validate_account_email(&email)?;
+    log_platform_info(
+        &app_handle,
+        "battle_net.switch_account",
+        "Battle.net switch requested",
+        build_battle_net_switch_details(Some(&target_email)),
+    );
     let accounts = known_account_emails(&app_handle)?;
     let current_account = read_saved_accounts()?.into_iter().next();
 
@@ -967,9 +989,9 @@ pub fn switch_account(app_handle: tauri::AppHandle, email: String) -> Result<(),
                 Ok(true) => {}
                 Ok(false) => {}
                 Err(error) => {
-                    log_battle_net_event(
+                    log_platform_warn(
                         &app_handle,
-                        "warn",
+                        "battle_net.switch_account",
                         "Could not capture Overwatch snapshot before Battle.net switch",
                         format!("from={current}; to={target}; error={error}"),
                     );
@@ -981,7 +1003,27 @@ pub fn switch_account(app_handle: tauri::AppHandle, email: String) -> Result<(),
     kill_battle_net();
     write_saved_accounts(&reordered)?;
     remember_account_usage(&app_handle, &target)?;
-    launch_battle_net(&app_handle)
+    let result = launch_battle_net(&app_handle);
+
+    match &result {
+        Ok(()) => log_platform_info(
+            &app_handle,
+            "battle_net.switch_account",
+            "Battle.net switch completed",
+            build_battle_net_switch_details(Some(&target)),
+        ),
+        Err(error) => log_platform_error(
+            &app_handle,
+            "battle_net.switch_account",
+            "Battle.net switch failed",
+            format!(
+                "error={error}; state={}",
+                build_battle_net_switch_details(Some(&target))
+            ),
+        ),
+    }
+
+    result
 }
 
 pub fn copy_game_settings(
@@ -1024,6 +1066,12 @@ pub fn get_copyable_games(
 pub fn begin_account_setup(
     app_handle: tauri::AppHandle,
 ) -> Result<BattleNetAccountSetupStatus, String> {
+    log_platform_info(
+        &app_handle,
+        "battle_net.begin_account_setup",
+        "Battle.net account setup requested",
+        build_battle_net_switch_details(None),
+    );
     let known_accounts = known_account_emails(&app_handle).unwrap_or_default();
     let setup_id = format!("battle-net-setup-{}", Uuid::new_v4());
     let created_at = now_unix_ms();
@@ -1047,7 +1095,15 @@ pub fn begin_account_setup(
 
     kill_battle_net();
     write_saved_accounts(&[])?;
-    launch_battle_net(&app_handle)?;
+    launch_battle_net(&app_handle).map_err(|e| {
+        log_platform_error(
+            &app_handle,
+            "battle_net.begin_account_setup",
+            "Battle.net account setup launch failed",
+            &e,
+        );
+        e
+    })?;
     Ok(setup_status(&setup_id, "waiting_for_client", "", "", ""))
 }
 

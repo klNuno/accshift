@@ -1,5 +1,6 @@
 use crate::config::{self, RiotProfileConfig};
 use crate::fs_utils;
+use crate::platforms::{log_platform_error, log_platform_info};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::ffi::OsStr;
@@ -189,6 +190,20 @@ fn running_process_names(process_names: &'static [&'static str]) -> Vec<&'static
         .copied()
         .filter(|process_name| os::is_process_running(process_name))
         .collect()
+}
+
+fn build_riot_switch_details(
+    app_handle: &tauri::AppHandle,
+    target_profile_id: Option<&str>,
+) -> String {
+    let cfg = config::load_config(app_handle);
+    serde_json::json!({
+        "targetProfileId": target_profile_id,
+        "currentProfileId": cfg.riot.current_profile_id,
+        "runningClientProcesses": running_process_names(RIOT_CLIENT_PROCESS_NAMES),
+        "runningGameProcesses": running_process_names(RIOT_GAME_PROCESS_NAMES),
+    })
+    .to_string()
 }
 
 fn ensure_no_riot_game_running(action: &str) -> Result<(), String> {
@@ -1159,6 +1174,12 @@ pub fn capture_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resu
 }
 
 pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
+    log_platform_info(
+        &app_handle,
+        "riot.switch_profile",
+        "Riot profile switch requested",
+        build_riot_switch_details(&app_handle, Some(&profile_id)),
+    );
     ensure_no_riot_game_running("switching Riot account")?;
     let client_path = resolve_riot_client_path(&app_handle)?;
     let target_id = normalize_profile_id(&profile_id)?;
@@ -1215,8 +1236,27 @@ pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
         None,
     )?;
     config::save_config(&app_handle, &cfg)?;
-    launch_riot_client(&client_path)?;
-    Ok(())
+    let result = launch_riot_client(&client_path);
+
+    match &result {
+        Ok(()) => log_platform_info(
+            &app_handle,
+            "riot.switch_profile",
+            "Riot profile switch completed",
+            build_riot_switch_details(&app_handle, Some(&target_id)),
+        ),
+        Err(error) => log_platform_error(
+            &app_handle,
+            "riot.switch_profile",
+            "Riot profile switch failed",
+            format!(
+                "error={error}; state={}",
+                build_riot_switch_details(&app_handle, Some(&target_id))
+            ),
+        ),
+    }
+
+    result
 }
 
 pub fn forget_profile(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
