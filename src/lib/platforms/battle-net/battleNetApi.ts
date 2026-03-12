@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { PlatformAddFlowStatus } from "$lib/shared/platform";
+import { logAppEvent, serializeLogValue } from "$lib/shared/appLogger";
 import { toPlatformAddFlowStatus } from "$lib/platforms/addFlow";
 import type { BattleNetAccount, BattleNetCopyableGame, BattleNetStartupSnapshot } from "./types";
 
@@ -24,7 +25,18 @@ export async function getStartupSnapshot(): Promise<BattleNetStartupSnapshot> {
 }
 
 export async function switchAccount(email: string): Promise<void> {
-  await invoke("switch_battle_net_account", { email });
+  const details = { email };
+  void logAppEvent("info", "frontend.battle_net.switch", "Switch request started", details);
+  try {
+    await invoke("switch_battle_net_account", { email });
+    void logAppEvent("info", "frontend.battle_net.switch", "Switch request completed", details);
+  } catch (reason) {
+    void logAppEvent("error", "frontend.battle_net.switch", "Switch request failed", {
+      ...details,
+      error: serializeLogValue(reason),
+    });
+    throw reason;
+  }
 }
 
 export async function beginAccountSetup(): Promise<PlatformAddFlowStatus> {

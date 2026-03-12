@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { PlatformAddFlowStatus } from "$lib/shared/platform";
+import { logAppEvent, serializeLogValue } from "$lib/shared/appLogger";
 import { toPlatformAddFlowStatus } from "$lib/platforms/addFlow";
 import type { RiotProfile, RiotStartupSnapshot } from "./types";
 
@@ -42,7 +43,18 @@ export async function captureProfile(profileId: string): Promise<void> {
 }
 
 export async function switchProfile(profileId: string): Promise<void> {
-  await invoke("switch_riot_profile", { profileId });
+  const details = { profileId };
+  void logAppEvent("info", "frontend.riot.switch", "Switch request started", details);
+  try {
+    await invoke("switch_riot_profile", { profileId });
+    void logAppEvent("info", "frontend.riot.switch", "Switch request completed", details);
+  } catch (reason) {
+    void logAppEvent("error", "frontend.riot.switch", "Switch request failed", {
+      ...details,
+      error: serializeLogValue(reason),
+    });
+    throw reason;
+  }
 }
 
 export async function forgetProfile(profileId: string): Promise<void> {

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { PlatformAddFlowStatus } from "$lib/shared/platform";
+import { logAppEvent, serializeLogValue } from "$lib/shared/appLogger";
 import { toPlatformAddFlowStatus } from "$lib/platforms/addFlow";
 import type { SteamAccount, ProfileInfo, BanInfo, CopyableGame, SteamStartupSnapshot } from "./types";
 import { getSettings } from "../../features/settings/store";
@@ -34,12 +35,44 @@ export async function getStartupSnapshot(): Promise<SteamStartupSnapshot> {
 
 export async function switchAccount(username: string): Promise<void> {
   const cfg = getSteamLaunchConfig();
-  await invoke("switch_account", { username, ...cfg });
+  const details = {
+    username,
+    runAsAdmin: cfg.runAsAdmin,
+    launchOptionsConfigured: cfg.launchOptions.length > 0,
+  };
+  void logAppEvent("info", "frontend.steam.switch", "Switch request started", details);
+  try {
+    await invoke("switch_account", { username, ...cfg });
+    void logAppEvent("info", "frontend.steam.switch", "Switch request completed", details);
+  } catch (reason) {
+    void logAppEvent("error", "frontend.steam.switch", "Switch request failed", {
+      ...details,
+      error: serializeLogValue(reason),
+    });
+    throw reason;
+  }
 }
 
 export async function switchAccountMode(username: string, steamId: string, mode: string): Promise<void> {
   const cfg = getSteamLaunchConfig();
-  await invoke("switch_account_mode", { username, steamId, mode, ...cfg });
+  const details = {
+    username,
+    steamId,
+    mode,
+    runAsAdmin: cfg.runAsAdmin,
+    launchOptionsConfigured: cfg.launchOptions.length > 0,
+  };
+  void logAppEvent("info", "frontend.steam.switch_mode", "Switch mode request started", details);
+  try {
+    await invoke("switch_account_mode", { username, steamId, mode, ...cfg });
+    void logAppEvent("info", "frontend.steam.switch_mode", "Switch mode request completed", details);
+  } catch (reason) {
+    void logAppEvent("error", "frontend.steam.switch_mode", "Switch mode request failed", {
+      ...details,
+      error: serializeLogValue(reason),
+    });
+    throw reason;
+  }
 }
 
 export async function beginAccountSetup(): Promise<PlatformAddFlowStatus> {
