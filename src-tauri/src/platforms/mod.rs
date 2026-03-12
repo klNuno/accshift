@@ -9,6 +9,64 @@ pub mod battle_net;
 pub mod riot;
 pub mod steam;
 
+pub(crate) fn log_platform_event(
+    app_handle: &tauri::AppHandle,
+    level: &str,
+    source: &str,
+    message: &str,
+    details: impl Into<String>,
+) {
+    let details = details.into();
+    let _ = crate::logging::append_app_log(
+        app_handle,
+        level,
+        source,
+        message,
+        if details.is_empty() {
+            None
+        } else {
+            Some(details.as_str())
+        },
+    );
+}
+
+pub(crate) fn log_platform_info(
+    app_handle: &tauri::AppHandle,
+    source: &str,
+    message: &str,
+    details: impl Into<String>,
+) {
+    log_platform_event(app_handle, "info", source, message, details);
+}
+
+pub(crate) fn log_platform_warn(
+    app_handle: &tauri::AppHandle,
+    source: &str,
+    message: &str,
+    details: impl Into<String>,
+) {
+    log_platform_event(app_handle, "warn", source, message, details);
+}
+
+pub(crate) fn log_platform_error(
+    app_handle: &tauri::AppHandle,
+    source: &str,
+    message: &str,
+    details: impl Into<String>,
+) {
+    log_platform_event(app_handle, "error", source, message, details);
+}
+
+pub(crate) fn to_logged_error(
+    app_handle: &tauri::AppHandle,
+    source: &str,
+    error: impl std::fmt::Display,
+) -> String {
+    let details = error.to_string();
+    log_platform_error(app_handle, source, "Platform operation failed", &details);
+    details
+}
+
 pub type PlatformFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 #[derive(Debug, Clone)]
