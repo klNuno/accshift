@@ -1,12 +1,11 @@
 import type {
   PlatformAdapter,
-  PlatformAddAccountResult,
-  PlatformAddFlowStatus,
   PlatformAccount,
   PlatformContextMenuCallbacks,
   PlatformProfileInfo,
 } from "../../shared/platform";
 import type { ContextMenuAction } from "../../shared/contextMenu/types";
+import { createPlatformAddFlowHandlers } from "$lib/platforms/addFlow";
 import * as service from "./steamApi";
 import { getCachedProfile, fetchProfile } from "./profileCache";
 import { getSteamContextMenuItems } from "./contextMenu";
@@ -35,6 +34,11 @@ export const steamAdapter: PlatformAdapter = {
   id: "steam",
   name: "Steam",
   accent: "#2563eb",
+  ...createPlatformAddFlowHandlers({
+    beginSetup: service.beginAccountSetup,
+    getSetupStatus: service.getAccountSetupStatus,
+    cancelSetup: service.cancelAccountSetup,
+  }),
 
   async loadAccounts(): Promise<PlatformAccount[]> {
     const accounts = await service.getAccounts();
@@ -63,19 +67,6 @@ export const steamAdapter: PlatformAdapter = {
 
   async switchAccount(account: PlatformAccount): Promise<void> {
     await service.switchAccount(account.username);
-  },
-
-  async addAccount(): Promise<PlatformAddAccountResult> {
-    const setupStatus = await service.beginAccountSetup();
-    return { setupStatus };
-  },
-
-  async pollAddFlow(setupId: string): Promise<PlatformAddFlowStatus> {
-    return service.getAccountSetupStatus(setupId);
-  },
-
-  async cancelAddFlow(setupId: string): Promise<void> {
-    await service.cancelAccountSetup(setupId);
   },
 
   getContextMenuActions(
