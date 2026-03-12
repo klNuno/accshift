@@ -1,11 +1,10 @@
 import type {
   PlatformAdapter,
-  PlatformAddAccountResult,
-  PlatformAddFlowStatus,
   PlatformAccount,
   PlatformContextMenuCallbacks,
 } from "$lib/shared/platform";
 import type { ContextMenuAction } from "$lib/shared/contextMenu/types";
+import { createPlatformAddFlowHandlers } from "$lib/platforms/addFlow";
 import * as service from "./battleNetApi";
 import { getBattleNetContextMenuItems } from "./contextMenu";
 import type { BattleNetAccount } from "./types";
@@ -37,6 +36,11 @@ export const battleNetAdapter: PlatformAdapter = {
   id: "battle-net",
   name: "Battle.net",
   accent: "#38bdf8",
+  ...createPlatformAddFlowHandlers({
+    beginSetup: service.beginAccountSetup,
+    getSetupStatus: service.getAccountSetupStatus,
+    cancelSetup: service.cancelAccountSetup,
+  }),
 
   async loadAccounts(): Promise<PlatformAccount[]> {
     const accounts = await service.getAccounts();
@@ -62,19 +66,6 @@ export const battleNetAdapter: PlatformAdapter = {
 
   async switchAccount(account: PlatformAccount): Promise<void> {
     await service.switchAccount(account.id);
-  },
-
-  async addAccount(): Promise<PlatformAddAccountResult> {
-    const setupStatus = await service.beginAccountSetup();
-    return { setupStatus };
-  },
-
-  async pollAddFlow(setupId: string): Promise<PlatformAddFlowStatus> {
-    return service.getAccountSetupStatus(setupId);
-  },
-
-  async cancelAddFlow(setupId: string): Promise<void> {
-    await service.cancelAccountSetup(setupId);
   },
 
   getContextMenuActions(

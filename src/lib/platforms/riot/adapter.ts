@@ -1,12 +1,11 @@
 import type {
   PlatformAdapter,
-  PlatformAddFlowStatus,
-  PlatformAddAccountResult,
   PlatformAccount,
   PlatformContextMenuCallbacks,
   PlatformProfileInfo,
 } from "$lib/shared/platform";
 import type { ContextMenuAction } from "$lib/shared/contextMenu/types";
+import { createPlatformAddFlowHandlers } from "$lib/platforms/addFlow";
 import * as service from "./riotApi";
 import { rememberRiotProfiles } from "./accountCache";
 import { getRiotContextMenuItems } from "./contextMenu";
@@ -60,6 +59,11 @@ export const riotAdapter: PlatformAdapter = {
   id: "riot",
   name: "Riot Games",
   accent: "#ef4444",
+  ...createPlatformAddFlowHandlers({
+    beginSetup: service.beginProfileSetup,
+    getSetupStatus: service.getProfileSetupStatus,
+    cancelSetup: service.cancelProfileSetup,
+  }),
 
   async loadAccounts(): Promise<PlatformAccount[]> {
     const profiles = await service.getProfiles();
@@ -87,19 +91,6 @@ export const riotAdapter: PlatformAdapter = {
 
   async switchAccount(account: PlatformAccount): Promise<void> {
     await service.switchProfile(account.id);
-  },
-
-  async addAccount(): Promise<PlatformAddAccountResult> {
-    const setupStatus = await service.beginProfileSetup();
-    return { setupStatus };
-  },
-
-  async pollAddFlow(setupId: string): Promise<PlatformAddFlowStatus> {
-    return service.getProfileSetupStatus(setupId);
-  },
-
-  async cancelAddFlow(setupId: string): Promise<void> {
-    await service.cancelProfileSetup(setupId);
   },
 
   getContextMenuActions(
