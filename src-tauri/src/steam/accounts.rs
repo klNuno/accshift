@@ -10,6 +10,7 @@ use crate::os;
 
 const MAX_KILL_WAIT_MS: u64 = 5000;
 const KILL_POLL_INTERVAL_MS: u64 = 500;
+const POST_KILL_SETTLE_MS: u64 = 750;
 const NON_GAME_APP_IDS: &[&str] = &[
     "7",   // Steam client internals
     "760", // Steam community / screenshots
@@ -69,11 +70,15 @@ fn kill_process_tree_if_running(process_name: &str) -> Result<(), AppError> {
 }
 
 fn kill_steam() -> Result<(), AppError> {
-    if !is_steam_running() {
+    let steam_running = is_steam_running();
+    let web_helper_running = os::is_process_running(os::steam_web_helper_process_name());
+    if !steam_running && !web_helper_running {
         return Ok(());
     }
 
-    kill_process_tree_if_running(os::steam_process_name())
+    kill_steam_client_processes()?;
+    std::thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
+    Ok(())
 }
 
 fn kill_steam_client_processes() -> Result<(), AppError> {
