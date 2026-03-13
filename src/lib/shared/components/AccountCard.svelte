@@ -31,6 +31,7 @@
     lastLoginUnknownKey = "time.unknown",
     lastLoginAt = null,
     note = "",
+    entranceDelay = 0,
     locale = DEFAULT_LOCALE,
   }: {
     account: PlatformAccount;
@@ -54,6 +55,7 @@
     lastLoginUnknownKey?: MessageKey;
     lastLoginAt?: number | null;
     note?: string;
+    entranceDelay?: number;
     locale?: Locale;
   } = $props();
 
@@ -277,6 +279,8 @@
     class:dragging={isDragged}
     class:ban-red={hasRedWarning}
     class:ban-yellow={hasOrangeWarning}
+    class:entrance={entranceDelay >= 0}
+    style:--entrance-delay={`${entranceDelay}ms`}
   >
     <div
       class="avatar"
@@ -476,6 +480,22 @@
     transition: background 180ms ease-out, transform 180ms ease-out, box-shadow 180ms ease-out, outline-color 120ms ease-out;
     color: inherit;
     user-select: none;
+  }
+
+  .card.entrance {
+    animation: cardEntrance 200ms ease-out backwards;
+    animation-delay: var(--entrance-delay, 0ms);
+  }
+
+  @keyframes cardEntrance {
+    from { opacity: 0; transform: translateY(8px) scale(0.97); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .card.entrance {
+      animation: none;
+    }
   }
 
   .card:not(.active):hover {
