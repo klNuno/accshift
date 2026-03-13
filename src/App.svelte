@@ -1124,9 +1124,7 @@
       </div>
     {/if}
   </main>
-{:else}
-  {#key activeTab}
-  {#if compatiblePlatforms.length === 0}
+{:else if compatiblePlatforms.length === 0}
   <main class="content">
     <div class="center-msg">
       <p>{t("app.noCompatiblePlatforms")}</p>
@@ -1354,8 +1352,6 @@
       </p>
     </div>
   </main>
-{/if}
-  {/key}
 {/if}
 
     {#if contextMenu}
@@ -1628,19 +1624,8 @@
     color: var(--fg);
     display: flex;
     flex-direction: column;
-    animation: contentFadeIn 180ms ease-out;
   }
 
-  @keyframes contentFadeIn {
-    from { opacity: 0; transform: translateY(3px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .content {
-      animation: none;
-    }
-  }
 
   .toolbar-row {
     display: flex;

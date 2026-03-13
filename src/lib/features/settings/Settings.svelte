@@ -85,10 +85,6 @@
   const PIN_CODE_LENGTH = 4;
   const NEUTRAL_TAB_ACCENT = "#71717a";
   const NEUTRAL_CONTROL_ACCENT = NEUTRAL_TAB_ACCENT;
-  const languageLabelByCode: Record<string, MessageKey> = {
-    en: "language.english",
-    fr: "language.french",
-  };
   const coreTabConfig: SettingsTabDef[] = [
     { id: "general", labelKey: "settings.general", accent: NEUTRAL_TAB_ACCENT },
     { id: "platforms", labelKey: "settings.platforms", accent: NEUTRAL_TAB_ACCENT },
@@ -560,23 +556,17 @@
       <div class="settings-grid">
         <section class="card">
           <h3>{t("settings.appearance")}</h3>
-          <div class="field">
-            <div class="row">
-              <span>{t("settings.language")}</span>
-              <strong>{t(languageLabelByCode[settings.language] ?? "language.english")}</strong>
-            </div>
+          <label class="field">
+            <span class="field-label">{t("settings.language")}</span>
             <select class="text-input select-input" bind:value={settings.language}>
               {#each LANGUAGE_OPTIONS as option}
                 <option value={option.code}>{t(option.labelKey)}</option>
               {/each}
             </select>
-          </div>
+          </label>
 
           <label class="field">
-            <div class="row">
-              <span>{t("settings.uiZoom")}</span>
-              <strong>{settings.uiScalePercent}%</strong>
-            </div>
+            <span class="field-label">{t("settings.uiZoom")} — {settings.uiScalePercent}%</span>
             <input
               type="range"
               min="75"
@@ -592,7 +582,7 @@
           </label>
 
           <div class="field">
-            <div class="row"><span>{t("settings.theme")}</span></div>
+            <span class="field-label">{t("settings.theme")}</span>
             <div class="theme-grid">
               {#each getAllThemes() as theme (theme.id)}
                 <button
@@ -641,10 +631,7 @@
           </div>
 
           <label class="field">
-            <div class="row">
-              <span>{t("settings.backgroundOpacity")}</span>
-              <strong>{settings.backgroundOpacity}%</strong>
-            </div>
+            <span class="field-label">{t("settings.backgroundOpacity")} — {settings.backgroundOpacity}%</span>
             <input
               type="range"
               min="0"
@@ -727,11 +714,7 @@
 
         <section class="card">
           <h3>{t("settings.defaultOnStartup")}</h3>
-          <div class="field">
-            <div class="row">
-              <span>{t("settings.defaultOnStartup")}</span>
-              <strong>{visiblePlatformOptions.find((platform) => platform.id === settings.defaultPlatformId)?.name || settings.defaultPlatformId}</strong>
-            </div>
+          <label class="field">
             <select class="text-input select-input" bind:value={settings.defaultPlatformId}>
               {#each visiblePlatformOptions as platform}
                 {@const disabled = !settings.enabledPlatforms.includes(platform.id) || !isPlatformSelectable(platform.id)}
@@ -740,7 +723,7 @@
                 </option>
               {/each}
             </select>
-          </div>
+          </label>
         </section>
       </div>
     {/if}
@@ -750,10 +733,7 @@
         <section class="card">
           <h3>{t("settings.privacy")}</h3>
           <label class="field">
-            <div class="row">
-              <span>{t("settings.inactivityTimeout")}</span>
-              <span class="hint">{t("settings.zeroDisabled")}</span>
-            </div>
+            <span class="field-label">{t("settings.inactivityTimeout")} <span class="hint">({t("settings.zeroDisabled")})</span></span>
             <input
               type="number"
               min="0"
@@ -792,10 +772,7 @@
 
           {#if settings.pinEnabled}
             <div class="field">
-              <div class="row">
-                <span>{t("settings.pinCode")}</span>
-                <strong>{settings.pinHash ? t("common.configured") : t("common.missing")}</strong>
-              </div>
+              <span class="field-label">{t("settings.pinCode")}</span>
               <input
                 id="pin-code"
                 type="password"
@@ -824,7 +801,6 @@
             accent={platformDef.accent}
             {t}
             bind:apiKey
-            {apiKeyConfigured}
             {avatarCacheDaysInput}
             {banCheckDaysInput}
             {avatarRefreshLoading}
@@ -1103,19 +1079,9 @@
     gap: 8px;
   }
 
-  .row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
+  .field-label {
     font-size: 12px;
     color: var(--fg-muted);
-  }
-
-  .row strong {
-    font-size: 12px;
-    color: var(--fg);
-    font-weight: 600;
   }
 
   .hint {

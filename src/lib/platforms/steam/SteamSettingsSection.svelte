@@ -7,7 +7,6 @@
     settings,
     steamPath = $bindable(),
     apiKey = $bindable(),
-    apiKeyConfigured = false,
     avatarCacheDaysInput = "",
     banCheckDaysInput = "",
     avatarRefreshLoading = false,
@@ -26,7 +25,6 @@
     settings: AppSettings;
     steamPath: string;
     apiKey: string;
-    apiKeyConfigured?: boolean;
     avatarCacheDaysInput?: string;
     banCheckDaysInput?: string;
     avatarRefreshLoading?: boolean;
@@ -55,11 +53,8 @@
     onToggle={() => settings.platformSettings.steam.runAsAdmin = !settings.platformSettings.steam.runAsAdmin}
   />
 
-  <div class="field">
-    <div class="row">
-      <span>{t("settings.launchOptions")}</span>
-      <strong>{settings.platformSettings.steam.launchOptions ? t("common.custom") : t("common.none")}</strong>
-    </div>
+  <label class="field">
+    <span class="field-label">{t("settings.launchOptions")}</span>
     <input
       id="steam-launch-options"
       type="text"
@@ -67,13 +62,10 @@
       class="text-input"
       placeholder="-silent -vgui"
     />
-  </div>
+  </label>
 
   <div class="field">
-    <div class="row">
-      <span>{t("settings.steamFolder")}</span>
-      <strong>{steamPath ? t("common.custom") : t("settings.steamFolderRegistry")}</strong>
-    </div>
+    <span class="field-label">{t("settings.steamFolder")}</span>
     <div class="input-row">
       <input
         id="steam-folder"
@@ -87,12 +79,9 @@
   </div>
 
   <div class="field">
-    <div class="row">
-      <span>{t("settings.steamWebApiKey")}</span>
-      <div class="row-actions">
-        <button class="inline-link-btn" type="button" onclick={onOpenSteamApiKeyPage}>{t("settings.getKey")}</button>
-        <strong>{apiKey.trim() || apiKeyConfigured ? t("common.configured") : t("common.missing")}</strong>
-      </div>
+    <div class="field-label-row">
+      <span class="field-label">{t("settings.steamWebApiKey")}</span>
+      <button class="inline-link-btn" type="button" onclick={onOpenSteamApiKeyPage}>{t("settings.getKey")}</button>
     </div>
     <input
       id="api-key"
@@ -105,10 +94,7 @@
   </div>
 
   <div class="field">
-    <div class="row">
-      <span>{t("settings.avatarRefresh")}</span>
-      <span>{t("settings.zeroEachLaunch")}</span>
-    </div>
+    <span class="field-label">{t("settings.avatarRefresh")} <span class="hint">({t("settings.zeroEachLaunch")})</span></span>
     <div class="input-row">
       <input
         type="number"
@@ -138,10 +124,7 @@
   </div>
 
   <div class="field">
-    <div class="row">
-      <span>{t("settings.banCheckDelay")}</span>
-      <span>{t("settings.zeroEachLaunch")}</span>
-    </div>
+    <span class="field-label">{t("settings.banCheckDelay")} <span class="hint">({t("settings.zeroEachLaunch")})</span></span>
     <div class="input-row">
       <input
         type="number"
@@ -205,25 +188,21 @@
     gap: 8px;
   }
 
-  .row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
+  .field-label {
     font-size: 12px;
     color: var(--fg-muted);
   }
 
-  .row strong {
-    font-size: 12px;
-    color: var(--fg);
-    font-weight: 600;
-  }
-
-  .row-actions {
+  .field-label-row {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 10px;
+  }
+
+  .hint {
+    font-size: 11px;
+    color: var(--fg-subtle);
   }
 
   .inline-link-btn {
