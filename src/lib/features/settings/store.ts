@@ -30,9 +30,11 @@ const DEFAULTS: AppSettings = {
   },
   accountDisplay: {
     showUsernames: true,
-    showLastLogin: false,
-    showRiotLastLogin: false,
-    showBattleNetLastLogin: true,
+    showLastLoginPerPlatform: {
+      steam: false,
+      riot: false,
+      "battle-net": true,
+    },
     showCardNotesInline: false,
   },
   pinEnabled: false,
@@ -56,6 +58,26 @@ function sanitizePinHash(value: unknown): string {
   if (typeof value !== "string") return "";
   const normalized = value.trim().toLowerCase();
   return isValidPinHash(normalized) ? normalized : "";
+}
+
+function sanitizeShowLastLoginPerPlatform(rawAccountDisplay: Record<string, unknown>): Record<string, boolean> {
+  const rawMap = asRecord(rawAccountDisplay.showLastLoginPerPlatform);
+  const defaults = DEFAULTS.accountDisplay.showLastLoginPerPlatform;
+  const result: Record<string, boolean> = {};
+  for (const id of PLATFORM_IDS) {
+    if (id in rawMap) {
+      result[id] = Boolean(rawMap[id]);
+    } else if (id === "steam" && "showLastLogin" in rawAccountDisplay) {
+      result[id] = Boolean(rawAccountDisplay.showLastLogin);
+    } else if (id === "riot" && "showRiotLastLogin" in rawAccountDisplay) {
+      result[id] = Boolean(rawAccountDisplay.showRiotLastLogin);
+    } else if (id === "battle-net" && "showBattleNetLastLogin" in rawAccountDisplay) {
+      result[id] = rawAccountDisplay.showBattleNetLastLogin !== false;
+    } else {
+      result[id] = defaults[id] ?? false;
+    }
+  }
+  return result;
 }
 
 function sanitizeSettings(value: unknown): AppSettings {
@@ -122,9 +144,7 @@ function sanitizeSettings(value: unknown): AppSettings {
     },
     accountDisplay: {
       showUsernames: rawAccountDisplay.showUsernames !== false && raw.showUsernames !== false,
-      showLastLogin: Boolean(rawAccountDisplay.showLastLogin ?? raw.showLastLogin),
-      showRiotLastLogin: Boolean(rawAccountDisplay.showRiotLastLogin),
-      showBattleNetLastLogin: rawAccountDisplay.showBattleNetLastLogin !== false,
+      showLastLoginPerPlatform: sanitizeShowLastLoginPerPlatform(rawAccountDisplay),
       showCardNotesInline: Boolean(rawAccountDisplay.showCardNotesInline ?? raw.showCardNotesInline),
     },
     pinEnabled,
@@ -145,6 +165,7 @@ function cloneSettings(settings: AppSettings): AppSettings {
     },
     accountDisplay: {
       ...settings.accountDisplay,
+      showLastLoginPerPlatform: { ...settings.accountDisplay.showLastLoginPerPlatform },
     },
     enabledPlatforms: [...settings.enabledPlatforms],
   };

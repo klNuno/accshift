@@ -23,7 +23,7 @@ export function getInitialActiveTab(settings: AppSettings, runtimeOs: RuntimeOs)
   if (firstEnabledUsable) return firstEnabledUsable;
   const firstUsable = ALL_PLATFORMS.find((platform) => isPlatformUsable(platform.id, runtimeOs));
   if (firstUsable) return firstUsable.id;
-  return settings.enabledPlatforms[0] || "steam";
+  return settings.enabledPlatforms[0] || ALL_PLATFORMS[0]?.id || "steam";
 }
 
 export function createPlatformShellState() {

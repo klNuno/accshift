@@ -410,11 +410,7 @@
     shell.activeTab === "steam" && settings.accountDisplay.showUsernames
   );
   let showLastLoginForActiveTab = $derived(
-    shell.activeTab === "riot"
-      ? shell.settings.accountDisplay.showRiotLastLogin
-      : shell.activeTab === "battle-net"
-        ? shell.settings.accountDisplay.showBattleNetLastLogin
-      : shell.settings.accountDisplay.showLastLogin
+    settings.accountDisplay.showLastLoginPerPlatform[shell.activeTab] ?? false
   );
   let lastLoginUnknownKey = $derived<MessageKey>(
     shell.activeTab === "riot" ? "time.neverConnected" : "time.unknown"

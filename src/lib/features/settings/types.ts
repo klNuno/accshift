@@ -17,9 +17,7 @@ export interface DataRefreshSettings {
 
 export interface AccountDisplaySettings {
   showUsernames: boolean;
-  showLastLogin: boolean;
-  showRiotLastLogin: boolean;
-  showBattleNetLastLogin: boolean;
+  showLastLoginPerPlatform: Record<string, boolean>;
   showCardNotesInline: boolean;
 }
 
