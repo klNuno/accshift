@@ -192,6 +192,16 @@ export function saveSettings(settings: AppSettings) {
   const sanitized = sanitizeSettings(settings);
   cachedSettings = sanitized;
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(sanitized));
+  try {
+    const theme = getThemeDefinition(sanitized.themeId);
+    localStorage.setItem("accshift_boot_theme", JSON.stringify({
+      colorScheme: theme.colorScheme,
+      bg: `rgb(${theme.tokens.bgRgb})`,
+      fg: theme.tokens.fg,
+    }));
+  } catch {
+    // non-critical
+  }
 }
 
 export function getCacheDuration(): number {
