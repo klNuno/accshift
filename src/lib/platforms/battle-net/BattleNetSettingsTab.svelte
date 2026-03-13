@@ -37,10 +37,7 @@
 <section class="card">
   <h3>{t("settings.battleNet")}</h3>
   <div class="field">
-    <div class="row">
-      <span>{t(pathLabelKey as MessageKey)}</span>
-      <strong>{path ? t("common.custom") : t("settings.autoDetected")}</strong>
-    </div>
+    <span class="field-label">{t(pathLabelKey as MessageKey)}</span>
     <div class="input-row">
       <input
         type="text"
@@ -82,19 +79,9 @@
     gap: 8px;
   }
 
-  .row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
+  .field-label {
     font-size: 12px;
     color: var(--fg-muted);
-  }
-
-  .row strong {
-    font-size: 12px;
-    color: var(--fg);
-    font-weight: 600;
   }
 
   .text-input {

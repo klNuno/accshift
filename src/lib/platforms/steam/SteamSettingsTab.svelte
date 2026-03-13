@@ -10,7 +10,6 @@
     accent,
     t,
     apiKey = $bindable(),
-    apiKeyConfigured = false,
     avatarCacheDaysInput = "",
     banCheckDaysInput = "",
     avatarRefreshLoading = false,
@@ -30,7 +29,7 @@
     accent: string;
     t: (key: MessageKey, params?: TranslationParams) => string;
     apiKey: string;
-    apiKeyConfigured?: boolean;
+
     avatarCacheDaysInput?: string;
     banCheckDaysInput?: string;
     avatarRefreshLoading?: boolean;
@@ -71,7 +70,7 @@
   {settings}
   bind:steamPath={path}
   bind:apiKey
-  {apiKeyConfigured}
+
   {avatarCacheDaysInput}
   {banCheckDaysInput}
   {avatarRefreshLoading}
