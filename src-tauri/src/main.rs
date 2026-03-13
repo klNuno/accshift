@@ -13,6 +13,7 @@ mod logging;
 mod os;
 mod platforms;
 mod steam;
+mod themes;
 
 fn main() {
     let client = reqwest::Client::builder()
@@ -194,6 +195,10 @@ fn main() {
             commands::steam_clear_browser_cache,
             // Riot-specific
             commands::riot_capture_profile,
+            // Theme
+            commands::list_custom_themes,
+            commands::save_custom_theme,
+            commands::delete_custom_theme,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
