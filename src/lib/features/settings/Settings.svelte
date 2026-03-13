@@ -461,10 +461,8 @@
     settings.platformSettings.steam.runAsAdmin;
     settings.platformSettings.steam.launchOptions;
     settings.accountDisplay.showUsernames;
-    settings.accountDisplay.showLastLogin;
     settings.accountDisplay.showCardNotesInline;
-    settings.accountDisplay.showRiotLastLogin;
-    settings.accountDisplay.showBattleNetLastLogin;
+    JSON.stringify(settings.accountDisplay.showLastLoginPerPlatform);
     settings.uiScalePercent;
     settings.defaultPlatformId;
     settings.pinEnabled;
@@ -781,11 +779,11 @@
           />
           <ToggleSetting
             label={t("settings.showSteamLastLogin")}
-            enabled={settings.accountDisplay.showLastLogin}
+            enabled={settings.accountDisplay.showLastLoginPerPlatform["steam"] ?? false}
             accent={STEAM_TAB_ACCENT}
             onLabel={t("common.on")}
             offLabel={t("common.off")}
-            onToggle={() => settings.accountDisplay.showLastLogin = !settings.accountDisplay.showLastLogin}
+            onToggle={() => settings.accountDisplay.showLastLoginPerPlatform["steam"] = !settings.accountDisplay.showLastLoginPerPlatform["steam"]}
           />
         </section>
 
@@ -821,11 +819,11 @@
           <h3>{t("settings.accountDisplay")}</h3>
           <ToggleSetting
             label={t("settings.showRiotLastLogin")}
-            enabled={settings.accountDisplay.showRiotLastLogin}
+            enabled={settings.accountDisplay.showLastLoginPerPlatform["riot"] ?? false}
             accent={RIOT_DISPLAY_ACCENT}
             onLabel={t("common.on")}
             offLabel={t("common.off")}
-            onToggle={() => settings.accountDisplay.showRiotLastLogin = !settings.accountDisplay.showRiotLastLogin}
+            onToggle={() => settings.accountDisplay.showLastLoginPerPlatform["riot"] = !settings.accountDisplay.showLastLoginPerPlatform["riot"]}
           />
         </section>
 
@@ -857,11 +855,11 @@
           <h3>{t("settings.accountDisplay")}</h3>
           <ToggleSetting
             label={t("settings.showBattleNetLastLogin")}
-            enabled={settings.accountDisplay.showBattleNetLastLogin}
+            enabled={settings.accountDisplay.showLastLoginPerPlatform["battle-net"] ?? true}
             accent={BATTLE_NET_TAB_ACCENT}
             onLabel={t("common.on")}
             offLabel={t("common.off")}
-            onToggle={() => settings.accountDisplay.showBattleNetLastLogin = !settings.accountDisplay.showBattleNetLastLogin}
+            onToggle={() => settings.accountDisplay.showLastLoginPerPlatform["battle-net"] = !settings.accountDisplay.showLastLoginPerPlatform["battle-net"]}
           />
         </section>
 
