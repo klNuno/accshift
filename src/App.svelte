@@ -62,7 +62,7 @@
     getInitialActiveTab,
     isPlatformUsable,
   } from "$lib/app/platformShell.svelte";
-  import { applyThemeToDocument } from "$lib/theme/themes";
+  import { applyThemeToDocument, loadCustomThemes } from "$lib/theme/themes";
   import { ensurePlatformLoaded } from "$lib/platforms/registry";
   import {
     createFolderNavigation,
@@ -143,6 +143,8 @@
   let pendingSetupAccount = $derived(addFlow.pendingSetupAccount);
   let platformAddFlow = $derived(addFlow.flow);
   let isAccountSelectionView = $derived(!showSettings && !!shell.adapter);
+  let bootReady = $state(false);
+  let contentKey = $state(0);
   let cardColorVersion = $state(0);
   let cardNoteVersion = $state(0);
   let isPinLocked = $state(startupPinLocked);
@@ -678,6 +680,7 @@
     shell.setActiveTab(tab);
     navigation.currentFolderId = null;
     showSettings = false;
+    contentKey += 1;
     if (isPlatformUsable(tab, shell.runtimeOs)) { loadAccounts(true); } else { navigation.refreshCurrentItems(); queueGridPadding(); }
     navigation.searchQuery = "";
   }
@@ -970,6 +973,8 @@
   }
 
   async function initializeAppShell() {
+    await loadCustomThemes();
+    shell.refreshSettings();
     const versionTask = getVersion()
       .then((version) => {
         appVersion = semverCore(version);
@@ -1009,6 +1014,7 @@
     void initializeAppShell()
       .finally(() => {
         requestAnimationFrame(() => {
+          bootReady = true;
           window.dispatchEvent(new CustomEvent("accshift:boot-ready"));
         });
       });
@@ -1070,6 +1076,7 @@
 
 <div
   class="app-frame"
+  class:boot-ready={bootReady}
   class:motion-paused={motionPaused}
   style={`--afk-reveal-delay:${AFK_TEXT_REVEAL_DELAY_MS}ms;`}
 >
@@ -1133,6 +1140,7 @@
     </div>
   </main>
 {:else if adapter}
+  {#key contentKey}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <main
     class="content"
@@ -1267,7 +1275,7 @@
             </div>
           {/each}
 
-          {#each displayAccountItemsWithPending as item (item.id)}
+          {#each displayAccountItemsWithPending as item, cardIndex (item.id)}
             {@const account = renderedAccountMap[item.id]}
             {@const avatarState = account ? loader.avatarStates[account.id] : null}
             <div animate:flip={{ duration: 200 }}>
@@ -1280,6 +1288,7 @@
                   showUsername={isPendingSetupAccount(account.id) ? false : showUsernamesForActiveTab}
                   showLastLogin={isPendingSetupAccount(account.id) ? false : showLastLoginForActiveTab}
                   lastLoginAt={account.lastLoginAt}
+                  entranceDelay={Math.min(cardIndex * 30, 300)}
                   {lastLoginUnknownKey}
                   {locale}
                   isActive={account.id === currentAccountId}
@@ -1321,6 +1330,7 @@
       </div>
     {/if}
   </main>
+  {/key}
 {:else}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <main
@@ -1458,6 +1468,23 @@
     padding: 0;
     box-sizing: border-box;
     overflow: hidden;
+    opacity: 0;
+  }
+
+  .app-frame.boot-ready {
+    animation: appEntrance 300ms ease-out forwards;
+  }
+
+  @keyframes appEntrance {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .app-frame.boot-ready {
+      animation: none;
+      opacity: 1;
+    }
   }
 
   .app-stage {
@@ -1600,6 +1627,18 @@
     color: var(--fg);
     display: flex;
     flex-direction: column;
+    animation: contentFadeIn 180ms ease-out;
+  }
+
+  @keyframes contentFadeIn {
+    from { opacity: 0; transform: translateY(3px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .content {
+      animation: none;
+    }
   }
 
   .toolbar-row {

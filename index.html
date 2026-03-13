@@ -28,8 +28,13 @@
         try {
           const raw = localStorage.getItem("accshift_settings");
           const parsed = raw ? JSON.parse(raw) : null;
-          if (parsed?.theme === "light") {
+          if (parsed?.themeId === "light" || parsed?.theme === "light") {
             theme = "light";
+          }
+          const bootTheme = localStorage.getItem("accshift_boot_theme");
+          if (bootTheme) {
+            const bt = JSON.parse(bootTheme);
+            if (bt?.colorScheme === "light") theme = "light";
           }
         } catch {
         }
