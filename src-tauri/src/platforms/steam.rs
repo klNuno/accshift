@@ -1,13 +1,13 @@
 use crate::config;
 use crate::os;
 use crate::platforms::{
-    log_platform_error, log_platform_info, to_logged_error, CopyGameSettingsRequest,
-    PlatformFuture, PlatformService, PlatformStartupSnapshot, SwitchAccountModeRequest,
-    SwitchAccountRequest,
+    log_platform_error, log_platform_info, to_logged_error, PlatformCapabilities, PlatformService,
+    SetupStatus,
 };
 use crate::steam::accounts::{self, CopyableGame, SteamAccount};
 use crate::steam::bans::{self, BanInfo};
 use crate::steam::profile::{self, ProfileInfo};
+use serde_json::Value;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -138,9 +138,9 @@ fn resolve_steam_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> 
     Ok(steam_path)
 }
 
-pub struct SteamPlatformService;
+pub struct SteamService;
 
-pub static STEAM_PLATFORM_SERVICE: SteamPlatformService = SteamPlatformService;
+pub static STEAM_SERVICE: SteamService = SteamService;
 
 fn build_switch_state_details(
     steam_path: &std::path::Path,
@@ -192,12 +192,19 @@ pub fn get_accounts(app_handle: tauri::AppHandle) -> Result<Vec<SteamAccount>, S
         .map_err(|e| to_logged_error(&app_handle, "steam.get_accounts", e))
 }
 
-pub fn get_startup_snapshot(
-    app_handle: tauri::AppHandle,
-) -> Result<PlatformStartupSnapshot, String> {
-    let steam_path = resolve_steam_path(&app_handle)?;
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SteamStartupSnapshot {
+    accounts: Vec<SteamAccount>,
+    current_account: String,
+}
+
+fn get_startup_snapshot_inner(
+    app_handle: &tauri::AppHandle,
+) -> Result<SteamStartupSnapshot, String> {
+    let steam_path = resolve_steam_path(app_handle)?;
     let (accounts, current_from_file) = accounts::get_accounts_snapshot(&steam_path)
-        .map_err(|e| to_logged_error(&app_handle, "steam.get_startup_snapshot", e))?;
+        .map_err(|e| to_logged_error(app_handle, "steam.get_startup_snapshot", e))?;
     let current_account = {
         let from_registry = os::get_auto_login_user().unwrap_or_default();
         if from_registry.trim().is_empty() {
@@ -207,7 +214,7 @@ pub fn get_startup_snapshot(
         }
     };
 
-    Ok(PlatformStartupSnapshot {
+    Ok(SteamStartupSnapshot {
         accounts,
         current_account,
     })
@@ -222,92 +229,6 @@ pub fn get_current_account(app_handle: tauri::AppHandle) -> Result<String, Strin
     let steam_path = resolve_steam_path(&app_handle)?;
     accounts::get_current_account_name(&steam_path)
         .map_err(|e| to_logged_error(&app_handle, "steam.get_current_account", e))
-}
-
-pub async fn switch_account(
-    app_handle: tauri::AppHandle,
-    username: String,
-    run_as_admin: bool,
-    launch_options: String,
-) -> Result<(), String> {
-    validate_username(&username)?;
-    let steam_path = resolve_steam_path(&app_handle)?;
-    log_platform_info(
-        &app_handle,
-        "steam.switch_account",
-        "Steam switch requested",
-        build_switch_state_details(
-            &steam_path,
-            Some(&username),
-            None,
-            None,
-            run_as_admin,
-            &launch_options,
-        ),
-    );
-
-    let app_handle_for_task = app_handle.clone();
-    let username_for_task = username.clone();
-    let launch_options_for_task = launch_options.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        log_platform_info(
-            &app_handle_for_task,
-            "steam.switch_account",
-            "Steam switch started",
-            build_switch_state_details(
-                &steam_path,
-                Some(&username_for_task),
-                None,
-                None,
-                run_as_admin,
-                &launch_options_for_task,
-            ),
-        );
-
-        let result = accounts::switch_account(
-            &steam_path,
-            &username_for_task,
-            run_as_admin,
-            &launch_options_for_task,
-        );
-
-        match &result {
-            Ok(()) => log_platform_info(
-                &app_handle_for_task,
-                "steam.switch_account",
-                "Steam switch completed",
-                build_switch_state_details(
-                    &steam_path,
-                    Some(&username_for_task),
-                    None,
-                    None,
-                    run_as_admin,
-                    &launch_options_for_task,
-                ),
-            ),
-            Err(error) => log_platform_error(
-                &app_handle_for_task,
-                "steam.switch_account",
-                "Steam switch failed",
-                format!(
-                    "error={error}; state={}",
-                    build_switch_state_details(
-                        &steam_path,
-                        Some(&username_for_task),
-                        None,
-                        None,
-                        run_as_admin,
-                        &launch_options_for_task,
-                    )
-                ),
-            ),
-        }
-
-        result
-    })
-    .await
-    .map_err(|e| format!("Switch account task failed: {e}"))?
-    .map_err(|e| to_logged_error(&app_handle, "steam.switch_account", e))
 }
 
 pub async fn switch_account_mode(
@@ -527,15 +448,6 @@ pub fn cancel_account_setup(_app_handle: tauri::AppHandle, setup_id: String) -> 
     Ok(())
 }
 
-pub async fn forget_account(app_handle: tauri::AppHandle, steam_id: String) -> Result<(), String> {
-    validate_steam_id(&steam_id)?;
-    let steam_path = resolve_steam_path(&app_handle)?;
-    tauri::async_runtime::spawn_blocking(move || accounts::forget_account(&steam_path, &steam_id))
-        .await
-        .map_err(|e| format!("Forget account task failed: {e}"))?
-        .map_err(|e| to_logged_error(&app_handle, "steam.forget_account", e))
-}
-
 pub fn open_userdata(app_handle: tauri::AppHandle, steam_id: String) -> Result<(), String> {
     validate_steam_id(&steam_id)?;
     let steam_path = resolve_steam_path(&app_handle)?;
@@ -641,136 +553,160 @@ pub async fn get_player_bans(
     bans::fetch_player_bans(&client, &api_key, unique_steam_ids).await
 }
 
-impl PlatformService for SteamPlatformService {
+impl PlatformService for SteamService {
     fn id(&self) -> &'static str {
         "steam"
     }
 
-    fn set_api_key(&self, app_handle: tauri::AppHandle, key: String) -> Result<(), String> {
-        set_api_key(app_handle, key)
+    fn capabilities(&self) -> PlatformCapabilities {
+        PlatformCapabilities {
+            has_profiles: true,
+            has_warnings: true,
+            has_api_key: true,
+            has_game_copy: true,
+            has_usernames: true,
+        }
     }
 
-    fn has_api_key(&self, app_handle: tauri::AppHandle) -> bool {
-        has_api_key(app_handle)
+    fn get_accounts(&self, app: &tauri::AppHandle) -> Result<Value, String> {
+        let accounts = get_accounts(app.clone())?;
+        serde_json::to_value(accounts).map_err(|e| e.to_string())
     }
 
-    fn get_accounts(&self, app_handle: tauri::AppHandle) -> Result<Vec<SteamAccount>, String> {
-        get_accounts(app_handle)
+    fn get_startup_snapshot(&self, app: &tauri::AppHandle) -> Result<Value, String> {
+        let snapshot = get_startup_snapshot_inner(app)?;
+        serde_json::to_value(snapshot).map_err(|e| e.to_string())
     }
 
-    fn get_startup_snapshot(
+    fn get_current_account(&self, app: &tauri::AppHandle) -> Result<String, String> {
+        get_current_account(app.clone())
+    }
+
+    fn switch_account(
         &self,
-        app_handle: tauri::AppHandle,
-    ) -> Result<PlatformStartupSnapshot, String> {
-        get_startup_snapshot(app_handle)
+        app: &tauri::AppHandle,
+        account_id: &str,
+        params: Value,
+    ) -> Result<(), String> {
+        validate_username(account_id)?;
+        let run_as_admin = params
+            .get("runAsAdmin")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let launch_options = params
+            .get("launchOptions")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let steam_path = resolve_steam_path(app)?;
+
+        log_platform_info(
+            app,
+            "steam.switch_account",
+            "Steam switch requested",
+            build_switch_state_details(
+                &steam_path,
+                Some(account_id),
+                None,
+                None,
+                run_as_admin,
+                &launch_options,
+            ),
+        );
+
+        let result = accounts::switch_account(&steam_path, account_id, run_as_admin, &launch_options)
+            .map_err(|e| to_logged_error(app, "steam.switch_account", e));
+
+        match &result {
+            Ok(()) => log_platform_info(
+                app,
+                "steam.switch_account",
+                "Steam switch completed",
+                build_switch_state_details(
+                    &steam_path,
+                    Some(account_id),
+                    None,
+                    None,
+                    run_as_admin,
+                    &launch_options,
+                ),
+            ),
+            Err(error) => log_platform_error(
+                app,
+                "steam.switch_account",
+                "Steam switch failed",
+                format!(
+                    "error={error}; state={}",
+                    build_switch_state_details(
+                        &steam_path,
+                        Some(account_id),
+                        None,
+                        None,
+                        run_as_admin,
+                        &launch_options,
+                    )
+                ),
+            ),
+        }
+
+        result
     }
 
-    fn get_current_account(&self, app_handle: tauri::AppHandle) -> Result<String, String> {
-        get_current_account(app_handle)
+    fn forget_account(&self, app: &tauri::AppHandle, account_id: &str) -> Result<(), String> {
+        validate_steam_id(account_id)?;
+        let steam_path = resolve_steam_path(app)?;
+        accounts::forget_account(&steam_path, account_id)
+            .map_err(|e| to_logged_error(app, "steam.forget_account", e))
     }
 
-    fn switch_account<'a>(
-        &'a self,
-        app_handle: tauri::AppHandle,
-        request: SwitchAccountRequest,
-    ) -> PlatformFuture<'a, Result<(), String>> {
-        Box::pin(async move {
-            switch_account(
-                app_handle,
-                request.username,
-                request.run_as_admin,
-                request.launch_options,
-            )
-            .await
+    fn begin_setup(&self, app: &tauri::AppHandle, params: Value) -> Result<SetupStatus, String> {
+        let run_as_admin = params
+            .get("runAsAdmin")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let launch_options = params
+            .get("launchOptions")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let status = begin_account_setup(app.clone(), run_as_admin, launch_options)?;
+        Ok(SetupStatus {
+            setup_id: status.setup_id,
+            state: status.state,
+            account_id: status.account_id,
+            account_display_name: status.account_display_name,
+            error_message: status.error_message,
         })
     }
 
-    fn switch_account_mode<'a>(
-        &'a self,
-        app_handle: tauri::AppHandle,
-        request: SwitchAccountModeRequest,
-    ) -> PlatformFuture<'a, Result<(), String>> {
-        Box::pin(async move {
-            switch_account_mode(
-                app_handle,
-                request.username,
-                request.steam_id,
-                request.mode,
-                request.run_as_admin,
-                request.launch_options,
-            )
-            .await
+    fn get_setup_status(
+        &self,
+        app: &tauri::AppHandle,
+        setup_id: &str,
+    ) -> Result<SetupStatus, String> {
+        let status = get_account_setup_status(app.clone(), setup_id.to_string())?;
+        Ok(SetupStatus {
+            setup_id: status.setup_id,
+            state: status.state,
+            account_id: status.account_id,
+            account_display_name: status.account_display_name,
+            error_message: status.error_message,
         })
     }
 
-    fn forget_account<'a>(
-        &'a self,
-        app_handle: tauri::AppHandle,
-        steam_id: String,
-    ) -> PlatformFuture<'a, Result<(), String>> {
-        Box::pin(async move { forget_account(app_handle, steam_id).await })
+    fn cancel_setup(&self, app: &tauri::AppHandle, setup_id: &str) -> Result<(), String> {
+        cancel_account_setup(app.clone(), setup_id.to_string())
     }
 
-    fn open_userdata(&self, app_handle: tauri::AppHandle, steam_id: String) -> Result<(), String> {
-        open_userdata(app_handle, steam_id)
+    fn get_path(&self, app: &tauri::AppHandle) -> Result<String, String> {
+        get_steam_path(app.clone())
     }
 
-    fn copy_game_settings(
-        &self,
-        app_handle: tauri::AppHandle,
-        request: CopyGameSettingsRequest,
-    ) -> Result<(), String> {
-        copy_game_settings(
-            app_handle,
-            request.from_steam_id,
-            request.to_steam_id,
-            request.app_id,
-        )
+    fn set_path(&self, app: &tauri::AppHandle, path: &str) -> Result<(), String> {
+        set_steam_path(app.clone(), path.to_string())
     }
 
-    fn get_copyable_games(
-        &self,
-        app_handle: tauri::AppHandle,
-        from_steam_id: String,
-        to_steam_id: String,
-    ) -> Result<Vec<CopyableGame>, String> {
-        get_copyable_games(app_handle, from_steam_id, to_steam_id)
-    }
-
-    fn get_installation_path(&self, app_handle: tauri::AppHandle) -> Result<String, String> {
-        get_steam_path(app_handle)
-    }
-
-    fn set_installation_path(
-        &self,
-        app_handle: tauri::AppHandle,
-        path: String,
-    ) -> Result<(), String> {
-        set_steam_path(app_handle, path)
-    }
-
-    fn select_installation_path(&self) -> Result<String, String> {
+    fn select_path(&self) -> Result<String, String> {
         select_steam_path()
-    }
-
-    fn open_api_key_page(&self) -> Result<(), String> {
-        open_steam_api_key_page()
-    }
-
-    fn get_profile_info<'a>(
-        &'a self,
-        steam_id: String,
-        client: reqwest::Client,
-    ) -> PlatformFuture<'a, Result<Option<ProfileInfo>, String>> {
-        Box::pin(async move { get_profile_info(steam_id, client).await })
-    }
-
-    fn get_player_bans<'a>(
-        &'a self,
-        app_handle: tauri::AppHandle,
-        steam_ids: Vec<String>,
-        client: reqwest::Client,
-    ) -> PlatformFuture<'a, Result<Vec<BanInfo>, String>> {
-        Box::pin(async move { get_player_bans(app_handle, steam_ids, client).await })
     }
 }

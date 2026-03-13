@@ -1,9 +1,7 @@
-use crate::steam::accounts::{CopyableGame, SteamAccount};
-use crate::steam::bans::BanInfo;
-use crate::steam::profile::ProfileInfo;
 use serde::Serialize;
-use std::future::Future;
-use std::pin::Pin;
+use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::OnceLock;
 
 pub mod battle_net;
 pub mod riot;
@@ -39,15 +37,6 @@ pub(crate) fn log_platform_info(
     log_platform_event(app_handle, "info", source, message, details);
 }
 
-pub(crate) fn log_platform_warn(
-    app_handle: &tauri::AppHandle,
-    source: &str,
-    message: &str,
-    details: impl Into<String>,
-) {
-    log_platform_event(app_handle, "warn", source, message, details);
-}
-
 pub(crate) fn log_platform_error(
     app_handle: &tauri::AppHandle,
     source: &str,
@@ -67,107 +56,77 @@ pub(crate) fn to_logged_error(
     details
 }
 
-pub type PlatformFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
-
-#[derive(Debug, Clone)]
-pub struct SwitchAccountRequest {
-    pub username: String,
-    pub run_as_admin: bool,
-    pub launch_options: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct SwitchAccountModeRequest {
-    pub username: String,
-    pub steam_id: String,
-    pub mode: String,
-    pub run_as_admin: bool,
-    pub launch_options: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct CopyGameSettingsRequest {
-    pub from_steam_id: String,
-    pub to_steam_id: String,
-    pub app_id: String,
-}
-
-#[derive(Serialize)]
+/// Capabilities that a platform may or may not support.
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PlatformStartupSnapshot {
-    pub accounts: Vec<SteamAccount>,
-    pub current_account: String,
+pub struct PlatformCapabilities {
+    pub has_profiles: bool,
+    pub has_warnings: bool,
+    pub has_api_key: bool,
+    pub has_game_copy: bool,
+    pub has_usernames: bool,
 }
 
-pub trait PlatformService: Sync {
+/// Common setup status returned by all platforms.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupStatus {
+    pub setup_id: String,
+    pub state: String,
+    pub account_id: String,
+    pub account_display_name: String,
+    pub error_message: String,
+}
+
+/// Core trait that all platforms implement.
+#[allow(dead_code)]
+pub trait PlatformService: Send + Sync {
     fn id(&self) -> &'static str;
-    fn set_api_key(&self, app_handle: tauri::AppHandle, key: String) -> Result<(), String>;
-    fn has_api_key(&self, app_handle: tauri::AppHandle) -> bool;
-    fn get_accounts(&self, app_handle: tauri::AppHandle) -> Result<Vec<SteamAccount>, String>;
-    fn get_startup_snapshot(
+    fn capabilities(&self) -> PlatformCapabilities;
+
+    // Account operations — returns platform-specific JSON.
+    fn get_accounts(&self, app: &tauri::AppHandle) -> Result<Value, String>;
+    fn get_startup_snapshot(&self, app: &tauri::AppHandle) -> Result<Value, String>;
+    fn get_current_account(&self, app: &tauri::AppHandle) -> Result<String, String>;
+    /// `params` carries platform-specific extras (e.g. Steam's runAsAdmin/launchOptions).
+    fn switch_account(
         &self,
-        app_handle: tauri::AppHandle,
-    ) -> Result<PlatformStartupSnapshot, String>;
-    fn get_current_account(&self, app_handle: tauri::AppHandle) -> Result<String, String>;
-    fn switch_account<'a>(
-        &'a self,
-        app_handle: tauri::AppHandle,
-        request: SwitchAccountRequest,
-    ) -> PlatformFuture<'a, Result<(), String>>;
-    fn switch_account_mode<'a>(
-        &'a self,
-        app_handle: tauri::AppHandle,
-        request: SwitchAccountModeRequest,
-    ) -> PlatformFuture<'a, Result<(), String>>;
-    fn forget_account<'a>(
-        &'a self,
-        app_handle: tauri::AppHandle,
-        steam_id: String,
-    ) -> PlatformFuture<'a, Result<(), String>>;
-    fn open_userdata(&self, app_handle: tauri::AppHandle, steam_id: String) -> Result<(), String>;
-    fn copy_game_settings(
-        &self,
-        app_handle: tauri::AppHandle,
-        request: CopyGameSettingsRequest,
+        app: &tauri::AppHandle,
+        account_id: &str,
+        params: Value,
     ) -> Result<(), String>;
-    fn get_copyable_games(
+    fn forget_account(&self, app: &tauri::AppHandle, account_id: &str) -> Result<(), String>;
+
+    // Setup flow
+    fn begin_setup(&self, app: &tauri::AppHandle, params: Value) -> Result<SetupStatus, String>;
+    fn get_setup_status(
         &self,
-        app_handle: tauri::AppHandle,
-        from_steam_id: String,
-        to_steam_id: String,
-    ) -> Result<Vec<CopyableGame>, String>;
-    fn get_installation_path(&self, app_handle: tauri::AppHandle) -> Result<String, String>;
-    fn set_installation_path(
-        &self,
-        app_handle: tauri::AppHandle,
-        path: String,
-    ) -> Result<(), String>;
-    fn select_installation_path(&self) -> Result<String, String>;
-    fn open_api_key_page(&self) -> Result<(), String>;
-    fn get_profile_info<'a>(
-        &'a self,
-        steam_id: String,
-        client: reqwest::Client,
-    ) -> PlatformFuture<'a, Result<Option<ProfileInfo>, String>>;
-    fn get_player_bans<'a>(
-        &'a self,
-        app_handle: tauri::AppHandle,
-        steam_ids: Vec<String>,
-        client: reqwest::Client,
-    ) -> PlatformFuture<'a, Result<Vec<BanInfo>, String>>;
+        app: &tauri::AppHandle,
+        setup_id: &str,
+    ) -> Result<SetupStatus, String>;
+    fn cancel_setup(&self, app: &tauri::AppHandle, setup_id: &str) -> Result<(), String>;
+
+    // Path management
+    fn get_path(&self, app: &tauri::AppHandle) -> Result<String, String>;
+    fn set_path(&self, app: &tauri::AppHandle, path: &str) -> Result<(), String>;
+    fn select_path(&self) -> Result<String, String>;
+}
+
+fn platform_registry() -> &'static HashMap<&'static str, &'static dyn PlatformService> {
+    static REGISTRY: OnceLock<HashMap<&'static str, &'static dyn PlatformService>> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        let mut map: HashMap<&'static str, &'static dyn PlatformService> = HashMap::new();
+        map.insert("steam", &steam::STEAM_SERVICE);
+        map.insert("riot", &riot::RIOT_SERVICE);
+        map.insert("battle-net", &battle_net::BATTLE_NET_SERVICE);
+        map
+    })
 }
 
 pub fn get_service(platform_id: &str) -> Option<&'static dyn PlatformService> {
-    match platform_id {
-        "steam" => {
-            let service: &'static dyn PlatformService = &steam::STEAM_PLATFORM_SERVICE;
-            debug_assert_eq!(service.id(), platform_id);
-            Some(service)
-        }
-        _ => None,
-    }
+    platform_registry().get(platform_id).copied()
 }
 
 pub fn require_service(platform_id: &str) -> Result<&'static dyn PlatformService, String> {
-    get_service(platform_id).ok_or_else(|| format!("Unknown platform service: {platform_id}"))
+    get_service(platform_id).ok_or_else(|| format!("Unknown platform: {platform_id}"))
 }
