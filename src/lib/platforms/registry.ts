@@ -9,6 +9,10 @@ export const PLATFORM_DEFS: PlatformDef[] = [
     accent: "#2563eb",
     implemented: true,
     supportedOs: ["windows"],
+    settingsTabKey: "settings.steam",
+    settingsComponent: () => import("./steam/SteamSettingsTab.svelte"),
+    pathLabelKey: "settings.steamFolder",
+    pathPlaceholder: "C:\\Program Files (x86)\\Steam",
   },
   {
     id: "riot",
@@ -16,6 +20,10 @@ export const PLATFORM_DEFS: PlatformDef[] = [
     accent: "#ef4444",
     implemented: true,
     supportedOs: ["windows"],
+    settingsTabKey: "settings.riot",
+    settingsComponent: () => import("./riot/RiotSettingsTab.svelte"),
+    pathLabelKey: "settings.riotClientPath",
+    pathPlaceholder: "C:\\Riot Games\\Riot Client\\RiotClientServices.exe",
   },
   {
     id: "battle-net",
@@ -23,6 +31,10 @@ export const PLATFORM_DEFS: PlatformDef[] = [
     accent: "#38bdf8",
     implemented: true,
     supportedOs: ["windows"],
+    settingsTabKey: "settings.battleNet",
+    settingsComponent: () => import("./battle-net/BattleNetSettingsTab.svelte"),
+    pathLabelKey: "settings.battleNetPath",
+    pathPlaceholder: "C:\\Program Files (x86)\\Battle.net\\Battle.net Launcher.exe",
   },
 ];
 

@@ -1,25 +1,23 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import { invoke } from "@tauri-apps/api/core";
   import { getSettings, saveSettings, ALL_PLATFORMS } from "./store";
   import { addToast } from "../notifications/store.svelte";
   import ToggleSetting from "./ToggleSetting.svelte";
-  import SteamSettingsSection from "$lib/platforms/steam/SteamSettingsSection.svelte";
   import {
-    getSteamPath,
     hasApiKey,
     openSteamApiKeyPage as openSteamApiKeyPageInBrowser,
-    selectSteamPath,
     setApiKey,
-    setSteamPath,
   } from "$lib/platforms/steam/steamApi";
-  import { getRiotPath, selectRiotPath, setRiotPath } from "$lib/platforms/riot/riotApi";
-  import {
-    getBattleNetPath,
-    selectBattleNetPath,
-    setBattleNetPath,
-  } from "$lib/platforms/battle-net/battleNetApi";
   import { getPlatformDefinition } from "$lib/platforms/registry";
-  import { getThemeDefinition } from "$lib/theme/themes";
+  import {
+    getThemeDefinition,
+    getAllThemes,
+    loadCustomThemes,
+    saveCustomTheme,
+    deleteCustomTheme as deleteCustomThemeFromRegistry,
+    parseThemeJson,
+  } from "$lib/theme/themes";
   import {
     DEFAULT_LOCALE,
     LANGUAGE_OPTIONS,
@@ -29,13 +27,14 @@
     type TranslationParams,
   } from "$lib/i18n";
   import { hashPinCode, sanitizePinDigits } from "$lib/shared/pin";
+  import type { PlatformDef } from "$lib/features/settings/types";
 
-  type SettingsTabId = "general" | "platforms" | "privacy" | "steam" | "riot" | "battleNet";
   type SettingsTabDef = {
-    id: SettingsTabId;
+    id: string;
     labelKey: MessageKey;
     accent: string;
     visible?: () => boolean;
+    platformDef?: PlatformDef;
   };
 
   let {
@@ -55,16 +54,14 @@
   } = $props();
 
   let settings = $state(getSettings());
-  let steamEnabled = $derived(settings.enabledPlatforms.includes("steam"));
-  let riotEnabled = $derived(settings.enabledPlatforms.includes("riot"));
-  let battleNetEnabled = $derived(settings.enabledPlatforms.includes("battle-net"));
   let apiKey = $state("");
   let apiKeyConfigured = $state(false);
   let apiKeyTouched = $state(false);
-  let steamPath = $state("");
-  let riotPath = $state("");
-  let battleNetPath = $state("");
+  let platformPaths = $state<Record<string, string>>({});
+  let platformPathsKey = $derived(JSON.stringify(platformPaths));
+  let showLastLoginKey = $derived(JSON.stringify(settings.accountDisplay.showLastLoginPerPlatform));
   let pinCodeInput = $state("");
+  let ActivePlatformComponent = $state<any>(null);
   let uiScalePercentInput = $state("");
   let backgroundOpacityInput = $state("");
   let avatarCacheDaysInput = $state("");
@@ -77,7 +74,7 @@
   let lastSavedToastAt = 0;
   let lastPersistedSnapshot = "";
   let lastPlatformSnapshot = "";
-  let activeSettingsTab = $state<SettingsTabId>("general");
+  let activeSettingsTab = $state<string>("general");
   let tabsRef = $state<HTMLDivElement | null>(null);
   let tabUiFrame: number | null = null;
   let tabResizeObserver: ResizeObserver | null = null;
@@ -88,22 +85,28 @@
   const PIN_CODE_LENGTH = 4;
   const NEUTRAL_TAB_ACCENT = "#71717a";
   const NEUTRAL_CONTROL_ACCENT = NEUTRAL_TAB_ACCENT;
-  const STEAM_TAB_ACCENT = getPlatformDefinition("steam")?.accent ?? NEUTRAL_TAB_ACCENT;
-  const RIOT_TAB_ACCENT = getPlatformDefinition("riot")?.accent ?? "#ef4444";
-  const RIOT_DISPLAY_ACCENT = getPlatformDefinition("riot")?.accent ?? "#ef4444";
-  const BATTLE_NET_TAB_ACCENT = getPlatformDefinition("battle-net")?.accent ?? NEUTRAL_TAB_ACCENT;
   const languageLabelByCode: Record<string, MessageKey> = {
     en: "language.english",
     fr: "language.french",
   };
-  const tabConfig: SettingsTabDef[] = [
+  const coreTabConfig: SettingsTabDef[] = [
     { id: "general", labelKey: "settings.general", accent: NEUTRAL_TAB_ACCENT },
     { id: "platforms", labelKey: "settings.platforms", accent: NEUTRAL_TAB_ACCENT },
     { id: "privacy", labelKey: "settings.privacy", accent: NEUTRAL_TAB_ACCENT },
-    { id: "steam", labelKey: "settings.steam", accent: STEAM_TAB_ACCENT, visible: () => steamEnabled },
-    { id: "riot", labelKey: "settings.riot", accent: RIOT_TAB_ACCENT, visible: () => riotEnabled },
-    { id: "battleNet", labelKey: "settings.battleNet", accent: BATTLE_NET_TAB_ACCENT, visible: () => battleNetEnabled },
   ];
+
+  let platformTabConfig = $derived.by(() => {
+    return ALL_PLATFORMS
+      .filter((p) => p.settingsTabKey && settings.enabledPlatforms.includes(p.id))
+      .map((p): SettingsTabDef => ({
+        id: `platform:${p.id}`,
+        labelKey: p.settingsTabKey as MessageKey,
+        accent: p.accent,
+        platformDef: p,
+      }));
+  });
+
+  let tabConfig = $derived([...coreTabConfig, ...platformTabConfig]);
 
   let visibleTabs = $derived.by(() =>
     tabConfig.filter((tab) => tab.visible ? tab.visible() : true)
@@ -158,13 +161,15 @@
 
   function buildPersistSnapshot(): string {
     const pendingApiKey = apiKeyTouched ? apiKey.trim() : "";
+    const trimmedPaths: Record<string, string> = {};
+    for (const [id, p] of Object.entries(platformPaths)) {
+      trimmedPaths[id] = p.trim();
+    }
     return JSON.stringify({
       settings,
       pendingApiKey,
       apiKeyConfigured,
-      steamPath: steamPath.trim(),
-      riotPath: riotPath.trim(),
-      battleNetPath: battleNetPath.trim(),
+      platformPaths: trimmedPaths,
     });
   }
 
@@ -224,19 +229,10 @@
 
     const nextPlatformSnapshot = buildPlatformSnapshot();
     const platformsChanged = nextPlatformSnapshot !== lastPlatformSnapshot;
-    const nextSteamPath = steamPath.trim();
-    const nextRiotPath = riotPath.trim();
-    const nextBattleNetPath = battleNetPath.trim();
     const previousState = lastPersistedSnapshot
-      ? JSON.parse(lastPersistedSnapshot) as {
-        steamPath?: string;
-        riotPath?: string;
-        battleNetPath?: string;
-      }
+      ? JSON.parse(lastPersistedSnapshot) as { platformPaths?: Record<string, string> }
       : {};
-    const steamPathChanged = (previousState.steamPath ?? "") !== nextSteamPath;
-    const riotPathChanged = (previousState.riotPath ?? "") !== nextRiotPath;
-    const battleNetPathChanged = (previousState.battleNetPath ?? "") !== nextBattleNetPath;
+    const prevPaths = previousState.platformPaths ?? {};
 
     saveSettings(settings);
     onSettingsUpdated?.();
@@ -249,14 +245,11 @@
         apiKeyTouched = false;
         apiKey = "";
       }
-      if (steamPathChanged) {
-        await setSteamPath(nextSteamPath);
-      }
-      if (riotPathChanged) {
-        await setRiotPath(nextRiotPath);
-      }
-      if (battleNetPathChanged) {
-        await setBattleNetPath(nextBattleNetPath);
+      for (const platformId of Object.keys(platformPaths)) {
+        const nextPath = platformPaths[platformId]?.trim() ?? "";
+        if ((prevPaths[platformId] ?? "") !== nextPath) {
+          await invoke("platform_set_path", { platformId, path: nextPath });
+        }
       }
       lastPersistedSnapshot = buildPersistSnapshot();
       lastPlatformSnapshot = nextPlatformSnapshot;
@@ -342,9 +335,28 @@
     });
   }
 
-  function selectSettingsTab(tabId: SettingsTabId) {
+  function selectSettingsTab(tabId: string) {
     activeSettingsTab = tabId;
+    loadActivePlatformComponent(tabId);
     queueTabUiRefresh(true);
+  }
+
+  function loadActivePlatformComponent(tabId: string) {
+    if (!tabId.startsWith("platform:")) {
+      ActivePlatformComponent = null;
+      return;
+    }
+    const platformId = tabId.slice("platform:".length);
+    const def = ALL_PLATFORMS.find((p) => p.id === platformId);
+    if (def?.settingsComponent) {
+      def.settingsComponent().then((mod) => {
+        if (activeSettingsTab === tabId) {
+          ActivePlatformComponent = mod.default;
+        }
+      });
+    } else {
+      ActivePlatformComponent = null;
+    }
   }
 
   function scrollTabs(direction: -1 | 1) {
@@ -356,25 +368,10 @@
     });
   }
 
-  async function chooseSteamFolder() {
+  async function choosePlatformPath(platformId: string) {
     try {
-      steamPath = await selectSteamPath();
-    } catch {
-      // User canceled the picker or the native dialog failed.
-    }
-  }
-
-  async function chooseRiotPath() {
-    try {
-      riotPath = await selectRiotPath();
-    } catch {
-      // User canceled the picker or the native dialog failed.
-    }
-  }
-
-  async function chooseBattleNetPath() {
-    try {
-      battleNetPath = await selectBattleNetPath();
+      const selected = await invoke<string>("platform_select_path", { platformId });
+      platformPaths[platformId] = selected;
     } catch {
       // User canceled the picker or the native dialog failed.
     }
@@ -413,19 +410,31 @@
   }
 
   onMount(async () => {
-    const [apiKeyResult, steamPathResult, riotPathResult, battleNetPathResult] = await Promise.allSettled([
+    const enabledIds = settings.enabledPlatforms;
+    const pathPromises = enabledIds.map((id) =>
+      invoke<string>("platform_get_path", { platformId: id })
+        .then((p: string) => [id, p] as const)
+        .catch(() => [id, ""] as const)
+    );
+    const [apiKeyResult, ...pathResults] = await Promise.allSettled([
       hasApiKey(),
-      getSteamPath(),
-      getRiotPath(),
-      getBattleNetPath(),
+      ...pathPromises,
     ]);
 
     apiKeyConfigured = apiKeyResult.status === "fulfilled" ? apiKeyResult.value : false;
     apiKey = "";
     apiKeyTouched = false;
-    steamPath = steamPathResult.status === "fulfilled" ? steamPathResult.value : "";
-    riotPath = riotPathResult.status === "fulfilled" ? riotPathResult.value : "";
-    battleNetPath = battleNetPathResult.status === "fulfilled" ? battleNetPathResult.value : "";
+    const paths: Record<string, string> = {};
+    for (const id of enabledIds) {
+      paths[id] = "";
+    }
+    for (const result of pathResults) {
+      if (result.status === "fulfilled") {
+        const [id, p] = result.value as [string, string];
+        paths[id] = p;
+      }
+    }
+    platformPaths = paths;
 
     normalizeSettings();
     refreshNumericInputsFromSettings();
@@ -462,7 +471,7 @@
     settings.platformSettings.steam.launchOptions;
     settings.accountDisplay.showUsernames;
     settings.accountDisplay.showCardNotesInline;
-    JSON.stringify(settings.accountDisplay.showLastLoginPerPlatform);
+    showLastLoginKey;
     settings.uiScalePercent;
     settings.defaultPlatformId;
     settings.pinEnabled;
@@ -472,9 +481,7 @@
     apiKey;
     apiKeyConfigured;
     apiKeyTouched;
-    steamPath;
-    riotPath;
-    battleNetPath;
+    platformPathsKey;
     queueSave();
   });
 
@@ -482,6 +489,7 @@
     const visibleIds = visibleTabs.map((tab) => tab.id);
     if (!visibleIds.includes(activeSettingsTab)) {
       activeSettingsTab = visibleIds[0] ?? "general";
+      loadActivePlatformComponent(activeSettingsTab);
     }
     visibleIds.join(",");
     settings.language;
@@ -583,14 +591,54 @@
             />
           </label>
 
-          <ToggleSetting
-            label={t("settings.theme")}
-            enabled={settings.themeId === "light"}
-            accent={NEUTRAL_CONTROL_ACCENT}
-            onLabel={t("theme.light")}
-            offLabel={t("theme.dark")}
-            onToggle={() => settings.themeId = settings.themeId === "light" ? "dark" : "light"}
-          />
+          <div class="field">
+            <div class="row"><span>{t("settings.theme")}</span></div>
+            <div class="theme-grid">
+              {#each getAllThemes() as theme (theme.id)}
+                <button
+                  type="button"
+                  class="theme-swatch"
+                  class:selected={settings.themeId === theme.id}
+                  title={theme.isCustom ? (theme.displayName ?? theme.id) : t(theme.labelKey)}
+                  style="--swatch-bg: rgb({theme.tokens.bgRgb}); --swatch-card: {theme.tokens.bgCard}; --swatch-fg: {theme.tokens.fg}; --swatch-border: {theme.tokens.border};"
+                  onclick={() => settings.themeId = theme.id}
+                >
+                  <span class="swatch-preview">
+                    <span class="swatch-bar"></span>
+                    <span class="swatch-bar short"></span>
+                  </span>
+                  <span class="swatch-label">{theme.isCustom ? (theme.displayName ?? theme.id) : t(theme.labelKey)}</span>
+                  {#if theme.isCustom}
+                    <!-- svelte-ignore node_invalid_placement_ssr -->
+                    <button
+                      type="button"
+                      class="swatch-delete"
+                      title={t("settings.themeDelete")}
+                      onclick={(e: MouseEvent) => {
+                        e.stopPropagation();
+                        void (async () => {
+                          await deleteCustomThemeFromRegistry(theme.id);
+                          if (settings.themeId === theme.id) settings.themeId = "dark";
+                          addToast(t("settings.themeDeleted"));
+                        })();
+                      }}
+                    >&times;</button>
+                  {/if}
+                </button>
+              {/each}
+            </div>
+            <button type="button" class="theme-action-btn" onclick={async () => {
+              try {
+                const json = await navigator.clipboard.readText();
+                const parsed = parseThemeJson(json);
+                if (!parsed) { addToast(t("settings.themeInvalidJson")); return; }
+                await saveCustomTheme(parsed);
+                await loadCustomThemes();
+                settings.themeId = parsed.id;
+                addToast(t("settings.themeImported"));
+              } catch { addToast(t("settings.themeInvalidJson")); }
+            }}>{t("settings.themeImport")}</button>
+          </div>
 
           <label class="field">
             <div class="row">
@@ -765,124 +813,39 @@
       </div>
     {/if}
 
-    {#if activeSettingsTab === "steam" && steamEnabled}
-      <div class="settings-grid">
-        <section class="card platform-display-card" style={`--display-accent:${STEAM_TAB_ACCENT};`}>
-          <h3>{t("settings.accountDisplay")}</h3>
-          <ToggleSetting
-            label={t("settings.showUsernames")}
-            enabled={settings.accountDisplay.showUsernames}
-            accent={STEAM_TAB_ACCENT}
-            onLabel={t("common.visible")}
-            offLabel={t("common.hidden")}
-            onToggle={() => settings.accountDisplay.showUsernames = !settings.accountDisplay.showUsernames}
+    {#if activeSettingsTab.startsWith("platform:") && ActivePlatformComponent}
+      {@const platformId = activeSettingsTab.slice("platform:".length)}
+      {@const platformDef = ALL_PLATFORMS.find((p) => p.id === platformId)}
+      {#if platformDef && platformId in platformPaths}
+        <div class="settings-grid">
+          <ActivePlatformComponent
+            bind:settings
+            bind:path={platformPaths[platformId]}
+            accent={platformDef.accent}
+            {t}
+            bind:apiKey
+            {apiKeyConfigured}
+            {avatarCacheDaysInput}
+            {banCheckDaysInput}
+            {avatarRefreshLoading}
+            {banRefreshLoading}
+            onChoosePath={() => choosePlatformPath(platformId)}
+            onOpenSteamApiKeyPage={openSteamApiKeyPage}
+            onApiKeyInput={(value: string) => {
+              apiKey = value;
+              apiKeyTouched = true;
+            }}
+            onAvatarCacheDaysInput={(value: string) => avatarCacheDaysInput = value}
+            onBanCheckDaysInput={(value: string) => banCheckDaysInput = value}
+            onCommitAvatarCacheDays={commitAvatarCacheDays}
+            onCommitBanCheckDays={commitBanCheckDays}
+            onRefreshAvatarsNow={handleRefreshAvatarsNow}
+            onRefreshBansNow={handleRefreshBansNow}
+            pathLabelKey={platformDef.pathLabelKey}
+            pathPlaceholder={platformDef.pathPlaceholder}
           />
-          <ToggleSetting
-            label={t("settings.showSteamLastLogin")}
-            enabled={settings.accountDisplay.showLastLoginPerPlatform["steam"] ?? false}
-            accent={STEAM_TAB_ACCENT}
-            onLabel={t("common.on")}
-            offLabel={t("common.off")}
-            onToggle={() => settings.accountDisplay.showLastLoginPerPlatform["steam"] = !settings.accountDisplay.showLastLoginPerPlatform["steam"]}
-          />
-        </section>
-
-        <SteamSettingsSection
-          {settings}
-          bind:steamPath
-          bind:apiKey
-          {apiKeyConfigured}
-          {avatarCacheDaysInput}
-          {banCheckDaysInput}
-          {avatarRefreshLoading}
-          {banRefreshLoading}
-          onChooseSteamFolder={chooseSteamFolder}
-          onOpenSteamApiKeyPage={openSteamApiKeyPage}
-          onApiKeyInput={(value) => {
-            apiKey = value;
-            apiKeyTouched = true;
-          }}
-          onAvatarCacheDaysInput={(value) => avatarCacheDaysInput = value}
-          onBanCheckDaysInput={(value) => banCheckDaysInput = value}
-          onCommitAvatarCacheDays={commitAvatarCacheDays}
-          onCommitBanCheckDays={commitBanCheckDays}
-          onRefreshAvatarsNow={handleRefreshAvatarsNow}
-          onRefreshBansNow={handleRefreshBansNow}
-          {t}
-        />
-      </div>
-    {/if}
-
-    {#if activeSettingsTab === "riot" && riotEnabled}
-      <div class="settings-grid">
-        <section class="card platform-display-card" style={`--display-accent:${RIOT_DISPLAY_ACCENT};`}>
-          <h3>{t("settings.accountDisplay")}</h3>
-          <ToggleSetting
-            label={t("settings.showRiotLastLogin")}
-            enabled={settings.accountDisplay.showLastLoginPerPlatform["riot"] ?? false}
-            accent={RIOT_DISPLAY_ACCENT}
-            onLabel={t("common.on")}
-            offLabel={t("common.off")}
-            onToggle={() => settings.accountDisplay.showLastLoginPerPlatform["riot"] = !settings.accountDisplay.showLastLoginPerPlatform["riot"]}
-          />
-        </section>
-
-        <section class="card">
-          <h3>{t("settings.riot")}</h3>
-          <div class="field">
-            <div class="row">
-              <span>{t("settings.riotClientPath")}</span>
-              <strong>{riotPath ? t("common.custom") : t("settings.autoDetected")}</strong>
-            </div>
-            <div class="input-row">
-              <input
-                id="riot-client-path"
-                type="text"
-                bind:value={riotPath}
-                class="text-input"
-                placeholder="C:\Riot Games\Riot Client\RiotClientServices.exe"
-              />
-              <button class="browse-btn" type="button" onclick={chooseRiotPath}>{t("common.choose")}</button>
-            </div>
-          </div>
-        </section>
-      </div>
-    {/if}
-
-    {#if activeSettingsTab === "battleNet" && battleNetEnabled}
-      <div class="settings-grid">
-        <section class="card platform-display-card" style={`--display-accent:${BATTLE_NET_TAB_ACCENT};`}>
-          <h3>{t("settings.accountDisplay")}</h3>
-          <ToggleSetting
-            label={t("settings.showBattleNetLastLogin")}
-            enabled={settings.accountDisplay.showLastLoginPerPlatform["battle-net"] ?? true}
-            accent={BATTLE_NET_TAB_ACCENT}
-            onLabel={t("common.on")}
-            offLabel={t("common.off")}
-            onToggle={() => settings.accountDisplay.showLastLoginPerPlatform["battle-net"] = !settings.accountDisplay.showLastLoginPerPlatform["battle-net"]}
-          />
-        </section>
-
-        <section class="card">
-          <h3>{t("settings.battleNet")}</h3>
-          <div class="field">
-            <div class="row">
-              <span>{t("settings.battleNetPath")}</span>
-              <strong>{battleNetPath ? t("common.custom") : t("settings.autoDetected")}</strong>
-            </div>
-            <div class="input-row">
-              <input
-                id="battle-net-path"
-                type="text"
-                bind:value={battleNetPath}
-                class="text-input"
-                placeholder="C:\Program Files (x86)\Battle.net\Battle.net Launcher.exe"
-              />
-              <button class="browse-btn" type="button" onclick={chooseBattleNetPath}>{t("common.choose")}</button>
-            </div>
-          </div>
-        </section>
-      </div>
+        </div>
+      {/if}
     {/if}
   </div>
 </div>
@@ -1062,11 +1025,6 @@
     color: var(--fg);
   }
 
-  .platform-display-card {
-    border-color: color-mix(in srgb, var(--display-accent) 32%, var(--border));
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--display-accent) 12%, transparent);
-  }
-
   .platforms {
     display: flex;
     flex-direction: column;
@@ -1204,30 +1162,118 @@
     accent-color: var(--fg);
   }
 
-  .input-row {
-    display: flex;
-    gap: 8px;
-  }
-
-  .browse-btn {
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--bg-card);
-    color: var(--fg);
-    font-size: 12px;
-    padding: 0 12px;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .browse-btn:hover {
-    background: var(--bg-card-hover);
-  }
-
   @media (max-width: 980px) {
     .card-wide {
       grid-column: span 1;
     }
+  }
+
+  .theme-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(86px, 1fr));
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  .theme-swatch {
+    position: relative;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background: var(--swatch-bg);
+    cursor: pointer;
+    padding: 8px 8px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    transition: border-color 120ms ease-out, box-shadow 120ms ease-out;
+  }
+
+  .theme-swatch:hover {
+    border-color: color-mix(in srgb, var(--swatch-fg) 25%, transparent);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  }
+
+  .theme-swatch.selected {
+    border-color: var(--swatch-fg);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--swatch-fg) 30%, transparent);
+  }
+
+  .swatch-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 6px;
+    border-radius: 4px;
+    background: var(--swatch-card);
+    border: 1px solid var(--swatch-border);
+  }
+
+  .swatch-bar {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--swatch-fg);
+    opacity: 0.35;
+  }
+
+  .swatch-bar.short {
+    width: 60%;
+    opacity: 0.2;
+  }
+
+  .swatch-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--swatch-fg);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: center;
+    line-height: 1.2;
+    opacity: 0.7;
+  }
+
+  .theme-swatch.selected .swatch-label {
+    opacity: 1;
+  }
+
+  .swatch-delete {
+    position: absolute;
+    top: 2px;
+    right: 4px;
+    font-size: 14px;
+    line-height: 1;
+    color: var(--swatch-fg);
+    opacity: 0;
+    cursor: pointer;
+    padding: 2px 4px;
+    border: none;
+    background: color-mix(in srgb, var(--swatch-bg) 80%, #000 20%);
+    border-radius: 4px;
+  }
+
+  .theme-swatch:hover .swatch-delete {
+    opacity: 0.6;
+  }
+
+  .swatch-delete:hover {
+    opacity: 1 !important;
+  }
+
+  .theme-action-btn {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-card);
+    color: var(--fg-muted);
+    font-size: 11px;
+    padding: 5px 12px;
+    cursor: pointer;
+    margin-top: 4px;
+    transition: background 120ms ease-out;
+  }
+
+  .theme-action-btn:hover {
+    background: var(--bg-card-hover);
+    color: var(--fg);
   }
 
   @media (max-width: 720px) {
