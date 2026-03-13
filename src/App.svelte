@@ -144,7 +144,6 @@
   let platformAddFlow = $derived(addFlow.flow);
   let isAccountSelectionView = $derived(!showSettings && !!shell.adapter);
   let bootReady = $state(false);
-  let contentKey = $state(0);
   let cardColorVersion = $state(0);
   let cardNoteVersion = $state(0);
   let isPinLocked = $state(startupPinLocked);
@@ -680,7 +679,6 @@
     shell.setActiveTab(tab);
     navigation.currentFolderId = null;
     showSettings = false;
-    contentKey += 1;
     if (isPlatformUsable(tab, shell.runtimeOs)) { loadAccounts(true); } else { navigation.refreshCurrentItems(); queueGridPadding(); }
     navigation.searchQuery = "";
   }
@@ -1000,6 +998,13 @@
       shell.setActiveTab(nextTab);
     }
 
+    // Signal boot-ready before loading accounts so the window appears
+    // while accounts load — the entrance animation covers the wait.
+    requestAnimationFrame(() => {
+      bootReady = true;
+      window.dispatchEvent(new CustomEvent("accshift:boot-ready"));
+    });
+
     if (isPlatformUsable(shell.activeTab, shell.runtimeOs)) {
       await loadAccounts(false, false, false, false, true);
     } else {
@@ -1011,13 +1016,7 @@
   }
 
   onMount(() => {
-    void initializeAppShell()
-      .finally(() => {
-        requestAnimationFrame(() => {
-          bootReady = true;
-          window.dispatchEvent(new CustomEvent("accshift:boot-ready"));
-        });
-      });
+    void initializeAppShell();
     void windowActivity.start();
 
     updateCheckTimer = setTimeout(() => { void startBackgroundUpdateFlow(); }, 3500);
@@ -1125,7 +1124,9 @@
       </div>
     {/if}
   </main>
-{:else if compatiblePlatforms.length === 0}
+{:else}
+  {#key activeTab}
+  {#if compatiblePlatforms.length === 0}
   <main class="content">
     <div class="center-msg">
       <p>{t("app.noCompatiblePlatforms")}</p>
@@ -1140,7 +1141,6 @@
     </div>
   </main>
 {:else if adapter}
-  {#key contentKey}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <main
     class="content"
@@ -1330,7 +1330,6 @@
       </div>
     {/if}
   </main>
-  {/key}
 {:else}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <main
@@ -1355,6 +1354,8 @@
       </p>
     </div>
   </main>
+{/if}
+  {/key}
 {/if}
 
     {#if contextMenu}
