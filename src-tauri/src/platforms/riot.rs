@@ -1,6 +1,8 @@
 use crate::config::{self, RiotProfileConfig};
 use crate::fs_utils;
-use crate::platforms::{log_platform_error, log_platform_info};
+use crate::platforms::{
+    log_platform_error, log_platform_info, PlatformCapabilities, PlatformService, SetupStatus,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::ffi::OsStr;
@@ -1308,4 +1310,93 @@ pub fn select_riot_path() -> Result<String, String> {
         "Executable files (*.exe)|*.exe|All files (*.*)|*.*",
     )
     .map_err(|e| e.to_string())
+}
+
+pub struct RiotService;
+
+pub static RIOT_SERVICE: RiotService = RiotService;
+
+impl PlatformService for RiotService {
+    fn id(&self) -> &'static str {
+        "riot"
+    }
+
+    fn capabilities(&self) -> PlatformCapabilities {
+        PlatformCapabilities {
+            has_profiles: true,
+            has_warnings: false,
+            has_api_key: false,
+            has_game_copy: false,
+            has_usernames: false,
+        }
+    }
+
+    fn get_accounts(&self, app: &tauri::AppHandle) -> Result<Value, String> {
+        let profiles = get_profiles(app.clone())?;
+        serde_json::to_value(profiles).map_err(|e| e.to_string())
+    }
+
+    fn get_startup_snapshot(&self, app: &tauri::AppHandle) -> Result<Value, String> {
+        let snapshot = get_startup_snapshot(app.clone())?;
+        serde_json::to_value(snapshot).map_err(|e| e.to_string())
+    }
+
+    fn get_current_account(&self, app: &tauri::AppHandle) -> Result<String, String> {
+        get_current_profile(app.clone())
+    }
+
+    fn switch_account(
+        &self,
+        app: &tauri::AppHandle,
+        account_id: &str,
+        _params: Value,
+    ) -> Result<(), String> {
+        switch_profile(app.clone(), account_id.to_string())
+    }
+
+    fn forget_account(&self, app: &tauri::AppHandle, account_id: &str) -> Result<(), String> {
+        forget_profile(app.clone(), account_id.to_string())
+    }
+
+    fn begin_setup(&self, app: &tauri::AppHandle, _params: Value) -> Result<SetupStatus, String> {
+        let status = begin_profile_setup(app.clone())?;
+        Ok(SetupStatus {
+            setup_id: status.profile_id,
+            state: status.state,
+            account_id: status.account_id,
+            account_display_name: status.account_display_name,
+            error_message: status.error_message,
+        })
+    }
+
+    fn get_setup_status(
+        &self,
+        app: &tauri::AppHandle,
+        setup_id: &str,
+    ) -> Result<SetupStatus, String> {
+        let status = get_profile_setup_status(app.clone(), setup_id.to_string())?;
+        Ok(SetupStatus {
+            setup_id: status.profile_id,
+            state: status.state,
+            account_id: status.account_id,
+            account_display_name: status.account_display_name,
+            error_message: status.error_message,
+        })
+    }
+
+    fn cancel_setup(&self, app: &tauri::AppHandle, setup_id: &str) -> Result<(), String> {
+        cancel_profile_setup(app.clone(), setup_id.to_string())
+    }
+
+    fn get_path(&self, app: &tauri::AppHandle) -> Result<String, String> {
+        get_riot_path(app.clone())
+    }
+
+    fn set_path(&self, app: &tauri::AppHandle, path: &str) -> Result<(), String> {
+        set_riot_path(app.clone(), path.to_string())
+    }
+
+    fn select_path(&self) -> Result<String, String> {
+        select_riot_path()
+    }
 }
