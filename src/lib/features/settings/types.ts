@@ -8,6 +8,10 @@ export interface PlatformDef {
   accent: string;
   implemented: boolean;
   supportedOs: RuntimeOs[];
+  settingsTabKey?: string;
+  settingsComponent?: () => Promise<{ default: any }>;
+  pathLabelKey?: string;
+  pathPlaceholder?: string;
 }
 
 export interface DataRefreshSettings {
