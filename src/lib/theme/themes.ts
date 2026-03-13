@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import type { MessageKey } from "$lib/i18n";
 
 export interface ThemeTokens {
@@ -19,6 +20,15 @@ export interface AppThemeDefinition {
   labelKey: MessageKey;
   colorScheme: "dark" | "light";
   tokens: ThemeTokens;
+  isCustom?: boolean;
+  displayName?: string;
+}
+
+interface CustomThemePayload {
+  id: string;
+  name: string;
+  colorScheme: string;
+  tokens: Record<string, string>;
 }
 
 function hexToRgbTriplet(color: string): string {
@@ -74,14 +84,186 @@ export const BUILT_IN_THEMES: AppThemeDefinition[] = [
       afkText: "#000000",
     },
   },
+  {
+    id: "midnight",
+    labelKey: "theme.midnight",
+    colorScheme: "dark",
+    tokens: {
+      bgRgb: "10 14 28",
+      bgCard: "#141c30",
+      bgCardHover: "#1a2440",
+      bgMuted: "#1c2744",
+      bgElevated: "#283a5c",
+      fg: "#e4e8f0",
+      fgMuted: "#8892a8",
+      fgSubtle: "#5a6580",
+      border: "#1c2744",
+      danger: "#ef4444",
+      afkText: "#dce2f0",
+    },
+  },
+  {
+    id: "forest",
+    labelKey: "theme.forest",
+    colorScheme: "dark",
+    tokens: {
+      bgRgb: "8 14 10",
+      bgCard: "#101e14",
+      bgCardHover: "#182a1e",
+      bgMuted: "#1a3020",
+      bgElevated: "#284830",
+      fg: "#e4f0e6",
+      fgMuted: "#88a88c",
+      fgSubtle: "#5a7a60",
+      border: "#1a3020",
+      danger: "#dc2626",
+      afkText: "#daf0de",
+    },
+  },
+  {
+    id: "sunset",
+    labelKey: "theme.sunset",
+    colorScheme: "dark",
+    tokens: {
+      bgRgb: "18 12 8",
+      bgCard: "#221610",
+      bgCardHover: "#2e1e16",
+      bgMuted: "#342018",
+      bgElevated: "#483020",
+      fg: "#f4ebe4",
+      fgMuted: "#b4988a",
+      fgSubtle: "#887060",
+      border: "#342018",
+      danger: "#dc2626",
+      afkText: "#f4e6da",
+    },
+  },
+  {
+    id: "nord",
+    labelKey: "theme.nord",
+    colorScheme: "dark",
+    tokens: {
+      bgRgb: "46 52 64",
+      bgCard: "#3b4252",
+      bgCardHover: "#434c5e",
+      bgMuted: "#434c5e",
+      bgElevated: "#4c566a",
+      fg: "#eceff4",
+      fgMuted: "#d8dee9",
+      fgSubtle: "#81a1c1",
+      border: "#434c5e",
+      danger: "#bf616a",
+      afkText: "#eceff4",
+    },
+  },
 ] as const;
 
 const DEFAULT_THEME_ID = "dark";
 const BUILT_IN_THEME_MAP = new Map(BUILT_IN_THEMES.map((theme) => [theme.id, theme]));
+const customThemes = new Map<string, AppThemeDefinition>();
+
+const REQUIRED_TOKEN_KEYS: (keyof ThemeTokens)[] = [
+  "bgRgb", "bgCard", "bgCardHover", "bgMuted", "bgElevated",
+  "fg", "fgMuted", "fgSubtle", "border", "danger", "afkText",
+];
+
+function isValidTokens(tokens: unknown): tokens is ThemeTokens {
+  if (!tokens || typeof tokens !== "object") return false;
+  const record = tokens as Record<string, unknown>;
+  return REQUIRED_TOKEN_KEYS.every(
+    (key) => typeof record[key] === "string" && (record[key] as string).trim().length > 0,
+  );
+}
 
 export function getThemeDefinition(themeId: string | null | undefined): AppThemeDefinition {
   if (!themeId) return BUILT_IN_THEME_MAP.get(DEFAULT_THEME_ID)!;
-  return BUILT_IN_THEME_MAP.get(themeId) ?? BUILT_IN_THEME_MAP.get(DEFAULT_THEME_ID)!;
+  return customThemes.get(themeId)
+    ?? BUILT_IN_THEME_MAP.get(themeId)
+    ?? BUILT_IN_THEME_MAP.get(DEFAULT_THEME_ID)!;
+}
+
+export function getAllThemes(): AppThemeDefinition[] {
+  const custom = [...customThemes.values()].filter(
+    (t) => !BUILT_IN_THEME_MAP.has(t.id),
+  );
+  return [...BUILT_IN_THEMES, ...custom];
+}
+
+export async function loadCustomThemes(): Promise<void> {
+  try {
+    const payloads = await invoke<CustomThemePayload[]>("list_custom_themes");
+    customThemes.clear();
+    for (const payload of payloads) {
+      if (!isValidTokens(payload.tokens)) continue;
+      if (BUILT_IN_THEME_MAP.has(payload.id)) continue;
+      const colorScheme = payload.colorScheme === "light" ? "light" : "dark";
+      customThemes.set(payload.id, {
+        id: payload.id,
+        labelKey: "theme.custom" as MessageKey,
+        colorScheme,
+        tokens: payload.tokens as ThemeTokens,
+        isCustom: true,
+        displayName: payload.name,
+      });
+    }
+  } catch {
+    // themes dir may not exist yet — that's fine
+  }
+}
+
+export async function saveCustomTheme(theme: AppThemeDefinition): Promise<void> {
+  if (BUILT_IN_THEME_MAP.has(theme.id)) {
+    throw new Error(`Cannot overwrite built-in theme: ${theme.id}`);
+  }
+  const payload: CustomThemePayload = {
+    id: theme.id,
+    name: theme.displayName ?? theme.id,
+    colorScheme: theme.colorScheme,
+    tokens: theme.tokens as unknown as Record<string, string>,
+  };
+  await invoke("save_custom_theme", { theme: payload });
+  customThemes.set(theme.id, theme);
+}
+
+export async function deleteCustomTheme(themeId: string): Promise<void> {
+  await invoke("delete_custom_theme", { themeId });
+  customThemes.delete(themeId);
+}
+
+export function exportThemeJson(theme: AppThemeDefinition): string {
+  return JSON.stringify(
+    {
+      id: theme.id,
+      name: theme.displayName ?? theme.id,
+      colorScheme: theme.colorScheme,
+      tokens: theme.tokens,
+    },
+    null,
+    2,
+  );
+}
+
+export function parseThemeJson(json: string): AppThemeDefinition | null {
+  try {
+    const raw = JSON.parse(json);
+    if (!raw || typeof raw !== "object") return null;
+    const id = typeof raw.id === "string" ? raw.id.trim() : "";
+    const name = typeof raw.name === "string" ? raw.name.trim() : "";
+    if (!id || !name) return null;
+    if (!/^[a-zA-Z0-9_-]+$/.test(id)) return null;
+    if (!isValidTokens(raw.tokens)) return null;
+    const colorScheme = raw.colorScheme === "light" ? "light" : "dark";
+    return {
+      id,
+      labelKey: "theme.custom" as MessageKey,
+      colorScheme,
+      tokens: raw.tokens as ThemeTokens,
+      isCustom: true,
+      displayName: name,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function applyThemeToDocument(

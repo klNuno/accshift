@@ -82,6 +82,8 @@ pub struct AppConfig {
     pub window_width: Option<f64>,
     #[serde(default)]
     pub window_height: Option<f64>,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -260,6 +262,7 @@ fn normalize_config(raw: RawAppConfig) -> AppConfig {
         battle_net,
         window_width: raw.window_width,
         window_height: raw.window_height,
+        extra: serde_json::Map::new(),
     }
 }
 
