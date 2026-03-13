@@ -2,9 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 import type { PlatformAddFlowStatus } from "$lib/shared/platform";
 import { logAppEvent, serializeLogValue } from "$lib/shared/appLogger";
 import { toPlatformAddFlowStatus } from "$lib/platforms/addFlow";
-import type { BattleNetAccount, BattleNetCopyableGame, BattleNetStartupSnapshot } from "./types";
+import type { BattleNetAccount, BattleNetStartupSnapshot } from "./types";
 
-interface BattleNetSetupStatusPayload {
+const PLATFORM_ID = "battle-net";
+
+interface SetupStatusPayload {
   setupId: string;
   state: string;
   accountId?: string;
@@ -13,22 +15,26 @@ interface BattleNetSetupStatusPayload {
 }
 
 export async function getAccounts(): Promise<BattleNetAccount[]> {
-  return invoke<BattleNetAccount[]>("get_battle_net_accounts");
+  return invoke<BattleNetAccount[]>("platform_get_accounts", { platformId: PLATFORM_ID });
 }
 
 export async function getCurrentAccount(): Promise<string> {
-  return invoke<string>("get_current_battle_net_account");
+  return invoke<string>("platform_get_current_account", { platformId: PLATFORM_ID });
 }
 
 export async function getStartupSnapshot(): Promise<BattleNetStartupSnapshot> {
-  return invoke<BattleNetStartupSnapshot>("get_battle_net_startup_snapshot");
+  return invoke<BattleNetStartupSnapshot>("platform_get_startup_snapshot", { platformId: PLATFORM_ID });
 }
 
 export async function switchAccount(email: string): Promise<void> {
   const details = { email };
   void logAppEvent("info", "frontend.battle_net.switch", "Switch request started", details);
   try {
-    await invoke("switch_battle_net_account", { email });
+    await invoke("platform_switch_account", {
+      platformId: PLATFORM_ID,
+      accountId: email,
+      params: {},
+    });
     void logAppEvent("info", "frontend.battle_net.switch", "Switch request completed", details);
   } catch (reason) {
     void logAppEvent("error", "frontend.battle_net.switch", "Switch request failed", {
@@ -40,39 +46,37 @@ export async function switchAccount(email: string): Promise<void> {
 }
 
 export async function beginAccountSetup(): Promise<PlatformAddFlowStatus> {
-  const payload = await invoke<BattleNetSetupStatusPayload>("begin_battle_net_account_setup");
+  const payload = await invoke<SetupStatusPayload>("platform_begin_setup", {
+    platformId: PLATFORM_ID,
+    params: {},
+  });
   return toPlatformAddFlowStatus(payload.setupId, payload);
 }
 
 export async function getAccountSetupStatus(setupId: string): Promise<PlatformAddFlowStatus> {
-  const payload = await invoke<BattleNetSetupStatusPayload>("get_battle_net_account_setup_status", { setupId });
+  const payload = await invoke<SetupStatusPayload>("platform_get_setup_status", {
+    platformId: PLATFORM_ID,
+    setupId,
+  });
   return toPlatformAddFlowStatus(payload.setupId, payload);
 }
 
 export async function cancelAccountSetup(setupId: string): Promise<void> {
-  await invoke("cancel_battle_net_account_setup", { setupId });
+  await invoke("platform_cancel_setup", { platformId: PLATFORM_ID, setupId });
 }
 
 export async function forgetAccount(email: string): Promise<void> {
-  await invoke("forget_battle_net_account", { email });
-}
-
-export async function copyGameSettings(fromEmail: string, toEmail: string, gameId: string): Promise<void> {
-  await invoke("copy_battle_net_game_settings", { fromEmail, toEmail, gameId });
-}
-
-export async function getCopyableGames(fromEmail: string, toEmail: string): Promise<BattleNetCopyableGame[]> {
-  return invoke<BattleNetCopyableGame[]>("get_battle_net_copyable_games", { fromEmail, toEmail });
+  await invoke("platform_forget_account", { platformId: PLATFORM_ID, accountId: email });
 }
 
 export async function getBattleNetPath(): Promise<string> {
-  return invoke<string>("get_battle_net_path");
+  return invoke<string>("platform_get_path", { platformId: PLATFORM_ID });
 }
 
 export async function setBattleNetPath(path: string): Promise<void> {
-  await invoke("set_battle_net_path", { path });
+  await invoke("platform_set_path", { platformId: PLATFORM_ID, path });
 }
 
 export async function selectBattleNetPath(): Promise<string> {
-  return invoke<string>("select_battle_net_path");
+  return invoke<string>("platform_select_path", { platformId: PLATFORM_ID });
 }
