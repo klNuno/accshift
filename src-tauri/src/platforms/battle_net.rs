@@ -1,8 +1,6 @@
 use crate::config::{self, BattleNetAccountConfig};
-use crate::fs_utils;
 use crate::platforms::{
-    log_platform_error, log_platform_info, log_platform_warn, PlatformCapabilities,
-    PlatformService, SetupStatus,
+    log_platform_error, log_platform_info, PlatformCapabilities, PlatformService, SetupStatus,
 };
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
@@ -14,7 +12,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::Manager;
 use uuid::Uuid;
 #[cfg(target_os = "windows")]
 use winreg::HKEY;
@@ -28,18 +25,6 @@ const BATTLE_NET_EXECUTABLE_CANDIDATES: &[&str] = &[
 ];
 const BATTLE_NET_EXECUTABLE_NAMES: &[&str] = &["Battle.net Launcher.exe", "Battle.net.exe"];
 const BATTLE_NET_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
-const OVERWATCH_PROCESS_NAMES: &[&str] = &["Overwatch.exe"];
-const OVERWATCH_GAME_ID: &str = "overwatch";
-const OVERWATCH_GAME_NAME: &str = "Overwatch";
-const OVERWATCH_SNAPSHOT_MISSING_ERROR: &str = "battle_net_overwatch_snapshot_missing";
-const OVERWATCH_IGNORED_SNAPSHOT_NAMES: &[&str] = &["Logs", "CrashMail"];
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct BattleNetCopyableGame {
-    pub app_id: String,
-    pub name: String,
-}
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -144,247 +129,6 @@ fn build_battle_net_switch_details(target_email: Option<&str>) -> String {
         "runningProcesses": running_processes,
     })
     .to_string()
-}
-
-fn log_battle_net_event(
-    app_handle: &tauri::AppHandle,
-    level: &str,
-    message: &str,
-    details: impl Into<String>,
-) {
-    crate::platforms::log_platform_event(
-        app_handle,
-        level,
-        "battle_net.overwatch",
-        message,
-        details,
-    );
-}
-
-fn is_any_process_running(process_names: &[&str]) -> bool {
-    process_names
-        .iter()
-        .any(|process_name| crate::os::is_process_running(process_name))
-}
-
-fn ensure_no_overwatch_running(action: &str) -> Result<(), String> {
-    if !is_any_process_running(OVERWATCH_PROCESS_NAMES) {
-        return Ok(());
-    }
-
-    Err(format!(
-        "Close Overwatch before {action}: {}",
-        OVERWATCH_PROCESS_NAMES.join(", ")
-    ))
-}
-
-fn account_snapshot_key(email: &str) -> String {
-    normalize_account_key(email)
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
-        .collect()
-}
-
-fn battle_net_snapshot_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let root = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Could not resolve app data dir: {e}"))?
-        .join("battle-net-snapshots")
-        .join(OVERWATCH_GAME_ID);
-    fs::create_dir_all(&root).map_err(|e| {
-        format!(
-            "Could not create Battle.net snapshot dir {}: {e}",
-            root.display()
-        )
-    })?;
-    Ok(root)
-}
-
-fn battle_net_overwatch_snapshot_dir(
-    app_handle: &tauri::AppHandle,
-    email: &str,
-) -> Result<PathBuf, String> {
-    Ok(battle_net_snapshot_root(app_handle)?.join(account_snapshot_key(email)))
-}
-
-fn directory_has_entries(path: &Path) -> bool {
-    fs::read_dir(path)
-        .ok()
-        .and_then(|mut entries| entries.next())
-        .is_some()
-}
-
-fn overwatch_root_candidates() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-
-    if let Ok(user_profile) = env::var("USERPROFILE") {
-        candidates.push(
-            PathBuf::from(&user_profile)
-                .join("Documents")
-                .join("Overwatch"),
-        );
-    }
-
-    if let Ok(one_drive) = env::var("OneDrive") {
-        candidates.push(
-            PathBuf::from(&one_drive)
-                .join("Documents")
-                .join("Overwatch"),
-        );
-    }
-
-    let mut seen = HashSet::new();
-    candidates.retain(|path| seen.insert(path.to_string_lossy().to_ascii_lowercase()));
-    candidates
-}
-
-fn existing_overwatch_root_dir() -> Option<PathBuf> {
-    overwatch_root_candidates()
-        .into_iter()
-        .find(|candidate| candidate.exists() && candidate.is_dir())
-}
-
-fn preferred_overwatch_root_dir() -> Result<PathBuf, String> {
-    overwatch_root_candidates()
-        .into_iter()
-        .next()
-        .ok_or_else(|| "Could not resolve Overwatch directory".to_string())
-}
-
-fn has_overwatch_snapshot(app_handle: &tauri::AppHandle, email: &str) -> bool {
-    battle_net_overwatch_snapshot_dir(app_handle, email)
-        .map(|path| path.exists() && path.is_dir() && directory_has_entries(&path))
-        .unwrap_or(false)
-}
-
-fn capture_overwatch_snapshot(app_handle: &tauri::AppHandle, email: &str) -> Result<bool, String> {
-    ensure_no_overwatch_running("switching Battle.net accounts")?;
-
-    let Some(live_root_dir) = existing_overwatch_root_dir() else {
-        log_battle_net_event(
-            app_handle,
-            "warn",
-            "Skipped Overwatch snapshot capture because no live Overwatch directory was found",
-            format!("email={email}"),
-        );
-        return Ok(false);
-    };
-
-    let snapshot_dir = battle_net_overwatch_snapshot_dir(app_handle, email)?;
-    if snapshot_dir.exists() {
-        fs::remove_dir_all(&snapshot_dir).map_err(|e| {
-            format!(
-                "Could not clear Battle.net Overwatch snapshot {}: {e}",
-                snapshot_dir.display()
-            )
-        })?;
-    }
-
-    log_battle_net_event(
-        app_handle,
-        "info",
-        "Capturing Overwatch snapshot for Battle.net account",
-        format!(
-            "email={email}; source={}; target={}",
-            live_root_dir.display(),
-            snapshot_dir.display()
-        ),
-    );
-
-    fs_utils::copy_dir_recursive(
-        &live_root_dir,
-        &snapshot_dir,
-        OVERWATCH_IGNORED_SNAPSHOT_NAMES,
-    )?;
-
-    log_battle_net_event(
-        app_handle,
-        "info",
-        "Captured Overwatch snapshot for Battle.net account",
-        format!("email={email}; snapshot={}", snapshot_dir.display()),
-    );
-
-    Ok(true)
-}
-
-fn copy_overwatch_snapshot_to_live(
-    app_handle: &tauri::AppHandle,
-    from_email: &str,
-    to_email: &str,
-) -> Result<(), String> {
-    ensure_no_overwatch_running("copying Overwatch settings")?;
-
-    let snapshot_dir = battle_net_overwatch_snapshot_dir(app_handle, from_email)?;
-    if !snapshot_dir.exists() || !snapshot_dir.is_dir() || !directory_has_entries(&snapshot_dir) {
-        log_battle_net_event(
-            app_handle,
-            "warn",
-            "Missing Overwatch snapshot for Battle.net account",
-            format!("from={from_email}; to={to_email}"),
-        );
-        return Err(OVERWATCH_SNAPSHOT_MISSING_ERROR.to_string());
-    }
-
-    let target_dir = preferred_overwatch_root_dir()?;
-    if let Some(parent) = target_dir.parent() {
-        fs::create_dir_all(parent).map_err(|e| {
-            format!(
-                "Could not create Overwatch parent {}: {e}",
-                parent.display()
-            )
-        })?;
-    }
-
-    if target_dir.exists() {
-        fs::remove_dir_all(&target_dir).map_err(|e| {
-            format!(
-                "Could not replace Overwatch directory {}: {e}",
-                target_dir.display()
-            )
-        })?;
-    }
-
-    log_battle_net_event(
-        app_handle,
-        "info",
-        "Copying Overwatch settings between Battle.net accounts",
-        format!(
-            "from={from_email}; to={to_email}; source={}; target={}",
-            snapshot_dir.display(),
-            target_dir.display()
-        ),
-    );
-
-    fs_utils::copy_dir_recursive(&snapshot_dir, &target_dir, OVERWATCH_IGNORED_SNAPSHOT_NAMES)?;
-
-    let target_snapshot_dir = battle_net_overwatch_snapshot_dir(app_handle, to_email)?;
-    if target_snapshot_dir.exists() {
-        fs::remove_dir_all(&target_snapshot_dir).map_err(|e| {
-            format!(
-                "Could not replace Battle.net target snapshot {}: {e}",
-                target_snapshot_dir.display()
-            )
-        })?;
-    }
-    fs_utils::copy_dir_recursive(
-        &snapshot_dir,
-        &target_snapshot_dir,
-        OVERWATCH_IGNORED_SNAPSHOT_NAMES,
-    )?;
-
-    log_battle_net_event(
-        app_handle,
-        "info",
-        "Copied Overwatch settings between Battle.net accounts",
-        format!(
-            "from={from_email}; to={to_email}; target={}; targetSnapshot={}",
-            target_dir.display(),
-            target_snapshot_dir.display()
-        ),
-    );
-
-    Ok(())
 }
 
 fn battle_net_cached_data_path() -> Result<PathBuf, String> {
@@ -968,7 +712,6 @@ pub fn switch_account(app_handle: tauri::AppHandle, email: String) -> Result<(),
         build_battle_net_switch_details(Some(&target_email)),
     );
     let accounts = known_account_emails(&app_handle)?;
-    let current_account = read_saved_accounts()?.into_iter().next();
 
     let Some(target) = accounts
         .iter()
@@ -983,23 +726,6 @@ pub fn switch_account(app_handle: tauri::AppHandle, email: String) -> Result<(),
     for account in accounts {
         if normalize_account_key(&account) != normalize_account_key(&target) {
             reordered.push(account);
-        }
-    }
-
-    if let Some(current) = current_account {
-        if normalize_account_key(&current) != normalize_account_key(&target) {
-            match capture_overwatch_snapshot(&app_handle, &current) {
-                Ok(true) => {}
-                Ok(false) => {}
-                Err(error) => {
-                    log_platform_warn(
-                        &app_handle,
-                        "battle_net.switch_account",
-                        "Could not capture Overwatch snapshot before Battle.net switch",
-                        format!("from={current}; to={target}; error={error}"),
-                    );
-                }
-            }
         }
     }
 
@@ -1027,43 +753,6 @@ pub fn switch_account(app_handle: tauri::AppHandle, email: String) -> Result<(),
     }
 
     result
-}
-
-pub fn copy_game_settings(
-    app_handle: tauri::AppHandle,
-    from_email: String,
-    to_email: String,
-    game_id: String,
-) -> Result<(), String> {
-    let from_email = validate_account_email(&from_email)?;
-    let to_email = validate_account_email(&to_email)?;
-    let game_id = game_id.trim().to_ascii_lowercase();
-
-    if game_id != OVERWATCH_GAME_ID {
-        return Err("Unsupported Battle.net game id".into());
-    }
-
-    copy_overwatch_snapshot_to_live(&app_handle, &from_email, &to_email)
-}
-
-pub fn get_copyable_games(
-    app_handle: tauri::AppHandle,
-    from_email: String,
-    _to_email: String,
-) -> Result<Vec<BattleNetCopyableGame>, String> {
-    let from_email = validate_account_email(&from_email)?;
-
-    if has_overwatch_snapshot(&app_handle, &from_email) {
-        return Ok(vec![BattleNetCopyableGame {
-            app_id: OVERWATCH_GAME_ID.to_string(),
-            name: OVERWATCH_GAME_NAME.to_string(),
-        }]);
-    }
-
-    Ok(vec![BattleNetCopyableGame {
-        app_id: OVERWATCH_GAME_ID.to_string(),
-        name: OVERWATCH_GAME_NAME.to_string(),
-    }])
 }
 
 pub fn begin_account_setup(
@@ -1209,7 +898,7 @@ impl PlatformService for BattleNetService {
             has_profiles: false,
             has_warnings: false,
             has_api_key: false,
-            has_game_copy: true,
+            has_game_copy: false,
             has_usernames: false,
         }
     }

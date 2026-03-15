@@ -2,20 +2,8 @@ import type { ContextMenuAction } from "$lib/shared/contextMenu/types";
 import type { PlatformAccount, PlatformContextMenuCallbacks } from "$lib/shared/platform";
 import {
   confirmSafeContextAction,
-  createSafeContextAction,
 } from "$lib/shared/contextMenu/actions";
-import { copyGameSettings, forgetAccount, getCopyableGames } from "./battleNetApi";
-
-function battleNetCopyErrorMessage(
-  error: unknown,
-  callbacks: PlatformContextMenuCallbacks,
-): string {
-  const message = String(error);
-  if (message.includes("battle_net_overwatch_snapshot_missing")) {
-    return callbacks.t("battlenet.overwatchSnapshotMissing");
-  }
-  return message;
-}
+import { forgetAccount } from "./battleNetApi";
 
 export function getBattleNetContextMenuItems(
   account: PlatformAccount,
@@ -36,30 +24,6 @@ export function getBattleNetContextMenuItems(
       action: () => callbacks.copyToClipboard(account.id, callbacks.t("battlenet.copyLabelEmail")),
     },
   ];
-
-  const targetAccountId = callbacks.getCurrentAccountId();
-  if (targetAccountId && targetAccountId !== account.id) {
-    items.push({
-      id: `battle-net.copy.settings.${account.id}`,
-      group: "platform.data",
-      label: callbacks.t("battlenet.copySettingsFrom"),
-      submenuLoader: async () => {
-        const games = await getCopyableGames(account.id, targetAccountId);
-        return games.map((game) => ({
-          id: `battle-net.copy.settings.${account.id}.${game.appId}`,
-          label: game.name,
-          action: createSafeContextAction(
-            callbacks,
-            async () => {
-              await copyGameSettings(account.id, targetAccountId, game.appId);
-              callbacks.showToast(callbacks.t("battlenet.copiedSettingsToCurrent", { game: game.name }));
-            },
-            battleNetCopyErrorMessage,
-          ),
-        }));
-      },
-    });
-  }
 
   items.push({
     id: `battle-net.forget.${account.id}`,

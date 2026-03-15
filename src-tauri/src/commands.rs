@@ -266,30 +266,6 @@ pub fn steam_get_account_games(
     crate::platforms::steam::get_account_games(app_handle, steam_id)
 }
 
-// ---------------------------------------------------------------------------
-// Battle.net-specific commands
-// ---------------------------------------------------------------------------
-
-#[tauri::command]
-pub fn battle_net_copy_game_settings(
-    app_handle: tauri::AppHandle,
-    from_email: String,
-    to_email: String,
-    game_id: String,
-) -> Result<(), String> {
-    crate::platforms::battle_net::copy_game_settings(app_handle, from_email, to_email, game_id)
-}
-
-#[tauri::command]
-pub fn battle_net_get_copyable_games(
-    app_handle: tauri::AppHandle,
-    from_email: String,
-    to_email: String,
-) -> Result<Vec<crate::platforms::battle_net::BattleNetCopyableGame>, String> {
-    crate::platforms::battle_net::get_copyable_games(app_handle, from_email, to_email)
-}
-
-// ---------------------------------------------------------------------------
 // Ubisoft-specific commands
 // ---------------------------------------------------------------------------
 

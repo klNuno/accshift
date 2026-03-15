@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { PlatformAddFlowStatus } from "$lib/shared/platform";
 import { logAppEvent, serializeLogValue } from "$lib/shared/appLogger";
 import { toPlatformAddFlowStatus } from "$lib/platforms/addFlow";
-import type { BattleNetAccount, BattleNetCopyableGame, BattleNetStartupSnapshot } from "./types";
+import type { BattleNetAccount, BattleNetStartupSnapshot } from "./types";
 
 const PLATFORM_ID = "battle-net";
 
@@ -67,14 +67,6 @@ export async function cancelAccountSetup(setupId: string): Promise<void> {
 
 export async function forgetAccount(email: string): Promise<void> {
   await invoke("platform_forget_account", { platformId: PLATFORM_ID, accountId: email });
-}
-
-export async function copyGameSettings(fromEmail: string, toEmail: string, gameId: string): Promise<void> {
-  await invoke("battle_net_copy_game_settings", { fromEmail, toEmail, gameId });
-}
-
-export async function getCopyableGames(fromEmail: string, toEmail: string): Promise<BattleNetCopyableGame[]> {
-  return invoke<BattleNetCopyableGame[]>("battle_net_get_copyable_games", { fromEmail, toEmail });
 }
 
 export async function getBattleNetPath(): Promise<string> {
