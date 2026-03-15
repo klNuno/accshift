@@ -26,6 +26,7 @@ type PlatformAddFlowDeps = {
     checkBans?: boolean,
     deferBackground?: boolean,
   ) => void;
+  onAccountAdded?: (platformId: string, accountId: string) => void;
 };
 
 function getSetupKey(
@@ -41,14 +42,14 @@ function getSetupKey(
     | "failed"
     | "failedMessage",
 ): MessageKey {
-  switch (platformId) {
-    case "battle-net":
-      return `battlenet.setup${kind[0].toUpperCase()}${kind.slice(1)}` as MessageKey;
-    case "steam":
-      return `steam.setup${kind[0].toUpperCase()}${kind.slice(1)}` as MessageKey;
-    default:
-      return `riot.setup${kind[0].toUpperCase()}${kind.slice(1)}` as MessageKey;
-  }
+  const PLATFORM_MESSAGE_PREFIX: Record<string, string> = {
+    steam: "steam",
+    riot: "riot",
+    "battle-net": "battlenet",
+    ubisoft: "ubisoft",
+  };
+  const prefix = PLATFORM_MESSAGE_PREFIX[platformId] ?? platformId;
+  return `${prefix}.setup${kind[0].toUpperCase()}${kind.slice(1)}` as MessageKey;
 }
 
 function createDetectedSection(
@@ -71,6 +72,7 @@ export function createPlatformAddFlowController({
   t,
   showToast,
   loadAccounts,
+  onAccountAdded,
 }: PlatformAddFlowDeps) {
   let flow = $state<PlatformAddFlowEntry | null>(null);
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -85,7 +87,7 @@ export function createPlatformAddFlowController({
     const detectedName = (flow.status.accountDisplayName || "").trim();
     return {
       id: setupId,
-      displayName: detectedName || t(getSetupKey(flow.platformId, "pendingLabel")),
+      displayName: detectedName || t("platform.newAccountPending"),
       username: detectedName
         ? t(getSetupKey(flow.platformId, "connected"))
         : t(getSetupKey(flow.platformId, "waitingForLogin")),
@@ -151,8 +153,9 @@ export function createPlatformAddFlowController({
       flow = { ...flow, status: nextStatus };
 
       if (nextStatus.state === "ready") {
+        const adapter = getPlatform(current.platformId);
         if (current.platformId === "steam" && nextStatus.accountId) {
-          void getPlatform("steam")?.getProfileInfo?.(nextStatus.accountId).catch(() => null);
+          void adapter?.getProfileInfo?.(nextStatus.accountId).catch(() => null);
         }
         if (getActiveTab() === current.platformId) {
           loadAccounts(true, false, false, false, false);
@@ -161,6 +164,9 @@ export function createPlatformAddFlowController({
           ? t(getSetupKey(current.platformId, "readyWithProfile"), { profile: nextStatus.accountDisplayName })
           : t(getSetupKey(current.platformId, "ready")));
         stop();
+        if (adapter?.setAccountLabel && nextStatus.accountId) {
+          onAccountAdded?.(current.platformId, nextStatus.accountId);
+        }
         return;
       }
 
@@ -299,7 +305,7 @@ export function createPlatformAddFlowController({
         return {
           sections: [
             {
-              text: t(getSetupKey("steam", "waitingForClient")),
+              text: t(getSetupKey(flow.platformId, "waitingForClient")),
               loading: true,
             },
           ],
@@ -308,8 +314,8 @@ export function createPlatformAddFlowController({
         return {
           sections: [
             {
-              title: t(getSetupKey("steam", "failed")),
-              text: t(getSetupKey("steam", "failedMessage")),
+              title: t(getSetupKey(flow.platformId, "failed")),
+              text: t(getSetupKey(flow.platformId, "failedMessage")),
             },
             ...(error ? [{
               lines: [error],
@@ -324,7 +330,7 @@ export function createPlatformAddFlowController({
         return {
           sections: [
             {
-              text: t(getSetupKey("steam", "waitingForLogin")),
+              text: t(getSetupKey(flow.platformId, "waitingForLogin")),
               loading: true,
             },
             ...(detectedSection ? [detectedSection] : []),

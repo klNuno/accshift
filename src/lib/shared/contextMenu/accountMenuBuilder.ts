@@ -30,13 +30,41 @@ function collapseCopyActions(
   ];
 }
 
+function getRenameAction(
+  account: PlatformAccount,
+  adapter: PlatformAdapter,
+  callbacks: PlatformContextMenuCallbacks,
+): ContextMenuAction | null {
+  if (!adapter.setAccountLabel || !callbacks.openInputDialog) return null;
+  const setLabel = adapter.setAccountLabel.bind(adapter);
+  return {
+    id: `platform.rename.${account.id}`,
+    group: "platform.primary",
+    label: callbacks.t("platform.rename"),
+    action: () => {
+      callbacks.openInputDialog!({
+        title: callbacks.t("platform.renameTitle"),
+        placeholder: callbacks.t("platform.renamePlaceholder"),
+        initialValue: account.displayName,
+        allowEmpty: true,
+        onConfirm: async (value) => {
+          await setLabel(account.id, value);
+          callbacks.refreshAccounts();
+        },
+      });
+    },
+  };
+}
+
 export function buildAccountContextMenuItems({
   account,
   adapter,
   platformCallbacks,
   appearanceCallbacks,
 }: BuildAccountContextMenuOptions): ContextMenuItem[] {
+  const renameAction = getRenameAction(account, adapter, platformCallbacks);
   const actions = collapseCopyActions([
+    ...(renameAction ? [renameAction] : []),
     ...adapter.getContextMenuActions(account, platformCallbacks),
     ...getAccountAppearanceContextActions(account, appearanceCallbacks),
   ], platformCallbacks);

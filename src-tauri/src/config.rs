@@ -66,6 +66,24 @@ pub struct BattleNetAccountConfig {
     pub last_used_at: Option<u64>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct UbisoftConfig {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub path_override: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accounts: Vec<UbisoftAccountConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct UbisoftAccountConfig {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub uuid: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<u64>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default, skip_serializing_if = "is_default_steam_config")]
@@ -78,6 +96,8 @@ pub struct AppConfig {
         rename = "battleNet"
     )]
     pub battle_net: BattleNetConfig,
+    #[serde(default, skip_serializing_if = "is_default_ubisoft_config")]
+    pub ubisoft: UbisoftConfig,
     #[serde(default)]
     pub window_width: Option<f64>,
     #[serde(default)]
@@ -94,6 +114,8 @@ struct RawAppConfig {
     riot: Option<RawRiotConfig>,
     #[serde(default, rename = "battleNet", alias = "battle_net")]
     battle_net: Option<BattleNetConfig>,
+    #[serde(default)]
+    ubisoft: Option<UbisoftConfig>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     steam_api_key: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -163,6 +185,10 @@ fn is_default_riot_config(value: &RiotConfig) -> bool {
 }
 
 fn is_default_battle_net_config(value: &BattleNetConfig) -> bool {
+    value.path_override.is_empty() && value.accounts.is_empty()
+}
+
+fn is_default_ubisoft_config(value: &UbisoftConfig) -> bool {
     value.path_override.is_empty() && value.accounts.is_empty()
 }
 
@@ -256,10 +282,12 @@ fn normalize_config(raw: RawAppConfig) -> AppConfig {
     }
     let riot = normalize_riot_config(raw.riot);
     let battle_net = raw.battle_net.unwrap_or_default();
+    let ubisoft = raw.ubisoft.unwrap_or_default();
     AppConfig {
         steam,
         riot,
         battle_net,
+        ubisoft,
         window_width: raw.window_width,
         window_height: raw.window_height,
         extra: serde_json::Map::new(),
