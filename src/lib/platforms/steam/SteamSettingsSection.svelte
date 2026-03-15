@@ -20,6 +20,7 @@
     onCommitBanCheckDays = () => {},
     onRefreshAvatarsNow = async () => {},
     onRefreshBansNow = async () => {},
+    accent = "#2563eb",
     t,
   }: {
     settings: AppSettings;
@@ -38,11 +39,12 @@
     onCommitBanCheckDays?: () => void;
     onRefreshAvatarsNow?: () => void | Promise<void>;
     onRefreshBansNow?: () => void | Promise<void>;
+    accent?: string;
     t: (key: MessageKey, params?: TranslationParams) => string;
   } = $props();
 </script>
 
-<section class="card steam-card">
+<section class="card steam-card platform-display-card" style={`--display-accent:${accent};`}>
   <h3>{t("settings.steam")}</h3>
 
   <ToggleSetting
@@ -182,6 +184,11 @@
     color: var(--fg);
   }
 
+  .platform-display-card {
+    border-color: color-mix(in srgb, var(--display-accent) 32%, var(--border));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--display-accent) 12%, transparent);
+  }
+
   .field {
     display: flex;
     flex-direction: column;
@@ -231,7 +238,7 @@
   }
 
   .text-input:focus {
-    border-color: #3b82f6;
+    border-color: color-mix(in srgb, var(--fg-muted) 55%, var(--border));
   }
 
   .input-row {
