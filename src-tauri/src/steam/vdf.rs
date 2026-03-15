@@ -83,10 +83,8 @@ pub fn vdf_set_nested_value(content: &str, path: &[&str], value: &str) -> String
 
         if trimmed == "}" {
             if depth > 0 {
-                if matched_depth == depth && matched_depth <= sections.len() {
-                    if matched_depth > 0 {
-                        matched_depth -= 1;
-                    }
+                if matched_depth == depth && matched_depth <= sections.len() && matched_depth > 0 {
+                    matched_depth = matched_depth.saturating_sub(1);
                 }
                 depth -= 1;
             }
@@ -169,10 +167,8 @@ pub fn vdf_set_nested_value(content: &str, path: &[&str], value: &str) -> String
             }
 
             if depth > 0 {
-                if matched_depth == depth && matched_depth <= sections.len() {
-                    if matched_depth > 0 {
-                        matched_depth -= 1;
-                    }
+                if matched_depth == depth && matched_depth <= sections.len() && matched_depth > 0 {
+                    matched_depth = matched_depth.saturating_sub(1);
                 }
                 depth -= 1;
             }
