@@ -16,12 +16,21 @@ export interface PlatformContextMenuConfirmConfig {
   onConfirm: () => void | Promise<void>;
 }
 
+export interface PlatformContextMenuInputConfig {
+  title: string;
+  placeholder: string;
+  initialValue: string;
+  allowEmpty?: boolean;
+  onConfirm: (value: string) => void | Promise<void>;
+}
+
 export interface PlatformContextMenuCallbacks {
   copyToClipboard: (text: string, label: string) => void | Promise<void>;
   showToast: (msg: string) => void;
   getCurrentAccountId: () => string | null;
   refreshAccounts: () => void;
   confirmAction: (config: PlatformContextMenuConfirmConfig) => void;
+  openInputDialog?: (config: PlatformContextMenuInputConfig) => void;
   t: (key: MessageKey, params?: TranslationParams) => string;
 }
 
@@ -84,6 +93,8 @@ export interface PlatformAdapter {
   cancelAddFlow?(setupId: string): Promise<void>;
 
   getContextMenuActions(account: PlatformAccount, callbacks: PlatformContextMenuCallbacks): ContextMenuAction[];
+
+  setAccountLabel?(accountId: string, label: string): Promise<void>;
 
   getProfileInfo?(accountId: string): Promise<PlatformProfileInfo | null>;
   getCachedProfile?(accountId: string): CachedPlatformProfile | null;

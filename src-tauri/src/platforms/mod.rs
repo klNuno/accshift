@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 pub mod battle_net;
 pub mod riot;
 pub mod steam;
+pub mod ubisoft;
 
 pub(crate) fn log_platform_event(
     app_handle: &tauri::AppHandle,
@@ -119,6 +120,7 @@ fn platform_registry() -> &'static HashMap<&'static str, &'static dyn PlatformSe
         map.insert("steam", &steam::STEAM_SERVICE);
         map.insert("riot", &riot::RIOT_SERVICE);
         map.insert("battle-net", &battle_net::BATTLE_NET_SERVICE);
+        map.insert("ubisoft", &ubisoft::UBISOFT_SERVICE);
         map
     })
 }

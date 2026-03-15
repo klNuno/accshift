@@ -36,12 +36,24 @@ export const PLATFORM_DEFS: PlatformDef[] = [
     pathLabelKey: "settings.battleNetPath",
     pathPlaceholder: "C:\\Program Files (x86)\\Battle.net\\Battle.net Launcher.exe",
   },
+  {
+    id: "ubisoft",
+    name: "Ubisoft",
+    accent: "#0070ff",
+    implemented: true,
+    supportedOs: ["windows"],
+    settingsTabKey: "settings.ubisoft",
+    settingsComponent: () => import("./ubisoft/UbisoftSettingsTab.svelte"),
+    pathLabelKey: "settings.ubisoftPath",
+    pathPlaceholder: "C:\\Program Files (x86)\\Ubisoft\\Ubisoft Game Launcher",
+  },
 ];
 
 const PLATFORM_LOADERS: Record<string, () => Promise<PlatformAdapter>> = {
   steam: () => import("./steam/adapter").then((mod) => mod.steamAdapter),
   riot: () => import("./riot/adapter").then((mod) => mod.riotAdapter),
   "battle-net": () => import("./battle-net/adapter").then((mod) => mod.battleNetAdapter),
+  ubisoft: () => import("./ubisoft/adapter").then((mod) => mod.ubisoftAdapter),
 };
 
 const platformLoadTasks = new Map<string, Promise<PlatformAdapter>>();
