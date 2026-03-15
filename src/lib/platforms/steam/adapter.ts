@@ -106,6 +106,13 @@ export const steamAdapter: PlatformAdapter = {
     return callbacks.t("toast.noSteamAccountsFound");
   },
 
+  getSwitchErrorToastMessage(message, callbacks) {
+    if (message.toLowerCase().includes("steam is running as administrator")) {
+      return callbacks.t("toast.steamElevated");
+    }
+    return null;
+  },
+
   getLoadErrorToastMessage(message, callbacks) {
     const normalized = message.trim().toLowerCase();
     if (

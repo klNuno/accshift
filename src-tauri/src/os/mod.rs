@@ -55,6 +55,13 @@ pub fn kill_process(process_name: &str) -> Result<(), AppError> {
     imp::kill_process(process_name)
 }
 
+pub fn kill_and_relaunch_steam_elevated(
+    steam_path: &Path,
+    launch_options: &[String],
+) -> Result<(), AppError> {
+    imp::kill_and_relaunch_steam_elevated(steam_path, launch_options)
+}
+
 pub fn launch_steam(
     steam_path: &Path,
     run_as_admin: bool,

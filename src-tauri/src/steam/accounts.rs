@@ -65,7 +65,9 @@ fn kill_process_tree_if_running(process_name: &str) -> Result<(), AppError> {
     if !os::is_process_running(process_name) {
         return Ok(());
     }
-    let _ = os::kill_process(process_name);
+    if let Err(AppError::SteamElevated) = os::kill_process(process_name) {
+        return Err(AppError::SteamElevated);
+    }
     wait_for_process_exit(process_name)
 }
 
@@ -79,6 +81,31 @@ fn kill_steam() -> Result<(), AppError> {
     kill_steam_client_processes()?;
     std::thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
     Ok(())
+}
+
+fn kill_and_relaunch(
+    steam_path: &Path,
+    run_as_admin: bool,
+    launch_options: &str,
+) -> Result<(), AppError> {
+    let needs_kill =
+        is_steam_running() || os::is_process_running(os::steam_web_helper_process_name());
+
+    if !needs_kill {
+        return launch_steam(steam_path, run_as_admin, launch_options);
+    }
+
+    match kill_steam_client_processes() {
+        Ok(()) => {
+            std::thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
+            launch_steam(steam_path, run_as_admin, launch_options)
+        }
+        Err(AppError::SteamElevated) if run_as_admin => {
+            let args = parse_launch_options(launch_options);
+            os::kill_and_relaunch_steam_elevated(steam_path, &args)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 fn kill_steam_client_processes() -> Result<(), AppError> {
@@ -388,9 +415,8 @@ pub fn switch_account(
     run_as_admin: bool,
     launch_options: &str,
 ) -> Result<(), AppError> {
-    kill_steam()?;
     os::set_auto_login_user(username)?;
-    launch_steam(steam_path, run_as_admin, launch_options)
+    kill_and_relaunch(steam_path, run_as_admin, launch_options)
 }
 
 pub fn add_account(
@@ -398,9 +424,8 @@ pub fn add_account(
     run_as_admin: bool,
     launch_options: &str,
 ) -> Result<(), AppError> {
-    kill_steam()?;
     os::clear_auto_login_user()?;
-    launch_steam(steam_path, run_as_admin, launch_options)
+    kill_and_relaunch(steam_path, run_as_admin, launch_options)
 }
 
 pub fn forget_account(steam_path: &Path, steam_id: &str) -> Result<(), AppError> {
@@ -428,7 +453,6 @@ pub fn switch_account_mode(
     run_as_admin: bool,
     launch_options: &str,
 ) -> Result<(), AppError> {
-    kill_steam()?;
     os::set_auto_login_user(username)?;
 
     if let Some(account_id) = steam_id_to_account_id(steam_id) {
@@ -439,7 +463,7 @@ pub fn switch_account_mode(
         set_persona_state(steam_path, account_id, state);
     }
 
-    launch_steam(steam_path, run_as_admin, launch_options)
+    kill_and_relaunch(steam_path, run_as_admin, launch_options)
 }
 
 pub fn open_userdata_with_path(steam_path: &Path, steam_id: &str) -> Result<(), AppError> {
