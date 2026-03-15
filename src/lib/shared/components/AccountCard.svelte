@@ -32,6 +32,7 @@
     lastLoginAt = null,
     note = "",
     entranceDelay = 0,
+    singleClickSwitch = false,
     locale = DEFAULT_LOCALE,
   }: {
     account: PlatformAccount;
@@ -56,6 +57,7 @@
     lastLoginAt?: number | null;
     note?: string;
     entranceDelay?: number;
+    singleClickSwitch?: boolean;
     locale?: Locale;
   } = $props();
 
@@ -217,6 +219,10 @@
   function handleClick() {
     if (isDragged) return;
     onActivate();
+    if (singleClickSwitch) {
+      onSwitch();
+      return;
+    }
     if (showConfirm) {
       showConfirm = false;
       onSwitch();

@@ -124,6 +124,23 @@
     t,
     showToast: (message) => addToast(message),
     loadAccounts,
+    onAccountAdded: (platformId, accountId) => {
+      const adapter = getPlatform(platformId);
+      if (!adapter?.setAccountLabel) return;
+      inputDialog = {
+        title: t("platform.renameNewAccount"),
+        placeholder: t("platform.renamePlaceholder"),
+        initialValue: "",
+        allowEmpty: true,
+        onConfirm: async (value) => {
+          inputDialog = null;
+          if (value.trim()) {
+            await adapter.setAccountLabel!(accountId, value);
+            loadAccounts(true);
+          }
+        },
+      };
+    },
   });
   let settings = $derived(shell.settings);
   let runtimeOs = $derived(shell.runtimeOs);
@@ -146,6 +163,60 @@
   let bootReady = $state(false);
   let cardColorVersion = $state(0);
   let cardNoteVersion = $state(0);
+  let bulkEditMode = $state(false);
+  let bulkEditSelectedIds = $state<Set<string>>(new Set());
+  type BulkEditBarType = (typeof import("$lib/platforms/steam/BulkEditBar.svelte"))["default"];
+  let BulkEditBar = $state<BulkEditBarType | null>(null);
+  let bulkEditBarLoadPromise: Promise<void> | null = null;
+
+  function toggleBulkEdit() {
+    if (bulkEditMode) {
+      bulkEditMode = false;
+      bulkEditSelectedIds = new Set();
+      return;
+    }
+    if (BulkEditBar) {
+      bulkEditMode = true;
+      return;
+    }
+    if (!bulkEditBarLoadPromise) {
+      bulkEditBarLoadPromise = import("$lib/platforms/steam/BulkEditBar.svelte")
+        .then((mod) => {
+          BulkEditBar = mod.default;
+          bulkEditMode = true;
+        })
+        .catch(() => {
+          bulkEditBarLoadPromise = null;
+        });
+    }
+  }
+
+  function toggleBulkEditAccount(accountId: string) {
+    const next = new Set(bulkEditSelectedIds);
+    if (next.has(accountId)) next.delete(accountId);
+    else next.add(accountId);
+    bulkEditSelectedIds = next;
+  }
+
+  function bulkEditSelectAll() {
+    bulkEditSelectedIds = new Set(loader.accounts.map((a) => a.id));
+  }
+
+  function bulkEditDeselectAll() {
+    bulkEditSelectedIds = new Set();
+  }
+
+  function closeBulkEdit() {
+    bulkEditMode = false;
+    bulkEditSelectedIds = new Set();
+  }
+
+  let bulkEditActiveAccountSelected = $derived(
+    bulkEditSelectedIds.size > 0 &&
+    !!loader.currentAccountId &&
+    bulkEditSelectedIds.has(loader.currentAccountId)
+  );
+
   let isPinLocked = $state(startupPinLocked);
   let isPinUnlocking = $state(false);
   let isPinRetryLocked = $state(false);
@@ -594,6 +665,7 @@
   async function toggleSettingsPanel() {
     if (!showSettings) {
       await addFlow.cancel();
+      closeBulkEdit();
     }
     if (!showSettings) {
       history.pushState({ tab: shell.activeTab, folderId: navigation.currentFolderId, showSettings: true }, "");
@@ -673,6 +745,7 @@
   async function handleTabChange(tab: string) {
     if (!isPlatformUsable(tab, shell.runtimeOs)) return;
     await addFlow.cancel();
+    closeBulkEdit();
     history.pushState({ tab, folderId: null, showSettings: false }, "");
     lastPreparedVisibleKey = "";
     loader.clearForPlatformChange();
@@ -713,6 +786,18 @@
           refreshAccounts: () => loadAccounts(true),
           confirmAction: (config) => {
             confirmDialog = config;
+          },
+          openInputDialog: (config) => {
+            inputDialog = {
+              title: config.title,
+              placeholder: config.placeholder,
+              initialValue: config.initialValue,
+              allowEmpty: config.allowEmpty,
+              onConfirm: (value) => {
+                config.onConfirm(value);
+                inputDialog = null;
+              },
+            };
           },
           t,
         },
@@ -1092,6 +1177,7 @@
           void handleAddAccount();
         }}
         onOpenSettings={toggleSettingsPanel}
+      onBulkEdit={toggleBulkEdit}
       onApplyUpdate={applyReadyUpdate}
       updateCtaLabel={updateCtaLabel}
       updateCtaTitle={updateCtaTitle}
@@ -1102,6 +1188,8 @@
       {unavailablePlatformIds}
       canRefresh={activeTabUsable && !adapterLoading}
       canAddAccount={activeTabUsable && !adapterLoading}
+      showBulkEdit={activeTab === "steam" && !showSettings && activeTabUsable}
+      bulkEditActive={bulkEditMode}
       {locale}
     />
     <div class="inactivity-frost" class:visible={isObscured} aria-hidden={!isObscured}></div>
@@ -1185,6 +1273,7 @@
         bind:this={grid.wrapperRef}
         class="list-wrapper"
         class:is-dragging={drag.isDragging}
+        style={bulkEditMode ? "padding-bottom: 52px;" : ""}
         onmousedown={(e) => !isSearching && drag.handleGridMouseDown(e)}
       >
           <ListView
@@ -1196,27 +1285,36 @@
             {lastLoginUnknownKey}
             pendingSetupId={pendingSetupAccount?.id ?? null}
             {currentFolderId}
-            {currentAccountId}
+            currentAccountId={bulkEditMode ? "" : currentAccountId}
           avatarStates={loader.avatarStates}
-          warningStates={loader.warningStates}
-          {getAccountNote}
-          {getAccountCardColor}
+          warningStates={bulkEditMode ? {} : loader.warningStates}
+          getAccountNote={bulkEditMode ? () => "" : getAccountNote}
+          getAccountCardColor={bulkEditMode ? (id) => bulkEditSelectedIds.has(id) ? "#2563eb" : "" : getAccountCardColor}
           {accentColor}
-          dragItem={drag.dragItem}
-          dragOverFolderId={drag.dragOverFolderId}
-          dragOverBack={drag.dragOverBack}
+          dragItem={bulkEditMode ? null : drag.dragItem}
+          dragOverFolderId={bulkEditMode ? null : drag.dragOverFolderId}
+          dragOverBack={bulkEditMode ? false : drag.dragOverBack}
           onNavigate={(id) => { void navigateTo(id); }}
           onGoBack={() => {
             void cancelPlatformAddFlowIfConflicting(activeTab);
             void navigateToParentFolder();
           }}
-          onAccountActivate={(account) => { void cancelPlatformAddFlowIfConflicting(activeTab, account.id); }}
+          onAccountActivate={(account) => { if (!bulkEditMode) void cancelPlatformAddFlowIfConflicting(activeTab, account.id); }}
           onSwitch={(account) => {
+            if (bulkEditMode) {
+              toggleBulkEditAccount(account.id);
+              return;
+            }
             if (isPendingSetupAccount(account.id)) return;
             void cancelPlatformAddFlowIfConflicting(activeTab, account.id);
             void handleAccountSwitch(account);
           }}
       onAccountContextMenu={(e, account) => {
+            if (bulkEditMode) {
+              e.preventDefault();
+              toggleBulkEditAccount(account.id);
+              return;
+            }
             if (isPendingSetupAccount(account.id)) return;
             void cancelPlatformAddFlowIfConflicting(activeTab, account.id);
             contextMenu = { x: e.clientX, y: e.clientY, account };
@@ -1239,7 +1337,7 @@
       >
         <div
           class="grid-container"
-          style="padding-left: {grid.paddingLeft}px; {grid.isResizing ? '' : 'transition: padding-left 200ms ease-out;'}"
+          style="padding-left: {grid.paddingLeft}px; {bulkEditMode ? 'padding-bottom: 52px;' : ''} {grid.isResizing ? '' : 'transition: padding-left 200ms ease-out;'}"
         >
           {#if currentFolderId && !isSearching}
             <BackCard
@@ -1280,36 +1378,46 @@
               {#if account}
                 <AccountCard
                   {account}
-                  cardColor={getAccountCardColor(account.id)}
-                  note={getAccountNote(account.id)}
-                  showNoteInline={settings.accountDisplay.showCardNotesInline}
+                  cardColor={bulkEditMode ? (bulkEditSelectedIds.has(account.id) ? "#2563eb" : "") : getAccountCardColor(account.id)}
+                  note={bulkEditMode ? "" : getAccountNote(account.id)}
+                  showNoteInline={bulkEditMode ? false : settings.accountDisplay.showCardNotesInline}
                   showUsername={isPendingSetupAccount(account.id) ? false : showUsernamesForActiveTab}
                   showLastLogin={isPendingSetupAccount(account.id) ? false : showLastLoginForActiveTab}
                   lastLoginAt={account.lastLoginAt}
                   entranceDelay={Math.min(cardIndex * 30, 300)}
                   {lastLoginUnknownKey}
                   {locale}
-                  isActive={account.id === currentAccountId}
+                  isActive={!bulkEditMode && account.id === currentAccountId}
                   onSwitch={() => {
+                    if (bulkEditMode) {
+                      toggleBulkEditAccount(account.id);
+                      return;
+                    }
                     if (isPendingSetupAccount(account.id)) return;
                     void cancelPlatformAddFlowIfConflicting(activeTab, account.id);
                     void handleAccountSwitch(account);
                   }}
                   onContextMenu={(e) => {
+                    if (bulkEditMode) {
+                      e.preventDefault();
+                      toggleBulkEditAccount(account.id);
+                      return;
+                    }
                     if (isPendingSetupAccount(account.id)) return;
                     void cancelPlatformAddFlowIfConflicting(activeTab, account.id);
                     contextMenu = { x: e.clientX, y: e.clientY, account };
                   }}
-                  onActivate={() => { void cancelPlatformAddFlowIfConflicting(activeTab, account.id); }}
+                  onActivate={() => { if (!bulkEditMode) void cancelPlatformAddFlowIfConflicting(activeTab, account.id); }}
                   avatarUrl={avatarState?.url}
                   isLoadingAvatar={isPendingSetupAccount(account.id) ? true : (avatarState?.loading ?? false)}
                   isRefreshingAvatar={avatarState?.refreshing ?? false}
-                  isDragged={drag.dragItem?.type === "account" && drag.dragItem?.id === account.id}
-                  warningInfo={isPendingSetupAccount(account.id) ? undefined : loader.warningStates[account.id]}
-                  extensionContent={accountExtensionContentById[account.id] ?? null}
-                  forceExtensionOpen={isAccountExtensionForcedOpen(account.id)}
-                  disableExtension={drag.isDragging}
-                  disableHoverExtension={Boolean(platformAddFlow && platformAddFlow.status.setupId !== account.id)}
+                  isDragged={!bulkEditMode && drag.dragItem?.type === "account" && drag.dragItem?.id === account.id}
+                  warningInfo={bulkEditMode ? undefined : (isPendingSetupAccount(account.id) ? undefined : loader.warningStates[account.id])}
+                  extensionContent={bulkEditMode ? null : (accountExtensionContentById[account.id] ?? null)}
+                  forceExtensionOpen={bulkEditMode ? false : isAccountExtensionForcedOpen(account.id)}
+                  disableExtension={bulkEditMode || drag.isDragging}
+                  disableHoverExtension={bulkEditMode || Boolean(platformAddFlow && platformAddFlow.status.setupId !== account.id)}
+                  singleClickSwitch={bulkEditMode}
                 />
               {/if}
             </div>
@@ -1388,6 +1496,26 @@
           void action?.();
         }}
         onCancel={() => confirmDialog = null}
+      />
+    {/if}
+
+    {#if bulkEditMode && BulkEditBar}
+      <BulkEditBar
+        selectedIds={bulkEditSelectedIds}
+        activeAccountSelected={bulkEditActiveAccountSelected}
+        onSelectAll={bulkEditSelectAll}
+        onDeselectAll={bulkEditDeselectAll}
+        onClose={closeBulkEdit}
+        onResult={(result) => {
+          if (result.failed.length === 0 && result.succeeded > 0) {
+            addToast(t("bulkEdit.toastSuccess", { count: result.succeeded }));
+          } else if (result.failed.length > 0 && result.succeeded > 0) {
+            addToast(t("bulkEdit.toastPartial", { succeeded: result.succeeded, failed: result.failed.length }));
+          } else {
+            addToast(t("bulkEdit.toastFailed"));
+          }
+        }}
+        {t}
       />
     {/if}
 

@@ -153,3 +153,56 @@ export async function selectSteamPath(): Promise<string> {
 export async function openSteamApiKeyPage(): Promise<void> {
   await invoke("steam_open_api_key_page");
 }
+
+// Bulk edit
+
+export interface LaunchOptionEdit {
+  appId: string;
+  value: string;
+}
+
+export interface BulkEditRequest {
+  steamIds: string[];
+  newsPopup: boolean | null;
+  doNotDisturb: boolean | null;
+  launchOptions: LaunchOptionEdit[];
+}
+
+export interface BulkEditFailure {
+  steamId: string;
+  error: string;
+}
+
+export interface BulkEditResult {
+  succeeded: number;
+  failed: BulkEditFailure[];
+}
+
+export async function bulkEdit(request: BulkEditRequest): Promise<BulkEditResult> {
+  const details = {
+    accountCount: request.steamIds.length,
+    newsPopup: request.newsPopup,
+    doNotDisturb: request.doNotDisturb,
+    launchOptionCount: request.launchOptions.length,
+  };
+  void logAppEvent("info", "frontend.steam.bulk_edit", "Bulk edit started", details);
+  try {
+    const result = await invoke<BulkEditResult>("steam_bulk_edit", { request });
+    void logAppEvent("info", "frontend.steam.bulk_edit", "Bulk edit completed", {
+      ...details,
+      succeeded: result.succeeded,
+      failed: result.failed.length,
+    });
+    return result;
+  } catch (reason) {
+    void logAppEvent("error", "frontend.steam.bulk_edit", "Bulk edit failed", {
+      ...details,
+      error: serializeLogValue(reason),
+    });
+    throw reason;
+  }
+}
+
+export async function getAccountGames(steamId: string): Promise<CopyableGame[]> {
+  return invoke<CopyableGame[]>("steam_get_account_games", { steamId });
+}

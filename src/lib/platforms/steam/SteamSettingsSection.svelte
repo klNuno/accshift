@@ -154,6 +154,8 @@
       </button>
     </div>
   </div>
+
+
 </section>
 
 <style>
@@ -260,4 +262,5 @@
   .browse-btn:hover {
     background: var(--bg-card-hover);
   }
+
 </style>
