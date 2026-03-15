@@ -51,6 +51,13 @@ pub fn kill_process(_process_name: &str) -> Result<(), AppError> {
     Err(unsupported("Process management"))
 }
 
+pub fn kill_and_relaunch_steam_elevated(
+    _steam_path: &Path,
+    _launch_options: &[String],
+) -> Result<(), AppError> {
+    Err(unsupported("Elevated process management"))
+}
+
 pub fn launch_steam(
     _steam_path: &Path,
     _run_as_admin: bool,

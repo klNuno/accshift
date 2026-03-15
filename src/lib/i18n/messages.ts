@@ -160,6 +160,7 @@ export const EN_MESSAGES = {
   "toast.accountsRefreshed.single": "{count} account refreshed",
   "toast.accountsRefreshed.multiple": "{count} accounts refreshed",
   "toast.steamFolderNotFound": "Steam folder was not found. Set it manually in Settings > Steam folder.",
+  "toast.steamElevated": "Steam is running as admin. Enable 'Run Steam as admin' in Settings > Steam.",
   "toast.noRiotProfilesFound": "No Riot profiles yet. Click + to add one.",
   "toast.noBattleNetAccountsFound": "No Battle.net accounts found. Sign in to Battle.net at least once, then refresh.",
 
@@ -426,6 +427,7 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "toast.accountsRefreshed.single": "{count} compte rafraîchi",
   "toast.accountsRefreshed.multiple": "{count} comptes rafraîchis",
   "toast.steamFolderNotFound": "Dossier Steam introuvable. Configure-le manuellement dans Paramètres > Dossier Steam.",
+  "toast.steamElevated": "Steam tourne en admin. Active 'Lancer Steam en admin' dans Paramètres > Steam.",
   "toast.noRiotProfilesFound": "Aucun profil Riot pour l'instant. Clique sur + pour en ajouter un.",
   "toast.noBattleNetAccountsFound": "Aucun compte Battle.net trouvé. Connecte-toi à Battle.net au moins une fois puis rafraîchis.",
 

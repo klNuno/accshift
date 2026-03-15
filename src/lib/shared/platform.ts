@@ -93,6 +93,7 @@ export interface PlatformAdapter {
     options: PlatformWarningLoadOptions
   ): Promise<Record<string, AccountWarningPresentation>>;
   getNoAccountsToastMessage?(callbacks: PlatformUiCallbacks): string | null;
+  getSwitchErrorToastMessage?(message: string, callbacks: PlatformUiCallbacks): string | null;
   getLoadErrorToastMessage?(message: string, callbacks: PlatformUiCallbacks): string | null;
 }
 

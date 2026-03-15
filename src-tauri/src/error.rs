@@ -32,6 +32,9 @@ pub enum AppError {
     #[error("Steam is still running")]
     KillSteamTimeout,
 
+    #[error("Steam is running as administrator")]
+    SteamElevated,
+
     #[error("{0}")]
     UnsupportedOperatingSystem(String),
 }

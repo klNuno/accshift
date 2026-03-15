@@ -318,7 +318,9 @@ export function createAccountLoader(
       }
     } catch (e) {
       error = String(e);
-      addToast(error);
+      const adapter = getAdapter();
+      const mapped = adapter?.getSwitchErrorToastMessage?.(error, { t });
+      addToast(mapped ?? error);
     }
     switching = false;
   }
