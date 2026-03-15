@@ -16,7 +16,7 @@
 </p>
 
 
-## Current Status
+## Current Status (very very early state)
 | Platform | Windows | macOS | Linux |
 | --- | --- | --- | --- |
 | Steam | ✅ Done | 🚧 Possible | 🚧 Possible |
