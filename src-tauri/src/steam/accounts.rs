@@ -38,7 +38,7 @@ struct ParsedLoginUser {
     is_most_recent: bool,
 }
 
-fn steam_id_to_account_id(steam_id64: &str) -> Option<u32> {
+pub(crate) fn steam_id_to_account_id(steam_id64: &str) -> Option<u32> {
     let id: u64 = steam_id64.parse().ok()?;
     Some((id & 0xFFFFFFFF) as u32)
 }
@@ -163,12 +163,12 @@ fn launch_steam(
     os::launch_steam(steam_path, run_as_admin, &args)
 }
 
-fn steam_user_data_path(steam_path: &Path, steam_id: &str) -> Result<PathBuf, AppError> {
+pub(crate) fn steam_user_data_path(steam_path: &Path, steam_id: &str) -> Result<PathBuf, AppError> {
     let account_id = steam_id_to_account_id(steam_id).ok_or(AppError::InvalidSteamId)?;
     Ok(steam_path.join("userdata").join(account_id.to_string()))
 }
 
-fn list_account_games(userdata_root: &Path) -> Result<HashSet<String>, AppError> {
+pub(crate) fn list_account_games(userdata_root: &Path) -> Result<HashSet<String>, AppError> {
     let mut ids = HashSet::new();
     if !userdata_root.exists() {
         return Ok(ids);
@@ -232,7 +232,7 @@ fn load_library_paths(steam_path: &Path) -> Vec<PathBuf> {
     paths
 }
 
-fn load_app_names(steam_path: &Path) -> HashMap<String, String> {
+pub(crate) fn load_app_names(steam_path: &Path) -> HashMap<String, String> {
     let mut names = HashMap::new();
     for library_root in load_library_paths(steam_path) {
         let steamapps = if library_root

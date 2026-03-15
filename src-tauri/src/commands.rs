@@ -252,6 +252,35 @@ pub fn steam_clear_browser_cache(app_handle: tauri::AppHandle) -> Result<(), Str
     crate::platforms::steam::clear_integrated_browser_cache(app_handle)
 }
 
+#[tauri::command]
+pub fn steam_bulk_edit(
+    app_handle: tauri::AppHandle,
+    request: crate::steam::bulk_edit::BulkEditRequest,
+) -> Result<crate::steam::bulk_edit::BulkEditResult, String> {
+    crate::platforms::steam::bulk_edit(app_handle, request)
+}
+
+#[tauri::command]
+pub fn steam_get_account_games(
+    app_handle: tauri::AppHandle,
+    steam_id: String,
+) -> Result<Vec<crate::steam::accounts::CopyableGame>, String> {
+    crate::platforms::steam::get_account_games(app_handle, steam_id)
+}
+
+// ---------------------------------------------------------------------------
+// Ubisoft-specific commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn ubisoft_set_account_label(
+    app_handle: tauri::AppHandle,
+    uuid: String,
+    label: String,
+) -> Result<(), String> {
+    crate::platforms::ubisoft::set_account_label(&app_handle, &uuid, &label)
+}
+
 // ---------------------------------------------------------------------------
 // Riot-specific commands
 // ---------------------------------------------------------------------------

@@ -193,6 +193,10 @@ fn main() {
             commands::steam_get_copyable_games,
             commands::steam_open_userdata,
             commands::steam_clear_browser_cache,
+            commands::steam_bulk_edit,
+            commands::steam_get_account_games,
+            // Ubisoft-specific
+            commands::ubisoft_set_account_label,
             // Riot-specific
             commands::riot_capture_profile,
             // Theme

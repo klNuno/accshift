@@ -5,6 +5,7 @@ use crate::platforms::{
     SetupStatus,
 };
 use crate::steam::accounts::{self, CopyableGame, SteamAccount};
+use crate::steam::bulk_edit;
 use crate::steam::bans::{self, BanInfo};
 use crate::steam::profile::{self, ProfileInfo};
 use serde_json::Value;
@@ -506,6 +507,46 @@ pub fn set_steam_path(app_handle: tauri::AppHandle, path: String) -> Result<(), 
 
 pub fn select_steam_path() -> Result<String, String> {
     os::select_folder("Select Steam folder").map_err(|e| e.to_string())
+}
+
+pub fn bulk_edit(
+    app_handle: tauri::AppHandle,
+    request: bulk_edit::BulkEditRequest,
+) -> Result<bulk_edit::BulkEditResult, String> {
+    for steam_id in &request.steam_ids {
+        validate_steam_id(steam_id)?;
+    }
+    let steam_path = resolve_steam_path(&app_handle)?;
+    log_platform_info(
+        &app_handle,
+        "steam.bulk_edit",
+        "Bulk edit requested",
+        format!(
+            "accounts={} news_popup={:?} dnd={:?} launch_options={}",
+            request.steam_ids.len(),
+            request.news_popup,
+            request.do_not_disturb,
+            request.launch_options.len()
+        ),
+    );
+    let result = bulk_edit::apply_bulk_edit(&steam_path, &request);
+    log_platform_info(
+        &app_handle,
+        "steam.bulk_edit",
+        "Bulk edit completed",
+        format!("succeeded={} failed={}", result.succeeded, result.failed.len()),
+    );
+    Ok(result)
+}
+
+pub fn get_account_games(
+    app_handle: tauri::AppHandle,
+    steam_id: String,
+) -> Result<Vec<CopyableGame>, String> {
+    validate_steam_id(&steam_id)?;
+    let steam_path = resolve_steam_path(&app_handle)?;
+    bulk_edit::get_account_games(&steam_path, &steam_id)
+        .map_err(|e| to_logged_error(&app_handle, "steam.get_account_games", e))
 }
 
 pub fn open_steam_api_key_page() -> Result<(), String> {
