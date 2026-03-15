@@ -108,6 +108,33 @@ fn kill_and_relaunch(
     }
 }
 
+fn restore_auto_login_user(previous_username: &str) -> Result<(), AppError> {
+    if previous_username.trim().is_empty() {
+        os::clear_auto_login_user()
+    } else {
+        os::set_auto_login_user(previous_username)
+    }
+}
+
+fn with_auto_login_user<T>(
+    next_username: Option<&str>,
+    action: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let previous_username = os::get_auto_login_user()?;
+    match next_username {
+        Some(username) => os::set_auto_login_user(username)?,
+        None => os::clear_auto_login_user()?,
+    }
+
+    match action() {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            let _ = restore_auto_login_user(&previous_username);
+            Err(error)
+        }
+    }
+}
+
 fn kill_steam_client_processes() -> Result<(), AppError> {
     kill_process_tree_if_running(os::steam_process_name())?;
     kill_process_tree_if_running(os::steam_web_helper_process_name())
@@ -415,8 +442,9 @@ pub fn switch_account(
     run_as_admin: bool,
     launch_options: &str,
 ) -> Result<(), AppError> {
-    os::set_auto_login_user(username)?;
-    kill_and_relaunch(steam_path, run_as_admin, launch_options)
+    with_auto_login_user(Some(username), || {
+        kill_and_relaunch(steam_path, run_as_admin, launch_options)
+    })
 }
 
 pub fn add_account(
@@ -424,8 +452,9 @@ pub fn add_account(
     run_as_admin: bool,
     launch_options: &str,
 ) -> Result<(), AppError> {
-    os::clear_auto_login_user()?;
-    kill_and_relaunch(steam_path, run_as_admin, launch_options)
+    with_auto_login_user(None, || {
+        kill_and_relaunch(steam_path, run_as_admin, launch_options)
+    })
 }
 
 pub fn forget_account(steam_path: &Path, steam_id: &str) -> Result<(), AppError> {
@@ -453,17 +482,17 @@ pub fn switch_account_mode(
     run_as_admin: bool,
     launch_options: &str,
 ) -> Result<(), AppError> {
-    os::set_auto_login_user(username)?;
+    with_auto_login_user(Some(username), || {
+        if let Some(account_id) = steam_id_to_account_id(steam_id) {
+            let state = match mode {
+                "invisible" => "7",
+                _ => "1",
+            };
+            set_persona_state(steam_path, account_id, state);
+        }
 
-    if let Some(account_id) = steam_id_to_account_id(steam_id) {
-        let state = match mode {
-            "invisible" => "7",
-            _ => "1",
-        };
-        set_persona_state(steam_path, account_id, state);
-    }
-
-    kill_and_relaunch(steam_path, run_as_admin, launch_options)
+        kill_and_relaunch(steam_path, run_as_admin, launch_options)
+    })
 }
 
 pub fn open_userdata_with_path(steam_path: &Path, steam_id: &str) -> Result<(), AppError> {

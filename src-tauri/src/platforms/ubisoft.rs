@@ -17,11 +17,8 @@ use winreg::enums::*;
 #[cfg(target_os = "windows")]
 use winreg::RegKey;
 
-const UBISOFT_PROCESS_NAMES: &[&str] = &[
-    "UbisoftConnect.exe",
-    "UbisoftGameLauncher.exe",
-    "upc.exe",
-];
+const UBISOFT_PROCESS_NAMES: &[&str] =
+    &["UbisoftConnect.exe", "UbisoftGameLauncher.exe", "upc.exe"];
 const UBISOFT_EXECUTABLE_NAME: &str = "UbisoftConnect.exe";
 const UBISOFT_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
 const AUTH_FILES: &[&str] = &["user.dat", "ConnectSecureStorage.dat"];
@@ -80,13 +77,17 @@ fn ubisoft_local_data_dir() -> Result<PathBuf, String> {
 
 fn ubisoft_default_install_dir() -> Option<PathBuf> {
     if let Ok(pf86) = env::var("ProgramFiles(x86)") {
-        let path = PathBuf::from(pf86).join("Ubisoft").join("Ubisoft Game Launcher");
+        let path = PathBuf::from(pf86)
+            .join("Ubisoft")
+            .join("Ubisoft Game Launcher");
         if path.exists() {
             return Some(path);
         }
     }
     if let Ok(pf) = env::var("ProgramFiles") {
-        let path = PathBuf::from(pf).join("Ubisoft").join("Ubisoft Game Launcher");
+        let path = PathBuf::from(pf)
+            .join("Ubisoft")
+            .join("Ubisoft Game Launcher");
         if path.exists() {
             return Some(path);
         }
@@ -199,19 +200,14 @@ use tauri::Manager;
 fn save_auth_snapshot(app_handle: &tauri::AppHandle, uuid: &str) -> Result<(), String> {
     let local_dir = ubisoft_local_data_dir()?;
     let cache_dir = auth_cache_dir(app_handle, uuid)?;
-    fs::create_dir_all(&cache_dir)
-        .map_err(|e| format!("Could not create auth cache dir: {e}"))?;
+    fs::create_dir_all(&cache_dir).map_err(|e| format!("Could not create auth cache dir: {e}"))?;
 
     for file_name in AUTH_FILES {
         let source = local_dir.join(file_name);
         if source.exists() {
             let dest = cache_dir.join(file_name);
-            fs::copy(&source, &dest).map_err(|e| {
-                format!(
-                    "Could not copy {} to cache: {e}",
-                    source.display()
-                )
-            })?;
+            fs::copy(&source, &dest)
+                .map_err(|e| format!("Could not copy {} to cache: {e}", source.display()))?;
         }
     }
 
@@ -232,12 +228,8 @@ fn restore_auth_snapshot(app_handle: &tauri::AppHandle, uuid: &str) -> Result<()
         let source = cache_dir.join(file_name);
         if source.exists() {
             let dest = local_dir.join(file_name);
-            fs::copy(&source, &dest).map_err(|e| {
-                format!(
-                    "Could not restore {} from cache: {e}",
-                    source.display()
-                )
-            })?;
+            fs::copy(&source, &dest)
+                .map_err(|e| format!("Could not restore {} from cache: {e}", source.display()))?;
         }
     }
 
@@ -379,7 +371,9 @@ fn read_file_shared(path: &PathBuf) -> Option<String> {
             .ok()?;
         use std::io::Read;
         let mut content = String::new();
-        std::io::BufReader::new(file).read_to_string(&mut content).ok()?;
+        std::io::BufReader::new(file)
+            .read_to_string(&mut content)
+            .ok()?;
         Some(content)
     }
     #[cfg(not(target_os = "windows"))]
@@ -410,9 +404,12 @@ fn launch_ubisoft(app_handle: &tauri::AppHandle) -> Result<(), String> {
     if let Some(install_dir) = executable.parent() {
         command.current_dir(install_dir);
     }
-    command
-        .spawn()
-        .map_err(|e| format!("Could not launch Ubisoft Connect {}: {e}", executable.display()))?;
+    command.spawn().map_err(|e| {
+        format!(
+            "Could not launch Ubisoft Connect {}: {e}",
+            executable.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -759,7 +756,11 @@ pub fn forget_account(app_handle: &tauri::AppHandle, uuid: &str) -> Result<(), S
     forget_account_metadata(app_handle, &uuid)
 }
 
-pub fn set_account_label(app_handle: &tauri::AppHandle, uuid: &str, label: &str) -> Result<(), String> {
+pub fn set_account_label(
+    app_handle: &tauri::AppHandle,
+    uuid: &str,
+    label: &str,
+) -> Result<(), String> {
     let uuid = validate_uuid(uuid)?;
     let key = uuid.to_lowercase();
     let mut cfg = config::load_config(app_handle);

@@ -38,6 +38,15 @@ pub(crate) fn log_platform_info(
     log_platform_event(app_handle, "info", source, message, details);
 }
 
+pub(crate) fn log_platform_warn(
+    app_handle: &tauri::AppHandle,
+    source: &str,
+    message: &str,
+    details: impl Into<String>,
+) {
+    log_platform_event(app_handle, "warn", source, message, details);
+}
+
 pub(crate) fn log_platform_error(
     app_handle: &tauri::AppHandle,
     source: &str,
@@ -114,7 +123,8 @@ pub trait PlatformService: Send + Sync {
 }
 
 fn platform_registry() -> &'static HashMap<&'static str, &'static dyn PlatformService> {
-    static REGISTRY: OnceLock<HashMap<&'static str, &'static dyn PlatformService>> = OnceLock::new();
+    static REGISTRY: OnceLock<HashMap<&'static str, &'static dyn PlatformService>> =
+        OnceLock::new();
     REGISTRY.get_or_init(|| {
         let mut map: HashMap<&'static str, &'static dyn PlatformService> = HashMap::new();
         map.insert("steam", &steam::STEAM_SERVICE);

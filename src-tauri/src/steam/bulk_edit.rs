@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
-use super::accounts::{load_app_names, list_account_games, steam_user_data_path, CopyableGame};
+use super::accounts::{list_account_games, load_app_names, steam_user_data_path, CopyableGame};
 use super::vdf::vdf_set_nested_value;
 use crate::error::AppError;
 
@@ -89,7 +89,14 @@ fn apply_for_account(
         }
         content = vdf_set_nested_value(
             &content,
-            &["Software", "Valve", "Steam", "apps", &edit.app_id, "LaunchOptions"],
+            &[
+                "Software",
+                "Valve",
+                "Steam",
+                "apps",
+                &edit.app_id,
+                "LaunchOptions",
+            ],
             &edit.value,
         );
     }
@@ -97,10 +104,7 @@ fn apply_for_account(
     fs::write(&config_path, content).map_err(|e| AppError::FileRead(e.to_string()))
 }
 
-pub fn get_account_games(
-    steam_path: &Path,
-    steam_id: &str,
-) -> Result<Vec<CopyableGame>, AppError> {
+pub fn get_account_games(steam_path: &Path, steam_id: &str) -> Result<Vec<CopyableGame>, AppError> {
     let userdata = steam_user_data_path(steam_path, steam_id)?;
     let game_ids = list_account_games(&userdata)?;
     let names = load_app_names(steam_path);

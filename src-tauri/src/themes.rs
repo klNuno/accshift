@@ -32,7 +32,8 @@ pub fn list_custom_themes(app: &tauri::AppHandle) -> Result<Vec<CustomTheme>, St
     if !dir.exists() {
         return Ok(vec![]);
     }
-    let entries = fs::read_dir(&dir).map_err(|e| format!("Could not read themes directory: {e}"))?;
+    let entries =
+        fs::read_dir(&dir).map_err(|e| format!("Could not read themes directory: {e}"))?;
     let mut themes = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
@@ -58,7 +59,10 @@ pub fn list_custom_themes(app: &tauri::AppHandle) -> Result<Vec<CustomTheme>, St
 
 pub fn save_custom_theme(app: &tauri::AppHandle, theme: &CustomTheme) -> Result<(), String> {
     if !is_safe_theme_id(&theme.id) {
-        return Err("Invalid theme ID: only alphanumeric characters, hyphens, and underscores are allowed".to_string());
+        return Err(
+            "Invalid theme ID: only alphanumeric characters, hyphens, and underscores are allowed"
+                .to_string(),
+        );
     }
     let dir = themes_dir(app);
     fs::create_dir_all(&dir).map_err(|e| format!("Could not create themes directory: {e}"))?;
