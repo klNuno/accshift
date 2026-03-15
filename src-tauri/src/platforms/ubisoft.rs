@@ -643,14 +643,13 @@ pub fn begin_account_setup(app_handle: &tauri::AppHandle) -> Result<SetupStatus,
     delete_auth_files()?;
 
     // Relaunch
-    launch_ubisoft(app_handle).map_err(|e| {
+    launch_ubisoft(app_handle).inspect_err(|e| {
         log_platform_error(
             app_handle,
             "ubisoft.begin_account_setup",
             "Ubisoft setup launch failed",
-            &e,
+            e,
         );
-        e
     })?;
 
     Ok(SetupStatus {

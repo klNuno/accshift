@@ -787,14 +787,13 @@ pub fn begin_account_setup(
 
     kill_battle_net();
     write_saved_accounts(&[])?;
-    launch_battle_net(&app_handle).map_err(|e| {
+    launch_battle_net(&app_handle).inspect_err(|e| {
         log_platform_error(
             &app_handle,
             "battle_net.begin_account_setup",
             "Battle.net account setup launch failed",
-            &e,
+            e,
         );
-        e
     })?;
     Ok(setup_status(&setup_id, "waiting_for_client", "", "", ""))
 }
