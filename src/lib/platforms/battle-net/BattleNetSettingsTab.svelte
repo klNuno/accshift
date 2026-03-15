@@ -34,7 +34,7 @@
   />
 </section>
 
-<section class="card">
+<section class="card platform-display-card" style={`--display-accent:${accent};`}>
   <h3>{t("settings.battleNet")}</h3>
   <div class="field">
     <span class="field-label">{t(pathLabelKey as MessageKey)}</span>

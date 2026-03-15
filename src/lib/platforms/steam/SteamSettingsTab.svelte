@@ -70,6 +70,7 @@
   {settings}
   bind:steamPath={path}
   bind:apiKey
+  {accent}
 
   {avatarCacheDaysInput}
   {banCheckDaysInput}
