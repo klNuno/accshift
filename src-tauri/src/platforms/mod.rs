@@ -38,15 +38,6 @@ pub(crate) fn log_platform_info(
     log_platform_event(app_handle, "info", source, message, details);
 }
 
-pub(crate) fn log_platform_warn(
-    app_handle: &tauri::AppHandle,
-    source: &str,
-    message: &str,
-    details: impl Into<String>,
-) {
-    log_platform_event(app_handle, "warn", source, message, details);
-}
-
 pub(crate) fn log_platform_error(
     app_handle: &tauri::AppHandle,
     source: &str,
