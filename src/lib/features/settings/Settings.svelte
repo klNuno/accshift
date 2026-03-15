@@ -17,6 +17,7 @@
     saveCustomTheme,
     deleteCustomTheme as deleteCustomThemeFromRegistry,
     parseThemeJson,
+    exportThemeJson,
   } from "$lib/theme/themes";
   import {
     DEFAULT_LOCALE,
@@ -617,17 +618,24 @@
                 </button>
               {/each}
             </div>
-            <button type="button" class="theme-action-btn" onclick={async () => {
-              try {
-                const json = await navigator.clipboard.readText();
-                const parsed = parseThemeJson(json);
-                if (!parsed) { addToast(t("settings.themeInvalidJson")); return; }
-                await saveCustomTheme(parsed);
-                await loadCustomThemes();
-                settings.themeId = parsed.id;
-                addToast(t("settings.themeImported"));
-              } catch { addToast(t("settings.themeInvalidJson")); }
-            }}>{t("settings.themeImport")}</button>
+            <div class="theme-actions-row">
+              <button type="button" class="theme-action-btn" onclick={async () => {
+                try {
+                  const json = await navigator.clipboard.readText();
+                  const parsed = parseThemeJson(json);
+                  if (!parsed) { addToast(t("settings.themeInvalidJson")); return; }
+                  await saveCustomTheme(parsed);
+                  await loadCustomThemes();
+                  settings.themeId = parsed.id;
+                  addToast(t("settings.themeImported"));
+                } catch { addToast(t("settings.themeInvalidJson")); }
+              }}>{t("settings.themeImport")}</button>
+              <button type="button" class="theme-action-btn" onclick={() => {
+                const theme = getThemeDefinition(settings.themeId);
+                navigator.clipboard.writeText(exportThemeJson(theme));
+                addToast(t("settings.themeExportCopied"));
+              }}>{t("settings.themeExport")}</button>
+            </div>
           </div>
 
           <label class="field">
@@ -1225,7 +1233,14 @@
     opacity: 1 !important;
   }
 
+  .theme-actions-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
   .theme-action-btn {
+    flex: 1;
     border: 1px solid var(--border);
     border-radius: 6px;
     background: var(--bg-card);
@@ -1233,7 +1248,6 @@
     font-size: 11px;
     padding: 5px 12px;
     cursor: pointer;
-    margin-top: 4px;
     transition: background 120ms ease-out;
   }
 
