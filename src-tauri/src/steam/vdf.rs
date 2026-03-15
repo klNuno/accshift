@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
@@ -44,6 +45,168 @@ pub fn parse_vdf(content: &str) -> HashMap<String, HashMap<String, String>> {
     }
 
     accounts
+}
+
+/// Set a nested value in a VDF file by path.
+///
+/// `path` is a slice of section/key names relative to the root section.
+/// The last element is the key to set; preceding elements are section names.
+/// Example: `["friends", "DoNotDisturb"]` sets the `DoNotDisturb` key inside the `friends` section.
+///
+/// If the key already exists at the target path, its value is replaced.
+/// If the section exists but the key does not, the key is inserted before the section's closing `}`.
+/// If the section does not exist, it is created (with the key) before the file's final `}`.
+pub fn vdf_set_nested_value(content: &str, path: &[&str], value: &str) -> String {
+    assert!(path.len() >= 2, "path must have at least a section and a key");
+
+    let sections = &path[..path.len() - 1];
+    let target_key = path[path.len() - 1];
+
+    let lines: Vec<&str> = content.lines().collect();
+    let mut result = String::with_capacity(content.len() + 128);
+    let mut depth: usize = 0;
+    let mut matched_depth: usize = 0; // how many sections from `sections` we have entered
+    let mut found = false;
+    let mut inserted = false;
+
+    // Two-pass: first scan to check if key exists, then build output.
+    for line in lines.iter() {
+        let trimmed = line.trim();
+
+        if trimmed == "{" {
+            depth += 1;
+            continue;
+        }
+
+        if trimmed == "}" {
+            if depth > 0 {
+                if matched_depth == depth && matched_depth <= sections.len() {
+                    if matched_depth > 0 {
+                        matched_depth -= 1;
+                    }
+                }
+                depth -= 1;
+            }
+            continue;
+        }
+
+        let parts: Vec<&str> = trimmed.split('"').collect();
+
+        // Check if this is a section header we're looking for
+        if parts.len() >= 2 && matched_depth < sections.len() && depth == matched_depth + 1 {
+            let key = parts[1];
+            if key.eq_ignore_ascii_case(sections[matched_depth]) {
+                matched_depth += 1;
+                continue;
+            }
+        }
+
+        // Check if this is the target key at the right depth
+        if parts.len() >= 4
+            && matched_depth == sections.len()
+            && depth == sections.len() + 1
+            && parts[1].eq_ignore_ascii_case(target_key)
+        {
+            found = true;
+        }
+    }
+
+    // ── second pass: build output ──
+    depth = 0;
+    matched_depth = 0;
+    let mut key_replaced = false;
+
+    for line in lines.iter() {
+        let trimmed = line.trim();
+
+        if trimmed == "{" {
+            result.push_str(line);
+            result.push('\n');
+            depth += 1;
+            continue;
+        }
+
+        if trimmed == "}" {
+            // If we need to insert the key before the closing brace of the target section
+            if !inserted && !found && matched_depth == sections.len() && depth == sections.len() + 1 {
+                let indent = "\t".repeat(depth);
+                let _ = writeln!(result, "{indent}\"{target_key}\"\t\t\"{value}\"");
+                inserted = true;
+            }
+
+            // If we need to insert a missing section before the parent's closing brace
+            if !inserted && !found {
+                // Check if this brace closes at a depth where we need to insert the remaining sections
+                if matched_depth < sections.len() && depth == matched_depth + 1 {
+                    // Insert all remaining sections + key
+                    let base_indent = "\t".repeat(depth);
+                    for (j, section) in sections[matched_depth..].iter().enumerate() {
+                        let section_indent = format!("{}{}", base_indent, "\t".repeat(j));
+                        let _ = writeln!(result, "{section_indent}\"{section}\"");
+                        let _ = writeln!(result, "{section_indent}{{");
+                    }
+                    let key_indent = format!("{}{}", base_indent, "\t".repeat(sections.len() - matched_depth));
+                    let _ = writeln!(result, "{key_indent}\"{target_key}\"\t\t\"{value}\"");
+                    for j in (0..sections.len() - matched_depth).rev() {
+                        let close_indent = format!("{}{}", base_indent, "\t".repeat(j));
+                        let _ = writeln!(result, "{close_indent}}}");
+                    }
+                    inserted = true;
+                }
+            }
+
+            if depth > 0 {
+                if matched_depth == depth && matched_depth <= sections.len() {
+                    if matched_depth > 0 {
+                        matched_depth -= 1;
+                    }
+                }
+                depth -= 1;
+            }
+            result.push_str(line);
+            result.push('\n');
+            continue;
+        }
+
+        let parts: Vec<&str> = trimmed.split('"').collect();
+
+        // Track section entry
+        if parts.len() >= 2 && matched_depth < sections.len() && depth == matched_depth + 1 {
+            let key = parts[1];
+            if key.eq_ignore_ascii_case(sections[matched_depth]) {
+                matched_depth += 1;
+                result.push_str(line);
+                result.push('\n');
+                continue;
+            }
+        }
+
+        // Replace existing key value
+        if !key_replaced
+            && found
+            && parts.len() >= 4
+            && matched_depth == sections.len()
+            && depth == sections.len() + 1
+            && parts[1].eq_ignore_ascii_case(target_key)
+        {
+            // Rebuild line preserving original indentation
+            let leading_whitespace: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+            let _ = writeln!(result, "{leading_whitespace}\"{target_key}\"\t\t\"{value}\"");
+            key_replaced = true;
+            inserted = true;
+            continue;
+        }
+
+        result.push_str(line);
+        result.push('\n');
+    }
+
+    // If the original content didn't end with a newline, remove trailing one
+    if !content.ends_with('\n') && result.ends_with('\n') {
+        result.pop();
+    }
+
+    result
 }
 
 pub fn set_persona_state(steam_path: &Path, account_id: u32, state: &str) {
