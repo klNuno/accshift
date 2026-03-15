@@ -57,7 +57,10 @@ pub fn parse_vdf(content: &str) -> HashMap<String, HashMap<String, String>> {
 /// If the section exists but the key does not, the key is inserted before the section's closing `}`.
 /// If the section does not exist, it is created (with the key) before the file's final `}`.
 pub fn vdf_set_nested_value(content: &str, path: &[&str], value: &str) -> String {
-    assert!(path.len() >= 2, "path must have at least a section and a key");
+    assert!(
+        path.len() >= 2,
+        "path must have at least a section and a key"
+    );
 
     let sections = &path[..path.len() - 1];
     let target_key = path[path.len() - 1];
@@ -128,9 +131,11 @@ pub fn vdf_set_nested_value(content: &str, path: &[&str], value: &str) -> String
 
         if trimmed == "}" {
             // If we need to insert the key before the closing brace of the target section
-            if !inserted && !found && matched_depth == sections.len() && depth == sections.len() + 1 {
+            if !inserted && !found && matched_depth == sections.len() && depth == sections.len() + 1
+            {
                 let indent = "\t".repeat(depth);
-                let _ = writeln!(result, "{indent}\"{target_key}\"\t\t\"{value}\"");
+                let escaped_value = escape_vdf_string(value);
+                let _ = writeln!(result, "{indent}\"{target_key}\"\t\t\"{escaped_value}\"");
                 inserted = true;
             }
 
@@ -145,8 +150,16 @@ pub fn vdf_set_nested_value(content: &str, path: &[&str], value: &str) -> String
                         let _ = writeln!(result, "{section_indent}\"{section}\"");
                         let _ = writeln!(result, "{section_indent}{{");
                     }
-                    let key_indent = format!("{}{}", base_indent, "\t".repeat(sections.len() - matched_depth));
-                    let _ = writeln!(result, "{key_indent}\"{target_key}\"\t\t\"{value}\"");
+                    let key_indent = format!(
+                        "{}{}",
+                        base_indent,
+                        "\t".repeat(sections.len() - matched_depth)
+                    );
+                    let escaped_value = escape_vdf_string(value);
+                    let _ = writeln!(
+                        result,
+                        "{key_indent}\"{target_key}\"\t\t\"{escaped_value}\""
+                    );
                     for j in (0..sections.len() - matched_depth).rev() {
                         let close_indent = format!("{}{}", base_indent, "\t".repeat(j));
                         let _ = writeln!(result, "{close_indent}}}");
@@ -190,8 +203,13 @@ pub fn vdf_set_nested_value(content: &str, path: &[&str], value: &str) -> String
             && parts[1].eq_ignore_ascii_case(target_key)
         {
             // Rebuild line preserving original indentation
-            let leading_whitespace: String = line.chars().take_while(|c| c.is_whitespace()).collect();
-            let _ = writeln!(result, "{leading_whitespace}\"{target_key}\"\t\t\"{value}\"");
+            let leading_whitespace: String =
+                line.chars().take_while(|c| c.is_whitespace()).collect();
+            let escaped_value = escape_vdf_string(value);
+            let _ = writeln!(
+                result,
+                "{leading_whitespace}\"{target_key}\"\t\t\"{escaped_value}\""
+            );
             key_replaced = true;
             inserted = true;
             continue;
@@ -207,6 +225,18 @@ pub fn vdf_set_nested_value(content: &str, path: &[&str], value: &str) -> String
     }
 
     result
+}
+
+fn escape_vdf_string(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 pub fn set_persona_state(steam_path: &Path, account_id: u32, state: &str) {
@@ -244,5 +274,55 @@ pub fn set_persona_state(steam_path: &Path, account_id: u32, state: &str) {
         if found {
             let _ = fs::write(&config_path, result);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{escape_vdf_string, parse_vdf, vdf_set_nested_value};
+
+    #[test]
+    fn parse_vdf_extracts_multiple_accounts() {
+        let content = r#""users"
+{
+    "111"
+    {
+        "AccountName"    "first"
+        "PersonaName"    "First User"
+        "Timestamp"      "123"
+    }
+    "222"
+    {
+        "AccountName"    "second"
+        "PersonaName"    "Second User"
+        "Timestamp"      "456"
+    }
+}"#;
+
+        let parsed = parse_vdf(content);
+        assert_eq!(parsed["111"]["accountname"], "first");
+        assert_eq!(parsed["222"]["personaname"], "Second User");
+        assert_eq!(parsed["222"]["timestamp"], "456");
+    }
+
+    #[test]
+    fn escapes_vdf_string_special_characters() {
+        assert_eq!(
+            escape_vdf_string(r#"+exec "autoexec.cfg" -path C:\Steam"#),
+            r#"+exec \"autoexec.cfg\" -path C:\\Steam"#
+        );
+    }
+
+    #[test]
+    fn set_nested_value_escapes_launch_options() {
+        let input = "\"UserLocalConfigStore\"\n{\n\t\"Software\"\n\t{\n\t}\n}\n";
+        let output = vdf_set_nested_value(
+            input,
+            &["Software", "Valve", "Steam", "apps", "730", "LaunchOptions"],
+            r#"+exec "autoexec.cfg" -path C:\Steam"#,
+        );
+
+        assert!(output
+            .contains("\"LaunchOptions\"\t\t\"+exec \\\"autoexec.cfg\\\" -path C:\\\\Steam\""));
     }
 }

@@ -5,11 +5,11 @@ use crate::platforms::{
     SetupStatus,
 };
 use crate::steam::accounts::{self, CopyableGame, SteamAccount};
-use crate::steam::bulk_edit;
 use crate::steam::bans::{self, BanInfo};
+use crate::steam::bulk_edit;
 use crate::steam::profile::{self, ProfileInfo};
-use serde_json::Value;
 use serde::Serialize;
+use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -534,7 +534,11 @@ pub fn bulk_edit(
         &app_handle,
         "steam.bulk_edit",
         "Bulk edit completed",
-        format!("succeeded={} failed={}", result.succeeded, result.failed.len()),
+        format!(
+            "succeeded={} failed={}",
+            result.succeeded,
+            result.failed.len()
+        ),
     );
     Ok(result)
 }
@@ -655,8 +659,9 @@ impl PlatformService for SteamService {
             ),
         );
 
-        let result = accounts::switch_account(&steam_path, account_id, run_as_admin, &launch_options)
-            .map_err(|e| to_logged_error(app, "steam.switch_account", e));
+        let result =
+            accounts::switch_account(&steam_path, account_id, run_as_admin, &launch_options)
+                .map_err(|e| to_logged_error(app, "steam.switch_account", e));
 
         match &result {
             Ok(()) => log_platform_info(

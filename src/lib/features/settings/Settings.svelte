@@ -299,6 +299,18 @@
     } else {
       if (!isPlatformSelectable(id)) return;
       settings.enabledPlatforms = [...settings.enabledPlatforms, id];
+      if (!(id in platformPaths)) {
+        platformPaths[id] = "";
+        void invoke<string>("platform_get_path", { platformId: id })
+          .then((path) => {
+            if (settings.enabledPlatforms.includes(id)) {
+              platformPaths[id] = path;
+            }
+          })
+          .catch(() => {
+            // Ignore path lookup failures for newly enabled platforms.
+          });
+      }
     }
   }
 
