@@ -9,3 +9,8 @@ export interface BattleNetStartupSnapshot {
   currentAccount: string;
 }
 
+export interface BattleNetCopyableGame {
+  appId: string;
+  name: string;
+}
+

@@ -88,11 +88,9 @@ pub async fn platform_forget_account(
     account_id: String,
 ) -> Result<(), String> {
     let service = require_service(&platform_id)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        service.forget_account(&app_handle, &account_id)
-    })
-    .await
-    .map_err(|e| format!("Task failed: {e}"))?
+    tauri::async_runtime::spawn_blocking(move || service.forget_account(&app_handle, &account_id))
+        .await
+        .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[tauri::command]
@@ -269,6 +267,29 @@ pub fn steam_get_account_games(
 }
 
 // ---------------------------------------------------------------------------
+// Battle.net-specific commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn battle_net_copy_game_settings(
+    app_handle: tauri::AppHandle,
+    from_email: String,
+    to_email: String,
+    game_id: String,
+) -> Result<(), String> {
+    crate::platforms::battle_net::copy_game_settings(app_handle, from_email, to_email, game_id)
+}
+
+#[tauri::command]
+pub fn battle_net_get_copyable_games(
+    app_handle: tauri::AppHandle,
+    from_email: String,
+    to_email: String,
+) -> Result<Vec<crate::platforms::battle_net::BattleNetCopyableGame>, String> {
+    crate::platforms::battle_net::get_copyable_games(app_handle, from_email, to_email)
+}
+
+// ---------------------------------------------------------------------------
 // Ubisoft-specific commands
 // ---------------------------------------------------------------------------
 
@@ -298,12 +319,17 @@ pub fn riot_capture_profile(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn list_custom_themes(app_handle: tauri::AppHandle) -> Result<Vec<crate::themes::CustomTheme>, String> {
+pub fn list_custom_themes(
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<crate::themes::CustomTheme>, String> {
     crate::themes::list_custom_themes(&app_handle)
 }
 
 #[tauri::command]
-pub fn save_custom_theme(app_handle: tauri::AppHandle, theme: crate::themes::CustomTheme) -> Result<(), String> {
+pub fn save_custom_theme(
+    app_handle: tauri::AppHandle,
+    theme: crate::themes::CustomTheme,
+) -> Result<(), String> {
     crate::themes::save_custom_theme(&app_handle, &theme)
 }
 
