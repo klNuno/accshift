@@ -138,10 +138,65 @@ pub fn is_process_running(process_name: &str) -> bool {
 }
 
 pub fn kill_process(process_name: &str) -> Result<(), AppError> {
-    hidden_command("taskkill")
+    let output = hidden_command("taskkill")
         .args(["/F", "/IM", process_name, "/T"])
         .output()
         .map_err(|e| AppError::ProcessStart(e.to_string()))?;
+    if !output.status.success() && is_process_running(process_name) {
+        return Err(AppError::SteamElevated);
+    }
+    Ok(())
+}
+
+pub fn kill_and_relaunch_steam_elevated(
+    steam_path: &Path,
+    launch_options: &[String],
+) -> Result<(), AppError> {
+    let steam_exe = steam_path.join(steam_executable_name());
+    let exe_escaped = steam_exe.to_string_lossy().replace('\'', "''");
+
+    let launch_cmd = if launch_options.is_empty() {
+        format!("Start-Process -FilePath '{exe_escaped}'")
+    } else {
+        let args = launch_options
+            .iter()
+            .map(|a| format!("'{}'", a.replace('\'', "''")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("Start-Process -FilePath '{exe_escaped}' -ArgumentList @({args})")
+    };
+
+    let script = format!(
+        "taskkill /F /IM steam.exe /T 2>$null\r\n\
+         taskkill /F /IM steamwebhelper.exe /T 2>$null\r\n\
+         $sw = [System.Diagnostics.Stopwatch]::StartNew()\r\n\
+         while ($sw.Elapsed.TotalSeconds -lt 10) {{\r\n\
+           $p = Get-Process -Name steam,steamwebhelper -ErrorAction SilentlyContinue\r\n\
+           if (-not $p) {{ break }}\r\n\
+           Start-Sleep -Milliseconds 300\r\n\
+         }}\r\n\
+         {launch_cmd}"
+    );
+
+    let temp_dir = std::env::temp_dir();
+    let script_path = temp_dir.join("accshift_elevated.ps1");
+    std::fs::write(&script_path, &script)
+        .map_err(|e| AppError::ProcessStart(format!("Failed to write temp script: {e}")))?;
+
+    let script_path_str = script_path.to_string_lossy().replace('\'', "''");
+    let outer = format!(
+        "$p = Start-Process powershell -Verb RunAs -PassThru -WindowStyle Hidden \
+         -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','{script_path_str}'; \
+         $p.WaitForExit()"
+    );
+
+    let result = hidden_command("powershell")
+        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &outer])
+        .status()
+        .map_err(|e| AppError::ProcessStart(e.to_string()));
+
+    let _ = std::fs::remove_file(&script_path);
+    result?;
     Ok(())
 }
 
