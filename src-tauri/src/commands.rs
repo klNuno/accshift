@@ -94,30 +94,43 @@ pub async fn platform_forget_account(
 }
 
 #[tauri::command]
-pub fn platform_begin_setup(
+pub async fn platform_begin_setup(
     app_handle: tauri::AppHandle,
     platform_id: String,
     params: Value,
 ) -> Result<SetupStatus, String> {
-    require_service(&platform_id)?.begin_setup(&app_handle, params)
+    let service = require_service(&platform_id)?;
+    tauri::async_runtime::spawn_blocking(move || service.begin_setup(&app_handle, params))
+        .await
+        .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[tauri::command]
-pub fn platform_get_setup_status(
+pub async fn platform_get_setup_status(
     app_handle: tauri::AppHandle,
     platform_id: String,
     setup_id: String,
 ) -> Result<SetupStatus, String> {
-    require_service(&platform_id)?.get_setup_status(&app_handle, &setup_id)
+    let service = require_service(&platform_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        service.get_setup_status(&app_handle, &setup_id)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[tauri::command]
-pub fn platform_cancel_setup(
+pub async fn platform_cancel_setup(
     app_handle: tauri::AppHandle,
     platform_id: String,
     setup_id: String,
 ) -> Result<(), String> {
-    require_service(&platform_id)?.cancel_setup(&app_handle, &setup_id)
+    let service = require_service(&platform_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        service.cancel_setup(&app_handle, &setup_id)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[tauri::command]
@@ -276,6 +289,19 @@ pub fn ubisoft_set_account_label(
     label: String,
 ) -> Result<(), String> {
     crate::platforms::ubisoft::set_account_label(&app_handle, &uuid, &label)
+}
+
+// ---------------------------------------------------------------------------
+// Epic-specific commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn epic_set_account_label(
+    app_handle: tauri::AppHandle,
+    account_id: String,
+    label: String,
+) -> Result<(), String> {
+    crate::platforms::epic::set_account_label(&app_handle, &account_id, &label)
 }
 
 // ---------------------------------------------------------------------------
