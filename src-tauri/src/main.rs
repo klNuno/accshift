@@ -57,7 +57,6 @@ fn main() {
             .transparent(true)
             .background_color(tauri::webview::Color(0, 0, 0, 0))
             .center()
-            .decorations(false)
             .resizable(true)
             .on_navigation(move |url| {
                 // Only allow app URLs in production. In dev, allow local Vite URLs only.
@@ -99,6 +98,21 @@ fn main() {
                 );
             });
 
+            #[cfg(target_os = "macos")]
+            {
+                // TitleBarStyle::Overlay lets native traffic lights sit in the macOS titlebar
+                // area. We do NOT set traffic_light_position — macOS auto-centers them in its
+                // native titlebar container. The CSS header uses env(safe-area-inset-top) which
+                // WKWebView injects as exactly that container's height, so everything aligns.
+                window_builder = window_builder
+                    .title_bar_style(tauri::TitleBarStyle::Overlay)
+                    .hidden_title(true);
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                window_builder = window_builder.decorations(false);
+            }
+
             if let Some(icon) = app.default_window_icon() {
                 window_builder = window_builder.icon(icon.clone())?;
             }
@@ -111,6 +125,7 @@ fn main() {
                 "Main window created",
                 Some("label=main"),
             );
+
             let app_handle = app.handle().clone();
             let win_for_events = win.clone();
             win.on_window_event(move |event| {
