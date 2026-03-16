@@ -56,6 +56,17 @@ export const PLATFORM_DEFS: PlatformDef[] = [
     settingsTabKey: "settings.roblox",
     settingsComponent: () => import("./roblox/RobloxSettingsTab.svelte"),
   },
+  {
+    id: "epic",
+    name: "Epic Games",
+    accent: "#0078f2",
+    implemented: true,
+    supportedOs: ["windows"],
+    settingsTabKey: "settings.epic",
+    settingsComponent: () => import("./epic/EpicSettingsTab.svelte"),
+    pathLabelKey: "settings.epicPath",
+    pathPlaceholder: "C:\\Program Files (x86)\\Epic Games\\Launcher\\Portal\\Binaries\\Win64\\EpicGamesLauncher.exe",
+  },
 ];
 
 const PLATFORM_LOADERS: Record<string, () => Promise<PlatformAdapter>> = {
@@ -64,6 +75,7 @@ const PLATFORM_LOADERS: Record<string, () => Promise<PlatformAdapter>> = {
   "battle-net": () => import("./battle-net/adapter").then((mod) => mod.battleNetAdapter),
   ubisoft: () => import("./ubisoft/adapter").then((mod) => mod.ubisoftAdapter),
   roblox: () => import("./roblox/adapter").then((mod) => mod.robloxAdapter),
+  epic: () => import("./epic/adapter").then((mod) => mod.epicAdapter),
 };
 
 const platformLoadTasks = new Map<string, Promise<PlatformAdapter>>();

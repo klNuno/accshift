@@ -104,6 +104,24 @@ pub struct RobloxConfig {
     pub accounts: Vec<RobloxAccountConfig>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct EpicAccountConfig {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub account_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct EpicConfig {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub path_override: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accounts: Vec<EpicAccountConfig>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default, skip_serializing_if = "is_default_steam_config")]
@@ -120,6 +138,8 @@ pub struct AppConfig {
     pub ubisoft: UbisoftConfig,
     #[serde(default, skip_serializing_if = "is_default_roblox_config")]
     pub roblox: RobloxConfig,
+    #[serde(default, skip_serializing_if = "is_default_epic_config")]
+    pub epic: EpicConfig,
     #[serde(default)]
     pub window_width: Option<f64>,
     #[serde(default)]
@@ -140,6 +160,8 @@ struct RawAppConfig {
     ubisoft: Option<UbisoftConfig>,
     #[serde(default)]
     roblox: Option<RobloxConfig>,
+    #[serde(default)]
+    epic: Option<EpicConfig>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     steam_api_key: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -218,6 +240,10 @@ fn is_default_ubisoft_config(value: &UbisoftConfig) -> bool {
 
 fn is_default_roblox_config(value: &RobloxConfig) -> bool {
     value.accounts.is_empty()
+}
+
+fn is_default_epic_config(value: &EpicConfig) -> bool {
+    value.path_override.is_empty() && value.accounts.is_empty()
 }
 
 fn normalize_riot_profile(raw: RawRiotProfileConfig) -> RiotProfileConfig {
@@ -312,12 +338,14 @@ fn normalize_config(raw: RawAppConfig) -> AppConfig {
     let battle_net = raw.battle_net.unwrap_or_default();
     let ubisoft = raw.ubisoft.unwrap_or_default();
     let roblox = raw.roblox.unwrap_or_default();
+    let epic = raw.epic.unwrap_or_default();
     AppConfig {
         steam,
         riot,
         battle_net,
         ubisoft,
         roblox,
+        epic,
         window_width: raw.window_width,
         window_height: raw.window_height,
         extra: serde_json::Map::new(),
