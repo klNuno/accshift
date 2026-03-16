@@ -47,6 +47,15 @@ export const PLATFORM_DEFS: PlatformDef[] = [
     pathLabelKey: "settings.ubisoftPath",
     pathPlaceholder: "C:\\Program Files (x86)\\Ubisoft\\Ubisoft Game Launcher",
   },
+  {
+    id: "roblox",
+    name: "Roblox",
+    accent: "#e1242a",
+    implemented: true,
+    supportedOs: ["windows"],
+    settingsTabKey: "settings.roblox",
+    settingsComponent: () => import("./roblox/RobloxSettingsTab.svelte"),
+  },
 ];
 
 const PLATFORM_LOADERS: Record<string, () => Promise<PlatformAdapter>> = {
@@ -54,6 +63,7 @@ const PLATFORM_LOADERS: Record<string, () => Promise<PlatformAdapter>> = {
   riot: () => import("./riot/adapter").then((mod) => mod.riotAdapter),
   "battle-net": () => import("./battle-net/adapter").then((mod) => mod.battleNetAdapter),
   ubisoft: () => import("./ubisoft/adapter").then((mod) => mod.ubisoftAdapter),
+  roblox: () => import("./roblox/adapter").then((mod) => mod.robloxAdapter),
 };
 
 const platformLoadTasks = new Map<string, Promise<PlatformAdapter>>();

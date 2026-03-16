@@ -7,10 +7,16 @@ export interface CardExtensionChip {
   tone: CardExtensionChipTone;
 }
 
+export interface CardExtensionLink {
+  label: string;
+  url: string;
+}
+
 export interface CardExtensionSection {
   title?: string;
   text?: string;
   lines?: string[];
+  link?: CardExtensionLink;
   chips?: CardExtensionChip[];
   loading?: boolean;
 }

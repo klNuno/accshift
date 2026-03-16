@@ -84,6 +84,26 @@ pub struct UbisoftAccountConfig {
     pub last_used_at: Option<u64>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct RobloxAccountConfig {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub user_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub username: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub cookie_encrypted: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct RobloxConfig {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accounts: Vec<RobloxAccountConfig>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default, skip_serializing_if = "is_default_steam_config")]
@@ -98,6 +118,8 @@ pub struct AppConfig {
     pub battle_net: BattleNetConfig,
     #[serde(default, skip_serializing_if = "is_default_ubisoft_config")]
     pub ubisoft: UbisoftConfig,
+    #[serde(default, skip_serializing_if = "is_default_roblox_config")]
+    pub roblox: RobloxConfig,
     #[serde(default)]
     pub window_width: Option<f64>,
     #[serde(default)]
@@ -116,6 +138,8 @@ struct RawAppConfig {
     battle_net: Option<BattleNetConfig>,
     #[serde(default)]
     ubisoft: Option<UbisoftConfig>,
+    #[serde(default)]
+    roblox: Option<RobloxConfig>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     steam_api_key: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -190,6 +214,10 @@ fn is_default_battle_net_config(value: &BattleNetConfig) -> bool {
 
 fn is_default_ubisoft_config(value: &UbisoftConfig) -> bool {
     value.path_override.is_empty() && value.accounts.is_empty()
+}
+
+fn is_default_roblox_config(value: &RobloxConfig) -> bool {
+    value.accounts.is_empty()
 }
 
 fn normalize_riot_profile(raw: RawRiotProfileConfig) -> RiotProfileConfig {
@@ -283,11 +311,13 @@ fn normalize_config(raw: RawAppConfig) -> AppConfig {
     let riot = normalize_riot_config(raw.riot);
     let battle_net = raw.battle_net.unwrap_or_default();
     let ubisoft = raw.ubisoft.unwrap_or_default();
+    let roblox = raw.roblox.unwrap_or_default();
     AppConfig {
         steam,
         riot,
         battle_net,
         ubisoft,
+        roblox,
         window_width: raw.window_width,
         window_height: raw.window_height,
         extra: serde_json::Map::new(),

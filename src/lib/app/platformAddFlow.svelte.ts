@@ -47,6 +47,7 @@ function getSetupKey(
     riot: "riot",
     "battle-net": "battlenet",
     ubisoft: "ubisoft",
+    roblox: "roblox",
   };
   const prefix = PLATFORM_MESSAGE_PREFIX[platformId] ?? platformId;
   return `${prefix}.setup${kind[0].toUpperCase()}${kind.slice(1)}` as MessageKey;
@@ -252,6 +253,35 @@ export function createPlatformAddFlowController({
                 loading: true,
               },
               ...(detectedSection ? [detectedSection] : [{ lines: [t("riot.setupStaySignedIn")] }]),
+            ],
+          };
+      }
+    }
+
+    if (flow.platformId === "roblox") {
+      switch (flow.status.state) {
+        case "failed":
+          return {
+            sections: [
+              {
+                title: t("roblox.setupFailed"),
+                text: error || t("roblox.setupFailedMessage"),
+              },
+            ],
+          };
+        case "ready":
+          return null;
+        case "waiting_for_client":
+        case "waiting_for_login":
+        default:
+          return {
+            sections: [
+              {
+                text: t("roblox.setupWaitingForLogin"),
+                link: { label: "roblox.com/quick-login", url: "https://www.roblox.com/crossdevicelogin/ConfirmCode" },
+                chips: [{ text: "Quick Login", tone: "green" as const }],
+                loading: true,
+              },
             ],
           };
       }

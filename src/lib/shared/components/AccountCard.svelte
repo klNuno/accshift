@@ -33,6 +33,7 @@
     note = "",
     entranceDelay = 0,
     singleClickSwitch = false,
+    interactionDisabled = false,
     locale = DEFAULT_LOCALE,
   }: {
     account: PlatformAccount;
@@ -58,6 +59,7 @@
     note?: string;
     entranceDelay?: number;
     singleClickSwitch?: boolean;
+    interactionDisabled?: boolean;
     locale?: Locale;
   } = $props();
 
@@ -217,7 +219,7 @@
   });
 
   function handleClick() {
-    if (isDragged) return;
+    if (isDragged || interactionDisabled) return;
     onActivate();
     if (singleClickSwitch) {
       onSwitch();

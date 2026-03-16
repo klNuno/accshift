@@ -5,6 +5,7 @@ use std::sync::OnceLock;
 
 pub mod battle_net;
 pub mod riot;
+pub mod roblox;
 pub mod steam;
 pub mod ubisoft;
 
@@ -122,6 +123,7 @@ fn platform_registry() -> &'static HashMap<&'static str, &'static dyn PlatformSe
         map.insert("riot", &riot::RIOT_SERVICE);
         map.insert("battle-net", &battle_net::BATTLE_NET_SERVICE);
         map.insert("ubisoft", &ubisoft::UBISOFT_SERVICE);
+        map.insert("roblox", &roblox::ROBLOX_SERVICE);
         map
     })
 }

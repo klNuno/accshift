@@ -1,10 +1,15 @@
 <script lang="ts">
+  import { invoke } from "@tauri-apps/api/core";
   import type { CardExtensionContent, CardExtensionSection } from "$lib/shared/cardExtension";
 
   let { content }: { content: CardExtensionContent } = $props();
 
   function sectionKey(section: CardExtensionSection, index: number) {
     return `${section.title ?? section.text ?? "section"}-${index}`;
+  }
+
+  function openLink(url: string) {
+    void invoke("open_url", { url });
   }
 </script>
 
@@ -21,6 +26,11 @@
           {/if}
           <div class="section-text">{section.text}</div>
         </div>
+      {/if}
+      {#if section.link}
+        <button class="section-link" onclick={() => openLink(section.link!.url)}>
+          {section.link.label}
+        </button>
       {/if}
       {#if section.lines?.length}
         <div class="section-lines">
@@ -119,6 +129,22 @@
 
   .section.loading .section-text {
     color: color-mix(in srgb, var(--fg) 88%, var(--fg-muted) 12%);
+  }
+
+  .section-link {
+    all: unset;
+    font-size: 10px;
+    line-height: 1.3;
+    color: #93c5fd;
+    text-decoration: underline;
+    cursor: pointer;
+    pointer-events: auto;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+
+  .section-link:hover {
+    color: #bfdbfe;
   }
 
   .section-lines {

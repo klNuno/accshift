@@ -291,6 +291,37 @@ pub fn riot_capture_profile(
 }
 
 // ---------------------------------------------------------------------------
+// Utility commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    crate::os::open_url(&url).map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Roblox-specific commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn roblox_add_account_by_cookie(
+    app_handle: tauri::AppHandle,
+    cookie: String,
+    client: tauri::State<'_, reqwest::Client>,
+) -> Result<crate::platforms::roblox::RobloxAccount, String> {
+    crate::platforms::roblox::add_account_by_cookie(app_handle, cookie, client.inner().clone())
+        .await
+}
+
+#[tauri::command]
+pub async fn roblox_get_profile_info(
+    user_id: String,
+    client: tauri::State<'_, reqwest::Client>,
+) -> Result<crate::platforms::roblox::RobloxProfileInfo, String> {
+    crate::platforms::roblox::get_profile_info(user_id, client.inner().clone()).await
+}
+
+// ---------------------------------------------------------------------------
 // Theme commands
 // ---------------------------------------------------------------------------
 
