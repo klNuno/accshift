@@ -5,6 +5,7 @@ export type CardExtensionChipTone = AccountWarningTone | "blue" | "green" | "sla
 export interface CardExtensionChip {
   text: string;
   tone: CardExtensionChipTone;
+  onClick?: () => void;
 }
 
 export interface CardExtensionLink {

@@ -199,6 +199,8 @@ fn main() {
             commands::steam_get_account_games,
             // Ubisoft-specific
             commands::ubisoft_set_account_label,
+            // Epic-specific
+            commands::epic_set_account_label,
             // Riot-specific
             commands::riot_capture_profile,
             // Roblox-specific

@@ -123,6 +123,7 @@
     getIsSearching: () => navigation.isSearching,
     t,
     showToast: (message) => addToast(message),
+    copyToClipboard: (text) => { void navigator.clipboard.writeText(text).then(() => addToast(t("toast.copied", { label: text }))); },
     loadAccounts,
     onAccountAdded: (platformId, accountId) => {
       const adapter = getPlatform(platformId);
