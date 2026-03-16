@@ -28,7 +28,7 @@
         </div>
       {/if}
       {#if section.link}
-        <button class="section-link" onclick={() => openLink(section.link!.url)}>
+        <button class="section-link" onclick={(e: MouseEvent) => { e.stopPropagation(); openLink(section.link!.url); }}>
           {section.link.label}
         </button>
       {/if}
@@ -42,7 +42,11 @@
       {#if section.chips?.length}
         <div class="chips">
           {#each section.chips as chip (`${chip.tone}-${chip.text}`)}
-            <span class={`chip tone-${chip.tone}`}>{chip.text}</span>
+            {#if chip.onClick}
+              <button class={`chip tone-${chip.tone} clickable`} onclick={(e: MouseEvent) => { e.stopPropagation(); chip.onClick!(); }}>{chip.text}</button>
+            {:else}
+              <span class={`chip tone-${chip.tone}`}>{chip.text}</span>
+            {/if}
           {/each}
         </div>
       {/if}
@@ -170,6 +174,26 @@
     font-weight: 700;
     line-height: 1;
     letter-spacing: 0.02em;
+  }
+
+  .chip.clickable {
+    all: unset;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 20px;
+    border-radius: 999px;
+    padding: 0 8px;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+
+  .chip.clickable:hover {
+    filter: brightness(1.2);
   }
 
   .tone-red {
