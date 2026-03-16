@@ -14,7 +14,7 @@ pub enum AppError {
     #[error("Could not read Steam login data")]
     FileRead(String),
 
-    #[error("Could not start Steam")]
+    #[error("Could not start process: {0}")]
     ProcessStart(String),
 
     #[error("Invalid SteamID64")]
