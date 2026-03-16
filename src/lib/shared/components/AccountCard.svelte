@@ -236,6 +236,7 @@
   function handleContextMenu(e: MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
+    if (interactionDisabled) return;
     onActivate();
     showConfirm = false;
     onContextMenu(e);
