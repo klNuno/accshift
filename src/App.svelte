@@ -1158,41 +1158,51 @@
   });
 </script>
 
+{#snippet titleBar()}
+  <TitleBar
+    onRefresh={() => {
+      if (!activeTabUsable) return;
+      loadAccounts(false, true, false, true);
+    }}
+    onAddAccount={() => {
+      if (!activeTabUsable) return;
+      void handleAddAccount();
+    }}
+    onOpenSettings={toggleSettingsPanel}
+    onBulkEdit={toggleBulkEdit}
+    onApplyUpdate={applyReadyUpdate}
+    updateCtaLabel={updateCtaLabel}
+    updateCtaTitle={updateCtaTitle}
+    updateCtaDisabled={updateCtaDisabled}
+    {activeTab}
+    onTabChange={handleTabChange}
+    {enabledPlatforms}
+    {unavailablePlatformIds}
+    canRefresh={activeTabUsable && !adapterLoading}
+    canAddAccount={activeTabUsable && !adapterLoading}
+    showBulkEdit={activeTab === "steam" && !showSettings && activeTabUsable}
+    bulkEditActive={bulkEditMode}
+    {locale}
+    {runtimeOs}
+  />
+{/snippet}
+
 <div
   class="app-frame"
   class:boot-ready={bootReady}
   class:motion-paused={motionPaused}
   style={`--afk-reveal-delay:${AFK_TEXT_REVEAL_DELAY_MS}ms;`}
 >
+  {#if runtimeOs === "macos"}
+    {@render titleBar()}
+  {/if}
   <div class="app-stage" class:locked={isPinLocked} style={appStageStyle}>
     <div class="app-shell" class:obscured={isObscured}>
       {#if !renderSuspended}
-      <TitleBar
-        onRefresh={() => {
-          if (!activeTabUsable) return;
-          loadAccounts(false, true, false, true);
-        }}
-        onAddAccount={() => {
-          if (!activeTabUsable) return;
-          void handleAddAccount();
-        }}
-        onOpenSettings={toggleSettingsPanel}
-      onBulkEdit={toggleBulkEdit}
-      onApplyUpdate={applyReadyUpdate}
-      updateCtaLabel={updateCtaLabel}
-      updateCtaTitle={updateCtaTitle}
-      updateCtaDisabled={updateCtaDisabled}
-      {activeTab}
-      onTabChange={handleTabChange}
-      {enabledPlatforms}
-      {unavailablePlatformIds}
-      canRefresh={activeTabUsable && !adapterLoading}
-      canAddAccount={activeTabUsable && !adapterLoading}
-      showBulkEdit={activeTab === "steam" && !showSettings && activeTabUsable}
-      bulkEditActive={bulkEditMode}
-      {locale}
-    />
-    <div class="inactivity-frost" class:visible={isObscured} aria-hidden={!isObscured}></div>
+      {#if runtimeOs !== "macos"}
+        {@render titleBar()}
+      {/if}
+      <div class="inactivity-frost" class:visible={isObscured} aria-hidden={!isObscured}></div>
 
 {#if showSettings}
   <main class="content">
@@ -1594,6 +1604,8 @@
     box-sizing: border-box;
     overflow: hidden;
     opacity: 0;
+    display: flex;
+    flex-direction: column;
   }
 
   .app-frame.boot-ready {
