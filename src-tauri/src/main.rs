@@ -178,6 +178,8 @@ fn main() {
             commands::platform_get_path,
             commands::platform_set_path,
             commands::platform_select_path,
+            // Utility
+            commands::open_url,
             // Window
             commands::minimize_window,
             commands::toggle_maximize_window,
@@ -199,6 +201,9 @@ fn main() {
             commands::ubisoft_set_account_label,
             // Riot-specific
             commands::riot_capture_profile,
+            // Roblox-specific
+            commands::roblox_add_account_by_cookie,
+            commands::roblox_get_profile_info,
             // Theme
             commands::list_custom_themes,
             commands::save_custom_theme,

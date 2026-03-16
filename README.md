@@ -23,7 +23,7 @@
 | Riot Games | ✅ Done | 🚧 Possible | ⛔ Not feasible |
 | Battle.net | ✅ Done | 🚧 Possible | ⛔ Not feasible |
 | Epic Games | 🚧 Possible | 🚧 Possible | 🚧 Possible |
-| Ubisoft Connect | 🚧 Possible | 🚧 Possible | 🚧 Possible |
+| Ubisoft Connect | ✅ Done | 🚧 Possible | 🚧 Possible |
 | Roblox | 🚧 Possible | 🚧 Possible | ⛔ Not feasible |
 | EA app | 🚧 Possible | 🚧 Possible | ⛔ Not feasible |
 | Discord | 🚧 Possible | 🚧 Possible | 🚧 Possible |
