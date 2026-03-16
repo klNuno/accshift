@@ -10,9 +10,9 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const API_KEY_ENCRYPT_SCRIPT: &str =
-    "$secure = ConvertTo-SecureString $env:ACCSHIFT_SECRET -AsPlainText -Force; ConvertFrom-SecureString $secure";
+    "Import-Module Microsoft.PowerShell.Security -ErrorAction SilentlyContinue; $secure = ConvertTo-SecureString $env:ACCSHIFT_SECRET -AsPlainText -Force; ConvertFrom-SecureString $secure";
 const API_KEY_DECRYPT_SCRIPT: &str =
-    "$secure = ConvertTo-SecureString $env:ACCSHIFT_SECRET; $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure); try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }";
+    "Import-Module Microsoft.PowerShell.Security -ErrorAction SilentlyContinue; $secure = ConvertTo-SecureString $env:ACCSHIFT_SECRET; $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure); try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }";
 
 fn hidden_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     let mut cmd = Command::new(program);
