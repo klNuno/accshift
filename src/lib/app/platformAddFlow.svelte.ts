@@ -19,6 +19,7 @@ type PlatformAddFlowDeps = {
   getIsSearching: () => boolean;
   t: Translator;
   showToast: (message: string) => void;
+  copyToClipboard: (text: string) => void;
   loadAccounts: (
     silent?: boolean,
     showRefreshedToast?: boolean,
@@ -72,6 +73,7 @@ export function createPlatformAddFlowController({
   getIsSearching,
   t,
   showToast,
+  copyToClipboard,
   loadAccounts,
   onAccountAdded,
 }: PlatformAddFlowDeps) {
@@ -277,9 +279,11 @@ export function createPlatformAddFlowController({
           return {
             sections: [
               {
-                text: t("roblox.setupWaitingForLogin"),
                 link: { label: "roblox.com/quick-login", url: "https://www.roblox.com/crossdevicelogin/ConfirmCode" },
-                chips: [{ text: "Quick Login", tone: "green" as const }],
+                chips: [
+                  { text: "Quick Login", tone: "green" as const },
+                  ...(display ? [{ text: t("roblox.copyCode"), tone: "slate" as const, onClick: () => copyToClipboard(display) }] : []),
+                ],
                 loading: true,
               },
             ],
