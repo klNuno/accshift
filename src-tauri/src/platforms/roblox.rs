@@ -1,5 +1,5 @@
 use crate::config::{self, RobloxAccountConfig};
-use crate::platforms::{log_platform_info, PlatformCapabilities, PlatformService, SetupStatus};
+use crate::platforms::{log_platform_error, log_platform_info, PlatformCapabilities, PlatformService, SetupStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -126,6 +126,53 @@ fn blocking_client() -> &'static reqwest::blocking::Client {
     })
 }
 
+fn csrf_cache() -> &'static Mutex<String> {
+    static CSRF: OnceLock<Mutex<String>> = OnceLock::new();
+    CSRF.get_or_init(|| Mutex::new(String::new()))
+}
+
+/// POST with automatic CSRF retry. Roblox returns 403 + x-csrf-token on first attempt.
+fn post_with_csrf(url: &str, body: &str) -> Result<reqwest::blocking::Response, String> {
+    let cached_csrf = csrf_cache()
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+
+    let response = blocking_client()
+        .post(url)
+        .header("Content-Type", "application/json")
+        .header("X-CSRF-TOKEN", &cached_csrf)
+        .body(body.to_string())
+        .send()
+        .map_err(|e| format!("Request failed: {e}"))?;
+
+    if response.status().as_u16() == 403 {
+        // Extract fresh CSRF token and retry
+        let new_csrf = response
+            .headers()
+            .get("x-csrf-token")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+
+        if !new_csrf.is_empty() {
+            if let Ok(mut cache) = csrf_cache().lock() {
+                *cache = new_csrf.clone();
+            }
+
+            return blocking_client()
+                .post(url)
+                .header("Content-Type", "application/json")
+                .header("X-CSRF-TOKEN", &new_csrf)
+                .body(body.to_string())
+                .send()
+                .map_err(|e| format!("Request retry failed: {e}"));
+        }
+    }
+
+    Ok(response)
+}
+
 fn validate_cookie_blocking(cookie: &str) -> Result<AuthenticatedUserResponse, String> {
     let response = blocking_client()
         .get("https://users.roblox.com/v1/users/authenticated")
@@ -165,38 +212,48 @@ fn exchange_quick_login_for_cookie(code: &str, private_key: &str) -> Result<Stri
         "cvalue": code,
         "password": private_key,
     });
+    let body_str = body.to_string();
+    let url = "https://auth.roblox.com/v2/login";
 
-    // First attempt — get CSRF token from 403
+    let cached_csrf = csrf_cache()
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+
     let response = client
-        .post("https://auth.roblox.com/v2/login")
+        .post(url)
         .header("Content-Type", "application/json")
         .header("Referer", "https://www.roblox.com")
-        .body(body.to_string())
+        .header("X-CSRF-TOKEN", &cached_csrf)
+        .body(body_str.clone())
         .send()
         .map_err(|e| format!("Login exchange failed: {e}"))?;
 
-    let csrf_token = response
-        .headers()
-        .get("x-csrf-token")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
-        .unwrap_or_default();
+    let response = if response.status().as_u16() == 403 {
+        let new_csrf = response
+            .headers()
+            .get("x-csrf-token")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
 
-    if response.status().is_success() {
-        if let Some(cookie) = extract_roblosecurity_cookie(response.headers()) {
-            return Ok(cookie);
+        if !new_csrf.is_empty() {
+            if let Ok(mut cache) = csrf_cache().lock() {
+                *cache = new_csrf.clone();
+            }
         }
-    }
 
-    // Retry with CSRF token
-    let response = client
-        .post("https://auth.roblox.com/v2/login")
-        .header("Content-Type", "application/json")
-        .header("X-CSRF-TOKEN", &csrf_token)
-        .header("Referer", "https://www.roblox.com")
-        .body(body.to_string())
-        .send()
-        .map_err(|e| format!("Login exchange retry failed: {e}"))?;
+        client
+            .post(url)
+            .header("Content-Type", "application/json")
+            .header("Referer", "https://www.roblox.com")
+            .header("X-CSRF-TOKEN", &new_csrf)
+            .body(body_str)
+            .send()
+            .map_err(|e| format!("Login exchange retry failed: {e}"))?
+    } else {
+        response
+    };
 
     if !response.status().is_success() {
         let status = response.status();
@@ -354,12 +411,11 @@ pub fn begin_account_setup(app_handle: &tauri::AppHandle) -> Result<SetupStatus,
         "",
     );
 
-    let response = blocking_client()
-        .post("https://apis.roblox.com/auth-token-service/v1/login/create")
-        .header("Content-Type", "application/json")
-        .body("{}")
-        .send()
-        .map_err(|e| format!("Quick Login create failed: {e}"))?;
+    let response = post_with_csrf(
+        "https://apis.roblox.com/auth-token-service/v1/login/create",
+        "{}",
+    )
+    .map_err(|e| format!("Quick Login create failed: {e}"))?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -413,40 +469,74 @@ pub fn get_account_setup_status(
         "privateKey": job.private_key,
     });
 
-    let response = blocking_client()
-        .post("https://apis.roblox.com/auth-token-service/v1/login/status")
-        .header("Content-Type", "application/json")
-        .body(body.to_string())
-        .send()
-        .map_err(|e| format!("Quick Login status check failed: {e}"))?;
+    let response = post_with_csrf(
+        "https://apis.roblox.com/auth-token-service/v1/login/status",
+        &body.to_string(),
+    )
+    .map_err(|e| format!("Quick Login status check failed: {e}"))?;
 
-    if !response.status().is_success() {
-        // API error — keep waiting
+    let http_status = response.status();
+    let response_text = response.text().unwrap_or_default();
+
+    log_platform_info(
+        app_handle,
+        "roblox.setup_poll",
+        "Quick Login status poll",
+        format!("httpStatus={http_status}; body={response_text}"),
+    );
+
+    if !http_status.is_success() {
         return Ok(make_setup_status(setup_id, "waiting_for_login", "", &job.code, ""));
     }
 
-    let status_data = response
-        .json::<QuickLoginStatusResponse>()
+    let status_data: QuickLoginStatusResponse = serde_json::from_str(&response_text)
         .map_err(|e| format!("Could not parse Quick Login status: {e}"))?;
 
     match status_data.status.as_str() {
         "Validated" => {
-            let cookie = exchange_quick_login_for_cookie(&job.code, &job.private_key)?;
+            log_platform_info(app_handle, "roblox.setup_poll", "Status is Validated, exchanging for cookie", "");
+
+            let cookie = match exchange_quick_login_for_cookie(&job.code, &job.private_key) {
+                Ok(c) => c,
+                Err(e) => {
+                    log_platform_info(app_handle, "roblox.setup_poll", "Cookie exchange failed", &e);
+                    return Err(e);
+                }
+            };
+
+            log_platform_info(app_handle, "roblox.setup_poll", "Cookie obtained, validating", "");
+
             let user = validate_cookie_blocking(&cookie)?;
-            let encrypted = crate::os::encrypt_secret(&cookie)
-                .map_err(|e| format!("Could not encrypt cookie: {e}"))?;
-            store_account(app_handle, &user, &encrypted)?;
+
+            log_platform_info(
+                app_handle,
+                "roblox.setup_poll",
+                "Cookie validated, storing account",
+                format!("userId={}; username={}", user.id, user.name),
+            );
+
+            let encrypted = match crate::os::encrypt_secret(&cookie) {
+                Ok(enc) => enc,
+                Err(e) => {
+                    let msg = format!("Could not encrypt cookie: {e}");
+                    log_platform_error(app_handle, "roblox.setup_poll", "Encryption failed", &msg);
+                    if let Ok(mut jobs) = setup_jobs().lock() {
+                        jobs.remove(setup_id);
+                    }
+                    return Ok(make_setup_status(setup_id, "failed", "", "", &msg));
+                }
+            };
+            if let Err(e) = store_account(app_handle, &user, &encrypted) {
+                log_platform_error(app_handle, "roblox.setup_poll", "Account storage failed", &e);
+                if let Ok(mut jobs) = setup_jobs().lock() {
+                    jobs.remove(setup_id);
+                }
+                return Ok(make_setup_status(setup_id, "failed", "", "", &e));
+            }
 
             if let Ok(mut jobs) = setup_jobs().lock() {
                 jobs.remove(setup_id);
             }
-
-            log_platform_info(
-                app_handle,
-                "roblox.account_setup",
-                "Roblox account added via Quick Login",
-                format!("userId={}", user.id),
-            );
 
             Ok(make_setup_status(
                 setup_id,
@@ -477,11 +567,10 @@ pub fn cancel_account_setup(setup_id: &str) -> Result<(), String> {
 
     if let Some(job) = job {
         let body = serde_json::json!({ "code": job.code });
-        let _ = blocking_client()
-            .post("https://apis.roblox.com/auth-token-service/v1/login/cancel")
-            .header("Content-Type", "application/json")
-            .body(body.to_string())
-            .send();
+        let _ = post_with_csrf(
+            "https://apis.roblox.com/auth-token-service/v1/login/cancel",
+            &body.to_string(),
+        );
     }
 
     Ok(())
