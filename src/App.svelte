@@ -1188,6 +1188,7 @@
       {unavailablePlatformIds}
       canRefresh={activeTabUsable && !adapterLoading}
       canAddAccount={activeTabUsable && !adapterLoading}
+      {showSettings}
       showBulkEdit={activeTab === "steam" && !showSettings && activeTabUsable}
       bulkEditActive={bulkEditMode}
       {locale}
@@ -1265,7 +1266,7 @@
     {:else if renderedAccountCount === 0}
       <div class="center-msg">
         <p>{t("app.noAccountsFound", { platform: adapter.name })}</p>
-        <p class="text-sm mt-1 opacity-70">{t("app.noAccountsHint", { platform: adapter.name })}</p>
+        <p class="text-sm mt-1 opacity-70">{adapter.getNoAccountsHintMessage?.({ t }) ?? t("app.noAccountsHint", { platform: adapter.name })}</p>
       </div>
     {:else if viewMode === "list"}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1418,6 +1419,7 @@
                   disableExtension={bulkEditMode || drag.isDragging}
                   disableHoverExtension={bulkEditMode || Boolean(platformAddFlow && platformAddFlow.status.setupId !== account.id)}
                   singleClickSwitch={bulkEditMode}
+                  interactionDisabled={isPendingSetupAccount(account.id)}
                 />
               {/if}
             </div>
