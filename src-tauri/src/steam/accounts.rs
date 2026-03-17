@@ -564,17 +564,36 @@ pub fn get_copyable_games(
 pub fn clear_integrated_browser_cache() -> Result<(), AppError> {
     kill_steam_client_processes()?;
 
-    let local_app_data = std::env::var("LOCALAPPDATA")
-        .map_err(|e| AppError::FileRead(format!("Could not resolve LOCALAPPDATA: {e}")))?;
-    let htmlcache_path = PathBuf::from(local_app_data)
-        .join("Steam")
-        .join("htmlcache");
+    #[cfg(target_os = "windows")]
+    let htmlcache_path = {
+        let local_app_data = std::env::var("LOCALAPPDATA")
+            .map_err(|e| AppError::FileRead(format!("Could not resolve LOCALAPPDATA: {e}")))?;
+        PathBuf::from(local_app_data).join("Steam").join("htmlcache")
+    };
 
-    if htmlcache_path.exists() {
-        fs::remove_dir_all(&htmlcache_path).map_err(|e| AppError::FileRead(e.to_string()))?;
+    #[cfg(target_os = "macos")]
+    let htmlcache_path = {
+        let home = std::env::var("HOME")
+            .map_err(|e| AppError::FileRead(format!("Could not resolve HOME: {e}")))?;
+        PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("Steam")
+            .join("htmlcache")
+    };
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    return Err(AppError::UnsupportedOperatingSystem(
+        "Browser cache clearing not supported on this OS".into(),
+    ));
+
+    #[allow(unreachable_code)]
+    {
+        if htmlcache_path.exists() {
+            fs::remove_dir_all(&htmlcache_path).map_err(|e| AppError::FileRead(e.to_string()))?;
+        }
+        Ok(())
     }
-
-    Ok(())
 }
 
 #[cfg(test)]

@@ -159,7 +159,7 @@ struct RiotDetectedIdentity {
 }
 
 fn hidden_command(program: impl AsRef<OsStr>) -> Command {
-    let mut cmd = Command::new(program);
+    let cmd = Command::new(program);
     #[cfg(target_os = "windows")]
     {
         cmd.creation_flags(CREATE_NO_WINDOW);

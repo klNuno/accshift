@@ -23,6 +23,7 @@ const BATTLE_NET_EXECUTABLE_CANDIDATES: &[&str] = &[
     "Battle.net\\Battle.net Launcher.exe",
     "Battle.net\\Battle.net.exe",
 ];
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 const BATTLE_NET_EXECUTABLE_NAMES: &[&str] = &["Battle.net Launcher.exe", "Battle.net.exe"];
 const BATTLE_NET_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
 
@@ -478,6 +479,7 @@ fn kill_battle_net() {
     }
 }
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn normalize_registry_path(raw: &str) -> String {
     let mut value = raw.trim().trim_matches('"').to_string();
     if let Some((head, _)) = value.split_once(",") {
@@ -486,6 +488,7 @@ fn normalize_registry_path(raw: &str) -> String {
     value
 }
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn preferred_launcher_path(path: PathBuf) -> PathBuf {
     let is_battle_net_exe = path
         .file_name()
@@ -509,6 +512,7 @@ fn preferred_launcher_path(path: PathBuf) -> PathBuf {
     path
 }
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn candidate_from_registry_value(raw: &str) -> Option<PathBuf> {
     let normalized = normalize_registry_path(raw);
     if normalized.is_empty() {
