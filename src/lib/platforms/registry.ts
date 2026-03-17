@@ -8,7 +8,7 @@ export const PLATFORM_DEFS: PlatformDef[] = [
     name: "Steam",
     accent: "#2563eb",
     implemented: true,
-    supportedOs: ["windows"],
+    supportedOs: ["windows", "macos"],
     settingsTabKey: "settings.steam",
     settingsComponent: () => import("./steam/SteamSettingsTab.svelte"),
     pathLabelKey: "settings.steamFolder",

@@ -1,15 +1,19 @@
 use crate::error::AppError;
 use std::path::{Path, PathBuf};
 
-#[cfg(not(target_os = "windows"))]
-mod unsupported;
 #[cfg(target_os = "windows")]
 mod windows;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+mod unsupported;
 
-#[cfg(not(target_os = "windows"))]
-use unsupported as imp;
 #[cfg(target_os = "windows")]
 use windows as imp;
+#[cfg(target_os = "macos")]
+use macos as imp;
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+use unsupported as imp;
 
 pub fn encrypt_secret(secret: &str) -> Result<String, AppError> {
     imp::encrypt_secret(secret)
