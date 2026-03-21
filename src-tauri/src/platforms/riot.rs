@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::Manager;
 use uuid::Uuid;
 
 use crate::os;
@@ -285,11 +284,7 @@ fn resolve_riot_client_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, St
 }
 
 fn app_profiles_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let root = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Could not resolve app data dir: {e}"))?
-        .join("riot-profiles");
+    let root = crate::storage::riot_snapshots_dir(app_handle)?;
     fs::create_dir_all(&root).map_err(|e| format!("Could not create Riot profiles dir: {e}"))?;
     Ok(root)
 }

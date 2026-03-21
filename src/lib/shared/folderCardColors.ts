@@ -1,4 +1,8 @@
-const STORAGE_KEY = "accshift_folder_card_colors";
+import {
+  CLIENT_STORE_FOLDER_CARD_COLORS,
+  getClientStoreValue,
+  setClientStoreValue,
+} from "$lib/storage/clientStorage";
 
 type FolderColorMap = Record<string, string>;
 let cachedMap: FolderColorMap | null = null;
@@ -24,12 +28,12 @@ function readMap(): FolderColorMap {
   if (cachedMap) return cachedMap;
 
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
+    const raw = getClientStoreValue<unknown>(CLIENT_STORE_FOLDER_CARD_COLORS);
+    if (raw == null) {
       cachedMap = {};
       return cachedMap;
     }
-    cachedMap = sanitizeMap(JSON.parse(raw));
+    cachedMap = sanitizeMap(raw);
     return cachedMap;
   } catch {
     cachedMap = {};
@@ -39,7 +43,7 @@ function readMap(): FolderColorMap {
 
 function writeMap(data: FolderColorMap) {
   cachedMap = data;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  setClientStoreValue(CLIENT_STORE_FOLDER_CARD_COLORS, data);
 }
 
 export function getFolderCardColor(folderId: string): string {

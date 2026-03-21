@@ -3,8 +3,11 @@ import { DEFAULT_LOCALE, detectPreferredLocale, normalizeLocale } from "$lib/i18
 import { isValidPinHash } from "$lib/shared/pin";
 import { PLATFORM_DEFS } from "$lib/platforms/registry";
 import { getThemeDefinition } from "$lib/theme/themes";
-
-const SETTINGS_KEY = "accshift_settings";
+import {
+  CLIENT_STORE_SETTINGS,
+  getClientStoreValue,
+  setClientStoreValue,
+} from "$lib/storage/clientStorage";
 
 export const ALL_PLATFORMS: PlatformDef[] = PLATFORM_DEFS;
 
@@ -172,13 +175,7 @@ function cloneSettings(settings: AppSettings): AppSettings {
 }
 
 function loadSettingsFromStorage(): AppSettings {
-  try {
-    const data = localStorage.getItem(SETTINGS_KEY);
-    if (!data) return sanitizeSettings({});
-    return sanitizeSettings(JSON.parse(data));
-  } catch {
-    return sanitizeSettings({});
-  }
+  return sanitizeSettings(getClientStoreValue(CLIENT_STORE_SETTINGS) ?? {});
 }
 
 export function getSettings(): AppSettings {
@@ -191,7 +188,7 @@ export function getSettings(): AppSettings {
 export function saveSettings(settings: AppSettings) {
   const sanitized = sanitizeSettings(settings);
   cachedSettings = sanitized;
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(sanitized));
+  setClientStoreValue(CLIENT_STORE_SETTINGS, sanitized);
   try {
     const theme = getThemeDefinition(sanitized.themeId);
     localStorage.setItem("accshift_boot_theme", JSON.stringify({

@@ -326,15 +326,8 @@ fn is_valid_epic_account_id(s: &str) -> bool {
 // Auth snapshot (file-based like Ubisoft)
 // ---------------------------------------------------------------------------
 
-use tauri::Manager;
-
 fn auth_cache_dir(app_handle: &tauri::AppHandle, account_id: &str) -> Result<PathBuf, String> {
-    let base = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Could not resolve app data dir: {e}"))?
-        .join("epic_cache")
-        .join(account_id);
+    let base = crate::storage::epic_snapshots_dir(app_handle)?.join(account_id);
     Ok(base)
 }
 

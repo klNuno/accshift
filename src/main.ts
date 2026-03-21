@@ -2,6 +2,7 @@ import "./app.css";
 import App from "./App.svelte";
 import { invoke } from "@tauri-apps/api/core";
 import { mount } from "svelte";
+import { initializeClientStorage } from "$lib/storage/clientStorage";
 
 type LogLevel = "info" | "warn" | "error";
 
@@ -117,14 +118,26 @@ console.error = (...args: unknown[]) => {
 queueLog("info", "frontend.boot", "main.ts initialized");
 
 let app;
-try {
-  app = mount(App, {
-    target: document.getElementById("app")!,
-  });
-  queueLog("info", "frontend.boot", "App mounted");
-} catch (reason) {
-  queueLog("error", "frontend.mount", "Failed to mount App", serializeLogValue(reason));
-  throw reason;
+
+async function bootstrap() {
+  try {
+    await initializeClientStorage();
+    queueLog("info", "frontend.storage", "Client storage initialized");
+  } catch (reason) {
+    queueLog("error", "frontend.storage", "Failed to initialize client storage", serializeLogValue(reason));
+  }
+
+  try {
+    app = mount(App, {
+      target: document.getElementById("app")!,
+    });
+    queueLog("info", "frontend.boot", "App mounted");
+  } catch (reason) {
+    queueLog("error", "frontend.mount", "Failed to mount App", serializeLogValue(reason));
+    throw reason;
+  }
 }
+
+void bootstrap();
 
 export default app;

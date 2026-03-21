@@ -1,8 +1,11 @@
 import { getProfileInfo } from "./robloxApi";
 import { getCacheDuration } from "../../features/settings/store";
 import type { RobloxProfileInfo } from "./types";
-
-const CACHE_KEY = "accshift_roblox_avatars";
+import {
+  CLIENT_STORE_ROBLOX_PROFILE_CACHE,
+  getClientStoreValue,
+  setClientStoreValue,
+} from "$lib/storage/clientStorage";
 const SESSION_START_MS = Date.now();
 
 interface CachedProfile {
@@ -29,9 +32,9 @@ function isSafeUrl(value: string): boolean {
 function getCache(): ProfileCache {
   if (cachedProfiles) return cachedProfiles;
   try {
-    const data = localStorage.getItem(CACHE_KEY);
-    if (!data) { cachedProfiles = {}; return cachedProfiles; }
-    const parsed = JSON.parse(data) as Record<string, unknown>;
+    const data = getClientStoreValue<unknown>(CLIENT_STORE_ROBLOX_PROFILE_CACHE);
+    if (data == null) { cachedProfiles = {}; return cachedProfiles; }
+    const parsed = data as Record<string, unknown>;
     const out: ProfileCache = {};
     for (const [id, entry] of Object.entries(parsed)) {
       const raw = entry as Partial<CachedProfile>;
@@ -49,7 +52,7 @@ function getCache(): ProfileCache {
 
 function saveCache(cache: ProfileCache) {
   cachedProfiles = cache;
-  localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+  setClientStoreValue(CLIENT_STORE_ROBLOX_PROFILE_CACHE, cache);
 }
 
 export function getRobloxCachedProfile(userId: string): { url: string; expired: boolean } | null {

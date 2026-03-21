@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use tauri::Manager;
 
 pub const DEFAULT_WINDOW_WIDTH: f64 = 900.0;
 pub const DEFAULT_WINDOW_HEIGHT: f64 = 450.0;
@@ -122,7 +121,7 @@ pub struct EpicConfig {
     pub accounts: Vec<EpicAccountConfig>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct AppConfig {
     #[serde(default, skip_serializing_if = "is_default_steam_config")]
     pub steam: SteamConfig,
@@ -353,34 +352,58 @@ fn normalize_config(raw: RawAppConfig) -> AppConfig {
 }
 
 pub fn load_config(app_handle: &tauri::AppHandle) -> AppConfig {
-    let path = app_handle
-        .path()
-        .app_data_dir()
-        .expect("failed to resolve app data dir")
-        .join("config.json");
+    let legacy = load_legacy_config(app_handle);
+    let portable_path = match crate::storage::portable_config_path(app_handle) {
+        Ok(path) => path,
+        Err(_) => return legacy,
+    };
+    let local_path = match crate::storage::local_config_path(app_handle) {
+        Ok(path) => path,
+        Err(_) => return legacy,
+    };
 
-    match fs::read_to_string(&path) {
-        Ok(data) => serde_json::from_str::<RawAppConfig>(&data)
-            .map(normalize_config)
-            .unwrap_or_default(),
-        Err(_) => AppConfig::default(),
+    let portable = crate::storage::read_json_if_exists::<AppConfig>(&portable_path)
+        .ok()
+        .flatten();
+    let local = crate::storage::read_json_if_exists::<AppConfig>(&local_path)
+        .ok()
+        .flatten();
+
+    match (portable, local) {
+        (None, None) => legacy,
+        (portable, local) => merge_missing_from_fallback(
+            merge_split_configs(portable.unwrap_or_default(), local.unwrap_or_default()),
+            legacy,
+        ),
     }
 }
 
 pub fn save_config(app_handle: &tauri::AppHandle, config: &AppConfig) -> Result<(), String> {
-    let dir = app_handle
-        .path()
-        .app_data_dir()
-        .expect("failed to resolve app data dir");
+    let portable = portable_config(config);
+    let local = local_config(config);
+    let portable_path = crate::storage::portable_config_path(app_handle)?;
+    let local_path = crate::storage::local_config_path(app_handle)?;
 
-    fs::create_dir_all(&dir).map_err(|e| format!("Could not create config directory: {}", e))?;
-
-    let path = dir.join("config.json");
-    let json = serde_json::to_string_pretty(config)
-        .map_err(|e| format!("Could not serialize config: {}", e))?;
-
-    fs::write(&path, json).map_err(|e| format!("Could not write config file: {}", e))?;
-
+    crate::storage::write_json_atomic(&portable_path, &portable)?;
+    crate::storage::write_json_atomic(&local_path, &local)?;
+    let details = serde_json::json!({
+        "portablePath": portable_path,
+        "localPath": local_path,
+        "riotProfiles": config.riot.profiles.len(),
+        "battleNetAccounts": config.battle_net.accounts.len(),
+        "ubisoftAccounts": config.ubisoft.accounts.len(),
+        "robloxAccounts": config.roblox.accounts.len(),
+        "epicAccounts": config.epic.accounts.len(),
+        "hasWindowSize": config.window_width.is_some() && config.window_height.is_some(),
+    })
+    .to_string();
+    let _ = crate::logging::append_app_log(
+        app_handle,
+        "info",
+        "config.save",
+        "Saved split app config",
+        Some(&details),
+    );
     Ok(())
 }
 
@@ -422,4 +445,224 @@ pub fn save_window_size(
 fn is_suspicious_min_window_size(width: f64, height: f64) -> bool {
     width <= MIN_WINDOW_WIDTH + WINDOW_SIZE_EPSILON
         && height <= MIN_WINDOW_HEIGHT + WINDOW_SIZE_EPSILON
+}
+
+fn load_legacy_config(app_handle: &tauri::AppHandle) -> AppConfig {
+    let path = match crate::storage::legacy_config_path(app_handle) {
+        Ok(path) => path,
+        Err(_) => return AppConfig::default(),
+    };
+
+    match fs::read_to_string(&path) {
+        Ok(data) => serde_json::from_str::<RawAppConfig>(&data)
+            .map(normalize_config)
+            .unwrap_or_default(),
+        Err(_) => AppConfig::default(),
+    }
+}
+
+fn portable_config(config: &AppConfig) -> AppConfig {
+    let mut portable = config.clone();
+    portable.steam.api_key.clear();
+    portable.steam.api_key_encrypted.clear();
+    portable.steam.path_override.clear();
+    portable.riot.path_override.clear();
+    portable.battle_net.path_override.clear();
+    portable.ubisoft.path_override.clear();
+    portable.epic.path_override.clear();
+    portable.window_width = None;
+    portable.window_height = None;
+    for account in &mut portable.roblox.accounts {
+        account.cookie_encrypted.clear();
+    }
+    portable
+}
+
+fn local_config(config: &AppConfig) -> AppConfig {
+    let mut local = AppConfig::default();
+    local.steam.api_key = config.steam.api_key.clone();
+    local.steam.api_key_encrypted = config.steam.api_key_encrypted.clone();
+    local.steam.path_override = config.steam.path_override.clone();
+    local.riot.path_override = config.riot.path_override.clone();
+    local.battle_net.path_override = config.battle_net.path_override.clone();
+    local.ubisoft.path_override = config.ubisoft.path_override.clone();
+    local.epic.path_override = config.epic.path_override.clone();
+    local.window_width = config.window_width;
+    local.window_height = config.window_height;
+    local.roblox.accounts = config
+        .roblox
+        .accounts
+        .iter()
+        .filter(|account| !account.user_id.trim().is_empty())
+        .map(|account| RobloxAccountConfig {
+            user_id: account.user_id.clone(),
+            username: String::new(),
+            display_name: String::new(),
+            cookie_encrypted: account.cookie_encrypted.clone(),
+            last_used_at: account.last_used_at,
+        })
+        .collect();
+    local
+}
+
+fn merge_split_configs(portable: AppConfig, local: AppConfig) -> AppConfig {
+    let mut merged = portable;
+
+    if !local.steam.api_key.is_empty() {
+        merged.steam.api_key = local.steam.api_key;
+    }
+    if !local.steam.api_key_encrypted.is_empty() {
+        merged.steam.api_key_encrypted = local.steam.api_key_encrypted;
+    }
+    if !local.steam.path_override.is_empty() {
+        merged.steam.path_override = local.steam.path_override;
+    }
+    if !local.riot.path_override.is_empty() {
+        merged.riot.path_override = local.riot.path_override;
+    }
+    if !local.battle_net.path_override.is_empty() {
+        merged.battle_net.path_override = local.battle_net.path_override;
+    }
+    if !local.ubisoft.path_override.is_empty() {
+        merged.ubisoft.path_override = local.ubisoft.path_override;
+    }
+    if !local.epic.path_override.is_empty() {
+        merged.epic.path_override = local.epic.path_override;
+    }
+    if local.window_width.is_some() {
+        merged.window_width = local.window_width;
+    }
+    if local.window_height.is_some() {
+        merged.window_height = local.window_height;
+    }
+
+    for local_account in local.roblox.accounts {
+        if local_account.user_id.trim().is_empty() {
+            continue;
+        }
+        if let Some(existing) = merged
+            .roblox
+            .accounts
+            .iter_mut()
+            .find(|account| account.user_id == local_account.user_id)
+        {
+            if !local_account.cookie_encrypted.is_empty() {
+                existing.cookie_encrypted = local_account.cookie_encrypted;
+            }
+            if local_account.last_used_at.is_some() {
+                existing.last_used_at = local_account.last_used_at;
+            }
+        } else {
+            merged.roblox.accounts.push(local_account);
+        }
+    }
+
+    merged
+}
+
+fn merge_missing_from_fallback(mut current: AppConfig, fallback: AppConfig) -> AppConfig {
+    if current.steam.api_key.is_empty() {
+        current.steam.api_key = fallback.steam.api_key;
+    }
+    if current.steam.api_key_encrypted.is_empty() {
+        current.steam.api_key_encrypted = fallback.steam.api_key_encrypted;
+    }
+    if current.steam.path_override.is_empty() {
+        current.steam.path_override = fallback.steam.path_override;
+    }
+
+    if current.riot.path_override.is_empty() {
+        current.riot.path_override = fallback.riot.path_override.clone();
+    }
+    if current.riot.current_profile_id.is_empty() {
+        current.riot.current_profile_id = fallback.riot.current_profile_id.clone();
+    }
+    for fallback_profile in fallback.riot.profiles {
+        if !current
+            .riot
+            .profiles
+            .iter()
+            .any(|profile| profile.id == fallback_profile.id)
+        {
+            current.riot.profiles.push(fallback_profile);
+        }
+    }
+
+    if current.battle_net.path_override.is_empty() {
+        current.battle_net.path_override = fallback.battle_net.path_override.clone();
+    }
+    for fallback_account in fallback.battle_net.accounts {
+        if !current
+            .battle_net
+            .accounts
+            .iter()
+            .any(|account| account.email == fallback_account.email && !account.email.is_empty())
+        {
+            current.battle_net.accounts.push(fallback_account);
+        }
+    }
+
+    if current.ubisoft.path_override.is_empty() {
+        current.ubisoft.path_override = fallback.ubisoft.path_override.clone();
+    }
+    for fallback_account in fallback.ubisoft.accounts {
+        if !current
+            .ubisoft
+            .accounts
+            .iter()
+            .any(|account| account.uuid == fallback_account.uuid && !account.uuid.is_empty())
+        {
+            current.ubisoft.accounts.push(fallback_account);
+        }
+    }
+
+    for fallback_account in fallback.roblox.accounts {
+        if let Some(existing) = current
+            .roblox
+            .accounts
+            .iter_mut()
+            .find(|account| account.user_id == fallback_account.user_id)
+        {
+            if existing.username.is_empty() {
+                existing.username = fallback_account.username.clone();
+            }
+            if existing.display_name.is_empty() {
+                existing.display_name = fallback_account.display_name.clone();
+            }
+            if existing.cookie_encrypted.is_empty() {
+                existing.cookie_encrypted = fallback_account.cookie_encrypted.clone();
+            }
+            if existing.last_used_at.is_none() {
+                existing.last_used_at = fallback_account.last_used_at;
+            }
+        } else {
+            current.roblox.accounts.push(fallback_account);
+        }
+    }
+
+    if current.epic.path_override.is_empty() {
+        current.epic.path_override = fallback.epic.path_override.clone();
+    }
+    for fallback_account in fallback.epic.accounts {
+        if !current
+            .epic
+            .accounts
+            .iter()
+            .any(|account| account.account_id == fallback_account.account_id && !account.account_id.is_empty())
+        {
+            current.epic.accounts.push(fallback_account);
+        }
+    }
+
+    if current.window_width.is_none() {
+        current.window_width = fallback.window_width;
+    }
+    if current.window_height.is_none() {
+        current.window_height = fallback.window_height;
+    }
+    for (key, value) in fallback.extra {
+        current.extra.entry(key).or_insert(value);
+    }
+
+    current
 }
