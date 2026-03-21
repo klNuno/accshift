@@ -12,13 +12,23 @@ function deferBackgroundTask(task: () => void | Promise<void>) {
   if (typeof window !== "undefined" && "requestIdleCallback" in window) {
     const requestIdle = (
       window as Window & {
-        requestIdleCallback: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+        requestIdleCallback: (
+          callback: IdleRequestCallback,
+          options?: IdleRequestOptions,
+        ) => number;
       }
     ).requestIdleCallback;
-    requestIdle(() => { void task(); }, { timeout: 600 });
+    requestIdle(
+      () => {
+        void task();
+      },
+      { timeout: 600 },
+    );
     return;
   }
-  setTimeout(() => { void task(); }, 0);
+  setTimeout(() => {
+    void task();
+  }, 0);
 }
 
 export function createAccountLoader(
@@ -29,7 +39,7 @@ export function createAccountLoader(
   // Centralized UI state for account loading, switching, avatars, and platform warnings.
   let accounts = $state<PlatformAccount[]>([]);
   let accountMap = $derived<Record<string, PlatformAccount>>(
-    Object.fromEntries(accounts.map(a => [a.id, a]))
+    Object.fromEntries(accounts.map((a) => [a.id, a])),
   );
   let currentAccount = $state("");
   let currentAccountId = $derived.by(() => {
@@ -39,10 +49,11 @@ export function createAccountLoader(
     const direct = accounts.find((account) => account.id.trim().toLowerCase() === needle);
     if (direct) return direct.id;
     const adapter = getAdapter();
-    const matched = accounts.find((account) =>
-      adapter?.isCurrentAccount?.(account, raw)
-      || account.username.trim().toLowerCase() === needle
-      || (account.displayName || "").trim().toLowerCase() === needle
+    const matched = accounts.find(
+      (account) =>
+        adapter?.isCurrentAccount?.(account, raw) ||
+        account.username.trim().toLowerCase() === needle ||
+        (account.displayName || "").trim().toLowerCase() === needle,
     );
     return matched?.id ?? null;
   });
@@ -82,10 +93,10 @@ export function createAccountLoader(
       ...next,
     };
     if (
-      previous
-      && previous.url === nextState.url
-      && previous.loading === nextState.loading
-      && previous.refreshing === nextState.refreshing
+      previous &&
+      previous.url === nextState.url &&
+      previous.loading === nextState.loading &&
+      previous.refreshing === nextState.refreshing
     ) {
       return;
     }
@@ -104,10 +115,10 @@ export function createAccountLoader(
     for (const [accountId, nextState] of Object.entries(updates)) {
       const previous = current[accountId];
       if (
-        previous
-        && previous.url === nextState.url
-        && previous.loading === nextState.loading
-        && previous.refreshing === nextState.refreshing
+        previous &&
+        previous.url === nextState.url &&
+        previous.loading === nextState.loading &&
+        previous.refreshing === nextState.refreshing
       ) {
         continue;
       }
@@ -170,7 +181,10 @@ export function createAccountLoader(
     return needsRefresh;
   }
 
-  function applyProfileUpdate(account: PlatformAccount, profile: Awaited<ReturnType<NonNullable<PlatformAdapter["getProfileInfo"]>>>) {
+  function applyProfileUpdate(
+    account: PlatformAccount,
+    profile: Awaited<ReturnType<NonNullable<PlatformAdapter["getProfileInfo"]>>>,
+  ) {
     if (profile) {
       updateAvatarState(account.id, {
         url: profile.avatarUrl,
@@ -195,10 +209,7 @@ export function createAccountLoader(
     applyProfileUpdate(account, profile);
   }
 
-  async function loadProfilesForAccounts(
-    accts: PlatformAccount[],
-    forceRefresh = false
-  ) {
+  async function loadProfilesForAccounts(accts: PlatformAccount[], forceRefresh = false) {
     const adapter = getAdapter();
     if (!adapter) return;
     const needsRefresh = seedAvatarStatesForAccounts(accts, forceRefresh);
@@ -206,9 +217,11 @@ export function createAccountLoader(
     // Keep requests bounded to avoid API/UI spikes on large account lists.
     for (let i = 0; i < needsRefresh.length; i += BATCH_SIZE) {
       const batch = needsRefresh.slice(i, i + BATCH_SIZE);
-      await Promise.all(batch.map(async (account) => {
-        await refreshProfile(adapter, account);
-      }));
+      await Promise.all(
+        batch.map(async (account) => {
+          await refreshProfile(adapter, account);
+        }),
+      );
     }
   }
 
@@ -265,7 +278,7 @@ export function createAccountLoader(
         addToast(
           t(count === 1 ? "toast.accountsRefreshed.single" : "toast.accountsRefreshed.multiple", {
             count,
-          })
+          }),
         );
       }
       onAfterLoad?.();
@@ -308,7 +321,8 @@ export function createAccountLoader(
       currentAccount = account.id;
       if (adapter.getProfileInfo) {
         updateAvatarState(account.id, { refreshing: true });
-        void adapter.getProfileInfo(account.id)
+        void adapter
+          .getProfileInfo(account.id)
           .then((profile) => {
             applyProfileUpdate(account, profile);
           })
@@ -356,9 +370,7 @@ export function createAccountLoader(
     const visibleAccounts = resolveVisibleAccounts(accounts);
     if (visibleAccounts.length === 0) return 0;
     const run = async () => {
-      const tasks: Promise<unknown>[] = [
-        loadProfilesForAccounts(visibleAccounts, forceRefresh),
-      ];
+      const tasks: Promise<unknown>[] = [loadProfilesForAccounts(visibleAccounts, forceRefresh)];
       if (checkBans && adapter?.loadWarningStates) {
         tasks.push(loadWarningStatesForAccounts(adapter, visibleAccounts, silent, forceRefresh));
       }
@@ -392,16 +404,36 @@ export function createAccountLoader(
   }
 
   return {
-    get accounts() { return accounts; },
-    set accounts(v: PlatformAccount[]) { accounts = v; },
-    get accountMap() { return accountMap; },
-    get currentAccount() { return currentAccount; },
-    get currentAccountId() { return currentAccountId; },
-    get loading() { return loading; },
-    get switching() { return switching; },
-    get error() { return error; },
-    get avatarStates() { return avatarStates; },
-    get warningStates() { return warningStates; },
+    get accounts() {
+      return accounts;
+    },
+    set accounts(v: PlatformAccount[]) {
+      accounts = v;
+    },
+    get accountMap() {
+      return accountMap;
+    },
+    get currentAccount() {
+      return currentAccount;
+    },
+    get currentAccountId() {
+      return currentAccountId;
+    },
+    get loading() {
+      return loading;
+    },
+    get switching() {
+      return switching;
+    },
+    get error() {
+      return error;
+    },
+    get avatarStates() {
+      return avatarStates;
+    },
+    get warningStates() {
+      return warningStates;
+    },
     load,
     switchTo,
     addNew,

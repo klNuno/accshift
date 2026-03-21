@@ -33,7 +33,10 @@ function getCache(): ProfileCache {
   if (cachedProfiles) return cachedProfiles;
   try {
     const data = getClientStoreValue<unknown>(CLIENT_STORE_ROBLOX_PROFILE_CACHE);
-    if (data == null) { cachedProfiles = {}; return cachedProfiles; }
+    if (data == null) {
+      cachedProfiles = {};
+      return cachedProfiles;
+    }
     const parsed = data as Record<string, unknown>;
     const out: ProfileCache = {};
     for (const [id, entry] of Object.entries(parsed)) {
@@ -61,9 +64,8 @@ export function getRobloxCachedProfile(userId: string): { url: string; expired: 
   if (!entry) return null;
 
   const duration = getCacheDuration();
-  const expired = duration === 0
-    ? entry.timestamp < SESSION_START_MS
-    : Date.now() - entry.timestamp > duration;
+  const expired =
+    duration === 0 ? entry.timestamp < SESSION_START_MS : Date.now() - entry.timestamp > duration;
   return { url: entry.url, expired };
 }
 
@@ -81,7 +83,9 @@ export async function fetchRobloxProfile(userId: string): Promise<RobloxProfileI
       return info;
     })
     .catch(() => null)
-    .finally(() => { inFlightProfiles.delete(userId); });
+    .finally(() => {
+      inFlightProfiles.delete(userId);
+    });
 
   inFlightProfiles.set(userId, task);
   return task;

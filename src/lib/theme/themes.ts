@@ -33,9 +33,13 @@ interface CustomThemePayload {
 
 function hexToRgbTriplet(color: string): string {
   const hex = color.trim().replace(/^#/, "");
-  const normalized = hex.length === 3
-    ? hex.split("").map((char) => `${char}${char}`).join("")
-    : hex;
+  const normalized =
+    hex.length === 3
+      ? hex
+          .split("")
+          .map((char) => `${char}${char}`)
+          .join("")
+      : hex;
 
   if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
     throw new Error(`Unsupported theme color format: ${color}`);
@@ -109,8 +113,17 @@ const BUILT_IN_THEME_MAP = new Map(BUILT_IN_THEMES.map((theme) => [theme.id, the
 const customThemes = new Map<string, AppThemeDefinition>();
 
 const REQUIRED_TOKEN_KEYS: (keyof ThemeTokens)[] = [
-  "bgRgb", "bgCard", "bgCardHover", "bgMuted", "bgElevated",
-  "fg", "fgMuted", "fgSubtle", "border", "danger", "afkText",
+  "bgRgb",
+  "bgCard",
+  "bgCardHover",
+  "bgMuted",
+  "bgElevated",
+  "fg",
+  "fgMuted",
+  "fgSubtle",
+  "border",
+  "danger",
+  "afkText",
 ];
 
 function isValidTokens(tokens: unknown): tokens is ThemeTokens {
@@ -123,15 +136,15 @@ function isValidTokens(tokens: unknown): tokens is ThemeTokens {
 
 export function getThemeDefinition(themeId: string | null | undefined): AppThemeDefinition {
   if (!themeId) return BUILT_IN_THEME_MAP.get(DEFAULT_THEME_ID)!;
-  return customThemes.get(themeId)
-    ?? BUILT_IN_THEME_MAP.get(themeId)
-    ?? BUILT_IN_THEME_MAP.get(DEFAULT_THEME_ID)!;
+  return (
+    customThemes.get(themeId) ??
+    BUILT_IN_THEME_MAP.get(themeId) ??
+    BUILT_IN_THEME_MAP.get(DEFAULT_THEME_ID)!
+  );
 }
 
 export function getAllThemes(): AppThemeDefinition[] {
-  const custom = [...customThemes.values()].filter(
-    (t) => !BUILT_IN_THEME_MAP.has(t.id),
-  );
+  const custom = [...customThemes.values()].filter((t) => !BUILT_IN_THEME_MAP.has(t.id));
   return [...BUILT_IN_THEMES, ...custom];
 }
 

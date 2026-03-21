@@ -5,7 +5,8 @@ export function formatRelativeTimeFromUnixSeconds(
   locale: Locale = DEFAULT_LOCALE,
   unknownKey: MessageKey = "time.unknown",
 ): string {
-  if (!timestamp || !Number.isFinite(timestamp) || timestamp <= 0) return translate(locale, unknownKey);
+  if (!timestamp || !Number.isFinite(timestamp) || timestamp <= 0)
+    return translate(locale, unknownKey);
   const thenMs = timestamp * 1000;
   const nowMs = Date.now();
   const deltaMs = Math.max(0, nowMs - thenMs);

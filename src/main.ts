@@ -22,7 +22,8 @@ function serializeLogValue(value: unknown, seen = new WeakSet<object>()): string
   }
 
   if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean" || value == null) return String(value);
+  if (typeof value === "number" || typeof value === "boolean" || value == null)
+    return String(value);
   if (typeof value === "bigint") return value.toString();
 
   if (typeof value === "object") {
@@ -73,21 +74,29 @@ async function finishBoot(source: string) {
   }
 }
 
-window.addEventListener("accshift:boot-ready", () => {
-  queueLog("info", "frontend.boot", "Received boot-ready signal");
-  window.setTimeout(() => {
-    void finishBoot("frontend.boot-ready");
-  }, 50);
-}, { once: true });
+window.addEventListener(
+  "accshift:boot-ready",
+  () => {
+    queueLog("info", "frontend.boot", "Received boot-ready signal");
+    window.setTimeout(() => {
+      void finishBoot("frontend.boot-ready");
+    }, 50);
+  },
+  { once: true },
+);
 
-window.addEventListener("load", () => {
-  queueLog("info", "frontend.boot", "Window load event fired");
-  window.setTimeout(() => {
-    if (bootFinished) return;
-    queueLog("warn", "frontend.boot", "1500ms fallback elapsed before boot-ready");
-    void finishBoot("frontend.load-fallback-1500ms");
-  }, 1500);
-}, { once: true });
+window.addEventListener(
+  "load",
+  () => {
+    queueLog("info", "frontend.boot", "Window load event fired");
+    window.setTimeout(() => {
+      if (bootFinished) return;
+      queueLog("warn", "frontend.boot", "1500ms fallback elapsed before boot-ready");
+      void finishBoot("frontend.load-fallback-1500ms");
+    }, 1500);
+  },
+  { once: true },
+);
 
 window.addEventListener("error", (event) => {
   const message = event.message || "Unhandled window error";
@@ -124,7 +133,12 @@ async function bootstrap() {
     await initializeClientStorage();
     queueLog("info", "frontend.storage", "Client storage initialized");
   } catch (reason) {
-    queueLog("error", "frontend.storage", "Failed to initialize client storage", serializeLogValue(reason));
+    queueLog(
+      "error",
+      "frontend.storage",
+      "Failed to initialize client storage",
+      serializeLogValue(reason),
+    );
   }
 
   try {

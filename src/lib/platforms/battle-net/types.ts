@@ -8,4 +8,3 @@ export interface BattleNetStartupSnapshot {
   accounts: BattleNetAccount[];
   currentAccount: string;
 }
-

@@ -1,7 +1,4 @@
-import type {
-  PlatformAccount,
-  PlatformAddFlowStatus,
-} from "$lib/shared/platform";
+import type { PlatformAccount, PlatformAddFlowStatus } from "$lib/shared/platform";
 import type { CardExtensionContent } from "$lib/shared/cardExtension";
 import { getPlatform } from "$lib/shared/platform";
 import type { MessageKey, TranslationParams } from "$lib/i18n";
@@ -163,9 +160,13 @@ export function createPlatformAddFlowController({
         if (getActiveTab() === current.platformId) {
           loadAccounts(true, false, false, false, false);
         }
-        showToast(nextStatus.accountDisplayName
-          ? t(getSetupKey(current.platformId, "readyWithProfile"), { profile: nextStatus.accountDisplayName })
-          : t(getSetupKey(current.platformId, "ready")));
+        showToast(
+          nextStatus.accountDisplayName
+            ? t(getSetupKey(current.platformId, "readyWithProfile"), {
+                profile: nextStatus.accountDisplayName,
+              })
+            : t(getSetupKey(current.platformId, "ready")),
+        );
         stop();
         if (adapter?.setAccountLabel && nextStatus.accountId) {
           onAccountAdded?.(current.platformId, nextStatus.accountId);
@@ -238,10 +239,14 @@ export function createPlatformAddFlowController({
                 title: t("riot.setupFailed"),
                 text: t("riot.setupFailedMessage"),
               },
-              ...(error ? [{
-                lines: [error],
-                chips: [{ text: t("common.close"), tone: "red" as const }],
-              }] : []),
+              ...(error
+                ? [
+                    {
+                      lines: [error],
+                      chips: [{ text: t("common.close"), tone: "red" as const }],
+                    },
+                  ]
+                : []),
             ],
           };
         case "ready":
@@ -279,10 +284,21 @@ export function createPlatformAddFlowController({
           return {
             sections: [
               {
-                link: { label: "roblox.com/quick-login", url: "https://www.roblox.com/crossdevicelogin/ConfirmCode" },
+                link: {
+                  label: "roblox.com/quick-login",
+                  url: "https://www.roblox.com/crossdevicelogin/ConfirmCode",
+                },
                 chips: [
                   { text: "Quick Login", tone: "green" as const },
-                  ...(display ? [{ text: t("roblox.copyCode"), tone: "slate" as const, onClick: () => copyToClipboard(display) }] : []),
+                  ...(display
+                    ? [
+                        {
+                          text: t("roblox.copyCode"),
+                          tone: "slate" as const,
+                          onClick: () => copyToClipboard(display),
+                        },
+                      ]
+                    : []),
                 ],
                 loading: true,
               },
@@ -309,10 +325,14 @@ export function createPlatformAddFlowController({
                 title: t("battlenet.setupFailed"),
                 text: t("battlenet.setupFailedMessage"),
               },
-              ...(error ? [{
-                lines: [error],
-                chips: [{ text: t("common.close"), tone: "red" as const }],
-              }] : []),
+              ...(error
+                ? [
+                    {
+                      lines: [error],
+                      chips: [{ text: t("common.close"), tone: "red" as const }],
+                    },
+                  ]
+                : []),
             ],
           };
         case "ready":
@@ -351,10 +371,14 @@ export function createPlatformAddFlowController({
               title: t(getSetupKey(flow.platformId, "failed")),
               text: t(getSetupKey(flow.platformId, "failedMessage")),
             },
-            ...(error ? [{
-              lines: [error],
-              chips: [{ text: t("common.close"), tone: "red" as const }],
-            }] : []),
+            ...(error
+              ? [
+                  {
+                    lines: [error],
+                    chips: [{ text: t("common.close"), tone: "red" as const }],
+                  },
+                ]
+              : []),
           ],
         };
       case "ready":
@@ -375,10 +399,10 @@ export function createPlatformAddFlowController({
 
   function isForcedOpen(accountId: string): boolean {
     return Boolean(
-      flow
-      && flow.platformId === getActiveTab()
-      && flow.status.setupId === accountId
-      && flow.status.state !== "ready"
+      flow &&
+      flow.platformId === getActiveTab() &&
+      flow.status.setupId === accountId &&
+      flow.status.state !== "ready",
     );
   }
 
@@ -387,8 +411,12 @@ export function createPlatformAddFlowController({
   }
 
   return {
-    get flow() { return flow; },
-    get pendingSetupAccount() { return pendingSetupAccount; },
+    get flow() {
+      return flow;
+    },
+    get pendingSetupAccount() {
+      return pendingSetupAccount;
+    },
     clearTimer,
     stop,
     start,

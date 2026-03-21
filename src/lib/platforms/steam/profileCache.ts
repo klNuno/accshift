@@ -35,7 +35,8 @@ function isSafeAvatarUrl(value: string): boolean {
 function sanitizeCachedProfile(value: unknown): CachedProfile | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const raw = value as Partial<CachedProfile>;
-  if (typeof raw.url !== "string" || raw.url.trim().length === 0 || !isSafeAvatarUrl(raw.url)) return null;
+  if (typeof raw.url !== "string" || raw.url.trim().length === 0 || !isSafeAvatarUrl(raw.url))
+    return null;
   const timestamp = Number(raw.timestamp);
   if (!Number.isFinite(timestamp) || timestamp < 0) return null;
   return {
@@ -81,7 +82,9 @@ function saveCache(cache: ProfileCache) {
   setClientStoreValue(CLIENT_STORE_STEAM_PROFILE_CACHE, cache);
 }
 
-function hasSafeAvatarUrl(profile: ProfileInfo | null): profile is ProfileInfo & { avatar_url: string } {
+function hasSafeAvatarUrl(
+  profile: ProfileInfo | null,
+): profile is ProfileInfo & { avatar_url: string } {
   const avatarUrl = profile?.avatar_url?.trim() ?? "";
   return avatarUrl.length > 0 && isSafeAvatarUrl(avatarUrl);
 }
@@ -113,8 +116,7 @@ async function fetchProfileWithRetries(steamId: string): Promise<ProfileInfo | n
           return profile;
         }
       }
-    } catch {
-    }
+    } catch {}
 
     if (attempt < PROFILE_FETCH_ATTEMPTS - 1) {
       await delay(PROFILE_FETCH_RETRY_DELAY_MS);
@@ -135,9 +137,8 @@ export function getCachedProfile(steamId: string): {
   if (!cached) return null;
 
   const duration = getCacheDuration();
-  const expired = duration === 0
-    ? cached.timestamp < SESSION_START_MS
-    : Date.now() - cached.timestamp > duration;
+  const expired =
+    duration === 0 ? cached.timestamp < SESSION_START_MS : Date.now() - cached.timestamp > duration;
   return {
     url: cached.url,
     displayName: cached.displayName,
@@ -145,10 +146,7 @@ export function getCachedProfile(steamId: string): {
   };
 }
 
-export function setCachedProfile(
-  steamId: string,
-  data: { url: string; displayName?: string },
-) {
+export function setCachedProfile(steamId: string, data: { url: string; displayName?: string }) {
   if (!isSafeAvatarUrl(data.url)) return;
   const cache = getCache();
   cache[steamId] = {
@@ -159,9 +157,7 @@ export function setCachedProfile(
   saveCache(cache);
 }
 
-export async function fetchProfile(
-  steamId: string,
-): Promise<ProfileInfo | null> {
+export async function fetchProfile(steamId: string): Promise<ProfileInfo | null> {
   const existing = inFlightProfiles.get(steamId);
   if (existing) {
     return existing;

@@ -6,10 +6,9 @@ const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 // --- Minimal MD5 (RFC 1321) ---
 
 const S = [
-  7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
-  5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
-  4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
-  6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+  7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14,
+  20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15, 21, 6,
+  10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
 ];
 
 const K = new Uint32Array(64);
@@ -20,7 +19,7 @@ for (let i = 0; i < 64; i++) {
 function md5(input: Uint8Array): Uint8Array {
   const msgLen = input.length;
   const bitLen = msgLen * 8;
-  const padCount = ((55 - (msgLen % 64)) + 64) % 64;
+  const padCount = (55 - (msgLen % 64) + 64) % 64;
   const totalLen = msgLen + 1 + padCount + 8;
   const padded = new Uint8Array(totalLen);
   padded.set(input);
@@ -37,13 +36,25 @@ function md5(input: Uint8Array): Uint8Array {
     const M = new Uint32Array(16);
     for (let j = 0; j < 16; j++) M[j] = dv.getUint32(off + j * 4, true);
 
-    let A = a0, B = b0, C = c0, D = d0;
+    let A = a0,
+      B = b0,
+      C = c0,
+      D = d0;
     for (let i = 0; i < 64; i++) {
       let F: number, g: number;
-      if (i < 16) { F = (B & C) | (~B & D); g = i; }
-      else if (i < 32) { F = (D & B) | (~D & C); g = (5 * i + 1) % 16; }
-      else if (i < 48) { F = B ^ C ^ D; g = (3 * i + 5) % 16; }
-      else { F = C ^ (B | ~D); g = (7 * i) % 16; }
+      if (i < 16) {
+        F = (B & C) | (~B & D);
+        g = i;
+      } else if (i < 32) {
+        F = (D & B) | (~D & C);
+        g = (5 * i + 1) % 16;
+      } else if (i < 48) {
+        F = B ^ C ^ D;
+        g = (3 * i + 5) % 16;
+      } else {
+        F = C ^ (B | ~D);
+        g = (7 * i) % 16;
+      }
 
       F = (F + A + K[i] + M[g]) >>> 0;
       A = D;
@@ -72,7 +83,7 @@ function md5(input: Uint8Array): Uint8Array {
 function toLEBytes(n: bigint): Uint8Array {
   const r = new Uint8Array(8);
   for (let i = 0; i < 8; i++) {
-    r[i] = Number(n & 0xFFn);
+    r[i] = Number(n & 0xffn);
     n >>= 8n;
   }
   return r;
@@ -89,8 +100,8 @@ function fromLEBytes(bytes: Uint8Array): bigint {
 // --- Friend Code ---
 
 function hashSteamId(steamid: bigint): bigint {
-  const accountId = steamid & 0xFFFFFFFFn;
-  const strangeSteamId = accountId | 0x4353474F00000000n;
+  const accountId = steamid & 0xffffffffn;
+  const strangeSteamId = accountId | 0x4353474f00000000n;
   const hash = md5(toLEBytes(strangeSteamId));
   return fromLEBytes(hash.slice(0, 4));
 }
@@ -105,7 +116,7 @@ export function encodeFriendCode(steamId64: string): string {
 
   let r = 0n;
   for (let i = 0; i < 8; i++) {
-    const idNibble = steamid & 0xFn;
+    const idNibble = steamid & 0xfn;
     steamid >>= 4n;
     const hashNibble = (h >> BigInt(i)) & 1n;
 
@@ -124,7 +135,7 @@ export function encodeFriendCode(steamId64: string): string {
     if (i === 4 || i === 9) {
       code += "-";
     }
-    code += ALPHABET[Number(val & 0x1Fn)];
+    code += ALPHABET[Number(val & 0x1fn)];
     val >>= 5n;
   }
 

@@ -63,7 +63,9 @@ function sanitizePinHash(value: unknown): string {
   return isValidPinHash(normalized) ? normalized : "";
 }
 
-function sanitizeShowLastLoginPerPlatform(rawAccountDisplay: Record<string, unknown>): Record<string, boolean> {
+function sanitizeShowLastLoginPerPlatform(
+  rawAccountDisplay: Record<string, unknown>,
+): Record<string, boolean> {
   const rawMap = asRecord(rawAccountDisplay.showLastLoginPerPlatform);
   const defaults = DEFAULTS.accountDisplay.showLastLoginPerPlatform;
   const result: Record<string, boolean> = {};
@@ -91,16 +93,18 @@ function sanitizeSettings(value: unknown): AppSettings {
   const rawAccountDisplay = asRecord(raw.accountDisplay);
   const hasLanguage = Object.prototype.hasOwnProperty.call(raw, "language");
   const enabledPlatformsRaw = Array.isArray(raw.enabledPlatforms) ? raw.enabledPlatforms : [];
-  const enabledPlatforms = Array.from(new Set(
-    enabledPlatformsRaw
-      .filter((platformId): platformId is string => typeof platformId === "string")
-      .filter((platformId) => PLATFORM_IDS.has(platformId))
-  ));
-  const normalizedEnabledPlatforms = enabledPlatforms.length > 0
-    ? enabledPlatforms
-    : [...DEFAULTS.enabledPlatforms];
+  const enabledPlatforms = Array.from(
+    new Set(
+      enabledPlatformsRaw
+        .filter((platformId): platformId is string => typeof platformId === "string")
+        .filter((platformId) => PLATFORM_IDS.has(platformId)),
+    ),
+  );
+  const normalizedEnabledPlatforms =
+    enabledPlatforms.length > 0 ? enabledPlatforms : [...DEFAULTS.enabledPlatforms];
 
-  const defaultPlatformIdRaw = typeof raw.defaultPlatformId === "string" ? raw.defaultPlatformId : DEFAULTS.defaultPlatformId;
+  const defaultPlatformIdRaw =
+    typeof raw.defaultPlatformId === "string" ? raw.defaultPlatformId : DEFAULTS.defaultPlatformId;
   const defaultPlatformId = normalizedEnabledPlatforms.includes(defaultPlatformIdRaw)
     ? defaultPlatformIdRaw
     : normalizedEnabledPlatforms[0];
@@ -114,7 +118,7 @@ function sanitizeSettings(value: unknown): AppSettings {
         ? raw.themeId
         : raw.theme === "light"
           ? "light"
-          : DEFAULTS.themeId
+          : DEFAULTS.themeId,
     ).id,
     backgroundOpacity: clampInt(raw.backgroundOpacity, 0, 100, DEFAULTS.backgroundOpacity),
     uiScalePercent: clampInt(raw.uiScalePercent, 75, 150, DEFAULTS.uiScalePercent),
@@ -136,19 +140,29 @@ function sanitizeSettings(value: unknown): AppSettings {
     },
     enabledPlatforms: normalizedEnabledPlatforms,
     defaultPlatformId,
-    inactivityBlurSeconds: clampInt(raw.inactivityBlurSeconds, 0, 3600, DEFAULTS.inactivityBlurSeconds),
+    inactivityBlurSeconds: clampInt(
+      raw.inactivityBlurSeconds,
+      0,
+      3600,
+      DEFAULTS.inactivityBlurSeconds,
+    ),
     platformSettings: {
       steam: {
         runAsAdmin: Boolean(rawSteamSettings.runAsAdmin ?? raw.steamRunAsAdmin),
-        launchOptions: typeof (rawSteamSettings.launchOptions ?? raw.steamLaunchOptions) === "string"
-          ? String(rawSteamSettings.launchOptions ?? raw.steamLaunchOptions).trim().slice(0, 256)
-          : "",
+        launchOptions:
+          typeof (rawSteamSettings.launchOptions ?? raw.steamLaunchOptions) === "string"
+            ? String(rawSteamSettings.launchOptions ?? raw.steamLaunchOptions)
+                .trim()
+                .slice(0, 256)
+            : "",
       },
     },
     accountDisplay: {
       showUsernames: rawAccountDisplay.showUsernames !== false && raw.showUsernames !== false,
       showLastLoginPerPlatform: sanitizeShowLastLoginPerPlatform(rawAccountDisplay),
-      showCardNotesInline: Boolean(rawAccountDisplay.showCardNotesInline ?? raw.showCardNotesInline),
+      showCardNotesInline: Boolean(
+        rawAccountDisplay.showCardNotesInline ?? raw.showCardNotesInline,
+      ),
     },
     pinEnabled,
     pinHash,
@@ -191,11 +205,14 @@ export function saveSettings(settings: AppSettings) {
   setClientStoreValue(CLIENT_STORE_SETTINGS, sanitized);
   try {
     const theme = getThemeDefinition(sanitized.themeId);
-    localStorage.setItem("accshift_boot_theme", JSON.stringify({
-      colorScheme: theme.colorScheme,
-      bg: `rgb(${theme.tokens.bgRgb})`,
-      fg: theme.tokens.fg,
-    }));
+    localStorage.setItem(
+      "accshift_boot_theme",
+      JSON.stringify({
+        colorScheme: theme.colorScheme,
+        bg: `rgb(${theme.tokens.bgRgb})`,
+        fg: theme.tokens.fg,
+      }),
+    );
   } catch {
     // non-critical
   }

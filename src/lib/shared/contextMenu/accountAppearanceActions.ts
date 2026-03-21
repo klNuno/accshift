@@ -32,8 +32,8 @@ export function getAccountAppearanceContextActions(
 ): ContextMenuAction[] {
   const existingNote = callbacks.getExistingNote();
   const currentColor = callbacks.getCurrentColor();
-  const getColorLabel = callbacks.getColorLabel
-    ?? ((presetId) => callbacks.t(DEFAULT_COLOR_LABEL_KEYS[presetId]));
+  const getColorLabel =
+    callbacks.getColorLabel ?? ((presetId) => callbacks.t(DEFAULT_COLOR_LABEL_KEYS[presetId]));
 
   return [
     {
@@ -43,22 +43,22 @@ export function getAccountAppearanceContextActions(
       submenu: [
         {
           id: `account.appearance.note.${account.id}`,
-          label: existingNote ? callbacks.t("context.menu.editNote") : callbacks.t("context.menu.addNote"),
+          label: existingNote
+            ? callbacks.t("context.menu.editNote")
+            : callbacks.t("context.menu.addNote"),
           action: () => callbacks.openNoteEditor(existingNote),
         },
         {
           id: `account.appearance.color.${account.id}`,
           kind: "swatches",
           label: callbacks.t("context.menu.cardColor"),
-          swatches: [
-            ...ACCOUNT_CARD_COLOR_PRESETS.map((preset) => ({
-              id: preset.id,
-              label: getColorLabel(preset.id),
-              color: preset.color,
-              active: currentColor === preset.color,
-              action: () => callbacks.setColor(preset.color),
-            })),
-          ],
+          swatches: ACCOUNT_CARD_COLOR_PRESETS.map((preset) => ({
+            id: preset.id,
+            label: getColorLabel(preset.id),
+            color: preset.color,
+            active: currentColor === preset.color,
+            action: () => callbacks.setColor(preset.color),
+          })),
         },
       ],
     },

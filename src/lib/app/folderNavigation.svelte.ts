@@ -1,7 +1,4 @@
-import {
-  getItemsInFolder,
-  getFolderPath,
-} from "$lib/features/folders/store";
+import { getItemsInFolder, getFolderPath } from "$lib/features/folders/store";
 import type { ItemRef } from "$lib/features/folders/types";
 
 export type AppHistoryEntry = {
@@ -24,16 +21,36 @@ export function createFolderNavigation(getActiveTab: () => string) {
   }
 
   return {
-    get currentFolderId() { return currentFolderId; },
-    set currentFolderId(next: string | null) { currentFolderId = next; },
-    get currentItems() { return currentItems; },
-    set currentItems(next: ItemRef[]) { currentItems = next; },
-    get folderPath() { return folderPath; },
-    get folderItems() { return folderItems; },
-    get accountItems() { return accountItems; },
-    get searchQuery() { return searchQuery; },
-    set searchQuery(next: string) { searchQuery = next; },
-    get isSearching() { return isSearching; },
+    get currentFolderId() {
+      return currentFolderId;
+    },
+    set currentFolderId(next: string | null) {
+      currentFolderId = next;
+    },
+    get currentItems() {
+      return currentItems;
+    },
+    set currentItems(next: ItemRef[]) {
+      currentItems = next;
+    },
+    get folderPath() {
+      return folderPath;
+    },
+    get folderItems() {
+      return folderItems;
+    },
+    get accountItems() {
+      return accountItems;
+    },
+    get searchQuery() {
+      return searchQuery;
+    },
+    set searchQuery(next: string) {
+      searchQuery = next;
+    },
+    get isSearching() {
+      return isSearching;
+    },
     refreshCurrentItems,
   };
 }

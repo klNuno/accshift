@@ -1,9 +1,6 @@
 import type { ContextMenuAction } from "$lib/shared/contextMenu/types";
 import type { PlatformAccount, PlatformContextMenuCallbacks } from "$lib/shared/platform";
-import {
-  confirmSafeContextAction,
-  createSafeContextAction,
-} from "$lib/shared/contextMenu/actions";
+import { confirmSafeContextAction, createSafeContextAction } from "$lib/shared/contextMenu/actions";
 import { captureProfile, forgetProfile } from "./riotApi";
 import { forgetCachedRiotProfile, getCachedRiotProfileMeta } from "./accountCache";
 
@@ -12,9 +9,10 @@ export function getRiotContextMenuItems(
   callbacks: PlatformContextMenuCallbacks,
 ): ContextMenuAction[] {
   const profile = getCachedRiotProfileMeta(account.id);
-  const captureLabel = profile?.snapshot_state === "ready"
-    ? callbacks.t("riot.recaptureSession")
-    : callbacks.t("riot.captureSession");
+  const captureLabel =
+    profile?.snapshot_state === "ready"
+      ? callbacks.t("riot.recaptureSession")
+      : callbacks.t("riot.captureSession");
   return [
     {
       id: `riot.capture.${account.id}`,
@@ -35,14 +33,16 @@ export function getRiotContextMenuItems(
         confirmSafeContextAction(
           callbacks,
           {
-          title: callbacks.t("riot.forgetConfirmTitle", { display }),
-          message: callbacks.t("riot.forgetConfirmMessage"),
-          confirmLabel: callbacks.t("riot.forget"),
+            title: callbacks.t("riot.forgetConfirmTitle", { display }),
+            message: callbacks.t("riot.forgetConfirmMessage"),
+            confirmLabel: callbacks.t("riot.forget"),
           },
           async () => {
             await forgetProfile(account.id);
             forgetCachedRiotProfile(account.id);
-            callbacks.showToast(callbacks.t("riot.forgotProfile", { profile: account.displayName }));
+            callbacks.showToast(
+              callbacks.t("riot.forgotProfile", { profile: account.displayName }),
+            );
             callbacks.refreshAccounts();
           },
         );

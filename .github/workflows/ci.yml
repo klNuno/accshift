@@ -15,36 +15,31 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
-          version: 9
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
+          node-version: 22
+          cache: true
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Vite+ check
+        run: vp check
 
       - name: Svelte check
-        run: pnpm check:frontend
+        run: vp run check:frontend
 
       - name: Build frontend
-        run: pnpm build
+        run: vp build
 
       - name: Cargo fmt
-        run: pnpm fmt:check
+        run: vp run fmt:check
 
       - name: Cargo clippy
-        run: pnpm clippy
+        run: vp run clippy
 
       - name: Cargo check
-        run: pnpm check:rust
+        run: vp run check:rust

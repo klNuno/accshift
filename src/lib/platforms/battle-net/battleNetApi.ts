@@ -23,7 +23,9 @@ export async function getCurrentAccount(): Promise<string> {
 }
 
 export async function getStartupSnapshot(): Promise<BattleNetStartupSnapshot> {
-  return invoke<BattleNetStartupSnapshot>("platform_get_startup_snapshot", { platformId: PLATFORM_ID });
+  return invoke<BattleNetStartupSnapshot>("platform_get_startup_snapshot", {
+    platformId: PLATFORM_ID,
+  });
 }
 
 export async function switchAccount(email: string): Promise<void> {

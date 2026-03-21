@@ -26,7 +26,12 @@ export function createDragManager(options: DragManagerOptions) {
   let dragOverBack = $state(false);
   let isDragging = $state(false);
   let previewIndex = $state<number | null>(null);
-  let pendingDrag = $state<{ item: ItemRef; startX: number; startY: number; sourceEl: HTMLElement } | null>(null);
+  let pendingDrag = $state<{
+    item: ItemRef;
+    startX: number;
+    startY: number;
+    sourceEl: HTMLElement;
+  } | null>(null);
   // Swallow the click generated right after a drag so we do not trigger card actions.
   let eatNextClick = false;
   let ghostEl: HTMLElement | null = null;
@@ -44,7 +49,9 @@ export function createDragManager(options: DragManagerOptions) {
   function refreshSlotRects() {
     if (!dragItem) return;
     const wrapperRef = options.getWrapperRef();
-    const gridEl = wrapperRef?.querySelector(".grid-container, .list-container") as HTMLElement | null;
+    const gridEl = wrapperRef?.querySelector(
+      ".grid-container, .list-container",
+    ) as HTMLElement | null;
     if (!gridEl) {
       slotRects = [];
       dragOldIndex = -1;
@@ -53,9 +60,9 @@ export function createDragManager(options: DragManagerOptions) {
     dragIsListMode = gridEl.classList.contains("list-container");
     const selector = dragItem.type === "folder" ? "[data-folder-id]" : "[data-account-id]";
     const cards = Array.from(gridEl.querySelectorAll(selector)) as HTMLElement[];
-    slotRects = cards.map(el => el.getBoundingClientRect());
+    slotRects = cards.map((el) => el.getBoundingClientRect());
     const items = dragItem.type === "folder" ? options.getFolderItems() : options.getAccountItems();
-    dragOldIndex = items.findIndex(i => i.id === dragItem!.id);
+    dragOldIndex = items.findIndex((i) => i.id === dragItem!.id);
   }
 
   function updateDragAt(clientX: number, clientY: number) {
@@ -74,13 +81,18 @@ export function createDragManager(options: DragManagerOptions) {
       return;
     }
 
-    const hover = el.closest("[data-folder-id], [data-back-card], [data-account-id]") as HTMLElement | null;
+    const hover = el.closest(
+      "[data-folder-id], [data-back-card], [data-account-id]",
+    ) as HTMLElement | null;
 
     if (hover?.dataset.backCard) {
       dragOverBack = true;
       dragOverFolderId = null;
       previewIndex = null;
-    } else if (hover?.dataset.folderId && !(dragItem?.type === "folder" && dragItem?.id === hover.dataset.folderId)) {
+    } else if (
+      hover?.dataset.folderId &&
+      !(dragItem?.type === "folder" && dragItem?.id === hover.dataset.folderId)
+    ) {
       dragOverFolderId = hover.dataset.folderId!;
       dragOverBack = false;
       previewIndex = null;
@@ -92,8 +104,12 @@ export function createDragManager(options: DragManagerOptions) {
         let bestDist = Infinity;
         for (let i = 0; i < slotRects.length; i++) {
           const r = slotRects[i];
-          const dist = (clientX - (r.left + r.width / 2)) ** 2 + (clientY - (r.top + r.height / 2)) ** 2;
-          if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+          const dist =
+            (clientX - (r.left + r.width / 2)) ** 2 + (clientY - (r.top + r.height / 2)) ** 2;
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestIdx = i;
+          }
         }
         const r = slotRects[bestIdx];
         let dropIdx: number;
@@ -197,11 +213,11 @@ export function createDragManager(options: DragManagerOptions) {
         const folderItems = options.getFolderItems();
         const accountItems = options.getAccountItems();
         if (dragItem.type === "folder") {
-          const newFolders = folderItems.filter(i => i.id !== dragItem!.id);
+          const newFolders = folderItems.filter((i) => i.id !== dragItem!.id);
           newFolders.splice(Math.min(previewIndex, newFolders.length), 0, dragItem);
           reorderItems(currentFolderId, activeTab, [...newFolders, ...accountItems]);
         } else {
-          const newAccounts = accountItems.filter(i => i.id !== dragItem!.id);
+          const newAccounts = accountItems.filter((i) => i.id !== dragItem!.id);
           newAccounts.splice(Math.min(previewIndex, newAccounts.length), 0, dragItem);
           reorderItems(currentFolderId, activeTab, [...folderItems, ...newAccounts]);
         }
@@ -217,7 +233,9 @@ export function createDragManager(options: DragManagerOptions) {
 
     eatNextClick = true;
     // If no click event is emitted, clear the guard on the next tick.
-    setTimeout(() => { eatNextClick = false; }, 0);
+    setTimeout(() => {
+      eatNextClick = false;
+    }, 0);
     dragItem = null;
     dragOverFolderId = null;
     dragOverBack = false;
@@ -238,11 +256,21 @@ export function createDragManager(options: DragManagerOptions) {
   }
 
   return {
-    get dragItem() { return dragItem; },
-    get dragOverFolderId() { return dragOverFolderId; },
-    get dragOverBack() { return dragOverBack; },
-    get isDragging() { return isDragging; },
-    get previewIndex() { return previewIndex; },
+    get dragItem() {
+      return dragItem;
+    },
+    get dragOverFolderId() {
+      return dragOverFolderId;
+    },
+    get dragOverBack() {
+      return dragOverBack;
+    },
+    get isDragging() {
+      return isDragging;
+    },
+    get previewIndex() {
+      return previewIndex;
+    },
     handleGridMouseDown,
     handleDocMouseMove,
     handleDocScroll,

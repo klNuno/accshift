@@ -59,9 +59,10 @@ export const steamAdapter: PlatformAdapter = {
 
   isCurrentAccount(account, currentAccount) {
     const needle = currentAccount.trim().toLowerCase();
-    return needle.length > 0 && (
-      account.id.trim().toLowerCase() === needle
-      || account.username.trim().toLowerCase() === needle
+    return (
+      needle.length > 0 &&
+      (account.id.trim().toLowerCase() === needle ||
+        account.username.trim().toLowerCase() === needle)
     );
   },
 
@@ -71,7 +72,7 @@ export const steamAdapter: PlatformAdapter = {
 
   getContextMenuActions(
     account: PlatformAccount,
-    callbacks: PlatformContextMenuCallbacks
+    callbacks: PlatformContextMenuCallbacks,
   ): ContextMenuAction[] {
     return getSteamContextMenuItems(account, callbacks);
   },
@@ -116,8 +117,8 @@ export const steamAdapter: PlatformAdapter = {
   getLoadErrorToastMessage(message, callbacks) {
     const normalized = message.trim().toLowerCase();
     if (
-      normalized.includes("could not locate steam installation")
-      || normalized.includes("could not read steam configuration")
+      normalized.includes("could not locate steam installation") ||
+      normalized.includes("could not read steam configuration")
     ) {
       return callbacks.t("toast.steamFolderNotFound");
     }

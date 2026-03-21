@@ -92,16 +92,21 @@ export interface PlatformAdapter {
   pollAddFlow?(setupId: string): Promise<PlatformAddFlowStatus>;
   cancelAddFlow?(setupId: string): Promise<void>;
 
-  getContextMenuActions(account: PlatformAccount, callbacks: PlatformContextMenuCallbacks): ContextMenuAction[];
+  getContextMenuActions(
+    account: PlatformAccount,
+    callbacks: PlatformContextMenuCallbacks,
+  ): ContextMenuAction[];
 
   setAccountLabel?(accountId: string, label: string): Promise<void>;
 
   getProfileInfo?(accountId: string): Promise<PlatformProfileInfo | null>;
   getCachedProfile?(accountId: string): CachedPlatformProfile | null;
-  getCachedWarningStates?(callbacks: PlatformUiCallbacks): Record<string, AccountWarningPresentation>;
+  getCachedWarningStates?(
+    callbacks: PlatformUiCallbacks,
+  ): Record<string, AccountWarningPresentation>;
   loadWarningStates?(
     accounts: PlatformAccount[],
-    options: PlatformWarningLoadOptions
+    options: PlatformWarningLoadOptions,
   ): Promise<Record<string, AccountWarningPresentation>>;
   getNoAccountsToastMessage?(callbacks: PlatformUiCallbacks): string | null;
   getNoAccountsHintMessage?(callbacks: PlatformUiCallbacks): string | null;

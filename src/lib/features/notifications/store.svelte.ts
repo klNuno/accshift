@@ -25,7 +25,7 @@ export function addToast(message: string, options: AddToastOptions = {}): string
 }
 
 export function removeToast(id: string) {
-  const idx = toasts.findIndex(t => t.id === id);
+  const idx = toasts.findIndex((t) => t.id === id);
   if (idx !== -1) {
     toasts.splice(idx, 1);
   }

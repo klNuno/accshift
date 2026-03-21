@@ -41,30 +41,15 @@
         "dialogImagePath": "icons/installer/wix-dialog.bmp"
       }
     },
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.ico"
-    ]
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"]
   },
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY5QjgxOUY2RjJFMjU5NTMKUldSVFdlTHk5aG00YVVla0RIQ25oZGlMc2tWRVVMTUQrSG96bUtiQ2ZLNFlSRkpmS1pGcVlKSzcK",
-      "endpoints": [
-        "https://github.com/klNuno/accshift/releases/latest/download/latest.json"
-      ],
+      "endpoints": ["https://github.com/klNuno/accshift/releases/latest/download/latest.json"],
       "windows": {
         "installMode": "passive"
       }
     }
   }
 }
-
-
-
-
-
-
-
-

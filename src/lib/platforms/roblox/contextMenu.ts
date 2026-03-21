@@ -13,7 +13,10 @@ export function getRobloxContextMenuItems(
       group: "platform.copy",
       label: callbacks.t("roblox.copyLabelUsername"),
       action: () =>
-        callbacks.copyToClipboard(account.username || account.id, callbacks.t("roblox.copyLabelUsername")),
+        callbacks.copyToClipboard(
+          account.username || account.id,
+          callbacks.t("roblox.copyLabelUsername"),
+        ),
     },
     {
       id: `roblox.copy.userId.${account.id}`,

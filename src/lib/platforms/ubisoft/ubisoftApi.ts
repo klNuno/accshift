@@ -23,7 +23,9 @@ export async function getCurrentAccount(): Promise<string> {
 }
 
 export async function getStartupSnapshot(): Promise<UbisoftStartupSnapshot> {
-  return invoke<UbisoftStartupSnapshot>("platform_get_startup_snapshot", { platformId: PLATFORM_ID });
+  return invoke<UbisoftStartupSnapshot>("platform_get_startup_snapshot", {
+    platformId: PLATFORM_ID,
+  });
 }
 
 export async function switchAccount(uuid: string): Promise<void> {

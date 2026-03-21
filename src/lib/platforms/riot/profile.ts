@@ -16,7 +16,8 @@ export function getRiotProfile(profileId: string): PlatformProfileInfo | null {
   const profile = getCachedRiotProfileMeta(profileId);
   if (!profile) return null;
   const displayName = getProfileDisplayName(profile);
-  const avatarLoading = profile.snapshot_state === "setup_pending" || profile.snapshot_state === "capturing";
+  const avatarLoading =
+    profile.snapshot_state === "setup_pending" || profile.snapshot_state === "capturing";
   return {
     // Riot uses shared fallback gradients for now (no generated local SVG avatar).
     avatarUrl: null,

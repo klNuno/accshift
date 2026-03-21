@@ -5,7 +5,10 @@ import { getPlatformDefinition } from "$lib/platforms/registry";
 import { DEFAULT_LOCALE } from "$lib/i18n";
 import { getThemeDefinition } from "$lib/theme/themes";
 
-export function isPlatformCompatibleWithOs(platform: PlatformDef | undefined, runtimeOs: RuntimeOs): boolean {
+export function isPlatformCompatibleWithOs(
+  platform: PlatformDef | undefined,
+  runtimeOs: RuntimeOs,
+): boolean {
   if (!platform) return false;
   return platform.supportedOs.includes(runtimeOs);
 }
@@ -16,10 +19,15 @@ export function isPlatformUsable(platformId: string, runtimeOs: RuntimeOs): bool
 }
 
 export function getInitialActiveTab(settings: AppSettings, runtimeOs: RuntimeOs): string {
-  if (settings.enabledPlatforms.includes(settings.defaultPlatformId) && isPlatformUsable(settings.defaultPlatformId, runtimeOs)) {
+  if (
+    settings.enabledPlatforms.includes(settings.defaultPlatformId) &&
+    isPlatformUsable(settings.defaultPlatformId, runtimeOs)
+  ) {
     return settings.defaultPlatformId;
   }
-  const firstEnabledUsable = settings.enabledPlatforms.find((platformId) => isPlatformUsable(platformId, runtimeOs));
+  const firstEnabledUsable = settings.enabledPlatforms.find((platformId) =>
+    isPlatformUsable(platformId, runtimeOs),
+  );
   if (firstEnabledUsable) return firstEnabledUsable;
   const firstUsable = ALL_PLATFORMS.find((platform) => isPlatformUsable(platform.id, runtimeOs));
   if (firstUsable) return firstUsable.id;
@@ -33,10 +41,10 @@ export function createPlatformShellState() {
   let adapterEpoch = $state(0);
   let locale = $derived(settings.language ?? DEFAULT_LOCALE);
   let enabledPlatforms = $derived<PlatformDef[]>(
-    ALL_PLATFORMS.filter((platform) => settings.enabledPlatforms.includes(platform.id))
+    ALL_PLATFORMS.filter((platform) => settings.enabledPlatforms.includes(platform.id)),
   );
   let compatiblePlatforms = $derived<PlatformDef[]>(
-    ALL_PLATFORMS.filter((platform) => isPlatformUsable(platform.id, runtimeOs))
+    ALL_PLATFORMS.filter((platform) => isPlatformUsable(platform.id, runtimeOs)),
   );
   let activeTab = $state(getInitialActiveTab(startupSettings, "unknown"));
   let activePlatformDef = $derived(getPlatformDefinition(activeTab));
@@ -88,21 +96,51 @@ export function createPlatformShellState() {
   }
 
   return {
-    get settings() { return settings; },
-    set settings(next: AppSettings) { settings = next; },
-    get runtimeOs() { return runtimeOs; },
-    get locale() { return locale; },
-    get enabledPlatforms() { return enabledPlatforms; },
-    get compatiblePlatforms() { return compatiblePlatforms; },
-    get activeTab() { return activeTab; },
-    get activePlatformDef() { return activePlatformDef; },
-    get activeTabUsable() { return activeTabUsable; },
-    get unavailablePlatformIds() { return unavailablePlatformIds; },
-    get accentColor() { return accentColor; },
-    get activeTheme() { return activeTheme; },
-    get uiZoomFactor() { return uiZoomFactor; },
-    get appStageStyle() { return appStageStyle; },
-    get adapter() { return adapter; },
+    get settings() {
+      return settings;
+    },
+    set settings(next: AppSettings) {
+      settings = next;
+    },
+    get runtimeOs() {
+      return runtimeOs;
+    },
+    get locale() {
+      return locale;
+    },
+    get enabledPlatforms() {
+      return enabledPlatforms;
+    },
+    get compatiblePlatforms() {
+      return compatiblePlatforms;
+    },
+    get activeTab() {
+      return activeTab;
+    },
+    get activePlatformDef() {
+      return activePlatformDef;
+    },
+    get activeTabUsable() {
+      return activeTabUsable;
+    },
+    get unavailablePlatformIds() {
+      return unavailablePlatformIds;
+    },
+    get accentColor() {
+      return accentColor;
+    },
+    get activeTheme() {
+      return activeTheme;
+    },
+    get uiZoomFactor() {
+      return uiZoomFactor;
+    },
+    get appStageStyle() {
+      return appStageStyle;
+    },
+    get adapter() {
+      return adapter;
+    },
     refreshSettings,
     setRuntimeOs,
     setActiveTab,
