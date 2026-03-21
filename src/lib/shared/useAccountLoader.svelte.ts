@@ -65,12 +65,14 @@ export function createAccountLoader(
   let lastLoadErrorToastAt = 0;
   let lastNoAccountsToastAt = 0;
   let latestLoadId = 0;
+  let latestPrimeRunId = 0;
   const t = (key: MessageKey, params?: TranslationParams) =>
     translateMessage?.(key, params) ?? translate(DEFAULT_LOCALE, key, params);
 
-  function resolveVisibleAccounts(source: PlatformAccount[]): PlatformAccount[] {
-    if (!getVisibleAccountIds) return source;
-    const requestedIds = getVisibleAccountIds();
+  function resolveAccountsByIds(
+    source: PlatformAccount[],
+    requestedIds: readonly string[],
+  ): PlatformAccount[] {
     if (!requestedIds.length) return [];
     const byId = new Map(source.map((account) => [account.id, account]));
     const out: PlatformAccount[] = [];
@@ -82,6 +84,11 @@ export function createAccountLoader(
       if (account) out.push(account);
     }
     return out;
+  }
+
+  function resolveVisibleAccounts(source: PlatformAccount[]): PlatformAccount[] {
+    if (!getVisibleAccountIds) return source;
+    return resolveAccountsByIds(source, getVisibleAccountIds());
   }
 
   function updateAvatarState(accountId: string, next: Partial<AvatarState>) {
@@ -203,23 +210,34 @@ export function createAccountLoader(
     });
   }
 
-  async function refreshProfile(adapter: PlatformAdapter, account: PlatformAccount) {
+  async function refreshProfile(
+    adapter: PlatformAdapter,
+    account: PlatformAccount,
+    shouldContinue: () => boolean = () => true,
+  ) {
     if (!adapter.getProfileInfo) return;
+    if (!shouldContinue()) return;
     const profile = await adapter.getProfileInfo(account.id);
+    if (!shouldContinue()) return;
     applyProfileUpdate(account, profile);
   }
 
-  async function loadProfilesForAccounts(accts: PlatformAccount[], forceRefresh = false) {
+  async function loadProfilesForAccounts(
+    accts: PlatformAccount[],
+    forceRefresh = false,
+    shouldContinue: () => boolean = () => true,
+  ) {
     const adapter = getAdapter();
     if (!adapter) return;
     const needsRefresh = seedAvatarStatesForAccounts(accts, forceRefresh);
 
     // Keep requests bounded to avoid API/UI spikes on large account lists.
     for (let i = 0; i < needsRefresh.length; i += BATCH_SIZE) {
+      if (!shouldContinue()) return;
       const batch = needsRefresh.slice(i, i + BATCH_SIZE);
       await Promise.all(
         batch.map(async (account) => {
-          await refreshProfile(adapter, account);
+          await refreshProfile(adapter, account, shouldContinue);
         }),
       );
     }
@@ -230,9 +248,19 @@ export function createAccountLoader(
     accts: PlatformAccount[],
     silent = true,
     forceRefresh = false,
+    shouldContinue: () => boolean = () => true,
   ) {
     if (!adapter.loadWarningStates || accts.length === 0) return;
-    warningStates = await adapter.loadWarningStates(accts, { forceRefresh, silent, t });
+    if (!shouldContinue()) return;
+    const nextWarningStates = await adapter.loadWarningStates(accts, { forceRefresh, silent, t });
+    if (!shouldContinue()) return;
+    warningStates = nextWarningStates;
+  }
+
+  function createPrimeGuard() {
+    const runId = ++latestPrimeRunId;
+    const adapter = getAdapter();
+    return () => runId === latestPrimeRunId && adapter === getAdapter();
   }
 
   async function load(
@@ -246,6 +274,7 @@ export function createAccountLoader(
     const adapter = getAdapter();
     if (!adapter) return;
     const loadId = ++latestLoadId;
+    latestPrimeRunId += 1;
     loading = true;
     error = null;
     try {
@@ -366,16 +395,49 @@ export function createAccountLoader(
     silent = true,
     deferBackground = true,
   ): Promise<number> {
-    const adapter = getAdapter();
     const visibleAccounts = resolveVisibleAccounts(accounts);
-    if (visibleAccounts.length === 0) return 0;
+    return refreshAccounts(visibleAccounts, checkBans, forceRefresh, silent, deferBackground);
+  }
+
+  async function refreshAccountIds(
+    accountIds: readonly string[],
+    checkBans = false,
+    forceRefresh = false,
+    silent = true,
+    deferBackground = true,
+  ): Promise<number> {
+    const targetAccounts = resolveAccountsByIds(accounts, accountIds);
+    return refreshAccounts(targetAccounts, checkBans, forceRefresh, silent, deferBackground);
+  }
+
+  async function refreshAccounts(
+    targetAccounts: PlatformAccount[],
+    checkBans = false,
+    forceRefresh = false,
+    silent = true,
+    deferBackground = true,
+  ): Promise<number> {
+    const adapter = getAdapter();
+    if (targetAccounts.length === 0) return 0;
+    const shouldContinue = createPrimeGuard();
     const run = async () => {
-      const tasks: Promise<unknown>[] = [loadProfilesForAccounts(visibleAccounts, forceRefresh)];
+      if (!shouldContinue()) return 0;
+      const tasks: Promise<unknown>[] = [
+        loadProfilesForAccounts(targetAccounts, forceRefresh, shouldContinue),
+      ];
       if (checkBans && adapter?.loadWarningStates) {
-        tasks.push(loadWarningStatesForAccounts(adapter, visibleAccounts, silent, forceRefresh));
+        tasks.push(
+          loadWarningStatesForAccounts(
+            adapter,
+            targetAccounts,
+            silent,
+            forceRefresh,
+            shouldContinue,
+          ),
+        );
       }
       await Promise.all(tasks);
-      return visibleAccounts.length;
+      return shouldContinue() ? targetAccounts.length : 0;
     };
     if (deferBackground) {
       return new Promise((resolve) => {
@@ -389,12 +451,21 @@ export function createAccountLoader(
 
   function prepareVisibleAccounts(forceRefresh = false): number {
     const visibleAccounts = resolveVisibleAccounts(accounts);
-    seedAvatarStatesForAccounts(visibleAccounts, forceRefresh);
-    return visibleAccounts.length;
+    return prepareAccounts(visibleAccounts, forceRefresh);
+  }
+
+  function prepareAccountIds(accountIds: readonly string[], forceRefresh = false): number {
+    return prepareAccounts(resolveAccountsByIds(accounts, accountIds), forceRefresh);
+  }
+
+  function prepareAccounts(targetAccounts: PlatformAccount[], forceRefresh = false): number {
+    seedAvatarStatesForAccounts(targetAccounts, forceRefresh);
+    return targetAccounts.length;
   }
 
   function clearForPlatformChange() {
     latestLoadId += 1;
+    latestPrimeRunId += 1;
     accounts = [];
     currentAccount = "";
     loading = true;
@@ -438,7 +509,9 @@ export function createAccountLoader(
     switchTo,
     addNew,
     clearForPlatformChange,
+    prepareAccountIds,
     prepareVisibleAccounts,
+    primeAccountIds: refreshAccountIds,
     primeVisibleAccounts: refreshVisibleAccounts,
     refreshVisibleAccounts,
   };

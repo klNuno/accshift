@@ -296,12 +296,43 @@
 
   type PendingUpdate = NonNullable<Awaited<ReturnType<typeof check>>>;
   type UpdateState = "idle" | "checking" | "downloading" | "ready" | "applying";
+  const VISIBLE_PRIME_DEBOUNCE_MS = 120;
   let updateState = $state<UpdateState>("idle");
   let updateVersion = $state("");
   let pendingUpdate = $state<PendingUpdate | null>(null);
   let appVersion = $state("");
   let loadingAdapterFor = $state<string | null>(null);
   let lastPreparedVisibleKey = "";
+  let lastPrimedVisibleIds = new Set<string>();
+  let visiblePrimeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearVisiblePrimeTimer() {
+    if (visiblePrimeTimer) {
+      clearTimeout(visiblePrimeTimer);
+      visiblePrimeTimer = null;
+    }
+  }
+
+  function resetVisiblePrimeState() {
+    clearVisiblePrimeTimer();
+    lastPreparedVisibleKey = "";
+    lastPrimedVisibleIds = new Set();
+  }
+
+  function scheduleVisiblePrime(visibleIds: string[], newlyVisibleIds: string[]) {
+    clearVisiblePrimeTimer();
+    visiblePrimeTimer = setTimeout(() => {
+      visiblePrimeTimer = null;
+      loader.prepareAccountIds(visibleIds);
+      void loader.primeAccountIds(
+        newlyVisibleIds.length > 0 ? newlyVisibleIds : visibleIds,
+        true,
+        false,
+        true,
+        true,
+      );
+    }, VISIBLE_PRIME_DEBOUNCE_MS);
+  }
 
   function semverCore(version: string): string {
     const match = version.match(/\d+\.\d+\.\d+/);
@@ -406,6 +437,17 @@
     return [...displayAccountItems, { type: "account" as const, id: pending.id }];
   });
 
+  let visibleRenderedAccountIds = $derived.by(() => {
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    for (const item of displayAccountItemsWithPending) {
+      if (item.type !== "account" || seen.has(item.id)) continue;
+      seen.add(item.id);
+      ids.push(item.id);
+    }
+    return ids;
+  });
+
   let renderedAccountMap = $derived.by(() => {
     const pending = addFlow.pendingSetupAccount;
     if (!pending) return loader.accountMap;
@@ -421,15 +463,24 @@
   });
 
   $effect(() => {
-    if (showSettings || !shell.adapter || loader.loading || !windowForeground || renderSuspended) return;
-    const visibleIds = (navigation.isSearching ? filteredAccountItems : navigation.currentItems.filter((item) => item.type === "account"))
-      .map((item) => item.id);
-    if (visibleIds.length === 0) return;
-    const visibleKey = `${shell.activeTab}:${navigation.isSearching ? "search" : "folder"}:${visibleIds.join(",")}`;
+    if (showSettings || !shell.adapter || loader.loading || !windowForeground || renderSuspended) {
+      resetVisiblePrimeState();
+      return;
+    }
+    const visibleIds = visibleRenderedAccountIds;
+    if (visibleIds.length === 0) {
+      resetVisiblePrimeState();
+      return;
+    }
+    const visibleKey = `${shell.activeTab}:${navigation.isSearching ? "search" : "folder"}:${[...visibleIds].sort().join(",")}`;
     if (visibleKey === lastPreparedVisibleKey) return;
+    const previouslyPrimedIds = lastPrimedVisibleIds;
     lastPreparedVisibleKey = visibleKey;
-    loader.prepareVisibleAccounts();
-    loader.primeVisibleAccounts(true, false, true, true);
+    lastPrimedVisibleIds = new Set(visibleIds);
+    scheduleVisiblePrime(
+      visibleIds,
+      visibleIds.filter((accountId) => !previouslyPrimedIds.has(accountId)),
+    );
   });
 
   function showToast(msg: string) { addToast(msg); }
@@ -560,12 +611,8 @@
 
   let accountExtensionContentById = $derived.by(() => {
     trackDependencies(locale, cardNoteVersion, settings.accountDisplay.showCardNotesInline);
-    const pending = addFlow.pendingSetupAccount;
-    const accountIds = new Set(loader.accounts.map((account) => account.id));
-    if (pending) accountIds.add(pending.id);
-
     const contentById: Record<string, CardExtensionContent | null> = {};
-    for (const accountId of accountIds) {
+    for (const accountId of visibleRenderedAccountIds) {
       const setupContent = addFlow.getSetupExtensionContent(accountId);
       if (setupContent) {
         contentById[accountId] = setupContent;
@@ -1233,6 +1280,7 @@
   });
 
   onDestroy(() => {
+    clearVisiblePrimeTimer();
     if (afkWaveStopTimer) {
       clearTimeout(afkWaveStopTimer);
       afkWaveStopTimer = null;
