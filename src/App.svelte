@@ -1,11 +1,9 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { getVersion } from "@tauri-apps/api/app";
   import { invoke } from "@tauri-apps/api/core";
   import TitleBar from "$lib/shared/components/TitleBar.svelte";
   import { getToasts, addToast, removeToast } from "$lib/features/notifications/store.svelte";
   import { getSettings, saveSettings } from "$lib/features/settings/store";
-  import type { RuntimeOs } from "$lib/features/settings/types";
   import type {
     PlatformAccount,
     PlatformContextMenuConfirmConfig,
@@ -47,27 +45,8 @@
     getInitialActiveTab,
     isPlatformUsable,
   } from "$lib/app/platformShell.svelte";
-  import { applyThemeToDocument, loadCustomThemes } from "$lib/theme/themes";
+  import { applyThemeToDocument } from "$lib/theme/themes";
   import { ensurePlatformLoaded } from "$lib/platforms/registry";
-  import {
-    CLIENT_STORE_ACCOUNT_CARD_COLORS,
-    CLIENT_STORE_ACCOUNT_CARD_NOTES,
-    CLIENT_STORE_FOLDER_CARD_COLORS,
-    CLIENT_STORE_FOLDERS,
-    CLIENT_STORE_ROBLOX_PROFILE_CACHE,
-    CLIENT_STORE_SETTINGS,
-    CLIENT_STORE_STEAM_BAN_CHECK_STATE,
-    CLIENT_STORE_STEAM_BAN_INFO_CACHE,
-    CLIENT_STORE_STEAM_PROFILE_CACHE,
-    CLIENT_STORE_VIEW_MODE,
-    refreshClientStorageIfChanged,
-    STORAGE_TARGET_APP_CONFIG_LOCAL,
-    STORAGE_TARGET_APP_CONFIG_PORTABLE,
-    STORAGE_TARGET_CUSTOM_THEMES,
-    STORAGE_TARGET_EPIC_SNAPSHOTS,
-    STORAGE_TARGET_RIOT_SNAPSHOTS,
-    STORAGE_TARGET_UBISOFT_SNAPSHOTS,
-  } from "$lib/storage/clientStorage";
   import {
     createFolderNavigation,
     type AppHistoryEntry,
@@ -77,6 +56,7 @@
   import AppDialogs from "$lib/app/AppDialogs.svelte";
   import AppScreenOverlays from "$lib/app/AppScreenOverlays.svelte";
   import { createAppUpdater } from "$lib/app/useAppUpdater.svelte";
+  import { createAppLifecycleController } from "$lib/app/useAppLifecycle.svelte";
   import { createSecureScreenController } from "$lib/app/useSecureScreen.svelte";
   import type { BulkEditResult } from "$lib/platforms/steam/steamApi";
   type SettingsComponentType = (typeof import("$lib/features/settings/Settings.svelte"))["default"];
@@ -227,7 +207,6 @@
 
   let updateCheckTimer: ReturnType<typeof setTimeout> | null = null;
   let zoomPersistTimer: ReturnType<typeof setTimeout> | null = null;
-  let externalStorageRefreshInFlight = false;
   let wheelZoomAccumulator = 0;
   const UI_SCALE_STEP_PERCENT = 5;
   const UI_SCALE_MIN_PERCENT = 75;
@@ -254,6 +233,34 @@
   let lastPrimedVisibleIds = new Set<string>();
   let visiblePrimeTimer: ReturnType<typeof setTimeout> | null = null;
   const updates = createAppUpdater({ t, addToast });
+  const lifecycle = createAppLifecycleController({
+    shell,
+    navigation,
+    loader,
+    loadAccounts,
+    queueGridPadding,
+    syncViewModeFromStorage: () => {
+      viewMode = getViewMode();
+    },
+    bumpCardColorVersion: () => {
+      cardColorVersion += 1;
+    },
+    bumpCardNoteVersion: () => {
+      cardNoteVersion += 1;
+    },
+    setAppVersion: (version) => {
+      appVersion = version;
+    },
+    markBootReady: () => {
+      requestAnimationFrame(() => {
+        bootReady = true;
+        window.dispatchEvent(new CustomEvent("accshift:boot-ready"));
+      });
+    },
+    replaceHistoryState: (entry) => {
+      history.replaceState(entry, "");
+    },
+  });
   const secureScreen = createSecureScreenController({
     blur,
     windowActivity,
@@ -290,11 +297,6 @@
         true,
       );
     }, VISIBLE_PRIME_DEBOUNCE_MS);
-  }
-
-  function semverCore(version: string): string {
-    const match = version.match(/\d+\.\d+\.\d+/);
-    return match ? match[0] : version;
   }
 
   let adapterLoading = $derived(loadingAdapterFor === shell.activeTab && !adapter);
@@ -1026,141 +1028,8 @@
     }
   });
 
-  async function initializeAppShell() {
-    await loadCustomThemes();
-    shell.refreshSettings();
-    const versionTask = getVersion()
-      .then((version) => {
-        appVersion = semverCore(version);
-      })
-      .catch((reason) => {
-        console.error("Failed to read app version:", reason);
-      });
-
-    const runtimeOsResult = await invoke<string>("get_runtime_os")
-      .catch((reason) => {
-        console.error("Failed to read runtime OS:", reason);
-        return "unknown";
-      });
-
-    const normalizedOs: RuntimeOs =
-      (runtimeOsResult === "windows" || runtimeOsResult === "linux" || runtimeOsResult === "macos")
-      ? runtimeOsResult
-      : "unknown";
-
-    shell.setRuntimeOs(normalizedOs);
-    const nextTab = getInitialActiveTab(shell.settings, shell.runtimeOs);
-    if (nextTab !== shell.activeTab) {
-      shell.setActiveTab(nextTab);
-    }
-
-    // Signal boot-ready before loading accounts so the window appears
-    // while accounts load — the entrance animation covers the wait.
-    requestAnimationFrame(() => {
-      bootReady = true;
-      window.dispatchEvent(new CustomEvent("accshift:boot-ready"));
-    });
-
-    if (isPlatformUsable(shell.activeTab, shell.runtimeOs)) {
-      await loadAccounts(false, false, false, false, true);
-    } else {
-      navigation.refreshCurrentItems();
-      queueGridPadding();
-    }
-
-    void versionTask;
-  }
-
-  function getActiveSnapshotTarget(platformId: string): string | null {
-    if (platformId === "riot") return STORAGE_TARGET_RIOT_SNAPSHOTS;
-    if (platformId === "ubisoft") return STORAGE_TARGET_UBISOFT_SNAPSHOTS;
-    if (platformId === "epic") return STORAGE_TARGET_EPIC_SNAPSHOTS;
-    return null;
-  }
-
-  async function refreshExternalStorageState() {
-    if (externalStorageRefreshInFlight) return;
-    externalStorageRefreshInFlight = true;
-
-    try {
-      const changed = await refreshClientStorageIfChanged();
-      if (changed.length === 0) return;
-      void invoke("log_app_event", {
-        level: "info",
-        source: "frontend.storage.refresh",
-        message: "Detected external storage changes",
-        details: JSON.stringify({ changed, activeTab: shell.activeTab }),
-      }).catch(() => {});
-
-      const settingsChanged = changed.includes(CLIENT_STORE_SETTINGS);
-      const foldersChanged = changed.includes(CLIENT_STORE_FOLDERS);
-      const notesChanged = changed.includes(CLIENT_STORE_ACCOUNT_CARD_NOTES);
-      const accountColorsChanged = changed.includes(CLIENT_STORE_ACCOUNT_CARD_COLORS);
-      const folderColorsChanged = changed.includes(CLIENT_STORE_FOLDER_CARD_COLORS);
-      const viewModeChanged = changed.includes(CLIENT_STORE_VIEW_MODE);
-      const themesChanged = changed.includes(STORAGE_TARGET_CUSTOM_THEMES);
-      const configChanged = changed.includes(STORAGE_TARGET_APP_CONFIG_PORTABLE)
-        || changed.includes(STORAGE_TARGET_APP_CONFIG_LOCAL);
-      const snapshotTarget = getActiveSnapshotTarget(shell.activeTab);
-      const activeSnapshotsChanged = snapshotTarget ? changed.includes(snapshotTarget) : false;
-      const activeCachesChanged =
-        (shell.activeTab === "steam" && (
-          changed.includes(CLIENT_STORE_STEAM_PROFILE_CACHE)
-          || changed.includes(CLIENT_STORE_STEAM_BAN_CHECK_STATE)
-          || changed.includes(CLIENT_STORE_STEAM_BAN_INFO_CACHE)
-        ))
-        || (shell.activeTab === "roblox" && changed.includes(CLIENT_STORE_ROBLOX_PROFILE_CACHE));
-
-      if (themesChanged) {
-        await loadCustomThemes();
-      }
-
-      if (settingsChanged || themesChanged) {
-        shell.refreshSettings();
-        if (!shell.settings.enabledPlatforms.includes(shell.activeTab) || !isPlatformUsable(shell.activeTab, shell.runtimeOs)) {
-          shell.setActiveTab(getInitialActiveTab(shell.settings, shell.runtimeOs));
-          navigation.currentFolderId = null;
-          history.replaceState({ tab: shell.activeTab, folderId: null, showSettings: false }, "");
-        }
-      }
-
-      if (viewModeChanged) {
-        viewMode = getViewMode();
-      }
-      if (accountColorsChanged || folderColorsChanged) {
-        cardColorVersion += 1;
-      }
-      if (notesChanged) {
-        cardNoteVersion += 1;
-      }
-      if (foldersChanged || notesChanged || accountColorsChanged || folderColorsChanged || viewModeChanged || settingsChanged) {
-        navigation.refreshCurrentItems();
-        loader.prepareVisibleAccounts();
-        queueGridPadding();
-      }
-
-      if (configChanged || activeSnapshotsChanged || activeCachesChanged) {
-        await loadAccounts(true, false, true, shell.activeTab === "steam", false);
-      }
-    } catch (reason) {
-      console.error("Failed to refresh external storage state:", reason);
-    } finally {
-      externalStorageRefreshInFlight = false;
-    }
-  }
-
-  function handleWindowFocus() {
-    void refreshExternalStorageState();
-  }
-
-  function handleVisibilityChange() {
-    if (document.visibilityState === "visible") {
-      void refreshExternalStorageState();
-    }
-  }
-
   onMount(() => {
-    void initializeAppShell();
+    void lifecycle.initializeAppShell();
     void windowActivity.start();
 
     updateCheckTimer = setTimeout(() => { void updates.startBackgroundUpdateFlow(); }, 3500);
@@ -1174,8 +1043,8 @@
     window.addEventListener("wheel", handleCtrlWheelZoom, { passive: false });
     window.addEventListener("keydown", handleZoomKeydown);
     window.addEventListener("popstate", handlePopState);
-    window.addEventListener("focus", handleWindowFocus);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", lifecycle.handleWindowFocus);
+    document.addEventListener("visibilitychange", lifecycle.handleVisibilityChange);
   });
 
   onDestroy(() => {
@@ -1197,8 +1066,8 @@
     window.removeEventListener("wheel", handleCtrlWheelZoom);
     window.removeEventListener("keydown", handleZoomKeydown);
     window.removeEventListener("popstate", handlePopState);
-    window.removeEventListener("focus", handleWindowFocus);
-    document.removeEventListener("visibilitychange", handleVisibilityChange);
+    window.removeEventListener("focus", lifecycle.handleWindowFocus);
+    document.removeEventListener("visibilitychange", lifecycle.handleVisibilityChange);
     secureScreen.handleAppDestroyed();
     windowActivity.stop();
     grid.destroy();
