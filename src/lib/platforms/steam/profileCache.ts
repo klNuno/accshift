@@ -1,8 +1,11 @@
 import { getProfileInfo } from "./steamApi";
 import { getCacheDuration } from "../../features/settings/store";
 import type { ProfileInfo } from "./types";
-
-const CACHE_KEY = "accshift_avatars";
+import {
+  CLIENT_STORE_STEAM_PROFILE_CACHE,
+  getClientStoreValue,
+  setClientStoreValue,
+} from "$lib/storage/clientStorage";
 const SESSION_START_MS = Date.now();
 const PROFILE_FETCH_ATTEMPTS = 4;
 const PROFILE_FETCH_RETRY_DELAY_MS = 750;
@@ -46,12 +49,12 @@ function getCache(): ProfileCache {
   if (cachedProfiles) return cachedProfiles;
 
   try {
-    const data = localStorage.getItem(CACHE_KEY);
-    if (!data) {
+    const data = getClientStoreValue<unknown>(CLIENT_STORE_STEAM_PROFILE_CACHE);
+    if (data == null) {
       cachedProfiles = {};
       return cachedProfiles;
     }
-    const parsed = JSON.parse(data) as Record<string, unknown>;
+    const parsed = data as Record<string, unknown>;
     if (!parsed || typeof parsed !== "object") {
       cachedProfiles = {};
       return cachedProfiles;
@@ -75,7 +78,7 @@ function getCache(): ProfileCache {
 
 function saveCache(cache: ProfileCache) {
   cachedProfiles = cache;
-  localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+  setClientStoreValue(CLIENT_STORE_STEAM_PROFILE_CACHE, cache);
 }
 
 function hasSafeAvatarUrl(profile: ProfileInfo | null): profile is ProfileInfo & { avatar_url: string } {

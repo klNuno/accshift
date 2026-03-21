@@ -269,22 +269,53 @@ fn exchange_quick_login_for_cookie(code: &str, private_key: &str) -> Result<Stri
 // Account storage
 // ---------------------------------------------------------------------------
 
+fn load_account_configs(app_handle: &tauri::AppHandle) -> Vec<RobloxAccountConfig> {
+    if let Ok(path) = crate::storage::roblox_accounts_path(app_handle) {
+        if let Ok(Some(accounts)) = crate::storage::read_json_if_exists::<Vec<RobloxAccountConfig>>(&path) {
+            return accounts;
+        }
+    }
+
+    let cfg = config::load_config(app_handle);
+    cfg.roblox.accounts
+}
+
+fn save_account_configs(
+    app_handle: &tauri::AppHandle,
+    accounts: &[RobloxAccountConfig],
+) -> Result<(), String> {
+    let path = crate::storage::roblox_accounts_path(app_handle)?;
+    crate::storage::write_json_atomic(&path, &accounts)?;
+
+    let mut cfg = config::load_config(app_handle);
+    cfg.roblox.accounts = accounts.to_vec();
+    config::save_config(app_handle, &cfg)?;
+
+    log_platform_info(
+        app_handle,
+        "roblox.account_store",
+        "Saved Roblox account store",
+        format!("path={}; accounts={}", path.display(), accounts.len()),
+    );
+    Ok(())
+}
+
 fn store_account(
     app_handle: &tauri::AppHandle,
     user: &AuthenticatedUserResponse,
     encrypted_cookie: &str,
 ) -> Result<(), String> {
-    let mut cfg = config::load_config(app_handle);
+    let mut accounts = load_account_configs(app_handle);
     let user_id = user.id.to_string();
     let now = now_unix_ms();
 
-    if let Some(existing) = cfg.roblox.accounts.iter_mut().find(|a| a.user_id == user_id) {
+    if let Some(existing) = accounts.iter_mut().find(|a| a.user_id == user_id) {
         existing.username = user.name.clone();
         existing.display_name = user.display_name.clone();
         existing.cookie_encrypted = encrypted_cookie.to_string();
         existing.last_used_at = Some(now);
     } else {
-        cfg.roblox.accounts.push(RobloxAccountConfig {
+        accounts.push(RobloxAccountConfig {
             user_id,
             username: user.name.clone(),
             display_name: user.display_name.clone(),
@@ -293,13 +324,11 @@ fn store_account(
         });
     }
 
-    config::save_config(app_handle, &cfg)
+    save_account_configs(app_handle, &accounts)
 }
 
 fn read_accounts(app_handle: &tauri::AppHandle) -> Vec<RobloxAccount> {
-    let cfg = config::load_config(app_handle);
-    cfg.roblox
-        .accounts
+    load_account_configs(app_handle)
         .iter()
         .map(|a| RobloxAccount {
             user_id: a.user_id.clone(),
@@ -396,10 +425,8 @@ pub fn get_startup_snapshot(
 }
 
 pub fn switch_account(app_handle: &tauri::AppHandle, user_id: &str) -> Result<(), String> {
-    let cfg = config::load_config(app_handle);
-    let account = cfg
-        .roblox
-        .accounts
+    let accounts = load_account_configs(app_handle);
+    let account = accounts
         .iter()
         .find(|a| a.user_id == user_id)
         .ok_or_else(|| "Roblox account not found".to_string())?;
@@ -422,11 +449,11 @@ pub fn switch_account(app_handle: &tauri::AppHandle, user_id: &str) -> Result<()
     write_cookie_to_registry(&cookie)?;
 
     // Update last_used_at
-    let mut cfg = config::load_config(app_handle);
-    if let Some(a) = cfg.roblox.accounts.iter_mut().find(|a| a.user_id == user_id) {
+    let mut accounts = load_account_configs(app_handle);
+    if let Some(a) = accounts.iter_mut().find(|a| a.user_id == user_id) {
         a.last_used_at = Some(now_unix_ms());
     }
-    let _ = config::save_config(app_handle, &cfg);
+    let _ = save_account_configs(app_handle, &accounts);
 
     let launch_result = launch_roblox();
 
@@ -614,9 +641,9 @@ pub fn cancel_account_setup(setup_id: &str) -> Result<(), String> {
 }
 
 pub fn forget_account(app_handle: &tauri::AppHandle, user_id: &str) -> Result<(), String> {
-    let mut cfg = config::load_config(app_handle);
-    cfg.roblox.accounts.retain(|a| a.user_id != user_id);
-    config::save_config(app_handle, &cfg)
+    let mut accounts = load_account_configs(app_handle);
+    accounts.retain(|a| a.user_id != user_id);
+    save_account_configs(app_handle, &accounts)
 }
 
 // ---------------------------------------------------------------------------

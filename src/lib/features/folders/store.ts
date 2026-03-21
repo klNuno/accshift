@@ -1,6 +1,9 @@
 import type { FolderInfo, ItemRef, FolderStore } from "./types";
-
-const STORE_KEY = "accshift_folders";
+import {
+  CLIENT_STORE_FOLDERS,
+  getClientStoreValue,
+  setClientStoreValue,
+} from "$lib/storage/clientStorage";
 const CURRENT_VERSION = 1;
 let cachedStore: FolderStore | null = null;
 
@@ -74,12 +77,12 @@ function getStore(): FolderStore {
   if (cachedStore) return cachedStore;
 
   try {
-    const data = localStorage.getItem(STORE_KEY);
-    if (!data) {
+    const data = getClientStoreValue<unknown>(CLIENT_STORE_FOLDERS);
+    if (data == null) {
       cachedStore = { version: CURRENT_VERSION, folders: [], itemOrder: {} };
       return cachedStore;
     }
-    const store = sanitizeStore(JSON.parse(data));
+    const store = sanitizeStore(data);
     cachedStore = migrateStore(store);
     return cachedStore;
   } catch {
@@ -91,7 +94,7 @@ function getStore(): FolderStore {
 function saveStore(store: FolderStore) {
   store.version = CURRENT_VERSION;
   cachedStore = store;
-  localStorage.setItem(STORE_KEY, JSON.stringify(store));
+  setClientStoreValue(CLIENT_STORE_FOLDERS, store);
 }
 
 function generateId(): string {

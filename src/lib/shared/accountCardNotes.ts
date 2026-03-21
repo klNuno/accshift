@@ -1,4 +1,9 @@
-const STORAGE_KEY = "accshift_account_card_notes";
+import {
+  CLIENT_STORE_ACCOUNT_CARD_NOTES,
+  getClientStoreValue,
+  setClientStoreValue,
+} from "$lib/storage/clientStorage";
+
 const MAX_NOTE_LENGTH = 180;
 
 type AccountNoteMap = Record<string, string>;
@@ -25,12 +30,12 @@ function sanitizeMap(value: unknown): AccountNoteMap {
 function readMap(): AccountNoteMap {
   if (cachedMap) return cachedMap;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
+    const raw = getClientStoreValue<unknown>(CLIENT_STORE_ACCOUNT_CARD_NOTES);
+    if (raw == null) {
       cachedMap = {};
       return cachedMap;
     }
-    cachedMap = sanitizeMap(JSON.parse(raw));
+    cachedMap = sanitizeMap(raw);
     return cachedMap;
   } catch {
     cachedMap = {};
@@ -40,7 +45,7 @@ function readMap(): AccountNoteMap {
 
 function writeMap(data: AccountNoteMap) {
   cachedMap = data;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  setClientStoreValue(CLIENT_STORE_ACCOUNT_CARD_NOTES, data);
 }
 
 export function getAccountCardNote(accountId: string): string {

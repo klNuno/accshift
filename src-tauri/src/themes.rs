@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use tauri::Manager;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -13,10 +12,7 @@ pub struct CustomTheme {
 }
 
 fn themes_dir(app: &tauri::AppHandle) -> PathBuf {
-    app.path()
-        .app_data_dir()
-        .expect("failed to resolve app data dir")
-        .join("themes")
+    crate::storage::themes_dir(app).expect("failed to resolve themes dir")
 }
 
 fn is_safe_theme_id(id: &str) -> bool {

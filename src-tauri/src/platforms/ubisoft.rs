@@ -186,16 +186,9 @@ fn resolve_executable(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> 
 // ---------------------------------------------------------------------------
 
 fn auth_cache_dir(app_handle: &tauri::AppHandle, uuid: &str) -> Result<PathBuf, String> {
-    let base = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Could not resolve app data dir: {e}"))?
-        .join("ubisoft_cache")
-        .join(uuid);
+    let base = crate::storage::ubisoft_snapshots_dir(app_handle)?.join(uuid);
     Ok(base)
 }
-
-use tauri::Manager;
 
 fn save_auth_snapshot(app_handle: &tauri::AppHandle, uuid: &str) -> Result<(), String> {
     let local_dir = ubisoft_local_data_dir()?;

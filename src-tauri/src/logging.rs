@@ -4,9 +4,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tauri::Manager;
-
-const LOG_DIR_NAME: &str = "logs";
 const LOG_FILE_NAME: &str = "app.log";
 const PREVIOUS_LOG_FILE_NAME: &str = "app.previous.log";
 const MAX_MESSAGE_BYTES: usize = 512;
@@ -140,12 +137,7 @@ fn now_unix_ms() -> u128 {
 }
 
 pub fn log_file_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let base_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|reason| format!("Could not resolve app data directory: {reason}"))?;
-
-    Ok(base_dir.join(LOG_DIR_NAME).join(LOG_FILE_NAME))
+    Ok(crate::storage::app_log_root(app_handle)?.join(LOG_FILE_NAME))
 }
 
 fn previous_log_file_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
