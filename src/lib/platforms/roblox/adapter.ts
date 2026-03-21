@@ -8,6 +8,7 @@ import type { ContextMenuAction } from "$lib/shared/contextMenu/types";
 import { createPlatformAddFlowHandlers } from "$lib/platforms/addFlow";
 import * as service from "./robloxApi";
 import { getRobloxContextMenuItems } from "./contextMenu";
+import { getRobloxCachedProfile, fetchRobloxProfile } from "./profileCache";
 import type { RobloxAccount } from "./types";
 
 function toAccount(account: RobloxAccount): PlatformAccount {
@@ -64,9 +65,13 @@ export const robloxAdapter: PlatformAdapter = {
   },
 
   async getProfileInfo(userId: string): Promise<PlatformProfileInfo | null> {
-    const info = await service.getProfileInfo(userId);
-    if (!info.avatarUrl) return null;
+    const info = await fetchRobloxProfile(userId);
+    if (!info?.avatarUrl) return null;
     return { avatarUrl: info.avatarUrl };
+  },
+
+  getCachedProfile(userId: string) {
+    return getRobloxCachedProfile(userId) ?? null;
   },
 
   getNoAccountsToastMessage(callbacks) {
