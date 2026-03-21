@@ -10,9 +10,9 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const API_KEY_ENCRYPT_SCRIPT: &str =
-    "Import-Module Microsoft.PowerShell.Security -ErrorAction SilentlyContinue; $secure = ConvertTo-SecureString $env:ACCSHIFT_SECRET -AsPlainText -Force; ConvertFrom-SecureString $secure";
+    "Add-Type -AssemblyName System.Security; $bytes = [System.Text.Encoding]::UTF8.GetBytes($env:ACCSHIFT_SECRET); $enc = [System.Security.Cryptography.ProtectedData]::Protect($bytes, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser); [Convert]::ToBase64String($enc)";
 const API_KEY_DECRYPT_SCRIPT: &str =
-    "Import-Module Microsoft.PowerShell.Security -ErrorAction SilentlyContinue; $secure = ConvertTo-SecureString $env:ACCSHIFT_SECRET; $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure); try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }";
+    "Add-Type -AssemblyName System.Security; $enc = [Convert]::FromBase64String($env:ACCSHIFT_SECRET); $bytes = [System.Security.Cryptography.ProtectedData]::Unprotect($enc, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser); [System.Text.Encoding]::UTF8.GetString($bytes)";
 
 fn hidden_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     let mut cmd = Command::new(program);

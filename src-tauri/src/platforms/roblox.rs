@@ -342,6 +342,41 @@ fn kill_roblox() {
     }
 }
 
+fn launch_roblox() -> Result<(), String> {
+    // Try to find RobloxPlayerBeta.exe in the versioned install directory
+    let local_app_data =
+        std::env::var("LOCALAPPDATA").map_err(|_| "LOCALAPPDATA is not available".to_string())?;
+    let versions_dir = std::path::PathBuf::from(&local_app_data)
+        .join("Roblox")
+        .join("Versions");
+
+    if versions_dir.exists() {
+        // Find the most recent version folder with the player executable
+        let mut candidates: Vec<_> = std::fs::read_dir(&versions_dir)
+            .map_err(|e| format!("Could not read Roblox versions dir: {e}"))?
+            .filter_map(Result::ok)
+            .filter(|e| e.path().is_dir() && e.path().join("RobloxPlayerBeta.exe").exists())
+            .collect();
+
+        candidates.sort_by(|a, b| {
+            let ma = a.metadata().and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH);
+            let mb = b.metadata().and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH);
+            mb.cmp(&ma)
+        });
+
+        if let Some(entry) = candidates.first() {
+            let exe = entry.path().join("RobloxPlayerBeta.exe");
+            std::process::Command::new(&exe)
+                .spawn()
+                .map_err(|e| format!("Could not launch Roblox {}: {e}", exe.display()))?;
+            return Ok(());
+        }
+    }
+
+    // Fallback: open via protocol handler
+    crate::os::open_url("roblox://").map_err(|e| format!("Could not launch Roblox: {e}"))
+}
+
 // ---------------------------------------------------------------------------
 // Public operations
 // ---------------------------------------------------------------------------
@@ -393,14 +428,16 @@ pub fn switch_account(app_handle: &tauri::AppHandle, user_id: &str) -> Result<()
     }
     let _ = config::save_config(app_handle, &cfg);
 
+    let launch_result = launch_roblox();
+
     log_platform_info(
         app_handle,
         "roblox.switch_account",
         "Roblox switch completed",
-        format!("userId={user_id}"),
+        format!("userId={user_id}; launch={}", launch_result.is_ok()),
     );
 
-    Ok(())
+    launch_result
 }
 
 pub fn begin_account_setup(app_handle: &tauri::AppHandle) -> Result<SetupStatus, String> {
