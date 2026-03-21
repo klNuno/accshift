@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
+  import { trackDependencies } from "$lib/shared/trackDependencies";
 
   let {
     text = "",
@@ -120,17 +121,13 @@
   }
 
   $effect(() => {
-    letters;
-    phaseStep;
+    trackDependencies(letters, phaseStep);
     letterRefs.length = letters.length;
     phaseOffsets = Array.from({ length: letters.length }, (_, i) => i * phaseStep);
   });
 
   $effect(() => {
-    active;
-    reduceMotion;
-    respectReducedMotion;
-    startDelayMs;
+    trackDependencies(active, reduceMotion, respectReducedMotion, startDelayMs);
     if (!mounted) return;
     if (active && !isMotionBlocked()) {
       startAnimation();
@@ -140,7 +137,7 @@
   });
 
   $effect(() => {
-    text;
+    trackDependencies(text);
     if (!mounted) return;
     void tick().then(() => {
       if (!mounted || rafId !== null || startTimerId !== null) return;
