@@ -32,6 +32,9 @@ jobs:
       - name: Svelte check
         run: vp run check:frontend
 
+      - name: Run tests
+        run: vp test
+
       - name: Build frontend
         run: vp build
 
