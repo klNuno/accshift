@@ -6,15 +6,12 @@
   import { getSettings, saveSettings } from "$lib/features/settings/store";
   import type {
     PlatformAccount,
-    PlatformContextMenuConfirmConfig,
   } from "$lib/shared/platform";
   import { getPlatform } from "$lib/shared/platform";
-  import type { ContextMenuItem, InputDialogConfig } from "$lib/shared/types";
-  import { buildAccountContextMenuItems } from "$lib/shared/contextMenu/accountMenuBuilder";
   import type { ItemRef, FolderInfo } from "$lib/features/folders/types";
   import {
-    syncAccounts, getFolder,
-    createFolder, deleteFolder, renameFolder,
+    syncAccounts,
+    getFolder,
   } from "$lib/features/folders/store";
   import { createDragManager } from "$lib/shared/dragAndDrop.svelte";
   import { getViewMode, setViewMode, type ViewMode } from "$lib/shared/viewMode";
@@ -23,20 +20,13 @@
   import { createGridLayout } from "$lib/shared/useGridLayout.svelte";
   import { createAccountLoader } from "$lib/shared/useAccountLoader.svelte";
   import {
-    ACCOUNT_CARD_COLOR_PRESETS,
     getAccountCardColor as getStoredAccountCardColor,
-    setAccountCardColor,
   } from "$lib/shared/accountCardColors";
   import type { CardExtensionContent } from "$lib/shared/cardExtension";
   import { warningChipsToExtensionChips } from "$lib/shared/cardExtension";
-  import {
-    getAccountCardNote as getStoredAccountCardNote,
-    setAccountCardNote,
-    clearAccountCardNote,
-  } from "$lib/shared/accountCardNotes";
+  import { getAccountCardNote as getStoredAccountCardNote } from "$lib/shared/accountCardNotes";
   import {
     getFolderCardColor as getStoredFolderCardColor,
-    setFolderCardColor,
   } from "$lib/shared/folderCardColors";
   import { DEFAULT_LOCALE, translate, type MessageKey, type TranslationParams } from "$lib/i18n";
   import { trackDependencies } from "$lib/shared/trackDependencies";
@@ -55,12 +45,11 @@
   import AppWorkspace from "$lib/app/AppWorkspace.svelte";
   import AppDialogs from "$lib/app/AppDialogs.svelte";
   import AppScreenOverlays from "$lib/app/AppScreenOverlays.svelte";
+  import { createAppDialogsController } from "$lib/app/useAppDialogs.svelte";
   import { createAppUpdater } from "$lib/app/useAppUpdater.svelte";
   import { createAppLifecycleController } from "$lib/app/useAppLifecycle.svelte";
   import { createSecureScreenController } from "$lib/app/useSecureScreen.svelte";
-  import type { BulkEditResult } from "$lib/platforms/steam/steamApi";
   type SettingsComponentType = (typeof import("$lib/features/settings/Settings.svelte"))["default"];
-  type ConfirmDialogConfig = PlatformContextMenuConfirmConfig;
 
   const shell = createPlatformShellState();
   const t = (key: MessageKey, params?: TranslationParams) => translate(shell.locale, key, params);
@@ -90,20 +79,32 @@
     (key, params) => translate(shell.settings.language ?? DEFAULT_LOCALE, key, params)
   );
 
-  // Context menu state
-  let contextMenu = $state<{
-    x: number; y: number;
-    account?: PlatformAccount;
-    folder?: FolderInfo;
-    isBackground?: boolean;
-  } | null>(null);
-
   // Panel and dialog state
   let showSettings = $state(false);
   let SettingsPanel = $state<SettingsComponentType | null>(null);
   let settingsLoadPromise: Promise<void> | null = null;
-  let inputDialog = $state<InputDialogConfig | null>(null);
-  let confirmDialog = $state<ConfirmDialogConfig | null>(null);
+  const dialogs = createAppDialogsController({
+    t,
+    getAdapter: () => shell.adapter,
+    getActiveTab: () => shell.activeTab,
+    getActiveTabUsable: () => shell.activeTabUsable,
+    getCurrentFolderId: () => navigation.currentFolderId,
+    getCurrentAccountId: () => loader.currentAccountId,
+    refreshCurrentItems: navigation.refreshCurrentItems,
+    loadAccounts,
+    getAccountCardColor,
+    getAccountNote,
+    getFolderCardColor,
+    getColorLabel: (presetId) => t(COLOR_LABEL_KEYS[presetId as keyof typeof COLOR_LABEL_KEYS]),
+    copyToClipboard,
+    showToast,
+    bumpCardColorVersion: () => {
+      cardColorVersion += 1;
+    },
+    bumpCardNoteVersion: () => {
+      cardNoteVersion += 1;
+    },
+  });
   const addFlow = createPlatformAddFlowController({
     getActiveTab: () => shell.activeTab,
     getCurrentFolderId: () => navigation.currentFolderId,
@@ -113,21 +114,7 @@
     copyToClipboard: (text) => { void navigator.clipboard.writeText(text).then(() => addToast(t("toast.copied", { label: text }))); },
     loadAccounts,
     onAccountAdded: (platformId, accountId) => {
-      const adapter = getPlatform(platformId);
-      if (!adapter?.setAccountLabel) return;
-      inputDialog = {
-        title: t("platform.renameNewAccount"),
-        placeholder: t("platform.renamePlaceholder"),
-        initialValue: "",
-        allowEmpty: true,
-        onConfirm: async (value) => {
-          inputDialog = null;
-          if (value.trim()) {
-            await adapter.setAccountLabel!(accountId, value);
-            loadAccounts(true);
-          }
-        },
-      };
+      dialogs.promptRenameNewAccount(platformId, accountId);
     },
   });
   let settings = $derived(shell.settings);
@@ -350,7 +337,7 @@
   function handleBackgroundContextMenu(event: MouseEvent) {
     event.preventDefault();
     void cancelPlatformAddFlowIfConflicting(activeTab);
-    contextMenu = { x: event.clientX, y: event.clientY, isBackground: true };
+    dialogs.openBackgroundContextMenu(event);
   }
 
   function handleSearchQueryChange(value: string) {
@@ -396,12 +383,12 @@
     }
     if (isPendingSetupAccount(account.id)) return;
     void cancelPlatformAddFlowIfConflicting(activeTab, account.id);
-    contextMenu = { x: event.clientX, y: event.clientY, account };
+    dialogs.openAccountContextMenu(event, account);
   }
 
   function handleWorkspaceFolderContextMenu(event: MouseEvent, folder: FolderInfo) {
     void cancelPlatformAddFlowIfConflicting(activeTab);
-    contextMenu = { x: event.clientX, y: event.clientY, folder };
+    dialogs.openFolderContextMenu(event, folder);
   }
 
   function setGridWrapperRef(node: HTMLDivElement | null) {
@@ -600,31 +587,7 @@
   }
 
   function closeContextMenu() {
-    contextMenu = null;
-  }
-
-  function closeInputDialog() {
-    inputDialog = null;
-  }
-
-  function closeConfirmDialog() {
-    confirmDialog = null;
-  }
-
-  function confirmCurrentDialog() {
-    const action = confirmDialog?.onConfirm;
-    confirmDialog = null;
-    void action?.();
-  }
-
-  function handleBulkEditResult(result: BulkEditResult) {
-    if (result.failed.length === 0 && result.succeeded > 0) {
-      addToast(t("bulkEdit.toastSuccess", { count: result.succeeded }));
-    } else if (result.failed.length > 0 && result.succeeded > 0) {
-      addToast(t("bulkEdit.toastPartial", { succeeded: result.succeeded, failed: result.failed.length }));
-    } else {
-      addToast(t("bulkEdit.toastFailed"));
-    }
+    dialogs.closeContextMenu();
   }
 
   function createWarningExtensionSection(accountId: string): CardExtensionContent["sections"][number] | null {
@@ -869,114 +832,6 @@
     navigation.searchQuery = "";
   }
 
-  // Dialog helpers
-  function showNewFolderDialog() {
-    inputDialog = {
-      title: t("dialog.newFolderTitle"), placeholder: t("dialog.folderNamePlaceholder"), initialValue: "",
-      onConfirm: (name) => { createFolder(name, navigation.currentFolderId, shell.activeTab); navigation.refreshCurrentItems(); inputDialog = null; },
-    };
-  }
-
-  function showRenameFolderDialog(folder: FolderInfo) {
-    inputDialog = {
-      title: t("dialog.renameFolderTitle"), placeholder: t("dialog.folderNamePlaceholder"), initialValue: folder.name,
-      onConfirm: (name) => { renameFolder(folder.id, name); navigation.refreshCurrentItems(); inputDialog = null; },
-    };
-  }
-
-  // Context menu items
-  function getContextMenuItems(): ContextMenuItem[] {
-    if (!contextMenu) return [];
-    if (contextMenu.account && shell.adapter) {
-      const account = contextMenu.account;
-      return buildAccountContextMenuItems({
-        account,
-        adapter: shell.adapter,
-        platformCallbacks: {
-          copyToClipboard,
-          showToast,
-          getCurrentAccountId: () => loader.currentAccountId,
-          refreshAccounts: () => loadAccounts(true),
-          confirmAction: (config) => {
-            confirmDialog = config;
-          },
-          openInputDialog: (config) => {
-            inputDialog = {
-              title: config.title,
-              placeholder: config.placeholder,
-              initialValue: config.initialValue,
-              allowEmpty: config.allowEmpty,
-              onConfirm: (value) => {
-                config.onConfirm(value);
-                inputDialog = null;
-              },
-            };
-          },
-          t,
-        },
-        appearanceCallbacks: {
-          t,
-          getCurrentColor: () => getAccountCardColor(account.id),
-          getExistingNote: () => getAccountNote(account.id),
-          getColorLabel: (presetId) => t(COLOR_LABEL_KEYS[presetId]),
-          openNoteEditor: (initialNote) => {
-            inputDialog = {
-              title: t("dialog.cardNoteTitle"),
-              placeholder: t("dialog.cardNotePlaceholder"),
-              initialValue: initialNote,
-              allowEmpty: true,
-              onConfirm: (note) => {
-                if (note.trim()) {
-                  setAccountCardNote(account.id, note);
-                } else {
-                  clearAccountCardNote(account.id);
-                }
-                cardNoteVersion += 1;
-                inputDialog = null;
-              },
-            };
-          },
-          setColor: (color) => {
-            setAccountCardColor(account.id, color);
-            cardColorVersion += 1;
-          },
-        },
-      });
-    }
-    if (contextMenu.folder) {
-      const folder = contextMenu.folder;
-      const currentColor = getFolderCardColor(folder.id);
-      return [
-        { label: t("context.menu.rename"), action: () => showRenameFolderDialog(folder) },
-        {
-          label: t("context.menu.folderColor"),
-          swatches: ACCOUNT_CARD_COLOR_PRESETS.map((preset) => ({
-              id: preset.id,
-              label: t(COLOR_LABEL_KEYS[preset.id]),
-              color: preset.color,
-              active: currentColor === preset.color,
-              action: () => {
-                setFolderCardColor(folder.id, preset.color);
-                cardColorVersion += 1;
-              },
-            })),
-        },
-        { label: t("context.menu.deleteFolder"), action: () => { deleteFolder(folder.id); navigation.refreshCurrentItems(); } },
-      ];
-    }
-    if (contextMenu.isBackground) {
-      const items: ContextMenuItem[] = [];
-      if (shell.activeTabUsable && shell.adapter) {
-        items.push({ label: t("context.menu.refresh"), action: () => loadAccounts(false, true, false, true) });
-      }
-      items.push({ label: t("context.menu.newFolder"), action: () => showNewFolderDialog() });
-      return items;
-    }
-    return [];
-  }
-
-  let contextMenuItems = $derived(getContextMenuItems());
-  let confirmDialogConfirmLabel = $derived(confirmDialog?.confirmLabel || t("common.confirm"));
   let activePlatformName = $derived(activePlatformDef?.name || activeTab);
   let activePlatformImplemented = $derived(Boolean(activePlatformDef?.implemented));
   let pendingSetupAccountId = $derived(pendingSetupAccount?.id ?? null);
@@ -1177,16 +1032,16 @@
   />
 
   <AppDialogs
-    {contextMenu}
-    {contextMenuItems}
+    contextMenu={dialogs.contextMenu}
+    contextMenuItems={dialogs.contextMenuItems}
     {locale}
-    onCloseContextMenu={closeContextMenu}
-    {inputDialog}
-    onCancelInputDialog={closeInputDialog}
-    {confirmDialog}
-    {confirmDialogConfirmLabel}
-    onConfirmDialog={confirmCurrentDialog}
-    onCancelConfirmDialog={closeConfirmDialog}
+    onCloseContextMenu={dialogs.closeContextMenu}
+    inputDialog={dialogs.inputDialog}
+    onCancelInputDialog={dialogs.closeInputDialog}
+    confirmDialog={dialogs.confirmDialog}
+    confirmDialogConfirmLabel={dialogs.confirmDialogConfirmLabel}
+    onConfirmDialog={dialogs.confirmCurrentDialog}
+    onCancelConfirmDialog={dialogs.closeConfirmDialog}
     {bulkEditMode}
     {BulkEditBar}
     bulkEditSelectedIds={bulkEditSelectedIds}
@@ -1194,7 +1049,7 @@
     onBulkEditSelectAll={bulkEditSelectAll}
     onBulkEditDeselectAll={bulkEditDeselectAll}
     onBulkEditClose={closeBulkEdit}
-    onBulkEditResult={handleBulkEditResult}
+    onBulkEditResult={dialogs.handleBulkEditResult}
     {t}
     {toasts}
     onToastDone={removeToast}
