@@ -42,14 +42,13 @@
   import AppWorkspace from "$lib/app/AppWorkspace.svelte";
   import AppDialogs from "$lib/app/AppDialogs.svelte";
   import AppScreenOverlays from "$lib/app/AppScreenOverlays.svelte";
-  import { createAccountCardExtensionsController } from "$lib/app/useAccountCardExtensions.svelte";
+  import type { CardExtensionContent } from "$lib/shared/cardExtension";
+  import { warningChipsToExtensionChips } from "$lib/shared/cardExtension";
   import { createAppDialogsController } from "$lib/app/useAppDialogs.svelte";
   import { createAppNavigationController } from "$lib/app/useAppNavigation.svelte";
   import { createAppUpdater } from "$lib/app/useAppUpdater.svelte";
   import { createAppLifecycleController } from "$lib/app/useAppLifecycle.svelte";
   import { createSecureScreenController } from "$lib/app/useSecureScreen.svelte";
-  import { createSettingsPanelController } from "$lib/app/useSettingsPanel.svelte";
-  import { createSteamMaintenanceController } from "$lib/app/useSteamMaintenance.svelte";
 
   const shell = createPlatformShellState();
   const t = (key: MessageKey, params?: TranslationParams) => translate(shell.locale, key, params);
@@ -81,19 +80,9 @@
 
   // Panel and dialog state
   let showSettings = $state(false);
-  const settingsPanel = createSettingsPanelController({
-    t,
-    showToast,
-    refreshSettings: () => {
-      shell.refreshSettings();
-    },
-    setShowSettings: (value) => {
-      showSettings = value;
-    },
-    onAfterClose: () => {
-      secureScreen.handleSettingsClosed();
-    },
-  });
+  type SettingsComponentType = (typeof import("$lib/features/settings/Settings.svelte"))["default"];
+  let SettingsPanel = $state<SettingsComponentType | null>(null);
+  let settingsLoadPromise: Promise<void> | null = null;
   const dialogs = createAppDialogsController({
     t,
     getAdapter: () => shell.adapter,
@@ -108,7 +97,7 @@
     getFolderCardColor,
     getColorLabel: (presetId) => t(COLOR_LABEL_KEYS[presetId as keyof typeof COLOR_LABEL_KEYS]),
     copyToClipboard,
-    showToast,
+    showToast: addToast,
     bumpCardColorVersion: () => {
       cardColorVersion += 1;
     },
@@ -284,26 +273,74 @@
     getSettings: () => shell.settings,
     getIsAccountSelectionView: () => isAccountSelectionView,
     getAppVersion: () => appVersion,
-    onCloseContextMenu: closeContextMenu,
+    onCloseContextMenu: dialogs.closeContextMenu,
     t,
   });
-  const accountExtensions = createAccountCardExtensionsController({
-    t,
-    getLocale: () => locale,
-    getCardNoteVersion: () => cardNoteVersion,
-    getShowCardNotesInline: () => settings.accountDisplay.showCardNotesInline,
-    getVisibleRenderedAccountIds: () => visibleRenderedAccountIds,
-    getWarningStates: () => loader.warningStates,
-    getAccountNote,
-    addFlow,
+  function createWarningExtensionSection(
+    accountId: string,
+  ): CardExtensionContent["sections"][number] | null {
+    const warningInfo = loader.warningStates[accountId];
+    const warningChips = warningChipsToExtensionChips(warningInfo?.chips);
+    const warningLines = warningInfo?.tooltipText
+      ? warningInfo.tooltipText.split("\n").map((l) => l.trim()).filter(Boolean)
+      : [];
+    if (warningLines.length === 0 && warningChips.length === 0) return null;
+    return {
+      title: t("card.extensionWarnings"),
+      text: warningChips.length > 0 ? undefined : warningLines.join(" \u2022 "),
+      lines: warningChips.length > 0 ? [] : warningLines,
+      chips: warningChips,
+    };
+  }
+
+  function createNoteExtensionSection(
+    accountId: string,
+  ): CardExtensionContent["sections"][number] | null {
+    if (settings.accountDisplay.showCardNotesInline) return null;
+    const note = getAccountNote(accountId).trim();
+    if (!note) return null;
+    return { title: t("card.extensionNote"), lines: [note] };
+  }
+
+  let accountExtensionContentById = $derived.by(() => {
+    trackDependencies(locale, cardNoteVersion, settings.accountDisplay.showCardNotesInline);
+    const map: Record<string, CardExtensionContent | null> = {};
+    for (const accountId of visibleRenderedAccountIds) {
+      const setupContent = addFlow.getSetupExtensionContent(accountId);
+      if (setupContent) { map[accountId] = setupContent; continue; }
+      const sections: CardExtensionContent["sections"] = [];
+      const warn = createWarningExtensionSection(accountId);
+      const note = createNoteExtensionSection(accountId);
+      if (warn) sections.push(warn);
+      if (note) sections.push(note);
+      map[accountId] = sections.length > 0 ? { sections } : null;
+    }
+    return map;
   });
-  const steamMaintenance = createSteamMaintenanceController({
-    t,
-    ensureAdapterReady,
-    getActiveTab: () => shell.activeTab,
-    loadAccounts,
-    showToast,
-  });
+
+  async function refreshAvatarsNow() {
+    const steamAdapter = await ensureAdapterReady("steam");
+    if (!steamAdapter?.getProfileInfo) return;
+    try {
+      const steamAccounts = await steamAdapter.loadAccounts();
+      if (steamAccounts.length === 0) { addToast(t("toast.noSteamAccountsFound")); return; }
+      await Promise.all(steamAccounts.map((a) => steamAdapter.getProfileInfo!(a.id).catch(() => null)));
+      if (shell.activeTab === "steam") void loadAccounts(true, false, true, false, false);
+      addToast(t("toast.avatarRefreshComplete", { count: steamAccounts.length }));
+    } catch (error) { addToast(String(error)); }
+  }
+
+  async function refreshBansNow() {
+    const steamAdapter = await ensureAdapterReady("steam");
+    if (!steamAdapter?.loadWarningStates) return;
+    try {
+      const steamAccounts = await steamAdapter.loadAccounts();
+      if (steamAccounts.length === 0) { addToast(t("toast.noSteamAccountsFound")); return; }
+      await steamAdapter.loadWarningStates(steamAccounts, { forceRefresh: true, silent: false, t });
+      if (shell.activeTab === "steam") void loadAccounts(true, false, false, true, false);
+      addToast(t("toast.banRefreshComplete", { count: steamAccounts.length }));
+    } catch (error) { addToast(String(error)); }
+  }
 
   function clearVisiblePrimeTimer() {
     if (visiblePrimeTimer) {
@@ -383,7 +420,7 @@
 
   function handleBackgroundContextMenu(event: MouseEvent) {
     event.preventDefault();
-    void cancelPlatformAddFlowIfConflicting(activeTab);
+    void addFlow.cancelIfConflicting(activeTab);
     dialogs.openBackgroundContextMenu(event);
   }
 
@@ -398,17 +435,17 @@
   }
 
   function handleNavigateToFolder(folderId: string | null) {
-    void navigateTo(folderId);
+    void appNavigation.navigateTo(folderId);
   }
 
   function handleNavigateBack() {
-    void cancelPlatformAddFlowIfConflicting(activeTab);
-    void navigateToParentFolder();
+    void addFlow.cancelIfConflicting(activeTab);
+    void appNavigation.navigateToParentFolder();
   }
 
   function handleWorkspaceAccountActivate(account: PlatformAccount) {
     if (!bulkEditMode) {
-      void cancelPlatformAddFlowIfConflicting(activeTab, account.id);
+      void addFlow.cancelIfConflicting(activeTab, account.id);
     }
   }
 
@@ -417,8 +454,8 @@
       toggleBulkEditAccount(account.id);
       return;
     }
-    if (accountExtensions.isPendingSetupAccount(account.id)) return;
-    void cancelPlatformAddFlowIfConflicting(activeTab, account.id);
+    if (addFlow.isPendingSetupAccount(account.id)) return;
+    void addFlow.cancelIfConflicting(activeTab, account.id);
     void handleAccountSwitch(account);
   }
 
@@ -428,13 +465,13 @@
       toggleBulkEditAccount(account.id);
       return;
     }
-    if (accountExtensions.isPendingSetupAccount(account.id)) return;
-    void cancelPlatformAddFlowIfConflicting(activeTab, account.id);
+    if (addFlow.isPendingSetupAccount(account.id)) return;
+    void addFlow.cancelIfConflicting(activeTab, account.id);
     dialogs.openAccountContextMenu(event, account);
   }
 
   function handleWorkspaceFolderContextMenu(event: MouseEvent, folder: FolderInfo) {
-    void cancelPlatformAddFlowIfConflicting(activeTab);
+    void addFlow.cancelIfConflicting(activeTab);
     dialogs.openFolderContextMenu(event, folder);
   }
 
@@ -540,11 +577,6 @@
     );
   });
 
-  function showToast(msg: string) { addToast(msg); }
-
-  async function cancelPlatformAddFlowIfConflicting(targetPlatformId: string, targetAccountId?: string) {
-    await addFlow.cancelIfConflicting(targetPlatformId, targetAccountId);
-  }
 
   function clampUiScalePercent(value: number): number {
     const rounded = Math.round(value / UI_SCALE_STEP_PERCENT) * UI_SCALE_STEP_PERCENT;
@@ -633,17 +665,23 @@
     return getStoredFolderCardColor(folderId);
   }
 
-  function closeContextMenu() {
-    dialogs.closeContextMenu();
-  }
-
   async function copyToClipboard(text: string, label: string) {
     await navigator.clipboard.writeText(text);
-    showToast(t("toast.copied", { label }));
+    addToast(t("toast.copied", { label }));
   }
 
   function loadSettingsComponent() {
-    return settingsPanel.loadComponent();
+    if (SettingsPanel) return Promise.resolve();
+    if (!settingsLoadPromise) {
+      settingsLoadPromise = import("$lib/features/settings/Settings.svelte")
+        .then((mod) => { SettingsPanel = mod.default; })
+        .catch((error) => {
+          console.error("Failed to load settings panel:", error);
+          addToast(t("toast.failedLoadSettingsPanel"));
+          settingsLoadPromise = null;
+        });
+    }
+    return settingsLoadPromise;
   }
 
   async function loadAccounts(
@@ -673,22 +711,6 @@
     }
   }
 
-  async function toggleSettingsPanel() {
-    await appNavigation.toggleSettingsPanel();
-  }
-
-  async function navigateToParentFolder() {
-    await appNavigation.navigateToParentFolder();
-  }
-
-  async function navigateTo(folderId: string | null, options: { trackHistory?: boolean } = {}) {
-    await appNavigation.navigateTo(folderId, options);
-  }
-
-  async function handleTabChange(tab: string) {
-    await appNavigation.handleTabChange(tab);
-  }
-
   let activePlatformName = $derived(activePlatformDef?.name || activeTab);
   let activePlatformImplemented = $derived(Boolean(activePlatformDef?.implemented));
   let pendingSetupAccountId = $derived(pendingSetupAccount?.id ?? null);
@@ -696,16 +718,14 @@
     platformAddFlow?.platformId === activeTab ? platformAddFlow.status.setupId : null
   );
 
-  function handlePlatformsChanged() {
-    appNavigation.handlePlatformsChanged();
-  }
-
   function handleSettingsClose() {
-    settingsPanel.handleClose();
+    showSettings = false;
+    shell.refreshSettings();
+    secureScreen.handleSettingsClosed();
   }
 
   function handleSettingsUpdated() {
-    settingsPanel.handleUpdated();
+    shell.refreshSettings();
   }
 
   $effect(() => {
@@ -787,14 +807,14 @@
       <TitleBar
         onRefresh={handleRefreshClick}
         onAddAccount={handleAddAccountClick}
-        onOpenSettings={toggleSettingsPanel}
+        onOpenSettings={appNavigation.toggleSettingsPanel}
       onBulkEdit={toggleBulkEdit}
       onApplyUpdate={updates.applyReadyUpdate}
       updateCtaLabel={updates.ctaLabel}
       updateCtaTitle={updates.ctaTitle}
       updateCtaDisabled={updates.ctaDisabled}
       {activeTab}
-      onTabChange={handleTabChange}
+      onTabChange={appNavigation.handleTabChange}
       {enabledPlatforms}
       {unavailablePlatformIds}
       canRefresh={activeTabUsable && !adapterLoading}
@@ -812,13 +832,13 @@
 
   <AppWorkspace
     {showSettings}
-    SettingsPanel={settingsPanel.panel}
+    {SettingsPanel}
     {runtimeOs}
     onSettingsClose={handleSettingsClose}
-    onPlatformsChanged={handlePlatformsChanged}
+    onPlatformsChanged={appNavigation.handlePlatformsChanged}
     onSettingsUpdated={handleSettingsUpdated}
-    onRefreshAvatarsNow={steamMaintenance.refreshAvatarsNow}
-    onRefreshBansNow={steamMaintenance.refreshBansNow}
+    onRefreshAvatarsNow={refreshAvatarsNow}
+    onRefreshBansNow={refreshBansNow}
     compatiblePlatformCount={compatiblePlatforms.length}
     {activeTabUsable}
     {adapterLoading}
@@ -870,9 +890,9 @@
     onAccountContextMenu={handleWorkspaceAccountContextMenu}
     onFolderContextMenu={handleWorkspaceFolderContextMenu}
     showCardNotesInline={settings.accountDisplay.showCardNotesInline}
-    accountExtensionContentById={accountExtensions.contentById}
-    isAccountExtensionForcedOpen={accountExtensions.isForcedOpen}
-    isPendingSetupAccount={accountExtensions.isPendingSetupAccount}
+    {accountExtensionContentById}
+    isAccountExtensionForcedOpen={addFlow.isForcedOpen}
+    isPendingSetupAccount={addFlow.isPendingSetupAccount}
     {activePlatformAddSetupId}
     switching={loader.switching}
   />
