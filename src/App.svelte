@@ -2,8 +2,6 @@
   import { onMount, onDestroy } from "svelte";
   import { getVersion } from "@tauri-apps/api/app";
   import { invoke } from "@tauri-apps/api/core";
-  import { check } from "@tauri-apps/plugin-updater";
-  import { relaunch } from "@tauri-apps/plugin-process";
   import TitleBar from "$lib/shared/components/TitleBar.svelte";
   import { getToasts, addToast, removeToast } from "$lib/features/notifications/store.svelte";
   import { getSettings, saveSettings } from "$lib/features/settings/store";
@@ -43,7 +41,6 @@
     setFolderCardColor,
   } from "$lib/shared/folderCardColors";
   import { DEFAULT_LOCALE, translate, type MessageKey, type TranslationParams } from "$lib/i18n";
-  import { hashPinCode, sanitizePinDigits, isValidPinHash } from "$lib/shared/pin";
   import { trackDependencies } from "$lib/shared/trackDependencies";
   import {
     createPlatformShellState,
@@ -79,14 +76,13 @@
   import AppWorkspace from "$lib/app/AppWorkspace.svelte";
   import AppDialogs from "$lib/app/AppDialogs.svelte";
   import AppScreenOverlays from "$lib/app/AppScreenOverlays.svelte";
+  import { createAppUpdater } from "$lib/app/useAppUpdater.svelte";
+  import { createSecureScreenController } from "$lib/app/useSecureScreen.svelte";
   import type { BulkEditResult } from "$lib/platforms/steam/steamApi";
   type SettingsComponentType = (typeof import("$lib/features/settings/Settings.svelte"))["default"];
   type ConfirmDialogConfig = PlatformContextMenuConfirmConfig;
 
-  const PIN_CODE_LENGTH = 4;
-  const PIN_FAILURE_DELAY_MS = 1200;
   const shell = createPlatformShellState();
-  const startupPinLocked = Boolean(shell.settings.pinEnabled && isValidPinHash(shell.settings.pinHash || ""));
   const t = (key: MessageKey, params?: TranslationParams) => translate(shell.locale, key, params);
 
   // Shared controllers
@@ -229,44 +225,10 @@
     bulkEditSelectedIds.has(loader.currentAccountId)
   );
 
-  let isPinLocked = $state(startupPinLocked);
-  let isPinUnlocking = $state(false);
-  let isPinRetryLocked = $state(false);
-  let pinAttempt = $state("");
-  let pinError = $state("");
-  let pinInputRef = $state<HTMLInputElement | null>(null);
-  let pinRetryTimer: ReturnType<typeof setTimeout> | null = null;
-  let afkListenersAttached = $state(false);
-  let windowForeground = $derived(windowActivity.isForeground);
-  let windowRenderable = $derived(windowActivity.isPageVisible && !windowActivity.isMinimized);
-  let windowMinimized = $derived(windowActivity.isMinimized);
-  let renderSuspended = $derived(
-    shell.settings.suspendGraphicsWhenMinimized && windowMinimized
-  );
-  let inactivityEnabled = $derived(shell.settings.inactivityBlurSeconds > 0);
-  let isObscured = $derived(
-    (inactivityEnabled && blur.isBlurred && isAccountSelectionView) || isPinLocked || isPinUnlocking || isPinRetryLocked
-  );
-  let afkOverlayVisible = $derived(
-    inactivityEnabled
-    && blur.isBlurred
-    && isAccountSelectionView
-    && !isPinLocked
-    && !isPinUnlocking
-    && !isPinRetryLocked
-    && windowRenderable
-    && !renderSuspended
-  );
-  let motionPaused = $derived(!windowRenderable || renderSuspended);
-  const AFK_TEXT_FADE_MS = 900;
-  const AFK_TEXT_REVEAL_DELAY_MS = 2500;
-  let afkWaveActive = $state(false);
-  let afkWaveStopTimer: ReturnType<typeof setTimeout> | null = null;
   let updateCheckTimer: ReturnType<typeof setTimeout> | null = null;
   let zoomPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let externalStorageRefreshInFlight = false;
   let wheelZoomAccumulator = 0;
-  let updateCheckStarted = false;
   const UI_SCALE_STEP_PERCENT = 5;
   const UI_SCALE_MIN_PERCENT = 75;
   const UI_SCALE_MAX_PERCENT = 150;
@@ -285,17 +247,22 @@
     gray: "color.gray",
   } as const;
 
-  type PendingUpdate = NonNullable<Awaited<ReturnType<typeof check>>>;
-  type UpdateState = "idle" | "checking" | "downloading" | "ready" | "applying";
   const VISIBLE_PRIME_DEBOUNCE_MS = 120;
-  let updateState = $state<UpdateState>("idle");
-  let updateVersion = $state("");
-  let pendingUpdate = $state<PendingUpdate | null>(null);
   let appVersion = $state("");
   let loadingAdapterFor = $state<string | null>(null);
   let lastPreparedVisibleKey = "";
   let lastPrimedVisibleIds = new Set<string>();
   let visiblePrimeTimer: ReturnType<typeof setTimeout> | null = null;
+  const updates = createAppUpdater({ t, addToast });
+  const secureScreen = createSecureScreenController({
+    blur,
+    windowActivity,
+    getSettings: () => shell.settings,
+    getIsAccountSelectionView: () => isAccountSelectionView,
+    getAppVersion: () => appVersion,
+    onCloseContextMenu: closeContextMenu,
+    t,
+  });
 
   function clearVisiblePrimeTimer() {
     if (visiblePrimeTimer) {
@@ -330,14 +297,6 @@
     return match ? match[0] : version;
   }
 
-  let updateCtaLabel = $derived(
-    updateState === "ready" ? t("update.ctaAvailable") : updateState === "applying" ? t("update.ctaInstalling") : null
-  );
-  let updateCtaTitle = $derived(
-    updateVersion ? t("update.restartToApplyVersion", { version: updateVersion }) : t("update.restartToApply")
-  );
-  let updateCtaDisabled = $derived(updateState === "applying");
-  let afkVersionLabel = $derived(afkOverlayVisible && appVersion ? appVersion : null);
   let adapterLoading = $derived(loadingAdapterFor === shell.activeTab && !adapter);
 
   // Toast state
@@ -525,7 +484,7 @@
   });
 
   $effect(() => {
-    if (showSettings || !shell.adapter || loader.loading || !windowForeground || renderSuspended) {
+    if (showSettings || !shell.adapter || loader.loading || !secureScreen.windowForeground || secureScreen.renderSuspended) {
       resetVisiblePrimeState();
       return;
     }
@@ -644,14 +603,6 @@
 
   function closeInputDialog() {
     inputDialog = null;
-  }
-
-  function setPinInputRef(node: HTMLInputElement | null) {
-    pinInputRef = node;
-  }
-
-  function handlePinAttemptChange(value: string) {
-    pinAttempt = value;
   }
 
   function closeConfirmDialog() {
@@ -857,8 +808,7 @@
     }
     if (settingsClosing) {
       shell.refreshSettings();
-      blur.start();
-      if (!afkListenersAttached) { blur.attachListeners(); afkListenersAttached = true; }
+      secureScreen.handleSettingsClosed();
     }
     if (tabChanged && isPlatformUsable(entry.tab, shell.runtimeOs)) {
       loadAccounts(true);
@@ -1048,124 +998,16 @@
   function handleSettingsClose() {
     showSettings = false;
     shell.refreshSettings();
-    blur.start();
-    if (!afkListenersAttached) {
-      blur.attachListeners();
-      afkListenersAttached = true;
-    }
+    secureScreen.handleSettingsClosed();
   }
 
   function handleSettingsUpdated() {
     shell.refreshSettings();
   }
 
-  async function startBackgroundUpdateFlow() {
-    if (import.meta.env.DEV) return;
-    if (updateCheckStarted) return;
-    updateCheckStarted = true;
-    updateState = "checking";
-
-    try {
-      const update = await check();
-      if (!update) {
-        updateState = "idle";
-        return;
-      }
-
-      pendingUpdate = update;
-      updateVersion = update.version;
-      updateState = "downloading";
-
-      await update.download();
-
-      updateState = "ready";
-      addToast(updateVersion ? t("update.readyToastVersion", { version: updateVersion }) : t("update.readyToast"));
-    } catch (e) {
-      console.error("Updater check/download failed:", e);
-      pendingUpdate = null;
-      updateVersion = "";
-      updateState = "idle";
-    }
-  }
-
-  async function applyReadyUpdate() {
-    if (updateState !== "ready" || !pendingUpdate) return;
-
-    try {
-      updateState = "applying";
-      await pendingUpdate.install();
-      await relaunch();
-    } catch (e) {
-      updateState = "ready";
-      console.error("Failed to restart for update:", e);
-      addToast(t("update.restartFailed"));
-    }
-  }
-
-  $effect(() => {
-    const visible = afkOverlayVisible;
-    if (afkWaveStopTimer) {
-      clearTimeout(afkWaveStopTimer);
-      afkWaveStopTimer = null;
-    }
-    if (visible) {
-      if (contextMenu) contextMenu = null;
-      afkWaveActive = true;
-      return;
-    }
-    if (!afkWaveActive) return;
-    afkWaveStopTimer = setTimeout(() => {
-      afkWaveActive = false;
-      afkWaveStopTimer = null;
-    }, AFK_TEXT_FADE_MS);
-  });
-
-  $effect(() => {
-    if (!renderSuspended) return;
-    if (contextMenu) {
-      contextMenu = null;
-    }
-  });
-
-  $effect(() => {
-    if (renderSuspended) {
-      if (afkListenersAttached) {
-        blur.detachListeners();
-        afkListenersAttached = false;
-      }
-      return;
-    }
-    if (!afkListenersAttached) {
-      blur.attachListeners();
-      afkListenersAttached = true;
-    }
-  });
-
   $effect(() => {
     trackDependencies(shell.settings.uiScalePercent);
     queueGridPadding();
-  });
-
-  $effect(() => {
-    const hasValidPinCode = isValidPinHash(shell.settings.pinHash || "");
-    if (!shell.settings.pinEnabled || !hasValidPinCode) {
-      isPinLocked = false;
-      isPinRetryLocked = false;
-      pinAttempt = "";
-      pinError = "";
-    }
-  });
-
-  $effect(() => {
-    const sanitizedAttempt = sanitizePinDigits(pinAttempt);
-    if (sanitizedAttempt !== pinAttempt) {
-      pinAttempt = sanitizedAttempt;
-      return;
-    }
-    if (!isPinLocked || isPinUnlocking || isPinRetryLocked) return;
-    if (sanitizedAttempt.length === PIN_CODE_LENGTH) {
-      unlockWithPin();
-    }
   });
 
   $effect(() => {
@@ -1183,44 +1025,6 @@
       navigation.currentFolderId = null;
     }
   });
-
-  async function unlockWithPin() {
-    const expectedPinHash = shell.settings.pinHash || "";
-    if (!isValidPinHash(expectedPinHash)) {
-      isPinLocked = false;
-      return;
-    }
-    const attemptPin = sanitizePinDigits(pinAttempt);
-    if (attemptPin.length !== PIN_CODE_LENGTH || isPinRetryLocked) return;
-    isPinUnlocking = true;
-    pinError = "";
-    const attemptHash = await hashPinCode(attemptPin);
-    if (!attemptHash) {
-      isPinUnlocking = false;
-      return;
-    }
-    if (attemptHash !== expectedPinHash) {
-      isPinUnlocking = false;
-      isPinRetryLocked = true;
-      pinError = t("pin.invalid");
-      pinAttempt = "";
-      if (pinRetryTimer) {
-        clearTimeout(pinRetryTimer);
-      }
-      pinRetryTimer = setTimeout(() => {
-        pinRetryTimer = null;
-        isPinRetryLocked = false;
-        setTimeout(() => pinInputRef?.focus(), 0);
-      }, PIN_FAILURE_DELAY_MS);
-      return;
-    }
-    pinAttempt = "";
-    setTimeout(() => {
-      isPinLocked = false;
-      isPinUnlocking = false;
-      blur.resetActivity();
-    }, 240);
-  }
 
   async function initializeAppShell() {
     await loadCustomThemes();
@@ -1359,16 +1163,8 @@
     void initializeAppShell();
     void windowActivity.start();
 
-    updateCheckTimer = setTimeout(() => { void startBackgroundUpdateFlow(); }, 3500);
-    blur.start();
-    blur.attachListeners();
-    afkListenersAttached = true;
-    if (isPinLocked) {
-      isPinRetryLocked = false;
-      pinAttempt = "";
-      pinError = "";
-      setTimeout(() => pinInputRef?.focus(), 0);
-    }
+    updateCheckTimer = setTimeout(() => { void updates.startBackgroundUpdateFlow(); }, 3500);
+    secureScreen.handleAppMounted();
     history.replaceState({ tab: shell.activeTab, folderId: null, showSettings: false }, "");
     window.addEventListener("resize", grid.handleResize);
     document.addEventListener("mousemove", drag.handleDocMouseMove);
@@ -1384,17 +1180,9 @@
 
   onDestroy(() => {
     clearVisiblePrimeTimer();
-    if (afkWaveStopTimer) {
-      clearTimeout(afkWaveStopTimer);
-      afkWaveStopTimer = null;
-    }
     if (updateCheckTimer) {
       clearTimeout(updateCheckTimer);
       updateCheckTimer = null;
-    }
-    if (pinRetryTimer) {
-      clearTimeout(pinRetryTimer);
-      pinRetryTimer = null;
     }
     if (zoomPersistTimer) {
       clearTimeout(zoomPersistTimer);
@@ -1411,8 +1199,7 @@
     window.removeEventListener("popstate", handlePopState);
     window.removeEventListener("focus", handleWindowFocus);
     document.removeEventListener("visibilitychange", handleVisibilityChange);
-    if (afkListenersAttached) blur.detachListeners();
-    blur.stop();
+    secureScreen.handleAppDestroyed();
     windowActivity.stop();
     grid.destroy();
   });
@@ -1421,21 +1208,21 @@
 <div
   class="app-frame"
   class:boot-ready={bootReady}
-  class:motion-paused={motionPaused}
-  style={`--afk-reveal-delay:${AFK_TEXT_REVEAL_DELAY_MS}ms;`}
+  class:motion-paused={secureScreen.motionPaused}
+  style={`--afk-reveal-delay:${secureScreen.afkTextRevealDelayMs}ms;`}
 >
-  <div class="app-stage" class:locked={isPinLocked} style={appStageStyle}>
-    <div class="app-shell" class:obscured={isObscured}>
-      {#if !renderSuspended}
+  <div class="app-stage" class:locked={secureScreen.isPinLocked} style={appStageStyle}>
+    <div class="app-shell" class:obscured={secureScreen.isObscured}>
+      {#if !secureScreen.renderSuspended}
       <TitleBar
         onRefresh={handleRefreshClick}
         onAddAccount={handleAddAccountClick}
         onOpenSettings={toggleSettingsPanel}
       onBulkEdit={toggleBulkEdit}
-      onApplyUpdate={applyReadyUpdate}
-      updateCtaLabel={updateCtaLabel}
-      updateCtaTitle={updateCtaTitle}
-      updateCtaDisabled={updateCtaDisabled}
+      onApplyUpdate={updates.applyReadyUpdate}
+      updateCtaLabel={updates.ctaLabel}
+      updateCtaTitle={updates.ctaTitle}
+      updateCtaDisabled={updates.ctaDisabled}
       {activeTab}
       onTabChange={handleTabChange}
       {enabledPlatforms}
@@ -1447,7 +1234,11 @@
       bulkEditActive={bulkEditMode}
       {locale}
     />
-    <div class="inactivity-frost" class:visible={isObscured} aria-hidden={!isObscured}></div>
+    <div
+      class="inactivity-frost"
+      class:visible={secureScreen.isObscured}
+      aria-hidden={!secureScreen.isObscured}
+    ></div>
 
   <AppWorkspace
     {showSettings}
@@ -1543,20 +1334,20 @@
   </div>
 
   <AppScreenOverlays
-    {renderSuspended}
-    {afkVersionLabel}
-    {afkOverlayVisible}
-    {afkWaveActive}
-    {motionPaused}
-    afkTextRevealDelayMs={AFK_TEXT_REVEAL_DELAY_MS}
-    {isPinLocked}
-    {isPinUnlocking}
-    {isPinRetryLocked}
-    {pinAttempt}
-    {pinError}
-    pinCodeLength={PIN_CODE_LENGTH}
-    onPinAttemptChange={handlePinAttemptChange}
-    onPinInputRefChange={setPinInputRef}
+    renderSuspended={secureScreen.renderSuspended}
+    afkVersionLabel={secureScreen.afkVersionLabel}
+    afkOverlayVisible={secureScreen.afkOverlayVisible}
+    afkWaveActive={secureScreen.afkWaveActive}
+    motionPaused={secureScreen.motionPaused}
+    afkTextRevealDelayMs={secureScreen.afkTextRevealDelayMs}
+    isPinLocked={secureScreen.isPinLocked}
+    isPinUnlocking={secureScreen.isPinUnlocking}
+    isPinRetryLocked={secureScreen.isPinRetryLocked}
+    pinAttempt={secureScreen.pinAttempt}
+    pinError={secureScreen.pinError}
+    pinCodeLength={secureScreen.pinCodeLength}
+    onPinAttemptChange={secureScreen.setPinAttempt}
+    onPinInputRefChange={secureScreen.setPinInputRef}
     {t}
   />
 </div>
