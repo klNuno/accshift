@@ -33,6 +33,69 @@ pub fn finish_boot(
     crate::app_runtime::show_main_window(&app_handle)
 }
 
+#[tauri::command]
+pub fn load_client_storage_snapshot(
+    app_handle: tauri::AppHandle,
+) -> Result<crate::storage::ClientStorageSnapshot, String> {
+    let snapshot = crate::storage::load_client_storage_snapshot(&app_handle)?;
+    let details = serde_json::json!({
+        "storeCount": snapshot.stores.len(),
+        "manifestCount": snapshot.manifest.stores.len(),
+        "schemaVersion": snapshot.manifest.schema_version,
+    })
+    .to_string();
+    let _ = crate::logging::append_app_log(
+        &app_handle,
+        "info",
+        "storage.load_snapshot",
+        "Loaded client storage snapshot",
+        Some(&details),
+    );
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub fn save_client_storage_store(
+    app_handle: tauri::AppHandle,
+    store_id: String,
+    value: Value,
+) -> Result<(), String> {
+    crate::storage::save_client_store(&app_handle, &store_id, &value)?;
+    let details = serde_json::json!({
+        "storeId": store_id,
+        "isNull": value.is_null(),
+    })
+    .to_string();
+    let _ = crate::logging::append_app_log(
+        &app_handle,
+        "info",
+        "storage.save_store",
+        "Saved client storage store",
+        Some(&details),
+    );
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_storage_manifest(
+    app_handle: tauri::AppHandle,
+) -> Result<crate::storage::StorageManifest, String> {
+    let manifest = crate::storage::build_storage_manifest(&app_handle)?;
+    let details = serde_json::json!({
+        "storeCount": manifest.stores.len(),
+        "schemaVersion": manifest.schema_version,
+    })
+    .to_string();
+    let _ = crate::logging::append_app_log(
+        &app_handle,
+        "info",
+        "storage.get_manifest",
+        "Built storage manifest",
+        Some(&details),
+    );
+    Ok(manifest)
+}
+
 // ---------------------------------------------------------------------------
 // Generic platform commands
 // ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@ mod fs_utils;
 mod logging;
 mod os;
 mod platforms;
+mod storage;
 mod steam;
 mod themes;
 
@@ -165,6 +166,9 @@ fn main() {
             commands::log_app_event,
             commands::finish_boot,
             commands::get_runtime_os,
+            commands::load_client_storage_snapshot,
+            commands::save_client_storage_store,
+            commands::get_storage_manifest,
             // Generic platform commands
             commands::platform_get_capabilities,
             commands::platform_get_accounts,

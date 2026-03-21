@@ -1,4 +1,8 @@
-const STORAGE_KEY = "accshift_account_card_colors";
+import {
+  CLIENT_STORE_ACCOUNT_CARD_COLORS,
+  getClientStoreValue,
+  setClientStoreValue,
+} from "$lib/storage/clientStorage";
 
 export const ACCOUNT_CARD_COLOR_PRESETS = [
   { id: "none", color: "" },
@@ -38,12 +42,12 @@ function readMap(): CardColorMap {
   if (cachedMap) return cachedMap;
 
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
+    const raw = getClientStoreValue<unknown>(CLIENT_STORE_ACCOUNT_CARD_COLORS);
+    if (raw == null) {
       cachedMap = {};
       return cachedMap;
     }
-    cachedMap = sanitizeMap(JSON.parse(raw));
+    cachedMap = sanitizeMap(raw);
     return cachedMap;
   } catch {
     cachedMap = {};
@@ -53,7 +57,7 @@ function readMap(): CardColorMap {
 
 function writeMap(data: CardColorMap) {
   cachedMap = data;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  setClientStoreValue(CLIENT_STORE_ACCOUNT_CARD_COLORS, data);
 }
 
 export function getAccountCardColor(accountId: string): string {

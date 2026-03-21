@@ -5,9 +5,12 @@ import type { PlatformAccount, PlatformUiCallbacks, PlatformWarningLoadOptions }
 import type { MessageKey, TranslationParams } from "$lib/i18n";
 import { getPlayerBans, hasApiKey } from "./steamApi";
 import type { BanInfo } from "./types";
-
-const BAN_CHECK_STATE_KEY = "accshift_ban_check_state_v2";
-const BAN_INFO_CACHE_KEY = "accshift_ban_info_cache_v1";
+import {
+  CLIENT_STORE_STEAM_BAN_CHECK_STATE,
+  CLIENT_STORE_STEAM_BAN_INFO_CACHE,
+  getClientStoreValue,
+  setClientStoreValue,
+} from "$lib/storage/clientStorage";
 const BAN_ERROR_TOAST_COOLDOWN_MS = 30000;
 
 interface BanCheckState {
@@ -21,9 +24,9 @@ let activeBanCheckToastId: string | null = null;
 
 function readBanCheckState(): BanCheckState | null {
   try {
-    const raw = localStorage.getItem(BAN_CHECK_STATE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<BanCheckState>;
+    const raw = getClientStoreValue<unknown>(CLIENT_STORE_STEAM_BAN_CHECK_STATE);
+    if (!raw || typeof raw !== "object") return null;
+    const parsed = raw as Partial<BanCheckState>;
     const lastSuccessAt = Number(parsed.lastSuccessAt);
     const checkedSteamIds = Array.isArray(parsed.checkedSteamIds)
       ? parsed.checkedSteamIds.filter((id): id is string => typeof id === "string")
@@ -39,7 +42,7 @@ function readBanCheckState(): BanCheckState | null {
 }
 
 function writeBanCheckState(state: BanCheckState) {
-  localStorage.setItem(BAN_CHECK_STATE_KEY, JSON.stringify(state));
+  setClientStoreValue(CLIENT_STORE_STEAM_BAN_CHECK_STATE, state);
 }
 
 function isBanInfo(value: unknown): value is BanInfo {
@@ -56,9 +59,9 @@ function isBanInfo(value: unknown): value is BanInfo {
 
 function readBanInfoCache(): Record<string, BanInfo> {
   try {
-    const raw = localStorage.getItem(BAN_INFO_CACHE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const raw = getClientStoreValue<unknown>(CLIENT_STORE_STEAM_BAN_INFO_CACHE);
+    if (!raw || typeof raw !== "object") return {};
+    const parsed = raw as Record<string, unknown>;
     if (!parsed || typeof parsed !== "object") return {};
 
     const entries = Object.entries(parsed).filter(([, value]) => isBanInfo(value));
@@ -69,7 +72,7 @@ function readBanInfoCache(): Record<string, BanInfo> {
 }
 
 function writeBanInfoCache(bans: Record<string, BanInfo>) {
-  localStorage.setItem(BAN_INFO_CACHE_KEY, JSON.stringify(bans));
+  setClientStoreValue(CLIENT_STORE_STEAM_BAN_INFO_CACHE, bans);
 }
 
 function formatBanTooltip(info: BanInfo): string {
@@ -249,7 +252,7 @@ export async function loadSteamWarningStates(
         checkedSteamIds: mergedCheckedIds,
       });
     } else {
-      localStorage.removeItem(BAN_CHECK_STATE_KEY);
+      setClientStoreValue(CLIENT_STORE_STEAM_BAN_CHECK_STATE, null, { immediate: true });
     }
 
     writeBanInfoCache(cachedBans);
