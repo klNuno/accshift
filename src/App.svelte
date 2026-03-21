@@ -22,8 +22,6 @@
   import {
     getAccountCardColor as getStoredAccountCardColor,
   } from "$lib/shared/accountCardColors";
-  import type { CardExtensionContent } from "$lib/shared/cardExtension";
-  import { warningChipsToExtensionChips } from "$lib/shared/cardExtension";
   import { getAccountCardNote as getStoredAccountCardNote } from "$lib/shared/accountCardNotes";
   import {
     getFolderCardColor as getStoredFolderCardColor,
@@ -39,17 +37,19 @@
   import { ensurePlatformLoaded } from "$lib/platforms/registry";
   import {
     createFolderNavigation,
-    type AppHistoryEntry,
   } from "$lib/app/folderNavigation.svelte";
   import { createPlatformAddFlowController } from "$lib/app/platformAddFlow.svelte";
   import AppWorkspace from "$lib/app/AppWorkspace.svelte";
   import AppDialogs from "$lib/app/AppDialogs.svelte";
   import AppScreenOverlays from "$lib/app/AppScreenOverlays.svelte";
+  import { createAccountCardExtensionsController } from "$lib/app/useAccountCardExtensions.svelte";
   import { createAppDialogsController } from "$lib/app/useAppDialogs.svelte";
+  import { createAppNavigationController } from "$lib/app/useAppNavigation.svelte";
   import { createAppUpdater } from "$lib/app/useAppUpdater.svelte";
   import { createAppLifecycleController } from "$lib/app/useAppLifecycle.svelte";
   import { createSecureScreenController } from "$lib/app/useSecureScreen.svelte";
-  type SettingsComponentType = (typeof import("$lib/features/settings/Settings.svelte"))["default"];
+  import { createSettingsPanelController } from "$lib/app/useSettingsPanel.svelte";
+  import { createSteamMaintenanceController } from "$lib/app/useSteamMaintenance.svelte";
 
   const shell = createPlatformShellState();
   const t = (key: MessageKey, params?: TranslationParams) => translate(shell.locale, key, params);
@@ -81,8 +81,19 @@
 
   // Panel and dialog state
   let showSettings = $state(false);
-  let SettingsPanel = $state<SettingsComponentType | null>(null);
-  let settingsLoadPromise: Promise<void> | null = null;
+  const settingsPanel = createSettingsPanelController({
+    t,
+    showToast,
+    refreshSettings: () => {
+      shell.refreshSettings();
+    },
+    setShowSettings: (value) => {
+      showSettings = value;
+    },
+    onAfterClose: () => {
+      secureScreen.handleSettingsClosed();
+    },
+  });
   const dialogs = createAppDialogsController({
     t,
     getAdapter: () => shell.adapter,
@@ -220,6 +231,25 @@
   let lastPrimedVisibleIds = new Set<string>();
   let visiblePrimeTimer: ReturnType<typeof setTimeout> | null = null;
   const updates = createAppUpdater({ t, addToast });
+  const appNavigation = createAppNavigationController({
+    shell,
+    navigation,
+    loader,
+    addFlow,
+    getShowSettings: () => showSettings,
+    setShowSettings: (value) => {
+      showSettings = value;
+    },
+    loadSettingsComponent,
+    loadAccounts,
+    closeBulkEdit,
+    queueGridPadding,
+    onSettingsClosed: () => {
+      secureScreen.handleSettingsClosed();
+    },
+    getParentFolderId: () => getFolder(navigation.currentFolderId || "")?.parentId ?? null,
+    resetVisiblePrimeState,
+  });
   const lifecycle = createAppLifecycleController({
     shell,
     navigation,
@@ -256,6 +286,23 @@
     getAppVersion: () => appVersion,
     onCloseContextMenu: closeContextMenu,
     t,
+  });
+  const accountExtensions = createAccountCardExtensionsController({
+    t,
+    getLocale: () => locale,
+    getCardNoteVersion: () => cardNoteVersion,
+    getShowCardNotesInline: () => settings.accountDisplay.showCardNotesInline,
+    getVisibleRenderedAccountIds: () => visibleRenderedAccountIds,
+    getWarningStates: () => loader.warningStates,
+    getAccountNote,
+    addFlow,
+  });
+  const steamMaintenance = createSteamMaintenanceController({
+    t,
+    ensureAdapterReady,
+    getActiveTab: () => shell.activeTab,
+    loadAccounts,
+    showToast,
   });
 
   function clearVisiblePrimeTimer() {
@@ -370,7 +417,7 @@
       toggleBulkEditAccount(account.id);
       return;
     }
-    if (isPendingSetupAccount(account.id)) return;
+    if (accountExtensions.isPendingSetupAccount(account.id)) return;
     void cancelPlatformAddFlowIfConflicting(activeTab, account.id);
     void handleAccountSwitch(account);
   }
@@ -381,7 +428,7 @@
       toggleBulkEditAccount(account.id);
       return;
     }
-    if (isPendingSetupAccount(account.id)) return;
+    if (accountExtensions.isPendingSetupAccount(account.id)) return;
     void cancelPlatformAddFlowIfConflicting(activeTab, account.id);
     dialogs.openAccountContextMenu(event, account);
   }
@@ -590,84 +637,13 @@
     dialogs.closeContextMenu();
   }
 
-  function createWarningExtensionSection(accountId: string): CardExtensionContent["sections"][number] | null {
-    const warningInfo = loader.warningStates[accountId];
-    const warningChips = warningChipsToExtensionChips(warningInfo?.chips);
-    const warningLines = warningInfo?.tooltipText
-      ? warningInfo.tooltipText.split("\n").map((line) => line.trim()).filter(Boolean)
-      : [];
-
-    if (warningLines.length === 0 && warningChips.length === 0) {
-      return null;
-    }
-
-    return {
-      title: t("card.extensionWarnings"),
-      text: warningChips.length > 0 ? undefined : warningLines.join(" • "),
-      lines: warningChips.length > 0 ? [] : warningLines,
-      chips: warningChips,
-    };
-  }
-
-  function createNoteExtensionSection(accountId: string): CardExtensionContent["sections"][number] | null {
-    if (shell.settings.accountDisplay.showCardNotesInline) return null;
-    const note = getAccountNote(accountId).trim();
-    if (!note) return null;
-    return {
-      title: t("card.extensionNote"),
-      lines: [note],
-    };
-  }
-
-  let accountExtensionContentById = $derived.by(() => {
-    trackDependencies(locale, cardNoteVersion, settings.accountDisplay.showCardNotesInline);
-    const contentById: Record<string, CardExtensionContent | null> = {};
-    for (const accountId of visibleRenderedAccountIds) {
-      const setupContent = addFlow.getSetupExtensionContent(accountId);
-      if (setupContent) {
-        contentById[accountId] = setupContent;
-        continue;
-      }
-
-      const sections: CardExtensionContent["sections"] = [];
-      const warningSection = createWarningExtensionSection(accountId);
-      const noteSection = createNoteExtensionSection(accountId);
-      if (warningSection) sections.push(warningSection);
-      if (noteSection) sections.push(noteSection);
-
-      contentById[accountId] = sections.length > 0 ? { sections } : null;
-    }
-
-    return contentById;
-  });
-
-  function isAccountExtensionForcedOpen(accountId: string): boolean {
-    return addFlow.isForcedOpen(accountId);
-  }
-
-  function isPendingSetupAccount(accountId: string): boolean {
-    return addFlow.isPendingSetupAccount(accountId);
-  }
-
   async function copyToClipboard(text: string, label: string) {
     await navigator.clipboard.writeText(text);
     showToast(t("toast.copied", { label }));
   }
 
   function loadSettingsComponent() {
-    if (SettingsPanel) return Promise.resolve();
-    if (!settingsLoadPromise) {
-      settingsLoadPromise = import("$lib/features/settings/Settings.svelte")
-        .then((mod) => {
-          SettingsPanel = mod.default;
-        })
-        .catch((e) => {
-          console.error("Failed to load settings panel:", e);
-          addToast(t("toast.failedLoadSettingsPanel"));
-          settingsLoadPromise = null;
-        });
-    }
-    return settingsLoadPromise;
+    return settingsPanel.loadComponent();
   }
 
   async function loadAccounts(
@@ -697,139 +673,20 @@
     }
   }
 
-  async function refreshAvatarsNow() {
-    const steamAdapter = await ensureAdapterReady("steam");
-    if (!steamAdapter?.getProfileInfo) return;
-    try {
-      const steamAccounts = await steamAdapter.loadAccounts();
-      if (steamAccounts.length === 0) {
-        showToast(t("toast.noSteamAccountsFound"));
-        return;
-      }
-      await Promise.all(steamAccounts.map((account) =>
-        steamAdapter.getProfileInfo!(account.id).catch(() => null)
-      ));
-      const count = steamAccounts.length;
-      if (shell.activeTab === "steam") {
-        loadAccounts(true, false, true, false, false);
-      }
-      showToast(t("toast.avatarRefreshComplete", { count }));
-    } catch (e) {
-      showToast(String(e));
-    }
-  }
-
-  async function refreshBansNow() {
-    const steamAdapter = await ensureAdapterReady("steam");
-    if (!steamAdapter?.loadWarningStates) return;
-    try {
-      const steamAccounts = await steamAdapter.loadAccounts();
-      if (steamAccounts.length === 0) {
-        showToast(t("toast.noSteamAccountsFound"));
-        return;
-      }
-      await steamAdapter.loadWarningStates(steamAccounts, { forceRefresh: true, silent: false, t });
-      const count = steamAccounts.length;
-      if (shell.activeTab === "steam") {
-        loadAccounts(true, false, false, true, false);
-      }
-      showToast(t("toast.banRefreshComplete", { count }));
-    } catch (e) {
-      showToast(String(e));
-    }
-  }
-
   async function toggleSettingsPanel() {
-    if (!showSettings) {
-      await addFlow.cancel();
-      closeBulkEdit();
-    }
-    if (!showSettings) {
-      history.pushState({ tab: shell.activeTab, folderId: navigation.currentFolderId, showSettings: true }, "");
-      void loadSettingsComponent();
-    }
-    showSettings = !showSettings;
-  }
-
-
-  // Navigation helpers
-  function applyAppState(entry: AppHistoryEntry) {
-    if (
-      addFlow.flow
-      && (entry.showSettings || entry.tab !== addFlow.flow.platformId || entry.folderId !== navigation.currentFolderId)
-    ) {
-      void addFlow.cancel();
-    }
-    const tabChanged = shell.activeTab !== entry.tab;
-    const settingsClosing = showSettings && !entry.showSettings;
-    if (tabChanged) {
-      loader.clearForPlatformChange();
-    }
-    shell.setActiveTab(entry.tab);
-    navigation.currentFolderId = entry.folderId;
-    showSettings = entry.showSettings;
-    if (entry.showSettings) {
-      void loadSettingsComponent();
-    }
-    if (settingsClosing) {
-      shell.refreshSettings();
-      secureScreen.handleSettingsClosed();
-    }
-    if (tabChanged && isPlatformUsable(entry.tab, shell.runtimeOs)) {
-      loadAccounts(true);
-    } else {
-      navigation.refreshCurrentItems();
-      loader.prepareVisibleAccounts();
-      queueGridPadding();
-    }
-    navigation.searchQuery = "";
-  }
-
-  function handlePopState(e: PopStateEvent) {
-    if (e.state) applyAppState(e.state as AppHistoryEntry);
-  }
-
-  function getParentFolderId(): string | null {
-    if (!navigation.currentFolderId) return null;
-    return getFolder(navigation.currentFolderId)?.parentId ?? null;
+    await appNavigation.toggleSettingsPanel();
   }
 
   async function navigateToParentFolder() {
-    if (!navigation.currentFolderId) return;
-    await addFlow.cancelIfConflicting(shell.activeTab);
-    const parentFolderId = getParentFolderId();
-    history.replaceState({ tab: shell.activeTab, folderId: parentFolderId, showSettings: false }, "");
-    navigation.currentFolderId = parentFolderId;
-    showSettings = false;
-    navigation.refreshCurrentItems();
-    loader.prepareVisibleAccounts();
-    navigation.searchQuery = "";
-    queueGridPadding();
+    await appNavigation.navigateToParentFolder();
   }
 
   async function navigateTo(folderId: string | null, options: { trackHistory?: boolean } = {}) {
-    const { trackHistory = true } = options;
-    await addFlow.cancelIfConflicting(shell.activeTab);
-    if (trackHistory) history.pushState({ tab: shell.activeTab, folderId, showSettings: false }, "");
-    navigation.currentFolderId = folderId;
-    showSettings = false;
-    navigation.refreshCurrentItems();
-    loader.prepareVisibleAccounts();
-    queueGridPadding();
+    await appNavigation.navigateTo(folderId, options);
   }
 
   async function handleTabChange(tab: string) {
-    if (!isPlatformUsable(tab, shell.runtimeOs)) return;
-    await addFlow.cancel();
-    closeBulkEdit();
-    history.pushState({ tab, folderId: null, showSettings: false }, "");
-    lastPreparedVisibleKey = "";
-    loader.clearForPlatformChange();
-    shell.setActiveTab(tab);
-    navigation.currentFolderId = null;
-    showSettings = false;
-    if (isPlatformUsable(tab, shell.runtimeOs)) { loadAccounts(true); } else { navigation.refreshCurrentItems(); queueGridPadding(); }
-    navigation.searchQuery = "";
+    await appNavigation.handleTabChange(tab);
   }
 
   let activePlatformName = $derived(activePlatformDef?.name || activeTab);
@@ -840,26 +697,15 @@
   );
 
   function handlePlatformsChanged() {
-    if (addFlow.flow) {
-      void addFlow.cancel();
-    }
-    shell.refreshSettings();
-    if (!shell.settings.enabledPlatforms.includes(shell.activeTab) || !isPlatformUsable(shell.activeTab, shell.runtimeOs)) {
-      shell.setActiveTab(getInitialActiveTab(shell.settings, shell.runtimeOs));
-    }
-    navigation.currentFolderId = null;
-    history.replaceState({ tab: shell.activeTab, folderId: null, showSettings: false }, "");
-    if (isPlatformUsable(shell.activeTab, shell.runtimeOs)) { loadAccounts(); } else { navigation.refreshCurrentItems(); }
+    appNavigation.handlePlatformsChanged();
   }
 
   function handleSettingsClose() {
-    showSettings = false;
-    shell.refreshSettings();
-    secureScreen.handleSettingsClosed();
+    settingsPanel.handleClose();
   }
 
   function handleSettingsUpdated() {
-    shell.refreshSettings();
+    settingsPanel.handleUpdated();
   }
 
   $effect(() => {
@@ -897,7 +743,7 @@
     document.addEventListener("click", drag.handleCaptureClick, true);
     window.addEventListener("wheel", handleCtrlWheelZoom, { passive: false });
     window.addEventListener("keydown", handleZoomKeydown);
-    window.addEventListener("popstate", handlePopState);
+    window.addEventListener("popstate", appNavigation.handlePopState);
     window.addEventListener("focus", lifecycle.handleWindowFocus);
     document.addEventListener("visibilitychange", lifecycle.handleVisibilityChange);
   });
@@ -920,7 +766,7 @@
     document.removeEventListener("click", drag.handleCaptureClick, true);
     window.removeEventListener("wheel", handleCtrlWheelZoom);
     window.removeEventListener("keydown", handleZoomKeydown);
-    window.removeEventListener("popstate", handlePopState);
+    window.removeEventListener("popstate", appNavigation.handlePopState);
     window.removeEventListener("focus", lifecycle.handleWindowFocus);
     document.removeEventListener("visibilitychange", lifecycle.handleVisibilityChange);
     secureScreen.handleAppDestroyed();
@@ -966,13 +812,13 @@
 
   <AppWorkspace
     {showSettings}
-    {SettingsPanel}
+    SettingsPanel={settingsPanel.panel}
     {runtimeOs}
     onSettingsClose={handleSettingsClose}
     onPlatformsChanged={handlePlatformsChanged}
     onSettingsUpdated={handleSettingsUpdated}
-    onRefreshAvatarsNow={refreshAvatarsNow}
-    onRefreshBansNow={refreshBansNow}
+    onRefreshAvatarsNow={steamMaintenance.refreshAvatarsNow}
+    onRefreshBansNow={steamMaintenance.refreshBansNow}
     compatiblePlatformCount={compatiblePlatforms.length}
     {activeTabUsable}
     {adapterLoading}
@@ -1024,9 +870,9 @@
     onAccountContextMenu={handleWorkspaceAccountContextMenu}
     onFolderContextMenu={handleWorkspaceFolderContextMenu}
     showCardNotesInline={settings.accountDisplay.showCardNotesInline}
-    {accountExtensionContentById}
-    {isAccountExtensionForcedOpen}
-    {isPendingSetupAccount}
+    accountExtensionContentById={accountExtensions.contentById}
+    isAccountExtensionForcedOpen={accountExtensions.isForcedOpen}
+    isPendingSetupAccount={accountExtensions.isPendingSetupAccount}
     {activePlatformAddSetupId}
     switching={loader.switching}
   />
