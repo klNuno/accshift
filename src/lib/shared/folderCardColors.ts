@@ -1,11 +1,13 @@
 import {
   CLIENT_STORE_FOLDER_CARD_COLORS,
+  getClientStoreRevision,
   getClientStoreValue,
   setClientStoreValue,
 } from "$lib/storage/clientStorage";
 
 type FolderColorMap = Record<string, string>;
 let cachedMap: FolderColorMap | null = null;
+let cachedRevision = -1;
 const SAFE_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
 function isSafeColor(color: string): boolean {
@@ -25,18 +27,22 @@ function sanitizeMap(value: unknown): FolderColorMap {
 }
 
 function readMap(): FolderColorMap {
-  if (cachedMap) return cachedMap;
+  const revision = getClientStoreRevision(CLIENT_STORE_FOLDER_CARD_COLORS);
+  if (cachedMap && cachedRevision === revision) return cachedMap;
 
   try {
     const raw = getClientStoreValue<unknown>(CLIENT_STORE_FOLDER_CARD_COLORS);
     if (raw == null) {
       cachedMap = {};
+      cachedRevision = revision;
       return cachedMap;
     }
     cachedMap = sanitizeMap(raw);
+    cachedRevision = revision;
     return cachedMap;
   } catch {
     cachedMap = {};
+    cachedRevision = revision;
     return cachedMap;
   }
 }
@@ -44,6 +50,7 @@ function readMap(): FolderColorMap {
 function writeMap(data: FolderColorMap) {
   cachedMap = data;
   setClientStoreValue(CLIENT_STORE_FOLDER_CARD_COLORS, data);
+  cachedRevision = getClientStoreRevision(CLIENT_STORE_FOLDER_CARD_COLORS);
 }
 
 export function getFolderCardColor(folderId: string): string {

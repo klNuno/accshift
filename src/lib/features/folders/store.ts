@@ -1,11 +1,13 @@
 import type { FolderInfo, ItemRef, FolderStore } from "./types";
 import {
   CLIENT_STORE_FOLDERS,
+  getClientStoreRevision,
   getClientStoreValue,
   setClientStoreValue,
 } from "$lib/storage/clientStorage";
 const CURRENT_VERSION = 1;
 let cachedStore: FolderStore | null = null;
+let cachedStoreRevision = -1;
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -75,19 +77,23 @@ function migrateStore(store: FolderStore): FolderStore {
 }
 
 function getStore(): FolderStore {
-  if (cachedStore) return cachedStore;
+  const revision = getClientStoreRevision(CLIENT_STORE_FOLDERS);
+  if (cachedStore && cachedStoreRevision === revision) return cachedStore;
 
   try {
     const data = getClientStoreValue<unknown>(CLIENT_STORE_FOLDERS);
     if (data == null) {
       cachedStore = { version: CURRENT_VERSION, folders: [], itemOrder: {} };
+      cachedStoreRevision = revision;
       return cachedStore;
     }
     const store = sanitizeStore(data);
     cachedStore = migrateStore(store);
+    cachedStoreRevision = revision;
     return cachedStore;
   } catch {
     cachedStore = { version: CURRENT_VERSION, folders: [], itemOrder: {} };
+    cachedStoreRevision = revision;
     return cachedStore;
   }
 }
@@ -96,6 +102,7 @@ function saveStore(store: FolderStore) {
   store.version = CURRENT_VERSION;
   cachedStore = store;
   setClientStoreValue(CLIENT_STORE_FOLDERS, store);
+  cachedStoreRevision = getClientStoreRevision(CLIENT_STORE_FOLDERS);
 }
 
 function generateId(): string {

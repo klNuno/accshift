@@ -1,5 +1,6 @@
 import {
   CLIENT_STORE_ACCOUNT_CARD_NOTES,
+  getClientStoreRevision,
   getClientStoreValue,
   setClientStoreValue,
 } from "$lib/storage/clientStorage";
@@ -8,6 +9,7 @@ const MAX_NOTE_LENGTH = 180;
 
 type AccountNoteMap = Record<string, string>;
 let cachedMap: AccountNoteMap | null = null;
+let cachedRevision = -1;
 
 function sanitizeNote(value: string): string {
   const withoutControls = value.replace(/\p{Cc}/gu, " ");
@@ -28,17 +30,21 @@ function sanitizeMap(value: unknown): AccountNoteMap {
 }
 
 function readMap(): AccountNoteMap {
-  if (cachedMap) return cachedMap;
+  const revision = getClientStoreRevision(CLIENT_STORE_ACCOUNT_CARD_NOTES);
+  if (cachedMap && cachedRevision === revision) return cachedMap;
   try {
     const raw = getClientStoreValue<unknown>(CLIENT_STORE_ACCOUNT_CARD_NOTES);
     if (raw == null) {
       cachedMap = {};
+      cachedRevision = revision;
       return cachedMap;
     }
     cachedMap = sanitizeMap(raw);
+    cachedRevision = revision;
     return cachedMap;
   } catch {
     cachedMap = {};
+    cachedRevision = revision;
     return cachedMap;
   }
 }
@@ -46,6 +52,7 @@ function readMap(): AccountNoteMap {
 function writeMap(data: AccountNoteMap) {
   cachedMap = data;
   setClientStoreValue(CLIENT_STORE_ACCOUNT_CARD_NOTES, data);
+  cachedRevision = getClientStoreRevision(CLIENT_STORE_ACCOUNT_CARD_NOTES);
 }
 
 export function getAccountCardNote(accountId: string): string {

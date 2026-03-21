@@ -5,6 +5,7 @@ import { PLATFORM_DEFS } from "$lib/platforms/registry";
 import { getThemeDefinition } from "$lib/theme/themes";
 import {
   CLIENT_STORE_SETTINGS,
+  getClientStoreRevision,
   getClientStoreValue,
   setClientStoreValue,
 } from "$lib/storage/clientStorage";
@@ -45,6 +46,7 @@ const DEFAULTS: AppSettings = {
 };
 const PLATFORM_IDS = new Set(ALL_PLATFORMS.map((platform) => platform.id));
 let cachedSettings: AppSettings | null = null;
+let cachedSettingsRevision = -1;
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -193,8 +195,10 @@ function loadSettingsFromStorage(): AppSettings {
 }
 
 export function getSettings(): AppSettings {
-  if (!cachedSettings) {
+  const revision = getClientStoreRevision(CLIENT_STORE_SETTINGS);
+  if (!cachedSettings || cachedSettingsRevision !== revision) {
     cachedSettings = loadSettingsFromStorage();
+    cachedSettingsRevision = revision;
   }
   return cloneSettings(cachedSettings);
 }
@@ -203,6 +207,7 @@ export function saveSettings(settings: AppSettings) {
   const sanitized = sanitizeSettings(settings);
   cachedSettings = sanitized;
   setClientStoreValue(CLIENT_STORE_SETTINGS, sanitized);
+  cachedSettingsRevision = getClientStoreRevision(CLIENT_STORE_SETTINGS);
   try {
     const theme = getThemeDefinition(sanitized.themeId);
     localStorage.setItem(

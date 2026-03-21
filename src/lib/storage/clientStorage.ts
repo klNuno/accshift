@@ -68,6 +68,7 @@ const LEGACY_LOCAL_STORAGE_KEYS: Record<ClientStoreId, string> = {
 
 const memoryStores = new Map<ClientStoreId, unknown>();
 const saveTimers = new Map<ClientStoreId, ReturnType<typeof setTimeout>>();
+const storeRevisions = new Map<ClientStoreId, number>();
 
 let lastManifest: StorageManifest = {
   schemaVersion: 1,
@@ -110,10 +111,18 @@ function readLegacyLocalStorageValue(storeId: ClientStoreId): unknown {
   }
 }
 
-function applySnapshot(snapshot: ClientStorageSnapshot) {
+function bumpStoreRevision(storeId: ClientStoreId) {
+  storeRevisions.set(storeId, (storeRevisions.get(storeId) ?? 0) + 1);
+}
+
+function applySnapshot(
+  snapshot: ClientStorageSnapshot,
+  storeIds: readonly ClientStoreId[] = CLIENT_STORE_IDS,
+) {
   lastManifest = snapshot.manifest ?? { schemaVersion: 1, stores: {} };
-  for (const storeId of CLIENT_STORE_IDS) {
+  for (const storeId of storeIds) {
     memoryStores.set(storeId, cloneValue(snapshot.stores?.[storeId]));
+    bumpStoreRevision(storeId);
   }
 }
 
@@ -209,6 +218,10 @@ export function getClientStoreValue<T>(storeId: ClientStoreId): T | undefined {
   return cloneValue(memoryStores.get(storeId) as T | undefined);
 }
 
+export function getClientStoreRevision(storeId: ClientStoreId): number {
+  return storeRevisions.get(storeId) ?? 0;
+}
+
 export function setClientStoreValue(
   storeId: ClientStoreId,
   value: unknown,
@@ -217,6 +230,7 @@ export function setClientStoreValue(
   },
 ) {
   memoryStores.set(storeId, cloneValue(value));
+  bumpStoreRevision(storeId);
   scheduleSave(storeId, options?.immediate ? 0 : 120);
 }
 
@@ -232,7 +246,7 @@ export async function refreshClientStorageIfChanged(): Promise<string[]> {
   }
 
   const snapshot = await loadSnapshotFromBackend();
-  applySnapshot(snapshot);
+  applySnapshot(snapshot, changed.filter(isClientStoreId));
   return changed;
 }
 
