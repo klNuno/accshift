@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
+  import { trackDependencies } from "$lib/shared/trackDependencies";
 
   let { title, placeholder = "", initialValue = "", allowEmpty = false, onConfirm, onCancel, locale = DEFAULT_LOCALE }: {
     title: string;
@@ -16,7 +17,7 @@
   let inputRef = $state<HTMLInputElement | null>(null);
 
   $effect(() => {
-    initialValue;
+    trackDependencies(initialValue);
     value = initialValue;
   });
 

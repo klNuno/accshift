@@ -4,6 +4,7 @@ import { getPlatform } from "$lib/shared/platform";
 import { getPlatformDefinition } from "$lib/platforms/registry";
 import { DEFAULT_LOCALE } from "$lib/i18n";
 import { getThemeDefinition } from "$lib/theme/themes";
+import { trackDependencies } from "$lib/shared/trackDependencies";
 
 export function isPlatformCompatibleWithOs(
   platform: PlatformDef | undefined,
@@ -67,7 +68,7 @@ export function createPlatformShellState() {
     return `transform: scale(${zoom}); transform-origin: top left; width: calc(100% / ${zoom}); height: calc(100% / ${zoom});`;
   });
   let adapter = $derived.by(() => {
-    adapterEpoch;
+    trackDependencies(adapterEpoch);
     return activeTabUsable ? getPlatform(activeTab) : undefined;
   });
 

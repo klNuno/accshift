@@ -57,6 +57,7 @@
   } from "$lib/shared/folderCardColors";
   import { DEFAULT_LOCALE, translate, type MessageKey, type TranslationParams } from "$lib/i18n";
   import { hashPinCode, sanitizePinDigits, isValidPinHash } from "$lib/shared/pin";
+  import { trackDependencies } from "$lib/shared/trackDependencies";
   import {
     createPlatformShellState,
     getInitialActiveTab,
@@ -510,17 +511,17 @@
   );
 
   function getAccountCardColor(accountId: string): string {
-    cardColorVersion;
+    trackDependencies(cardColorVersion);
     return getStoredAccountCardColor(accountId);
   }
 
   function getAccountNote(accountId: string): string {
-    cardNoteVersion;
+    trackDependencies(cardNoteVersion);
     return getStoredAccountCardNote(accountId);
   }
 
   function getFolderCardColor(folderId: string): string {
-    cardColorVersion;
+    trackDependencies(cardColorVersion);
     return getStoredFolderCardColor(folderId);
   }
 
@@ -558,9 +559,7 @@
   }
 
   let accountExtensionContentById = $derived.by(() => {
-    locale;
-    cardNoteVersion;
-    settings.accountDisplay.showCardNotesInline;
+    trackDependencies(locale, cardNoteVersion, settings.accountDisplay.showCardNotesInline);
     const pending = addFlow.pendingSetupAccount;
     const accountIds = new Set(loader.accounts.map((account) => account.id));
     if (pending) accountIds.add(pending.id);
@@ -993,7 +992,7 @@
   });
 
   $effect(() => {
-    shell.settings.uiScalePercent;
+    trackDependencies(shell.settings.uiScalePercent);
     queueGridPadding();
   });
 
@@ -1025,8 +1024,7 @@
   });
 
   $effect(() => {
-    shell.runtimeOs;
-    shell.settings.enabledPlatforms.join(",");
+    trackDependencies(shell.runtimeOs, shell.settings.enabledPlatforms.join(","));
     if (isPlatformUsable(shell.activeTab, shell.runtimeOs)) return;
     const fallbackTab = getInitialActiveTab(shell.settings, shell.runtimeOs);
     if (fallbackTab !== shell.activeTab) {

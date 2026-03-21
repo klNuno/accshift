@@ -2,6 +2,7 @@
   import { onMount, onDestroy, tick } from "svelte";
   import type { ContextMenuItem } from "../types";
   import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
+  import { trackDependencies } from "$lib/shared/trackDependencies";
 
   let { items, x, y, onClose, locale = DEFAULT_LOCALE }: {
     items: ContextMenuItem[];
@@ -60,8 +61,7 @@
   });
 
   $effect(() => {
-    x;
-    y;
+    trackDependencies(x, y);
     void positionMenu();
   });
 

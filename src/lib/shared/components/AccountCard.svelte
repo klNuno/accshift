@@ -8,6 +8,7 @@
   import { formatRelativeTimeCompact } from "$lib/shared/time";
   import { getAvatarGradientStyle, getAvatarInitials, getAvatarSeed } from "$lib/shared/avatarFallback";
   import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
+  import { trackDependencies } from "$lib/shared/trackDependencies";
 
   let {
     account,
@@ -183,8 +184,7 @@
   }
 
   $effect(() => {
-    account.displayName;
-    account.username;
+    trackDependencies(account.displayName, account.username);
     if (isHovered) {
       queueOverflowCheck();
       return;

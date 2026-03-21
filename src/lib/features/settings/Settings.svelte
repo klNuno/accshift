@@ -28,6 +28,7 @@
     type TranslationParams,
   } from "$lib/i18n";
   import { hashPinCode, sanitizePinDigits } from "$lib/shared/pin";
+  import { trackDependencies } from "$lib/shared/trackDependencies";
   import type { PlatformDef } from "$lib/features/settings/types";
 
   type SettingsTabDef = {
@@ -468,29 +469,31 @@
   });
 
   $effect(() => {
-    settings.dataRefresh.avatarCacheDays;
-    settings.dataRefresh.banCheckDays;
-    settings.inactivityBlurSeconds;
-    settings.themeId;
-    settings.backgroundOpacity;
-    settings.suspendGraphicsWhenMinimized;
-    settings.minimizeOnAccountSwitch;
-    settings.language;
-    settings.platformSettings.steam.runAsAdmin;
-    settings.platformSettings.steam.launchOptions;
-    settings.accountDisplay.showUsernames;
-    settings.accountDisplay.showCardNotesInline;
-    showLastLoginKey;
-    settings.uiScalePercent;
-    settings.defaultPlatformId;
-    settings.pinEnabled;
-    settings.pinHash;
-    pinCodeInput;
-    settings.enabledPlatforms.join(",");
-    apiKey;
-    apiKeyConfigured;
-    apiKeyTouched;
-    platformPathsKey;
+    trackDependencies(
+      settings.dataRefresh.avatarCacheDays,
+      settings.dataRefresh.banCheckDays,
+      settings.inactivityBlurSeconds,
+      settings.themeId,
+      settings.backgroundOpacity,
+      settings.suspendGraphicsWhenMinimized,
+      settings.minimizeOnAccountSwitch,
+      settings.language,
+      settings.platformSettings.steam.runAsAdmin,
+      settings.platformSettings.steam.launchOptions,
+      settings.accountDisplay.showUsernames,
+      settings.accountDisplay.showCardNotesInline,
+      showLastLoginKey,
+      settings.uiScalePercent,
+      settings.defaultPlatformId,
+      settings.pinEnabled,
+      settings.pinHash,
+      pinCodeInput,
+      settings.enabledPlatforms.join(","),
+      apiKey,
+      apiKeyConfigured,
+      apiKeyTouched,
+      platformPathsKey,
+    );
     queueSave();
   });
 
@@ -500,8 +503,7 @@
       activeSettingsTab = visibleIds[0] ?? "general";
       loadActivePlatformComponent(activeSettingsTab);
     }
-    visibleIds.join(",");
-    settings.language;
+    trackDependencies(visibleIds.join(","), settings.language);
     queueTabUiRefresh(true);
   });
 </script>
