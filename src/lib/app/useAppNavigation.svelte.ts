@@ -2,47 +2,33 @@ import { getInitialActiveTab, isPlatformUsable } from "$lib/app/platformShell.sv
 import type { AppSettings, RuntimeOs } from "$lib/features/settings/types";
 import type { AppHistoryEntry } from "$lib/app/folderNavigation.svelte";
 
-type ShellLike = {
-  get activeTab(): string;
-  get settings(): AppSettings;
-  get runtimeOs(): RuntimeOs;
-  setActiveTab: (tab: string) => void;
-  refreshSettings: () => void;
-};
-
-type NavigationLike = {
-  get currentFolderId(): string | null;
-  set currentFolderId(folderId: string | null);
-  get searchQuery(): string;
-  set searchQuery(query: string);
-  refreshCurrentItems: () => void;
-};
-
-type LoaderLike = {
-  clearForPlatformChange: () => void;
-  prepareVisibleAccounts: () => void;
-};
-
-type AddFlowLike = {
-  get flow(): { platformId: string } | null;
-  cancel: () => Promise<void>;
-  cancelIfConflicting: (targetPlatformId: string, targetAccountId?: string) => Promise<void>;
-};
-
-type AppNavigationControllerOptions = {
-  shell: ShellLike;
-  navigation: NavigationLike;
-  loader: LoaderLike;
-  addFlow: AddFlowLike;
+type AppNavigationDeps = {
+  shell: {
+    get activeTab(): string;
+    get runtimeOs(): RuntimeOs;
+    get settings(): AppSettings;
+    setActiveTab: (tab: string) => void;
+    refreshSettings: () => void;
+  };
+  navigation: {
+    currentFolderId: string | null;
+    searchQuery: string;
+    refreshCurrentItems: () => void;
+  };
+  loader: {
+    clearForPlatformChange: () => void;
+    prepareVisibleAccounts: () => void;
+  };
+  addFlow: {
+    get flow(): { platformId: string } | null;
+    cancel: () => Promise<void>;
+    cancelIfConflicting: (platformId: string, accountId?: string) => Promise<void>;
+  };
   getShowSettings: () => boolean;
   setShowSettings: (value: boolean) => void;
   loadSettingsComponent: () => Promise<void>;
   loadAccounts: (
-    silent?: boolean,
-    showRefreshedToast?: boolean,
-    forceRefresh?: boolean,
-    checkBans?: boolean,
-    deferBackground?: boolean,
+    ...args: [boolean?, boolean?, boolean?, boolean?, boolean?]
   ) => void | Promise<unknown>;
   closeBulkEdit: () => void;
   queueGridPadding: () => void;
@@ -65,13 +51,11 @@ export function createAppNavigationController({
   onSettingsClosed,
   getParentFolderId,
   resetVisiblePrimeState,
-}: AppNavigationControllerOptions) {
+}: AppNavigationDeps) {
   async function toggleSettingsPanel() {
     if (!getShowSettings()) {
       await addFlow.cancel();
       closeBulkEdit();
-    }
-    if (!getShowSettings()) {
       history.pushState(
         {
           tab: shell.activeTab,

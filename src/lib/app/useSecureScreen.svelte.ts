@@ -2,24 +2,20 @@ import { hashPinCode, sanitizePinDigits, isValidPinHash } from "$lib/shared/pin"
 import type { AppSettings } from "$lib/features/settings/types";
 import type { MessageKey, TranslationParams } from "$lib/i18n";
 
-type InactivityBlurController = {
-  get isBlurred(): boolean;
-  resetActivity: () => void;
-  start: () => void;
-  stop: () => void;
-  attachListeners: () => void;
-  detachListeners: () => void;
-};
-
-type WindowActivityController = {
-  get isForeground(): boolean;
-  get isMinimized(): boolean;
-  get isPageVisible(): boolean;
-};
-
-type SecureScreenOptions = {
-  blur: InactivityBlurController;
-  windowActivity: WindowActivityController;
+type SecureScreenDeps = {
+  blur: {
+    get isBlurred(): boolean;
+    resetActivity: () => void;
+    start: () => void;
+    stop: () => void;
+    attachListeners: () => void;
+    detachListeners: () => void;
+  };
+  windowActivity: {
+    get isForeground(): boolean;
+    get isMinimized(): boolean;
+    get isPageVisible(): boolean;
+  };
   getSettings: () => AppSettings;
   getIsAccountSelectionView: () => boolean;
   getAppVersion: () => string;
@@ -40,7 +36,7 @@ export function createSecureScreenController({
   getAppVersion,
   onCloseContextMenu,
   t,
-}: SecureScreenOptions) {
+}: SecureScreenDeps) {
   const startupPinLocked = Boolean(
     getSettings().pinEnabled && isValidPinHash(getSettings().pinHash || ""),
   );
