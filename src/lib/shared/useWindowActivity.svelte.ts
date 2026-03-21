@@ -58,7 +58,9 @@ export function createWindowActivity() {
     if (typeof document !== "undefined") {
       const handleVisibilityChange = () => {
         updatePageVisibility();
-        void sync();
+        if (document.visibilityState === "visible") {
+          void sync();
+        }
       };
       document.addEventListener("visibilitychange", handleVisibilityChange);
       cleanupFns.push(() =>
