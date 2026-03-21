@@ -10,7 +10,7 @@ type AccountNoteMap = Record<string, string>;
 let cachedMap: AccountNoteMap | null = null;
 
 function sanitizeNote(value: string): string {
-  const withoutControls = value.replace(/[\u0000-\u001F\u007F]/g, " ");
+  const withoutControls = value.replace(/\p{Cc}/gu, " ");
   return withoutControls.trim().slice(0, MAX_NOTE_LENGTH);
 }
 
