@@ -31,8 +31,7 @@
             const bt = JSON.parse(bootTheme);
             if (bt?.colorScheme === "light") theme = "light";
           }
-        } catch {
-        }
+        } catch {}
 
         const palette = theme === "light" ? LIGHT : DARK;
         const root = document.documentElement;
@@ -63,7 +62,13 @@
       }
 
       body {
-        font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-family:
+          Inter,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
       }
 
       #app {

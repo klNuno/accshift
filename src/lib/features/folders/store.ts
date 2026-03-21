@@ -18,11 +18,12 @@ function sanitizeFolder(value: unknown): FolderInfo | null {
   const name = typeof raw.name === "string" ? raw.name.trim() : "";
   const platform = typeof raw.platform === "string" ? raw.platform.trim() : "";
   const parentIdRaw = raw.parentId;
-  const parentId = parentIdRaw === null
-    ? null
-    : typeof parentIdRaw === "string" && parentIdRaw.trim().length > 0
-      ? parentIdRaw.trim()
-      : null;
+  const parentId =
+    parentIdRaw === null
+      ? null
+      : typeof parentIdRaw === "string" && parentIdRaw.trim().length > 0
+        ? parentIdRaw.trim()
+        : null;
 
   if (!id || !name || !platform) return null;
 
@@ -127,7 +128,7 @@ export function createFolder(name: string, parentId: string | null, platform: st
 }
 
 export function getFolder(id: string): FolderInfo | undefined {
-  return getStore().folders.find(f => f.id === id);
+  return getStore().folders.find((f) => f.id === id);
 }
 
 export function getFolderPath(folderId: string | null): FolderInfo[] {
@@ -136,7 +137,7 @@ export function getFolderPath(folderId: string | null): FolderInfo[] {
   const path: FolderInfo[] = [];
   let currentId: string | null = folderId;
   while (currentId) {
-    const folder = store.folders.find(f => f.id === currentId);
+    const folder = store.folders.find((f) => f.id === currentId);
     if (!folder) break;
     path.unshift(folder);
     currentId = folder.parentId;
@@ -150,9 +151,7 @@ export function syncAccounts(accountIds: string[], platform: string) {
   if (!store.itemOrder[rootKey]) store.itemOrder[rootKey] = [];
 
   const allPlacedIds = new Set<string>();
-  const platformFolderIds = store.folders
-    .filter(f => f.platform === platform)
-    .map(f => f.id);
+  const platformFolderIds = store.folders.filter((f) => f.platform === platform).map((f) => f.id);
   const allKeys = [rootKey, ...platformFolderIds];
 
   for (const key of allKeys) {
@@ -172,7 +171,7 @@ export function syncAccounts(accountIds: string[], platform: string) {
   for (const key of allKeys) {
     if (store.itemOrder[key]) {
       store.itemOrder[key] = store.itemOrder[key].filter(
-        item => item.type === "folder" || validIds.has(item.id)
+        (item) => item.type === "folder" || validIds.has(item.id),
       );
     }
   }
@@ -185,7 +184,7 @@ export function moveItem(
   fromFolderId: string | null,
   toFolderId: string | null,
   platform: string,
-  insertIndex?: number
+  insertIndex?: number,
 ) {
   const store = getStore();
   const fromKey = fromFolderId || getRootKey(platform);
@@ -193,7 +192,7 @@ export function moveItem(
 
   if (store.itemOrder[fromKey]) {
     store.itemOrder[fromKey] = store.itemOrder[fromKey].filter(
-      i => !(i.type === itemRef.type && i.id === itemRef.id)
+      (i) => !(i.type === itemRef.type && i.id === itemRef.id),
     );
   }
 
@@ -251,7 +250,7 @@ function collectNestedAccountItems(
 
 export function deleteFolder(folderId: string) {
   const store = getStore();
-  const folder = store.folders.find(f => f.id === folderId);
+  const folder = store.folders.find((f) => f.id === folderId);
   if (!folder) return;
 
   const parentKey = folder.parentId || getRootKey(folder.platform);
@@ -260,7 +259,7 @@ export function deleteFolder(folderId: string) {
   const movedAccounts = collectNestedAccountItems(store, folderId, folderIdsToDelete);
 
   const parentItems = store.itemOrder[parentKey];
-  const folderIdx = parentItems.findIndex(i => i.type === "folder" && i.id === folderId);
+  const folderIdx = parentItems.findIndex((i) => i.type === "folder" && i.id === folderId);
   if (folderIdx >= 0) {
     parentItems.splice(folderIdx, 1, ...movedAccounts);
   } else {
@@ -269,21 +268,21 @@ export function deleteFolder(folderId: string) {
 
   for (const key of Object.keys(store.itemOrder)) {
     store.itemOrder[key] = (store.itemOrder[key] || []).filter(
-      (item) => item.type !== "folder" || !folderIdsToDelete.has(item.id)
+      (item) => item.type !== "folder" || !folderIdsToDelete.has(item.id),
     );
   }
 
   for (const id of folderIdsToDelete) {
     delete store.itemOrder[id];
   }
-  store.folders = store.folders.filter(f => !folderIdsToDelete.has(f.id));
+  store.folders = store.folders.filter((f) => !folderIdsToDelete.has(f.id));
 
   saveStore(store);
 }
 
 export function renameFolder(folderId: string, newName: string) {
   const store = getStore();
-  const folder = store.folders.find(f => f.id === folderId);
+  const folder = store.folders.find((f) => f.id === folderId);
   if (folder) {
     folder.name = newName;
     saveStore(store);

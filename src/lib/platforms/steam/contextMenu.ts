@@ -17,32 +17,31 @@ import {
 
 export function getSteamContextMenuItems(
   account: PlatformAccount,
-  callbacks: PlatformContextMenuCallbacks
+  callbacks: PlatformContextMenuCallbacks,
 ): ContextMenuAction[] {
   const items: ContextMenuAction[] = [
     {
       id: `steam.launch.online.${account.id}`,
       group: "platform.primary",
       label: callbacks.t("steam.launchOnline"),
-      action: createSafeContextAction(
-        callbacks,
-        () => switchAccountMode(account.username, account.id, "online"),
+      action: createSafeContextAction(callbacks, () =>
+        switchAccountMode(account.username, account.id, "online"),
       ),
     },
     {
       id: `steam.launch.invisible.${account.id}`,
       group: "platform.primary",
       label: callbacks.t("steam.launchInvisible"),
-      action: createSafeContextAction(
-        callbacks,
-        () => switchAccountMode(account.username, account.id, "invisible"),
+      action: createSafeContextAction(callbacks, () =>
+        switchAccountMode(account.username, account.id, "invisible"),
       ),
     },
     {
       id: `steam.copy.username.${account.id}`,
       group: "platform.copy",
       label: callbacks.t("steam.copyLabelUsername"),
-      action: () => callbacks.copyToClipboard(account.username, callbacks.t("steam.copyLabelUsername")),
+      action: () =>
+        callbacks.copyToClipboard(account.username, callbacks.t("steam.copyLabelUsername")),
     },
     {
       id: `steam.copy.id64.${account.id}`,
@@ -63,7 +62,11 @@ export function getSteamContextMenuItems(
       id: `steam.copy.profileUrl.${account.id}`,
       group: "platform.copy",
       label: callbacks.t("steam.copyLabelProfileUrl"),
-      action: () => callbacks.copyToClipboard(toProfileUrl(account.id), callbacks.t("steam.copyLabelProfileUrl")),
+      action: () =>
+        callbacks.copyToClipboard(
+          toProfileUrl(account.id),
+          callbacks.t("steam.copyLabelProfileUrl"),
+        ),
     },
     {
       id: `steam.open.userdata.${account.id}`,
@@ -82,9 +85,9 @@ export function getSteamContextMenuItems(
         confirmSafeContextAction(
           callbacks,
           {
-          title: callbacks.t("steam.clearIntegratedBrowserCacheConfirmTitle"),
-          message: callbacks.t("steam.clearIntegratedBrowserCacheConfirmMessage"),
-          confirmLabel: callbacks.t("steam.clearIntegratedBrowserCache"),
+            title: callbacks.t("steam.clearIntegratedBrowserCacheConfirmTitle"),
+            message: callbacks.t("steam.clearIntegratedBrowserCacheConfirmMessage"),
+            confirmLabel: callbacks.t("steam.clearIntegratedBrowserCache"),
           },
           async () => {
             await clearIntegratedBrowserCache();

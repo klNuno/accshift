@@ -1,7 +1,10 @@
 import type { ContextMenuAction } from "./types";
 import type { ContextMenuItem } from "../types";
 import type { PlatformAccount, PlatformAdapter, PlatformContextMenuCallbacks } from "../platform";
-import { getAccountAppearanceContextActions, type AccountAppearanceActionCallbacks } from "./accountAppearanceActions";
+import {
+  getAccountAppearanceContextActions,
+  type AccountAppearanceActionCallbacks,
+} from "./accountAppearanceActions";
 import { ACCOUNT_CONTEXT_GROUP_ORDER, buildContextMenuItems } from "./types";
 
 interface BuildAccountContextMenuOptions {
@@ -63,11 +66,14 @@ export function buildAccountContextMenuItems({
   appearanceCallbacks,
 }: BuildAccountContextMenuOptions): ContextMenuItem[] {
   const renameAction = getRenameAction(account, adapter, platformCallbacks);
-  const actions = collapseCopyActions([
-    ...(renameAction ? [renameAction] : []),
-    ...adapter.getContextMenuActions(account, platformCallbacks),
-    ...getAccountAppearanceContextActions(account, appearanceCallbacks),
-  ], platformCallbacks);
+  const actions = collapseCopyActions(
+    [
+      ...(renameAction ? [renameAction] : []),
+      ...adapter.getContextMenuActions(account, platformCallbacks),
+      ...getAccountAppearanceContextActions(account, appearanceCallbacks),
+    ],
+    platformCallbacks,
+  );
 
   return buildContextMenuItems(actions, ACCOUNT_CONTEXT_GROUP_ORDER);
 }

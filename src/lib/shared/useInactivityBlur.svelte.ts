@@ -74,7 +74,9 @@ export function createInactivityBlur() {
   }
 
   return {
-    get isBlurred() { return isBlurred; },
+    get isBlurred() {
+      return isBlurred;
+    },
     resetActivity,
     start,
     stop,

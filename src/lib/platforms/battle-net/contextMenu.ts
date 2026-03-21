@@ -1,8 +1,6 @@
 import type { ContextMenuAction } from "$lib/shared/contextMenu/types";
 import type { PlatformAccount, PlatformContextMenuCallbacks } from "$lib/shared/platform";
-import {
-  confirmSafeContextAction,
-} from "$lib/shared/contextMenu/actions";
+import { confirmSafeContextAction } from "$lib/shared/contextMenu/actions";
 import { forgetAccount } from "./battleNetApi";
 
 export function getBattleNetContextMenuItems(

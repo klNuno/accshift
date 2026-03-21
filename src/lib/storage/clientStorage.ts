@@ -144,7 +144,9 @@ function diffManifests(previous: StorageManifest, next: StorageManifest): string
     ...Object.keys(previous.stores ?? {}),
     ...Object.keys(next.stores ?? {}),
   ]);
-  return [...allKeys].filter((key) => (previous.stores?.[key] ?? "") !== (next.stores?.[key] ?? ""));
+  return [...allKeys].filter(
+    (key) => (previous.stores?.[key] ?? "") !== (next.stores?.[key] ?? ""),
+  );
 }
 
 async function loadSnapshotFromBackend(): Promise<ClientStorageSnapshot> {
@@ -180,13 +182,15 @@ export async function initializeClientStorage(): Promise<void> {
       migratedStores.push(storeId);
     }
 
-    await Promise.all(migratedStores.map(async (storeId) => {
-      try {
-        await persistStore(storeId);
-      } catch (reason) {
-        console.error(`Failed to migrate legacy store ${storeId}:`, reason);
-      }
-    }));
+    await Promise.all(
+      migratedStores.map(async (storeId) => {
+        try {
+          await persistStore(storeId);
+        } catch (reason) {
+          console.error(`Failed to migrate legacy store ${storeId}:`, reason);
+        }
+      }),
+    );
 
     if (migratedStores.length > 0) {
       emitStorageLog("Migrated legacy localStorage stores", { storeIds: migratedStores });
@@ -205,9 +209,13 @@ export function getClientStoreValue<T>(storeId: ClientStoreId): T | undefined {
   return cloneValue(memoryStores.get(storeId) as T | undefined);
 }
 
-export function setClientStoreValue(storeId: ClientStoreId, value: unknown, options?: {
-  immediate?: boolean;
-}) {
+export function setClientStoreValue(
+  storeId: ClientStoreId,
+  value: unknown,
+  options?: {
+    immediate?: boolean;
+  },
+) {
   memoryStores.set(storeId, cloneValue(value));
   scheduleSave(storeId, options?.immediate ? 0 : 120);
 }

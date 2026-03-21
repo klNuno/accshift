@@ -23,7 +23,9 @@ export async function getCurrentAccount(): Promise<string> {
 }
 
 export async function getStartupSnapshot(): Promise<RobloxStartupSnapshot> {
-  return invoke<RobloxStartupSnapshot>("platform_get_startup_snapshot", { platformId: PLATFORM_ID });
+  return invoke<RobloxStartupSnapshot>("platform_get_startup_snapshot", {
+    platformId: PLATFORM_ID,
+  });
 }
 
 export async function switchAccount(userId: string): Promise<void> {

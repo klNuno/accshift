@@ -12,8 +12,7 @@ export function getEpicContextMenuItems(
       id: `epic.copy.accountId.${account.id}`,
       group: "platform.copy",
       label: callbacks.t("epic.copyLabelAccountId"),
-      action: () =>
-        callbacks.copyToClipboard(account.id, callbacks.t("epic.copyLabelAccountId")),
+      action: () => callbacks.copyToClipboard(account.id, callbacks.t("epic.copyLabelAccountId")),
     },
     {
       id: `epic.forget.${account.id}`,
