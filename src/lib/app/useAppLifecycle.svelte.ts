@@ -23,50 +23,36 @@ import {
   refreshClientStorageIfChanged,
 } from "$lib/storage/clientStorage";
 
-type HistoryState = {
-  tab: string;
-  folderId: string | null;
-  showSettings: boolean;
-};
-
-type PlatformShellLike = {
-  get settings(): AppSettings;
-  get activeTab(): string;
-  get runtimeOs(): RuntimeOs;
-  refreshSettings: () => void;
-  setRuntimeOs: (runtimeOs: RuntimeOs) => void;
-  setActiveTab: (tab: string) => void;
-};
-
-type NavigationLike = {
-  currentFolderId: string | null;
-  refreshCurrentItems: () => void;
-};
-
-type LoaderLike = {
-  prepareVisibleAccounts: () => void;
-};
-
-type LoadAccountsFn = (
-  silent?: boolean,
-  showRefreshedToast?: boolean,
-  forceRefresh?: boolean,
-  checkBans?: boolean,
-  deferBackground?: boolean,
-) => Promise<unknown> | void;
-
-type AppLifecycleOptions = {
-  shell: PlatformShellLike;
-  navigation: NavigationLike;
-  loader: LoaderLike;
-  loadAccounts: LoadAccountsFn;
+type AppLifecycleDeps = {
+  shell: {
+    get settings(): AppSettings;
+    get activeTab(): string;
+    get runtimeOs(): RuntimeOs;
+    refreshSettings: () => void;
+    setRuntimeOs: (os: RuntimeOs) => void;
+    setActiveTab: (tab: string) => void;
+  };
+  navigation: {
+    currentFolderId: string | null;
+    refreshCurrentItems: () => void;
+  };
+  loader: {
+    prepareVisibleAccounts: () => void;
+  };
+  loadAccounts: (
+    ...args: [boolean?, boolean?, boolean?, boolean?, boolean?]
+  ) => void | Promise<unknown>;
   queueGridPadding: () => void;
   syncViewModeFromStorage: () => void;
   bumpCardColorVersion: () => void;
   bumpCardNoteVersion: () => void;
   setAppVersion: (version: string) => void;
   markBootReady: () => void;
-  replaceHistoryState: (entry: HistoryState) => void;
+  replaceHistoryState: (entry: {
+    tab: string;
+    folderId: string | null;
+    showSettings: boolean;
+  }) => void;
 };
 
 function semverCore(version: string): string {
@@ -93,14 +79,14 @@ export function createAppLifecycleController({
   setAppVersion,
   markBootReady,
   replaceHistoryState,
-}: AppLifecycleOptions) {
+}: AppLifecycleDeps) {
   let externalStorageRefreshInFlight = false;
 
   async function initializeAppShell() {
     await loadCustomThemes();
     shell.refreshSettings();
 
-    const versionTask = getVersion()
+    void getVersion()
       .then((version) => {
         setAppVersion(semverCore(version));
       })
@@ -132,8 +118,6 @@ export function createAppLifecycleController({
       navigation.refreshCurrentItems();
       queueGridPadding();
     }
-
-    void versionTask;
   }
 
   async function refreshExternalStorageState() {

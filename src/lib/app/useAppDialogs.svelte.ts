@@ -22,7 +22,7 @@ type ContextMenuState = {
   isBackground?: boolean;
 } | null;
 
-type AppDialogsControllerOptions = {
+type AppDialogsDeps = {
   t: (key: MessageKey, params?: TranslationParams) => string;
   getAdapter: () => PlatformAdapter | undefined;
   getActiveTab: () => string;
@@ -31,11 +31,7 @@ type AppDialogsControllerOptions = {
   getCurrentAccountId: () => string | null;
   refreshCurrentItems: () => void;
   loadAccounts: (
-    silent?: boolean,
-    showRefreshedToast?: boolean,
-    forceRefresh?: boolean,
-    checkBans?: boolean,
-    deferBackground?: boolean,
+    ...args: [boolean?, boolean?, boolean?, boolean?, boolean?]
   ) => void | Promise<unknown>;
   getAccountCardColor: (accountId: string) => string;
   getAccountNote: (accountId: string) => string;
@@ -64,7 +60,7 @@ export function createAppDialogsController({
   showToast,
   bumpCardColorVersion,
   bumpCardNoteVersion,
-}: AppDialogsControllerOptions) {
+}: AppDialogsDeps) {
   let contextMenu = $state<ContextMenuState>(null);
   let inputDialog = $state<InputDialogConfig | null>(null);
   let confirmDialog = $state<PlatformContextMenuConfirmConfig | null>(null);
@@ -111,7 +107,6 @@ export function createAppDialogsController({
                   clearAccountCardNote(account.id);
                 }
                 bumpCardNoteVersion();
-                inputDialog = null;
               },
             });
           },
@@ -197,7 +192,6 @@ export function createAppDialogsController({
       onConfirm: (name) => {
         createFolder(name, getCurrentFolderId(), getActiveTab());
         refreshCurrentItems();
-        inputDialog = null;
       },
     });
   }
@@ -210,7 +204,6 @@ export function createAppDialogsController({
       onConfirm: (name) => {
         renameFolder(folder.id, name);
         refreshCurrentItems();
-        inputDialog = null;
       },
     });
   }
