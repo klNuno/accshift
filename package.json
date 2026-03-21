@@ -21,14 +21,13 @@
     "@tauri-apps/plugin-updater": "^2.10.0"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^6.2.4",
+    "@sveltejs/vite-plugin-svelte": "^7.0.0",
+    "@tailwindcss/vite": "^4.2.2",
     "@tauri-apps/cli": "^2.10.1",
     "@tsconfig/svelte": "^5.0.8",
-    "autoprefixer": "^10.4.27",
-    "postcss": "^8.5.8",
     "svelte": "^5.54.1",
     "svelte-check": "^4.4.5",
-    "tailwindcss": "^3.4.15",
+    "tailwindcss": "^4.2.2",
     "typescript": "^5.6.3",
     "vite": "npm:@voidzero-dev/vite-plus-core@latest",
     "vite-plus": "latest",
