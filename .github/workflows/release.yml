@@ -36,22 +36,18 @@ jobs:
           "tag=$tag" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
-          version: 9
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
+          node-version: 22
+          cache: true
+          run-install: false
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: vp install --frozen-lockfile
 
       - name: Validate versions against tag
         shell: pwsh
@@ -84,7 +80,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm tauri build
+        run: vp exec tauri build
 
       - name: Generate SHA256 checksums
         shell: pwsh

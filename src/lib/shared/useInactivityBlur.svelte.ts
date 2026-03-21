@@ -1,7 +1,9 @@
 import { getSettings } from "../features/settings/store";
 
 export function createInactivityBlur() {
+  const POINTER_ACTIVITY_THROTTLE_MS = 200;
   let lastActivity = Date.now();
+  let lastPointerActivity = 0;
   let isBlurred = $state(false);
   let blurTimeoutId: number | undefined;
 
@@ -46,6 +48,15 @@ export function createInactivityBlur() {
     scheduleBlurCheck();
   }
 
+  function resetPointerActivity() {
+    const now = Date.now();
+    if (now - lastPointerActivity < POINTER_ACTIVITY_THROTTLE_MS) {
+      return;
+    }
+    lastPointerActivity = now;
+    resetActivity();
+  }
+
   function start() {
     stop();
     const threshold = getSettings().inactivityBlurSeconds;
@@ -54,6 +65,7 @@ export function createInactivityBlur() {
       return;
     }
     lastActivity = Date.now();
+    lastPointerActivity = lastActivity;
     scheduleBlurCheck();
   }
 
@@ -62,13 +74,13 @@ export function createInactivityBlur() {
   }
 
   function attachListeners() {
-    document.addEventListener("mousemove", resetActivity);
+    document.addEventListener("mousemove", resetPointerActivity);
     document.addEventListener("mousedown", resetActivity);
     document.addEventListener("keydown", resetActivity);
   }
 
   function detachListeners() {
-    document.removeEventListener("mousemove", resetActivity);
+    document.removeEventListener("mousemove", resetPointerActivity);
     document.removeEventListener("mousedown", resetActivity);
     document.removeEventListener("keydown", resetActivity);
   }

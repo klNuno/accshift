@@ -155,7 +155,11 @@ export function getFolderPath(folderId: string | null): FolderInfo[] {
 export function syncAccounts(accountIds: string[], platform: string) {
   const store = getStore();
   const rootKey = getRootKey(platform);
-  if (!store.itemOrder[rootKey]) store.itemOrder[rootKey] = [];
+  let changed = false;
+  if (!store.itemOrder[rootKey]) {
+    store.itemOrder[rootKey] = [];
+    changed = true;
+  }
 
   const allPlacedIds = new Set<string>();
   const platformFolderIds = store.folders.filter((f) => f.platform === platform).map((f) => f.id);
@@ -171,19 +175,33 @@ export function syncAccounts(accountIds: string[], platform: string) {
   for (const id of accountIds) {
     if (!allPlacedIds.has(id)) {
       store.itemOrder[rootKey].push({ type: "account", id });
+      changed = true;
     }
   }
 
   const validIds = new Set(accountIds);
   for (const key of allKeys) {
     if (store.itemOrder[key]) {
-      store.itemOrder[key] = store.itemOrder[key].filter(
+      const nextItems = store.itemOrder[key].filter(
         (item) => item.type === "folder" || validIds.has(item.id),
       );
+      const previousItems = store.itemOrder[key];
+      if (
+        nextItems.length !== previousItems.length ||
+        nextItems.some(
+          (item, index) =>
+            item.type !== previousItems[index]?.type || item.id !== previousItems[index]?.id,
+        )
+      ) {
+        store.itemOrder[key] = nextItems;
+        changed = true;
+      }
     }
   }
 
-  saveStore(store);
+  if (changed) {
+    saveStore(store);
+  }
 }
 
 export function moveItem(
