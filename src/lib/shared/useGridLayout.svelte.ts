@@ -44,10 +44,18 @@ export function createGridLayout() {
   }
 
   return {
-    get wrapperRef() { return wrapperRef; },
-    set wrapperRef(v: HTMLDivElement | null) { wrapperRef = v; },
-    get paddingLeft() { return paddingLeft; },
-    get isResizing() { return isResizing; },
+    get wrapperRef() {
+      return wrapperRef;
+    },
+    set wrapperRef(v: HTMLDivElement | null) {
+      wrapperRef = v;
+    },
+    get paddingLeft() {
+      return paddingLeft;
+    },
+    get isResizing() {
+      return isResizing;
+    },
     calculatePadding,
     queueCalculatePadding,
     handleResize,

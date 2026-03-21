@@ -1,18 +1,19 @@
 {
   "name": "accshift",
-  "private": true,
   "version": "0.9.0",
+  "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "check": "pnpm check:frontend && pnpm check:rust",
+    "dev": "vp dev",
+    "build": "vp build",
+    "check": "vp check && vp run check:frontend && vp run check:rust",
     "check:frontend": "svelte-check --tsconfig ./tsconfig.json",
     "check:rust": "cargo check --manifest-path src-tauri/Cargo.toml",
     "fmt:check": "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
     "clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
-    "preview": "vite preview",
-    "tauri": "tauri"
+    "preview": "vp preview",
+    "tauri": "tauri",
+    "prepare": "vp config"
   },
   "dependencies": {
     "@tauri-apps/api": "2.9.1",
@@ -29,10 +30,15 @@
     "svelte-check": "^4.0.0",
     "tailwindcss": "^3.4.15",
     "typescript": "^5.6.3",
-    "vite": "^6.0.0"
+    "vite": "npm:@voidzero-dev/vite-plus-core@latest",
+    "vite-plus": "latest",
+    "vitest": "npm:@voidzero-dev/vite-plus-test@latest"
+  },
+  "packageManager": "pnpm@10.32.1",
+  "pnpm": {
+    "overrides": {
+      "vite": "npm:@voidzero-dev/vite-plus-core@latest",
+      "vitest": "npm:@voidzero-dev/vite-plus-test@latest"
+    }
   }
 }
-
-
-
-

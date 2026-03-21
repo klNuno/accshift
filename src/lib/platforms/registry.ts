@@ -65,7 +65,8 @@ export const PLATFORM_DEFS: PlatformDef[] = [
     settingsTabKey: "settings.epic",
     settingsComponent: () => import("./epic/EpicSettingsTab.svelte"),
     pathLabelKey: "settings.epicPath",
-    pathPlaceholder: "C:\\Program Files (x86)\\Epic Games\\Launcher\\Portal\\Binaries\\Win64\\EpicGamesLauncher.exe",
+    pathPlaceholder:
+      "C:\\Program Files (x86)\\Epic Games\\Launcher\\Portal\\Binaries\\Win64\\EpicGamesLauncher.exe",
   },
 ];
 
@@ -80,7 +81,9 @@ const PLATFORM_LOADERS: Record<string, () => Promise<PlatformAdapter>> = {
 
 const platformLoadTasks = new Map<string, Promise<PlatformAdapter>>();
 
-export async function ensurePlatformLoaded(platformId: string): Promise<PlatformAdapter | undefined> {
+export async function ensurePlatformLoaded(
+  platformId: string,
+): Promise<PlatformAdapter | undefined> {
   const existing = getPlatform(platformId);
   if (existing) return existing;
 

@@ -2,7 +2,13 @@ import { invoke } from "@tauri-apps/api/core";
 import type { PlatformAddFlowStatus } from "$lib/shared/platform";
 import { logAppEvent, serializeLogValue } from "$lib/shared/appLogger";
 import { toPlatformAddFlowStatus } from "$lib/platforms/addFlow";
-import type { SteamAccount, ProfileInfo, BanInfo, CopyableGame, SteamStartupSnapshot } from "./types";
+import type {
+  SteamAccount,
+  ProfileInfo,
+  BanInfo,
+  CopyableGame,
+  SteamStartupSnapshot,
+} from "./types";
 import { getSettings } from "../../features/settings/store";
 
 const PLATFORM_ID = "steam";
@@ -59,7 +65,11 @@ export async function switchAccount(username: string): Promise<void> {
   }
 }
 
-export async function switchAccountMode(username: string, steamId: string, mode: string): Promise<void> {
+export async function switchAccountMode(
+  username: string,
+  steamId: string,
+  mode: string,
+): Promise<void> {
   const cfg = getSteamLaunchConfig();
   const details = {
     username,
@@ -71,7 +81,12 @@ export async function switchAccountMode(username: string, steamId: string, mode:
   void logAppEvent("info", "frontend.steam.switch_mode", "Switch mode request started", details);
   try {
     await invoke("steam_switch_account_mode", { username, steamId, mode, ...cfg });
-    void logAppEvent("info", "frontend.steam.switch_mode", "Switch mode request completed", details);
+    void logAppEvent(
+      "info",
+      "frontend.steam.switch_mode",
+      "Switch mode request completed",
+      details,
+    );
   } catch (reason) {
     void logAppEvent("error", "frontend.steam.switch_mode", "Switch mode request failed", {
       ...details,
@@ -114,11 +129,18 @@ export async function clearIntegratedBrowserCache(): Promise<void> {
   await invoke("steam_clear_browser_cache");
 }
 
-export async function copyGameSettings(fromSteamId: string, toSteamId: string, appId: string): Promise<void> {
+export async function copyGameSettings(
+  fromSteamId: string,
+  toSteamId: string,
+  appId: string,
+): Promise<void> {
   await invoke("steam_copy_game_settings", { fromSteamId, toSteamId, appId });
 }
 
-export async function getCopyableGames(fromSteamId: string, toSteamId: string): Promise<CopyableGame[]> {
+export async function getCopyableGames(
+  fromSteamId: string,
+  toSteamId: string,
+): Promise<CopyableGame[]> {
   return invoke<CopyableGame[]>("steam_get_copyable_games", { fromSteamId, toSteamId });
 }
 

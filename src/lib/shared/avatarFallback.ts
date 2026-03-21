@@ -1,9 +1,5 @@
 function normalizeSeed(seed: string): string {
-  return seed
-    .normalize("NFKC")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
+  return seed.normalize("NFKC").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function reverseText(text: string): string {
@@ -23,10 +19,7 @@ function bitCycleHash(text: string, mult: number, modulo: number, seed: number):
 }
 
 export function getAvatarInitials(name: string): string {
-  const parts = name
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
+  const parts = name.trim().split(/\s+/).filter(Boolean);
 
   if (parts.length === 0) return "?";
   if (parts.length === 1) {
@@ -35,11 +28,7 @@ export function getAvatarInitials(name: string): string {
   return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
 }
 
-export function getAvatarSeed(
-  displayName: string,
-  username: string,
-  accountId: string,
-): string {
+export function getAvatarSeed(displayName: string, username: string, accountId: string): string {
   const primary = (displayName || username || "").trim();
   const stable = primary || "unknown";
   const reversed = reverseText(stable);

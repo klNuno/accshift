@@ -61,7 +61,9 @@ export function createWindowActivity() {
         void sync();
       };
       document.addEventListener("visibilitychange", handleVisibilityChange);
-      cleanupFns.push(() => document.removeEventListener("visibilitychange", handleVisibilityChange));
+      cleanupFns.push(() =>
+        document.removeEventListener("visibilitychange", handleVisibilityChange),
+      );
     }
 
     if (!appWindow) return;
@@ -94,10 +96,18 @@ export function createWindowActivity() {
   }
 
   return {
-    get isFocused() { return isFocused; },
-    get isMinimized() { return isMinimized; },
-    get isPageVisible() { return isPageVisible; },
-    get isForeground() { return isFocused && isPageVisible && !isMinimized; },
+    get isFocused() {
+      return isFocused;
+    },
+    get isMinimized() {
+      return isMinimized;
+    },
+    get isPageVisible() {
+      return isPageVisible;
+    },
+    get isForeground() {
+      return isFocused && isPageVisible && !isMinimized;
+    },
     start,
     stop,
     sync,

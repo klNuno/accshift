@@ -1,7 +1,11 @@
 import { addToast, removeToast } from "$lib/features/notifications/store.svelte";
 import { getSettings } from "$lib/features/settings/store";
 import type { AccountWarningChip, AccountWarningPresentation } from "$lib/shared/accountWarnings";
-import type { PlatformAccount, PlatformUiCallbacks, PlatformWarningLoadOptions } from "$lib/shared/platform";
+import type {
+  PlatformAccount,
+  PlatformUiCallbacks,
+  PlatformWarningLoadOptions,
+} from "$lib/shared/platform";
 import type { MessageKey, TranslationParams } from "$lib/i18n";
 import { getPlayerBans, hasApiKey } from "./steamApi";
 import type { BanInfo } from "./types";
@@ -48,13 +52,15 @@ function writeBanCheckState(state: BanCheckState) {
 function isBanInfo(value: unknown): value is BanInfo {
   if (!value || typeof value !== "object") return false;
   const v = value as Partial<BanInfo>;
-  return typeof v.steam_id === "string"
-    && typeof v.community_banned === "boolean"
-    && typeof v.vac_banned === "boolean"
-    && typeof v.number_of_vac_bans === "number"
-    && typeof v.days_since_last_ban === "number"
-    && typeof v.number_of_game_bans === "number"
-    && typeof v.economy_ban === "string";
+  return (
+    typeof v.steam_id === "string" &&
+    typeof v.community_banned === "boolean" &&
+    typeof v.vac_banned === "boolean" &&
+    typeof v.number_of_vac_bans === "number" &&
+    typeof v.days_since_last_ban === "number" &&
+    typeof v.number_of_game_bans === "number" &&
+    typeof v.economy_ban === "string"
+  );
 }
 
 function readBanInfoCache(): Record<string, BanInfo> {
@@ -110,20 +116,20 @@ function toSteamAccountWarningPresentation(
   if (banInfo.number_of_game_bans > 0) {
     chips.push({
       tone: "red",
-      text: t(
-        banInfo.number_of_game_bans > 1 ? "ban.game.multiple" : "ban.game.single",
-        { count: banInfo.number_of_game_bans },
-      ),
+      text: t(banInfo.number_of_game_bans > 1 ? "ban.game.multiple" : "ban.game.single", {
+        count: banInfo.number_of_game_bans,
+      }),
     });
   }
 
   return {
     tooltipText: formatBanTooltip(banInfo),
-    cardOutlineTone: banInfo.vac_banned || banInfo.number_of_game_bans > 0
-      ? "red"
-      : banInfo.community_banned || (banInfo.economy_ban && banInfo.economy_ban !== "none")
-        ? "orange"
-        : null,
+    cardOutlineTone:
+      banInfo.vac_banned || banInfo.number_of_game_bans > 0
+        ? "red"
+        : banInfo.community_banned || (banInfo.economy_ban && banInfo.economy_ban !== "none")
+          ? "orange"
+          : null,
     listHasRed: banInfo.vac_banned || banInfo.number_of_game_bans > 0,
     listHasOrange: banInfo.community_banned,
     chips,
@@ -170,9 +176,8 @@ export async function loadSteamWarningStates(
   const now = Date.now();
   const cachedState = readBanCheckState();
   const delayMs = delayDays * 24 * 60 * 60 * 1000;
-  const withinDelayWindow = delayDays > 0
-    && !!cachedState
-    && now - cachedState.lastSuccessAt < delayMs;
+  const withinDelayWindow =
+    delayDays > 0 && !!cachedState && now - cachedState.lastSuccessAt < delayMs;
   const cachedCheckedIds = new Set(cachedState?.checkedSteamIds ?? []);
 
   let idsToFetch: string[] = [];
@@ -244,9 +249,10 @@ export async function loadSteamWarningStates(
     }
 
     if (delayDays > 0) {
-      const mergedCheckedIds = forceRefresh || !withinDelayWindow
-        ? steamIds
-        : Array.from(new Set([...(cachedState?.checkedSteamIds ?? []), ...idsToFetch]));
+      const mergedCheckedIds =
+        forceRefresh || !withinDelayWindow
+          ? steamIds
+          : Array.from(new Set([...(cachedState?.checkedSteamIds ?? []), ...idsToFetch]));
       writeBanCheckState({
         lastSuccessAt: now,
         checkedSteamIds: mergedCheckedIds,

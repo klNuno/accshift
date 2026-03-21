@@ -858,8 +858,7 @@
         { label: t("context.menu.rename"), action: () => showRenameFolderDialog(folder) },
         {
           label: t("context.menu.folderColor"),
-          swatches: [
-            ...ACCOUNT_CARD_COLOR_PRESETS.map((preset) => ({
+          swatches: ACCOUNT_CARD_COLOR_PRESETS.map((preset) => ({
               id: preset.id,
               label: t(COLOR_LABEL_KEYS[preset.id]),
               color: preset.color,
@@ -869,7 +868,6 @@
                 cardColorVersion += 1;
               },
             })),
-          ],
         },
         { label: t("context.menu.deleteFolder"), action: () => { deleteFolder(folder.id); navigation.refreshCurrentItems(); } },
       ];
