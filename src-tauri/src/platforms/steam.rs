@@ -123,6 +123,14 @@ fn validate_username(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn is_force_kill(params: &Value) -> bool {
+    params
+        .get("shutdownMode")
+        .and_then(Value::as_str)
+        .map(|m| m == "force")
+        .unwrap_or(false)
+}
+
 fn resolve_steam_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
     let cfg = config::load_config(app_handle);
     let override_path = cfg.steam.path_override.trim();
@@ -241,6 +249,7 @@ pub async fn switch_account_mode(
     mode: String,
     run_as_admin: bool,
     launch_options: String,
+    shutdown_mode: String,
 ) -> Result<(), String> {
     validate_username(&username)?;
     validate_steam_id(&steam_id)?;
@@ -262,6 +271,7 @@ pub async fn switch_account_mode(
         ),
     );
 
+    let force_kill = shutdown_mode == "force";
     let app_handle_for_task = app_handle.clone();
     let username_for_task = username.clone();
     let steam_id_for_task = steam_id.clone();
@@ -289,6 +299,7 @@ pub async fn switch_account_mode(
             &mode_for_task,
             run_as_admin,
             &launch_options_for_task,
+            force_kill,
         );
 
         match &result {
@@ -334,6 +345,7 @@ pub fn begin_account_setup(
     app_handle: tauri::AppHandle,
     run_as_admin: bool,
     launch_options: String,
+    force_kill: bool,
 ) -> Result<SteamAccountSetupStatus, String> {
     let steam_path = resolve_steam_path(&app_handle)?;
     let known_accounts = accounts::get_accounts(&steam_path)
@@ -365,7 +377,7 @@ pub fn begin_account_setup(
     let setup_id_for_job = setup_id.clone();
     let app_handle_for_job = app_handle.clone();
     thread::spawn(move || {
-        let launch_result = accounts::add_account(&steam_path, run_as_admin, &launch_options)
+        let launch_result = accounts::add_account(&steam_path, run_as_admin, &launch_options, force_kill)
             .map_err(|e| e.to_string());
         if let Ok(mut jobs) = steam_setup_jobs().lock() {
             if let Some(job) = jobs.get_mut(&setup_id_for_job) {
@@ -645,6 +657,7 @@ impl PlatformService for SteamService {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
+        let force_kill = is_force_kill(&params);
         let steam_path = resolve_steam_path(app)?;
 
         log_platform_info(
@@ -662,7 +675,7 @@ impl PlatformService for SteamService {
         );
 
         let result =
-            accounts::switch_account(&steam_path, account_id, run_as_admin, &launch_options)
+            accounts::switch_account(&steam_path, account_id, run_as_admin, &launch_options, force_kill)
                 .map_err(|e| to_logged_error(app, "steam.switch_account", e));
 
         match &result {
@@ -703,7 +716,7 @@ impl PlatformService for SteamService {
     fn forget_account(&self, app: &tauri::AppHandle, account_id: &str) -> Result<(), String> {
         validate_steam_id(account_id)?;
         let steam_path = resolve_steam_path(app)?;
-        accounts::forget_account(&steam_path, account_id)
+        accounts::forget_account(&steam_path, account_id, false)
             .map_err(|e| to_logged_error(app, "steam.forget_account", e))
     }
 
@@ -717,7 +730,8 @@ impl PlatformService for SteamService {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        let status = begin_account_setup(app.clone(), run_as_admin, launch_options)?;
+        let force_kill = is_force_kill(&params);
+        let status = begin_account_setup(app.clone(), run_as_admin, launch_options, force_kill)?;
         Ok(SetupStatus {
             setup_id: status.setup_id,
             state: status.state,

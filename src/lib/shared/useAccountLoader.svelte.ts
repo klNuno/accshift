@@ -59,6 +59,7 @@ export function createAccountLoader(
   });
   let loading = $state(true);
   let switching = $state(false);
+  let switchingAccountId = $state<string | null>(null);
   let error = $state<string | null>(null);
   let avatarStates = $state.raw<Record<string, AvatarState>>({});
   let warningStates = $state.raw<Record<string, AccountWarningPresentation>>({});
@@ -344,6 +345,7 @@ export function createAccountLoader(
     const adapter = getAdapter();
     if (!adapter || switching) return;
     switching = true;
+    switchingAccountId = account.id;
     error = null;
     try {
       await adapter.switchAccount(account);
@@ -366,6 +368,7 @@ export function createAccountLoader(
       addToast(mapped ?? error);
     }
     switching = false;
+    switchingAccountId = null;
   }
 
   async function addNew() {
@@ -495,6 +498,9 @@ export function createAccountLoader(
     },
     get switching() {
       return switching;
+    },
+    get switchingAccountId() {
+      return switchingAccountId;
     },
     get error() {
       return error;

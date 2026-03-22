@@ -25,9 +25,12 @@ export interface AccountDisplaySettings {
   showCardNotesInline: boolean;
 }
 
+export type SteamShutdownMode = "graceful" | "force";
+
 export interface SteamPlatformSettings {
   runAsAdmin: boolean;
   launchOptions: string;
+  shutdownMode: SteamShutdownMode;
 }
 
 export interface PlatformSettings {

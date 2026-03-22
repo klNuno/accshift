@@ -16,6 +16,7 @@
     isDragOver = false,
     avatarUrl = null,
     isLoadingAvatar = false,
+    isSwitching = false,
     allowMetaWrap = false,
     warningInfo = undefined,
     cardColor = "",
@@ -38,6 +39,7 @@
     isDragOver?: boolean;
     avatarUrl?: string | null;
     isLoadingAvatar?: boolean;
+    isSwitching?: boolean;
     allowMetaWrap?: boolean;
     warningInfo?: AccountWarningPresentation;
     cardColor?: string;
@@ -116,6 +118,11 @@
     >
       {#if isLoadingAvatar}
         <div class="loader"></div>
+      {:else if isSwitching}
+        {#if avatarUrl}
+          <img src={avatarUrl} alt={account.displayName} draggable={false} class="blurred" />
+        {/if}
+        <div class="loader switching-loader"></div>
       {:else if avatarUrl}
         <img src={avatarUrl} alt={account.displayName} draggable={false} />
       {:else}
@@ -213,6 +220,7 @@
   }
 
   .avatar {
+    position: relative;
     width: 32px;
     height: 32px;
     border-radius: 4px;
@@ -308,6 +316,10 @@
     color: color-mix(in srgb, var(--fg-subtle) 40%, var(--fg) 60%);
   }
 
+  .avatar img.blurred {
+    filter: blur(3px) brightness(0.5);
+  }
+
   .loader {
     width: 15px;
     height: 15px;
@@ -315,6 +327,13 @@
     border: 2px solid color-mix(in srgb, var(--fg) 24%, transparent);
     border-top-color: var(--fg);
     animation: spin 0.75s linear infinite;
+  }
+
+  .switching-loader {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
   }
 
   @keyframes spin {

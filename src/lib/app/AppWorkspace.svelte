@@ -79,7 +79,7 @@
     isAccountExtensionForcedOpen,
     isPendingSetupAccount,
     activePlatformAddSetupId,
-    switching,
+    switchingAccountId,
   }: {
     compatiblePlatformCount: number;
     activeTabUsable: boolean;
@@ -136,7 +136,7 @@
     isAccountExtensionForcedOpen: (accountId: string) => boolean;
     isPendingSetupAccount: (accountId: string) => boolean;
     activePlatformAddSetupId: string | null;
-    switching: boolean;
+    switchingAccountId: string | null;
   } = $props();
 
   let contentWrapperRef = $state<HTMLDivElement | null>(null);
@@ -255,6 +255,7 @@
           dragItem={bulkEditMode ? null : dragItem}
           dragOverFolderId={bulkEditMode ? null : dragOverFolderId}
           dragOverBack={bulkEditMode ? false : dragOverBack}
+          {switchingAccountId}
           onNavigate={onNavigateToFolder}
           onGoBack={onGoBack}
           onAccountActivate={onAccountActivate}
@@ -331,6 +332,7 @@
                   forceExtensionOpen={bulkEditMode ? false : isAccountExtensionForcedOpen(account.id)}
                   disableExtension={bulkEditMode || dragIsDragging}
                   disableHoverExtension={isHoverExtensionDisabled(account.id)}
+                  isSwitching={switchingAccountId === account.id}
                   singleClickSwitch={bulkEditMode}
                   interactionDisabled={isPendingSetupAccount(account.id)}
                 />
@@ -341,13 +343,6 @@
       </div>
     {/if}
 
-    {#if switching}
-      <div class="switching-banner" style={`--switch-accent: ${accentColor};`}>
-        <div class="switching-spinner" style={`border-top-color: ${accentColor};`}></div>
-        <span class="switching-text">{t("app.switchingAccount")}</span>
-        <span class="switching-hint">{t("app.platformRestarting", { platform: adapter.name })}</span>
-      </div>
-    {/if}
   </main>
 {:else}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -442,46 +437,6 @@
     align-items: center;
     justify-content: center;
     padding: 48px 0;
-    color: var(--fg-muted);
-  }
-
-  .switching-banner {
-    position: sticky;
-    bottom: 0;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 16px;
-    background: var(--bg-card);
-    border-top: 1px solid var(--border);
-    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.2);
-    animation: bannerSlideIn 200ms ease-out;
-    z-index: 30;
-  }
-
-  @keyframes bannerSlideIn {
-    from { opacity: 0; transform: translateY(100%); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-
-  .switching-spinner {
-    width: 16px;
-    height: 16px;
-    border: 2px solid var(--border);
-    border-top-color: #3b82f6;
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
-    flex-shrink: 0;
-  }
-
-  .switching-text {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--fg);
-  }
-
-  .switching-hint {
-    font-size: 11px;
     color: var(--fg-muted);
   }
 
