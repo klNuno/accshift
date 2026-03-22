@@ -44,8 +44,8 @@
   } = $props();
 </script>
 
-<section class="card steam-card platform-display-card" style={`--display-accent:${accent};`}>
-  <h3>{t("settings.steam")}</h3>
+<section class="card platform-display-card" style={`--display-accent:${accent};`}>
+  <h3>{t("settings.steamLaunch")}</h3>
 
   <ToggleSetting
     label={t("settings.runSteamAsAdmin")}
@@ -73,6 +73,10 @@
       placeholder="-silent -vgui"
     />
   </label>
+</section>
+
+<section class="card platform-display-card" style={`--display-accent:${accent};`}>
+  <h3>{t("settings.steamInstallation")}</h3>
 
   <div class="field">
     <span class="field-label">{t("settings.steamFolder")}</span>
@@ -87,6 +91,10 @@
       <button class="browse-btn" type="button" onclick={onChooseSteamFolder}>{t("common.choose")}</button>
     </div>
   </div>
+</section>
+
+<section class="card platform-display-card" style={`--display-accent:${accent};`}>
+  <h3>{t("settings.steamApiAndData")}</h3>
 
   <div class="field">
     <div class="field-label-row">
@@ -162,21 +170,9 @@
       </button>
     </div>
   </div>
-
-
 </section>
 
 <style>
-  .steam-card {
-    grid-column: span 2;
-  }
-
-  @media (max-width: 980px) {
-    .steam-card {
-      grid-column: span 1;
-    }
-  }
-
   .card {
     background: color-mix(in srgb, var(--bg-card) 84%, #000 16%);
     border: 1px solid color-mix(in srgb, var(--border) 80%, #fff 20%);
@@ -270,5 +266,4 @@
   .browse-btn:hover {
     background: var(--bg-card-hover);
   }
-
 </style>

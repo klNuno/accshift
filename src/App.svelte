@@ -96,6 +96,11 @@
     getCurrentAccountId: () => loader.currentAccountId,
     refreshCurrentItems: navigation.refreshCurrentItems,
     loadAccounts,
+    removeAccount: (accountId: string) => {
+      loader.removeAccount(accountId);
+      syncAccounts(loader.accounts.map((a) => a.id), shell.activeTab);
+      navigation.refreshCurrentItems();
+    },
     getAccountCardColor,
     getAccountNote,
     getFolderCardColor,

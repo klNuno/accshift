@@ -134,7 +134,7 @@ export function getSteamContextMenuItems(
         async () => {
           await forgetAccount(account.id);
           callbacks.showToast(callbacks.t("steam.forgotAccount", { username: account.username }));
-          callbacks.refreshAccounts();
+          callbacks.removeAccount(account.id);
         },
       );
     },
