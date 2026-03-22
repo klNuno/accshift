@@ -53,6 +53,14 @@
   const shell = createPlatformShellState();
   const t = (key: MessageKey, params?: TranslationParams) => translate(shell.locale, key, params);
 
+  function matchesSearch(account: PlatformAccount, query: string): boolean {
+    return (
+      account.id.toLowerCase().includes(query) ||
+      account.username.toLowerCase().includes(query) ||
+      (account.displayName || "").toLowerCase().includes(query)
+    );
+  }
+
   // Shared controllers
   const blur = createInactivityBlur();
   const windowActivity = createWindowActivity();
@@ -64,12 +72,8 @@
       const q = navigation.searchQuery.trim().toLowerCase();
       if (q) {
         return loader.accounts
-          .filter((account) =>
-            account.id.toLowerCase().includes(q) ||
-            account.username.toLowerCase().includes(q) ||
-            (account.displayName || "").toLowerCase().includes(q)
-          )
-          .map((account) => account.id);
+          .filter((a) => matchesSearch(a, q))
+          .map((a) => a.id);
       }
       return navigation.currentItems
         .filter((item): item is ItemRef => item.type === "account")
@@ -111,29 +115,18 @@
     getIsSearching: () => navigation.isSearching,
     t,
     showToast: (message) => addToast(message),
-    copyToClipboard: (text) => { void navigator.clipboard.writeText(text).then(() => addToast(t("toast.copied", { label: text }))); },
+    copyToClipboard: (text) => copyToClipboard(text, text),
     loadAccounts,
     onAccountAdded: (platformId, accountId) => {
       dialogs.promptRenameNewAccount(platformId, accountId);
     },
   });
   let settings = $derived(shell.settings);
-  let runtimeOs = $derived(shell.runtimeOs);
   let locale = $derived(shell.locale);
-  let enabledPlatforms = $derived(shell.enabledPlatforms);
-  let compatiblePlatforms = $derived(shell.compatiblePlatforms);
   let activeTab = $derived(shell.activeTab);
   let activePlatformDef = $derived(shell.activePlatformDef);
   let activeTabUsable = $derived(shell.activeTabUsable);
-  let unavailablePlatformIds = $derived(shell.unavailablePlatformIds);
-  let accentColor = $derived(shell.accentColor);
-  let appStageStyle = $derived(shell.appStageStyle);
-  let adapter = $derived(shell.adapter);
-  let folderPath = $derived(navigation.folderPath);
-  let currentFolderId = $derived(navigation.currentFolderId);
   let isSearching = $derived(navigation.isSearching);
-  let pendingSetupAccount = $derived(addFlow.pendingSetupAccount);
-  let platformAddFlow = $derived(addFlow.flow);
   let isAccountSelectionView = $derived(!showSettings && !!shell.adapter);
   let bootReady = $state(false);
   let cardColorVersion = $state(0);
@@ -232,7 +225,7 @@
     loadSettingsComponent,
     loadAccounts,
     closeBulkEdit,
-    queueGridPadding,
+    queueGridPadding: grid.queueCalculatePadding,
     onSettingsClosed: () => {
       secureScreen.handleSettingsClosed();
     },
@@ -244,7 +237,7 @@
     navigation,
     loader,
     loadAccounts,
-    queueGridPadding,
+    queueGridPadding: grid.queueCalculatePadding,
     syncViewModeFromStorage: () => {
       viewMode = getViewMode();
     },
@@ -370,14 +363,10 @@
     }, VISIBLE_PRIME_DEBOUNCE_MS);
   }
 
-  let adapterLoading = $derived(loadingAdapterFor === shell.activeTab && !adapter);
+  let adapterLoading = $derived(loadingAdapterFor === shell.activeTab && !shell.adapter);
 
   // Toast state
   let toasts = $derived(getToasts());
-
-  function queueGridPadding() {
-    grid.queueCalculatePadding();
-  }
 
   async function ensureAdapterReady(platformId: string) {
     const existing = getPlatform(platformId);
@@ -405,7 +394,7 @@
   function handleViewModeChange(mode: ViewMode) {
     viewMode = mode;
     setViewMode(mode);
-    if (mode === "grid") queueGridPadding();
+    if (mode === "grid") grid.queueCalculatePadding();
   }
 
   function handleRefreshClick() {
@@ -504,12 +493,8 @@
     const q = navigation.searchQuery.trim().toLowerCase();
     if (!q) return navigation.accountItems;
     return loader.accounts
-      .filter((account) =>
-        account.id.toLowerCase().includes(q) ||
-        account.username.toLowerCase().includes(q) ||
-        (account.displayName || "").toLowerCase().includes(q)
-      )
-      .map((account) => ({ type: "account" as const, id: account.id }));
+      .filter((a) => matchesSearch(a, q))
+      .map((a) => ({ type: "account" as const, id: a.id }));
   });
 
   let displayAccountItems = $derived.by(() => {
@@ -697,7 +682,7 @@
     return loader.load(() => {
       syncAccounts(loader.accounts.map(a => a.id), shell.activeTab);
       navigation.refreshCurrentItems();
-      queueGridPadding();
+      grid.queueCalculatePadding();
     }, silent, showRefreshedToast, forceRefresh, checkBans, deferBackground);
   }
 
@@ -713,9 +698,9 @@
 
   let activePlatformName = $derived(activePlatformDef?.name || activeTab);
   let activePlatformImplemented = $derived(Boolean(activePlatformDef?.implemented));
-  let pendingSetupAccountId = $derived(pendingSetupAccount?.id ?? null);
+  let pendingSetupAccountId = $derived(addFlow.pendingSetupAccount?.id ?? null);
   let activePlatformAddSetupId = $derived(
-    platformAddFlow?.platformId === activeTab ? platformAddFlow.status.setupId : null
+    addFlow.flow?.platformId === activeTab ? addFlow.flow.status.setupId : null
   );
 
   function handleSettingsClose() {
@@ -724,13 +709,10 @@
     secureScreen.handleSettingsClosed();
   }
 
-  function handleSettingsUpdated() {
-    shell.refreshSettings();
-  }
 
   $effect(() => {
     trackDependencies(shell.settings.uiScalePercent);
-    queueGridPadding();
+    grid.queueCalculatePadding();
   });
 
   $effect(() => {
@@ -801,7 +783,7 @@
   class:motion-paused={secureScreen.motionPaused}
   style={`--afk-reveal-delay:${secureScreen.afkTextRevealDelayMs}ms;`}
 >
-  <div class="app-stage" class:locked={secureScreen.isPinLocked} style={appStageStyle}>
+  <div class="app-stage" class:locked={secureScreen.isPinLocked} style={shell.appStageStyle}>
     <div class="app-shell" class:obscured={secureScreen.isObscured}>
       {#if !secureScreen.renderSuspended}
       <TitleBar
@@ -815,8 +797,8 @@
       updateCtaDisabled={updates.ctaDisabled}
       {activeTab}
       onTabChange={appNavigation.handleTabChange}
-      {enabledPlatforms}
-      {unavailablePlatformIds}
+      enabledPlatforms={shell.enabledPlatforms}
+      unavailablePlatformIds={shell.unavailablePlatformIds}
       canRefresh={activeTabUsable && !adapterLoading}
       canAddAccount={activeTabUsable && !adapterLoading}
       {showSettings}
@@ -830,25 +812,36 @@
       aria-hidden={!secureScreen.isObscured}
     ></div>
 
+  {#if showSettings}
+    <main class="content">
+      {#if SettingsPanel}
+        <SettingsPanel
+          onClose={handleSettingsClose}
+          onPlatformsChanged={appNavigation.handlePlatformsChanged}
+          onSettingsUpdated={shell.refreshSettings}
+          onRefreshAvatarsNow={refreshAvatarsNow}
+          onRefreshBansNow={refreshBansNow}
+          runtimeOs={shell.runtimeOs}
+        />
+      {:else}
+        <div class="center-msg">
+          <div class="spinner" style={`border-top-color: ${shell.accentColor};`}></div>
+          <p class="text-sm">{t("app.loadingSettings")}</p>
+        </div>
+      {/if}
+    </main>
+  {:else}
   <AppWorkspace
-    {showSettings}
-    {SettingsPanel}
-    {runtimeOs}
-    onSettingsClose={handleSettingsClose}
-    onPlatformsChanged={appNavigation.handlePlatformsChanged}
-    onSettingsUpdated={handleSettingsUpdated}
-    onRefreshAvatarsNow={refreshAvatarsNow}
-    onRefreshBansNow={refreshBansNow}
-    compatiblePlatformCount={compatiblePlatforms.length}
+    compatiblePlatformCount={shell.compatiblePlatforms.length}
     {activeTabUsable}
     {adapterLoading}
-    adapter={adapter ?? null}
-    {accentColor}
+    adapter={shell.adapter ?? null}
+    accentColor={shell.accentColor}
     {t}
     activePlatformName={activePlatformName}
     activePlatformImplemented={activePlatformImplemented}
     onBackgroundContextMenu={handleBackgroundContextMenu}
-    {folderPath}
+    folderPath={navigation.folderPath}
     onNavigateToFolder={handleNavigateToFolder}
     searchQuery={navigation.searchQuery}
     {isSearching}
@@ -866,7 +859,7 @@
     showUsernames={showUsernamesForActiveTab}
     showLastLogin={showLastLoginForActiveTab}
     {lastLoginUnknownKey}
-    {currentFolderId}
+    currentFolderId={navigation.currentFolderId}
     {currentAccountId}
     avatarStates={loader.avatarStates}
     warningStates={loader.warningStates}
@@ -896,6 +889,7 @@
     {activePlatformAddSetupId}
     switching={loader.switching}
   />
+  {/if}
 
   <AppDialogs
     contextMenu={dialogs.contextMenu}
@@ -1018,5 +1012,39 @@
   .app-frame.motion-paused :global(.loader),
   .app-frame.motion-paused :global(.name.marquee .name-inner) {
     animation-play-state: paused !important;
+  }
+
+  .content {
+    flex: 1;
+    padding: 10px 16px 16px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
+    background: var(--bg);
+    color: var(--fg);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .center-msg {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 0;
+    color: var(--fg-muted);
+  }
+
+  .spinner {
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--border);
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 </style>

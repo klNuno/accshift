@@ -3,7 +3,6 @@
   import { flip } from "svelte/animate";
   import Breadcrumb from "$lib/features/folders/Breadcrumb.svelte";
   import type { FolderInfo, ItemRef } from "$lib/features/folders/types";
-  import type { RuntimeOs } from "$lib/features/settings/types";
   import ViewToggle from "$lib/shared/components/ViewToggle.svelte";
   import ListView from "$lib/shared/components/ListView.svelte";
   import FolderCard from "$lib/features/folders/FolderCard.svelte";
@@ -18,7 +17,6 @@
   import type { Locale, MessageKey, TranslationParams } from "$lib/i18n";
   import type { ViewMode } from "$lib/shared/viewMode";
 
-  type SettingsComponentType = (typeof import("$lib/features/settings/Settings.svelte"))["default"];
   type AvatarState = {
     url: string | null;
     loading: boolean;
@@ -26,14 +24,6 @@
   };
 
   let {
-    showSettings,
-    SettingsPanel = null,
-    runtimeOs,
-    onSettingsClose,
-    onPlatformsChanged,
-    onSettingsUpdated,
-    onRefreshAvatarsNow,
-    onRefreshBansNow,
     compatiblePlatformCount,
     activeTabUsable,
     adapterLoading,
@@ -91,14 +81,6 @@
     activePlatformAddSetupId,
     switching,
   }: {
-    showSettings: boolean;
-    SettingsPanel?: SettingsComponentType | null;
-    runtimeOs: RuntimeOs;
-    onSettingsClose: () => void;
-    onPlatformsChanged: () => void;
-    onSettingsUpdated: () => void;
-    onRefreshAvatarsNow: () => void | Promise<void>;
-    onRefreshBansNow: () => void | Promise<void>;
     compatiblePlatformCount: number;
     activeTabUsable: boolean;
     adapterLoading: boolean;
@@ -199,25 +181,7 @@
   }
 </script>
 
-{#if showSettings}
-  <main class="content">
-    {#if SettingsPanel}
-      <SettingsPanel
-        onClose={onSettingsClose}
-        onPlatformsChanged={onPlatformsChanged}
-        onSettingsUpdated={onSettingsUpdated}
-        onRefreshAvatarsNow={onRefreshAvatarsNow}
-        onRefreshBansNow={onRefreshBansNow}
-        {runtimeOs}
-      />
-    {:else}
-      <div class="center-msg">
-        <div class="spinner" style={`border-top-color: ${accentColor};`}></div>
-        <p class="text-sm">{t("app.loadingSettings")}</p>
-      </div>
-    {/if}
-  </main>
-{:else if compatiblePlatformCount === 0}
+{#if compatiblePlatformCount === 0}
   <main class="content">
     <div class="center-msg">
       <p>{t("app.noCompatiblePlatforms")}</p>

@@ -545,7 +545,7 @@ pub fn switch_account(app_handle: &tauri::AppHandle, target_uuid: &str) -> Resul
         app_handle,
         "ubisoft.switch_account",
         "Ubisoft switch requested",
-        format!("target={target_uuid}"),
+        format!("target={}", super::redact_id(&target_uuid)),
     );
 
     // Save current account's auth first
@@ -573,13 +573,13 @@ pub fn switch_account(app_handle: &tauri::AppHandle, target_uuid: &str) -> Resul
             app_handle,
             "ubisoft.switch_account",
             "Ubisoft switch completed",
-            format!("target={target_uuid}"),
+            format!("target={}", super::redact_id(&target_uuid)),
         ),
         Err(error) => log_platform_error(
             app_handle,
             "ubisoft.switch_account",
             "Ubisoft switch failed",
-            format!("target={target_uuid}; error={error}"),
+            format!("target={}; error={error}", super::redact_id(&target_uuid)),
         ),
     }
 

@@ -122,9 +122,10 @@ fn build_battle_net_switch_details(target_email: Option<&str>) -> String {
         .filter(|name| crate::os::is_process_running(name))
         .collect::<Vec<_>>();
 
+    use super::{redact_id, redact_opt};
     serde_json::json!({
-        "targetEmail": target_email,
-        "currentAccount": current_account,
+        "targetEmail": redact_opt(target_email),
+        "currentAccount": redact_id(&current_account),
         "launcherRunning": is_battle_net_running(),
         "runningProcesses": running_processes,
     })

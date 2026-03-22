@@ -442,7 +442,7 @@ pub fn switch_account(app_handle: &tauri::AppHandle, user_id: &str) -> Result<()
         app_handle,
         "roblox.switch_account",
         "Roblox switch requested",
-        format!("userId={user_id}"),
+        format!("userId={}", super::redact_id(user_id)),
     );
 
     kill_roblox();
@@ -461,7 +461,7 @@ pub fn switch_account(app_handle: &tauri::AppHandle, user_id: &str) -> Result<()
         app_handle,
         "roblox.switch_account",
         "Roblox switch completed",
-        format!("userId={user_id}; launch={}", launch_result.is_ok()),
+        format!("userId={}; launch={}", super::redact_id(user_id), launch_result.is_ok()),
     );
 
     launch_result
@@ -576,7 +576,7 @@ pub fn get_account_setup_status(
                 app_handle,
                 "roblox.setup_poll",
                 "Cookie validated, storing account",
-                format!("userId={}; username={}", user.id, user.name),
+                format!("userId={}; username={}", super::redact_id(&user.id.to_string()), super::redact_id(&user.name)),
             );
 
             let encrypted = match crate::os::encrypt_secret(&cookie) {
@@ -684,7 +684,7 @@ pub async fn add_account_by_cookie(
         &app_handle,
         "roblox.add_by_cookie",
         "Roblox account added via cookie paste",
-        format!("userId={}", user.id),
+        format!("userId={}", super::redact_id(&user.id.to_string())),
     );
 
     Ok(RobloxAccount {

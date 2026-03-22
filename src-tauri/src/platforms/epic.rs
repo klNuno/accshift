@@ -590,7 +590,7 @@ pub fn switch_account(app_handle: &tauri::AppHandle, account_id: &str) -> Result
         app_handle,
         "epic.switch_account",
         "Epic switch requested",
-        format!("target={account_id}"),
+        format!("target={}", super::redact_id(&account_id)),
     );
 
     // Always save current account's auth before switching
@@ -620,13 +620,13 @@ pub fn switch_account(app_handle: &tauri::AppHandle, account_id: &str) -> Result
             app_handle,
             "epic.switch_account",
             "Epic switch completed",
-            format!("target={account_id}"),
+            format!("target={}", super::redact_id(&account_id)),
         ),
         Err(error) => log_platform_error(
             app_handle,
             "epic.switch_account",
             "Epic switch failed",
-            format!("target={account_id}; error={error}"),
+            format!("target={}; error={error}", super::redact_id(&account_id)),
         ),
     }
 
