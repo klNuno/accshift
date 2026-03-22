@@ -13,6 +13,7 @@ export interface PlatformContextMenuConfirmConfig {
   title: string;
   message: string;
   confirmLabel?: string;
+  confirmColor?: string;
   onConfirm: () => void | Promise<void>;
 }
 

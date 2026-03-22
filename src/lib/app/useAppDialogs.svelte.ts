@@ -170,6 +170,7 @@ export function createAppDialogsController({
   });
 
   let confirmDialogConfirmLabel = $derived(confirmDialog?.confirmLabel || t("common.confirm"));
+  let confirmDialogConfirmColor = $derived(confirmDialog?.confirmColor || "");
 
   function openInputDialog(config: InputDialogConfig) {
     inputDialog = {
@@ -286,6 +287,9 @@ export function createAppDialogsController({
     },
     get confirmDialogConfirmLabel() {
       return confirmDialogConfirmLabel;
+    },
+    get confirmDialogConfirmColor() {
+      return confirmDialogConfirmColor;
     },
     promptRenameNewAccount,
     closeContextMenu,
