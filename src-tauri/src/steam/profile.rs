@@ -75,17 +75,14 @@ fn extract_cdata(body: &str, tag: &str) -> Option<String> {
     None
 }
 
-fn steam_id64_to_account_id(steam_id: &str) -> Option<u32> {
-    let value = steam_id.parse::<u64>().ok()?;
-    Some((value & 0xFFFF_FFFF) as u32)
-}
+use super::accounts::steam_id_to_account_id;
 
 fn is_blank(value: Option<&str>) -> bool {
     value.map(|v| v.trim().is_empty()).unwrap_or(true)
 }
 
 async fn fetch_mini_profile(client: &reqwest::Client, steam_id: &str) -> Option<MiniProfileInfo> {
-    let account_id = steam_id64_to_account_id(steam_id)?;
+    let account_id = steam_id_to_account_id(steam_id)?;
     let url = format!("https://steamcommunity.com/miniprofile/{}/json", account_id);
 
     let response = match client.get(&url).send().await {

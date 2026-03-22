@@ -17,17 +17,10 @@ interface ProfileCache {
   [userId: string]: CachedProfile;
 }
 
+import { isSafeHttpUrl } from "$lib/shared/url";
+
 let cachedProfiles: ProfileCache | null = null;
 const inFlightProfiles = new Map<string, Promise<RobloxProfileInfo | null>>();
-
-function isSafeUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "https:" || parsed.protocol === "http:";
-  } catch {
-    return false;
-  }
-}
 
 function getCache(): ProfileCache {
   if (cachedProfiles) return cachedProfiles;
@@ -41,7 +34,11 @@ function getCache(): ProfileCache {
     const out: ProfileCache = {};
     for (const [id, entry] of Object.entries(parsed)) {
       const raw = entry as Partial<CachedProfile>;
-      if (typeof raw.url === "string" && isSafeUrl(raw.url) && typeof raw.timestamp === "number") {
+      if (
+        typeof raw.url === "string" &&
+        isSafeHttpUrl(raw.url) &&
+        typeof raw.timestamp === "number"
+      ) {
         out[id] = { url: raw.url, timestamp: raw.timestamp };
       }
     }
@@ -75,7 +72,7 @@ export async function fetchRobloxProfile(userId: string): Promise<RobloxProfileI
 
   const task = getProfileInfo(userId)
     .then((info) => {
-      if (info.avatarUrl && isSafeUrl(info.avatarUrl)) {
+      if (info.avatarUrl && isSafeHttpUrl(info.avatarUrl)) {
         const cache = getCache();
         cache[userId] = { url: info.avatarUrl, timestamp: Date.now() };
         saveCache(cache);

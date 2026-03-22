@@ -137,14 +137,14 @@ pub fn encrypt_secret(secret: &str) -> Result<String, AppError> {
         return Ok(String::new());
     }
     let data = secret.as_bytes();
-    let mut input_blob = CRYPT_INTEGER_BLOB {
+    let input_blob = CRYPT_INTEGER_BLOB {
         cbData: data.len() as u32,
         pbData: data.as_ptr() as *mut u8,
     };
     let mut output_blob: CRYPT_INTEGER_BLOB = unsafe { std::mem::zeroed() };
     let ok = unsafe {
         CryptProtectData(
-            &mut input_blob,
+            &input_blob,
             std::ptr::null(),
             std::ptr::null_mut(),
             std::ptr::null_mut(),
@@ -172,14 +172,14 @@ pub fn decrypt_secret(secret: &str) -> Result<String, AppError> {
     }
     let encrypted = base64_decode(secret)
         .map_err(|_| AppError::ProcessStart("Invalid base64 in encrypted secret".into()))?;
-    let mut input_blob = CRYPT_INTEGER_BLOB {
+    let input_blob = CRYPT_INTEGER_BLOB {
         cbData: encrypted.len() as u32,
         pbData: encrypted.as_ptr() as *mut u8,
     };
     let mut output_blob: CRYPT_INTEGER_BLOB = unsafe { std::mem::zeroed() };
     let ok = unsafe {
         CryptUnprotectData(
-            &mut input_blob,
+            &input_blob,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             std::ptr::null_mut(),
@@ -203,7 +203,7 @@ pub fn decrypt_secret(secret: &str) -> Result<String, AppError> {
 
 fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as u32;
         let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
@@ -238,7 +238,7 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
     }
     let input = input.trim();
     let bytes: Vec<u8> = input.bytes().filter(|&b| b != b'\r' && b != b'\n').collect();
-    if bytes.len() % 4 != 0 {
+    if !bytes.len().is_multiple_of(4) {
         return Err(());
     }
     let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
@@ -337,7 +337,7 @@ fn shell_execute(verb: &str, file: &str, args: &str) -> Result<(), AppError> {
             file_w.as_ptr(),
             params_w.as_ptr(),
             std::ptr::null(),
-            SW_SHOWNORMAL as i32,
+            SW_SHOWNORMAL,
         )
     };
     // ShellExecuteW returns HINSTANCE > 32 on success

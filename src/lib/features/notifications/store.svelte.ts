@@ -43,17 +43,3 @@ export function removeToast(id: string) {
     toasts.splice(idx, 1);
   }
 }
-
-// Backward-compatible alias for older call sites.
-export function addNotification(message: string) {
-  addToast(message);
-}
-
-// Temporary no-op exports kept to avoid breaking stale imports.
-export function getUnreadCount(): number {
-  return 0;
-}
-
-export function clearNotifications() {
-  // Intentionally empty.
-}

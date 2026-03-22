@@ -2,11 +2,11 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
-use super::accounts::{list_account_games, load_app_names, steam_user_data_path, CopyableGame};
+use super::accounts::{
+    list_account_games, load_app_names, steam_user_data_path, CopyableGame, NON_GAME_APP_IDS,
+};
 use super::vdf::vdf_set_nested_value;
 use crate::error::AppError;
-
-const NON_GAME_APP_IDS: &[&str] = &["7", "760"];
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

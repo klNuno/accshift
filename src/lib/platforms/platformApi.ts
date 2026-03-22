@@ -81,6 +81,10 @@ export function createPlatformApi(platformId: string) {
     return invoke<string>("platform_select_path", { platformId });
   }
 
+  function setAccountLabel(accountId: string, label: string): Promise<void> {
+    return invoke("platform_set_account_label", { platformId, accountId, label });
+  }
+
   return {
     getAccounts,
     getCurrentAccount,
@@ -93,5 +97,6 @@ export function createPlatformApi(platformId: string) {
     getPath,
     setPath,
     selectPath,
+    setAccountLabel,
   };
 }

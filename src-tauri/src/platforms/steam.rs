@@ -1,7 +1,7 @@
 use crate::config;
 use crate::os;
 use crate::platforms::{
-    log_platform_error, log_platform_info, to_logged_error, PlatformCapabilities, PlatformService,
+    log_platform_error, log_platform_info, to_logged_error, PlatformService,
     SetupStatus,
 };
 use crate::steam::accounts::{self, CopyableGame, SteamAccount};
@@ -14,20 +14,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 const STEAM_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SteamAccountSetupStatus {
-    pub setup_id: String,
-    pub state: String,
-    pub account_id: String,
-    pub account_display_name: String,
-    pub error_message: String,
-}
 
 #[derive(Clone)]
 struct SteamAccountSetupJob {
@@ -38,40 +27,13 @@ struct SteamAccountSetupJob {
     last_touched_at: u64,
 }
 
-fn now_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
-}
-
 fn steam_setup_jobs() -> &'static Mutex<HashMap<String, SteamAccountSetupJob>> {
     static JOBS: OnceLock<Mutex<HashMap<String, SteamAccountSetupJob>>> = OnceLock::new();
     JOBS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn steam_setup_expired(last_touched_at: u64) -> bool {
-    now_unix_ms().saturating_sub(last_touched_at) > STEAM_SETUP_TTL_MS
-}
-
 fn purge_expired_steam_setup_jobs(jobs: &mut HashMap<String, SteamAccountSetupJob>) {
-    jobs.retain(|_, job| !steam_setup_expired(job.last_touched_at));
-}
-
-fn setup_status(
-    setup_id: &str,
-    state: &str,
-    account_id: impl Into<String>,
-    account_display_name: impl Into<String>,
-    error_message: impl Into<String>,
-) -> SteamAccountSetupStatus {
-    SteamAccountSetupStatus {
-        setup_id: setup_id.to_string(),
-        state: state.to_string(),
-        account_id: account_id.into(),
-        account_display_name: account_display_name.into(),
-        error_message: error_message.into(),
-    }
+    jobs.retain(|_, job| !super::setup_expired(job.last_touched_at, STEAM_SETUP_TTL_MS));
 }
 
 fn encrypt_api_key(api_key: &str) -> Result<String, String> {
@@ -181,14 +143,15 @@ fn build_switch_state_details(
 
 pub fn set_api_key(app_handle: tauri::AppHandle, key: String) -> Result<(), String> {
     let trimmed = key.trim();
-    let mut cfg = config::load_config(&app_handle);
-    cfg.steam.api_key = String::new();
-    cfg.steam.api_key_encrypted = if trimmed.is_empty() {
+    let encrypted = if trimmed.is_empty() {
         String::new()
     } else {
         encrypt_api_key(trimmed)?
     };
-    config::save_config(&app_handle, &cfg)
+    config::update_config(&app_handle, |cfg| {
+        cfg.steam.api_key = String::new();
+        cfg.steam.api_key_encrypted = encrypted;
+    })
 }
 
 pub fn has_api_key(app_handle: tauri::AppHandle) -> bool {
@@ -346,7 +309,7 @@ pub fn begin_account_setup(
     run_as_admin: bool,
     launch_options: String,
     force_kill: bool,
-) -> Result<SteamAccountSetupStatus, String> {
+) -> Result<SetupStatus, String> {
     let steam_path = resolve_steam_path(&app_handle)?;
     let known_accounts = accounts::get_accounts(&steam_path)
         .map_err(|e| to_logged_error(&app_handle, "steam.begin_account_setup", e))?;
@@ -355,7 +318,7 @@ pub fn begin_account_setup(
         .map(|account| account.steam_id)
         .collect::<HashSet<_>>();
     let setup_id = format!("steam-setup-{}", Uuid::new_v4());
-    let created_at = now_unix_ms();
+    let created_at = super::now_unix_ms();
 
     {
         let mut jobs = steam_setup_jobs()
@@ -395,13 +358,13 @@ pub fn begin_account_setup(
         }
     });
 
-    Ok(setup_status(&setup_id, "waiting_for_client", "", "", ""))
+    Ok(super::make_setup_status(&setup_id, "waiting_for_client", "", "", ""))
 }
 
 pub fn get_account_setup_status(
     app_handle: tauri::AppHandle,
     setup_id: String,
-) -> Result<SteamAccountSetupStatus, String> {
+) -> Result<SetupStatus, String> {
     let setup_id = setup_id.trim().to_string();
     if setup_id.is_empty() {
         return Err("Invalid Steam setup id".into());
@@ -415,16 +378,16 @@ pub fn get_account_setup_status(
         let Some(job) = jobs.get_mut(&setup_id) else {
             return Err("Steam setup not found".into());
         };
-        job.last_touched_at = now_unix_ms();
+        job.last_touched_at = super::now_unix_ms();
         job.clone()
     };
 
     if let Some(error) = job.error_message {
-        return Ok(setup_status(&setup_id, "failed", "", "", error));
+        return Ok(super::make_setup_status(&setup_id, "failed", "", "", error));
     }
 
     if !job.launch_started {
-        return Ok(setup_status(&setup_id, "waiting_for_client", "", "", ""));
+        return Ok(super::make_setup_status(&setup_id, "waiting_for_client", "", "", ""));
     }
 
     let accounts = accounts::get_accounts(&job.steam_path)
@@ -438,7 +401,7 @@ pub fn get_account_setup_status(
         if let Ok(mut jobs) = steam_setup_jobs().lock() {
             jobs.remove(&setup_id);
         }
-        return Ok(setup_status(
+        return Ok(super::make_setup_status(
             &setup_id,
             "ready",
             account.steam_id,
@@ -447,7 +410,7 @@ pub fn get_account_setup_status(
         ));
     }
 
-    Ok(setup_status(&setup_id, "waiting_for_login", "", "", ""))
+    Ok(super::make_setup_status(&setup_id, "waiting_for_login", "", "", ""))
 }
 
 pub fn cancel_account_setup(_app_handle: tauri::AppHandle, setup_id: String) -> Result<(), String> {
@@ -496,7 +459,7 @@ pub fn get_copyable_games(
     validate_steam_id(&from_steam_id)?;
     validate_steam_id(&to_steam_id)?;
     let steam_path = resolve_steam_path(&app_handle)?;
-    accounts::get_copyable_games(&steam_path, &from_steam_id, &to_steam_id)
+    accounts::get_copyable_games(&steam_path, &from_steam_id)
         .map_err(|e| to_logged_error(&app_handle, "steam.get_copyable_games", e))
 }
 
@@ -509,14 +472,14 @@ pub fn get_steam_path(app_handle: tauri::AppHandle) -> Result<String, String> {
 }
 
 pub fn set_steam_path(app_handle: tauri::AppHandle, path: String) -> Result<(), String> {
-    let trimmed = path.trim();
-    let mut cfg = config::load_config(&app_handle);
-    if trimmed.is_empty() {
-        cfg.steam.path_override = String::new();
-    } else {
-        cfg.steam.path_override = trimmed.to_string();
-    }
-    config::save_config(&app_handle, &cfg)
+    let trimmed = path.trim().to_string();
+    config::update_config(&app_handle, |cfg| {
+        if trimmed.is_empty() {
+            cfg.steam.path_override = String::new();
+        } else {
+            cfg.steam.path_override = trimmed;
+        }
+    })
 }
 
 pub fn select_steam_path() -> Result<String, String> {
@@ -613,20 +576,6 @@ pub async fn get_player_bans(
 }
 
 impl PlatformService for SteamService {
-    fn id(&self) -> &'static str {
-        "steam"
-    }
-
-    fn capabilities(&self) -> PlatformCapabilities {
-        PlatformCapabilities {
-            has_profiles: true,
-            has_warnings: true,
-            has_api_key: true,
-            has_game_copy: true,
-            has_usernames: true,
-        }
-    }
-
     fn get_accounts(&self, app: &tauri::AppHandle) -> Result<Value, String> {
         let accounts = get_accounts(app.clone())?;
         serde_json::to_value(accounts).map_err(|e| e.to_string())
@@ -731,14 +680,7 @@ impl PlatformService for SteamService {
             .unwrap_or("")
             .to_string();
         let force_kill = is_force_kill(&params);
-        let status = begin_account_setup(app.clone(), run_as_admin, launch_options, force_kill)?;
-        Ok(SetupStatus {
-            setup_id: status.setup_id,
-            state: status.state,
-            account_id: status.account_id,
-            account_display_name: status.account_display_name,
-            error_message: status.error_message,
-        })
+        begin_account_setup(app.clone(), run_as_admin, launch_options, force_kill)
     }
 
     fn get_setup_status(
@@ -746,14 +688,7 @@ impl PlatformService for SteamService {
         app: &tauri::AppHandle,
         setup_id: &str,
     ) -> Result<SetupStatus, String> {
-        let status = get_account_setup_status(app.clone(), setup_id.to_string())?;
-        Ok(SetupStatus {
-            setup_id: status.setup_id,
-            state: status.state,
-            account_id: status.account_id,
-            account_display_name: status.account_display_name,
-            error_message: status.error_message,
-        })
+        get_account_setup_status(app.clone(), setup_id.to_string())
     }
 
     fn cancel_setup(&self, app: &tauri::AppHandle, setup_id: &str) -> Result<(), String> {

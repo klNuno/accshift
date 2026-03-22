@@ -1,6 +1,6 @@
 use crate::config::{self, BattleNetAccountConfig};
 use crate::platforms::{
-    log_platform_error, log_platform_info, PlatformCapabilities, PlatformService, SetupStatus,
+    log_platform_error, log_platform_info, PlatformService, SetupStatus,
 };
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
@@ -11,7 +11,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 #[cfg(target_os = "windows")]
 use winreg::HKEY;
@@ -41,27 +40,10 @@ pub struct BattleNetStartupSnapshot {
     pub current_account: String,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BattleNetAccountSetupStatus {
-    pub setup_id: String,
-    pub state: String,
-    pub account_id: String,
-    pub account_display_name: String,
-    pub error_message: String,
-}
-
 #[derive(Clone)]
 struct BattleNetAccountSetupJob {
     known_account_keys: HashSet<String>,
     last_touched_at: u64,
-}
-
-fn now_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 fn battle_net_setup_jobs() -> &'static Mutex<HashMap<String, BattleNetAccountSetupJob>> {
@@ -69,28 +51,8 @@ fn battle_net_setup_jobs() -> &'static Mutex<HashMap<String, BattleNetAccountSet
     JOBS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn battle_net_setup_expired(last_touched_at: u64) -> bool {
-    now_unix_ms().saturating_sub(last_touched_at) > BATTLE_NET_SETUP_TTL_MS
-}
-
 fn purge_expired_battle_net_setup_jobs(jobs: &mut HashMap<String, BattleNetAccountSetupJob>) {
-    jobs.retain(|_, job| !battle_net_setup_expired(job.last_touched_at));
-}
-
-fn setup_status(
-    setup_id: &str,
-    state: &str,
-    account_id: impl Into<String>,
-    account_display_name: impl Into<String>,
-    error_message: impl Into<String>,
-) -> BattleNetAccountSetupStatus {
-    BattleNetAccountSetupStatus {
-        setup_id: setup_id.to_string(),
-        state: state.to_string(),
-        account_id: account_id.into(),
-        account_display_name: account_display_name.into(),
-        error_message: error_message.into(),
-    }
+    jobs.retain(|_, job| !super::setup_expired(job.last_touched_at, BATTLE_NET_SETUP_TTL_MS));
 }
 
 fn battle_net_config_path() -> Result<PathBuf, String> {
@@ -389,8 +351,7 @@ fn remember_account_usage(
 ) -> Result<(), String> {
     let email = validate_account_email(email)?;
     let key = normalize_account_key(&email);
-    let mut cfg = config::load_config(app_handle);
-    let now = now_unix_ms();
+    let now = super::now_unix_ms();
     // Only query the battle tag for the account that is actually logged in
     // right now. Applying it to other accounts would overwrite their tags.
     let battle_tag = if is_current_account {
@@ -399,35 +360,35 @@ fn remember_account_usage(
         None
     };
 
-    if let Some(existing) = cfg
-        .battle_net
-        .accounts
-        .iter_mut()
-        .find(|account| normalize_account_key(&account.email) == key)
-    {
-        existing.email = email;
-        if let Some(tag) = battle_tag {
-            existing.battle_tag = tag;
+    config::update_config(app_handle, |cfg| {
+        if let Some(existing) = cfg
+            .battle_net
+            .accounts
+            .iter_mut()
+            .find(|account| normalize_account_key(&account.email) == key)
+        {
+            existing.email = email;
+            if let Some(tag) = battle_tag {
+                existing.battle_tag = tag;
+            }
+            existing.last_used_at = Some(now);
+        } else {
+            cfg.battle_net.accounts.push(BattleNetAccountConfig {
+                email,
+                battle_tag: battle_tag.unwrap_or_default(),
+                last_used_at: Some(now),
+            });
         }
-        existing.last_used_at = Some(now);
-    } else {
-        cfg.battle_net.accounts.push(BattleNetAccountConfig {
-            email,
-            battle_tag: battle_tag.unwrap_or_default(),
-            last_used_at: Some(now),
-        });
-    }
-
-    config::save_config(app_handle, &cfg)
+    })
 }
 
 fn forget_account_metadata(app_handle: &tauri::AppHandle, email: &str) -> Result<(), String> {
     let key = normalize_account_key(email);
-    let mut cfg = config::load_config(app_handle);
-    cfg.battle_net
-        .accounts
-        .retain(|account| normalize_account_key(&account.email) != key);
-    config::save_config(app_handle, &cfg)
+    config::update_config(app_handle, |cfg| {
+        cfg.battle_net
+            .accounts
+            .retain(|account| normalize_account_key(&account.email) != key);
+    })
 }
 
 fn write_saved_accounts(accounts: &[String]) -> Result<(), String> {
@@ -768,7 +729,7 @@ pub fn switch_account(app_handle: tauri::AppHandle, email: String) -> Result<(),
 
 pub fn begin_account_setup(
     app_handle: tauri::AppHandle,
-) -> Result<BattleNetAccountSetupStatus, String> {
+) -> Result<SetupStatus, String> {
     log_platform_info(
         &app_handle,
         "battle_net.begin_account_setup",
@@ -777,7 +738,7 @@ pub fn begin_account_setup(
     );
     let known_accounts = known_account_emails(&app_handle).unwrap_or_default();
     let setup_id = format!("battle-net-setup-{}", Uuid::new_v4());
-    let created_at = now_unix_ms();
+    let created_at = super::now_unix_ms();
     let known_account_keys = known_accounts
         .iter()
         .map(|account| normalize_account_key(account))
@@ -806,13 +767,13 @@ pub fn begin_account_setup(
             e,
         );
     })?;
-    Ok(setup_status(&setup_id, "waiting_for_client", "", "", ""))
+    Ok(super::make_setup_status(&setup_id, "waiting_for_client", "", "", ""))
 }
 
 pub fn get_account_setup_status(
     app_handle: tauri::AppHandle,
     setup_id: String,
-) -> Result<BattleNetAccountSetupStatus, String> {
+) -> Result<SetupStatus, String> {
     let job = {
         let mut jobs = battle_net_setup_jobs()
             .lock()
@@ -821,7 +782,7 @@ pub fn get_account_setup_status(
         let Some(job) = jobs.get_mut(&setup_id) else {
             return Err("Battle.net setup session not found".into());
         };
-        job.last_touched_at = now_unix_ms();
+        job.last_touched_at = super::now_unix_ms();
         job.clone()
     };
 
@@ -834,7 +795,7 @@ pub fn get_account_setup_status(
             jobs.remove(&setup_id);
         }
         let _ = remember_account_usage(&app_handle, account, true);
-        return Ok(setup_status(
+        return Ok(super::make_setup_status(
             &setup_id,
             "ready",
             account.clone(),
@@ -844,10 +805,10 @@ pub fn get_account_setup_status(
     }
 
     if is_battle_net_running() {
-        return Ok(setup_status(&setup_id, "waiting_for_login", "", "", ""));
+        return Ok(super::make_setup_status(&setup_id, "waiting_for_login", "", "", ""));
     }
 
-    Ok(setup_status(&setup_id, "waiting_for_client", "", "", ""))
+    Ok(super::make_setup_status(&setup_id, "waiting_for_client", "", "", ""))
 }
 
 pub fn cancel_account_setup(setup_id: String) -> Result<(), String> {
@@ -881,9 +842,9 @@ pub fn get_battle_net_path(app_handle: tauri::AppHandle) -> Result<String, Strin
 }
 
 pub fn set_battle_net_path(app_handle: tauri::AppHandle, path: String) -> Result<(), String> {
-    let mut cfg = config::load_config(&app_handle);
-    cfg.battle_net.path_override = path.trim().to_string();
-    config::save_config(&app_handle, &cfg)
+    config::update_config(&app_handle, |cfg| {
+        cfg.battle_net.path_override = path.trim().to_string();
+    })
 }
 
 pub fn select_battle_net_path() -> Result<String, String> {
@@ -899,20 +860,6 @@ pub struct BattleNetService;
 pub static BATTLE_NET_SERVICE: BattleNetService = BattleNetService;
 
 impl PlatformService for BattleNetService {
-    fn id(&self) -> &'static str {
-        "battle-net"
-    }
-
-    fn capabilities(&self) -> PlatformCapabilities {
-        PlatformCapabilities {
-            has_profiles: false,
-            has_warnings: false,
-            has_api_key: false,
-            has_game_copy: false,
-            has_usernames: false,
-        }
-    }
-
     fn get_accounts(&self, app: &tauri::AppHandle) -> Result<Value, String> {
         let accounts = get_accounts(app.clone())?;
         serde_json::to_value(accounts).map_err(|e| e.to_string())
@@ -941,14 +888,7 @@ impl PlatformService for BattleNetService {
     }
 
     fn begin_setup(&self, app: &tauri::AppHandle, _params: Value) -> Result<SetupStatus, String> {
-        let status = begin_account_setup(app.clone())?;
-        Ok(SetupStatus {
-            setup_id: status.setup_id,
-            state: status.state,
-            account_id: status.account_id,
-            account_display_name: status.account_display_name,
-            error_message: status.error_message,
-        })
+        begin_account_setup(app.clone())
     }
 
     fn get_setup_status(
@@ -956,14 +896,7 @@ impl PlatformService for BattleNetService {
         app: &tauri::AppHandle,
         setup_id: &str,
     ) -> Result<SetupStatus, String> {
-        let status = get_account_setup_status(app.clone(), setup_id.to_string())?;
-        Ok(SetupStatus {
-            setup_id: status.setup_id,
-            state: status.state,
-            account_id: status.account_id,
-            account_display_name: status.account_display_name,
-            error_message: status.error_message,
-        })
+        get_account_setup_status(app.clone(), setup_id.to_string())
     }
 
     fn cancel_setup(&self, _app: &tauri::AppHandle, setup_id: &str) -> Result<(), String> {

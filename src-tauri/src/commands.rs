@@ -1,4 +1,4 @@
-use crate::platforms::{require_service, PlatformCapabilities, SetupStatus};
+use crate::platforms::{require_service, SetupStatus};
 use serde_json::Value;
 
 #[tauri::command]
@@ -112,11 +112,6 @@ pub fn get_storage_manifest(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn platform_get_capabilities(platform_id: String) -> Result<PlatformCapabilities, String> {
-    Ok(require_service(&platform_id)?.capabilities())
-}
-
-#[tauri::command]
 pub fn platform_get_accounts(
     app_handle: tauri::AppHandle,
     platform_id: String,
@@ -227,6 +222,16 @@ pub fn platform_set_path(
 #[tauri::command]
 pub fn platform_select_path(platform_id: String) -> Result<String, String> {
     require_service(&platform_id)?.select_path()
+}
+
+#[tauri::command]
+pub fn platform_set_account_label(
+    app_handle: tauri::AppHandle,
+    platform_id: String,
+    account_id: String,
+    label: String,
+) -> Result<(), String> {
+    require_service(&platform_id)?.set_account_label(&app_handle, &account_id, &label)
 }
 
 // ---------------------------------------------------------------------------
@@ -355,30 +360,6 @@ pub fn steam_get_account_games(
     crate::platforms::steam::get_account_games(app_handle, steam_id)
 }
 
-// Ubisoft-specific commands
-// ---------------------------------------------------------------------------
-
-#[tauri::command]
-pub fn ubisoft_set_account_label(
-    app_handle: tauri::AppHandle,
-    uuid: String,
-    label: String,
-) -> Result<(), String> {
-    crate::platforms::ubisoft::set_account_label(&app_handle, &uuid, &label)
-}
-
-// ---------------------------------------------------------------------------
-// Epic-specific commands
-// ---------------------------------------------------------------------------
-
-#[tauri::command]
-pub fn epic_set_account_label(
-    app_handle: tauri::AppHandle,
-    account_id: String,
-    label: String,
-) -> Result<(), String> {
-    crate::platforms::epic::set_account_label(&app_handle, &account_id, &label)
-}
 
 // ---------------------------------------------------------------------------
 // Riot-specific commands

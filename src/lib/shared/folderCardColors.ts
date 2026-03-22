@@ -1,68 +1,11 @@
-import {
-  CLIENT_STORE_FOLDER_CARD_COLORS,
-  getClientStoreRevision,
-  getClientStoreValue,
-  setClientStoreValue,
-} from "$lib/storage/clientStorage";
+import { CLIENT_STORE_FOLDER_CARD_COLORS } from "$lib/storage/clientStorage";
+import { createCachedMapStore } from "./cachedMapStore";
 
-type FolderColorMap = Record<string, string>;
-let cachedMap: FolderColorMap | null = null;
-let cachedRevision = -1;
 const SAFE_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
-function isSafeColor(color: string): boolean {
-  return SAFE_COLOR_RE.test(color);
-}
+const store = createCachedMapStore(CLIENT_STORE_FOLDER_CARD_COLORS, (_key, color) =>
+  SAFE_COLOR_RE.test(color) ? color : null,
+);
 
-function sanitizeMap(value: unknown): FolderColorMap {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const out: FolderColorMap = {};
-  for (const [key, rawColor] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof key !== "string" || key.trim().length === 0) continue;
-    if (typeof rawColor !== "string") continue;
-    if (!isSafeColor(rawColor)) continue;
-    out[key] = rawColor;
-  }
-  return out;
-}
-
-function readMap(): FolderColorMap {
-  const revision = getClientStoreRevision(CLIENT_STORE_FOLDER_CARD_COLORS);
-  if (cachedMap && cachedRevision === revision) return cachedMap;
-
-  try {
-    const raw = getClientStoreValue<unknown>(CLIENT_STORE_FOLDER_CARD_COLORS);
-    if (raw == null) {
-      cachedMap = {};
-      cachedRevision = revision;
-      return cachedMap;
-    }
-    cachedMap = sanitizeMap(raw);
-    cachedRevision = revision;
-    return cachedMap;
-  } catch {
-    cachedMap = {};
-    cachedRevision = revision;
-    return cachedMap;
-  }
-}
-
-function writeMap(data: FolderColorMap) {
-  cachedMap = data;
-  setClientStoreValue(CLIENT_STORE_FOLDER_CARD_COLORS, data);
-  cachedRevision = getClientStoreRevision(CLIENT_STORE_FOLDER_CARD_COLORS);
-}
-
-export function getFolderCardColor(folderId: string): string {
-  return readMap()[folderId] ?? "";
-}
-
-export function setFolderCardColor(folderId: string, color: string) {
-  const data = readMap();
-  if (!color || !isSafeColor(color)) {
-    delete data[folderId];
-  } else {
-    data[folderId] = color;
-  }
-  writeMap(data);
-}
+export const getFolderCardColor = store.get;
+export const setFolderCardColor = store.set;

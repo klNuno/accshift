@@ -1,6 +1,6 @@
 use crate::config::{self, UbisoftAccountConfig};
 use crate::platforms::{
-    log_platform_error, log_platform_info, PlatformCapabilities, PlatformService, SetupStatus,
+    log_platform_error, log_platform_info, PlatformService, SetupStatus,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -10,7 +10,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 #[cfg(target_os = "windows")]
 use winreg::enums::*;
@@ -45,24 +44,13 @@ struct UbisoftSetupJob {
     last_touched_at: u64,
 }
 
-fn now_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
-
 fn setup_jobs() -> &'static Mutex<HashMap<String, UbisoftSetupJob>> {
     static JOBS: OnceLock<Mutex<HashMap<String, UbisoftSetupJob>>> = OnceLock::new();
     JOBS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn setup_expired(last_touched_at: u64) -> bool {
-    now_unix_ms().saturating_sub(last_touched_at) > UBISOFT_SETUP_TTL_MS
-}
-
 fn purge_expired_setup_jobs(jobs: &mut HashMap<String, UbisoftSetupJob>) {
-    jobs.retain(|_, job| !setup_expired(job.last_touched_at));
+    jobs.retain(|_, job| !super::setup_expired(job.last_touched_at, UBISOFT_SETUP_TTL_MS));
 }
 
 // ---------------------------------------------------------------------------
@@ -479,34 +467,33 @@ fn read_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<UbisoftAccount>, S
 fn remember_account_usage(app_handle: &tauri::AppHandle, uuid: &str) -> Result<(), String> {
     let uuid = validate_uuid(uuid)?;
     let key = uuid.to_lowercase();
-    let mut cfg = config::load_config(app_handle);
-    let now = now_unix_ms();
+    let now = super::now_unix_ms();
 
-    if let Some(existing) = cfg
-        .ubisoft
-        .accounts
-        .iter_mut()
-        .find(|a| a.uuid.trim().to_lowercase() == key)
-    {
-        existing.last_used_at = Some(now);
-    } else {
-        cfg.ubisoft.accounts.push(UbisoftAccountConfig {
-            uuid,
-            label: String::new(),
-            last_used_at: Some(now),
-        });
-    }
-
-    config::save_config(app_handle, &cfg)
+    config::update_config(app_handle, |cfg| {
+        if let Some(existing) = cfg
+            .ubisoft
+            .accounts
+            .iter_mut()
+            .find(|a| a.uuid.trim().to_lowercase() == key)
+        {
+            existing.last_used_at = Some(now);
+        } else {
+            cfg.ubisoft.accounts.push(UbisoftAccountConfig {
+                uuid,
+                label: String::new(),
+                last_used_at: Some(now),
+            });
+        }
+    })
 }
 
 fn forget_account_metadata(app_handle: &tauri::AppHandle, uuid: &str) -> Result<(), String> {
     let key = uuid.trim().to_lowercase();
-    let mut cfg = config::load_config(app_handle);
-    cfg.ubisoft
-        .accounts
-        .retain(|a| a.uuid.trim().to_lowercase() != key);
-    config::save_config(app_handle, &cfg)?;
+    config::update_config(app_handle, |cfg| {
+        cfg.ubisoft
+            .accounts
+            .retain(|a| a.uuid.trim().to_lowercase() != key);
+    })?;
 
     // Also remove cached auth snapshot
     if let Ok(cache_dir) = auth_cache_dir(app_handle, uuid) {
@@ -615,7 +602,7 @@ pub fn begin_account_setup(app_handle: &tauri::AppHandle) -> Result<SetupStatus,
     }
 
     let setup_id = format!("ubisoft-setup-{}", Uuid::new_v4());
-    let created_at = now_unix_ms();
+    let created_at = super::now_unix_ms();
 
     let mut jobs = setup_jobs()
         .lock()
@@ -645,13 +632,13 @@ pub fn begin_account_setup(app_handle: &tauri::AppHandle) -> Result<SetupStatus,
         );
     })?;
 
-    Ok(SetupStatus {
-        setup_id,
-        state: "waiting_for_client".to_string(),
-        account_id: String::new(),
-        account_display_name: String::new(),
-        error_message: String::new(),
-    })
+    Ok(super::make_setup_status(
+        &setup_id,
+        "waiting_for_client",
+        "",
+        "",
+        "",
+    ))
 }
 
 pub fn get_account_setup_status(
@@ -666,7 +653,7 @@ pub fn get_account_setup_status(
         let Some(job) = jobs.get_mut(setup_id) else {
             return Err("Ubisoft setup session not found".into());
         };
-        job.last_touched_at = now_unix_ms();
+        job.last_touched_at = super::now_unix_ms();
         job.clone()
     };
 
@@ -682,13 +669,13 @@ pub fn get_account_setup_status(
                 jobs.remove(setup_id);
             }
 
-            return Ok(SetupStatus {
-                setup_id: setup_id.to_string(),
-                state: "ready".to_string(),
-                account_id: current_uuid.clone(),
-                account_display_name: current_uuid,
-                error_message: String::new(),
-            });
+            return Ok(super::make_setup_status(
+                setup_id,
+                "ready",
+                current_uuid.clone(),
+                current_uuid,
+                "",
+            ));
         }
     }
 
@@ -705,33 +692,33 @@ pub fn get_account_setup_status(
                 jobs.remove(setup_id);
             }
 
-            return Ok(SetupStatus {
-                setup_id: setup_id.to_string(),
-                state: "ready".to_string(),
-                account_id: uuid.clone(),
-                account_display_name: uuid.clone(),
-                error_message: String::new(),
-            });
+            return Ok(super::make_setup_status(
+                setup_id,
+                "ready",
+                uuid.clone(),
+                uuid.clone(),
+                "",
+            ));
         }
     }
 
     if is_ubisoft_running() {
-        return Ok(SetupStatus {
-            setup_id: setup_id.to_string(),
-            state: "waiting_for_login".to_string(),
-            account_id: String::new(),
-            account_display_name: String::new(),
-            error_message: String::new(),
-        });
+        return Ok(super::make_setup_status(
+            setup_id,
+            "waiting_for_login",
+            "",
+            "",
+            "",
+        ));
     }
 
-    Ok(SetupStatus {
-        setup_id: setup_id.to_string(),
-        state: "waiting_for_client".to_string(),
-        account_id: String::new(),
-        account_display_name: String::new(),
-        error_message: String::new(),
-    })
+    Ok(super::make_setup_status(
+        setup_id,
+        "waiting_for_client",
+        "",
+        "",
+        "",
+    ))
 }
 
 pub fn cancel_account_setup(setup_id: &str) -> Result<(), String> {
@@ -755,25 +742,24 @@ pub fn set_account_label(
 ) -> Result<(), String> {
     let uuid = validate_uuid(uuid)?;
     let key = uuid.to_lowercase();
-    let mut cfg = config::load_config(app_handle);
     let label = label.trim().to_string();
 
-    if let Some(existing) = cfg
-        .ubisoft
-        .accounts
-        .iter_mut()
-        .find(|a| a.uuid.trim().to_lowercase() == key)
-    {
-        existing.label = label;
-    } else {
-        cfg.ubisoft.accounts.push(UbisoftAccountConfig {
-            uuid,
-            label,
-            last_used_at: None,
-        });
-    }
-
-    config::save_config(app_handle, &cfg)
+    config::update_config(app_handle, |cfg| {
+        if let Some(existing) = cfg
+            .ubisoft
+            .accounts
+            .iter_mut()
+            .find(|a| a.uuid.trim().to_lowercase() == key)
+        {
+            existing.label = label;
+        } else {
+            cfg.ubisoft.accounts.push(UbisoftAccountConfig {
+                uuid,
+                label,
+                last_used_at: None,
+            });
+        }
+    })
 }
 
 pub fn get_ubisoft_path(app_handle: &tauri::AppHandle) -> Result<String, String> {
@@ -785,9 +771,10 @@ pub fn get_ubisoft_path(app_handle: &tauri::AppHandle) -> Result<String, String>
 }
 
 pub fn set_ubisoft_path(app_handle: &tauri::AppHandle, path: &str) -> Result<(), String> {
-    let mut cfg = config::load_config(app_handle);
-    cfg.ubisoft.path_override = path.trim().to_string();
-    config::save_config(app_handle, &cfg)
+    let path = path.trim().to_string();
+    config::update_config(app_handle, |cfg| {
+        cfg.ubisoft.path_override = path;
+    })
 }
 
 pub fn select_ubisoft_path() -> Result<String, String> {
@@ -807,20 +794,6 @@ pub struct UbisoftService;
 pub static UBISOFT_SERVICE: UbisoftService = UbisoftService;
 
 impl PlatformService for UbisoftService {
-    fn id(&self) -> &'static str {
-        "ubisoft"
-    }
-
-    fn capabilities(&self) -> PlatformCapabilities {
-        PlatformCapabilities {
-            has_profiles: false,
-            has_warnings: false,
-            has_api_key: false,
-            has_game_copy: false,
-            has_usernames: false,
-        }
-    }
-
     fn get_accounts(&self, app: &tauri::AppHandle) -> Result<Value, String> {
         let accounts = get_accounts(app)?;
         serde_json::to_value(accounts).map_err(|e| e.to_string())
@@ -874,6 +847,15 @@ impl PlatformService for UbisoftService {
 
     fn select_path(&self) -> Result<String, String> {
         select_ubisoft_path()
+    }
+
+    fn set_account_label(
+        &self,
+        app: &tauri::AppHandle,
+        account_id: &str,
+        label: &str,
+    ) -> Result<(), String> {
+        set_account_label(app, account_id, label)
     }
 }
 
