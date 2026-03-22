@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
   import { trackDependencies } from "$lib/shared/trackDependencies";
+  import BaseDialog from "./BaseDialog.svelte";
 
   let { title, placeholder = "", initialValue = "", allowEmpty = false, onConfirm, onCancel, locale = DEFAULT_LOCALE }: {
     title: string;
@@ -26,70 +27,30 @@
     inputRef?.select();
   });
 
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape") onCancel();
-    if (e.key === "Enter" && (allowEmpty || value.trim())) {
-      onConfirm(allowEmpty ? value : value.trim());
-    }
-  }
-
-  function handleSubmit() {
+  function submit() {
     if (allowEmpty || value.trim()) onConfirm(allowEmpty ? value : value.trim());
   }
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+<BaseDialog
+  {title}
+  {onCancel}
+  onKeydown={(e) => { if (e.key === "Enter") submit(); }}
+>
+  <input
+    bind:this={inputRef}
+    bind:value={value}
+    class="input"
+    {placeholder}
+  />
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="overlay" onclick={onCancel}>
-  <div class="dialog" onclick={(e) => e.stopPropagation()}>
-    <span class="title">{title}</span>
-    <input
-      bind:this={inputRef}
-      bind:value={value}
-      class="input"
-      {placeholder}
-    />
-    <div class="actions">
-      <button class="btn-cancel" onclick={onCancel}>{translate(locale, "common.cancel")}</button>
-      <button class="btn-ok" onclick={handleSubmit} disabled={!allowEmpty && !value.trim()}>{translate(locale, "common.ok")}</button>
-    </div>
-  </div>
-</div>
+  {#snippet actions()}
+    <button class="btn-cancel" onclick={onCancel}>{translate(locale, "common.cancel")}</button>
+    <button class="btn-ok" onclick={submit} disabled={!allowEmpty && !value.trim()}>{translate(locale, "common.ok")}</button>
+  {/snippet}
+</BaseDialog>
 
 <style>
-  .overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 1100;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(4px);
-    animation: overlay-fade-in 100ms ease-out;
-  }
-
-  .dialog {
-    width: 280px;
-    padding: 16px;
-    background: var(--bg-overlay);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    animation: dialog-slide-in 120ms ease-out;
-  }
-
-  .title {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--fg);
-  }
-
   .input {
     width: 100%;
     padding: 8px 10px;
@@ -105,12 +66,6 @@
 
   .input:focus {
     border-color: var(--bg-elevated);
-  }
-
-  .actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
   }
 
   .btn-cancel {

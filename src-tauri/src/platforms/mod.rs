@@ -182,3 +182,120 @@ pub fn get_service(platform_id: &str) -> Option<&'static dyn PlatformService> {
 pub fn require_service(platform_id: &str) -> Result<&'static dyn PlatformService, String> {
     get_service(platform_id).ok_or_else(|| format!("Unknown platform: {platform_id}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn now_unix_ms_returns_positive_timestamp() {
+        let ts = now_unix_ms();
+        assert!(ts > 0, "timestamp should be positive, got {ts}");
+    }
+
+    #[test]
+    fn now_unix_ms_is_within_reasonable_range() {
+        let ts = now_unix_ms();
+        // Should be after 2024-01-01 and within an hour of the actual system time
+        let jan_2024 = 1_704_067_200_000u64;
+        assert!(ts > jan_2024, "timestamp {ts} should be after 2024-01-01");
+
+        let one_hour_ms = 3_600_000u64;
+        let system_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let diff = if ts > system_ms {
+            ts - system_ms
+        } else {
+            system_ms - ts
+        };
+        assert!(
+            diff < one_hour_ms,
+            "timestamp drift {diff}ms exceeds 1 hour"
+        );
+    }
+
+    #[test]
+    fn setup_expired_true_when_elapsed_exceeds_ttl() {
+        let old_time = now_unix_ms() - 10_000; // 10 seconds ago
+        assert!(setup_expired(old_time, 5_000)); // 5s TTL
+    }
+
+    #[test]
+    fn setup_expired_false_when_within_ttl() {
+        let recent = now_unix_ms() - 1_000; // 1 second ago
+        assert!(!setup_expired(recent, 5_000)); // 5s TTL
+    }
+
+    #[test]
+    fn setup_expired_boundary_at_exact_ttl() {
+        // At exactly the TTL boundary, elapsed == ttl, not > ttl, so should be false.
+        let ts = now_unix_ms();
+        // last_touched_at = ts means elapsed ≈ 0, well within any TTL
+        assert!(!setup_expired(ts, 0));
+    }
+
+    #[test]
+    fn setup_expired_handles_zero_last_touched() {
+        // last_touched_at = 0 means it was set at epoch — always expired with any real TTL
+        assert!(setup_expired(0, 1_000));
+    }
+
+    #[test]
+    fn make_setup_status_builds_correct_fields() {
+        let status = make_setup_status("sid-1", "pending", "acc-42", "Player One", "");
+
+        assert_eq!(status.setup_id, "sid-1");
+        assert_eq!(status.state, "pending");
+        assert_eq!(status.account_id, "acc-42");
+        assert_eq!(status.account_display_name, "Player One");
+        assert_eq!(status.error_message, "");
+    }
+
+    #[test]
+    fn make_setup_status_with_error() {
+        let status = make_setup_status("sid-2", "failed", "", "", "connection refused");
+
+        assert_eq!(status.setup_id, "sid-2");
+        assert_eq!(status.state, "failed");
+        assert!(status.account_id.is_empty());
+        assert!(status.account_display_name.is_empty());
+        assert_eq!(status.error_message, "connection refused");
+    }
+
+    #[test]
+    fn make_setup_status_accepts_string_types() {
+        let id = String::from("acc-owned");
+        let name = String::from("Named");
+        let err = String::from("err");
+        let status = make_setup_status("s", "done", id, name, err);
+        assert_eq!(status.account_id, "acc-owned");
+        assert_eq!(status.account_display_name, "Named");
+        assert_eq!(status.error_message, "err");
+    }
+
+    #[test]
+    fn require_service_returns_err_for_unknown_platform() {
+        let result = require_service("nintendo");
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert_eq!(err, "Unknown platform: nintendo");
+    }
+
+    #[test]
+    fn require_service_returns_ok_for_known_platforms() {
+        for platform in &["steam", "riot", "battle-net", "ubisoft", "roblox", "epic"] {
+            let result = require_service(platform);
+            assert!(
+                result.is_ok(),
+                "require_service should succeed for '{platform}'"
+            );
+        }
+    }
+
+    #[test]
+    fn get_service_returns_none_for_unknown() {
+        assert!(get_service("playstation").is_none());
+    }
+}

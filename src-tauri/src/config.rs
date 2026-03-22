@@ -609,3 +609,357 @@ fn merge_split_configs(portable: AppConfig, local: AppConfig) -> AppConfig {
     merged
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_config_migrates_legacy_steam_fields() {
+        let raw = RawAppConfig {
+            steam: None,
+            steam_api_key: "my-legacy-key".into(),
+            steam_api_key_encrypted: "my-enc-key".into(),
+            steam_path_override: "C:\\Steam".into(),
+            window_width: Some(1024.0),
+            window_height: Some(768.0),
+            ..Default::default()
+        };
+
+        let cfg = normalize_config(raw);
+        assert_eq!(cfg.steam.api_key, "my-legacy-key");
+        assert_eq!(cfg.steam.api_key_encrypted, "my-enc-key");
+        assert_eq!(cfg.steam.path_override, "C:\\Steam");
+        assert_eq!(cfg.window_width, Some(1024.0));
+        assert_eq!(cfg.window_height, Some(768.0));
+    }
+
+    #[test]
+    fn normalize_config_prefers_nested_steam_over_legacy() {
+        let raw = RawAppConfig {
+            steam: Some(SteamConfig {
+                api_key: "nested-key".into(),
+                api_key_encrypted: "nested-enc".into(),
+                path_override: "D:\\Steam".into(),
+            }),
+            steam_api_key: "legacy-key".into(),
+            steam_api_key_encrypted: "legacy-enc".into(),
+            steam_path_override: "C:\\Old".into(),
+            ..Default::default()
+        };
+
+        let cfg = normalize_config(raw);
+        assert_eq!(cfg.steam.api_key, "nested-key");
+        assert_eq!(cfg.steam.api_key_encrypted, "nested-enc");
+        assert_eq!(cfg.steam.path_override, "D:\\Steam");
+    }
+
+    #[test]
+    fn normalize_config_falls_back_to_legacy_when_nested_empty() {
+        let raw = RawAppConfig {
+            steam: Some(SteamConfig {
+                api_key: String::new(),
+                api_key_encrypted: String::new(),
+                path_override: String::new(),
+            }),
+            steam_api_key: "fallback-key".into(),
+            steam_api_key_encrypted: "fallback-enc".into(),
+            steam_path_override: "C:\\Fallback".into(),
+            ..Default::default()
+        };
+
+        let cfg = normalize_config(raw);
+        assert_eq!(cfg.steam.api_key, "fallback-key");
+        assert_eq!(cfg.steam.api_key_encrypted, "fallback-enc");
+        assert_eq!(cfg.steam.path_override, "C:\\Fallback");
+    }
+
+    #[test]
+    fn portable_config_strips_secrets_and_paths() {
+        let config = AppConfig {
+            steam: SteamConfig {
+                api_key: "secret".into(),
+                api_key_encrypted: "enc-secret".into(),
+                path_override: "C:\\Steam".into(),
+            },
+            riot: RiotConfig {
+                path_override: "/opt/riot".into(),
+                profiles: vec![RiotProfileConfig {
+                    id: "p1".into(),
+                    label: "Main".into(),
+                    ..Default::default()
+                }],
+                current_profile_id: "p1".into(),
+            },
+            battle_net: BattleNetConfig {
+                path_override: "C:\\BNet".into(),
+                accounts: vec![],
+            },
+            ubisoft: UbisoftConfig {
+                path_override: "C:\\Ubi".into(),
+                accounts: vec![],
+            },
+            epic: EpicConfig {
+                path_override: "C:\\Epic".into(),
+                accounts: vec![],
+            },
+            roblox: RobloxConfig {
+                accounts: vec![RobloxAccountConfig {
+                    user_id: "123".into(),
+                    username: "player1".into(),
+                    display_name: "Player".into(),
+                    cookie_encrypted: "cookie-secret".into(),
+                    last_used_at: Some(1000),
+                }],
+            },
+            window_width: Some(1200.0),
+            window_height: Some(800.0),
+        };
+
+        let p = portable_config(&config);
+
+        // Secrets and paths stripped
+        assert!(p.steam.api_key.is_empty());
+        assert!(p.steam.api_key_encrypted.is_empty());
+        assert!(p.steam.path_override.is_empty());
+        assert!(p.riot.path_override.is_empty());
+        assert!(p.battle_net.path_override.is_empty());
+        assert!(p.ubisoft.path_override.is_empty());
+        assert!(p.epic.path_override.is_empty());
+        assert!(p.window_width.is_none());
+        assert!(p.window_height.is_none());
+
+        // Roblox cookies stripped
+        assert!(p.roblox.accounts[0].cookie_encrypted.is_empty());
+
+        // Non-secret data preserved
+        assert_eq!(p.riot.profiles.len(), 1);
+        assert_eq!(p.riot.profiles[0].label, "Main");
+        assert_eq!(p.roblox.accounts[0].username, "player1");
+    }
+
+    #[test]
+    fn local_config_keeps_only_secrets_paths_and_window() {
+        let config = AppConfig {
+            steam: SteamConfig {
+                api_key: "secret".into(),
+                api_key_encrypted: "enc".into(),
+                path_override: "C:\\Steam".into(),
+            },
+            riot: RiotConfig {
+                path_override: "/opt/riot".into(),
+                profiles: vec![RiotProfileConfig {
+                    id: "p1".into(),
+                    label: "Main".into(),
+                    ..Default::default()
+                }],
+                current_profile_id: "p1".into(),
+            },
+            battle_net: BattleNetConfig {
+                path_override: "C:\\BNet".into(),
+                accounts: vec![BattleNetAccountConfig {
+                    email: "test@example.com".into(),
+                    battle_tag: "Tag#1234".into(),
+                    last_used_at: None,
+                }],
+            },
+            ubisoft: UbisoftConfig {
+                path_override: "C:\\Ubi".into(),
+                accounts: vec![],
+            },
+            epic: EpicConfig {
+                path_override: "C:\\Epic".into(),
+                accounts: vec![],
+            },
+            roblox: RobloxConfig {
+                accounts: vec![RobloxAccountConfig {
+                    user_id: "456".into(),
+                    username: "player2".into(),
+                    display_name: "Player Two".into(),
+                    cookie_encrypted: "cookie-enc".into(),
+                    last_used_at: Some(2000),
+                }],
+            },
+            window_width: Some(1024.0),
+            window_height: Some(768.0),
+        };
+
+        let l = local_config(&config);
+
+        // Secrets and paths kept
+        assert_eq!(l.steam.api_key, "secret");
+        assert_eq!(l.steam.api_key_encrypted, "enc");
+        assert_eq!(l.steam.path_override, "C:\\Steam");
+        assert_eq!(l.riot.path_override, "/opt/riot");
+        assert_eq!(l.battle_net.path_override, "C:\\BNet");
+        assert_eq!(l.ubisoft.path_override, "C:\\Ubi");
+        assert_eq!(l.epic.path_override, "C:\\Epic");
+        assert_eq!(l.window_width, Some(1024.0));
+        assert_eq!(l.window_height, Some(768.0));
+
+        // Roblox local keeps user_id + cookie, but not username/display_name
+        assert_eq!(l.roblox.accounts.len(), 1);
+        assert_eq!(l.roblox.accounts[0].user_id, "456");
+        assert_eq!(l.roblox.accounts[0].cookie_encrypted, "cookie-enc");
+        assert!(l.roblox.accounts[0].username.is_empty());
+        assert!(l.roblox.accounts[0].display_name.is_empty());
+
+        // Non-secret account data not kept
+        assert!(l.riot.profiles.is_empty());
+        assert!(l.battle_net.accounts.is_empty());
+    }
+
+    #[test]
+    fn merge_split_configs_combines_portable_and_local() {
+        let portable = AppConfig {
+            steam: SteamConfig {
+                api_key: String::new(),
+                api_key_encrypted: String::new(),
+                path_override: String::new(),
+            },
+            riot: RiotConfig {
+                path_override: String::new(),
+                profiles: vec![RiotProfileConfig {
+                    id: "r1".into(),
+                    label: "Ranked".into(),
+                    ..Default::default()
+                }],
+                current_profile_id: "r1".into(),
+            },
+            roblox: RobloxConfig {
+                accounts: vec![RobloxAccountConfig {
+                    user_id: "100".into(),
+                    username: "robloxer".into(),
+                    display_name: "Robloxer".into(),
+                    cookie_encrypted: String::new(),
+                    last_used_at: None,
+                }],
+            },
+            ..Default::default()
+        };
+
+        let local = AppConfig {
+            steam: SteamConfig {
+                api_key: "local-key".into(),
+                api_key_encrypted: "local-enc".into(),
+                path_override: "C:\\LocalSteam".into(),
+            },
+            riot: RiotConfig {
+                path_override: "/local/riot".into(),
+                ..Default::default()
+            },
+            battle_net: BattleNetConfig {
+                path_override: "C:\\LocalBNet".into(),
+                ..Default::default()
+            },
+            roblox: RobloxConfig {
+                accounts: vec![RobloxAccountConfig {
+                    user_id: "100".into(),
+                    username: String::new(),
+                    display_name: String::new(),
+                    cookie_encrypted: "restored-cookie".into(),
+                    last_used_at: Some(5000),
+                }],
+            },
+            window_width: Some(800.0),
+            window_height: Some(600.0),
+            ..Default::default()
+        };
+
+        let merged = merge_split_configs(portable, local);
+
+        // Local secrets merged in
+        assert_eq!(merged.steam.api_key, "local-key");
+        assert_eq!(merged.steam.api_key_encrypted, "local-enc");
+        assert_eq!(merged.steam.path_override, "C:\\LocalSteam");
+        assert_eq!(merged.riot.path_override, "/local/riot");
+        assert_eq!(merged.battle_net.path_override, "C:\\LocalBNet");
+
+        // Portable data preserved
+        assert_eq!(merged.riot.profiles.len(), 1);
+        assert_eq!(merged.riot.profiles[0].label, "Ranked");
+
+        // Window from local
+        assert_eq!(merged.window_width, Some(800.0));
+        assert_eq!(merged.window_height, Some(600.0));
+
+        // Roblox: cookie and last_used_at merged into existing account
+        assert_eq!(merged.roblox.accounts.len(), 1);
+        assert_eq!(merged.roblox.accounts[0].username, "robloxer");
+        assert_eq!(merged.roblox.accounts[0].cookie_encrypted, "restored-cookie");
+        assert_eq!(merged.roblox.accounts[0].last_used_at, Some(5000));
+    }
+
+    #[test]
+    fn merge_split_configs_adds_unknown_roblox_accounts_from_local() {
+        let portable = AppConfig {
+            roblox: RobloxConfig {
+                accounts: vec![RobloxAccountConfig {
+                    user_id: "1".into(),
+                    username: "existing".into(),
+                    ..Default::default()
+                }],
+            },
+            ..Default::default()
+        };
+
+        let local = AppConfig {
+            roblox: RobloxConfig {
+                accounts: vec![RobloxAccountConfig {
+                    user_id: "2".into(),
+                    cookie_encrypted: "new-cookie".into(),
+                    ..Default::default()
+                }],
+            },
+            ..Default::default()
+        };
+
+        let merged = merge_split_configs(portable, local);
+        assert_eq!(merged.roblox.accounts.len(), 2);
+        assert_eq!(merged.roblox.accounts[1].user_id, "2");
+        assert_eq!(merged.roblox.accounts[1].cookie_encrypted, "new-cookie");
+    }
+
+    #[test]
+    fn merge_split_configs_skips_local_roblox_with_empty_user_id() {
+        let portable = AppConfig::default();
+        let local = AppConfig {
+            roblox: RobloxConfig {
+                accounts: vec![RobloxAccountConfig {
+                    user_id: "  ".into(),
+                    cookie_encrypted: "orphan-cookie".into(),
+                    ..Default::default()
+                }],
+            },
+            ..Default::default()
+        };
+
+        let merged = merge_split_configs(portable, local);
+        assert!(merged.roblox.accounts.is_empty());
+    }
+
+    #[test]
+    fn local_config_skips_roblox_accounts_with_blank_user_id() {
+        let config = AppConfig {
+            roblox: RobloxConfig {
+                accounts: vec![
+                    RobloxAccountConfig {
+                        user_id: "valid".into(),
+                        cookie_encrypted: "cookie".into(),
+                        ..Default::default()
+                    },
+                    RobloxAccountConfig {
+                        user_id: "   ".into(),
+                        cookie_encrypted: "should-skip".into(),
+                        ..Default::default()
+                    },
+                ],
+            },
+            ..Default::default()
+        };
+
+        let l = local_config(&config);
+        assert_eq!(l.roblox.accounts.len(), 1);
+        assert_eq!(l.roblox.accounts[0].user_id, "valid");
+    }
+}
+
