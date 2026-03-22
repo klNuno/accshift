@@ -4,7 +4,7 @@ import { addToast } from "../features/notifications/store.svelte";
 import type { AccountWarningPresentation } from "./accountWarnings";
 import { DEFAULT_LOCALE, translate, type MessageKey, type TranslationParams } from "$lib/i18n";
 
-const BATCH_SIZE = 5;
+const BATCH_SIZE = 15;
 const LOAD_TOAST_COOLDOWN_MS = 30000;
 type AvatarState = { url: string | null; loading: boolean; refreshing: boolean };
 

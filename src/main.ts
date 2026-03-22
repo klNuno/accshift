@@ -78,9 +78,7 @@ window.addEventListener(
   "accshift:boot-ready",
   () => {
     queueLog("info", "frontend.boot", "Received boot-ready signal");
-    window.setTimeout(() => {
-      void finishBoot("frontend.boot-ready");
-    }, 50);
+    void finishBoot("frontend.boot-ready");
   },
   { once: true },
 );

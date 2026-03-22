@@ -9,7 +9,7 @@ use crate::fs_utils;
 use crate::os;
 
 const MAX_KILL_WAIT_MS: u64 = 5000;
-const KILL_POLL_INTERVAL_MS: u64 = 500;
+const KILL_POLL_INTERVAL_MS: u64 = 100;
 const POST_KILL_SETTLE_MS: u64 = 750;
 const NON_GAME_APP_IDS: &[&str] = &[
     "7",   // Steam client internals
@@ -136,8 +136,15 @@ fn with_auto_login_user<T>(
 }
 
 fn kill_steam_client_processes() -> Result<(), AppError> {
-    kill_process_tree_if_running(os::steam_process_name())?;
-    kill_process_tree_if_running(os::steam_web_helper_process_name())
+    let steam_name = os::steam_process_name();
+    let helper_name = os::steam_web_helper_process_name();
+
+    let steam_handle = std::thread::spawn(move || kill_process_tree_if_running(steam_name));
+    let helper_result = kill_process_tree_if_running(helper_name);
+
+    let steam_result = steam_handle.join().map_err(|_| AppError::KillSteamTimeout)?;
+    steam_result?;
+    helper_result
 }
 
 fn parse_launch_options(launch_options: &str) -> Vec<String> {

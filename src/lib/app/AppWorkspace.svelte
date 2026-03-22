@@ -288,7 +288,7 @@
 
           {#each displayFolderItems as item (item.id)}
             {@const folder = getFolder(item.id)}
-            <div animate:flip={{ duration: 200 }}>
+            <div animate:flip={{ duration: dragIsDragging ? 0 : 200 }}>
               {#if folder}
                 <FolderCard
                   {folder}
@@ -306,7 +306,7 @@
           {#each displayAccountItemsWithPending as item, cardIndex (item.id)}
             {@const account = renderedAccountMap[item.id]}
             {@const avatarState = account ? avatarStates[account.id] : null}
-            <div animate:flip={{ duration: 200 }}>
+            <div animate:flip={{ duration: dragIsDragging ? 0 : 200 }}>
               {#if account}
                 <AccountCard
                   {account}

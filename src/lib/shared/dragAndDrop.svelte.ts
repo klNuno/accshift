@@ -40,6 +40,7 @@ export function createDragManager(options: DragManagerOptions) {
   let lastClientX = 0;
   let lastClientY = 0;
   let hasPointer = false;
+  let dragRafId: number | null = null;
 
   // Snapshot card slots at drag start to keep preview calculations stable while DOM reorders.
   let slotRects: DOMRect[] = [];
@@ -158,10 +159,8 @@ export function createDragManager(options: DragManagerOptions) {
       isDragging = true;
       dragItem = pendingDrag.item;
 
-      // Capture slot positions once, before preview reorders mutate the DOM layout.
       refreshSlotRects();
 
-      // Render a floating clone so the dragged card stays visible under the cursor.
       const sourceRect = pendingDrag.sourceEl.getBoundingClientRect();
       ghostOffsetX = e.clientX - sourceRect.left;
       ghostOffsetY = e.clientY - sourceRect.top;
@@ -180,7 +179,12 @@ export function createDragManager(options: DragManagerOptions) {
       document.body.appendChild(ghostEl);
     }
 
-    updateDragAt(e.clientX, e.clientY);
+    if (dragRafId === null) {
+      dragRafId = requestAnimationFrame(() => {
+        dragRafId = null;
+        updateDragAt(lastClientX, lastClientY);
+      });
+    }
   }
 
   function handleDocScroll() {
@@ -223,6 +227,11 @@ export function createDragManager(options: DragManagerOptions) {
         }
       }
       options.onRefresh();
+    }
+
+    if (dragRafId !== null) {
+      cancelAnimationFrame(dragRafId);
+      dragRafId = null;
     }
 
     // Always cleanup drag ghost when the interaction ends.
