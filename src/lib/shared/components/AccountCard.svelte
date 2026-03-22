@@ -156,10 +156,26 @@
     panelSide = roomOnRight >= needed ? "right" : "left";
   }
 
+  let lastOverflowName = "";
+  let cachedOverflowPx = 0;
+
   function handleMouseEnter() {
     isHovered = true;
     updatePanelSide();
-    queueOverflowCheck();
+    const currentName = `${account.displayName}|${account.username}`;
+    if (currentName !== lastOverflowName) {
+      lastOverflowName = currentName;
+      queueOverflowCheck();
+    } else {
+      // Restore cached values without DOM measurement
+      const overflowPx = cachedOverflowPx;
+      isOverflowing = overflowPx > 2;
+      marqueeShiftPx = overflowPx;
+      marqueeMoveDurationMs = overflowPx > 0
+        ? Math.round((overflowPx / MARQUEE_SPEED_PX_PER_SEC) * 1000)
+        : 0;
+      if (isOverflowing) startMarquee();
+    }
   }
 
   function handleMouseLeave() {
@@ -170,6 +186,7 @@
   function checkOverflow() {
     if (nameRef && nameContainerRef) {
       const overflowPx = Math.max(0, nameRef.scrollWidth - nameContainerRef.clientWidth);
+      cachedOverflowPx = overflowPx;
       marqueeShiftPx = overflowPx;
       isOverflowing = overflowPx > 2;
       marqueeMoveDurationMs = overflowPx > 0
@@ -185,10 +202,8 @@
 
   $effect(() => {
     trackDependencies(account.displayName, account.username);
-    if (isHovered) {
-      queueOverflowCheck();
-      return;
-    }
+    lastOverflowName = "";
+    cachedOverflowPx = 0;
     isOverflowing = false;
     marqueeShiftPx = 0;
     marqueeMoveDurationMs = 0;

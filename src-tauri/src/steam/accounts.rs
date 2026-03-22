@@ -9,7 +9,7 @@ use crate::fs_utils;
 use crate::os;
 
 const KILL_WAIT_MS: u32 = 5000;
-const POST_KILL_SETTLE_MS: u64 = 750;
+const GRACEFUL_SHUTDOWN_WAIT_MS: u32 = 8000;
 const NON_GAME_APP_IDS: &[&str] = &[
     "7",   // Steam client internals
     "760", // Steam community / screenshots
@@ -64,16 +64,34 @@ fn kill_process_tree_if_running(process_name: &str) -> Result<(), AppError> {
     wait_for_process_exit(process_name)
 }
 
-fn kill_steam() -> Result<(), AppError> {
+fn try_graceful_shutdown(steam_path: &Path) -> bool {
+    let steam_exe = steam_path.join(os::steam_executable_name());
+    let mut cmd = std::process::Command::new(&steam_exe);
+    cmd.arg("-shutdown");
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    let _ = cmd.spawn();
+    os::wait_for_process_exit(os::steam_process_name(), GRACEFUL_SHUTDOWN_WAIT_MS)
+        && os::wait_for_process_exit(os::steam_web_helper_process_name(), 2000)
+}
+
+fn kill_steam(steam_path: &Path) -> Result<(), AppError> {
     let steam_running = is_steam_running();
     let web_helper_running = os::is_process_running(os::steam_web_helper_process_name());
     if !steam_running && !web_helper_running {
         return Ok(());
     }
 
-    kill_steam_client_processes()?;
-    std::thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
-    Ok(())
+    // Try graceful shutdown first — no settle delay needed
+    if try_graceful_shutdown(steam_path) {
+        return Ok(());
+    }
+
+    // Fallback to force kill
+    kill_steam_client_processes()
 }
 
 fn kill_and_relaunch(
@@ -88,11 +106,14 @@ fn kill_and_relaunch(
         return launch_steam(steam_path, run_as_admin, launch_options);
     }
 
+    // Try graceful shutdown first
+    if try_graceful_shutdown(steam_path) {
+        return launch_steam(steam_path, run_as_admin, launch_options);
+    }
+
+    // Fallback to force kill
     match kill_steam_client_processes() {
-        Ok(()) => {
-            std::thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
-            launch_steam(steam_path, run_as_admin, launch_options)
-        }
+        Ok(()) => launch_steam(steam_path, run_as_admin, launch_options),
         Err(AppError::SteamElevated) if run_as_admin => {
             let args = parse_launch_options(launch_options);
             os::kill_and_relaunch_steam_elevated(steam_path, &args)
@@ -458,7 +479,7 @@ pub fn add_account(
 }
 
 pub fn forget_account(steam_path: &Path, steam_id: &str) -> Result<(), AppError> {
-    kill_steam()?;
+    kill_steam(steam_path)?;
 
     // Remove account entry from loginusers.vdf.
     let loginusers_path = steam_path.join("config").join("loginusers.vdf");
