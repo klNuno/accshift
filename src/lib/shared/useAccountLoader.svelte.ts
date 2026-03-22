@@ -176,11 +176,13 @@ export function createAccountLoader(
           needsRefresh.push(account);
         }
       } else if (adapter.getProfileInfo) {
-        updates[account.id] = {
-          url: existing?.url ?? null,
-          loading: true,
-          refreshing: false,
-        };
+        if (!existing) {
+          updates[account.id] = {
+            url: null,
+            loading: true,
+            refreshing: false,
+          };
+        }
         needsRefresh.push(account);
       }
     }

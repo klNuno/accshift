@@ -130,7 +130,7 @@ export const EN_MESSAGES = {
   "platform.rename": "Rename",
   "platform.renameTitle": "Rename account",
   "platform.renamePlaceholder": "Account name",
-  "platform.newAccountPending": "New account",
+  "platform.newAccountPending": "Waiting...",
   "platform.renameNewAccount": "Name this account",
 
   "dialog.newFolderTitle": "New folder",
@@ -508,7 +508,7 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "platform.rename": "Renommer",
   "platform.renameTitle": "Renommer le compte",
   "platform.renamePlaceholder": "Nom du compte",
-  "platform.newAccountPending": "Nouveau compte",
+  "platform.newAccountPending": "En attente...",
   "platform.renameNewAccount": "Nommer ce compte",
 
   "dialog.newFolderTitle": "Nouveau dossier",

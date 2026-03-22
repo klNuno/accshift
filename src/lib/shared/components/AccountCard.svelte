@@ -82,7 +82,7 @@
 
   const MARQUEE_SPEED_PX_PER_SEC = 42;
   const MARQUEE_PAUSE_MS = 2000;
-  const EXTENSION_DETAIL_WIDTH_PX = 156;
+  const EXTENSION_DETAIL_WIDTH_PX = 130;
   const EXTENSION_VIEWPORT_GAP_PX = 12;
   const noteText = $derived(note.trim());
   const hasUsername = $derived(Boolean(showUsername && account.username.trim()));
@@ -403,7 +403,7 @@
     position: absolute;
     top: -2px;
     bottom: -2px;
-    width: calc(var(--grid-card-width) + 156px);
+    width: calc(var(--grid-card-width) + 130px);
     pointer-events: none;
     z-index: 1;
   }
@@ -482,7 +482,7 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    width: 156px;
+    width: 130px;
     box-sizing: border-box;
   }
 

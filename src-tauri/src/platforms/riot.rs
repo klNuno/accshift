@@ -111,7 +111,7 @@ const RIOT_SETUP_RESET_ITEMS: &[&str] = &[
     "Sessions",
     "RiotClientConfig",
 ];
-const RIOT_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
+const RIOT_SETUP_TTL_MS: u64 = 10 * 60 * 1000;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -771,6 +771,23 @@ fn cleanup_expired_pending_profiles(
     app_handle: &tauri::AppHandle,
     cfg: &mut config::AppConfig,
 ) -> Result<(), String> {
+    let mut changed = false;
+
+    // Profiles that have a detected identity (account_name set) but are still
+    // in setup_pending should transition to awaiting_capture instead of being
+    // deleted — the user logged in (possibly via 2FA) but session files weren't
+    // written in time. They can still re-capture manually.
+    for profile in cfg.riot.profiles.iter_mut() {
+        if profile.snapshot_state == "setup_pending"
+            && riot_setup_expired(profile.last_used_at)
+            && !profile.account_name.trim().is_empty()
+        {
+            profile.snapshot_state = "awaiting_capture".into();
+            changed = true;
+        }
+    }
+
+    // Only delete truly empty pending profiles (no identity detected at all).
     let expired_ids = cfg
         .riot
         .profiles
@@ -780,27 +797,28 @@ fn cleanup_expired_pending_profiles(
         .map(|profile| profile.id.clone())
         .collect::<Vec<_>>();
 
-    if expired_ids.is_empty() {
-        return Ok(());
-    }
-
-    cfg.riot
-        .profiles
-        .retain(|profile| !expired_ids.iter().any(|id| id == &profile.id));
-
-    if expired_ids
-        .iter()
-        .any(|id| id == &cfg.riot.current_profile_id)
-    {
-        cfg.riot.current_profile_id = cfg
-            .riot
+    if !expired_ids.is_empty() {
+        cfg.riot
             .profiles
-            .first()
-            .map(|profile| profile.id.clone())
-            .unwrap_or_default();
+            .retain(|profile| !expired_ids.iter().any(|id| id == &profile.id));
+
+        if expired_ids
+            .iter()
+            .any(|id| id == &cfg.riot.current_profile_id)
+        {
+            cfg.riot.current_profile_id = cfg
+                .riot
+                .profiles
+                .first()
+                .map(|profile| profile.id.clone())
+                .unwrap_or_default();
+        }
+        changed = true;
     }
 
-    config::save_config(app_handle, cfg)?;
+    if changed {
+        config::save_config(app_handle, cfg)?;
+    }
 
     for profile_id in expired_ids {
         let snapshot_dir = profile_snapshot_path(app_handle, &profile_id)?;
@@ -973,7 +991,7 @@ fn get_profile_setup_status_internal(
     if login_status.phase.eq_ignore_ascii_case("logged_in") && login_status.persist {
         if let Some(identity) = identity.as_ref() {
             let capture_ready =
-                wait_for_riot_setup_capture_ready(app_handle, 1800, 300).unwrap_or(false);
+                wait_for_riot_setup_capture_ready(app_handle, 8000, 500).unwrap_or(false);
             if !capture_ready {
                 let _ = config::save_config(app_handle, cfg);
                 let updated = cfg
@@ -1197,14 +1215,23 @@ pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
         if !is_valid_profile_id(&current_id) {
             return Err("Invalid Riot profile id in config".into());
         }
-        let current_ready = cfg
+        let current_state = cfg
             .riot
             .profiles
             .iter()
             .find(|profile| profile.id == current_id)
-            .map(|profile| profile.snapshot_state == "ready")
-            .unwrap_or(false);
-        if current_ready {
+            .map(|profile| profile.snapshot_state.as_str());
+        let should_backup = match current_state {
+            Some("ready") => true,
+            // Capture on switch if the user logged in but capture didn't
+            // trigger during setup (common with 2FA). By the time the user
+            // switches away, session files are usually on disk.
+            Some("awaiting_capture" | "setup_pending") => {
+                riot_setup_capture_ready(&app_handle).unwrap_or(false)
+            }
+            _ => false,
+        };
+        if should_backup {
             backup_live_snapshot(&app_handle, &current_id)?;
             update_profile_state(
                 &mut cfg,
