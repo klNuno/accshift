@@ -49,7 +49,7 @@ export const robloxAdapter: PlatformAdapter = {
   },
 
   isCurrentAccount(_account, _currentAccount) {
-    // Roblox has no persistent "current account" — last_used_at handles ordering
+    // Roblox has no persistent "current account", last_used_at handles ordering
     return false;
   },
 

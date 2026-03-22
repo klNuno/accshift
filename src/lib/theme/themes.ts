@@ -166,7 +166,7 @@ export async function loadCustomThemes(): Promise<void> {
       });
     }
   } catch {
-    // themes dir may not exist yet — that's fine
+    // themes dir may not exist yet, that's fine
   }
 }
 

@@ -169,6 +169,7 @@ fn main() {
             commands::log_app_event,
             commands::finish_boot,
             commands::get_runtime_os,
+            commands::migrate_legacy_config,
             commands::load_client_storage_snapshot,
             commands::save_client_storage_store,
             commands::get_storage_manifest,
