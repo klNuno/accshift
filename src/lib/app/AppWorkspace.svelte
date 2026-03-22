@@ -220,10 +220,7 @@
     {/if}
 
     {#if loaderLoading && renderedAccountCount === 0 && !pendingSetupAccountId}
-      <div class="center-msg">
-        <div class="spinner" style={`border-top-color: ${accentColor};`}></div>
-        <p class="text-sm">{t("app.loading")}</p>
-      </div>
+      <div class="center-msg"></div>
     {:else if renderedAccountCount === 0}
       <div class="center-msg">
         <p>{t("app.noAccountsFound", { platform: adapter.name })}</p>
@@ -288,7 +285,8 @@
 
           {#each displayFolderItems as item (item.id)}
             {@const folder = getFolder(item.id)}
-            <div animate:flip={{ duration: dragIsDragging ? 0 : 200 }}>
+            {@const isFolderDragged = dragItem?.type === "folder" && dragItem.id === item.id}
+            <div animate:flip={{ duration: isFolderDragged ? 0 : 200 }}>
               {#if folder}
                 <FolderCard
                   {folder}
@@ -297,7 +295,7 @@
                   onOpen={() => onNavigateToFolder(folder.id)}
                   onContextMenu={(event) => onFolderContextMenu(event, folder)}
                   isDragOver={dragOverFolderId === folder.id}
-                  isDragged={dragItem?.type === "folder" && dragItem.id === folder.id}
+                  isDragged={isFolderDragged}
                 />
               {/if}
             </div>
@@ -306,7 +304,8 @@
           {#each displayAccountItemsWithPending as item, cardIndex (item.id)}
             {@const account = renderedAccountMap[item.id]}
             {@const avatarState = account ? avatarStates[account.id] : null}
-            <div animate:flip={{ duration: dragIsDragging ? 0 : 200 }}>
+            {@const isAccountDragged = !bulkEditMode && dragItem?.type === "account" && dragItem.id === item.id}
+            <div animate:flip={{ duration: isAccountDragged ? 0 : 200 }}>
               {#if account}
                 <AccountCard
                   {account}
@@ -326,7 +325,7 @@
                   avatarUrl={avatarState?.url}
                   isLoadingAvatar={isPendingSetupAccount(account.id) ? true : (avatarState?.loading ?? false)}
                   isRefreshingAvatar={avatarState?.refreshing ?? false}
-                  isDragged={!bulkEditMode && dragItem?.type === "account" && dragItem.id === account.id}
+                  isDragged={isAccountDragged}
                   warningInfo={bulkEditMode ? undefined : (isPendingSetupAccount(account.id) ? undefined : warningStates[account.id])}
                   extensionContent={bulkEditMode ? null : (accountExtensionContentById[account.id] ?? null)}
                   forceExtensionOpen={bulkEditMode ? false : isAccountExtensionForcedOpen(account.id)}
@@ -343,14 +342,10 @@
     {/if}
 
     {#if switching}
-      <div class="switching-overlay">
-        <div class="switching-card">
-          <div class="spinner" style={`border-top-color: ${accentColor};`}></div>
-          <p class="text-sm font-medium">{t("app.switchingAccount")}</p>
-          <p class="text-xs" style="color: var(--fg-muted);">
-            {t("app.platformRestarting", { platform: adapter.name })}
-          </p>
-        </div>
+      <div class="switching-banner" style={`--switch-accent: ${accentColor};`}>
+        <div class="switching-spinner" style={`border-top-color: ${accentColor};`}></div>
+        <span class="switching-text">{t("app.switchingAccount")}</span>
+        <span class="switching-hint">{t("app.platformRestarting", { platform: adapter.name })}</span>
       </div>
     {/if}
   </main>
@@ -450,26 +445,44 @@
     color: var(--fg-muted);
   }
 
-  .switching-overlay {
-    position: fixed;
-    inset: 0;
+  .switching-banner {
+    position: sticky;
+    bottom: 0;
     display: flex;
     align-items: center;
-    justify-content: center;
-    z-index: 50;
-    background: rgba(9, 9, 11, 0.9);
-    backdrop-filter: blur(4px);
+    gap: 10px;
+    padding: 10px 16px;
+    background: var(--bg-card);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.2);
+    animation: bannerSlideIn 200ms ease-out;
+    z-index: 30;
   }
 
-  .switching-card {
-    padding: 24px;
-    text-align: center;
-    border-radius: 8px;
-    background: var(--bg-card);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
+  @keyframes bannerSlideIn {
+    from { opacity: 0; transform: translateY(100%); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .switching-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+
+  .switching-text {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+
+  .switching-hint {
+    font-size: 11px;
+    color: var(--fg-muted);
   }
 
   .spinner {

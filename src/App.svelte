@@ -630,6 +630,32 @@
     setUiScalePercent(100);
   }
 
+  function handleGlobalKeydown(e: KeyboardEvent) {
+    // Ctrl+F → focus search input
+    if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+      e.preventDefault();
+      const searchInput = document.querySelector<HTMLInputElement>(".search-input");
+      if (searchInput) {
+        searchInput.focus();
+        searchInput.select();
+      }
+      return;
+    }
+    // Escape → clear search if focused, or close settings
+    if (e.key === "Escape") {
+      const active = document.activeElement;
+      if (active instanceof HTMLInputElement && active.classList.contains("search-input")) {
+        if (navigation.searchQuery) {
+          navigation.searchQuery = "";
+          active.blur();
+        } else {
+          active.blur();
+        }
+        return;
+      }
+    }
+  }
+
   async function handleAccountSwitch(account: PlatformAccount) {
     if (shell.settings.minimizeOnAccountSwitch) {
       try {
@@ -762,6 +788,7 @@
     document.addEventListener("click", drag.handleCaptureClick, true);
     window.addEventListener("wheel", handleCtrlWheelZoom, { passive: false });
     window.addEventListener("keydown", handleZoomKeydown);
+    window.addEventListener("keydown", handleGlobalKeydown);
     window.addEventListener("popstate", appNavigation.handlePopState);
     window.addEventListener("focus", lifecycle.handleWindowFocus);
     document.addEventListener("visibilitychange", lifecycle.handleVisibilityChange);
@@ -785,6 +812,7 @@
     document.removeEventListener("click", drag.handleCaptureClick, true);
     window.removeEventListener("wheel", handleCtrlWheelZoom);
     window.removeEventListener("keydown", handleZoomKeydown);
+    window.removeEventListener("keydown", handleGlobalKeydown);
     window.removeEventListener("popstate", appNavigation.handlePopState);
     window.removeEventListener("focus", lifecycle.handleWindowFocus);
     document.removeEventListener("visibilitychange", lifecycle.handleVisibilityChange);
@@ -917,6 +945,7 @@
     onCancelInputDialog={dialogs.closeInputDialog}
     confirmDialog={dialogs.confirmDialog}
     confirmDialogConfirmLabel={dialogs.confirmDialogConfirmLabel}
+    confirmDialogConfirmColor={dialogs.confirmDialogConfirmColor}
     onConfirmDialog={dialogs.confirmCurrentDialog}
     onCancelConfirmDialog={dialogs.closeConfirmDialog}
     {bulkEditMode}

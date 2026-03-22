@@ -176,6 +176,19 @@ export function createDragManager(options: DragManagerOptions) {
       ghostEl.style.boxShadow = "0 8px 24px rgba(0,0,0,0.5)";
       ghostEl.style.transition = "none";
       ghostEl.style.margin = "0";
+      // Inherit CSS custom properties from ancestors (e.g. --card-custom-color on .card-shell)
+      const parentEl = pendingDrag.sourceEl.parentElement;
+      if (parentEl) {
+        const parentStyle = getComputedStyle(parentEl);
+        const customColor = parentStyle.getPropertyValue("--card-custom-color").trim();
+        if (customColor) {
+          ghostEl.style.setProperty("--card-custom-color", customColor);
+        }
+        const folderColor = parentStyle.getPropertyValue("--folder-custom-color").trim();
+        if (folderColor) {
+          ghostEl.style.setProperty("--folder-custom-color", folderColor);
+        }
+      }
       document.body.appendChild(ghostEl);
     }
 
