@@ -775,7 +775,7 @@ fn cleanup_expired_pending_profiles(
 
     // Profiles that have a detected identity (account_name set) but are still
     // in setup_pending should transition to awaiting_capture instead of being
-    // deleted — the user logged in (possibly via 2FA) but session files weren't
+    // deleted. The user logged in (possibly via 2FA) but session files weren't
     // written in time. They can still re-capture manually.
     for profile in cfg.riot.profiles.iter_mut() {
         if profile.snapshot_state == "setup_pending"

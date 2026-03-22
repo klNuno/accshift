@@ -298,7 +298,7 @@ fn discover_uuids(app_handle: &tauri::AppHandle) -> HashSet<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Log parsing — current account detection
+// Log parsing: current account detection
 // ---------------------------------------------------------------------------
 
 fn current_account_from_logs(app_handle: &tauri::AppHandle) -> Option<String> {
@@ -674,7 +674,7 @@ pub fn get_account_setup_status(
     if let Some(current_uuid) = current_account_from_logs(app_handle) {
         let key = current_uuid.to_lowercase();
         if !job.known_uuids.contains(&key) {
-            // New account detected — save its auth snapshot
+            // New account detected, save its auth snapshot
             let _ = save_auth_snapshot(app_handle, &current_uuid);
             let _ = remember_account_usage(app_handle, &current_uuid);
 

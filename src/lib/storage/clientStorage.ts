@@ -91,7 +91,7 @@ function cloneValue<T>(value: T): T {
     try {
       return structuredClone(value);
     } catch {
-      // Svelte 5 reactive proxies can't be structuredClone'd — fall through.
+      // Svelte 5 reactive proxies can't be structuredClone'd, fall through.
     }
   }
   return JSON.parse(JSON.stringify(value)) as T;
