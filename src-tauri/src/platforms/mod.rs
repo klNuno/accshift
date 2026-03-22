@@ -10,6 +10,22 @@ pub mod roblox;
 pub mod steam;
 pub mod ubisoft;
 
+pub(crate) fn redact_id(value: &str) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() <= 2 {
+        "***".into()
+    } else {
+        format!("{}***", chars[..2].iter().collect::<String>())
+    }
+}
+
+pub(crate) fn redact_opt(value: Option<&str>) -> serde_json::Value {
+    match value {
+        Some(v) => serde_json::Value::String(redact_id(v)),
+        None => serde_json::Value::Null,
+    }
+}
+
 pub(crate) fn log_platform_event(
     app_handle: &tauri::AppHandle,
     level: &str,

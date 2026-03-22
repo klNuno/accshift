@@ -198,9 +198,10 @@ fn build_riot_switch_details(
     target_profile_id: Option<&str>,
 ) -> String {
     let cfg = config::load_config(app_handle);
+    use super::{redact_id, redact_opt};
     serde_json::json!({
-        "targetProfileId": target_profile_id,
-        "currentProfileId": cfg.riot.current_profile_id,
+        "targetProfileId": redact_opt(target_profile_id),
+        "currentProfileId": redact_id(&cfg.riot.current_profile_id),
         "runningClientProcesses": running_process_names(RIOT_CLIENT_PROCESS_NAMES),
         "runningGameProcesses": running_process_names(RIOT_GAME_PROCESS_NAMES),
     })
