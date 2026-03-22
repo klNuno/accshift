@@ -341,7 +341,7 @@ fn known_account_emails(app_handle: &tauri::AppHandle) -> Result<Vec<String>, St
 
 fn read_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<BattleNetAccount>, String> {
     if let Some(current_email) = read_saved_accounts()?.into_iter().next() {
-        let _ = remember_account_usage(app_handle, &current_email);
+        let _ = remember_account_usage(app_handle, &current_email, true);
     }
 
     let account_emails = known_account_emails(app_handle)?;
@@ -382,12 +382,22 @@ fn current_account(accounts: &[BattleNetAccount]) -> String {
         .unwrap_or_default()
 }
 
-fn remember_account_usage(app_handle: &tauri::AppHandle, email: &str) -> Result<(), String> {
+fn remember_account_usage(
+    app_handle: &tauri::AppHandle,
+    email: &str,
+    is_current_account: bool,
+) -> Result<(), String> {
     let email = validate_account_email(email)?;
     let key = normalize_account_key(&email);
     let mut cfg = config::load_config(app_handle);
     let now = now_unix_ms();
-    let current_battle_tag = current_battle_tag_from_cache().ok().flatten();
+    // Only query the battle tag for the account that is actually logged in
+    // right now. Applying it to other accounts would overwrite their tags.
+    let battle_tag = if is_current_account {
+        current_battle_tag_from_cache().ok().flatten()
+    } else {
+        None
+    };
 
     if let Some(existing) = cfg
         .battle_net
@@ -396,14 +406,14 @@ fn remember_account_usage(app_handle: &tauri::AppHandle, email: &str) -> Result<
         .find(|account| normalize_account_key(&account.email) == key)
     {
         existing.email = email;
-        if let Some(battle_tag) = current_battle_tag {
-            existing.battle_tag = battle_tag;
+        if let Some(tag) = battle_tag {
+            existing.battle_tag = tag;
         }
         existing.last_used_at = Some(now);
     } else {
         cfg.battle_net.accounts.push(BattleNetAccountConfig {
             email,
-            battle_tag: current_battle_tag.unwrap_or_default(),
+            battle_tag: battle_tag.unwrap_or_default(),
             last_used_at: Some(now),
         });
     }
@@ -732,7 +742,7 @@ pub fn switch_account(app_handle: tauri::AppHandle, email: String) -> Result<(),
 
     kill_battle_net();
     write_saved_accounts(&reordered)?;
-    remember_account_usage(&app_handle, &target)?;
+    remember_account_usage(&app_handle, &target, false)?;
     let result = launch_battle_net(&app_handle);
 
     match &result {
@@ -823,7 +833,7 @@ pub fn get_account_setup_status(
         if let Ok(mut jobs) = battle_net_setup_jobs().lock() {
             jobs.remove(&setup_id);
         }
-        let _ = remember_account_usage(&app_handle, account);
+        let _ = remember_account_usage(&app_handle, account, true);
         return Ok(setup_status(
             &setup_id,
             "ready",
