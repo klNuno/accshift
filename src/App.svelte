@@ -42,13 +42,16 @@
   import AppWorkspace from "$lib/app/AppWorkspace.svelte";
   import AppDialogs from "$lib/app/AppDialogs.svelte";
   import AppScreenOverlays from "$lib/app/AppScreenOverlays.svelte";
-  import type { CardExtensionContent } from "$lib/shared/cardExtension";
-  import { warningChipsToExtensionChips } from "$lib/shared/cardExtension";
   import { createAppDialogsController } from "$lib/app/useAppDialogs.svelte";
   import { createAppNavigationController } from "$lib/app/useAppNavigation.svelte";
   import { createAppUpdater } from "$lib/app/useAppUpdater.svelte";
   import { createAppLifecycleController } from "$lib/app/useAppLifecycle.svelte";
   import { createSecureScreenController } from "$lib/app/useSecureScreen.svelte";
+  import { createBulkEditController } from "$lib/app/useBulkEdit.svelte";
+  import { createUiScale } from "$lib/app/useUiScale.svelte";
+  import { createSettingsPanel } from "$lib/app/useSettingsPanel.svelte";
+  import { createExtensionContentController } from "$lib/app/useExtensionContent.svelte";
+  import { createVisiblePriming } from "$lib/app/useVisiblePriming.svelte";
 
   const shell = createPlatformShellState();
   const t = (key: MessageKey, params?: TranslationParams) => translate(shell.locale, key, params);
@@ -83,10 +86,13 @@
   );
 
   // Panel and dialog state
-  let showSettings = $state(false);
-  type SettingsComponentType = (typeof import("$lib/features/settings/Settings.svelte"))["default"];
-  let SettingsPanel = $state<SettingsComponentType | null>(null);
-  let settingsLoadPromise: Promise<void> | null = null;
+  const settingsPanel = createSettingsPanel({
+    t,
+    onClose: () => {
+      shell.refreshSettings();
+      secureScreen.handleSettingsClosed();
+    },
+  });
   const dialogs = createAppDialogsController({
     t,
     getAdapter: () => shell.adapter,
@@ -132,71 +138,26 @@
   let activePlatformDef = $derived(shell.activePlatformDef);
   let activeTabUsable = $derived(shell.activeTabUsable);
   let isSearching = $derived(navigation.isSearching);
-  let isAccountSelectionView = $derived(!showSettings && !!shell.adapter);
+  let isAccountSelectionView = $derived(!settingsPanel.showSettings && !!shell.adapter);
   let bootReady = $state(false);
   let cardColorVersion = $state(0);
   let cardNoteVersion = $state(0);
-  let bulkEditMode = $state(false);
-  let bulkEditSelectedIds = $state<Set<string>>(new Set());
-  type BulkEditBarType = (typeof import("$lib/platforms/steam/BulkEditBar.svelte"))["default"];
-  let BulkEditBar = $state<BulkEditBarType | null>(null);
-  let bulkEditBarLoadPromise: Promise<void> | null = null;
+  const bulkEdit = createBulkEditController({
+    getCurrentAccountId: () => loader.currentAccountId,
+    getVisibleAccountIds: () => loader.accounts.map((a) => a.id),
+  });
 
-  function toggleBulkEdit() {
-    if (bulkEditMode) {
-      bulkEditMode = false;
-      bulkEditSelectedIds = new Set();
-      return;
-    }
-    if (BulkEditBar) {
-      bulkEditMode = true;
-      return;
-    }
-    if (!bulkEditBarLoadPromise) {
-      bulkEditBarLoadPromise = import("$lib/platforms/steam/BulkEditBar.svelte")
-        .then((mod) => {
-          BulkEditBar = mod.default;
-          bulkEditMode = true;
-        })
-        .catch(() => {
-          bulkEditBarLoadPromise = null;
-        });
-    }
-  }
-
-  function toggleBulkEditAccount(accountId: string) {
-    const next = new Set(bulkEditSelectedIds);
-    if (next.has(accountId)) next.delete(accountId);
-    else next.add(accountId);
-    bulkEditSelectedIds = next;
-  }
-
-  function bulkEditSelectAll() {
-    bulkEditSelectedIds = new Set(loader.accounts.map((a) => a.id));
-  }
-
-  function bulkEditDeselectAll() {
-    bulkEditSelectedIds = new Set();
-  }
-
-  function closeBulkEdit() {
-    bulkEditMode = false;
-    bulkEditSelectedIds = new Set();
-  }
-
-  let bulkEditActiveAccountSelected = $derived(
-    bulkEditSelectedIds.size > 0 &&
-    !!loader.currentAccountId &&
-    bulkEditSelectedIds.has(loader.currentAccountId)
-  );
+  const uiScale = createUiScale({
+    getSettings: () => shell.settings,
+    saveSettings: (mutate) => {
+      const latest = getSettings();
+      mutate(latest);
+      saveSettings(latest);
+    },
+    getGridLayout: () => grid,
+  });
 
   let updateCheckTimer: ReturnType<typeof setTimeout> | null = null;
-  let zoomPersistTimer: ReturnType<typeof setTimeout> | null = null;
-  let wheelZoomAccumulator = 0;
-  const UI_SCALE_STEP_PERCENT = 5;
-  const UI_SCALE_MIN_PERCENT = 75;
-  const UI_SCALE_MAX_PERCENT = 150;
-  const WHEEL_ZOOM_THRESHOLD = 80;
   const COLOR_LABEL_KEYS = {
     none: "color.none",
     blue: "color.blue",
@@ -211,31 +172,28 @@
     gray: "color.gray",
   } as const;
 
-  const VISIBLE_PRIME_DEBOUNCE_MS = 120;
   let appVersion = $state("");
   let loadingAdapterFor = $state<string | null>(null);
-  let lastPreparedVisibleKey = "";
-  let lastPrimedVisibleIds = new Set<string>();
-  let visiblePrimeTimer: ReturnType<typeof setTimeout> | null = null;
+  const visiblePriming = createVisiblePriming(loader);
   const updates = createAppUpdater({ t, addToast });
   const appNavigation = createAppNavigationController({
     shell,
     navigation,
     loader,
     addFlow,
-    getShowSettings: () => showSettings,
+    getShowSettings: () => settingsPanel.showSettings,
     setShowSettings: (value) => {
-      showSettings = value;
+      settingsPanel.showSettings = value;
     },
-    loadSettingsComponent,
+    loadSettingsComponent: settingsPanel.loadComponent,
     loadAccounts,
-    closeBulkEdit,
+    closeBulkEdit: bulkEdit.closeBulkEdit,
     queueGridPadding: grid.queueCalculatePadding,
     onSettingsClosed: () => {
       secureScreen.handleSettingsClosed();
     },
     getParentFolderId: () => getFolder(navigation.currentFolderId || "")?.parentId ?? null,
-    resetVisiblePrimeState,
+    resetVisiblePrimeState: visiblePriming.reset,
   });
   const lifecycle = createAppLifecycleController({
     shell,
@@ -274,63 +232,15 @@
     onCloseContextMenu: dialogs.closeContextMenu,
     t,
   });
-  function createWarningExtensionSection(
-    accountId: string,
-  ): CardExtensionContent["sections"][number] | null {
-    const warningInfo = loader.warningStates[accountId];
-    const warningChips = warningChipsToExtensionChips(warningInfo?.chips);
-    const warningLines = warningInfo?.tooltipText
-      ? warningInfo.tooltipText.split("\n").map((l) => l.trim()).filter(Boolean)
-      : [];
-    if (warningLines.length === 0 && warningChips.length === 0) return null;
-    return {
-      title: t("card.extensionWarnings"),
-      text: warningChips.length > 0 ? undefined : warningLines.join(" \u2022 "),
-      lines: warningChips.length > 0 ? [] : warningLines,
-      chips: warningChips,
-    };
-  }
-
-  function createNoteExtensionSection(
-    accountId: string,
-  ): CardExtensionContent["sections"][number] | null {
-    if (settings.accountDisplay.showCardNotesInline) return null;
-    const note = getAccountNote(accountId).trim();
-    if (!note) return null;
-    return { title: t("card.extensionNote"), lines: [note] };
-  }
-
-  let extensionCacheKey = "";
-  let extensionCache: Record<string, CardExtensionContent | null> = {};
-
-  let accountExtensionContentById = $derived.by(() => {
-    trackDependencies(locale, cardNoteVersion, settings.accountDisplay.showCardNotesInline);
-    const ids = visibleRenderedAccountIds;
-    // Build a key that captures all inputs per account
-    const keyParts: string[] = [];
-    for (const id of ids) {
-      const w = loader.warningStates[id];
-      const n = getAccountNote(id);
-      const s = addFlow.getSetupExtensionContent(id) ? "s" : "";
-      keyParts.push(`${id}:${w?.tooltipText ?? ""}:${w?.chips?.length ?? 0}:${n}:${s}`);
-    }
-    const newKey = `${locale}:${cardNoteVersion}:${settings.accountDisplay.showCardNotesInline}:${keyParts.join("|")}`;
-    if (newKey === extensionCacheKey) return extensionCache;
-
-    const map: Record<string, CardExtensionContent | null> = {};
-    for (const accountId of ids) {
-      const setupContent = addFlow.getSetupExtensionContent(accountId);
-      if (setupContent) { map[accountId] = setupContent; continue; }
-      const sections: CardExtensionContent["sections"] = [];
-      const warn = createWarningExtensionSection(accountId);
-      const note = createNoteExtensionSection(accountId);
-      if (warn) sections.push(warn);
-      if (note) sections.push(note);
-      map[accountId] = sections.length > 0 ? { sections } : null;
-    }
-    extensionCacheKey = newKey;
-    extensionCache = map;
-    return map;
+  const extensionContent = createExtensionContentController({
+    t,
+    getLocale: () => shell.locale,
+    getWarningStates: () => loader.warningStates,
+    getVisibleRenderedAccountIds: () => visibleRenderedAccountIds,
+    getSetupExtensionContent: (id) => addFlow.getSetupExtensionContent(id),
+    getAccountNote,
+    getCardNoteVersion: () => cardNoteVersion,
+    getShowCardNotesInline: () => settings.accountDisplay.showCardNotesInline,
   });
 
   async function refreshAvatarsNow() {
@@ -355,34 +265,6 @@
       if (shell.activeTab === "steam") void loadAccounts(true, false, false, true, false);
       addToast(t("toast.banRefreshComplete", { count: steamAccounts.length }));
     } catch (error) { addToast(String(error)); }
-  }
-
-  function clearVisiblePrimeTimer() {
-    if (visiblePrimeTimer) {
-      clearTimeout(visiblePrimeTimer);
-      visiblePrimeTimer = null;
-    }
-  }
-
-  function resetVisiblePrimeState() {
-    clearVisiblePrimeTimer();
-    lastPreparedVisibleKey = "";
-    lastPrimedVisibleIds = new Set();
-  }
-
-  function scheduleVisiblePrime(visibleIds: string[], newlyVisibleIds: string[]) {
-    clearVisiblePrimeTimer();
-    visiblePrimeTimer = setTimeout(() => {
-      visiblePrimeTimer = null;
-      loader.prepareAccountIds(visibleIds);
-      void loader.primeAccountIds(
-        newlyVisibleIds.length > 0 ? newlyVisibleIds : visibleIds,
-        true,
-        false,
-        true,
-        true,
-      );
-    }, VISIBLE_PRIME_DEBOUNCE_MS);
   }
 
   let adapterLoading = $derived(loadingAdapterFor === shell.activeTab && !shell.adapter);
@@ -455,14 +337,14 @@
   }
 
   function handleWorkspaceAccountActivate(account: PlatformAccount) {
-    if (!bulkEditMode) {
+    if (!bulkEdit.bulkEditMode) {
       void addFlow.cancelIfConflicting(activeTab, account.id);
     }
   }
 
   function handleWorkspaceAccountSwitch(account: PlatformAccount) {
-    if (bulkEditMode) {
-      toggleBulkEditAccount(account.id);
+    if (bulkEdit.bulkEditMode) {
+      bulkEdit.toggleBulkEditAccount(account.id);
       return;
     }
     if (addFlow.isPendingSetupAccount(account.id)) return;
@@ -471,9 +353,9 @@
   }
 
   function handleWorkspaceAccountContextMenu(event: MouseEvent, account: PlatformAccount) {
-    if (bulkEditMode) {
+    if (bulkEdit.bulkEditMode) {
       event.preventDefault();
-      toggleBulkEditAccount(account.id);
+      bulkEdit.toggleBulkEditAccount(account.id);
       return;
     }
     if (addFlow.isPendingSetupAccount(account.id)) return;
@@ -564,76 +446,18 @@
   });
 
   $effect(() => {
-    if (showSettings || !shell.adapter || loader.loading || !secureScreen.windowForeground || secureScreen.renderSuspended) {
-      resetVisiblePrimeState();
+    if (settingsPanel.showSettings || !shell.adapter || loader.loading || !secureScreen.windowForeground || secureScreen.renderSuspended) {
+      visiblePriming.reset();
       return;
     }
     const visibleIds = visibleRenderedAccountIds;
     if (visibleIds.length === 0) {
-      resetVisiblePrimeState();
+      visiblePriming.reset();
       return;
     }
-    const visibleKey = `${shell.activeTab}:${navigation.isSearching ? "search" : "folder"}:${[...visibleIds].sort().join(",")}`;
-    if (visibleKey === lastPreparedVisibleKey) return;
-    const previouslyPrimedIds = lastPrimedVisibleIds;
-    lastPreparedVisibleKey = visibleKey;
-    lastPrimedVisibleIds = new Set(visibleIds);
-    scheduleVisiblePrime(
-      visibleIds,
-      visibleIds.filter((accountId) => !previouslyPrimedIds.has(accountId)),
-    );
+    visiblePriming.processVisible(visibleIds, shell.activeTab, navigation.isSearching);
   });
 
-
-  function clampUiScalePercent(value: number): number {
-    const rounded = Math.round(value / UI_SCALE_STEP_PERCENT) * UI_SCALE_STEP_PERCENT;
-    return Math.min(UI_SCALE_MAX_PERCENT, Math.max(UI_SCALE_MIN_PERCENT, rounded));
-  }
-
-  function persistUiScalePercent(value: number) {
-    const latest = getSettings();
-    const next = clampUiScalePercent(value);
-    if (latest.uiScalePercent === next) return;
-    latest.uiScalePercent = next;
-    saveSettings(latest);
-  }
-
-  function queuePersistUiScalePercent(value: number) {
-    if (zoomPersistTimer) clearTimeout(zoomPersistTimer);
-    zoomPersistTimer = setTimeout(() => {
-      persistUiScalePercent(value);
-      zoomPersistTimer = null;
-    }, 180);
-  }
-
-  function setUiScalePercent(value: number) {
-    const next = clampUiScalePercent(value);
-    if (next === shell.settings.uiScalePercent) return;
-    shell.settings.uiScalePercent = next;
-    queuePersistUiScalePercent(next);
-  }
-
-  function handleCtrlWheelZoom(e: WheelEvent) {
-    if (!e.ctrlKey) {
-      wheelZoomAccumulator = 0;
-      return;
-    }
-    e.preventDefault();
-    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerHeight : 1;
-    wheelZoomAccumulator += e.deltaY * unit;
-    if (Math.abs(wheelZoomAccumulator) < WHEEL_ZOOM_THRESHOLD) return;
-    const direction = wheelZoomAccumulator < 0 ? 1 : -1;
-    wheelZoomAccumulator = 0;
-    setUiScalePercent(shell.settings.uiScalePercent + direction * UI_SCALE_STEP_PERCENT);
-  }
-
-  function handleZoomKeydown(e: KeyboardEvent) {
-    if (!e.ctrlKey && !e.metaKey) return;
-    if (e.key !== "0") return;
-    e.preventDefault();
-    wheelZoomAccumulator = 0;
-    setUiScalePercent(100);
-  }
 
   function handleGlobalKeydown(e: KeyboardEvent) {
     // Ctrl+F → focus search input
@@ -703,20 +527,6 @@
     addToast(t("toast.copied", { label }));
   }
 
-  function loadSettingsComponent() {
-    if (SettingsPanel) return Promise.resolve();
-    if (!settingsLoadPromise) {
-      settingsLoadPromise = import("$lib/features/settings/Settings.svelte")
-        .then((mod) => { SettingsPanel = mod.default; })
-        .catch((error) => {
-          console.error("Failed to load settings panel:", error);
-          addToast(t("toast.failedLoadSettingsPanel"));
-          settingsLoadPromise = null;
-        });
-    }
-    return settingsLoadPromise;
-  }
-
   async function loadAccounts(
     silent = false,
     showRefreshedToast = false,
@@ -751,18 +561,6 @@
     addFlow.flow?.platformId === activeTab ? addFlow.flow.status.setupId : null
   );
 
-  function handleSettingsClose() {
-    showSettings = false;
-    shell.refreshSettings();
-    secureScreen.handleSettingsClosed();
-  }
-
-
-  $effect(() => {
-    trackDependencies(shell.settings.uiScalePercent);
-    grid.queueCalculatePadding();
-  });
-
   $effect(() => {
     applyThemeToDocument(shell.activeTheme, shell.settings.backgroundOpacity);
     document.documentElement.lang = shell.locale;
@@ -791,8 +589,8 @@
     document.addEventListener("scroll", drag.handleDocScroll, true);
     document.addEventListener("mouseup", drag.handleDocMouseUp);
     document.addEventListener("click", drag.handleCaptureClick, true);
-    window.addEventListener("wheel", handleCtrlWheelZoom, { passive: false });
-    window.addEventListener("keydown", handleZoomKeydown);
+    window.addEventListener("wheel", uiScale.handleCtrlWheelZoom, { passive: false });
+    window.addEventListener("keydown", uiScale.handleZoomKeydown);
     window.addEventListener("keydown", handleGlobalKeydown);
     window.addEventListener("popstate", appNavigation.handlePopState);
     window.addEventListener("focus", lifecycle.handleWindowFocus);
@@ -800,23 +598,20 @@
   });
 
   onDestroy(() => {
-    clearVisiblePrimeTimer();
+    visiblePriming.destroy();
     if (updateCheckTimer) {
       clearTimeout(updateCheckTimer);
       updateCheckTimer = null;
     }
-    if (zoomPersistTimer) {
-      clearTimeout(zoomPersistTimer);
-      zoomPersistTimer = null;
-    }
+    uiScale.destroy();
     addFlow.clearTimer();
     window.removeEventListener("resize", grid.handleResize);
     document.removeEventListener("mousemove", drag.handleDocMouseMove);
     document.removeEventListener("scroll", drag.handleDocScroll, true);
     document.removeEventListener("mouseup", drag.handleDocMouseUp);
     document.removeEventListener("click", drag.handleCaptureClick, true);
-    window.removeEventListener("wheel", handleCtrlWheelZoom);
-    window.removeEventListener("keydown", handleZoomKeydown);
+    window.removeEventListener("wheel", uiScale.handleCtrlWheelZoom);
+    window.removeEventListener("keydown", uiScale.handleZoomKeydown);
     window.removeEventListener("keydown", handleGlobalKeydown);
     window.removeEventListener("popstate", appNavigation.handlePopState);
     window.removeEventListener("focus", lifecycle.handleWindowFocus);
@@ -840,7 +635,7 @@
         onRefresh={handleRefreshClick}
         onAddAccount={handleAddAccountClick}
         onOpenSettings={appNavigation.toggleSettingsPanel}
-      onBulkEdit={toggleBulkEdit}
+      onBulkEdit={bulkEdit.toggleBulkEdit}
       onApplyUpdate={updates.applyReadyUpdate}
       updateCtaLabel={updates.ctaLabel}
       updateCtaTitle={updates.ctaTitle}
@@ -851,9 +646,9 @@
       unavailablePlatformIds={shell.unavailablePlatformIds}
       canRefresh={activeTabUsable && !adapterLoading}
       canAddAccount={activeTabUsable && !adapterLoading}
-      {showSettings}
-      showBulkEdit={activeTab === "steam" && !showSettings && activeTabUsable}
-      bulkEditActive={bulkEditMode}
+      showSettings={settingsPanel.showSettings}
+      showBulkEdit={activeTab === "steam" && !settingsPanel.showSettings && activeTabUsable}
+      bulkEditActive={bulkEdit.bulkEditMode}
       {locale}
     />
     <div
@@ -862,11 +657,11 @@
       aria-hidden={!secureScreen.isObscured}
     ></div>
 
-  {#if showSettings}
+  {#if settingsPanel.showSettings}
     <main class="content">
-      {#if SettingsPanel}
-        <SettingsPanel
-          onClose={handleSettingsClose}
+      {#if settingsPanel.SettingsPanel}
+        <settingsPanel.SettingsPanel
+          onClose={settingsPanel.close}
           onPlatformsChanged={appNavigation.handlePlatformsChanged}
           onSettingsUpdated={shell.refreshSettings}
           onRefreshAvatarsNow={refreshAvatarsNow}
@@ -916,8 +711,8 @@
     {getAccountNote}
     {getAccountCardColor}
     {getFolderCardColor}
-    {bulkEditMode}
-    {bulkEditSelectedIds}
+    bulkEditMode={bulkEdit.bulkEditMode}
+    bulkEditSelectedIds={bulkEdit.bulkEditSelectedIds}
     dragIsDragging={drag.isDragging}
     dragItem={drag.dragItem}
     dragOverFolderId={drag.dragOverFolderId}
@@ -933,7 +728,7 @@
     onAccountContextMenu={handleWorkspaceAccountContextMenu}
     onFolderContextMenu={handleWorkspaceFolderContextMenu}
     showCardNotesInline={settings.accountDisplay.showCardNotesInline}
-    {accountExtensionContentById}
+    accountExtensionContentById={extensionContent.accountExtensionContentById}
     isAccountExtensionForcedOpen={addFlow.isForcedOpen}
     isPendingSetupAccount={addFlow.isPendingSetupAccount}
     {activePlatformAddSetupId}
@@ -953,13 +748,13 @@
     confirmDialogConfirmColor={dialogs.confirmDialogConfirmColor}
     onConfirmDialog={dialogs.confirmCurrentDialog}
     onCancelConfirmDialog={dialogs.closeConfirmDialog}
-    {bulkEditMode}
-    {BulkEditBar}
-    bulkEditSelectedIds={bulkEditSelectedIds}
-    {bulkEditActiveAccountSelected}
-    onBulkEditSelectAll={bulkEditSelectAll}
-    onBulkEditDeselectAll={bulkEditDeselectAll}
-    onBulkEditClose={closeBulkEdit}
+    bulkEditMode={bulkEdit.bulkEditMode}
+    BulkEditBar={bulkEdit.BulkEditBar}
+    bulkEditSelectedIds={bulkEdit.bulkEditSelectedIds}
+    bulkEditActiveAccountSelected={bulkEdit.bulkEditActiveAccountSelected}
+    onBulkEditSelectAll={bulkEdit.bulkEditSelectAll}
+    onBulkEditDeselectAll={bulkEdit.bulkEditDeselectAll}
+    onBulkEditClose={bulkEdit.closeBulkEdit}
     onBulkEditResult={dialogs.handleBulkEditResult}
     {t}
     {toasts}

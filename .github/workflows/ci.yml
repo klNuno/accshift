@@ -32,7 +32,7 @@ jobs:
       - name: Svelte check
         run: vp run check:frontend
 
-      - name: Run tests
+      - name: Frontend tests
         run: vp test
 
       - name: Build frontend
@@ -46,3 +46,6 @@ jobs:
 
       - name: Cargo check
         run: vp run check:rust
+
+      - name: Rust tests
+        run: vp run test:rust

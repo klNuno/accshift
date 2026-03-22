@@ -929,8 +929,9 @@ impl PlatformService for BattleNetService {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_saved_account_names;
+    use super::{collect_unique_accounts, extract_saved_account_names, normalize_account_key};
     use serde_json::json;
+    use std::collections::HashSet;
 
     #[test]
     fn extracts_unique_accounts_from_string_field() {
@@ -954,5 +955,95 @@ mod tests {
 
         let accounts = extract_saved_account_names(&value);
         assert_eq!(accounts, vec!["one@example.com", "two@example.com"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // collect_unique_accounts
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn collect_unique_accounts_deduplicates_case_insensitive() {
+        let mut seen = HashSet::new();
+        let input = vec![
+            "Alice@example.com".to_string(),
+            "alice@example.com".to_string(),
+            "ALICE@EXAMPLE.COM".to_string(),
+        ];
+        let result = collect_unique_accounts(input.into_iter(), &mut seen);
+        assert_eq!(result, vec!["Alice@example.com"]);
+    }
+
+    #[test]
+    fn collect_unique_accounts_trims_whitespace() {
+        let mut seen = HashSet::new();
+        let input = vec![
+            "  user@test.com  ".to_string(),
+            "user@test.com".to_string(),
+        ];
+        let result = collect_unique_accounts(input.into_iter(), &mut seen);
+        assert_eq!(result, vec!["user@test.com"]);
+    }
+
+    #[test]
+    fn collect_unique_accounts_empty_input() {
+        let mut seen = HashSet::new();
+        let input: Vec<String> = Vec::new();
+        let result = collect_unique_accounts(input.into_iter(), &mut seen);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn collect_unique_accounts_skips_blank_entries() {
+        let mut seen = HashSet::new();
+        let input = vec![
+            "".to_string(),
+            "   ".to_string(),
+            "valid@email.com".to_string(),
+            "  ".to_string(),
+        ];
+        let result = collect_unique_accounts(input.into_iter(), &mut seen);
+        assert_eq!(result, vec!["valid@email.com"]);
+    }
+
+    #[test]
+    fn collect_unique_accounts_preserves_order_of_first_occurrence() {
+        let mut seen = HashSet::new();
+        let input = vec![
+            "b@test.com".to_string(),
+            "a@test.com".to_string(),
+            "c@test.com".to_string(),
+            "B@TEST.COM".to_string(),
+        ];
+        let result = collect_unique_accounts(input.into_iter(), &mut seen);
+        assert_eq!(
+            result,
+            vec!["b@test.com", "a@test.com", "c@test.com"]
+        );
+    }
+
+    #[test]
+    fn collect_unique_accounts_mixed_case_duplicates() {
+        let mut seen = HashSet::new();
+        let input = vec![
+            "User1@Gmail.Com".to_string(),
+            "user2@outlook.com".to_string(),
+            "user1@gmail.com".to_string(),
+            "USER2@OUTLOOK.COM".to_string(),
+            "user3@yahoo.com".to_string(),
+        ];
+        let result = collect_unique_accounts(input.into_iter(), &mut seen);
+        assert_eq!(
+            result,
+            vec!["User1@Gmail.Com", "user2@outlook.com", "user3@yahoo.com"]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // normalize_account_key
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn normalize_account_key_trims_and_lowercases() {
+        assert_eq!(normalize_account_key("  Foo@BAR.com  "), "foo@bar.com");
     }
 }

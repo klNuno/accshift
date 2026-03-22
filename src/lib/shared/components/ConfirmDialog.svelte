@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
+  import BaseDialog from "./BaseDialog.svelte";
 
   let { title, message, confirmLabel = "", cancelLabel = "", confirmColor = "", onConfirm, onCancel, locale = DEFAULT_LOCALE }: {
     title: string;
@@ -18,72 +19,29 @@
   onMount(() => {
     confirmRef?.focus();
   });
-
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape") onCancel();
-    if (e.key === "Enter") onConfirm();
-  }
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+<BaseDialog
+  {title}
+  width="min(360px, calc(100vw - 24px))"
+  {onCancel}
+  onKeydown={(e) => { if (e.key === "Enter") onConfirm(); }}
+>
+  <p class="message">{message}</p>
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="overlay" onclick={onCancel}>
-  <div class="dialog" onclick={(e) => e.stopPropagation()}>
-    <span class="title">{title}</span>
-    <p class="message">{message}</p>
-    <div class="actions">
-      <button class="btn-cancel" onclick={onCancel}>{cancelLabel || translate(locale, "common.cancel")}</button>
-      <button bind:this={confirmRef} class="btn-confirm" style={confirmColor ? `--confirm-bg: ${confirmColor};` : ""} onclick={onConfirm}>{confirmLabel || translate(locale, "common.confirm")}</button>
-    </div>
-  </div>
-</div>
+  {#snippet actions()}
+    <button class="btn-cancel" onclick={onCancel}>{cancelLabel || translate(locale, "common.cancel")}</button>
+    <button bind:this={confirmRef} class="btn-confirm" style={confirmColor ? `--confirm-bg: ${confirmColor};` : ""} onclick={onConfirm}>{confirmLabel || translate(locale, "common.confirm")}</button>
+  {/snippet}
+</BaseDialog>
 
 <style>
-  .overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 1100;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(4px);
-    animation: overlay-fade-in 100ms ease-out;
-  }
-
-  .dialog {
-    width: min(360px, calc(100vw - 24px));
-    padding: 16px;
-    background: var(--bg-overlay);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    animation: dialog-slide-in 120ms ease-out;
-  }
-
-  .title {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--fg);
-  }
-
   .message {
     margin: 0;
     font-size: 12px;
     line-height: 1.35;
     color: var(--fg-muted);
     white-space: pre-line;
-  }
-
-  .actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
   }
 
   .btn-cancel {

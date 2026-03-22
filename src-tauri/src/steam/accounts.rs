@@ -616,7 +616,7 @@ pub fn clear_integrated_browser_cache() -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_launch_options;
+    use super::{parse_launch_options, steam_id_to_account_id};
 
     #[test]
     fn parse_launch_options_keeps_quoted_groups() {
@@ -637,5 +637,60 @@ mod tests {
     fn parse_launch_options_handles_escaped_spaces() {
         let args = parse_launch_options("-foo bar\\ baz");
         assert_eq!(args, vec!["-foo", "bar baz"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // steam_id_to_account_id
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn steam_id_to_account_id_known_value() {
+        // SteamID64 76561197960265729 -> low 32 bits = 1 (Gabe Newell's account)
+        assert_eq!(steam_id_to_account_id("76561197960265729"), Some(1));
+    }
+
+    #[test]
+    fn steam_id_to_account_id_another_known_value() {
+        // 76561197960265728 is the base (0x0110000100000000), low 32 bits = 0
+        assert_eq!(steam_id_to_account_id("76561197960265728"), Some(0));
+    }
+
+    #[test]
+    fn steam_id_to_account_id_large_account_id() {
+        // 76561198000000000 -> low 32 bits: 0x0110000100000000 subtracted from base
+        // 76561198000000000 = 0x01100001_025317C0, low 32 = 0x025317C0 = 39_734_272
+        assert_eq!(
+            steam_id_to_account_id("76561198000000000"),
+            Some(39_734_272)
+        );
+    }
+
+    #[test]
+    fn steam_id_to_account_id_empty_string() {
+        assert_eq!(steam_id_to_account_id(""), None);
+    }
+
+    #[test]
+    fn steam_id_to_account_id_non_numeric() {
+        assert_eq!(steam_id_to_account_id("not_a_number"), None);
+    }
+
+    #[test]
+    fn steam_id_to_account_id_alphabetic_mixed() {
+        assert_eq!(steam_id_to_account_id("7656abc"), None);
+    }
+
+    #[test]
+    fn steam_id_to_account_id_zero() {
+        assert_eq!(steam_id_to_account_id("0"), Some(0));
+    }
+
+    #[test]
+    fn steam_id_to_account_id_max_u32_low_bits() {
+        // 4294967295 = 0xFFFFFFFF, low 32 bits = u32::MAX
+        assert_eq!(
+            steam_id_to_account_id("4294967295"),
+            Some(u32::MAX)
+        );
     }
 }

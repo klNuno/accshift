@@ -2,6 +2,7 @@
   import ToggleSetting from "$lib/features/settings/ToggleSetting.svelte";
   import type { AppSettings } from "$lib/features/settings/types";
   import type { MessageKey, TranslationParams } from "$lib/i18n";
+  import SettingsCard from "$lib/shared/components/SettingsCard.svelte";
   import { addAccountByCookie } from "./robloxApi";
 
   let {
@@ -39,8 +40,7 @@
   }
 </script>
 
-<section class="card platform-display-card" style={`--display-accent:${accent};`}>
-  <h3>{t("settings.accountDisplay")}</h3>
+<SettingsCard title={t("settings.accountDisplay")} {accent}>
   <ToggleSetting
     label={t("settings.showRobloxLastLogin")}
     enabled={settings.accountDisplay.showLastLoginPerPlatform["roblox"] ?? true}
@@ -49,10 +49,9 @@
     offLabel={t("common.off")}
     onToggle={() => settings.accountDisplay.showLastLoginPerPlatform["roblox"] = !settings.accountDisplay.showLastLoginPerPlatform["roblox"]}
   />
-</section>
+</SettingsCard>
 
-<section class="card platform-display-card" style={`--display-accent:${accent};`}>
-  <h3>{t("roblox.cookiePasteTitle")}</h3>
+<SettingsCard title={t("roblox.cookiePasteTitle")} {accent}>
   <p class="hint">{t("roblox.cookiePasteHint")}</p>
   <div class="input-row">
     <input
@@ -72,31 +71,9 @@
   {#if statusMessage}
     <p class="status" class:error={statusError}>{statusMessage}</p>
   {/if}
-</section>
+</SettingsCard>
 
 <style>
-  .card {
-    background: color-mix(in srgb, var(--bg-card) 84%, #000 16%);
-    border: 1px solid color-mix(in srgb, var(--border) 80%, #fff 20%);
-    border-radius: 12px;
-    padding: 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .card h3 {
-    margin: 0;
-    font-size: 13px;
-    font-weight: 700;
-    color: var(--fg);
-  }
-
-  .platform-display-card {
-    border-color: color-mix(in srgb, var(--display-accent) 32%, var(--border));
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--display-accent) 12%, transparent);
-  }
-
   .hint {
     margin: 0;
     font-size: 11px;
