@@ -43,7 +43,7 @@ export function getRiotContextMenuItems(
             callbacks.showToast(
               callbacks.t("riot.forgotProfile", { profile: account.displayName }),
             );
-            callbacks.refreshAccounts();
+            callbacks.removeAccount(account.id);
           },
         );
       },

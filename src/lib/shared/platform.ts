@@ -30,6 +30,7 @@ export interface PlatformContextMenuCallbacks {
   showToast: (msg: string) => void;
   getCurrentAccountId: () => string | null;
   refreshAccounts: () => void;
+  removeAccount: (accountId: string) => void;
   confirmAction: (config: PlatformContextMenuConfirmConfig) => void;
   openInputDialog?: (config: PlatformContextMenuInputConfig) => void;
   t: (key: MessageKey, params?: TranslationParams) => string;

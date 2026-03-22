@@ -32,7 +32,7 @@ export function getUbisoftContextMenuItems(
         async () => {
           await forgetAccount(account.id);
           callbacks.showToast(callbacks.t("ubisoft.forgotAccount", { display }));
-          callbacks.refreshAccounts();
+          callbacks.removeAccount(account.id);
         },
       );
     },

@@ -466,6 +466,17 @@ export function createAccountLoader(
     return targetAccounts.length;
   }
 
+  function removeAccount(accountId: string) {
+    accounts = accounts.filter((a) => a.id !== accountId);
+    if (currentAccount === accountId) {
+      currentAccount = "";
+    }
+    const { [accountId]: _avatar, ...restAvatars } = avatarStates;
+    avatarStates = restAvatars;
+    const { [accountId]: _warning, ...restWarnings } = warningStates;
+    warningStates = restWarnings;
+  }
+
   function clearForPlatformChange() {
     latestLoadId += 1;
     latestPrimeRunId += 1;
@@ -514,6 +525,7 @@ export function createAccountLoader(
     load,
     switchTo,
     addNew,
+    removeAccount,
     clearForPlatformChange,
     prepareAccountIds,
     prepareVisibleAccounts,

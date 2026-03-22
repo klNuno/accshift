@@ -30,7 +30,7 @@ export function getEpicContextMenuItems(
           async () => {
             await forgetAccount(account.id);
             callbacks.showToast(callbacks.t("epic.forgotAccount", { display }));
-            callbacks.refreshAccounts();
+            callbacks.removeAccount(account.id);
           },
         );
       },

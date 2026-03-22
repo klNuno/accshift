@@ -33,6 +33,7 @@ type AppDialogsDeps = {
   loadAccounts: (
     ...args: [boolean?, boolean?, boolean?, boolean?, boolean?]
   ) => void | Promise<unknown>;
+  removeAccount: (accountId: string) => void;
   getAccountCardColor: (accountId: string) => string;
   getAccountNote: (accountId: string) => string;
   getFolderCardColor: (folderId: string) => string;
@@ -52,6 +53,7 @@ export function createAppDialogsController({
   getCurrentAccountId,
   refreshCurrentItems,
   loadAccounts,
+  removeAccount,
   getAccountCardColor,
   getAccountNote,
   getFolderCardColor,
@@ -81,6 +83,7 @@ export function createAppDialogsController({
           refreshAccounts: () => {
             void loadAccounts(true);
           },
+          removeAccount,
           confirmAction: (config) => {
             confirmDialog = config;
           },

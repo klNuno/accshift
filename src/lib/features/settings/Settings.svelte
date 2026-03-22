@@ -480,6 +480,7 @@
       settings.language,
       settings.platformSettings.steam.runAsAdmin,
       settings.platformSettings.steam.launchOptions,
+      settings.platformSettings.steam.shutdownMode,
       settings.accountDisplay.showUsernames,
       settings.accountDisplay.showCardNotesInline,
       showLastLoginKey,
