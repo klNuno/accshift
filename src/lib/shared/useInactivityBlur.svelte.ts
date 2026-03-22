@@ -74,9 +74,9 @@ export function createInactivityBlur() {
   }
 
   function attachListeners() {
-    document.addEventListener("mousemove", resetPointerActivity);
-    document.addEventListener("mousedown", resetActivity);
-    document.addEventListener("keydown", resetActivity);
+    document.addEventListener("mousemove", resetPointerActivity, { passive: true });
+    document.addEventListener("mousedown", resetActivity, { passive: true });
+    document.addEventListener("keydown", resetActivity, { passive: true });
   }
 
   function detachListeners() {

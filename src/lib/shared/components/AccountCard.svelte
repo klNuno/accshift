@@ -305,6 +305,7 @@
           <img
             src={avatarUrl}
             alt={account.displayName}
+            loading="lazy"
             draggable={false}
             class:blurred={isRefreshingAvatar || showConfirm}
           />
