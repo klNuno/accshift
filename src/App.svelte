@@ -295,10 +295,25 @@
     return { title: t("card.extensionNote"), lines: [note] };
   }
 
+  let extensionCacheKey = "";
+  let extensionCache: Record<string, CardExtensionContent | null> = {};
+
   let accountExtensionContentById = $derived.by(() => {
     trackDependencies(locale, cardNoteVersion, settings.accountDisplay.showCardNotesInline);
+    const ids = visibleRenderedAccountIds;
+    // Build a key that captures all inputs per account
+    const keyParts: string[] = [];
+    for (const id of ids) {
+      const w = loader.warningStates[id];
+      const n = getAccountNote(id);
+      const s = addFlow.getSetupExtensionContent(id) ? "s" : "";
+      keyParts.push(`${id}:${w?.tooltipText ?? ""}:${w?.chips?.length ?? 0}:${n}:${s}`);
+    }
+    const newKey = `${locale}:${cardNoteVersion}:${settings.accountDisplay.showCardNotesInline}:${keyParts.join("|")}`;
+    if (newKey === extensionCacheKey) return extensionCache;
+
     const map: Record<string, CardExtensionContent | null> = {};
-    for (const accountId of visibleRenderedAccountIds) {
+    for (const accountId of ids) {
       const setupContent = addFlow.getSetupExtensionContent(accountId);
       if (setupContent) { map[accountId] = setupContent; continue; }
       const sections: CardExtensionContent["sections"] = [];
@@ -308,6 +323,8 @@
       if (note) sections.push(note);
       map[accountId] = sections.length > 0 ? { sections } : null;
     }
+    extensionCacheKey = newKey;
+    extensionCache = map;
     return map;
   });
 

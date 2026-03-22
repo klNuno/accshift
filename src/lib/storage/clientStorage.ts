@@ -215,7 +215,7 @@ export async function initializeClientStorage(): Promise<void> {
 }
 
 export function getClientStoreValue<T>(storeId: ClientStoreId): T | undefined {
-  return cloneValue(memoryStores.get(storeId) as T | undefined);
+  return memoryStores.get(storeId) as T | undefined;
 }
 
 export function getClientStoreRevision(storeId: ClientStoreId): number {

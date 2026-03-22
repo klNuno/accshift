@@ -26,9 +26,11 @@ export function createGridLayout() {
   }
 
   function handleResize() {
-    isResizing = true;
+    if (!isResizing) {
+      isResizing = true;
+      queueCalculatePadding();
+    }
     clearTimeout(resizeTimeout);
-    queueCalculatePadding();
     resizeTimeout = setTimeout(() => {
       isResizing = false;
       queueCalculatePadding();
