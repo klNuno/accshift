@@ -1,6 +1,9 @@
 // Keep this to hide the extra console window in Windows release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use tauri::webview::PageLoadEvent;
 use tauri::Manager;
 
