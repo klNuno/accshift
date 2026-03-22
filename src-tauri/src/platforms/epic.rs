@@ -18,6 +18,7 @@ use winreg::RegKey;
 
 const EPIC_PROCESS_NAMES: &[&str] = &["EpicGamesLauncher.exe"];
 const EPIC_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
+const POST_KILL_SETTLE_MS: u64 = 500;
 
 /// Auth file relative to the Epic launcher saved-config directory.
 const AUTH_INI: &str = "GameUserSettings.ini";
@@ -584,7 +585,7 @@ pub fn switch_account(app_handle: &tauri::AppHandle, account_id: &str) -> Result
 
     // Kill launcher
     kill_epic();
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
 
     // Restore target account's auth
     restore_auth_snapshot(app_handle, &account_id)?;
@@ -660,7 +661,7 @@ pub fn begin_account_setup(app_handle: &tauri::AppHandle) -> Result<SetupStatus,
 
     // Kill launcher, clear auth files to force login screen
     kill_epic();
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
     delete_auth_files()?;
     clear_eos_caches();
 

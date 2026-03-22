@@ -31,6 +31,10 @@ const RIOT_CLIENT_PROCESS_NAMES: &[&str] = &[
 
 const RIOT_GAME_PROCESS_NAMES: &[&str] = &["LeagueofLegends.exe", "VALORANT-Win64-Shipping.exe"];
 
+const KILL_RETRY_COUNT: usize = 4;
+const KILL_RETRY_DELAY_MS: u64 = 450;
+const POST_KILL_SETTLE_MS: u64 = 250;
+
 #[derive(Clone, Copy)]
 enum RiotPathBase {
     LocalAppData,
@@ -165,6 +169,20 @@ fn hidden_command(program: impl AsRef<OsStr>) -> Command {
     cmd
 }
 
+fn find_profile<'a>(
+    cfg: &'a config::AppConfig,
+    profile_id: &str,
+) -> Option<&'a config::RiotProfileConfig> {
+    cfg.riot.profiles.iter().find(|p| p.id == profile_id)
+}
+
+fn find_profile_mut<'a>(
+    cfg: &'a mut config::AppConfig,
+    profile_id: &str,
+) -> Option<&'a mut config::RiotProfileConfig> {
+    cfg.riot.profiles.iter_mut().find(|p| p.id == profile_id)
+}
+
 fn env_path(name: &str) -> Result<PathBuf, String> {
     std::env::var_os(name)
         .map(PathBuf::from)
@@ -212,14 +230,14 @@ fn ensure_no_riot_game_running(action: &str) -> Result<(), String> {
 }
 
 fn kill_riot_client_processes() {
-    for _ in 0..4 {
+    for _ in 0..KILL_RETRY_COUNT {
         for process_name in RIOT_CLIENT_PROCESS_NAMES {
             let _ = os::kill_process(process_name);
         }
         if !is_any_process_running(RIOT_CLIENT_PROCESS_NAMES) {
             break;
         }
-        thread::sleep(std::time::Duration::from_millis(450));
+        thread::sleep(std::time::Duration::from_millis(KILL_RETRY_DELAY_MS));
     }
 }
 
@@ -227,7 +245,7 @@ fn prepare_clean_riot_launch(app_handle: &tauri::AppHandle) -> Result<(), String
     kill_riot_client_processes();
     clear_live_riot_setup_state(app_handle)?;
     kill_riot_client_processes();
-    thread::sleep(std::time::Duration::from_millis(250));
+    thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
     Ok(())
 }
 
@@ -559,21 +577,15 @@ async fn fetch_local_json(access: &RiotLocalApiAccess, path: &str) -> Result<Val
 fn detect_live_identity_with_access(
     access: &RiotLocalApiAccess,
 ) -> Result<RiotDetectedIdentity, String> {
-    let access = RiotLocalApiAccess {
-        protocol: access.protocol.clone(),
-        port: access.port,
-        password: access.password.clone(),
-    };
-
-    tauri::async_runtime::block_on(async move {
-        let alias_json = fetch_local_json(&access, "/player-account/aliases/v1/active").await?;
+    tauri::async_runtime::block_on(async {
+        let alias_json = fetch_local_json(access, "/player-account/aliases/v1/active").await?;
         let alias: RiotAliasResponse = serde_json::from_value(alias_json)
             .map_err(|e| format!("Could not parse Riot alias response: {e}"))?;
 
         let account_name = trim_or_empty(&alias.game_name);
         let account_tag_line = trim_or_empty(&alias.tag_line);
 
-        let userinfo = fetch_local_json(&access, "/riot-client-auth/v1/userinfo")
+        let userinfo = fetch_local_json(access, "/riot-client-auth/v1/userinfo")
             .await
             .unwrap_or(Value::Null);
         let account_puuid = userinfo
@@ -600,14 +612,8 @@ fn detect_live_identity() -> Result<RiotDetectedIdentity, String> {
 }
 
 fn read_live_login_status(access: &RiotLocalApiAccess) -> Result<RiotLoginStatus, String> {
-    let access = RiotLocalApiAccess {
-        protocol: access.protocol.clone(),
-        port: access.port,
-        password: access.password.clone(),
-    };
-
-    tauri::async_runtime::block_on(async move {
-        let value = fetch_local_json(&access, "/riot-login/v1/status").await?;
+    tauri::async_runtime::block_on(async {
+        let value = fetch_local_json(access, "/riot-login/v1/status").await?;
         let phase = value
             .get("phase")
             .and_then(Value::as_str)
@@ -886,12 +892,7 @@ fn update_profile_state(
     used_at: Option<Option<u64>>,
     identity: Option<&RiotDetectedIdentity>,
 ) -> Result<(), String> {
-    let Some(profile) = cfg
-        .riot
-        .profiles
-        .iter_mut()
-        .find(|profile| profile.id == profile_id)
-    else {
+    let Some(profile) = find_profile_mut(cfg, profile_id) else {
         return Err("Riot profile not found".into());
     };
 
@@ -934,13 +935,7 @@ fn get_profile_setup_status_internal(
     cfg: &mut config::AppConfig,
     profile_id: &str,
 ) -> Result<RiotProfileSetupStatus, String> {
-    let Some(profile) = cfg
-        .riot
-        .profiles
-        .iter()
-        .find(|profile| profile.id == profile_id)
-        .cloned()
-    else {
+    let Some(profile) = find_profile(cfg, profile_id).cloned() else {
         return Err("Riot profile not found".into());
     };
 
@@ -955,12 +950,7 @@ fn get_profile_setup_status_internal(
 
     let identity = detect_live_identity_with_access(&access).ok();
     if let Some(identity) = identity.as_ref() {
-        if let Some(target) = cfg
-            .riot
-            .profiles
-            .iter_mut()
-            .find(|entry| entry.id == profile_id)
-        {
+        if let Some(target) = find_profile_mut(cfg, profile_id) {
             apply_detected_identity(target, identity);
         }
     }
@@ -969,13 +959,7 @@ fn get_profile_setup_status_internal(
         Ok(status) => status,
         Err(_) => {
             let _ = config::save_config(app_handle, cfg);
-            let updated = cfg
-                .riot
-                .profiles
-                .iter()
-                .find(|entry| entry.id == profile_id)
-                .cloned()
-                .unwrap_or(profile);
+            let updated = find_profile(cfg, profile_id).cloned().unwrap_or(profile);
             return Ok(make_setup_status(&updated, "waiting_for_client", ""));
         }
     };
@@ -986,42 +970,19 @@ fn get_profile_setup_status_internal(
                 wait_for_riot_setup_capture_ready(app_handle, 8000, 500).unwrap_or(false);
             if !capture_ready {
                 let _ = config::save_config(app_handle, cfg);
-                let updated = cfg
-                    .riot
-                    .profiles
-                    .iter()
-                    .find(|entry| entry.id == profile_id)
-                    .cloned()
-                    .unwrap_or(profile);
+                let updated = find_profile(cfg, profile_id).cloned().unwrap_or(profile);
                 return Ok(make_setup_status(&updated, "waiting_for_login", ""));
             }
-            if let Some(target) = cfg
-                .riot
-                .profiles
-                .iter_mut()
-                .find(|entry| entry.id == profile_id)
-            {
+            if let Some(target) = find_profile_mut(cfg, profile_id) {
                 target.snapshot_state = "capturing".into();
             }
             config::save_config(app_handle, cfg)?;
             capture_profile_into_snapshot(app_handle, cfg, profile_id, Some(identity))?;
-            let updated = cfg
-                .riot
-                .profiles
-                .iter()
-                .find(|entry| entry.id == profile_id)
-                .cloned()
-                .unwrap_or(profile);
+            let updated = find_profile(cfg, profile_id).cloned().unwrap_or(profile);
             return Ok(make_setup_status(&updated, "ready", ""));
         }
 
-        let updated = cfg
-            .riot
-            .profiles
-            .iter()
-            .find(|entry| entry.id == profile_id)
-            .cloned()
-            .unwrap_or(profile);
+        let updated = find_profile(cfg, profile_id).cloned().unwrap_or(profile);
         let _ = config::save_config(app_handle, cfg);
         return Ok(make_setup_status(
             &updated,
@@ -1030,13 +991,7 @@ fn get_profile_setup_status_internal(
         ));
     }
 
-    let updated = cfg
-        .riot
-        .profiles
-        .iter()
-        .find(|entry| entry.id == profile_id)
-        .cloned()
-        .unwrap_or(profile);
+    let updated = find_profile(cfg, profile_id).cloned().unwrap_or(profile);
     let _ = config::save_config(app_handle, cfg);
     Ok(make_setup_status(&updated, "waiting_for_login", ""))
 }
@@ -1095,11 +1050,7 @@ pub fn begin_profile_setup(app_handle: tauri::AppHandle) -> Result<RiotProfileSe
 
     profile_snapshot_dir(&app_handle, &profile_id)?;
     spawn_riot_setup_launch(app_handle.clone(), client_path);
-    let created = cfg
-        .riot
-        .profiles
-        .iter()
-        .find(|profile| profile.id == profile_id)
+    let created = find_profile(&cfg, &profile_id)
         .cloned()
         .ok_or_else(|| "Riot profile not found".to_string())?;
     Ok(make_setup_status(&created, "waiting_for_client", ""))
@@ -1169,12 +1120,7 @@ pub fn capture_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resu
     let profile_id = normalize_profile_id(&profile_id)?;
     let live_identity = detect_live_identity().ok();
     let mut cfg = config::load_config(&app_handle);
-    if !cfg
-        .riot
-        .profiles
-        .iter()
-        .any(|profile| profile.id == profile_id)
-    {
+    if find_profile(&cfg, &profile_id).is_none() {
         return Err("Riot profile not found".into());
     }
 
@@ -1193,12 +1139,7 @@ pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
     let target_id = normalize_profile_id(&profile_id)?;
     let current_live_identity = detect_live_identity().ok();
     let mut cfg = config::load_config(&app_handle);
-    if !cfg
-        .riot
-        .profiles
-        .iter()
-        .any(|profile| profile.id == target_id)
-    {
+    if find_profile(&cfg, &target_id).is_none() {
         return Err("Riot profile not found".into());
     }
 
@@ -1207,11 +1148,7 @@ pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
         if !is_valid_profile_id(&current_id) {
             return Err("Invalid Riot profile id in config".into());
         }
-        let current_state = cfg
-            .riot
-            .profiles
-            .iter()
-            .find(|profile| profile.id == current_id)
+        let current_state = find_profile(&cfg, &current_id)
             .map(|profile| profile.snapshot_state.as_str());
         let should_backup = match current_state {
             Some("ready") => true,
