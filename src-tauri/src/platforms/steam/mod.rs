@@ -4,10 +4,15 @@ use crate::platforms::{
     log_platform_error, log_platform_info, to_logged_error, PlatformService,
     SetupStatus,
 };
-use crate::steam::accounts::{self, CopyableGame, SteamAccount};
-use crate::steam::bans::{self, BanInfo};
-use crate::steam::bulk_edit;
-use crate::steam::profile::{self, ProfileInfo};
+pub mod accounts;
+pub mod bans;
+pub mod bulk_edit;
+pub mod profile;
+pub mod vdf;
+
+use accounts::{CopyableGame, SteamAccount};
+use bans::BanInfo;
+use profile::ProfileInfo;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};

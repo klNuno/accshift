@@ -302,7 +302,7 @@ pub async fn steam_switch_account_mode(
 pub async fn steam_get_profile_info(
     steam_id: String,
     client: tauri::State<'_, reqwest::Client>,
-) -> Result<Option<crate::steam::profile::ProfileInfo>, String> {
+) -> Result<Option<crate::platforms::steam::profile::ProfileInfo>, String> {
     crate::platforms::steam::get_profile_info(steam_id, client.inner().clone()).await
 }
 
@@ -311,7 +311,7 @@ pub async fn steam_get_player_bans(
     app_handle: tauri::AppHandle,
     steam_ids: Vec<String>,
     client: tauri::State<'_, reqwest::Client>,
-) -> Result<Vec<crate::steam::bans::BanInfo>, String> {
+) -> Result<Vec<crate::platforms::steam::bans::BanInfo>, String> {
     crate::platforms::steam::get_player_bans(app_handle, steam_ids, client.inner().clone()).await
 }
 
@@ -330,7 +330,7 @@ pub fn steam_get_copyable_games(
     app_handle: tauri::AppHandle,
     from_steam_id: String,
     to_steam_id: String,
-) -> Result<Vec<crate::steam::accounts::CopyableGame>, String> {
+) -> Result<Vec<crate::platforms::steam::accounts::CopyableGame>, String> {
     crate::platforms::steam::get_copyable_games(app_handle, from_steam_id, to_steam_id)
 }
 
@@ -347,8 +347,8 @@ pub fn steam_clear_browser_cache(app_handle: tauri::AppHandle) -> Result<(), Str
 #[tauri::command]
 pub fn steam_bulk_edit(
     app_handle: tauri::AppHandle,
-    request: crate::steam::bulk_edit::BulkEditRequest,
-) -> Result<crate::steam::bulk_edit::BulkEditResult, String> {
+    request: crate::platforms::steam::bulk_edit::BulkEditRequest,
+) -> Result<crate::platforms::steam::bulk_edit::BulkEditResult, String> {
     crate::platforms::steam::bulk_edit(app_handle, request)
 }
 
@@ -356,7 +356,7 @@ pub fn steam_bulk_edit(
 pub fn steam_get_account_games(
     app_handle: tauri::AppHandle,
     steam_id: String,
-) -> Result<Vec<crate::steam::accounts::CopyableGame>, String> {
+) -> Result<Vec<crate::platforms::steam::accounts::CopyableGame>, String> {
     crate::platforms::steam::get_account_games(app_handle, steam_id)
 }
 
