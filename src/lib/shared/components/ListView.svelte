@@ -26,6 +26,7 @@
     dragItem = null,
     dragOverFolderId = null,
     dragOverBack = false,
+    switchingAccountId = null,
     onNavigate,
     onGoBack,
     onSwitch,
@@ -52,6 +53,7 @@
     dragItem?: ItemRef | null;
     dragOverFolderId?: string | null;
     dragOverBack?: boolean;
+    switchingAccountId?: string | null;
     onNavigate: (folderId: string) => void;
     onGoBack: () => void;
     onSwitch: (account: PlatformAccount) => void;
@@ -118,6 +120,7 @@
             isSelected={selectedAccountId === account.id}
             avatarUrl={avatarState?.url}
             isLoadingAvatar={isPendingSetup || (avatarState?.loading ?? false)}
+            isSwitching={switchingAccountId === account.id}
             allowMetaWrap={isPendingSetup}
             warningInfo={warningStates[account.id]}
             cardColor={getAccountCardColor(account.id)}

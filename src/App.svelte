@@ -932,7 +932,7 @@
     isAccountExtensionForcedOpen={addFlow.isForcedOpen}
     isPendingSetupAccount={addFlow.isPendingSetupAccount}
     {activePlatformAddSetupId}
-    switching={loader.switching}
+    switchingAccountId={loader.switchingAccountId}
   />
   {/if}
 

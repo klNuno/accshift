@@ -30,6 +30,7 @@ const DEFAULTS: AppSettings = {
     steam: {
       runAsAdmin: false,
       launchOptions: "",
+      shutdownMode: "graceful",
     },
   },
   accountDisplay: {
@@ -157,6 +158,7 @@ function sanitizeSettings(value: unknown): AppSettings {
                 .trim()
                 .slice(0, 256)
             : "",
+        shutdownMode: rawSteamSettings.shutdownMode === "force" ? "force" : "graceful",
       },
     },
     accountDisplay: {
