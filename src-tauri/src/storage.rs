@@ -65,7 +65,7 @@ pub fn app_cache_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> 
 }
 
 pub fn app_log_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
-    Ok(scope_root(raw_app_log_root(app_handle)?))
+    Ok(scope_root(raw_app_config_root(app_handle)?.join("logs")))
 }
 
 pub fn legacy_app_data_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -100,12 +100,6 @@ fn raw_app_cache_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> 
         .map_err(|e| format!("Could not resolve app cache dir: {e}"))
 }
 
-fn raw_app_log_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
-    app_handle
-        .path()
-        .app_log_dir()
-        .map_err(|e| format!("Could not resolve app log dir: {e}"))
-}
 
 fn scope_root(path: PathBuf) -> PathBuf {
     if cfg!(debug_assertions) {
@@ -222,15 +216,15 @@ pub fn client_store_path(app_handle: &tauri::AppHandle, store_id: &str) -> Resul
             .join("user")
             .join("folder-card-colors.json")),
         STORE_VIEW_MODE => Ok(app_config_root(app_handle)?.join("user").join("view-mode.json")),
-        STORE_STEAM_PROFILE_CACHE => Ok(app_cache_root(app_handle)?.join("steam").join("profiles.json")),
+        STORE_STEAM_PROFILE_CACHE => Ok(app_cache_root(app_handle)?.join("platforms").join("steam").join("profiles.json")),
         STORE_ROBLOX_PROFILE_CACHE => {
-            Ok(app_cache_root(app_handle)?.join("roblox").join("profiles.json"))
+            Ok(app_cache_root(app_handle)?.join("platforms").join("roblox").join("profiles.json"))
         }
         STORE_STEAM_BAN_CHECK_STATE => {
-            Ok(app_cache_root(app_handle)?.join("steam").join("ban-check-state.json"))
+            Ok(app_cache_root(app_handle)?.join("platforms").join("steam").join("ban-check-state.json"))
         }
         STORE_STEAM_BAN_INFO_CACHE => {
-            Ok(app_cache_root(app_handle)?.join("steam").join("ban-info-cache.json"))
+            Ok(app_cache_root(app_handle)?.join("platforms").join("steam").join("ban-info-cache.json"))
         }
         _ => Err(format!("Unknown client store id: {store_id}")),
     }?;

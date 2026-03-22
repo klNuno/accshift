@@ -16,7 +16,6 @@ mod logging;
 mod os;
 mod platforms;
 mod storage;
-mod steam;
 mod themes;
 
 fn main() {
