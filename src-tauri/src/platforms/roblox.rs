@@ -56,6 +56,12 @@ fn purge_expired_jobs(jobs: &mut HashMap<String, QuickLoginJob>) {
     jobs.retain(|_, j| !super::setup_expired(j.last_touched_at, ROBLOX_SETUP_TTL_MS));
 }
 
+fn remove_setup_job(setup_id: &str) {
+    if let Ok(mut jobs) = setup_jobs().lock() {
+        jobs.remove(setup_id);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Roblox API helpers (blocking)
 // ---------------------------------------------------------------------------
@@ -108,22 +114,31 @@ fn csrf_cache() -> &'static Mutex<String> {
 }
 
 /// POST with automatic CSRF retry. Roblox returns 403 + x-csrf-token on first attempt.
-fn post_with_csrf(url: &str, body: &str) -> Result<reqwest::blocking::Response, String> {
+/// `extra_headers` lets callers inject additional headers (e.g. Referer) without duplicating
+/// the retry logic.
+fn post_with_csrf_and_headers(
+    url: &str,
+    body: &str,
+    extra_headers: &[(&str, &str)],
+) -> Result<reqwest::blocking::Response, String> {
     let cached_csrf = csrf_cache()
         .lock()
         .map(|g| g.clone())
         .unwrap_or_default();
 
-    let response = blocking_client()
+    let mut request = blocking_client()
         .post(url)
         .header("Content-Type", "application/json")
-        .header("X-CSRF-TOKEN", &cached_csrf)
+        .header("X-CSRF-TOKEN", &cached_csrf);
+    for &(k, v) in extra_headers {
+        request = request.header(k, v);
+    }
+    let response = request
         .body(body.to_string())
         .send()
         .map_err(|e| format!("Request failed: {e}"))?;
 
     if response.status().as_u16() == 403 {
-        // Extract fresh CSRF token and retry
         let new_csrf = response
             .headers()
             .get("x-csrf-token")
@@ -136,10 +151,14 @@ fn post_with_csrf(url: &str, body: &str) -> Result<reqwest::blocking::Response, 
                 *cache = new_csrf.clone();
             }
 
-            return blocking_client()
+            let mut retry = blocking_client()
                 .post(url)
                 .header("Content-Type", "application/json")
-                .header("X-CSRF-TOKEN", &new_csrf)
+                .header("X-CSRF-TOKEN", &new_csrf);
+            for &(k, v) in extra_headers {
+                retry = retry.header(k, v);
+            }
+            return retry
                 .body(body.to_string())
                 .send()
                 .map_err(|e| format!("Request retry failed: {e}"));
@@ -147,6 +166,10 @@ fn post_with_csrf(url: &str, body: &str) -> Result<reqwest::blocking::Response, 
     }
 
     Ok(response)
+}
+
+fn post_with_csrf(url: &str, body: &str) -> Result<reqwest::blocking::Response, String> {
+    post_with_csrf_and_headers(url, body, &[])
 }
 
 fn validate_cookie_blocking(cookie: &str) -> Result<AuthenticatedUserResponse, String> {
@@ -182,54 +205,17 @@ fn extract_roblosecurity_cookie(headers: &reqwest::header::HeaderMap) -> Option<
 }
 
 fn exchange_quick_login_for_cookie(code: &str, private_key: &str) -> Result<String, String> {
-    let client = blocking_client();
     let body = serde_json::json!({
         "ctype": "AuthToken",
         "cvalue": code,
         "password": private_key,
     });
-    let body_str = body.to_string();
-    let url = "https://auth.roblox.com/v2/login";
 
-    let cached_csrf = csrf_cache()
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_default();
-
-    let response = client
-        .post(url)
-        .header("Content-Type", "application/json")
-        .header("Referer", "https://www.roblox.com")
-        .header("X-CSRF-TOKEN", &cached_csrf)
-        .body(body_str.clone())
-        .send()
-        .map_err(|e| format!("Login exchange failed: {e}"))?;
-
-    let response = if response.status().as_u16() == 403 {
-        let new_csrf = response
-            .headers()
-            .get("x-csrf-token")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
-
-        if !new_csrf.is_empty() {
-            if let Ok(mut cache) = csrf_cache().lock() {
-                *cache = new_csrf.clone();
-            }
-        }
-
-        client
-            .post(url)
-            .header("Content-Type", "application/json")
-            .header("Referer", "https://www.roblox.com")
-            .header("X-CSRF-TOKEN", &new_csrf)
-            .body(body_str)
-            .send()
-            .map_err(|e| format!("Login exchange retry failed: {e}"))?
-    } else {
-        response
-    };
+    let response = post_with_csrf_and_headers(
+        "https://auth.roblox.com/v2/login",
+        &body.to_string(),
+        &[("Referer", "https://www.roblox.com")],
+    )?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -561,23 +547,17 @@ pub fn get_account_setup_status(
                 Err(e) => {
                     let msg = format!("Could not encrypt cookie: {e}");
                     log_platform_error(app_handle, "roblox.setup_poll", "Encryption failed", &msg);
-                    if let Ok(mut jobs) = setup_jobs().lock() {
-                        jobs.remove(setup_id);
-                    }
+                    remove_setup_job(setup_id);
                     return Ok(super::make_setup_status(setup_id, "failed", "", "", &msg));
                 }
             };
             if let Err(e) = store_account(app_handle, &user, &encrypted) {
                 log_platform_error(app_handle, "roblox.setup_poll", "Account storage failed", &e);
-                if let Ok(mut jobs) = setup_jobs().lock() {
-                    jobs.remove(setup_id);
-                }
+                remove_setup_job(setup_id);
                 return Ok(super::make_setup_status(setup_id, "failed", "", "", &e));
             }
 
-            if let Ok(mut jobs) = setup_jobs().lock() {
-                jobs.remove(setup_id);
-            }
+            remove_setup_job(setup_id);
 
             Ok(super::make_setup_status(
                 setup_id,
@@ -588,9 +568,7 @@ pub fn get_account_setup_status(
             ))
         }
         "Cancelled" => {
-            if let Ok(mut jobs) = setup_jobs().lock() {
-                jobs.remove(setup_id);
-            }
+            remove_setup_job(setup_id);
             Ok(super::make_setup_status(setup_id, "failed", "", "", "Quick Login was cancelled"))
         }
         // "Created" | "UserLinked" | anything else → still waiting
