@@ -231,7 +231,6 @@ export async function loadSteamWarningStates(
       console.error("[ban-check] malformed ban rows without steam_id", {
         malformedRows,
         totalRows: bans.length,
-        sampleRow: bans[0] ?? null,
       });
     }
 
@@ -240,11 +239,10 @@ export async function loadSteamWarningStates(
     }
 
     if (returnedIds.size !== idsToFetch.length) {
-      const missingIds = idsToFetch.filter((steamId) => !returnedIds.has(steamId));
       console.warn("[ban-check] missing results for some Steam IDs", {
         expected: idsToFetch.length,
         received: returnedIds.size,
-        missingIds,
+        missingCount: idsToFetch.length - returnedIds.size,
       });
     }
 

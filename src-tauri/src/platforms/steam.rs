@@ -155,14 +155,16 @@ fn build_switch_state_details(
     let current_from_file =
         accounts::get_current_account_name(steam_path).unwrap_or_else(|e| format!("<error:{e}>"));
 
+    use super::redact_id;
+    use super::redact_opt;
     serde_json::json!({
-        "requestedUsername": requested_username,
-        "steamId": steam_id,
+        "requestedUsername": redact_opt(requested_username),
+        "steamId": redact_opt(steam_id),
         "mode": mode,
         "runAsAdmin": run_as_admin,
         "launchOptionsConfigured": !launch_options.trim().is_empty(),
-        "autoLoginUser": auto_login_user,
-        "currentAccountFromLoginusers": current_from_file,
+        "autoLoginUser": redact_id(&auto_login_user),
+        "currentAccountFromLoginusers": redact_id(&current_from_file),
         "steamRunning": os::is_process_running(os::steam_process_name()),
         "steamWebHelperRunning": os::is_process_running(os::steam_web_helper_process_name()),
     })
