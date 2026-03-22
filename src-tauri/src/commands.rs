@@ -6,6 +6,17 @@ pub fn get_runtime_os() -> String {
     std::env::consts::OS.to_string()
 }
 
+/// Returns "migrated" if legacy config was converted, "none" if no legacy found,
+/// or an error string if migration failed.
+#[tauri::command]
+pub fn migrate_legacy_config(app_handle: tauri::AppHandle) -> String {
+    match crate::config::migrate_legacy_config(&app_handle) {
+        None => "none".to_string(),
+        Some(Ok(())) => "migrated".to_string(),
+        Some(Err(e)) => format!("error:{e}"),
+    }
+}
+
 #[tauri::command]
 pub fn log_app_event(
     app_handle: tauri::AppHandle,

@@ -352,14 +352,13 @@ fn normalize_config(raw: RawAppConfig) -> AppConfig {
 }
 
 pub fn load_config(app_handle: &tauri::AppHandle) -> AppConfig {
-    let legacy = load_legacy_config(app_handle);
     let portable_path = match crate::storage::portable_config_path(app_handle) {
         Ok(path) => path,
-        Err(_) => return legacy,
+        Err(_) => return load_legacy_config(app_handle),
     };
     let local_path = match crate::storage::local_config_path(app_handle) {
         Ok(path) => path,
-        Err(_) => return legacy,
+        Err(_) => return load_legacy_config(app_handle),
     };
 
     let portable = crate::storage::read_json_if_exists::<AppConfig>(&portable_path)
@@ -370,18 +369,14 @@ pub fn load_config(app_handle: &tauri::AppHandle) -> AppConfig {
         .flatten();
 
     match (portable, local) {
-        (None, None) => legacy,
         (Some(portable), local) => {
-            let merged = merge_split_configs(portable, local.unwrap_or_default());
-            // Only merge non-account fields from legacy (paths, keys).
-            // Account lists are authoritative in portable config — merging
-            // them from legacy would resurrect forgotten/deleted accounts.
-            merge_non_account_fields(merged, legacy)
+            merge_split_configs(portable, local.unwrap_or_default())
         }
-        (None, Some(local)) => merge_missing_from_fallback(
-            merge_split_configs(AppConfig::default(), local),
-            legacy,
-        ),
+        (None, Some(local)) => {
+            merge_split_configs(AppConfig::default(), local)
+        }
+        // No split config yet, fall back to legacy (pre-migration).
+        (None, None) => load_legacy_config(app_handle),
     }
 }
 
@@ -411,7 +406,46 @@ pub fn save_config(app_handle: &tauri::AppHandle, config: &AppConfig) -> Result<
         "Saved split app config",
         Some(&details),
     );
+
     Ok(())
+}
+
+/// Check for a legacy config.json, migrate it to portable+local, and delete it.
+/// Returns `Some("ok")` if migrated, `Some(error)` if failed, `None` if no legacy.
+pub fn migrate_legacy_config(app_handle: &tauri::AppHandle) -> Option<Result<(), String>> {
+    let legacy_path = crate::storage::legacy_config_path(app_handle).ok()?;
+    if !legacy_path.exists() {
+        return None;
+    }
+
+    let portable_path = match crate::storage::portable_config_path(app_handle) {
+        Ok(p) => p,
+        Err(e) => return Some(Err(e)),
+    };
+
+    // If portable already exists, legacy is stale. Just delete it.
+    if portable_path.exists() {
+        let _ = fs::remove_file(&legacy_path);
+        return None;
+    }
+
+    // Migrate: load legacy, save as portable+local, delete legacy.
+    let legacy = load_legacy_config(app_handle);
+    if let Err(e) = save_config(app_handle, &legacy) {
+        return Some(Err(format!("Failed to write migrated config: {e}")));
+    }
+
+    if let Err(e) = fs::remove_file(&legacy_path) {
+        let _ = crate::logging::append_app_log(
+            app_handle,
+            "warn",
+            "config.migrate_legacy",
+            &format!("Migrated config but could not delete legacy file: {e}"),
+            None,
+        );
+    }
+
+    Some(Ok(()))
 }
 
 pub fn load_window_size(app_handle: &tauri::AppHandle) -> Option<(f64, f64)> {
@@ -567,146 +601,3 @@ fn merge_split_configs(portable: AppConfig, local: AppConfig) -> AppConfig {
     merged
 }
 
-/// Merge only non-account fields (paths, API keys, window size) from the
-/// fallback (legacy) config. Account lists are NOT merged because the portable
-/// config is authoritative — merging them would resurrect forgotten accounts.
-fn merge_non_account_fields(mut current: AppConfig, fallback: AppConfig) -> AppConfig {
-    if current.steam.api_key.is_empty() {
-        current.steam.api_key = fallback.steam.api_key;
-    }
-    if current.steam.api_key_encrypted.is_empty() {
-        current.steam.api_key_encrypted = fallback.steam.api_key_encrypted;
-    }
-    if current.steam.path_override.is_empty() {
-        current.steam.path_override = fallback.steam.path_override;
-    }
-    if current.riot.path_override.is_empty() {
-        current.riot.path_override = fallback.riot.path_override;
-    }
-    if current.battle_net.path_override.is_empty() {
-        current.battle_net.path_override = fallback.battle_net.path_override;
-    }
-    if current.ubisoft.path_override.is_empty() {
-        current.ubisoft.path_override = fallback.ubisoft.path_override;
-    }
-    if current.epic.path_override.is_empty() {
-        current.epic.path_override = fallback.epic.path_override;
-    }
-    if current.window_width.is_none() {
-        current.window_width = fallback.window_width;
-    }
-    if current.window_height.is_none() {
-        current.window_height = fallback.window_height;
-    }
-    for (key, value) in fallback.extra {
-        current.extra.entry(key).or_insert(value);
-    }
-    current
-}
-
-fn merge_missing_from_fallback(mut current: AppConfig, fallback: AppConfig) -> AppConfig {
-    if current.steam.api_key.is_empty() {
-        current.steam.api_key = fallback.steam.api_key;
-    }
-    if current.steam.api_key_encrypted.is_empty() {
-        current.steam.api_key_encrypted = fallback.steam.api_key_encrypted;
-    }
-    if current.steam.path_override.is_empty() {
-        current.steam.path_override = fallback.steam.path_override;
-    }
-
-    if current.riot.path_override.is_empty() {
-        current.riot.path_override = fallback.riot.path_override.clone();
-    }
-    if current.riot.current_profile_id.is_empty() {
-        current.riot.current_profile_id = fallback.riot.current_profile_id.clone();
-    }
-    for fallback_profile in fallback.riot.profiles {
-        if !current
-            .riot
-            .profiles
-            .iter()
-            .any(|profile| profile.id == fallback_profile.id)
-        {
-            current.riot.profiles.push(fallback_profile);
-        }
-    }
-
-    if current.battle_net.path_override.is_empty() {
-        current.battle_net.path_override = fallback.battle_net.path_override.clone();
-    }
-    for fallback_account in fallback.battle_net.accounts {
-        if !current
-            .battle_net
-            .accounts
-            .iter()
-            .any(|account| account.email == fallback_account.email && !account.email.is_empty())
-        {
-            current.battle_net.accounts.push(fallback_account);
-        }
-    }
-
-    if current.ubisoft.path_override.is_empty() {
-        current.ubisoft.path_override = fallback.ubisoft.path_override.clone();
-    }
-    for fallback_account in fallback.ubisoft.accounts {
-        if !current
-            .ubisoft
-            .accounts
-            .iter()
-            .any(|account| account.uuid == fallback_account.uuid && !account.uuid.is_empty())
-        {
-            current.ubisoft.accounts.push(fallback_account);
-        }
-    }
-
-    for fallback_account in fallback.roblox.accounts {
-        if let Some(existing) = current
-            .roblox
-            .accounts
-            .iter_mut()
-            .find(|account| account.user_id == fallback_account.user_id)
-        {
-            if existing.username.is_empty() {
-                existing.username = fallback_account.username.clone();
-            }
-            if existing.display_name.is_empty() {
-                existing.display_name = fallback_account.display_name.clone();
-            }
-            if existing.cookie_encrypted.is_empty() {
-                existing.cookie_encrypted = fallback_account.cookie_encrypted.clone();
-            }
-            if existing.last_used_at.is_none() {
-                existing.last_used_at = fallback_account.last_used_at;
-            }
-        } else {
-            current.roblox.accounts.push(fallback_account);
-        }
-    }
-
-    if current.epic.path_override.is_empty() {
-        current.epic.path_override = fallback.epic.path_override.clone();
-    }
-    for fallback_account in fallback.epic.accounts {
-        if !current
-            .epic
-            .accounts
-            .iter()
-            .any(|account| account.account_id == fallback_account.account_id && !account.account_id.is_empty())
-        {
-            current.epic.accounts.push(fallback_account);
-        }
-    }
-
-    if current.window_width.is_none() {
-        current.window_width = fallback.window_width;
-    }
-    if current.window_height.is_none() {
-        current.window_height = fallback.window_height;
-    }
-    for (key, value) in fallback.extra {
-        current.extra.entry(key).or_insert(value);
-    }
-
-    current
-}

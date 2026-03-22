@@ -202,7 +202,7 @@ fn resolve_executable(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> 
         if p.is_file() {
             return Ok(p);
         }
-        // Treat as directory — look for the executable inside
+        // Treat as directory, look for the executable inside
         for arch in &["Win64", "Win32"] {
             let candidate = p
                 .join("Launcher")
@@ -233,7 +233,7 @@ fn resolve_executable(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> 
 }
 
 // ---------------------------------------------------------------------------
-// Registry — current account detection
+// Registry: current account detection
 // ---------------------------------------------------------------------------
 
 #[cfg(target_os = "windows")]

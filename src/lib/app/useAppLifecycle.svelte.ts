@@ -1,5 +1,7 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { addToast } from "$lib/features/notifications/store.svelte";
+import { translate } from "$lib/i18n";
 import type { AppSettings, RuntimeOs } from "$lib/features/settings/types";
 import { getInitialActiveTab, isPlatformUsable } from "$lib/app/platformShell.svelte";
 import { loadCustomThemes } from "$lib/theme/themes";
@@ -83,6 +85,19 @@ export function createAppLifecycleController({
   let externalStorageRefreshInFlight = false;
 
   async function initializeAppShell() {
+    // Migrate legacy config.json → split format before anything reads config.
+    try {
+      const result = await invoke<string>("migrate_legacy_config");
+      const locale = shell.settings.language;
+      if (result === "migrated") {
+        addToast(translate(locale, "toast.legacyConfigMigrated"));
+      } else if (result.startsWith("error:")) {
+        addToast(translate(locale, "toast.legacyConfigMigrationFailed"));
+      }
+    } catch {
+      // Non-critical, config will fall back to legacy on read.
+    }
+
     await loadCustomThemes();
     shell.refreshSettings();
 

@@ -103,7 +103,7 @@ pub trait PlatformService: Send + Sync {
     fn id(&self) -> &'static str;
     fn capabilities(&self) -> PlatformCapabilities;
 
-    // Account operations — returns platform-specific JSON.
+    // Account operations: returns platform-specific JSON.
     fn get_accounts(&self, app: &tauri::AppHandle) -> Result<Value, String>;
     fn get_startup_snapshot(&self, app: &tauri::AppHandle) -> Result<Value, String>;
     fn get_current_account(&self, app: &tauri::AppHandle) -> Result<String, String>;

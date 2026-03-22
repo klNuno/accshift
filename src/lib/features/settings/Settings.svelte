@@ -582,7 +582,7 @@
           </label>
 
           <label class="field">
-            <span class="field-label">{t("settings.uiZoom")} — {settings.uiScalePercent}%</span>
+            <span class="field-label">{t("settings.uiZoom")} - {settings.uiScalePercent}%</span>
             <input
               type="range"
               min="75"
@@ -654,7 +654,7 @@
           </div>
 
           <label class="field">
-            <span class="field-label">{t("settings.backgroundOpacity")} — {settings.backgroundOpacity}%</span>
+            <span class="field-label">{t("settings.backgroundOpacity")} - {settings.backgroundOpacity}%</span>
             <input
               type="range"
               min="0"

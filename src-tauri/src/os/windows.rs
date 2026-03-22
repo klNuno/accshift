@@ -353,7 +353,7 @@ pub fn kill_and_relaunch_steam_elevated(
     steam_path: &Path,
     launch_options: &[String],
 ) -> Result<(), AppError> {
-    // Kill using native API — will fail silently for elevated processes
+    // Kill using native API, will fail silently for elevated processes
     let _ = kill_process("steam.exe");
     let _ = kill_process("steamwebhelper.exe");
 

@@ -166,6 +166,8 @@ export const EN_MESSAGES = {
   "time.compactWrapper": "({value})",
 
   "toast.copied": "{label} copied",
+  "toast.legacyConfigMigrated": "Settings migrated to new format",
+  "toast.legacyConfigMigrationFailed": "Failed to migrate old settings, check logs",
   "toast.failedLoadSettingsPanel": "Failed to load settings panel",
   "toast.banChecking": "Checking bans...",
   "toast.banCheckSummary.single": "Ban check: {count} account with bans",
@@ -544,6 +546,8 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "time.compactWrapper": "({value})",
 
   "toast.copied": "{label} copié",
+  "toast.legacyConfigMigrated": "Paramètres migrés vers le nouveau format",
+  "toast.legacyConfigMigrationFailed": "La migration des anciens paramètres a échoué",
   "toast.failedLoadSettingsPanel": "Impossible de charger le panneau paramètres",
   "toast.banChecking": "Vérification des bans...",
   "toast.banCheckSummary.single": "Vérification: {count} compte avec ban",
