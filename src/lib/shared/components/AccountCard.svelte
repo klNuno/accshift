@@ -802,8 +802,4 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
 </style>

@@ -336,10 +336,6 @@
     transform: translate(-50%, -50%);
   }
 
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-
   .active-badge {
     margin-left: 6px;
     font-size: 9px;

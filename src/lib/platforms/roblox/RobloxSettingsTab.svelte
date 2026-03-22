@@ -10,12 +10,8 @@
     t,
   }: {
     settings: AppSettings;
-    path: string;
     accent: string;
     t: (key: MessageKey, params?: TranslationParams) => string;
-    onChoosePath: () => void | Promise<void>;
-    pathLabelKey?: string;
-    pathPlaceholder?: string;
   } = $props();
 
   let cookieValue = $state("");

@@ -2,6 +2,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::OnceLock;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod battle_net;
 pub mod epic;
@@ -75,15 +76,31 @@ pub(crate) fn to_logged_error(
     details
 }
 
-/// Capabilities that a platform may or may not support.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PlatformCapabilities {
-    pub has_profiles: bool,
-    pub has_warnings: bool,
-    pub has_api_key: bool,
-    pub has_game_copy: bool,
-    pub has_usernames: bool,
+pub(crate) fn now_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+pub(crate) fn setup_expired(last_touched_at: u64, ttl_ms: u64) -> bool {
+    now_unix_ms().saturating_sub(last_touched_at) > ttl_ms
+}
+
+pub(crate) fn make_setup_status(
+    setup_id: &str,
+    state: &str,
+    account_id: impl Into<String>,
+    display_name: impl Into<String>,
+    error: impl Into<String>,
+) -> SetupStatus {
+    SetupStatus {
+        setup_id: setup_id.to_string(),
+        state: state.to_string(),
+        account_id: account_id.into(),
+        account_display_name: display_name.into(),
+        error_message: error.into(),
+    }
 }
 
 /// Common setup status returned by all platforms.
@@ -98,11 +115,7 @@ pub struct SetupStatus {
 }
 
 /// Core trait that all platforms implement.
-#[allow(dead_code)]
 pub trait PlatformService: Send + Sync {
-    fn id(&self) -> &'static str;
-    fn capabilities(&self) -> PlatformCapabilities;
-
     // Account operations: returns platform-specific JSON.
     fn get_accounts(&self, app: &tauri::AppHandle) -> Result<Value, String>;
     fn get_startup_snapshot(&self, app: &tauri::AppHandle) -> Result<Value, String>;
@@ -125,10 +138,26 @@ pub trait PlatformService: Send + Sync {
     ) -> Result<SetupStatus, String>;
     fn cancel_setup(&self, app: &tauri::AppHandle, setup_id: &str) -> Result<(), String>;
 
-    // Path management
-    fn get_path(&self, app: &tauri::AppHandle) -> Result<String, String>;
-    fn set_path(&self, app: &tauri::AppHandle, path: &str) -> Result<(), String>;
-    fn select_path(&self) -> Result<String, String>;
+    // Path management (default: not supported)
+    fn get_path(&self, _app: &tauri::AppHandle) -> Result<String, String> {
+        Err("Path management not supported".into())
+    }
+    fn set_path(&self, _app: &tauri::AppHandle, _path: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn select_path(&self) -> Result<String, String> {
+        Err("Path management not supported".into())
+    }
+
+    // Account labeling (default: not supported)
+    fn set_account_label(
+        &self,
+        _app: &tauri::AppHandle,
+        _account_id: &str,
+        _label: &str,
+    ) -> Result<(), String> {
+        Err("Account labeling not supported".into())
+    }
 }
 
 fn platform_registry() -> &'static HashMap<&'static str, &'static dyn PlatformService> {

@@ -11,15 +11,7 @@ import { getCachedProfile, fetchProfile } from "./profileCache";
 import { getSteamContextMenuItems } from "./contextMenu";
 import { getCachedSteamWarningStates, loadSteamWarningStates } from "./warnings";
 import type { SteamAccount } from "./types";
-
-function isSafeAvatarUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "https:" || parsed.protocol === "http:";
-  } catch {
-    return false;
-  }
-}
+import { isSafeHttpUrl } from "$lib/shared/url";
 
 function toAccount(s: SteamAccount): PlatformAccount {
   return {
@@ -86,7 +78,7 @@ export const steamAdapter: PlatformAdapter = {
     }
     const avatarUrl = (profile.avatar_url ?? "").trim();
     return {
-      avatarUrl: avatarUrl && isSafeAvatarUrl(avatarUrl) ? avatarUrl : null,
+      avatarUrl: avatarUrl && isSafeHttpUrl(avatarUrl) ? avatarUrl : null,
       displayName: profile.display_name,
     };
   },

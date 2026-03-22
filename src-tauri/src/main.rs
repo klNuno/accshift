@@ -174,7 +174,6 @@ fn main() {
             commands::save_client_storage_store,
             commands::get_storage_manifest,
             // Generic platform commands
-            commands::platform_get_capabilities,
             commands::platform_get_accounts,
             commands::platform_get_startup_snapshot,
             commands::platform_get_current_account,
@@ -186,6 +185,7 @@ fn main() {
             commands::platform_get_path,
             commands::platform_set_path,
             commands::platform_select_path,
+            commands::platform_set_account_label,
             // Utility
             commands::open_url,
             // Window
@@ -205,10 +205,6 @@ fn main() {
             commands::steam_clear_browser_cache,
             commands::steam_bulk_edit,
             commands::steam_get_account_games,
-            // Ubisoft-specific
-            commands::ubisoft_set_account_label,
-            // Epic-specific
-            commands::epic_set_account_label,
             // Riot-specific
             commands::riot_capture_profile,
             // Roblox-specific

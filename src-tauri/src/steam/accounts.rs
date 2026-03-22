@@ -10,7 +10,7 @@ use crate::os;
 
 const KILL_WAIT_MS: u32 = 5000;
 const GRACEFUL_SHUTDOWN_WAIT_MS: u32 = 8000;
-const NON_GAME_APP_IDS: &[&str] = &[
+pub(crate) const NON_GAME_APP_IDS: &[&str] = &[
     "7",   // Steam client internals
     "760", // Steam community / screenshots
 ];
@@ -578,7 +578,6 @@ pub fn copy_game_settings(
 pub fn get_copyable_games(
     steam_path: &Path,
     from_steam_id: &str,
-    _to_steam_id: &str,
 ) -> Result<Vec<CopyableGame>, AppError> {
     let from_root = steam_user_data_path(steam_path, from_steam_id)?;
     let from_games = list_account_games(&from_root)?;

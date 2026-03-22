@@ -1,10 +1,10 @@
 use crate::config::{self, RobloxAccountConfig};
-use crate::platforms::{log_platform_error, log_platform_info, PlatformCapabilities, PlatformService, SetupStatus};
+use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 use uuid::Uuid;
 
 const ROBLOX_PROCESS_NAMES: &[&str] = &["RobloxPlayerBeta.exe", "RobloxStudioBeta.exe"];
@@ -47,37 +47,13 @@ struct QuickLoginJob {
     last_touched_at: u64,
 }
 
-fn now_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
-
 fn setup_jobs() -> &'static Mutex<HashMap<String, QuickLoginJob>> {
     static JOBS: OnceLock<Mutex<HashMap<String, QuickLoginJob>>> = OnceLock::new();
     JOBS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn purge_expired_jobs(jobs: &mut HashMap<String, QuickLoginJob>) {
-    let now = now_unix_ms();
-    jobs.retain(|_, job| now.saturating_sub(job.last_touched_at) <= ROBLOX_SETUP_TTL_MS);
-}
-
-fn make_setup_status(
-    setup_id: &str,
-    state: &str,
-    account_id: impl Into<String>,
-    account_display_name: impl Into<String>,
-    error_message: impl Into<String>,
-) -> SetupStatus {
-    SetupStatus {
-        setup_id: setup_id.to_string(),
-        state: state.to_string(),
-        account_id: account_id.into(),
-        account_display_name: account_display_name.into(),
-        error_message: error_message.into(),
-    }
+    jobs.retain(|_, j| !super::setup_expired(j.last_touched_at, ROBLOX_SETUP_TTL_MS));
 }
 
 // ---------------------------------------------------------------------------
@@ -287,9 +263,10 @@ fn save_account_configs(
     let path = crate::storage::roblox_accounts_path(app_handle)?;
     crate::storage::write_json_atomic(&path, &accounts)?;
 
-    let mut cfg = config::load_config(app_handle);
-    cfg.roblox.accounts = accounts.to_vec();
-    config::save_config(app_handle, &cfg)?;
+    let accounts_clone = accounts.to_vec();
+    config::update_config(app_handle, |cfg| {
+        cfg.roblox.accounts = accounts_clone;
+    })?;
 
     log_platform_info(
         app_handle,
@@ -307,7 +284,7 @@ fn store_account(
 ) -> Result<(), String> {
     let mut accounts = load_account_configs(app_handle);
     let user_id = user.id.to_string();
-    let now = now_unix_ms();
+    let now = super::now_unix_ms();
 
     if let Some(existing) = accounts.iter_mut().find(|a| a.user_id == user_id) {
         existing.username = user.name.clone();
@@ -451,7 +428,7 @@ pub fn switch_account(app_handle: &tauri::AppHandle, user_id: &str) -> Result<()
     // Update last_used_at
     let mut accounts = load_account_configs(app_handle);
     if let Some(a) = accounts.iter_mut().find(|a| a.user_id == user_id) {
-        a.last_used_at = Some(now_unix_ms());
+        a.last_used_at = Some(super::now_unix_ms());
     }
     let _ = save_account_configs(app_handle, &accounts);
 
@@ -503,12 +480,12 @@ pub fn begin_account_setup(app_handle: &tauri::AppHandle) -> Result<SetupStatus,
         QuickLoginJob {
             code: login_data.code,
             private_key: login_data.private_key,
-            last_touched_at: now_unix_ms(),
+            last_touched_at: super::now_unix_ms(),
         },
     );
 
     // accountDisplayName carries the Quick Login code for UI display
-    Ok(make_setup_status(&setup_id, "waiting_for_login", "", &code, ""))
+    Ok(super::make_setup_status(&setup_id, "waiting_for_login", "", &code, ""))
 }
 
 pub fn get_account_setup_status(
@@ -523,7 +500,7 @@ pub fn get_account_setup_status(
         let Some(job) = jobs.get_mut(setup_id) else {
             return Err("Roblox setup session not found".to_string());
         };
-        job.last_touched_at = now_unix_ms();
+        job.last_touched_at = super::now_unix_ms();
         job.clone()
     };
 
@@ -550,7 +527,7 @@ pub fn get_account_setup_status(
     );
 
     if !http_status.is_success() {
-        return Ok(make_setup_status(setup_id, "waiting_for_login", "", &job.code, ""));
+        return Ok(super::make_setup_status(setup_id, "waiting_for_login", "", &job.code, ""));
     }
 
     let status_data: QuickLoginStatusResponse = serde_json::from_str(&response_text)
@@ -587,7 +564,7 @@ pub fn get_account_setup_status(
                     if let Ok(mut jobs) = setup_jobs().lock() {
                         jobs.remove(setup_id);
                     }
-                    return Ok(make_setup_status(setup_id, "failed", "", "", &msg));
+                    return Ok(super::make_setup_status(setup_id, "failed", "", "", &msg));
                 }
             };
             if let Err(e) = store_account(app_handle, &user, &encrypted) {
@@ -595,14 +572,14 @@ pub fn get_account_setup_status(
                 if let Ok(mut jobs) = setup_jobs().lock() {
                     jobs.remove(setup_id);
                 }
-                return Ok(make_setup_status(setup_id, "failed", "", "", &e));
+                return Ok(super::make_setup_status(setup_id, "failed", "", "", &e));
             }
 
             if let Ok(mut jobs) = setup_jobs().lock() {
                 jobs.remove(setup_id);
             }
 
-            Ok(make_setup_status(
+            Ok(super::make_setup_status(
                 setup_id,
                 "ready",
                 user.id.to_string(),
@@ -614,10 +591,10 @@ pub fn get_account_setup_status(
             if let Ok(mut jobs) = setup_jobs().lock() {
                 jobs.remove(setup_id);
             }
-            Ok(make_setup_status(setup_id, "failed", "", "", "Quick Login was cancelled"))
+            Ok(super::make_setup_status(setup_id, "failed", "", "", "Quick Login was cancelled"))
         }
         // "Created" | "UserLinked" | anything else → still waiting
-        _ => Ok(make_setup_status(setup_id, "waiting_for_login", "", &job.code, "")),
+        _ => Ok(super::make_setup_status(setup_id, "waiting_for_login", "", &job.code, "")),
     }
 }
 
@@ -691,7 +668,7 @@ pub async fn add_account_by_cookie(
         user_id: user.id.to_string(),
         username: user.name,
         display_name: user.display_name,
-        last_login_at: Some(now_unix_ms()),
+        last_login_at: Some(super::now_unix_ms()),
     })
 }
 
@@ -725,20 +702,6 @@ pub struct RobloxService;
 pub static ROBLOX_SERVICE: RobloxService = RobloxService;
 
 impl PlatformService for RobloxService {
-    fn id(&self) -> &'static str {
-        "roblox"
-    }
-
-    fn capabilities(&self) -> PlatformCapabilities {
-        PlatformCapabilities {
-            has_profiles: true,
-            has_warnings: false,
-            has_api_key: false,
-            has_game_copy: false,
-            has_usernames: true,
-        }
-    }
-
     fn get_accounts(&self, app: &tauri::AppHandle) -> Result<Value, String> {
         let accounts = get_accounts(app)?;
         serde_json::to_value(accounts).map_err(|e| e.to_string())
@@ -782,15 +745,4 @@ impl PlatformService for RobloxService {
         cancel_account_setup(setup_id)
     }
 
-    fn get_path(&self, _app: &tauri::AppHandle) -> Result<String, String> {
-        Err("Roblox does not require a custom path".to_string())
-    }
-
-    fn set_path(&self, _app: &tauri::AppHandle, _path: &str) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn select_path(&self) -> Result<String, String> {
-        Err("Roblox does not require a custom path".to_string())
-    }
 }
