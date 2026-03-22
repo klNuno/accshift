@@ -30,7 +30,7 @@ const DEFAULTS: AppSettings = {
     steam: {
       runAsAdmin: false,
       launchOptions: "",
-      shutdownMode: "graceful",
+      shutdownMode: "force",
     },
   },
   accountDisplay: {

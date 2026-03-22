@@ -39,7 +39,7 @@ export function getBattleNetContextMenuItems(
         async () => {
           await forgetAccount(account.id);
           callbacks.showToast(callbacks.t("battlenet.forgotAccount", { email: display }));
-          callbacks.refreshAccounts();
+          callbacks.removeAccount(account.id);
         },
       );
     },

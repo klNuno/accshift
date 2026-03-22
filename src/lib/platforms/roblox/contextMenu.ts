@@ -40,7 +40,7 @@ export function getRobloxContextMenuItems(
           async () => {
             await forgetAccount(account.id);
             callbacks.showToast(callbacks.t("roblox.forgotAccount", { display }));
-            callbacks.refreshAccounts();
+            callbacks.removeAccount(account.id);
           },
         );
       },

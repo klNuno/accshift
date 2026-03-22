@@ -371,8 +371,15 @@ pub fn load_config(app_handle: &tauri::AppHandle) -> AppConfig {
 
     match (portable, local) {
         (None, None) => legacy,
-        (portable, local) => merge_missing_from_fallback(
-            merge_split_configs(portable.unwrap_or_default(), local.unwrap_or_default()),
+        (Some(portable), local) => {
+            let merged = merge_split_configs(portable, local.unwrap_or_default());
+            // Only merge non-account fields from legacy (paths, keys).
+            // Account lists are authoritative in portable config — merging
+            // them from legacy would resurrect forgotten/deleted accounts.
+            merge_non_account_fields(merged, legacy)
+        }
+        (None, Some(local)) => merge_missing_from_fallback(
+            merge_split_configs(AppConfig::default(), local),
             legacy,
         ),
     }
@@ -558,6 +565,43 @@ fn merge_split_configs(portable: AppConfig, local: AppConfig) -> AppConfig {
     }
 
     merged
+}
+
+/// Merge only non-account fields (paths, API keys, window size) from the
+/// fallback (legacy) config. Account lists are NOT merged because the portable
+/// config is authoritative — merging them would resurrect forgotten accounts.
+fn merge_non_account_fields(mut current: AppConfig, fallback: AppConfig) -> AppConfig {
+    if current.steam.api_key.is_empty() {
+        current.steam.api_key = fallback.steam.api_key;
+    }
+    if current.steam.api_key_encrypted.is_empty() {
+        current.steam.api_key_encrypted = fallback.steam.api_key_encrypted;
+    }
+    if current.steam.path_override.is_empty() {
+        current.steam.path_override = fallback.steam.path_override;
+    }
+    if current.riot.path_override.is_empty() {
+        current.riot.path_override = fallback.riot.path_override;
+    }
+    if current.battle_net.path_override.is_empty() {
+        current.battle_net.path_override = fallback.battle_net.path_override;
+    }
+    if current.ubisoft.path_override.is_empty() {
+        current.ubisoft.path_override = fallback.ubisoft.path_override;
+    }
+    if current.epic.path_override.is_empty() {
+        current.epic.path_override = fallback.epic.path_override;
+    }
+    if current.window_width.is_none() {
+        current.window_width = fallback.window_width;
+    }
+    if current.window_height.is_none() {
+        current.window_height = fallback.window_height;
+    }
+    for (key, value) in fallback.extra {
+        current.extra.entry(key).or_insert(value);
+    }
+    current
 }
 
 fn merge_missing_from_fallback(mut current: AppConfig, fallback: AppConfig) -> AppConfig {
