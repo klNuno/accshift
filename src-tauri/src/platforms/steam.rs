@@ -32,10 +32,6 @@ fn steam_setup_jobs() -> &'static Mutex<HashMap<String, SteamAccountSetupJob>> {
     JOBS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn purge_expired_steam_setup_jobs(jobs: &mut HashMap<String, SteamAccountSetupJob>) {
-    jobs.retain(|_, job| !super::setup_expired(job.last_touched_at, STEAM_SETUP_TTL_MS));
-}
-
 fn encrypt_api_key(api_key: &str) -> Result<String, String> {
     if api_key.trim().is_empty() {
         return Ok(String::new());
@@ -241,20 +237,6 @@ pub async fn switch_account_mode(
     let mode_for_task = mode.clone();
     let launch_options_for_task = launch_options.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        log_platform_info(
-            &app_handle_for_task,
-            "steam.switch_account_mode",
-            "Steam switch mode started",
-            build_switch_state_details(
-                &steam_path,
-                Some(&username_for_task),
-                Some(&steam_id_for_task),
-                Some(&mode_for_task),
-                run_as_admin,
-                &launch_options_for_task,
-            ),
-        );
-
         let result = accounts::switch_account_mode(
             &steam_path,
             &username_for_task,
@@ -265,35 +247,27 @@ pub async fn switch_account_mode(
             force_kill,
         );
 
+        let post_state = build_switch_state_details(
+            &steam_path,
+            Some(&username_for_task),
+            Some(&steam_id_for_task),
+            Some(&mode_for_task),
+            run_as_admin,
+            &launch_options_for_task,
+        );
+
         match &result {
             Ok(()) => log_platform_info(
                 &app_handle_for_task,
                 "steam.switch_account_mode",
                 "Steam switch mode completed",
-                build_switch_state_details(
-                    &steam_path,
-                    Some(&username_for_task),
-                    Some(&steam_id_for_task),
-                    Some(&mode_for_task),
-                    run_as_admin,
-                    &launch_options_for_task,
-                ),
+                &post_state,
             ),
             Err(error) => log_platform_error(
                 &app_handle_for_task,
                 "steam.switch_account_mode",
                 "Steam switch mode failed",
-                format!(
-                    "error={error}; state={}",
-                    build_switch_state_details(
-                        &steam_path,
-                        Some(&username_for_task),
-                        Some(&steam_id_for_task),
-                        Some(&mode_for_task),
-                        run_as_admin,
-                        &launch_options_for_task,
-                    )
-                ),
+                format!("error={error}; state={post_state}"),
             ),
         }
 
@@ -324,7 +298,7 @@ pub fn begin_account_setup(
         let mut jobs = steam_setup_jobs()
             .lock()
             .map_err(|_| "Steam setup storage is unavailable".to_string())?;
-        purge_expired_steam_setup_jobs(&mut jobs);
+        jobs.retain(|_, job| !super::setup_expired(job.last_touched_at, STEAM_SETUP_TTL_MS));
         jobs.insert(
             setup_id.clone(),
             SteamAccountSetupJob {
@@ -374,7 +348,7 @@ pub fn get_account_setup_status(
         let mut jobs = steam_setup_jobs()
             .lock()
             .map_err(|_| "Steam setup storage is unavailable".to_string())?;
-        purge_expired_steam_setup_jobs(&mut jobs);
+        jobs.retain(|_, job| !super::setup_expired(job.last_touched_at, STEAM_SETUP_TTL_MS));
         let Some(job) = jobs.get_mut(&setup_id) else {
             return Err("Steam setup not found".into());
         };
@@ -421,7 +395,7 @@ pub fn cancel_account_setup(_app_handle: tauri::AppHandle, setup_id: String) -> 
     let mut jobs = steam_setup_jobs()
         .lock()
         .map_err(|_| "Steam setup storage is unavailable".to_string())?;
-    purge_expired_steam_setup_jobs(&mut jobs);
+    jobs.retain(|_, job| !super::setup_expired(job.last_touched_at, STEAM_SETUP_TTL_MS));
     jobs.remove(setup_id);
     Ok(())
 }
@@ -627,35 +601,27 @@ impl PlatformService for SteamService {
             accounts::switch_account(&steam_path, account_id, run_as_admin, &launch_options, force_kill)
                 .map_err(|e| to_logged_error(app, "steam.switch_account", e));
 
+        let post_state = build_switch_state_details(
+            &steam_path,
+            Some(account_id),
+            None,
+            None,
+            run_as_admin,
+            &launch_options,
+        );
+
         match &result {
             Ok(()) => log_platform_info(
                 app,
                 "steam.switch_account",
                 "Steam switch completed",
-                build_switch_state_details(
-                    &steam_path,
-                    Some(account_id),
-                    None,
-                    None,
-                    run_as_admin,
-                    &launch_options,
-                ),
+                &post_state,
             ),
             Err(error) => log_platform_error(
                 app,
                 "steam.switch_account",
                 "Steam switch failed",
-                format!(
-                    "error={error}; state={}",
-                    build_switch_state_details(
-                        &steam_path,
-                        Some(account_id),
-                        None,
-                        None,
-                        run_as_admin,
-                        &launch_options,
-                    )
-                ),
+                format!("error={error}; state={post_state}"),
             ),
         }
 

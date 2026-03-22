@@ -228,6 +228,22 @@ fn read_config_json(path: &Path) -> Result<Option<Value>, String> {
     Ok(Some(value))
 }
 
+fn collect_unique_accounts(
+    values: impl Iterator<Item = String>,
+    seen: &mut HashSet<String>,
+) -> Vec<String> {
+    let mut accounts = Vec::new();
+    for value in values {
+        let trimmed = value.trim().to_string();
+        let key = normalize_account_key(&trimmed);
+        if trimmed.is_empty() || !seen.insert(key) {
+            continue;
+        }
+        accounts.push(trimmed);
+    }
+    accounts
+}
+
 fn extract_saved_account_names(value: &Value) -> Vec<String> {
     let source = value
         .get("Client")
@@ -235,36 +251,17 @@ fn extract_saved_account_names(value: &Value) -> Vec<String> {
         .and_then(|client| client.get("SavedAccountNames"));
 
     let mut seen = HashSet::new();
-    let mut accounts = Vec::new();
 
     match source {
         Some(Value::String(raw)) => {
-            for account in raw.split(',') {
-                let trimmed = account.trim();
-                let key = normalize_account_key(trimmed);
-                if trimmed.is_empty() || !seen.insert(key) {
-                    continue;
-                }
-                accounts.push(trimmed.to_string());
-            }
+            collect_unique_accounts(raw.split(',').map(String::from), &mut seen)
         }
-        Some(Value::Array(items)) => {
-            for item in items {
-                let Some(account) = item.as_str() else {
-                    continue;
-                };
-                let trimmed = account.trim();
-                let key = normalize_account_key(trimmed);
-                if trimmed.is_empty() || !seen.insert(key) {
-                    continue;
-                }
-                accounts.push(trimmed.to_string());
-            }
-        }
-        _ => {}
+        Some(Value::Array(items)) => collect_unique_accounts(
+            items.iter().filter_map(|item| item.as_str().map(String::from)),
+            &mut seen,
+        ),
+        _ => Vec::new(),
     }
-
-    accounts
 }
 
 fn read_saved_accounts() -> Result<Vec<String>, String> {
@@ -557,47 +554,63 @@ fn registry_candidates_from_uninstall(root: HKEY, subkey: &str) -> Vec<PathBuf> 
 }
 
 #[cfg(target_os = "windows")]
+enum RegistryLookup {
+    AppPaths,
+    Uninstall,
+}
+
+#[cfg(target_os = "windows")]
+const REGISTRY_INSTALL_SOURCES: &[(HKEY, &str, RegistryLookup)] = &[
+    (
+        HKEY_LOCAL_MACHINE,
+        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Battle.net Launcher.exe",
+        RegistryLookup::AppPaths,
+    ),
+    (
+        HKEY_LOCAL_MACHINE,
+        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Battle.net.exe",
+        RegistryLookup::AppPaths,
+    ),
+    (
+        HKEY_CURRENT_USER,
+        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Battle.net Launcher.exe",
+        RegistryLookup::AppPaths,
+    ),
+    (
+        HKEY_CURRENT_USER,
+        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Battle.net.exe",
+        RegistryLookup::AppPaths,
+    ),
+    (
+        HKEY_LOCAL_MACHINE,
+        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+        RegistryLookup::Uninstall,
+    ),
+    (
+        HKEY_LOCAL_MACHINE,
+        "SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+        RegistryLookup::Uninstall,
+    ),
+    (
+        HKEY_CURRENT_USER,
+        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+        RegistryLookup::Uninstall,
+    ),
+];
+
+#[cfg(target_os = "windows")]
 fn registry_install_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
-
-    for &(root, subkey) in &[
-        (
-            HKEY_LOCAL_MACHINE,
-            "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Battle.net Launcher.exe",
-        ),
-        (
-            HKEY_LOCAL_MACHINE,
-            "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Battle.net.exe",
-        ),
-        (
-            HKEY_CURRENT_USER,
-            "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Battle.net Launcher.exe",
-        ),
-        (
-            HKEY_CURRENT_USER,
-            "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Battle.net.exe",
-        ),
-    ] {
-        out.extend(registry_candidates_from_app_paths(root, subkey));
+    for &(root, subkey, ref lookup) in REGISTRY_INSTALL_SOURCES {
+        match lookup {
+            RegistryLookup::AppPaths => {
+                out.extend(registry_candidates_from_app_paths(root, subkey));
+            }
+            RegistryLookup::Uninstall => {
+                out.extend(registry_candidates_from_uninstall(root, subkey));
+            }
+        }
     }
-
-    for &(root, subkey) in &[
-        (
-            HKEY_LOCAL_MACHINE,
-            "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
-        ),
-        (
-            HKEY_LOCAL_MACHINE,
-            "SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
-        ),
-        (
-            HKEY_CURRENT_USER,
-            "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
-        ),
-    ] {
-        out.extend(registry_candidates_from_uninstall(root, subkey));
-    }
-
     out
 }
 
@@ -706,21 +719,19 @@ pub fn switch_account(app_handle: tauri::AppHandle, email: String) -> Result<(),
     remember_account_usage(&app_handle, &target, false)?;
     let result = launch_battle_net(&app_handle);
 
+    let post_switch_details = build_battle_net_switch_details(Some(&target));
     match &result {
         Ok(()) => log_platform_info(
             &app_handle,
             "battle_net.switch_account",
             "Battle.net switch completed",
-            build_battle_net_switch_details(Some(&target)),
+            post_switch_details,
         ),
         Err(error) => log_platform_error(
             &app_handle,
             "battle_net.switch_account",
             "Battle.net switch failed",
-            format!(
-                "error={error}; state={}",
-                build_battle_net_switch_details(Some(&target))
-            ),
+            format!("error={error}; state={post_switch_details}"),
         ),
     }
 

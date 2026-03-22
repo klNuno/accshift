@@ -251,6 +251,10 @@ fn is_valid_uuid(s: &str) -> bool {
     })
 }
 
+fn normalize_uuid(uuid: &str) -> String {
+    uuid.trim().to_lowercase()
+}
+
 fn discover_uuids(app_handle: &tauri::AppHandle) -> HashSet<String> {
     let mut uuids = HashSet::new();
 
@@ -315,25 +319,19 @@ fn current_account_from_logs(app_handle: &tauri::AppHandle) -> Option<String> {
 }
 
 fn extract_uuid_from_line(line: &str) -> Option<String> {
-    // Look for User: <uuid> pattern
-    if let Some(idx) = line.find("User: ") {
-        let after = &line[idx + 6..];
-        let candidate: String = after.chars().take(36).collect();
-        if is_valid_uuid(&candidate) {
-            return Some(candidate);
+    // Fast path: look for "User: <uuid>" pattern
+    if let Some(pos) = line.find("User: ") {
+        let after = &line[pos + 6..];
+        if after.len() >= 36 && is_valid_uuid(&after[..36]) {
+            return Some(after[..36].to_string());
         }
     }
-    // Fallback: look for any UUID pattern in the line
-    let chars: Vec<char> = line.chars().collect();
-    for start in 0..chars.len().saturating_sub(35) {
-        let candidate: String = chars[start..start + 36].iter().collect();
-        if is_valid_uuid(&candidate) {
-            // Verify it's near "User" context
-            if start >= 4 {
-                let context: String = chars[start.saturating_sub(10)..start].iter().collect();
-                if context.contains("User") {
-                    return Some(candidate);
-                }
+    // Fallback: scan for any 36-char UUID near a "User" context
+    if line.len() >= 36 {
+        for start in 0..=line.len() - 36 {
+            let candidate = &line[start..start + 36];
+            if is_valid_uuid(candidate) && start >= 4 && line[start.saturating_sub(10)..start].contains("User") {
+                return Some(candidate.to_string());
             }
         }
     }
@@ -420,7 +418,7 @@ fn read_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<UbisoftAccount>, S
         .accounts
         .iter()
         .filter(|a| !a.uuid.trim().is_empty())
-        .map(|a| (a.uuid.trim().to_lowercase(), a))
+        .map(|a| (normalize_uuid(&a.uuid), a))
         .collect();
 
     // Merge discovered UUIDs with config accounts
@@ -429,8 +427,8 @@ fn read_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<UbisoftAccount>, S
 
     // Config accounts first (preserves order / labels)
     for account in &cfg.ubisoft.accounts {
-        let uuid = account.uuid.trim().to_lowercase();
-        if uuid.is_empty() || !seen.insert(uuid.clone()) {
+        let key = normalize_uuid(&account.uuid);
+        if key.is_empty() || !seen.insert(key.clone()) {
             continue;
         }
         accounts.push(UbisoftAccount {
@@ -443,7 +441,7 @@ fn read_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<UbisoftAccount>, S
 
     // Discovered UUIDs not yet in config
     for uuid in &discovered {
-        let key = uuid.to_lowercase();
+        let key = normalize_uuid(uuid);
         if !seen.insert(key) {
             continue;
         }
@@ -457,7 +455,7 @@ fn read_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<UbisoftAccount>, S
 
     // Filter to only accounts that exist on disk OR have a snapshot
     accounts.retain(|a| {
-        let key = a.uuid.to_lowercase();
+        let key = normalize_uuid(&a.uuid);
         discovered.contains(&a.uuid) || metadata_by_uuid.contains_key(&key) || a.snapshot_saved
     });
 
@@ -466,7 +464,7 @@ fn read_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<UbisoftAccount>, S
 
 fn remember_account_usage(app_handle: &tauri::AppHandle, uuid: &str) -> Result<(), String> {
     let uuid = validate_uuid(uuid)?;
-    let key = uuid.to_lowercase();
+    let key = normalize_uuid(&uuid);
     let now = super::now_unix_ms();
 
     config::update_config(app_handle, |cfg| {
@@ -474,7 +472,7 @@ fn remember_account_usage(app_handle: &tauri::AppHandle, uuid: &str) -> Result<(
             .ubisoft
             .accounts
             .iter_mut()
-            .find(|a| a.uuid.trim().to_lowercase() == key)
+            .find(|a| normalize_uuid(&a.uuid) == key)
         {
             existing.last_used_at = Some(now);
         } else {
@@ -488,11 +486,11 @@ fn remember_account_usage(app_handle: &tauri::AppHandle, uuid: &str) -> Result<(
 }
 
 fn forget_account_metadata(app_handle: &tauri::AppHandle, uuid: &str) -> Result<(), String> {
-    let key = uuid.trim().to_lowercase();
+    let key = normalize_uuid(uuid);
     config::update_config(app_handle, |cfg| {
         cfg.ubisoft
             .accounts
-            .retain(|a| a.uuid.trim().to_lowercase() != key);
+            .retain(|a| normalize_uuid(&a.uuid) != key);
     })?;
 
     // Also remove cached auth snapshot
@@ -537,7 +535,7 @@ pub fn switch_account(app_handle: &tauri::AppHandle, target_uuid: &str) -> Resul
 
     // Save current account's auth first
     if let Some(current_uuid) = current_account_from_logs(app_handle) {
-        if current_uuid.to_lowercase() != target_uuid.to_lowercase() {
+        if normalize_uuid(&current_uuid) != normalize_uuid(&target_uuid) {
             let _ = save_auth_snapshot(app_handle, &current_uuid);
         }
     }
@@ -588,14 +586,14 @@ pub fn begin_account_setup(app_handle: &tauri::AppHandle) -> Result<SetupStatus,
 
     let known_uuids = discover_uuids(app_handle)
         .into_iter()
-        .map(|u| u.to_lowercase())
+        .map(|u| normalize_uuid(&u))
         .collect::<HashSet<_>>();
 
     // Also include config UUIDs
     let cfg = config::load_config(app_handle);
     let mut all_known = known_uuids;
     for account in &cfg.ubisoft.accounts {
-        let key = account.uuid.trim().to_lowercase();
+        let key = normalize_uuid(&account.uuid);
         if !key.is_empty() {
             all_known.insert(key);
         }
@@ -659,7 +657,7 @@ pub fn get_account_setup_status(
 
     // Check logs for a new account UUID
     if let Some(current_uuid) = current_account_from_logs(app_handle) {
-        let key = current_uuid.to_lowercase();
+        let key = normalize_uuid(&current_uuid);
         if !job.known_uuids.contains(&key) {
             // New account detected, save its auth snapshot
             let _ = save_auth_snapshot(app_handle, &current_uuid);
@@ -682,7 +680,7 @@ pub fn get_account_setup_status(
     // Check filesystem for new UUIDs
     let current_uuids = discover_uuids(app_handle);
     for uuid in &current_uuids {
-        let key = uuid.to_lowercase();
+        let key = normalize_uuid(uuid);
         if !job.known_uuids.contains(&key) {
             // New UUID found on filesystem
             let _ = save_auth_snapshot(app_handle, uuid);
@@ -741,7 +739,7 @@ pub fn set_account_label(
     label: &str,
 ) -> Result<(), String> {
     let uuid = validate_uuid(uuid)?;
-    let key = uuid.to_lowercase();
+    let key = normalize_uuid(&uuid);
     let label = label.trim().to_string();
 
     config::update_config(app_handle, |cfg| {
@@ -749,7 +747,7 @@ pub fn set_account_label(
             .ubisoft
             .accounts
             .iter_mut()
-            .find(|a| a.uuid.trim().to_lowercase() == key)
+            .find(|a| normalize_uuid(&a.uuid) == key)
         {
             existing.label = label;
         } else {
