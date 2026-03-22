@@ -29,6 +29,7 @@
   } from "$lib/i18n";
   import { hashPinCode, sanitizePinDigits } from "$lib/shared/pin";
   import { trackDependencies } from "$lib/shared/trackDependencies";
+  import { createNumericInput, clampInt } from "$lib/shared/useNumericInput.svelte";
   import type { PlatformDef } from "$lib/features/settings/types";
 
   type SettingsTabDef = {
@@ -64,11 +65,11 @@
   let showLastLoginKey = $derived(JSON.stringify(settings.accountDisplay.showLastLoginPerPlatform));
   let pinCodeInput = $state("");
   let ActivePlatformComponent = $state<any>(null);
-  let uiScalePercentInput = $state("");
-  let backgroundOpacityInput = $state("");
-  let avatarCacheDaysInput = $state("");
-  let banCheckDaysInput = $state("");
-  let inactivityBlurSecondsInput = $state("");
+  const uiScale = createNumericInput(() => settings.uiScalePercent, (v) => { settings.uiScalePercent = v; }, 75, 150);
+  const bgOpacity = createNumericInput(() => settings.backgroundOpacity, (v) => { settings.backgroundOpacity = v; }, 0, 100);
+  const avatarCacheDays = createNumericInput(() => settings.dataRefresh.avatarCacheDays, (v) => { settings.dataRefresh.avatarCacheDays = v; }, 0, 90);
+  const banCheckDays = createNumericInput(() => settings.dataRefresh.banCheckDays, (v) => { settings.dataRefresh.banCheckDays = v; }, 0, 90);
+  const inactivityBlur = createNumericInput(() => settings.inactivityBlurSeconds, (v) => { settings.inactivityBlurSeconds = v; }, 0, 3600);
   let avatarRefreshLoading = $state(false);
   let banRefreshLoading = $state(false);
   let hydrated = $state(false);
@@ -116,11 +117,6 @@
 
   function t(key: MessageKey, params?: TranslationParams): string {
     return translate(settings.language ?? DEFAULT_LOCALE, key, params);
-  }
-
-  function clampInt(value: number, min: number, max: number, fallback: number): number {
-    if (!Number.isFinite(value)) return fallback;
-    return Math.min(max, Math.max(min, Math.round(value)));
   }
 
   function buildPlatformSnapshot(): string {
@@ -172,46 +168,11 @@
   }
 
   function refreshNumericInputsFromSettings() {
-    uiScalePercentInput = String(settings.uiScalePercent);
-    backgroundOpacityInput = String(settings.backgroundOpacity);
-    avatarCacheDaysInput = String(settings.dataRefresh.avatarCacheDays);
-    banCheckDaysInput = String(settings.dataRefresh.banCheckDays);
-    inactivityBlurSecondsInput = String(settings.inactivityBlurSeconds);
-  }
-
-  function commitUiScalePercent() {
-    settings.uiScalePercent = clampInt(Number(uiScalePercentInput), 75, 150, settings.uiScalePercent);
-    uiScalePercentInput = String(settings.uiScalePercent);
-  }
-
-  function commitBackgroundOpacity() {
-    settings.backgroundOpacity = clampInt(Number(backgroundOpacityInput), 0, 100, settings.backgroundOpacity);
-    backgroundOpacityInput = String(settings.backgroundOpacity);
-  }
-
-  function commitAvatarCacheDays() {
-    settings.dataRefresh.avatarCacheDays = clampInt(
-      Number(avatarCacheDaysInput),
-      0,
-      90,
-      settings.dataRefresh.avatarCacheDays,
-    );
-    avatarCacheDaysInput = String(settings.dataRefresh.avatarCacheDays);
-  }
-
-  function commitBanCheckDays() {
-    settings.dataRefresh.banCheckDays = clampInt(
-      Number(banCheckDaysInput),
-      0,
-      90,
-      settings.dataRefresh.banCheckDays,
-    );
-    banCheckDaysInput = String(settings.dataRefresh.banCheckDays);
-  }
-
-  function commitInactivityBlurSeconds() {
-    settings.inactivityBlurSeconds = clampInt(Number(inactivityBlurSecondsInput), 0, 3600, settings.inactivityBlurSeconds);
-    inactivityBlurSecondsInput = String(settings.inactivityBlurSeconds);
+    uiScale.refresh();
+    bgOpacity.refresh();
+    avatarCacheDays.refresh();
+    banCheckDays.refresh();
+    inactivityBlur.refresh();
   }
 
   async function persistNow() {
@@ -588,10 +549,10 @@
               min="75"
               max="150"
               step="5"
-              bind:value={uiScalePercentInput}
+              value={uiScale.input}
               oninput={(e) => {
-                uiScalePercentInput = (e.currentTarget as HTMLInputElement).value;
-                commitUiScalePercent();
+                uiScale.input = (e.currentTarget as HTMLInputElement).value;
+                uiScale.commit();
               }}
               class="slider-input"
             />
@@ -660,10 +621,10 @@
               min="0"
               max="100"
               step="5"
-              bind:value={backgroundOpacityInput}
+              value={bgOpacity.input}
               oninput={(e) => {
-                backgroundOpacityInput = (e.currentTarget as HTMLInputElement).value;
-                commitBackgroundOpacity();
+                bgOpacity.input = (e.currentTarget as HTMLInputElement).value;
+                bgOpacity.commit();
               }}
               class="slider-input"
             />
@@ -762,12 +723,12 @@
               min="0"
               max="3600"
               step="5"
-              value={inactivityBlurSecondsInput}
-              oninput={(e) => inactivityBlurSecondsInput = (e.currentTarget as HTMLInputElement).value}
-              onblur={commitInactivityBlurSeconds}
+              value={inactivityBlur.input}
+              oninput={(e) => inactivityBlur.input = (e.currentTarget as HTMLInputElement).value}
+              onblur={inactivityBlur.commit}
               onkeydown={(e) => {
                 if (e.key === "Enter") {
-                  commitInactivityBlurSeconds();
+                  inactivityBlur.commit();
                   (e.currentTarget as HTMLInputElement).blur();
                 }
               }}
@@ -824,8 +785,8 @@
             accent={platformDef.accent}
             {t}
             bind:apiKey
-            {avatarCacheDaysInput}
-            {banCheckDaysInput}
+            avatarCacheDaysInput={avatarCacheDays.input}
+            banCheckDaysInput={banCheckDays.input}
             {avatarRefreshLoading}
             {banRefreshLoading}
             onChoosePath={() => choosePlatformPath(platformId)}
@@ -834,10 +795,10 @@
               apiKey = value;
               apiKeyTouched = true;
             }}
-            onAvatarCacheDaysInput={(value: string) => avatarCacheDaysInput = value}
-            onBanCheckDaysInput={(value: string) => banCheckDaysInput = value}
-            onCommitAvatarCacheDays={commitAvatarCacheDays}
-            onCommitBanCheckDays={commitBanCheckDays}
+            onAvatarCacheDaysInput={(value: string) => { avatarCacheDays.input = value; }}
+            onBanCheckDaysInput={(value: string) => { banCheckDays.input = value; }}
+            onCommitAvatarCacheDays={avatarCacheDays.commit}
+            onCommitBanCheckDays={banCheckDays.commit}
             onRefreshAvatarsNow={handleRefreshAvatarsNow}
             onRefreshBansNow={handleRefreshBansNow}
             pathLabelKey={platformDef.pathLabelKey}

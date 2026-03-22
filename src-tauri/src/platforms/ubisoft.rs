@@ -861,16 +861,97 @@ impl PlatformService for UbisoftService {
 mod tests {
     use super::*;
 
+    // -----------------------------------------------------------------------
+    // normalize_uuid
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn normalize_uuid_trims_whitespace() {
+        assert_eq!(
+            normalize_uuid("  a9da419c-1234-5678-9abc-def012345678  "),
+            "a9da419c-1234-5678-9abc-def012345678"
+        );
+    }
+
+    #[test]
+    fn normalize_uuid_lowercases() {
+        assert_eq!(
+            normalize_uuid("A9DA419C-1234-5678-9ABC-DEF012345678"),
+            "a9da419c-1234-5678-9abc-def012345678"
+        );
+    }
+
+    #[test]
+    fn normalize_uuid_trims_and_lowercases_combined() {
+        assert_eq!(
+            normalize_uuid("\t A9DA419C-ABCD-EF01-2345-678901234567 \n"),
+            "a9da419c-abcd-ef01-2345-678901234567"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // is_valid_uuid
+    // -----------------------------------------------------------------------
+
     #[test]
     fn valid_uuid_format() {
         assert!(is_valid_uuid("a9da419c-1234-5678-9abc-def012345678"));
-        assert!(!is_valid_uuid("not-a-uuid"));
+    }
+
+    #[test]
+    fn valid_uuid_all_zeros() {
+        assert!(is_valid_uuid("00000000-0000-0000-0000-000000000000"));
+    }
+
+    #[test]
+    fn valid_uuid_all_f() {
+        assert!(is_valid_uuid("ffffffff-ffff-ffff-ffff-ffffffffffff"));
+    }
+
+    #[test]
+    fn valid_uuid_uppercase_hex() {
+        assert!(is_valid_uuid("ABCDEF01-2345-6789-ABCD-EF0123456789"));
+    }
+
+    #[test]
+    fn rejects_empty_string() {
         assert!(!is_valid_uuid(""));
+    }
+
+    #[test]
+    fn rejects_short_string() {
+        assert!(!is_valid_uuid("not-a-uuid"));
+    }
+
+    #[test]
+    fn rejects_missing_dashes() {
         assert!(!is_valid_uuid("a9da419c12345678-9abc-def012345678"));
     }
 
     #[test]
-    fn extracts_uuid_from_log_line() {
+    fn rejects_wrong_length() {
+        assert!(!is_valid_uuid("a9da419c-1234-5678-9abc-def01234567")); // 35 chars
+        assert!(!is_valid_uuid("a9da419c-1234-5678-9abc-def0123456789")); // 37 chars
+    }
+
+    #[test]
+    fn rejects_non_hex_characters() {
+        assert!(!is_valid_uuid("g9da419c-1234-5678-9abc-def012345678"));
+        assert!(!is_valid_uuid("a9da419c-1234-5678-9abc-xyz012345678"));
+    }
+
+    #[test]
+    fn rejects_dashes_at_wrong_positions() {
+        // Dash at position 7 instead of 8
+        assert!(!is_valid_uuid("a9da41-c-1234-5678-9abc-def012345678"));
+    }
+
+    // -----------------------------------------------------------------------
+    // extract_uuid_from_line
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn extracts_uuid_from_user_pattern() {
         let line = "[2024-01-15 12:00:00] AccountStartupUser.cpp - User: a9da419c-1234-5678-9abc-def012345678 logged in";
         assert_eq!(
             extract_uuid_from_line(line),
@@ -879,7 +960,38 @@ mod tests {
     }
 
     #[test]
+    fn extracts_uuid_from_user_pattern_at_end_of_line() {
+        let line = "User: deadbeef-0000-1111-2222-333344445555";
+        assert_eq!(
+            extract_uuid_from_line(line),
+            Some("deadbeef-0000-1111-2222-333344445555".to_string())
+        );
+    }
+
+    #[test]
+    fn extracts_uuid_via_fallback_scan_with_user_context() {
+        // UUID not preceded by "User: " but "User" appears within 10 chars before it
+        let line = "some prefix User=a1b2c3d4-e5f6-7890-abcd-ef1234567890 done";
+        assert_eq!(
+            extract_uuid_from_line(line),
+            Some("a1b2c3d4-e5f6-7890-abcd-ef1234567890".to_string())
+        );
+    }
+
+    #[test]
     fn no_uuid_in_unrelated_line() {
         assert_eq!(extract_uuid_from_line("some random log line"), None);
+    }
+
+    #[test]
+    fn no_uuid_when_line_too_short() {
+        assert_eq!(extract_uuid_from_line("short"), None);
+    }
+
+    #[test]
+    fn no_uuid_when_valid_uuid_present_but_no_user_context() {
+        // The fallback scan requires "User" to appear within 10 chars before the UUID
+        let line = "xxxxxxxxxxxxxxxxxxxxxxxxxxx a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+        assert_eq!(extract_uuid_from_line(line), None);
     }
 }

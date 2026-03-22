@@ -1,42 +1,28 @@
 import type { ContextMenuAction } from "$lib/shared/contextMenu/types";
 import type { PlatformAccount, PlatformContextMenuCallbacks } from "$lib/shared/platform";
-import { confirmSafeContextAction } from "$lib/shared/contextMenu/actions";
+import { buildPlatformContextMenu } from "$lib/shared/contextMenu/platformMenuBuilder";
 import { forgetAccount } from "./ubisoftApi";
 
 export function getUbisoftContextMenuItems(
   account: PlatformAccount,
   callbacks: PlatformContextMenuCallbacks,
 ): ContextMenuAction[] {
-  const items: ContextMenuAction[] = [
-    {
-      id: `ubisoft.copy.uuid.${account.id}`,
-      group: "platform.copy",
-      label: callbacks.t("ubisoft.copyLabelUuid"),
-      action: () => callbacks.copyToClipboard(account.id, callbacks.t("ubisoft.copyLabelUuid")),
+  return buildPlatformContextMenu("ubisoft", account, callbacks, {
+    copyItems: [
+      {
+        field: "uuid",
+        value: account.id,
+        labelKey: "ubisoft.copyLabelUuid",
+        clipboardLabelKey: "ubisoft.copyLabelUuid",
+      },
+    ],
+    forget: {
+      titleKey: "ubisoft.forgetConfirmTitle",
+      messageKey: "ubisoft.forgetConfirmMessage",
+      confirmLabelKey: "ubisoft.forget",
+      toastKey: "ubisoft.forgotAccount",
+      action: () => forgetAccount(account.id),
     },
-  ];
-
-  items.push({
-    id: `ubisoft.forget.${account.id}`,
-    group: "platform.danger",
-    label: callbacks.t("ubisoft.forget"),
-    action: () => {
-      const display = (account.displayName || account.id).trim() || account.id;
-      confirmSafeContextAction(
-        callbacks,
-        {
-          title: callbacks.t("ubisoft.forgetConfirmTitle", { display }),
-          message: callbacks.t("ubisoft.forgetConfirmMessage"),
-          confirmLabel: callbacks.t("ubisoft.forget"),
-        },
-        async () => {
-          await forgetAccount(account.id);
-          callbacks.showToast(callbacks.t("ubisoft.forgotAccount", { display }));
-          callbacks.removeAccount(account.id);
-        },
-      );
-    },
+    displayValue: (account.displayName || account.id).trim() || account.id,
   });
-
-  return items;
 }
