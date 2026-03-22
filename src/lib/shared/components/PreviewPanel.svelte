@@ -263,10 +263,6 @@
     animation: spin 0.75s linear infinite;
   }
 
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-
   .ban-badges {
     display: flex;
     gap: 4px;

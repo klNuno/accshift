@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { createPlatformApi } from "$lib/platforms/platformApi";
 import type { UbisoftAccount, UbisoftStartupSnapshot } from "./types";
 
@@ -12,10 +11,7 @@ export const beginAccountSetup = api.beginSetup;
 export const getAccountSetupStatus = api.getSetupStatus;
 export const cancelAccountSetup = api.cancelSetup;
 export const forgetAccount = api.forgetAccount;
-
-export async function setAccountLabel(uuid: string, label: string): Promise<void> {
-  await invoke("ubisoft_set_account_label", { uuid, label });
-}
+export const setAccountLabel = (uuid: string, label: string) => api.setAccountLabel(uuid, label);
 
 export const getUbisoftPath = api.getPath;
 export const setUbisoftPath = api.setPath;

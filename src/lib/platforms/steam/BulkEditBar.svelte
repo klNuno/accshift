@@ -329,12 +329,7 @@
     justify-content: center;
     background: rgba(0, 0, 0, 0.5);
     backdrop-filter: blur(4px);
-    animation: fadeIn 100ms ease-out;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    animation: overlay-fade-in 100ms ease-out;
   }
 
   .dialog {
@@ -347,12 +342,7 @@
     display: flex;
     flex-direction: column;
     gap: 14px;
-    animation: slideIn 120ms ease-out;
-  }
-
-  @keyframes slideIn {
-    from { opacity: 0; transform: scale(0.96) translateY(8px); }
-    to { opacity: 1; transform: scale(1) translateY(0); }
+    animation: dialog-slide-in 120ms ease-out;
   }
 
   .dialog-header {

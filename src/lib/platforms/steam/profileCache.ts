@@ -6,6 +6,7 @@ import {
   getClientStoreValue,
   setClientStoreValue,
 } from "$lib/storage/clientStorage";
+import { isSafeHttpUrl } from "$lib/shared/url";
 const SESSION_START_MS = Date.now();
 const PROFILE_FETCH_ATTEMPTS = 4;
 const PROFILE_FETCH_RETRY_DELAY_MS = 750;
@@ -23,19 +24,10 @@ interface ProfileCache {
 let cachedProfiles: ProfileCache | null = null;
 const inFlightProfiles = new Map<string, Promise<ProfileInfo | null>>();
 
-function isSafeAvatarUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "https:" || parsed.protocol === "http:";
-  } catch {
-    return false;
-  }
-}
-
 function sanitizeCachedProfile(value: unknown): CachedProfile | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const raw = value as Partial<CachedProfile>;
-  if (typeof raw.url !== "string" || raw.url.trim().length === 0 || !isSafeAvatarUrl(raw.url))
+  if (typeof raw.url !== "string" || raw.url.trim().length === 0 || !isSafeHttpUrl(raw.url))
     return null;
   const timestamp = Number(raw.timestamp);
   if (!Number.isFinite(timestamp) || timestamp < 0) return null;
@@ -86,7 +78,7 @@ function hasSafeAvatarUrl(
   profile: ProfileInfo | null,
 ): profile is ProfileInfo & { avatar_url: string } {
   const avatarUrl = profile?.avatar_url?.trim() ?? "";
-  return avatarUrl.length > 0 && isSafeAvatarUrl(avatarUrl);
+  return avatarUrl.length > 0 && isSafeHttpUrl(avatarUrl);
 }
 
 function cacheProfile(profile: ProfileInfo, steamId: string) {
@@ -147,7 +139,7 @@ export function getCachedProfile(steamId: string): {
 }
 
 export function setCachedProfile(steamId: string, data: { url: string; displayName?: string }) {
-  if (!isSafeAvatarUrl(data.url)) return;
+  if (!isSafeHttpUrl(data.url)) return;
   const cache = getCache();
   cache[steamId] = {
     url: data.url,

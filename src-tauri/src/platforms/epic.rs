@@ -1,6 +1,6 @@
 use crate::config::{self, EpicAccountConfig};
 use crate::platforms::{
-    log_platform_error, log_platform_info, PlatformCapabilities, PlatformService, SetupStatus,
+    log_platform_error, log_platform_info, PlatformService, SetupStatus,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -10,7 +10,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 #[cfg(target_os = "windows")]
 use winreg::enums::*;
@@ -60,24 +59,9 @@ struct EpicSetupJob {
     last_touched_at: u64,
 }
 
-fn now_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
-
 fn setup_jobs() -> &'static Mutex<HashMap<String, EpicSetupJob>> {
     static JOBS: OnceLock<Mutex<HashMap<String, EpicSetupJob>>> = OnceLock::new();
     JOBS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn setup_expired(last_touched_at: u64) -> bool {
-    now_unix_ms().saturating_sub(last_touched_at) > EPIC_SETUP_TTL_MS
-}
-
-fn purge_expired_setup_jobs(jobs: &mut HashMap<String, EpicSetupJob>) {
-    jobs.retain(|_, job| !setup_expired(job.last_touched_at));
 }
 
 // ---------------------------------------------------------------------------
@@ -523,34 +507,33 @@ fn read_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<EpicAccount>, Stri
 fn remember_account_usage(app_handle: &tauri::AppHandle, account_id: &str) -> Result<(), String> {
     let account_id = validate_account_id(account_id)?;
     let key = account_id.to_lowercase();
-    let mut cfg = config::load_config(app_handle);
-    let now = now_unix_ms();
+    let now = super::now_unix_ms();
 
-    if let Some(existing) = cfg
-        .epic
-        .accounts
-        .iter_mut()
-        .find(|a| a.account_id.trim().to_lowercase() == key)
-    {
-        existing.last_used_at = Some(now);
-    } else {
-        cfg.epic.accounts.push(EpicAccountConfig {
-            account_id,
-            label: String::new(),
-            last_used_at: Some(now),
-        });
-    }
-
-    config::save_config(app_handle, &cfg)
+    config::update_config(app_handle, |cfg| {
+        if let Some(existing) = cfg
+            .epic
+            .accounts
+            .iter_mut()
+            .find(|a| a.account_id.trim().to_lowercase() == key)
+        {
+            existing.last_used_at = Some(now);
+        } else {
+            cfg.epic.accounts.push(EpicAccountConfig {
+                account_id: account_id.clone(),
+                label: String::new(),
+                last_used_at: Some(now),
+            });
+        }
+    })
 }
 
 fn forget_account_metadata(app_handle: &tauri::AppHandle, account_id: &str) -> Result<(), String> {
     let key = account_id.trim().to_lowercase();
-    let mut cfg = config::load_config(app_handle);
-    cfg.epic
-        .accounts
-        .retain(|a| a.account_id.trim().to_lowercase() != key);
-    config::save_config(app_handle, &cfg)?;
+    config::update_config(app_handle, |cfg| {
+        cfg.epic
+            .accounts
+            .retain(|a| a.account_id.trim().to_lowercase() != key);
+    })?;
 
     // Remove cached auth snapshot
     if let Ok(cache_dir) = auth_cache_dir(app_handle, account_id) {
@@ -660,12 +643,12 @@ pub fn begin_account_setup(app_handle: &tauri::AppHandle) -> Result<SetupStatus,
     }
 
     let setup_id = format!("epic-setup-{}", Uuid::new_v4());
-    let created_at = now_unix_ms();
+    let created_at = super::now_unix_ms();
 
     let mut jobs = setup_jobs()
         .lock()
         .map_err(|_| "Epic setup storage is unavailable".to_string())?;
-    purge_expired_setup_jobs(&mut jobs);
+    jobs.retain(|_, j| !super::setup_expired(j.last_touched_at, EPIC_SETUP_TTL_MS));
     jobs.insert(
         setup_id.clone(),
         EpicSetupJob {
@@ -691,13 +674,13 @@ pub fn begin_account_setup(app_handle: &tauri::AppHandle) -> Result<SetupStatus,
         );
     })?;
 
-    Ok(SetupStatus {
-        setup_id,
-        state: "waiting_for_client".to_string(),
-        account_id: String::new(),
-        account_display_name: String::new(),
-        error_message: String::new(),
-    })
+    Ok(super::make_setup_status(
+        &setup_id,
+        "waiting_for_client",
+        "",
+        "",
+        "",
+    ))
 }
 
 pub fn get_account_setup_status(
@@ -708,11 +691,11 @@ pub fn get_account_setup_status(
         let mut jobs = setup_jobs()
             .lock()
             .map_err(|_| "Epic setup storage is unavailable".to_string())?;
-        purge_expired_setup_jobs(&mut jobs);
+        jobs.retain(|_, j| !super::setup_expired(j.last_touched_at, EPIC_SETUP_TTL_MS));
         let Some(job) = jobs.get_mut(setup_id) else {
             return Err("Epic setup session not found".into());
         };
-        job.last_touched_at = now_unix_ms();
+        job.last_touched_at = super::now_unix_ms();
         job.clone()
     };
 
@@ -728,13 +711,13 @@ pub fn get_account_setup_status(
                 jobs.remove(setup_id);
             }
 
-            return Ok(SetupStatus {
-                setup_id: setup_id.to_string(),
-                state: "ready".to_string(),
-                account_id: key.clone(),
-                account_display_name: key,
-                error_message: String::new(),
-            });
+            return Ok(super::make_setup_status(
+                setup_id,
+                "ready",
+                key.clone(),
+                key,
+                "",
+            ));
         }
     }
 
@@ -749,40 +732,40 @@ pub fn get_account_setup_status(
                 jobs.remove(setup_id);
             }
 
-            return Ok(SetupStatus {
-                setup_id: setup_id.to_string(),
-                state: "ready".to_string(),
-                account_id: id.clone(),
-                account_display_name: id.clone(),
-                error_message: String::new(),
-            });
+            return Ok(super::make_setup_status(
+                setup_id,
+                "ready",
+                id.clone(),
+                id.clone(),
+                "",
+            ));
         }
     }
 
     if is_epic_running() {
-        return Ok(SetupStatus {
-            setup_id: setup_id.to_string(),
-            state: "waiting_for_login".to_string(),
-            account_id: String::new(),
-            account_display_name: String::new(),
-            error_message: String::new(),
-        });
+        return Ok(super::make_setup_status(
+            setup_id,
+            "waiting_for_login",
+            "",
+            "",
+            "",
+        ));
     }
 
-    Ok(SetupStatus {
-        setup_id: setup_id.to_string(),
-        state: "waiting_for_client".to_string(),
-        account_id: String::new(),
-        account_display_name: String::new(),
-        error_message: String::new(),
-    })
+    Ok(super::make_setup_status(
+        setup_id,
+        "waiting_for_client",
+        "",
+        "",
+        "",
+    ))
 }
 
 pub fn cancel_account_setup(setup_id: &str) -> Result<(), String> {
     let mut jobs = setup_jobs()
         .lock()
         .map_err(|_| "Epic setup storage is unavailable".to_string())?;
-    purge_expired_setup_jobs(&mut jobs);
+    jobs.retain(|_, j| !super::setup_expired(j.last_touched_at, EPIC_SETUP_TTL_MS));
     jobs.remove(setup_id);
     Ok(())
 }
@@ -799,25 +782,24 @@ pub fn set_account_label(
 ) -> Result<(), String> {
     let account_id = validate_account_id(account_id)?;
     let key = account_id.to_lowercase();
-    let mut cfg = config::load_config(app_handle);
     let label = label.trim().to_string();
 
-    if let Some(existing) = cfg
-        .epic
-        .accounts
-        .iter_mut()
-        .find(|a| a.account_id.trim().to_lowercase() == key)
-    {
-        existing.label = label;
-    } else {
-        cfg.epic.accounts.push(EpicAccountConfig {
-            account_id,
-            label,
-            last_used_at: None,
-        });
-    }
-
-    config::save_config(app_handle, &cfg)
+    config::update_config(app_handle, |cfg| {
+        if let Some(existing) = cfg
+            .epic
+            .accounts
+            .iter_mut()
+            .find(|a| a.account_id.trim().to_lowercase() == key)
+        {
+            existing.label = label.clone();
+        } else {
+            cfg.epic.accounts.push(EpicAccountConfig {
+                account_id: account_id.clone(),
+                label,
+                last_used_at: None,
+            });
+        }
+    })
 }
 
 pub fn get_epic_path(app_handle: &tauri::AppHandle) -> Result<String, String> {
@@ -829,9 +811,10 @@ pub fn get_epic_path(app_handle: &tauri::AppHandle) -> Result<String, String> {
 }
 
 pub fn set_epic_path(app_handle: &tauri::AppHandle, path: &str) -> Result<(), String> {
-    let mut cfg = config::load_config(app_handle);
-    cfg.epic.path_override = path.trim().to_string();
-    config::save_config(app_handle, &cfg)
+    let path = path.trim().to_string();
+    config::update_config(app_handle, |cfg| {
+        cfg.epic.path_override = path;
+    })
 }
 
 pub fn select_epic_path() -> Result<String, String> {
@@ -851,20 +834,6 @@ pub struct EpicService;
 pub static EPIC_SERVICE: EpicService = EpicService;
 
 impl PlatformService for EpicService {
-    fn id(&self) -> &'static str {
-        "epic"
-    }
-
-    fn capabilities(&self) -> PlatformCapabilities {
-        PlatformCapabilities {
-            has_profiles: false,
-            has_warnings: false,
-            has_api_key: false,
-            has_game_copy: false,
-            has_usernames: false,
-        }
-    }
-
     fn get_accounts(&self, app: &tauri::AppHandle) -> Result<Value, String> {
         let accounts = get_accounts(app)?;
         serde_json::to_value(accounts).map_err(|e| e.to_string())
@@ -918,5 +887,14 @@ impl PlatformService for EpicService {
 
     fn select_path(&self) -> Result<String, String> {
         select_epic_path()
+    }
+
+    fn set_account_label(
+        &self,
+        app: &tauri::AppHandle,
+        account_id: &str,
+        label: &str,
+    ) -> Result<(), String> {
+        set_account_label(app, account_id, label)
     }
 }

@@ -143,8 +143,6 @@ pub struct AppConfig {
     pub window_width: Option<f64>,
     #[serde(default)]
     pub window_height: Option<f64>,
-    #[serde(flatten)]
-    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -347,7 +345,6 @@ fn normalize_config(raw: RawAppConfig) -> AppConfig {
         epic,
         window_width: raw.window_width,
         window_height: raw.window_height,
-        extra: serde_json::Map::new(),
     }
 }
 
@@ -408,6 +405,17 @@ pub fn save_config(app_handle: &tauri::AppHandle, config: &AppConfig) -> Result<
     );
 
     Ok(())
+}
+
+/// Load config, apply a mutation, and save in one step.
+/// Avoids the scattered load→mutate→save pattern across platform files.
+pub fn update_config(
+    app_handle: &tauri::AppHandle,
+    mutate: impl FnOnce(&mut AppConfig),
+) -> Result<(), String> {
+    let mut cfg = load_config(app_handle);
+    mutate(&mut cfg);
+    save_config(app_handle, &cfg)
 }
 
 /// Check for a legacy config.json, migrate it to portable+local, and delete it.

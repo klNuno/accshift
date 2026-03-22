@@ -1,7 +1,7 @@
 use crate::config::{self, RiotProfileConfig};
 use crate::fs_utils;
 use crate::platforms::{
-    log_platform_error, log_platform_info, PlatformCapabilities, PlatformService, SetupStatus,
+    log_platform_error, log_platform_info, PlatformService, SetupStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -10,7 +10,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 use crate::os;
@@ -164,13 +163,6 @@ fn hidden_command(program: impl AsRef<OsStr>) -> Command {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
     cmd
-}
-
-fn now_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 fn env_path(name: &str) -> Result<PathBuf, String> {
@@ -764,7 +756,7 @@ fn riot_setup_expired(last_touched_at: Option<u64>) -> bool {
     let Some(last_touched_at) = last_touched_at else {
         return true;
     };
-    now_unix_ms().saturating_sub(last_touched_at) > RIOT_SETUP_TTL_MS
+    super::setup_expired(last_touched_at, RIOT_SETUP_TTL_MS)
 }
 
 fn cleanup_expired_pending_profiles(
@@ -930,8 +922,8 @@ fn capture_profile_into_snapshot(
         cfg,
         profile_id,
         Some("ready"),
-        Some(Some(now_unix_ms())),
-        Some(Some(now_unix_ms())),
+        Some(Some(super::now_unix_ms())),
+        Some(Some(super::now_unix_ms())),
         identity,
     )?;
     config::save_config(app_handle, cfg)
@@ -1096,7 +1088,7 @@ pub fn begin_profile_setup(app_handle: tauri::AppHandle) -> Result<RiotProfileSe
         snapshot_state: "setup_pending".into(),
         notes: String::new(),
         last_captured_at: None,
-        last_used_at: Some(now_unix_ms()),
+        last_used_at: Some(super::now_unix_ms()),
     });
     cfg.riot.current_profile_id = profile_id.clone();
     config::save_config(&app_handle, &cfg)?;
@@ -1125,7 +1117,7 @@ pub fn get_profile_setup_status(
         &profile_id,
         None,
         None,
-        Some(Some(now_unix_ms())),
+        Some(Some(super::now_unix_ms())),
         None,
     );
     let _ = config::save_config(&app_handle, &cfg);
@@ -1237,7 +1229,7 @@ pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
                 &mut cfg,
                 &current_id,
                 Some("ready"),
-                Some(Some(now_unix_ms())),
+                Some(Some(super::now_unix_ms())),
                 None,
                 current_live_identity.as_ref(),
             )?;
@@ -1257,7 +1249,7 @@ pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
         &target_id,
         Some(next_state),
         None,
-        Some(Some(now_unix_ms())),
+        Some(Some(super::now_unix_ms())),
         None,
     )?;
     config::save_config(&app_handle, &cfg)?;
@@ -1286,19 +1278,19 @@ pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
 
 pub fn forget_profile(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
     let profile_id = normalize_profile_id(&profile_id)?;
-    let mut cfg = config::load_config(&app_handle);
-    cfg.riot
-        .profiles
-        .retain(|profile| profile.id != profile_id.as_str());
-    if cfg.riot.current_profile_id == profile_id {
-        cfg.riot.current_profile_id = cfg
-            .riot
+    config::update_config(&app_handle, |cfg| {
+        cfg.riot
             .profiles
-            .first()
-            .map(|profile| profile.id.clone())
-            .unwrap_or_default();
-    }
-    config::save_config(&app_handle, &cfg)?;
+            .retain(|profile| profile.id != profile_id.as_str());
+        if cfg.riot.current_profile_id == profile_id {
+            cfg.riot.current_profile_id = cfg
+                .riot
+                .profiles
+                .first()
+                .map(|profile| profile.id.clone())
+                .unwrap_or_default();
+        }
+    })?;
 
     let snapshot_dir = profile_snapshot_path(&app_handle, &profile_id)?;
     if snapshot_dir.exists() {
@@ -1322,9 +1314,9 @@ pub fn get_riot_path(app_handle: tauri::AppHandle) -> Result<String, String> {
 }
 
 pub fn set_riot_path(app_handle: tauri::AppHandle, path: String) -> Result<(), String> {
-    let mut cfg = config::load_config(&app_handle);
-    cfg.riot.path_override = path.trim().to_string();
-    config::save_config(&app_handle, &cfg)
+    config::update_config(&app_handle, |cfg| {
+        cfg.riot.path_override = path.trim().to_string();
+    })
 }
 
 pub fn select_riot_path() -> Result<String, String> {
@@ -1340,20 +1332,6 @@ pub struct RiotService;
 pub static RIOT_SERVICE: RiotService = RiotService;
 
 impl PlatformService for RiotService {
-    fn id(&self) -> &'static str {
-        "riot"
-    }
-
-    fn capabilities(&self) -> PlatformCapabilities {
-        PlatformCapabilities {
-            has_profiles: true,
-            has_warnings: false,
-            has_api_key: false,
-            has_game_copy: false,
-            has_usernames: false,
-        }
-    }
-
     fn get_accounts(&self, app: &tauri::AppHandle) -> Result<Value, String> {
         let profiles = get_profiles(app.clone())?;
         serde_json::to_value(profiles).map_err(|e| e.to_string())
