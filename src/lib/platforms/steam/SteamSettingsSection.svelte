@@ -55,6 +55,14 @@
     onToggle={() => settings.platformSettings.steam.runAsAdmin = !settings.platformSettings.steam.runAsAdmin}
   />
 
+  <ToggleSetting
+    label={t("settings.shutdownMode")}
+    enabled={settings.platformSettings.steam.shutdownMode === "force"}
+    onLabel={t("settings.shutdownModeForce")}
+    offLabel={t("settings.shutdownModeGraceful")}
+    onToggle={() => settings.platformSettings.steam.shutdownMode = settings.platformSettings.steam.shutdownMode === "force" ? "graceful" : "force"}
+  />
+
   <label class="field">
     <span class="field-label">{t("settings.launchOptions")}</span>
     <input

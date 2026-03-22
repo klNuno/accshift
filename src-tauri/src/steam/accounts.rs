@@ -78,19 +78,22 @@ fn try_graceful_shutdown(steam_path: &Path) -> bool {
         && os::wait_for_process_exit(os::steam_web_helper_process_name(), 2000)
 }
 
-fn kill_steam(steam_path: &Path) -> Result<(), AppError> {
+fn kill_steam(steam_path: &Path, force_kill: bool) -> Result<(), AppError> {
     let steam_running = is_steam_running();
     let web_helper_running = os::is_process_running(os::steam_web_helper_process_name());
     if !steam_running && !web_helper_running {
         return Ok(());
     }
 
-    // Try graceful shutdown first — no settle delay needed
+    if force_kill {
+        return kill_steam_client_processes();
+    }
+
+    // Try graceful shutdown first, fallback to force kill
     if try_graceful_shutdown(steam_path) {
         return Ok(());
     }
 
-    // Fallback to force kill
     kill_steam_client_processes()
 }
 
@@ -98,6 +101,7 @@ fn kill_and_relaunch(
     steam_path: &Path,
     run_as_admin: bool,
     launch_options: &str,
+    force_kill: bool,
 ) -> Result<(), AppError> {
     let needs_kill =
         is_steam_running() || os::is_process_running(os::steam_web_helper_process_name());
@@ -106,12 +110,22 @@ fn kill_and_relaunch(
         return launch_steam(steam_path, run_as_admin, launch_options);
     }
 
-    // Try graceful shutdown first
+    if force_kill {
+        return match kill_steam_client_processes() {
+            Ok(()) => launch_steam(steam_path, run_as_admin, launch_options),
+            Err(AppError::SteamElevated) if run_as_admin => {
+                let args = parse_launch_options(launch_options);
+                os::kill_and_relaunch_steam_elevated(steam_path, &args)
+            }
+            Err(e) => Err(e),
+        };
+    }
+
+    // Try graceful shutdown first, fallback to force kill
     if try_graceful_shutdown(steam_path) {
         return launch_steam(steam_path, run_as_admin, launch_options);
     }
 
-    // Fallback to force kill
     match kill_steam_client_processes() {
         Ok(()) => launch_steam(steam_path, run_as_admin, launch_options),
         Err(AppError::SteamElevated) if run_as_admin => {
@@ -462,9 +476,10 @@ pub fn switch_account(
     username: &str,
     run_as_admin: bool,
     launch_options: &str,
+    force_kill: bool,
 ) -> Result<(), AppError> {
     with_auto_login_user(Some(username), || {
-        kill_and_relaunch(steam_path, run_as_admin, launch_options)
+        kill_and_relaunch(steam_path, run_as_admin, launch_options, force_kill)
     })
 }
 
@@ -472,14 +487,15 @@ pub fn add_account(
     steam_path: &Path,
     run_as_admin: bool,
     launch_options: &str,
+    force_kill: bool,
 ) -> Result<(), AppError> {
     with_auto_login_user(None, || {
-        kill_and_relaunch(steam_path, run_as_admin, launch_options)
+        kill_and_relaunch(steam_path, run_as_admin, launch_options, force_kill)
     })
 }
 
-pub fn forget_account(steam_path: &Path, steam_id: &str) -> Result<(), AppError> {
-    kill_steam(steam_path)?;
+pub fn forget_account(steam_path: &Path, steam_id: &str, force_kill: bool) -> Result<(), AppError> {
+    kill_steam(steam_path, force_kill)?;
 
     // Remove account entry from loginusers.vdf.
     let loginusers_path = steam_path.join("config").join("loginusers.vdf");
@@ -502,6 +518,7 @@ pub fn switch_account_mode(
     mode: &str,
     run_as_admin: bool,
     launch_options: &str,
+    force_kill: bool,
 ) -> Result<(), AppError> {
     with_auto_login_user(Some(username), || {
         if let Some(account_id) = steam_id_to_account_id(steam_id) {
@@ -512,7 +529,7 @@ pub fn switch_account_mode(
             set_persona_state(steam_path, account_id, state);
         }
 
-        kill_and_relaunch(steam_path, run_as_admin, launch_options)
+        kill_and_relaunch(steam_path, run_as_admin, launch_options, force_kill)
     })
 }
 

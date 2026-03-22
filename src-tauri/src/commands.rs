@@ -268,6 +268,7 @@ pub async fn steam_switch_account_mode(
     mode: String,
     run_as_admin: bool,
     launch_options: String,
+    shutdown_mode: String,
 ) -> Result<(), String> {
     crate::platforms::steam::switch_account_mode(
         app_handle,
@@ -276,6 +277,7 @@ pub async fn steam_switch_account_mode(
         mode,
         run_as_admin,
         launch_options,
+        shutdown_mode,
     )
     .await
 }

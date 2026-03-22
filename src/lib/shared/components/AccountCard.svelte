@@ -34,6 +34,7 @@
     note = "",
     entranceDelay = 0,
     singleClickSwitch = false,
+    isSwitching = false,
     interactionDisabled = false,
     locale = DEFAULT_LOCALE,
   }: {
@@ -59,6 +60,7 @@
     lastLoginAt?: number | null;
     note?: string;
     entranceDelay?: number;
+    isSwitching?: boolean;
     singleClickSwitch?: boolean;
     interactionDisabled?: boolean;
     locale?: Locale;
@@ -322,17 +324,22 @@
             alt={account.displayName}
             loading="lazy"
             draggable={false}
-            class:blurred={isRefreshingAvatar || showConfirm}
+            class:blurred={isRefreshingAvatar || showConfirm || isSwitching}
           />
-          {#if isRefreshingAvatar}
+          {#if isRefreshingAvatar || isSwitching}
             <div class="loader-anchor">
               <div class="loader"></div>
             </div>
           {/if}
         {:else}
-          <span class="initials" class:blurred-text={showConfirm}>
+          <span class="initials" class:blurred-text={showConfirm || isSwitching}>
             {getAvatarInitials(account.displayName || account.username)}
           </span>
+          {#if isSwitching}
+            <div class="loader-anchor">
+              <div class="loader"></div>
+            </div>
+          {/if}
         {/if}
 
         {#if showConfirm && !isDragged}
