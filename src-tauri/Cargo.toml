@@ -20,12 +20,24 @@ thiserror = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 
+[dependencies.mimalloc]
+version = "0.1"
+default-features = false
+
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
+windows-sys = { version = "0.52", features = [
+  "Win32_Foundation",
+  "Win32_Security_Cryptography",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Threading",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
 
 [profile.release]
 panic = "abort"
 codegen-units = 1
-lto = true
-opt-level = "s"
+lto = "fat"
+opt-level = 2
 strip = true

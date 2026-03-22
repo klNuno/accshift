@@ -11,6 +11,11 @@ export default defineConfig({
     "*": "vp check --fix",
   },
   plugins: [tailwindcss(), svelte()],
+  build: {
+    target: "esnext",
+    modulePreload: { polyfill: false },
+    reportCompressedSize: false,
+  },
   clearScreen: false,
   server: {
     port: 1420,

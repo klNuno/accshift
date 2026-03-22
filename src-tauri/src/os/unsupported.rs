@@ -81,3 +81,7 @@ pub fn select_file(_title: &str, _filter: &str) -> Result<String, AppError> {
 pub fn open_url(_url: &str) -> Result<(), AppError> {
     Err(unsupported("URL opening"))
 }
+
+pub fn wait_for_process_exit(_process_name: &str, _timeout_ms: u32) -> bool {
+    true
+}

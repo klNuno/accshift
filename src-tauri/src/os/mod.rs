@@ -85,3 +85,7 @@ pub fn select_file(title: &str, filter: &str) -> Result<String, AppError> {
 pub fn open_url(url: &str) -> Result<(), AppError> {
     imp::open_url(url)
 }
+
+pub fn wait_for_process_exit(process_name: &str, timeout_ms: u32) -> bool {
+    imp::wait_for_process_exit(process_name, timeout_ms)
+}

@@ -8,8 +8,7 @@ use crate::error::AppError;
 use crate::fs_utils;
 use crate::os;
 
-const MAX_KILL_WAIT_MS: u64 = 5000;
-const KILL_POLL_INTERVAL_MS: u64 = 100;
+const KILL_WAIT_MS: u32 = 5000;
 const POST_KILL_SETTLE_MS: u64 = 750;
 const NON_GAME_APP_IDS: &[&str] = &[
     "7",   // Steam client internals
@@ -48,17 +47,11 @@ fn is_steam_running() -> bool {
 }
 
 fn wait_for_process_exit(process_name: &str) -> Result<(), AppError> {
-    if !os::is_process_running(process_name) {
-        return Ok(());
+    if os::wait_for_process_exit(process_name, KILL_WAIT_MS) {
+        Ok(())
+    } else {
+        Err(AppError::KillSteamTimeout)
     }
-    let max_polls = MAX_KILL_WAIT_MS / KILL_POLL_INTERVAL_MS;
-    for _ in 0..max_polls {
-        std::thread::sleep(std::time::Duration::from_millis(KILL_POLL_INTERVAL_MS));
-        if !os::is_process_running(process_name) {
-            return Ok(());
-        }
-    }
-    Err(AppError::KillSteamTimeout)
 }
 
 fn kill_process_tree_if_running(process_name: &str) -> Result<(), AppError> {

@@ -37,7 +37,7 @@ export function createAccountLoader(
   translateMessage?: (key: MessageKey, params?: TranslationParams) => string,
 ) {
   // Centralized UI state for account loading, switching, avatars, and platform warnings.
-  let accounts = $state<PlatformAccount[]>([]);
+  let accounts = $state.raw<PlatformAccount[]>([]);
   let accountMap = $derived<Record<string, PlatformAccount>>(
     Object.fromEntries(accounts.map((a) => [a.id, a])),
   );
@@ -60,8 +60,8 @@ export function createAccountLoader(
   let loading = $state(true);
   let switching = $state(false);
   let error = $state<string | null>(null);
-  let avatarStates = $state<Record<string, AvatarState>>({});
-  let warningStates = $state<Record<string, AccountWarningPresentation>>({});
+  let avatarStates = $state.raw<Record<string, AvatarState>>({});
+  let warningStates = $state.raw<Record<string, AccountWarningPresentation>>({});
   let lastLoadErrorToastAt = 0;
   let lastNoAccountsToastAt = 0;
   let latestLoadId = 0;
