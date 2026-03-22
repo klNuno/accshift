@@ -109,23 +109,25 @@
       {#each enabledPlatforms as platform}
         {@const unavailable = unavailablePlatformIds.has(platform.id)}
         {@const tabIconPath = TAB_ICON_PATHS[platform.id]}
-        <button
-          class="tab"
-          class:active={!showSettings && activeTab === platform.id}
-          class:disabled={unavailable}
-          onclick={() => onTabChange(platform.id)}
-          title={unavailable ? `${platform.name} (${translate(locale, "settings.platformUnsupportedOs")})` : platform.name}
-          style={!showSettings && activeTab === platform.id ? `color: ${platform.accent};` : ""}
-          disabled={unavailable}
-        >
-          {#if tabIconPath}
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d={tabIconPath} />
-            </svg>
-          {:else}
-            <span class="tab-text">{platform.name.slice(0, 2)}</span>
-          {/if}
-        </button>
+        <div class="tab-wrap">
+          <button
+            class="tab"
+            class:active={!showSettings && activeTab === platform.id}
+            class:disabled={unavailable}
+            onclick={() => onTabChange(platform.id)}
+            style={!showSettings && activeTab === platform.id ? `color: ${platform.accent};` : ""}
+            disabled={unavailable}
+          >
+            {#if tabIconPath}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d={tabIconPath} />
+              </svg>
+            {:else}
+              <span class="tab-text">{platform.name.slice(0, 2)}</span>
+            {/if}
+          </button>
+          <span class="tab-tooltip">{unavailable ? `${platform.name} (${translate(locale, "settings.platformUnsupportedOs")})` : platform.name}</span>
+        </div>
       {/each}
     </div>
   {/if}
@@ -192,6 +194,35 @@
     display: flex;
     align-items: center;
     gap: 2px;
+  }
+
+  .tab-wrap {
+    position: relative;
+  }
+
+  .tab-tooltip {
+    position: absolute;
+    left: 50%;
+    top: 100%;
+    transform: translateX(-50%) translateY(4px);
+    padding: 4px 8px;
+    background: var(--bg-overlay);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--fg);
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 120ms ease-out;
+    z-index: 100;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+
+  .tab-wrap:hover .tab-tooltip {
+    opacity: 1;
+    transition-delay: 300ms;
   }
 
   .tab {

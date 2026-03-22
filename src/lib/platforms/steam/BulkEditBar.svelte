@@ -299,7 +299,7 @@
 
   .btn-primary {
     padding: 5px 12px;
-    border: none;
+    border: 1px solid transparent;
     border-radius: 6px;
     background: #2563eb;
     color: #fff;

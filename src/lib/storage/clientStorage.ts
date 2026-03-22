@@ -88,7 +88,11 @@ function emitStorageLog(message: string, details?: unknown) {
 function cloneValue<T>(value: T): T {
   if (value == null) return value;
   if (typeof structuredClone === "function") {
-    return structuredClone(value);
+    try {
+      return structuredClone(value);
+    } catch {
+      // Svelte 5 reactive proxies can't be structuredClone'd — fall through.
+    }
   }
   return JSON.parse(JSON.stringify(value)) as T;
 }

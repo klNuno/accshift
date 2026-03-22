@@ -22,9 +22,9 @@
 | Steam                | ✅ Done     | 🚧 Possible     | 🚧 Possible     |
 | Riot Games           | ✅ Done     | 🚧 Possible     | ⛔ Not feasible |
 | Battle.net           | ✅ Done     | 🚧 Possible     | ⛔ Not feasible |
-| Epic Games           | 🚧 Possible | 🚧 Possible     | 🚧 Possible     |
+| Epic Games           | ✅ Done     | 🚧 Possible     | 🚧 Possible     |
 | Ubisoft Connect      | ✅ Done     | 🚧 Possible     | 🚧 Possible     |
-| Roblox               | 🚧 Possible | 🚧 Possible     | ⛔ Not feasible |
+| Roblox               | ✅ Done     | 🚧 Possible     | ⛔ Not feasible |
 | EA app               | 🚧 Possible | 🚧 Possible     | ⛔ Not feasible |
 | Discord              | 🚧 Possible | 🚧 Possible     | 🚧 Possible     |
 | Rockstar Launcher    | 🚧 Possible | ⛔ Not feasible | 🚧 Possible     |

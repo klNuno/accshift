@@ -420,8 +420,7 @@
       opacity 140ms ease-out,
       transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
       box-shadow 180ms ease-out,
-      background 180ms ease-out,
-      outline-color 120ms ease-out;
+      background 180ms ease-out;
     box-shadow: none;
     overflow: hidden;
     pointer-events: none;
@@ -502,7 +501,7 @@
     background: var(--bg-card);
     border: none;
     cursor: pointer;
-    transition: background 180ms ease-out, transform 180ms ease-out, box-shadow 180ms ease-out, outline-color 120ms ease-out;
+    transition: background 180ms ease-out, transform 180ms ease-out, box-shadow 180ms ease-out;
     color: inherit;
     user-select: none;
   }

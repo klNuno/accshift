@@ -33,6 +33,7 @@
     onCancelInputDialog,
     confirmDialog,
     confirmDialogConfirmLabel,
+    confirmDialogConfirmColor,
     onConfirmDialog,
     onCancelConfirmDialog,
     bulkEditMode,
@@ -55,6 +56,7 @@
     onCancelInputDialog: () => void;
     confirmDialog: PlatformContextMenuConfirmConfig | null;
     confirmDialogConfirmLabel: string;
+    confirmDialogConfirmColor: string;
     onConfirmDialog: () => void;
     onCancelConfirmDialog: () => void;
     bulkEditMode: boolean;
@@ -98,6 +100,7 @@
     title={confirmDialog.title}
     message={confirmDialog.message}
     confirmLabel={confirmDialogConfirmLabel}
+    confirmColor={confirmDialogConfirmColor}
     {locale}
     onConfirm={onConfirmDialog}
     onCancel={onCancelConfirmDialog}
@@ -126,6 +129,8 @@
       <Toast
         message={toast.message}
         durationMs={toast.durationMs}
+        type={toast.type}
+        toastAction={toast.toastAction}
         onDone={() => onToastDone(toast.id)}
       />
     </div>

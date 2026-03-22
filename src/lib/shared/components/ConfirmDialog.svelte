@@ -2,11 +2,12 @@
   import { onMount } from "svelte";
   import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
 
-  let { title, message, confirmLabel = "", cancelLabel = "", onConfirm, onCancel, locale = DEFAULT_LOCALE }: {
+  let { title, message, confirmLabel = "", cancelLabel = "", confirmColor = "", onConfirm, onCancel, locale = DEFAULT_LOCALE }: {
     title: string;
     message: string;
     confirmLabel?: string;
     cancelLabel?: string;
+    confirmColor?: string;
     onConfirm: () => void;
     onCancel: () => void;
     locale?: Locale;
@@ -34,7 +35,7 @@
     <p class="message">{message}</p>
     <div class="actions">
       <button class="btn-cancel" onclick={onCancel}>{cancelLabel || translate(locale, "common.cancel")}</button>
-      <button bind:this={confirmRef} class="btn-confirm" onclick={onConfirm}>{confirmLabel || translate(locale, "common.confirm")}</button>
+      <button bind:this={confirmRef} class="btn-confirm" style={confirmColor ? `--confirm-bg: ${confirmColor};` : ""} onclick={onConfirm}>{confirmLabel || translate(locale, "common.confirm")}</button>
     </div>
   </div>
 </div>
@@ -115,7 +116,7 @@
     padding: 6px 12px;
     border: none;
     border-radius: 4px;
-    background: #dc2626;
+    background: var(--confirm-bg, #dc2626);
     color: #fff;
     font-size: 12px;
     font-weight: 600;
@@ -124,7 +125,7 @@
   }
 
   .btn-confirm:hover {
-    background: #b91c1c;
+    filter: brightness(0.85);
   }
 
   .btn-confirm:active {
