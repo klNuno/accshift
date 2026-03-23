@@ -100,7 +100,6 @@ fn raw_app_cache_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> 
         .map_err(|e| format!("Could not resolve app cache dir: {e}"))
 }
 
-
 fn scope_root(path: PathBuf) -> PathBuf {
     if cfg!(debug_assertions) {
         path.join(DEV_SCOPE_DIR)
@@ -204,8 +203,12 @@ pub fn epic_snapshots_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, Stri
 
 pub fn client_store_path(app_handle: &tauri::AppHandle, store_id: &str) -> Result<PathBuf, String> {
     let target = match store_id {
-        STORE_SETTINGS => Ok(app_config_root(app_handle)?.join("user").join("settings.json")),
-        STORE_FOLDERS => Ok(app_config_root(app_handle)?.join("user").join("folders.json")),
+        STORE_SETTINGS => Ok(app_config_root(app_handle)?
+            .join("user")
+            .join("settings.json")),
+        STORE_FOLDERS => Ok(app_config_root(app_handle)?
+            .join("user")
+            .join("folders.json")),
         STORE_ACCOUNT_CARD_NOTES => Ok(app_config_root(app_handle)?
             .join("user")
             .join("account-card-notes.json")),
@@ -215,17 +218,25 @@ pub fn client_store_path(app_handle: &tauri::AppHandle, store_id: &str) -> Resul
         STORE_FOLDER_CARD_COLORS => Ok(app_config_root(app_handle)?
             .join("user")
             .join("folder-card-colors.json")),
-        STORE_VIEW_MODE => Ok(app_config_root(app_handle)?.join("user").join("view-mode.json")),
-        STORE_STEAM_PROFILE_CACHE => Ok(app_cache_root(app_handle)?.join("platforms").join("steam").join("profiles.json")),
-        STORE_ROBLOX_PROFILE_CACHE => {
-            Ok(app_cache_root(app_handle)?.join("platforms").join("roblox").join("profiles.json"))
-        }
-        STORE_STEAM_BAN_CHECK_STATE => {
-            Ok(app_cache_root(app_handle)?.join("platforms").join("steam").join("ban-check-state.json"))
-        }
-        STORE_STEAM_BAN_INFO_CACHE => {
-            Ok(app_cache_root(app_handle)?.join("platforms").join("steam").join("ban-info-cache.json"))
-        }
+        STORE_VIEW_MODE => Ok(app_config_root(app_handle)?
+            .join("user")
+            .join("view-mode.json")),
+        STORE_STEAM_PROFILE_CACHE => Ok(app_cache_root(app_handle)?
+            .join("platforms")
+            .join("steam")
+            .join("profiles.json")),
+        STORE_ROBLOX_PROFILE_CACHE => Ok(app_cache_root(app_handle)?
+            .join("platforms")
+            .join("roblox")
+            .join("profiles.json")),
+        STORE_STEAM_BAN_CHECK_STATE => Ok(app_cache_root(app_handle)?
+            .join("platforms")
+            .join("steam")
+            .join("ban-check-state.json")),
+        STORE_STEAM_BAN_INFO_CACHE => Ok(app_cache_root(app_handle)?
+            .join("platforms")
+            .join("steam")
+            .join("ban-info-cache.json")),
         _ => Err(format!("Unknown client store id: {store_id}")),
     }?;
 
@@ -345,8 +356,12 @@ fn legacy_client_store_path(
     store_id: &str,
 ) -> Result<Option<PathBuf>, String> {
     let path = match store_id {
-        STORE_SETTINGS => raw_app_config_root(app_handle)?.join("user").join("settings.json"),
-        STORE_FOLDERS => raw_app_config_root(app_handle)?.join("user").join("folders.json"),
+        STORE_SETTINGS => raw_app_config_root(app_handle)?
+            .join("user")
+            .join("settings.json"),
+        STORE_FOLDERS => raw_app_config_root(app_handle)?
+            .join("user")
+            .join("folders.json"),
         STORE_ACCOUNT_CARD_NOTES => raw_app_config_root(app_handle)?
             .join("user")
             .join("account-card-notes.json"),
@@ -356,9 +371,15 @@ fn legacy_client_store_path(
         STORE_FOLDER_CARD_COLORS => raw_app_config_root(app_handle)?
             .join("user")
             .join("folder-card-colors.json"),
-        STORE_VIEW_MODE => raw_app_config_root(app_handle)?.join("user").join("view-mode.json"),
-        STORE_STEAM_PROFILE_CACHE => raw_app_cache_root(app_handle)?.join("steam").join("profiles.json"),
-        STORE_ROBLOX_PROFILE_CACHE => raw_app_cache_root(app_handle)?.join("roblox").join("profiles.json"),
+        STORE_VIEW_MODE => raw_app_config_root(app_handle)?
+            .join("user")
+            .join("view-mode.json"),
+        STORE_STEAM_PROFILE_CACHE => raw_app_cache_root(app_handle)?
+            .join("steam")
+            .join("profiles.json"),
+        STORE_ROBLOX_PROFILE_CACHE => raw_app_cache_root(app_handle)?
+            .join("roblox")
+            .join("profiles.json"),
         STORE_STEAM_BAN_CHECK_STATE => raw_app_cache_root(app_handle)?
             .join("steam")
             .join("ban-check-state.json"),
@@ -371,7 +392,9 @@ fn legacy_client_store_path(
     Ok(Some(path))
 }
 
-fn manifest_targets(app_handle: &tauri::AppHandle) -> Result<Vec<(String, ManifestTarget)>, String> {
+fn manifest_targets(
+    app_handle: &tauri::AppHandle,
+) -> Result<Vec<(String, ManifestTarget)>, String> {
     let mut targets = Vec::new();
 
     for store_id in client_store_ids() {
@@ -431,7 +454,11 @@ fn fingerprint_dir(path: &Path, depth: usize) -> Result<String, String> {
     let mut entries = Vec::new();
     collect_dir_entries(path, path, depth, &mut entries)?;
     let joined = entries.join("|");
-    Ok(format!("dir:{}:{:016x}", entries.len(), fnv1a64(joined.as_bytes())))
+    Ok(format!(
+        "dir:{}:{:016x}",
+        entries.len(),
+        fnv1a64(joined.as_bytes())
+    ))
 }
 
 fn collect_dir_entries(
@@ -495,12 +522,13 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 }
 
 fn legacy_backup_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let root = app_local_data_root(app_handle)?.join("backups").join("pre-migration");
+    let root = app_local_data_root(app_handle)?
+        .join("backups")
+        .join("pre-migration");
     fs::create_dir_all(&root)
         .map_err(|e| format!("Could not create backup dir {}: {e}", root.display()))?;
     Ok(root)
 }
-
 
 fn backup_legacy_path(source: &Path, backup_root: &Path) -> Result<(), String> {
     if !source.exists() {

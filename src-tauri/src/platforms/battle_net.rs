@@ -1,7 +1,5 @@
 use crate::config::{self, BattleNetAccountConfig};
-use crate::platforms::{
-    log_platform_error, log_platform_info, PlatformService, SetupStatus,
-};
+use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -257,7 +255,9 @@ fn extract_saved_account_names(value: &Value) -> Vec<String> {
             collect_unique_accounts(raw.split(',').map(String::from), &mut seen)
         }
         Some(Value::Array(items)) => collect_unique_accounts(
-            items.iter().filter_map(|item| item.as_str().map(String::from)),
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(String::from)),
             &mut seen,
         ),
         _ => Vec::new(),
@@ -749,9 +749,7 @@ pub fn switch_account(app_handle: tauri::AppHandle, email: String) -> Result<(),
     result
 }
 
-pub fn begin_account_setup(
-    app_handle: tauri::AppHandle,
-) -> Result<SetupStatus, String> {
+pub fn begin_account_setup(app_handle: tauri::AppHandle) -> Result<SetupStatus, String> {
     log_platform_info(
         &app_handle,
         "battle_net.begin_account_setup",
@@ -789,7 +787,13 @@ pub fn begin_account_setup(
             e,
         );
     })?;
-    Ok(super::make_setup_status(&setup_id, "waiting_for_client", "", "", ""))
+    Ok(super::make_setup_status(
+        &setup_id,
+        "waiting_for_client",
+        "",
+        "",
+        "",
+    ))
 }
 
 pub fn get_account_setup_status(
@@ -827,10 +831,22 @@ pub fn get_account_setup_status(
     }
 
     if is_battle_net_running() {
-        return Ok(super::make_setup_status(&setup_id, "waiting_for_login", "", "", ""));
+        return Ok(super::make_setup_status(
+            &setup_id,
+            "waiting_for_login",
+            "",
+            "",
+            "",
+        ));
     }
 
-    Ok(super::make_setup_status(&setup_id, "waiting_for_client", "", "", ""))
+    Ok(super::make_setup_status(
+        &setup_id,
+        "waiting_for_client",
+        "",
+        "",
+        "",
+    ))
 }
 
 pub fn cancel_account_setup(setup_id: String) -> Result<(), String> {
@@ -987,10 +1003,7 @@ mod tests {
     #[test]
     fn collect_unique_accounts_trims_whitespace() {
         let mut seen = HashSet::new();
-        let input = vec![
-            "  user@test.com  ".to_string(),
-            "user@test.com".to_string(),
-        ];
+        let input = vec!["  user@test.com  ".to_string(), "user@test.com".to_string()];
         let result = collect_unique_accounts(input.into_iter(), &mut seen);
         assert_eq!(result, vec!["user@test.com"]);
     }
@@ -1026,10 +1039,7 @@ mod tests {
             "B@TEST.COM".to_string(),
         ];
         let result = collect_unique_accounts(input.into_iter(), &mut seen);
-        assert_eq!(
-            result,
-            vec!["b@test.com", "a@test.com", "c@test.com"]
-        );
+        assert_eq!(result, vec!["b@test.com", "a@test.com", "c@test.com"]);
     }
 
     #[test]

@@ -121,10 +121,7 @@ fn post_with_csrf_and_headers(
     body: &str,
     extra_headers: &[(&str, &str)],
 ) -> Result<reqwest::blocking::Response, String> {
-    let cached_csrf = csrf_cache()
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_default();
+    let cached_csrf = csrf_cache().lock().map(|g| g.clone()).unwrap_or_default();
 
     let mut request = blocking_client()
         .post(url)
@@ -233,7 +230,9 @@ fn exchange_quick_login_for_cookie(code: &str, private_key: &str) -> Result<Stri
 
 fn load_account_configs(app_handle: &tauri::AppHandle) -> Vec<RobloxAccountConfig> {
     if let Ok(path) = crate::storage::roblox_accounts_path(app_handle) {
-        if let Ok(Some(accounts)) = crate::storage::read_json_if_exists::<Vec<RobloxAccountConfig>>(&path) {
+        if let Ok(Some(accounts)) =
+            crate::storage::read_json_if_exists::<Vec<RobloxAccountConfig>>(&path)
+        {
             return accounts;
         }
     }
@@ -373,7 +372,6 @@ fn launch_roblox_with_ticket(ticket: &str) -> Result<(), String> {
     crate::os::open_url(&uri).map_err(|e| format!("Could not launch Roblox: {e}"))
 }
 
-
 // ---------------------------------------------------------------------------
 // Public operations
 // ---------------------------------------------------------------------------
@@ -433,7 +431,11 @@ pub fn switch_account(app_handle: &tauri::AppHandle, user_id: &str) -> Result<()
         app_handle,
         "roblox.switch_account",
         "Roblox switch completed",
-        format!("userId={}; launch={}", super::redact_id(user_id), launch_result.is_ok()),
+        format!(
+            "userId={}; launch={}",
+            super::redact_id(user_id),
+            launch_result.is_ok()
+        ),
     );
 
     launch_result
@@ -480,7 +482,13 @@ pub fn begin_account_setup(app_handle: &tauri::AppHandle) -> Result<SetupStatus,
     );
 
     // accountDisplayName carries the Quick Login code for UI display
-    Ok(super::make_setup_status(&setup_id, "waiting_for_login", "", &code, ""))
+    Ok(super::make_setup_status(
+        &setup_id,
+        "waiting_for_login",
+        "",
+        &code,
+        "",
+    ))
 }
 
 pub fn get_account_setup_status(
@@ -522,7 +530,13 @@ pub fn get_account_setup_status(
     );
 
     if !http_status.is_success() {
-        return Ok(super::make_setup_status(setup_id, "waiting_for_login", "", &job.code, ""));
+        return Ok(super::make_setup_status(
+            setup_id,
+            "waiting_for_login",
+            "",
+            &job.code,
+            "",
+        ));
     }
 
     let status_data: QuickLoginStatusResponse = serde_json::from_str(&response_text)
@@ -530,17 +544,32 @@ pub fn get_account_setup_status(
 
     match status_data.status.as_str() {
         "Validated" => {
-            log_platform_info(app_handle, "roblox.setup_poll", "Status is Validated, exchanging for cookie", "");
+            log_platform_info(
+                app_handle,
+                "roblox.setup_poll",
+                "Status is Validated, exchanging for cookie",
+                "",
+            );
 
             let cookie = match exchange_quick_login_for_cookie(&job.code, &job.private_key) {
                 Ok(c) => c,
                 Err(e) => {
-                    log_platform_info(app_handle, "roblox.setup_poll", "Cookie exchange failed", &e);
+                    log_platform_info(
+                        app_handle,
+                        "roblox.setup_poll",
+                        "Cookie exchange failed",
+                        &e,
+                    );
                     return Err(e);
                 }
             };
 
-            log_platform_info(app_handle, "roblox.setup_poll", "Cookie obtained, validating", "");
+            log_platform_info(
+                app_handle,
+                "roblox.setup_poll",
+                "Cookie obtained, validating",
+                "",
+            );
 
             let user = validate_cookie_blocking(&cookie)?;
 
@@ -548,7 +577,11 @@ pub fn get_account_setup_status(
                 app_handle,
                 "roblox.setup_poll",
                 "Cookie validated, storing account",
-                format!("userId={}; username={}", super::redact_id(&user.id.to_string()), super::redact_id(&user.name)),
+                format!(
+                    "userId={}; username={}",
+                    super::redact_id(&user.id.to_string()),
+                    super::redact_id(&user.name)
+                ),
             );
 
             let encrypted = match crate::os::encrypt_secret(&cookie) {
@@ -561,7 +594,12 @@ pub fn get_account_setup_status(
                 }
             };
             if let Err(e) = store_account(app_handle, &user, &encrypted) {
-                log_platform_error(app_handle, "roblox.setup_poll", "Account storage failed", &e);
+                log_platform_error(
+                    app_handle,
+                    "roblox.setup_poll",
+                    "Account storage failed",
+                    &e,
+                );
                 remove_setup_job(setup_id);
                 return Ok(super::make_setup_status(setup_id, "failed", "", "", &e));
             }
@@ -578,10 +616,22 @@ pub fn get_account_setup_status(
         }
         "Cancelled" => {
             remove_setup_job(setup_id);
-            Ok(super::make_setup_status(setup_id, "failed", "", "", "Quick Login was cancelled"))
+            Ok(super::make_setup_status(
+                setup_id,
+                "failed",
+                "",
+                "",
+                "Quick Login was cancelled",
+            ))
         }
         // "Created" | "UserLinked" | anything else → still waiting
-        _ => Ok(super::make_setup_status(setup_id, "waiting_for_login", "", &job.code, "")),
+        _ => Ok(super::make_setup_status(
+            setup_id,
+            "waiting_for_login",
+            "",
+            &job.code,
+            "",
+        )),
     }
 }
 
@@ -626,10 +676,9 @@ pub async fn add_account_by_cookie(
     let cookie = {
         let mut raw = cookie.trim().to_string();
         // Strip .ROBLOSECURITY prefix with any separator
-        if let Some(rest) = raw
-            .strip_prefix(".ROBLOSECURITY")
-            .map(|s| s.trim_start_matches(|c: char| c == ':' || c == '=' || c == '"' || c.is_whitespace()))
-        {
+        if let Some(rest) = raw.strip_prefix(".ROBLOSECURITY").map(|s| {
+            s.trim_start_matches(|c: char| c == ':' || c == '=' || c == '"' || c.is_whitespace())
+        }) {
             raw = rest.trim_end_matches('"').to_string();
         }
         // Strip the warning prefix if present
@@ -661,8 +710,8 @@ pub async fn add_account_by_cookie(
         .await
         .map_err(|e| format!("Could not parse user response: {e}"))?;
 
-    let encrypted = crate::os::encrypt_secret(&cookie)
-        .map_err(|e| format!("Could not encrypt cookie: {e}"))?;
+    let encrypted =
+        crate::os::encrypt_secret(&cookie).map_err(|e| format!("Could not encrypt cookie: {e}"))?;
     store_account(&app_handle, &user, &encrypted)?;
 
     log_platform_info(
@@ -680,12 +729,19 @@ pub async fn add_account_by_cookie(
     })
 }
 
-pub async fn get_profile_info(user_id: String, client: reqwest::Client) -> Result<RobloxProfileInfo, String> {
+pub async fn get_profile_info(
+    user_id: String,
+    client: reqwest::Client,
+) -> Result<RobloxProfileInfo, String> {
     let url = format!(
         "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds={user_id}&size=150x150&format=Png"
     );
 
-    let resp = client.get(&url).send().await.map_err(|e| format!("Thumbnail request failed: {e}"))?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Thumbnail request failed: {e}"))?;
 
     if !resp.status().is_success() {
         return Ok(RobloxProfileInfo { avatar_url: None });
@@ -752,5 +808,4 @@ impl PlatformService for RobloxService {
     fn cancel_setup(&self, _app: &tauri::AppHandle, setup_id: &str) -> Result<(), String> {
         cancel_account_setup(setup_id)
     }
-
 }

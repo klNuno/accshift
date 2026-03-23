@@ -1,7 +1,5 @@
 use crate::config::{self, UbisoftAccountConfig};
-use crate::platforms::{
-    log_platform_error, log_platform_info, PlatformService, SetupStatus,
-};
+use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -330,7 +328,10 @@ fn extract_uuid_from_line(line: &str) -> Option<String> {
     if line.len() >= 36 {
         for start in 0..=line.len() - 36 {
             let candidate = &line[start..start + 36];
-            if is_valid_uuid(candidate) && start >= 4 && line[start.saturating_sub(10)..start].contains("User") {
+            if is_valid_uuid(candidate)
+                && start >= 4
+                && line[start.saturating_sub(10)..start].contains("User")
+            {
                 return Some(candidate.to_string());
             }
         }

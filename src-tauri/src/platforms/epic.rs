@@ -1,7 +1,5 @@
 use crate::config::{self, EpicAccountConfig};
-use crate::platforms::{
-    log_platform_error, log_platform_info, PlatformService, SetupStatus,
-};
+use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -348,8 +346,7 @@ fn restore_auth_snapshot(app_handle: &tauri::AppHandle, account_id: &str) -> Res
         ));
     }
 
-    fs::create_dir_all(&config_dir)
-        .map_err(|e| format!("Could not create config dir: {e}"))?;
+    fs::create_dir_all(&config_dir).map_err(|e| format!("Could not create config dir: {e}"))?;
 
     // Restore GameUserSettings.ini
     let source = cache_dir.join(AUTH_INI);
@@ -552,9 +549,7 @@ pub fn get_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<EpicAccount>, S
     read_accounts(app_handle)
 }
 
-pub fn get_startup_snapshot(
-    app_handle: &tauri::AppHandle,
-) -> Result<EpicStartupSnapshot, String> {
+pub fn get_startup_snapshot(app_handle: &tauri::AppHandle) -> Result<EpicStartupSnapshot, String> {
     let accounts = read_accounts(app_handle)?;
     let current = get_current_account(app_handle).unwrap_or_default();
     Ok(EpicStartupSnapshot {

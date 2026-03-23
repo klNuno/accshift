@@ -237,7 +237,10 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
         }
     }
     let input = input.trim();
-    let bytes: Vec<u8> = input.bytes().filter(|&b| b != b'\r' && b != b'\n').collect();
+    let bytes: Vec<u8> = input
+        .bytes()
+        .filter(|&b| b != b'\r' && b != b'\n')
+        .collect();
     if !bytes.len().is_multiple_of(4) {
         return Err(());
     }
