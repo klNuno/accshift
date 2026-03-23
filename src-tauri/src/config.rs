@@ -71,6 +71,8 @@ pub struct UbisoftConfig {
     pub path_override: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub accounts: Vec<UbisoftAccountConfig>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forgotten_uuids: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
