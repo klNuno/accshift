@@ -636,7 +636,7 @@ impl PlatformService for SteamService {
     fn forget_account(&self, app: &tauri::AppHandle, account_id: &str) -> Result<(), String> {
         validate_steam_id(account_id)?;
         let steam_path = resolve_steam_path(app)?;
-        accounts::forget_account(&steam_path, account_id, false)
+        accounts::forget_account(&steam_path, account_id)
             .map_err(|e| to_logged_error(app, "steam.forget_account", e))
     }
 

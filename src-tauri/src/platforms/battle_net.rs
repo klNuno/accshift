@@ -351,7 +351,18 @@ fn remember_account_usage(
     let now = super::now_unix_ms();
     // Only query the battle tag for the account that is actually logged in
     // right now. Applying it to other accounts would overwrite their tags.
-    let battle_tag = if is_current_account {
+    // Only query battle tag from cache if we don't already have one stored.
+    // After a switch, the log-based account_id_lo still points to the PREVIOUS
+    // account, so current_battle_tag_from_cache() would return the wrong tag.
+    let existing_tag = config::load_config(app_handle)
+        .battle_net
+        .accounts
+        .iter()
+        .find(|a| normalize_account_key(&a.email) == key)
+        .map(|a| a.battle_tag.trim().to_string())
+        .filter(|t| !t.is_empty());
+
+    let battle_tag = if is_current_account && existing_tag.is_none() {
         current_battle_tag_from_cache().ok().flatten()
     } else {
         None
