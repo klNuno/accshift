@@ -976,7 +976,7 @@ fn get_profile_setup_status_internal(
     // and won't survive a Riot Client restart, making the captured profile useless.
     let login_state = access
         .as_ref()
-        .map(|a| read_riot_login_state(a))
+        .map(read_riot_login_state)
         .unwrap_or(RiotLoginState {
             logged_in: false,
             persist: false,
