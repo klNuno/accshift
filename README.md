@@ -24,7 +24,7 @@
 | Battle.net           | ✅ Done     | 🚧 Possible     | ⛔ Not feasible |
 | Epic Games           | ✅ Done     | 🚧 Possible     | 🚧 Possible     |
 | Ubisoft Connect      | ✅ Done     | 🚧 Possible     | 🚧 Possible     |
-| Roblox               | ✅ Done     | 🚧 Possible     | ⛔ Not feasible |
+| Roblox               | ✅ Done     | 🚧 Possible     | 🚧 Possible     |
 | EA app               | 🚧 Possible | 🚧 Possible     | ⛔ Not feasible |
 | Discord              | 🚧 Possible | 🚧 Possible     | 🚧 Possible     |
 | Rockstar Launcher    | 🚧 Possible | ⛔ Not feasible | 🚧 Possible     |
