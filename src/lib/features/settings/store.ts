@@ -38,7 +38,7 @@ const DEFAULTS: AppSettings = {
     showLastLoginPerPlatform: {
       steam: false,
       riot: false,
-      "battle-net": true,
+      "battle-net": false,
     },
     showCardNotesInline: false,
   },

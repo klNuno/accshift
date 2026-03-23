@@ -26,7 +26,7 @@
 <SettingsCard title={t("settings.accountDisplay")} {accent}>
   <ToggleSetting
     label={t("settings.showBattleNetLastLogin")}
-    enabled={settings.accountDisplay.showLastLoginPerPlatform["battle-net"] ?? true}
+    enabled={settings.accountDisplay.showLastLoginPerPlatform["battle-net"] ?? false}
     accent={accent}
     onLabel={t("common.on")}
     offLabel={t("common.off")}
