@@ -695,6 +695,7 @@ mod tests {
             ubisoft: UbisoftConfig {
                 path_override: "C:\\Ubi".into(),
                 accounts: vec![],
+                forgotten_uuids: vec![],
             },
             epic: EpicConfig {
                 path_override: "C:\\Epic".into(),
@@ -763,6 +764,7 @@ mod tests {
             ubisoft: UbisoftConfig {
                 path_override: "C:\\Ubi".into(),
                 accounts: vec![],
+                forgotten_uuids: vec![],
             },
             epic: EpicConfig {
                 path_override: "C:\\Epic".into(),
