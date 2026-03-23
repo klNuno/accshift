@@ -17,7 +17,7 @@ function getSteamLaunchConfig() {
   return {
     runAsAdmin: !!settings.platformSettings.steam.runAsAdmin,
     launchOptions: (settings.platformSettings.steam.launchOptions || "").trim(),
-    shutdownMode: settings.platformSettings.steam.shutdownMode || "graceful",
+    shutdownMode: settings.platformSettings.steam.shutdownMode || "force",
   };
 }
 

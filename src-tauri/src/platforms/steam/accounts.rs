@@ -78,25 +78,6 @@ fn try_graceful_shutdown(steam_path: &Path) -> bool {
         && os::wait_for_process_exit(os::steam_web_helper_process_name(), 2000)
 }
 
-fn kill_steam(steam_path: &Path, force_kill: bool) -> Result<(), AppError> {
-    let steam_running = is_steam_running();
-    let web_helper_running = os::is_process_running(os::steam_web_helper_process_name());
-    if !steam_running && !web_helper_running {
-        return Ok(());
-    }
-
-    if force_kill {
-        return kill_steam_client_processes();
-    }
-
-    // Try graceful shutdown first, fallback to force kill
-    if try_graceful_shutdown(steam_path) {
-        return Ok(());
-    }
-
-    kill_steam_client_processes()
-}
-
 fn kill_and_relaunch(
     steam_path: &Path,
     run_as_admin: bool,
@@ -494,9 +475,7 @@ pub fn add_account(
     })
 }
 
-pub fn forget_account(steam_path: &Path, steam_id: &str, force_kill: bool) -> Result<(), AppError> {
-    kill_steam(steam_path, force_kill)?;
-
+pub fn forget_account(steam_path: &Path, steam_id: &str) -> Result<(), AppError> {
     // Remove account entry from loginusers.vdf.
     let loginusers_path = steam_path.join("config").join("loginusers.vdf");
     if loginusers_path.exists() {
