@@ -116,7 +116,7 @@ pub fn portable_config_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, St
     let scoped_legacy = raw_app_data_root(app_handle)?
         .join("state")
         .join("portable-config.json");
-    migrate_file_if_missing(&scoped_legacy, &target)?;
+    backup_and_migrate_file(app_handle, &scoped_legacy, &target)?;
     Ok(target)
 }
 
@@ -127,7 +127,7 @@ pub fn local_config_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, Strin
     let scoped_legacy = raw_app_local_data_root(app_handle)?
         .join("state")
         .join("local-config.json");
-    migrate_file_if_missing(&scoped_legacy, &target)?;
+    backup_and_migrate_file(app_handle, &scoped_legacy, &target)?;
     Ok(target)
 }
 
@@ -144,7 +144,7 @@ pub fn roblox_accounts_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, St
         .join("platforms")
         .join("roblox")
         .join("accounts.json");
-    migrate_file_if_missing(&scoped_legacy, &target)?;
+    backup_and_migrate_file(app_handle, &scoped_legacy, &target)?;
     Ok(target)
 }
 
@@ -152,8 +152,8 @@ pub fn themes_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
     let target = app_config_root(app_handle)?.join("themes");
     let scoped_legacy = raw_app_config_root(app_handle)?.join("themes");
     let old_legacy = legacy_app_data_root(app_handle)?.join("themes");
-    migrate_dir_if_missing(&scoped_legacy, &target)?;
-    migrate_dir_if_missing(&old_legacy, &target)?;
+    backup_and_migrate_dir(app_handle, &scoped_legacy, &target)?;
+    backup_and_migrate_dir(app_handle, &old_legacy, &target)?;
     Ok(target)
 }
 
@@ -167,8 +167,8 @@ pub fn riot_snapshots_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, Stri
         .join("riot")
         .join("snapshots");
     let old_legacy = legacy_app_data_root(app_handle)?.join("riot-profiles");
-    migrate_dir_if_missing(&scoped_legacy, &target)?;
-    migrate_dir_if_missing(&old_legacy, &target)?;
+    backup_and_migrate_dir(app_handle, &scoped_legacy, &target)?;
+    backup_and_migrate_dir(app_handle, &old_legacy, &target)?;
     Ok(target)
 }
 
@@ -182,8 +182,8 @@ pub fn ubisoft_snapshots_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, S
         .join("ubisoft")
         .join("snapshots");
     let old_legacy = legacy_app_data_root(app_handle)?.join("ubisoft_cache");
-    migrate_dir_if_missing(&scoped_legacy, &target)?;
-    migrate_dir_if_missing(&old_legacy, &target)?;
+    backup_and_migrate_dir(app_handle, &scoped_legacy, &target)?;
+    backup_and_migrate_dir(app_handle, &old_legacy, &target)?;
     Ok(target)
 }
 
@@ -197,8 +197,8 @@ pub fn epic_snapshots_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, Stri
         .join("epic")
         .join("snapshots");
     let old_legacy = legacy_app_data_root(app_handle)?.join("epic_cache");
-    migrate_dir_if_missing(&scoped_legacy, &target)?;
-    migrate_dir_if_missing(&old_legacy, &target)?;
+    backup_and_migrate_dir(app_handle, &scoped_legacy, &target)?;
+    backup_and_migrate_dir(app_handle, &old_legacy, &target)?;
     Ok(target)
 }
 
@@ -230,7 +230,7 @@ pub fn client_store_path(app_handle: &tauri::AppHandle, store_id: &str) -> Resul
     }?;
 
     if let Some(legacy) = legacy_client_store_path(app_handle, store_id)? {
-        migrate_file_if_missing(&legacy, &target)?;
+        backup_and_migrate_file(app_handle, &legacy, &target)?;
     }
 
     Ok(target)
@@ -492,6 +492,73 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
+}
+
+fn legacy_backup_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let root = app_local_data_root(app_handle)?.join("backups").join("pre-migration");
+    fs::create_dir_all(&root)
+        .map_err(|e| format!("Could not create backup dir {}: {e}", root.display()))?;
+    Ok(root)
+}
+
+fn backup_legacy_path(source: &Path, backup_root: &Path) -> Result<(), String> {
+    if !source.exists() {
+        return Ok(());
+    }
+
+    // Derive a flat backup name from the last 3 path components
+    let backup_name: String = source
+        .components()
+        .rev()
+        .take(3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|c| c.as_os_str().to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join("_");
+    let backup_path = backup_root.join(&backup_name);
+
+    if backup_path.exists() {
+        return Ok(());
+    }
+
+    if source.is_dir() {
+        fs_utils::copy_dir_recursive(source, &backup_path, &[])?;
+    } else {
+        fs::copy(source, &backup_path)
+            .map_err(|e| format!("Could not backup {}: {e}", source.display()))?;
+    }
+
+    Ok(())
+}
+
+fn backup_and_migrate_dir(
+    app_handle: &tauri::AppHandle,
+    from: &Path,
+    to: &Path,
+) -> Result<(), String> {
+    if from == to || !from.exists() || to.exists() {
+        return Ok(());
+    }
+    if let Ok(backup_root) = legacy_backup_root(app_handle) {
+        let _ = backup_legacy_path(from, &backup_root);
+    }
+    migrate_dir_if_missing(from, to)
+}
+
+fn backup_and_migrate_file(
+    app_handle: &tauri::AppHandle,
+    from: &Path,
+    to: &Path,
+) -> Result<(), String> {
+    if from == to || !from.exists() || to.exists() {
+        return Ok(());
+    }
+    if let Ok(backup_root) = legacy_backup_root(app_handle) {
+        let _ = backup_legacy_path(from, &backup_root);
+    }
+    migrate_file_if_missing(from, to)
 }
 
 fn migrate_dir_if_missing(from: &Path, to: &Path) -> Result<(), String> {
