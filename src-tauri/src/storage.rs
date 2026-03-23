@@ -501,6 +501,7 @@ fn legacy_backup_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> 
     Ok(root)
 }
 
+
 fn backup_legacy_path(source: &Path, backup_root: &Path) -> Result<(), String> {
     if !source.exists() {
         return Ok(());
