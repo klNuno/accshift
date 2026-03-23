@@ -141,12 +141,6 @@ struct RiotAliasResponse {
     tag_line: String,
 }
 
-#[derive(Debug)]
-struct RiotLoginStatus {
-    phase: String,
-    persist: bool,
-}
-
 struct RiotLocalApiAccess {
     protocol: String,
     port: u16,
@@ -241,8 +235,57 @@ fn kill_riot_client_processes() {
     }
 }
 
-fn prepare_clean_riot_launch(app_handle: &tauri::AppHandle) -> Result<(), String> {
+/// Request a graceful quit via the local API, which flushes in-memory tokens
+/// to disk before exiting. Falls back to force-kill if the API is unreachable
+/// or the process doesn't exit within the timeout.
+fn graceful_riot_quit() {
+    let access = match read_riot_local_api_access() {
+        Ok(a) => a,
+        Err(_) => {
+            kill_riot_client_processes();
+            return;
+        }
+    };
+
+    // POST /process-control/v1/process/quit triggers a graceful shutdown
+    let quit_ok = tauri::async_runtime::block_on(async {
+        let client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .build()
+            .ok();
+        let Some(client) = client else { return false };
+        let url = format!(
+            "{}://127.0.0.1:{}/process-control/v1/process/quit",
+            access.protocol, access.port
+        );
+        client
+            .post(url)
+            .basic_auth("riot", Some(access.password.as_str()))
+            .send()
+            .await
+            .is_ok()
+    });
+
+    if !quit_ok {
+        kill_riot_client_processes();
+        return;
+    }
+
+    // Wait for the process to exit (up to 8 seconds)
+    for _ in 0..16 {
+        if !is_any_process_running(RIOT_CLIENT_PROCESS_NAMES) {
+            thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
+            return;
+        }
+        thread::sleep(std::time::Duration::from_millis(500));
+    }
+
+    // Timed out — force kill
     kill_riot_client_processes();
+}
+
+fn prepare_clean_riot_launch(app_handle: &tauri::AppHandle) -> Result<(), String> {
+    graceful_riot_quit();
     clear_live_riot_setup_state(app_handle)?;
     kill_riot_client_processes();
     thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
@@ -371,30 +414,7 @@ fn remove_path_if_exists(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn directory_has_entries(path: &Path, ignored_names: &[&str]) -> Result<bool, String> {
-    if !path.exists() || !path.is_dir() {
-        return Ok(false);
-    }
-
-    for entry in fs::read_dir(path)
-        .map_err(|e| format!("Could not read directory {}: {e}", path.display()))?
-    {
-        let entry = entry.map_err(|e| format!("Could not read directory entry: {e}"))?;
-        let file_name = entry.file_name();
-        let file_name = file_name.to_string_lossy();
-        if ignored_names
-            .iter()
-            .any(|ignored| ignored.eq_ignore_ascii_case(&file_name))
-        {
-            continue;
-        }
-        return Ok(true);
-    }
-
-    Ok(false)
-}
-
-fn riot_setup_capture_ready(app_handle: &tauri::AppHandle) -> Result<bool, String> {
+fn riot_settings_file_ready(app_handle: &tauri::AppHandle) -> Result<bool, String> {
     let install_dir = resolve_riot_client_path(app_handle)
         .ok()
         .and_then(|path| path.parent().map(Path::to_path_buf));
@@ -411,37 +431,12 @@ fn riot_setup_capture_ready(app_handle: &tauri::AppHandle) -> Result<bool, Strin
             required_settings.display()
         )
     })?;
-    if settings_metadata.len() == 0 {
-        return Ok(false);
-    }
-
-    let sessions_path = live_path_for(&RIOT_SNAPSHOT_ITEMS[2], install_dir.as_deref())?
-        .ok_or_else(|| "Could not resolve Riot sessions path".to_string())?;
-    let config_path = live_path_for(&RIOT_SNAPSHOT_ITEMS[3], install_dir.as_deref())?
-        .ok_or_else(|| "Could not resolve Riot config path".to_string())?;
-
-    let has_sessions = directory_has_entries(&sessions_path, &[])?;
-    let has_config = directory_has_entries(&config_path, &["lockfile"])?;
-
-    Ok(has_sessions || has_config)
+    // A default settings file without auth tokens is ~500 bytes (just tdid cookie).
+    // A file with actual persistent login tokens is ~2500+ bytes.
+    // Capturing the small file produces a useless snapshot that opens the login page.
+    Ok(settings_metadata.len() > 1000)
 }
 
-fn wait_for_riot_setup_capture_ready(
-    app_handle: &tauri::AppHandle,
-    timeout_ms: u64,
-    poll_interval_ms: u64,
-) -> Result<bool, String> {
-    let max_attempts = std::cmp::max(1, timeout_ms / poll_interval_ms);
-    for attempt in 0..max_attempts {
-        if riot_setup_capture_ready(app_handle)? {
-            return Ok(true);
-        }
-        if attempt + 1 < max_attempts {
-            thread::sleep(std::time::Duration::from_millis(poll_interval_ms));
-        }
-    }
-    Ok(false)
-}
 
 fn snapshot_has_settings(snapshot_dir: &Path) -> bool {
     snapshot_dir.join("RiotGamesPrivateSettings.yaml").exists()
@@ -578,12 +573,19 @@ fn detect_live_identity_with_access(
     access: &RiotLocalApiAccess,
 ) -> Result<RiotDetectedIdentity, String> {
     tauri::async_runtime::block_on(async {
-        let alias_json = fetch_local_json(access, "/player-account/aliases/v1/active").await?;
-        let alias: RiotAliasResponse = serde_json::from_value(alias_json)
-            .map_err(|e| format!("Could not parse Riot alias response: {e}"))?;
+        let alias = fetch_local_json(access, "/player-account/aliases/v1/active")
+            .await
+            .ok()
+            .and_then(|json| serde_json::from_value::<RiotAliasResponse>(json).ok());
 
-        let account_name = trim_or_empty(&alias.game_name);
-        let account_tag_line = trim_or_empty(&alias.tag_line);
+        let account_name = alias
+            .as_ref()
+            .map(|a| trim_or_empty(&a.game_name))
+            .unwrap_or_default();
+        let account_tag_line = alias
+            .as_ref()
+            .map(|a| trim_or_empty(&a.tag_line))
+            .unwrap_or_default();
 
         let userinfo = fetch_local_json(access, "/riot-client-auth/v1/userinfo")
             .await
@@ -606,25 +608,40 @@ fn detect_live_identity_with_access(
     })
 }
 
-fn detect_live_identity() -> Result<RiotDetectedIdentity, String> {
-    let access = read_riot_local_api_access()?;
-    detect_live_identity_with_access(&access)
+struct RiotLoginState {
+    logged_in: bool,
+    persist: bool,
 }
 
-fn read_live_login_status(access: &RiotLocalApiAccess) -> Result<RiotLoginStatus, String> {
+fn read_riot_login_state(access: &RiotLocalApiAccess) -> RiotLoginState {
     tauri::async_runtime::block_on(async {
-        let value = fetch_local_json(access, "/riot-login/v1/status").await?;
+        let value = match fetch_local_json(access, "/riot-login/v1/status").await {
+            Ok(v) => v,
+            Err(_) => {
+                return RiotLoginState {
+                    logged_in: false,
+                    persist: false,
+                }
+            }
+        };
         let phase = value
             .get("phase")
             .and_then(Value::as_str)
-            .map(trim_or_empty)
             .unwrap_or_default();
         let persist = value
             .get("persist")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        Ok(RiotLoginStatus { phase, persist })
+        RiotLoginState {
+            logged_in: phase.eq_ignore_ascii_case("logged_in"),
+            persist,
+        }
     })
+}
+
+fn detect_live_identity() -> Result<RiotDetectedIdentity, String> {
+    let access = read_riot_local_api_access()?;
+    detect_live_identity_with_access(&access)
 }
 
 fn backup_live_snapshot(app_handle: &tauri::AppHandle, profile_id: &str) -> Result<(), String> {
@@ -943,57 +960,68 @@ fn get_profile_setup_status_internal(
         return Ok(make_setup_status(&profile, "ready", ""));
     }
 
-    let access = match read_riot_local_api_access() {
-        Ok(access) => access,
-        Err(_) => return Ok(make_setup_status(&profile, "waiting_for_client", "")),
-    };
+    let access = read_riot_local_api_access().ok();
+    let has_lockfile = access.is_some();
 
-    let identity = detect_live_identity_with_access(&access).ok();
-    if let Some(identity) = identity.as_ref() {
+    // Identity detection is optional — used to label the profile, not to gate capture.
+    // The alias endpoint fails during 2FA, so we must not require it.
+    let identity = access
+        .as_ref()
+        .and_then(|a| detect_live_identity_with_access(a).ok());
+    if let Some(ref id) = identity {
         if let Some(target) = find_profile_mut(cfg, profile_id) {
-            apply_detected_identity(target, identity);
+            apply_detected_identity(target, id);
         }
     }
 
-    let login_status = match read_live_login_status(&access) {
-        Ok(status) => status,
-        Err(_) => {
-            let _ = config::save_config(app_handle, cfg);
-            let updated = find_profile(cfg, profile_id).cloned().unwrap_or(profile);
-            return Ok(make_setup_status(&updated, "waiting_for_client", ""));
-        }
-    };
+    // Login status API is the official way to detect completed auth (including 2FA).
+    // persist=true ("Stay signed in") is required — without it, tokens are session-only
+    // and won't survive a Riot Client restart, making the captured profile useless.
+    let login_state = access
+        .as_ref()
+        .map(|a| read_riot_login_state(a))
+        .unwrap_or(RiotLoginState {
+            logged_in: false,
+            persist: false,
+        });
+    let settings_ready = riot_settings_file_ready(app_handle).unwrap_or(false);
+    let can_capture = login_state.logged_in && login_state.persist && settings_ready;
 
-    if login_status.phase.eq_ignore_ascii_case("logged_in") && login_status.persist {
-        if let Some(identity) = identity.as_ref() {
-            let capture_ready =
-                wait_for_riot_setup_capture_ready(app_handle, 8000, 500).unwrap_or(false);
-            if !capture_ready {
-                let _ = config::save_config(app_handle, cfg);
-                let updated = find_profile(cfg, profile_id).cloned().unwrap_or(profile);
-                return Ok(make_setup_status(&updated, "waiting_for_login", ""));
-            }
-            if let Some(target) = find_profile_mut(cfg, profile_id) {
-                target.snapshot_state = "capturing".into();
-            }
-            config::save_config(app_handle, cfg)?;
-            capture_profile_into_snapshot(app_handle, cfg, profile_id, Some(identity))?;
-            let updated = find_profile(cfg, profile_id).cloned().unwrap_or(profile);
-            return Ok(make_setup_status(&updated, "ready", ""));
-        }
+    log_platform_info(
+        app_handle,
+        "riot.setup_poll",
+        "Riot setup poll",
+        format!(
+            "lockfile={has_lockfile} logged_in={} persist={} settings_ready={settings_ready} identity={} can_capture={can_capture}",
+            login_state.logged_in, login_state.persist, identity.is_some()
+        ),
+    );
 
-        let updated = find_profile(cfg, profile_id).cloned().unwrap_or(profile);
+    if !can_capture {
         let _ = config::save_config(app_handle, cfg);
-        return Ok(make_setup_status(
-            &updated,
-            "waiting_for_login",
-            "Riot account detected but alias is not ready yet.",
-        ));
+        let (state, error_msg) = if !has_lockfile {
+            ("waiting_for_client", "")
+        } else if login_state.logged_in && !login_state.persist {
+            ("waiting_for_login", "Check 'Stay signed in' in the Riot Client, then sign out and sign back in.")
+        } else {
+            ("waiting_for_login", "")
+        };
+        let updated = find_profile(cfg, profile_id).cloned().unwrap_or(profile);
+        return Ok(make_setup_status(&updated, state, error_msg));
     }
 
+    // Graceful quit flushes the Riot Client's in-memory tokens to disk.
+    // Without this, the YAML file contains pre-rotation tokens that the server
+    // has already invalidated, making the captured snapshot useless.
+    if let Some(target) = find_profile_mut(cfg, profile_id) {
+        target.snapshot_state = "capturing".into();
+    }
+    config::save_config(app_handle, cfg)?;
+
+    graceful_riot_quit();
+    capture_profile_into_snapshot(app_handle, cfg, profile_id, identity.as_ref())?;
     let updated = find_profile(cfg, profile_id).cloned().unwrap_or(profile);
-    let _ = config::save_config(app_handle, cfg);
-    Ok(make_setup_status(&updated, "waiting_for_login", ""))
+    Ok(make_setup_status(&updated, "ready", ""))
 }
 
 pub fn get_profiles(app_handle: tauri::AppHandle) -> Result<Vec<RiotProfileConfig>, String> {
@@ -1023,6 +1051,26 @@ pub fn begin_profile_setup(app_handle: tauri::AppHandle) -> Result<RiotProfileSe
     let client_path = resolve_riot_client_path(&app_handle)?;
     let mut cfg = config::load_config(&app_handle);
     cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
+
+    // Graceful quit flushes in-memory tokens to disk, then we backup.
+    // Without this, the file contains pre-rotation tokens that are invalid.
+    let prev_id = cfg.riot.current_profile_id.clone();
+    if !prev_id.is_empty() {
+        let prev_ready = find_profile(&cfg, &prev_id)
+            .map(|p| p.snapshot_state == "ready")
+            .unwrap_or(false);
+        if prev_ready {
+            let identity = detect_live_identity().ok();
+            graceful_riot_quit();
+            if riot_settings_file_ready(&app_handle).unwrap_or(false) {
+                let _ = backup_live_snapshot(&app_handle, &prev_id);
+                if let Some(ref id) = identity {
+                    let _ =
+                        update_profile_state(&mut cfg, &prev_id, None, None, None, Some(id));
+                }
+            }
+        }
+    }
 
     if let Some(existing) = find_pending_setup_profile(&cfg).cloned() {
         cfg.riot.current_profile_id = existing.id.clone();
@@ -1150,14 +1198,13 @@ pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
         }
         let current_state = find_profile(&cfg, &current_id)
             .map(|profile| profile.snapshot_state.as_str());
+        // Only re-backup if the live settings file actually has tokens (>1000 bytes).
+        // begin_profile_setup clears live files to add a new account — without this
+        // check, switching after an add overwrites the good snapshot with a default
+        // 484-byte file that has no auth tokens.
+        let has_live_tokens = riot_settings_file_ready(&app_handle).unwrap_or(false);
         let should_backup = match current_state {
-            Some("ready") => true,
-            // Capture on switch if the user logged in but capture didn't
-            // trigger during setup (common with 2FA). By the time the user
-            // switches away, session files are usually on disk.
-            Some("awaiting_capture" | "setup_pending") => {
-                riot_setup_capture_ready(&app_handle).unwrap_or(false)
-            }
+            Some("ready" | "awaiting_capture" | "setup_pending") => has_live_tokens,
             _ => false,
         };
         if should_backup {
@@ -1173,8 +1220,27 @@ pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
         }
     }
 
-    kill_riot_client_processes();
+    graceful_riot_quit();
     let restored = restore_live_snapshot(&app_handle, &target_id)?;
+
+    // Log the restored settings file size to diagnose overwrite issues
+    {
+        let install_dir = resolve_riot_client_path(&app_handle)
+            .ok()
+            .and_then(|path| path.parent().map(Path::to_path_buf));
+        if let Ok(Some(settings_path)) =
+            live_path_for(&RIOT_SNAPSHOT_ITEMS[0], install_dir.as_deref())
+        {
+            let size = fs::metadata(&settings_path).map(|m| m.len()).unwrap_or(0);
+            log_platform_info(
+                &app_handle,
+                "riot.switch_profile",
+                "Settings file after restore",
+                format!("size={size} restored={restored}"),
+            );
+        }
+    }
+
     cfg.riot.current_profile_id = target_id.clone();
     let next_state = if restored {
         "ready"

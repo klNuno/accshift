@@ -256,8 +256,8 @@ export function createPlatformAddFlowController({
           return {
             sections: [
               {
-                text: t("riot.setupWaitingForLogin"),
-                loading: true,
+                text: error || t("riot.setupWaitingForLogin"),
+                loading: !error,
               },
               ...(detectedSection ? [detectedSection] : [{ lines: [t("riot.setupStaySignedIn")] }]),
             ],
