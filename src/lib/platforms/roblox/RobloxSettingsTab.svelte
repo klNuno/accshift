@@ -3,6 +3,7 @@
   import type { AppSettings } from "$lib/features/settings/types";
   import type { MessageKey, TranslationParams } from "$lib/i18n";
   import SettingsCard from "$lib/shared/components/SettingsCard.svelte";
+  import { addToast } from "$lib/features/notifications/store.svelte";
   import { addAccountByCookie } from "./robloxApi";
 
   let {
@@ -17,23 +18,19 @@
 
   let cookieValue = $state("");
   let isAdding = $state(false);
-  let statusMessage = $state("");
-  let statusError = $state(false);
+  let errorMessage = $state("");
 
   async function handleAddByCookie() {
     const trimmed = cookieValue.trim();
     if (!trimmed || isAdding) return;
     isAdding = true;
-    statusMessage = "";
-    statusError = false;
+    errorMessage = "";
     try {
       const account = await addAccountByCookie(trimmed);
       cookieValue = "";
-      statusMessage = t("roblox.setupReadyWithProfile", { profile: account.displayName || account.username });
-      statusError = false;
+      addToast(t("roblox.setupReadyWithProfile", { profile: account.displayName || account.username }));
     } catch (err) {
-      statusMessage = String(err);
-      statusError = true;
+      errorMessage = String(err);
     } finally {
       isAdding = false;
     }
@@ -68,8 +65,8 @@
       disabled={isAdding || !cookieValue.trim()}
     >{isAdding ? "..." : t("common.add")}</button>
   </div>
-  {#if statusMessage}
-    <p class="status" class:error={statusError}>{statusMessage}</p>
+  {#if errorMessage}
+    <p class="status error">{errorMessage}</p>
   {/if}
 </SettingsCard>
 
@@ -121,13 +118,9 @@
     cursor: default;
   }
 
-  .status {
+  .status.error {
     margin: 0;
     font-size: 11px;
-    color: #86efac;
-  }
-
-  .status.error {
     color: #fca5a5;
   }
 </style>

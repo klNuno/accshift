@@ -334,40 +334,45 @@ fn kill_roblox() {
     }
 }
 
-fn launch_roblox() -> Result<(), String> {
-    // Try to find RobloxPlayerBeta.exe in the versioned install directory
-    let local_app_data =
-        std::env::var("LOCALAPPDATA").map_err(|_| "LOCALAPPDATA is not available".to_string())?;
-    let versions_dir = std::path::PathBuf::from(&local_app_data)
-        .join("Roblox")
-        .join("Versions");
+fn request_auth_ticket(cookie: &str) -> Result<String, String> {
+    let response = post_with_csrf_and_headers(
+        "https://auth.roblox.com/v1/authentication-ticket/",
+        "{}",
+        &[
+            ("Cookie", &format!(".ROBLOSECURITY={cookie}")),
+            ("Referer", "https://www.roblox.com/"),
+        ],
+    )
+    .map_err(|e| format!("Could not request auth ticket: {e}"))?;
 
-    if versions_dir.exists() {
-        // Find the most recent version folder with the player executable
-        let mut candidates: Vec<_> = std::fs::read_dir(&versions_dir)
-            .map_err(|e| format!("Could not read Roblox versions dir: {e}"))?
-            .filter_map(Result::ok)
-            .filter(|e| e.path().is_dir() && e.path().join("RobloxPlayerBeta.exe").exists())
-            .collect();
-
-        candidates.sort_by(|a, b| {
-            let ma = a.metadata().and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH);
-            let mb = b.metadata().and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH);
-            mb.cmp(&ma)
-        });
-
-        if let Some(entry) = candidates.first() {
-            let exe = entry.path().join("RobloxPlayerBeta.exe");
-            std::process::Command::new(&exe)
-                .spawn()
-                .map_err(|e| format!("Could not launch Roblox {}: {e}", exe.display()))?;
-            return Ok(());
-        }
+    if !response.status().is_success() {
+        return Err(format!(
+            "Auth ticket request failed (HTTP {})",
+            response.status()
+        ));
     }
 
-    // Fallback: open via protocol handler
-    crate::os::open_url("roblox://").map_err(|e| format!("Could not launch Roblox: {e}"))
+    response
+        .headers()
+        .get("rbx-authentication-ticket")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "No auth ticket in response".to_string())
 }
+
+fn launch_roblox_with_ticket(ticket: &str) -> Result<(), String> {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+
+    let uri = format!(
+        "roblox-player:1+launchmode:app+gameinfo:{ticket}+launchtime:{now_ms}+browsertrackerid:0+robloxLocale:en_us+gameLocale:en_us"
+    );
+
+    crate::os::open_url(&uri).map_err(|e| format!("Could not launch Roblox: {e}"))
+}
+
 
 // ---------------------------------------------------------------------------
 // Public operations
@@ -408,8 +413,12 @@ pub fn switch_account(app_handle: &tauri::AppHandle, user_id: &str) -> Result<()
         format!("userId={}", super::redact_id(user_id)),
     );
 
+    // Get an auth ticket BEFORE killing — the API needs the cookie, not a running process
+    let ticket = request_auth_ticket(&cookie)?;
+
     kill_roblox();
-    write_cookie_to_registry(&cookie)?;
+    // Still write to registry for Studio compatibility
+    let _ = write_cookie_to_registry(&cookie);
 
     // Update last_used_at
     let mut accounts = load_account_configs(app_handle);
@@ -418,7 +427,7 @@ pub fn switch_account(app_handle: &tauri::AppHandle, user_id: &str) -> Result<()
     }
     let _ = save_account_configs(app_handle, &accounts);
 
-    let launch_result = launch_roblox();
+    let launch_result = launch_roblox_with_ticket(&ticket);
 
     log_platform_info(
         app_handle,
@@ -610,7 +619,28 @@ pub async fn add_account_by_cookie(
     cookie: String,
     client: reqwest::Client,
 ) -> Result<RobloxAccount, String> {
-    let cookie = cookie.trim().to_string();
+    // Accept various paste formats:
+    // - raw cookie value
+    // - .ROBLOSECURITY:"<cookie>"  or  .ROBLOSECURITY=<cookie>
+    // - _|WARNING:...|_<cookie>
+    let cookie = {
+        let mut raw = cookie.trim().to_string();
+        // Strip .ROBLOSECURITY prefix with any separator
+        if let Some(rest) = raw
+            .strip_prefix(".ROBLOSECURITY")
+            .map(|s| s.trim_start_matches(|c: char| c == ':' || c == '=' || c == '"' || c.is_whitespace()))
+        {
+            raw = rest.trim_end_matches('"').to_string();
+        }
+        // Strip the warning prefix if present
+        if let Some(idx) = raw.find("|_") {
+            let after = &raw[idx + 2..];
+            if !after.is_empty() {
+                raw = after.to_string();
+            }
+        }
+        raw.trim().to_string()
+    };
     if cookie.is_empty() {
         return Err("Cookie is empty".to_string());
     }
