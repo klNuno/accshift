@@ -410,8 +410,17 @@ fn read_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<UbisoftAccount>, S
         let _ = remember_account_usage(app_handle, &current_uuid);
     }
 
-    let discovered = discover_uuids(app_handle);
     let cfg = config::load_config(app_handle);
+    let forgotten: HashSet<String> = cfg
+        .ubisoft
+        .forgotten_uuids
+        .iter()
+        .map(|u| normalize_uuid(u))
+        .collect();
+    let discovered: Vec<String> = discover_uuids(app_handle)
+        .into_iter()
+        .filter(|u| !forgotten.contains(&normalize_uuid(u)))
+        .collect();
 
     let metadata_by_uuid: HashMap<String, &UbisoftAccountConfig> = cfg
         .ubisoft
@@ -468,6 +477,10 @@ fn remember_account_usage(app_handle: &tauri::AppHandle, uuid: &str) -> Result<(
     let now = super::now_unix_ms();
 
     config::update_config(app_handle, |cfg| {
+        // Remove from blocklist if the account is being used again
+        cfg.ubisoft
+            .forgotten_uuids
+            .retain(|u| normalize_uuid(u) != key);
         if let Some(existing) = cfg
             .ubisoft
             .accounts
@@ -491,6 +504,15 @@ fn forget_account_metadata(app_handle: &tauri::AppHandle, uuid: &str) -> Result<
         cfg.ubisoft
             .accounts
             .retain(|a| normalize_uuid(&a.uuid) != key);
+        // Blocklist the UUID so filesystem discovery doesn't re-add it
+        if !cfg
+            .ubisoft
+            .forgotten_uuids
+            .iter()
+            .any(|u| normalize_uuid(u) == key)
+        {
+            cfg.ubisoft.forgotten_uuids.push(key);
+        }
     })?;
 
     // Also remove cached auth snapshot
