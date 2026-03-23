@@ -1,8 +1,6 @@
 use crate::config::{self, RiotProfileConfig};
 use crate::fs_utils;
-use crate::platforms::{
-    log_platform_error, log_platform_info, PlatformService, SetupStatus,
-};
+use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::ffi::OsStr;
@@ -436,7 +434,6 @@ fn riot_settings_file_ready(app_handle: &tauri::AppHandle) -> Result<bool, Strin
     // Capturing the small file produces a useless snapshot that opens the login page.
     Ok(settings_metadata.len() > 1000)
 }
-
 
 fn snapshot_has_settings(snapshot_dir: &Path) -> bool {
     snapshot_dir.join("RiotGamesPrivateSettings.yaml").exists()
@@ -1002,7 +999,10 @@ fn get_profile_setup_status_internal(
         let (state, error_msg) = if !has_lockfile {
             ("waiting_for_client", "")
         } else if login_state.logged_in && !login_state.persist {
-            ("waiting_for_login", "Check 'Stay signed in' in the Riot Client, then sign out and sign back in.")
+            (
+                "waiting_for_login",
+                "Check 'Stay signed in' in the Riot Client, then sign out and sign back in.",
+            )
         } else {
             ("waiting_for_login", "")
         };
@@ -1065,8 +1065,7 @@ pub fn begin_profile_setup(app_handle: tauri::AppHandle) -> Result<RiotProfileSe
             if riot_settings_file_ready(&app_handle).unwrap_or(false) {
                 let _ = backup_live_snapshot(&app_handle, &prev_id);
                 if let Some(ref id) = identity {
-                    let _ =
-                        update_profile_state(&mut cfg, &prev_id, None, None, None, Some(id));
+                    let _ = update_profile_state(&mut cfg, &prev_id, None, None, None, Some(id));
                 }
             }
         }
@@ -1196,8 +1195,8 @@ pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
         if !is_valid_profile_id(&current_id) {
             return Err("Invalid Riot profile id in config".into());
         }
-        let current_state = find_profile(&cfg, &current_id)
-            .map(|profile| profile.snapshot_state.as_str());
+        let current_state =
+            find_profile(&cfg, &current_id).map(|profile| profile.snapshot_state.as_str());
         // Only re-backup if the live settings file actually has tokens (>1000 bytes).
         // begin_profile_setup clears live files to add a new account — without this
         // check, switching after an add overwrites the good snapshot with a default

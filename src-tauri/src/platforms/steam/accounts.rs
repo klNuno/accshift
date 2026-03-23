@@ -151,7 +151,9 @@ fn kill_steam_client_processes() -> Result<(), AppError> {
     let steam_handle = std::thread::spawn(move || kill_process_tree_if_running(steam_name));
     let helper_result = kill_process_tree_if_running(helper_name);
 
-    let steam_result = steam_handle.join().map_err(|_| AppError::KillSteamTimeout)?;
+    let steam_result = steam_handle
+        .join()
+        .map_err(|_| AppError::KillSteamTimeout)?;
     steam_result?;
     helper_result
 }
@@ -667,9 +669,6 @@ mod tests {
     #[test]
     fn steam_id_to_account_id_max_u32_low_bits() {
         // 4294967295 = 0xFFFFFFFF, low 32 bits = u32::MAX
-        assert_eq!(
-            steam_id_to_account_id("4294967295"),
-            Some(u32::MAX)
-        );
+        assert_eq!(steam_id_to_account_id("4294967295"), Some(u32::MAX));
     }
 }

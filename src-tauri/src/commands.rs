@@ -181,11 +181,9 @@ pub async fn platform_get_setup_status(
     setup_id: String,
 ) -> Result<SetupStatus, String> {
     let service = require_service(&platform_id)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        service.get_setup_status(&app_handle, &setup_id)
-    })
-    .await
-    .map_err(|e| format!("Task failed: {e}"))?
+    tauri::async_runtime::spawn_blocking(move || service.get_setup_status(&app_handle, &setup_id))
+        .await
+        .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[tauri::command]
@@ -195,11 +193,9 @@ pub async fn platform_cancel_setup(
     setup_id: String,
 ) -> Result<(), String> {
     let service = require_service(&platform_id)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        service.cancel_setup(&app_handle, &setup_id)
-    })
-    .await
-    .map_err(|e| format!("Task failed: {e}"))?
+    tauri::async_runtime::spawn_blocking(move || service.cancel_setup(&app_handle, &setup_id))
+        .await
+        .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[tauri::command]
@@ -359,7 +355,6 @@ pub fn steam_get_account_games(
 ) -> Result<Vec<crate::platforms::steam::accounts::CopyableGame>, String> {
     crate::platforms::steam::get_account_games(app_handle, steam_id)
 }
-
 
 // ---------------------------------------------------------------------------
 // Riot-specific commands

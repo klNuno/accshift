@@ -368,12 +368,8 @@ pub fn load_config(app_handle: &tauri::AppHandle) -> AppConfig {
         .flatten();
 
     match (portable, local) {
-        (Some(portable), local) => {
-            merge_split_configs(portable, local.unwrap_or_default())
-        }
-        (None, Some(local)) => {
-            merge_split_configs(AppConfig::default(), local)
-        }
+        (Some(portable), local) => merge_split_configs(portable, local.unwrap_or_default()),
+        (None, Some(local)) => merge_split_configs(AppConfig::default(), local),
         // No split config yet, fall back to legacy (pre-migration).
         (None, None) => load_legacy_config(app_handle),
     }
@@ -887,7 +883,10 @@ mod tests {
         // Roblox: cookie and last_used_at merged into existing account
         assert_eq!(merged.roblox.accounts.len(), 1);
         assert_eq!(merged.roblox.accounts[0].username, "robloxer");
-        assert_eq!(merged.roblox.accounts[0].cookie_encrypted, "restored-cookie");
+        assert_eq!(
+            merged.roblox.accounts[0].cookie_encrypted,
+            "restored-cookie"
+        );
         assert_eq!(merged.roblox.accounts[0].last_used_at, Some(5000));
     }
 
@@ -964,4 +963,3 @@ mod tests {
         assert_eq!(l.roblox.accounts[0].user_id, "valid");
     }
 }
-

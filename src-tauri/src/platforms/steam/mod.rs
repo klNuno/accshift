@@ -1,8 +1,7 @@
 use crate::config;
 use crate::os;
 use crate::platforms::{
-    log_platform_error, log_platform_info, to_logged_error, PlatformService,
-    SetupStatus,
+    log_platform_error, log_platform_info, to_logged_error, PlatformService, SetupStatus,
 };
 pub mod accounts;
 pub mod bans;
@@ -319,8 +318,9 @@ pub fn begin_account_setup(
     let setup_id_for_job = setup_id.clone();
     let app_handle_for_job = app_handle.clone();
     thread::spawn(move || {
-        let launch_result = accounts::add_account(&steam_path, run_as_admin, &launch_options, force_kill)
-            .map_err(|e| e.to_string());
+        let launch_result =
+            accounts::add_account(&steam_path, run_as_admin, &launch_options, force_kill)
+                .map_err(|e| e.to_string());
         if let Ok(mut jobs) = steam_setup_jobs().lock() {
             if let Some(job) = jobs.get_mut(&setup_id_for_job) {
                 job.launch_started = true;
@@ -337,7 +337,13 @@ pub fn begin_account_setup(
         }
     });
 
-    Ok(super::make_setup_status(&setup_id, "waiting_for_client", "", "", ""))
+    Ok(super::make_setup_status(
+        &setup_id,
+        "waiting_for_client",
+        "",
+        "",
+        "",
+    ))
 }
 
 pub fn get_account_setup_status(
@@ -366,7 +372,13 @@ pub fn get_account_setup_status(
     }
 
     if !job.launch_started {
-        return Ok(super::make_setup_status(&setup_id, "waiting_for_client", "", "", ""));
+        return Ok(super::make_setup_status(
+            &setup_id,
+            "waiting_for_client",
+            "",
+            "",
+            "",
+        ));
     }
 
     let accounts = accounts::get_accounts(&job.steam_path)
@@ -389,7 +401,13 @@ pub fn get_account_setup_status(
         ));
     }
 
-    Ok(super::make_setup_status(&setup_id, "waiting_for_login", "", "", ""))
+    Ok(super::make_setup_status(
+        &setup_id,
+        "waiting_for_login",
+        "",
+        "",
+        "",
+    ))
 }
 
 pub fn cancel_account_setup(_app_handle: tauri::AppHandle, setup_id: String) -> Result<(), String> {
@@ -602,9 +620,14 @@ impl PlatformService for SteamService {
             ),
         );
 
-        let result =
-            accounts::switch_account(&steam_path, account_id, run_as_admin, &launch_options, force_kill)
-                .map_err(|e| to_logged_error(app, "steam.switch_account", e));
+        let result = accounts::switch_account(
+            &steam_path,
+            account_id,
+            run_as_admin,
+            &launch_options,
+            force_kill,
+        )
+        .map_err(|e| to_logged_error(app, "steam.switch_account", e));
 
         let post_state = build_switch_state_details(
             &steam_path,
