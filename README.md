@@ -15,7 +15,7 @@
   <a href="https://svelte.dev/"><img src="https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte" alt="Svelte" /></a>
 </p>
 
-## Current Status (very very early state)
+## Current Status
 
 | Platform             | Windows     | macOS           | Linux           |
 | -------------------- | ----------- | --------------- | --------------- |
@@ -32,24 +32,17 @@
 | HoYoverse / HoYoPlay | 🚧 Possible | ⛔ Not feasible | ⛔ Not feasible |
 | Minecraft Launcher   | 🚧 Possible | 🚧 Possible     | 🚧 Possible     |
 
-Status:
+- `✅ Done` — implemented and working
+- `🚧 Possible` — feasible, priority goes to user requests
+- `⛔ Not feasible` — not realistic for this OS
 
-- `✅ Done`: already implemented
-- `🚧 Possible`: feasible and planned (priority to requested platforms from users)
-- `⛔ Not feasible`: not realistic/supported for this OS
-
-Note: some `🚧 Possible` entries on macOS/Linux may rely on compatibility layers (Wine/Proton/Heroic).
-
-Users can propose new platforms through GitHub Issues.
+Users can propose new platforms through [GitHub Issues](https://github.com/klNuno/accshift/issues).
 
 ## Installation
 
-### From Releases
+Download the latest installer from [Releases](https://github.com/klNuno/accshift/releases).
 
-Download the latest installer from:
-`https://github.com/klNuno/accshift/releases`
-
-### From Source
+## Building from source
 
 ```bash
 pnpm install
@@ -63,82 +56,51 @@ pnpm install
 pnpm tauri dev
 ```
 
-## Steam Ban Check Notes
-
-- Ban checks use Steam `GetPlayerBans` API.
-- A Steam Web API key is required (configure it in Settings).
-- Requests are chunked and cached to reduce unnecessary API calls.
-- Manual refresh can force a full refresh when needed.
-
-## Riot Data & Security
-
-- Riot profile metadata and session snapshots are stored locally in the app data directory.
-- Snapshot files are used only for local restore/switch flows and are not uploaded by accshift.
-- Riot account switching relies on a locally saved Riot session on this PC.
-- Riot snapshot data is currently not encrypted at rest.
-- Riot setup/switch only terminates Riot client processes, not game binaries.
-- Steam API keys are encrypted at rest using OS-level secret storage.
-
-## Recent Security Hardening
-
-- Add-account setup identifiers are random UUIDs instead of timestamp-based IDs.
-- Pending Steam, Riot, and Battle.net setup flows expire automatically after a short inactivity window.
-- The local PIN lock now adds a short delay after a failed attempt to reduce trivial retry spam.
-- The main desktop webview blocks external navigation in production.
-- The desktop CSP no longer enables `unsafe-eval`.
-
-## Battle.net Notes
-
-- Battle.net account discovery is based on the local launcher configuration plus accshift local metadata.
-- Display names use the native BattleTag when it becomes available locally.
-- The add-account flow currently works by restarting the launcher and forcing a fresh login selection flow.
-- Battle.net switching is designed for local desktop use on the same Windows machine.
-
-## Installation Path Overrides
-
-- Steam folder, Riot client executable, and Battle.net executable can all be overridden in Settings.
-- If auto-detection fails, configure the launcher path manually from the platform settings tab.
-
 ## Project Structure
 
 ```text
 src/lib/
+  app/                          # app lifecycle, dialogs, navigation
   features/
-    folders/
-    notifications/
-    settings/
+    folders/                    # folder organization
+    notifications/              # toast system
+    settings/                   # settings store & UI
   platforms/
-    battle-net/
-      adapter.ts
-      battleNetApi.ts
-      types.ts
-    riot/
-      adapter.ts
-      riotApi.ts
-      types.ts
-    steam/
-      adapter.ts
-      steamApi.ts
-      profileCache.ts
-      types.ts
-    registry.ts
+    battle-net/                 # Battle.net adapter, API, context menu
+    epic/                       # Epic Games adapter, API, context menu
+    riot/                       # Riot Games adapter, API, context menu
+    roblox/                     # Roblox adapter, API, context menu
+    steam/                      # Steam adapter, API, context menu, bulk edit
+    ubisoft/                    # Ubisoft Connect adapter, API, context menu
+    platformApi.ts              # shared platform API factory
+    registry.ts                 # platform registry
   shared/
-    components/
-    platform.ts
-    useAccountLoader.svelte.ts
+    components/                 # AccountCard, ListView, dialogs, etc.
+    contextMenu/                # context menu builders
+    platform.ts                 # platform types & interfaces
+    useAccountLoader.svelte.ts  # account state management
+  storage/                      # client storage layer
 
 src-tauri/src/
-  commands.rs
+  commands.rs                   # Tauri command handlers
+  config.rs                     # app config (portable + local split)
+  storage.rs                    # file storage, migrations, manifests
   platforms/
-    battle_net.rs
-    riot.rs
-    steam.rs
-  steam/
-    accounts.rs
-    bans.rs
-    profile.rs
+    battle_net.rs               # Battle.net switching & setup
+    epic.rs                     # Epic Games switching & setup
+    riot.rs                     # Riot session capture & switching
+    roblox.rs                   # Roblox auth ticket switching
+    ubisoft.rs                  # Ubisoft Connect switching & setup
+    steam/
+      mod.rs                    # Steam service & setup
+      accounts.rs               # Steam account switching
+      bans.rs                   # Steam ban checking
+      bulk_edit.rs              # Steam bulk edit operations
+      profile.rs                # Steam profile info
+      vdf.rs                    # VDF parser
+  os/                           # OS-specific APIs (Windows, DPAPI, process mgmt)
 ```
 
 ## Disclaimer
 
-This project is not affiliated with Valve, Blizzard, or Riot Games. Use it at your own risk.
+This project is not affiliated with Valve, Blizzard, Riot Games, Epic Games, Ubisoft, or Roblox Corporation. Use at your own risk.
