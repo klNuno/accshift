@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 
-pub const DEFAULT_WINDOW_WIDTH: f64 = 900.0;
-pub const DEFAULT_WINDOW_HEIGHT: f64 = 450.0;
+pub const DEFAULT_WINDOW_WIDTH: f64 = 1000.0;
+pub const DEFAULT_WINDOW_HEIGHT: f64 = 520.0;
 pub const MIN_WINDOW_WIDTH: f64 = 400.0;
 pub const MIN_WINDOW_HEIGHT: f64 = 300.0;
 const WINDOW_SIZE_EPSILON: f64 = 1.0;

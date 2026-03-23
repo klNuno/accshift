@@ -2,7 +2,7 @@
 <p align="center">Fast multi-platform desktop account switcher, built with Tauri 2 and Svelte 5.</p>
 
 <p align="center">
-  <img src="./public/vite.svg" alt="accshift logo" width="140" />
+  <img src="./public/logo.svg" alt="accshift logo" width="140" />
 </p>
 
 <p align="center">
