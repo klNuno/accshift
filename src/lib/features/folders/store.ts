@@ -307,9 +307,9 @@ export function deleteFolder(folderId: string) {
 
 export function renameFolder(folderId: string, newName: string) {
   const store = getStore();
-  const folder = store.folders.find((f) => f.id === folderId);
-  if (folder) {
-    folder.name = newName;
+  const index = store.folders.findIndex((f) => f.id === folderId);
+  if (index !== -1) {
+    store.folders[index] = { ...store.folders[index], name: newName };
     saveStore(store);
   }
 }
