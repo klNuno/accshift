@@ -259,7 +259,6 @@ where
         Err(e) => Err(format!("Could not read file {}: {e}", path.display())),
     }
 }
-
 pub fn write_json_atomic<T>(path: &Path, value: &T) -> Result<(), String>
 where
     T: Serialize,
@@ -278,13 +277,31 @@ where
     match fs::rename(&tmp_path, path) {
         Ok(()) => Ok(()),
         Err(_) => {
+            // On Windows, rename often fails (antivirus lock, cross-drive, etc.).
+            // Back up the original before deleting so data survives if the copy
+            // also fails.
+            let bak_path = path.with_extension("bak");
             if path.exists() {
+                let _ = fs::copy(path, &bak_path);
                 let _ = fs::remove_file(path);
             }
-            fs::copy(&tmp_path, path)
-                .map_err(|e| format!("Could not finalize file {}: {e}", path.display()))?;
-            let _ = fs::remove_file(&tmp_path);
-            Ok(())
+            match fs::copy(&tmp_path, path) {
+                Ok(_) => {
+                    let _ = fs::remove_file(&tmp_path);
+                    let _ = fs::remove_file(&bak_path);
+                    Ok(())
+                }
+                Err(e) => {
+                    // Restore from backup if the copy failed.
+                    if bak_path.exists() && !path.exists() {
+                        let _ = fs::rename(&bak_path, path);
+                    }
+                    Err(format!(
+                        "Could not finalize file {}: {e}",
+                        path.display()
+                    ))
+                }
+            }
         }
     }
 }

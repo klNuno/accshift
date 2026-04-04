@@ -1063,8 +1063,14 @@ pub fn begin_profile_setup(app_handle: tauri::AppHandle) -> Result<RiotProfileSe
             let identity = detect_live_identity().ok();
             graceful_riot_quit();
             if riot_settings_file_ready(&app_handle).unwrap_or(false) {
-                let _ = backup_live_snapshot(&app_handle, &prev_id);
-                if let Some(ref id) = identity {
+                if let Err(e) = backup_live_snapshot(&app_handle, &prev_id) {
+                    log_platform_error(
+                        &app_handle,
+                        "riot.begin_setup",
+                        "Failed to backup current profile before setup",
+                        format!("profile={prev_id} error={e}"),
+                    );
+                } else if let Some(ref id) = identity {
                     let _ = update_profile_state(&mut cfg, &prev_id, None, None, None, Some(id));
                 }
             }

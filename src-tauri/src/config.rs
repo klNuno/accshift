@@ -361,11 +361,27 @@ pub fn load_config(app_handle: &tauri::AppHandle) -> AppConfig {
     };
 
     let portable = crate::storage::read_json_if_exists::<AppConfig>(&portable_path)
-        .ok()
-        .flatten();
+        .unwrap_or_else(|e| {
+            let _ = crate::logging::append_app_log(
+                app_handle,
+                "error",
+                "config.load",
+                "Portable config corrupted, using defaults",
+                Some(&e),
+            );
+            None
+        });
     let local = crate::storage::read_json_if_exists::<AppConfig>(&local_path)
-        .ok()
-        .flatten();
+        .unwrap_or_else(|e| {
+            let _ = crate::logging::append_app_log(
+                app_handle,
+                "error",
+                "config.load",
+                "Local config corrupted, using defaults",
+                Some(&e),
+            );
+            None
+        });
 
     match (portable, local) {
         (Some(portable), local) => merge_split_configs(portable, local.unwrap_or_default()),
