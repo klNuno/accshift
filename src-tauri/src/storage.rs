@@ -296,10 +296,7 @@ where
                     if bak_path.exists() && !path.exists() {
                         let _ = fs::rename(&bak_path, path);
                     }
-                    Err(format!(
-                        "Could not finalize file {}: {e}",
-                        path.display()
-                    ))
+                    Err(format!("Could not finalize file {}: {e}", path.display()))
                 }
             }
         }
