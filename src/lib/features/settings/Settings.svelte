@@ -31,14 +31,7 @@
   import { trackDependencies } from "$lib/shared/trackDependencies";
   import { createNumericInput, clampInt } from "$lib/shared/useNumericInput.svelte";
   import type { PlatformDef } from "$lib/features/settings/types";
-
-  type SettingsTabDef = {
-    id: string;
-    labelKey: MessageKey;
-    accent: string;
-    visible?: () => boolean;
-    platformDef?: PlatformDef;
-  };
+  import { createSettingsTabBar, type SettingsTabDef } from "./useSettingsTabBar.svelte";
 
   let {
     onClose,
@@ -64,7 +57,6 @@
   let platformPathsKey = $derived(JSON.stringify(platformPaths));
   let showLastLoginKey = $derived(JSON.stringify(settings.accountDisplay.showLastLoginPerPlatform));
   let pinCodeInput = $state("");
-  let ActivePlatformComponent = $state<any>(null);
   const uiScale = createNumericInput(() => settings.uiScalePercent, (v) => { settings.uiScalePercent = v; }, 75, 150);
   const bgOpacity = createNumericInput(() => settings.backgroundOpacity, (v) => { settings.backgroundOpacity = v; }, 0, 100);
   const avatarCacheDays = createNumericInput(() => settings.dataRefresh.avatarCacheDays, (v) => { settings.dataRefresh.avatarCacheDays = v; }, 0, 90);
@@ -77,13 +69,7 @@
   let lastSavedToastAt = 0;
   let lastPersistedSnapshot = "";
   let lastPlatformSnapshot = "";
-  let activeSettingsTab = $state<string>("general");
-  let tabsRef = $state<HTMLDivElement | null>(null);
-  let tabUiFrame: number | null = null;
-  let tabResizeObserver: ResizeObserver | null = null;
-  let tabsOverflowing = $state(false);
-  let canScrollTabsLeft = $state(false);
-  let canScrollTabsRight = $state(false);
+  let ActivePlatformComponent = $state<any>(null);
   const SAVE_TOAST_COOLDOWN_MS = 1500;
   const PIN_CODE_LENGTH = 4;
   const NEUTRAL_TAB_ACCENT = "#71717a";
@@ -97,7 +83,7 @@
   let platformTabConfig = $derived.by(() => {
     return ALL_PLATFORMS
       .filter((p) => p.settingsTabKey && settings.enabledPlatforms.includes(p.id))
-      .map((p): SettingsTabDef => ({
+      .map((p): SettingsTabDef & { platformDef?: PlatformDef } => ({
         id: `platform:${p.id}`,
         labelKey: p.settingsTabKey as MessageKey,
         accent: p.accent,
@@ -110,6 +96,11 @@
   let visibleTabs = $derived.by(() =>
     tabConfig.filter((tab) => tab.visible ? tab.visible() : true)
   );
+
+  const tabBar = createSettingsTabBar({
+    getVisibleTabs: () => visibleTabs,
+    onTabSelected: loadActivePlatformComponent,
+  });
 
   let visiblePlatformOptions = $derived.by(() =>
     ALL_PLATFORMS.filter((platform) => platform.implemented || settings.enabledPlatforms.includes(platform.id))
@@ -276,42 +267,6 @@
     }
   }
 
-  function updateTabScrollState() {
-    const el = tabsRef;
-    if (!el) {
-      tabsOverflowing = false;
-      canScrollTabsLeft = false;
-      canScrollTabsRight = false;
-      return;
-    }
-    const maxScrollLeft = Math.max(0, el.scrollWidth - el.clientWidth);
-    tabsOverflowing = maxScrollLeft > 6;
-    canScrollTabsLeft = tabsOverflowing && el.scrollLeft > 6;
-    canScrollTabsRight = tabsOverflowing && el.scrollLeft < maxScrollLeft - 6;
-  }
-
-  function scrollActiveTabIntoView(behavior: ScrollBehavior = "smooth") {
-    const activeButton = tabsRef?.querySelector<HTMLElement>(`[data-settings-tab="${activeSettingsTab}"]`);
-    activeButton?.scrollIntoView({ inline: "nearest", block: "nearest", behavior });
-  }
-
-  function queueTabUiRefresh(scrollActive = false) {
-    if (tabUiFrame !== null) cancelAnimationFrame(tabUiFrame);
-    tabUiFrame = requestAnimationFrame(() => {
-      updateTabScrollState();
-      if (scrollActive) {
-        scrollActiveTabIntoView("auto");
-      }
-      tabUiFrame = null;
-    });
-  }
-
-  function selectSettingsTab(tabId: string) {
-    activeSettingsTab = tabId;
-    loadActivePlatformComponent(tabId);
-    queueTabUiRefresh(true);
-  }
-
   function loadActivePlatformComponent(tabId: string) {
     if (!tabId.startsWith("platform:")) {
       ActivePlatformComponent = null;
@@ -321,22 +276,13 @@
     const def = ALL_PLATFORMS.find((p) => p.id === platformId);
     if (def?.settingsComponent) {
       def.settingsComponent().then((mod) => {
-        if (activeSettingsTab === tabId) {
+        if (tabBar.activeTab === tabId) {
           ActivePlatformComponent = mod.default;
         }
       });
     } else {
       ActivePlatformComponent = null;
     }
-  }
-
-  function scrollTabs(direction: -1 | 1) {
-    const el = tabsRef;
-    if (!el) return;
-    el.scrollBy({
-      left: Math.max(180, el.clientWidth * 0.6) * direction,
-      behavior: "smooth",
-    });
   }
 
   async function choosePlatformPath(platformId: string) {
@@ -413,20 +359,12 @@
     lastPlatformSnapshot = buildPlatformSnapshot();
     hydrated = true;
 
-    queueTabUiRefresh(true);
-
-    if (tabsRef && typeof ResizeObserver !== "undefined") {
-      tabResizeObserver = new ResizeObserver(() => {
-        updateTabScrollState();
-      });
-      tabResizeObserver.observe(tabsRef);
-    }
+    tabBar.startObserver();
   });
 
   onDestroy(() => {
     if (saveTimer) clearTimeout(saveTimer);
-    if (tabUiFrame !== null) cancelAnimationFrame(tabUiFrame);
-    tabResizeObserver?.disconnect();
+    tabBar.destroy();
   });
 
   $effect(() => {
@@ -460,17 +398,12 @@
   });
 
   $effect(() => {
-    const visibleIds = visibleTabs.map((tab) => tab.id);
-    if (!visibleIds.includes(activeSettingsTab)) {
-      activeSettingsTab = visibleIds[0] ?? "general";
-      loadActivePlatformComponent(activeSettingsTab);
-    }
-    trackDependencies(visibleIds.join(","), settings.language);
-    queueTabUiRefresh(true);
+    trackDependencies(visibleTabs.map((tab) => tab.id).join(","), settings.language);
+    tabBar.ensureActiveVisible();
   });
 </script>
 
-<svelte:window onkeydown={handleKeydown} onresize={updateTabScrollState} />
+<svelte:window onkeydown={handleKeydown} onresize={tabBar.updateScrollState} />
 
 <div class="settings-panel">
   <div class="header">
@@ -487,40 +420,40 @@
     </div>
   </div>
 
-  <div class="settings-nav-shell" class:compact={tabsOverflowing}>
-    {#if tabsOverflowing}
+  <div class="settings-nav-shell" class:compact={tabBar.tabsOverflowing}>
+    {#if tabBar.tabsOverflowing}
       <button
         class="tabs-scroll-btn"
         type="button"
-        onclick={() => scrollTabs(-1)}
-        disabled={!canScrollTabsLeft}
+        onclick={() => tabBar.scroll(-1)}
+        disabled={!tabBar.canScrollLeft}
         aria-label="Scroll settings tabs left"
       >
         <span>&lsaquo;</span>
       </button>
     {/if}
 
-    <div class="settings-tabs" bind:this={tabsRef} onscroll={updateTabScrollState}>
+    <div class="settings-tabs" bind:this={tabBar.tabsRef} onscroll={tabBar.updateScrollState}>
       {#each visibleTabs as tab}
         <button
           class="settings-tab"
-          class:active={activeSettingsTab === tab.id}
+          class:active={tabBar.activeTab === tab.id}
           type="button"
           data-settings-tab={tab.id}
           style={`--tab-accent:${tab.accent};`}
-          onclick={() => selectSettingsTab(tab.id)}
+          onclick={() => tabBar.select(tab.id)}
         >
           <span>{t(tab.labelKey)}</span>
         </button>
       {/each}
     </div>
 
-    {#if tabsOverflowing}
+    {#if tabBar.tabsOverflowing}
       <button
         class="tabs-scroll-btn"
         type="button"
-        onclick={() => scrollTabs(1)}
-        disabled={!canScrollTabsRight}
+        onclick={() => tabBar.scroll(1)}
+        disabled={!tabBar.canScrollRight}
         aria-label="Scroll settings tabs right"
       >
         <span>&rsaquo;</span>
@@ -529,7 +462,7 @@
   </div>
 
   <div class="settings-content">
-    {#if activeSettingsTab === "general"}
+    {#if tabBar.activeTab === "general"}
       <div class="settings-grid">
         <section class="card">
           <h3>{t("settings.appearance")}</h3>
@@ -664,7 +597,7 @@
       </div>
     {/if}
 
-    {#if activeSettingsTab === "platforms"}
+    {#if tabBar.activeTab === "platforms"}
       <div class="settings-grid">
         <section class="card card-wide">
           <h3>{t("settings.platforms")}</h3>
@@ -712,7 +645,7 @@
       </div>
     {/if}
 
-    {#if activeSettingsTab === "privacy"}
+    {#if tabBar.activeTab === "privacy"}
       <div class="settings-grid">
         <section class="card">
           <h3>{t("settings.privacy")}</h3>
@@ -774,8 +707,8 @@
       </div>
     {/if}
 
-    {#if activeSettingsTab.startsWith("platform:") && ActivePlatformComponent}
-      {@const platformId = activeSettingsTab.slice("platform:".length)}
+    {#if tabBar.activeTab.startsWith("platform:") && ActivePlatformComponent}
+      {@const platformId = tabBar.activeTab.slice("platform:".length)}
       {@const platformDef = ALL_PLATFORMS.find((p) => p.id === platformId)}
       {#if platformDef && platformId in platformPaths}
         <div class="settings-grid">
