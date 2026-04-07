@@ -3,25 +3,15 @@
   import { invoke } from "@tauri-apps/api/core";
   import { getSettings, saveSettings, ALL_PLATFORMS } from "./store";
   import { addToast } from "../notifications/store.svelte";
-  import ToggleSetting from "./ToggleSetting.svelte";
   import {
     hasApiKey,
     openSteamApiKeyPage as openSteamApiKeyPageInBrowser,
     setApiKey,
   } from "$lib/platforms/steam/steamApi";
   import { getPlatformDefinition } from "$lib/platforms/registry";
-  import {
-    getThemeDefinition,
-    getAllThemes,
-    loadCustomThemes,
-    saveCustomTheme,
-    deleteCustomTheme as deleteCustomThemeFromRegistry,
-    parseThemeJson,
-    exportThemeJson,
-  } from "$lib/theme/themes";
+  import { getThemeDefinition } from "$lib/theme/themes";
   import {
     DEFAULT_LOCALE,
-    LANGUAGE_OPTIONS,
     normalizeLocale,
     translate,
     type MessageKey,
@@ -32,6 +22,9 @@
   import { createNumericInput, clampInt } from "$lib/shared/useNumericInput.svelte";
   import type { PlatformDef } from "$lib/features/settings/types";
   import { createSettingsTabBar, type SettingsTabDef } from "./useSettingsTabBar.svelte";
+  import SettingsGeneralTab from "./SettingsGeneralTab.svelte";
+  import SettingsPlatformsTab from "./SettingsPlatformsTab.svelte";
+  import SettingsPrivacyTab from "./SettingsPrivacyTab.svelte";
 
   let {
     onClose,
@@ -102,10 +95,6 @@
     onTabSelected: loadActivePlatformComponent,
   });
 
-  let visiblePlatformOptions = $derived.by(() =>
-    ALL_PLATFORMS.filter((platform) => platform.implemented || settings.enabledPlatforms.includes(platform.id))
-  );
-
   function t(key: MessageKey, params?: TranslationParams): string {
     return translate(settings.language ?? DEFAULT_LOCALE, key, params);
   }
@@ -131,7 +120,8 @@
     if (!settings.pinEnabled) {
       settings.pinHash = "";
     }
-    if (!visiblePlatformOptions.some((platform) => platform.id === settings.defaultPlatformId)) {
+    const visiblePlatforms = ALL_PLATFORMS.filter((p) => p.implemented || settings.enabledPlatforms.includes(p.id));
+    if (!visiblePlatforms.some((platform) => platform.id === settings.defaultPlatformId)) {
       settings.defaultPlatformId = "steam";
     }
     if (!settings.enabledPlatforms.length) settings.enabledPlatforms = ["steam"];
@@ -234,37 +224,6 @@
     const definition = getPlatformDefinition(platformId);
     if (!definition) return false;
     return definition.implemented && isPlatformOsCompatible(platformId);
-  }
-
-  function platformAvailabilityLabel(platformId: string): string {
-    const definition = getPlatformDefinition(platformId);
-    if (!definition) return t("settings.platformNotImplemented");
-    if (!definition.implemented) return t("settings.platformNotImplemented");
-    if (!isPlatformOsCompatible(platformId)) return t("settings.platformUnsupportedOs");
-    return "";
-  }
-
-  function togglePlatform(id: string) {
-    if (settings.enabledPlatforms.includes(id)) {
-      const selectableEnabled = settings.enabledPlatforms.filter((platformId) => isPlatformSelectable(platformId));
-      if (selectableEnabled.length <= 1 && selectableEnabled.includes(id)) return;
-      settings.enabledPlatforms = settings.enabledPlatforms.filter((platformId) => platformId !== id);
-    } else {
-      if (!isPlatformSelectable(id)) return;
-      settings.enabledPlatforms = [...settings.enabledPlatforms, id];
-      if (!(id in platformPaths)) {
-        platformPaths[id] = "";
-        void invoke<string>("platform_get_path", { platformId: id })
-          .then((path) => {
-            if (settings.enabledPlatforms.includes(id)) {
-              platformPaths[id] = path;
-            }
-          })
-          .catch(() => {
-            // Ignore path lookup failures for newly enabled platforms.
-          });
-      }
-    }
   }
 
   function loadActivePlatformComponent(tabId: string) {
@@ -463,248 +422,32 @@
 
   <div class="settings-content">
     {#if tabBar.activeTab === "general"}
-      <div class="settings-grid">
-        <section class="card">
-          <h3>{t("settings.appearance")}</h3>
-          <label class="field">
-            <span class="field-label">{t("settings.language")}</span>
-            <select class="text-input select-input" bind:value={settings.language}>
-              {#each LANGUAGE_OPTIONS as option}
-                <option value={option.code}>{t(option.labelKey)}</option>
-              {/each}
-            </select>
-          </label>
-
-          <label class="field">
-            <span class="field-label">{t("settings.uiZoom")} - {settings.uiScalePercent}%</span>
-            <input
-              type="range"
-              min="75"
-              max="150"
-              step="5"
-              value={uiScale.input}
-              oninput={(e) => {
-                uiScale.input = (e.currentTarget as HTMLInputElement).value;
-                uiScale.commit();
-              }}
-              class="slider-input"
-            />
-          </label>
-
-          <div class="field">
-            <span class="field-label">{t("settings.theme")}</span>
-            <div class="theme-grid">
-              {#each getAllThemes() as theme (theme.id)}
-                <button
-                  type="button"
-                  class="theme-swatch"
-                  class:selected={settings.themeId === theme.id}
-                  title={theme.isCustom ? (theme.displayName ?? theme.id) : t(theme.labelKey)}
-                  style="--swatch-bg: rgb({theme.tokens.bgRgb}); --swatch-card: {theme.tokens.bgCard}; --swatch-fg: {theme.tokens.fg}; --swatch-border: {theme.tokens.border};"
-                  onclick={() => settings.themeId = theme.id}
-                >
-                  <span class="swatch-preview">
-                    <span class="swatch-bar"></span>
-                    <span class="swatch-bar short"></span>
-                  </span>
-                  <span class="swatch-label">{theme.isCustom ? (theme.displayName ?? theme.id) : t(theme.labelKey)}</span>
-                  {#if theme.isCustom}
-                    <!-- svelte-ignore node_invalid_placement_ssr -->
-                    <button
-                      type="button"
-                      class="swatch-delete"
-                      title={t("settings.themeDelete")}
-                      onclick={(e: MouseEvent) => {
-                        e.stopPropagation();
-                        void (async () => {
-                          await deleteCustomThemeFromRegistry(theme.id);
-                          if (settings.themeId === theme.id) settings.themeId = "dark";
-                          addToast(t("settings.themeDeleted"));
-                        })();
-                      }}
-                    >&times;</button>
-                  {/if}
-                </button>
-              {/each}
-            </div>
-            <div class="theme-actions-row">
-              <button type="button" class="theme-action-btn" onclick={async () => {
-                try {
-                  const json = await navigator.clipboard.readText();
-                  const parsed = parseThemeJson(json);
-                  if (!parsed) { addToast(t("settings.themeInvalidJson")); return; }
-                  await saveCustomTheme(parsed);
-                  await loadCustomThemes();
-                  settings.themeId = parsed.id;
-                  addToast(t("settings.themeImported"));
-                } catch { addToast(t("settings.themeInvalidJson")); }
-              }}>{t("settings.themeImport")}</button>
-              <button type="button" class="theme-action-btn" onclick={() => {
-                const theme = getThemeDefinition(settings.themeId);
-                navigator.clipboard.writeText(exportThemeJson(theme));
-                addToast(t("settings.themeExportCopied"));
-              }}>{t("settings.themeExport")}</button>
-            </div>
-          </div>
-
-          <label class="field">
-            <span class="field-label">{t("settings.backgroundOpacity")} - {settings.backgroundOpacity}%</span>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              step="5"
-              value={bgOpacity.input}
-              oninput={(e) => {
-                bgOpacity.input = (e.currentTarget as HTMLInputElement).value;
-                bgOpacity.commit();
-              }}
-              class="slider-input"
-            />
-          </label>
-        </section>
-
-        <section class="card">
-          <h3>{t("settings.accountDisplay")}</h3>
-          <ToggleSetting
-            label={t("settings.showNotesUnderCards")}
-            enabled={settings.accountDisplay.showCardNotesInline}
-            onLabel={t("common.inline")}
-            offLabel={t("common.tooltip")}
-            onToggle={() => settings.accountDisplay.showCardNotesInline = !settings.accountDisplay.showCardNotesInline}
-          />
-        </section>
-
-        <section class="card">
-          <h3>{t("settings.performance")}</h3>
-          <ToggleSetting
-            label={t("settings.suspendGraphicsWhenMinimized")}
-            enabled={settings.suspendGraphicsWhenMinimized}
-            accent={NEUTRAL_CONTROL_ACCENT}
-            onLabel={t("common.enabled")}
-            offLabel={t("common.disabled")}
-            onToggle={() => settings.suspendGraphicsWhenMinimized = !settings.suspendGraphicsWhenMinimized}
-          />
-          <ToggleSetting
-            label={t("settings.minimizeOnAccountSwitch")}
-            enabled={settings.minimizeOnAccountSwitch}
-            accent={NEUTRAL_CONTROL_ACCENT}
-            onLabel={t("common.enabled")}
-            offLabel={t("common.disabled")}
-            onToggle={() => settings.minimizeOnAccountSwitch = !settings.minimizeOnAccountSwitch}
-          />
-        </section>
-      </div>
+      <SettingsGeneralTab
+        bind:settings
+        {t}
+        {uiScale}
+        {bgOpacity}
+        neutralAccent={NEUTRAL_CONTROL_ACCENT}
+      />
     {/if}
 
     {#if tabBar.activeTab === "platforms"}
-      <div class="settings-grid">
-        <section class="card card-wide">
-          <h3>{t("settings.platforms")}</h3>
-          <div class="platforms">
-            {#each visiblePlatformOptions as platform}
-              {@const isSelectable = isPlatformSelectable(platform.id)}
-              {@const isEnabled = settings.enabledPlatforms.includes(platform.id)}
-              {@const isLocked = !isSelectable && !isEnabled}
-              {@const statusLabel = platformAvailabilityLabel(platform.id)}
-              <button
-                class="platform-chip"
-                class:disabled={isLocked}
-                onclick={() => togglePlatform(platform.id)}
-                style={`--chip-accent:${platform.accent};`}
-                disabled={isLocked}
-                title={statusLabel || platform.name}
-              >
-                <span class="platform-main">
-                  <span>{platform.name}</span>
-                  {#if statusLabel}
-                    <span class="platform-status">{statusLabel}</span>
-                  {/if}
-                </span>
-                <div class="toggle" class:active={isEnabled}>
-                  <div class="knob"></div>
-                </div>
-              </button>
-            {/each}
-          </div>
-        </section>
-
-        <section class="card">
-          <h3>{t("settings.defaultOnStartup")}</h3>
-          <label class="field">
-            <select class="text-input select-input" bind:value={settings.defaultPlatformId}>
-              {#each visiblePlatformOptions as platform}
-                {@const disabled = !settings.enabledPlatforms.includes(platform.id) || !isPlatformSelectable(platform.id)}
-                <option value={platform.id} {disabled}>
-                  {platform.name}{disabled ? ` ${t("settings.platformDisabledSuffix")}` : ""}
-                </option>
-              {/each}
-            </select>
-          </label>
-        </section>
-      </div>
+      <SettingsPlatformsTab
+        bind:settings
+        bind:platformPaths
+        {t}
+        {runtimeOs}
+      />
     {/if}
 
     {#if tabBar.activeTab === "privacy"}
-      <div class="settings-grid">
-        <section class="card">
-          <h3>{t("settings.privacy")}</h3>
-          <label class="field">
-            <span class="field-label">{t("settings.inactivityTimeout")} <span class="hint">({t("settings.zeroDisabled")})</span></span>
-            <input
-              type="number"
-              min="0"
-              max="3600"
-              step="5"
-              value={inactivityBlur.input}
-              oninput={(e) => inactivityBlur.input = (e.currentTarget as HTMLInputElement).value}
-              onblur={inactivityBlur.commit}
-              onkeydown={(e) => {
-                if (e.key === "Enter") {
-                  inactivityBlur.commit();
-                  (e.currentTarget as HTMLInputElement).blur();
-                }
-              }}
-              class="text-input number-input"
-            />
-          </label>
-        </section>
-
-        <section class="card">
-          <h3>{t("settings.security")}</h3>
-          <ToggleSetting
-            label={t("settings.pinLockOnAfk")}
-            enabled={settings.pinEnabled}
-            accent={NEUTRAL_CONTROL_ACCENT}
-            onLabel={t("common.enabled")}
-            offLabel={t("common.disabled")}
-            onToggle={() => {
-              settings.pinEnabled = !settings.pinEnabled;
-              if (!settings.pinEnabled) {
-                settings.pinHash = "";
-                pinCodeInput = "";
-              }
-            }}
-          />
-
-          {#if settings.pinEnabled}
-            <div class="field">
-              <span class="field-label">{t("settings.pinCode")}</span>
-              <input
-                id="pin-code"
-                type="password"
-                bind:value={pinCodeInput}
-                class="text-input"
-                placeholder={t("settings.pinPlaceholder")}
-                maxlength={PIN_CODE_LENGTH}
-                inputmode="numeric"
-                pattern="[0-9]*"
-                oninput={(e) => pinCodeInput = sanitizePinDigits((e.currentTarget as HTMLInputElement).value)}
-              />
-            </div>
-          {/if}
-        </section>
-      </div>
+      <SettingsPrivacyTab
+        bind:settings
+        bind:pinCodeInput
+        {t}
+        {inactivityBlur}
+        neutralAccent={NEUTRAL_CONTROL_ACCENT}
+      />
     {/if}
 
     {#if tabBar.activeTab.startsWith("platform:") && ActivePlatformComponent}
@@ -918,78 +661,6 @@
     color: var(--fg);
   }
 
-  .platforms {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .platform-chip {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--bg-card) 88%, #fff 12%);
-    color: var(--fg);
-    padding: 10px 12px;
-    cursor: pointer;
-    transition: border-color 120ms ease-out, background 120ms ease-out;
-  }
-
-  .platform-main {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 3px;
-  }
-
-  .platform-status {
-    font-size: 10px;
-    color: var(--fg-subtle);
-  }
-
-  .platform-chip:hover {
-    border-color: color-mix(in srgb, var(--chip-accent) 55%, var(--border));
-    background: color-mix(in srgb, var(--bg-card) 84%, #fff 16%);
-  }
-
-  .platform-chip.disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
-  }
-
-  .platform-chip.disabled:hover {
-    border-color: var(--border);
-    background: color-mix(in srgb, var(--bg-card) 88%, #fff 12%);
-  }
-
-  .toggle {
-    width: 36px;
-    height: 20px;
-    border-radius: 999px;
-    background: var(--bg-elevated);
-    padding: 2px;
-    transition: background 120ms ease-out;
-  }
-
-  .toggle.active {
-    background: var(--chip-accent);
-  }
-
-  .knob {
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: #fff;
-    transition: transform 120ms ease-out;
-  }
-
-  .toggle.active .knob {
-    transform: translateX(16px);
-  }
-
   .field {
     display: flex;
     flex-direction: column;
@@ -1049,120 +720,6 @@
     .card-wide {
       grid-column: span 1;
     }
-  }
-
-  .theme-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(86px, 1fr));
-    gap: 8px;
-    margin-top: 4px;
-  }
-
-  .theme-swatch {
-    position: relative;
-    border-radius: 8px;
-    border: 2px solid transparent;
-    background: var(--swatch-bg);
-    cursor: pointer;
-    padding: 8px 8px 6px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    transition: border-color 120ms ease-out, box-shadow 120ms ease-out;
-  }
-
-  .theme-swatch:hover {
-    border-color: color-mix(in srgb, var(--swatch-fg) 25%, transparent);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
-  }
-
-  .theme-swatch.selected {
-    border-color: var(--swatch-fg);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--swatch-fg) 30%, transparent);
-  }
-
-  .swatch-preview {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    padding: 6px;
-    border-radius: 4px;
-    background: var(--swatch-card);
-    border: 1px solid var(--swatch-border);
-  }
-
-  .swatch-bar {
-    height: 4px;
-    border-radius: 2px;
-    background: var(--swatch-fg);
-    opacity: 0.35;
-  }
-
-  .swatch-bar.short {
-    width: 60%;
-    opacity: 0.2;
-  }
-
-  .swatch-label {
-    font-size: 10px;
-    font-weight: 600;
-    color: var(--swatch-fg);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    text-align: center;
-    line-height: 1.2;
-    opacity: 0.7;
-  }
-
-  .theme-swatch.selected .swatch-label {
-    opacity: 1;
-  }
-
-  .swatch-delete {
-    position: absolute;
-    top: 2px;
-    right: 4px;
-    font-size: 14px;
-    line-height: 1;
-    color: var(--swatch-fg);
-    opacity: 0;
-    cursor: pointer;
-    padding: 2px 4px;
-    border: none;
-    background: color-mix(in srgb, var(--swatch-bg) 80%, #000 20%);
-    border-radius: 4px;
-  }
-
-  .theme-swatch:hover .swatch-delete {
-    opacity: 0.6;
-  }
-
-  .swatch-delete:hover {
-    opacity: 1 !important;
-  }
-
-  .theme-actions-row {
-    display: flex;
-    gap: 8px;
-    margin-top: 4px;
-  }
-
-  .theme-action-btn {
-    flex: 1;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg-card);
-    color: var(--fg-muted);
-    font-size: 11px;
-    padding: 5px 12px;
-    cursor: pointer;
-    transition: background 120ms ease-out;
-  }
-
-  .theme-action-btn:hover {
-    background: var(--bg-card-hover);
-    color: var(--fg);
   }
 
   @media (max-width: 720px) {
