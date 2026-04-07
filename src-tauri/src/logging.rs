@@ -246,3 +246,87 @@ pub fn install_panic_hook(app_handle: tauri::AppHandle) {
         previous_hook(panic_info);
     }));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trim_text_shorter_than_max() {
+        assert_eq!(trim_text("hello", 10), "hello");
+    }
+
+    #[test]
+    fn trim_text_exact_max() {
+        assert_eq!(trim_text("hello", 5), "hello");
+    }
+
+    #[test]
+    fn trim_text_truncates_at_boundary() {
+        assert_eq!(trim_text("hello world", 5), "hello");
+    }
+
+    #[test]
+    fn trim_text_respects_utf8_boundary() {
+        // é is 2 bytes in UTF-8, max_bytes=3 should not split it
+        let result = trim_text("héllo", 2);
+        assert_eq!(result, "h");
+    }
+
+    #[test]
+    fn trim_text_empty_string() {
+        assert_eq!(trim_text("", 10), "");
+    }
+
+    #[test]
+    fn replace_case_insensitive_basic() {
+        assert_eq!(replace_case_insensitive("Hello WORLD", "world", "earth"), "Hello earth");
+    }
+
+    #[test]
+    fn replace_case_insensitive_multiple() {
+        assert_eq!(replace_case_insensitive("aAbBaA", "aa", "X"), "XbBX");
+    }
+
+    #[test]
+    fn replace_case_insensitive_empty_needle() {
+        assert_eq!(replace_case_insensitive("hello", "", "X"), "hello");
+    }
+
+    #[test]
+    fn replace_case_insensitive_no_match() {
+        assert_eq!(replace_case_insensitive("hello", "xyz", "X"), "hello");
+    }
+
+    #[test]
+    fn redact_email_basic() {
+        // local part is kept, only @domain is replaced
+        assert_eq!(redact_email_like_tokens("user@example.com"), "user<email>");
+    }
+
+    #[test]
+    fn redact_email_multiple() {
+        assert_eq!(
+            redact_email_like_tokens("a@b.co and c@d.com"),
+            "a<email> and c<email>"
+        );
+    }
+
+    #[test]
+    fn redact_email_no_email() {
+        assert_eq!(redact_email_like_tokens("hello world"), "hello world");
+    }
+
+    #[test]
+    fn redact_email_at_without_domain() {
+        assert_eq!(redact_email_like_tokens("just @ sign"), "just @ sign");
+    }
+
+    #[test]
+    fn redact_email_preserves_surrounding_text() {
+        assert_eq!(
+            redact_email_like_tokens("logged in as test@mail.com successfully"),
+            "logged in as test<email> successfully"
+        );
+    }
+}

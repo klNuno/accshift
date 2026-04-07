@@ -894,3 +894,49 @@ impl PlatformService for EpicService {
         set_account_label(app, account_id, label)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn valid_epic_id_32_hex() {
+        assert!(is_valid_epic_account_id("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"));
+    }
+
+    #[test]
+    fn valid_epic_id_uppercase() {
+        assert!(is_valid_epic_account_id("A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4"));
+    }
+
+    #[test]
+    fn invalid_epic_id_too_short() {
+        assert!(!is_valid_epic_account_id("abc123"));
+    }
+
+    #[test]
+    fn invalid_epic_id_non_hex() {
+        assert!(!is_valid_epic_account_id("g1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"));
+    }
+
+    #[test]
+    fn invalid_epic_id_empty() {
+        assert!(!is_valid_epic_account_id(""));
+    }
+
+    #[test]
+    fn validate_account_id_trims_and_lowercases() {
+        let result = validate_account_id("  A1B2C3D4  ");
+        assert_eq!(result.unwrap(), "a1b2c3d4");
+    }
+
+    #[test]
+    fn validate_account_id_empty_fails() {
+        assert!(validate_account_id("").is_err());
+    }
+
+    #[test]
+    fn validate_account_id_whitespace_only_fails() {
+        assert!(validate_account_id("   ").is_err());
+    }
+}

@@ -644,3 +644,36 @@ fn migrate_file_if_missing(from: &Path, to: &Path) -> Result<(), String> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fnv1a64_empty_returns_offset_basis() {
+        assert_eq!(fnv1a64(b""), 0xcbf29ce484222325);
+    }
+
+    #[test]
+    fn fnv1a64_deterministic() {
+        let a = fnv1a64(b"hello");
+        let b = fnv1a64(b"hello");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn fnv1a64_different_inputs() {
+        assert_ne!(fnv1a64(b"hello"), fnv1a64(b"world"));
+    }
+
+    #[test]
+    fn fnv1a64_order_matters() {
+        assert_ne!(fnv1a64(b"ab"), fnv1a64(b"ba"));
+    }
+
+    #[test]
+    fn fnv1a64_known_vector() {
+        // FNV-1a 64-bit hash of "a" is a known value
+        assert_eq!(fnv1a64(b"a"), 0xaf63dc4c8601ec8c);
+    }
+}

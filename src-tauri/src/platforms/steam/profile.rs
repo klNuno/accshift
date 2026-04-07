@@ -119,3 +119,64 @@ fn extract_text(body: &str, tag: &str) -> Option<String> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_cdata_basic() {
+        let body = "<steamID><![CDATA[PlayerName]]></steamID>";
+        assert_eq!(extract_cdata(body, "steamID"), Some("PlayerName".into()));
+    }
+
+    #[test]
+    fn extract_cdata_missing_tag() {
+        let body = "<other><![CDATA[data]]></other>";
+        assert_eq!(extract_cdata(body, "steamID"), None);
+    }
+
+    #[test]
+    fn extract_cdata_empty_content() {
+        let body = "<tag><![CDATA[]]></tag>";
+        assert_eq!(extract_cdata(body, "tag"), Some("".into()));
+    }
+
+    #[test]
+    fn extract_text_basic() {
+        let body = "<vacBanned>0</vacBanned>";
+        assert_eq!(extract_text(body, "vacBanned"), Some("0".into()));
+    }
+
+    #[test]
+    fn extract_text_trims_whitespace() {
+        let body = "<tag>  content  </tag>";
+        assert_eq!(extract_text(body, "tag"), Some("content".into()));
+    }
+
+    #[test]
+    fn extract_text_missing_tag() {
+        let body = "<other>data</other>";
+        assert_eq!(extract_text(body, "tag"), None);
+    }
+
+    #[test]
+    fn is_blank_none() {
+        assert!(is_blank(None));
+    }
+
+    #[test]
+    fn is_blank_empty() {
+        assert!(is_blank(Some("")));
+    }
+
+    #[test]
+    fn is_blank_whitespace() {
+        assert!(is_blank(Some("   ")));
+    }
+
+    #[test]
+    fn is_blank_content() {
+        assert!(!is_blank(Some("text")));
+    }
+}
