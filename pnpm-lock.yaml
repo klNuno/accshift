@@ -16,18 +16,18 @@ importers:
         specifier: 2.10.1
         version: 2.10.1
       '@tauri-apps/plugin-process':
-        specifier: ^2.0.0
+        specifier: ^2.3.1
         version: 2.3.1
       '@tauri-apps/plugin-updater':
-        specifier: ^2.10.0
-        version: 2.10.0
+        specifier: ^2.10.1
+        version: 2.10.1
     devDependencies:
       '@sveltejs/vite-plugin-svelte':
         specifier: ^7.0.0
-        version: 7.0.0(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@5.9.3))(svelte@5.54.1)
+        version: 7.0.0(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@6.0.2))(svelte@5.55.1)
       '@tailwindcss/vite':
         specifier: ^4.2.2
-        version: 4.2.2(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@5.9.3))
+        version: 4.2.2(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@6.0.2))
       '@tauri-apps/cli':
         specifier: ^2.10.1
         version: 2.10.1
@@ -35,26 +35,26 @@ importers:
         specifier: ^5.0.8
         version: 5.0.8
       svelte:
-        specifier: ^5.54.1
-        version: 5.54.1
+        specifier: ^5.55.1
+        version: 5.55.1
       svelte-check:
-        specifier: ^4.4.5
-        version: 4.4.5(picomatch@4.0.3)(svelte@5.54.1)(typescript@5.9.3)
+        specifier: ^4.4.6
+        version: 4.4.6(picomatch@4.0.3)(svelte@5.55.1)(typescript@6.0.2)
       tailwindcss:
         specifier: ^4.2.2
         version: 4.2.2
       typescript:
-        specifier: ^5.6.3
-        version: 5.9.3
+        specifier: ^6.0.2
+        version: 6.0.2
       vite:
         specifier: npm:@voidzero-dev/vite-plus-core@0.1.13
-        version: '@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@5.9.3)'
+        version: '@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@6.0.2)'
       vite-plus:
         specifier: 0.1.13
-        version: 0.1.13(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@5.9.3))(jiti@2.6.1)(typescript@5.9.3)
+        version: 0.1.13(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@6.0.2))(jiti@2.6.1)(typescript@6.0.2)
       vitest:
         specifier: npm:@voidzero-dev/vite-plus-test@0.1.13
-        version: '@voidzero-dev/vite-plus-test@0.1.13(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@5.9.3))(jiti@2.6.1)(typescript@5.9.3)'
+        version: '@voidzero-dev/vite-plus-test@0.1.13(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@6.0.2))(jiti@2.6.1)(typescript@6.0.2)'
 
 packages:
 
@@ -549,8 +549,8 @@ packages:
   '@tauri-apps/plugin-process@2.3.1':
     resolution: {integrity: sha512-nCa4fGVaDL/B9ai03VyPOjfAHRHSBz5v6F/ObsB73r/dA3MHHhZtldaDMIc0V/pnUw9ehzr2iEG+XkSEyC0JJA==}
 
-  '@tauri-apps/plugin-updater@2.10.0':
-    resolution: {integrity: sha512-ljN8jPlnT0aSn8ecYhuBib84alxfMx6Hc8vJSKMJyzGbTPFZAC44T2I1QNFZssgWKrAlofvJqCC6Rr472JWfkQ==}
+  '@tauri-apps/plugin-updater@2.10.1':
+    resolution: {integrity: sha512-NFYMg+tWOZPJdzE/PpFj2qfqwAWwNS3kXrb1tm1gnBJ9mYzZ4WDRrwy8udzWoAnfGCHLuePNLY1WVCNHnh3eRA==}
 
   '@tsconfig/svelte@5.0.8':
     resolution: {integrity: sha512-UkNnw1/oFEfecR8ypyHIQuWYdkPvHiwcQ78sh+ymIiYoF+uc5H1UBetbjyqT+vgGJ3qQN6nhucJviX6HesWtKQ==}
@@ -566,6 +566,10 @@ packages:
 
   '@types/trusted-types@2.0.7':
     resolution: {integrity: sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw==}
+
+  '@typescript-eslint/types@8.58.0':
+    resolution: {integrity: sha512-O9CjxypDT89fbHxRfETNoAnHj/i6IpRK0CvbVN3qibxlLdo5p5hcLmUuCCrHMpxiWSwKyI8mCP7qRNYuOJ0Uww==}
+    engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
 
   '@voidzero-dev/vite-plus-core@0.1.13':
     resolution: {integrity: sha512-72dAIYgGrrmh4ap5Tbvzo0EYCrmVRoPQjz3NERpZ34CWCjFB8+WAyBkxG631Jz9/qC1TR/ZThjOKbdYXQ5z9Aw==}
@@ -744,8 +748,8 @@ packages:
   esm-env@1.2.2:
     resolution: {integrity: sha512-Epxrv+Nr/CaL4ZcFGPJIYLWFom+YeV1DqMLHJoEd9SYRxNbaFruBwfEX/kkHUJf55j2+TUbmDcmuilbP1TmXHA==}
 
-  esrap@2.2.2:
-    resolution: {integrity: sha512-zA6497ha+qKvoWIK+WM9NAh5ni17sKZKhbS5B3PoYbBvaYHZWoS33zmFybmyqpn07RLUxSmn+RCls2/XF+d0oQ==}
+  esrap@2.2.4:
+    resolution: {integrity: sha512-suICpxAmZ9A8bzJjEl/+rLJiDKC0X4gYWUxT6URAWBLvlXmtbZd5ySMu/N2ZGEtMCAmflUDPSehrP9BQcsGcSg==}
 
   fdir@6.5.0:
     resolution: {integrity: sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==}
@@ -939,16 +943,16 @@ packages:
   std-env@4.0.0:
     resolution: {integrity: sha512-zUMPtQ/HBY3/50VbpkupYHbRroTRZJPRLvreamgErJVys0ceuzMkD44J/QjqhHjOzK42GQ3QZIeFG1OYfOtKqQ==}
 
-  svelte-check@4.4.5:
-    resolution: {integrity: sha512-1bSwIRCvvmSHrlK52fOlZmVtUZgil43jNL/2H18pRpa+eQjzGt6e3zayxhp1S7GajPFKNM/2PMCG+DZFHlG9fw==}
+  svelte-check@4.4.6:
+    resolution: {integrity: sha512-kP1zG81EWaFe9ZyTv4ZXv44Csi6Pkdpb7S3oj6m+K2ec/IcDg/a8LsFsnVLqm2nxtkSwsd5xPj/qFkTBgXHXjg==}
     engines: {node: '>= 18.0.0'}
     hasBin: true
     peerDependencies:
       svelte: ^4.0.0 || ^5.0.0-next.0
       typescript: '>=5.0.0'
 
-  svelte@5.54.1:
-    resolution: {integrity: sha512-ow8tncN097Ty8U1H+C3bM1xNlsCbnO2UZeN0lWBnv8f3jKho7QTTQ2LWbMXrPQDodLjH91n4kpNnLolyRhVE6A==}
+  svelte@5.55.1:
+    resolution: {integrity: sha512-QjvU7EFemf6mRzdMGlAFttMWtAAVXrax61SZYHdkD6yoVGQ89VeyKfZD4H1JrV1WLmJBxWhFch9H6ig/87VGjw==}
     engines: {node: '>=18'}
 
   tailwindcss@4.2.2:
@@ -977,8 +981,8 @@ packages:
     resolution: {integrity: sha512-sf4i37nQ2LBx4m3wB74y+ubopq6W/dIzXg0FDGjsYnZHVa1Da8FH853wlL2gtUhg+xJXjfk3kUZS3BRoQeoQBQ==}
     engines: {node: '>=6'}
 
-  typescript@5.9.3:
-    resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
+  typescript@6.0.2:
+    resolution: {integrity: sha512-bGdAIrZ0wiGDo5l8c++HWtbaNCWTS4UTv7RaTH/ThVIgjkveJt83m74bBHMJkuCbslY8ixgLBVZJIOiQlQTjfQ==}
     engines: {node: '>=14.17'}
     hasBin: true
 
@@ -1180,14 +1184,14 @@ snapshots:
     dependencies:
       acorn: 8.15.0
 
-  '@sveltejs/vite-plugin-svelte@7.0.0(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@5.9.3))(svelte@5.54.1)':
+  '@sveltejs/vite-plugin-svelte@7.0.0(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@6.0.2))(svelte@5.55.1)':
     dependencies:
       deepmerge: 4.3.1
       magic-string: 0.30.21
       obug: 2.1.1
-      svelte: 5.54.1
-      vite: '@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@5.9.3)'
-      vitefu: 1.1.2(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@5.9.3))
+      svelte: 5.55.1
+      vite: '@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@6.0.2)'
+      vitefu: 1.1.2(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@6.0.2))
 
   '@tailwindcss/node@4.2.2':
     dependencies:
@@ -1250,12 +1254,12 @@ snapshots:
       '@tailwindcss/oxide-win32-arm64-msvc': 4.2.2
       '@tailwindcss/oxide-win32-x64-msvc': 4.2.2
 
-  '@tailwindcss/vite@4.2.2(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@5.9.3))':
+  '@tailwindcss/vite@4.2.2(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@6.0.2))':
     dependencies:
       '@tailwindcss/node': 4.2.2
       '@tailwindcss/oxide': 4.2.2
       tailwindcss: 4.2.2
-      vite: '@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@5.9.3)'
+      vite: '@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@6.0.2)'
 
   '@tauri-apps/api@2.10.1': {}
 
@@ -1310,7 +1314,7 @@ snapshots:
     dependencies:
       '@tauri-apps/api': 2.10.1
 
-  '@tauri-apps/plugin-updater@2.10.0':
+  '@tauri-apps/plugin-updater@2.10.1':
     dependencies:
       '@tauri-apps/api': 2.10.1
 
@@ -1327,7 +1331,9 @@ snapshots:
 
   '@types/trusted-types@2.0.7': {}
 
-  '@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@5.9.3)':
+  '@typescript-eslint/types@8.58.0': {}
+
+  '@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@6.0.2)':
     dependencies:
       '@oxc-project/runtime': 0.120.0
       '@oxc-project/types': 0.120.0
@@ -1336,7 +1342,7 @@ snapshots:
     optionalDependencies:
       fsevents: 2.3.3
       jiti: 2.6.1
-      typescript: 5.9.3
+      typescript: 6.0.2
 
   '@voidzero-dev/vite-plus-darwin-arm64@0.1.13':
     optional: true
@@ -1350,11 +1356,11 @@ snapshots:
   '@voidzero-dev/vite-plus-linux-x64-gnu@0.1.13':
     optional: true
 
-  '@voidzero-dev/vite-plus-test@0.1.13(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@5.9.3))(jiti@2.6.1)(typescript@5.9.3)':
+  '@voidzero-dev/vite-plus-test@0.1.13(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@6.0.2))(jiti@2.6.1)(typescript@6.0.2)':
     dependencies:
       '@standard-schema/spec': 1.1.0
       '@types/chai': 5.2.3
-      '@voidzero-dev/vite-plus-core': 0.1.13(jiti@2.6.1)(typescript@5.9.3)
+      '@voidzero-dev/vite-plus-core': 0.1.13(jiti@2.6.1)(typescript@6.0.2)
       es-module-lexer: 1.7.0
       obug: 2.1.1
       pixelmatch: 7.1.0
@@ -1364,7 +1370,7 @@ snapshots:
       tinybench: 2.9.0
       tinyexec: 1.0.4
       tinyglobby: 0.2.15
-      vite: '@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@5.9.3)'
+      vite: '@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@6.0.2)'
       ws: 8.19.0
     transitivePeerDependencies:
       - '@arethetypeswrong/core'
@@ -1430,9 +1436,10 @@ snapshots:
 
   esm-env@1.2.2: {}
 
-  esrap@2.2.2:
+  esrap@2.2.4:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
+      '@typescript-eslint/types': 8.58.0
 
   fdir@6.5.0(picomatch@4.0.3):
     optionalDependencies:
@@ -1610,19 +1617,19 @@ snapshots:
 
   std-env@4.0.0: {}
 
-  svelte-check@4.4.5(picomatch@4.0.3)(svelte@5.54.1)(typescript@5.9.3):
+  svelte-check@4.4.6(picomatch@4.0.3)(svelte@5.55.1)(typescript@6.0.2):
     dependencies:
       '@jridgewell/trace-mapping': 0.3.31
       chokidar: 4.0.3
       fdir: 6.5.0(picomatch@4.0.3)
       picocolors: 1.1.1
       sade: 1.8.1
-      svelte: 5.54.1
-      typescript: 5.9.3
+      svelte: 5.55.1
+      typescript: 6.0.2
     transitivePeerDependencies:
       - picomatch
 
-  svelte@5.54.1:
+  svelte@5.55.1:
     dependencies:
       '@jridgewell/remapping': 2.3.5
       '@jridgewell/sourcemap-codec': 1.5.5
@@ -1635,7 +1642,7 @@ snapshots:
       clsx: 2.1.1
       devalue: 5.6.4
       esm-env: 1.2.2
-      esrap: 2.2.2
+      esrap: 2.2.4
       is-reference: 3.0.3
       locate-character: 3.0.0
       magic-string: 0.30.21
@@ -1658,13 +1665,13 @@ snapshots:
 
   totalist@3.0.1: {}
 
-  typescript@5.9.3: {}
+  typescript@6.0.2: {}
 
-  vite-plus@0.1.13(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@5.9.3))(jiti@2.6.1)(typescript@5.9.3):
+  vite-plus@0.1.13(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@6.0.2))(jiti@2.6.1)(typescript@6.0.2):
     dependencies:
       '@oxc-project/types': 0.120.0
-      '@voidzero-dev/vite-plus-core': 0.1.13(jiti@2.6.1)(typescript@5.9.3)
-      '@voidzero-dev/vite-plus-test': 0.1.13(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@5.9.3))(jiti@2.6.1)(typescript@5.9.3)
+      '@voidzero-dev/vite-plus-core': 0.1.13(jiti@2.6.1)(typescript@6.0.2)
+      '@voidzero-dev/vite-plus-test': 0.1.13(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@6.0.2))(jiti@2.6.1)(typescript@6.0.2)
       cac: 7.0.0
       cross-spawn: 7.0.6
       oxfmt: 0.41.0
@@ -1706,9 +1713,9 @@ snapshots:
       - vite
       - yaml
 
-  vitefu@1.1.2(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@5.9.3)):
+  vitefu@1.1.2(@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@6.0.2)):
     optionalDependencies:
-      vite: '@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@5.9.3)'
+      vite: '@voidzero-dev/vite-plus-core@0.1.13(jiti@2.6.1)(typescript@6.0.2)'
 
   which@2.0.2:
     dependencies:

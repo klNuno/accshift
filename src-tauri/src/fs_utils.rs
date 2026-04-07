@@ -42,19 +42,3 @@ pub fn copy_dir_recursive(
 
     Ok(())
 }
-
-pub fn copy_optional_file(source: &Path, target: &Path) -> Result<(), String> {
-    if !source.exists() {
-        return Ok(());
-    }
-
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-    }
-
-    fs::copy(source, target)
-        .map_err(|e| format!("Could not copy file {}: {e}", source.display()))?;
-
-    Ok(())
-}

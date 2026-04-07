@@ -1,4 +1,4 @@
-import { hashPinCode, sanitizePinDigits, isValidPinHash } from "$lib/shared/pin";
+import { verifyPinCode, sanitizePinDigits, isValidPinHash } from "$lib/shared/pin";
 import type { AppSettings } from "$lib/features/settings/types";
 import type { MessageKey, TranslationParams } from "$lib/i18n";
 
@@ -147,12 +147,8 @@ export function createSecureScreenController({
     if (attemptPin.length !== PIN_CODE_LENGTH || isPinRetryLocked) return;
     isPinUnlocking = true;
     pinError = "";
-    const attemptHash = await hashPinCode(attemptPin);
-    if (!attemptHash) {
-      isPinUnlocking = false;
-      return;
-    }
-    if (attemptHash !== expectedPinHash) {
+    const matches = await verifyPinCode(attemptPin, expectedPinHash);
+    if (!matches) {
       isPinUnlocking = false;
       isPinRetryLocked = true;
       pinError = t("pin.invalid");

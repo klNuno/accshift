@@ -97,15 +97,16 @@ struct ThumbnailResponse {
     data: Vec<ThumbnailEntry>,
 }
 
-fn blocking_client() -> &'static reqwest::blocking::Client {
-    static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
-    CLIENT.get_or_init(|| {
+fn blocking_client() -> Result<&'static reqwest::blocking::Client, String> {
+    static CLIENT: OnceLock<Result<reqwest::blocking::Client, String>> = OnceLock::new();
+    let result = CLIENT.get_or_init(|| {
         reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .connect_timeout(std::time::Duration::from_secs(5))
             .build()
-            .expect("failed to create Roblox HTTP client")
-    })
+            .map_err(|e| format!("Failed to create HTTP client: {e}"))
+    });
+    result.as_ref().map_err(|e| e.clone())
 }
 
 fn csrf_cache() -> &'static Mutex<String> {
@@ -123,7 +124,7 @@ fn post_with_csrf_and_headers(
 ) -> Result<reqwest::blocking::Response, String> {
     let cached_csrf = csrf_cache().lock().map(|g| g.clone()).unwrap_or_default();
 
-    let mut request = blocking_client()
+    let mut request = blocking_client()?
         .post(url)
         .header("Content-Type", "application/json")
         .header("X-CSRF-TOKEN", &cached_csrf);
@@ -148,7 +149,7 @@ fn post_with_csrf_and_headers(
                 *cache = new_csrf.clone();
             }
 
-            let mut retry = blocking_client()
+            let mut retry = blocking_client()?
                 .post(url)
                 .header("Content-Type", "application/json")
                 .header("X-CSRF-TOKEN", &new_csrf);
@@ -170,7 +171,7 @@ fn post_with_csrf(url: &str, body: &str) -> Result<reqwest::blocking::Response, 
 }
 
 fn validate_cookie_blocking(cookie: &str) -> Result<AuthenticatedUserResponse, String> {
-    let response = blocking_client()
+    let response = blocking_client()?
         .get("https://users.roblox.com/v1/users/authenticated")
         .header("Cookie", format!(".ROBLOSECURITY={cookie}"))
         .send()

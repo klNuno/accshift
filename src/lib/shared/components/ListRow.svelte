@@ -120,11 +120,11 @@
         <div class="loader"></div>
       {:else if isSwitching}
         {#if avatarUrl}
-          <img src={avatarUrl} alt={account.displayName} draggable={false} class="blurred" />
+          <img src={avatarUrl} alt={account.displayName} loading="lazy" draggable={false} class="blurred" />
         {/if}
         <div class="loader switching-loader"></div>
       {:else if avatarUrl}
-        <img src={avatarUrl} alt={account.displayName} draggable={false} />
+        <img src={avatarUrl} alt={account.displayName} loading="lazy" draggable={false} />
       {:else}
         <span class="initials">{getAvatarInitials(account.displayName || account.username)}</span>
       {/if}

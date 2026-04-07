@@ -1,5 +1,4 @@
 use crate::config::{self, RiotProfileConfig};
-use crate::fs_utils;
 use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -439,6 +438,94 @@ fn snapshot_has_settings(snapshot_dir: &Path) -> bool {
     snapshot_dir.join("RiotGamesPrivateSettings.yaml").exists()
 }
 
+/// Magic header identifying DPAPI-encrypted snapshot files.
+const ENCRYPTED_HEADER: &[u8] = b"ACCS";
+
+/// Copy a file and encrypt its contents with DPAPI.
+fn encrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
+    let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
+    let encrypted = os::encrypt_bytes(&data)
+        .map_err(|e| format!("Could not encrypt {}: {e}", source.display()))?;
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
+    }
+    let mut out = Vec::with_capacity(ENCRYPTED_HEADER.len() + encrypted.len());
+    out.extend_from_slice(ENCRYPTED_HEADER);
+    out.extend_from_slice(&encrypted);
+    fs::write(dest, &out).map_err(|e| format!("Could not write {}: {e}", dest.display()))
+}
+
+/// Copy a file, decrypting if it has the DPAPI header (legacy plaintext files pass through).
+fn decrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
+    let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
+    let content = if data.starts_with(ENCRYPTED_HEADER) {
+        os::decrypt_bytes(&data[ENCRYPTED_HEADER.len()..])
+            .map_err(|e| format!("Could not decrypt {}: {e}", source.display()))?
+    } else {
+        data
+    };
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
+    }
+    fs::write(dest, &content).map_err(|e| format!("Could not write {}: {e}", dest.display()))
+}
+
+/// Recursively copy a directory, encrypting every file with DPAPI.
+fn encrypted_copy_dir(source: &Path, target: &Path, ignored_names: &[&str]) -> Result<(), String> {
+    if !source.exists() {
+        return Ok(());
+    }
+    fs::create_dir_all(target)
+        .map_err(|e| format!("Could not create directory {}: {e}", target.display()))?;
+    for entry in fs::read_dir(source)
+        .map_err(|e| format!("Could not read directory {}: {e}", source.display()))?
+    {
+        let entry = entry.map_err(|e| format!("Could not read directory entry: {e}"))?;
+        let src_path = entry.path();
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+        if ignored_names.iter().any(|i| i.eq_ignore_ascii_case(&name)) {
+            continue;
+        }
+        let dst_path = target.join(name.as_ref());
+        if src_path.is_dir() {
+            encrypted_copy_dir(&src_path, &dst_path, ignored_names)?;
+        } else {
+            encrypted_copy_file(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Recursively copy a directory, decrypting every file (handles legacy plaintext).
+fn decrypted_copy_dir(source: &Path, target: &Path, ignored_names: &[&str]) -> Result<(), String> {
+    if !source.exists() {
+        return Ok(());
+    }
+    fs::create_dir_all(target)
+        .map_err(|e| format!("Could not create directory {}: {e}", target.display()))?;
+    for entry in fs::read_dir(source)
+        .map_err(|e| format!("Could not read directory {}: {e}", source.display()))?
+    {
+        let entry = entry.map_err(|e| format!("Could not read directory entry: {e}"))?;
+        let src_path = entry.path();
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+        if ignored_names.iter().any(|i| i.eq_ignore_ascii_case(&name)) {
+            continue;
+        }
+        let dst_path = target.join(name.as_ref());
+        if src_path.is_dir() {
+            decrypted_copy_dir(&src_path, &dst_path, ignored_names)?;
+        } else {
+            decrypted_copy_file(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
 fn live_path_for(
     item: &RiotSnapshotItem,
     install_dir: Option<&Path>,
@@ -658,13 +745,13 @@ fn backup_live_snapshot(app_handle: &tauri::AppHandle, profile_id: &str) -> Resu
         match item.kind {
             RiotSnapshotKind::Directory => {
                 if source_path.exists() {
-                    fs_utils::copy_dir_recursive(&source_path, &target_path, item.ignored_names)?;
+                    encrypted_copy_dir(&source_path, &target_path, item.ignored_names)?;
                     captured_any = true;
                 }
             }
             RiotSnapshotKind::File => {
                 if source_path.exists() {
-                    fs_utils::copy_optional_file(&source_path, &target_path)?;
+                    encrypted_copy_file(&source_path, &target_path)?;
                     captured_any = true;
                 } else if !item.optional {
                     return Err(format!(
@@ -734,12 +821,12 @@ fn restore_live_snapshot(app_handle: &tauri::AppHandle, profile_id: &str) -> Res
         match item.kind {
             RiotSnapshotKind::Directory => {
                 if source_path.exists() {
-                    fs_utils::copy_dir_recursive(&source_path, &target_path, item.ignored_names)?;
+                    decrypted_copy_dir(&source_path, &target_path, item.ignored_names)?;
                 }
             }
             RiotSnapshotKind::File => {
                 if source_path.exists() {
-                    fs_utils::copy_optional_file(&source_path, &target_path)?;
+                    decrypted_copy_file(&source_path, &target_path)?;
                 } else if !item.optional {
                     return Ok(false);
                 }

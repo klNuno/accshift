@@ -19,6 +19,14 @@ pub fn decrypt_secret(secret: &str) -> Result<String, AppError> {
     imp::decrypt_secret(secret)
 }
 
+pub fn encrypt_bytes(data: &[u8]) -> Result<Vec<u8>, AppError> {
+    imp::encrypt_bytes(data)
+}
+
+pub fn decrypt_bytes(data: &[u8]) -> Result<Vec<u8>, AppError> {
+    imp::decrypt_bytes(data)
+}
+
 pub fn steam_installation_path() -> Result<PathBuf, AppError> {
     imp::steam_installation_path()
 }

@@ -19,8 +19,10 @@ pub fn parse_vdf(content: &str) -> HashMap<String, HashMap<String, String>> {
 
         if trimmed == "}" {
             depth -= 1;
-            if depth == 1 && current_id.is_some() {
-                accounts.insert(current_id.take().unwrap(), current_account.clone());
+            if depth == 1 {
+                if let Some(id) = current_id.take() {
+                    accounts.insert(id, current_account.clone());
+                }
                 current_account.clear();
             }
             continue;

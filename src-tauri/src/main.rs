@@ -19,11 +19,17 @@ mod storage;
 mod themes;
 
 fn main() {
-    let client = reqwest::Client::builder()
+    let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .connect_timeout(std::time::Duration::from_secs(5))
         .build()
-        .expect("failed to create HTTP client");
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Fatal: failed to create HTTP client: {e}");
+            std::process::exit(1);
+        }
+    };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())

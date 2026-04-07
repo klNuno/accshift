@@ -91,7 +91,7 @@ pub fn kill_process(process_name: &str) -> Result<(), AppError> {
     for pid in &pids {
         unsafe {
             let handle = OpenProcess(PROCESS_TERMINATE | PROCESS_SYNCHRONIZE, 0, *pid);
-            if handle == 0 {
+            if handle.is_null() {
                 any_access_denied = true;
                 continue;
             }
@@ -115,7 +115,7 @@ pub fn wait_for_process_exit(process_name: &str, timeout_ms: u32) -> bool {
     for pid in pids {
         unsafe {
             let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
-            if handle == 0 {
+            if handle.is_null() {
                 continue;
             }
             let result = WaitForSingleObject(handle, timeout_ms);
@@ -194,6 +194,74 @@ pub fn decrypt_secret(secret: &str) -> Result<String, AppError> {
     let decrypted =
         unsafe { std::slice::from_raw_parts(output_blob.pbData, output_blob.cbData as usize) };
     let result = String::from_utf8_lossy(decrypted).into_owned();
+    use windows_sys::Win32::Foundation::LocalFree;
+    unsafe {
+        LocalFree(output_blob.pbData as _);
+    }
+    Ok(result)
+}
+
+/// DPAPI encrypt raw bytes. Returns encrypted bytes (no encoding).
+pub fn encrypt_bytes(data: &[u8]) -> Result<Vec<u8>, AppError> {
+    if data.is_empty() {
+        return Ok(Vec::new());
+    }
+    let input_blob = CRYPT_INTEGER_BLOB {
+        cbData: data.len() as u32,
+        pbData: data.as_ptr() as *mut u8,
+    };
+    let mut output_blob: CRYPT_INTEGER_BLOB = unsafe { std::mem::zeroed() };
+    let ok = unsafe {
+        CryptProtectData(
+            &input_blob,
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            0,
+            &mut output_blob,
+        )
+    };
+    if ok == 0 {
+        return Err(AppError::ProcessStart("DPAPI encryption failed".into()));
+    }
+    let encrypted =
+        unsafe { std::slice::from_raw_parts(output_blob.pbData, output_blob.cbData as usize) };
+    let result = encrypted.to_vec();
+    use windows_sys::Win32::Foundation::LocalFree;
+    unsafe {
+        LocalFree(output_blob.pbData as _);
+    }
+    Ok(result)
+}
+
+/// DPAPI decrypt raw bytes.
+pub fn decrypt_bytes(data: &[u8]) -> Result<Vec<u8>, AppError> {
+    if data.is_empty() {
+        return Ok(Vec::new());
+    }
+    let input_blob = CRYPT_INTEGER_BLOB {
+        cbData: data.len() as u32,
+        pbData: data.as_ptr() as *mut u8,
+    };
+    let mut output_blob: CRYPT_INTEGER_BLOB = unsafe { std::mem::zeroed() };
+    let ok = unsafe {
+        CryptUnprotectData(
+            &input_blob,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            0,
+            &mut output_blob,
+        )
+    };
+    if ok == 0 {
+        return Err(AppError::ProcessStart("DPAPI decryption failed".into()));
+    }
+    let decrypted =
+        unsafe { std::slice::from_raw_parts(output_blob.pbData, output_blob.cbData as usize) };
+    let result = decrypted.to_vec();
     use windows_sys::Win32::Foundation::LocalFree;
     unsafe {
         LocalFree(output_blob.pbData as _);
@@ -335,7 +403,7 @@ fn shell_execute(verb: &str, file: &str, args: &str) -> Result<(), AppError> {
     let params_w = to_wide_null(args);
     let result = unsafe {
         ShellExecuteW(
-            0,
+            std::ptr::null_mut(),
             verb_w.as_ptr(),
             file_w.as_ptr(),
             params_w.as_ptr(),

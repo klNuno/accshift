@@ -15,6 +15,14 @@ pub fn decrypt_secret(_secret: &str) -> Result<String, AppError> {
     Err(unsupported("Secret storage"))
 }
 
+pub fn encrypt_bytes(_data: &[u8]) -> Result<Vec<u8>, AppError> {
+    Err(unsupported("Secret storage"))
+}
+
+pub fn decrypt_bytes(_data: &[u8]) -> Result<Vec<u8>, AppError> {
+    Err(unsupported("Secret storage"))
+}
+
 pub fn steam_installation_path() -> Result<PathBuf, AppError> {
     Err(unsupported("Steam installation discovery"))
 }

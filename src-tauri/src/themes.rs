@@ -11,8 +11,8 @@ pub struct CustomTheme {
     pub tokens: serde_json::Value,
 }
 
-fn themes_dir(app: &tauri::AppHandle) -> PathBuf {
-    crate::storage::themes_dir(app).expect("failed to resolve themes dir")
+fn themes_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    crate::storage::themes_dir(app)
 }
 
 fn is_safe_theme_id(id: &str) -> bool {
@@ -24,7 +24,7 @@ fn is_safe_theme_id(id: &str) -> bool {
 }
 
 pub fn list_custom_themes(app: &tauri::AppHandle) -> Result<Vec<CustomTheme>, String> {
-    let dir = themes_dir(app);
+    let dir = themes_dir(app)?;
     if !dir.exists() {
         return Ok(vec![]);
     }
@@ -60,7 +60,7 @@ pub fn save_custom_theme(app: &tauri::AppHandle, theme: &CustomTheme) -> Result<
                 .to_string(),
         );
     }
-    let dir = themes_dir(app);
+    let dir = themes_dir(app)?;
     fs::create_dir_all(&dir).map_err(|e| format!("Could not create themes directory: {e}"))?;
     let path = dir.join(format!("{}.json", theme.id));
     let json = serde_json::to_string_pretty(&theme)
@@ -73,7 +73,7 @@ pub fn delete_custom_theme(app: &tauri::AppHandle, theme_id: &str) -> Result<(),
     if !is_safe_theme_id(theme_id) {
         return Err("Invalid theme ID".to_string());
     }
-    let path = themes_dir(app).join(format!("{}.json", theme_id));
+    let path = themes_dir(app)?.join(format!("{}.json", theme_id));
     if path.exists() {
         fs::remove_file(&path).map_err(|e| format!("Could not delete theme file: {e}"))?;
     }
