@@ -3,7 +3,7 @@ import { ACCOUNT_CARD_COLOR_PRESETS } from "../accountCardColors";
 import type { PlatformAccount } from "../platform";
 import type { ContextMenuAction } from "./types";
 
-const DEFAULT_COLOR_LABEL_KEYS = {
+export const COLOR_LABEL_KEYS = {
   none: "color.none",
   blue: "color.blue",
   cyan: "color.cyan",
@@ -33,7 +33,7 @@ export function getAccountAppearanceContextActions(
   const existingNote = callbacks.getExistingNote();
   const currentColor = callbacks.getCurrentColor();
   const getColorLabel =
-    callbacks.getColorLabel ?? ((presetId) => callbacks.t(DEFAULT_COLOR_LABEL_KEYS[presetId]));
+    callbacks.getColorLabel ?? ((presetId) => callbacks.t(COLOR_LABEL_KEYS[presetId]));
 
   return [
     {

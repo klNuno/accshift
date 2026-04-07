@@ -17,7 +17,6 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
-use std::thread;
 use uuid::Uuid;
 
 const STEAM_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
@@ -317,7 +316,7 @@ pub fn begin_account_setup(
 
     let setup_id_for_job = setup_id.clone();
     let app_handle_for_job = app_handle.clone();
-    thread::spawn(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         let launch_result =
             accounts::add_account(&steam_path, run_as_admin, &launch_options, force_kill)
                 .map_err(|e| e.to_string());

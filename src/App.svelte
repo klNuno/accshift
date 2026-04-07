@@ -52,17 +52,11 @@
   import { createSettingsPanel } from "$lib/app/useSettingsPanel.svelte";
   import { createExtensionContentController } from "$lib/app/useExtensionContent.svelte";
   import { createVisiblePriming } from "$lib/app/useVisiblePriming.svelte";
+  import { COLOR_LABEL_KEYS } from "$lib/shared/contextMenu/accountAppearanceActions";
+  import { createDisplayPipeline, matchesSearch } from "$lib/app/useDisplayPipeline.svelte";
 
   const shell = createPlatformShellState();
   const t = (key: MessageKey, params?: TranslationParams) => translate(shell.locale, key, params);
-
-  function matchesSearch(account: PlatformAccount, query: string): boolean {
-    return (
-      account.id.toLowerCase().includes(query) ||
-      account.username.toLowerCase().includes(query) ||
-      (account.displayName || "").toLowerCase().includes(query)
-    );
-  }
 
   // Shared controllers
   const blur = createInactivityBlur();
@@ -158,20 +152,6 @@
   });
 
   let updateCheckTimer: ReturnType<typeof setTimeout> | null = null;
-  const COLOR_LABEL_KEYS = {
-    none: "color.none",
-    blue: "color.blue",
-    cyan: "color.cyan",
-    green: "color.green",
-    lime: "color.lime",
-    yellow: "color.yellow",
-    orange: "color.orange",
-    red: "color.red",
-    pink: "color.pink",
-    violet: "color.violet",
-    gray: "color.gray",
-  } as const;
-
   let appVersion = $state("");
   let loadingAdapterFor = $state<string | null>(null);
   const visiblePriming = createVisiblePriming(loader);
@@ -236,7 +216,7 @@
     t,
     getLocale: () => shell.locale,
     getWarningStates: () => loader.warningStates,
-    getVisibleRenderedAccountIds: () => visibleRenderedAccountIds,
+    getVisibleRenderedAccountIds: () => display.visibleRenderedAccountIds,
     getSetupExtensionContent: (id) => addFlow.getSetupExtensionContent(id),
     getAccountNote,
     getCardNoteVersion: () => cardNoteVersion,
@@ -382,75 +362,14 @@
     onRefresh: navigation.refreshCurrentItems,
   });
 
-  // Derived item lists used by drag preview
-  let displayFolderItems = $derived.by(() => {
-    if (navigation.isSearching) return [] as ItemRef[];
-    if (!drag.isDragging || !drag.dragItem || drag.dragItem.type !== "folder" || drag.previewIndex === null) {
-      return navigation.folderItems;
-    }
-    const arr = navigation.folderItems.filter(i => i.id !== drag.dragItem!.id);
-    arr.splice(Math.min(drag.previewIndex, arr.length), 0, drag.dragItem);
-    return arr;
-  });
-
-  let filteredAccountItems = $derived.by(() => {
-    const q = navigation.searchQuery.trim().toLowerCase();
-    if (!q) return navigation.accountItems;
-    return loader.accounts
-      .filter((a) => matchesSearch(a, q))
-      .map((a) => ({ type: "account" as const, id: a.id }));
-  });
-
-  let displayAccountItems = $derived.by(() => {
-    if (navigation.isSearching) return filteredAccountItems;
-    if (!drag.isDragging || !drag.dragItem || drag.dragItem.type !== "account" || drag.previewIndex === null) {
-      return filteredAccountItems;
-    }
-    const arr = filteredAccountItems.filter(i => i.id !== drag.dragItem!.id);
-    arr.splice(Math.min(drag.previewIndex, arr.length), 0, drag.dragItem);
-    return arr;
-  });
-
-  let displayAccountItemsWithPending = $derived.by(() => {
-    const pending = addFlow.pendingSetupAccount;
-    if (!pending) return displayAccountItems;
-    if (displayAccountItems.some((item) => item.type === "account" && item.id === pending.id)) {
-      return displayAccountItems;
-    }
-    return [...displayAccountItems, { type: "account" as const, id: pending.id }];
-  });
-
-  let visibleRenderedAccountIds = $derived.by(() => {
-    const ids: string[] = [];
-    const seen = new Set<string>();
-    for (const item of displayAccountItemsWithPending) {
-      if (item.type !== "account" || seen.has(item.id)) continue;
-      seen.add(item.id);
-      ids.push(item.id);
-    }
-    return ids;
-  });
-
-  let renderedAccountMap = $derived.by(() => {
-    const pending = addFlow.pendingSetupAccount;
-    if (!pending) return loader.accountMap;
-    return {
-      ...loader.accountMap,
-      [pending.id]: pending,
-    };
-  });
-
-  let renderedAccountCount = $derived.by(() => {
-    const pending = addFlow.pendingSetupAccount;
-    return loader.accounts.length + (pending && !loader.accountMap[pending.id] ? 1 : 0);
-  });
+  const display = createDisplayPipeline({ navigation, drag, loader, addFlow });
 
   $effect(() => {
     if (settingsPanel.showSettings || !shell.adapter || loader.loading || !secureScreen.windowForeground || secureScreen.renderSuspended) {
       visiblePriming.reset();
       return;
     }
-    const visibleIds = visibleRenderedAccountIds;
+    const visibleIds = display.visibleRenderedAccountIds;
     if (visibleIds.length === 0) {
       visiblePriming.reset();
       return;
@@ -696,11 +615,11 @@
     {locale}
     loaderError={loader.error}
     loaderLoading={loader.loading}
-    {renderedAccountCount}
+    renderedAccountCount={display.renderedAccountCount}
     {pendingSetupAccountId}
-    {displayFolderItems}
-    {displayAccountItemsWithPending}
-    {renderedAccountMap}
+    displayFolderItems={display.displayFolderItems}
+    displayAccountItemsWithPending={display.displayAccountItemsWithPending}
+    renderedAccountMap={display.renderedAccountMap}
     showUsernames={showUsernamesForActiveTab}
     showLastLogin={showLastLoginForActiveTab}
     {lastLoginUnknownKey}

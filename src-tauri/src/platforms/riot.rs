@@ -290,7 +290,7 @@ fn prepare_clean_riot_launch(app_handle: &tauri::AppHandle) -> Result<(), String
 }
 
 fn spawn_riot_setup_launch(app_handle: tauri::AppHandle, client_path: PathBuf) {
-    thread::spawn(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         let _ = prepare_clean_riot_launch(&app_handle);
         let _ = launch_riot_client(&client_path);
     });

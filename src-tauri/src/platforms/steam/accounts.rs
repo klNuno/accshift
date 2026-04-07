@@ -148,14 +148,16 @@ fn kill_steam_client_processes() -> Result<(), AppError> {
     let steam_name = os::steam_process_name();
     let helper_name = os::steam_web_helper_process_name();
 
-    let steam_handle = std::thread::spawn(move || kill_process_tree_if_running(steam_name));
-    let helper_result = kill_process_tree_if_running(helper_name);
+    std::thread::scope(|s| {
+        let steam_handle = s.spawn(|| kill_process_tree_if_running(steam_name));
+        let helper_result = kill_process_tree_if_running(helper_name);
 
-    let steam_result = steam_handle
-        .join()
-        .map_err(|_| AppError::KillSteamTimeout)?;
-    steam_result?;
-    helper_result
+        let steam_result = steam_handle
+            .join()
+            .map_err(|_| AppError::KillSteamTimeout)?;
+        steam_result?;
+        helper_result
+    })
 }
 
 fn parse_launch_options(launch_options: &str) -> Vec<String> {
