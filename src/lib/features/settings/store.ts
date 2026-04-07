@@ -66,6 +66,12 @@ function sanitizePinHash(value: unknown): string {
   return isValidPinHash(normalized) ? normalized : "";
 }
 
+const LEGACY_LAST_LOGIN_KEYS: Record<string, string> = {
+  steam: "showLastLogin",
+  riot: "showRiotLastLogin",
+  "battle-net": "showBattleNetLastLogin",
+};
+
 function sanitizeShowLastLoginPerPlatform(
   rawAccountDisplay: Record<string, unknown>,
 ): Record<string, boolean> {
@@ -73,14 +79,11 @@ function sanitizeShowLastLoginPerPlatform(
   const defaults = DEFAULTS.accountDisplay.showLastLoginPerPlatform;
   const result: Record<string, boolean> = {};
   for (const id of PLATFORM_IDS) {
+    const legacyKey = LEGACY_LAST_LOGIN_KEYS[id];
     if (id in rawMap) {
       result[id] = Boolean(rawMap[id]);
-    } else if (id === "steam" && "showLastLogin" in rawAccountDisplay) {
-      result[id] = Boolean(rawAccountDisplay.showLastLogin);
-    } else if (id === "riot" && "showRiotLastLogin" in rawAccountDisplay) {
-      result[id] = Boolean(rawAccountDisplay.showRiotLastLogin);
-    } else if (id === "battle-net" && "showBattleNetLastLogin" in rawAccountDisplay) {
-      result[id] = rawAccountDisplay.showBattleNetLastLogin !== false;
+    } else if (legacyKey && legacyKey in rawAccountDisplay) {
+      result[id] = Boolean(rawAccountDisplay[legacyKey]);
     } else {
       result[id] = defaults[id] ?? false;
     }
@@ -174,22 +177,7 @@ function sanitizeSettings(value: unknown): AppSettings {
 }
 
 function cloneSettings(settings: AppSettings): AppSettings {
-  return {
-    ...settings,
-    dataRefresh: {
-      ...settings.dataRefresh,
-    },
-    platformSettings: {
-      steam: {
-        ...settings.platformSettings.steam,
-      },
-    },
-    accountDisplay: {
-      ...settings.accountDisplay,
-      showLastLoginPerPlatform: { ...settings.accountDisplay.showLastLoginPerPlatform },
-    },
-    enabledPlatforms: [...settings.enabledPlatforms],
-  };
+  return structuredClone(settings);
 }
 
 function loadSettingsFromStorage(): AppSettings {

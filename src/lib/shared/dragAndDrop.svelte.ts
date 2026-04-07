@@ -165,17 +165,19 @@ export function createDragManager(options: DragManagerOptions) {
       ghostOffsetX = e.clientX - sourceRect.left;
       ghostOffsetY = e.clientY - sourceRect.top;
       ghostEl = pendingDrag.sourceEl.cloneNode(true) as HTMLElement;
-      ghostEl.style.position = "fixed";
-      ghostEl.style.left = `${sourceRect.left}px`;
-      ghostEl.style.top = `${sourceRect.top}px`;
-      ghostEl.style.width = `${sourceRect.width}px`;
-      ghostEl.style.pointerEvents = "none";
-      ghostEl.style.zIndex = "9999";
-      ghostEl.style.opacity = "0.85";
-      ghostEl.style.transform = "scale(1.05)";
-      ghostEl.style.boxShadow = "0 8px 24px rgba(0,0,0,0.5)";
-      ghostEl.style.transition = "none";
-      ghostEl.style.margin = "0";
+      Object.assign(ghostEl.style, {
+        position: "fixed",
+        left: `${sourceRect.left}px`,
+        top: `${sourceRect.top}px`,
+        width: `${sourceRect.width}px`,
+        pointerEvents: "none",
+        zIndex: "9999",
+        opacity: "0.85",
+        transform: "scale(1.05)",
+        boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+        transition: "none",
+        margin: "0",
+      });
       // Inherit CSS custom properties from ancestors (e.g. --card-custom-color on .card-shell)
       const parentEl = pendingDrag.sourceEl.parentElement;
       if (parentEl) {
