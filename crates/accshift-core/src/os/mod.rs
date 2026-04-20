@@ -1,6 +1,7 @@
 use crate::error::AppError;
 use std::path::{Path, PathBuf};
 
+mod common;
 #[cfg(not(target_os = "windows"))]
 mod unsupported;
 #[cfg(target_os = "windows")]
@@ -10,6 +11,34 @@ mod windows;
 use unsupported as imp;
 #[cfg(target_os = "windows")]
 use windows as imp;
+
+// ---------------------------------------------------------------------------
+// Cross-platform primitives (sysinfo + open crates)
+// ---------------------------------------------------------------------------
+
+pub fn is_process_running(process_name: &str) -> bool {
+    common::is_process_running(process_name)
+}
+
+pub fn kill_process(process_name: &str) -> Result<(), AppError> {
+    common::kill_process(process_name)
+}
+
+pub fn wait_for_process_exit(process_name: &str, timeout_ms: u32) -> bool {
+    common::wait_for_process_exit(process_name, timeout_ms)
+}
+
+pub fn open_url(url: &str) -> Result<(), AppError> {
+    common::open_url(url)
+}
+
+pub fn open_folder(path: &Path) -> Result<(), AppError> {
+    common::open_folder(path)
+}
+
+// ---------------------------------------------------------------------------
+// Platform-specific primitives (Windows-only for now)
+// ---------------------------------------------------------------------------
 
 pub fn encrypt_secret(secret: &str) -> Result<String, AppError> {
     imp::encrypt_secret(secret)
@@ -55,14 +84,6 @@ pub fn clear_auto_login_user() -> Result<(), AppError> {
     imp::clear_auto_login_user()
 }
 
-pub fn is_process_running(process_name: &str) -> bool {
-    imp::is_process_running(process_name)
-}
-
-pub fn kill_process(process_name: &str) -> Result<(), AppError> {
-    imp::kill_process(process_name)
-}
-
 pub fn kill_and_relaunch_steam_elevated(
     steam_path: &Path,
     launch_options: &[String],
@@ -78,22 +99,10 @@ pub fn launch_steam(
     imp::launch_steam(steam_path, run_as_admin, launch_options)
 }
 
-pub fn open_folder(path: &Path) -> Result<(), AppError> {
-    imp::open_folder(path)
-}
-
 pub fn select_folder(title: &str) -> Result<String, AppError> {
     imp::select_folder(title)
 }
 
 pub fn select_file(title: &str, filter: &str) -> Result<String, AppError> {
     imp::select_file(title, filter)
-}
-
-pub fn open_url(url: &str) -> Result<(), AppError> {
-    imp::open_url(url)
-}
-
-pub fn wait_for_process_exit(process_name: &str, timeout_ms: u32) -> bool {
-    imp::wait_for_process_exit(process_name, timeout_ms)
 }

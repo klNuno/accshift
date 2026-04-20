@@ -1,29 +1,17 @@
 use crate::error::AppError;
-use std::ffi::OsString;
-use std::os::windows::ffi::OsStringExt;
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use winreg::enums::*;
 use winreg::RegKey;
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-
-#[cfg(target_os = "windows")]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE, WAIT_OBJECT_0};
 use windows_sys::Win32::Security::Cryptography::{
     CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB,
 };
-use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
-};
-use windows_sys::Win32::System::Threading::{
-    OpenProcess, TerminateProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
-};
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -31,101 +19,12 @@ use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
 fn hidden_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     let mut cmd = Command::new(program);
-    #[cfg(target_os = "windows")]
-    {
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    cmd.creation_flags(CREATE_NO_WINDOW);
     cmd
 }
 
 fn to_wide_null(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
-fn wchar_to_string(buf: &[u16]) -> String {
-    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-    OsString::from_wide(&buf[..len])
-        .to_string_lossy()
-        .into_owned()
-}
-
-// ---------------------------------------------------------------------------
-// Process management (native Windows API)
-// ---------------------------------------------------------------------------
-
-fn find_process_ids(process_name: &str) -> Vec<u32> {
-    let mut pids = Vec::new();
-    unsafe {
-        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if snapshot == INVALID_HANDLE_VALUE {
-            return pids;
-        }
-        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
-        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
-        let target = process_name.to_lowercase();
-        if Process32FirstW(snapshot, &mut entry) != 0 {
-            loop {
-                if wchar_to_string(&entry.szExeFile).to_lowercase() == target {
-                    pids.push(entry.th32ProcessID);
-                }
-                if Process32NextW(snapshot, &mut entry) == 0 {
-                    break;
-                }
-            }
-        }
-        CloseHandle(snapshot);
-    }
-    pids
-}
-
-pub fn is_process_running(process_name: &str) -> bool {
-    !find_process_ids(process_name).is_empty()
-}
-
-pub fn kill_process(process_name: &str) -> Result<(), AppError> {
-    let pids = find_process_ids(process_name);
-    if pids.is_empty() {
-        return Ok(());
-    }
-    let mut any_access_denied = false;
-    for pid in &pids {
-        unsafe {
-            let handle = OpenProcess(PROCESS_TERMINATE | PROCESS_SYNCHRONIZE, 0, *pid);
-            if handle.is_null() {
-                any_access_denied = true;
-                continue;
-            }
-            TerminateProcess(handle, 1);
-            WaitForSingleObject(handle, 5000);
-            CloseHandle(handle);
-        }
-    }
-    if any_access_denied && is_process_running(process_name) {
-        return Err(AppError::SteamElevated);
-    }
-    Ok(())
-}
-
-/// Wait for all instances of a process to exit using kernel wait (zero CPU).
-pub fn wait_for_process_exit(process_name: &str, timeout_ms: u32) -> bool {
-    let pids = find_process_ids(process_name);
-    if pids.is_empty() {
-        return true;
-    }
-    for pid in pids {
-        unsafe {
-            let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
-            if handle.is_null() {
-                continue;
-            }
-            let result = WaitForSingleObject(handle, timeout_ms);
-            CloseHandle(handle);
-            if result != WAIT_OBJECT_0 {
-                return false;
-            }
-        }
-    }
-    true
 }
 
 // ---------------------------------------------------------------------------
@@ -424,15 +323,15 @@ pub fn kill_and_relaunch_steam_elevated(
     steam_path: &Path,
     launch_options: &[String],
 ) -> Result<(), AppError> {
-    // Kill using native API, will fail silently for elevated processes
-    let _ = kill_process("steam.exe");
-    let _ = kill_process("steamwebhelper.exe");
+    // Best-effort kill via sysinfo; will fail silently for elevated processes.
+    let _ = super::common::kill_process("steam.exe");
+    let _ = super::common::kill_process("steamwebhelper.exe");
 
-    // Wait for exit using kernel wait (zero CPU)
-    wait_for_process_exit("steam.exe", 10_000);
-    wait_for_process_exit("steamwebhelper.exe", 5_000);
+    // Wait for exit (polling on both platforms).
+    super::common::wait_for_process_exit("steam.exe", 10_000);
+    super::common::wait_for_process_exit("steamwebhelper.exe", 5_000);
 
-    // Relaunch elevated via ShellExecute with "runas" verb
+    // Relaunch elevated via ShellExecute with "runas" verb.
     let steam_exe = steam_path.join(steam_executable_name());
     let args = launch_options.join(" ");
     shell_execute("runas", &steam_exe.to_string_lossy(), &args)
@@ -457,16 +356,8 @@ pub fn launch_steam(
 }
 
 // ---------------------------------------------------------------------------
-// File/URL opening (still uses shell commands for dialogs)
+// File / folder pickers (shell-based dialogs)
 // ---------------------------------------------------------------------------
-
-pub fn open_folder(path: &Path) -> Result<(), AppError> {
-    Command::new("explorer")
-        .arg(path)
-        .spawn()
-        .map_err(|e| AppError::FolderOpen(e.to_string()))?;
-    Ok(())
-}
 
 pub fn select_folder(title: &str) -> Result<String, AppError> {
     let output = hidden_command("powershell")
@@ -501,8 +392,4 @@ pub fn select_file(title: &str, filter: &str) -> Result<String, AppError> {
         return Err(AppError::FolderOpen("File selection canceled".into()));
     }
     Ok(path)
-}
-
-pub fn open_url(url: &str) -> Result<(), AppError> {
-    shell_execute("open", url, "")
 }

@@ -13,6 +13,8 @@ thiserror = { workspace = true }
 rusqlite = { workspace = true }
 uuid = { workspace = true }
 tokio = { workspace = true }
+sysinfo = { workspace = true }
+open = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 winreg = { workspace = true }

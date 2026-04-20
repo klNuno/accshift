@@ -51,14 +51,6 @@ pub fn clear_auto_login_user() -> Result<(), AppError> {
     Err(unsupported("Steam auto-login write"))
 }
 
-pub fn is_process_running(_process_name: &str) -> bool {
-    false
-}
-
-pub fn kill_process(_process_name: &str) -> Result<(), AppError> {
-    Err(unsupported("Process management"))
-}
-
 pub fn kill_and_relaunch_steam_elevated(
     _steam_path: &Path,
     _launch_options: &[String],
@@ -74,22 +66,10 @@ pub fn launch_steam(
     Err(unsupported("Steam launch"))
 }
 
-pub fn open_folder(_path: &Path) -> Result<(), AppError> {
-    Err(unsupported("Folder opening"))
-}
-
 pub fn select_folder(_title: &str) -> Result<String, AppError> {
     Err(unsupported("Folder picker"))
 }
 
 pub fn select_file(_title: &str, _filter: &str) -> Result<String, AppError> {
     Err(unsupported("File picker"))
-}
-
-pub fn open_url(_url: &str) -> Result<(), AppError> {
-    Err(unsupported("URL opening"))
-}
-
-pub fn wait_for_process_exit(_process_name: &str, _timeout_ms: u32) -> bool {
-    true
 }
