@@ -1,3 +1,4 @@
+use crate::context::AppContext;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -136,16 +137,16 @@ fn now_unix_ms() -> u128 {
         .as_millis()
 }
 
-pub fn log_file_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub fn log_file_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     Ok(crate::storage::app_log_root(app_handle)?.join(LOG_FILE_NAME))
 }
 
-fn previous_log_file_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+fn previous_log_file_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     let current_path = log_file_path(app_handle)?;
     Ok(current_path.with_file_name(PREVIOUS_LOG_FILE_NAME))
 }
 
-pub fn begin_log_session(app_handle: &tauri::AppHandle) -> Result<(), String> {
+pub fn begin_log_session(app_handle: &dyn AppContext) -> Result<(), String> {
     let _guard = log_lock()
         .lock()
         .map_err(|_| "Log file lock is poisoned".to_string())?;
@@ -179,7 +180,7 @@ pub fn begin_log_session(app_handle: &tauri::AppHandle) -> Result<(), String> {
 }
 
 pub fn append_app_log(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     level: &str,
     source: &str,
     message: &str,
@@ -212,7 +213,7 @@ pub fn append_app_log(
     Ok(())
 }
 
-pub fn install_panic_hook(app_handle: tauri::AppHandle) {
+pub fn install_panic_hook(app_handle: crate::AppCtx) {
     let previous_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
         let location = panic_info
@@ -236,7 +237,7 @@ pub fn install_panic_hook(app_handle: tauri::AppHandle) {
         };
 
         let _ = append_app_log(
-            &app_handle,
+            &*app_handle,
             "error",
             "rust.panic",
             &payload,

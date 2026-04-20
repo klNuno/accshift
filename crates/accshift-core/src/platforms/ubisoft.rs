@@ -1,5 +1,6 @@
 use crate::config::{self, UbisoftAccountConfig};
 use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
+use crate::{AppContext, AppCtx};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -108,7 +109,7 @@ fn ubisoft_install_dir_from_registry() -> Option<PathBuf> {
     None
 }
 
-fn resolve_install_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+fn resolve_install_dir(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     let cfg = config::load_config(app_handle);
     let override_path = cfg.ubisoft.path_override.trim().to_string();
     if !override_path.is_empty() {
@@ -135,7 +136,7 @@ fn resolve_install_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String>
     Err("Could not locate Ubisoft Connect installation".into())
 }
 
-fn resolve_executable(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+fn resolve_executable(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     let cfg = config::load_config(app_handle);
     let override_path = cfg.ubisoft.path_override.trim().to_string();
     if !override_path.is_empty() {
@@ -171,12 +172,12 @@ fn resolve_executable(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> 
 // Auth cache (snapshot save/restore)
 // ---------------------------------------------------------------------------
 
-fn auth_cache_dir(app_handle: &tauri::AppHandle, uuid: &str) -> Result<PathBuf, String> {
+fn auth_cache_dir(app_handle: &dyn AppContext, uuid: &str) -> Result<PathBuf, String> {
     let base = crate::storage::ubisoft_snapshots_dir(app_handle)?.join(uuid);
     Ok(base)
 }
 
-fn save_auth_snapshot(app_handle: &tauri::AppHandle, uuid: &str) -> Result<(), String> {
+fn save_auth_snapshot(app_handle: &dyn AppContext, uuid: &str) -> Result<(), String> {
     let local_dir = ubisoft_local_data_dir()?;
     let cache_dir = auth_cache_dir(app_handle, uuid)?;
     fs::create_dir_all(&cache_dir).map_err(|e| format!("Could not create auth cache dir: {e}"))?;
@@ -193,7 +194,7 @@ fn save_auth_snapshot(app_handle: &tauri::AppHandle, uuid: &str) -> Result<(), S
     Ok(())
 }
 
-fn restore_auth_snapshot(app_handle: &tauri::AppHandle, uuid: &str) -> Result<(), String> {
+fn restore_auth_snapshot(app_handle: &dyn AppContext, uuid: &str) -> Result<(), String> {
     let local_dir = ubisoft_local_data_dir()?;
     let cache_dir = auth_cache_dir(app_handle, uuid)?;
 
@@ -215,7 +216,7 @@ fn restore_auth_snapshot(app_handle: &tauri::AppHandle, uuid: &str) -> Result<()
     Ok(())
 }
 
-fn has_auth_snapshot(app_handle: &tauri::AppHandle, uuid: &str) -> bool {
+fn has_auth_snapshot(app_handle: &dyn AppContext, uuid: &str) -> bool {
     if let Ok(cache_dir) = auth_cache_dir(app_handle, uuid) {
         AUTH_FILES.iter().any(|f| cache_dir.join(f).exists())
     } else {
@@ -253,7 +254,7 @@ fn normalize_uuid(uuid: &str) -> String {
     uuid.trim().to_lowercase()
 }
 
-fn discover_uuids(app_handle: &tauri::AppHandle) -> HashSet<String> {
+fn discover_uuids(app_handle: &dyn AppContext) -> HashSet<String> {
     let mut uuids = HashSet::new();
 
     // From savegames directory
@@ -291,7 +292,7 @@ fn discover_uuids(app_handle: &tauri::AppHandle) -> HashSet<String> {
 // Log parsing: current account detection
 // ---------------------------------------------------------------------------
 
-fn current_account_from_logs(app_handle: &tauri::AppHandle) -> Option<String> {
+fn current_account_from_logs(app_handle: &dyn AppContext) -> Option<String> {
     let install_dir = resolve_install_dir(app_handle).ok()?;
     let log_path = install_dir.join("logs").join("launcher_log.txt");
     if !log_path.exists() {
@@ -378,7 +379,7 @@ fn kill_ubisoft() {
     }
 }
 
-fn launch_ubisoft(app_handle: &tauri::AppHandle) -> Result<(), String> {
+fn launch_ubisoft(app_handle: &dyn AppContext) -> Result<(), String> {
     let executable = resolve_executable(app_handle)?;
     let mut command = Command::new(&executable);
     if let Some(install_dir) = executable.parent() {
@@ -405,7 +406,7 @@ fn validate_uuid(uuid: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
-fn read_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<UbisoftAccount>, String> {
+fn read_accounts(app_handle: &dyn AppContext) -> Result<Vec<UbisoftAccount>, String> {
     // Mark current account as recently used
     if let Some(current_uuid) = current_account_from_logs(app_handle) {
         let _ = remember_account_usage(app_handle, &current_uuid);
@@ -472,7 +473,7 @@ fn read_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<UbisoftAccount>, S
     Ok(accounts)
 }
 
-fn remember_account_usage(app_handle: &tauri::AppHandle, uuid: &str) -> Result<(), String> {
+fn remember_account_usage(app_handle: &dyn AppContext, uuid: &str) -> Result<(), String> {
     let uuid = validate_uuid(uuid)?;
     let key = normalize_uuid(&uuid);
     let now = super::now_unix_ms();
@@ -499,7 +500,7 @@ fn remember_account_usage(app_handle: &tauri::AppHandle, uuid: &str) -> Result<(
     })
 }
 
-fn forget_account_metadata(app_handle: &tauri::AppHandle, uuid: &str) -> Result<(), String> {
+fn forget_account_metadata(app_handle: &dyn AppContext, uuid: &str) -> Result<(), String> {
     let key = normalize_uuid(uuid);
     config::update_config(app_handle, |cfg| {
         cfg.ubisoft
@@ -528,13 +529,11 @@ fn forget_account_metadata(app_handle: &tauri::AppHandle, uuid: &str) -> Result<
 // Public operations
 // ---------------------------------------------------------------------------
 
-pub fn get_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<UbisoftAccount>, String> {
+pub fn get_accounts(app_handle: &dyn AppContext) -> Result<Vec<UbisoftAccount>, String> {
     read_accounts(app_handle)
 }
 
-pub fn get_startup_snapshot(
-    app_handle: &tauri::AppHandle,
-) -> Result<UbisoftStartupSnapshot, String> {
+pub fn get_startup_snapshot(app_handle: &dyn AppContext) -> Result<UbisoftStartupSnapshot, String> {
     let accounts = read_accounts(app_handle)?;
     let current = current_account_from_logs(app_handle).unwrap_or_default();
     Ok(UbisoftStartupSnapshot {
@@ -543,11 +542,11 @@ pub fn get_startup_snapshot(
     })
 }
 
-pub fn get_current_account(app_handle: &tauri::AppHandle) -> Result<String, String> {
+pub fn get_current_account(app_handle: &dyn AppContext) -> Result<String, String> {
     Ok(current_account_from_logs(app_handle).unwrap_or_default())
 }
 
-pub fn switch_account(app_handle: &tauri::AppHandle, target_uuid: &str) -> Result<(), String> {
+pub fn switch_account(app_handle: &dyn AppContext, target_uuid: &str) -> Result<(), String> {
     let target_uuid = validate_uuid(target_uuid)?;
     log_platform_info(
         app_handle,
@@ -594,7 +593,7 @@ pub fn switch_account(app_handle: &tauri::AppHandle, target_uuid: &str) -> Resul
     result
 }
 
-pub fn begin_account_setup(app_handle: &tauri::AppHandle) -> Result<SetupStatus, String> {
+pub fn begin_account_setup(app_handle: &dyn AppContext) -> Result<SetupStatus, String> {
     log_platform_info(
         app_handle,
         "ubisoft.begin_account_setup",
@@ -663,7 +662,7 @@ pub fn begin_account_setup(app_handle: &tauri::AppHandle) -> Result<SetupStatus,
 }
 
 pub fn get_account_setup_status(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     setup_id: &str,
 ) -> Result<SetupStatus, String> {
     let job = {
@@ -751,13 +750,13 @@ pub fn cancel_account_setup(setup_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn forget_account(app_handle: &tauri::AppHandle, uuid: &str) -> Result<(), String> {
+pub fn forget_account(app_handle: &dyn AppContext, uuid: &str) -> Result<(), String> {
     let uuid = validate_uuid(uuid)?;
     forget_account_metadata(app_handle, &uuid)
 }
 
 pub fn set_account_label(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     uuid: &str,
     label: &str,
 ) -> Result<(), String> {
@@ -783,7 +782,7 @@ pub fn set_account_label(
     })
 }
 
-pub fn get_ubisoft_path(app_handle: &tauri::AppHandle) -> Result<String, String> {
+pub fn get_ubisoft_path(app_handle: &dyn AppContext) -> Result<String, String> {
     let cfg = config::load_config(app_handle);
     if !cfg.ubisoft.path_override.trim().is_empty() {
         return Ok(cfg.ubisoft.path_override);
@@ -791,7 +790,7 @@ pub fn get_ubisoft_path(app_handle: &tauri::AppHandle) -> Result<String, String>
     resolve_executable(app_handle).map(|p| p.to_string_lossy().to_string())
 }
 
-pub fn set_ubisoft_path(app_handle: &tauri::AppHandle, path: &str) -> Result<(), String> {
+pub fn set_ubisoft_path(app_handle: &dyn AppContext, path: &str) -> Result<(), String> {
     let path = path.trim().to_string();
     config::update_config(app_handle, |cfg| {
         cfg.ubisoft.path_override = path;
@@ -815,68 +814,54 @@ pub struct UbisoftService;
 pub static UBISOFT_SERVICE: UbisoftService = UbisoftService;
 
 impl PlatformService for UbisoftService {
-    fn get_accounts(&self, app: &tauri::AppHandle) -> Result<Value, String> {
-        let accounts = get_accounts(app)?;
+    fn get_accounts(&self, app: AppCtx) -> Result<Value, String> {
+        let accounts = get_accounts(&app)?;
         serde_json::to_value(accounts).map_err(|e| e.to_string())
     }
 
-    fn get_startup_snapshot(&self, app: &tauri::AppHandle) -> Result<Value, String> {
-        let snapshot = get_startup_snapshot(app)?;
+    fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, String> {
+        let snapshot = get_startup_snapshot(&app)?;
         serde_json::to_value(snapshot).map_err(|e| e.to_string())
     }
 
-    fn get_current_account(&self, app: &tauri::AppHandle) -> Result<String, String> {
-        get_current_account(app)
+    fn get_current_account(&self, app: AppCtx) -> Result<String, String> {
+        get_current_account(&app)
     }
 
-    fn switch_account(
-        &self,
-        app: &tauri::AppHandle,
-        account_id: &str,
-        _params: Value,
-    ) -> Result<(), String> {
-        switch_account(app, account_id)
+    fn switch_account(&self, app: AppCtx, account_id: &str, _params: Value) -> Result<(), String> {
+        switch_account(&app, account_id)
     }
 
-    fn forget_account(&self, app: &tauri::AppHandle, account_id: &str) -> Result<(), String> {
-        forget_account(app, account_id)
+    fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), String> {
+        forget_account(&app, account_id)
     }
 
-    fn begin_setup(&self, app: &tauri::AppHandle, _params: Value) -> Result<SetupStatus, String> {
-        begin_account_setup(app)
+    fn begin_setup(&self, app: AppCtx, _params: Value) -> Result<SetupStatus, String> {
+        begin_account_setup(&app)
     }
 
-    fn get_setup_status(
-        &self,
-        app: &tauri::AppHandle,
-        setup_id: &str,
-    ) -> Result<SetupStatus, String> {
-        get_account_setup_status(app, setup_id)
+    fn get_setup_status(&self, app: AppCtx, setup_id: &str) -> Result<SetupStatus, String> {
+        get_account_setup_status(&app, setup_id)
     }
 
-    fn cancel_setup(&self, _app: &tauri::AppHandle, setup_id: &str) -> Result<(), String> {
+    fn cancel_setup(&self, _app: AppCtx, setup_id: &str) -> Result<(), String> {
         cancel_account_setup(setup_id)
     }
 
-    fn get_path(&self, app: &tauri::AppHandle) -> Result<String, String> {
-        get_ubisoft_path(app)
+    fn get_path(&self, app: AppCtx) -> Result<String, String> {
+        get_ubisoft_path(&app)
     }
 
-    fn set_path(&self, app: &tauri::AppHandle, path: &str) -> Result<(), String> {
-        set_ubisoft_path(app, path)
+    fn set_path(&self, app: AppCtx, path: &str) -> Result<(), String> {
+        set_ubisoft_path(&app, path)
     }
 
     fn select_path(&self) -> Result<String, String> {
         select_ubisoft_path()
     }
 
-    fn set_account_label(
-        &self,
-        app: &tauri::AppHandle,
-        account_id: &str,
-        label: &str,
-    ) -> Result<(), String> {
-        set_account_label(app, account_id, label)
+    fn set_account_label(&self, app: AppCtx, account_id: &str, label: &str) -> Result<(), String> {
+        set_account_label(&app, account_id, label)
     }
 }
 

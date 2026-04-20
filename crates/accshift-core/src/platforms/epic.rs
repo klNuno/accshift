@@ -1,5 +1,6 @@
 use crate::config::{self, EpicAccountConfig};
 use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
+use crate::{AppContext, AppCtx};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -177,7 +178,7 @@ fn epic_executable_from_registry() -> Option<PathBuf> {
     None
 }
 
-fn resolve_executable(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+fn resolve_executable(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     let cfg = config::load_config(app_handle);
     let override_path = cfg.epic.path_override.trim().to_string();
     if !override_path.is_empty() {
@@ -309,12 +310,12 @@ fn is_valid_epic_account_id(s: &str) -> bool {
 // Auth snapshot (file-based like Ubisoft)
 // ---------------------------------------------------------------------------
 
-fn auth_cache_dir(app_handle: &tauri::AppHandle, account_id: &str) -> Result<PathBuf, String> {
+fn auth_cache_dir(app_handle: &dyn AppContext, account_id: &str) -> Result<PathBuf, String> {
     let base = crate::storage::epic_snapshots_dir(app_handle)?.join(account_id);
     Ok(base)
 }
 
-fn save_auth_snapshot(app_handle: &tauri::AppHandle, account_id: &str) -> Result<(), String> {
+fn save_auth_snapshot(app_handle: &dyn AppContext, account_id: &str) -> Result<(), String> {
     let config_dir = epic_config_dir()?;
     let cache_dir = auth_cache_dir(app_handle, account_id)?;
     fs::create_dir_all(&cache_dir).map_err(|e| format!("Could not create auth cache dir: {e}"))?;
@@ -336,7 +337,7 @@ fn save_auth_snapshot(app_handle: &tauri::AppHandle, account_id: &str) -> Result
     Ok(())
 }
 
-fn restore_auth_snapshot(app_handle: &tauri::AppHandle, account_id: &str) -> Result<(), String> {
+fn restore_auth_snapshot(app_handle: &dyn AppContext, account_id: &str) -> Result<(), String> {
     let config_dir = epic_config_dir()?;
     let cache_dir = auth_cache_dir(app_handle, account_id)?;
 
@@ -365,7 +366,7 @@ fn restore_auth_snapshot(app_handle: &tauri::AppHandle, account_id: &str) -> Res
     Ok(())
 }
 
-fn has_auth_snapshot(app_handle: &tauri::AppHandle, account_id: &str) -> bool {
+fn has_auth_snapshot(app_handle: &dyn AppContext, account_id: &str) -> bool {
     if let Ok(cache_dir) = auth_cache_dir(app_handle, account_id) {
         cache_dir.join(AUTH_INI).exists()
     } else {
@@ -412,7 +413,7 @@ fn kill_epic() {
     }
 }
 
-fn launch_epic(app_handle: &tauri::AppHandle) -> Result<(), String> {
+fn launch_epic(app_handle: &dyn AppContext) -> Result<(), String> {
     let executable = resolve_executable(app_handle)?;
     let mut command = Command::new(&executable);
     if let Some(install_dir) = executable.parent() {
@@ -439,7 +440,7 @@ fn validate_account_id(id: &str) -> Result<String, String> {
     Ok(trimmed)
 }
 
-fn read_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<EpicAccount>, String> {
+fn read_accounts(app_handle: &dyn AppContext) -> Result<Vec<EpicAccount>, String> {
     // Detect current account from registry, mark as recently used,
     // and ensure a snapshot exists so switching works later.
     if let Some(current_id) = read_registry_account_id() {
@@ -502,7 +503,7 @@ fn read_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<EpicAccount>, Stri
     Ok(accounts)
 }
 
-fn remember_account_usage(app_handle: &tauri::AppHandle, account_id: &str) -> Result<(), String> {
+fn remember_account_usage(app_handle: &dyn AppContext, account_id: &str) -> Result<(), String> {
     let account_id = validate_account_id(account_id)?;
     let key = account_id.to_lowercase();
     let now = super::now_unix_ms();
@@ -525,7 +526,7 @@ fn remember_account_usage(app_handle: &tauri::AppHandle, account_id: &str) -> Re
     })
 }
 
-fn forget_account_metadata(app_handle: &tauri::AppHandle, account_id: &str) -> Result<(), String> {
+fn forget_account_metadata(app_handle: &dyn AppContext, account_id: &str) -> Result<(), String> {
     let key = account_id.trim().to_lowercase();
     config::update_config(app_handle, |cfg| {
         cfg.epic
@@ -545,11 +546,11 @@ fn forget_account_metadata(app_handle: &tauri::AppHandle, account_id: &str) -> R
 // Public operations
 // ---------------------------------------------------------------------------
 
-pub fn get_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<EpicAccount>, String> {
+pub fn get_accounts(app_handle: &dyn AppContext) -> Result<Vec<EpicAccount>, String> {
     read_accounts(app_handle)
 }
 
-pub fn get_startup_snapshot(app_handle: &tauri::AppHandle) -> Result<EpicStartupSnapshot, String> {
+pub fn get_startup_snapshot(app_handle: &dyn AppContext) -> Result<EpicStartupSnapshot, String> {
     let accounts = read_accounts(app_handle)?;
     let current = get_current_account(app_handle).unwrap_or_default();
     Ok(EpicStartupSnapshot {
@@ -558,12 +559,12 @@ pub fn get_startup_snapshot(app_handle: &tauri::AppHandle) -> Result<EpicStartup
     })
 }
 
-pub fn get_current_account(app_handle: &tauri::AppHandle) -> Result<String, String> {
+pub fn get_current_account(app_handle: &dyn AppContext) -> Result<String, String> {
     let _ = app_handle;
     Ok(read_registry_account_id().unwrap_or_default())
 }
 
-pub fn switch_account(app_handle: &tauri::AppHandle, account_id: &str) -> Result<(), String> {
+pub fn switch_account(app_handle: &dyn AppContext, account_id: &str) -> Result<(), String> {
     let account_id = validate_account_id(account_id)?;
     log_platform_info(
         app_handle,
@@ -612,7 +613,7 @@ pub fn switch_account(app_handle: &tauri::AppHandle, account_id: &str) -> Result
     result
 }
 
-pub fn begin_account_setup(app_handle: &tauri::AppHandle) -> Result<SetupStatus, String> {
+pub fn begin_account_setup(app_handle: &dyn AppContext) -> Result<SetupStatus, String> {
     log_platform_info(
         app_handle,
         "epic.begin_account_setup",
@@ -680,7 +681,7 @@ pub fn begin_account_setup(app_handle: &tauri::AppHandle) -> Result<SetupStatus,
 }
 
 pub fn get_account_setup_status(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     setup_id: &str,
 ) -> Result<SetupStatus, String> {
     let job = {
@@ -766,13 +767,13 @@ pub fn cancel_account_setup(setup_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn forget_account(app_handle: &tauri::AppHandle, account_id: &str) -> Result<(), String> {
+pub fn forget_account(app_handle: &dyn AppContext, account_id: &str) -> Result<(), String> {
     let account_id = validate_account_id(account_id)?;
     forget_account_metadata(app_handle, &account_id)
 }
 
 pub fn set_account_label(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     account_id: &str,
     label: &str,
 ) -> Result<(), String> {
@@ -798,7 +799,7 @@ pub fn set_account_label(
     })
 }
 
-pub fn get_epic_path(app_handle: &tauri::AppHandle) -> Result<String, String> {
+pub fn get_epic_path(app_handle: &dyn AppContext) -> Result<String, String> {
     let cfg = config::load_config(app_handle);
     if !cfg.epic.path_override.trim().is_empty() {
         return Ok(cfg.epic.path_override);
@@ -806,7 +807,7 @@ pub fn get_epic_path(app_handle: &tauri::AppHandle) -> Result<String, String> {
     resolve_executable(app_handle).map(|p| p.to_string_lossy().to_string())
 }
 
-pub fn set_epic_path(app_handle: &tauri::AppHandle, path: &str) -> Result<(), String> {
+pub fn set_epic_path(app_handle: &dyn AppContext, path: &str) -> Result<(), String> {
     let path = path.trim().to_string();
     config::update_config(app_handle, |cfg| {
         cfg.epic.path_override = path;
@@ -830,68 +831,54 @@ pub struct EpicService;
 pub static EPIC_SERVICE: EpicService = EpicService;
 
 impl PlatformService for EpicService {
-    fn get_accounts(&self, app: &tauri::AppHandle) -> Result<Value, String> {
-        let accounts = get_accounts(app)?;
+    fn get_accounts(&self, app: AppCtx) -> Result<Value, String> {
+        let accounts = get_accounts(&app)?;
         serde_json::to_value(accounts).map_err(|e| e.to_string())
     }
 
-    fn get_startup_snapshot(&self, app: &tauri::AppHandle) -> Result<Value, String> {
-        let snapshot = get_startup_snapshot(app)?;
+    fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, String> {
+        let snapshot = get_startup_snapshot(&app)?;
         serde_json::to_value(snapshot).map_err(|e| e.to_string())
     }
 
-    fn get_current_account(&self, app: &tauri::AppHandle) -> Result<String, String> {
-        get_current_account(app)
+    fn get_current_account(&self, app: AppCtx) -> Result<String, String> {
+        get_current_account(&app)
     }
 
-    fn switch_account(
-        &self,
-        app: &tauri::AppHandle,
-        account_id: &str,
-        _params: Value,
-    ) -> Result<(), String> {
-        switch_account(app, account_id)
+    fn switch_account(&self, app: AppCtx, account_id: &str, _params: Value) -> Result<(), String> {
+        switch_account(&app, account_id)
     }
 
-    fn forget_account(&self, app: &tauri::AppHandle, account_id: &str) -> Result<(), String> {
-        forget_account(app, account_id)
+    fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), String> {
+        forget_account(&app, account_id)
     }
 
-    fn begin_setup(&self, app: &tauri::AppHandle, _params: Value) -> Result<SetupStatus, String> {
-        begin_account_setup(app)
+    fn begin_setup(&self, app: AppCtx, _params: Value) -> Result<SetupStatus, String> {
+        begin_account_setup(&app)
     }
 
-    fn get_setup_status(
-        &self,
-        app: &tauri::AppHandle,
-        setup_id: &str,
-    ) -> Result<SetupStatus, String> {
-        get_account_setup_status(app, setup_id)
+    fn get_setup_status(&self, app: AppCtx, setup_id: &str) -> Result<SetupStatus, String> {
+        get_account_setup_status(&app, setup_id)
     }
 
-    fn cancel_setup(&self, _app: &tauri::AppHandle, setup_id: &str) -> Result<(), String> {
+    fn cancel_setup(&self, _app: AppCtx, setup_id: &str) -> Result<(), String> {
         cancel_account_setup(setup_id)
     }
 
-    fn get_path(&self, app: &tauri::AppHandle) -> Result<String, String> {
-        get_epic_path(app)
+    fn get_path(&self, app: AppCtx) -> Result<String, String> {
+        get_epic_path(&app)
     }
 
-    fn set_path(&self, app: &tauri::AppHandle, path: &str) -> Result<(), String> {
-        set_epic_path(app, path)
+    fn set_path(&self, app: AppCtx, path: &str) -> Result<(), String> {
+        set_epic_path(&app, path)
     }
 
     fn select_path(&self) -> Result<String, String> {
         select_epic_path()
     }
 
-    fn set_account_label(
-        &self,
-        app: &tauri::AppHandle,
-        account_id: &str,
-        label: &str,
-    ) -> Result<(), String> {
-        set_account_label(app, account_id, label)
+    fn set_account_label(&self, app: AppCtx, account_id: &str, label: &str) -> Result<(), String> {
+        set_account_label(&app, account_id, label)
     }
 }
 

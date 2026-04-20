@@ -1,3 +1,4 @@
+use crate::ctx;
 use crate::platforms::{require_service, SetupStatus};
 use serde_json::Value;
 
@@ -10,7 +11,7 @@ pub fn get_runtime_os() -> String {
 /// or an error string if migration failed.
 #[tauri::command]
 pub fn migrate_legacy_config(app_handle: tauri::AppHandle) -> String {
-    match crate::config::migrate_legacy_config(&app_handle) {
+    match crate::config::migrate_legacy_config(&ctx(&app_handle)) {
         None => "none".to_string(),
         Some(Ok(())) => "migrated".to_string(),
         Some(Err(e)) => format!("error:{e}"),
@@ -25,7 +26,13 @@ pub fn log_app_event(
     message: String,
     details: Option<String>,
 ) -> Result<(), String> {
-    crate::logging::append_app_log(&app_handle, &level, &source, &message, details.as_deref())
+    crate::logging::append_app_log(
+        &ctx(&app_handle),
+        &level,
+        &source,
+        &message,
+        details.as_deref(),
+    )
 }
 
 #[tauri::command]
@@ -40,7 +47,7 @@ pub fn finish_boot(
     } else {
         "Boot completion requested again"
     };
-    let _ = crate::logging::append_app_log(&app_handle, "info", &source, message, None);
+    let _ = crate::logging::append_app_log(&ctx(&app_handle), "info", &source, message, None);
     crate::app_runtime::show_main_window(&app_handle)
 }
 
@@ -48,7 +55,8 @@ pub fn finish_boot(
 pub fn load_client_storage_snapshot(
     app_handle: tauri::AppHandle,
 ) -> Result<crate::storage::ClientStorageSnapshot, String> {
-    let snapshot = crate::storage::load_client_storage_snapshot(&app_handle)?;
+    let c = ctx(&app_handle);
+    let snapshot = crate::storage::load_client_storage_snapshot(&c)?;
     let details = serde_json::json!({
         "storeCount": snapshot.stores.len(),
         "manifestCount": snapshot.manifest.stores.len(),
@@ -56,7 +64,7 @@ pub fn load_client_storage_snapshot(
     })
     .to_string();
     let _ = crate::logging::append_app_log(
-        &app_handle,
+        &c,
         "info",
         "storage.load_snapshot",
         "Loaded client storage snapshot",
@@ -71,14 +79,15 @@ pub fn save_client_storage_store(
     store_id: String,
     value: Value,
 ) -> Result<(), String> {
-    crate::storage::save_client_store(&app_handle, &store_id, &value)?;
+    let c = ctx(&app_handle);
+    crate::storage::save_client_store(&c, &store_id, &value)?;
     let details = serde_json::json!({
         "storeId": store_id,
         "isNull": value.is_null(),
     })
     .to_string();
     let _ = crate::logging::append_app_log(
-        &app_handle,
+        &c,
         "info",
         "storage.save_store",
         "Saved client storage store",
@@ -91,14 +100,15 @@ pub fn save_client_storage_store(
 pub fn get_storage_manifest(
     app_handle: tauri::AppHandle,
 ) -> Result<crate::storage::StorageManifest, String> {
-    let manifest = crate::storage::build_storage_manifest(&app_handle)?;
+    let c = ctx(&app_handle);
+    let manifest = crate::storage::build_storage_manifest(&c)?;
     let details = serde_json::json!({
         "storeCount": manifest.stores.len(),
         "schemaVersion": manifest.schema_version,
     })
     .to_string();
     let _ = crate::logging::append_app_log(
-        &app_handle,
+        &c,
         "info",
         "storage.get_manifest",
         "Built storage manifest",
@@ -116,7 +126,7 @@ pub fn platform_get_accounts(
     app_handle: tauri::AppHandle,
     platform_id: String,
 ) -> Result<Value, String> {
-    require_service(&platform_id)?.get_accounts(&app_handle)
+    require_service(&platform_id)?.get_accounts(ctx(&app_handle))
 }
 
 #[tauri::command]
@@ -124,7 +134,7 @@ pub fn platform_get_startup_snapshot(
     app_handle: tauri::AppHandle,
     platform_id: String,
 ) -> Result<Value, String> {
-    require_service(&platform_id)?.get_startup_snapshot(&app_handle)
+    require_service(&platform_id)?.get_startup_snapshot(ctx(&app_handle))
 }
 
 #[tauri::command]
@@ -132,7 +142,7 @@ pub fn platform_get_current_account(
     app_handle: tauri::AppHandle,
     platform_id: String,
 ) -> Result<String, String> {
-    require_service(&platform_id)?.get_current_account(&app_handle)
+    require_service(&platform_id)?.get_current_account(ctx(&app_handle))
 }
 
 #[tauri::command]
@@ -143,11 +153,10 @@ pub async fn platform_switch_account(
     params: Value,
 ) -> Result<(), String> {
     let service = require_service(&platform_id)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        service.switch_account(&app_handle, &account_id, params)
-    })
-    .await
-    .map_err(|e| format!("Task failed: {e}"))?
+    let c = ctx(&app_handle);
+    tauri::async_runtime::spawn_blocking(move || service.switch_account(c, &account_id, params))
+        .await
+        .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[tauri::command]
@@ -157,7 +166,8 @@ pub async fn platform_forget_account(
     account_id: String,
 ) -> Result<(), String> {
     let service = require_service(&platform_id)?;
-    tauri::async_runtime::spawn_blocking(move || service.forget_account(&app_handle, &account_id))
+    let c = ctx(&app_handle);
+    tauri::async_runtime::spawn_blocking(move || service.forget_account(c, &account_id))
         .await
         .map_err(|e| format!("Task failed: {e}"))?
 }
@@ -169,7 +179,8 @@ pub async fn platform_begin_setup(
     params: Value,
 ) -> Result<SetupStatus, String> {
     let service = require_service(&platform_id)?;
-    tauri::async_runtime::spawn_blocking(move || service.begin_setup(&app_handle, params))
+    let c = ctx(&app_handle);
+    tauri::async_runtime::spawn_blocking(move || service.begin_setup(c, params))
         .await
         .map_err(|e| format!("Task failed: {e}"))?
 }
@@ -181,7 +192,8 @@ pub async fn platform_get_setup_status(
     setup_id: String,
 ) -> Result<SetupStatus, String> {
     let service = require_service(&platform_id)?;
-    tauri::async_runtime::spawn_blocking(move || service.get_setup_status(&app_handle, &setup_id))
+    let c = ctx(&app_handle);
+    tauri::async_runtime::spawn_blocking(move || service.get_setup_status(c, &setup_id))
         .await
         .map_err(|e| format!("Task failed: {e}"))?
 }
@@ -193,7 +205,8 @@ pub async fn platform_cancel_setup(
     setup_id: String,
 ) -> Result<(), String> {
     let service = require_service(&platform_id)?;
-    tauri::async_runtime::spawn_blocking(move || service.cancel_setup(&app_handle, &setup_id))
+    let c = ctx(&app_handle);
+    tauri::async_runtime::spawn_blocking(move || service.cancel_setup(c, &setup_id))
         .await
         .map_err(|e| format!("Task failed: {e}"))?
 }
@@ -203,7 +216,7 @@ pub fn platform_get_path(
     app_handle: tauri::AppHandle,
     platform_id: String,
 ) -> Result<String, String> {
-    require_service(&platform_id)?.get_path(&app_handle)
+    require_service(&platform_id)?.get_path(ctx(&app_handle))
 }
 
 #[tauri::command]
@@ -212,7 +225,7 @@ pub fn platform_set_path(
     platform_id: String,
     path: String,
 ) -> Result<(), String> {
-    require_service(&platform_id)?.set_path(&app_handle, &path)
+    require_service(&platform_id)?.set_path(ctx(&app_handle), &path)
 }
 
 #[tauri::command]
@@ -227,7 +240,7 @@ pub fn platform_set_account_label(
     account_id: String,
     label: String,
 ) -> Result<(), String> {
-    require_service(&platform_id)?.set_account_label(&app_handle, &account_id, &label)
+    require_service(&platform_id)?.set_account_label(ctx(&app_handle), &account_id, &label)
 }
 
 // ---------------------------------------------------------------------------
@@ -259,12 +272,12 @@ pub fn close_window(window: tauri::Window) {
 
 #[tauri::command]
 pub fn steam_set_api_key(app_handle: tauri::AppHandle, key: String) -> Result<(), String> {
-    crate::platforms::steam::set_api_key(app_handle, key)
+    crate::platforms::steam::set_api_key(ctx(&app_handle), key)
 }
 
 #[tauri::command]
 pub fn steam_has_api_key(app_handle: tauri::AppHandle) -> bool {
-    crate::platforms::steam::has_api_key(app_handle)
+    crate::platforms::steam::has_api_key(ctx(&app_handle))
 }
 
 #[tauri::command]
@@ -283,7 +296,7 @@ pub async fn steam_switch_account_mode(
     shutdown_mode: String,
 ) -> Result<(), String> {
     crate::platforms::steam::switch_account_mode(
-        app_handle,
+        ctx(&app_handle),
         username,
         steam_id,
         mode,
@@ -308,7 +321,8 @@ pub async fn steam_get_player_bans(
     steam_ids: Vec<String>,
     client: tauri::State<'_, reqwest::Client>,
 ) -> Result<Vec<crate::platforms::steam::bans::BanInfo>, String> {
-    crate::platforms::steam::get_player_bans(app_handle, steam_ids, client.inner().clone()).await
+    crate::platforms::steam::get_player_bans(ctx(&app_handle), steam_ids, client.inner().clone())
+        .await
 }
 
 #[tauri::command]
@@ -318,7 +332,12 @@ pub fn steam_copy_game_settings(
     to_steam_id: String,
     app_id: String,
 ) -> Result<(), String> {
-    crate::platforms::steam::copy_game_settings(app_handle, from_steam_id, to_steam_id, app_id)
+    crate::platforms::steam::copy_game_settings(
+        ctx(&app_handle),
+        from_steam_id,
+        to_steam_id,
+        app_id,
+    )
 }
 
 #[tauri::command]
@@ -327,17 +346,17 @@ pub fn steam_get_copyable_games(
     from_steam_id: String,
     to_steam_id: String,
 ) -> Result<Vec<crate::platforms::steam::accounts::CopyableGame>, String> {
-    crate::platforms::steam::get_copyable_games(app_handle, from_steam_id, to_steam_id)
+    crate::platforms::steam::get_copyable_games(ctx(&app_handle), from_steam_id, to_steam_id)
 }
 
 #[tauri::command]
 pub fn steam_open_userdata(app_handle: tauri::AppHandle, steam_id: String) -> Result<(), String> {
-    crate::platforms::steam::open_userdata(app_handle, steam_id)
+    crate::platforms::steam::open_userdata(ctx(&app_handle), steam_id)
 }
 
 #[tauri::command]
 pub fn steam_clear_browser_cache(app_handle: tauri::AppHandle) -> Result<(), String> {
-    crate::platforms::steam::clear_integrated_browser_cache(app_handle)
+    crate::platforms::steam::clear_integrated_browser_cache(ctx(&app_handle))
 }
 
 #[tauri::command]
@@ -345,7 +364,7 @@ pub fn steam_bulk_edit(
     app_handle: tauri::AppHandle,
     request: crate::platforms::steam::bulk_edit::BulkEditRequest,
 ) -> Result<crate::platforms::steam::bulk_edit::BulkEditResult, String> {
-    crate::platforms::steam::bulk_edit(app_handle, request)
+    crate::platforms::steam::bulk_edit(ctx(&app_handle), request)
 }
 
 #[tauri::command]
@@ -353,7 +372,7 @@ pub fn steam_get_account_games(
     app_handle: tauri::AppHandle,
     steam_id: String,
 ) -> Result<Vec<crate::platforms::steam::accounts::CopyableGame>, String> {
-    crate::platforms::steam::get_account_games(app_handle, steam_id)
+    crate::platforms::steam::get_account_games(ctx(&app_handle), steam_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -365,7 +384,7 @@ pub fn riot_capture_profile(
     app_handle: tauri::AppHandle,
     profile_id: String,
 ) -> Result<(), String> {
-    crate::platforms::riot::capture_profile(app_handle, profile_id)
+    crate::platforms::riot::capture_profile(ctx(&app_handle), profile_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -387,8 +406,12 @@ pub async fn roblox_add_account_by_cookie(
     cookie: String,
     client: tauri::State<'_, reqwest::Client>,
 ) -> Result<crate::platforms::roblox::RobloxAccount, String> {
-    crate::platforms::roblox::add_account_by_cookie(app_handle, cookie, client.inner().clone())
-        .await
+    crate::platforms::roblox::add_account_by_cookie(
+        ctx(&app_handle),
+        cookie,
+        client.inner().clone(),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -407,7 +430,7 @@ pub async fn roblox_get_profile_info(
 pub fn list_custom_themes(
     app_handle: tauri::AppHandle,
 ) -> Result<Vec<crate::themes::CustomTheme>, String> {
-    crate::themes::list_custom_themes(&app_handle)
+    crate::themes::list_custom_themes(&ctx(&app_handle))
 }
 
 #[tauri::command]
@@ -415,10 +438,10 @@ pub fn save_custom_theme(
     app_handle: tauri::AppHandle,
     theme: crate::themes::CustomTheme,
 ) -> Result<(), String> {
-    crate::themes::save_custom_theme(&app_handle, &theme)
+    crate::themes::save_custom_theme(&ctx(&app_handle), &theme)
 }
 
 #[tauri::command]
 pub fn delete_custom_theme(app_handle: tauri::AppHandle, theme_id: String) -> Result<(), String> {
-    crate::themes::delete_custom_theme(&app_handle, &theme_id)
+    crate::themes::delete_custom_theme(&ctx(&app_handle), &theme_id)
 }

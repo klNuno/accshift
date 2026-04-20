@@ -6,13 +6,13 @@ edition.workspace = true
 authors.workspace = true
 
 [dependencies]
-tauri = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
 thiserror = { workspace = true }
 rusqlite = { workspace = true }
 uuid = { workspace = true }
+tokio = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 winreg = { workspace = true }

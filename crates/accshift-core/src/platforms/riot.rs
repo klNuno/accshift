@@ -1,5 +1,6 @@
 use crate::config::{self, RiotProfileConfig};
 use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
+use crate::{AppContext, AppCtx};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::ffi::OsStr;
@@ -195,7 +196,7 @@ fn running_process_names(process_names: &'static [&'static str]) -> Vec<&'static
 }
 
 fn build_riot_switch_details(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     target_profile_id: Option<&str>,
 ) -> String {
     let cfg = config::load_config(app_handle);
@@ -245,7 +246,7 @@ fn graceful_riot_quit() {
     };
 
     // POST /process-control/v1/process/quit triggers a graceful shutdown
-    let quit_ok = tauri::async_runtime::block_on(async {
+    let quit_ok = crate::runtime::block_on(async {
         let client = reqwest::Client::builder()
             .danger_accept_invalid_certs(true)
             .build()
@@ -281,7 +282,7 @@ fn graceful_riot_quit() {
     kill_riot_client_processes();
 }
 
-fn prepare_clean_riot_launch(app_handle: &tauri::AppHandle) -> Result<(), String> {
+fn prepare_clean_riot_launch(app_handle: &dyn AppContext) -> Result<(), String> {
     graceful_riot_quit();
     clear_live_riot_setup_state(app_handle)?;
     kill_riot_client_processes();
@@ -289,8 +290,8 @@ fn prepare_clean_riot_launch(app_handle: &tauri::AppHandle) -> Result<(), String
     Ok(())
 }
 
-fn spawn_riot_setup_launch(app_handle: tauri::AppHandle, client_path: PathBuf) {
-    tauri::async_runtime::spawn_blocking(move || {
+fn spawn_riot_setup_launch(app_handle: AppCtx, client_path: PathBuf) {
+    tokio::task::spawn_blocking(move || {
         let _ = prepare_clean_riot_launch(&app_handle);
         let _ = launch_riot_client(&client_path);
     });
@@ -314,7 +315,7 @@ fn detect_installation_path_from_installs() -> Option<String> {
     None
 }
 
-fn resolve_riot_client_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+fn resolve_riot_client_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     let cfg = config::load_config(app_handle);
     let override_path = cfg.riot.path_override.trim();
     let raw_path = if override_path.is_empty() {
@@ -334,7 +335,7 @@ fn resolve_riot_client_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, St
     }
 }
 
-fn app_profiles_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+fn app_profiles_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     let root = crate::storage::riot_snapshots_dir(app_handle)?;
     fs::create_dir_all(&root).map_err(|e| format!("Could not create Riot profiles dir: {e}"))?;
     Ok(root)
@@ -357,18 +358,12 @@ fn normalize_profile_id(profile_id: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
-fn profile_snapshot_path(
-    app_handle: &tauri::AppHandle,
-    profile_id: &str,
-) -> Result<PathBuf, String> {
+fn profile_snapshot_path(app_handle: &dyn AppContext, profile_id: &str) -> Result<PathBuf, String> {
     let profile_id = normalize_profile_id(profile_id)?;
     Ok(app_profiles_root(app_handle)?.join(profile_id))
 }
 
-fn profile_snapshot_dir(
-    app_handle: &tauri::AppHandle,
-    profile_id: &str,
-) -> Result<PathBuf, String> {
+fn profile_snapshot_dir(app_handle: &dyn AppContext, profile_id: &str) -> Result<PathBuf, String> {
     let dir = profile_snapshot_path(app_handle, profile_id)?;
     fs::create_dir_all(&dir)
         .map_err(|e| format!("Could not create Riot profile snapshot dir: {e}"))?;
@@ -411,7 +406,7 @@ fn remove_path_if_exists(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn riot_settings_file_ready(app_handle: &tauri::AppHandle) -> Result<bool, String> {
+fn riot_settings_file_ready(app_handle: &dyn AppContext) -> Result<bool, String> {
     let install_dir = resolve_riot_client_path(app_handle)
         .ok()
         .and_then(|path| path.parent().map(Path::to_path_buf));
@@ -656,7 +651,7 @@ async fn fetch_local_json(access: &RiotLocalApiAccess, path: &str) -> Result<Val
 fn detect_live_identity_with_access(
     access: &RiotLocalApiAccess,
 ) -> Result<RiotDetectedIdentity, String> {
-    tauri::async_runtime::block_on(async {
+    crate::runtime::block_on(async {
         let alias = fetch_local_json(access, "/player-account/aliases/v1/active")
             .await
             .ok()
@@ -698,7 +693,7 @@ struct RiotLoginState {
 }
 
 fn read_riot_login_state(access: &RiotLocalApiAccess) -> RiotLoginState {
-    tauri::async_runtime::block_on(async {
+    crate::runtime::block_on(async {
         let value = match fetch_local_json(access, "/riot-login/v1/status").await {
             Ok(v) => v,
             Err(_) => {
@@ -728,7 +723,7 @@ fn detect_live_identity() -> Result<RiotDetectedIdentity, String> {
     detect_live_identity_with_access(&access)
 }
 
-fn backup_live_snapshot(app_handle: &tauri::AppHandle, profile_id: &str) -> Result<(), String> {
+fn backup_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Result<(), String> {
     let install_dir = resolve_riot_client_path(app_handle)
         .ok()
         .and_then(|path| path.parent().map(Path::to_path_buf));
@@ -770,7 +765,7 @@ fn backup_live_snapshot(app_handle: &tauri::AppHandle, profile_id: &str) -> Resu
     }
 }
 
-fn clear_live_riot_state(app_handle: &tauri::AppHandle) -> Result<(), String> {
+fn clear_live_riot_state(app_handle: &dyn AppContext) -> Result<(), String> {
     let install_dir = resolve_riot_client_path(app_handle)
         .ok()
         .and_then(|path| path.parent().map(Path::to_path_buf));
@@ -785,7 +780,7 @@ fn clear_live_riot_state(app_handle: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn clear_live_riot_setup_state(app_handle: &tauri::AppHandle) -> Result<(), String> {
+fn clear_live_riot_setup_state(app_handle: &dyn AppContext) -> Result<(), String> {
     let install_dir = resolve_riot_client_path(app_handle)
         .ok()
         .and_then(|path| path.parent().map(Path::to_path_buf));
@@ -803,7 +798,7 @@ fn clear_live_riot_setup_state(app_handle: &tauri::AppHandle) -> Result<(), Stri
     Ok(())
 }
 
-fn restore_live_snapshot(app_handle: &tauri::AppHandle, profile_id: &str) -> Result<bool, String> {
+fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Result<bool, String> {
     let install_dir = resolve_riot_client_path(app_handle)
         .ok()
         .and_then(|path| path.parent().map(Path::to_path_buf));
@@ -867,7 +862,7 @@ fn riot_setup_expired(last_touched_at: Option<u64>) -> bool {
 }
 
 fn cleanup_expired_pending_profiles(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     cfg: &mut config::AppConfig,
 ) -> Result<(), String> {
     let mut changed = false;
@@ -1013,7 +1008,7 @@ fn update_profile_state(
 }
 
 fn capture_profile_into_snapshot(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     cfg: &mut config::AppConfig,
     profile_id: &str,
     identity: Option<&RiotDetectedIdentity>,
@@ -1032,7 +1027,7 @@ fn capture_profile_into_snapshot(
 }
 
 fn get_profile_setup_status_internal(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     cfg: &mut config::AppConfig,
     profile_id: &str,
 ) -> Result<RiotProfileSetupStatus, String> {
@@ -1111,13 +1106,13 @@ fn get_profile_setup_status_internal(
     Ok(make_setup_status(&updated, "ready", ""))
 }
 
-pub fn get_profiles(app_handle: tauri::AppHandle) -> Result<Vec<RiotProfileConfig>, String> {
+pub fn get_profiles(app_handle: AppCtx) -> Result<Vec<RiotProfileConfig>, String> {
     let mut cfg = config::load_config(&app_handle);
     cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
     Ok(visible_profiles(&cfg))
 }
 
-pub fn get_startup_snapshot(app_handle: tauri::AppHandle) -> Result<RiotStartupSnapshot, String> {
+pub fn get_startup_snapshot(app_handle: AppCtx) -> Result<RiotStartupSnapshot, String> {
     let mut cfg = config::load_config(&app_handle);
     cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
     let current_profile = visible_current_profile_id(&cfg);
@@ -1127,13 +1122,13 @@ pub fn get_startup_snapshot(app_handle: tauri::AppHandle) -> Result<RiotStartupS
     })
 }
 
-pub fn get_current_profile(app_handle: tauri::AppHandle) -> Result<String, String> {
+pub fn get_current_profile(app_handle: AppCtx) -> Result<String, String> {
     let mut cfg = config::load_config(&app_handle);
     cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
     Ok(visible_current_profile_id(&cfg))
 }
 
-pub fn begin_profile_setup(app_handle: tauri::AppHandle) -> Result<RiotProfileSetupStatus, String> {
+pub fn begin_profile_setup(app_handle: AppCtx) -> Result<RiotProfileSetupStatus, String> {
     ensure_no_riot_game_running("starting Riot account setup")?;
     let client_path = resolve_riot_client_path(&app_handle)?;
     let mut cfg = config::load_config(&app_handle);
@@ -1197,7 +1192,7 @@ pub fn begin_profile_setup(app_handle: tauri::AppHandle) -> Result<RiotProfileSe
 }
 
 pub fn get_profile_setup_status(
-    app_handle: tauri::AppHandle,
+    app_handle: AppCtx,
     profile_id: String,
 ) -> Result<RiotProfileSetupStatus, String> {
     let profile_id = normalize_profile_id(&profile_id)?;
@@ -1215,10 +1210,7 @@ pub fn get_profile_setup_status(
     get_profile_setup_status_internal(&app_handle, &mut cfg, &profile_id)
 }
 
-pub fn cancel_profile_setup(
-    app_handle: tauri::AppHandle,
-    profile_id: String,
-) -> Result<(), String> {
+pub fn cancel_profile_setup(app_handle: AppCtx, profile_id: String) -> Result<(), String> {
     let profile_id = normalize_profile_id(&profile_id)?;
     let mut cfg = config::load_config(&app_handle);
     cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
@@ -1256,7 +1248,7 @@ pub fn cancel_profile_setup(
     Ok(())
 }
 
-pub fn capture_profile(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
+pub fn capture_profile(app_handle: AppCtx, profile_id: String) -> Result<(), String> {
     let profile_id = normalize_profile_id(&profile_id)?;
     let live_identity = detect_live_identity().ok();
     let mut cfg = config::load_config(&app_handle);
@@ -1267,7 +1259,7 @@ pub fn capture_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resu
     capture_profile_into_snapshot(&app_handle, &mut cfg, &profile_id, live_identity.as_ref())
 }
 
-pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
+pub fn switch_profile(app_handle: AppCtx, profile_id: String) -> Result<(), String> {
     log_platform_info(
         &app_handle,
         "riot.switch_profile",
@@ -1371,7 +1363,7 @@ pub fn switch_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
     result
 }
 
-pub fn forget_profile(app_handle: tauri::AppHandle, profile_id: String) -> Result<(), String> {
+pub fn forget_profile(app_handle: AppCtx, profile_id: String) -> Result<(), String> {
     let profile_id = normalize_profile_id(&profile_id)?;
     config::update_config(&app_handle, |cfg| {
         cfg.riot
@@ -1400,7 +1392,7 @@ pub fn forget_profile(app_handle: tauri::AppHandle, profile_id: String) -> Resul
     Ok(())
 }
 
-pub fn get_riot_path(app_handle: tauri::AppHandle) -> Result<String, String> {
+pub fn get_riot_path(app_handle: AppCtx) -> Result<String, String> {
     let cfg = config::load_config(&app_handle);
     if !cfg.riot.path_override.trim().is_empty() {
         return Ok(cfg.riot.path_override);
@@ -1408,7 +1400,7 @@ pub fn get_riot_path(app_handle: tauri::AppHandle) -> Result<String, String> {
     resolve_riot_client_path(&app_handle).map(|path| path.to_string_lossy().to_string())
 }
 
-pub fn set_riot_path(app_handle: tauri::AppHandle, path: String) -> Result<(), String> {
+pub fn set_riot_path(app_handle: AppCtx, path: String) -> Result<(), String> {
     config::update_config(&app_handle, |cfg| {
         cfg.riot.path_override = path.trim().to_string();
     })
@@ -1427,34 +1419,29 @@ pub struct RiotService;
 pub static RIOT_SERVICE: RiotService = RiotService;
 
 impl PlatformService for RiotService {
-    fn get_accounts(&self, app: &tauri::AppHandle) -> Result<Value, String> {
+    fn get_accounts(&self, app: AppCtx) -> Result<Value, String> {
         let profiles = get_profiles(app.clone())?;
         serde_json::to_value(profiles).map_err(|e| e.to_string())
     }
 
-    fn get_startup_snapshot(&self, app: &tauri::AppHandle) -> Result<Value, String> {
+    fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, String> {
         let snapshot = get_startup_snapshot(app.clone())?;
         serde_json::to_value(snapshot).map_err(|e| e.to_string())
     }
 
-    fn get_current_account(&self, app: &tauri::AppHandle) -> Result<String, String> {
+    fn get_current_account(&self, app: AppCtx) -> Result<String, String> {
         get_current_profile(app.clone())
     }
 
-    fn switch_account(
-        &self,
-        app: &tauri::AppHandle,
-        account_id: &str,
-        _params: Value,
-    ) -> Result<(), String> {
+    fn switch_account(&self, app: AppCtx, account_id: &str, _params: Value) -> Result<(), String> {
         switch_profile(app.clone(), account_id.to_string())
     }
 
-    fn forget_account(&self, app: &tauri::AppHandle, account_id: &str) -> Result<(), String> {
+    fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), String> {
         forget_profile(app.clone(), account_id.to_string())
     }
 
-    fn begin_setup(&self, app: &tauri::AppHandle, _params: Value) -> Result<SetupStatus, String> {
+    fn begin_setup(&self, app: AppCtx, _params: Value) -> Result<SetupStatus, String> {
         let status = begin_profile_setup(app.clone())?;
         Ok(SetupStatus {
             setup_id: status.profile_id,
@@ -1465,11 +1452,7 @@ impl PlatformService for RiotService {
         })
     }
 
-    fn get_setup_status(
-        &self,
-        app: &tauri::AppHandle,
-        setup_id: &str,
-    ) -> Result<SetupStatus, String> {
+    fn get_setup_status(&self, app: AppCtx, setup_id: &str) -> Result<SetupStatus, String> {
         let status = get_profile_setup_status(app.clone(), setup_id.to_string())?;
         Ok(SetupStatus {
             setup_id: status.profile_id,
@@ -1480,15 +1463,15 @@ impl PlatformService for RiotService {
         })
     }
 
-    fn cancel_setup(&self, app: &tauri::AppHandle, setup_id: &str) -> Result<(), String> {
+    fn cancel_setup(&self, app: AppCtx, setup_id: &str) -> Result<(), String> {
         cancel_profile_setup(app.clone(), setup_id.to_string())
     }
 
-    fn get_path(&self, app: &tauri::AppHandle) -> Result<String, String> {
+    fn get_path(&self, app: AppCtx) -> Result<String, String> {
         get_riot_path(app.clone())
     }
 
-    fn set_path(&self, app: &tauri::AppHandle, path: &str) -> Result<(), String> {
+    fn set_path(&self, app: AppCtx, path: &str) -> Result<(), String> {
         set_riot_path(app.clone(), path.to_string())
     }
 

@@ -1,3 +1,4 @@
+use crate::context::{AppContext, AppCtx};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -28,7 +29,7 @@ pub(crate) fn redact_opt(value: Option<&str>) -> serde_json::Value {
 }
 
 pub(crate) fn log_platform_event(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     level: &str,
     source: &str,
     message: &str,
@@ -49,7 +50,7 @@ pub(crate) fn log_platform_event(
 }
 
 pub(crate) fn log_platform_info(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     source: &str,
     message: &str,
     details: impl Into<String>,
@@ -58,7 +59,7 @@ pub(crate) fn log_platform_info(
 }
 
 pub(crate) fn log_platform_error(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     source: &str,
     message: &str,
     details: impl Into<String>,
@@ -67,7 +68,7 @@ pub(crate) fn log_platform_error(
 }
 
 pub(crate) fn to_logged_error(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     source: &str,
     error: impl std::fmt::Display,
 ) -> String {
@@ -115,34 +116,30 @@ pub struct SetupStatus {
 }
 
 /// Core trait that all platforms implement.
+///
+/// Methods take `AppCtx` by value because several impls move the context
+/// into `spawn_blocking` closures. Helpers that only borrow take
+/// `&dyn AppContext` — callers with an `AppCtx` pass `&ctx` and let Deref
+/// coercion handle the rest.
 pub trait PlatformService: Send + Sync {
     // Account operations: returns platform-specific JSON.
-    fn get_accounts(&self, app: &tauri::AppHandle) -> Result<Value, String>;
-    fn get_startup_snapshot(&self, app: &tauri::AppHandle) -> Result<Value, String>;
-    fn get_current_account(&self, app: &tauri::AppHandle) -> Result<String, String>;
+    fn get_accounts(&self, app: AppCtx) -> Result<Value, String>;
+    fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, String>;
+    fn get_current_account(&self, app: AppCtx) -> Result<String, String>;
     /// `params` carries platform-specific extras (e.g. Steam's runAsAdmin/launchOptions).
-    fn switch_account(
-        &self,
-        app: &tauri::AppHandle,
-        account_id: &str,
-        params: Value,
-    ) -> Result<(), String>;
-    fn forget_account(&self, app: &tauri::AppHandle, account_id: &str) -> Result<(), String>;
+    fn switch_account(&self, app: AppCtx, account_id: &str, params: Value) -> Result<(), String>;
+    fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), String>;
 
     // Setup flow
-    fn begin_setup(&self, app: &tauri::AppHandle, params: Value) -> Result<SetupStatus, String>;
-    fn get_setup_status(
-        &self,
-        app: &tauri::AppHandle,
-        setup_id: &str,
-    ) -> Result<SetupStatus, String>;
-    fn cancel_setup(&self, app: &tauri::AppHandle, setup_id: &str) -> Result<(), String>;
+    fn begin_setup(&self, app: AppCtx, params: Value) -> Result<SetupStatus, String>;
+    fn get_setup_status(&self, app: AppCtx, setup_id: &str) -> Result<SetupStatus, String>;
+    fn cancel_setup(&self, app: AppCtx, setup_id: &str) -> Result<(), String>;
 
     // Path management (default: not supported)
-    fn get_path(&self, _app: &tauri::AppHandle) -> Result<String, String> {
+    fn get_path(&self, _app: AppCtx) -> Result<String, String> {
         Err("Path management not supported".into())
     }
-    fn set_path(&self, _app: &tauri::AppHandle, _path: &str) -> Result<(), String> {
+    fn set_path(&self, _app: AppCtx, _path: &str) -> Result<(), String> {
         Ok(())
     }
     fn select_path(&self) -> Result<String, String> {
@@ -152,7 +149,7 @@ pub trait PlatformService: Send + Sync {
     // Account labeling (default: not supported)
     fn set_account_label(
         &self,
-        _app: &tauri::AppHandle,
+        _app: AppCtx,
         _account_id: &str,
         _label: &str,
     ) -> Result<(), String> {

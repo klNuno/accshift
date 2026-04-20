@@ -1,5 +1,6 @@
 use crate::config::{self, BattleNetAccountConfig};
 use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
+use crate::{AppContext, AppCtx};
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -272,7 +273,7 @@ fn read_saved_accounts() -> Result<Vec<String>, String> {
     Ok(extract_saved_account_names(&value))
 }
 
-fn known_account_emails(app_handle: &tauri::AppHandle) -> Result<Vec<String>, String> {
+fn known_account_emails(app_handle: &dyn AppContext) -> Result<Vec<String>, String> {
     let saved_accounts = read_saved_accounts()?;
     let cfg = config::load_config(app_handle);
     let mut accounts = Vec::new();
@@ -298,7 +299,7 @@ fn known_account_emails(app_handle: &tauri::AppHandle) -> Result<Vec<String>, St
     Ok(accounts)
 }
 
-fn read_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<BattleNetAccount>, String> {
+fn read_accounts(app_handle: &dyn AppContext) -> Result<Vec<BattleNetAccount>, String> {
     if let Some(current_email) = read_saved_accounts()?.into_iter().next() {
         let _ = remember_account_usage(app_handle, &current_email, true);
     }
@@ -342,7 +343,7 @@ fn current_account(accounts: &[BattleNetAccount]) -> String {
 }
 
 fn remember_account_usage(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     email: &str,
     is_current_account: bool,
 ) -> Result<(), String> {
@@ -390,7 +391,7 @@ fn remember_account_usage(
     })
 }
 
-fn forget_account_metadata(app_handle: &tauri::AppHandle, email: &str) -> Result<(), String> {
+fn forget_account_metadata(app_handle: &dyn AppContext, email: &str) -> Result<(), String> {
     let key = normalize_account_key(email);
     config::update_config(app_handle, |cfg| {
         cfg.battle_net
@@ -630,7 +631,7 @@ fn registry_install_candidates() -> Vec<PathBuf> {
     Vec::new()
 }
 
-fn resolve_battle_net_executable(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+fn resolve_battle_net_executable(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     let mut candidates = Vec::new();
     let cfg = config::load_config(app_handle);
     let override_path = cfg.battle_net.path_override.trim();
@@ -666,7 +667,7 @@ fn resolve_battle_net_executable(app_handle: &tauri::AppHandle) -> Result<PathBu
     Err("Could not locate Battle.net installation".into())
 }
 
-fn launch_battle_net(app_handle: &tauri::AppHandle) -> Result<(), String> {
+fn launch_battle_net(app_handle: &dyn AppContext) -> Result<(), String> {
     let executable = resolve_battle_net_executable(app_handle)?;
     let mut command = Command::new(&executable);
     if let Some(install_dir) = executable.parent() {
@@ -678,13 +679,11 @@ fn launch_battle_net(app_handle: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-pub fn get_accounts(app_handle: tauri::AppHandle) -> Result<Vec<BattleNetAccount>, String> {
+pub fn get_accounts(app_handle: AppCtx) -> Result<Vec<BattleNetAccount>, String> {
     read_accounts(&app_handle)
 }
 
-pub fn get_startup_snapshot(
-    app_handle: tauri::AppHandle,
-) -> Result<BattleNetStartupSnapshot, String> {
+pub fn get_startup_snapshot(app_handle: AppCtx) -> Result<BattleNetStartupSnapshot, String> {
     let accounts = read_accounts(&app_handle)?;
     Ok(BattleNetStartupSnapshot {
         current_account: current_account(&accounts),
@@ -699,7 +698,7 @@ pub fn get_current_account() -> Result<String, String> {
         .unwrap_or_default())
 }
 
-pub fn switch_account(app_handle: tauri::AppHandle, email: String) -> Result<(), String> {
+pub fn switch_account(app_handle: AppCtx, email: String) -> Result<(), String> {
     let target_email = validate_account_email(&email)?;
     log_platform_info(
         &app_handle,
@@ -749,7 +748,7 @@ pub fn switch_account(app_handle: tauri::AppHandle, email: String) -> Result<(),
     result
 }
 
-pub fn begin_account_setup(app_handle: tauri::AppHandle) -> Result<SetupStatus, String> {
+pub fn begin_account_setup(app_handle: AppCtx) -> Result<SetupStatus, String> {
     log_platform_info(
         &app_handle,
         "battle_net.begin_account_setup",
@@ -797,7 +796,7 @@ pub fn begin_account_setup(app_handle: tauri::AppHandle) -> Result<SetupStatus, 
 }
 
 pub fn get_account_setup_status(
-    app_handle: tauri::AppHandle,
+    app_handle: AppCtx,
     setup_id: String,
 ) -> Result<SetupStatus, String> {
     let job = {
@@ -858,7 +857,7 @@ pub fn cancel_account_setup(setup_id: String) -> Result<(), String> {
     Ok(())
 }
 
-pub fn forget_account(app_handle: tauri::AppHandle, email: String) -> Result<(), String> {
+pub fn forget_account(app_handle: AppCtx, email: String) -> Result<(), String> {
     let target_email = validate_account_email(&email)?;
     let accounts = read_saved_accounts()?;
     let filtered = accounts
@@ -871,7 +870,7 @@ pub fn forget_account(app_handle: tauri::AppHandle, email: String) -> Result<(),
     forget_account_metadata(&app_handle, &target_email)
 }
 
-pub fn get_battle_net_path(app_handle: tauri::AppHandle) -> Result<String, String> {
+pub fn get_battle_net_path(app_handle: AppCtx) -> Result<String, String> {
     let cfg = config::load_config(&app_handle);
     if !cfg.battle_net.path_override.trim().is_empty() {
         return Ok(cfg.battle_net.path_override);
@@ -879,7 +878,7 @@ pub fn get_battle_net_path(app_handle: tauri::AppHandle) -> Result<String, Strin
     resolve_battle_net_executable(&app_handle).map(|path| path.to_string_lossy().to_string())
 }
 
-pub fn set_battle_net_path(app_handle: tauri::AppHandle, path: String) -> Result<(), String> {
+pub fn set_battle_net_path(app_handle: AppCtx, path: String) -> Result<(), String> {
     config::update_config(&app_handle, |cfg| {
         cfg.battle_net.path_override = path.trim().to_string();
     })
@@ -898,54 +897,45 @@ pub struct BattleNetService;
 pub static BATTLE_NET_SERVICE: BattleNetService = BattleNetService;
 
 impl PlatformService for BattleNetService {
-    fn get_accounts(&self, app: &tauri::AppHandle) -> Result<Value, String> {
+    fn get_accounts(&self, app: AppCtx) -> Result<Value, String> {
         let accounts = get_accounts(app.clone())?;
         serde_json::to_value(accounts).map_err(|e| e.to_string())
     }
 
-    fn get_startup_snapshot(&self, app: &tauri::AppHandle) -> Result<Value, String> {
+    fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, String> {
         let snapshot = get_startup_snapshot(app.clone())?;
         serde_json::to_value(snapshot).map_err(|e| e.to_string())
     }
 
-    fn get_current_account(&self, _app: &tauri::AppHandle) -> Result<String, String> {
+    fn get_current_account(&self, _app: AppCtx) -> Result<String, String> {
         get_current_account()
     }
 
-    fn switch_account(
-        &self,
-        app: &tauri::AppHandle,
-        account_id: &str,
-        _params: Value,
-    ) -> Result<(), String> {
+    fn switch_account(&self, app: AppCtx, account_id: &str, _params: Value) -> Result<(), String> {
         switch_account(app.clone(), account_id.to_string())
     }
 
-    fn forget_account(&self, app: &tauri::AppHandle, account_id: &str) -> Result<(), String> {
+    fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), String> {
         forget_account(app.clone(), account_id.to_string())
     }
 
-    fn begin_setup(&self, app: &tauri::AppHandle, _params: Value) -> Result<SetupStatus, String> {
+    fn begin_setup(&self, app: AppCtx, _params: Value) -> Result<SetupStatus, String> {
         begin_account_setup(app.clone())
     }
 
-    fn get_setup_status(
-        &self,
-        app: &tauri::AppHandle,
-        setup_id: &str,
-    ) -> Result<SetupStatus, String> {
+    fn get_setup_status(&self, app: AppCtx, setup_id: &str) -> Result<SetupStatus, String> {
         get_account_setup_status(app.clone(), setup_id.to_string())
     }
 
-    fn cancel_setup(&self, _app: &tauri::AppHandle, setup_id: &str) -> Result<(), String> {
+    fn cancel_setup(&self, _app: AppCtx, setup_id: &str) -> Result<(), String> {
         cancel_account_setup(setup_id.to_string())
     }
 
-    fn get_path(&self, app: &tauri::AppHandle) -> Result<String, String> {
+    fn get_path(&self, app: AppCtx) -> Result<String, String> {
         get_battle_net_path(app.clone())
     }
 
-    fn set_path(&self, app: &tauri::AppHandle, path: &str) -> Result<(), String> {
+    fn set_path(&self, app: AppCtx, path: &str) -> Result<(), String> {
         set_battle_net_path(app.clone(), path.to_string())
     }
 

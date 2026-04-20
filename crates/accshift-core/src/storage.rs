@@ -1,3 +1,4 @@
+use crate::context::AppContext;
 use crate::fs_utils;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
@@ -5,7 +6,6 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
-use tauri::Manager;
 
 pub const STORAGE_SCHEMA_VERSION: u32 = 1;
 
@@ -48,56 +48,44 @@ enum ManifestTarget {
     Dir(PathBuf, usize),
 }
 
-pub fn app_config_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub fn app_config_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     Ok(scope_root(raw_app_config_root(app_handle)?))
 }
 
-pub fn app_data_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub fn app_data_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     Ok(scope_root(raw_app_data_root(app_handle)?))
 }
 
-pub fn app_local_data_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub fn app_local_data_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     Ok(scope_root(raw_app_local_data_root(app_handle)?))
 }
 
-pub fn app_cache_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub fn app_cache_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     Ok(scope_root(raw_app_cache_root(app_handle)?))
 }
 
-pub fn app_log_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub fn app_log_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     Ok(scope_root(raw_app_config_root(app_handle)?.join("logs")))
 }
 
-pub fn legacy_app_data_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub fn legacy_app_data_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     raw_app_data_root(app_handle)
 }
 
-fn raw_app_config_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
-    app_handle
-        .path()
-        .app_config_dir()
-        .map_err(|e| format!("Could not resolve app config dir: {e}"))
+fn raw_app_config_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
+    app_handle.app_config_dir()
 }
 
-fn raw_app_data_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
-    app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Could not resolve app data dir: {e}"))
+fn raw_app_data_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
+    app_handle.app_data_dir()
 }
 
-fn raw_app_local_data_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
-    app_handle
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| format!("Could not resolve app local data dir: {e}"))
+fn raw_app_local_data_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
+    app_handle.app_local_data_dir()
 }
 
-fn raw_app_cache_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
-    app_handle
-        .path()
-        .app_cache_dir()
-        .map_err(|e| format!("Could not resolve app cache dir: {e}"))
+fn raw_app_cache_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
+    app_handle.app_cache_dir()
 }
 
 fn scope_root(path: PathBuf) -> PathBuf {
@@ -108,7 +96,7 @@ fn scope_root(path: PathBuf) -> PathBuf {
     }
 }
 
-pub fn portable_config_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub fn portable_config_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     let target = app_data_root(app_handle)?
         .join("state")
         .join("portable-config.json");
@@ -119,7 +107,7 @@ pub fn portable_config_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, St
     Ok(target)
 }
 
-pub fn local_config_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub fn local_config_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     let target = app_local_data_root(app_handle)?
         .join("state")
         .join("local-config.json");
@@ -130,11 +118,11 @@ pub fn local_config_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, Strin
     Ok(target)
 }
 
-pub fn legacy_config_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub fn legacy_config_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     Ok(legacy_app_data_root(app_handle)?.join("config.json"))
 }
 
-pub fn roblox_accounts_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub fn roblox_accounts_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     let target = app_local_data_root(app_handle)?
         .join("platforms")
         .join("roblox")
@@ -147,7 +135,7 @@ pub fn roblox_accounts_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, St
     Ok(target)
 }
 
-pub fn themes_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub fn themes_dir(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     let target = app_config_root(app_handle)?.join("themes");
     let scoped_legacy = raw_app_config_root(app_handle)?.join("themes");
     let old_legacy = legacy_app_data_root(app_handle)?.join("themes");
@@ -156,7 +144,7 @@ pub fn themes_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(target)
 }
 
-pub fn riot_snapshots_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub fn riot_snapshots_dir(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     let target = app_local_data_root(app_handle)?
         .join("platforms")
         .join("riot")
@@ -171,7 +159,7 @@ pub fn riot_snapshots_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, Stri
     Ok(target)
 }
 
-pub fn ubisoft_snapshots_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub fn ubisoft_snapshots_dir(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     let target = app_local_data_root(app_handle)?
         .join("platforms")
         .join("ubisoft")
@@ -186,7 +174,7 @@ pub fn ubisoft_snapshots_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, S
     Ok(target)
 }
 
-pub fn epic_snapshots_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub fn epic_snapshots_dir(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     let target = app_local_data_root(app_handle)?
         .join("platforms")
         .join("epic")
@@ -201,7 +189,7 @@ pub fn epic_snapshots_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, Stri
     Ok(target)
 }
 
-pub fn client_store_path(app_handle: &tauri::AppHandle, store_id: &str) -> Result<PathBuf, String> {
+pub fn client_store_path(app_handle: &dyn AppContext, store_id: &str) -> Result<PathBuf, String> {
     let target = match store_id {
         STORE_SETTINGS => Ok(app_config_root(app_handle)?
             .join("user")
@@ -304,7 +292,7 @@ where
 }
 
 pub fn save_client_store(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     store_id: &str,
     value: &Value,
 ) -> Result<(), String> {
@@ -320,7 +308,7 @@ pub fn save_client_store(
 }
 
 pub fn load_client_storage_snapshot(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
 ) -> Result<ClientStorageSnapshot, String> {
     let mut stores = BTreeMap::new();
     for store_id in client_store_ids() {
@@ -334,7 +322,7 @@ pub fn load_client_storage_snapshot(
     })
 }
 
-pub fn build_storage_manifest(app_handle: &tauri::AppHandle) -> Result<StorageManifest, String> {
+pub fn build_storage_manifest(app_handle: &dyn AppContext) -> Result<StorageManifest, String> {
     let mut stores = BTreeMap::new();
     for (store_id, target) in manifest_targets(app_handle)? {
         let fingerprint = match target {
@@ -366,7 +354,7 @@ fn client_store_ids() -> &'static [&'static str] {
 }
 
 fn legacy_client_store_path(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     store_id: &str,
 ) -> Result<Option<PathBuf>, String> {
     let path = match store_id {
@@ -406,9 +394,7 @@ fn legacy_client_store_path(
     Ok(Some(path))
 }
 
-fn manifest_targets(
-    app_handle: &tauri::AppHandle,
-) -> Result<Vec<(String, ManifestTarget)>, String> {
+fn manifest_targets(app_handle: &dyn AppContext) -> Result<Vec<(String, ManifestTarget)>, String> {
     let mut targets = Vec::new();
 
     for store_id in client_store_ids() {
@@ -535,7 +521,7 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
-fn legacy_backup_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+fn legacy_backup_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     let root = app_local_data_root(app_handle)?
         .join("backups")
         .join("pre-migration");
@@ -577,7 +563,7 @@ fn backup_legacy_path(source: &Path, backup_root: &Path) -> Result<(), String> {
 }
 
 fn backup_and_migrate_dir(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     from: &Path,
     to: &Path,
 ) -> Result<(), String> {
@@ -591,7 +577,7 @@ fn backup_and_migrate_dir(
 }
 
 fn backup_and_migrate_file(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     from: &Path,
     to: &Path,
 ) -> Result<(), String> {

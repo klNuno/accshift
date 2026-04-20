@@ -9,10 +9,12 @@ use tauri::Manager;
 
 mod app_runtime;
 mod commands;
+mod tauri_context;
 
 // Re-export core modules at the crate root so `crate::foo` keeps working
 // across the split (commands.rs and app_runtime.rs still use `crate::`).
 pub(crate) use accshift_core::{config, logging, os, platforms, storage, themes};
+pub(crate) use tauri_context::ctx;
 
 fn main() {
     let client = match reqwest::Client::builder()
@@ -35,21 +37,22 @@ fn main() {
         .manage(client)
         .setup(|app| {
             let setup_handle = app.handle().clone();
-            let _ = logging::begin_log_session(&setup_handle);
-            logging::install_panic_hook(setup_handle.clone());
+            let setup_ctx = ctx(&setup_handle);
+            let _ = logging::begin_log_session(&setup_ctx);
+            logging::install_panic_hook(setup_ctx.clone());
             let _ = logging::append_app_log(
-                &setup_handle,
+                &setup_ctx,
                 "info",
                 "backend.startup",
                 "App setup started",
                 None,
             );
 
-            let (start_width, start_height) = config::load_window_size(app.handle())
+            let (start_width, start_height) = config::load_window_size(&setup_ctx)
                 .unwrap_or((config::DEFAULT_WINDOW_WIDTH, config::DEFAULT_WINDOW_HEIGHT));
 
-            let navigation_log_handle = setup_handle.clone();
-            let page_load_log_handle = setup_handle.clone();
+            let navigation_log_ctx = setup_ctx.clone();
+            let page_load_log_ctx = setup_ctx.clone();
             let mut window_builder = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
@@ -76,7 +79,7 @@ fn main() {
                         && matches!(host, Some("localhost" | "127.0.0.1")));
 
                 let _ = logging::append_app_log(
-                    &navigation_log_handle,
+                    &navigation_log_ctx,
                     if allowed { "info" } else { "warn" },
                     "backend.webview.navigation",
                     if allowed {
@@ -96,7 +99,7 @@ fn main() {
                 };
                 let url = payload.url().to_string();
                 let _ = logging::append_app_log(
-                    &page_load_log_handle,
+                    &page_load_log_ctx,
                     "info",
                     "backend.webview.page_load",
                     event,
@@ -110,7 +113,7 @@ fn main() {
 
             let win = window_builder.build()?;
             let _ = logging::append_app_log(
-                &setup_handle,
+                &setup_ctx,
                 "info",
                 "backend.window",
                 "Main window created",
@@ -123,7 +126,7 @@ fn main() {
                     let boot_state = app_handle.state::<app_runtime::BootState>();
                     if !boot_state.is_completed() {
                         let _ = logging::append_app_log(
-                            &app_handle,
+                            &ctx(&app_handle),
                             "info",
                             "backend.window",
                             "Skipped window size save because boot was not completed",
@@ -136,7 +139,7 @@ fn main() {
                     }
                     if let Ok(size) = win_for_events.inner_size() {
                         let _ = config::save_window_size(
-                            &app_handle,
+                            &ctx(&app_handle),
                             f64::from(size.width),
                             f64::from(size.height),
                         );
@@ -154,7 +157,7 @@ fn main() {
                 }
 
                 let _ = logging::append_app_log(
-                    &fallback_handle,
+                    &ctx(&fallback_handle),
                     "warn",
                     "backend.boot-failsafe",
                     "Rust failsafe triggered after 5000ms; forcing main window visibility",

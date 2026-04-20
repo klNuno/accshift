@@ -1,3 +1,4 @@
+use crate::context::AppContext;
 use serde::{Deserialize, Serialize};
 use std::fs;
 
@@ -350,7 +351,7 @@ fn normalize_config(raw: RawAppConfig) -> AppConfig {
     }
 }
 
-pub fn load_config(app_handle: &tauri::AppHandle) -> AppConfig {
+pub fn load_config(app_handle: &dyn AppContext) -> AppConfig {
     let portable_path = match crate::storage::portable_config_path(app_handle) {
         Ok(path) => path,
         Err(_) => return load_legacy_config(app_handle),
@@ -390,7 +391,7 @@ pub fn load_config(app_handle: &tauri::AppHandle) -> AppConfig {
     }
 }
 
-pub fn save_config(app_handle: &tauri::AppHandle, config: &AppConfig) -> Result<(), String> {
+pub fn save_config(app_handle: &dyn AppContext, config: &AppConfig) -> Result<(), String> {
     let portable = portable_config(config);
     let local = local_config(config);
     let portable_path = crate::storage::portable_config_path(app_handle)?;
@@ -423,7 +424,7 @@ pub fn save_config(app_handle: &tauri::AppHandle, config: &AppConfig) -> Result<
 /// Load config, apply a mutation, and save in one step.
 /// Avoids the scattered load→mutate→save pattern across platform files.
 pub fn update_config(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     mutate: impl FnOnce(&mut AppConfig),
 ) -> Result<(), String> {
     let mut cfg = load_config(app_handle);
@@ -433,7 +434,7 @@ pub fn update_config(
 
 /// Check for a legacy config.json, migrate it to portable+local, and delete it.
 /// Returns `Some("ok")` if migrated, `Some(error)` if failed, `None` if no legacy.
-pub fn migrate_legacy_config(app_handle: &tauri::AppHandle) -> Option<Result<(), String>> {
+pub fn migrate_legacy_config(app_handle: &dyn AppContext) -> Option<Result<(), String>> {
     let legacy_path = crate::storage::legacy_config_path(app_handle).ok()?;
     if !legacy_path.exists() {
         return None;
@@ -469,7 +470,7 @@ pub fn migrate_legacy_config(app_handle: &tauri::AppHandle) -> Option<Result<(),
     Some(Ok(()))
 }
 
-pub fn load_window_size(app_handle: &tauri::AppHandle) -> Option<(f64, f64)> {
+pub fn load_window_size(app_handle: &dyn AppContext) -> Option<(f64, f64)> {
     let cfg = load_config(app_handle);
     let width = cfg.window_width?;
     let height = cfg.window_height?;
@@ -486,7 +487,7 @@ pub fn load_window_size(app_handle: &tauri::AppHandle) -> Option<(f64, f64)> {
 }
 
 pub fn save_window_size(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     width: f64,
     height: f64,
 ) -> Result<(), String> {
@@ -509,7 +510,7 @@ fn is_suspicious_min_window_size(width: f64, height: f64) -> bool {
         && height <= MIN_WINDOW_HEIGHT + WINDOW_SIZE_EPSILON
 }
 
-fn load_legacy_config(app_handle: &tauri::AppHandle) -> AppConfig {
+fn load_legacy_config(app_handle: &dyn AppContext) -> AppConfig {
     let path = match crate::storage::legacy_config_path(app_handle) {
         Ok(path) => path,
         Err(_) => return AppConfig::default(),

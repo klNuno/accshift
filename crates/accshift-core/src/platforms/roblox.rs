@@ -1,5 +1,6 @@
 use crate::config::{self, RobloxAccountConfig};
 use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
+use crate::{AppContext, AppCtx};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -229,7 +230,7 @@ fn exchange_quick_login_for_cookie(code: &str, private_key: &str) -> Result<Stri
 // Account storage
 // ---------------------------------------------------------------------------
 
-fn load_account_configs(app_handle: &tauri::AppHandle) -> Vec<RobloxAccountConfig> {
+fn load_account_configs(app_handle: &dyn AppContext) -> Vec<RobloxAccountConfig> {
     if let Ok(path) = crate::storage::roblox_accounts_path(app_handle) {
         if let Ok(Some(accounts)) =
             crate::storage::read_json_if_exists::<Vec<RobloxAccountConfig>>(&path)
@@ -243,7 +244,7 @@ fn load_account_configs(app_handle: &tauri::AppHandle) -> Vec<RobloxAccountConfi
 }
 
 fn save_account_configs(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     accounts: &[RobloxAccountConfig],
 ) -> Result<(), String> {
     let path = crate::storage::roblox_accounts_path(app_handle)?;
@@ -264,7 +265,7 @@ fn save_account_configs(
 }
 
 fn store_account(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     user: &AuthenticatedUserResponse,
     encrypted_cookie: &str,
 ) -> Result<(), String> {
@@ -290,7 +291,7 @@ fn store_account(
     save_account_configs(app_handle, &accounts)
 }
 
-fn read_accounts(app_handle: &tauri::AppHandle) -> Vec<RobloxAccount> {
+fn read_accounts(app_handle: &dyn AppContext) -> Vec<RobloxAccount> {
     load_account_configs(app_handle)
         .iter()
         .map(|a| RobloxAccount {
@@ -377,13 +378,11 @@ fn launch_roblox_with_ticket(ticket: &str) -> Result<(), String> {
 // Public operations
 // ---------------------------------------------------------------------------
 
-pub fn get_accounts(app_handle: &tauri::AppHandle) -> Result<Vec<RobloxAccount>, String> {
+pub fn get_accounts(app_handle: &dyn AppContext) -> Result<Vec<RobloxAccount>, String> {
     Ok(read_accounts(app_handle))
 }
 
-pub fn get_startup_snapshot(
-    app_handle: &tauri::AppHandle,
-) -> Result<RobloxStartupSnapshot, String> {
+pub fn get_startup_snapshot(app_handle: &dyn AppContext) -> Result<RobloxStartupSnapshot, String> {
     let accounts = read_accounts(app_handle);
     Ok(RobloxStartupSnapshot {
         current_account: String::new(),
@@ -391,7 +390,7 @@ pub fn get_startup_snapshot(
     })
 }
 
-pub fn switch_account(app_handle: &tauri::AppHandle, user_id: &str) -> Result<(), String> {
+pub fn switch_account(app_handle: &dyn AppContext, user_id: &str) -> Result<(), String> {
     let accounts = load_account_configs(app_handle);
     let account = accounts
         .iter()
@@ -442,7 +441,7 @@ pub fn switch_account(app_handle: &tauri::AppHandle, user_id: &str) -> Result<()
     launch_result
 }
 
-pub fn begin_account_setup(app_handle: &tauri::AppHandle) -> Result<SetupStatus, String> {
+pub fn begin_account_setup(app_handle: &dyn AppContext) -> Result<SetupStatus, String> {
     log_platform_info(
         app_handle,
         "roblox.begin_account_setup",
@@ -493,7 +492,7 @@ pub fn begin_account_setup(app_handle: &tauri::AppHandle) -> Result<SetupStatus,
 }
 
 pub fn get_account_setup_status(
-    app_handle: &tauri::AppHandle,
+    app_handle: &dyn AppContext,
     setup_id: &str,
 ) -> Result<SetupStatus, String> {
     let job = {
@@ -655,7 +654,7 @@ pub fn cancel_account_setup(setup_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn forget_account(app_handle: &tauri::AppHandle, user_id: &str) -> Result<(), String> {
+pub fn forget_account(app_handle: &dyn AppContext, user_id: &str) -> Result<(), String> {
     let mut accounts = load_account_configs(app_handle);
     accounts.retain(|a| a.user_id != user_id);
     save_account_configs(app_handle, &accounts)
@@ -666,7 +665,7 @@ pub fn forget_account(app_handle: &tauri::AppHandle, user_id: &str) -> Result<()
 // ---------------------------------------------------------------------------
 
 pub async fn add_account_by_cookie(
-    app_handle: tauri::AppHandle,
+    app_handle: AppCtx,
     cookie: String,
     client: reqwest::Client,
 ) -> Result<RobloxAccount, String> {
@@ -767,46 +766,37 @@ pub struct RobloxService;
 pub static ROBLOX_SERVICE: RobloxService = RobloxService;
 
 impl PlatformService for RobloxService {
-    fn get_accounts(&self, app: &tauri::AppHandle) -> Result<Value, String> {
-        let accounts = get_accounts(app)?;
+    fn get_accounts(&self, app: AppCtx) -> Result<Value, String> {
+        let accounts = get_accounts(&app)?;
         serde_json::to_value(accounts).map_err(|e| e.to_string())
     }
 
-    fn get_startup_snapshot(&self, app: &tauri::AppHandle) -> Result<Value, String> {
-        let snapshot = get_startup_snapshot(app)?;
+    fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, String> {
+        let snapshot = get_startup_snapshot(&app)?;
         serde_json::to_value(snapshot).map_err(|e| e.to_string())
     }
 
-    fn get_current_account(&self, _app: &tauri::AppHandle) -> Result<String, String> {
+    fn get_current_account(&self, _app: AppCtx) -> Result<String, String> {
         Ok(String::new())
     }
 
-    fn switch_account(
-        &self,
-        app: &tauri::AppHandle,
-        account_id: &str,
-        _params: Value,
-    ) -> Result<(), String> {
-        switch_account(app, account_id)
+    fn switch_account(&self, app: AppCtx, account_id: &str, _params: Value) -> Result<(), String> {
+        switch_account(&app, account_id)
     }
 
-    fn forget_account(&self, app: &tauri::AppHandle, account_id: &str) -> Result<(), String> {
-        forget_account(app, account_id)
+    fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), String> {
+        forget_account(&app, account_id)
     }
 
-    fn begin_setup(&self, app: &tauri::AppHandle, _params: Value) -> Result<SetupStatus, String> {
-        begin_account_setup(app)
+    fn begin_setup(&self, app: AppCtx, _params: Value) -> Result<SetupStatus, String> {
+        begin_account_setup(&app)
     }
 
-    fn get_setup_status(
-        &self,
-        app: &tauri::AppHandle,
-        setup_id: &str,
-    ) -> Result<SetupStatus, String> {
-        get_account_setup_status(app, setup_id)
+    fn get_setup_status(&self, app: AppCtx, setup_id: &str) -> Result<SetupStatus, String> {
+        get_account_setup_status(&app, setup_id)
     }
 
-    fn cancel_setup(&self, _app: &tauri::AppHandle, setup_id: &str) -> Result<(), String> {
+    fn cancel_setup(&self, _app: AppCtx, setup_id: &str) -> Result<(), String> {
         cancel_account_setup(setup_id)
     }
 }

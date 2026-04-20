@@ -29,6 +29,7 @@ windows-sys = { version = "0.59", features = [
   "Win32_UI_WindowsAndMessaging",
 ] }
 mimalloc = { version = "0.1", default-features = false }
+tokio = { version = "=1.47", features = ["rt", "rt-multi-thread", "macros"] }
 
 [profile.release]
 panic = "abort"

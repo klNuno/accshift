@@ -1,3 +1,4 @@
+use crate::context::AppContext;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -11,7 +12,7 @@ pub struct CustomTheme {
     pub tokens: serde_json::Value,
 }
 
-fn themes_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+fn themes_dir(app: &dyn AppContext) -> Result<PathBuf, String> {
     crate::storage::themes_dir(app)
 }
 
@@ -23,7 +24,7 @@ fn is_safe_theme_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-pub fn list_custom_themes(app: &tauri::AppHandle) -> Result<Vec<CustomTheme>, String> {
+pub fn list_custom_themes(app: &dyn AppContext) -> Result<Vec<CustomTheme>, String> {
     let dir = themes_dir(app)?;
     if !dir.exists() {
         return Ok(vec![]);
@@ -53,7 +54,7 @@ pub fn list_custom_themes(app: &tauri::AppHandle) -> Result<Vec<CustomTheme>, St
     Ok(themes)
 }
 
-pub fn save_custom_theme(app: &tauri::AppHandle, theme: &CustomTheme) -> Result<(), String> {
+pub fn save_custom_theme(app: &dyn AppContext, theme: &CustomTheme) -> Result<(), String> {
     if !is_safe_theme_id(&theme.id) {
         return Err(
             "Invalid theme ID: only alphanumeric characters, hyphens, and underscores are allowed"
@@ -69,7 +70,7 @@ pub fn save_custom_theme(app: &tauri::AppHandle, theme: &CustomTheme) -> Result<
     Ok(())
 }
 
-pub fn delete_custom_theme(app: &tauri::AppHandle, theme_id: &str) -> Result<(), String> {
+pub fn delete_custom_theme(app: &dyn AppContext, theme_id: &str) -> Result<(), String> {
     if !is_safe_theme_id(theme_id) {
         return Err("Invalid theme ID".to_string());
     }

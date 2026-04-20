@@ -3,6 +3,7 @@ use crate::os;
 use crate::platforms::{
     log_platform_error, log_platform_info, to_logged_error, PlatformService, SetupStatus,
 };
+use crate::{AppContext, AppCtx};
 pub mod accounts;
 pub mod bans;
 pub mod bulk_edit;
@@ -49,7 +50,7 @@ fn decrypt_api_key(encrypted_api_key: &str) -> Result<String, String> {
     os::decrypt_secret(encrypted_api_key).map_err(|e| e.to_string())
 }
 
-fn read_api_key(app_handle: &tauri::AppHandle) -> Result<String, String> {
+fn read_api_key(app_handle: &dyn AppContext) -> Result<String, String> {
     let mut cfg = config::load_config(app_handle);
     let encrypted = cfg.steam.api_key_encrypted.trim();
     if !encrypted.is_empty() {
@@ -92,7 +93,7 @@ fn is_force_kill(params: &Value) -> bool {
         .unwrap_or(false)
 }
 
-fn resolve_steam_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+fn resolve_steam_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     let cfg = config::load_config(app_handle);
     let override_path = cfg.steam.path_override.trim();
     let steam_path = if !override_path.is_empty() {
@@ -140,7 +141,7 @@ fn build_switch_state_details(
     .to_string()
 }
 
-pub fn set_api_key(app_handle: tauri::AppHandle, key: String) -> Result<(), String> {
+pub fn set_api_key(app_handle: AppCtx, key: String) -> Result<(), String> {
     let trimmed = key.trim();
     let encrypted = if trimmed.is_empty() {
         String::new()
@@ -153,13 +154,13 @@ pub fn set_api_key(app_handle: tauri::AppHandle, key: String) -> Result<(), Stri
     })
 }
 
-pub fn has_api_key(app_handle: tauri::AppHandle) -> bool {
+pub fn has_api_key(app_handle: AppCtx) -> bool {
     read_api_key(&app_handle)
         .map(|api_key| !api_key.trim().is_empty())
         .unwrap_or(false)
 }
 
-pub fn get_accounts(app_handle: tauri::AppHandle) -> Result<Vec<SteamAccount>, String> {
+pub fn get_accounts(app_handle: AppCtx) -> Result<Vec<SteamAccount>, String> {
     let steam_path = resolve_steam_path(&app_handle)?;
     accounts::get_accounts(&steam_path)
         .map_err(|e| to_logged_error(&app_handle, "steam.get_accounts", e))
@@ -172,9 +173,7 @@ struct SteamStartupSnapshot {
     current_account: String,
 }
 
-fn get_startup_snapshot_inner(
-    app_handle: &tauri::AppHandle,
-) -> Result<SteamStartupSnapshot, String> {
+fn get_startup_snapshot_inner(app_handle: &dyn AppContext) -> Result<SteamStartupSnapshot, String> {
     let steam_path = resolve_steam_path(app_handle)?;
     let (accounts, current_from_file) = accounts::get_accounts_snapshot(&steam_path)
         .map_err(|e| to_logged_error(app_handle, "steam.get_startup_snapshot", e))?;
@@ -193,7 +192,7 @@ fn get_startup_snapshot_inner(
     })
 }
 
-pub fn get_current_account(app_handle: tauri::AppHandle) -> Result<String, String> {
+pub fn get_current_account(app_handle: AppCtx) -> Result<String, String> {
     let from_registry = os::get_auto_login_user().unwrap_or_default();
     if !from_registry.trim().is_empty() {
         return Ok(from_registry);
@@ -205,7 +204,7 @@ pub fn get_current_account(app_handle: tauri::AppHandle) -> Result<String, Strin
 }
 
 pub async fn switch_account_mode(
-    app_handle: tauri::AppHandle,
+    app_handle: AppCtx,
     username: String,
     steam_id: String,
     mode: String,
@@ -239,7 +238,7 @@ pub async fn switch_account_mode(
     let steam_id_for_task = steam_id.clone();
     let mode_for_task = mode.clone();
     let launch_options_for_task = launch_options.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let result = accounts::switch_account_mode(
             &steam_path,
             &username_for_task,
@@ -282,7 +281,7 @@ pub async fn switch_account_mode(
 }
 
 pub fn begin_account_setup(
-    app_handle: tauri::AppHandle,
+    app_handle: AppCtx,
     run_as_admin: bool,
     launch_options: String,
     force_kill: bool,
@@ -316,7 +315,7 @@ pub fn begin_account_setup(
 
     let setup_id_for_job = setup_id.clone();
     let app_handle_for_job = app_handle.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let launch_result =
             accounts::add_account(&steam_path, run_as_admin, &launch_options, force_kill)
                 .map_err(|e| e.to_string());
@@ -346,7 +345,7 @@ pub fn begin_account_setup(
 }
 
 pub fn get_account_setup_status(
-    app_handle: tauri::AppHandle,
+    app_handle: AppCtx,
     setup_id: String,
 ) -> Result<SetupStatus, String> {
     let setup_id = setup_id.trim().to_string();
@@ -409,7 +408,7 @@ pub fn get_account_setup_status(
     ))
 }
 
-pub fn cancel_account_setup(_app_handle: tauri::AppHandle, setup_id: String) -> Result<(), String> {
+pub fn cancel_account_setup(_app_handle: AppCtx, setup_id: String) -> Result<(), String> {
     let setup_id = setup_id.trim();
     if setup_id.is_empty() {
         return Ok(());
@@ -422,20 +421,20 @@ pub fn cancel_account_setup(_app_handle: tauri::AppHandle, setup_id: String) -> 
     Ok(())
 }
 
-pub fn open_userdata(app_handle: tauri::AppHandle, steam_id: String) -> Result<(), String> {
+pub fn open_userdata(app_handle: AppCtx, steam_id: String) -> Result<(), String> {
     validate_steam_id(&steam_id)?;
     let steam_path = resolve_steam_path(&app_handle)?;
     accounts::open_userdata_with_path(&steam_path, &steam_id)
         .map_err(|e| to_logged_error(&app_handle, "steam.open_userdata", e))
 }
 
-pub fn clear_integrated_browser_cache(app_handle: tauri::AppHandle) -> Result<(), String> {
+pub fn clear_integrated_browser_cache(app_handle: AppCtx) -> Result<(), String> {
     accounts::clear_integrated_browser_cache()
         .map_err(|e| to_logged_error(&app_handle, "steam.clear_integrated_browser_cache", e))
 }
 
 pub fn copy_game_settings(
-    app_handle: tauri::AppHandle,
+    app_handle: AppCtx,
     from_steam_id: String,
     to_steam_id: String,
     app_id: String,
@@ -448,7 +447,7 @@ pub fn copy_game_settings(
 }
 
 pub fn get_copyable_games(
-    app_handle: tauri::AppHandle,
+    app_handle: AppCtx,
     from_steam_id: String,
     to_steam_id: String,
 ) -> Result<Vec<CopyableGame>, String> {
@@ -459,7 +458,7 @@ pub fn get_copyable_games(
         .map_err(|e| to_logged_error(&app_handle, "steam.get_copyable_games", e))
 }
 
-pub fn get_steam_path(app_handle: tauri::AppHandle) -> Result<String, String> {
+pub fn get_steam_path(app_handle: AppCtx) -> Result<String, String> {
     let cfg = config::load_config(&app_handle);
     if !cfg.steam.path_override.trim().is_empty() {
         return Ok(cfg.steam.path_override);
@@ -467,7 +466,7 @@ pub fn get_steam_path(app_handle: tauri::AppHandle) -> Result<String, String> {
     resolve_steam_path(&app_handle).map(|p| p.to_string_lossy().to_string())
 }
 
-pub fn set_steam_path(app_handle: tauri::AppHandle, path: String) -> Result<(), String> {
+pub fn set_steam_path(app_handle: AppCtx, path: String) -> Result<(), String> {
     let trimmed = path.trim().to_string();
     config::update_config(&app_handle, |cfg| {
         if trimmed.is_empty() {
@@ -483,7 +482,7 @@ pub fn select_steam_path() -> Result<String, String> {
 }
 
 pub fn bulk_edit(
-    app_handle: tauri::AppHandle,
+    app_handle: AppCtx,
     request: bulk_edit::BulkEditRequest,
 ) -> Result<bulk_edit::BulkEditResult, String> {
     for steam_id in &request.steam_ids {
@@ -517,7 +516,7 @@ pub fn bulk_edit(
 }
 
 pub fn get_account_games(
-    app_handle: tauri::AppHandle,
+    app_handle: AppCtx,
     steam_id: String,
 ) -> Result<Vec<CopyableGame>, String> {
     validate_steam_id(&steam_id)?;
@@ -539,7 +538,7 @@ pub async fn get_profile_info(
 }
 
 pub async fn get_player_bans(
-    app_handle: tauri::AppHandle,
+    app_handle: AppCtx,
     steam_ids: Vec<String>,
     client: reqwest::Client,
 ) -> Result<Vec<BanInfo>, String> {
@@ -572,26 +571,21 @@ pub async fn get_player_bans(
 }
 
 impl PlatformService for SteamService {
-    fn get_accounts(&self, app: &tauri::AppHandle) -> Result<Value, String> {
+    fn get_accounts(&self, app: AppCtx) -> Result<Value, String> {
         let accounts = get_accounts(app.clone())?;
         serde_json::to_value(accounts).map_err(|e| e.to_string())
     }
 
-    fn get_startup_snapshot(&self, app: &tauri::AppHandle) -> Result<Value, String> {
-        let snapshot = get_startup_snapshot_inner(app)?;
+    fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, String> {
+        let snapshot = get_startup_snapshot_inner(&app)?;
         serde_json::to_value(snapshot).map_err(|e| e.to_string())
     }
 
-    fn get_current_account(&self, app: &tauri::AppHandle) -> Result<String, String> {
+    fn get_current_account(&self, app: AppCtx) -> Result<String, String> {
         get_current_account(app.clone())
     }
 
-    fn switch_account(
-        &self,
-        app: &tauri::AppHandle,
-        account_id: &str,
-        params: Value,
-    ) -> Result<(), String> {
+    fn switch_account(&self, app: AppCtx, account_id: &str, params: Value) -> Result<(), String> {
         validate_username(account_id)?;
         let run_as_admin = params
             .get("runAsAdmin")
@@ -603,10 +597,10 @@ impl PlatformService for SteamService {
             .unwrap_or("")
             .to_string();
         let force_kill = is_force_kill(&params);
-        let steam_path = resolve_steam_path(app)?;
+        let steam_path = resolve_steam_path(&app)?;
 
         log_platform_info(
-            app,
+            &app,
             "steam.switch_account",
             "Steam switch requested",
             build_switch_state_details(
@@ -626,7 +620,7 @@ impl PlatformService for SteamService {
             &launch_options,
             force_kill,
         )
-        .map_err(|e| to_logged_error(app, "steam.switch_account", e));
+        .map_err(|e| to_logged_error(&app, "steam.switch_account", e));
 
         let post_state = build_switch_state_details(
             &steam_path,
@@ -639,13 +633,13 @@ impl PlatformService for SteamService {
 
         match &result {
             Ok(()) => log_platform_info(
-                app,
+                &app,
                 "steam.switch_account",
                 "Steam switch completed",
                 &post_state,
             ),
             Err(error) => log_platform_error(
-                app,
+                &app,
                 "steam.switch_account",
                 "Steam switch failed",
                 format!("error={error}; state={post_state}"),
@@ -655,14 +649,14 @@ impl PlatformService for SteamService {
         result
     }
 
-    fn forget_account(&self, app: &tauri::AppHandle, account_id: &str) -> Result<(), String> {
+    fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), String> {
         validate_steam_id(account_id)?;
-        let steam_path = resolve_steam_path(app)?;
+        let steam_path = resolve_steam_path(&app)?;
         accounts::forget_account(&steam_path, account_id)
-            .map_err(|e| to_logged_error(app, "steam.forget_account", e))
+            .map_err(|e| to_logged_error(&app, "steam.forget_account", e))
     }
 
-    fn begin_setup(&self, app: &tauri::AppHandle, params: Value) -> Result<SetupStatus, String> {
+    fn begin_setup(&self, app: AppCtx, params: Value) -> Result<SetupStatus, String> {
         let run_as_admin = params
             .get("runAsAdmin")
             .and_then(Value::as_bool)
@@ -676,23 +670,19 @@ impl PlatformService for SteamService {
         begin_account_setup(app.clone(), run_as_admin, launch_options, force_kill)
     }
 
-    fn get_setup_status(
-        &self,
-        app: &tauri::AppHandle,
-        setup_id: &str,
-    ) -> Result<SetupStatus, String> {
+    fn get_setup_status(&self, app: AppCtx, setup_id: &str) -> Result<SetupStatus, String> {
         get_account_setup_status(app.clone(), setup_id.to_string())
     }
 
-    fn cancel_setup(&self, app: &tauri::AppHandle, setup_id: &str) -> Result<(), String> {
+    fn cancel_setup(&self, app: AppCtx, setup_id: &str) -> Result<(), String> {
         cancel_account_setup(app.clone(), setup_id.to_string())
     }
 
-    fn get_path(&self, app: &tauri::AppHandle) -> Result<String, String> {
+    fn get_path(&self, app: AppCtx) -> Result<String, String> {
         get_steam_path(app.clone())
     }
 
-    fn set_path(&self, app: &tauri::AppHandle, path: &str) -> Result<(), String> {
+    fn set_path(&self, app: AppCtx, path: &str) -> Result<(), String> {
         set_steam_path(app.clone(), path.to_string())
     }
 
