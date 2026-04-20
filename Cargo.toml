@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["src-tauri", "crates/accshift-core"]
+members = ["src-tauri", "crates/accshift-core", "crates/accshift-cli"]
 
 [workspace.package]
 version = "0.9.0"
@@ -31,6 +31,9 @@ tokio = { version = "=1.47", features = ["rt", "rt-multi-thread", "macros"] }
 sysinfo = { version = "0.32", default-features = false, features = ["system"] }
 open = "5"
 fs4 = { version = "0.13", features = ["sync"] }
+clap = { version = "4", features = ["derive"] }
+directories = "5"
+is-terminal = "0.4"
 
 [profile.release]
 panic = "abort"
