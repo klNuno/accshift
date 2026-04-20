@@ -19,7 +19,7 @@
 
 | Platform             | Windows     | macOS           | Linux           |
 | -------------------- | ----------- | --------------- | --------------- |
-| Steam                | ✅ Done     | 🚧 Possible     | 🚧 Possible     |
+| Steam                | ✅ Done     | 🧪 CLI ready    | 🧪 CLI ready    |
 | Riot Games           | ✅ Done     | 🚧 Possible     | ⛔ Not feasible |
 | Battle.net           | ✅ Done     | 🚧 Possible     | ⛔ Not feasible |
 | Epic Games           | ✅ Done     | 🚧 Possible     | 🚧 Possible     |
@@ -32,7 +32,8 @@
 | HoYoverse / HoYoPlay | 🚧 Possible | ⛔ Not feasible | ⛔ Not feasible |
 | Minecraft Launcher   | 🚧 Possible | 🚧 Possible     | 🚧 Possible     |
 
-- `✅ Done` — implemented and working
+- `✅ Done` — GUI and CLI implemented and working
+- `🧪 CLI ready` — non-Windows support landed, awaiting on-target verification
 - `🚧 Possible` — feasible, priority goes to user requests
 - `⛔ Not feasible` — not realistic for this OS
 
@@ -56,49 +57,79 @@ pnpm install
 pnpm tauri dev
 ```
 
+## CLI
+
+`accshift` also ships as a command-line binary for scripting and AI
+automation. It reads and writes the same config as the GUI — running
+both at once is safe thanks to an exclusive lock on mutating operations.
+
+### Install
+
+The CLI binary is produced alongside the GUI by `pnpm tauri build`
+(output: `target/release/accshift.exe` on Windows, `target/release/accshift`
+on Linux/macOS). Drop it anywhere on your `PATH`, or run it by its
+absolute path.
+
+### Commands
+
+```bash
+accshift platforms               # list platforms known to this build
+accshift list <platform>         # dump accounts for a platform as JSON
+accshift switch <platform> <account-id>
+    [--steam-mode online|invisible]
+    [--shutdown graceful|force]
+    [--run-as-admin]
+    [--launch-options "..."]
+```
+
+Add `--format=pretty` to pretty-print for humans; the default is JSON
+when stdout is piped and pretty on a TTY. All error envelopes go to
+stderr so stdout stays parseable.
+
+### Output schema
+
+```json
+{ "schema": "accshift.v1", "ok": true, "command": "list",
+  "data": { "platform": "steam", "accounts": [ ... ] } }
+
+{ "schema": "accshift.v1", "ok": false, "command": "switch",
+  "error": { "code": "lock_contended", "message": "..." } }
+```
+
+### Exit codes
+
+| Code | Meaning                                  |
+| ---- | ---------------------------------------- |
+| 0    | Success                                  |
+| 1    | Generic error                            |
+| 2    | Unknown platform on this OS              |
+| 3    | Unknown account                          |
+| 4    | Another accshift instance holds the lock |
+| 5    | I/O error (paths, permissions)           |
+
 ## Project Structure
 
 ```text
-src/lib/
-  app/                          # app lifecycle, dialogs, navigation
-  features/
-    folders/                    # folder organization
-    notifications/              # toast system
-    settings/                   # settings store & UI
-  platforms/
-    battle-net/                 # Battle.net adapter, API, context menu
-    epic/                       # Epic Games adapter, API, context menu
-    riot/                       # Riot Games adapter, API, context menu
-    roblox/                     # Roblox adapter, API, context menu
-    steam/                      # Steam adapter, API, context menu, bulk edit
-    ubisoft/                    # Ubisoft Connect adapter, API, context menu
-    platformApi.ts              # shared platform API factory
-    registry.ts                 # platform registry
-  shared/
-    components/                 # AccountCard, ListView, dialogs, etc.
-    contextMenu/                # context menu builders
-    platform.ts                 # platform types & interfaces
-    useAccountLoader.svelte.ts  # account state management
-  storage/                      # client storage layer
+src/lib/                          # Svelte frontend (GUI)
+  app/                            # app lifecycle, dialogs, navigation
+  features/folders notifications settings
+  platforms/                      # per-platform UI adapters
+  shared/components contextMenu platform ...
+  storage/                        # client storage layer
 
-src-tauri/src/
-  commands.rs                   # Tauri command handlers
-  config.rs                     # app config (portable + local split)
-  storage.rs                    # file storage, migrations, manifests
-  platforms/
-    battle_net.rs               # Battle.net switching & setup
-    epic.rs                     # Epic Games switching & setup
-    riot.rs                     # Riot session capture & switching
-    roblox.rs                   # Roblox auth ticket switching
-    ubisoft.rs                  # Ubisoft Connect switching & setup
-    steam/
-      mod.rs                    # Steam service & setup
-      accounts.rs               # Steam account switching
-      bans.rs                   # Steam ban checking
-      bulk_edit.rs              # Steam bulk edit operations
-      profile.rs                # Steam profile info
-      vdf.rs                    # VDF parser
-  os/                           # OS-specific APIs (Windows, DPAPI, process mgmt)
+crates/
+  accshift-core/                  # platform logic, config, storage, OS
+    src/
+      platforms/steam riot ...    # platform implementations
+      os/windows linux macos      # per-OS primitives (sysinfo/open/keyring)
+      context.rs                  # AppContext trait (replaces tauri::AppHandle)
+      lock.rs                     # fs4 exclusive lock
+      runtime.rs                  # tokio block_on helper
+      config storage logging themes
+  accshift-cli/                   # CLI binary (list, switch, platforms)
+
+src-tauri/                        # Tauri GUI thin wrapper
+  src/main.rs commands.rs app_runtime.rs tauri_context.rs
 ```
 
 ## Disclaimer
