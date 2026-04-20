@@ -1,6 +1,6 @@
 [package]
-name = "accshift"
-description = "Account Switcher"
+name = "accshift-gui"
+description = "Accshift desktop account switcher (Tauri GUI)"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
