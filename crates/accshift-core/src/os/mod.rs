@@ -2,12 +2,20 @@ use crate::error::AppError;
 use std::path::{Path, PathBuf};
 
 mod common;
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
 mod unsupported;
 #[cfg(target_os = "windows")]
 mod windows;
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
+use linux as imp;
+#[cfg(target_os = "macos")]
+use macos as imp;
+#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
 use unsupported as imp;
 #[cfg(target_os = "windows")]
 use windows as imp;
