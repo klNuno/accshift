@@ -154,6 +154,8 @@ pub async fn platform_switch_account(
 ) -> Result<(), String> {
     let service = require_service(&platform_id)?;
     let c = ctx(&app_handle);
+    let _lock = accshift_core::lock::acquire_exclusive(&c, std::time::Duration::from_secs(2))
+        .map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || service.switch_account(c, &account_id, params))
         .await
         .map_err(|e| format!("Task failed: {e}"))?
@@ -167,6 +169,8 @@ pub async fn platform_forget_account(
 ) -> Result<(), String> {
     let service = require_service(&platform_id)?;
     let c = ctx(&app_handle);
+    let _lock = accshift_core::lock::acquire_exclusive(&c, std::time::Duration::from_secs(2))
+        .map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || service.forget_account(c, &account_id))
         .await
         .map_err(|e| format!("Task failed: {e}"))?

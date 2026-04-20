@@ -2,6 +2,7 @@ pub mod config;
 pub mod context;
 pub mod error;
 pub mod fs_utils;
+pub mod lock;
 pub mod logging;
 pub mod os;
 pub mod platforms;

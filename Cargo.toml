@@ -30,6 +30,7 @@ mimalloc = { version = "0.1", default-features = false }
 tokio = { version = "=1.47", features = ["rt", "rt-multi-thread", "macros"] }
 sysinfo = { version = "0.32", default-features = false, features = ["system"] }
 open = "5"
+fs4 = { version = "0.13", features = ["sync"] }
 
 [profile.release]
 panic = "abort"
