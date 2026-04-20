@@ -3,7 +3,7 @@ node_modules/
 
 # Build outputs
 dist/
-src-tauri/target/
+target/
 src-tauri/keys/
 
 # IDE

@@ -1,43 +1,21 @@
 [package]
 name = "accshift"
-version = "0.9.0"
 description = "Account Switcher"
-authors = ["you"]
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 
 [build-dependencies]
-tauri-build = { version = "2.5.6", features = [] }
+tauri-build = { workspace = true, features = [] }
 
 [dependencies]
-tauri = { version = "2.10.3", features = [] }
-tauri-plugin-shell = "2.3.5"
-tauri-plugin-process = "2.3.1"
-tauri-plugin-updater = "2.10.1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-reqwest = { version = "0.12", features = ["rustls-tls", "json", "blocking"] }
-thiserror = "2"
-rusqlite = { version = "0.34", features = ["bundled"] }
-uuid = { version = "1", features = ["v4"] }
+accshift-core = { path = "../crates/accshift-core" }
+tauri = { workspace = true, features = [] }
+tauri-plugin-shell = { workspace = true }
+tauri-plugin-process = { workspace = true }
+tauri-plugin-updater = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
 
 [dependencies.mimalloc]
-version = "0.1"
-default-features = false
-
-[target.'cfg(windows)'.dependencies]
-winreg = "0.55"
-windows-sys = { version = "0.59", features = [
-  "Win32_Foundation",
-  "Win32_Security_Cryptography",
-  "Win32_System_Diagnostics_ToolHelp",
-  "Win32_System_Threading",
-  "Win32_UI_Shell",
-  "Win32_UI_WindowsAndMessaging",
-] }
-
-[profile.release]
-panic = "abort"
-codegen-units = 1
-lto = "fat"
-opt-level = 2
-strip = true
+workspace = true

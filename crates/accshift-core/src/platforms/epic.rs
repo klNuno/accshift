@@ -916,7 +916,9 @@ mod tests {
 
     #[test]
     fn invalid_epic_id_non_hex() {
-        assert!(!is_valid_epic_account_id("g1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"));
+        assert!(!is_valid_epic_account_id(
+            "g1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+        ));
     }
 
     #[test]

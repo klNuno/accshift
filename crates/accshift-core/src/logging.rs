@@ -280,7 +280,10 @@ mod tests {
 
     #[test]
     fn replace_case_insensitive_basic() {
-        assert_eq!(replace_case_insensitive("Hello WORLD", "world", "earth"), "Hello earth");
+        assert_eq!(
+            replace_case_insensitive("Hello WORLD", "world", "earth"),
+            "Hello earth"
+        );
     }
 
     #[test]

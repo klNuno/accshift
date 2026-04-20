@@ -9,14 +9,10 @@ use tauri::Manager;
 
 mod app_runtime;
 mod commands;
-mod config;
-mod error;
-mod fs_utils;
-mod logging;
-mod os;
-mod platforms;
-mod storage;
-mod themes;
+
+// Re-export core modules at the crate root so `crate::foo` keeps working
+// across the split (commands.rs and app_runtime.rs still use `crate::`).
+pub(crate) use accshift_core::{config, logging, os, platforms, storage, themes};
 
 fn main() {
     let client = match reqwest::Client::builder()

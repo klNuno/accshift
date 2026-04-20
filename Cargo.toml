@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = ["src-tauri", "crates/accshift-core"]
+
+[workspace.package]
+version = "0.9.0"
+edition = "2021"
+authors = ["you"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["rustls-tls", "json", "blocking"] }
+thiserror = "2"
+rusqlite = { version = "0.34", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
+tauri = "2.10.3"
+tauri-plugin-shell = "2.3.5"
+tauri-plugin-process = "2.3.1"
+tauri-plugin-updater = "2.10.1"
+tauri-build = "2.5.6"
+winreg = "0.55"
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Security_Cryptography",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Threading",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+mimalloc = { version = "0.1", default-features = false }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = "fat"
+opt-level = 2
+strip = true
