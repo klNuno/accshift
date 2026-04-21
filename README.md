@@ -74,7 +74,7 @@ absolute path.
 
 ```bash
 accshift platforms               # list platforms known to this build
-accshift list <platform>         # dump accounts for a platform as JSON
+accshift list <platform>         # list accounts for a platform
 accshift switch <platform> <account-id>
     [--steam-mode online|invisible]
     [--shutdown graceful|force]
@@ -82,9 +82,27 @@ accshift switch <platform> <account-id>
     [--launch-options "..."]
 ```
 
-Add `--format=pretty` to pretty-print for humans; the default is JSON
-when stdout is piped and pretty on a TTY. All error envelopes go to
-stderr so stdout stays parseable.
+Example:
+
+```
+$ accshift list steam
+  ACCOUNT        PERSONA                         STEAM ID
+* microtel91     meetsu (low cortisol edition)   76561198008071583
+  kuba3136       hom dafair                      76561198155223381
+  dzirt522       chien congelé                   76561198120679570
+  ...
+
+84 accounts.  * = currently signed in
+```
+
+Output format:
+
+- **Default**: a readable table for humans on a TTY, auto-switched to
+  JSON when stdout is piped (so scripts and AI tools get a stable
+  contract without extra flags).
+- `--json` forces the JSON envelope everywhere.
+- `--human` forces the table even when piped (useful for `| less`).
+- Errors always go to stderr so stdout stays parseable.
 
 ### Output schema
 

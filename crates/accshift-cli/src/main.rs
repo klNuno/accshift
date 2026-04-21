@@ -5,13 +5,12 @@ use accshift_core::lock::{acquire_exclusive, LockError};
 use accshift_core::platforms::get_service;
 use clap::{Parser, Subcommand};
 use context::CliAppContext;
-use output::{emit_err, emit_ok, Format};
-use serde_json::json;
+use output::{emit_err, emit_json_ok, Format};
+use serde_json::{json, Value};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Stable exit codes. Documented in docs/cli-schema.md.
 mod exit {
     pub const OK: u8 = 0;
     pub const GENERIC: u8 = 1;
@@ -31,9 +30,13 @@ const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
     about = "Command-line account switcher for gaming platforms"
 )]
 struct Cli {
-    /// Output format. Defaults to `pretty` on a TTY and `json` when piped.
-    #[arg(long, value_parser = ["json", "pretty"], global = true)]
-    format: Option<String>,
+    /// Force JSON output (default when stdout is piped).
+    #[arg(long, global = true, conflicts_with = "human")]
+    json: bool,
+
+    /// Force human-readable output even when piped.
+    #[arg(long, global = true)]
+    human: bool,
 
     #[command(subcommand)]
     command: Command,
@@ -71,7 +74,7 @@ enum Command {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let format = Format::resolve(cli.format.as_deref());
+    let format = Format::resolve(cli.json, cli.human);
 
     let exit = match cli.command {
         Command::List { platform } => cmd_list(format, &platform),
@@ -97,13 +100,19 @@ fn main() -> ExitCode {
     ExitCode::from(exit)
 }
 
+fn build_ctx(format: Format, command: &str) -> Result<accshift_core::AppCtx, u8> {
+    CliAppContext::new()
+        .map(|c| Arc::new(c) as accshift_core::AppCtx)
+        .map_err(|e| {
+            emit_err(format, command, "io", &e);
+            exit::IO
+        })
+}
+
 fn cmd_list(format: Format, platform_id: &str) -> u8 {
-    let ctx = match CliAppContext::new() {
-        Ok(c) => Arc::new(c) as accshift_core::AppCtx,
-        Err(e) => {
-            emit_err(format, "list", "io", &e);
-            return exit::IO;
-        }
+    let ctx = match build_ctx(format, "list") {
+        Ok(c) => c,
+        Err(code) => return code,
     };
 
     let service = match get_service(platform_id) {
@@ -119,23 +128,37 @@ fn cmd_list(format: Format, platform_id: &str) -> u8 {
         }
     };
 
-    match service.get_accounts(ctx) {
-        Ok(value) => {
-            emit_ok(
-                format,
+    let accounts = match service.get_accounts(ctx.clone()) {
+        Ok(v) => v,
+        Err(e) => {
+            emit_err(format, "list", "platform_error", &e);
+            return exit::GENERIC;
+        }
+    };
+
+    // Best-effort: some platforms return an error here (no Steam installed,
+    // no config yet, …). Missing current is fine, the list still prints.
+    let current = service.get_current_account(ctx).ok();
+
+    match format {
+        Format::Json => {
+            emit_json_ok(
                 "list",
                 json!({
                     "platform": platform_id,
-                    "accounts": value,
+                    "accounts": accounts,
+                    "current": current,
                 }),
             );
-            exit::OK
         }
-        Err(e) => {
-            emit_err(format, "list", "platform_error", &e);
-            exit::GENERIC
+        Format::Human => {
+            let empty = Vec::new();
+            let rows = accounts.as_array().unwrap_or(&empty);
+            output::render_accounts(platform_id, rows, current.as_deref());
         }
     }
+
+    exit::OK
 }
 
 fn cmd_switch(
@@ -147,12 +170,9 @@ fn cmd_switch(
     run_as_admin: bool,
     launch_options: &str,
 ) -> u8 {
-    let ctx = match CliAppContext::new() {
-        Ok(c) => Arc::new(c) as accshift_core::AppCtx,
-        Err(e) => {
-            emit_err(format, "switch", "io", &e);
-            return exit::IO;
-        }
+    let ctx = match build_ctx(format, "switch") {
+        Ok(c) => c,
+        Err(code) => return code,
     };
 
     let service = match get_service(platform_id) {
@@ -194,19 +214,16 @@ fn cmd_switch(
 
     match service.switch_account(ctx, account_id, params) {
         Ok(()) => {
-            emit_ok(
-                format,
-                "switch",
-                json!({
-                    "platform": platform_id,
-                    "accountId": account_id,
-                }),
-            );
+            match format {
+                Format::Json => emit_json_ok(
+                    "switch",
+                    json!({ "platform": platform_id, "accountId": account_id }),
+                ),
+                Format::Human => output::render_switch_ok(platform_id, account_id),
+            }
             exit::OK
         }
         Err(e) => {
-            // Best-effort mapping: Steam returns "Invalid username" for unknown
-            // accounts, and most other errors are operational failures.
             let (code, status) = if e.contains("Invalid username") || e.contains("not found") {
                 ("unknown_account", exit::UNKNOWN_ACCOUNT)
             } else {
@@ -219,20 +236,22 @@ fn cmd_switch(
 }
 
 fn cmd_platforms(format: Format) -> u8 {
-    // Keep this list in sync with `accshift_core::platforms::platform_registry`.
     let known = ["steam", "riot", "battle-net", "ubisoft", "roblox", "epic"];
-
-    let platforms: Vec<_> = known
+    let rows: Vec<(String, bool)> = known
         .iter()
-        .map(|id| {
-            let available = get_service(id).is_some();
-            json!({
-                "id": id,
-                "available": available,
-            })
-        })
+        .map(|id| (id.to_string(), get_service(id).is_some()))
         .collect();
 
-    emit_ok(format, "platforms", json!({ "platforms": platforms }));
+    match format {
+        Format::Json => {
+            let platforms: Vec<Value> = rows
+                .iter()
+                .map(|(id, available)| json!({ "id": id, "available": available }))
+                .collect();
+            emit_json_ok("platforms", json!({ "platforms": platforms }));
+        }
+        Format::Human => output::render_platforms(&rows),
+    }
+
     exit::OK
 }
