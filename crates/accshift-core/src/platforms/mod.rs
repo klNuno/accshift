@@ -5,11 +5,20 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// Native clients for Battle.net, Epic, Riot, Ubisoft and Roblox don't exist
+// on Linux / macOS. We gate them to Windows to keep the non-Windows build
+// green; `get_service("riot")` etc. return None outside Windows, and the CLI
+// advertises `available: false` for those platforms via `accshift platforms`.
+#[cfg(windows)]
 pub mod battle_net;
+#[cfg(windows)]
 pub mod epic;
+#[cfg(windows)]
 pub mod riot;
+#[cfg(windows)]
 pub mod roblox;
 pub mod steam;
+#[cfg(windows)]
 pub mod ubisoft;
 
 pub(crate) fn redact_id(value: &str) -> String {
@@ -163,11 +172,14 @@ fn platform_registry() -> &'static HashMap<&'static str, &'static dyn PlatformSe
     REGISTRY.get_or_init(|| {
         let mut map: HashMap<&'static str, &'static dyn PlatformService> = HashMap::new();
         map.insert("steam", &steam::STEAM_SERVICE);
-        map.insert("riot", &riot::RIOT_SERVICE);
-        map.insert("battle-net", &battle_net::BATTLE_NET_SERVICE);
-        map.insert("ubisoft", &ubisoft::UBISOFT_SERVICE);
-        map.insert("roblox", &roblox::ROBLOX_SERVICE);
-        map.insert("epic", &epic::EPIC_SERVICE);
+        #[cfg(windows)]
+        {
+            map.insert("riot", &riot::RIOT_SERVICE);
+            map.insert("battle-net", &battle_net::BATTLE_NET_SERVICE);
+            map.insert("ubisoft", &ubisoft::UBISOFT_SERVICE);
+            map.insert("roblox", &roblox::ROBLOX_SERVICE);
+            map.insert("epic", &epic::EPIC_SERVICE);
+        }
         map
     })
 }
@@ -282,7 +294,11 @@ mod tests {
 
     #[test]
     fn require_service_returns_ok_for_known_platforms() {
-        for platform in &["steam", "riot", "battle-net", "ubisoft", "roblox", "epic"] {
+        #[cfg(windows)]
+        let platforms: &[&str] = &["steam", "riot", "battle-net", "ubisoft", "roblox", "epic"];
+        #[cfg(not(windows))]
+        let platforms: &[&str] = &["steam"];
+        for platform in platforms {
             let result = require_service(platform);
             assert!(
                 result.is_ok(),

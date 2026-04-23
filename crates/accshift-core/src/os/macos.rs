@@ -4,26 +4,45 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn unsupported(feature: &str) -> AppError {
-    AppError::UnsupportedOperatingSystem(format!(
-        "{feature} is not supported on this operating system"
-    ))
+use super::secrets::{
+    keyring_get_bytes, keyring_get_password, keyring_set_bytes, keyring_set_password, secret_error,
+    unsupported,
+};
+
+// Secrets live in the Keychain via `keyring`. See os/secrets.rs and the Linux
+// twin for the token-based scheme.
+
+pub fn encrypt_secret(secret: &str) -> Result<String, AppError> {
+    if secret.is_empty() {
+        return Ok(String::new());
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    keyring_set_password(&id, secret).map_err(secret_error)?;
+    Ok(id)
 }
 
-pub fn encrypt_secret(_secret: &str) -> Result<String, AppError> {
-    Err(unsupported("Secret storage"))
+pub fn decrypt_secret(token: &str) -> Result<String, AppError> {
+    if token.is_empty() {
+        return Ok(String::new());
+    }
+    keyring_get_password(token).map_err(secret_error)
 }
 
-pub fn decrypt_secret(_secret: &str) -> Result<String, AppError> {
-    Err(unsupported("Secret storage"))
+pub fn encrypt_bytes(data: &[u8]) -> Result<Vec<u8>, AppError> {
+    if data.is_empty() {
+        return Ok(Vec::new());
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    keyring_set_bytes(&id, data).map_err(secret_error)?;
+    Ok(id.into_bytes())
 }
 
-pub fn encrypt_bytes(_data: &[u8]) -> Result<Vec<u8>, AppError> {
-    Err(unsupported("Secret storage"))
-}
-
-pub fn decrypt_bytes(_data: &[u8]) -> Result<Vec<u8>, AppError> {
-    Err(unsupported("Secret storage"))
+pub fn decrypt_bytes(token: &[u8]) -> Result<Vec<u8>, AppError> {
+    if token.is_empty() {
+        return Ok(Vec::new());
+    }
+    let id = std::str::from_utf8(token).map_err(|e| secret_error(e.to_string()))?;
+    keyring_get_bytes(id).map_err(secret_error)
 }
 
 fn home_dir() -> Option<PathBuf> {

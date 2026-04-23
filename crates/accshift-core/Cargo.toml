@@ -20,3 +20,6 @@ fs4 = { workspace = true }
 [target.'cfg(windows)'.dependencies]
 winreg = { workspace = true }
 windows-sys = { workspace = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+keyring = { workspace = true }
