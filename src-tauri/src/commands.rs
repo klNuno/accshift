@@ -380,9 +380,10 @@ pub fn steam_get_account_games(
 }
 
 // ---------------------------------------------------------------------------
-// Riot-specific commands
+// Riot-specific commands — Windows-only (no Linux/macOS Riot client).
 // ---------------------------------------------------------------------------
 
+#[cfg(windows)]
 #[tauri::command]
 pub fn riot_capture_profile(
     app_handle: tauri::AppHandle,
@@ -401,9 +402,11 @@ pub fn open_url(url: String) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
-// Roblox-specific commands
+// Roblox-specific commands — Windows-only (cookie write goes through
+// registry, no equivalent on Linux/macOS at the moment).
 // ---------------------------------------------------------------------------
 
+#[cfg(windows)]
 #[tauri::command]
 pub async fn roblox_add_account_by_cookie(
     app_handle: tauri::AppHandle,
@@ -418,6 +421,7 @@ pub async fn roblox_add_account_by_cookie(
     .await
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub async fn roblox_get_profile_info(
     user_id: String,

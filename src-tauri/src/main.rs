@@ -209,10 +209,13 @@ fn main() {
             commands::steam_clear_browser_cache,
             commands::steam_bulk_edit,
             commands::steam_get_account_games,
-            // Riot-specific
+            // Riot-specific (Windows-only)
+            #[cfg(windows)]
             commands::riot_capture_profile,
-            // Roblox-specific
+            // Roblox-specific (Windows-only)
+            #[cfg(windows)]
             commands::roblox_add_account_by_cookie,
+            #[cfg(windows)]
             commands::roblox_get_profile_info,
             // Theme
             commands::list_custom_themes,
