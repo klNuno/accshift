@@ -33,12 +33,8 @@ const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 )]
 struct Cli {
     /// Force JSON output (default when stdout is piped).
-    #[arg(long, global = true, conflicts_with = "human")]
-    json: bool,
-
-    /// Force human-readable output even when piped.
     #[arg(long, global = true)]
-    human: bool,
+    json: bool,
 
     #[command(subcommand)]
     command: Command,
@@ -90,7 +86,7 @@ enum Command {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let format = Format::resolve(cli.json, cli.human);
+    let format = Format::resolve(cli.json);
 
     let exit = match cli.command {
         Command::List { platform, folder } => cmd_list(format, &platform, folder.as_deref()),

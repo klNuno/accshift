@@ -101,7 +101,6 @@ Output format:
   JSON when stdout is piped (so scripts and AI tools get a stable
   contract without extra flags).
 - `--json` forces the JSON envelope everywhere.
-- `--human` forces the table even when piped (useful for `| less`).
 - Errors always go to stderr so stdout stays parseable.
 
 ### Output schema

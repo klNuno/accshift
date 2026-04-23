@@ -18,12 +18,9 @@ pub enum Format {
 }
 
 impl Format {
-    pub fn resolve(json_flag: bool, human_flag: bool) -> Self {
+    pub fn resolve(json_flag: bool) -> Self {
         if json_flag {
             return Self::Json;
-        }
-        if human_flag {
-            return Self::Human;
         }
         if std::io::stdout().is_terminal() {
             Self::Human
