@@ -7,6 +7,7 @@
 use is_terminal::IsTerminal;
 use serde::Serialize;
 use serde_json::{json, Value};
+use unicode_width::UnicodeWidthStr;
 
 pub const SCHEMA: &str = "accshift.v1";
 
@@ -67,22 +68,31 @@ pub fn emit_err(format: Format, command: &str, code: &str, message: &str) {
 pub fn render_platforms(platforms: &[(String, bool)]) {
     let id_width = platforms
         .iter()
-        .map(|(id, _)| id.len())
+        .map(|(id, _)| display_width(id))
         .max()
         .unwrap_or(8)
-        .max("PLATFORM".len());
+        .max(display_width("PLATFORM"));
 
-    println!("{:<id_width$}  AVAILABLE", "PLATFORM", id_width = id_width);
+    println!("{}  AVAILABLE", pad("PLATFORM", id_width));
     for (id, available) in platforms {
         let flag = if *available { "yes" } else { "no" };
-        println!("{id:<id_width$}  {flag}", id_width = id_width);
+        println!("{}  {flag}", pad(id, id_width));
     }
 }
 
-pub fn render_accounts(platform_id: &str, accounts: &[Value], current: Option<&str>) {
+pub fn render_accounts(
+    platform_id: &str,
+    accounts: &[Value],
+    current: Option<&str>,
+    folder_filter: Option<&std::collections::HashSet<String>>,
+) {
     let mut rows: Vec<AccountRow> = accounts
         .iter()
         .filter_map(|a| extract_row(platform_id, a))
+        .filter(|r| match folder_filter {
+            Some(ids) => ids.contains(&r.folder_id),
+            None => true,
+        })
         .collect();
 
     // Most-recently used first so the active account is at the top. The
@@ -103,12 +113,10 @@ pub fn render_accounts(platform_id: &str, accounts: &[Value], current: Option<&s
 
     // The "  " leading gutter holds the "*" marker for the current account.
     println!(
-        "  {:<id_w$}  {:<primary_w$}  {}",
-        id_header,
-        primary_header,
+        "  {}  {}  {}",
+        pad(id_header, id_w),
+        pad(primary_header, primary_w),
         secondary_header,
-        id_w = id_w,
-        primary_w = primary_w,
     );
 
     for row in &rows {
@@ -121,12 +129,10 @@ pub fn render_accounts(platform_id: &str, accounts: &[Value], current: Option<&s
             " "
         };
         println!(
-            "{marker} {:<id_w$}  {:<primary_w$}  {}",
-            row.id,
-            row.primary,
+            "{marker} {}  {}  {}",
+            pad(&row.id, id_w),
+            pad(&row.primary, primary_w),
             row.secondary,
-            id_w = id_w,
-            primary_w = primary_w,
         );
     }
 
@@ -148,15 +154,18 @@ pub fn render_switch_ok(platform_id: &str, account_id: &str) {
 // Internals
 // ---------------------------------------------------------------------------
 
-struct AccountRow {
-    id: String,
-    primary: String,
-    secondary: String,
+pub struct AccountRow {
+    pub id: String,
+    pub primary: String,
+    pub secondary: String,
     /// Higher means more recent. Used for descending sort.
-    sort_key: u64,
+    pub sort_key: u64,
+    /// The ID used by the GUI folder store to reference this account.
+    /// Differs from `id` for Steam (account_name vs steam_id) and Roblox.
+    pub folder_id: String,
 }
 
-fn extract_row(platform_id: &str, account: &Value) -> Option<AccountRow> {
+pub fn extract_row(platform_id: &str, account: &Value) -> Option<AccountRow> {
     let get = |key: &str| {
         account
             .get(key)
@@ -167,42 +176,66 @@ fn extract_row(platform_id: &str, account: &Value) -> Option<AccountRow> {
     let get_num = |key: &str| account.get(key).and_then(Value::as_u64).unwrap_or(0);
 
     match platform_id {
-        "steam" => Some(AccountRow {
-            id: nonempty(get("account_name"))?,
-            primary: get("persona_name"),
-            secondary: get("steam_id"),
-            sort_key: get_num("last_login_at"),
-        }),
-        "roblox" => Some(AccountRow {
-            id: nonempty(get("username"))?,
-            primary: get("display_name"),
-            secondary: get("user_id"),
-            sort_key: get_num("last_used_at"),
-        }),
-        "riot" => Some(AccountRow {
-            id: nonempty(get("id"))?,
-            primary: get("label"),
-            secondary: format_riot_tag(&get("account_name"), &get("account_tag_line")),
-            sort_key: get_num("last_used_at"),
-        }),
-        "battle-net" => Some(AccountRow {
-            id: nonempty(get("email"))?,
-            primary: get("battle_tag"),
-            secondary: String::new(),
-            sort_key: get_num("last_used_at"),
-        }),
-        "ubisoft" => Some(AccountRow {
-            id: nonempty(get("uuid"))?,
-            primary: get("label"),
-            secondary: String::new(),
-            sort_key: get_num("last_used_at"),
-        }),
-        "epic" => Some(AccountRow {
-            id: nonempty(get("account_id"))?,
-            primary: get("label"),
-            secondary: String::new(),
-            sort_key: get_num("last_used_at"),
-        }),
+        "steam" => {
+            let steam_id = get("steam_id");
+            Some(AccountRow {
+                id: nonempty(get("account_name"))?,
+                primary: get("persona_name"),
+                secondary: steam_id.clone(),
+                sort_key: get_num("last_login_at"),
+                folder_id: steam_id,
+            })
+        }
+        "roblox" => {
+            let user_id = get("user_id");
+            Some(AccountRow {
+                id: nonempty(get("username"))?,
+                primary: get("display_name"),
+                secondary: user_id.clone(),
+                sort_key: get_num("last_used_at"),
+                folder_id: user_id,
+            })
+        }
+        "riot" => {
+            let pid = nonempty(get("id"))?;
+            Some(AccountRow {
+                id: pid.clone(),
+                primary: get("label"),
+                secondary: format_riot_tag(&get("account_name"), &get("account_tag_line")),
+                sort_key: get_num("last_used_at"),
+                folder_id: pid,
+            })
+        }
+        "battle-net" => {
+            let email = nonempty(get("email"))?;
+            Some(AccountRow {
+                id: email.clone(),
+                primary: get("battle_tag"),
+                secondary: String::new(),
+                sort_key: get_num("last_used_at"),
+                folder_id: email,
+            })
+        }
+        "ubisoft" => {
+            let uuid = nonempty(get("uuid"))?;
+            Some(AccountRow {
+                id: uuid.clone(),
+                primary: get("label"),
+                secondary: String::new(),
+                sort_key: get_num("last_used_at"),
+                folder_id: uuid,
+            })
+        }
+        "epic" => {
+            let account_id = nonempty(get("account_id"))?;
+            Some(AccountRow {
+                id: account_id.clone(),
+                primary: get("label"),
+                secondary: String::new(),
+                sort_key: get_num("last_used_at"),
+                folder_id: account_id,
+            })
+        }
         _ => {
             // Best-effort fallback for unknown platforms: show the raw JSON.
             let id = nonempty(
@@ -214,10 +247,11 @@ fn extract_row(platform_id: &str, account: &Value) -> Option<AccountRow> {
                     .unwrap_or_default(),
             )?;
             Some(AccountRow {
-                id,
+                id: id.clone(),
                 primary: account.to_string(),
                 secondary: String::new(),
                 sort_key: 0,
+                folder_id: id,
             })
         }
     }
@@ -254,7 +288,7 @@ fn id_header_for(platform_id: &str) -> &'static str {
 
 fn primary_header_for(platform_id: &str) -> &'static str {
     match platform_id {
-        "steam" => "PERSONA",
+        "steam" => "NAME",
         "roblox" => "DISPLAY NAME",
         "riot" | "ubisoft" | "epic" => "LABEL",
         "battle-net" => "BATTLETAG",
@@ -273,8 +307,28 @@ fn secondary_header_for(platform_id: &str) -> &'static str {
 
 fn column_width<F: Fn(&AccountRow) -> &str>(rows: &[AccountRow], field: F, header: &str) -> usize {
     rows.iter()
-        .map(|r| field(r).len())
+        .map(|r| display_width(field(r)))
         .max()
         .unwrap_or(0)
-        .max(header.len())
+        .max(display_width(header))
+}
+
+/// Display width of a string in terminal columns (handles CJK + emoji).
+fn display_width(s: &str) -> usize {
+    UnicodeWidthStr::width(s)
+}
+
+/// Right-pad `s` with spaces so its rendered width equals `target`.
+fn pad(s: &str, target: usize) -> String {
+    let w = display_width(s);
+    if w >= target {
+        s.to_string()
+    } else {
+        let mut out = String::with_capacity(s.len() + (target - w));
+        out.push_str(s);
+        for _ in 0..(target - w) {
+            out.push(' ');
+        }
+        out
+    }
 }

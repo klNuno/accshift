@@ -1,5 +1,7 @@
 mod context;
+mod folders;
 mod output;
+mod settings;
 
 use accshift_core::lock::{acquire_exclusive, LockError};
 use accshift_core::platforms::get_service;
@@ -48,6 +50,10 @@ enum Command {
     List {
         /// Platform identifier (see `accshift platforms`).
         platform: String,
+        /// Restrict to accounts in the named folder (case-insensitive,
+        /// includes nested subfolders).
+        #[arg(long)]
+        folder: Option<String>,
     },
     /// List the platforms the CLI knows about on this OS.
     Platforms,
@@ -57,18 +63,28 @@ enum Command {
         platform: String,
         /// Account identifier (for Steam: the account name from `list`).
         account_id: String,
-        /// Steam only: online presence or invisible.
-        #[arg(long, value_parser = ["online", "invisible"])]
-        steam_mode: Option<String>,
-        /// Steam only: how to shut down the running client.
-        #[arg(long, value_parser = ["graceful", "force"], default_value = "graceful")]
-        shutdown: String,
-        /// Steam only: relaunch with admin rights (UAC prompt on Windows).
+        /// Steam: start Steam in online mode (default when neither set).
+        #[arg(long, conflicts_with = "invisible")]
+        online: bool,
+        /// Steam: start Steam in invisible mode.
         #[arg(long)]
-        run_as_admin: bool,
-        /// Steam only: launch options passed to steam.exe.
-        #[arg(long, default_value = "")]
-        launch_options: String,
+        invisible: bool,
+        /// Steam: kill Steam gracefully (default falls back to GUI setting).
+        #[arg(long, conflicts_with = "force")]
+        graceful: bool,
+        /// Steam: force-kill Steam (default falls back to GUI setting).
+        #[arg(long)]
+        force: bool,
+        /// Steam: relaunch with admin rights (falls back to GUI setting).
+        #[arg(long, conflicts_with = "no_admin")]
+        admin: bool,
+        /// Steam: explicitly disable admin rights for this run.
+        #[arg(long = "no-admin")]
+        no_admin: bool,
+        /// Steam: launch options passed to steam.exe (falls back to GUI
+        /// setting; pass an empty string to override with none).
+        #[arg(long)]
+        launch_options: Option<String>,
     },
 }
 
@@ -77,24 +93,34 @@ fn main() -> ExitCode {
     let format = Format::resolve(cli.json, cli.human);
 
     let exit = match cli.command {
-        Command::List { platform } => cmd_list(format, &platform),
+        Command::List { platform, folder } => cmd_list(format, &platform, folder.as_deref()),
         Command::Platforms => cmd_platforms(format),
         Command::Switch {
             platform,
             account_id,
-            steam_mode,
-            shutdown,
-            run_as_admin,
+            online,
+            invisible,
+            graceful,
+            force,
+            admin,
+            no_admin,
             launch_options,
-        } => cmd_switch(
-            format,
-            &platform,
-            &account_id,
-            steam_mode.as_deref(),
-            &shutdown,
-            run_as_admin,
-            &launch_options,
-        ),
+        } => {
+            let _ = online; // accepted for symmetry; default is already online
+            cmd_switch(
+                format,
+                &platform,
+                &account_id,
+                SwitchOverrides {
+                    invisible,
+                    graceful,
+                    force,
+                    admin,
+                    no_admin,
+                    launch_options,
+                },
+            )
+        }
     };
 
     ExitCode::from(exit)
@@ -109,7 +135,7 @@ fn build_ctx(format: Format, command: &str) -> Result<accshift_core::AppCtx, u8>
         })
 }
 
-fn cmd_list(format: Format, platform_id: &str) -> u8 {
+fn cmd_list(format: Format, platform_id: &str, folder: Option<&str>) -> u8 {
     let ctx = match build_ctx(format, "list") {
         Ok(c) => c,
         Err(code) => return code,
@@ -128,6 +154,14 @@ fn cmd_list(format: Format, platform_id: &str) -> u8 {
         }
     };
 
+    let folder_filter = match resolve_folder(&ctx, platform_id, folder) {
+        Ok(f) => f,
+        Err(e) => {
+            emit_err(format, "list", "unknown_folder", &e);
+            return exit::GENERIC;
+        }
+    };
+
     let accounts = match service.get_accounts(ctx.clone()) {
         Ok(v) => v,
         Err(e) => {
@@ -142,11 +176,26 @@ fn cmd_list(format: Format, platform_id: &str) -> u8 {
 
     match format {
         Format::Json => {
+            let filtered: Vec<Value> = match (&folder_filter, accounts.as_array()) {
+                (Some(ids), Some(list)) => list
+                    .iter()
+                    .filter_map(|a| {
+                        let row = output::extract_row(platform_id, a)?;
+                        if ids.contains(&row.folder_id) {
+                            Some(a.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                _ => accounts.as_array().cloned().unwrap_or_default(),
+            };
             emit_json_ok(
                 "list",
                 json!({
                     "platform": platform_id,
-                    "accounts": accounts,
+                    "folder": folder,
+                    "accounts": filtered,
                     "current": current,
                 }),
             );
@@ -154,21 +203,50 @@ fn cmd_list(format: Format, platform_id: &str) -> u8 {
         Format::Human => {
             let empty = Vec::new();
             let rows = accounts.as_array().unwrap_or(&empty);
-            output::render_accounts(platform_id, rows, current.as_deref());
+            if let Some(name) = folder {
+                println!("Folder: {name}");
+            }
+            output::render_accounts(
+                platform_id,
+                rows,
+                current.as_deref(),
+                folder_filter.as_ref(),
+            );
         }
     }
 
     exit::OK
 }
 
+fn resolve_folder(
+    ctx: &accshift_core::AppCtx,
+    platform_id: &str,
+    folder: Option<&str>,
+) -> Result<Option<std::collections::HashSet<String>>, String> {
+    let Some(name) = folder else {
+        return Ok(None);
+    };
+    let store = match folders::load(&**ctx)? {
+        Some(s) => s,
+        None => return Err("No folders configured yet.".into()),
+    };
+    folders::accounts_in_folder(&store, platform_id, name).map(Some)
+}
+
+struct SwitchOverrides {
+    invisible: bool,
+    graceful: bool,
+    force: bool,
+    admin: bool,
+    no_admin: bool,
+    launch_options: Option<String>,
+}
+
 fn cmd_switch(
     format: Format,
     platform_id: &str,
     account_id: &str,
-    steam_mode: Option<&str>,
-    shutdown: &str,
-    run_as_admin: bool,
-    launch_options: &str,
+    overrides: SwitchOverrides,
 ) -> u8 {
     let ctx = match build_ctx(format, "switch") {
         Ok(c) => c,
@@ -205,11 +283,43 @@ fn cmd_switch(
         }
     };
 
+    let steam_defaults = settings::load(&*ctx).platform_settings.steam;
+
+    let run_as_admin = if overrides.admin {
+        true
+    } else if overrides.no_admin {
+        false
+    } else {
+        steam_defaults.run_as_admin
+    };
+
+    let shutdown = if overrides.force {
+        "force"
+    } else if overrides.graceful {
+        "graceful"
+    } else {
+        match steam_defaults.shutdown_mode.as_deref() {
+            Some("force") => "force",
+            Some("graceful") => "graceful",
+            _ => "graceful",
+        }
+    };
+
+    let mode = if overrides.invisible {
+        "invisible"
+    } else {
+        "online"
+    };
+
+    let launch_options = overrides
+        .launch_options
+        .unwrap_or(steam_defaults.launch_options);
+
     let params = json!({
         "runAsAdmin": run_as_admin,
         "launchOptions": launch_options,
         "shutdownMode": shutdown,
-        "mode": steam_mode.unwrap_or("online"),
+        "mode": mode,
     });
 
     match service.switch_account(ctx, account_id, params) {
