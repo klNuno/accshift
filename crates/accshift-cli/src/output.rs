@@ -62,18 +62,13 @@ pub fn emit_err(format: Format, command: &str, code: &str, message: &str) {
 // Human renderers
 // ---------------------------------------------------------------------------
 
-pub fn render_platforms(platforms: &[(String, bool)]) {
-    let id_width = platforms
-        .iter()
-        .map(|(id, _)| display_width(id))
-        .max()
-        .unwrap_or(8)
-        .max(display_width("PLATFORM"));
-
-    println!("{}  AVAILABLE", pad("PLATFORM", id_width));
-    for (id, available) in platforms {
-        let flag = if *available { "yes" } else { "no" };
-        println!("{}  {flag}", pad(id, id_width));
+pub fn render_platforms(platforms: &[&str]) {
+    if platforms.is_empty() {
+        println!("No platforms available on this OS.");
+        return;
+    }
+    for id in platforms {
+        println!("{id}");
     }
 }
 

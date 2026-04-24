@@ -343,20 +343,15 @@ fn cmd_switch(
 
 fn cmd_platforms(format: Format) -> u8 {
     let known = ["steam", "riot", "battle-net", "ubisoft", "roblox", "epic"];
-    let rows: Vec<(String, bool)> = known
+    let available: Vec<&str> = known
         .iter()
-        .map(|id| (id.to_string(), get_service(id).is_some()))
+        .copied()
+        .filter(|id| get_service(id).is_some())
         .collect();
 
     match format {
-        Format::Json => {
-            let platforms: Vec<Value> = rows
-                .iter()
-                .map(|(id, available)| json!({ "id": id, "available": available }))
-                .collect();
-            emit_json_ok("platforms", json!({ "platforms": platforms }));
-        }
-        Format::Human => output::render_platforms(&rows),
+        Format::Json => emit_json_ok("platforms", json!({ "platforms": available })),
+        Format::Human => output::render_platforms(&available),
     }
 
     exit::OK
