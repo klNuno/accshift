@@ -84,6 +84,33 @@ export const EN_MESSAGES = {
   "settings.pinLockOnAfk": "PIN lock on AFK",
   "settings.pinCode": "PIN code",
   "settings.pinPlaceholder": "4 digits",
+  "settings.telemetry": "Usage statistics",
+  "settings.telemetryModeA": "Send anonymous statistics",
+  "settings.telemetryModeAHint":
+    "Session pings and event counts. No local identifier, no personal data. Legal basis: legitimate interest.",
+  "settings.telemetryModeB": "Enhanced statistics (opt-in)",
+  "settings.telemetryModeBHint":
+    "Stores a random UUID on this machine to enable retention and per-feature adoption metrics.",
+  "settings.telemetryExport": "Export my data",
+  "settings.telemetryExported": "Data exported to clipboard",
+  "settings.telemetryExportFailed": "Export failed",
+  "settings.telemetryDisableFailed": "Could not disable enhanced stats",
+  "settings.telemetryLearnMore": "What data is sent?",
+  "settings.sendLogs": "Send my logs to the team",
+  "settings.sendLogsHint":
+    "Bundles the current and previous session logs. Paths and email addresses are redacted before sending.",
+  "settings.sendLogsSuccess": "Ticket ID copied: {id}",
+  "settings.sendLogsFailed": "Log upload failed",
+  "onboarding.telemetry.title": "Help improve Accshift",
+  "onboarding.telemetry.intro":
+    "Accshift collects a few anonymous usage stats to prioritise improvements. No personal data, no identifier stored on your machine by default.",
+  "onboarding.telemetry.modeBLabel":
+    "Also enable enhanced statistics (stores a random UUID locally)",
+  "onboarding.telemetry.modeBHint":
+    "Lets us measure retention and feature adoption. Opt-in, revocable any time in Settings › Privacy.",
+  "onboarding.telemetry.continue": "Continue",
+  "onboarding.telemetry.optOutHint":
+    "To disable all telemetry, uncheck the toggles in Settings › Privacy.",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
   "settings.battleNet": "Battle.net",
@@ -464,6 +491,33 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.pinLockOnAfk": "Verrou PIN en AFK",
   "settings.pinCode": "Code PIN",
   "settings.pinPlaceholder": "4 chiffres",
+  "settings.telemetry": "Statistiques d'utilisation",
+  "settings.telemetryModeA": "Envoyer des statistiques anonymes",
+  "settings.telemetryModeAHint":
+    "Pings session et compteurs d'events. Aucun identifiant local, aucune donnée personnelle. Base légale : intérêt légitime.",
+  "settings.telemetryModeB": "Statistiques avancées (opt-in)",
+  "settings.telemetryModeBHint":
+    "Stocke un UUID aléatoire sur cette machine pour mesurer la rétention et l'adoption par fonctionnalité.",
+  "settings.telemetryExport": "Exporter mes données",
+  "settings.telemetryExported": "Données copiées dans le presse-papiers",
+  "settings.telemetryExportFailed": "Échec de l'export",
+  "settings.telemetryDisableFailed": "Impossible de désactiver les stats avancées",
+  "settings.telemetryLearnMore": "Quelles données sont envoyées ?",
+  "settings.sendLogs": "Envoyer mes logs à l'équipe",
+  "settings.sendLogsHint":
+    "Inclut les logs de la session courante et de la précédente. Les chemins et emails sont expurgés avant envoi.",
+  "settings.sendLogsSuccess": "Ticket ID copié : {id}",
+  "settings.sendLogsFailed": "Échec de l'envoi",
+  "onboarding.telemetry.title": "Aide-nous à améliorer Accshift",
+  "onboarding.telemetry.intro":
+    "Accshift collecte quelques statistiques d'utilisation anonymes pour prioriser les améliorations. Aucune donnée personnelle, aucun identifiant local par défaut.",
+  "onboarding.telemetry.modeBLabel":
+    "Activer aussi les statistiques avancées (stocke un UUID aléatoire localement)",
+  "onboarding.telemetry.modeBHint":
+    "Permet de mesurer la rétention et l'adoption des fonctionnalités. Opt-in, révocable à tout moment dans Paramètres › Confidentialité.",
+  "onboarding.telemetry.continue": "Continuer",
+  "onboarding.telemetry.optOutHint":
+    "Pour désactiver toute la télémétrie, décoche les toggles dans Paramètres › Confidentialité.",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
   "settings.battleNet": "Battle.net",

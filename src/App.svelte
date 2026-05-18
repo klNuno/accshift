@@ -42,6 +42,7 @@
   import AppWorkspace from "$lib/app/AppWorkspace.svelte";
   import AppDialogs from "$lib/app/AppDialogs.svelte";
   import AppScreenOverlays from "$lib/app/AppScreenOverlays.svelte";
+  import TelemetryOnboarding from "$lib/features/settings/TelemetryOnboarding.svelte";
   import { createAppDialogsController } from "$lib/app/useAppDialogs.svelte";
   import { createAppNavigationController } from "$lib/app/useAppNavigation.svelte";
   import { createAppUpdater } from "$lib/app/useAppUpdater.svelte";
@@ -496,9 +497,24 @@
     }
   });
 
+  let showTelemetryOnboarding = $state(false);
+
+  async function checkTelemetryOnboarding() {
+    try {
+      type TState = { onboarding_completed: boolean };
+      const state = await invoke<TState>("telemetry_get_state");
+      if (!state.onboarding_completed) {
+        setTimeout(() => { showTelemetryOnboarding = true; }, 1200);
+      }
+    } catch (e) {
+      console.error("telemetry_get_state failed", e);
+    }
+  }
+
   onMount(() => {
     void lifecycle.initializeAppShell();
     void windowActivity.start();
+    void checkTelemetryOnboarding();
 
     updateCheckTimer = setTimeout(() => { void updates.startBackgroundUpdateFlow(); }, 3500);
     secureScreen.handleAppMounted();
@@ -679,6 +695,13 @@
     {toasts}
     onToastDone={removeToast}
   />
+
+  {#if showTelemetryOnboarding}
+    <TelemetryOnboarding
+      {t}
+      onComplete={() => { showTelemetryOnboarding = false; }}
+    />
+  {/if}
       {/if}
   </div>
 

@@ -9,11 +9,13 @@ use tauri::Manager;
 
 mod app_runtime;
 mod commands;
+mod commands_telemetry;
 mod tauri_context;
+mod telemetry_runtime;
 
 // Re-export core modules at the crate root so `crate::foo` keeps working
 // across the split (commands.rs and app_runtime.rs still use `crate::`).
-pub(crate) use accshift_core::{config, logging, os, platforms, storage, themes};
+pub(crate) use accshift_core::{config, logging, os, platforms, storage, telemetry, themes};
 pub(crate) use tauri_context::ctx;
 
 fn main() {
@@ -40,6 +42,9 @@ fn main() {
             let setup_ctx = ctx(&setup_handle);
             let _ = logging::begin_log_session(&setup_ctx);
             logging::install_panic_hook(setup_ctx.clone());
+
+            // Telemetry: build the worker, share the handle with commands.
+            app.manage(telemetry_runtime::TelemetryState::new(&setup_ctx));
             let _ = logging::append_app_log(
                 &setup_ctx,
                 "info",
@@ -124,6 +129,14 @@ fn main() {
             win.on_window_event(move |event| {
                 if let tauri::WindowEvent::CloseRequested { .. } = event {
                     let boot_state = app_handle.state::<app_runtime::BootState>();
+                    // Session ended + flush telemetry before the process exits.
+                    let tstate = app_handle.state::<telemetry_runtime::TelemetryState>();
+                    let duration_ms = tstate.app_start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+                    tstate
+                        .handle
+                        .track(telemetry::Event::SessionEnded { duration_ms });
+                    tstate.shutdown();
+
                     if !boot_state.is_completed() {
                         let _ = logging::append_app_log(
                             &ctx(&app_handle),
@@ -221,6 +234,13 @@ fn main() {
             commands::list_custom_themes,
             commands::save_custom_theme,
             commands::delete_custom_theme,
+            // Telemetry
+            commands_telemetry::telemetry_get_state,
+            commands_telemetry::telemetry_set_mode_a,
+            commands_telemetry::telemetry_set_mode_b,
+            commands_telemetry::telemetry_complete_onboarding,
+            commands_telemetry::telemetry_export,
+            commands_telemetry::telemetry_upload_logs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

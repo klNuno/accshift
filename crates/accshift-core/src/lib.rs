@@ -8,6 +8,7 @@ pub mod os;
 pub mod platforms;
 pub mod runtime;
 pub mod storage;
+pub mod telemetry;
 pub mod themes;
 
 pub use context::{AppContext, AppCtx};

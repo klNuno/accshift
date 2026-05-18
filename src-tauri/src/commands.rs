@@ -1,6 +1,9 @@
 use crate::ctx;
 use crate::platforms::{require_service, SetupStatus};
+use crate::telemetry;
+use crate::telemetry_runtime::TelemetryState;
 use serde_json::Value;
+use tauri::Manager;
 
 #[tauri::command]
 pub fn get_runtime_os() -> String {
@@ -39,6 +42,7 @@ pub fn log_app_event(
 pub fn finish_boot(
     app_handle: tauri::AppHandle,
     boot_state: tauri::State<'_, crate::app_runtime::BootState>,
+    tstate: tauri::State<'_, TelemetryState>,
     source: String,
 ) -> Result<(), String> {
     let was_first_completion = boot_state.mark_completed();
@@ -48,7 +52,43 @@ pub fn finish_boot(
         "Boot completion requested again"
     };
     let _ = crate::logging::append_app_log(&ctx(&app_handle), "info", &source, message, None);
+
+    // Telemetry: first boot completion triggers app_launched, ping, accounts_snapshot.
+    if was_first_completion {
+        let duration_ms = tstate
+            .app_start
+            .elapsed()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64;
+        tstate
+            .handle
+            .track(telemetry::Event::AppLaunched { duration_ms });
+        tstate.handle.track(telemetry::Event::Ping);
+        emit_accounts_snapshots(&app_handle, &tstate);
+    }
+
     crate::app_runtime::show_main_window(&app_handle)
+}
+
+/// Emits one `accounts_snapshot` per non-empty platform.
+/// Called once on first boot completion, gives the day's observed distribution.
+fn emit_accounts_snapshots(app_handle: &tauri::AppHandle, tstate: &TelemetryState) {
+    let cfg = crate::config::load_config(&ctx(app_handle));
+    let counts: [(&str, u64); 5] = [
+        ("riot", cfg.riot.profiles.len() as u64),
+        ("battle_net", cfg.battle_net.accounts.len() as u64),
+        ("ubisoft", cfg.ubisoft.accounts.len() as u64),
+        ("roblox", cfg.roblox.accounts.len() as u64),
+        ("epic", cfg.epic.accounts.len() as u64),
+    ];
+    for (platform, count) in counts {
+        if count > 0 {
+            tstate.handle.track(telemetry::Event::AccountsSnapshot {
+                platform: platform.to_string(),
+                count,
+            });
+        }
+    }
 }
 
 #[tauri::command]
@@ -156,9 +196,20 @@ pub async fn platform_switch_account(
     let c = ctx(&app_handle);
     let _lock = accshift_core::lock::acquire_exclusive(&c, std::time::Duration::from_secs(2))
         .map_err(|e| e.to_string())?;
-    tauri::async_runtime::spawn_blocking(move || service.switch_account(c, &account_id, params))
-        .await
-        .map_err(|e| format!("Task failed: {e}"))?
+    let t0 = std::time::Instant::now();
+    let platform_for_event = platform_id.clone();
+    let result =
+        tauri::async_runtime::spawn_blocking(move || service.switch_account(c, &account_id, params))
+            .await
+            .map_err(|e| format!("Task failed: {e}"))?;
+    let duration_ms = t0.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    let tstate = app_handle.state::<TelemetryState>();
+    tstate.handle.track(telemetry::Event::PlatformSwitch {
+        platform: platform_for_event,
+        duration_ms,
+        success: result.is_ok(),
+    });
+    result
 }
 
 #[tauri::command]

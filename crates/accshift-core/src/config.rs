@@ -124,6 +124,33 @@ pub struct EpicConfig {
     pub accounts: Vec<EpicAccountConfig>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TelemetryConfig {
+    #[serde(default = "default_true")]
+    pub mode_a_enabled: bool,
+    #[serde(default)]
+    pub mode_b_enabled: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub install_id: String,
+    #[serde(default)]
+    pub onboarding_completed: bool,
+}
+
+impl Default for TelemetryConfig {
+    fn default() -> Self {
+        Self {
+            mode_a_enabled: true,
+            mode_b_enabled: false,
+            install_id: String::new(),
+            onboarding_completed: false,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct AppConfig {
     #[serde(default, skip_serializing_if = "is_default_steam_config")]
@@ -142,6 +169,8 @@ pub struct AppConfig {
     pub roblox: RobloxConfig,
     #[serde(default, skip_serializing_if = "is_default_epic_config")]
     pub epic: EpicConfig,
+    #[serde(default)]
+    pub telemetry: TelemetryConfig,
     #[serde(default)]
     pub window_width: Option<f64>,
     #[serde(default)]
@@ -162,6 +191,8 @@ struct RawAppConfig {
     roblox: Option<RobloxConfig>,
     #[serde(default)]
     epic: Option<EpicConfig>,
+    #[serde(default)]
+    telemetry: Option<TelemetryConfig>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     steam_api_key: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -339,6 +370,7 @@ fn normalize_config(raw: RawAppConfig) -> AppConfig {
     let ubisoft = raw.ubisoft.unwrap_or_default();
     let roblox = raw.roblox.unwrap_or_default();
     let epic = raw.epic.unwrap_or_default();
+    let telemetry = raw.telemetry.unwrap_or_default();
     AppConfig {
         steam,
         riot,
@@ -346,6 +378,7 @@ fn normalize_config(raw: RawAppConfig) -> AppConfig {
         ubisoft,
         roblox,
         epic,
+        telemetry,
         window_width: raw.window_width,
         window_height: raw.window_height,
     }
@@ -533,6 +566,7 @@ fn portable_config(config: &AppConfig) -> AppConfig {
     portable.battle_net.path_override.clear();
     portable.ubisoft.path_override.clear();
     portable.epic.path_override.clear();
+    portable.telemetry.install_id.clear();
     portable.window_width = None;
     portable.window_height = None;
     for account in &mut portable.roblox.accounts {
@@ -550,6 +584,12 @@ fn local_config(config: &AppConfig) -> AppConfig {
     local.battle_net.path_override = config.battle_net.path_override.clone();
     local.ubisoft.path_override = config.ubisoft.path_override.clone();
     local.epic.path_override = config.epic.path_override.clone();
+    local.telemetry.install_id = config.telemetry.install_id.clone();
+    // mode_a_enabled / mode_b_enabled / onboarding_completed live in the portable
+    // file. Reset the defaults here so they do not pollute the later merge step.
+    local.telemetry.mode_a_enabled = false;
+    local.telemetry.mode_b_enabled = false;
+    local.telemetry.onboarding_completed = false;
     local.window_width = config.window_width;
     local.window_height = config.window_height;
     local.roblox.accounts = config
@@ -591,6 +631,9 @@ fn merge_split_configs(portable: AppConfig, local: AppConfig) -> AppConfig {
     }
     if !local.epic.path_override.is_empty() {
         merged.epic.path_override = local.epic.path_override;
+    }
+    if !local.telemetry.install_id.is_empty() {
+        merged.telemetry.install_id = local.telemetry.install_id;
     }
     if local.window_width.is_some() {
         merged.window_width = local.window_width;
@@ -726,6 +769,7 @@ mod tests {
                     last_used_at: Some(1000),
                 }],
             },
+            telemetry: TelemetryConfig::default(),
             window_width: Some(1200.0),
             window_height: Some(800.0),
         };
@@ -795,6 +839,7 @@ mod tests {
                     last_used_at: Some(2000),
                 }],
             },
+            telemetry: TelemetryConfig::default(),
             window_width: Some(1024.0),
             window_height: Some(768.0),
         };

@@ -14,8 +14,12 @@ tauri = { workspace = true, features = [] }
 tauri-plugin-shell = { workspace = true }
 tauri-plugin-process = { workspace = true }
 tauri-plugin-updater = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+winreg = { workspace = true }
 
 [dependencies.mimalloc]
 workspace = true
