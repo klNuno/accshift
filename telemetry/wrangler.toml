@@ -1,0 +1,99 @@
+name = "accshift-telemetry"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+# account_id is read from the CLOUDFLARE_ACCOUNT_ID env var (or wrangler login).
+# Not versioned here so the repo stays fork-friendly.
+
+# Custom domain. Public anyway, the client hardcodes it in the binary.
+# Forks replace it with their own (or delete this block to use workers.dev).
+routes = [{ pattern = "accshift.mtsu.dev", custom_domain = true }]
+
+workers_dev = false
+preview_urls = false
+
+# CPU limit. Free tier has a wide margin for our workload.
+# cpu_ms = 50
+
+# ── Analytics Engine: high-cardinality events, 90-day retention ──
+[[analytics_engine_datasets]]
+binding = "AE"
+dataset = "accshift_events"
+
+# ── D1: pings, snapshots, Mode B pseudonyms, forget list ──
+# database_id is filled after `wrangler d1 create accshift-telemetry`.
+[[d1_databases]]
+binding = "DB"
+database_name = "accshift-telemetry"
+database_id = "a7eb2043-c878-48f9-ab21-6cdc7d8ea327"
+
+# ── R2: manual log uploads ──
+[[r2_buckets]]
+binding = "LOGS"
+bucket_name = "accshift-logs"
+
+# ── Public variables (non-secret) ──
+[vars]
+ENVIRONMENT = "production"
+LOG_MAX_BYTES = "10485760" # 10 MB max per upload
+BATCH_MAX_EVENTS = "200" # per /track request
+ADMIN_ALLOWED = "true"
+ALERT_FROM = "onboarding@resend.dev" # replace with a verified domain once set up
+
+# Expected User-Agent prefix. Requests without it are rejected.
+# Cheap filter against opportunistic scripts. Trivially spoofable but effective.
+UA_PREFIX = "Accshift/"
+
+# Global daily budget per endpoint. Last line of defense against a distributed
+# abuse that would bypass per-IP rate limiters.
+# Values calibrated to stay inside the free tiers of Cloudflare and R2.
+BUDGET_TRACK = "4000" # batches/day, max 200 events/batch = 800k events/day (AE free: 830k/day)
+BUDGET_LOGS = "2000" # uploads/day, max 10 MB each = 20 GB/day (R2 free: 10 GB storage)
+BUDGET_FORGET = "500"
+BUDGET_EXPORT = "500"
+BUDGET_ADMIN = "2000"
+
+# ── Secrets (set with `wrangler secret put <NAME>`) ──
+# HASH_SECRET       -> salt for daily_visitor_hash
+# ADMIN_TOKEN       -> bearer token for the /admin/query endpoint
+# RESEND_API_KEY    -> Resend API key for email alerts
+# ALERT_EMAIL       -> recipient address for alerts
+
+# ── Rate limiting (native bindings, free) ──
+# The period field accepts only 10 or 60 seconds.
+# namespace_id values must be unique within the account.
+
+[[unsafe.bindings]]
+name = "RL_TRACK"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 30, period = 60 } # 30 batches/min/IP (up to 6000 events/min)
+
+[[unsafe.bindings]]
+name = "RL_LOGS"
+type = "ratelimit"
+namespace_id = "1002"
+simple = { limit = 2, period = 60 } # 2 uploads/min/IP (max 20 MB/min with 10 MB cap)
+
+[[unsafe.bindings]]
+name = "RL_RGPD"
+type = "ratelimit"
+namespace_id = "1003"
+simple = { limit = 5, period = 60 } # forget + export combined, per install_id
+
+[[unsafe.bindings]]
+name = "RL_ADMIN"
+type = "ratelimit"
+namespace_id = "1004"
+simple = { limit = 10, period = 60 }
+
+[[unsafe.bindings]]
+name = "RL_NOTIFY"
+type = "ratelimit"
+namespace_id = "1005"
+simple = { limit = 1, period = 60 } # email throttle: 1/min per (endpoint, IP)
+
+# ── Observability ──
+[observability]
+enabled = true
