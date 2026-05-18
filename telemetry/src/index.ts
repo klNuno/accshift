@@ -246,6 +246,7 @@ async function handleLogs(request: Request, env: Env, ctx: ExecutionContext): Pr
   const appVersion = request.headers.get("X-App-Version") ?? "";
   const osVersion = request.headers.get("X-OS-Version") ?? "";
   const country = (request.cf?.country as string | undefined) ?? "XX";
+  const note = decodeNoteHeader(request.headers.get("X-Note-B64"));
 
   await env.LOGS.put(key, body, {
     httpMetadata: { contentType: "application/zip" },
@@ -253,13 +254,40 @@ async function handleLogs(request: Request, env: Env, ctx: ExecutionContext): Pr
   });
 
   await env.DB.prepare(
-    `INSERT INTO log_uploads (ticket_id, created_at, size_bytes, app_version, os_version, country)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+    `INSERT INTO log_uploads (ticket_id, created_at, size_bytes, app_version, os_version, country, note)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
   )
-    .bind(ticketId, Math.floor(Date.now() / 1000), body.byteLength, appVersion, osVersion, country)
+    .bind(
+      ticketId,
+      Math.floor(Date.now() / 1000),
+      body.byteLength,
+      appVersion,
+      osVersion,
+      country,
+      note,
+    )
     .run();
 
   return json({ ok: true, ticket_id: ticketId });
+}
+
+const NOTE_MAX_CHARS = 1000;
+
+// Decodes the base64 note header into a plain string, capped at NOTE_MAX_CHARS
+// characters. Invalid base64 or oversized payloads degrade to null instead of
+// failing the upload, since the note is auxiliary metadata.
+function decodeNoteHeader(raw: string | null): string | null {
+  if (!raw) return null;
+  try {
+    const bytes = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
+    const decoded = new TextDecoder("utf-8", { fatal: false, ignoreBOM: false })
+      .decode(bytes)
+      .trim();
+    if (!decoded) return null;
+    return decoded.length > NOTE_MAX_CHARS ? decoded.slice(0, NOTE_MAX_CHARS) : decoded;
+  } catch {
+    return null;
+  }
 }
 
 // ─── /forget (Mode B) ────────────────────────────────────────────
@@ -433,7 +461,10 @@ function cors(res: Response): Response {
   const h = new Headers(res.headers);
   h.set("Access-Control-Allow-Origin", "*");
   h.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  h.set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-App-Version, X-OS-Version");
+  h.set(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, X-App-Version, X-OS-Version, X-Note-B64",
+  );
   h.set("Access-Control-Max-Age", "86400");
   return new Response(res.body, { status: res.status, headers: h });
 }

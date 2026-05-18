@@ -99,6 +99,9 @@ export const EN_MESSAGES = {
   "settings.sendLogs": "Send my logs to the team",
   "settings.sendLogsHint":
     "Bundles the current and previous session logs. Paths and email addresses are redacted before sending.",
+  "settings.sendLogsNoteLabel": "What's the issue? (optional)",
+  "settings.sendLogsNotePlaceholder":
+    "Describe what went wrong, what you were doing, anything that helps us reproduce.",
   "settings.sendLogsSuccess": "Ticket ID copied: {id}",
   "settings.sendLogsFailed": "Log upload failed",
   "onboarding.telemetry.title": "Help improve Accshift",
@@ -506,6 +509,9 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.sendLogs": "Envoyer mes logs à l'équipe",
   "settings.sendLogsHint":
     "Inclut les logs de la session courante et de la précédente. Les chemins et emails sont expurgés avant envoi.",
+  "settings.sendLogsNoteLabel": "Quel est le problème ? (optionnel)",
+  "settings.sendLogsNotePlaceholder":
+    "Décrivez ce qui s'est mal passé, ce que vous faisiez, tout ce qui peut aider à reproduire.",
   "settings.sendLogsSuccess": "Ticket ID copié : {id}",
   "settings.sendLogsFailed": "Échec de l'envoi",
   "onboarding.telemetry.title": "Aide-nous à améliorer Accshift",

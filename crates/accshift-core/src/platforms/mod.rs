@@ -214,11 +214,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as u64;
-        let diff = if ts > system_ms {
-            ts - system_ms
-        } else {
-            system_ms - ts
-        };
+        let diff = ts.abs_diff(system_ms);
         assert!(
             diff < one_hour_ms,
             "timestamp drift {diff}ms exceeds 1 hour"

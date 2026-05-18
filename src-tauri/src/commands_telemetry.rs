@@ -116,9 +116,13 @@ pub fn telemetry_complete_onboarding(
 }
 
 /// Bundles the current and previous session logs into a zip and POSTs it to
-/// `/logs`. Returns the ticket_id the user can copy into a bug report.
+/// `/logs`. The optional `note` is the user-typed reason shown in the privacy
+/// tab textarea. Returns the ticket_id the user can copy into a bug report.
 #[tauri::command]
-pub async fn telemetry_upload_logs(app_handle: tauri::AppHandle) -> Result<String, String> {
+pub async fn telemetry_upload_logs(
+    app_handle: tauri::AppHandle,
+    note: Option<String>,
+) -> Result<String, String> {
     let c = ctx(&app_handle);
     let zip_bytes =
         tauri::async_runtime::spawn_blocking(move || telemetry::log_bundle::build(&c))
@@ -143,6 +147,7 @@ pub async fn telemetry_upload_logs(app_handle: tauri::AppHandle) -> Result<Strin
             zip_bytes,
             &app_version,
             &os_version,
+            note.as_deref(),
         )
     })
     .await

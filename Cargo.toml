@@ -45,6 +45,7 @@ keyring = { version = "3", default-features = false, features = [
   "sync-secret-service",
   "crypto-rust",
 ] }
+base64 = "0.22"
 
 [profile.release]
 panic = "abort"

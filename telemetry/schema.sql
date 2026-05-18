@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS log_uploads (
   size_bytes  INTEGER NOT NULL,
   app_version TEXT,
   os_version  TEXT,
-  country     TEXT
+  country     TEXT,
+  note        TEXT                    -- user-typed reason, capped at 1000 chars
 );
 
 CREATE INDEX IF NOT EXISTS idx_uploads_date ON log_uploads(created_at);

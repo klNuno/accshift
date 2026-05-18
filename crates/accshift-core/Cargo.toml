@@ -17,6 +17,7 @@ tokio = { workspace = true }
 sysinfo = { workspace = true }
 open = { workspace = true }
 fs4 = { workspace = true }
+base64 = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 winreg = { workspace = true }

@@ -30,10 +30,13 @@
     onboarding_completed: boolean;
   };
 
+  const NOTE_MAX_CHARS = 1000;
+
   let telemetry = $state<TelemetryState | null>(null);
   let modeBBusy = $state(false);
   let exportBusy = $state(false);
   let sendLogsBusy = $state(false);
+  let logsNote = $state("");
 
   async function refreshTelemetry() {
     try {
@@ -91,13 +94,16 @@
     if (sendLogsBusy) return;
     sendLogsBusy = true;
     try {
-      const ticketId = await invoke<string>("telemetry_upload_logs");
+      const trimmed = logsNote.trim();
+      const note = trimmed.length > 0 ? trimmed.slice(0, NOTE_MAX_CHARS) : null;
+      const ticketId = await invoke<string>("telemetry_upload_logs", { note });
       try {
         await navigator.clipboard.writeText(ticketId);
       } catch {
         // Ignore clipboard errors. The ticket id is still shown in the toast.
       }
       addToast(t("settings.sendLogsSuccess", { id: ticketId }));
+      logsNote = "";
     } catch (e) {
       console.error("telemetry_upload_logs failed", e);
       addToast(t("settings.sendLogsFailed"));
@@ -205,6 +211,17 @@
     <section class="card card-wide">
       <h3>{t("settings.sendLogs")}</h3>
       <p class="hint">{t("settings.sendLogsHint")}</p>
+      <label class="note-field">
+        <span class="note-label">{t("settings.sendLogsNoteLabel")}</span>
+        <textarea
+          class="note-input"
+          rows="3"
+          maxlength={NOTE_MAX_CHARS}
+          placeholder={t("settings.sendLogsNotePlaceholder")}
+          bind:value={logsNote}
+        ></textarea>
+        <span class="note-counter">{logsNote.length}/{NOTE_MAX_CHARS}</span>
+      </label>
       <button
         type="button"
         class="btn-export"
@@ -246,5 +263,45 @@
   .btn-export:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .note-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  .note-label {
+    font-size: 11px;
+    color: var(--fg-subtle);
+    line-height: 1.4;
+  }
+
+  .note-input {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--fg);
+    padding: 8px 10px;
+    font-size: 12px;
+    font-family: inherit;
+    line-height: 1.5;
+    resize: vertical;
+    min-height: 60px;
+    transition: border-color 120ms ease-out;
+  }
+
+  .note-input:focus {
+    outline: none;
+    border-color: color-mix(in srgb, var(--fg) 35%, var(--border));
+  }
+
+  .note-counter {
+    align-self: flex-end;
+    font-size: 10px;
+    color: var(--fg-subtle);
   }
 </style>
