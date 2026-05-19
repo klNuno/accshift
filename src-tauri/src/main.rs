@@ -70,7 +70,6 @@ fn main() {
             .transparent(true)
             .background_color(tauri::webview::Color(0, 0, 0, 0))
             .center()
-            .decorations(false)
             .resizable(true)
             .on_navigation(move |url| {
                 // Only allow app URLs in production. In dev, allow local Vite URLs only.
@@ -111,6 +110,20 @@ fn main() {
                     Some(&url),
                 );
             });
+
+            #[cfg(target_os = "macos")]
+            {
+                // Native traffic lights float over our custom titlebar. WKWebView
+                // injects env(safe-area-inset-top) so the CSS header aligns with
+                // the system-reserved zone for free.
+                window_builder = window_builder
+                    .title_bar_style(tauri::TitleBarStyle::Overlay)
+                    .hidden_title(true);
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                window_builder = window_builder.decorations(false);
+            }
 
             if let Some(icon) = app.default_window_icon() {
                 window_builder = window_builder.icon(icon.clone())?;

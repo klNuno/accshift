@@ -557,35 +557,45 @@
   });
 </script>
 
+{#snippet titleBar()}
+  <TitleBar
+    onRefresh={handleRefreshClick}
+    onAddAccount={handleAddAccountClick}
+    onOpenSettings={appNavigation.toggleSettingsPanel}
+    onBulkEdit={bulkEdit.toggleBulkEdit}
+    onApplyUpdate={updates.applyReadyUpdate}
+    updateCtaLabel={updates.ctaLabel}
+    updateCtaTitle={updates.ctaTitle}
+    updateCtaDisabled={updates.ctaDisabled}
+    {activeTab}
+    onTabChange={appNavigation.handleTabChange}
+    enabledPlatforms={shell.enabledPlatforms}
+    unavailablePlatformIds={shell.unavailablePlatformIds}
+    canRefresh={activeTabUsable && !adapterLoading}
+    canAddAccount={activeTabUsable && !adapterLoading}
+    showSettings={settingsPanel.showSettings}
+    showBulkEdit={activeTab === "steam" && !settingsPanel.showSettings && activeTabUsable}
+    bulkEditActive={bulkEdit.bulkEditMode}
+    {locale}
+    runtimeOs={shell.runtimeOs}
+  />
+{/snippet}
+
 <div
   class="app-frame"
   class:boot-ready={bootReady}
   class:motion-paused={secureScreen.motionPaused}
   style={`--afk-reveal-delay:${secureScreen.afkTextRevealDelayMs}ms;`}
 >
+  {#if shell.runtimeOs === "macos" && !secureScreen.renderSuspended}
+    {@render titleBar()}
+  {/if}
   <div class="app-stage" class:locked={secureScreen.isPinLocked} style={shell.appStageStyle}>
     <div class="app-shell" class:obscured={secureScreen.isObscured}>
       {#if !secureScreen.renderSuspended}
-      <TitleBar
-        onRefresh={handleRefreshClick}
-        onAddAccount={handleAddAccountClick}
-        onOpenSettings={appNavigation.toggleSettingsPanel}
-      onBulkEdit={bulkEdit.toggleBulkEdit}
-      onApplyUpdate={updates.applyReadyUpdate}
-      updateCtaLabel={updates.ctaLabel}
-      updateCtaTitle={updates.ctaTitle}
-      updateCtaDisabled={updates.ctaDisabled}
-      {activeTab}
-      onTabChange={appNavigation.handleTabChange}
-      enabledPlatforms={shell.enabledPlatforms}
-      unavailablePlatformIds={shell.unavailablePlatformIds}
-      canRefresh={activeTabUsable && !adapterLoading}
-      canAddAccount={activeTabUsable && !adapterLoading}
-      showSettings={settingsPanel.showSettings}
-      showBulkEdit={activeTab === "steam" && !settingsPanel.showSettings && activeTabUsable}
-      bulkEditActive={bulkEdit.bulkEditMode}
-      {locale}
-    />
+      {#if shell.runtimeOs !== "macos"}
+        {@render titleBar()}
+      {/if}
     <div
       class="inactivity-frost"
       class:visible={secureScreen.isObscured}
@@ -733,6 +743,16 @@
     box-sizing: border-box;
     overflow: hidden;
     opacity: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* When TitleBar sits at the top of .app-frame (macOS) the stage takes the
+     remainder. On other OSes TitleBar lives inside .app-shell, but flex layout
+     still works because .app-stage is the only flex child. */
+  .app-stage {
+    flex: 1;
+    min-height: 0;
   }
 
   .app-frame.boot-ready {
@@ -749,10 +769,6 @@
       animation: none;
       opacity: 1;
     }
-  }
-
-  .app-stage {
-    height: 100%;
   }
 
   .app-stage.locked {
