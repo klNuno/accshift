@@ -61,9 +61,7 @@ pub async fn telemetry_set_mode_b(
         Ok(())
     } else {
         // 1. Read the current install_id (needed for /forget before clearing).
-        let install_id = config::load_config(&ctx(&app_handle))
-            .telemetry
-            .install_id;
+        let install_id = config::load_config(&ctx(&app_handle)).telemetry.install_id;
 
         // 2. Call /forget remotely if an id existed.
         if !install_id.is_empty() {
@@ -124,10 +122,9 @@ pub async fn telemetry_upload_logs(
     note: Option<String>,
 ) -> Result<String, String> {
     let c = ctx(&app_handle);
-    let zip_bytes =
-        tauri::async_runtime::spawn_blocking(move || telemetry::log_bundle::build(&c))
-            .await
-            .map_err(|e| format!("task: {e}"))??;
+    let zip_bytes = tauri::async_runtime::spawn_blocking(move || telemetry::log_bundle::build(&c))
+        .await
+        .map_err(|e| format!("task: {e}"))??;
     if zip_bytes.is_empty() {
         return Err("no_logs_found".into());
     }
@@ -156,9 +153,7 @@ pub async fn telemetry_upload_logs(
 
 #[tauri::command]
 pub async fn telemetry_export(app_handle: tauri::AppHandle) -> Result<Value, String> {
-    let install_id = config::load_config(&ctx(&app_handle))
-        .telemetry
-        .install_id;
+    let install_id = config::load_config(&ctx(&app_handle)).telemetry.install_id;
     if install_id.is_empty() {
         return Err("mode_b_disabled".into());
     }

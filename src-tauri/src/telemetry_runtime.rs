@@ -68,7 +68,28 @@ pub fn detect_os_version() -> String {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub fn detect_os_version() -> String {
+    let arch = std::env::consts::ARCH;
+    // Prefer /etc/os-release PRETTY_NAME (e.g. "CachyOS Linux", "Ubuntu 24.04").
+    if let Ok(content) = std::fs::read_to_string("/etc/os-release") {
+        for line in content.lines() {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            if key != "PRETTY_NAME" {
+                continue;
+            }
+            let trimmed = value.trim().trim_matches('"').trim_matches('\'');
+            if !trimmed.is_empty() {
+                return format!("{trimmed} {arch}");
+            }
+        }
+    }
+    format!("Linux {arch}")
+}
+
+#[cfg(all(not(windows), not(target_os = "linux")))]
 pub fn detect_os_version() -> String {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;

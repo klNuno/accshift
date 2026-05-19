@@ -256,6 +256,14 @@ pub fn steam_web_helper_process_name() -> &'static str {
     "steamwebhelper.exe"
 }
 
+pub fn steam_htmlcache_path() -> Result<PathBuf, AppError> {
+    let local_app_data = std::env::var("LOCALAPPDATA")
+        .map_err(|e| AppError::FileRead(format!("Could not resolve LOCALAPPDATA: {e}")))?;
+    Ok(PathBuf::from(local_app_data)
+        .join("Steam")
+        .join("htmlcache"))
+}
+
 pub fn set_auto_login_user(username: &str) -> Result<(), AppError> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let steam_key = hkcu

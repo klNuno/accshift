@@ -17,14 +17,12 @@ pub fn build(ctx: &dyn AppContext) -> Result<Vec<u8>, String> {
     let mut buf = Vec::with_capacity(16 * 1024);
     {
         let mut zip = ZipWriter::new(Cursor::new(&mut buf));
-        let options =
-            SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
         if current.exists() {
             zip.start_file("app.log", options)
                 .map_err(|e| format!("zip start_file app.log: {e}"))?;
-            let data =
-                std::fs::read(&current).map_err(|e| format!("read app.log: {e}"))?;
+            let data = std::fs::read(&current).map_err(|e| format!("read app.log: {e}"))?;
             zip.write_all(&data)
                 .map_err(|e| format!("zip write app.log: {e}"))?;
         }
@@ -32,8 +30,8 @@ pub fn build(ctx: &dyn AppContext) -> Result<Vec<u8>, String> {
         if previous.exists() {
             zip.start_file("app.previous.log", options)
                 .map_err(|e| format!("zip start_file app.previous.log: {e}"))?;
-            let data = std::fs::read(&previous)
-                .map_err(|e| format!("read app.previous.log: {e}"))?;
+            let data =
+                std::fs::read(&previous).map_err(|e| format!("read app.previous.log: {e}"))?;
             zip.write_all(&data)
                 .map_err(|e| format!("zip write app.previous.log: {e}"))?;
         }

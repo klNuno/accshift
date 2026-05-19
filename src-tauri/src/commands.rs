@@ -198,10 +198,11 @@ pub async fn platform_switch_account(
         .map_err(|e| e.to_string())?;
     let t0 = std::time::Instant::now();
     let platform_for_event = platform_id.clone();
-    let result =
-        tauri::async_runtime::spawn_blocking(move || service.switch_account(c, &account_id, params))
-            .await
-            .map_err(|e| format!("Task failed: {e}"))?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        service.switch_account(c, &account_id, params)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {e}"))?;
     let duration_ms = t0.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
     let tstate = app_handle.state::<TelemetryState>();
     tstate.handle.track(telemetry::Event::PlatformSwitch {

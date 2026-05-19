@@ -131,7 +131,11 @@ fn main() {
                     let boot_state = app_handle.state::<app_runtime::BootState>();
                     // Session ended + flush telemetry before the process exits.
                     let tstate = app_handle.state::<telemetry_runtime::TelemetryState>();
-                    let duration_ms = tstate.app_start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+                    let duration_ms = tstate
+                        .app_start
+                        .elapsed()
+                        .as_millis()
+                        .min(u128::from(u64::MAX)) as u64;
                     tstate
                         .handle
                         .track(telemetry::Event::SessionEnded { duration_ms });

@@ -39,6 +39,10 @@ pub fn steam_web_helper_process_name() -> &'static str {
     "steamwebhelper"
 }
 
+pub fn steam_htmlcache_path() -> Result<PathBuf, AppError> {
+    Err(unsupported("Steam htmlcache discovery"))
+}
+
 pub fn get_auto_login_user() -> Result<String, AppError> {
     Err(unsupported("Steam auto-login lookup"))
 }

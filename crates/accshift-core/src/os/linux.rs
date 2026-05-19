@@ -13,7 +13,6 @@ use std::process::Command;
 
 use super::secrets::{
     keyring_get_bytes, keyring_get_password, keyring_set_bytes, keyring_set_password, secret_error,
-    unsupported,
 };
 
 pub fn encrypt_secret(secret: &str) -> Result<String, AppError> {
@@ -99,6 +98,22 @@ pub fn steam_process_name() -> &'static str {
 
 pub fn steam_web_helper_process_name() -> &'static str {
     "steamwebhelper"
+}
+
+pub fn steam_htmlcache_path() -> Result<PathBuf, AppError> {
+    // Steam on Linux stores the integrated browser cache under the Steam data
+    // dir, not in an XDG cache dir. Probe the same candidates as
+    // `steam_installation_path` so the Flatpak install is covered.
+    for candidate in candidate_steam_paths() {
+        let cache = candidate.join("config").join("htmlcache");
+        if cache.exists() {
+            return Ok(cache);
+        }
+    }
+    // Fall back to the most common location even when it does not exist yet —
+    // the caller treats a missing dir as a no-op.
+    let home = home_dir().ok_or_else(|| AppError::PathResolve("$HOME is not set".into()))?;
+    Ok(home.join(".local/share/Steam/config/htmlcache"))
 }
 
 // ---------------------------------------------------------------------------
@@ -204,14 +219,66 @@ fn resolve_steam_launcher(steam_path: &Path) -> PathBuf {
 }
 
 // ---------------------------------------------------------------------------
-// File / folder pickers — deferred. Tauri's dialog plugin covers the GUI side
-// and the CLI doesn't need pickers.
+// File / folder pickers — shell out to whichever native dialog tool is in
+// $PATH. No GUI deps at compile time, no extra runtime libraries beyond what
+// the user's desktop session already provides (Gnome ships zenity, KDE ships
+// kdialog; xdg-desktop-portal works under both).
 // ---------------------------------------------------------------------------
 
-pub fn select_folder(_title: &str) -> Result<String, AppError> {
-    Err(unsupported("Folder picker"))
+fn picker_supported() -> AppError {
+    AppError::UnsupportedOperatingSystem(
+        "No native folder picker tool found. Install zenity or kdialog, or set the path manually."
+            .into(),
+    )
 }
 
-pub fn select_file(_title: &str, _filter: &str) -> Result<String, AppError> {
-    Err(unsupported("File picker"))
+fn run_picker(command: &str, args: &[&str]) -> Option<Result<String, AppError>> {
+    let output = Command::new(command).args(args).output().ok()?;
+    if !output.status.success() {
+        // Non-zero status usually means the user cancelled — surface as empty.
+        return Some(Ok(String::new()));
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Some(Ok(path))
+}
+
+pub fn select_folder(title: &str) -> Result<String, AppError> {
+    if let Some(result) = run_picker(
+        "zenity",
+        &["--file-selection", "--directory", "--title", title],
+    ) {
+        return result;
+    }
+    if let Some(result) = run_picker(
+        "kdialog",
+        &["--getexistingdirectory", ".", "--title", title],
+    ) {
+        return result;
+    }
+    Err(picker_supported())
+}
+
+pub fn select_file(title: &str, filter: &str) -> Result<String, AppError> {
+    let zenity_args: Vec<&str> = if filter.is_empty() {
+        vec!["--file-selection", "--title", title]
+    } else {
+        vec![
+            "--file-selection",
+            "--title",
+            title,
+            "--file-filter",
+            filter,
+        ]
+    };
+    if let Some(result) = run_picker("zenity", &zenity_args) {
+        return result;
+    }
+    let kdialog_filter = if filter.is_empty() { "*" } else { filter };
+    if let Some(result) = run_picker(
+        "kdialog",
+        &["--getopenfilename", ".", kdialog_filter, "--title", title],
+    ) {
+        return result;
+    }
+    Err(picker_supported())
 }

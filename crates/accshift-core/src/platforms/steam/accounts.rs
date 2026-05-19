@@ -584,12 +584,7 @@ pub fn get_copyable_games(
 pub fn clear_integrated_browser_cache() -> Result<(), AppError> {
     kill_steam_client_processes()?;
 
-    let local_app_data = std::env::var("LOCALAPPDATA")
-        .map_err(|e| AppError::FileRead(format!("Could not resolve LOCALAPPDATA: {e}")))?;
-    let htmlcache_path = PathBuf::from(local_app_data)
-        .join("Steam")
-        .join("htmlcache");
-
+    let htmlcache_path = os::steam_htmlcache_path()?;
     if htmlcache_path.exists() {
         fs::remove_dir_all(&htmlcache_path).map_err(|e| AppError::FileRead(e.to_string()))?;
     }

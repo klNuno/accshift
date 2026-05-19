@@ -19,7 +19,7 @@
 
 | Platform             | Windows     | macOS           | Linux           |
 | -------------------- | ----------- | --------------- | --------------- |
-| Steam                | ✅ Done     | 🧪 CLI ready    | 🧪 CLI ready    |
+| Steam                | ✅ Done     | 🧪 GUI ready    | 🧪 GUI ready    |
 | Riot Games           | ✅ Done     | 🚧 Possible     | ⛔ Not feasible |
 | Battle.net           | ✅ Done     | 🚧 Possible     | ⛔ Not feasible |
 | Epic Games           | ✅ Done     | 🚧 Possible     | 🚧 Possible     |
@@ -32,8 +32,8 @@
 | HoYoverse / HoYoPlay | 🚧 Possible | ⛔ Not feasible | ⛔ Not feasible |
 | Minecraft Launcher   | 🚧 Possible | 🚧 Possible     | 🚧 Possible     |
 
-- `✅ Done` — GUI and CLI implemented and working
-- `🧪 CLI ready` — non-Windows support landed, awaiting on-target verification
+- `✅ Done` — GUI and CLI implemented and verified on target
+- `🧪 GUI ready` — GUI + CLI landed, awaiting on-target verification
 - `🚧 Possible` — feasible, priority goes to user requests
 - `⛔ Not feasible` — not realistic for this OS
 

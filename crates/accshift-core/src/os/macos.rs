@@ -6,7 +6,6 @@ use std::process::Command;
 
 use super::secrets::{
     keyring_get_bytes, keyring_get_password, keyring_set_bytes, keyring_set_password, secret_error,
-    unsupported,
 };
 
 // Secrets live in the Keychain via `keyring`. See os/secrets.rs and the Linux
@@ -75,6 +74,12 @@ pub fn steam_process_name() -> &'static str {
 
 pub fn steam_web_helper_process_name() -> &'static str {
     "Steam Helper"
+}
+
+pub fn steam_htmlcache_path() -> Result<PathBuf, AppError> {
+    let dir =
+        steam_support_dir().ok_or_else(|| AppError::PathResolve("$HOME is not set".into()))?;
+    Ok(dir.join("config").join("htmlcache"))
 }
 
 fn registry_vdf_path() -> Result<PathBuf, AppError> {
@@ -171,10 +176,27 @@ pub fn launch_steam(
     Ok(())
 }
 
-pub fn select_folder(_title: &str) -> Result<String, AppError> {
-    Err(unsupported("Folder picker"))
+fn run_osascript(script: &str) -> Result<String, AppError> {
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|e| AppError::ProcessStart(e.to_string()))?;
+    if !output.status.success() {
+        // User cancelled (osascript exits 1) — surface as empty selection.
+        return Ok(String::new());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-pub fn select_file(_title: &str, _filter: &str) -> Result<String, AppError> {
-    Err(unsupported("File picker"))
+pub fn select_folder(title: &str) -> Result<String, AppError> {
+    let escaped = title.replace('\\', "\\\\").replace('"', "\\\"");
+    let script = format!("POSIX path of (choose folder with prompt \"{escaped}\")");
+    run_osascript(&script)
+}
+
+pub fn select_file(title: &str, _filter: &str) -> Result<String, AppError> {
+    let escaped = title.replace('\\', "\\\\").replace('"', "\\\"");
+    let script = format!("POSIX path of (choose file with prompt \"{escaped}\")");
+    run_osascript(&script)
 }

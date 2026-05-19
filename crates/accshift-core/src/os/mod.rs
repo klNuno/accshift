@@ -82,6 +82,10 @@ pub fn steam_web_helper_process_name() -> &'static str {
     imp::steam_web_helper_process_name()
 }
 
+pub fn steam_htmlcache_path() -> Result<PathBuf, AppError> {
+    imp::steam_htmlcache_path()
+}
+
 pub fn get_auto_login_user() -> Result<String, AppError> {
     imp::get_auto_login_user()
 }
