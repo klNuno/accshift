@@ -20,10 +20,16 @@ fn fresh_system() -> System {
 }
 
 fn matches_name(process: &sysinfo::Process, target: &str) -> bool {
-    process
-        .name()
-        .to_string_lossy()
-        .eq_ignore_ascii_case(target)
+    let name = process.name().to_string_lossy();
+    if name.eq_ignore_ascii_case(target) {
+        return true;
+    }
+    // CEF on macOS spawns "Steam Helper", "Steam Helper (GPU)", "Steam Helper
+    // (Renderer)", etc. Match the variants so we kill the whole tree, not just
+    // the parent (which usually cascades but not always under sandbox).
+    let name_lower = name.to_lowercase();
+    let prefix_lower = target.to_lowercase() + " (";
+    name_lower.starts_with(&prefix_lower) && name_lower.ends_with(')')
 }
 
 pub fn is_process_running(process_name: &str) -> bool {

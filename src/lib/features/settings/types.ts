@@ -2,6 +2,8 @@ import type { Locale } from "$lib/i18n";
 
 export type RuntimeOs = "windows" | "linux" | "macos" | "unknown";
 
+export type PathPlaceholder = string | Partial<Record<RuntimeOs, string>>;
+
 export interface PlatformDef {
   id: string;
   name: string;
@@ -11,7 +13,16 @@ export interface PlatformDef {
   settingsTabKey?: string;
   settingsComponent?: () => Promise<{ default: any }>;
   pathLabelKey?: string;
-  pathPlaceholder?: string;
+  pathPlaceholder?: PathPlaceholder;
+}
+
+export function resolvePathPlaceholder(
+  placeholder: PathPlaceholder | undefined,
+  os: RuntimeOs,
+): string {
+  if (!placeholder) return "";
+  if (typeof placeholder === "string") return placeholder;
+  return placeholder[os] ?? placeholder.windows ?? placeholder.linux ?? placeholder.macos ?? "";
 }
 
 export interface DataRefreshSettings {

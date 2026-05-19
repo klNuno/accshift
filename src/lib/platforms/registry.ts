@@ -12,7 +12,11 @@ export const PLATFORM_DEFS: PlatformDef[] = [
     settingsTabKey: "settings.steam",
     settingsComponent: () => import("./steam/SteamSettingsTab.svelte"),
     pathLabelKey: "settings.steamFolder",
-    pathPlaceholder: "C:\\Program Files (x86)\\Steam",
+    pathPlaceholder: {
+      windows: "C:\\Program Files (x86)\\Steam",
+      linux: "~/.local/share/Steam",
+      macos: "~/Library/Application Support/Steam",
+    },
   },
   {
     id: "riot",

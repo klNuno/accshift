@@ -21,6 +21,7 @@
   import { trackDependencies } from "$lib/shared/trackDependencies";
   import { createNumericInput, clampInt } from "$lib/shared/useNumericInput.svelte";
   import type { PlatformDef } from "$lib/features/settings/types";
+  import { resolvePathPlaceholder } from "$lib/features/settings/types";
   import { createSettingsTabBar, type SettingsTabDef } from "./useSettingsTabBar.svelte";
   import SettingsGeneralTab from "./SettingsGeneralTab.svelte";
   import SettingsPlatformsTab from "./SettingsPlatformsTab.svelte";
@@ -478,7 +479,7 @@
             onRefreshAvatarsNow={handleRefreshAvatarsNow}
             onRefreshBansNow={handleRefreshBansNow}
             pathLabelKey={platformDef.pathLabelKey}
-            pathPlaceholder={platformDef.pathPlaceholder}
+            pathPlaceholder={resolvePathPlaceholder(platformDef.pathPlaceholder, runtimeOs)}
           />
         </div>
       {/if}
