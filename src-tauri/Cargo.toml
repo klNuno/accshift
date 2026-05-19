@@ -10,7 +10,7 @@ tauri-build = { workspace = true, features = [] }
 
 [dependencies]
 accshift-core = { path = "../crates/accshift-core" }
-tauri = { workspace = true, features = [] }
+tauri = { workspace = true, features = ["macos-private-api"] }
 tauri-plugin-shell = { workspace = true }
 tauri-plugin-process = { workspace = true }
 tauri-plugin-updater = { workspace = true }
