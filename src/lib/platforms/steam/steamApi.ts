@@ -40,6 +40,42 @@ export async function switchAccount(username: string): Promise<void> {
   });
 }
 
+export async function switchAccountAndLaunchGame(
+  username: string,
+  steamId: string,
+  appId: string,
+): Promise<void> {
+  const cfg = getSteamLaunchConfig();
+  const details = {
+    username,
+    steamId,
+    appId,
+    runAsAdmin: cfg.runAsAdmin,
+    launchOptionsConfigured: cfg.launchOptions.length > 0,
+  };
+  void logAppEvent(
+    "info",
+    "frontend.steam.switch_and_launch_game",
+    "Switch+launch request started",
+    details,
+  );
+  try {
+    await invoke("steam_switch_account_and_launch_game", { username, appId, ...cfg });
+    void logAppEvent(
+      "info",
+      "frontend.steam.switch_and_launch_game",
+      "Switch+launch request completed",
+      details,
+    );
+  } catch (reason) {
+    void logAppEvent("error", "frontend.steam.switch_and_launch_game", "Switch+launch failed", {
+      ...details,
+      error: serializeLogValue(reason),
+    });
+    throw reason;
+  }
+}
+
 export async function switchAccountMode(
   username: string,
   steamId: string,

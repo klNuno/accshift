@@ -364,6 +364,26 @@ pub async fn steam_switch_account_mode(
 }
 
 #[tauri::command]
+pub async fn steam_switch_account_and_launch_game(
+    app_handle: tauri::AppHandle,
+    username: String,
+    app_id: String,
+    run_as_admin: bool,
+    launch_options: String,
+    shutdown_mode: String,
+) -> Result<(), String> {
+    crate::platforms::steam::switch_account_and_launch_game(
+        ctx(&app_handle),
+        username,
+        app_id,
+        run_as_admin,
+        launch_options,
+        shutdown_mode,
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn steam_get_profile_info(
     steam_id: String,
     client: tauri::State<'_, reqwest::Client>,

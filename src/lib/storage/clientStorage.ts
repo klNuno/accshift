@@ -4,6 +4,7 @@ export const CLIENT_STORE_SETTINGS = "client.settings";
 export const CLIENT_STORE_FOLDERS = "client.folders";
 export const CLIENT_STORE_ACCOUNT_CARD_NOTES = "client.account-card-notes";
 export const CLIENT_STORE_ACCOUNT_CARD_COLORS = "client.account-card-colors";
+export const CLIENT_STORE_ACCOUNT_DEFAULT_GAME = "client.account-default-game";
 export const CLIENT_STORE_FOLDER_CARD_COLORS = "client.folder-card-colors";
 export const CLIENT_STORE_VIEW_MODE = "client.view-mode";
 export const CLIENT_STORE_STEAM_PROFILE_CACHE = "cache.steam.profiles";
@@ -23,6 +24,7 @@ export type ClientStoreId =
   | typeof CLIENT_STORE_FOLDERS
   | typeof CLIENT_STORE_ACCOUNT_CARD_NOTES
   | typeof CLIENT_STORE_ACCOUNT_CARD_COLORS
+  | typeof CLIENT_STORE_ACCOUNT_DEFAULT_GAME
   | typeof CLIENT_STORE_FOLDER_CARD_COLORS
   | typeof CLIENT_STORE_VIEW_MODE
   | typeof CLIENT_STORE_STEAM_PROFILE_CACHE
@@ -45,6 +47,7 @@ const CLIENT_STORE_IDS: readonly ClientStoreId[] = [
   CLIENT_STORE_FOLDERS,
   CLIENT_STORE_ACCOUNT_CARD_NOTES,
   CLIENT_STORE_ACCOUNT_CARD_COLORS,
+  CLIENT_STORE_ACCOUNT_DEFAULT_GAME,
   CLIENT_STORE_FOLDER_CARD_COLORS,
   CLIENT_STORE_VIEW_MODE,
   CLIENT_STORE_STEAM_PROFILE_CACHE,
@@ -58,6 +61,7 @@ const LEGACY_LOCAL_STORAGE_KEYS: Record<ClientStoreId, string> = {
   [CLIENT_STORE_FOLDERS]: "accshift_folders",
   [CLIENT_STORE_ACCOUNT_CARD_NOTES]: "accshift_account_card_notes",
   [CLIENT_STORE_ACCOUNT_CARD_COLORS]: "accshift_account_card_colors",
+  [CLIENT_STORE_ACCOUNT_DEFAULT_GAME]: "accshift_account_default_game",
   [CLIENT_STORE_FOLDER_CARD_COLORS]: "accshift_folder_card_colors",
   [CLIENT_STORE_VIEW_MODE]: "accshift_viewMode",
   [CLIENT_STORE_STEAM_PROFILE_CACHE]: "accshift_avatars",

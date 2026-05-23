@@ -4,6 +4,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::vdf::{parse_vdf, set_persona_state};
+#[cfg(not(target_os = "windows"))]
+use super::vdf::vdf_set_nested_value;
 use crate::error::AppError;
 use crate::fs_utils;
 use crate::os;
@@ -78,43 +80,85 @@ fn try_graceful_shutdown(steam_path: &Path) -> bool {
         && os::wait_for_process_exit(os::steam_web_helper_process_name(), 2000)
 }
 
-fn kill_and_relaunch(
-    steam_path: &Path,
-    run_as_admin: bool,
-    launch_options: &str,
-    force_kill: bool,
-) -> Result<(), AppError> {
+enum StopOutcome {
+    NotRunning,
+    Stopped,
+    NeedsElevation,
+}
+
+fn stop_steam(steam_path: &Path, force_kill: bool) -> Result<StopOutcome, AppError> {
     let needs_kill =
         is_steam_running() || os::is_process_running(os::steam_web_helper_process_name());
-
     if !needs_kill {
-        return launch_steam(steam_path, run_as_admin, launch_options);
+        return Ok(StopOutcome::NotRunning);
     }
 
     if force_kill {
         return match kill_steam_client_processes() {
-            Ok(()) => launch_steam(steam_path, run_as_admin, launch_options),
-            Err(AppError::SteamElevated) if run_as_admin => {
-                let args = parse_launch_options(launch_options);
-                os::kill_and_relaunch_steam_elevated(steam_path, &args)
-            }
+            Ok(()) => Ok(StopOutcome::Stopped),
+            Err(AppError::SteamElevated) => Ok(StopOutcome::NeedsElevation),
             Err(e) => Err(e),
         };
     }
 
-    // Try graceful shutdown first, fallback to force kill
     if try_graceful_shutdown(steam_path) {
-        return launch_steam(steam_path, run_as_admin, launch_options);
+        return Ok(StopOutcome::Stopped);
     }
 
     match kill_steam_client_processes() {
-        Ok(()) => launch_steam(steam_path, run_as_admin, launch_options),
-        Err(AppError::SteamElevated) if run_as_admin => {
-            let args = parse_launch_options(launch_options);
-            os::kill_and_relaunch_steam_elevated(steam_path, &args)
-        }
+        Ok(()) => Ok(StopOutcome::Stopped),
+        Err(AppError::SteamElevated) => Ok(StopOutcome::NeedsElevation),
         Err(e) => Err(e),
     }
+}
+
+fn write_auto_login(next_username: Option<&str>) -> Result<(), AppError> {
+    match next_username {
+        Some(username) => os::set_auto_login_user(username),
+        None => os::clear_auto_login_user(),
+    }
+}
+
+// Flip the per-user AllowAutoLogin / MostRecent flags inside loginusers.vdf.
+//
+// On Linux and macOS, Steam treats `AutoLoginUser=""` in registry.vdf as a
+// hint, not a hard rule — if any user in loginusers.vdf still has
+// `AllowAutoLogin=1` and `MostRecent=1`, Steam silently logs them in at
+// launch. Windows respects the registry value strictly so this step is a
+// no-op there.
+//
+// `target` = Some(account_name) → only that user gets the flags set to 1.
+// `target` = None               → all users get the flags cleared.
+#[cfg(not(target_os = "windows"))]
+fn set_login_user_flags(steam_path: &Path, target: Option<&str>) -> Result<(), AppError> {
+    let path = steam_path.join("config").join("loginusers.vdf");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(&path).map_err(|e| AppError::FileRead(e.to_string()))?;
+    let users = parse_vdf(&content);
+    if users.is_empty() {
+        return Ok(());
+    }
+
+    let mut updated = content;
+    for (steam_id, fields) in &users {
+        let account_name = fields.get("accountname").cloned().unwrap_or_default();
+        let is_target = target
+            .map(|t| account_name == t && !account_name.is_empty())
+            .unwrap_or(false);
+        let flag = if is_target { "1" } else { "0" };
+        updated = vdf_set_nested_value(&updated, &[steam_id.as_str(), "AllowAutoLogin"], flag);
+        updated = vdf_set_nested_value(&updated, &[steam_id.as_str(), "MostRecent"], flag);
+    }
+
+    fs::write(&path, updated).map_err(|e| AppError::FileRead(e.to_string()))
+}
+
+#[cfg(target_os = "windows")]
+fn set_login_user_flags(_steam_path: &Path, _target: Option<&str>) -> Result<(), AppError> {
+    Ok(())
 }
 
 fn restore_auto_login_user(previous_username: &str) -> Result<(), AppError> {
@@ -125,23 +169,61 @@ fn restore_auto_login_user(previous_username: &str) -> Result<(), AppError> {
     }
 }
 
-fn with_auto_login_user<T>(
+// Switch the Steam autologin and relaunch Steam.
+//
+// Steam on Linux/macOS owns `registry.vdf` in memory and rewrites it at
+// shutdown, so the autologin write MUST happen *after* Steam stops. On
+// Windows the autologin lives in HKCU (OS-scope) so the order does not
+// matter, but the same flow works.
+//
+// `pre_launch` runs after Steam is stopped and after the autologin is
+// written, so it can safely touch other Steam-owned files (e.g. persona
+// state).
+fn switch_autologin_and_relaunch(
+    steam_path: &Path,
     next_username: Option<&str>,
-    action: impl FnOnce() -> Result<T, AppError>,
-) -> Result<T, AppError> {
-    let previous_username = os::get_auto_login_user()?;
-    match next_username {
-        Some(username) => os::set_auto_login_user(username)?,
-        None => os::clear_auto_login_user()?,
+    run_as_admin: bool,
+    launch_options: &str,
+    extra_args: &[&str],
+    force_kill: bool,
+    pre_launch: impl FnOnce(),
+) -> Result<(), AppError> {
+    let previous = os::get_auto_login_user()?;
+
+    match stop_steam(steam_path, force_kill)? {
+        StopOutcome::NeedsElevation if run_as_admin => {
+            // Windows-only path: elevated combined kill+relaunch via UAC.
+            // The HKCU registry write is user-scope, so writing now (before
+            // the elevated kill) is safe — Steam does not own it.
+            write_auto_login(next_username)?;
+            let _ = set_login_user_flags(steam_path, next_username);
+            pre_launch();
+            let mut args = parse_launch_options(launch_options);
+            args.extend(extra_args.iter().map(|s| s.to_string()));
+            return os::kill_and_relaunch_steam_elevated(steam_path, &args);
+        }
+        StopOutcome::NeedsElevation => return Err(AppError::SteamElevated),
+        StopOutcome::NotRunning | StopOutcome::Stopped => {}
     }
 
-    match action() {
-        Ok(value) => Ok(value),
-        Err(error) => {
-            let _ = restore_auto_login_user(&previous_username);
-            Err(error)
-        }
+    if let Err(e) = write_auto_login(next_username) {
+        let _ = launch_steam(steam_path, run_as_admin, launch_options, extra_args);
+        return Err(e);
     }
+
+    // Linux/macOS: also strip AllowAutoLogin/MostRecent in loginusers.vdf,
+    // otherwise Steam re-logs the most-recent user even with an empty
+    // AutoLoginUser. No-op on Windows.
+    let _ = set_login_user_flags(steam_path, next_username);
+
+    pre_launch();
+
+    if let Err(e) = launch_steam(steam_path, run_as_admin, launch_options, extra_args) {
+        let _ = restore_auto_login_user(&previous);
+        return Err(e);
+    }
+
+    Ok(())
 }
 
 fn kill_steam_client_processes() -> Result<(), AppError> {
@@ -205,8 +287,10 @@ fn launch_steam(
     steam_path: &Path,
     run_as_admin: bool,
     launch_options: &str,
+    extra_args: &[&str],
 ) -> Result<(), AppError> {
-    let args = parse_launch_options(launch_options);
+    let mut args = parse_launch_options(launch_options);
+    args.extend(extra_args.iter().map(|s| s.to_string()));
     os::launch_steam(steam_path, run_as_admin, &args)
 }
 
@@ -463,9 +547,37 @@ pub fn switch_account(
     launch_options: &str,
     force_kill: bool,
 ) -> Result<(), AppError> {
-    with_auto_login_user(Some(username), || {
-        kill_and_relaunch(steam_path, run_as_admin, launch_options, force_kill)
-    })
+    switch_autologin_and_relaunch(
+        steam_path,
+        Some(username),
+        run_as_admin,
+        launch_options,
+        &[],
+        force_kill,
+        || {},
+    )
+}
+
+pub fn switch_account_and_launch_game(
+    steam_path: &Path,
+    username: &str,
+    app_id: &str,
+    run_as_admin: bool,
+    launch_options: &str,
+    force_kill: bool,
+) -> Result<(), AppError> {
+    if app_id.is_empty() || !app_id.chars().all(|c| c.is_ascii_digit()) {
+        return Err(AppError::FileRead("Invalid app id".into()));
+    }
+    switch_autologin_and_relaunch(
+        steam_path,
+        Some(username),
+        run_as_admin,
+        launch_options,
+        &["-applaunch", app_id],
+        force_kill,
+        || {},
+    )
 }
 
 pub fn add_account(
@@ -474,9 +586,15 @@ pub fn add_account(
     launch_options: &str,
     force_kill: bool,
 ) -> Result<(), AppError> {
-    with_auto_login_user(None, || {
-        kill_and_relaunch(steam_path, run_as_admin, launch_options, force_kill)
-    })
+    switch_autologin_and_relaunch(
+        steam_path,
+        None,
+        run_as_admin,
+        launch_options,
+        &[],
+        force_kill,
+        || {},
+    )
 }
 
 pub fn forget_account(steam_path: &Path, steam_id: &str) -> Result<(), AppError> {
@@ -503,17 +621,25 @@ pub fn switch_account_mode(
     launch_options: &str,
     force_kill: bool,
 ) -> Result<(), AppError> {
-    with_auto_login_user(Some(username), || {
-        if let Some(account_id) = steam_id_to_account_id(steam_id) {
-            let state = match mode {
-                "invisible" => "7",
-                _ => "1",
-            };
-            set_persona_state(steam_path, account_id, state);
-        }
+    let account_id = steam_id_to_account_id(steam_id);
+    let state = match mode {
+        "invisible" => "7",
+        _ => "1",
+    };
 
-        kill_and_relaunch(steam_path, run_as_admin, launch_options, force_kill)
-    })
+    switch_autologin_and_relaunch(
+        steam_path,
+        Some(username),
+        run_as_admin,
+        launch_options,
+        &[],
+        force_kill,
+        || {
+            if let Some(account_id) = account_id {
+                set_persona_state(steam_path, account_id, state);
+            }
+        },
+    )
 }
 
 pub fn open_userdata_with_path(steam_path: &Path, steam_id: &str) -> Result<(), AppError> {

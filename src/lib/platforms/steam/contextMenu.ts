@@ -11,16 +11,53 @@ import {
   clearIntegratedBrowserCache,
   copyGameSettings,
   forgetAccount,
+  getAccountGames,
   getCopyableGames,
   openUserdata,
+  switchAccountAndLaunchGame,
   switchAccountMode,
 } from "./steamApi";
+import { clearDefaultGame, getDefaultGame, setDefaultGame } from "./defaultGameStore";
 
 export function getSteamContextMenuItems(
   account: PlatformAccount,
   callbacks: PlatformContextMenuCallbacks,
 ): ContextMenuAction[] {
+  const defaultGame = getDefaultGame(account.id);
+
   const launchItems: ContextMenuAction[] = [
+    {
+      id: `steam.switch.run.${account.id}`,
+      group: "platform.primary",
+      label: defaultGame
+        ? callbacks.t("steam.switchAndRunGame", { game: defaultGame.name })
+        : callbacks.t("steam.switchAndRunPick"),
+      action: defaultGame
+        ? createSafeContextAction(callbacks, () =>
+            switchAccountAndLaunchGame(account.username, account.id, defaultGame.appId),
+          )
+        : undefined,
+      submenuLoader: async () => {
+        const games = await getAccountGames(account.id);
+        if (games.length === 0) {
+          return [
+            {
+              id: `steam.switch.run.${account.id}.empty`,
+              label: callbacks.t("steam.switchAndRunNoGames"),
+              action: () => {},
+            },
+          ];
+        }
+        return games.map((g) => ({
+          id: `steam.switch.run.${account.id}.${g.app_id}`,
+          label: g.name,
+          action: createSafeContextAction(callbacks, async () => {
+            setDefaultGame(account.id, { appId: g.app_id, name: g.name });
+            await switchAccountAndLaunchGame(account.username, account.id, g.app_id);
+          }),
+        }));
+      },
+    },
     {
       id: `steam.launch.online.${account.id}`,
       group: "platform.primary",
@@ -38,6 +75,17 @@ export function getSteamContextMenuItems(
       ),
     },
   ];
+
+  if (defaultGame) {
+    launchItems.push({
+      id: `steam.switch.run.clear.${account.id}`,
+      group: "platform.data",
+      label: callbacks.t("steam.clearDefaultGame"),
+      action: createSafeContextAction(callbacks, () => {
+        clearDefaultGame(account.id);
+      }),
+    });
+  }
 
   const copyAndForget = buildPlatformContextMenu("steam", account, callbacks, {
     copyItems: [
@@ -72,7 +120,10 @@ export function getSteamContextMenuItems(
       confirmLabelKey: "steam.forget",
       toastKey: "steam.forgotAccount",
       toastParams: { username: account.username },
-      action: () => forgetAccount(account.id),
+      action: async () => {
+        clearDefaultGame(account.id);
+        await forgetAccount(account.id);
+      },
     },
     displayValue: (account.displayName || account.username).trim() || account.username,
   });

@@ -159,9 +159,16 @@
       <button
         class="menu-item"
         onmouseenter={(e) => openSubmenu(item, idx, e)}
-        onclick={() => {
-          if (item.submenu || item.submenuLoader) return;
-          item.action?.();
+        onclick={(e) => {
+          if (item.action) {
+            item.action();
+            onClose();
+            return;
+          }
+          if (item.submenu || item.submenuLoader) {
+            void openSubmenu(item, idx, e);
+            return;
+          }
           onClose();
         }}
       >

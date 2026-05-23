@@ -231,6 +231,7 @@ fn main() {
             commands::steam_has_api_key,
             commands::steam_open_api_key_page,
             commands::steam_switch_account_mode,
+            commands::steam_switch_account_and_launch_game,
             commands::steam_get_profile_info,
             commands::steam_get_player_bans,
             commands::steam_copy_game_settings,

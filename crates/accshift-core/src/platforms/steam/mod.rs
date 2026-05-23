@@ -102,7 +102,7 @@ fn resolve_steam_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
         os::steam_installation_path().map_err(|e| e.to_string())?
     };
 
-    if !steam_path.exists() || !steam_path.join(os::steam_executable_name()).exists() {
+    if !steam_path.exists() || !steam_path.join("config").join("loginusers.vdf").exists() {
         return Err("Could not locate Steam installation".into());
     }
 
@@ -278,6 +278,79 @@ pub async fn switch_account_mode(
     .await
     .map_err(|e| format!("Switch account mode task failed: {e}"))?
     .map_err(|e| to_logged_error(&app_handle, "steam.switch_account_mode", e))
+}
+
+pub async fn switch_account_and_launch_game(
+    app_handle: AppCtx,
+    username: String,
+    app_id: String,
+    run_as_admin: bool,
+    launch_options: String,
+    shutdown_mode: String,
+) -> Result<(), String> {
+    validate_username(&username)?;
+    if app_id.is_empty() || !app_id.chars().all(|c| c.is_ascii_digit()) {
+        return Err("Invalid app id".into());
+    }
+    let steam_path = resolve_steam_path(&app_handle)?;
+    log_platform_info(
+        &app_handle,
+        "steam.switch_account_and_launch_game",
+        "Steam switch+launch requested",
+        build_switch_state_details(
+            &steam_path,
+            Some(&username),
+            None,
+            None,
+            run_as_admin,
+            &launch_options,
+        ),
+    );
+
+    let force_kill = shutdown_mode == "force";
+    let app_handle_for_task = app_handle.clone();
+    let username_for_task = username.clone();
+    let app_id_for_task = app_id.clone();
+    let launch_options_for_task = launch_options.clone();
+    tokio::task::spawn_blocking(move || {
+        let result = accounts::switch_account_and_launch_game(
+            &steam_path,
+            &username_for_task,
+            &app_id_for_task,
+            run_as_admin,
+            &launch_options_for_task,
+            force_kill,
+        );
+
+        let post_state = build_switch_state_details(
+            &steam_path,
+            Some(&username_for_task),
+            None,
+            None,
+            run_as_admin,
+            &launch_options_for_task,
+        );
+
+        match &result {
+            Ok(()) => log_platform_info(
+                &app_handle_for_task,
+                "steam.switch_account_and_launch_game",
+                "Steam switch+launch completed",
+                &post_state,
+            ),
+            Err(error) => log_platform_error(
+                &app_handle_for_task,
+                "steam.switch_account_and_launch_game",
+                "Steam switch+launch failed",
+                format!("error={error}; state={post_state}"),
+            ),
+        }
+
+        result
+    })
+    .await
+    .map_err(|e| format!("Switch+launch task failed: {e}"))?
+    .map_err(|e| to_logged_error(&app_handle, "steam.switch_account_and_launch_game", e))
 }
 
 pub fn begin_account_setup(

@@ -13,6 +13,7 @@ pub const STORE_SETTINGS: &str = "client.settings";
 pub const STORE_FOLDERS: &str = "client.folders";
 pub const STORE_ACCOUNT_CARD_NOTES: &str = "client.account-card-notes";
 pub const STORE_ACCOUNT_CARD_COLORS: &str = "client.account-card-colors";
+pub const STORE_ACCOUNT_DEFAULT_GAME: &str = "client.account-default-game";
 pub const STORE_FOLDER_CARD_COLORS: &str = "client.folder-card-colors";
 pub const STORE_VIEW_MODE: &str = "client.view-mode";
 pub const STORE_STEAM_PROFILE_CACHE: &str = "cache.steam.profiles";
@@ -203,6 +204,9 @@ pub fn client_store_path(app_handle: &dyn AppContext, store_id: &str) -> Result<
         STORE_ACCOUNT_CARD_COLORS => Ok(app_config_root(app_handle)?
             .join("user")
             .join("account-card-colors.json")),
+        STORE_ACCOUNT_DEFAULT_GAME => Ok(app_config_root(app_handle)?
+            .join("user")
+            .join("account-default-game.json")),
         STORE_FOLDER_CARD_COLORS => Ok(app_config_root(app_handle)?
             .join("user")
             .join("folder-card-colors.json")),
@@ -344,6 +348,7 @@ fn client_store_ids() -> &'static [&'static str] {
         STORE_FOLDERS,
         STORE_ACCOUNT_CARD_NOTES,
         STORE_ACCOUNT_CARD_COLORS,
+        STORE_ACCOUNT_DEFAULT_GAME,
         STORE_FOLDER_CARD_COLORS,
         STORE_VIEW_MODE,
         STORE_STEAM_PROFILE_CACHE,
@@ -370,6 +375,9 @@ fn legacy_client_store_path(
         STORE_ACCOUNT_CARD_COLORS => raw_app_config_root(app_handle)?
             .join("user")
             .join("account-card-colors.json"),
+        STORE_ACCOUNT_DEFAULT_GAME => raw_app_config_root(app_handle)?
+            .join("user")
+            .join("account-default-game.json"),
         STORE_FOLDER_CARD_COLORS => raw_app_config_root(app_handle)?
             .join("user")
             .join("folder-card-colors.json"),
