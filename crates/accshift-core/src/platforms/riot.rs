@@ -805,6 +805,17 @@ fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Resul
     let snapshot_dir = profile_snapshot_dir(app_handle, profile_id)?;
     let has_snapshot = snapshot_has_settings(&snapshot_dir);
 
+    // Validate the snapshot BEFORE wiping the live state — bailing out after
+    // the clear would leave the client logged out with nothing restored.
+    for item in RIOT_SNAPSHOT_ITEMS {
+        if matches!(item.kind, RiotSnapshotKind::File)
+            && !item.optional
+            && !snapshot_dir.join(item.snapshot_name).exists()
+        {
+            return Ok(false);
+        }
+    }
+
     clear_live_riot_state(app_handle)?;
 
     for item in RIOT_SNAPSHOT_ITEMS {

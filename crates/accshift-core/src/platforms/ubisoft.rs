@@ -318,20 +318,27 @@ fn current_account_from_logs(app_handle: &dyn AppContext) -> Option<String> {
 }
 
 fn extract_uuid_from_line(line: &str) -> Option<String> {
+    // Log lines can contain multibyte UTF-8 (usernames, paths) — every slice
+    // must go through `get` to avoid panicking on a char boundary.
+
     // Fast path: look for "User: <uuid>" pattern
     if let Some(pos) = line.find("User: ") {
-        let after = &line[pos + 6..];
-        if after.len() >= 36 && is_valid_uuid(&after[..36]) {
-            return Some(after[..36].to_string());
+        if let Some(candidate) = line.get(pos + 6..pos + 6 + 36) {
+            if is_valid_uuid(candidate) {
+                return Some(candidate.to_string());
+            }
         }
     }
     // Fallback: scan for any 36-char UUID near a "User" context
     if line.len() >= 36 {
-        for start in 0..=line.len() - 36 {
-            let candidate = &line[start..start + 36];
+        for start in 4..=line.len() - 36 {
+            let Some(candidate) = line.get(start..start + 36) else {
+                continue;
+            };
             if is_valid_uuid(candidate)
-                && start >= 4
-                && line[start.saturating_sub(10)..start].contains("User")
+                && line
+                    .get(start.saturating_sub(10)..start)
+                    .is_some_and(|ctx| ctx.contains("User"))
             {
                 return Some(candidate.to_string());
             }

@@ -439,7 +439,7 @@ fn write_saved_accounts(accounts: &[String]) -> Result<(), String> {
 
     let json = serde_json::to_string_pretty(&root)
         .map_err(|e| format!("Could not serialize Battle.net config: {e}"))?;
-    fs::write(&config_path, json).map_err(|e| {
+    crate::storage::write_bytes_atomic(&config_path, json.as_bytes()).map_err(|e| {
         format!(
             "Could not write Battle.net config {}: {e}",
             config_path.display()
@@ -453,10 +453,20 @@ fn is_battle_net_running() -> bool {
         .any(|name| crate::os::is_process_running(name))
 }
 
-fn kill_battle_net() {
+fn kill_battle_net() -> Result<(), String> {
     for process_name in BATTLE_NET_PROCESS_NAMES {
         let _ = crate::os::kill_process(process_name);
     }
+    // The launcher rewrites Battle.net.config on exit — if it survived the
+    // kill (elevated, hung), writing SavedAccountNames now would be silently
+    // undone. Refuse instead of pretending the switch worked.
+    if is_battle_net_running() {
+        return Err(
+            "Battle.net is still running and could not be closed. Close it manually and retry."
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 fn normalize_registry_path(raw: &str) -> String {
@@ -724,7 +734,7 @@ pub fn switch_account(app_handle: AppCtx, email: String) -> Result<(), String> {
         }
     }
 
-    kill_battle_net();
+    kill_battle_net()?;
     write_saved_accounts(&reordered)?;
     remember_account_usage(&app_handle, &target, false)?;
     let result = launch_battle_net(&app_handle);
@@ -776,7 +786,7 @@ pub fn begin_account_setup(app_handle: AppCtx) -> Result<SetupStatus, String> {
     );
     drop(jobs);
 
-    kill_battle_net();
+    kill_battle_net()?;
     write_saved_accounts(&[])?;
     launch_battle_net(&app_handle).inspect_err(|e| {
         log_platform_error(
@@ -865,7 +875,7 @@ pub fn forget_account(app_handle: AppCtx, email: String) -> Result<(), String> {
         .filter(|account| normalize_account_key(account) != normalize_account_key(&target_email))
         .collect::<Vec<_>>();
 
-    kill_battle_net();
+    kill_battle_net()?;
     write_saved_accounts(&filtered)?;
     forget_account_metadata(&app_handle, &target_email)
 }

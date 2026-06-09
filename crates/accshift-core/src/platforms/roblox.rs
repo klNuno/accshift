@@ -522,11 +522,13 @@ pub fn get_account_setup_status(
     let http_status = response.status();
     let response_text = response.text().unwrap_or_default();
 
+    // Do not log the raw body: it comes from an auth service and could carry
+    // tokens if the API shape changes. The parsed status is logged below.
     log_platform_info(
         app_handle,
         "roblox.setup_poll",
         "Quick Login status poll",
-        format!("httpStatus={http_status}; body={response_text}"),
+        format!("httpStatus={http_status}"),
     );
 
     if !http_status.is_success() {
@@ -541,6 +543,13 @@ pub fn get_account_setup_status(
 
     let status_data: QuickLoginStatusResponse = serde_json::from_str(&response_text)
         .map_err(|e| format!("Could not parse Quick Login status: {e}"))?;
+
+    log_platform_info(
+        app_handle,
+        "roblox.setup_poll",
+        "Quick Login status",
+        format!("status={}", status_data.status),
+    );
 
     match status_data.status.as_str() {
         "Validated" => {
@@ -733,6 +742,10 @@ pub async fn get_profile_info(
     user_id: String,
     client: reqwest::Client,
 ) -> Result<RobloxProfileInfo, String> {
+    // The id is interpolated into a query string — digits only.
+    if user_id.is_empty() || !user_id.chars().all(|c| c.is_ascii_digit()) {
+        return Err("Invalid Roblox user id".into());
+    }
     let url = format!(
         "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds={user_id}&size=150x150&format=Png"
     );
