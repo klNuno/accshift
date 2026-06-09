@@ -69,9 +69,6 @@ pub fn event_to_json(event: &Event, ctx: &TelemetryContext) -> Value {
             m.insert("platform".into(), Value::from(platform.clone()));
             m.insert("count".into(), Value::from(*count));
         }
-        Event::FeatureUsed { name } => {
-            m.insert("platform".into(), Value::from(name.to_string()));
-        }
     }
     Value::Object(m)
 }

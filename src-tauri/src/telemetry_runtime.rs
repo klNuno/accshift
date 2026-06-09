@@ -37,7 +37,7 @@ impl TelemetryState {
     /// Drains the worker and joins the background thread.
     pub fn shutdown(&self) {
         let taken = {
-            let mut guard = self.worker.lock().expect("telemetry worker poisoned");
+            let mut guard = self.worker.lock().unwrap_or_else(|e| e.into_inner());
             guard.take()
         };
         if let Some(worker) = taken {

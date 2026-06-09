@@ -20,9 +20,6 @@ pub enum Event {
     /// Snapshot of the number of accounts configured for a platform.
     /// Mode B only (requires a stable install_id).
     AccountsSnapshot { platform: String, count: u64 },
-    /// Feature touched by the user (stable name from code).
-    /// Deduplicated in memory per session by the queue.
-    FeatureUsed { name: &'static str },
 }
 
 impl Event {
@@ -33,7 +30,6 @@ impl Event {
             Event::PlatformSwitch { .. } => "platform_switch",
             Event::SessionEnded { .. } => "session_ended",
             Event::AccountsSnapshot { .. } => "accounts_snapshot",
-            Event::FeatureUsed { .. } => "feature_used",
         }
     }
 }

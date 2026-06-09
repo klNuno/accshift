@@ -1,8 +1,7 @@
 use super::client::{self, Mode};
 use super::events::{Event, TelemetryContext};
 use serde_json::Value;
-use std::collections::HashSet;
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -36,7 +35,6 @@ fn resolve_mode(state: &ConsentState) -> Option<(Mode, Option<String>)> {
 /// Internal messages consumed by the worker thread.
 enum Message {
     Event(Event),
-    FlushNow,
     Shutdown,
 }
 
@@ -57,13 +55,17 @@ impl Default for QueueParams {
     }
 }
 
+/// Upper bound on queued messages. A slow flush (network timeout) must not
+/// let the channel grow without limit; overflow events are dropped.
+const QUEUE_CAPACITY: usize = 512;
+
 /// Lightweight cloneable handle, usable from any thread or command.
-/// Used to push events, change consent, or trigger a flush.
+/// Used to push events or change consent.
+
 #[derive(Clone)]
 pub struct Handle {
-    tx: Sender<Message>,
+    tx: SyncSender<Message>,
     consent: Arc<Mutex<ConsentState>>,
-    features_seen: Arc<Mutex<HashSet<&'static str>>>,
 }
 
 impl Handle {
@@ -71,35 +73,19 @@ impl Handle {
     /// Never blocks.
     pub fn track(&self, event: Event) {
         {
-            let state = self.consent.lock().expect("consent poisoned");
+            let state = self.consent.lock().unwrap_or_else(|e| e.into_inner());
             if !state.mode_a && !state.mode_b {
                 return;
             }
         }
-        if let Event::FeatureUsed { name } = &event {
-            let mut seen = self.features_seen.lock().expect("features_seen poisoned");
-            if !seen.insert(*name) {
-                return;
-            }
-        }
-        let _ = self.tx.send(Message::Event(event));
+        let _ = self.tx.try_send(Message::Event(event));
     }
 
     /// Updates the consent state (called after a UI toggle or after the
     /// install_id is generated).
     pub fn update_consent(&self, new_state: ConsentState) {
-        let mut guard = self.consent.lock().expect("consent poisoned");
+        let mut guard = self.consent.lock().unwrap_or_else(|e| e.into_inner());
         *guard = new_state;
-    }
-
-    /// Snapshot of the current consent state. Useful for read-only UI commands.
-    pub fn consent_snapshot(&self) -> ConsentState {
-        self.consent.lock().expect("consent poisoned").clone()
-    }
-
-    /// Forces an immediate flush, bypassing the interval.
-    pub fn flush_now(&self) {
-        let _ = self.tx.send(Message::FlushNow);
     }
 }
 
@@ -112,9 +98,8 @@ pub struct Worker {
 
 impl Worker {
     pub fn spawn(ctx: TelemetryContext, consent: ConsentState, params: QueueParams) -> Self {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(QUEUE_CAPACITY);
         let consent = Arc::new(Mutex::new(consent));
-        let features_seen: Arc<Mutex<HashSet<&'static str>>> = Arc::new(Mutex::new(HashSet::new()));
         let consent_clone = consent.clone();
 
         let join = thread::Builder::new()
@@ -123,11 +108,7 @@ impl Worker {
             .expect("telemetry thread spawn failed");
 
         Self {
-            handle: Handle {
-                tx,
-                consent,
-                features_seen,
-            },
+            handle: Handle { tx, consent },
             join: Some(join),
         }
     }
@@ -151,12 +132,18 @@ fn run(
     consent: Arc<Mutex<ConsentState>>,
     params: QueueParams,
 ) {
-    let Ok(http) = reqwest::blocking::Client::builder()
+    let http = match reqwest::blocking::Client::builder()
         .user_agent(client::user_agent(&ctx.app_version))
         .timeout(Duration::from_secs(10))
         .build()
-    else {
-        return;
+    {
+        Ok(http) => http,
+        Err(e) => {
+            // Telemetry silently dying is acceptable; dying without a trace
+            // is not.
+            eprintln!("telemetry: failed to build HTTP client, telemetry disabled: {e}");
+            return;
+        }
     };
 
     let ua = client::user_agent(&ctx.app_version);
@@ -176,10 +163,6 @@ fn run(
                     flush(&http, &params.endpoint, &ua, &ctx, &consent, &mut buffer);
                     last_flush = Instant::now();
                 }
-            }
-            Ok(Message::FlushNow) => {
-                flush(&http, &params.endpoint, &ua, &ctx, &consent, &mut buffer);
-                last_flush = Instant::now();
             }
             Ok(Message::Shutdown) => {
                 flush(&http, &params.endpoint, &ua, &ctx, &consent, &mut buffer);
@@ -210,7 +193,7 @@ fn flush(
         return;
     }
     let snapshot = {
-        let guard = consent.lock().expect("consent poisoned");
+        let guard = consent.lock().unwrap_or_else(|e| e.into_inner());
         guard.clone()
     };
     let Some((mode, install_id)) = resolve_mode(&snapshot) else {
