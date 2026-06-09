@@ -24,8 +24,6 @@ function toAccount(s: SteamAccount): PlatformAccount {
 
 export const steamAdapter: PlatformAdapter = {
   id: "steam",
-  name: "Steam",
-  accent: "#2563eb",
   ...createPlatformAddFlowHandlers({
     beginSetup: service.beginAccountSetup,
     getSetupStatus: service.getAccountSetupStatus,
@@ -49,15 +47,6 @@ export const steamAdapter: PlatformAdapter = {
     };
   },
 
-  isCurrentAccount(account, currentAccount) {
-    const needle = currentAccount.trim().toLowerCase();
-    return (
-      needle.length > 0 &&
-      (account.id.trim().toLowerCase() === needle ||
-        account.username.trim().toLowerCase() === needle)
-    );
-  },
-
   async switchAccount(account: PlatformAccount): Promise<void> {
     await service.switchAccount(account.username);
   },
@@ -71,10 +60,11 @@ export const steamAdapter: PlatformAdapter = {
 
   async getProfileInfo(accountId: string): Promise<PlatformProfileInfo | null> {
     const profile = await fetchProfile(accountId);
+    // No data (e.g. transient network failure): return null so the caller
+    // keeps any avatar already on screen. `{ avatarUrl: null }` is reserved
+    // for profiles that exist but have no avatar.
     if (!profile) {
-      return {
-        avatarUrl: null,
-      };
+      return null;
     }
     const avatarUrl = (profile.avatar_url ?? "").trim();
     return {

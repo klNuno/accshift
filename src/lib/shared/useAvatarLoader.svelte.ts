@@ -53,16 +53,19 @@ export function createAvatarLoader(getAdapter: () => PlatformAdapter | undefined
   }
 
   function updateAccountDisplayName(
-    accounts: PlatformAccount[],
+    getAccounts: () => PlatformAccount[],
     setAccounts: (v: PlatformAccount[]) => void,
     accountId: string,
     displayName: string,
   ) {
-    const index = untrack(() => accounts.findIndex((a) => a.id === accountId));
-    if (index === -1) return;
-    const account = untrack(() => accounts[index]);
-    if (!account || account.displayName === displayName) return;
+    // Read the current list at update time so concurrent updates do not
+    // overwrite each other through a stale snapshot.
     untrack(() => {
+      const accounts = getAccounts();
+      const index = accounts.findIndex((a) => a.id === accountId);
+      if (index === -1) return;
+      const account = accounts[index];
+      if (!account || account.displayName === displayName) return;
       const next = accounts.slice();
       next[index] = { ...account, displayName };
       setAccounts(next);
@@ -102,7 +105,7 @@ export function createAvatarLoader(getAdapter: () => PlatformAdapter | undefined
   function applyProfileUpdate(
     account: PlatformAccount,
     profile: Awaited<ReturnType<NonNullable<PlatformAdapter["getProfileInfo"]>>>,
-    accounts: PlatformAccount[],
+    getAccounts: () => PlatformAccount[],
     setAccounts: (v: PlatformAccount[]) => void,
   ) {
     if (profile) {
@@ -112,7 +115,7 @@ export function createAvatarLoader(getAdapter: () => PlatformAdapter | undefined
         refreshing: false,
       });
       if (profile.displayName && profile.displayName !== account.displayName) {
-        updateAccountDisplayName(accounts, setAccounts, account.id, profile.displayName);
+        updateAccountDisplayName(getAccounts, setAccounts, account.id, profile.displayName);
       }
       return;
     }
@@ -126,7 +129,7 @@ export function createAvatarLoader(getAdapter: () => PlatformAdapter | undefined
   async function refreshProfile(
     adapter: PlatformAdapter,
     account: PlatformAccount,
-    accounts: PlatformAccount[],
+    getAccounts: () => PlatformAccount[],
     setAccounts: (v: PlatformAccount[]) => void,
     shouldContinue: () => boolean = () => true,
   ) {
@@ -134,12 +137,12 @@ export function createAvatarLoader(getAdapter: () => PlatformAdapter | undefined
     if (!shouldContinue()) return;
     const profile = await adapter.getProfileInfo(account.id);
     if (!shouldContinue()) return;
-    applyProfileUpdate(account, profile, accounts, setAccounts);
+    applyProfileUpdate(account, profile, getAccounts, setAccounts);
   }
 
   async function loadProfilesForAccounts(
     accts: PlatformAccount[],
-    accounts: PlatformAccount[],
+    getAccounts: () => PlatformAccount[],
     setAccounts: (v: PlatformAccount[]) => void,
     forceRefresh = false,
     shouldContinue: () => boolean = () => true,
@@ -153,7 +156,7 @@ export function createAvatarLoader(getAdapter: () => PlatformAdapter | undefined
       const batch = needsRefresh.slice(i, i + BATCH_SIZE);
       await Promise.all(
         batch.map((account) =>
-          refreshProfile(adapter, account, accounts, setAccounts, shouldContinue),
+          refreshProfile(adapter, account, getAccounts, setAccounts, shouldContinue),
         ),
       );
     }

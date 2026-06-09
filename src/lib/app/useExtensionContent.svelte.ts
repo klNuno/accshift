@@ -70,7 +70,9 @@ export function createExtensionContentController({
     for (const id of ids) {
       const w = getWarningStates()[id];
       const n = getAccountNote(id);
-      const s = getSetupExtensionContent(id) ? "s" : "";
+      // Serialize the full setup content so flow state changes invalidate the memo.
+      const setup = getSetupExtensionContent(id);
+      const s = setup ? JSON.stringify(setup.sections) : "";
       keyParts.push(`${id}:${w?.tooltipText ?? ""}:${w?.chips?.length ?? 0}:${n}:${s}`);
     }
     const newKey = `${locale}:${cardNoteVersion}:${showCardNotesInline}:${keyParts.join("|")}`;

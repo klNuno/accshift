@@ -33,6 +33,7 @@
     onSettingsUpdated = () => {},
     onRefreshAvatarsNow = async () => {},
     onRefreshBansNow = async () => {},
+    onAccountAdded = () => {},
     runtimeOs = "unknown",
   }: {
     onClose: () => void;
@@ -40,6 +41,7 @@
     onSettingsUpdated?: () => void;
     onRefreshAvatarsNow?: () => void | Promise<void>;
     onRefreshBansNow?: () => void | Promise<void>;
+    onAccountAdded?: () => void;
     runtimeOs?: "windows" | "linux" | "macos" | "unknown";
   } = $props();
 
@@ -165,6 +167,8 @@
       pinCodeInput = "";
     }
 
+    // Capture the snapshot before any await below so edits made while persisting
+    // stay dirty and get picked up by the next debounced save.
     const snapshot = buildPersistSnapshot();
     if (snapshot === lastPersistedSnapshot) return;
 
@@ -192,7 +196,7 @@
           await invoke("platform_set_path", { platformId, path: nextPath });
         }
       }
-      lastPersistedSnapshot = buildPersistSnapshot();
+      lastPersistedSnapshot = snapshot;
       lastPlatformSnapshot = nextPlatformSnapshot;
       const now = Date.now();
       if (now - lastSavedToastAt >= SAVE_TOAST_COOLDOWN_MS) {
@@ -342,6 +346,7 @@
       settings.platformSettings.steam.shutdownMode,
       settings.accountDisplay.showUsernames,
       settings.accountDisplay.showCardNotesInline,
+      settings.accountDisplay.expandedFolders,
       showLastLoginKey,
       settings.uiScalePercent,
       settings.defaultPlatformId,
@@ -367,9 +372,6 @@
 
 <div class="settings-panel">
   <div class="header">
-    <div class="title-wrap">
-      <span class="title">{t("settings.title")}</span>
-    </div>
     <div class="header-actions">
       <button class="close-btn" onclick={onClose} title={t("common.close")}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -377,6 +379,9 @@
           <line x1="6" y1="6" x2="18" y2="18" />
         </svg>
       </button>
+    </div>
+    <div class="title-wrap">
+      <span class="title">{t("settings.title")}</span>
     </div>
   </div>
 
@@ -478,6 +483,7 @@
             onCommitBanCheckDays={banCheckDays.commit}
             onRefreshAvatarsNow={handleRefreshAvatarsNow}
             onRefreshBansNow={handleRefreshBansNow}
+            onAccountAdded={onAccountAdded}
             pathLabelKey={platformDef.pathLabelKey}
             pathPlaceholder={resolvePathPlaceholder(platformDef.pathPlaceholder, runtimeOs)}
           />
@@ -506,7 +512,7 @@
   .header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-start;
     gap: 12px;
     padding-bottom: 10px;
     border-bottom: 1px solid var(--border);
@@ -528,7 +534,6 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding-right: 8px;
   }
 
   .close-btn {
@@ -634,14 +639,14 @@
     padding-bottom: 8px;
   }
 
-  .settings-grid {
+  .settings-panel :global(.settings-grid) {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     gap: 12px;
     min-width: 0;
   }
 
-  .card {
+  .settings-panel :global(.card) {
     background: color-mix(in srgb, var(--bg-card) 84%, #000 16%);
     border: 1px solid color-mix(in srgb, var(--border) 80%, #fff 20%);
     border-radius: 12px;
@@ -651,34 +656,34 @@
     gap: 12px;
   }
 
-  .card-wide {
+  .settings-panel :global(.card-wide) {
     grid-column: span 2;
   }
 
-  .card h3 {
+  .settings-panel :global(.card h3) {
     margin: 0;
     font-size: 13px;
     font-weight: 700;
     color: var(--fg);
   }
 
-  .field {
+  .settings-panel :global(.field) {
     display: flex;
     flex-direction: column;
     gap: 8px;
   }
 
-  .field-label {
+  .settings-panel :global(.field-label) {
     font-size: 12px;
     color: var(--fg-muted);
   }
 
-  .hint {
+  .settings-panel :global(.hint) {
     font-size: 11px;
     color: var(--fg-subtle);
   }
 
-  .text-input {
+  .settings-panel :global(.text-input) {
     width: 100%;
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -689,11 +694,11 @@
     outline: none;
   }
 
-  .text-input:focus {
+  .settings-panel :global(.text-input:focus) {
     border-color: color-mix(in srgb, var(--fg-muted) 55%, var(--border));
   }
 
-  .select-input {
+  .settings-panel :global(.select-input) {
     appearance: none;
     -webkit-appearance: none;
     -moz-appearance: none;
@@ -708,17 +713,17 @@
     background-repeat: no-repeat;
   }
 
-  .number-input {
+  .settings-panel :global(.number-input) {
     width: 100%;
   }
 
-  .slider-input {
+  .settings-panel :global(.slider-input) {
     width: 100%;
     accent-color: var(--fg);
   }
 
   @media (max-width: 980px) {
-    .card-wide {
+    .settings-panel :global(.card-wide) {
       grid-column: span 1;
     }
   }
@@ -728,7 +733,7 @@
       gap: 10px;
     }
 
-    .settings-grid {
+    .settings-panel :global(.settings-grid) {
       grid-template-columns: 1fr;
     }
 

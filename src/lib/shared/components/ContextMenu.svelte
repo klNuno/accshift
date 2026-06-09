@@ -102,13 +102,19 @@
     submenuLoading = true;
     submenuItems = null;
     try {
-      submenuItems = await item.submenuLoader();
+      const loaded = await item.submenuLoader();
+      // Drop stale results if another item was hovered while loading.
+      if (hoveredSubmenuIndex !== index) return;
+      submenuItems = loaded;
     } catch (e) {
+      if (hoveredSubmenuIndex !== index) return;
       submenuError = String(e);
       submenuItems = [];
     } finally {
-      submenuLoading = false;
-      void positionSubmenu(anchorTop);
+      if (hoveredSubmenuIndex === index) {
+        submenuLoading = false;
+        void positionSubmenu(anchorTop);
+      }
     }
   }
 

@@ -10,10 +10,12 @@
     settings = $bindable(),
     accent,
     t,
+    onAccountAdded,
   }: {
     settings: AppSettings;
     accent: string;
     t: (key: MessageKey, params?: TranslationParams) => string;
+    onAccountAdded?: () => void;
   } = $props();
 
   let cookieValue = $state("");
@@ -29,6 +31,7 @@
       const account = await addAccountByCookie(trimmed);
       cookieValue = "";
       addToast(t("roblox.setupReadyWithProfile", { profile: account.displayName || account.username }));
+      onAccountAdded?.();
     } catch (err) {
       errorMessage = String(err);
     } finally {

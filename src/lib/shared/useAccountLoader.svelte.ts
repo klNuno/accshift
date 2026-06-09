@@ -46,10 +46,8 @@ export function createAccountLoader(
     const needle = raw.toLowerCase();
     const direct = accounts.find((account) => account.id.trim().toLowerCase() === needle);
     if (direct) return direct.id;
-    const adapter = getAdapter();
     const matched = accounts.find(
       (account) =>
-        adapter?.isCurrentAccount?.(account, raw) ||
         account.username.trim().toLowerCase() === needle ||
         (account.displayName || "").trim().toLowerCase() === needle,
     );
@@ -190,6 +188,8 @@ export function createAccountLoader(
   async function switchTo(account: PlatformAccount) {
     const adapter = getAdapter();
     if (!adapter || switching) return;
+    // Invalidate in-flight loads so a pre-switch result cannot clobber currentAccount.
+    latestLoadId += 1;
     switching = true;
     switchingAccountId = account.id;
     error = null;
@@ -201,9 +201,14 @@ export function createAccountLoader(
         void adapter
           .getProfileInfo(account.id)
           .then((profile) => {
-            avatars.applyProfileUpdate(account, profile, accounts, (v) => {
-              accounts = v;
-            });
+            avatars.applyProfileUpdate(
+              account,
+              profile,
+              () => accounts,
+              (v) => {
+                accounts = v;
+              },
+            );
           })
           .catch(() => {
             avatars.updateState(account.id, { refreshing: false });
@@ -276,7 +281,7 @@ export function createAccountLoader(
       const tasks: Promise<unknown>[] = [
         avatars.loadProfilesForAccounts(
           targetAccounts,
-          accounts,
+          () => accounts,
           (v) => {
             accounts = v;
           },
@@ -362,9 +367,6 @@ export function createAccountLoader(
     get loading() {
       return loading;
     },
-    get switching() {
-      return switching;
-    },
     get switchingAccountId() {
       return switchingAccountId;
     },
@@ -385,7 +387,6 @@ export function createAccountLoader(
     prepareAccountIds,
     prepareVisibleAccounts,
     primeAccountIds: refreshAccountIds,
-    primeVisibleAccounts: refreshVisibleAccounts,
     refreshVisibleAccounts,
   };
 }

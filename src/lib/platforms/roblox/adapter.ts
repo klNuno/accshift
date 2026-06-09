@@ -10,6 +10,7 @@ import * as service from "./robloxApi";
 import { getRobloxContextMenuItems } from "./contextMenu";
 import { getRobloxCachedProfile, fetchRobloxProfile } from "./profileCache";
 import type { RobloxAccount } from "./types";
+import { isSafeHttpUrl } from "$lib/shared/url";
 
 function toAccount(account: RobloxAccount): PlatformAccount {
   return {
@@ -22,8 +23,6 @@ function toAccount(account: RobloxAccount): PlatformAccount {
 
 export const robloxAdapter: PlatformAdapter = {
   id: "roblox",
-  name: "Roblox",
-  accent: "#e1242a",
 
   ...createPlatformAddFlowHandlers({
     beginSetup: service.beginAccountSetup,
@@ -48,11 +47,6 @@ export const robloxAdapter: PlatformAdapter = {
     };
   },
 
-  isCurrentAccount(_account, _currentAccount) {
-    // Roblox has no persistent "current account", last_used_at handles ordering
-    return false;
-  },
-
   async switchAccount(account: PlatformAccount): Promise<void> {
     await service.switchAccount(account.id);
   },
@@ -67,7 +61,7 @@ export const robloxAdapter: PlatformAdapter = {
   async getProfileInfo(userId: string): Promise<PlatformProfileInfo | null> {
     const info = await fetchRobloxProfile(userId);
     if (!info?.avatarUrl) return null;
-    return { avatarUrl: info.avatarUrl };
+    return { avatarUrl: isSafeHttpUrl(info.avatarUrl) ? info.avatarUrl : null };
   },
 
   getCachedProfile(userId: string) {

@@ -42,7 +42,8 @@ function hexToRgbTriplet(color: string): string {
       : hex;
 
   if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
-    throw new Error(`Unsupported theme color format: ${color}`);
+    // Malformed token: fall back instead of throwing mid-render.
+    return "0 0 0";
   }
 
   const r = Number.parseInt(normalized.slice(0, 2), 16);
@@ -125,6 +126,10 @@ const REQUIRED_TOKEN_KEYS: (keyof ThemeTokens)[] = [
   "danger",
   "afkText",
 ];
+
+// Tokens converted via hexToRgbTriplet in applyThemeToDocument; must be 6-digit hex.
+const HEX_TOKEN_KEYS: (keyof ThemeTokens)[] = ["bgCard", "bgCardHover", "bgMuted", "bgElevated"];
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
 function isValidTokens(tokens: unknown): tokens is ThemeTokens {
   if (!tokens || typeof tokens !== "object") return false;
@@ -211,6 +216,8 @@ export function parseThemeJson(json: string): AppThemeDefinition | null {
     if (!id || !name) return null;
     if (!/^[a-zA-Z0-9_-]+$/.test(id)) return null;
     if (!isValidTokens(raw.tokens)) return null;
+    if (!HEX_TOKEN_KEYS.every((key) => HEX_COLOR_RE.test((raw.tokens as ThemeTokens)[key].trim())))
+      return null;
     const colorScheme = raw.colorScheme === "light" ? "light" : "dark";
     return {
       id,
