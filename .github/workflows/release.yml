@@ -14,7 +14,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
 
@@ -37,14 +37,14 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@2dec1e33f4ab2c6d5bce1b0c4607961bb1a3f7a1 # v1.12.0
         with:
           node-version: 22
           cache: true
           run-install: false
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable branch, pinned 2026-06-09
 
       - name: Install dependencies
         run: vp install --frozen-lockfile
@@ -220,9 +220,12 @@ jobs:
           Set-Content -Path RELEASE_NOTES.md -Value $notesText -Encoding utf8
           Get-Content RELEASE_NOTES.md
 
-          "body<<EOF" >> $env:GITHUB_OUTPUT
+          # Notes come from commit messages (untrusted). A static delimiter would let
+          # a crafted commit close the heredoc early and inject arbitrary outputs.
+          $delim = "NOTES_$([guid]::NewGuid().ToString('N'))"
+          "body<<$delim" >> $env:GITHUB_OUTPUT
           $notesText >> $env:GITHUB_OUTPUT
-          "EOF" >> $env:GITHUB_OUTPUT
+          "$delim" >> $env:GITHUB_OUTPUT
 
       - name: Generate updater manifest
         shell: pwsh
@@ -274,7 +277,7 @@ jobs:
           Get-Content $manifestPath
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ steps.release_tag.outputs.tag }}
           draft: true
