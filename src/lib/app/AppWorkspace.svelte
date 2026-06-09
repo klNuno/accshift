@@ -1,13 +1,17 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { flip } from "svelte/animate";
+  import { slide } from "svelte/transition";
+  import { SvelteSet } from "svelte/reactivity";
   import Breadcrumb from "$lib/features/folders/Breadcrumb.svelte";
   import type { FolderInfo, ItemRef } from "$lib/features/folders/types";
   import ViewToggle from "$lib/shared/components/ViewToggle.svelte";
   import ListView from "$lib/shared/components/ListView.svelte";
   import FolderCard from "$lib/features/folders/FolderCard.svelte";
   import BackCard from "$lib/features/folders/BackCard.svelte";
+  import SectionHeader from "$lib/features/folders/SectionHeader.svelte";
   import AccountCard from "$lib/shared/components/AccountCard.svelte";
+  import type { DisplaySection } from "./useDisplayPipeline.svelte";
   import type {
     PlatformAccount,
     PlatformAdapter,
@@ -47,6 +51,7 @@
     pendingSetupAccountId,
     displayFolderItems,
     displayAccountItemsWithPending,
+    displaySections,
     renderedAccountMap,
     showUsernames,
     showLastLogin,
@@ -104,6 +109,7 @@
     pendingSetupAccountId: string | null;
     displayFolderItems: ItemRef[];
     displayAccountItemsWithPending: ItemRef[];
+    displaySections: DisplaySection[] | null;
     renderedAccountMap: Record<string, PlatformAccount>;
     showUsernames: boolean;
     showLastLogin: boolean;
@@ -140,6 +146,26 @@
   } = $props();
 
   let contentWrapperRef = $state<HTMLDivElement | null>(null);
+  let collapsedFolders = new SvelteSet<string>();
+
+  let renderedItemCount = $derived(
+    displaySections
+      ? displaySections.reduce(
+          (sum, section) => sum + section.folderItems.length + section.accountItems.length,
+          0,
+        )
+      : displayFolderItems.length + displayAccountItemsWithPending.length,
+  );
+  // Past ~100 rendered cards the flip animation gets expensive during drags.
+  let flipDuration = $derived(renderedItemCount > 100 ? 0 : 200);
+
+  function toggleCollapsed(folderId: string) {
+    if (collapsedFolders.has(folderId)) {
+      collapsedFolders.delete(folderId);
+    } else {
+      collapsedFolders.add(folderId);
+    }
+  }
 
   $effect(() => {
     setGridWrapperRef(contentWrapperRef);
@@ -200,7 +226,7 @@
   <main class="content" oncontextmenu={onBackgroundContextMenu}>
     <div class="toolbar-row">
       <Breadcrumb
-        platformName={adapter.name}
+        platformName={activePlatformName}
         path={folderPath}
         onNavigate={onNavigateToFolder}
         {accentColor}
@@ -223,9 +249,9 @@
       <div class="center-msg"></div>
     {:else if renderedAccountCount === 0}
       <div class="center-msg">
-        <p>{t("app.noAccountsFound", { platform: adapter.name })}</p>
+        <p>{t("app.noAccountsFound", { platform: activePlatformName })}</p>
         <p class="text-sm mt-1 opacity-70">
-          {adapter.getNoAccountsHintMessage?.({ t }) ?? t("app.noAccountsHint", { platform: adapter.name })}
+          {adapter.getNoAccountsHintMessage?.({ t }) ?? t("app.noAccountsHint", { platform: activePlatformName })}
         </p>
       </div>
     {:else if viewMode === "list"}
@@ -240,6 +266,9 @@
         <ListView
           folderItems={displayFolderItems}
           accountItems={displayAccountItemsWithPending}
+          sections={displaySections}
+          collapsedFolders={collapsedFolders}
+          onToggleCollapse={toggleCollapsed}
           accounts={renderedAccountMap}
           showUsernames={showUsernames}
           showLastLogin={showLastLogin}
@@ -251,6 +280,7 @@
           warningStates={bulkEditMode ? {} : warningStates}
           getAccountNote={getEffectiveAccountNote}
           getAccountCardColor={getEffectiveAccountColor}
+          {getFolderCardColor}
           {accentColor}
           dragItem={bulkEditMode ? null : dragItem}
           dragOverFolderId={bulkEditMode ? null : dragOverFolderId}
@@ -265,6 +295,115 @@
           {getFolder}
           {locale}
         />
+      </div>
+    {:else if displaySections}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        bind:this={contentWrapperRef}
+        class="w-full"
+        class:is-dragging={dragIsDragging}
+        onmousedown={handleWorkspaceMouseDown}
+      >
+        <div class="sections-wrapper" style={gridContainerStyle()} data-sections-mode>
+          {#each displaySections as section, sectionIndex (section.folder?.id ?? "__root__")}
+            {@const isRoot = section.folder === null}
+            {@const totalCount = section.folderItems.length + section.accountItems.length}
+            {@const sectionFolderId = section.folder?.id}
+            {@const collapseKey = sectionFolderId ?? "__root__"}
+            {@const isSectionDragged = !isRoot && dragItem?.type === "folder" && dragItem.id === sectionFolderId}
+            {@const isCollapsed = collapsedFolders.has(collapseKey)}
+            <div
+              class="section"
+              class:is-root={isRoot}
+              class:is-dragged={isSectionDragged}
+              class:is-collapsed={isCollapsed}
+              data-folder-id={sectionFolderId ?? undefined}
+              data-section-card={isRoot ? undefined : "true"}
+            >
+            {#if !isRoot}
+              <SectionHeader
+                folder={section.folder}
+                label={section.folder?.name ?? ""}
+                count={totalCount}
+                cardColor={section.folder ? getFolderCardColor(section.folder.id) : ""}
+                {accentColor}
+                collapsed={isCollapsed}
+                onToggle={() => toggleCollapsed(collapseKey)}
+                onNavigate={onNavigateToFolder}
+                onContextMenu={onFolderContextMenu}
+              />
+            {:else if totalCount > 0}
+              <SectionHeader
+                folder={null}
+                label={t("list.rootSection")}
+                count={totalCount}
+                {accentColor}
+                collapsed={isCollapsed}
+                onToggle={() => toggleCollapsed(collapseKey)}
+              />
+            {/if}
+            {#if totalCount > 0 && !isCollapsed}
+              <div class="grid-container section-grid" transition:slide={{ duration: 220 }}>
+                {#each section.folderItems as item (item.id)}
+                  {@const folder = getFolder(item.id)}
+                  {@const isFolderDragged = dragItem?.type === "folder" && dragItem.id === item.id}
+                  <div animate:flip={{ duration: isFolderDragged ? 0 : flipDuration }}>
+                    {#if folder}
+                      <FolderCard
+                        {folder}
+                        cardColor={getFolderCardColor(folder.id)}
+                        {accentColor}
+                        onOpen={() => onNavigateToFolder(folder.id)}
+                        onContextMenu={(event) => onFolderContextMenu(event, folder)}
+                        isDragOver={dragOverFolderId === folder.id}
+                        isDragged={isFolderDragged}
+                      />
+                    {/if}
+                  </div>
+                {/each}
+
+                {#each section.accountItems as item, cardIndex (item.id)}
+                  {@const account = renderedAccountMap[item.id]}
+                  {@const avatarState = account ? avatarStates[account.id] : null}
+                  {@const isAccountDragged = !bulkEditMode && dragItem?.type === "account" && dragItem.id === item.id}
+                  <div animate:flip={{ duration: isAccountDragged ? 0 : flipDuration }}>
+                    {#if account}
+                      <AccountCard
+                        {account}
+                        cardColor={getEffectiveAccountColor(account.id)}
+                        note={getEffectiveAccountNote(account.id)}
+                        showNoteInline={bulkEditMode ? false : showCardNotesInline}
+                        showUsername={isPendingSetupAccount(account.id) ? false : showUsernames}
+                        showLastLogin={isPendingSetupAccount(account.id) ? false : showLastLogin}
+                        lastLoginAt={account.lastLoginAt}
+                        entranceDelay={Math.min((sectionIndex * 60) + (cardIndex * 25), 320)}
+                        {lastLoginUnknownKey}
+                        {locale}
+                        isActive={!bulkEditMode && account.id === currentAccountId}
+                        onSwitch={() => onAccountSwitch(account)}
+                        onContextMenu={(event) => onAccountContextMenu(event, account)}
+                        onActivate={() => onAccountActivate(account)}
+                        avatarUrl={avatarState?.url}
+                        isLoadingAvatar={isPendingSetupAccount(account.id) ? true : (avatarState?.loading ?? false)}
+                        isRefreshingAvatar={avatarState?.refreshing ?? false}
+                        isDragged={isAccountDragged}
+                        warningInfo={bulkEditMode ? undefined : (isPendingSetupAccount(account.id) ? undefined : warningStates[account.id])}
+                        extensionContent={bulkEditMode ? null : (accountExtensionContentById[account.id] ?? null)}
+                        forceExtensionOpen={bulkEditMode ? false : isAccountExtensionForcedOpen(account.id)}
+                        disableExtension={bulkEditMode || dragIsDragging}
+                        disableHoverExtension={isHoverExtensionDisabled(account.id)}
+                        isSwitching={switchingAccountId === account.id}
+                        singleClickSwitch={bulkEditMode}
+                        interactionDisabled={isPendingSetupAccount(account.id)}
+                      />
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            {/if}
+            </div>
+          {/each}
+        </div>
       </div>
     {:else}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -287,7 +426,7 @@
           {#each displayFolderItems as item (item.id)}
             {@const folder = getFolder(item.id)}
             {@const isFolderDragged = dragItem?.type === "folder" && dragItem.id === item.id}
-            <div animate:flip={{ duration: isFolderDragged ? 0 : 200 }}>
+            <div animate:flip={{ duration: isFolderDragged ? 0 : flipDuration }}>
               {#if folder}
                 <FolderCard
                   {folder}
@@ -306,7 +445,7 @@
             {@const account = renderedAccountMap[item.id]}
             {@const avatarState = account ? avatarStates[account.id] : null}
             {@const isAccountDragged = !bulkEditMode && dragItem?.type === "account" && dragItem.id === item.id}
-            <div animate:flip={{ duration: isAccountDragged ? 0 : 200 }}>
+            <div animate:flip={{ duration: isAccountDragged ? 0 : flipDuration }}>
               {#if account}
                 <AccountCard
                   {account}
@@ -417,6 +556,29 @@
     flex-wrap: wrap;
     gap: 10px;
   }
+
+  .sections-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+
+  .section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transition: opacity 140ms ease-out, transform 140ms ease-out;
+  }
+
+  .section.is-dragged {
+    opacity: 0.35;
+    transform: scale(0.97);
+  }
+
+  .section-grid {
+    margin: 0;
+  }
+
 
   .is-dragging :global(.card:not(.dragging):hover) {
     transform: none !important;

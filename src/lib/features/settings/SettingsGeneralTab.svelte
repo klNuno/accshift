@@ -68,11 +68,13 @@
             style="--swatch-bg: rgb({theme.tokens.bgRgb}); --swatch-card: {theme.tokens.bgCard}; --swatch-fg: {theme.tokens.fg}; --swatch-border: {theme.tokens.border};"
             onclick={() => settings.themeId = theme.id}
           >
-            <span class="swatch-preview">
-              <span class="swatch-bar"></span>
-              <span class="swatch-bar short"></span>
+            <span class="swatch-inner">
+              <span class="swatch-preview">
+                <span class="swatch-bar"></span>
+                <span class="swatch-bar short"></span>
+              </span>
+              <span class="swatch-label">{theme.isCustom ? (theme.displayName ?? theme.id) : t(theme.labelKey)}</span>
             </span>
-            <span class="swatch-label">{theme.isCustom ? (theme.displayName ?? theme.id) : t(theme.labelKey)}</span>
             {#if theme.isCustom}
               <!-- svelte-ignore node_invalid_placement_ssr -->
               <button
@@ -138,6 +140,14 @@
       offLabel={t("common.tooltip")}
       onToggle={() => settings.accountDisplay.showCardNotesInline = !settings.accountDisplay.showCardNotesInline}
     />
+    <ToggleSetting
+      label={t("settings.expandedFolders")}
+      enabled={settings.accountDisplay.expandedFolders}
+      accent={neutralAccent}
+      onLabel={t("common.enabled")}
+      offLabel={t("common.disabled")}
+      onToggle={() => settings.accountDisplay.expandedFolders = !settings.accountDisplay.expandedFolders}
+    />
   </section>
 
   <section class="card">
@@ -169,17 +179,26 @@
     margin-top: 4px;
   }
 
+  /* WebKit (Safari/macOS WebView) ignores `display: flex` on <button>, so the
+     swatch button stays as a block container and an inner span holds the
+     flex layout. See https://bugs.webkit.org/show_bug.cgi?id=147068. */
   .theme-swatch {
     position: relative;
+    box-sizing: border-box;
+    width: 100%;
     border-radius: 8px;
     border: 2px solid transparent;
     background: var(--swatch-bg);
     cursor: pointer;
     padding: 8px 8px 6px;
+    transition: border-color 120ms ease-out, box-shadow 120ms ease-out;
+  }
+
+  .swatch-inner {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    transition: border-color 120ms ease-out, box-shadow 120ms ease-out;
+    width: 100%;
   }
 
   .theme-swatch:hover {
@@ -197,6 +216,8 @@
     flex-direction: column;
     gap: 3px;
     padding: 6px;
+    width: 100%;
+    box-sizing: border-box;
     border-radius: 4px;
     background: var(--swatch-card);
     border: 1px solid var(--swatch-border);

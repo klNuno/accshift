@@ -50,6 +50,26 @@ export function createDragManager(options: DragManagerOptions) {
   function refreshSlotRects() {
     if (!dragItem) return;
     const wrapperRef = options.getWrapperRef();
+    const sectionsEl = wrapperRef?.querySelector("[data-sections-mode]") as HTMLElement | null;
+
+    if (sectionsEl && dragItem.type === "folder") {
+      const cards = Array.from(
+        sectionsEl.querySelectorAll(':scope > .section[data-section-card="true"]'),
+      ) as HTMLElement[];
+      slotRects = cards.map((el) => el.getBoundingClientRect());
+      dragIsListMode = true;
+      const items = options.getFolderItems();
+      dragOldIndex = items.findIndex((i) => i.id === dragItem!.id);
+      return;
+    }
+
+    if (sectionsEl && dragItem.type === "account") {
+      // Account reorder is not supported in sections mode; only move-into-folder via dragOverFolderId.
+      slotRects = [];
+      dragOldIndex = -1;
+      return;
+    }
+
     const gridEl = wrapperRef?.querySelector(
       ".grid-container, .list-container",
     ) as HTMLElement | null;
@@ -85,6 +105,9 @@ export function createDragManager(options: DragManagerOptions) {
     const hover = el.closest(
       "[data-folder-id], [data-back-card], [data-account-id]",
     ) as HTMLElement | null;
+    const wrapperRef = options.getWrapperRef();
+    const inSectionsMode = !!wrapperRef?.querySelector("[data-sections-mode]");
+    const isSectionHover = hover?.dataset.sectionCard === "true";
 
     if (hover?.dataset.backCard) {
       dragOverBack = true;
@@ -92,7 +115,8 @@ export function createDragManager(options: DragManagerOptions) {
       previewIndex = null;
     } else if (
       hover?.dataset.folderId &&
-      !(dragItem?.type === "folder" && dragItem?.id === hover.dataset.folderId)
+      !(dragItem?.type === "folder" && dragItem?.id === hover.dataset.folderId) &&
+      !(inSectionsMode && dragItem?.type === "folder" && isSectionHover)
     ) {
       dragOverFolderId = hover.dataset.folderId!;
       dragOverBack = false;
@@ -138,6 +162,14 @@ export function createDragManager(options: DragManagerOptions) {
       item = { type: "folder", id: card.dataset.folderId };
     }
     if (!item) return;
+
+    // In sections mode, only top-level section wrappers are draggable as folders.
+    // Subfolder cards inside sections stay click-to-navigate only.
+    const wrapperRef = options.getWrapperRef();
+    const inSectionsMode = !!wrapperRef?.querySelector("[data-sections-mode]");
+    if (inSectionsMode && item.type === "folder" && card.dataset.sectionCard !== "true") {
+      return;
+    }
 
     lastClientX = e.clientX;
     lastClientY = e.clientY;
@@ -218,6 +250,16 @@ export function createDragManager(options: DragManagerOptions) {
 
     const currentFolderId = options.getCurrentFolderId();
     const activeTab = options.getActiveTab();
+    const wrapperRef = options.getWrapperRef();
+    const inSectionsMode = !!wrapperRef?.querySelector("[data-sections-mode]");
+    // In sections mode, derive the actual source folder for account drags from the source section.
+    let sourceFolderId = currentFolderId;
+    if (inSectionsMode && dragItem?.type === "account" && pendingDrag) {
+      const sectionEl = pendingDrag.sourceEl.closest(
+        '[data-section-card="true"]',
+      ) as HTMLElement | null;
+      sourceFolderId = sectionEl?.dataset.folderId ?? null;
+    }
 
     if (dragItem) {
       if (dragOverBack && currentFolderId) {
@@ -225,7 +267,9 @@ export function createDragManager(options: DragManagerOptions) {
         moveItem(dragItem, currentFolderId, current?.parentId ?? null, activeTab);
       } else if (dragOverFolderId) {
         if (!(dragItem.type === "folder" && dragItem.id === dragOverFolderId)) {
-          moveItem(dragItem, currentFolderId, dragOverFolderId, activeTab);
+          if (sourceFolderId !== dragOverFolderId) {
+            moveItem(dragItem, sourceFolderId, dragOverFolderId, activeTab);
+          }
         }
       } else if (previewIndex !== null) {
         // Commit the same order shown by the preview.

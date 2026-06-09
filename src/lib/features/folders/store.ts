@@ -119,6 +119,36 @@ export function getItemsInFolder(folderId: string | null, platform: string): Ite
   return store.itemOrder[key] || [];
 }
 
+export type FolderSection = {
+  folder: FolderInfo | null;
+  folderItems: ItemRef[];
+  accountItems: ItemRef[];
+};
+
+export function getRootSections(platform: string): FolderSection[] {
+  const store = getStore();
+  const rootItems = store.itemOrder[getRootKey(platform)] || [];
+  const rootAccountItems = rootItems.filter((item) => item.type === "account");
+  const rootFolderItems = rootItems.filter((item) => item.type === "folder");
+
+  const sections: FolderSection[] = [];
+
+  for (const folderRef of rootFolderItems) {
+    const folder = store.folders.find((f) => f.id === folderRef.id);
+    if (!folder) continue;
+    const items = store.itemOrder[folder.id] || [];
+    sections.push({
+      folder,
+      folderItems: items.filter((item) => item.type === "folder"),
+      accountItems: items.filter((item) => item.type === "account"),
+    });
+  }
+
+  sections.push({ folder: null, folderItems: [], accountItems: rootAccountItems });
+
+  return sections;
+}
+
 export function createFolder(name: string, parentId: string | null, platform: string): FolderInfo {
   const store = getStore();
   const folder: FolderInfo = { id: generateId(), name, parentId, platform };

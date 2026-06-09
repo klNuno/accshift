@@ -1,5 +1,6 @@
 import type { PlatformAccount } from "$lib/shared/platform";
 import type { ItemRef } from "$lib/features/folders/types";
+import { getRootSections, type FolderSection } from "$lib/features/folders/store";
 
 type DisplayPipelineDeps = {
   navigation: {
@@ -7,6 +8,8 @@ type DisplayPipelineDeps = {
     readonly searchQuery: string;
     readonly folderItems: ItemRef[];
     readonly accountItems: ItemRef[];
+    readonly currentFolderId: string | null;
+    readonly currentItems: ItemRef[];
   };
   drag: {
     readonly isDragging: boolean;
@@ -20,6 +23,14 @@ type DisplayPipelineDeps = {
   addFlow: {
     readonly pendingSetupAccount: PlatformAccount | null;
   };
+  getExpandedFolders: () => boolean;
+  getActiveTab: () => string;
+};
+
+export type DisplaySection = {
+  folder: FolderSection["folder"];
+  folderItems: ItemRef[];
+  accountItems: ItemRef[];
 };
 
 export function matchesSearch(account: PlatformAccount, query: string): boolean {
@@ -31,9 +42,22 @@ export function matchesSearch(account: PlatformAccount, query: string): boolean 
 }
 
 export function createDisplayPipeline(deps: DisplayPipelineDeps) {
-  const { navigation, drag, loader, addFlow } = deps;
+  const { navigation, drag, loader, addFlow, getExpandedFolders, getActiveTab } = deps;
+
+  let isExpandedMode = $derived(
+    getExpandedFolders() && navigation.currentFolderId === null && !navigation.isSearching,
+  );
+
+  let rawSections = $derived.by<DisplaySection[] | null>(() => {
+    if (!isExpandedMode) return null;
+    // Subscribe to folder mutations: refreshCurrentItems() reassigns currentItems
+    // after any folder/account mutation, which re-fires this derived.
+    void navigation.currentItems;
+    return getRootSections(getActiveTab());
+  });
 
   let displayFolderItems = $derived.by(() => {
+    if (rawSections) return [] as ItemRef[];
     if (navigation.isSearching) return [] as ItemRef[];
     if (
       !drag.isDragging ||
@@ -57,6 +81,7 @@ export function createDisplayPipeline(deps: DisplayPipelineDeps) {
   });
 
   let displayAccountItems = $derived.by(() => {
+    if (rawSections) return [] as ItemRef[];
     if (navigation.isSearching) return filteredAccountItems;
     if (
       !drag.isDragging ||
@@ -80,9 +105,45 @@ export function createDisplayPipeline(deps: DisplayPipelineDeps) {
     return [...displayAccountItems, { type: "account" as const, id: pending.id }];
   });
 
+  let displaySections = $derived.by<DisplaySection[] | null>(() => {
+    if (!rawSections) return null;
+    const pending = addFlow.pendingSetupAccount;
+    if (!pending) return rawSections;
+    const placedSomewhere = rawSections.some((section) =>
+      section.accountItems.some((item) => item.id === pending.id),
+    );
+    if (placedSomewhere) return rawSections;
+    const sections = rawSections.map((section) => ({
+      folder: section.folder,
+      folderItems: section.folderItems,
+      accountItems: section.accountItems,
+    }));
+    const rootIdx = sections.findIndex((s) => s.folder === null);
+    if (rootIdx >= 0) {
+      sections[rootIdx] = {
+        ...sections[rootIdx],
+        accountItems: [
+          ...sections[rootIdx].accountItems,
+          { type: "account" as const, id: pending.id },
+        ],
+      };
+    }
+    return sections;
+  });
+
   let visibleRenderedAccountIds = $derived.by(() => {
     const ids: string[] = [];
     const seen = new Set<string>();
+    if (displaySections) {
+      for (const section of displaySections) {
+        for (const item of section.accountItems) {
+          if (seen.has(item.id)) continue;
+          seen.add(item.id);
+          ids.push(item.id);
+        }
+      }
+      return ids;
+    }
     for (const item of displayAccountItemsWithPending) {
       if (item.type !== "account" || seen.has(item.id)) continue;
       seen.add(item.id);
@@ -109,14 +170,11 @@ export function createDisplayPipeline(deps: DisplayPipelineDeps) {
     get displayFolderItems() {
       return displayFolderItems;
     },
-    get filteredAccountItems() {
-      return filteredAccountItems;
-    },
-    get displayAccountItems() {
-      return displayAccountItems;
-    },
     get displayAccountItemsWithPending() {
       return displayAccountItemsWithPending;
+    },
+    get displaySections() {
+      return displaySections;
     },
     get visibleRenderedAccountIds() {
       return visibleRenderedAccountIds;

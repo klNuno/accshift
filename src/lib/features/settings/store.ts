@@ -41,6 +41,7 @@ const DEFAULTS: AppSettings = {
       "battle-net": false,
     },
     showCardNotesInline: false,
+    expandedFolders: false,
   },
   pinEnabled: false,
   pinHash: "",
@@ -170,6 +171,7 @@ function sanitizeSettings(value: unknown): AppSettings {
       showCardNotesInline: Boolean(
         rawAccountDisplay.showCardNotesInline ?? raw.showCardNotesInline,
       ),
+      expandedFolders: Boolean(rawAccountDisplay.expandedFolders ?? raw.expandedFolders),
     },
     pinEnabled,
     pinHash,

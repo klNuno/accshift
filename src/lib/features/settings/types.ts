@@ -34,6 +34,7 @@ export interface AccountDisplaySettings {
   showUsernames: boolean;
   showLastLoginPerPlatform: Record<string, boolean>;
   showCardNotesInline: boolean;
+  expandedFolders: boolean;
 }
 
 export type SteamShutdownMode = "graceful" | "force";
