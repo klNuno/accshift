@@ -28,11 +28,7 @@
   } from "$lib/shared/folderCardColors";
   import { DEFAULT_LOCALE, translate, type MessageKey, type TranslationParams } from "$lib/i18n";
   import { trackDependencies } from "$lib/shared/trackDependencies";
-  import {
-    createPlatformShellState,
-    getInitialActiveTab,
-    isPlatformUsable,
-  } from "$lib/app/platformShell.svelte";
+  import { createPlatformShellState, isPlatformUsable } from "$lib/app/platformShell.svelte";
   import { applyThemeToDocument } from "$lib/theme/themes";
   import { ensurePlatformLoaded } from "$lib/platforms/registry";
   import {
@@ -42,7 +38,8 @@
   import AppWorkspace from "$lib/app/AppWorkspace.svelte";
   import AppDialogs from "$lib/app/AppDialogs.svelte";
   import AppScreenOverlays from "$lib/app/AppScreenOverlays.svelte";
-  import TelemetryOnboarding from "$lib/features/settings/TelemetryOnboarding.svelte";
+  import type { Component, ComponentProps } from "svelte";
+  import type TelemetryOnboardingType from "$lib/features/settings/TelemetryOnboarding.svelte";
   import { createAppDialogsController } from "$lib/app/useAppDialogs.svelte";
   import { createAppNavigationController } from "$lib/app/useAppNavigation.svelte";
   import { createAppUpdater } from "$lib/app/useAppUpdater.svelte";
@@ -363,7 +360,14 @@
     onRefresh: navigation.refreshCurrentItems,
   });
 
-  const display = createDisplayPipeline({ navigation, drag, loader, addFlow });
+  const display = createDisplayPipeline({
+    navigation,
+    drag,
+    loader,
+    addFlow,
+    getExpandedFolders: () => settings.accountDisplay.expandedFolders,
+    getActiveTab: () => shell.activeTab,
+  });
 
   $effect(() => {
     if (settingsPanel.showSettings || !shell.adapter || loader.loading || !secureScreen.windowForeground || secureScreen.renderSuspended) {
@@ -488,23 +492,51 @@
 
   $effect(() => {
     trackDependencies(shell.runtimeOs, shell.settings.enabledPlatforms.join(","));
-    if (isPlatformUsable(shell.activeTab, shell.runtimeOs)) return;
-    const fallbackTab = getInitialActiveTab(shell.settings, shell.runtimeOs);
-    if (fallbackTab !== shell.activeTab) {
+    if (shell.ensureActiveTab()) {
       loader.clearForPlatformChange();
-      shell.setActiveTab(fallbackTab);
       navigation.currentFolderId = null;
     }
   });
 
   let showTelemetryOnboarding = $state(false);
+  let TelemetryOnboardingComp = $state<Component<ComponentProps<typeof TelemetryOnboardingType>> | null>(null);
+  let tourMockActive = $state(false);
+  let tourPrevTab: string | null = null;
+
+  const MOCK_TOUR_ACCOUNTS: PlatformAccount[] = [
+    { id: "__tour_mock_1", displayName: "Account 1", username: "account_1", lastLoginAt: null },
+    { id: "__tour_mock_2", displayName: "Account 2", username: "account_2", lastLoginAt: null },
+    { id: "__tour_mock_3", displayName: "Account 3", username: "account_3", lastLoginAt: null },
+  ];
+  const MOCK_TOUR_ITEMS: ItemRef[] = MOCK_TOUR_ACCOUNTS.map((a) => ({ type: "account" as const, id: a.id }));
+  const MOCK_TOUR_MAP: Record<string, PlatformAccount> = MOCK_TOUR_ACCOUNTS.reduce(
+    (acc, a) => { acc[a.id] = a; return acc; },
+    {} as Record<string, PlatformAccount>,
+  );
+
+  function activateTourMock() {
+    tourPrevTab = shell.activeTab;
+    if (shell.activeTab !== "steam") {
+      shell.setActiveTab("steam");
+    }
+    tourMockActive = true;
+  }
+  function deactivateTourMock() {
+    tourMockActive = false;
+    if (tourPrevTab && tourPrevTab !== shell.activeTab) {
+      shell.setActiveTab(tourPrevTab);
+    }
+    tourPrevTab = null;
+  }
 
   async function checkTelemetryOnboarding() {
     try {
       type TState = { onboarding_completed: boolean };
       const state = await invoke<TState>("telemetry_get_state");
       if (!state.onboarding_completed) {
-        setTimeout(() => { showTelemetryOnboarding = true; }, 1200);
+        const onbModule = await import("$lib/features/settings/TelemetryOnboarding.svelte");
+        TelemetryOnboardingComp = onbModule.default as Component<ComponentProps<typeof TelemetryOnboardingType>>;
+        showTelemetryOnboarding = true;
       }
     } catch (e) {
       console.error("telemetry_get_state failed", e);
@@ -585,6 +617,7 @@
   class="app-frame"
   class:boot-ready={bootReady}
   class:motion-paused={secureScreen.motionPaused}
+  class:is-macos={shell.runtimeOs === "macos"}
   style={`--afk-reveal-delay:${secureScreen.afkTextRevealDelayMs}ms;`}
 >
   {#if shell.runtimeOs === "macos" && !secureScreen.renderSuspended}
@@ -611,6 +644,7 @@
           onSettingsUpdated={shell.refreshSettings}
           onRefreshAvatarsNow={refreshAvatarsNow}
           onRefreshBansNow={refreshBansNow}
+          onAccountAdded={() => void loadAccounts(true)}
           runtimeOs={shell.runtimeOs}
         />
       {:else}
@@ -641,11 +675,12 @@
     {locale}
     loaderError={loader.error}
     loaderLoading={loader.loading}
-    renderedAccountCount={display.renderedAccountCount}
+    renderedAccountCount={tourMockActive ? MOCK_TOUR_ACCOUNTS.length : display.renderedAccountCount}
     {pendingSetupAccountId}
-    displayFolderItems={display.displayFolderItems}
-    displayAccountItemsWithPending={display.displayAccountItemsWithPending}
-    renderedAccountMap={display.renderedAccountMap}
+    displayFolderItems={tourMockActive ? [] : display.displayFolderItems}
+    displayAccountItemsWithPending={tourMockActive ? MOCK_TOUR_ITEMS : display.displayAccountItemsWithPending}
+    displaySections={tourMockActive ? null : display.displaySections}
+    renderedAccountMap={tourMockActive ? MOCK_TOUR_MAP : display.renderedAccountMap}
     showUsernames={showUsernamesForActiveTab}
     showLastLogin={showLastLoginForActiveTab}
     {lastLoginUnknownKey}
@@ -706,10 +741,20 @@
     onToastDone={removeToast}
   />
 
-  {#if showTelemetryOnboarding}
-    <TelemetryOnboarding
+  {#if showTelemetryOnboarding && TelemetryOnboardingComp}
+    {@const TelemetryOnboardingDyn = TelemetryOnboardingComp}
+    <TelemetryOnboardingDyn
       {t}
-      onComplete={() => { showTelemetryOnboarding = false; }}
+      version={appVersion}
+      compatiblePlatforms={shell.compatiblePlatforms}
+      onTourActive={(active) => {
+        if (active) activateTourMock();
+        else deactivateTourMock();
+      }}
+      onComplete={() => {
+        showTelemetryOnboarding = false;
+        deactivateTourMock();
+      }}
     />
   {/if}
       {/if}
@@ -791,6 +836,7 @@
     transform: scale(1.01);
   }
 
+
   .inactivity-frost {
     position: absolute;
     inset: 0;
@@ -828,6 +874,12 @@
     color: var(--fg);
     display: flex;
     flex-direction: column;
+  }
+
+  /* macOS scrollbars are overlay (zero width), so `scrollbar-gutter: stable`
+     would leave a permanent empty strip on the right. */
+  .app-frame.is-macos .content {
+    scrollbar-gutter: auto;
   }
 
   .center-msg {

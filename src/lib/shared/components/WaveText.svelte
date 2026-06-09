@@ -194,16 +194,18 @@
     letter-spacing: 0.03em;
     text-transform: uppercase;
     color: color-mix(in srgb, var(--afk-text) 35%, transparent);
+    /* Two text-shadow layers (sharp + soft glow) instead of five. Each
+       letter is composited on its own layer (will-change: transform set in
+       JS during animation), so the shadow is rasterized once. Five-layer
+       stacks with 52px blur radii melted VM GPUs. */
     text-shadow:
-      0 0 1px color-mix(in srgb, var(--afk-text) 50%, transparent),
-      0 0 4px color-mix(in srgb, var(--afk-text) 38%, transparent),
-      0 0 16px color-mix(in srgb, var(--afk-text) 75%, transparent),
-      0 0 34px color-mix(in srgb, var(--afk-text) 58%, transparent),
-      0 0 52px color-mix(in srgb, var(--afk-text) 42%, transparent);
+      0 0 3px color-mix(in srgb, var(--afk-text) 55%, transparent),
+      0 0 14px color-mix(in srgb, var(--afk-text) 50%, transparent);
   }
 
   .wave-char {
     display: inline-block;
     transform: translate3d(0, 0px, 0);
+    contain: paint;
   }
 </style>

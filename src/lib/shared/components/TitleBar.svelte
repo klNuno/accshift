@@ -82,7 +82,7 @@
     </svg>
   </button>
 
-  <button class="btn" onclick={onAddAccount} title={translate(locale, "titlebar.addAccount")} disabled={!canAddAccount}>
+  <button class="btn" data-tour="add-account" onclick={onAddAccount} title={translate(locale, "titlebar.addAccount")} disabled={!canAddAccount}>
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <line x1="12" y1="5" x2="12" y2="19" />
       <line x1="5" y1="12" x2="19" y2="12" />
@@ -115,7 +115,7 @@
   </div>
 
   {#if enabledPlatforms.length > 1}
-    <div class="tabs">
+    <div class="tabs" data-tour="platforms">
       {#each enabledPlatforms as platform}
         {@const unavailable = unavailablePlatformIds.has(platform.id)}
         {@const tabIconPath = TAB_ICON_PATHS[platform.id]}
@@ -196,10 +196,13 @@
   }
 
   /* macOS: native traffic lights float at top-left inside our titlebar.
-     72px of left padding clears them. 32px matches native title-bar height. */
+     72px of left padding clears them. 32px matches native title-bar height.
+     Opaque background (ignores --bg-opacity) so the desktop never bleeds
+     through the titlebar when the window is transparent. */
   .titlebar.macos {
     height: 32px;
     padding-left: 72px;
+    background: var(--bg-solid);
   }
 
   .left {
