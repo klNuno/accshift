@@ -8,6 +8,8 @@ mod linux;
 mod macos;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod secrets;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod steam_registry;
 #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
 mod unsupported;
 #[cfg(target_os = "windows")]

@@ -1,48 +1,10 @@
 use crate::error::AppError;
-use crate::platforms::steam::vdf::vdf_set_nested_value;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::secrets::{
-    keyring_get_bytes, keyring_get_password, keyring_set_bytes, keyring_set_password, secret_error,
-};
-
-// Secrets live in the Keychain via `keyring`. See os/secrets.rs and the Linux
-// twin for the token-based scheme.
-
-pub fn encrypt_secret(secret: &str) -> Result<String, AppError> {
-    if secret.is_empty() {
-        return Ok(String::new());
-    }
-    let id = uuid::Uuid::new_v4().to_string();
-    keyring_set_password(&id, secret).map_err(secret_error)?;
-    Ok(id)
-}
-
-pub fn decrypt_secret(token: &str) -> Result<String, AppError> {
-    if token.is_empty() {
-        return Ok(String::new());
-    }
-    keyring_get_password(token).map_err(secret_error)
-}
-
-pub fn encrypt_bytes(data: &[u8]) -> Result<Vec<u8>, AppError> {
-    if data.is_empty() {
-        return Ok(Vec::new());
-    }
-    let id = uuid::Uuid::new_v4().to_string();
-    keyring_set_bytes(&id, data).map_err(secret_error)?;
-    Ok(id.into_bytes())
-}
-
-pub fn decrypt_bytes(token: &[u8]) -> Result<Vec<u8>, AppError> {
-    if token.is_empty() {
-        return Ok(Vec::new());
-    }
-    let id = std::str::from_utf8(token).map_err(|e| secret_error(e.to_string()))?;
-    keyring_get_bytes(id).map_err(secret_error)
-}
+// Secrets live in the Keychain via `keyring`. Shared implementation in
+// os/secrets.rs.
+pub use super::secrets::{decrypt_bytes, decrypt_secret, encrypt_bytes, encrypt_secret};
 
 fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
@@ -58,7 +20,7 @@ pub fn steam_installation_path() -> Result<PathBuf, AppError> {
     if path.join("config").join("loginusers.vdf").exists() {
         Ok(path)
     } else {
-        Err(AppError::RegistryRead(
+        Err(AppError::RegistryOpen(
             "Steam installation not found under ~/Library/Application Support/Steam".into(),
         ))
     }
@@ -88,51 +50,16 @@ fn registry_vdf_path() -> Result<PathBuf, AppError> {
     Ok(dir.join("registry.vdf"))
 }
 
-const REGISTRY_PATH: &[&str] = &["HKCU", "Software", "Valve", "Steam", "AutoLoginUser"];
-const REMEMBER_PATH: &[&str] = &["HKCU", "Software", "Valve", "Steam", "RememberPassword"];
-
 pub fn get_auto_login_user() -> Result<String, AppError> {
-    let path = registry_vdf_path()?;
-    let content = match fs::read_to_string(&path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
-        Err(e) => return Err(AppError::FileRead(e.to_string())),
-    };
-    Ok(extract_registry_value(&content, "AutoLoginUser").unwrap_or_default())
+    super::steam_registry::get_auto_login_user(&registry_vdf_path()?)
 }
 
 pub fn set_auto_login_user(username: &str) -> Result<(), AppError> {
-    let path = registry_vdf_path()?;
-    let existing = fs::read_to_string(&path).unwrap_or_else(|_| empty_registry_vdf());
-    let updated = vdf_set_nested_value(&existing, REGISTRY_PATH, username);
-    let updated = vdf_set_nested_value(&updated, REMEMBER_PATH, "1");
-    fs::write(&path, updated).map_err(|e| AppError::RegistryWrite(e.to_string()))
+    super::steam_registry::set_auto_login_user(&registry_vdf_path()?, username)
 }
 
 pub fn clear_auto_login_user() -> Result<(), AppError> {
-    let path = registry_vdf_path()?;
-    let existing = match fs::read_to_string(&path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(AppError::FileRead(e.to_string())),
-    };
-    let updated = vdf_set_nested_value(&existing, REGISTRY_PATH, "");
-    fs::write(&path, updated).map_err(|e| AppError::RegistryWrite(e.to_string()))
-}
-
-fn extract_registry_value(content: &str, key: &str) -> Option<String> {
-    for line in content.lines() {
-        let trimmed = line.trim();
-        let parts: Vec<&str> = trimmed.split('"').collect();
-        if parts.len() >= 4 && parts[1].eq_ignore_ascii_case(key) {
-            return Some(parts[3].to_string());
-        }
-    }
-    None
-}
-
-fn empty_registry_vdf() -> String {
-    "\"Registry\"\n{\n\t\"HKCU\"\n\t{\n\t\t\"Software\"\n\t\t{\n\t\t\t\"Valve\"\n\t\t\t{\n\t\t\t\t\"Steam\"\n\t\t\t\t{\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n".to_string()
+    super::steam_registry::clear_auto_login_user(&registry_vdf_path()?)
 }
 
 pub fn kill_and_relaunch_steam_elevated(
