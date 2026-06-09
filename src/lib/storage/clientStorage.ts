@@ -257,7 +257,3 @@ export async function refreshClientStorageIfChanged(): Promise<string[]> {
   applySnapshot(snapshot, changed.filter(isClientStoreId));
   return changed;
 }
-
-export function getCachedStorageManifest(): StorageManifest {
-  return cloneValue(lastManifest);
-}

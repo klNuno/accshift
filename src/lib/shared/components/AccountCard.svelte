@@ -264,6 +264,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="card-shell"
+  data-tour="account-card"
   class:extension-visible={isExtensionVisible}
   style={cardColor ? `--card-custom-color: ${cardColor};` : ""}
   onmouseenter={handleMouseEnter}
@@ -299,13 +300,12 @@
     onclick={handleClick}
     oncontextmenu={handleContextMenu}
     data-account-id={account.id}
-    class="card"
+    class="card entrance"
     class:custom-color={!!cardColor}
     class:active={isActive}
     class:dragging={isDragged}
     class:ban-red={hasRedWarning}
     class:ban-yellow={hasOrangeWarning}
-    class:entrance={entranceDelay >= 0}
     style:--entrance-delay={`${entranceDelay}ms`}
   >
     <div

@@ -1,166 +1,18 @@
 import { getProfileInfo } from "./steamApi";
-import { getCacheDuration } from "../../features/settings/store";
 import type { ProfileInfo } from "./types";
-import {
-  CLIENT_STORE_STEAM_PROFILE_CACHE,
-  getClientStoreValue,
-  setClientStoreValue,
-} from "$lib/storage/clientStorage";
-import { isSafeHttpUrl } from "$lib/shared/url";
-const SESSION_START_MS = Date.now();
-const PROFILE_FETCH_ATTEMPTS = 4;
-const PROFILE_FETCH_RETRY_DELAY_MS = 750;
+import { CLIENT_STORE_STEAM_PROFILE_CACHE } from "$lib/storage/clientStorage";
+import { createProfileCache } from "$lib/shared/profileCache";
 
-interface CachedProfile {
-  url: string;
-  displayName?: string;
-  timestamp: number;
-}
+const cache = createProfileCache<ProfileInfo>({
+  storeId: CLIENT_STORE_STEAM_PROFILE_CACHE,
+  fetcher: getProfileInfo,
+  getAvatarUrl: (profile) => profile.avatar_url,
+  getDisplayName: (profile) => profile.display_name ?? undefined,
+  // Profile data can lag right after Steam writes loginusers.vdf: retry a few
+  // times, then negative-cache profiles that expose no avatar (e.g. private).
+  retry: { attempts: 4, delayMs: 750 },
+  cacheNegativeResults: true,
+});
 
-interface ProfileCache {
-  [steamId: string]: CachedProfile;
-}
-
-let cachedProfiles: ProfileCache | null = null;
-const inFlightProfiles = new Map<string, Promise<ProfileInfo | null>>();
-
-function sanitizeCachedProfile(value: unknown): CachedProfile | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const raw = value as Partial<CachedProfile>;
-  if (typeof raw.url !== "string" || raw.url.trim().length === 0 || !isSafeHttpUrl(raw.url))
-    return null;
-  const timestamp = Number(raw.timestamp);
-  if (!Number.isFinite(timestamp) || timestamp < 0) return null;
-  return {
-    url: raw.url,
-    displayName: typeof raw.displayName === "string" ? raw.displayName : undefined,
-    timestamp,
-  };
-}
-
-function getCache(): ProfileCache {
-  if (cachedProfiles) return cachedProfiles;
-
-  try {
-    const data = getClientStoreValue<unknown>(CLIENT_STORE_STEAM_PROFILE_CACHE);
-    if (data == null) {
-      cachedProfiles = {};
-      return cachedProfiles;
-    }
-    const parsed = data as Record<string, unknown>;
-    if (!parsed || typeof parsed !== "object") {
-      cachedProfiles = {};
-      return cachedProfiles;
-    }
-
-    const out: ProfileCache = {};
-    for (const [steamId, cached] of Object.entries(parsed)) {
-      if (typeof steamId !== "string" || steamId.trim().length === 0) continue;
-      const sanitized = sanitizeCachedProfile(cached);
-      if (sanitized) {
-        out[steamId] = sanitized;
-      }
-    }
-    cachedProfiles = out;
-    return cachedProfiles;
-  } catch {
-    cachedProfiles = {};
-    return cachedProfiles;
-  }
-}
-
-function saveCache(cache: ProfileCache) {
-  cachedProfiles = cache;
-  setClientStoreValue(CLIENT_STORE_STEAM_PROFILE_CACHE, cache);
-}
-
-function hasSafeAvatarUrl(
-  profile: ProfileInfo | null,
-): profile is ProfileInfo & { avatar_url: string } {
-  const avatarUrl = profile?.avatar_url?.trim() ?? "";
-  return avatarUrl.length > 0 && isSafeHttpUrl(avatarUrl);
-}
-
-function cacheProfile(profile: ProfileInfo, steamId: string) {
-  if (!hasSafeAvatarUrl(profile)) return;
-  setCachedProfile(steamId, {
-    url: profile.avatar_url,
-    displayName: profile.display_name ?? undefined,
-  });
-}
-
-function delay(ms: number) {
-  return new Promise<void>((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-async function fetchProfileWithRetries(steamId: string): Promise<ProfileInfo | null> {
-  let lastProfile: ProfileInfo | null = null;
-
-  for (let attempt = 0; attempt < PROFILE_FETCH_ATTEMPTS; attempt += 1) {
-    try {
-      const profile = await getProfileInfo(steamId);
-      if (profile) {
-        lastProfile = profile;
-        cacheProfile(profile, steamId);
-        if (hasSafeAvatarUrl(profile)) {
-          return profile;
-        }
-      }
-    } catch {}
-
-    if (attempt < PROFILE_FETCH_ATTEMPTS - 1) {
-      await delay(PROFILE_FETCH_RETRY_DELAY_MS);
-    }
-  }
-
-  return lastProfile;
-}
-
-export function getCachedProfile(steamId: string): {
-  url: string;
-  displayName?: string;
-  expired: boolean;
-} | null {
-  const cache = getCache();
-  const cached = cache[steamId];
-
-  if (!cached) return null;
-
-  const duration = getCacheDuration();
-  const expired =
-    duration === 0 ? cached.timestamp < SESSION_START_MS : Date.now() - cached.timestamp > duration;
-  return {
-    url: cached.url,
-    displayName: cached.displayName,
-    expired,
-  };
-}
-
-export function setCachedProfile(steamId: string, data: { url: string; displayName?: string }) {
-  if (!isSafeHttpUrl(data.url)) return;
-  const cache = getCache();
-  cache[steamId] = {
-    url: data.url,
-    displayName: data.displayName,
-    timestamp: Date.now(),
-  };
-  saveCache(cache);
-}
-
-export async function fetchProfile(steamId: string): Promise<ProfileInfo | null> {
-  const existing = inFlightProfiles.get(steamId);
-  if (existing) {
-    return existing;
-  }
-
-  const task = fetchProfileWithRetries(steamId)
-    .catch(() => null)
-    .finally(() => {
-      inFlightProfiles.delete(steamId);
-    });
-
-  inFlightProfiles.set(steamId, task);
-  return task;
-}
+export const getCachedProfile = cache.getCachedProfile;
+export const fetchProfile = cache.fetchProfile;

@@ -64,7 +64,6 @@ export function createVisiblePriming(loader: VisiblePrimingDeps) {
   }
 
   return {
-    scheduleVisiblePrime,
     processVisible,
     reset,
     destroy: clearTimer,

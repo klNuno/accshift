@@ -69,18 +69,6 @@ export function createPlatformApi(platformId: string) {
     await invoke("platform_forget_account", { platformId, accountId });
   }
 
-  function getPath(): Promise<string> {
-    return invoke<string>("platform_get_path", { platformId });
-  }
-
-  function setPath(path: string): Promise<void> {
-    return invoke("platform_set_path", { platformId, path });
-  }
-
-  function selectPath(): Promise<string> {
-    return invoke<string>("platform_select_path", { platformId });
-  }
-
   function setAccountLabel(accountId: string, label: string): Promise<void> {
     return invoke("platform_set_account_label", { platformId, accountId, label });
   }
@@ -94,9 +82,6 @@ export function createPlatformApi(platformId: string) {
     getSetupStatus,
     cancelSetup,
     forgetAccount,
-    getPath,
-    setPath,
-    selectPath,
     setAccountLabel,
   };
 }

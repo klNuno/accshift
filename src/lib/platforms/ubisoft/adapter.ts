@@ -27,8 +27,6 @@ function toAccount(account: UbisoftAccount): PlatformAccount {
 
 export const ubisoftAdapter: PlatformAdapter = {
   id: "ubisoft",
-  name: "Ubisoft",
-  accent: "#0070ff",
   ...createPlatformAddFlowHandlers({
     beginSetup: service.beginAccountSetup,
     getSetupStatus: service.getAccountSetupStatus,
@@ -50,11 +48,6 @@ export const ubisoftAdapter: PlatformAdapter = {
       accounts: snapshot.accounts.map(toAccount),
       currentAccount: snapshot.currentAccount,
     };
-  },
-
-  isCurrentAccount(account, currentAccount) {
-    const needle = currentAccount.trim().toLowerCase();
-    return needle.length > 0 && account.id.trim().toLowerCase() === needle;
   },
 
   async switchAccount(account: PlatformAccount): Promise<void> {

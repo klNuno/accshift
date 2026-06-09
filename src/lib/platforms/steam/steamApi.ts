@@ -27,9 +27,6 @@ export const getStartupSnapshot = api.getStartupSnapshot<SteamStartupSnapshot>;
 export const getAccountSetupStatus = api.getSetupStatus;
 export const cancelAccountSetup = api.cancelSetup;
 export const forgetAccount = api.forgetAccount;
-export const getSteamPath = api.getPath;
-export const setSteamPath = api.setPath;
-export const selectSteamPath = api.selectPath;
 
 export async function switchAccount(username: string): Promise<void> {
   const cfg = getSteamLaunchConfig();

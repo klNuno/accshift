@@ -1,4 +1,4 @@
-import type { CachedPlatformProfile, PlatformProfileInfo } from "$lib/shared/platform";
+import type { PlatformProfileInfo } from "$lib/shared/platform";
 import { getCachedRiotProfileMeta } from "./accountCache";
 
 function getProfileDisplayName(profile: {
@@ -24,8 +24,4 @@ export function getRiotProfile(profileId: string): PlatformProfileInfo | null {
     displayName,
     avatarLoading,
   };
-}
-
-export function getCachedRiotProfile(_profileId: string): CachedPlatformProfile | null {
-  return null;
 }

@@ -12,9 +12,6 @@ export const beginProfileSetup = api.beginSetup;
 export const getProfileSetupStatus = api.getSetupStatus;
 export const cancelProfileSetup = api.cancelSetup;
 export const forgetProfile = api.forgetAccount;
-export const getRiotPath = api.getPath;
-export const setRiotPath = api.setPath;
-export const selectRiotPath = api.selectPath;
 
 export async function captureProfile(profileId: string): Promise<void> {
   await invoke("riot_capture_profile", { profileId });

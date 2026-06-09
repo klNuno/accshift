@@ -9,7 +9,7 @@ import { createPlatformAddFlowHandlers } from "$lib/platforms/addFlow";
 import * as service from "./riotApi";
 import { rememberRiotProfiles } from "./accountCache";
 import { getRiotContextMenuItems } from "./contextMenu";
-import { getCachedRiotProfile, getRiotProfile } from "./profile";
+import { getRiotProfile } from "./profile";
 import type { RiotProfile } from "./types";
 
 function getRiotAlias(profile: RiotProfile): string {
@@ -57,8 +57,6 @@ function toAccount(profile: RiotProfile): PlatformAccount {
 
 export const riotAdapter: PlatformAdapter = {
   id: "riot",
-  name: "Riot Games",
-  accent: "#ef4444",
   ...createPlatformAddFlowHandlers({
     beginSetup: service.beginProfileSetup,
     getSetupStatus: service.getProfileSetupStatus,
@@ -84,11 +82,6 @@ export const riotAdapter: PlatformAdapter = {
     };
   },
 
-  isCurrentAccount(account, currentAccount) {
-    const needle = currentAccount.trim().toLowerCase();
-    return needle.length > 0 && account.id.trim().toLowerCase() === needle;
-  },
-
   async switchAccount(account: PlatformAccount): Promise<void> {
     await service.switchProfile(account.id);
   },
@@ -102,10 +95,6 @@ export const riotAdapter: PlatformAdapter = {
 
   async getProfileInfo(accountId: string): Promise<PlatformProfileInfo | null> {
     return getRiotProfile(accountId);
-  },
-
-  getCachedProfile(accountId: string) {
-    return getCachedRiotProfile(accountId);
   },
 
   getNoAccountsToastMessage(callbacks) {

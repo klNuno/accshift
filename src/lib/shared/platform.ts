@@ -52,7 +52,8 @@ export interface PlatformProfileInfo {
 }
 
 export interface CachedPlatformProfile {
-  url: string;
+  // null = cached "no avatar" result; the entry still suppresses refetches.
+  url: string | null;
   displayName?: string;
   expired: boolean;
 }
@@ -78,8 +79,6 @@ export interface PlatformAddAccountResult {
 
 export interface PlatformAdapter {
   id: string;
-  name: string;
-  accent: string;
   reloadAfterAdd?: boolean;
 
   loadAccounts(): Promise<PlatformAccount[]>;
@@ -88,7 +87,6 @@ export interface PlatformAdapter {
     accounts: PlatformAccount[];
     currentAccount: string;
   }>;
-  isCurrentAccount?(account: PlatformAccount, currentAccount: string): boolean;
   switchAccount(account: PlatformAccount): Promise<void>;
   addAccount(): Promise<PlatformAddAccountResult>;
   pollAddFlow?(setupId: string): Promise<PlatformAddFlowStatus>;
@@ -124,8 +122,4 @@ export function registerPlatform(adapter: PlatformAdapter) {
 
 export function getPlatform(id: string): PlatformAdapter | undefined {
   return adapters.get(id);
-}
-
-export function getAllPlatforms(): PlatformAdapter[] {
-  return Array.from(adapters.values());
 }

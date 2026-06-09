@@ -12,7 +12,3 @@ export const getAccountSetupStatus = api.getSetupStatus;
 export const cancelAccountSetup = api.cancelSetup;
 export const forgetAccount = api.forgetAccount;
 export const setAccountLabel = (uuid: string, label: string) => api.setAccountLabel(uuid, label);
-
-export const getUbisoftPath = api.getPath;
-export const setUbisoftPath = api.setPath;
-export const selectUbisoftPath = api.selectPath;

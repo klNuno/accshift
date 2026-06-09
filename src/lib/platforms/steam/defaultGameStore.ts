@@ -63,7 +63,3 @@ export function clearDefaultGame(steamId: string) {
   delete data[steamId];
   writeMap(data);
 }
-
-export function getDefaultGameRevision(): number {
-  return getClientStoreRevision(CLIENT_STORE_ACCOUNT_DEFAULT_GAME);
-}

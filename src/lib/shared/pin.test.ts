@@ -1,11 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  sanitizePinDigits,
-  isValidPinCode,
-  isValidPinHash,
-  hashPinCode,
-  verifyPinCode,
-} from "./pin";
+import { sanitizePinDigits, isValidPinHash, hashPinCode, verifyPinCode } from "./pin";
 
 describe("sanitizePinDigits", () => {
   it("removes non-digits", () => {
@@ -22,20 +16,6 @@ describe("sanitizePinDigits", () => {
 
   it("handles empty string", () => {
     expect(sanitizePinDigits("")).toBe("");
-  });
-});
-
-describe("isValidPinCode", () => {
-  it("accepts 4 digits", () => {
-    expect(isValidPinCode("1234")).toBe(true);
-  });
-
-  it("rejects 3 digits", () => {
-    expect(isValidPinCode("123")).toBe(false);
-  });
-
-  it("rejects non-digits", () => {
-    expect(isValidPinCode("abcd")).toBe(false);
   });
 });
 

@@ -42,10 +42,6 @@ export function sanitizePinDigits(value: string): string {
   return value.replace(/\D/g, "").slice(0, PIN_CODE_LENGTH);
 }
 
-export function isValidPinCode(value: string): boolean {
-  return sanitizePinDigits(value).length === PIN_CODE_LENGTH;
-}
-
 export function isValidPinHash(value: string): boolean {
   return PIN_HASH_RE.test(value) || LEGACY_HASH_RE.test(value);
 }

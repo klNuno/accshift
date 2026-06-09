@@ -20,8 +20,6 @@ function toAccount(account: EpicAccount): PlatformAccount {
 
 export const epicAdapter: PlatformAdapter = {
   id: "epic",
-  name: "Epic Games",
-  accent: "#0078f2",
   reloadAfterAdd: true,
 
   ...createPlatformAddFlowHandlers({

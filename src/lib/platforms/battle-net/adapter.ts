@@ -34,8 +34,6 @@ function toAccount(account: BattleNetAccount): PlatformAccount {
 
 export const battleNetAdapter: PlatformAdapter = {
   id: "battle-net",
-  name: "Battle.net",
-  accent: "#38bdf8",
   ...createPlatformAddFlowHandlers({
     beginSetup: service.beginAccountSetup,
     getSetupStatus: service.getAccountSetupStatus,
@@ -57,11 +55,6 @@ export const battleNetAdapter: PlatformAdapter = {
       accounts: snapshot.accounts.map(toAccount),
       currentAccount: snapshot.currentAccount,
     };
-  },
-
-  isCurrentAccount(account, currentAccount) {
-    const needle = currentAccount.trim().toLowerCase();
-    return needle.length > 0 && account.id.trim().toLowerCase() === needle;
   },
 
   async switchAccount(account: PlatformAccount): Promise<void> {
