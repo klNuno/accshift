@@ -21,6 +21,11 @@ pub fn migrate_legacy_config(app_handle: tauri::AppHandle) -> String {
     }
 }
 
+/// Per-session ceiling on webview-originated log records. The webview is the
+/// least trusted writer; without a cap it can flood the disk (records are up
+/// to 16KB each).
+const WEBVIEW_LOG_CAP: u32 = 20_000;
+
 #[tauri::command]
 pub fn log_app_event(
     app_handle: tauri::AppHandle,
@@ -29,6 +34,21 @@ pub fn log_app_event(
     message: String,
     details: Option<String>,
 ) -> Result<(), String> {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static WRITTEN: AtomicU32 = AtomicU32::new(0);
+    let written = WRITTEN.fetch_add(1, Ordering::Relaxed);
+    if written >= WEBVIEW_LOG_CAP {
+        if written == WEBVIEW_LOG_CAP {
+            let _ = crate::logging::append_app_log(
+                &ctx(&app_handle),
+                "warn",
+                "logging",
+                "Webview log cap reached; dropping further webview records this session",
+                None,
+            );
+        }
+        return Ok(());
+    }
     crate::logging::append_app_log(
         &ctx(&app_handle),
         &level,
@@ -276,12 +296,18 @@ pub fn platform_get_path(
 }
 
 #[tauri::command]
-pub fn platform_set_path(
+pub async fn platform_set_path(
     app_handle: tauri::AppHandle,
     platform_id: String,
     path: String,
 ) -> Result<(), String> {
-    require_service(&platform_id)?.set_path(ctx(&app_handle), &path)
+    // Config writes take the cross-process lock (can wait several seconds
+    // when the CLI holds it) — keep them off the main thread.
+    let service = require_service(&platform_id)?;
+    let c = ctx(&app_handle);
+    tauri::async_runtime::spawn_blocking(move || service.set_path(c, &path))
+        .await
+        .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[tauri::command]
@@ -290,13 +316,17 @@ pub fn platform_select_path(platform_id: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn platform_set_account_label(
+pub async fn platform_set_account_label(
     app_handle: tauri::AppHandle,
     platform_id: String,
     account_id: String,
     label: String,
 ) -> Result<(), String> {
-    require_service(&platform_id)?.set_account_label(ctx(&app_handle), &account_id, &label)
+    let service = require_service(&platform_id)?;
+    let c = ctx(&app_handle);
+    tauri::async_runtime::spawn_blocking(move || service.set_account_label(c, &account_id, &label))
+        .await
+        .map_err(|e| format!("Task failed: {e}"))?
 }
 
 // ---------------------------------------------------------------------------
@@ -327,8 +357,11 @@ pub fn close_window(window: tauri::Window) {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn steam_set_api_key(app_handle: tauri::AppHandle, key: String) -> Result<(), String> {
-    crate::platforms::steam::set_api_key(ctx(&app_handle), key)
+pub async fn steam_set_api_key(app_handle: tauri::AppHandle, key: String) -> Result<(), String> {
+    let c = ctx(&app_handle);
+    tauri::async_runtime::spawn_blocking(move || crate::platforms::steam::set_api_key(c, key))
+        .await
+        .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[tauri::command]
@@ -351,8 +384,11 @@ pub async fn steam_switch_account_mode(
     launch_options: String,
     shutdown_mode: String,
 ) -> Result<(), String> {
+    let c = ctx(&app_handle);
+    let _lock = accshift_core::lock::acquire_exclusive(&c, std::time::Duration::from_secs(2))
+        .map_err(|e| e.to_string())?;
     crate::platforms::steam::switch_account_mode(
-        ctx(&app_handle),
+        c,
         username,
         steam_id,
         mode,
@@ -372,8 +408,11 @@ pub async fn steam_switch_account_and_launch_game(
     launch_options: String,
     shutdown_mode: String,
 ) -> Result<(), String> {
+    let c = ctx(&app_handle);
+    let _lock = accshift_core::lock::acquire_exclusive(&c, std::time::Duration::from_secs(2))
+        .map_err(|e| e.to_string())?;
     crate::platforms::steam::switch_account_and_launch_game(
-        ctx(&app_handle),
+        c,
         username,
         app_id,
         run_as_admin,
@@ -402,18 +441,18 @@ pub async fn steam_get_player_bans(
 }
 
 #[tauri::command]
-pub fn steam_copy_game_settings(
+pub async fn steam_copy_game_settings(
     app_handle: tauri::AppHandle,
     from_steam_id: String,
     to_steam_id: String,
     app_id: String,
 ) -> Result<(), String> {
-    crate::platforms::steam::copy_game_settings(
-        ctx(&app_handle),
-        from_steam_id,
-        to_steam_id,
-        app_id,
-    )
+    let c = ctx(&app_handle);
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::platforms::steam::copy_game_settings(c, from_steam_id, to_steam_id, app_id)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[tauri::command]
@@ -431,8 +470,15 @@ pub fn steam_open_userdata(app_handle: tauri::AppHandle, steam_id: String) -> Re
 }
 
 #[tauri::command]
-pub fn steam_clear_browser_cache(app_handle: tauri::AppHandle) -> Result<(), String> {
-    crate::platforms::steam::clear_integrated_browser_cache(ctx(&app_handle))
+pub async fn steam_clear_browser_cache(app_handle: tauri::AppHandle) -> Result<(), String> {
+    // Kills Steam (polls up to several seconds) then deletes the cache dir —
+    // must not run on the main thread.
+    let c = ctx(&app_handle);
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::platforms::steam::clear_integrated_browser_cache(c)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[tauri::command]
@@ -457,11 +503,16 @@ pub fn steam_get_account_games(
 
 #[cfg(windows)]
 #[tauri::command]
-pub fn riot_capture_profile(
+pub async fn riot_capture_profile(
     app_handle: tauri::AppHandle,
     profile_id: String,
 ) -> Result<(), String> {
-    crate::platforms::riot::capture_profile(ctx(&app_handle), profile_id)
+    let c = ctx(&app_handle);
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::platforms::riot::capture_profile(c, profile_id)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {e}"))?
 }
 
 // ---------------------------------------------------------------------------

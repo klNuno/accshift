@@ -28,11 +28,19 @@ pub fn telemetry_get_state(app_handle: tauri::AppHandle) -> TelemetryUiState {
 }
 
 #[tauri::command]
-pub fn telemetry_set_mode_a(app_handle: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+pub async fn telemetry_set_mode_a(
+    app_handle: tauri::AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
     let c = ctx(&app_handle);
-    config::update_config(&c, |cfg| {
-        cfg.telemetry.mode_a_enabled = enabled;
-    })?;
+    let c2 = c.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        config::update_config(&c2, |cfg| {
+            cfg.telemetry.mode_a_enabled = enabled;
+        })
+    })
+    .await
+    .map_err(|e| format!("task: {e}"))??;
     let tstate = app_handle.state::<TelemetryState>();
     refresh_consent_from_config(&tstate, &c);
     Ok(())
@@ -50,12 +58,17 @@ pub async fn telemetry_set_mode_b(
 ) -> Result<(), String> {
     if enabled {
         let c = ctx(&app_handle);
-        config::update_config(&c, |cfg| {
-            cfg.telemetry.mode_b_enabled = true;
-            if cfg.telemetry.install_id.is_empty() {
-                cfg.telemetry.install_id = telemetry::install_id::generate();
-            }
-        })?;
+        let c2 = c.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            config::update_config(&c2, |cfg| {
+                cfg.telemetry.mode_b_enabled = true;
+                if cfg.telemetry.install_id.is_empty() {
+                    cfg.telemetry.install_id = telemetry::install_id::generate();
+                }
+            })
+        })
+        .await
+        .map_err(|e| format!("task: {e}"))??;
         let tstate = app_handle.state::<TelemetryState>();
         refresh_consent_from_config(&tstate, &c);
         Ok(())
@@ -81,33 +94,45 @@ pub async fn telemetry_set_mode_b(
 
         // 3. Local mutation: clear install_id and disable the flag.
         let c = ctx(&app_handle);
-        config::update_config(&c, |cfg| {
-            cfg.telemetry.mode_b_enabled = false;
-            cfg.telemetry.install_id.clear();
-        })?;
+        let c2 = c.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            config::update_config(&c2, |cfg| {
+                cfg.telemetry.mode_b_enabled = false;
+                cfg.telemetry.install_id.clear();
+            })
+        })
+        .await
+        .map_err(|e| format!("task: {e}"))??;
         let tstate = app_handle.state::<TelemetryState>();
         refresh_consent_from_config(&tstate, &c);
         Ok(())
     }
 }
 
-/// Marks the onboarding as completed. If `mode_b_enabled`, also enables Mode B
-/// and generates an install_id. Mode A is not touched (stays ON by default).
+/// Marks the onboarding as completed and applies the user's choice from the
+/// three-button consent screen. Mode A defaults to ON, but the user can opt
+/// out from the onboarding dialog itself. Enabling Mode B also generates an
+/// install_id when missing.
 #[tauri::command]
-pub fn telemetry_complete_onboarding(
+pub async fn telemetry_complete_onboarding(
     app_handle: tauri::AppHandle,
+    mode_a_enabled: bool,
     mode_b_enabled: bool,
 ) -> Result<(), String> {
     let c = ctx(&app_handle);
-    config::update_config(&c, |cfg| {
-        cfg.telemetry.onboarding_completed = true;
-        if mode_b_enabled {
-            cfg.telemetry.mode_b_enabled = true;
-            if cfg.telemetry.install_id.is_empty() {
+    let c2 = c.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        config::update_config(&c2, |cfg| {
+            cfg.telemetry.onboarding_completed = true;
+            cfg.telemetry.mode_a_enabled = mode_a_enabled;
+            cfg.telemetry.mode_b_enabled = mode_b_enabled;
+            if mode_b_enabled && cfg.telemetry.install_id.is_empty() {
                 cfg.telemetry.install_id = telemetry::install_id::generate();
             }
-        }
-    })?;
+        })
+    })
+    .await
+    .map_err(|e| format!("task: {e}"))??;
     let tstate = app_handle.state::<TelemetryState>();
     refresh_consent_from_config(&tstate, &c);
     Ok(())
