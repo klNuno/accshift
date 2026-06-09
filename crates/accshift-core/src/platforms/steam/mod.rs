@@ -541,6 +541,19 @@ pub fn get_steam_path(app_handle: AppCtx) -> Result<String, String> {
 
 pub fn set_steam_path(app_handle: AppCtx, path: String) -> Result<(), String> {
     let trimmed = path.trim().to_string();
+    // The override is later joined with steam.exe and launched — only accept
+    // an existing directory that actually looks like a Steam install.
+    if !trimmed.is_empty() {
+        let candidate = PathBuf::from(&trimmed);
+        if !candidate.is_dir() {
+            return Err("Steam path override must be an existing directory".into());
+        }
+        if !candidate.join(os::steam_executable_name()).exists()
+            && !candidate.join("config").join("loginusers.vdf").exists()
+        {
+            return Err("This folder does not look like a Steam installation".into());
+        }
+    }
     config::update_config(&app_handle, |cfg| {
         if trimmed.is_empty() {
             cfg.steam.path_override = String::new();
@@ -574,6 +587,14 @@ pub fn bulk_edit(
             request.launch_options.len()
         ),
     );
+    // Steam keeps localconfig.vdf in memory and rewrites it on exit — edits
+    // made while it runs are silently lost. Stop it first; it stays closed.
+    match accounts::stop_steam(&steam_path, false).map_err(|e| e.to_string())? {
+        accounts::StopOutcome::NeedsElevation => {
+            return Err(crate::error::AppError::SteamElevated.to_string())
+        }
+        accounts::StopOutcome::NotRunning | accounts::StopOutcome::Stopped => {}
+    }
     let result = bulk_edit::apply_bulk_edit(&steam_path, &request);
     log_platform_info(
         &app_handle,
@@ -686,13 +707,40 @@ impl PlatformService for SteamService {
             ),
         );
 
-        let result = accounts::switch_account(
-            &steam_path,
-            account_id,
-            run_as_admin,
-            &launch_options,
-            force_kill,
-        )
+        // Optional persona mode (CLI --invisible/--online). When absent the
+        // switch leaves the account's persona state untouched.
+        let mode = params.get("mode").and_then(Value::as_str).unwrap_or("");
+
+        let result = if mode.is_empty() {
+            accounts::switch_account(
+                &steam_path,
+                account_id,
+                run_as_admin,
+                &launch_options,
+                force_kill,
+            )
+        } else {
+            // Persona state lives in userdata/<account_id>/, keyed by steam
+            // id — resolve it from loginusers.vdf. Unknown id → plain switch.
+            let steam_id = accounts::get_accounts_snapshot(&steam_path)
+                .ok()
+                .and_then(|(accounts, _)| {
+                    accounts
+                        .into_iter()
+                        .find(|a| a.account_name == account_id)
+                        .map(|a| a.steam_id)
+                })
+                .unwrap_or_default();
+            accounts::switch_account_mode(
+                &steam_path,
+                account_id,
+                &steam_id,
+                mode,
+                run_as_admin,
+                &launch_options,
+                force_kill,
+            )
+        }
         .map_err(|e| to_logged_error(&app, "steam.switch_account", e));
 
         let post_state = build_switch_state_details(

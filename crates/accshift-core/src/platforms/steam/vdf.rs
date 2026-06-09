@@ -237,9 +237,17 @@ fn escape_vdf_string(value: &str) -> String {
     escaped
 }
 
-pub fn set_persona_state(steam_path: &Path, account_id: u32, state: &str) {
+pub fn set_persona_state(
+    steam_path: &Path,
+    account_id: u32,
+    state: &str,
+) -> Result<(), crate::error::AppError> {
+    use crate::error::AppError;
+
     if !["0", "1", "2", "3", "4", "5", "6", "7"].contains(&state) {
-        return;
+        return Err(AppError::FileRead(format!(
+            "Invalid persona state: {state}"
+        )));
     }
     let config_path = steam_path
         .join("userdata")
@@ -247,32 +255,44 @@ pub fn set_persona_state(steam_path: &Path, account_id: u32, state: &str) {
         .join("config")
         .join("localconfig.vdf");
 
-    if let Ok(content) = fs::read_to_string(&config_path) {
-        let mut result = String::new();
-        let mut found = false;
+    let content = match fs::read_to_string(&config_path) {
+        Ok(content) => content,
+        // No localconfig yet (fresh account): nothing to edit.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            return Err(AppError::FileRead(format!(
+                "Could not read {}: {e}",
+                config_path.display()
+            )))
+        }
+    };
 
-        for line in content.lines() {
-            if !found && line.contains("\"PersonaState\"") {
-                if let Some(pos) = line.rfind('"') {
-                    if let Some(start) = line[..pos].rfind('"') {
-                        let mut new_line = line[..start + 1].to_string();
-                        new_line.push_str(state);
-                        new_line.push_str(&line[pos..]);
-                        result.push_str(&new_line);
-                        result.push('\n');
-                        found = true;
-                        continue;
-                    }
+    let mut result = String::new();
+    let mut found = false;
+
+    for line in content.lines() {
+        if !found && line.contains("\"PersonaState\"") {
+            if let Some(pos) = line.rfind('"') {
+                if let Some(start) = line[..pos].rfind('"') {
+                    let mut new_line = line[..start + 1].to_string();
+                    new_line.push_str(state);
+                    new_line.push_str(&line[pos..]);
+                    result.push_str(&new_line);
+                    result.push('\n');
+                    found = true;
+                    continue;
                 }
             }
-            result.push_str(line);
-            result.push('\n');
         }
-
-        if found {
-            let _ = fs::write(&config_path, result);
-        }
+        result.push_str(line);
+        result.push('\n');
     }
+
+    if found {
+        crate::storage::write_bytes_atomic(&config_path, result.as_bytes())
+            .map_err(AppError::FileRead)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

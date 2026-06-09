@@ -80,13 +80,13 @@ fn try_graceful_shutdown(steam_path: &Path) -> bool {
         && os::wait_for_process_exit(os::steam_web_helper_process_name(), 2000)
 }
 
-enum StopOutcome {
+pub(super) enum StopOutcome {
     NotRunning,
     Stopped,
     NeedsElevation,
 }
 
-fn stop_steam(steam_path: &Path, force_kill: bool) -> Result<StopOutcome, AppError> {
+pub(super) fn stop_steam(steam_path: &Path, force_kill: bool) -> Result<StopOutcome, AppError> {
     let needs_kill =
         is_steam_running() || os::is_process_running(os::steam_web_helper_process_name());
     if !needs_kill {
@@ -153,7 +153,7 @@ fn set_login_user_flags(steam_path: &Path, target: Option<&str>) -> Result<(), A
         updated = vdf_set_nested_value(&updated, &[steam_id.as_str(), "MostRecent"], flag);
     }
 
-    fs::write(&path, updated).map_err(|e| AppError::FileRead(e.to_string()))
+    crate::storage::write_bytes_atomic(&path, updated.as_bytes()).map_err(AppError::FileRead)
 }
 
 #[cfg(target_os = "windows")]
@@ -220,6 +220,10 @@ fn switch_autologin_and_relaunch(
 
     if let Err(e) = launch_steam(steam_path, run_as_admin, launch_options, extra_args) {
         let _ = restore_auto_login_user(&previous);
+        // Also revert the loginusers.vdf flags flipped above, so registry and
+        // VDF stay consistent on the failure path.
+        let previous_target = (!previous.trim().is_empty()).then_some(previous.as_str());
+        let _ = set_login_user_flags(steam_path, previous_target);
         return Err(e);
     }
 
@@ -605,7 +609,15 @@ pub fn forget_account(steam_path: &Path, steam_id: &str) -> Result<(), AppError>
             fs::read_to_string(&loginusers_path).map_err(|e| AppError::FileRead(e.to_string()))?;
         let (updated, removed) = remove_loginuser_entry(&content, steam_id);
         if removed {
-            fs::write(&loginusers_path, updated).map_err(|e| AppError::FileRead(e.to_string()))?;
+            // Steam keeps loginusers.vdf in memory and rewrites it on exit —
+            // editing it while Steam runs silently resurrects the entry. Stop
+            // Steam first (graceful, then kill); it stays closed afterwards.
+            match stop_steam(steam_path, false)? {
+                StopOutcome::NeedsElevation => return Err(AppError::SteamElevated),
+                StopOutcome::NotRunning | StopOutcome::Stopped => {}
+            }
+            crate::storage::write_bytes_atomic(&loginusers_path, updated.as_bytes())
+                .map_err(AppError::FileRead)?;
         }
     }
 
@@ -627,6 +639,7 @@ pub fn switch_account_mode(
         _ => "1",
     };
 
+    let mut persona_result: Result<(), AppError> = Ok(());
     switch_autologin_and_relaunch(
         steam_path,
         Some(username),
@@ -636,10 +649,13 @@ pub fn switch_account_mode(
         force_kill,
         || {
             if let Some(account_id) = account_id {
-                set_persona_state(steam_path, account_id, state);
+                persona_result = set_persona_state(steam_path, account_id, state);
             }
         },
-    )
+    )?;
+    // The switch itself succeeded; still surface a persona write failure so
+    // the user knows the requested mode did not apply.
+    persona_result
 }
 
 pub fn open_userdata_with_path(steam_path: &Path, steam_id: &str) -> Result<(), AppError> {
@@ -677,11 +693,37 @@ pub fn copy_game_settings(
         return Err(AppError::UserdataNotFound(source.display().to_string()));
     }
 
-    if target.exists() {
-        fs::remove_dir_all(&target).map_err(|e| AppError::FileRead(e.to_string()))?;
+    // Stage the copy next to the target, then swap. A failure mid-copy must
+    // not leave the destination account half-deleted.
+    let staging = to_root.join(format!(".{app_id}.copy-staging"));
+    if staging.exists() {
+        fs::remove_dir_all(&staging).map_err(|e| AppError::FileRead(e.to_string()))?;
     }
+    fs_utils::copy_dir_recursive(&source, &staging, &[]).map_err(AppError::FileRead)?;
 
-    fs_utils::copy_dir_recursive(&source, &target, &[]).map_err(AppError::FileRead)
+    let backup = to_root.join(format!(".{app_id}.copy-backup"));
+    if backup.exists() {
+        fs::remove_dir_all(&backup).map_err(|e| AppError::FileRead(e.to_string()))?;
+    }
+    let had_target = target.exists();
+    if had_target {
+        fs::rename(&target, &backup).map_err(|e| AppError::FileRead(e.to_string()))?;
+    }
+    match fs::rename(&staging, &target) {
+        Ok(()) => {
+            if had_target {
+                let _ = fs::remove_dir_all(&backup);
+            }
+            Ok(())
+        }
+        Err(e) => {
+            if had_target {
+                let _ = fs::rename(&backup, &target);
+            }
+            let _ = fs::remove_dir_all(&staging);
+            Err(AppError::FileRead(e.to_string()))
+        }
+    }
 }
 
 pub fn get_copyable_games(
