@@ -40,6 +40,12 @@ export async function switchAccount(username: string): Promise<void> {
   });
 }
 
+export async function launchGame(appId: string): Promise<void> {
+  if (!/^\d+$/.test(appId)) throw new Error("Invalid app id");
+  await invoke("open_url", { url: `steam://rungameid/${appId}` });
+  void logAppEvent("info", "frontend.steam.launch_game", "Launch game request", { appId });
+}
+
 export async function switchAccountAndLaunchGame(
   username: string,
   steamId: string,

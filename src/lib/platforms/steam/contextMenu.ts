@@ -13,6 +13,7 @@ import {
   forgetAccount,
   getAccountGames,
   getCopyableGames,
+  launchGame,
   openUserdata,
   switchAccountAndLaunchGame,
   switchAccountMode,
@@ -24,18 +25,40 @@ export function getSteamContextMenuItems(
   callbacks: PlatformContextMenuCallbacks,
 ): ContextMenuAction[] {
   const defaultGame = getDefaultGame(account.id);
+  const isCurrentAccount = callbacks.getCurrentAccountId() === account.id;
+
+  const runGame = (appId: string) =>
+    isCurrentAccount
+      ? launchGame(appId)
+      : switchAccountAndLaunchGame(account.username, account.id, appId);
 
   const launchItems: ContextMenuAction[] = [
+    {
+      id: `steam.launch.online.${account.id}`,
+      group: "platform.primary",
+      label: callbacks.t("steam.launchOnline"),
+      action: createSafeContextAction(callbacks, () =>
+        switchAccountMode(account.username, account.id, "online"),
+      ),
+    },
+    {
+      id: `steam.launch.invisible.${account.id}`,
+      group: "platform.primary",
+      label: callbacks.t("steam.launchInvisible"),
+      action: createSafeContextAction(callbacks, () =>
+        switchAccountMode(account.username, account.id, "invisible"),
+      ),
+    },
     {
       id: `steam.switch.run.${account.id}`,
       group: "platform.primary",
       label: defaultGame
-        ? callbacks.t("steam.switchAndRunGame", { game: defaultGame.name })
-        : callbacks.t("steam.switchAndRunPick"),
+        ? callbacks.t(isCurrentAccount ? "steam.runGame" : "steam.switchAndRunGame", {
+            game: defaultGame.name,
+          })
+        : callbacks.t(isCurrentAccount ? "steam.runPick" : "steam.switchAndRunPick"),
       action: defaultGame
-        ? createSafeContextAction(callbacks, () =>
-            switchAccountAndLaunchGame(account.username, account.id, defaultGame.appId),
-          )
+        ? createSafeContextAction(callbacks, () => runGame(defaultGame.appId))
         : undefined,
       submenuLoader: async () => {
         const games = await getAccountGames(account.id);
@@ -53,26 +76,10 @@ export function getSteamContextMenuItems(
           label: g.name,
           action: createSafeContextAction(callbacks, async () => {
             setDefaultGame(account.id, { appId: g.app_id, name: g.name });
-            await switchAccountAndLaunchGame(account.username, account.id, g.app_id);
+            await runGame(g.app_id);
           }),
         }));
       },
-    },
-    {
-      id: `steam.launch.online.${account.id}`,
-      group: "platform.primary",
-      label: callbacks.t("steam.launchOnline"),
-      action: createSafeContextAction(callbacks, () =>
-        switchAccountMode(account.username, account.id, "online"),
-      ),
-    },
-    {
-      id: `steam.launch.invisible.${account.id}`,
-      group: "platform.primary",
-      label: callbacks.t("steam.launchInvisible"),
-      action: createSafeContextAction(callbacks, () =>
-        switchAccountMode(account.username, account.id, "invisible"),
-      ),
     },
   ];
 
