@@ -437,6 +437,11 @@ fn validate_account_id(id: &str) -> Result<String, String> {
     if trimmed.is_empty() {
         return Err("Empty Epic account ID".into());
     }
+    // Strict format check: the id is joined into filesystem paths
+    // (auth_cache_dir), so anything but 32 hex chars must be rejected.
+    if !is_valid_epic_account_id(&trimmed) {
+        return Err(format!("Invalid Epic account ID: {trimmed}"));
+    }
     Ok(trimmed)
 }
 
@@ -534,9 +539,12 @@ fn forget_account_metadata(app_handle: &dyn AppContext, account_id: &str) -> Res
             .retain(|a| a.account_id.trim().to_lowercase() != key);
     })?;
 
-    // Remove cached auth snapshot
-    if let Ok(cache_dir) = auth_cache_dir(app_handle, account_id) {
-        let _ = fs::remove_dir_all(&cache_dir);
+    // Remove cached auth snapshot. Only touch the filesystem for ids in the
+    // canonical 32-hex format — the id is joined into the snapshot path.
+    if is_valid_epic_account_id(&key) {
+        if let Ok(cache_dir) = auth_cache_dir(app_handle, &key) {
+            let _ = fs::remove_dir_all(&cache_dir);
+        }
     }
 
     Ok(())
@@ -915,8 +923,8 @@ mod tests {
 
     #[test]
     fn validate_account_id_trims_and_lowercases() {
-        let result = validate_account_id("  A1B2C3D4  ");
-        assert_eq!(result.unwrap(), "a1b2c3d4");
+        let result = validate_account_id("  A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4  ");
+        assert_eq!(result.unwrap(), "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4");
     }
 
     #[test]
@@ -927,5 +935,12 @@ mod tests {
     #[test]
     fn validate_account_id_whitespace_only_fails() {
         assert!(validate_account_id("   ").is_err());
+    }
+
+    #[test]
+    fn validate_account_id_rejects_path_traversal() {
+        assert!(validate_account_id("..\\..\\evil").is_err());
+        assert!(validate_account_id("../../evil").is_err());
+        assert!(validate_account_id("a1b2c3d4").is_err());
     }
 }

@@ -327,6 +327,44 @@ fn shell_execute(verb: &str, file: &str, args: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Re-assemble already-tokenized launch options into a single ShellExecuteW
+/// parameter string with standard Windows quoting. A bare `join(" ")` would
+/// let a token containing spaces or quotes split into several arguments or
+/// break out of its own.
+fn quote_windows_args(args: &[String]) -> String {
+    let mut out = String::new();
+    for (i, arg) in args.iter().enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        if !arg.is_empty() && !arg.contains([' ', '\t', '"']) {
+            out.push_str(arg);
+            continue;
+        }
+        // MSVC CRT quoting rules: backslashes are literal except when they
+        // precede a double quote, where they must be doubled; quotes escape
+        // as backslash-quote.
+        out.push('"');
+        let mut backslashes = 0;
+        for ch in arg.chars() {
+            if ch == '\\' {
+                backslashes += 1;
+            } else if ch == '"' {
+                out.extend(std::iter::repeat_n('\\', backslashes * 2 + 1));
+                out.push('"');
+                backslashes = 0;
+            } else {
+                out.extend(std::iter::repeat_n('\\', backslashes));
+                out.push(ch);
+                backslashes = 0;
+            }
+        }
+        out.extend(std::iter::repeat_n('\\', backslashes * 2));
+        out.push('"');
+    }
+    out
+}
+
 pub fn kill_and_relaunch_steam_elevated(
     steam_path: &Path,
     launch_options: &[String],
@@ -341,7 +379,7 @@ pub fn kill_and_relaunch_steam_elevated(
 
     // Relaunch elevated via ShellExecute with "runas" verb.
     let steam_exe = steam_path.join(steam_executable_name());
-    let args = launch_options.join(" ");
+    let args = quote_windows_args(launch_options);
     shell_execute("runas", &steam_exe.to_string_lossy(), &args)
 }
 
@@ -352,7 +390,7 @@ pub fn launch_steam(
 ) -> Result<(), AppError> {
     let steam_exe = steam_path.join(steam_executable_name());
     if run_as_admin {
-        let args = launch_options.join(" ");
+        let args = quote_windows_args(launch_options);
         shell_execute("runas", &steam_exe.to_string_lossy(), &args)
     } else {
         hidden_command(&steam_exe)
@@ -400,4 +438,41 @@ pub fn select_file(title: &str, filter: &str) -> Result<String, AppError> {
         return Err(AppError::FolderOpen("File selection canceled".into()));
     }
     Ok(path)
+}
+
+#[cfg(test)]
+mod quoting_tests {
+    use super::quote_windows_args;
+
+    fn q(args: &[&str]) -> String {
+        quote_windows_args(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn plain_tokens_join_unquoted() {
+        assert_eq!(
+            q(&["-silent", "-applaunch", "730"]),
+            "-silent -applaunch 730"
+        );
+    }
+
+    #[test]
+    fn token_with_space_is_quoted() {
+        assert_eq!(q(&["-dir", "C:\\My Games"]), "-dir \"C:\\My Games\"");
+    }
+
+    #[test]
+    fn embedded_quote_is_escaped() {
+        assert_eq!(q(&["a\"b"]), "\"a\\\"b\"");
+    }
+
+    #[test]
+    fn trailing_backslash_before_closing_quote_is_doubled() {
+        assert_eq!(q(&["C:\\path with space\\"]), "\"C:\\path with space\\\\\"");
+    }
+
+    #[test]
+    fn empty_token_stays_visible() {
+        assert_eq!(q(&[""]), "\"\"");
+    }
 }

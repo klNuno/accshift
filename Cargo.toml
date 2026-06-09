@@ -20,7 +20,6 @@ rusqlite = { version = "0.34", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 tauri = "2.10.3"
-tauri-plugin-shell = "2.3.5"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-updater = "2.10.1"
 tauri-build = "2.5.6"
