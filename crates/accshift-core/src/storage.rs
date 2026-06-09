@@ -5,6 +5,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 
 pub const STORAGE_SCHEMA_VERSION: u32 = 1;
@@ -69,7 +70,7 @@ pub fn app_log_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     Ok(scope_root(raw_app_config_root(app_handle)?.join("logs")))
 }
 
-pub fn legacy_app_data_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
+fn legacy_app_data_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     raw_app_data_root(app_handle)
 }
 
@@ -239,60 +240,111 @@ pub fn client_store_path(app_handle: &dyn AppContext, store_id: &str) -> Result<
     Ok(target)
 }
 
+/// Ceiling for JSON stores read into memory. The largest legitimate store
+/// (profile caches) stays well under 1 MB; anything bigger is corrupt or
+/// hostile.
+const MAX_JSON_STORE_BYTES: u64 = 32 * 1024 * 1024;
+
 pub fn read_json_if_exists<T>(path: &Path) -> Result<Option<T>, String>
 where
     T: DeserializeOwned,
 {
-    match fs::read_to_string(path) {
-        Ok(data) => serde_json::from_str::<T>(&data)
-            .map(Some)
-            .map_err(|e| format!("Could not parse JSON {}: {e}", path.display())),
+    if let Ok(meta) = fs::metadata(path) {
+        if meta.len() > MAX_JSON_STORE_BYTES {
+            return Err(format!(
+                "Refusing to read {}: file is {} bytes (limit {MAX_JSON_STORE_BYTES})",
+                path.display(),
+                meta.len()
+            ));
+        }
+    }
+    let primary: Result<Option<T>, String> = match fs::read_to_string(path) {
+        Ok(data) => match serde_json::from_str::<T>(&data) {
+            Ok(value) => return Ok(Some(value)),
+            Err(e) => Err(format!("Could not parse JSON {}: {e}", path.display())),
+        },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(format!("Could not read file {}: {e}", path.display())),
+    };
+
+    // Primary file missing or corrupt: a write_bytes_atomic fallback that
+    // crashed mid-replace leaves a valid .bak behind — recover from it.
+    let bak_path = path.with_extension("bak");
+    if bak_path != path {
+        if let Ok(data) = fs::read_to_string(&bak_path) {
+            if let Ok(value) = serde_json::from_str::<T>(&data) {
+                let _ = fs::copy(&bak_path, path);
+                return Ok(Some(value));
+            }
+        }
     }
+
+    primary
 }
-pub fn write_json_atomic<T>(path: &Path, value: &T) -> Result<(), String>
-where
-    T: Serialize,
-{
+
+/// Temp-file sibling unique to this process, so a concurrent GUI and CLI
+/// writing the same target never share a temp file.
+fn unique_tmp_path(path: &Path) -> std::path::PathBuf {
+    let mut name = path
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_else(|| std::ffi::OsString::from("file"));
+    name.push(format!(".{}.tmp", std::process::id()));
+    path.with_file_name(name)
+}
+
+/// Write `bytes` to `path` via temp file + rename. On Windows the rename can
+/// fail transiently (antivirus, file indexing); retry briefly, then fall back
+/// to copy-over-existing with a .bak of the original. The fallback never
+/// deletes the original before the new content lands, and `read_json_if_exists`
+/// recovers from the .bak if a crash interrupts the copy.
+pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
     }
 
-    let json = serde_json::to_string_pretty(value)
-        .map_err(|e| format!("Could not serialize JSON {}: {e}", path.display()))?;
-    let tmp_path = path.with_extension("tmp");
-    fs::write(&tmp_path, json)
+    let tmp_path = unique_tmp_path(path);
+    fs::write(&tmp_path, bytes)
         .map_err(|e| format!("Could not write temp file {}: {e}", tmp_path.display()))?;
 
-    match fs::rename(&tmp_path, path) {
-        Ok(()) => Ok(()),
-        Err(_) => {
-            // On Windows, rename often fails (antivirus lock, cross-drive, etc.).
-            // Back up the original before deleting so data survives if the copy
-            // also fails.
-            let bak_path = path.with_extension("bak");
-            if path.exists() {
-                let _ = fs::copy(path, &bak_path);
-                let _ = fs::remove_file(path);
-            }
-            match fs::copy(&tmp_path, path) {
-                Ok(_) => {
-                    let _ = fs::remove_file(&tmp_path);
-                    let _ = fs::remove_file(&bak_path);
-                    Ok(())
-                }
-                Err(e) => {
-                    // Restore from backup if the copy failed.
-                    if bak_path.exists() && !path.exists() {
-                        let _ = fs::rename(&bak_path, path);
-                    }
-                    Err(format!("Could not finalize file {}: {e}", path.display()))
-                }
-            }
+    let mut rename_result = fs::rename(&tmp_path, path);
+    for _ in 0..2 {
+        if rename_result.is_ok() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        rename_result = fs::rename(&tmp_path, path);
+    }
+    if rename_result.is_ok() {
+        return Ok(());
+    }
+
+    let bak_path = path.with_extension("bak");
+    if path.exists() {
+        let _ = fs::copy(path, &bak_path);
+    }
+    match fs::copy(&tmp_path, path) {
+        Ok(_) => {
+            let _ = fs::remove_file(&tmp_path);
+            let _ = fs::remove_file(&bak_path);
+            Ok(())
+        }
+        Err(e) => {
+            // Keep the .bak on disk: the next read recovers from it.
+            let _ = fs::remove_file(&tmp_path);
+            Err(format!("Could not finalize file {}: {e}", path.display()))
         }
     }
+}
+
+pub fn write_json_atomic<T>(path: &Path, value: &T) -> Result<(), String>
+where
+    T: Serialize,
+{
+    let json = serde_json::to_string_pretty(value)
+        .map_err(|e| format!("Could not serialize JSON {}: {e}", path.display()))?;
+    write_bytes_atomic(path, json.as_bytes())
 }
 
 pub fn save_client_store(
@@ -306,6 +358,9 @@ pub fn save_client_store(
             fs::remove_file(&path)
                 .map_err(|e| format!("Could not remove file {}: {e}", path.display()))?;
         }
+        // Drop any stale .bak too, or read_json_if_exists would resurrect
+        // the store on the next load.
+        let _ = fs::remove_file(path.with_extension("bak"));
         return Ok(());
     }
     write_json_atomic(&path, value)
@@ -570,11 +625,29 @@ fn backup_legacy_path(source: &Path, backup_root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Legacy locations already checked this session. Migration can only be
+/// needed once per process; path helpers run on hot paths (every config
+/// load, every manifest build) and must not re-stat the legacy tree each
+/// time.
+fn migration_checked(from: &Path, to: &Path) -> bool {
+    use std::collections::HashSet;
+    static CHECKED: std::sync::OnceLock<Mutex<HashSet<(PathBuf, PathBuf)>>> =
+        std::sync::OnceLock::new();
+    let mut set = CHECKED
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    !set.insert((from.to_path_buf(), to.to_path_buf()))
+}
+
 fn backup_and_migrate_dir(
     app_handle: &dyn AppContext,
     from: &Path,
     to: &Path,
 ) -> Result<(), String> {
+    if migration_checked(from, to) {
+        return Ok(());
+    }
     if from == to || !from.exists() || to.exists() {
         return Ok(());
     }
@@ -589,6 +662,9 @@ fn backup_and_migrate_file(
     from: &Path,
     to: &Path,
 ) -> Result<(), String> {
+    if migration_checked(from, to) {
+        return Ok(());
+    }
     if from == to || !from.exists() || to.exists() {
         return Ok(());
     }

@@ -384,6 +384,31 @@ fn normalize_config(raw: RawAppConfig) -> AppConfig {
     }
 }
 
+type FileSig = Option<(std::time::SystemTime, u64)>;
+
+struct CachedConfig {
+    portable_path: std::path::PathBuf,
+    local_path: std::path::PathBuf,
+    portable_sig: FileSig,
+    local_sig: FileSig,
+    value: AppConfig,
+}
+
+/// Parsed-config cache keyed by file signatures. `load_config` is called on
+/// hot paths (every `update_config`, several times per switch); a pair of
+/// stats replaces a pair of read+parse when nothing changed on disk. External
+/// writers (the CLI) bump the mtime, which invalidates naturally.
+fn config_cache() -> &'static std::sync::Mutex<Option<CachedConfig>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<Option<CachedConfig>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+fn file_sig(path: &std::path::Path) -> FileSig {
+    let meta = fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
+
 pub fn load_config(app_handle: &dyn AppContext) -> AppConfig {
     let portable_path = match crate::storage::portable_config_path(app_handle) {
         Ok(path) => path,
@@ -393,6 +418,22 @@ pub fn load_config(app_handle: &dyn AppContext) -> AppConfig {
         Ok(path) => path,
         Err(_) => return load_legacy_config(app_handle),
     };
+
+    let portable_sig = file_sig(&portable_path);
+    let local_sig = file_sig(&local_path);
+    {
+        let cache = config_cache().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(cached) = cache.as_ref() {
+            if cached.portable_path == portable_path
+                && cached.local_path == local_path
+                && cached.portable_sig == portable_sig
+                && cached.local_sig == local_sig
+                && portable_sig.is_some()
+            {
+                return cached.value.clone();
+            }
+        }
+    }
 
     let portable =
         crate::storage::read_json_if_exists::<AppConfig>(&portable_path).unwrap_or_else(|e| {
@@ -416,15 +457,45 @@ pub fn load_config(app_handle: &dyn AppContext) -> AppConfig {
         None
     });
 
-    match (portable, local) {
+    let merged = match (portable, local) {
         (Some(portable), local) => merge_split_configs(portable, local.unwrap_or_default()),
         (None, Some(local)) => merge_split_configs(AppConfig::default(), local),
-        // No split config yet, fall back to legacy (pre-migration).
-        (None, None) => load_legacy_config(app_handle),
-    }
+        // No split config yet, fall back to legacy (pre-migration). Not
+        // cached: the next save creates the split files.
+        (None, None) => return load_legacy_config(app_handle),
+    };
+
+    let mut cache = config_cache().lock().unwrap_or_else(|e| e.into_inner());
+    *cache = Some(CachedConfig {
+        portable_path,
+        local_path,
+        portable_sig,
+        local_sig,
+        value: merged.clone(),
+    });
+    merged
 }
 
+/// Serializes config read-modify-write cycles within this process. The
+/// cross-process side is covered by `lock::acquire_for_write` below.
+fn config_io_mutex() -> &'static std::sync::Mutex<()> {
+    static MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    MUTEX.get_or_init(|| std::sync::Mutex::new(()))
+}
+
+const CONFIG_WRITE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 pub fn save_config(app_handle: &dyn AppContext, config: &AppConfig) -> Result<(), String> {
+    let _io = config_io_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    let _write_lock = crate::lock::acquire_for_write(app_handle, CONFIG_WRITE_LOCK_TIMEOUT)
+        .map_err(|e| e.to_string())?;
+    save_config_unlocked(app_handle, config)
+}
+
+fn save_config_unlocked(app_handle: &dyn AppContext, config: &AppConfig) -> Result<(), String> {
+    // Drop the parsed-config cache: the next load re-reads from disk.
+    *config_cache().lock().unwrap_or_else(|e| e.into_inner()) = None;
+
     let portable = portable_config(config);
     let local = local_config(config);
     let portable_path = crate::storage::portable_config_path(app_handle)?;
@@ -456,13 +527,18 @@ pub fn save_config(app_handle: &dyn AppContext, config: &AppConfig) -> Result<()
 
 /// Load config, apply a mutation, and save in one step.
 /// Avoids the scattered load→mutate→save pattern across platform files.
+/// The whole cycle runs under both the process-local mutex and the
+/// cross-process write lock, so concurrent updates can't lose writes.
 pub fn update_config(
     app_handle: &dyn AppContext,
     mutate: impl FnOnce(&mut AppConfig),
 ) -> Result<(), String> {
+    let _io = config_io_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    let _write_lock = crate::lock::acquire_for_write(app_handle, CONFIG_WRITE_LOCK_TIMEOUT)
+        .map_err(|e| e.to_string())?;
     let mut cfg = load_config(app_handle);
     mutate(&mut cfg);
-    save_config(app_handle, &cfg)
+    save_config_unlocked(app_handle, &cfg)
 }
 
 /// Check for a legacy config.json, migrate it to portable+local, and delete it.
@@ -550,9 +626,21 @@ fn load_legacy_config(app_handle: &dyn AppContext) -> AppConfig {
     };
 
     match fs::read_to_string(&path) {
-        Ok(data) => serde_json::from_str::<RawAppConfig>(&data)
-            .map(normalize_config)
-            .unwrap_or_default(),
+        Ok(data) => match serde_json::from_str::<RawAppConfig>(&data) {
+            Ok(raw) => normalize_config(raw),
+            Err(e) => {
+                // Falling back to defaults silently would hide that the whole
+                // legacy config was dropped.
+                let _ = crate::logging::append_app_log(
+                    app_handle,
+                    "error",
+                    "config.load_legacy",
+                    "Legacy config corrupted, using defaults",
+                    Some(&e.to_string()),
+                );
+                AppConfig::default()
+            }
+        },
         Err(_) => AppConfig::default(),
     }
 }

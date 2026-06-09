@@ -8,11 +8,17 @@ use crate::AppContext;
 use fs4::fs_std::FileExt;
 use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
 const LOCK_FILE_NAME: &str = ".accshift.lock";
 const POLL_INTERVAL_MS: u64 = 50;
+
+/// Number of `LockGuard`s currently alive in this process. Lets nested config
+/// writes (e.g. `update_config` inside a switch that already holds the
+/// operation lock) skip re-acquiring the file lock, which would self-deadlock.
+static GUARDS_HELD: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Debug, thiserror::Error)]
 pub enum LockError {
@@ -33,7 +39,26 @@ pub struct LockGuard {
 impl Drop for LockGuard {
     fn drop(&mut self) {
         let _ = FileExt::unlock(&self.file);
+        GUARDS_HELD.fetch_sub(1, Ordering::SeqCst);
     }
+}
+
+/// Guard returned by [`acquire_for_write`]. Either owns the file lock, or is
+/// a no-op because this process already holds it at the operation level.
+pub enum WriteGuard {
+    Owned(LockGuard),
+    Nested,
+}
+
+/// Take the cross-process lock for a config write. If this process already
+/// holds the operation lock (switch/forget), the write is nested inside it
+/// and protected by the outer guard — skip the file lock instead of
+/// self-deadlocking on a second handle.
+pub fn acquire_for_write(ctx: &dyn AppContext, timeout: Duration) -> Result<WriteGuard, LockError> {
+    if GUARDS_HELD.load(Ordering::SeqCst) > 0 {
+        return Ok(WriteGuard::Nested);
+    }
+    acquire_exclusive(ctx, timeout).map(WriteGuard::Owned)
 }
 
 fn lock_path(ctx: &dyn AppContext) -> Result<PathBuf, LockError> {
@@ -61,8 +86,15 @@ pub fn acquire_exclusive(ctx: &dyn AppContext, timeout: Duration) -> Result<Lock
     let deadline = Instant::now() + timeout;
     loop {
         match FileExt::try_lock_exclusive(&file) {
-            Ok(true) => return Ok(LockGuard { file, _path: path }),
-            Ok(false) | Err(_) => {
+            Ok(true) => {
+                GUARDS_HELD.fetch_add(1, Ordering::SeqCst);
+                return Ok(LockGuard { file, _path: path });
+            }
+            // fs4 maps "already locked" to Ok(false); an Err is a real I/O
+            // failure (bad descriptor, filesystem error) — waiting on it
+            // would just mislabel it as contention.
+            Err(e) => return Err(LockError::Io(e.to_string())),
+            Ok(false) => {
                 if Instant::now() >= deadline {
                     return Err(LockError::Contended);
                 }

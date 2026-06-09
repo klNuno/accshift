@@ -31,8 +31,17 @@ pub fn copy_dir_recursive(
             continue;
         }
 
+        // Skip symlinks entirely: following them can escape the source tree
+        // or loop forever (symlink to an ancestor).
+        let file_type = entry
+            .file_type()
+            .map_err(|e| format!("Could not stat {}: {e}", src_path.display()))?;
+        if file_type.is_symlink() {
+            continue;
+        }
+
         let dst_path = target.join(file_name.as_ref());
-        if src_path.is_dir() {
+        if file_type.is_dir() {
             copy_dir_recursive(&src_path, &dst_path, ignored_names)?;
         } else {
             fs::copy(&src_path, &dst_path)

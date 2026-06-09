@@ -147,9 +147,8 @@ fn previous_log_file_path(app_handle: &dyn AppContext) -> Result<PathBuf, String
 }
 
 pub fn begin_log_session(app_handle: &dyn AppContext) -> Result<(), String> {
-    let _guard = log_lock()
-        .lock()
-        .map_err(|_| "Log file lock is poisoned".to_string())?;
+    // Best-effort logging must keep working even if a writer panicked.
+    let _guard = log_lock().lock().unwrap_or_else(|e| e.into_inner());
 
     let current_path = log_file_path(app_handle)?;
     ensure_log_parent(&current_path)?;
@@ -186,9 +185,7 @@ pub fn append_app_log(
     message: &str,
     details: Option<&str>,
 ) -> Result<(), String> {
-    let _guard = log_lock()
-        .lock()
-        .map_err(|_| "Log file lock is poisoned".to_string())?;
+    let _guard = log_lock().lock().unwrap_or_else(|e| e.into_inner());
 
     let path = log_file_path(app_handle)?;
     ensure_log_parent(&path)?;

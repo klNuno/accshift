@@ -64,10 +64,7 @@ pub fn save_custom_theme(app: &dyn AppContext, theme: &CustomTheme) -> Result<()
     let dir = themes_dir(app)?;
     fs::create_dir_all(&dir).map_err(|e| format!("Could not create themes directory: {e}"))?;
     let path = dir.join(format!("{}.json", theme.id));
-    let json = serde_json::to_string_pretty(&theme)
-        .map_err(|e| format!("Could not serialize theme: {e}"))?;
-    fs::write(&path, json).map_err(|e| format!("Could not write theme file: {e}"))?;
-    Ok(())
+    crate::storage::write_json_atomic(&path, theme)
 }
 
 pub fn delete_custom_theme(app: &dyn AppContext, theme_id: &str) -> Result<(), String> {
