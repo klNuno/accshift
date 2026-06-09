@@ -102,12 +102,12 @@ fn main() -> ExitCode {
             no_admin,
             launch_options,
         } => {
-            let _ = online; // accepted for symmetry; default is already online
             cmd_switch(
                 format,
                 &platform,
                 &account_id,
                 SwitchOverrides {
+                    online,
                     invisible,
                     graceful,
                     force,
@@ -230,6 +230,7 @@ fn resolve_folder(
 }
 
 struct SwitchOverrides {
+    online: bool,
     invisible: bool,
     graceful: bool,
     force: bool,
@@ -301,22 +302,28 @@ fn cmd_switch(
         }
     };
 
+    // Only force a persona mode when the user asked for one — a plain switch
+    // must not touch the account's existing online/invisible state.
     let mode = if overrides.invisible {
-        "invisible"
+        Some("invisible")
+    } else if overrides.online {
+        Some("online")
     } else {
-        "online"
+        None
     };
 
     let launch_options = overrides
         .launch_options
         .unwrap_or(steam_defaults.launch_options);
 
-    let params = json!({
+    let mut params = json!({
         "runAsAdmin": run_as_admin,
         "launchOptions": launch_options,
         "shutdownMode": shutdown,
-        "mode": mode,
     });
+    if let Some(mode) = mode {
+        params["mode"] = json!(mode);
+    }
 
     match service.switch_account(ctx, account_id, params) {
         Ok(()) => {
