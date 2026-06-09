@@ -49,7 +49,7 @@ UA_PREFIX = "Accshift/"
 # abuse that would bypass per-IP rate limiters.
 # Values calibrated to stay inside the free tiers of Cloudflare and R2.
 BUDGET_TRACK = "4000" # batches/day, max 200 events/batch = 800k events/day (AE free: 830k/day)
-BUDGET_LOGS = "2000" # uploads/day, max 10 MB each = 20 GB/day (R2 free: 10 GB storage)
+BUDGET_LOGS = "100" # uploads/day, max 10 MB each = 1 GB/day max (R2 free: 10 GB storage)
 BUDGET_FORGET = "500"
 BUDGET_EXPORT = "500"
 BUDGET_ADMIN = "2000"
@@ -80,7 +80,7 @@ simple = { limit = 2, period = 60 } # 2 uploads/min/IP (max 20 MB/min with 10 MB
 name = "RL_RGPD"
 type = "ratelimit"
 namespace_id = "1003"
-simple = { limit = 5, period = 60 } # forget + export combined, per install_id
+simple = { limit = 5, period = 60 } # forget + export combined, per IP
 
 [[unsafe.bindings]]
 name = "RL_ADMIN"
@@ -93,6 +93,10 @@ name = "RL_NOTIFY"
 type = "ratelimit"
 namespace_id = "1005"
 simple = { limit = 1, period = 60 } # email throttle: 1/min per (endpoint, IP)
+
+# ── Cron: daily purge of log uploads older than 90 days (D1 + R2) ──
+[triggers]
+crons = ["0 4 * * *"]
 
 # ── Observability ──
 [observability]
