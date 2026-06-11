@@ -32,7 +32,6 @@
     lastLoginUnknownKey = "time.unknown",
     lastLoginAt = null,
     note = "",
-    entranceDelay = 0,
     singleClickSwitch = false,
     isSwitching = false,
     interactionDisabled = false,
@@ -59,7 +58,6 @@
     lastLoginUnknownKey?: MessageKey;
     lastLoginAt?: number | null;
     note?: string;
-    entranceDelay?: number;
     isSwitching?: boolean;
     singleClickSwitch?: boolean;
     interactionDisabled?: boolean;
@@ -306,7 +304,6 @@
     class:dragging={isDragged}
     class:ban-red={hasRedWarning}
     class:ban-yellow={hasOrangeWarning}
-    style:--entrance-delay={`${entranceDelay}ms`}
   >
     <div
       class="avatar"
@@ -514,13 +511,7 @@
   }
 
   .card.entrance {
-    animation: cardEntrance 200ms ease-out backwards;
-    animation-delay: var(--entrance-delay, 0ms);
-  }
-
-  @keyframes cardEntrance {
-    from { opacity: 0; transform: translateY(8px) scale(0.97); }
-    to   { opacity: 1; transform: translateY(0) scale(1); }
+    animation: card-entrance var(--motion-card-entrance) ease-out;
   }
 
   @media (prefers-reduced-motion: reduce) {

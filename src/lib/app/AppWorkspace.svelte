@@ -72,7 +72,6 @@
     onGridMouseDown,
     setGridWrapperRef,
     gridPaddingLeft,
-    gridIsResizing,
     getFolder,
     onGoBack,
     onAccountActivate,
@@ -130,7 +129,6 @@
     onGridMouseDown: (event: MouseEvent) => void;
     setGridWrapperRef: (node: HTMLDivElement | null) => void;
     gridPaddingLeft: number;
-    gridIsResizing: boolean;
     getFolder: (folderId: string) => FolderInfo | undefined;
     onGoBack: () => void;
     onAccountActivate: (account: PlatformAccount) => void;
@@ -156,8 +154,11 @@
         )
       : displayFolderItems.length + displayAccountItemsWithPending.length,
   );
-  // Past ~100 rendered cards the flip animation gets expensive during drags.
-  let flipDuration = $derived(renderedItemCount > 100 ? 0 : 200);
+  // FLIP is only wanted for drag reordering. Outside a drag (mount, tab switch,
+  // grid-padding settle) it would slide every card from its old position to its
+  // new one, which reads as an ugly left-to-right sweep. Gate it on the drag.
+  // Past ~100 rendered cards FLIP also gets too expensive even during drags.
+  let flipDuration = $derived(dragIsDragging && renderedItemCount <= 100 ? 200 : 0);
 
   function toggleCollapsed(folderId: string) {
     if (collapsedFolders.has(folderId)) {
@@ -202,8 +203,7 @@
 
   function gridContainerStyle(): string {
     const paddingBottom = bulkEditMode ? "padding-bottom: 52px;" : "";
-    const transition = gridIsResizing ? "" : "transition: padding-left 200ms ease-out;";
-    return `padding-left: ${gridPaddingLeft}px; ${paddingBottom} ${transition}`;
+    return `padding-left: ${gridPaddingLeft}px; ${paddingBottom}`;
   }
 </script>
 
@@ -305,7 +305,7 @@
         onmousedown={handleWorkspaceMouseDown}
       >
         <div class="sections-wrapper" style={gridContainerStyle()} data-sections-mode>
-          {#each displaySections as section, sectionIndex (section.folder?.id ?? "__root__")}
+          {#each displaySections as section (section.folder?.id ?? "__root__")}
             {@const isRoot = section.folder === null}
             {@const totalCount = section.folderItems.length + section.accountItems.length}
             {@const sectionFolderId = section.folder?.id}
@@ -362,7 +362,7 @@
                   </div>
                 {/each}
 
-                {#each section.accountItems as item, cardIndex (item.id)}
+                {#each section.accountItems as item (item.id)}
                   {@const account = renderedAccountMap[item.id]}
                   {@const avatarState = account ? avatarStates[account.id] : null}
                   {@const isAccountDragged = !bulkEditMode && dragItem?.type === "account" && dragItem.id === item.id}
@@ -376,7 +376,6 @@
                         showUsername={isPendingSetupAccount(account.id) ? false : showUsernames}
                         showLastLogin={isPendingSetupAccount(account.id) ? false : showLastLogin}
                         lastLoginAt={account.lastLoginAt}
-                        entranceDelay={Math.min((sectionIndex * 60) + (cardIndex * 25), 320)}
                         {lastLoginUnknownKey}
                         {locale}
                         isActive={!bulkEditMode && account.id === currentAccountId}
@@ -441,7 +440,7 @@
             </div>
           {/each}
 
-          {#each displayAccountItemsWithPending as item, cardIndex (item.id)}
+          {#each displayAccountItemsWithPending as item (item.id)}
             {@const account = renderedAccountMap[item.id]}
             {@const avatarState = account ? avatarStates[account.id] : null}
             {@const isAccountDragged = !bulkEditMode && dragItem?.type === "account" && dragItem.id === item.id}
@@ -455,7 +454,6 @@
                   showUsername={isPendingSetupAccount(account.id) ? false : showUsernames}
                   showLastLogin={isPendingSetupAccount(account.id) ? false : showLastLogin}
                   lastLoginAt={account.lastLoginAt}
-                  entranceDelay={Math.min(cardIndex * 30, 300)}
                   {lastLoginUnknownKey}
                   {locale}
                   isActive={!bulkEditMode && account.id === currentAccountId}
@@ -513,6 +511,13 @@
     color: var(--fg);
     display: flex;
     flex-direction: column;
+    animation: page-entrance var(--motion-page-entrance) ease-out;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .content {
+      animation: none;
+    }
   }
 
   .toolbar-row {

@@ -30,23 +30,30 @@
   let submitting = $state(false);
   let rejecting = $state(false);
   let fadingOut = $state(false);
-  let titleRed = $state(false);
   let titlebarH = $state(0);
+  let dealTitleEl = $state<HTMLHeadingElement | null>(null);
+  let gifEl = $state<HTMLImageElement | null>(null);
+  let gifSize = $state<{ w: number; h: number } | null>(null);
 
   $effect(() => {
     onTourActive(step === "features");
   });
 
+  // WAAPI rather than a CSS transition: the transition raced the mount and
+  // jumped straight to red. cancel() on cleanup resets to white for revisits.
   $effect(() => {
-    if (step !== "deal") {
-      titleRed = false;
-      return;
-    }
-    titleRed = false;
-    const id = requestAnimationFrame(() => {
-      requestAnimationFrame(() => { titleRed = true; });
-    });
-    return () => cancelAnimationFrame(id);
+    if (step !== "deal" || !dealTitleEl) return;
+    // Midpoint keyframe: plain white->red sRGB lerp reads as "nothing happens
+    // then sudden red"; forcing a visible pink at 40% spreads the shift out.
+    const anim = dealTitleEl.animate(
+      [
+        { color: "#ffffff", textShadow: "0 0 0px rgba(239, 68, 68, 0)" },
+        { color: "#f0a3a3", textShadow: "0 0 6px rgba(239, 68, 68, 0.2)", offset: 0.4 },
+        { color: "#ef4444", textShadow: "0 0 18px rgba(239, 68, 68, 0.6)" },
+      ],
+      { duration: 10000, easing: "linear", fill: "forwards" },
+    );
+    return () => anim.cancel();
   });
 
   async function finish(modeA: boolean, modeB: boolean) {
@@ -67,6 +74,10 @@
 
   function handleNo() {
     if (submitting || rejecting) return;
+    if (gifEl) {
+      const r = gifEl.getBoundingClientRect();
+      gifSize = { w: r.width, h: r.height };
+    }
     rejecting = true;
     setTimeout(() => { fadingOut = true; }, REJECT_FADE_DELAY_MS);
     setTimeout(() => { void finish(false, false); }, REJECT_TOTAL_MS);
@@ -248,6 +259,7 @@
   <div
     class="modal"
     class:dock-bottom={step === "features"}
+    class:deal-mode={step === "deal"}
     class:fading={fadingOut}
     role="dialog"
     aria-modal="true"
@@ -324,14 +336,16 @@
       </div>
     {:else}
       <div class="step">
-        <h2 id="onboarding-title" class="deal-title" class:red={titleRed}>
+        <h2 id="onboarding-title" class="deal-title" bind:this={dealTitleEl}>
           {t("onboarding.telemetry.title")}
         </h2>
         {#key rejecting}
           <img
             class="deal-gif"
+            bind:this={gifEl}
             src={rejecting ? noThanksGif : tradeOfferGif}
             alt={t("onboarding.telemetry.gifAlt")}
+            style={gifSize ? `width:${gifSize.w}px;height:${gifSize.h}px;` : undefined}
           />
         {/key}
         <p class="intro">{t("onboarding.telemetry.intro")}</p>
@@ -347,7 +361,6 @@
           >
             <div class="deal-row-label">{t("onboarding.telemetry.no")}</div>
             <div class="deal-row-body">{t("onboarding.telemetry.noHint")}</div>
-            <span class="deal-row-arrow" aria-hidden="true">→</span>
           </button>
           <button
             type="button"
@@ -360,7 +373,6 @@
               <span class="default-inline">{t("onboarding.telemetry.basicDefault")}</span>
             </div>
             <div class="deal-row-body">{t("onboarding.telemetry.basicHint")}</div>
-            <span class="deal-row-arrow" aria-hidden="true">→</span>
           </button>
           <button
             type="button"
@@ -370,7 +382,6 @@
           >
             <div class="deal-row-label">{t("onboarding.telemetry.deal")}</div>
             <div class="deal-row-body">{t("onboarding.telemetry.dealHint")}</div>
-            <span class="deal-row-arrow" aria-hidden="true">→</span>
           </button>
         </div>
 
@@ -413,9 +424,13 @@
     display: grid;
     place-items: center;
   }
+  /* During the tour the spotlight box-shadow does the dimming; the backdrop
+     goes transparent and above it (z 9003 > 9001) so the docked explanation
+     card is not darkened. */
   .backdrop.clear {
-    background: color-mix(in srgb, #000 35%, transparent);
+    background: transparent;
     backdrop-filter: blur(0px);
+    z-index: 9003;
   }
   .backdrop.fading { opacity: 0; }
 
@@ -478,9 +493,26 @@
     box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
     pointer-events: auto;
     animation: modalIn 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  /* Transition only while fading out. Declared permanently it would also
+     animate the dock-bottom translateX(-50%) on step changes, sliding the
+     whole modal sideways over 800ms. */
+  .modal.fading {
+    opacity: 0;
+    transform: scale(0.98) translateY(6px);
     transition: opacity 800ms ease-out, transform 800ms ease-out;
   }
-  .modal.fading { opacity: 0; transform: scale(0.98) translateY(6px); }
+  /* Deal step never scrolls: overflow is hidden and the gif is the flexible
+     element that shrinks when the window is short. */
+  .modal.deal-mode {
+    overflow: hidden;
+    gap: 12px;
+    padding: 18px 22px 16px;
+  }
+  .modal.deal-mode .step {
+    min-height: 0;
+    gap: 10px;
+  }
   .modal.dock-bottom {
     position: fixed;
     bottom: 24px;
@@ -646,43 +678,40 @@
 
   .deal-title {
     text-align: center;
-    font-size: 22px;
-    font-weight: 800;
-    letter-spacing: 0.02em;
+    font-size: 24px;
+    font-weight: 900;
+    letter-spacing: 0.08em;
     color: #ffffff;
-    text-shadow: none;
-    transition: color 10s cubic-bezier(0.7, 0.05, 0.95, 0.05),
-                text-shadow 10s cubic-bezier(0.7, 0.05, 0.95, 0.05);
-  }
-  .deal-title.red {
-    color: #ef4444;
-    text-shadow: 0 0 18px color-mix(in srgb, #ef4444 60%, transparent);
   }
 
   .deal-gif {
     max-width: 100%;
-    max-height: 50vh;
+    max-height: 36vh;
     width: auto;
     height: auto;
+    flex: 0 1 auto;
+    min-height: 80px;
     object-fit: contain;
     display: block;
     margin: 0 auto;
-    border-radius: 8px;
+    border-radius: 10px;
     animation: gifSwap 240ms ease-out;
   }
 
   .intro {
-    margin: 0;
-    font-size: 13px;
-    line-height: 1.55;
+    margin: 0 auto;
+    max-width: 46ch;
+    font-size: 12.5px;
+    line-height: 1.6;
     color: var(--fg-muted);
     text-align: center;
   }
   .question {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 700;
+    margin: 2px 0 0;
+    font-size: 17px;
+    font-weight: 800;
     text-align: center;
+    letter-spacing: 0.01em;
   }
 
   .deal-buttons {
@@ -691,11 +720,11 @@
     gap: 8px;
   }
   .deal-row {
-    display: grid;
-    grid-template-columns: minmax(110px, 0.45fr) 1fr auto;
-    align-items: center;
-    gap: 14px;
-    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    padding: 11px 16px;
     border-radius: 12px;
     border: 1px solid var(--border);
     background: color-mix(in srgb, var(--bg-card) 88%, #fff 12%);
@@ -729,19 +758,9 @@
     color: var(--fg-subtle);
   }
   .deal-row-body {
-    font-size: 12px;
+    font-size: 11.5px;
     line-height: 1.5;
     color: var(--fg-muted);
-  }
-  .deal-row-arrow {
-    color: var(--fg-subtle);
-    font-size: 16px;
-    font-weight: 700;
-    transition: transform 120ms ease-out, color 120ms ease-out;
-  }
-  .deal-row:hover:not(:disabled) .deal-row-arrow {
-    transform: translateX(3px);
-    color: var(--fg);
   }
 
   .no-btn:hover:not(:disabled) {
@@ -749,8 +768,7 @@
     border-color: color-mix(in srgb, #ef4444 55%, var(--border));
     color: #ef4444;
   }
-  .no-btn:hover:not(:disabled) .deal-row-body,
-  .no-btn:hover:not(:disabled) .deal-row-arrow {
+  .no-btn:hover:not(:disabled) .deal-row-body {
     color: #ef4444;
   }
   .no-btn.no-clicked,
@@ -761,8 +779,7 @@
     opacity: 1 !important;
     box-shadow: 0 10px 28px color-mix(in srgb, #ef4444 35%, transparent);
   }
-  .no-btn.no-clicked .deal-row-body,
-  .no-btn.no-clicked .deal-row-arrow {
+  .no-btn.no-clicked .deal-row-body {
     color: #ffffff !important;
   }
 
@@ -856,7 +873,6 @@
 
   @media (prefers-reduced-motion: reduce) {
     .backdrop, .step, .spotlight, .modal, .modal.dock-bottom, .feature-bare, .mock-ctx-menu, .deal-gif { animation: none; }
-    .deal-title { transition: none; }
     .deal-row:hover:not(:disabled), .primary:hover:not(:disabled) { transform: none; }
   }
 </style>

@@ -253,6 +253,13 @@
     background: var(--border);
     border-radius: 8px;
     overflow: hidden;
+    animation: page-entrance var(--motion-page-entrance) ease-out;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .list-layout {
+      animation: none;
+    }
   }
 
   .list-panel {

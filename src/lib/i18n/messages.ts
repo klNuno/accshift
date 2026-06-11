@@ -110,24 +110,24 @@ export const EN_MESSAGES = {
   "onboarding.welcome.next": "Show me around",
   "onboarding.welcome.skip": "Skip",
   "onboarding.features.title": "Quick tour",
-  "onboarding.features.hint": "Hover the cards to see what each piece does.",
+  "onboarding.features.hint": "This part of the app isn't visible right now.",
   "onboarding.features.addAccount.label": "Add an account",
   "onboarding.features.addAccount.body":
-    "Hit the + button in the top-right to start linking a new account on the active platform.",
+    "The + button at the top right adds an account to the current platform. Log in once, Accshift keeps it.",
   "onboarding.features.switch.label": "Switch account",
   "onboarding.features.switch.body":
-    "Click any account card and Accshift swaps the logged-in session for you. No re-typing credentials.",
+    "Click a card and you're on that account. That's the whole app, honestly.",
   "onboarding.features.contextMenu.label": "Right-click for actions",
   "onboarding.features.contextMenu.body":
-    "Rename, color-code, move to a folder, delete. Every per-account action lives in the context menu.",
+    "Right-click a card to rename it, change its color, move it to a folder or delete it.",
   "onboarding.features.platformSwitch.label": "Switch platform",
   "onboarding.features.platformSwitch.body":
-    "Pick the platform you want from the tab strip. Steam, Riot, Battle.net, Ubisoft, Epic, Roblox, all in one window.",
+    "Same deal for Riot, Battle.net, Epic and the rest. The tabs up top switch platforms.",
   "onboarding.features.next": "Next",
   "onboarding.features.back": "Back",
   "onboarding.telemetry.title": "SELL YOUR SOUL TO ACCSHIFT!",
   "onboarding.telemetry.intro":
-    "Accshift collects a few usage stats to prioritize improvements and fixes, with no slowdowns of the app and no personal data sent. Opt in or not, the decision won't change anything to the app, and you can change it any time in the settings tab.",
+    "Accshift counts a few anonymous usage stats so I know what to fix first. Nothing personal leaves your machine, the app works the same either way, and you can change your mind anytime in Settings.",
   "onboarding.telemetry.question": "Deal?",
   "onboarding.telemetry.gifAlt": "Trade offer meme",
   "onboarding.telemetry.no": "No thanks",
@@ -138,7 +138,7 @@ export const EN_MESSAGES = {
     "Anonymous counters only. No identifier on your machine. You help, but just a little.",
   "onboarding.telemetry.deal": "DEAL",
   "onboarding.telemetry.dealHint":
-    "Random local UUID to measure retention and feature adoption, I still don't know who you are but you will help a lot, thank you!",
+    "Adds a random UUID stored only on your machine. Still no idea who you are, but you help a lot. Thank you!",
   "onboarding.telemetry.back": "Back",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
@@ -554,24 +554,24 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "onboarding.welcome.next": "Fais-moi visiter",
   "onboarding.welcome.skip": "Passer",
   "onboarding.features.title": "Visite rapide",
-  "onboarding.features.hint": "Survole les cartes pour voir à quoi sert chaque élément.",
+  "onboarding.features.hint": "Cette partie de l'app n'est pas visible pour l'instant.",
   "onboarding.features.addAccount.label": "Ajouter un compte",
   "onboarding.features.addAccount.body":
-    "Clique sur le bouton + en haut à droite pour ajouter un compte sur la plateforme active.",
+    "Le bouton + en haut à droite ajoute un compte sur la plateforme active. Tu te connectes une fois, Accshift le garde.",
   "onboarding.features.switch.label": "Changer de compte",
   "onboarding.features.switch.body":
-    "Clique sur une carte de compte et Accshift bascule la session connectée pour toi. Pas besoin de retaper les identifiants.",
+    "Clique sur une carte et t'es sur ce compte. C'est toute l'app, honnêtement.",
   "onboarding.features.contextMenu.label": "Clic droit pour les actions",
   "onboarding.features.contextMenu.body":
-    "Renommer, colorer, déplacer dans un dossier, supprimer. Toutes les actions par compte sont dans le menu contextuel.",
+    "Clic droit sur une carte pour la renommer, changer sa couleur, la ranger dans un dossier ou la supprimer.",
   "onboarding.features.platformSwitch.label": "Changer de plateforme",
   "onboarding.features.platformSwitch.body":
-    "Choisis la plateforme via la barre d'onglets. Steam, Riot, Battle.net, Ubisoft, Epic, Roblox, tout dans une seule fenêtre.",
+    "Pareil pour Riot, Battle.net, Epic et les autres. Les onglets en haut changent de plateforme.",
   "onboarding.features.next": "Suivant",
   "onboarding.features.back": "Retour",
   "onboarding.telemetry.title": "VENDS TON ÂME À ACCSHIFT !",
   "onboarding.telemetry.intro":
-    "Accshift collecte quelques stats d'utilisation pour prioriser les améliorations et les correctifs, sans ralentissement et sans aucune donnée personnelle envoyée. Opt-in ou pas, la décision ne change rien à l'app, et tu peux changer d'avis à tout moment dans les paramètres.",
+    "Accshift compte quelques stats d'utilisation anonymes pour que je sache quoi corriger en premier. Rien de personnel ne quitte ta machine, l'app marche pareil dans tous les cas, et tu peux changer d'avis quand tu veux dans les paramètres.",
   "onboarding.telemetry.question": "Marché conclu ?",
   "onboarding.telemetry.gifAlt": "Mème Trade Offer",
   "onboarding.telemetry.no": "Non merci",
@@ -582,7 +582,7 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
     "Compteurs anonymes uniquement. Aucun identifiant sur ta machine. Tu aides, mais juste un peu.",
   "onboarding.telemetry.deal": "MARCHÉ CONCLU",
   "onboarding.telemetry.dealHint":
-    "UUID aléatoire local pour mesurer la rétention et l'adoption des fonctionnalités, je ne sais toujours pas qui tu es mais tu vas beaucoup aider, merci !",
+    "Ajoute un UUID aléatoire stocké uniquement sur ta machine. Je ne sais toujours pas qui tu es, mais tu aides beaucoup. Merci !",
   "onboarding.telemetry.back": "Retour",
   "settings.steam": "Steam",
   "settings.riot": "Riot",

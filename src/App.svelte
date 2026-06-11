@@ -131,6 +131,8 @@
   let activeTabUsable = $derived(shell.activeTabUsable);
   let isSearching = $derived(navigation.isSearching);
   let isAccountSelectionView = $derived(!settingsPanel.showSettings && !!shell.adapter);
+  // Remounts the settings/workspace panel on switch so page-entrance replays.
+  let panelKey = $derived(settingsPanel.showSettings ? "__settings__" : activeTab);
   let bootReady = $state(false);
   let cardColorVersion = $state(0);
   let cardNoteVersion = $state(0);
@@ -635,6 +637,7 @@
       aria-hidden={!secureScreen.isObscured}
     ></div>
 
+  {#key panelKey}
   {#if settingsPanel.showSettings}
     <main class="content">
       {#if settingsPanel.SettingsPanel}
@@ -700,7 +703,6 @@
     onGridMouseDown={handleWorkspaceMouseDown}
     {setGridWrapperRef}
     gridPaddingLeft={grid.paddingLeft}
-    gridIsResizing={grid.isResizing}
     {getFolder}
     onGoBack={handleNavigateBack}
     onAccountActivate={handleWorkspaceAccountActivate}
@@ -715,6 +717,7 @@
     switchingAccountId={loader.switchingAccountId}
   />
   {/if}
+  {/key}
 
   <AppDialogs
     contextMenu={dialogs.contextMenu}
@@ -801,16 +804,27 @@
   }
 
   .app-frame.boot-ready {
-    animation: appEntrance 300ms ease-out forwards;
+    animation: appEntrance 360ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  /* Boot cascade: frame un-blurs, then titlebar and stage fade in with a
+     slight vertical offset. All opacity/translateY, nothing horizontal. */
+  .app-frame.boot-ready :global(.titlebar) {
+    animation: page-entrance 240ms ease-out backwards;
+  }
+  .app-frame.boot-ready .app-stage {
+    animation: page-entrance 280ms ease-out 70ms backwards;
   }
 
   @keyframes appEntrance {
-    from { opacity: 0; transform: translateY(6px); }
-    to   { opacity: 1; transform: translateY(0); }
+    from { opacity: 0; transform: scale(0.99) translateY(6px); filter: blur(8px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); filter: none; }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .app-frame.boot-ready {
+    .app-frame.boot-ready,
+    .app-frame.boot-ready :global(.titlebar),
+    .app-frame.boot-ready .app-stage {
       animation: none;
       opacity: 1;
     }

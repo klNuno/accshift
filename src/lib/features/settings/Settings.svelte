@@ -501,12 +501,7 @@
     flex-direction: column;
     gap: 12px;
     overflow: hidden;
-    animation: fadeIn 140ms ease-out;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(4px); }
-    to { opacity: 1; transform: translateY(0); }
+    animation: page-entrance var(--motion-page-entrance) ease-out;
   }
 
   .header {
