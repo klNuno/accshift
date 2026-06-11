@@ -256,10 +256,8 @@
     animation: page-entrance var(--motion-page-entrance) ease-out;
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .list-layout {
-      animation: none;
-    }
+  :global(html[data-motion="reduced"]) .list-layout {
+    animation: none;
   }
 
   .list-panel {

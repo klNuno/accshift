@@ -507,17 +507,14 @@
     overflow-y: auto;
     overflow-x: hidden;
     scrollbar-gutter: stable;
-    background: var(--bg);
     color: var(--fg);
     display: flex;
     flex-direction: column;
     animation: page-entrance var(--motion-page-entrance) ease-out;
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .content {
-      animation: none;
-    }
+  :global(html[data-motion="reduced"]) .content {
+    animation: none;
   }
 
   .toolbar-row {

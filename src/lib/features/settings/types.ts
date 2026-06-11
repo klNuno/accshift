@@ -37,6 +37,9 @@ export interface AccountDisplaySettings {
   expandedFolders: boolean;
 }
 
+/** "system" follows the OS reduced-motion preference; "on"/"off" force it. */
+export type AnimationsMode = "system" | "on" | "off";
+
 export type SteamShutdownMode = "graceful" | "force";
 
 export interface SteamPlatformSettings {
@@ -54,6 +57,7 @@ export interface AppSettings {
   themeId: string;
   backgroundOpacity: number;
   uiScalePercent: number;
+  animations: AnimationsMode;
   suspendGraphicsWhenMinimized: boolean;
   minimizeOnAccountSwitch: boolean;
   dataRefresh: DataRefreshSettings;

@@ -188,7 +188,9 @@
     align-items: center;
     justify-content: space-between;
     padding: 0 0 0 10px;
-    background: var(--bg);
+    /* No own background: .app-shell paints var(--bg) behind. A second var(--bg)
+       layer here would double the alpha on translucent themes. */
+    background: transparent;
     user-select: none;
     -webkit-user-select: none;
     border-bottom: 1px solid var(--bg-card);

@@ -338,6 +338,7 @@
       settings.inactivityBlurSeconds,
       settings.themeId,
       settings.backgroundOpacity,
+      settings.animations,
       settings.suspendGraphicsWhenMinimized,
       settings.minimizeOnAccountSwitch,
       settings.language,
@@ -502,6 +503,10 @@
     gap: 12px;
     overflow: hidden;
     animation: page-entrance var(--motion-page-entrance) ease-out;
+  }
+
+  :global(html[data-motion="reduced"]) .settings-panel {
+    animation: none;
   }
 
   .header {

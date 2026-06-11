@@ -17,6 +17,7 @@ const DEFAULTS: AppSettings = {
   themeId: "dark",
   backgroundOpacity: 100,
   uiScalePercent: 100,
+  animations: "system",
   suspendGraphicsWhenMinimized: true,
   minimizeOnAccountSwitch: false,
   dataRefresh: {
@@ -129,6 +130,7 @@ function sanitizeSettings(value: unknown): AppSettings {
     ).id,
     backgroundOpacity: clampInt(raw.backgroundOpacity, 0, 100, DEFAULTS.backgroundOpacity),
     uiScalePercent: clampInt(raw.uiScalePercent, 75, 150, DEFAULTS.uiScalePercent),
+    animations: raw.animations === "on" || raw.animations === "off" ? raw.animations : "system",
     suspendGraphicsWhenMinimized: raw.suspendGraphicsWhenMinimized !== false,
     minimizeOnAccountSwitch: Boolean(raw.minimizeOnAccountSwitch),
     dataRefresh: {

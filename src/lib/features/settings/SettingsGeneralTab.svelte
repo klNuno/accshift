@@ -115,6 +115,15 @@
     </div>
 
     <label class="field">
+      <span class="field-label">{t("settings.animations")}</span>
+      <select class="text-input select-input" bind:value={settings.animations}>
+        <option value="system">{t("settings.animationsSystem")}</option>
+        <option value="on">{t("settings.animationsOn")}</option>
+        <option value="off">{t("settings.animationsOff")}</option>
+      </select>
+    </label>
+
+    <label class="field">
       <span class="field-label">{t("settings.backgroundOpacity")} - {settings.backgroundOpacity}%</span>
       <input
         type="range"

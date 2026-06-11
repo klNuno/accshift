@@ -23,8 +23,8 @@
   let letters = $derived(Array.from(text));
   let letterRefs: Array<HTMLSpanElement | null> = [];
   let mounted = false;
-  let reduceMotion = false;
-  let mediaQuery: MediaQueryList | null = null;
+  let reduceMotion = $state(false);
+  let motionObserver: MutationObserver | null = null;
   let rafId: number | null = null;
   let startTimerId: number | null = null;
   let startMs = 0;
@@ -116,10 +116,6 @@
     beginAnimation();
   }
 
-  function handleReduceMotionChange(e: MediaQueryListEvent) {
-    reduceMotion = e.matches;
-  }
-
   $effect(() => {
     trackDependencies(letters, phaseStep);
     letterRefs.length = letters.length;
@@ -147,27 +143,23 @@
 
   onMount(() => {
     mounted = true;
-    if (typeof window.matchMedia === "function") {
-      mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
-      reduceMotion = mediaQuery.matches;
-      if (typeof mediaQuery.addEventListener === "function") {
-        mediaQuery.addEventListener("change", handleReduceMotionChange);
-      } else if (typeof mediaQuery.addListener === "function") {
-        mediaQuery.addListener(handleReduceMotionChange);
-      }
-    }
+    // Follows the app-level motion preference (data-motion on <html>, set by
+    // applyMotionPreference) instead of the raw OS media query, so the
+    // in-app animations setting also controls the wave.
+    const root = document.documentElement;
+    reduceMotion = root.dataset.motion === "reduced";
+    motionObserver = new MutationObserver(() => {
+      reduceMotion = root.dataset.motion === "reduced";
+    });
+    motionObserver.observe(root, { attributes: true, attributeFilter: ["data-motion"] });
     if (active && !isMotionBlocked()) startAnimation();
   });
 
   onDestroy(() => {
     mounted = false;
     stopAnimation();
-    if (!mediaQuery) return;
-    if (typeof mediaQuery.removeEventListener === "function") {
-      mediaQuery.removeEventListener("change", handleReduceMotionChange);
-    } else if (typeof mediaQuery.removeListener === "function") {
-      mediaQuery.removeListener(handleReduceMotionChange);
-    }
+    motionObserver?.disconnect();
+    motionObserver = null;
   });
 </script>
 

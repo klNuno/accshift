@@ -30,6 +30,7 @@
   import { trackDependencies } from "$lib/shared/trackDependencies";
   import { createPlatformShellState, isPlatformUsable } from "$lib/app/platformShell.svelte";
   import { applyThemeToDocument } from "$lib/theme/themes";
+  import { applyMotionPreference } from "$lib/theme/motion";
   import { ensurePlatformLoaded } from "$lib/platforms/registry";
   import {
     createFolderNavigation,
@@ -492,6 +493,8 @@
     document.documentElement.lang = shell.locale;
   });
 
+  $effect(() => applyMotionPreference(settings.animations));
+
   $effect(() => {
     trackDependencies(shell.runtimeOs, shell.settings.enabledPlatforms.join(","));
     if (shell.ensureActiveTab()) {
@@ -804,16 +807,16 @@
   }
 
   .app-frame.boot-ready {
-    animation: appEntrance 360ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    animation: appEntrance 240ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
   }
 
   /* Boot cascade: frame un-blurs, then titlebar and stage fade in with a
      slight vertical offset. All opacity/translateY, nothing horizontal. */
   .app-frame.boot-ready :global(.titlebar) {
-    animation: page-entrance 240ms ease-out backwards;
+    animation: page-entrance 180ms ease-out backwards;
   }
   .app-frame.boot-ready .app-stage {
-    animation: page-entrance 280ms ease-out 70ms backwards;
+    animation: page-entrance 220ms ease-out 50ms backwards;
   }
 
   @keyframes appEntrance {
@@ -821,13 +824,11 @@
     to   { opacity: 1; transform: scale(1) translateY(0); filter: none; }
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .app-frame.boot-ready,
-    .app-frame.boot-ready :global(.titlebar),
-    .app-frame.boot-ready .app-stage {
-      animation: none;
-      opacity: 1;
-    }
+  :global(html[data-motion="reduced"]) .app-frame.boot-ready,
+  :global(html[data-motion="reduced"]) .app-frame.boot-ready :global(.titlebar),
+  :global(html[data-motion="reduced"]) .app-frame.boot-ready .app-stage {
+    animation: none;
+    opacity: 1;
   }
 
   .app-stage.locked {
@@ -841,6 +842,10 @@
     overflow: hidden;
     box-sizing: border-box;
     position: relative;
+    /* The shell owns the window background. Panels swapped under {#key}
+       replay page-entrance (opacity 0 -> 1); if they painted the background
+       themselves the window would flash transparent on every switch. */
+    background: var(--bg);
     transition: filter 320ms ease-out, transform 320ms ease-out, opacity 220ms ease-out;
     will-change: filter, transform;
   }
@@ -884,7 +889,6 @@
     overflow-y: auto;
     overflow-x: hidden;
     scrollbar-gutter: stable;
-    background: var(--bg);
     color: var(--fg);
     display: flex;
     flex-direction: column;

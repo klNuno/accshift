@@ -320,6 +320,7 @@
             src={avatarUrl}
             alt={account.displayName}
             loading="lazy"
+            decoding="async"
             draggable={false}
             class:blurred={isRefreshingAvatar || showConfirm || isSwitching}
           />
@@ -514,10 +515,8 @@
     animation: card-entrance var(--motion-card-entrance) ease-out;
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .card.entrance {
-      animation: none;
-    }
+  :global(html[data-motion="reduced"]) .card.entrance {
+    animation: none;
   }
 
   .card:not(.active):hover {

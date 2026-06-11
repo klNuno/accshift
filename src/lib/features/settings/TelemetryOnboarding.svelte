@@ -871,8 +871,6 @@
     to { opacity: 1; transform: scale(1); }
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .backdrop, .step, .spotlight, .modal, .modal.dock-bottom, .feature-bare, .mock-ctx-menu, .deal-gif { animation: none; }
-    .deal-row:hover:not(:disabled), .primary:hover:not(:disabled) { transform: none; }
-  }
+  :global(html[data-motion="reduced"]) :is(.backdrop, .step, .spotlight, .modal, .modal.dock-bottom, .feature-bare, .mock-ctx-menu, .deal-gif) { animation: none; }
+  :global(html[data-motion="reduced"]) :is(.deal-row:hover:not(:disabled), .primary:hover:not(:disabled)) { transform: none; }
 </style>

@@ -48,10 +48,8 @@
     animation: card-entrance var(--motion-card-entrance) ease-out;
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .card {
-      animation: none;
-    }
+  :global(html[data-motion="reduced"]) .card {
+    animation: none;
   }
 
   .card:hover {
