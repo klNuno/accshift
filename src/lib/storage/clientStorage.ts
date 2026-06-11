@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getBootPayload } from "$lib/app/bootPayload";
 
 export const CLIENT_STORE_SETTINGS = "client.settings";
 export const CLIENT_STORE_FOLDERS = "client.folders";
@@ -179,7 +180,11 @@ export async function initializeClientStorage(): Promise<void> {
 
   initPromise = (async () => {
     try {
-      const snapshot = await loadSnapshotFromBackend();
+      // The boot payload already carries the snapshot; only fall back to a
+      // dedicated invoke when that round trip failed.
+      const snapshot =
+        (getBootPayload()?.storageSnapshot as ClientStorageSnapshot | undefined) ??
+        (await loadSnapshotFromBackend());
       applySnapshot(snapshot);
       emitStorageLog("Loaded client storage into memory", {
         storeCount: Object.keys(snapshot.stores ?? {}).length,

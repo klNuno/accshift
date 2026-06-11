@@ -17,7 +17,9 @@ pub struct TelemetryState {
 
 impl TelemetryState {
     /// Builds the state at startup. Reads the config for initial consent.
-    pub fn new(ctx: &dyn AppContext) -> Self {
+    /// `app_start` is captured by the caller at process start so boot
+    /// durations stay accurate regardless of when this runs in setup.
+    pub fn new(ctx: &dyn AppContext, app_start: Instant) -> Self {
         let cfg = accshift_core::config::load_config(ctx);
         let consent = telemetry::consent_from_config(&cfg.telemetry);
         let tctx = TelemetryContext {
@@ -29,7 +31,7 @@ impl TelemetryState {
         Self {
             handle: worker.handle(),
             worker: Mutex::new(Some(worker)),
-            app_start: Instant::now(),
+            app_start,
         }
     }
 

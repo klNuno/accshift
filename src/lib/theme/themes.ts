@@ -24,7 +24,7 @@ export interface AppThemeDefinition {
   displayName?: string;
 }
 
-interface CustomThemePayload {
+export interface CustomThemePayload {
   id: string;
   name: string;
   colorScheme: string;
@@ -153,23 +153,27 @@ export function getAllThemes(): AppThemeDefinition[] {
   return [...BUILT_IN_THEMES, ...custom];
 }
 
+export function applyCustomThemePayloads(payloads: CustomThemePayload[]): void {
+  customThemes.clear();
+  for (const payload of payloads) {
+    if (!isValidTokens(payload.tokens)) continue;
+    if (BUILT_IN_THEME_MAP.has(payload.id)) continue;
+    const colorScheme = payload.colorScheme === "light" ? "light" : "dark";
+    customThemes.set(payload.id, {
+      id: payload.id,
+      labelKey: "theme.custom" as MessageKey,
+      colorScheme,
+      tokens: payload.tokens as ThemeTokens,
+      isCustom: true,
+      displayName: payload.name,
+    });
+  }
+}
+
 export async function loadCustomThemes(): Promise<void> {
   try {
     const payloads = await invoke<CustomThemePayload[]>("list_custom_themes");
-    customThemes.clear();
-    for (const payload of payloads) {
-      if (!isValidTokens(payload.tokens)) continue;
-      if (BUILT_IN_THEME_MAP.has(payload.id)) continue;
-      const colorScheme = payload.colorScheme === "light" ? "light" : "dark";
-      customThemes.set(payload.id, {
-        id: payload.id,
-        labelKey: "theme.custom" as MessageKey,
-        colorScheme,
-        tokens: payload.tokens as ThemeTokens,
-        isCustom: true,
-        displayName: payload.name,
-      });
-    }
+    applyCustomThemePayloads(payloads);
   } catch {
     // themes dir may not exist yet, that's fine
   }

@@ -3,8 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { addToast } from "$lib/features/notifications/store.svelte";
 import { translate } from "$lib/i18n";
 import type { AppSettings, RuntimeOs } from "$lib/features/settings/types";
+import { getBootPayload } from "$lib/app/bootPayload";
 import { getInitialActiveTab, isPlatformUsable } from "$lib/app/platformShell.svelte";
-import { loadCustomThemes } from "$lib/theme/themes";
+import { applyCustomThemePayloads, loadCustomThemes } from "$lib/theme/themes";
 import {
   CLIENT_STORE_ACCOUNT_CARD_COLORS,
   CLIENT_STORE_ACCOUNT_CARD_NOTES,
@@ -85,20 +86,26 @@ export function createAppLifecycleController({
   let externalStorageRefreshInFlight = false;
 
   async function initializeAppShell() {
-    // Migrate legacy config.json → split format before anything reads config.
-    try {
-      const result = await invoke<string>("migrate_legacy_config");
-      const locale = shell.settings.language;
-      if (result === "migrated") {
-        addToast(translate(locale, "toast.legacyConfigMigrated"));
-      } else if (result.startsWith("error:")) {
-        addToast(translate(locale, "toast.legacyConfigMigrationFailed"));
-      }
-    } catch {
-      // Non-critical, config will fall back to legacy on read.
+    // The boot payload (fetched in main.ts before mount) carries the
+    // migration result, custom themes and runtime OS in one round trip.
+    // The invoke fallbacks below only run if that round trip failed.
+    const boot = getBootPayload();
+
+    const migrationResult = boot
+      ? boot.migration
+      : await invoke<string>("migrate_legacy_config").catch(() => "none");
+    const locale = shell.settings.language;
+    if (migrationResult === "migrated") {
+      addToast(translate(locale, "toast.legacyConfigMigrated"));
+    } else if (migrationResult.startsWith("error:")) {
+      addToast(translate(locale, "toast.legacyConfigMigrationFailed"));
     }
 
-    await loadCustomThemes();
+    if (boot) {
+      applyCustomThemePayloads(boot.customThemes);
+    } else {
+      await loadCustomThemes();
+    }
     shell.refreshSettings();
 
     void getVersion()
@@ -109,10 +116,12 @@ export function createAppLifecycleController({
         console.error("Failed to read app version:", reason);
       });
 
-    const runtimeOsResult = await invoke<string>("get_runtime_os").catch((reason) => {
-      console.error("Failed to read runtime OS:", reason);
-      return "unknown";
-    });
+    const runtimeOsResult =
+      boot?.runtimeOs ??
+      (await invoke<string>("get_runtime_os").catch((reason) => {
+        console.error("Failed to read runtime OS:", reason);
+        return "unknown";
+      }));
 
     const normalizedOs: RuntimeOs =
       runtimeOsResult === "windows" || runtimeOsResult === "linux" || runtimeOsResult === "macos"

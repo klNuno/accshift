@@ -1,5 +1,5 @@
 use crate::context::AppContext;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -10,10 +10,22 @@ const PREVIOUS_LOG_FILE_NAME: &str = "app.previous.log";
 const MAX_MESSAGE_BYTES: usize = 512;
 const MAX_DETAILS_BYTES: usize = 16_384;
 
-static LOG_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+// Open append handle kept for the whole session. Opening the file on every
+// record costs a few syscalls per log line (plus antivirus re-scans on
+// Windows); the mutex also serializes writers, so it doubles as the old
+// LOG_LOCK.
+static LOG_SINK: OnceLock<Mutex<Option<File>>> = OnceLock::new();
 
-fn log_lock() -> &'static Mutex<()> {
-    LOG_LOCK.get_or_init(|| Mutex::new(()))
+fn log_sink() -> &'static Mutex<Option<File>> {
+    LOG_SINK.get_or_init(|| Mutex::new(None))
+}
+
+fn open_append_handle(path: &Path) -> Result<File, String> {
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|reason| format!("Could not open log file {}: {reason}", path.display()))
 }
 
 fn trim_text(value: &str, max_bytes: usize) -> String {
@@ -148,7 +160,10 @@ fn previous_log_file_path(app_handle: &dyn AppContext) -> Result<PathBuf, String
 
 pub fn begin_log_session(app_handle: &dyn AppContext) -> Result<(), String> {
     // Best-effort logging must keep working even if a writer panicked.
-    let _guard = log_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = log_sink().lock().unwrap_or_else(|e| e.into_inner());
+    // Release any handle from a previous session before rotating: Windows
+    // refuses the rename while the file is open.
+    *guard = None;
 
     let current_path = log_file_path(app_handle)?;
     ensure_log_parent(&current_path)?;
@@ -175,6 +190,8 @@ pub fn begin_log_session(app_handle: &dyn AppContext) -> Result<(), String> {
         )
     })?;
 
+    *guard = Some(open_append_handle(&current_path)?);
+
     Ok(())
 }
 
@@ -185,11 +202,6 @@ pub fn append_app_log(
     message: &str,
     details: Option<&str>,
 ) -> Result<(), String> {
-    let _guard = log_lock().lock().unwrap_or_else(|e| e.into_inner());
-
-    let path = log_file_path(app_handle)?;
-    ensure_log_parent(&path)?;
-
     let record = serde_json::json!({
         "tsMs": now_unix_ms(),
         "level": trim_text(&sanitize_log_text(level), 32),
@@ -198,14 +210,25 @@ pub fn append_app_log(
         "details": details.map(|value| trim_text(&sanitize_log_text(value), MAX_DETAILS_BYTES)),
     });
 
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|reason| format!("Could not open log file {}: {reason}", path.display()))?;
+    let mut guard = log_sink().lock().unwrap_or_else(|e| e.into_inner());
 
-    writeln!(file, "{record}")
-        .map_err(|reason| format!("Could not write log file {}: {reason}", path.display()))?;
+    if guard.is_none() {
+        // Writer without a session (CLI, tests): open lazily and keep it.
+        let path = log_file_path(app_handle)?;
+        ensure_log_parent(&path)?;
+        *guard = Some(open_append_handle(&path)?);
+    }
+
+    let file = guard.as_mut().expect("log sink populated above");
+    if let Err(reason) = writeln!(file, "{record}") {
+        // Drop the dead handle so the next record reopens the file.
+        *guard = None;
+        let path = log_file_path(app_handle)?;
+        return Err(format!(
+            "Could not write log file {}: {reason}",
+            path.display()
+        ));
+    }
 
     Ok(())
 }

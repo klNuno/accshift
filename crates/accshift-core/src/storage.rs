@@ -369,11 +369,32 @@ pub fn save_client_store(
 pub fn load_client_storage_snapshot(
     app_handle: &dyn AppContext,
 ) -> Result<ClientStorageSnapshot, String> {
-    let mut stores = BTreeMap::new();
+    // Path resolution stays sequential: client_store_path may migrate legacy
+    // files. The reads themselves are independent small JSON files — read
+    // them in parallel so wall time is the slowest file, not the sum.
+    let mut paths = Vec::with_capacity(client_store_ids().len());
     for store_id in client_store_ids() {
-        let path = client_store_path(app_handle, store_id)?;
-        let value = read_json_if_exists::<Value>(&path)?.unwrap_or(Value::Null);
-        stores.insert(store_id.to_string(), value);
+        paths.push((*store_id, client_store_path(app_handle, store_id)?));
+    }
+
+    let results: Vec<Result<Option<Value>, String>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = paths
+            .iter()
+            .map(|(_, path)| scope.spawn(move || read_json_if_exists::<Value>(path)))
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|_| Err("Store read thread panicked".to_string()))
+            })
+            .collect()
+    });
+
+    let mut stores = BTreeMap::new();
+    for ((store_id, _), value) in paths.iter().zip(results) {
+        stores.insert((*store_id).to_string(), value?.unwrap_or(Value::Null));
     }
     Ok(ClientStorageSnapshot {
         stores,

@@ -2,6 +2,7 @@ import "./app.css";
 import App from "./App.svelte";
 import { invoke } from "@tauri-apps/api/core";
 import { mount } from "svelte";
+import { fetchBootPayload } from "$lib/app/bootPayload";
 import { initializeClientStorage } from "$lib/storage/clientStorage";
 
 type LogLevel = "info" | "warn" | "error";
@@ -127,6 +128,15 @@ queueLog("info", "frontend.boot", "main.ts initialized");
 let app;
 
 async function bootstrap() {
+  try {
+    // One round trip for everything boot needs (storage, themes, runtime OS,
+    // migration result). On failure the legacy per-command path below covers.
+    await fetchBootPayload();
+    queueLog("info", "frontend.boot", "Boot payload loaded");
+  } catch (reason) {
+    queueLog("error", "frontend.boot", "Failed to load boot payload", serializeLogValue(reason));
+  }
+
   try {
     await initializeClientStorage();
     queueLog("info", "frontend.storage", "Client storage initialized");

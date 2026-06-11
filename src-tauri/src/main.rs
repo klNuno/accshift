@@ -19,6 +19,18 @@ pub(crate) use accshift_core::{config, logging, os, platforms, storage, telemetr
 pub(crate) use tauri_context::ctx;
 
 fn main() {
+    // WebKitGTK's DMABUF renderer is broken on the NVIDIA proprietary driver
+    // (white window, severe rendering lag). Opt out only on those machines;
+    // an explicit user-set value always wins.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none()
+        && std::path::Path::new("/proc/driver/nvidia").exists()
+    {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
+    let app_start = std::time::Instant::now();
+
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .connect_timeout(std::time::Duration::from_secs(5))
@@ -36,14 +48,12 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(app_runtime::BootState::default())
         .manage(client)
-        .setup(|app| {
+        .setup(move |app| {
             let setup_handle = app.handle().clone();
             let setup_ctx = ctx(&setup_handle);
             let _ = logging::begin_log_session(&setup_ctx);
             logging::install_panic_hook(setup_ctx.clone());
 
-            // Telemetry: build the worker, share the handle with commands.
-            app.manage(telemetry_runtime::TelemetryState::new(&setup_ctx));
             let _ = logging::append_app_log(
                 &setup_ctx,
                 "info",
@@ -136,6 +146,11 @@ fn main() {
                 "Main window created",
                 Some("label=main"),
             );
+
+            // Telemetry: build the worker, share the handle with commands.
+            // After the window build on purpose — the webview is the slow part
+            // of startup, let it begin initializing as early as possible.
+            app.manage(telemetry_runtime::TelemetryState::new(&setup_ctx, app_start));
             let app_handle = app.handle().clone();
             let win_for_events = win.clone();
             win.on_window_event(move |event| {
@@ -205,6 +220,7 @@ fn main() {
             // Core
             commands::log_app_event,
             commands::finish_boot,
+            commands::get_boot_payload,
             commands::get_runtime_os,
             commands::migrate_legacy_config,
             commands::load_client_storage_snapshot,

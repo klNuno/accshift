@@ -12,13 +12,51 @@ pub fn get_runtime_os() -> String {
 
 /// Returns "migrated" if legacy config was converted, "none" if no legacy found,
 /// or an error string if migration failed.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn migrate_legacy_config(app_handle: tauri::AppHandle) -> String {
-    match crate::config::migrate_legacy_config(&ctx(&app_handle)) {
+    migrate_legacy_config_inner(&ctx(&app_handle))
+}
+
+fn migrate_legacy_config_inner(c: &dyn accshift_core::AppContext) -> String {
+    match crate::config::migrate_legacy_config(c) {
         None => "none".to_string(),
         Some(Ok(())) => "migrated".to_string(),
         Some(Err(e)) => format!("error:{e}"),
     }
+}
+
+/// Everything the frontend needs before it can show the window, in one IPC
+/// round trip: legacy config migration, client storage snapshot, custom
+/// themes and the runtime OS. Replaces four sequential invokes on the boot
+/// critical path.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BootPayload {
+    migration: String,
+    runtime_os: &'static str,
+    storage_snapshot: crate::storage::ClientStorageSnapshot,
+    custom_themes: Vec<crate::themes::CustomTheme>,
+}
+
+#[tauri::command]
+pub async fn get_boot_payload(app_handle: tauri::AppHandle) -> Result<BootPayload, String> {
+    let c = ctx(&app_handle);
+    tauri::async_runtime::spawn_blocking(move || {
+        // Migration must land before anything reads config or stores.
+        let migration = migrate_legacy_config_inner(&c);
+        let storage_snapshot = crate::storage::load_client_storage_snapshot(&c)?;
+        // Missing themes dir is normal on first run; the frontend treats an
+        // empty list and "no custom themes" the same way.
+        let custom_themes = crate::themes::list_custom_themes(&c).unwrap_or_default();
+        Ok(BootPayload {
+            migration,
+            runtime_os: std::env::consts::OS,
+            storage_snapshot,
+            custom_themes,
+        })
+    })
+    .await
+    .map_err(|e| format!("Task failed: {e}"))?
 }
 
 /// Per-session ceiling on webview-originated log records. The webview is the
@@ -26,7 +64,7 @@ pub fn migrate_legacy_config(app_handle: tauri::AppHandle) -> String {
 /// to 16KB each).
 const WEBVIEW_LOG_CAP: u32 = 20_000;
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn log_app_event(
     app_handle: tauri::AppHandle,
     level: String,
@@ -58,7 +96,7 @@ pub fn log_app_event(
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn finish_boot(
     app_handle: tauri::AppHandle,
     boot_state: tauri::State<'_, crate::app_runtime::BootState>,
@@ -111,7 +149,7 @@ fn emit_accounts_snapshots(app_handle: &tauri::AppHandle, tstate: &TelemetryStat
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn load_client_storage_snapshot(
     app_handle: tauri::AppHandle,
 ) -> Result<crate::storage::ClientStorageSnapshot, String> {
@@ -133,7 +171,7 @@ pub fn load_client_storage_snapshot(
     Ok(snapshot)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_client_storage_store(
     app_handle: tauri::AppHandle,
     store_id: String,
@@ -156,7 +194,7 @@ pub fn save_client_storage_store(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_storage_manifest(
     app_handle: tauri::AppHandle,
 ) -> Result<crate::storage::StorageManifest, String> {
@@ -181,7 +219,7 @@ pub fn get_storage_manifest(
 // Generic platform commands
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn platform_get_accounts(
     app_handle: tauri::AppHandle,
     platform_id: String,
@@ -189,7 +227,7 @@ pub fn platform_get_accounts(
     require_service(&platform_id)?.get_accounts(ctx(&app_handle))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn platform_get_startup_snapshot(
     app_handle: tauri::AppHandle,
     platform_id: String,
@@ -197,7 +235,7 @@ pub fn platform_get_startup_snapshot(
     require_service(&platform_id)?.get_startup_snapshot(ctx(&app_handle))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn platform_get_current_account(
     app_handle: tauri::AppHandle,
     platform_id: String,
@@ -287,7 +325,7 @@ pub async fn platform_cancel_setup(
         .map_err(|e| format!("Task failed: {e}"))?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn platform_get_path(
     app_handle: tauri::AppHandle,
     platform_id: String,
@@ -364,7 +402,7 @@ pub async fn steam_set_api_key(app_handle: tauri::AppHandle, key: String) -> Res
         .map_err(|e| format!("Task failed: {e}"))?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn steam_has_api_key(app_handle: tauri::AppHandle) -> bool {
     crate::platforms::steam::has_api_key(ctx(&app_handle))
 }
@@ -455,7 +493,7 @@ pub async fn steam_copy_game_settings(
     .map_err(|e| format!("Task failed: {e}"))?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn steam_get_copyable_games(
     app_handle: tauri::AppHandle,
     from_steam_id: String,
@@ -464,7 +502,7 @@ pub fn steam_get_copyable_games(
     crate::platforms::steam::get_copyable_games(ctx(&app_handle), from_steam_id, to_steam_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn steam_open_userdata(app_handle: tauri::AppHandle, steam_id: String) -> Result<(), String> {
     crate::platforms::steam::open_userdata(ctx(&app_handle), steam_id)
 }
@@ -481,7 +519,7 @@ pub async fn steam_clear_browser_cache(app_handle: tauri::AppHandle) -> Result<(
     .map_err(|e| format!("Task failed: {e}"))?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn steam_bulk_edit(
     app_handle: tauri::AppHandle,
     request: crate::platforms::steam::bulk_edit::BulkEditRequest,
@@ -489,7 +527,7 @@ pub fn steam_bulk_edit(
     crate::platforms::steam::bulk_edit(ctx(&app_handle), request)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn steam_get_account_games(
     app_handle: tauri::AppHandle,
     steam_id: String,
@@ -519,7 +557,7 @@ pub async fn riot_capture_profile(
 // Utility commands
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_url(url: String) -> Result<(), String> {
     crate::os::open_url(&url).map_err(|e| e.to_string())
 }
@@ -557,14 +595,14 @@ pub async fn roblox_get_profile_info(
 // Theme commands
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_custom_themes(
     app_handle: tauri::AppHandle,
 ) -> Result<Vec<crate::themes::CustomTheme>, String> {
     crate::themes::list_custom_themes(&ctx(&app_handle))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_custom_theme(
     app_handle: tauri::AppHandle,
     theme: crate::themes::CustomTheme,
@@ -572,7 +610,7 @@ pub fn save_custom_theme(
     crate::themes::save_custom_theme(&ctx(&app_handle), &theme)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_custom_theme(app_handle: tauri::AppHandle, theme_id: String) -> Result<(), String> {
     crate::themes::delete_custom_theme(&ctx(&app_handle), &theme_id)
 }
