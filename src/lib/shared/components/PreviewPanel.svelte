@@ -60,7 +60,7 @@
     {#if isLoadingAvatar}
       <div class="loader"></div>
     {:else if avatarUrl}
-      <img src={avatarUrl} alt={account.displayName} loading="lazy" />
+      <img src={avatarUrl} alt={account.displayName} loading="lazy" decoding="async" />
     {:else}
       <span class="initials">{getAvatarInitials(account.displayName || account.username)}</span>
     {/if}

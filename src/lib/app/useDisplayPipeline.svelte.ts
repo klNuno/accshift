@@ -41,8 +41,25 @@ export function matchesSearch(account: PlatformAccount, query: string): boolean 
   );
 }
 
+const SEARCH_DEBOUNCE_MS = 80;
+
 export function createDisplayPipeline(deps: DisplayPipelineDeps) {
   const { navigation, drag, loader, addFlow, getExpandedFolders, getActiveTab } = deps;
+
+  // Each keystroke re-filters every account and re-renders the grid; debounce
+  // so a fast typist pays once, not per character. Clearing stays instant.
+  let debouncedSearchQuery = $state("");
+  $effect(() => {
+    const raw = navigation.searchQuery;
+    if (raw.trim() === "") {
+      debouncedSearchQuery = "";
+      return;
+    }
+    const timer = setTimeout(() => {
+      debouncedSearchQuery = raw;
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  });
 
   let isExpandedMode = $derived(
     getExpandedFolders() && navigation.currentFolderId === null && !navigation.isSearching,
@@ -73,7 +90,7 @@ export function createDisplayPipeline(deps: DisplayPipelineDeps) {
   });
 
   let filteredAccountItems = $derived.by(() => {
-    const q = navigation.searchQuery.trim().toLowerCase();
+    const q = debouncedSearchQuery.trim().toLowerCase();
     if (!q) return navigation.accountItems;
     return loader.accounts
       .filter((a) => matchesSearch(a, q))
