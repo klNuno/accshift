@@ -124,6 +124,15 @@ pub fn kill_and_relaunch_steam_elevated(
     launch_steam(steam_path, false, launch_options)
 }
 
+pub fn request_steam_shutdown(steam_path: &Path) -> bool {
+    // `steam -shutdown` forwards the request to the running instance through
+    // the launcher script / Snap wrapper, same resolution as launch_steam.
+    Command::new(resolve_steam_launcher(steam_path))
+        .arg("-shutdown")
+        .spawn()
+        .is_ok()
+}
+
 pub fn launch_steam(
     steam_path: &Path,
     _run_as_admin: bool,
@@ -141,9 +150,19 @@ pub fn launch_steam(
 }
 
 fn resolve_steam_launcher(steam_path: &Path) -> PathBuf {
-    let candidate = steam_path.join("steam.sh");
-    if candidate.exists() {
-        return candidate;
+    // Snap confines the Steam runtime: exec'ing steam.sh straight from the
+    // data dir boots partway then dies outside the sandbox. Detect Snap by
+    // resolving symlinks (~/.steam/steam points into ~/snap/...) and go
+    // through the `steam` wrapper in PATH instead.
+    let real = steam_path
+        .canonicalize()
+        .unwrap_or_else(|_| steam_path.to_path_buf());
+    let under_snap = real.components().any(|c| c.as_os_str() == "snap");
+    if !under_snap {
+        let candidate = steam_path.join("steam.sh");
+        if candidate.exists() {
+            return candidate;
+        }
     }
     PathBuf::from("steam")
 }

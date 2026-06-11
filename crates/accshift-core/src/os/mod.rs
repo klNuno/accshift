@@ -100,6 +100,13 @@ pub fn clear_auto_login_user() -> Result<(), AppError> {
     imp::clear_auto_login_user()
 }
 
+/// Ask the running Steam client to exit cleanly. Returns `true` when the
+/// request was actually delivered; callers should only wait for the process
+/// to exit when this succeeds, and fall back to killing otherwise.
+pub fn request_steam_shutdown(steam_path: &Path) -> bool {
+    imp::request_steam_shutdown(steam_path)
+}
+
 pub fn kill_and_relaunch_steam_elevated(
     steam_path: &Path,
     launch_options: &[String],

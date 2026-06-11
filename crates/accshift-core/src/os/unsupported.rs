@@ -62,6 +62,10 @@ pub fn kill_and_relaunch_steam_elevated(
     Err(unsupported("Elevated process management"))
 }
 
+pub fn request_steam_shutdown(_steam_path: &Path) -> bool {
+    false
+}
+
 pub fn launch_steam(
     _steam_path: &Path,
     _run_as_admin: bool,

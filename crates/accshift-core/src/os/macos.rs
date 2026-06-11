@@ -73,28 +73,42 @@ pub fn kill_and_relaunch_steam_elevated(
     launch_steam(steam_path, false, launch_options)
 }
 
+pub fn request_steam_shutdown(_steam_path: &Path) -> bool {
+    // steam://exit is routed to the running client and triggers a clean
+    // shutdown. A Quit Apple event does NOT work — Steam rejects it with
+    // "user cancelled" (-128) — and `open -a Steam --args -shutdown` is no
+    // better since `open` drops --args when the app is already running.
+    // Callers only invoke this while Steam runs, so the URL cannot
+    // accidentally boot a fresh instance.
+    Command::new("open")
+        .arg("steam://exit")
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 pub fn launch_steam(
     steam_path: &Path,
     _run_as_admin: bool,
     launch_options: &[String],
 ) -> Result<(), AppError> {
-    // On macOS the app bundle sits next to the data dir. `open -a Steam` is
-    // the canonical way to launch; fall back to the binary if the bundle is
-    // missing (e.g. manual install).
-    let bundle = steam_path.join("Steam.app");
-    if bundle.exists() {
-        let mut cmd = Command::new("open");
-        cmd.arg("-a").arg(&bundle);
-        if !launch_options.is_empty() {
-            cmd.arg("--args").args(launch_options);
-        }
-        cmd.spawn()
-            .map_err(|e| AppError::ProcessStart(e.to_string()))?;
-        return Ok(());
+    // Steam.app lives in /Applications (or wherever the user dropped it),
+    // never inside the data dir that `steam_path` points to. Let Launch
+    // Services resolve it by name; `open` exits non-zero when the app is
+    // missing, so wait for its status instead of fire-and-forget.
+    let mut cmd = Command::new("open");
+    cmd.arg("-a").arg("Steam");
+    if !launch_options.is_empty() {
+        cmd.arg("--args").args(launch_options);
+    }
+    match cmd.status() {
+        Ok(status) if status.success() => return Ok(()),
+        _ => {}
     }
 
+    // Fall back to the self-updated bundle Steam keeps inside its data dir.
     let binary = steam_path
-        .join("Steam.app/Contents/MacOS")
+        .join("Steam.AppBundle/Steam/Contents/MacOS")
         .join(steam_executable_name());
     Command::new(binary)
         .args(launch_options)

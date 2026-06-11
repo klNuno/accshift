@@ -11,7 +11,10 @@ use crate::fs_utils;
 use crate::os;
 
 const KILL_WAIT_MS: u32 = 5000;
-const GRACEFUL_SHUTDOWN_WAIT_MS: u32 = 8000;
+// Long enough to cover Snap on Linux: the `steam` wrapper takes 3-4s to boot
+// before it even forwards -shutdown, then teardown itself takes several more.
+// Windows and macOS exit in 2-5s; the wait stops as soon as they do.
+const GRACEFUL_SHUTDOWN_WAIT_MS: u32 = 12_000;
 pub(crate) const NON_GAME_APP_IDS: &[&str] = &[
     "7",   // Steam client internals
     "760", // Steam community / screenshots
@@ -67,15 +70,11 @@ fn kill_process_tree_if_running(process_name: &str) -> Result<(), AppError> {
 }
 
 fn try_graceful_shutdown(steam_path: &Path) -> bool {
-    let steam_exe = steam_path.join(os::steam_executable_name());
-    let mut cmd = std::process::Command::new(&steam_exe);
-    cmd.arg("-shutdown");
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    // Only wait when the shutdown request was actually delivered — otherwise
+    // we would burn the full timeout before falling back to a kill.
+    if !os::request_steam_shutdown(steam_path) {
+        return false;
     }
-    let _ = cmd.spawn();
     os::wait_for_process_exit(os::steam_process_name(), GRACEFUL_SHUTDOWN_WAIT_MS)
         && os::wait_for_process_exit(os::steam_web_helper_process_name(), 2000)
 }

@@ -27,6 +27,17 @@ fn with_refreshed_system<R>(f: impl FnOnce(&System) -> R) -> R {
     f(&system)
 }
 
+/// Zombies and dead-but-unreaped processes still show up in the process
+/// table. They hold no files or sockets, so for "is Steam still around"
+/// purposes they count as gone — treating them as alive turns a slow Snap
+/// teardown into a bogus "Steam is elevated" error.
+fn is_live(process: &sysinfo::Process) -> bool {
+    !matches!(
+        process.status(),
+        sysinfo::ProcessStatus::Zombie | sysinfo::ProcessStatus::Dead
+    )
+}
+
 fn matches_name(process: &sysinfo::Process, target: &str) -> bool {
     let name = process.name().to_string_lossy();
     if name.eq_ignore_ascii_case(target) {
@@ -48,7 +59,7 @@ pub fn is_process_running(process_name: &str) -> bool {
         system
             .processes()
             .values()
-            .any(|p| matches_name(p, process_name))
+            .any(|p| matches_name(p, process_name) && is_live(p))
     })
 }
 
@@ -57,7 +68,7 @@ pub fn kill_process(process_name: &str) -> Result<(), AppError> {
         let procs: Vec<&sysinfo::Process> = system
             .processes()
             .values()
-            .filter(|p| matches_name(p, process_name))
+            .filter(|p| matches_name(p, process_name) && is_live(p))
             .collect();
         if procs.is_empty() {
             return None;
@@ -86,7 +97,9 @@ pub fn kill_process(process_name: &str) -> Result<(), AppError> {
         return Ok(());
     }
 
-    if any_failure {
+    // A kill that "failed" on a process which is now gone was just a race
+    // with its own exit, not a permissions problem.
+    if any_failure && is_process_running(process_name) {
         // Common on Windows when the target runs elevated.
         Err(AppError::SteamElevated)
     } else {

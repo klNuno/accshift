@@ -383,6 +383,17 @@ pub fn kill_and_relaunch_steam_elevated(
     shell_execute("runas", &steam_exe.to_string_lossy(), &args)
 }
 
+pub fn request_steam_shutdown(steam_path: &Path) -> bool {
+    let steam_exe = steam_path.join(steam_executable_name());
+    if !steam_exe.exists() {
+        return false;
+    }
+    hidden_command(&steam_exe)
+        .arg("-shutdown")
+        .spawn()
+        .is_ok()
+}
+
 pub fn launch_steam(
     steam_path: &Path,
     run_as_admin: bool,
