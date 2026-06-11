@@ -6,7 +6,7 @@
 use accshift_core::context::AppContext;
 use accshift_core::telemetry::{self, Handle, QueueParams, TelemetryContext, Worker};
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// State managed by Tauri via `.manage(...)`.
 pub struct TelemetryState {
@@ -34,14 +34,14 @@ impl TelemetryState {
     }
 
     /// Clean shutdown called when the app is closing for good.
-    /// Drains the worker and joins the background thread.
+    /// Asks the worker to flush, bounded so the close never hangs on network.
     pub fn shutdown(&self) {
         let taken = {
             let mut guard = self.worker.lock().unwrap_or_else(|e| e.into_inner());
             guard.take()
         };
         if let Some(worker) = taken {
-            worker.shutdown();
+            worker.shutdown(Duration::from_millis(1500));
         }
     }
 }

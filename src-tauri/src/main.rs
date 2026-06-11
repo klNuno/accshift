@@ -141,7 +141,32 @@ fn main() {
             win.on_window_event(move |event| {
                 if let tauri::WindowEvent::CloseRequested { .. } = event {
                     let boot_state = app_handle.state::<app_runtime::BootState>();
-                    // Session ended + flush telemetry before the process exits.
+                    if boot_state.is_completed() {
+                        if !matches!(win_for_events.is_maximized(), Ok(true)) {
+                            if let Ok(size) = win_for_events.inner_size() {
+                                let _ = config::save_window_size(
+                                    &ctx(&app_handle),
+                                    f64::from(size.width),
+                                    f64::from(size.height),
+                                );
+                            }
+                        }
+                    } else {
+                        let _ = logging::append_app_log(
+                            &ctx(&app_handle),
+                            "info",
+                            "backend.window",
+                            "Skipped window size save because boot was not completed",
+                            None,
+                        );
+                    }
+
+                    // Hide before the telemetry flush: this handler runs on
+                    // the UI thread, so anything slow here shows up as a
+                    // frozen window instead of a closed app.
+                    let _ = win_for_events.hide();
+
+                    // Session ended + bounded flush before the process exits.
                     let tstate = app_handle.state::<telemetry_runtime::TelemetryState>();
                     let duration_ms = tstate
                         .app_start
@@ -152,27 +177,6 @@ fn main() {
                         .handle
                         .track(telemetry::Event::SessionEnded { duration_ms });
                     tstate.shutdown();
-
-                    if !boot_state.is_completed() {
-                        let _ = logging::append_app_log(
-                            &ctx(&app_handle),
-                            "info",
-                            "backend.window",
-                            "Skipped window size save because boot was not completed",
-                            None,
-                        );
-                        return;
-                    }
-                    if matches!(win_for_events.is_maximized(), Ok(true)) {
-                        return;
-                    }
-                    if let Ok(size) = win_for_events.inner_size() {
-                        let _ = config::save_window_size(
-                            &ctx(&app_handle),
-                            f64::from(size.width),
-                            f64::from(size.height),
-                        );
-                    }
                 }
             });
 

@@ -117,12 +117,24 @@ impl Worker {
         self.handle.clone()
     }
 
-    /// Clean shutdown: flushes pending events and joins the thread.
-    pub fn shutdown(mut self) {
+    /// Clean shutdown: asks the thread to flush, waiting at most `deadline`.
+    /// The final flush is best-effort. This runs on the UI thread during
+    /// window close; an unbounded join would freeze the window for up to the
+    /// HTTP timeout (10s) when the endpoint is slow or unreachable.
+    pub fn shutdown(mut self, deadline: Duration) {
         let _ = self.handle.tx.send(Message::Shutdown);
-        if let Some(join) = self.join.take() {
-            let _ = join.join();
+        let Some(join) = self.join.take() else {
+            return;
+        };
+        let start = Instant::now();
+        while start.elapsed() < deadline {
+            if join.is_finished() {
+                let _ = join.join();
+                return;
+            }
+            thread::sleep(Duration::from_millis(20));
         }
+        // Deadline hit: detach the thread and let process exit reap it.
     }
 }
 
