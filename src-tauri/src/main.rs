@@ -44,6 +44,20 @@ fn main() {
     };
 
     tauri::Builder::default()
+        // Must stay the first plugin: it short-circuits duplicate processes and,
+        // via its `deep-link` feature, forwards accshift:// URLs from the second
+        // instance's argv to this one as deep-link events.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            let _ = logging::append_app_log(
+                &ctx(app),
+                "info",
+                "backend.single-instance",
+                "Second instance launch redirected to the running app",
+                None,
+            );
+            let _ = app_runtime::show_main_window(app);
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(app_runtime::BootState::default())
@@ -150,7 +164,9 @@ fn main() {
             // Telemetry: build the worker, share the handle with commands.
             // After the window build on purpose — the webview is the slow part
             // of startup, let it begin initializing as early as possible.
-            app.manage(telemetry_runtime::TelemetryState::new(&setup_ctx, app_start));
+            app.manage(telemetry_runtime::TelemetryState::new(
+                &setup_ctx, app_start,
+            ));
             let app_handle = app.handle().clone();
             let win_for_events = win.clone();
             win.on_window_event(move |event| {
@@ -194,6 +210,51 @@ fn main() {
                     tstate.shutdown();
                 }
             });
+
+            // The installer registers accshift:// system-wide; this covers dev
+            // runs and portable builds (HKCU on Windows, .desktop on Linux).
+            // macOS only supports Info.plist registration, handled by the bundle.
+            #[cfg(any(windows, target_os = "linux"))]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                if let Err(reason) = app.deep_link().register_all() {
+                    let _ = logging::append_app_log(
+                        &setup_ctx,
+                        "warn",
+                        "backend.deep-link",
+                        "Failed to register accshift:// scheme",
+                        Some(&reason.to_string()),
+                    );
+                }
+            }
+
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let focus_handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    let urls = event
+                        .urls()
+                        .iter()
+                        .map(|url| url.as_str().to_owned())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let _ = logging::append_app_log(
+                        &ctx(&focus_handle),
+                        "info",
+                        "backend.deep-link",
+                        "Deep link received",
+                        Some(&urls),
+                    );
+                    // Don't force the window visible mid-boot: a deep link can be
+                    // the launch trigger, and boot completion shows it anyway.
+                    if focus_handle
+                        .state::<app_runtime::BootState>()
+                        .is_completed()
+                    {
+                        let _ = app_runtime::show_main_window(&focus_handle);
+                    }
+                });
+            }
 
             let fallback_handle = app.handle().clone();
             std::thread::spawn(move || {

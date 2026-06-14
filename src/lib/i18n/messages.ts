@@ -176,6 +176,10 @@ export const EN_MESSAGES = {
   "settings.pasteApiKey": "Paste your Steam Web API key",
   "settings.saved": "Settings saved",
   "settings.openApiKeyFailed": "Could not open Steam API key page",
+  "settings.integrations": "Integrations",
+  "settings.deepLinks": "Allow accshift:// links",
+  "settings.deepLinksHint":
+    "Lets browsers and tools like Stream Deck or AutoHotkey trigger account switches via accshift://switch/<platform>/<account>.",
 
   "context.loading": "Loading...",
   "context.noGamesFound": "No games found",
@@ -251,6 +255,12 @@ export const EN_MESSAGES = {
     "No Battle.net accounts found. Sign in to Battle.net at least once, then refresh.",
   "toast.noUbisoftAccountsFound":
     "No Ubisoft accounts found. Sign in to Ubisoft Connect at least once, then refresh.",
+  "toast.deepLinkInvalid": "Unrecognized accshift:// link",
+  "toast.deepLinkDisabled": "accshift:// links are disabled in Settings",
+  "toast.deepLinkUnknownPlatform": "Unknown platform in link: {platform}",
+  "toast.deepLinkPlatformDisabled": "{platform} is disabled in Settings",
+  "toast.deepLinkAccountNotFound": 'No {platform} account matching "{account}"',
+  "toast.deepLinkSwitched": "Switched to {account}",
 
   "steam.launchOnline": "Switch online",
   "steam.launchInvisible": "Switch invisible",
@@ -625,6 +635,10 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.pasteApiKey": "Colle ta clé API Steam Web",
   "settings.saved": "Paramètres enregistrés",
   "settings.openApiKeyFailed": "Impossible d'ouvrir la page de clé API Steam",
+  "settings.integrations": "Intégrations",
+  "settings.deepLinks": "Autoriser les liens accshift://",
+  "settings.deepLinksHint":
+    "Permet aux navigateurs et aux outils comme Stream Deck ou AutoHotkey de déclencher un changement de compte via accshift://switch/<plateforme>/<compte>.",
 
   "context.loading": "Chargement...",
   "context.noGamesFound": "Aucun jeu trouvé",
@@ -700,6 +714,12 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
     "Aucun compte Battle.net trouvé. Connecte-toi à Battle.net au moins une fois puis rafraîchis.",
   "toast.noUbisoftAccountsFound":
     "Aucun compte Ubisoft trouvé. Connecte-toi à Ubisoft Connect au moins une fois puis rafraîchis.",
+  "toast.deepLinkInvalid": "Lien accshift:// non reconnu",
+  "toast.deepLinkDisabled": "Les liens accshift:// sont désactivés dans les paramètres",
+  "toast.deepLinkUnknownPlatform": "Plateforme inconnue dans le lien : {platform}",
+  "toast.deepLinkPlatformDisabled": "{platform} est désactivé dans les paramètres",
+  "toast.deepLinkAccountNotFound": 'Aucun compte {platform} correspondant à "{account}"',
+  "toast.deepLinkSwitched": "Basculé sur {account}",
 
   "steam.launchOnline": "Basculer en ligne",
   "steam.launchInvisible": "Basculer en invisible",

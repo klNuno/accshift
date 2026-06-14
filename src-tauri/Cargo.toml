@@ -13,6 +13,8 @@ accshift-core = { path = "../crates/accshift-core" }
 tauri = { workspace = true, features = ["macos-private-api"] }
 tauri-plugin-process = { workspace = true }
 tauri-plugin-updater = { workspace = true }
+tauri-plugin-deep-link = { workspace = true }
+tauri-plugin-single-instance = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }

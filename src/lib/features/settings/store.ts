@@ -27,6 +27,7 @@ const DEFAULTS: AppSettings = {
   enabledPlatforms: ["steam"],
   defaultPlatformId: "steam",
   inactivityBlurSeconds: 60,
+  deepLinksEnabled: true,
   platformSettings: {
     steam: {
       runAsAdmin: false,
@@ -155,6 +156,7 @@ function sanitizeSettings(value: unknown): AppSettings {
       3600,
       DEFAULTS.inactivityBlurSeconds,
     ),
+    deepLinksEnabled: raw.deepLinksEnabled !== false,
     platformSettings: {
       steam: {
         runAsAdmin: Boolean(rawSteamSettings.runAsAdmin ?? raw.steamRunAsAdmin),

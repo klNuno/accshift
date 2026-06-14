@@ -51,6 +51,7 @@
   import { createSettingsPanel } from "$lib/app/useSettingsPanel.svelte";
   import { createExtensionContentController } from "$lib/app/useExtensionContent.svelte";
   import { createVisiblePriming } from "$lib/app/useVisiblePriming.svelte";
+  import { createDeepLinkController } from "$lib/app/useDeepLink.svelte";
   import { COLOR_LABEL_KEYS } from "$lib/shared/contextMenu/accountAppearanceActions";
   import { createDisplayPipeline, matchesSearch } from "$lib/app/useDisplayPipeline.svelte";
 
@@ -222,6 +223,22 @@
     getAccountNote,
     getCardNoteVersion: () => cardNoteVersion,
     getShowCardNotesInline: () => settings.accountDisplay.showCardNotesInline,
+  });
+
+  const deepLink = createDeepLinkController({
+    t: (key, params) => translate(shell.settings.language ?? DEFAULT_LOCALE, key, params),
+    showToast: addToast,
+    getSettings: () => shell.settings,
+    getRuntimeOs: () => shell.runtimeOs,
+    getActiveTab: () => shell.activeTab,
+    isPinLocked: () => secureScreen.isPinLocked,
+    isBootReady: () => bootReady,
+    changeTab: (tab) => appNavigation.handleTabChange(tab),
+    loadAccounts: () => loadAccounts(true),
+    getAccounts: () => loader.accounts,
+    isLoaderLoading: () => loader.loading,
+    getLoaderError: () => loader.error,
+    switchToAccount: handleAccountSwitch,
   });
 
   async function refreshAvatarsNow() {
@@ -552,6 +569,7 @@
     void lifecycle.initializeAppShell();
     void windowActivity.start();
     void checkTelemetryOnboarding();
+    void deepLink.start();
 
     updateCheckTimer = setTimeout(() => { void updates.startBackgroundUpdateFlow(); }, 3500);
     secureScreen.handleAppMounted();
@@ -570,6 +588,7 @@
   });
 
   onDestroy(() => {
+    deepLink.stop();
     visiblePriming.destroy();
     if (updateCheckTimer) {
       clearTimeout(updateCheckTimer);

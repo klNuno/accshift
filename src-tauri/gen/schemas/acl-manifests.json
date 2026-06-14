@@ -1798,6 +1798,57 @@
     "permission_sets": {},
     "global_scope_schema": null
   },
+  "deep-link": {
+    "default_permission": {
+      "identifier": "default",
+      "description": "Allows reading the opened deep link via the get_current command",
+      "permissions": ["allow-get-current"]
+    },
+    "permissions": {
+      "allow-get-current": {
+        "identifier": "allow-get-current",
+        "description": "Enables the get_current command without any pre-configured scope.",
+        "commands": { "allow": ["get_current"], "deny": [] }
+      },
+      "allow-is-registered": {
+        "identifier": "allow-is-registered",
+        "description": "Enables the is_registered command without any pre-configured scope.",
+        "commands": { "allow": ["is_registered"], "deny": [] }
+      },
+      "allow-register": {
+        "identifier": "allow-register",
+        "description": "Enables the register command without any pre-configured scope.",
+        "commands": { "allow": ["register"], "deny": [] }
+      },
+      "allow-unregister": {
+        "identifier": "allow-unregister",
+        "description": "Enables the unregister command without any pre-configured scope.",
+        "commands": { "allow": ["unregister"], "deny": [] }
+      },
+      "deny-get-current": {
+        "identifier": "deny-get-current",
+        "description": "Denies the get_current command without any pre-configured scope.",
+        "commands": { "allow": [], "deny": ["get_current"] }
+      },
+      "deny-is-registered": {
+        "identifier": "deny-is-registered",
+        "description": "Denies the is_registered command without any pre-configured scope.",
+        "commands": { "allow": [], "deny": ["is_registered"] }
+      },
+      "deny-register": {
+        "identifier": "deny-register",
+        "description": "Denies the register command without any pre-configured scope.",
+        "commands": { "allow": [], "deny": ["register"] }
+      },
+      "deny-unregister": {
+        "identifier": "deny-unregister",
+        "description": "Denies the unregister command without any pre-configured scope.",
+        "commands": { "allow": [], "deny": ["unregister"] }
+      }
+    },
+    "permission_sets": {},
+    "global_scope_schema": null
+  },
   "process": {
     "default_permission": {
       "identifier": "default",

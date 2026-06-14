@@ -64,6 +64,7 @@ export interface AppSettings {
   enabledPlatforms: string[];
   defaultPlatformId: string;
   inactivityBlurSeconds: number;
+  deepLinksEnabled: boolean;
   platformSettings: PlatformSettings;
   accountDisplay: AccountDisplaySettings;
   pinEnabled: boolean;

@@ -178,6 +178,19 @@
       onToggle={() => settings.minimizeOnAccountSwitch = !settings.minimizeOnAccountSwitch}
     />
   </section>
+
+  <section class="card">
+    <h3>{t("settings.integrations")}</h3>
+    <ToggleSetting
+      label={t("settings.deepLinks")}
+      enabled={settings.deepLinksEnabled}
+      accent={neutralAccent}
+      onLabel={t("common.enabled")}
+      offLabel={t("common.disabled")}
+      onToggle={() => settings.deepLinksEnabled = !settings.deepLinksEnabled}
+    />
+    <p class="hint">{t("settings.deepLinksHint")}</p>
+  </section>
 </div>
 
 <style>
