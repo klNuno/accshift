@@ -1,6 +1,6 @@
 use crate::error::AppError;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 // Secrets live in the Keychain via `keyring`. Shared implementation in
 // os/secrets.rs.
@@ -73,18 +73,45 @@ pub fn kill_and_relaunch_steam_elevated(
     launch_steam(steam_path, false, launch_options)
 }
 
-pub fn request_steam_shutdown(_steam_path: &Path) -> bool {
-    // steam://exit is routed to the running client and triggers a clean
-    // shutdown. A Quit Apple event does NOT work — Steam rejects it with
-    // "user cancelled" (-128) — and `open -a Steam --args -shutdown` is no
-    // better since `open` drops --args when the app is already running.
-    // Callers only invoke this while Steam runs, so the URL cannot
-    // accidentally boot a fresh instance.
-    Command::new("open")
-        .arg("steam://exit")
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+pub fn request_steam_shutdown(steam_path: &Path) -> bool {
+    // Same mechanism as Windows: invoke the client binary with -shutdown,
+    // which forwards the request to the running instance and exits. The
+    // alternatives are dead ends: current Steam builds ignore steam://exit
+    // (while `open` still reports success), and a Quit Apple event is
+    // rejected with "user cancelled" (-128).
+    let bundled = steam_path
+        .join("Steam.AppBundle/Steam/Contents/MacOS")
+        .join(steam_executable_name());
+    let binary = if bundled.exists() {
+        bundled
+    } else {
+        // Bootstrapper bundle ships the same binary.
+        PathBuf::from("/Applications/Steam.app/Contents/MacOS/steam_osx")
+    };
+    let child = Command::new(binary)
+        .arg("-shutdown")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    let Ok(mut child) = child else {
+        return false;
+    };
+
+    // The messenger is itself named steam_osx and takes a few seconds to
+    // deliver (it partially boots first). While it lives — or lingers as an
+    // unreaped zombie afterwards — the process-exit wait in the caller counts
+    // it as Steam still running. Reap it before returning, with a watchdog
+    // thread so a hung messenger cannot block the switch forever.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = child.wait();
+        let _ = tx.send(());
+    });
+    // Past the timeout, assume the request was delivered; the detached
+    // thread still reaps the messenger whenever it exits.
+    let _ = rx.recv_timeout(std::time::Duration::from_secs(15));
+    true
 }
 
 pub fn launch_steam(
