@@ -101,8 +101,7 @@ fn apply_for_account(
         );
     }
 
-    crate::storage::write_bytes_atomic(&config_path, content.as_bytes())
-        .map_err(AppError::FileRead)
+    crate::storage::write_bytes_atomic(&config_path, content.as_bytes()).map_err(AppError::FileRead)
 }
 
 pub fn get_account_games(steam_path: &Path, steam_id: &str) -> Result<Vec<CopyableGame>, AppError> {

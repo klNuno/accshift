@@ -388,10 +388,7 @@ pub fn request_steam_shutdown(steam_path: &Path) -> bool {
     if !steam_exe.exists() {
         return false;
     }
-    hidden_command(&steam_exe)
-        .arg("-shutdown")
-        .spawn()
-        .is_ok()
+    hidden_command(&steam_exe).arg("-shutdown").spawn().is_ok()
 }
 
 pub fn launch_steam(

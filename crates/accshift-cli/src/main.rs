@@ -101,22 +101,20 @@ fn main() -> ExitCode {
             admin,
             no_admin,
             launch_options,
-        } => {
-            cmd_switch(
-                format,
-                &platform,
-                &account_id,
-                SwitchOverrides {
-                    online,
-                    invisible,
-                    graceful,
-                    force,
-                    admin,
-                    no_admin,
-                    launch_options,
-                },
-            )
-        }
+        } => cmd_switch(
+            format,
+            &platform,
+            &account_id,
+            SwitchOverrides {
+                online,
+                invisible,
+                graceful,
+                force,
+                admin,
+                no_admin,
+                launch_options,
+            },
+        ),
     };
 
     ExitCode::from(exit)

@@ -3,9 +3,9 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::vdf::{parse_vdf, set_persona_state};
 #[cfg(not(target_os = "windows"))]
 use super::vdf::vdf_set_nested_value;
+use super::vdf::{parse_vdf, set_persona_state};
 use crate::error::AppError;
 use crate::fs_utils;
 use crate::os;
