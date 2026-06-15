@@ -35,6 +35,9 @@ pub enum AppError {
     #[error("Steam is running as administrator")]
     SteamElevated,
 
+    #[error("Dialog cancelled")]
+    Cancelled,
+
     #[error("{0}")]
     UnsupportedOperatingSystem(String),
 }

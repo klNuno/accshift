@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 
 const STEAM_BAN_IDS_PER_REQUEST: usize = 100;
 
+/// Taille max lue pour l'apercu d'erreur (16 KB). On ne garde que 160 chars au
+/// final, inutile (et risque d'OOM sur flux malveillant) de tout aspirer.
+const MAX_ERROR_PREVIEW_BODY: usize = 16 * 1024;
+
 #[derive(Debug, Serialize, Clone)]
 pub struct BanInfo {
     pub steam_id: String,
@@ -63,7 +67,9 @@ pub async fn fetch_player_bans(
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body = read_body_capped(response, MAX_ERROR_PREVIEW_BODY)
+                .await
+                .unwrap_or_default();
             let body_preview: String = body.chars().take(160).collect();
             return Err(format!(
                 "Steam API returned {} while fetching bans{}",
@@ -93,4 +99,33 @@ pub async fn fetch_player_bans(
     }
 
     Ok(all_players)
+}
+
+/// Lit le corps d'une reponse en accumulant les chunks avec un plafond dur.
+/// Stoppe en erreur si le `Content-Length` annonce, ou les octets recus,
+/// depassent `max`. Sert ici a borner l'apercu d'erreur : empeche l'OOM sur un
+/// flux malveillant/infini qui tiendrait dans le timeout HTTP.
+async fn read_body_capped(response: reqwest::Response, max: usize) -> Result<String, ()> {
+    if let Some(len) = response.content_length() {
+        if len as usize > max {
+            return Err(());
+        }
+    }
+
+    let mut buf: Vec<u8> = Vec::new();
+    let mut response = response;
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                if buf.len() + chunk.len() > max {
+                    return Err(());
+                }
+                buf.extend_from_slice(&chunk);
+            }
+            Ok(None) => break,
+            Err(_) => return Err(()),
+        }
+    }
+
+    String::from_utf8(buf).map_err(|_| ())
 }

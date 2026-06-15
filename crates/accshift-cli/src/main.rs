@@ -1,6 +1,7 @@
 mod context;
 mod folders;
 mod output;
+mod pin;
 mod settings;
 
 use accshift_core::lock::{acquire_exclusive, LockError};
@@ -17,10 +18,12 @@ mod exit {
     pub const OK: u8 = 0;
     pub const GENERIC: u8 = 1;
     pub const PLATFORM_UNAVAILABLE: u8 = 2;
-    #[allow(dead_code)]
     pub const UNKNOWN_ACCOUNT: u8 = 3;
     pub const LOCK_CONTENDED: u8 = 4;
     pub const IO: u8 = 5;
+    /// PIN lock is enabled but the supplied PIN was wrong, missing, or could
+    /// not be read (no TTY). The switch never runs in this case.
+    pub const PIN_DENIED: u8 = 6;
 }
 
 const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
@@ -261,6 +264,17 @@ fn cmd_switch(
         }
     };
 
+    let app_settings = settings::load(&*ctx);
+
+    // PIN gate: the GUI can lock account switching behind a 4-digit PIN. Honour
+    // the same lock here so the CLI cannot bypass it. Prompt before taking the
+    // lock so we never hold it while waiting on stdin.
+    if app_settings.pin_enabled {
+        if let Err(code) = pin::enforce(format, &app_settings.pin_hash) {
+            return code;
+        }
+    }
+
     let _lock = match acquire_exclusive(&ctx, LOCK_TIMEOUT) {
         Ok(g) => g,
         Err(LockError::Contended) => {
@@ -278,7 +292,7 @@ fn cmd_switch(
         }
     };
 
-    let steam_defaults = settings::load(&*ctx).platform_settings.steam;
+    let steam_defaults = app_settings.platform_settings.steam;
 
     let run_as_admin = if overrides.admin {
         true
@@ -335,7 +349,19 @@ fn cmd_switch(
             exit::OK
         }
         Err(e) => {
-            let (code, status) = if e.contains("Invalid username") || e.contains("not found") {
+            // String-matching error classification is brittle: several distinct
+            // failures share the "not found" substring (e.g.
+            // `AppError::UserdataNotFound` renders "User data folder not found",
+            // and "Steam setup not found" / "... session not found" are state
+            // errors, not unknown accounts). Match the precise per-platform
+            // "account/profile not found" messages instead of any "not found".
+            // TODO: the proper long-term fix is a typed error discriminant
+            // (e.g. an `error_kind()` returning an enum) so the CLI maps codes
+            // off a variant rather than scraping rendered strings.
+            let unknown_account = e.contains("Invalid username") // Steam
+                || e.contains("account not found") // Battle.net, Roblox
+                || e.contains("profile not found"); // Riot
+            let (code, status) = if unknown_account {
                 ("unknown_account", exit::UNKNOWN_ACCOUNT)
             } else {
                 ("platform_error", exit::GENERIC)

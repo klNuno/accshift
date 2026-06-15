@@ -7,7 +7,9 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 use std::thread;
+use std::time::Duration;
 use uuid::Uuid;
 
 use crate::os;
@@ -233,6 +235,26 @@ fn kill_riot_client_processes() {
     }
 }
 
+/// Process-wide reqwest client for the Riot local API.
+///
+/// Built once and reused: a fresh client per call leaks a connection pool each
+/// time, and (worse) a client with no timeout lets a hung Riot Client socket
+/// block its `spawn_blocking` thread forever. The 1s setup-status poll then
+/// drains the blocking worker pool and the whole backend freezes. The connect
+/// and request timeouts bound every call so a stuck socket fails fast.
+static RIOT_LOCAL_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn riot_local_client() -> &'static reqwest::Client {
+    RIOT_LOCAL_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .connect_timeout(Duration::from_secs(2))
+            .timeout(Duration::from_secs(5))
+            .build()
+            .expect("Riot local API client should build")
+    })
+}
+
 /// Request a graceful quit via the local API, which flushes in-memory tokens
 /// to disk before exiting. Falls back to force-kill if the API is unreachable
 /// or the process doesn't exit within the timeout.
@@ -247,16 +269,11 @@ fn graceful_riot_quit() {
 
     // POST /process-control/v1/process/quit triggers a graceful shutdown
     let quit_ok = crate::runtime::block_on(async {
-        let client = reqwest::Client::builder()
-            .danger_accept_invalid_certs(true)
-            .build()
-            .ok();
-        let Some(client) = client else { return false };
         let url = format!(
             "{}://127.0.0.1:{}/process-control/v1/process/quit",
             access.protocol, access.port
         );
-        client
+        riot_local_client()
             .post(url)
             .basic_auth("riot", Some(access.password.as_str()))
             .send()
@@ -417,16 +434,80 @@ fn riot_settings_file_ready(app_handle: &dyn AppContext) -> Result<bool, String>
         return Ok(false);
     }
 
-    let settings_metadata = fs::metadata(&required_settings).map_err(|e| {
-        format!(
-            "Could not read Riot settings metadata {}: {e}",
-            required_settings.display()
-        )
-    })?;
-    // A default settings file without auth tokens is ~500 bytes (just tdid cookie).
-    // A file with actual persistent login tokens is ~2500+ bytes.
-    // Capturing the small file produces a useless snapshot that opens the login page.
-    Ok(settings_metadata.len() > 1000)
+    // Inspect the file's actual auth structure rather than its raw byte size.
+    // A default settings file only carries a `tdid` cookie and an empty
+    // `private`/`sessions` block; a file with persistent login tokens has a
+    // non-empty `private` blob and/or session entries. The byte-size heuristic
+    // (>1000 bytes) was fragile: cookie churn alone could push a token-less file
+    // past the threshold. If the file can't be read we fall back to the size
+    // check so a transient read error doesn't wrongly report "not ready".
+    match fs::read_to_string(&required_settings) {
+        Ok(contents) => Ok(yaml_has_auth_tokens(&contents)),
+        Err(_) => {
+            let len = fs::metadata(&required_settings)
+                .map(|m| m.len())
+                .unwrap_or(0);
+            Ok(len > 1000)
+        }
+    }
+}
+
+/// Decide whether a `RiotGamesPrivateSettings.yaml` body carries real login
+/// tokens. Riot stores the persistent credentials as a non-empty `private`
+/// blob and, once a session exists, under `sessions`/token entries. A freshly
+/// reset file has those keys empty (or only a `tdid` cookie), which makes a
+/// captured snapshot useless. This is a lightweight line check on purpose:
+/// `serde_yaml` is not a dependency and the format is shallow.
+fn yaml_has_auth_tokens(contents: &str) -> bool {
+    // Return the part after `key:` only when the line is exactly that key (not a
+    // longer key that merely starts with it, e.g. `privateKey`).
+    fn value_for_key<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+        let rest = line.strip_prefix(key)?;
+        let rest = rest.strip_prefix(':')?;
+        Some(rest.trim())
+    }
+
+    let is_empty_yaml_value = |value: &str| {
+        value.is_empty()
+            || value == "{}"
+            || value == "[]"
+            || value == "''"
+            || value == "\"\""
+            || value == "null"
+            || value == "~"
+    };
+
+    let mut has_private = false;
+    let mut has_sessions = false;
+    let mut has_token = false;
+
+    for line in contents.lines() {
+        let trimmed = line.trim();
+
+        if let Some(value) = value_for_key(trimmed, "private") {
+            // Riot writes `private` as an inline base64 blob; a reset file has it
+            // empty (`private: ''` / `private:`). Only a non-empty value counts.
+            if !is_empty_yaml_value(value) {
+                has_private = true;
+            }
+        }
+        if let Some(value) = value_for_key(trimmed, "sessions") {
+            // `sessions` is a map: populated when it has nested children (empty
+            // inline value, e.g. `sessions:` with indented entries below) or a
+            // non-empty inline value. Only the explicit empty forms are skipped.
+            if !(value == "{}" || value == "[]" || value == "null" || value == "~") {
+                has_sessions = true;
+            }
+        }
+        if trimmed.contains("access_token")
+            || trimmed.contains("refresh_token")
+            || trimmed.contains("id_token")
+        {
+            has_token = true;
+        }
+    }
+
+    has_private || has_sessions || has_token
 }
 
 fn snapshot_has_settings(snapshot_dir: &Path) -> bool {
@@ -519,6 +600,69 @@ fn decrypted_copy_dir(source: &Path, target: &Path, ignored_names: &[&str]) -> R
         }
     }
     Ok(())
+}
+
+/// Free the OS-keyring entries a profile's encrypted snapshot files point at.
+///
+/// On Linux/macOS `os::encrypt_bytes` stores the real plaintext in the keyring
+/// under a UUID and writes only that UUID (the "token") to disk after the
+/// `ACCS` header. Deleting the snapshot directory alone leaks the keyring entry
+/// forever, so before we remove the files we read each one, strip the header,
+/// and hand the token to `os::delete_bytes`. On Windows this is a cheap no-op
+/// (DPAPI is stateless, the file *is* the ciphertext). Mirrors how
+/// `encrypted_copy_file` writes the header + token.
+///
+/// Best-effort: a failure to read a file or free one entry is logged and
+/// skipped so `forget`/`cancel` cleanup never aborts mid-way.
+fn free_snapshot_secrets(app_handle: &dyn AppContext, snapshot_dir: &Path) {
+    if !snapshot_dir.exists() {
+        return;
+    }
+    let entries = match fs::read_dir(snapshot_dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            log_platform_error(
+                app_handle,
+                "riot.free_secrets",
+                "Could not enumerate snapshot directory",
+                format!("dir={} error={e}", snapshot_dir.display()),
+            );
+            return;
+        }
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            free_snapshot_secrets(app_handle, &path);
+            continue;
+        }
+        let data = match fs::read(&path) {
+            Ok(data) => data,
+            Err(e) => {
+                log_platform_error(
+                    app_handle,
+                    "riot.free_secrets",
+                    "Could not read snapshot file",
+                    format!("file={} error={e}", path.display()),
+                );
+                continue;
+            }
+        };
+        // Legacy plaintext files have no token to free.
+        if !data.starts_with(ENCRYPTED_HEADER) {
+            continue;
+        }
+        let token = &data[ENCRYPTED_HEADER.len()..];
+        if let Err(e) = os::delete_bytes(token) {
+            log_platform_error(
+                app_handle,
+                "riot.free_secrets",
+                "Could not free keyring entry for snapshot file",
+                format!("file={} error={e}", path.display()),
+            );
+        }
+    }
 }
 
 fn live_path_for(
@@ -622,13 +766,8 @@ fn make_setup_status(
 }
 
 async fn fetch_local_json(access: &RiotLocalApiAccess, path: &str) -> Result<Value, String> {
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .build()
-        .map_err(|e| format!("Could not build Riot local API client: {e}"))?;
-
     let url = format!("{}://127.0.0.1:{}{}", access.protocol, access.port, path);
-    let response = client
+    let response = riot_local_client()
         .get(url)
         .basic_auth("riot", Some(access.password.as_str()))
         .send()
@@ -928,6 +1067,7 @@ fn cleanup_expired_pending_profiles(
     for profile_id in expired_ids {
         let snapshot_dir = profile_snapshot_path(app_handle, &profile_id)?;
         if snapshot_dir.exists() {
+            free_snapshot_secrets(app_handle, &snapshot_dir);
             fs::remove_dir_all(&snapshot_dir).map_err(|e| {
                 format!(
                     "Could not remove expired Riot profile snapshot {}: {e}",
@@ -1117,15 +1257,20 @@ fn get_profile_setup_status_internal(
     Ok(make_setup_status(&updated, "ready", ""))
 }
 
+// Read paths are side-effect free on purpose: they used to call
+// cleanup_expired_pending_profiles, which does save_config + remove_dir_all on
+// every read. The UI polls these, so the disk churn (and lock contention) added
+// up. Expiry cleanup now runs only on write entry points: begin_profile_setup,
+// cancel_profile_setup, switch_profile, and the setup-status poll
+// (get_profile_setup_status). Expired pending profiles are hidden from reads
+// anyway because visible_profiles filters out setup_pending state.
 pub fn get_profiles(app_handle: AppCtx) -> Result<Vec<RiotProfileConfig>, String> {
-    let mut cfg = config::load_config(&app_handle);
-    cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
+    let cfg = config::load_config(&app_handle);
     Ok(visible_profiles(&cfg))
 }
 
 pub fn get_startup_snapshot(app_handle: AppCtx) -> Result<RiotStartupSnapshot, String> {
-    let mut cfg = config::load_config(&app_handle);
-    cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
+    let cfg = config::load_config(&app_handle);
     let current_profile = visible_current_profile_id(&cfg);
     Ok(RiotStartupSnapshot {
         profiles: visible_profiles(&cfg),
@@ -1134,8 +1279,7 @@ pub fn get_startup_snapshot(app_handle: AppCtx) -> Result<RiotStartupSnapshot, S
 }
 
 pub fn get_current_profile(app_handle: AppCtx) -> Result<String, String> {
-    let mut cfg = config::load_config(&app_handle);
-    cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
+    let cfg = config::load_config(&app_handle);
     Ok(visible_current_profile_id(&cfg))
 }
 
@@ -1248,6 +1392,7 @@ pub fn cancel_profile_setup(app_handle: AppCtx, profile_id: String) -> Result<()
 
     let snapshot_dir = profile_snapshot_path(&app_handle, &profile_id)?;
     if snapshot_dir.exists() {
+        free_snapshot_secrets(&app_handle, &snapshot_dir);
         fs::remove_dir_all(&snapshot_dir).map_err(|e| {
             format!(
                 "Could not remove Riot profile snapshot {}: {e}",
@@ -1282,6 +1427,7 @@ pub fn switch_profile(app_handle: AppCtx, profile_id: String) -> Result<(), Stri
     let target_id = normalize_profile_id(&profile_id)?;
     let current_live_identity = detect_live_identity().ok();
     let mut cfg = config::load_config(&app_handle);
+    cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
     if find_profile(&cfg, &target_id).is_none() {
         return Err("Riot profile not found".into());
     }
@@ -1392,6 +1538,9 @@ pub fn forget_profile(app_handle: AppCtx, profile_id: String) -> Result<(), Stri
 
     let snapshot_dir = profile_snapshot_path(&app_handle, &profile_id)?;
     if snapshot_dir.exists() {
+        // Free the keyring entries the encrypted files point at before deleting
+        // them, otherwise the secrets are orphaned in the OS keyring forever.
+        free_snapshot_secrets(&app_handle, &snapshot_dir);
         fs::remove_dir_all(&snapshot_dir).map_err(|e| {
             format!(
                 "Could not remove Riot profile snapshot {}: {e}",
@@ -1488,5 +1637,80 @@ impl PlatformService for RiotService {
 
     fn select_path(&self) -> Result<String, String> {
         select_riot_path()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::yaml_has_auth_tokens;
+
+    #[test]
+    fn empty_private_and_sessions_are_not_ready() {
+        // A freshly reset settings file: only a tdid cookie, empty auth blocks.
+        let yaml = "\
+private: ''
+sessions: {}
+tdid: some-tracking-cookie-value
+";
+        assert!(!yaml_has_auth_tokens(yaml));
+    }
+
+    #[test]
+    fn null_and_tilde_private_are_not_ready() {
+        assert!(!yaml_has_auth_tokens("private: null\nsessions: {}\n"));
+        assert!(!yaml_has_auth_tokens("private: ~\nsessions: []\n"));
+        assert!(!yaml_has_auth_tokens("private:\nsessions: {}\n"));
+    }
+
+    #[test]
+    fn non_empty_private_blob_is_ready() {
+        // Riot writes the persistent credentials as an inline base64 blob.
+        let yaml = "private: eyJhbGciOiJ...base64-blob...XVCJ9\nsessions: {}\n";
+        assert!(yaml_has_auth_tokens(yaml));
+    }
+
+    #[test]
+    fn populated_sessions_map_is_ready() {
+        let yaml = "\
+private: ''
+sessions:
+  some-session-id:
+    type: account
+";
+        assert!(yaml_has_auth_tokens(yaml));
+    }
+
+    #[test]
+    fn token_entries_are_ready() {
+        assert!(yaml_has_auth_tokens("data:\n  access_token: abc.def.ghi\n"));
+        assert!(yaml_has_auth_tokens("refresh_token: zzz\n"));
+        assert!(yaml_has_auth_tokens("id_token: yyy\n"));
+    }
+
+    #[test]
+    fn keys_that_merely_start_with_private_do_not_match() {
+        // `privateKey` is a different key and must not be read as `private`.
+        assert!(!yaml_has_auth_tokens("privateKey: should-not-count\n"));
+        assert!(!yaml_has_auth_tokens("sessionsCount: 3\n"));
+    }
+
+    #[test]
+    fn indented_keys_still_match() {
+        // The real file nests these under a top-level key.
+        let yaml = "\
+riot-login:
+  private: real-blob-here
+  sessions: {}
+";
+        assert!(yaml_has_auth_tokens(yaml));
+    }
+
+    #[test]
+    fn small_token_file_is_ready_despite_being_under_old_size_threshold() {
+        // The old heuristic required >1000 bytes; a small file with a real token
+        // would have been wrongly rejected. The structural check accepts it.
+        let yaml = "private: tok\n";
+        assert!(yaml.len() < 1000);
+        assert!(yaml_has_auth_tokens(yaml));
     }
 }

@@ -252,9 +252,17 @@
   async function choosePlatformPath(platformId: string) {
     try {
       const selected = await invoke<string>("platform_select_path", { platformId });
-      platformPaths[platformId] = selected;
+      // Only overwrite when a real path came back. A cancel now rejects with
+      // AppError::Cancelled (caught below), but stay defensive against an empty
+      // string too: clearing the configured path is reserved for an explicit
+      // reset action, never for a dismissed picker.
+      const trimmed = selected?.trim();
+      if (trimmed) {
+        platformPaths[platformId] = trimmed;
+      }
     } catch {
-      // User canceled the picker or the native dialog failed.
+      // User canceled the picker or the native dialog failed: leave the
+      // existing path untouched.
     }
   }
 

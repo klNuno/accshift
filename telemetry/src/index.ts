@@ -139,9 +139,10 @@ async function handleTrack(request: Request, env: Env, ctx: ExecutionContext): P
   const ip = clientIp(request);
   const blocked = await enforceRateLimit(env, env.RL_TRACK, ip, "/track", ctx, true);
   if (blocked) return blocked;
-  const budgetErr = await checkBudget(env, "/track", intVar(env.BUDGET_TRACK, 4000), ctx);
-  if (budgetErr) return budgetErr;
 
+  // Parse and validate the body BEFORE touching the daily budget, so malformed
+  // or empty requests cannot burn the D1 budget counter. UA check and rate
+  // limit above already gate cheaply on the headers / IP.
   const parsed = await readJsonCapped<TrackPayload>(request, TRACK_BODY_MAX_BYTES);
   if (parsed instanceof Response) return parsed;
   const payload = parsed;
@@ -154,12 +155,23 @@ async function handleTrack(request: Request, env: Env, ctx: ExecutionContext): P
     return json({ error: "batch_too_large", max: maxEvents }, 413);
   }
 
+  // A valid event carries a non-empty string name; reject a batch with none.
+  const hasValidEvent = payload.events.some((e) => typeof e?.name === "string" && e.name !== "");
+  if (!hasValidEvent) {
+    return json({ error: "bad_payload" }, 400);
+  }
+
   if (payload.mode !== "A" && payload.mode !== "B") {
     return json({ error: "bad_mode" }, 400);
   }
   if (payload.mode === "B" && !isUuidV4(payload.install_id)) {
     return json({ error: "bad_install_id" }, 400);
   }
+
+  // Payload is well-formed and carries at least one usable event: now charge
+  // the daily budget.
+  const budgetErr = await checkBudget(env, "/track", intVar(env.BUDGET_TRACK, 4000), ctx);
+  if (budgetErr) return budgetErr;
 
   const country = (request.cf?.country as string | undefined) ?? "XX";
   const todayIso = new Date().toISOString().slice(0, 10);
@@ -472,28 +484,62 @@ async function handleAdminQuery(
   const payload = await safeJson<{ sql?: string; params?: unknown[] }>(request);
   if (!payload?.sql || typeof payload.sql !== "string") return json({ error: "bad_sql" }, 400);
 
-  // Read-only: reject anything that is not SELECT or WITH.
-  const normalized = payload.sql.trim().toUpperCase();
-  if (!normalized.startsWith("SELECT") && !normalized.startsWith("WITH")) {
+  // Read-only: only a plain SELECT is allowed. WITH is rejected outright since
+  // a CTE can hide a mutation (`WITH x AS (...) DELETE FROM ...`), and the
+  // dashboard never needs one. We also scan the body for any mutation keyword.
+  if (!isReadOnlySelect(payload.sql)) {
     return json({ error: "read_only" }, 400);
   }
 
-  const stmt = env.DB.prepare(payload.sql);
+  // Cap the result set at the DB level. The query must not already carry its
+  // own LIMIT (we cannot reliably rewrite an arbitrary one), then we append a
+  // hard cap so the database never materializes more than ADMIN_QUERY_MAX_ROWS.
+  if (hasLimitClause(payload.sql)) {
+    return json({ error: "limit_not_allowed" }, 400);
+  }
+  const capped = `${payload.sql.trim().replace(/;\s*$/, "")} LIMIT ${ADMIN_QUERY_MAX_ROWS}`;
+
+  const stmt = env.DB.prepare(capped);
   const bound =
     Array.isArray(payload.params) && payload.params.length > 0
       ? stmt.bind(...(payload.params as never[]))
       : stmt;
   const result = await bound.all();
   const rows = result.results ?? [];
-  if (rows.length > ADMIN_QUERY_MAX_ROWS) {
-    return json({
-      ok: true,
-      results: rows.slice(0, ADMIN_QUERY_MAX_ROWS),
-      meta: result.meta,
-      truncated: true,
-    });
-  }
-  return json({ ok: true, results: rows, meta: result.meta });
+  const truncated = rows.length >= ADMIN_QUERY_MAX_ROWS;
+  return json({ ok: true, results: rows, meta: result.meta, truncated });
+}
+
+// Mutation keywords rejected anywhere in an /admin/query body. Matched as whole
+// words so a column named e.g. `created_at` does not trip CREATE.
+const SQL_MUTATION_KEYWORDS = [
+  "DELETE",
+  "INSERT",
+  "UPDATE",
+  "DROP",
+  "ALTER",
+  "CREATE",
+  "REPLACE",
+  "ATTACH",
+  "PRAGMA",
+];
+
+const SQL_MUTATION_RE = new RegExp(`\\b(?:${SQL_MUTATION_KEYWORDS.join("|")})\\b`, "i");
+
+// True only for a plain SELECT with no mutation keyword anywhere in the body.
+// WITH (CTE) is rejected: it can prefix a DELETE/UPDATE and the dashboard does
+// not use it.
+function isReadOnlySelect(sql: string): boolean {
+  const trimmed = sql.trim();
+  if (!/^SELECT\b/i.test(trimmed)) return false;
+  if (SQL_MUTATION_RE.test(trimmed)) return false;
+  return true;
+}
+
+// True if the SQL already contains a LIMIT clause (as a word), so we refuse it
+// rather than appending a second LIMIT that SQLite would reject.
+function hasLimitClause(sql: string): boolean {
+  return /\bLIMIT\b/i.test(sql);
 }
 
 // ─── /admin/logs/<ticket_id> (stream R2 zip) ─────────────────────
@@ -697,7 +743,7 @@ async function loadRows() {
     const res = await authFetch("/admin/query", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sql: "SELECT ticket_id, created_at, size_bytes, app_version, os_version, country, note FROM log_uploads ORDER BY created_at DESC LIMIT 1000" }),
+      body: JSON.stringify({ sql: "SELECT ticket_id, created_at, size_bytes, app_version, os_version, country, note FROM log_uploads ORDER BY created_at DESC" }),
     });
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();

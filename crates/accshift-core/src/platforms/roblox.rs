@@ -329,6 +329,132 @@ fn write_cookie_to_registry(_cookie: &str) -> Result<(), String> {
     Err("Roblox registry switching is only supported on Windows".to_string())
 }
 
+/// Unwrap the `COOK::<cookie>` envelope Roblox / Studio store the cookie in.
+/// Falls back to the raw value if it is not wrapped (older formats, manual
+/// edits). Returns `None` for an empty result. Pure so it can be unit tested
+/// without touching the registry; the inverse of the format written by
+/// `write_cookie_to_registry`.
+// Only the Windows registry reader and the unit tests call this; on a
+// non-Windows release build it is intentionally dead.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn unwrap_registry_cookie(value: &str) -> Option<String> {
+    let unwrapped = value
+        .strip_prefix("COOK::<")
+        .and_then(|rest| rest.strip_suffix('>'))
+        .unwrap_or(value)
+        .trim();
+
+    if unwrapped.is_empty() {
+        None
+    } else {
+        Some(unwrapped.to_string())
+    }
+}
+
+/// Read the live `.ROBLOSECURITY` cookie out of HKCU. Returns `Ok(None)` when
+/// the key or value is missing, which is the normal state on a fresh machine.
+/// Mirrors `write_cookie_to_registry`.
+#[cfg(target_os = "windows")]
+fn read_cookie_from_registry() -> Result<Option<String>, String> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let key = match hkcu.open_subkey("SOFTWARE\\Roblox\\RobloxStudioBrowser\\roblox.com") {
+        Ok(key) => key,
+        // Key absent = no cookie has ever been written. Not an error.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("Could not open Roblox registry key: {e}")),
+    };
+
+    let value: String = match key.get_value(".ROBLOSECURITY") {
+        Ok(v) => v,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("Could not read Roblox cookie from registry: {e}")),
+    };
+
+    Ok(unwrap_registry_cookie(&value))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn read_cookie_from_registry() -> Result<Option<String>, String> {
+    Ok(None)
+}
+
+/// Before switching away from the active account, capture any cookie rotation
+/// that Roblox Studio performed in HKCU. Studio refreshes `.ROBLOSECURITY`
+/// in place; if we ignore it and later overwrite the registry with our stored
+/// (now stale) cookie, the user gets logged out. Windows-only; no-op elsewhere.
+fn persist_rotated_cookie(app_handle: &dyn AppContext, account: &RobloxAccountConfig) {
+    let live = match read_cookie_from_registry() {
+        Ok(Some(cookie)) => cookie,
+        Ok(None) => return,
+        Err(e) => {
+            log_platform_error(
+                app_handle,
+                "roblox.switch_account",
+                "Could not read live Roblox cookie from registry",
+                &e,
+            );
+            return;
+        }
+    };
+
+    let stored = match crate::os::decrypt_secret(&account.cookie_encrypted) {
+        Ok(c) => c,
+        Err(e) => {
+            log_platform_error(
+                app_handle,
+                "roblox.switch_account",
+                "Could not decrypt stored cookie for rotation check",
+                format!("{e}"),
+            );
+            return;
+        }
+    };
+
+    if live.trim() == stored.trim() {
+        return;
+    }
+
+    let encrypted = match crate::os::encrypt_secret(&live) {
+        Ok(enc) => enc,
+        Err(e) => {
+            log_platform_error(
+                app_handle,
+                "roblox.switch_account",
+                "Could not re-encrypt rotated cookie",
+                format!("{e}"),
+            );
+            return;
+        }
+    };
+
+    let mut accounts = load_account_configs(app_handle);
+    if let Some(a) = accounts.iter_mut().find(|a| a.user_id == account.user_id) {
+        a.cookie_encrypted = encrypted;
+    } else {
+        return;
+    }
+
+    if let Err(e) = save_account_configs(app_handle, &accounts) {
+        log_platform_error(
+            app_handle,
+            "roblox.switch_account",
+            "Could not persist rotated cookie",
+            &e,
+        );
+        return;
+    }
+
+    log_platform_info(
+        app_handle,
+        "roblox.switch_account",
+        "Persisted rotated Roblox cookie from registry",
+        format!("userId={}", super::redact_id(&account.user_id)),
+    );
+}
+
 fn kill_roblox() {
     for name in ROBLOX_PROCESS_NAMES {
         let _ = crate::os::kill_process(name);
@@ -391,6 +517,21 @@ pub fn get_startup_snapshot(app_handle: &dyn AppContext) -> Result<RobloxStartup
 }
 
 pub fn switch_account(app_handle: &dyn AppContext, user_id: &str) -> Result<(), String> {
+    let accounts = load_account_configs(app_handle);
+
+    // Before overwriting HKCU with the target cookie, capture any cookie that
+    // Roblox Studio rotated in place for the currently active account (the one
+    // we last switched to, which owns the live HKCU cookie). Otherwise the
+    // rotation is lost and that account is silently logged out next time it is
+    // loaded. This also covers re-loading the already-active account: its own
+    // rotation is persisted first, then decrypted below. Windows-only; the
+    // helper is a no-op elsewhere.
+    if let Some(active) = accounts.iter().max_by_key(|a| a.last_used_at.unwrap_or(0)) {
+        persist_rotated_cookie(app_handle, active);
+    }
+
+    // Re-read after the possible rotation persist so we decrypt the freshest
+    // stored cookie for the account we are switching to.
     let accounts = load_account_configs(app_handle);
     let account = accounts
         .iter()
@@ -665,6 +806,25 @@ pub fn cancel_account_setup(setup_id: &str) -> Result<(), String> {
 
 pub fn forget_account(app_handle: &dyn AppContext, user_id: &str) -> Result<(), String> {
     let mut accounts = load_account_configs(app_handle);
+
+    // Drop the keyring entry the encrypted cookie points at before we drop the
+    // account record. On Linux / macOS the "ciphertext" is a UUID into the OS
+    // keyring, so retaining-and-saving alone leaves the secret orphaned there.
+    // Log and continue on failure: a dangling keyring entry must not block the
+    // user from removing the account from the app.
+    if let Some(account) = accounts.iter().find(|a| a.user_id == user_id) {
+        if !account.cookie_encrypted.is_empty() {
+            if let Err(e) = crate::os::delete_secret(&account.cookie_encrypted) {
+                log_platform_error(
+                    app_handle,
+                    "roblox.forget_account",
+                    "Could not delete stored Roblox cookie secret",
+                    format!("{e}"),
+                );
+            }
+        }
+    }
+
     accounts.retain(|a| a.user_id != user_id);
     save_account_configs(app_handle, &accounts)
 }
@@ -811,5 +971,50 @@ impl PlatformService for RobloxService {
 
     fn cancel_setup(&self, _app: AppCtx, setup_id: &str) -> Result<(), String> {
         cancel_account_setup(setup_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unwrap_registry_cookie_strips_envelope() {
+        assert_eq!(
+            unwrap_registry_cookie("COOK::<abc123>"),
+            Some("abc123".to_string())
+        );
+    }
+
+    #[test]
+    fn unwrap_registry_cookie_falls_back_to_raw() {
+        // Older format / manual edit without the COOK::<> wrapper.
+        assert_eq!(
+            unwrap_registry_cookie("rawcookievalue"),
+            Some("rawcookievalue".to_string())
+        );
+    }
+
+    #[test]
+    fn unwrap_registry_cookie_trims_whitespace() {
+        assert_eq!(
+            unwrap_registry_cookie("COOK::<  spaced  >"),
+            Some("spaced".to_string())
+        );
+    }
+
+    #[test]
+    fn unwrap_registry_cookie_empty_is_none() {
+        assert_eq!(unwrap_registry_cookie(""), None);
+        assert_eq!(unwrap_registry_cookie("COOK::<>"), None);
+        assert_eq!(unwrap_registry_cookie("   "), None);
+    }
+
+    #[test]
+    fn unwrap_registry_cookie_roundtrips_write_format() {
+        // The value write_cookie_to_registry would set must read back identically.
+        let cookie = "_|WARNING:-DO-NOT-SHARE-THIS.--Sharing-this-will...|_FAKE";
+        let written = format!("COOK::<{cookie}>");
+        assert_eq!(unwrap_registry_cookie(&written), Some(cookie.to_string()));
     }
 }

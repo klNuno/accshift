@@ -175,11 +175,22 @@ fn main() {
                     if boot_state.is_completed() {
                         if !matches!(win_for_events.is_maximized(), Ok(true)) {
                             if let Ok(size) = win_for_events.inner_size() {
-                                let _ = config::save_window_size(
-                                    &ctx(&app_handle),
-                                    f64::from(size.width),
-                                    f64::from(size.height),
-                                );
+                                // This cosmetic write goes through save_config,
+                                // whose cross-process lock can wait up to 5s when
+                                // the CLI holds it. Running it inline would freeze
+                                // the UI thread for that whole stretch, so push it
+                                // onto a blocking task. The telemetry flush below
+                                // keeps the runtime alive while it lands.
+                                let save_handle = app_handle.clone();
+                                let width = f64::from(size.width);
+                                let height = f64::from(size.height);
+                                tauri::async_runtime::spawn_blocking(move || {
+                                    let _ = config::save_window_size(
+                                        &ctx(&save_handle),
+                                        width,
+                                        height,
+                                    );
+                                });
                             }
                         }
                     } else {

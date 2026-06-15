@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
@@ -18,6 +18,13 @@ use winreg::RegKey;
 const EPIC_PROCESS_NAMES: &[&str] = &["EpicGamesLauncher.exe"];
 const EPIC_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
 const POST_KILL_SETTLE_MS: u64 = 500;
+/// Longest we wait for the launcher to flush its config to disk and exit after
+/// a quit request before validating the snapshot source.
+const SETUP_QUIT_TIMEOUT_MS: u32 = 8000;
+/// A snapshot source file only counts as fresh if it was modified within this
+/// window. A new sign-in rewrites GameUserSettings.ini, so a stale mtime means
+/// the launcher never flushed the new tokens and capture would be useless.
+const SETUP_FRESH_WINDOW_MS: u64 = 5 * 60 * 1000;
 
 /// Auth file relative to the Epic launcher saved-config directory.
 const AUTH_INI: &str = "GameUserSettings.ini";
@@ -315,23 +322,104 @@ fn auth_cache_dir(app_handle: &dyn AppContext, account_id: &str) -> Result<PathB
     Ok(base)
 }
 
+/// Magic header identifying an encrypted snapshot file (same convention as Riot).
+const ENCRYPTED_HEADER: &[u8] = b"ACCS";
+
+/// Copy a file and encrypt its contents (DPAPI on Windows, keyring token elsewhere).
+fn encrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
+    let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
+    let encrypted = crate::os::encrypt_bytes(&data)
+        .map_err(|e| format!("Could not encrypt {}: {e}", source.display()))?;
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
+    }
+    let mut out = Vec::with_capacity(ENCRYPTED_HEADER.len() + encrypted.len());
+    out.extend_from_slice(ENCRYPTED_HEADER);
+    out.extend_from_slice(&encrypted);
+    fs::write(dest, &out).map_err(|e| format!("Could not write {}: {e}", dest.display()))
+}
+
+/// Copy a file, decrypting if it has the header (legacy plaintext files pass through).
+fn decrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
+    let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
+    let content = if data.starts_with(ENCRYPTED_HEADER) {
+        crate::os::decrypt_bytes(&data[ENCRYPTED_HEADER.len()..])
+            .map_err(|e| format!("Could not decrypt {}: {e}", source.display()))?
+    } else {
+        data
+    };
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
+    }
+    fs::write(dest, &content).map_err(|e| format!("Could not write {}: {e}", dest.display()))
+}
+
+/// Encrypt raw bytes and write them with the header (no temp plaintext on disk).
+fn write_encrypted_bytes(dest: &Path, data: &[u8]) -> Result<(), String> {
+    let encrypted = crate::os::encrypt_bytes(data)
+        .map_err(|e| format!("Could not encrypt {}: {e}", dest.display()))?;
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
+    }
+    let mut out = Vec::with_capacity(ENCRYPTED_HEADER.len() + encrypted.len());
+    out.extend_from_slice(ENCRYPTED_HEADER);
+    out.extend_from_slice(&encrypted);
+    fs::write(dest, &out).map_err(|e| format!("Could not write {}: {e}", dest.display()))
+}
+
+/// Read a snapshot file, decrypting it if it carries the header. Legacy
+/// plaintext files (no header) are returned as-is.
+fn read_decrypted_bytes(path: &Path) -> Result<Vec<u8>, String> {
+    let raw = fs::read(path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
+    if raw.starts_with(ENCRYPTED_HEADER) {
+        crate::os::decrypt_bytes(&raw[ENCRYPTED_HEADER.len()..])
+            .map_err(|e| format!("Could not decrypt {}: {e}", path.display()))
+    } else {
+        Ok(raw)
+    }
+}
+
+/// Release the OS-keyring entry an encrypted snapshot file points at (no-op on
+/// Windows DPAPI, frees the keyring token on Linux / macOS). Legacy plaintext
+/// files have no header and own no secret, so they are skipped.
+fn delete_encrypted_file_secret(path: &Path) {
+    let Ok(data) = fs::read(path) else {
+        return;
+    };
+    if data.starts_with(ENCRYPTED_HEADER) {
+        let _ = crate::os::delete_bytes(&data[ENCRYPTED_HEADER.len()..]);
+    }
+}
+
 fn save_auth_snapshot(app_handle: &dyn AppContext, account_id: &str) -> Result<(), String> {
     let config_dir = epic_config_dir()?;
     let cache_dir = auth_cache_dir(app_handle, account_id)?;
     fs::create_dir_all(&cache_dir).map_err(|e| format!("Could not create auth cache dir: {e}"))?;
 
-    // Save GameUserSettings.ini
+    // Save GameUserSettings.ini (encrypted)
     let source = config_dir.join(AUTH_INI);
     if source.exists() {
         let dest = cache_dir.join(AUTH_INI);
-        fs::copy(&source, &dest)
-            .map_err(|e| format!("Could not copy {} to cache: {e}", source.display()))?;
+        // Drop any secret backing a previous snapshot before overwriting it.
+        delete_encrypted_file_secret(&dest);
+        encrypted_copy_file(&source, &dest)?;
     }
 
-    // Save registry AccountId value
+    // Save registry AccountId value (encrypted, straight from memory)
     if let Some(reg_id) = read_registry_account_id() {
         let reg_file = cache_dir.join("registry_account_id.txt");
-        let _ = fs::write(&reg_file, &reg_id);
+        delete_encrypted_file_secret(&reg_file);
+        if let Err(e) = write_encrypted_bytes(&reg_file, reg_id.as_bytes()) {
+            log_platform_error(
+                app_handle,
+                "epic.save_auth_snapshot",
+                "Could not encrypt registry id for snapshot",
+                e,
+            );
+        }
     }
 
     Ok(())
@@ -349,18 +437,20 @@ fn restore_auth_snapshot(app_handle: &dyn AppContext, account_id: &str) -> Resul
 
     fs::create_dir_all(&config_dir).map_err(|e| format!("Could not create config dir: {e}"))?;
 
-    // Restore GameUserSettings.ini
+    // Restore GameUserSettings.ini (decrypts; legacy plaintext passes through)
     let source = cache_dir.join(AUTH_INI);
     if source.exists() {
         let dest = config_dir.join(AUTH_INI);
-        fs::copy(&source, &dest)
-            .map_err(|e| format!("Could not restore {} from cache: {e}", source.display()))?;
+        decrypted_copy_file(&source, &dest)?;
     }
 
-    // Restore registry AccountId
+    // Restore registry AccountId (decrypts; legacy plaintext passes through)
     let reg_file = cache_dir.join("registry_account_id.txt");
-    if let Ok(reg_id) = fs::read_to_string(&reg_file) {
-        let _ = write_registry_account_id(reg_id.trim());
+    if reg_file.exists() {
+        let bytes = read_decrypted_bytes(&reg_file)?;
+        if let Ok(reg_id) = String::from_utf8(bytes) {
+            let _ = write_registry_account_id(reg_id.trim());
+        }
     }
 
     Ok(())
@@ -413,6 +503,51 @@ fn kill_epic() {
     }
 }
 
+/// Stabilize the launcher before capturing: ask it to close so it flushes its
+/// in-memory auth to GameUserSettings.ini, then wait for the process to exit.
+/// Epic exposes no clean-quit IPC the way Riot does, so kill is the only quit
+/// mechanism, followed by a settle delay so the file write completes.
+fn quit_epic_and_wait() {
+    if !is_epic_running() {
+        return;
+    }
+    kill_epic();
+    for process_name in EPIC_PROCESS_NAMES {
+        crate::os::wait_for_process_exit(process_name, SETUP_QUIT_TIMEOUT_MS);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
+}
+
+/// True when a file exists, is non-empty, and was modified within
+/// `SETUP_FRESH_WINDOW_MS`. Used to confirm the launcher actually flushed a new
+/// sign-in to disk before we capture it.
+fn source_file_fresh(path: &Path) -> bool {
+    let Ok(meta) = fs::metadata(path) else {
+        return false;
+    };
+    if meta.len() == 0 {
+        return false;
+    }
+    let Ok(modified) = meta.modified() else {
+        // Cannot read mtime: fall back to the non-empty check above.
+        return true;
+    };
+    let Ok(elapsed) = modified.elapsed() else {
+        // mtime in the future (clock skew): treat as fresh, not stale.
+        return true;
+    };
+    (elapsed.as_millis() as u64) <= SETUP_FRESH_WINDOW_MS
+}
+
+/// Validate that the live snapshot source is worth capturing: GameUserSettings.ini
+/// must be present, non-empty, and freshly written by the launcher.
+fn live_source_ready() -> bool {
+    let Ok(config_dir) = epic_config_dir() else {
+        return false;
+    };
+    source_file_fresh(&config_dir.join(AUTH_INI))
+}
+
 fn launch_epic(app_handle: &dyn AppContext) -> Result<(), String> {
     let executable = resolve_executable(app_handle)?;
     let mut command = Command::new(&executable);
@@ -446,18 +581,9 @@ fn validate_account_id(id: &str) -> Result<String, String> {
 }
 
 fn read_accounts(app_handle: &dyn AppContext) -> Result<Vec<EpicAccount>, String> {
-    // Detect current account from registry, mark as recently used,
-    // and ensure a snapshot exists so switching works later.
-    if let Some(current_id) = read_registry_account_id() {
-        let key = current_id.to_lowercase();
-        if is_valid_epic_account_id(&key) {
-            let _ = remember_account_usage(app_handle, &key);
-            if !has_auth_snapshot(app_handle, &key) {
-                let _ = save_auth_snapshot(app_handle, &key);
-            }
-        }
-    }
-
+    // Pure read: no config writes, no snapshot capture. Recording usage and
+    // capturing the live snapshot happen on the explicit switch / setup paths
+    // (see capture_current_account), never while merely listing accounts.
     let discovered = discover_account_ids_from_data();
     let cfg = config::load_config(app_handle);
 
@@ -531,6 +657,23 @@ fn remember_account_usage(app_handle: &dyn AppContext, account_id: &str) -> Resu
     })
 }
 
+/// Record usage of the currently logged-in account and capture its snapshot
+/// if one is missing. Runs on the explicit switch / setup paths only, never on
+/// the read path (read_accounts must stay side-effect free).
+fn capture_current_account(app_handle: &dyn AppContext) {
+    let Some(current_id) = read_registry_account_id() else {
+        return;
+    };
+    let key = current_id.to_lowercase();
+    if !is_valid_epic_account_id(&key) {
+        return;
+    }
+    let _ = remember_account_usage(app_handle, &key);
+    if !has_auth_snapshot(app_handle, &key) {
+        let _ = save_auth_snapshot(app_handle, &key);
+    }
+}
+
 fn forget_account_metadata(app_handle: &dyn AppContext, account_id: &str) -> Result<(), String> {
     let key = account_id.trim().to_lowercase();
     config::update_config(app_handle, |cfg| {
@@ -540,9 +683,14 @@ fn forget_account_metadata(app_handle: &dyn AppContext, account_id: &str) -> Res
     })?;
 
     // Remove cached auth snapshot. Only touch the filesystem for ids in the
-    // canonical 32-hex format — the id is joined into the snapshot path.
+    // canonical 32-hex format: the id is joined into the snapshot path.
     if is_valid_epic_account_id(&key) {
         if let Ok(cache_dir) = auth_cache_dir(app_handle, &key) {
+            // Release the OS-keyring entries each encrypted file points at
+            // before deleting the files, otherwise the secrets are orphaned
+            // (no-op under Windows DPAPI, frees keyring tokens elsewhere).
+            delete_encrypted_file_secret(&cache_dir.join(AUTH_INI));
+            delete_encrypted_file_secret(&cache_dir.join("registry_account_id.txt"));
             let _ = fs::remove_dir_all(&cache_dir);
         }
     }
@@ -581,11 +729,8 @@ pub fn switch_account(app_handle: &dyn AppContext, account_id: &str) -> Result<(
         format!("target={}", super::redact_id(&account_id)),
     );
 
-    // Always save current account's auth before switching
-    if let Some(current_id) = read_registry_account_id() {
-        let current_key = current_id.to_lowercase();
-        let _ = save_auth_snapshot(app_handle, &current_key);
-    }
+    // Always record + snapshot the current account before switching away.
+    capture_current_account(app_handle);
 
     // Kill launcher
     kill_epic();
@@ -629,13 +774,8 @@ pub fn begin_account_setup(app_handle: &dyn AppContext) -> Result<SetupStatus, S
         "",
     );
 
-    // Save current account's auth snapshot before clearing
-    if let Some(current_id) = read_registry_account_id() {
-        let key = current_id.to_lowercase();
-        if is_valid_epic_account_id(&key) {
-            let _ = save_auth_snapshot(app_handle, &key);
-        }
-    }
+    // Record + snapshot the current account before clearing auth.
+    capture_current_account(app_handle);
 
     // Collect all known account IDs
     let mut known = discover_account_ids_from_data();
@@ -704,47 +844,50 @@ pub fn get_account_setup_status(
         job.clone()
     };
 
-    // Check registry for new account ID
-    if let Some(current_id) = read_registry_account_id() {
-        let key = current_id.to_lowercase();
-        if is_valid_epic_account_id(&key) && !job.known_account_ids.contains(&key) {
-            // New account detected
-            let _ = save_auth_snapshot(app_handle, &key);
-            let _ = remember_account_usage(app_handle, &key);
+    // Detect the new account: registry first, then new files in the Data dir.
+    let new_account_id = read_registry_account_id()
+        .map(|id| id.to_lowercase())
+        .filter(|key| is_valid_epic_account_id(key) && !job.known_account_ids.contains(key))
+        .or_else(|| {
+            discover_account_ids_from_data()
+                .into_iter()
+                .find(|id| !job.known_account_ids.contains(id))
+        });
 
-            if let Ok(mut jobs) = setup_jobs().lock() {
-                jobs.remove(setup_id);
-            }
+    if let Some(key) = new_account_id {
+        // A new account id appearing in the registry is not enough: the
+        // launcher may still be holding the new tokens in memory. Quit it so
+        // they flush, then verify GameUserSettings.ini is non-empty and fresh.
+        // Capturing a stale file would persist invalid tokens. Riot gates the
+        // same way (settle + graceful quit + readiness, riot.rs:1078,1114).
+        quit_epic_and_wait();
 
+        if !live_source_ready() {
+            // Not yet flushed: keep the job pending so the next poll retries.
+            // Do NOT flip to ready and do NOT capture a half-written snapshot.
             return Ok(super::make_setup_status(
                 setup_id,
-                "ready",
-                key.clone(),
-                key,
+                "waiting_for_login",
+                "",
+                "",
                 "",
             ));
         }
-    }
 
-    // Check data directory for new account files
-    let current_ids = discover_account_ids_from_data();
-    for id in &current_ids {
-        if !job.known_account_ids.contains(id) {
-            let _ = save_auth_snapshot(app_handle, id);
-            let _ = remember_account_usage(app_handle, id);
+        save_auth_snapshot(app_handle, &key)?;
+        let _ = remember_account_usage(app_handle, &key);
 
-            if let Ok(mut jobs) = setup_jobs().lock() {
-                jobs.remove(setup_id);
-            }
-
-            return Ok(super::make_setup_status(
-                setup_id,
-                "ready",
-                id.clone(),
-                id.clone(),
-                "",
-            ));
+        if let Ok(mut jobs) = setup_jobs().lock() {
+            jobs.remove(setup_id);
         }
+
+        return Ok(super::make_setup_status(
+            setup_id,
+            "ready",
+            key.clone(),
+            key,
+            "",
+        ));
     }
 
     if is_epic_running() {
@@ -942,5 +1085,62 @@ mod tests {
         assert!(validate_account_id("..\\..\\evil").is_err());
         assert!(validate_account_id("../../evil").is_err());
         assert!(validate_account_id("a1b2c3d4").is_err());
+    }
+
+    fn scratch_dir(tag: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "accshift-epic-test-{}-{}-{:?}",
+            tag,
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn encrypted_header_is_accs() {
+        // Snapshots must reuse Riot's header so the two stay interchangeable.
+        assert_eq!(ENCRYPTED_HEADER, b"ACCS");
+    }
+
+    #[test]
+    fn decrypted_copy_passes_legacy_plaintext_through() {
+        // Snapshots written before encryption have no header: they must restore
+        // byte-for-byte without ever calling the OS decrypt backend.
+        let dir = scratch_dir("legacy-plaintext");
+        let source = dir.join("GameUserSettings.ini");
+        let dest = dir.join("restored.ini");
+        let body: &[u8] = b"[Auth]\nToken=legacy-value\n";
+        fs::write(&source, body).unwrap();
+
+        decrypted_copy_file(&source, &dest).unwrap();
+
+        assert_eq!(fs::read(&dest).unwrap().as_slice(), body);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn source_file_fresh_rejects_missing_and_empty() {
+        let dir = scratch_dir("fresh-missing");
+        let missing = dir.join("nope.ini");
+        assert!(!source_file_fresh(&missing));
+
+        let empty = dir.join("empty.ini");
+        fs::write(&empty, b"").unwrap();
+        assert!(!source_file_fresh(&empty));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn source_file_fresh_accepts_freshly_written() {
+        let dir = scratch_dir("fresh-recent");
+        let recent = dir.join("recent.ini");
+        fs::write(&recent, b"data").unwrap();
+        // Just written, so well inside SETUP_FRESH_WINDOW_MS.
+        assert!(source_file_fresh(&recent));
+        let _ = fs::remove_dir_all(&dir);
     }
 }

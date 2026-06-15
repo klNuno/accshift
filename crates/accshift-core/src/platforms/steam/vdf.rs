@@ -3,6 +3,49 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
+/// Extract the quoted tokens from a single VDF line, honoring backslash escapes.
+///
+/// VDF quotes tokens with `"` and escapes `\"` and `\\` inside them. A naive
+/// `split('"')` breaks on escaped quotes and truncates values that contain
+/// them. This scanner walks the line character by character, collecting the
+/// content of each `"..."` token and unescaping `\"`, `\\`, `\n` and `\r`.
+///
+/// Returns the tokens in order. A `"key" "value"` line yields two entries.
+fn vdf_tokenize_line(line: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut chars = line.chars().peekable();
+
+    while let Some(&c) = chars.peek() {
+        if c == '"' {
+            chars.next(); // consume opening quote
+            let mut token = String::new();
+            while let Some(ch) = chars.next() {
+                if ch == '\\' {
+                    match chars.next() {
+                        Some('n') => token.push('\n'),
+                        Some('r') => token.push('\r'),
+                        Some('t') => token.push('\t'),
+                        Some('\\') => token.push('\\'),
+                        Some('"') => token.push('"'),
+                        // Unknown escape: keep the following char verbatim.
+                        Some(other) => token.push(other),
+                        None => break,
+                    }
+                } else if ch == '"' {
+                    break; // closing quote
+                } else {
+                    token.push(ch);
+                }
+            }
+            tokens.push(token);
+        } else {
+            chars.next();
+        }
+    }
+
+    tokens
+}
+
 pub fn parse_vdf(content: &str) -> HashMap<String, HashMap<String, String>> {
     let mut accounts: HashMap<String, HashMap<String, String>> = HashMap::new();
     let mut current_id: Option<String> = None;
@@ -28,20 +71,20 @@ pub fn parse_vdf(content: &str) -> HashMap<String, HashMap<String, String>> {
             continue;
         }
 
-        let parts: Vec<&str> = trimmed.split('"').collect();
+        let tokens = vdf_tokenize_line(trimmed);
 
-        if parts.len() >= 4 {
-            let key = parts[1];
-            let value = parts[3];
+        if tokens.len() >= 2 {
+            let key = &tokens[0];
+            let value = &tokens[1];
 
             if depth == 2 && current_id.is_some() {
-                current_account.insert(key.to_lowercase(), value.to_string());
+                current_account.insert(key.to_lowercase(), value.clone());
             }
-        } else if parts.len() >= 2 {
-            let key = parts[1];
+        } else if tokens.len() == 1 {
+            let key = &tokens[0];
 
             if depth == 1 && !key.is_empty() && key.chars().all(|c| c.is_ascii_digit()) {
-                current_id = Some(key.to_string());
+                current_id = Some(key.clone());
             }
         }
     }
@@ -93,11 +136,11 @@ pub fn vdf_set_nested_value(content: &str, path: &[&str], value: &str) -> String
             continue;
         }
 
-        let parts: Vec<&str> = trimmed.split('"').collect();
+        let tokens = vdf_tokenize_line(trimmed);
 
         // Check if this is a section header we're looking for
-        if parts.len() >= 2 && matched_depth < sections.len() && depth == matched_depth + 1 {
-            let key = parts[1];
+        if !tokens.is_empty() && matched_depth < sections.len() && depth == matched_depth + 1 {
+            let key = &tokens[0];
             if key.eq_ignore_ascii_case(sections[matched_depth]) {
                 matched_depth += 1;
                 continue;
@@ -105,10 +148,10 @@ pub fn vdf_set_nested_value(content: &str, path: &[&str], value: &str) -> String
         }
 
         // Check if this is the target key at the right depth
-        if parts.len() >= 4
+        if tokens.len() >= 2
             && matched_depth == sections.len()
             && depth == sections.len() + 1
-            && parts[1].eq_ignore_ascii_case(target_key)
+            && tokens[0].eq_ignore_ascii_case(target_key)
         {
             found = true;
         }
@@ -179,11 +222,11 @@ pub fn vdf_set_nested_value(content: &str, path: &[&str], value: &str) -> String
             continue;
         }
 
-        let parts: Vec<&str> = trimmed.split('"').collect();
+        let tokens = vdf_tokenize_line(trimmed);
 
         // Track section entry
-        if parts.len() >= 2 && matched_depth < sections.len() && depth == matched_depth + 1 {
-            let key = parts[1];
+        if !tokens.is_empty() && matched_depth < sections.len() && depth == matched_depth + 1 {
+            let key = &tokens[0];
             if key.eq_ignore_ascii_case(sections[matched_depth]) {
                 matched_depth += 1;
                 result.push_str(line);
@@ -195,10 +238,10 @@ pub fn vdf_set_nested_value(content: &str, path: &[&str], value: &str) -> String
         // Replace existing key value
         if !key_replaced
             && found
-            && parts.len() >= 4
+            && tokens.len() >= 2
             && matched_depth == sections.len()
             && depth == sections.len() + 1
-            && parts[1].eq_ignore_ascii_case(target_key)
+            && tokens[0].eq_ignore_ascii_case(target_key)
         {
             // Rebuild line preserving original indentation
             let leading_whitespace: String =
@@ -231,6 +274,10 @@ fn escape_vdf_string(value: &str) -> String {
         match ch {
             '\\' => escaped.push_str("\\\\"),
             '"' => escaped.push_str("\\\""),
+            // Escape newlines so a value can't restructure the VDF (injection).
+            // Steam reads `\n` / `\r` back as the literal control chars.
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
             _ => escaped.push(ch),
         }
     }
@@ -267,11 +314,68 @@ pub fn set_persona_state(
         }
     };
 
+    let result = set_persona_state_in_vdf(&content, state);
+
+    if let Some(result) = result {
+        crate::storage::write_bytes_atomic(&config_path, result.as_bytes())
+            .map_err(AppError::FileRead)?;
+    }
+    Ok(())
+}
+
+/// Rewrite the `PersonaState` key that lives directly under
+/// `UserLocalConfigStore` -> `friends`, returning the new file content.
+///
+/// Returns `None` if no such key exists, so the caller can skip the write.
+///
+/// Targeting is structural: we track the section path with the parser instead
+/// of matching the first line that merely contains `"PersonaState"`. A friend
+/// nickname, a custom category, or any other string elsewhere in the file that
+/// happens to contain `PersonaState` no longer corrupts the wrong line.
+fn set_persona_state_in_vdf(content: &str, state: &str) -> Option<String> {
+    // Section names walked so far, from the root section inward. The key we
+    // want is `friends.PersonaState` under the root `UserLocalConfigStore`.
+    let mut section_stack: Vec<String> = Vec::new();
+    // Token cached from the previous non-brace line: in VDF a subsection header
+    // is a bare `"name"` line followed by its own `{` on the next line.
+    let mut pending_section: Option<String> = None;
+
     let mut result = String::new();
     let mut found = false;
 
     for line in content.lines() {
-        if !found && line.contains("\"PersonaState\"") {
+        let trimmed = line.trim();
+
+        if trimmed == "{" {
+            // The previous header token opens a subsection here.
+            section_stack.push(pending_section.take().unwrap_or_default());
+            result.push_str(line);
+            result.push('\n');
+            continue;
+        }
+
+        if trimmed == "}" {
+            section_stack.pop();
+            pending_section = None;
+            result.push_str(line);
+            result.push('\n');
+            continue;
+        }
+
+        let tokens = vdf_tokenize_line(trimmed);
+
+        // Are we directly inside UserLocalConfigStore -> friends?
+        let in_friends = section_stack.len() == 2
+            && section_stack[0].eq_ignore_ascii_case("UserLocalConfigStore")
+            && section_stack[1].eq_ignore_ascii_case("friends");
+
+        if !found
+            && in_friends
+            && tokens.len() >= 2
+            && tokens[0].eq_ignore_ascii_case("PersonaState")
+        {
+            // Rewrite the value in place, preserving indentation and the key
+            // token exactly as written.
             if let Some(pos) = line.rfind('"') {
                 if let Some(start) = line[..pos].rfind('"') {
                     let mut new_line = line[..start + 1].to_string();
@@ -280,24 +384,37 @@ pub fn set_persona_state(
                     result.push_str(&new_line);
                     result.push('\n');
                     found = true;
+                    pending_section = None;
                     continue;
                 }
             }
         }
+
+        // Remember a bare header token so the next `{` knows its section name.
+        // A `"key" "value"` pair is not a section header.
+        if tokens.len() == 1 {
+            pending_section = Some(tokens[0].clone());
+        } else {
+            pending_section = None;
+        }
+
         result.push_str(line);
         result.push('\n');
     }
 
     if found {
-        crate::storage::write_bytes_atomic(&config_path, result.as_bytes())
-            .map_err(AppError::FileRead)?;
+        Some(result)
+    } else {
+        None
     }
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{escape_vdf_string, parse_vdf, vdf_set_nested_value};
+    use super::{
+        escape_vdf_string, parse_vdf, set_persona_state_in_vdf, vdf_set_nested_value,
+        vdf_tokenize_line,
+    };
 
     #[test]
     fn parse_vdf_extracts_multiple_accounts() {
@@ -342,5 +459,119 @@ mod tests {
 
         assert!(output
             .contains("\"LaunchOptions\"\t\t\"+exec \\\"autoexec.cfg\\\" -path C:\\\\Steam\""));
+    }
+
+    // ── V1: escape-aware tokenization ──
+
+    #[test]
+    fn tokenize_unescapes_quotes_and_backslashes() {
+        // A value containing an escaped quote and an escaped backslash.
+        let line = r#"	"LaunchOptions"		"+exec \"my cfg\" -path C:\\Steam""#;
+        let tokens = vdf_tokenize_line(line);
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0], "LaunchOptions");
+        assert_eq!(tokens[1], r#"+exec "my cfg" -path C:\Steam"#);
+    }
+
+    #[test]
+    fn tokenize_handles_escaped_newline() {
+        let line = r#"	"key"		"line one\nline two""#;
+        let tokens = vdf_tokenize_line(line);
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[1], "line one\nline two");
+    }
+
+    #[test]
+    fn parse_vdf_keeps_value_with_escaped_quote() {
+        // The old split('"') tokenizer truncated this PersonaName at the
+        // escaped quote. The escape-aware scanner must round-trip it.
+        let content = "\"users\"\n{\n\t\"111\"\n\t{\n\t\t\"AccountName\"\t\"acct\"\n\t\t\"PersonaName\"\t\"say \\\"hi\\\" now\"\n\t}\n}\n";
+        let parsed = parse_vdf(content);
+        assert_eq!(parsed["111"]["accountname"], "acct");
+        assert_eq!(parsed["111"]["personaname"], r#"say "hi" now"#);
+    }
+
+    // ── V2: newline escaping prevents VDF injection ──
+
+    #[test]
+    fn escapes_vdf_string_newlines() {
+        assert_eq!(escape_vdf_string("a\nb\r\nc"), "a\\nb\\r\\nc");
+    }
+
+    #[test]
+    fn newline_in_launch_options_cannot_inject_lines() {
+        // A value with a newline + a forged key must stay on one logical line.
+        let input = "\"UserLocalConfigStore\"\n{\n\t\"Software\"\n\t{\n\t}\n}\n";
+        let injection = "good\"\n\t\t\"PersonaState\"\t\t\"7";
+        let output = vdf_set_nested_value(
+            input,
+            &["Software", "Valve", "Steam", "apps", "730", "LaunchOptions"],
+            injection,
+        );
+
+        // The newline is escaped, so no second physical line is produced and
+        // no real PersonaState key leaks into the file.
+        assert!(output.contains("good\\\"\\n\t\t\\\"PersonaState\\\"\t\t\\\"7"));
+        for line in output.lines() {
+            let t = line.trim();
+            assert!(
+                !(t.starts_with("\"PersonaState\"")),
+                "injection produced a real PersonaState line: {line}"
+            );
+        }
+    }
+
+    // ── V3: structural PersonaState targeting ──
+
+    const LOCALCONFIG: &str = "\"UserLocalConfigStore\"\n\
+{\n\
+\t\"friends\"\n\
+\t{\n\
+\t\t\"PersonaState\"\t\t\"1\"\n\
+\t\t\"76561198000000000\"\n\
+\t\t{\n\
+\t\t\t\"name\"\t\t\"my PersonaState buddy\"\n\
+\t\t\t\"PersonaState\"\t\t\"5\"\n\
+\t\t}\n\
+\t}\n\
+}\n";
+
+    #[test]
+    fn set_persona_state_targets_friends_section() {
+        let out = set_persona_state_in_vdf(LOCALCONFIG, "7").expect("should find PersonaState");
+        // The direct friends.PersonaState changed to 7.
+        assert!(out.contains("\t\t\"PersonaState\"\t\t\"7\"\n"));
+        // The nested friend-block PersonaState (decoy) is untouched.
+        assert!(out.contains("\t\t\t\"PersonaState\"\t\t\"5\"\n"));
+        // The friend nickname mentioning PersonaState is untouched.
+        assert!(out.contains("\"my PersonaState buddy\""));
+    }
+
+    #[test]
+    fn set_persona_state_ignores_decoy_outside_friends() {
+        // A custom category named "PersonaState" sitting in another section
+        // must not be hit.
+        let content = "\"UserLocalConfigStore\"\n\
+{\n\
+\t\"WebStorage\"\n\
+\t{\n\
+\t\t\"PersonaState\"\t\t\"decoy\"\n\
+\t}\n\
+\t\"friends\"\n\
+\t{\n\
+\t\t\"PersonaState\"\t\t\"1\"\n\
+\t}\n\
+}\n";
+        let out = set_persona_state_in_vdf(content, "0").expect("should find friends PersonaState");
+        // WebStorage decoy untouched.
+        assert!(out.contains("\t\t\"PersonaState\"\t\t\"decoy\"\n"));
+        // friends PersonaState set to 0.
+        assert!(out.contains("\t\t\"PersonaState\"\t\t\"0\"\n"));
+    }
+
+    #[test]
+    fn set_persona_state_returns_none_when_absent() {
+        let content = "\"UserLocalConfigStore\"\n{\n\t\"friends\"\n\t{\n\t}\n}\n";
+        assert!(set_persona_state_in_vdf(content, "1").is_none());
     }
 }

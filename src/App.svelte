@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import type { UnlistenFn } from "@tauri-apps/api/event";
+  import { flushPendingSaves } from "$lib/storage/clientStorage";
   import TitleBar from "$lib/shared/components/TitleBar.svelte";
   import { getToasts, addToast, removeToast } from "$lib/features/notifications/store.svelte";
   import { getSettings, saveSettings } from "$lib/features/settings/store";
@@ -154,6 +157,11 @@
   });
 
   let updateCheckTimer: ReturnType<typeof setTimeout> | null = null;
+  // Flush pending storage saves on close, then destroy the window. The flag
+  // stops destroy() from re-entering our own preventDefault into a loop.
+  let unlistenCloseRequested: UnlistenFn | null = null;
+  let closeHandlerDisposed = false;
+  let isClosing = false;
   let appVersion = $state("");
   let loadingAdapterFor = $state<string | null>(null);
   const visiblePriming = createVisiblePriming(loader);
@@ -573,6 +581,31 @@
 
     updateCheckTimer = setTimeout(() => { void updates.startBackgroundUpdateFlow(); }, 3500);
     secureScreen.handleAppMounted();
+
+    void getCurrentWindow()
+      .onCloseRequested(async (event) => {
+        if (isClosing) return;
+        isClosing = true;
+        event.preventDefault();
+        try {
+          await flushPendingSaves();
+        } catch (e) {
+          console.error("Failed to flush pending saves on close:", e);
+        }
+        await getCurrentWindow().destroy();
+      })
+      .then((unlisten) => {
+        // The component may have been destroyed before the listener resolved.
+        if (closeHandlerDisposed) {
+          unlisten();
+        } else {
+          unlistenCloseRequested = unlisten;
+        }
+      })
+      .catch((e) => {
+        console.error("Failed to register close handler:", e);
+      });
+
     history.replaceState({ tab: shell.activeTab, folderId: null, showSettings: false }, "");
     window.addEventListener("resize", grid.handleResize);
     document.addEventListener("mousemove", drag.handleDocMouseMove);
@@ -588,6 +621,9 @@
   });
 
   onDestroy(() => {
+    closeHandlerDisposed = true;
+    unlistenCloseRequested?.();
+    unlistenCloseRequested = null;
     deepLink.stop();
     visiblePriming.destroy();
     if (updateCheckTimer) {

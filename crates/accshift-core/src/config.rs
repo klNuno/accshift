@@ -404,6 +404,24 @@ fn config_cache() -> &'static std::sync::Mutex<Option<CachedConfig>> {
     CACHE.get_or_init(|| std::sync::Mutex::new(None))
 }
 
+/// Process-global poison flag: set when `load_config` finds the local config
+/// file present on disk but unreadable/unparseable (and no valid `.bak` to
+/// recover from). The local file holds the only copy of the Steam API key,
+/// Roblox cookies and path overrides; treating a transient read failure as
+/// "empty defaults" and then saving would silently wipe those secrets. While
+/// poisoned, every local-config write is refused so a corrupt-but-present file
+/// is left untouched until the next successful read clears the flag.
+static LOCAL_CONFIG_UNREADABLE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn set_local_config_unreadable(unreadable: bool) {
+    LOCAL_CONFIG_UNREADABLE.store(unreadable, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn local_config_unreadable() -> bool {
+    LOCAL_CONFIG_UNREADABLE.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 fn file_sig(path: &std::path::Path) -> FileSig {
     let meta = fs::metadata(path).ok()?;
     Some((meta.modified().ok()?, meta.len()))
@@ -446,16 +464,26 @@ pub fn load_config(app_handle: &dyn AppContext) -> AppConfig {
             );
             None
         });
-    let local = crate::storage::read_json_if_exists::<AppConfig>(&local_path).unwrap_or_else(|e| {
-        let _ = crate::logging::append_app_log(
-            app_handle,
-            "error",
-            "config.load",
-            "Local config corrupted, using defaults",
-            Some(&e),
-        );
-        None
-    });
+    // Distinguish "file absent" (Ok(None), defaults are fine) from "file
+    // present but unreadable" (Err). The latter poisons local writes so a
+    // later save can't clobber the only copy of the secrets with defaults.
+    let local = match crate::storage::read_json_if_exists::<AppConfig>(&local_path) {
+        Ok(local) => {
+            set_local_config_unreadable(false);
+            local
+        }
+        Err(e) => {
+            set_local_config_unreadable(true);
+            let _ = crate::logging::append_app_log(
+                app_handle,
+                "error",
+                "config.load",
+                "Local config unreadable, refusing to overwrite it to avoid wiping secrets",
+                Some(&e),
+            );
+            None
+        }
+    };
 
     let merged = match (portable, local) {
         (Some(portable), local) => merge_split_configs(portable, local.unwrap_or_default()),
@@ -501,7 +529,30 @@ fn save_config_unlocked(app_handle: &dyn AppContext, config: &AppConfig) -> Resu
     let portable_path = crate::storage::portable_config_path(app_handle)?;
     let local_path = crate::storage::local_config_path(app_handle)?;
 
+    // Portable holds no secrets, always safe to persist.
     crate::storage::write_json_atomic(&portable_path, &portable)?;
+
+    // The last local read failed on an existing file: writing now would
+    // overwrite the user's Steam API key / Roblox cookies / path overrides
+    // with the empty defaults that the failed read produced. Refuse until a
+    // successful read clears the poison flag.
+    if local_config_unreadable() {
+        let message = format!(
+            "Refusing to write local config: the existing file at {} could not be read on the \
+             last load (it may be corrupt or locked). Writing now would wipe stored secrets. \
+             Fix or remove the file and restart.",
+            local_path.display()
+        );
+        let _ = crate::logging::append_app_log(
+            app_handle,
+            "error",
+            "config.save",
+            "Refused to overwrite unreadable local config to avoid wiping secrets",
+            Some(&message),
+        );
+        return Err(message);
+    }
+
     crate::storage::write_json_atomic(&local_path, &local)?;
     let details = serde_json::json!({
         "portablePath": portable_path,
@@ -757,6 +808,98 @@ fn merge_split_configs(portable: AppConfig, local: AppConfig) -> AppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    struct TempCtx {
+        root: std::path::PathBuf,
+    }
+
+    impl AppContext for TempCtx {
+        fn app_config_dir(&self) -> Result<std::path::PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_data_dir(&self) -> Result<std::path::PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_local_data_dir(&self) -> Result<std::path::PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_cache_dir(&self) -> Result<std::path::PathBuf, String> {
+            Ok(self.root.clone())
+        }
+    }
+
+    fn tmp_ctx(tag: &str) -> Arc<TempCtx> {
+        let root = std::env::temp_dir().join(format!(
+            "accshift-config-test-{}-{}-{:?}",
+            tag,
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        Arc::new(TempCtx { root })
+    }
+
+    #[test]
+    fn save_refuses_to_overwrite_unreadable_local_config() {
+        let ctx = tmp_ctx("unreadable-local");
+
+        // An existing local config holding the only copy of the Steam API key.
+        let local_path = crate::storage::local_config_path(&*ctx).unwrap();
+        std::fs::create_dir_all(local_path.parent().unwrap()).unwrap();
+        let corrupt = b"{ this is not valid json";
+        std::fs::write(&local_path, corrupt).unwrap();
+
+        // A read of the existing-but-corrupt file must poison local writes.
+        let _ = load_config(&*ctx);
+        assert!(
+            local_config_unreadable(),
+            "corrupt existing local config should poison local writes"
+        );
+
+        // The next save must refuse to touch the local file so the secrets it
+        // (still) holds are not wiped by the empty defaults the read produced.
+        let cfg = AppConfig::default();
+        let result = save_config(&*ctx, &cfg);
+        assert!(result.is_err(), "save must refuse while local is poisoned");
+
+        let after = std::fs::read(&local_path).unwrap();
+        assert_eq!(
+            after, corrupt,
+            "corrupt local config must be left byte-for-byte intact"
+        );
+
+        // Portable writes keep working even while local is poisoned.
+        let portable_path = crate::storage::portable_config_path(&*ctx).unwrap();
+        assert!(
+            portable_path.exists(),
+            "portable config should still be written"
+        );
+
+        // A subsequent successful local read clears the poison flag, and the
+        // following save is allowed again.
+        let valid = local_config(&AppConfig {
+            steam: SteamConfig {
+                api_key: "kept-secret".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        crate::storage::write_json_atomic(&local_path, &valid).unwrap();
+        let loaded = load_config(&*ctx);
+        assert!(
+            !local_config_unreadable(),
+            "successful local read should clear the poison flag"
+        );
+        assert_eq!(loaded.steam.api_key, "kept-secret");
+        assert!(
+            save_config(&*ctx, &loaded).is_ok(),
+            "save should succeed once the local read recovers"
+        );
+
+        let _ = std::fs::remove_dir_all(&ctx.root);
+    }
 
     #[test]
     fn normalize_config_migrates_legacy_steam_fields() {

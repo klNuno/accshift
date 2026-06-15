@@ -157,6 +157,32 @@ function scheduleSave(storeId: ClientStoreId, delayMs = 120) {
   saveTimers.set(storeId, timer);
 }
 
+/**
+ * Cancel every pending debounced save and persist those stores immediately,
+ * awaiting all of them. Call this before the window closes so a fast quit
+ * doesn't drop folders/labels/colors/notes still sitting in the 120ms debounce.
+ */
+export async function flushPendingSaves(): Promise<void> {
+  const pending = [...saveTimers.keys()];
+  if (pending.length === 0) return;
+
+  for (const storeId of pending) {
+    const timer = saveTimers.get(storeId);
+    if (timer) {
+      clearTimeout(timer);
+    }
+    saveTimers.delete(storeId);
+  }
+
+  await Promise.all(
+    pending.map((storeId) =>
+      persistStore(storeId).catch((reason) => {
+        console.error(`Failed to flush store ${storeId}:`, reason);
+      }),
+    ),
+  );
+}
+
 function diffManifests(previous: StorageManifest, next: StorageManifest): string[] {
   const allKeys = new Set<string>([
     ...Object.keys(previous.stores ?? {}),

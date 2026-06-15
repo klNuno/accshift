@@ -168,6 +168,18 @@ pub fn decrypt_bytes(data: &[u8]) -> Result<Vec<u8>, AppError> {
     Ok(result)
 }
 
+/// Windows stores the DPAPI ciphertext inline in the account JSON, there is no
+/// keyring entry to remove. Provided for cross-platform parity with the
+/// keyring backends; nothing to do.
+pub fn delete_secret(_token: &str) -> Result<(), AppError> {
+    Ok(())
+}
+
+/// See [`delete_secret`]. Inline DPAPI bytes have no external entry to remove.
+pub fn delete_bytes(_token: &[u8]) -> Result<(), AppError> {
+    Ok(())
+}
+
 fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
@@ -212,7 +224,19 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
         return Err(());
     }
     let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
-    for chunk in bytes.chunks(4) {
+    let chunk_count = bytes.len() / 4;
+    for (idx, chunk) in bytes.chunks(4).enumerate() {
+        // Padding is only legal in the very last 4-byte chunk.
+        let is_last = idx + 1 == chunk_count;
+        if !is_last && (chunk[2] == b'=' || chunk[3] == b'=') {
+            return Err(());
+        }
+        // Reject malformed padding like "AB=C": once a '=' appears at [2],
+        // [3] must also be '='. A bare '=' at [2] with a valid char at [3]
+        // is invalid base64.
+        if chunk[2] == b'=' && chunk[3] != b'=' {
+            return Err(());
+        }
         let a = val(chunk[0])?;
         let b = val(chunk[1])?;
         let c = if chunk[2] == b'=' { 0 } else { val(chunk[2])? };
@@ -419,13 +443,15 @@ pub fn select_folder(title: &str) -> Result<String, AppError> {
         .args([
             "-NoProfile",
             "-Command",
-            "$shell = New-Object -ComObject Shell.Application; $folder = $shell.BrowseForFolder(0, $env:ACCSHIFT_FOLDER_TITLE, 0, 0); if ($folder) { $folder.Self.Path }",
+            "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $shell = New-Object -ComObject Shell.Application; $folder = $shell.BrowseForFolder(0, $env:ACCSHIFT_FOLDER_TITLE, 0, 0); if ($folder) { $folder.Self.Path }",
         ])
         .output()
         .map_err(|e| AppError::FolderOpen(e.to_string()))?;
     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if path.is_empty() {
-        return Err(AppError::FolderOpen("Folder selection canceled".into()));
+        // No selection: the user cancelled the dialog. Signal cancel so the
+        // caller keeps any previously configured path instead of clearing it.
+        return Err(AppError::Cancelled);
     }
     Ok(path)
 }
@@ -437,13 +463,15 @@ pub fn select_file(title: &str, filter: &str) -> Result<String, AppError> {
         .args([
             "-NoProfile",
             "-Command",
-            "Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.OpenFileDialog; $dialog.Title = $env:ACCSHIFT_FILE_TITLE; $dialog.Filter = $env:ACCSHIFT_FILE_FILTER; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $dialog.FileName }",
+            "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.OpenFileDialog; $dialog.Title = $env:ACCSHIFT_FILE_TITLE; $dialog.Filter = $env:ACCSHIFT_FILE_FILTER; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $dialog.FileName }",
         ])
         .output()
         .map_err(|e| AppError::FolderOpen(e.to_string()))?;
     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if path.is_empty() {
-        return Err(AppError::FolderOpen("File selection canceled".into()));
+        // No selection: the user cancelled the dialog. Signal cancel so the
+        // caller keeps any previously configured path instead of clearing it.
+        return Err(AppError::Cancelled);
     }
     Ok(path)
 }
@@ -482,5 +510,45 @@ mod quoting_tests {
     #[test]
     fn empty_token_stays_visible() {
         assert_eq!(q(&[""]), "\"\"");
+    }
+}
+
+#[cfg(test)]
+mod base64_tests {
+    use super::base64_decode;
+
+    #[test]
+    fn decodes_plain_input() {
+        // "Man" -> "TWFu"
+        assert_eq!(base64_decode("TWFu").unwrap(), b"Man");
+    }
+
+    #[test]
+    fn decodes_single_pad() {
+        // "Ma" -> "TWE="
+        assert_eq!(base64_decode("TWE=").unwrap(), b"Ma");
+    }
+
+    #[test]
+    fn decodes_double_pad() {
+        // "M" -> "TQ=="
+        assert_eq!(base64_decode("TQ==").unwrap(), b"M");
+    }
+
+    #[test]
+    fn rejects_malformed_padding_pad_at_third_only() {
+        // '=' at index 2 but a valid char at index 3 is not legal base64.
+        assert!(base64_decode("AB=C").is_err());
+    }
+
+    #[test]
+    fn rejects_padding_in_non_final_chunk() {
+        // Padding may only appear in the very last 4-byte chunk.
+        assert!(base64_decode("TQ==TWFu").is_err());
+    }
+
+    #[test]
+    fn rejects_non_multiple_of_four() {
+        assert!(base64_decode("TWF").is_err());
     }
 }

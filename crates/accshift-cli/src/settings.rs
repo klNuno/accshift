@@ -13,6 +13,14 @@ use std::fs;
 pub struct AppSettings {
     #[serde(default, rename = "platformSettings")]
     pub platform_settings: PlatformSettings,
+    /// GUI PIN lock toggle. When true, the CLI must verify the PIN before
+    /// switching, mirroring the GUI lock (see `src/lib/shared/pin.ts`).
+    #[serde(default, rename = "pinEnabled")]
+    pub pin_enabled: bool,
+    /// PBKDF2 hash produced by the GUI, in `salt:hash` hex form (legacy plain
+    /// SHA-256 hex is also accepted). Empty when no PIN is set.
+    #[serde(default, rename = "pinHash")]
+    pub pin_hash: String,
 }
 
 #[derive(Debug, Deserialize, Default)]

@@ -243,6 +243,50 @@ fn collect_unique_accounts(
     accounts
 }
 
+/// Parse the comma-separated SavedAccountNames list with quote-aware CSV
+/// semantics. A field wrapped in double quotes may contain literal commas, and
+/// an internal quote is escaped by doubling it (`""`). Unquoted lists (the
+/// common case) parse exactly as a plain `split(',')` would, so this stays
+/// backward compatible with configs written by the launcher or older builds.
+fn parse_saved_account_names(raw: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    let mut in_quotes = false;
+    let mut chars = raw.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '"' if in_quotes => {
+                // A doubled quote inside a quoted field is a literal quote.
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    field.push('"');
+                } else {
+                    in_quotes = false;
+                }
+            }
+            '"' => in_quotes = true,
+            ',' if !in_quotes => {
+                fields.push(std::mem::take(&mut field));
+            }
+            other => field.push(other),
+        }
+    }
+    fields.push(field);
+    fields
+}
+
+/// Serialize an account name for the comma-separated SavedAccountNames list.
+/// Fields containing a comma or a double quote are wrapped in double quotes
+/// with internal quotes doubled, mirroring `parse_saved_account_names`.
+fn encode_saved_account_name(name: &str) -> String {
+    if name.contains(',') || name.contains('"') {
+        format!("\"{}\"", name.replace('"', "\"\""))
+    } else {
+        name.to_string()
+    }
+}
+
 fn extract_saved_account_names(value: &Value) -> Vec<String> {
     let source = value
         .get("Client")
@@ -253,7 +297,7 @@ fn extract_saved_account_names(value: &Value) -> Vec<String> {
 
     match source {
         Some(Value::String(raw)) => {
-            collect_unique_accounts(raw.split(',').map(String::from), &mut seen)
+            collect_unique_accounts(parse_saved_account_names(raw).into_iter(), &mut seen)
         }
         Some(Value::Array(items)) => collect_unique_accounts(
             items
@@ -427,10 +471,12 @@ fn write_saved_accounts(accounts: &[String]) -> Result<(), String> {
     let client = client_entry
         .as_object_mut()
         .ok_or_else(|| "Battle.net client config is invalid".to_string())?;
-    client.insert(
-        "SavedAccountNames".to_string(),
-        Value::String(accounts.join(",")),
-    );
+    let serialized = accounts
+        .iter()
+        .map(|name| encode_saved_account_name(name))
+        .collect::<Vec<_>>()
+        .join(",");
+    client.insert("SavedAccountNames".to_string(), Value::String(serialized));
 
     if config_path.exists() {
         let backup_path = config_path.with_extension("config.backup");
@@ -471,8 +517,13 @@ fn kill_battle_net() -> Result<(), String> {
 
 fn normalize_registry_path(raw: &str) -> String {
     let mut value = raw.trim().trim_matches('"').to_string();
-    if let Some((head, _)) = value.split_once(",") {
-        value = head.trim().trim_matches('"').to_string();
+    // Registry icon strings can carry a trailing icon-index argument
+    // (`...\Battle.net.exe,0`). Only strip that suffix, never an interior
+    // comma: install paths such as `C:\Jeux, Divers\Battle.net` are legal.
+    if let Some((head, tail)) = value.rsplit_once(',') {
+        if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) {
+            value = head.trim().trim_matches('"').to_string();
+        }
     }
     value
 }
@@ -956,7 +1007,10 @@ impl PlatformService for BattleNetService {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_unique_accounts, extract_saved_account_names, normalize_account_key};
+    use super::{
+        collect_unique_accounts, encode_saved_account_name, extract_saved_account_names,
+        normalize_account_key, normalize_registry_path, parse_saved_account_names,
+    };
     use serde_json::json;
     use std::collections::HashSet;
 
@@ -1066,5 +1120,87 @@ mod tests {
     #[test]
     fn normalize_account_key_trims_and_lowercases() {
         assert_eq!(normalize_account_key("  Foo@BAR.com  "), "foo@bar.com");
+    }
+
+    // -----------------------------------------------------------------------
+    // SavedAccountNames quote-aware CSV round-trip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parses_unquoted_saved_account_list() {
+        // Backward compatibility: plain comma-separated lists behave like split.
+        let parsed = parse_saved_account_names("one@example.com,two@example.com");
+        assert_eq!(parsed, vec!["one@example.com", "two@example.com"]);
+    }
+
+    #[test]
+    fn quoted_comma_email_survives_parse() {
+        // An email whose local part contains a quoted comma is stored as a
+        // single CSV-quoted field (`"""a,b""@x.com"`), so its embedded comma
+        // must not split it into two accounts.
+        let stored = encode_saved_account_name("\"a,b\"@x.com");
+        let line = format!("{stored},plain@example.com");
+        let parsed = parse_saved_account_names(&line);
+        assert_eq!(parsed, vec!["\"a,b\"@x.com", "plain@example.com"]);
+    }
+
+    #[test]
+    fn extracts_quoted_comma_email_from_string_field() {
+        // Field stored with full CSV quoting must come back as one account.
+        let stored = encode_saved_account_name("\"a,b\"@x.com");
+        let value = json!({
+            "Client": {
+                "SavedAccountNames": format!("{stored},plain@example.com")
+            }
+        });
+
+        let accounts = extract_saved_account_names(&value);
+        assert_eq!(accounts, vec!["\"a,b\"@x.com", "plain@example.com"]);
+    }
+
+    #[test]
+    fn encodes_field_with_comma_and_quote() {
+        assert_eq!(encode_saved_account_name("plain@example.com"), "plain@example.com");
+        assert_eq!(encode_saved_account_name("\"a,b\"@x.com"), "\"\"\"a,b\"\"@x.com\"");
+        assert_eq!(encode_saved_account_name("has,comma"), "\"has,comma\"");
+    }
+
+    #[test]
+    fn saved_account_names_round_trip_with_quoted_comma() {
+        // Encode then parse must yield the original field intact.
+        let original = "\"a,b\"@x.com";
+        let encoded = encode_saved_account_name(original);
+        let line = [encoded, encode_saved_account_name("plain@example.com")].join(",");
+        let parsed = parse_saved_account_names(&line);
+        assert_eq!(parsed, vec![original.to_string(), "plain@example.com".to_string()]);
+    }
+
+    // -----------------------------------------------------------------------
+    // normalize_registry_path
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn normalize_registry_path_strips_trailing_icon_index() {
+        assert_eq!(
+            normalize_registry_path("\"C:\\Program Files (x86)\\Battle.net\\Battle.net.exe\",0"),
+            "C:\\Program Files (x86)\\Battle.net\\Battle.net.exe"
+        );
+    }
+
+    #[test]
+    fn normalize_registry_path_keeps_comma_in_install_path() {
+        // A comma inside the directory name is part of the path, not an icon arg.
+        assert_eq!(
+            normalize_registry_path("C:\\Jeux, Divers\\Battle.net"),
+            "C:\\Jeux, Divers\\Battle.net"
+        );
+    }
+
+    #[test]
+    fn normalize_registry_path_keeps_comma_path_with_icon_index() {
+        assert_eq!(
+            normalize_registry_path("\"C:\\Jeux, Divers\\Battle.net\\Battle.net.exe\",3"),
+            "C:\\Jeux, Divers\\Battle.net\\Battle.net.exe"
+        );
     }
 }

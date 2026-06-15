@@ -1,4 +1,5 @@
 use crate::config::{self, UbisoftAccountConfig};
+use crate::os;
 use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
 use crate::{AppContext, AppCtx};
 use serde::Serialize;
@@ -6,7 +7,7 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
@@ -20,6 +21,13 @@ const UBISOFT_PROCESS_NAMES: &[&str] =
 const UBISOFT_EXECUTABLE_NAME: &str = "UbisoftConnect.exe";
 const UBISOFT_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
 const AUTH_FILES: &[&str] = &["user.dat", "ConnectSecureStorage.dat"];
+/// How long Ubisoft needs to flush auth files after login before we trust them.
+const POST_KILL_SETTLE_MS: u64 = 500;
+/// An auth file written more than this long ago is considered stale: it belongs
+/// to a previous session, not the login that just completed during setup.
+const FRESH_AUTH_WINDOW_MS: u64 = 5 * 60 * 1000;
+/// Magic header identifying DPAPI/keyring-encrypted snapshot files.
+const ENCRYPTED_HEADER: &[u8] = b"ACCS";
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -177,6 +185,53 @@ fn auth_cache_dir(app_handle: &dyn AppContext, uuid: &str) -> Result<PathBuf, St
     Ok(base)
 }
 
+/// Copy a file and encrypt its contents (DPAPI on Windows, keyring token
+/// elsewhere). The on-disk snapshot is no longer plaintext auth material.
+fn encrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
+    let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
+    let encrypted = os::encrypt_bytes(&data)
+        .map_err(|e| format!("Could not encrypt {}: {e}", source.display()))?;
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
+    }
+    let mut out = Vec::with_capacity(ENCRYPTED_HEADER.len() + encrypted.len());
+    out.extend_from_slice(ENCRYPTED_HEADER);
+    out.extend_from_slice(&encrypted);
+    fs::write(dest, &out).map_err(|e| format!("Could not write {}: {e}", dest.display()))
+}
+
+/// Copy a file, decrypting if it carries the header. Legacy plaintext snapshots
+/// (captured before encryption landed) pass through unchanged.
+fn decrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
+    let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
+    let content = if data.starts_with(ENCRYPTED_HEADER) {
+        os::decrypt_bytes(&data[ENCRYPTED_HEADER.len()..])
+            .map_err(|e| format!("Could not decrypt {}: {e}", source.display()))?
+    } else {
+        data
+    };
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
+    }
+    fs::write(dest, &content).map_err(|e| format!("Could not write {}: {e}", dest.display()))
+}
+
+/// Free any keyring entry backing an encrypted snapshot file before deleting it.
+/// On Windows the header carries DPAPI ciphertext (no external entry to free),
+/// so the delete is a no-op; on Linux / macOS the payload is a keyring token.
+fn delete_snapshot_secret(path: &Path) {
+    let Ok(data) = fs::read(path) else {
+        return;
+    };
+    if !data.starts_with(ENCRYPTED_HEADER) {
+        return;
+    }
+    let token = &data[ENCRYPTED_HEADER.len()..];
+    let _ = os::delete_bytes(token);
+}
+
 fn save_auth_snapshot(app_handle: &dyn AppContext, uuid: &str) -> Result<(), String> {
     let local_dir = ubisoft_local_data_dir()?;
     let cache_dir = auth_cache_dir(app_handle, uuid)?;
@@ -186,8 +241,7 @@ fn save_auth_snapshot(app_handle: &dyn AppContext, uuid: &str) -> Result<(), Str
         let source = local_dir.join(file_name);
         if source.exists() {
             let dest = cache_dir.join(file_name);
-            fs::copy(&source, &dest)
-                .map_err(|e| format!("Could not copy {} to cache: {e}", source.display()))?;
+            encrypted_copy_file(&source, &dest)?;
         }
     }
 
@@ -208,12 +262,49 @@ fn restore_auth_snapshot(app_handle: &dyn AppContext, uuid: &str) -> Result<(), 
         let source = cache_dir.join(file_name);
         if source.exists() {
             let dest = local_dir.join(file_name);
-            fs::copy(&source, &dest)
-                .map_err(|e| format!("Could not restore {} from cache: {e}", source.display()))?;
+            decrypted_copy_file(&source, &dest)?;
         }
     }
 
     Ok(())
+}
+
+/// True when at least one live auth file was modified within the freshness
+/// window, i.e. the login that just happened actually wrote auth material.
+fn live_auth_files_fresh() -> bool {
+    let Ok(local_dir) = ubisoft_local_data_dir() else {
+        return false;
+    };
+    let now = super::now_unix_ms();
+    AUTH_FILES.iter().any(|file_name| {
+        let path = local_dir.join(file_name);
+        let Ok(metadata) = fs::metadata(&path) else {
+            return false;
+        };
+        if metadata.len() == 0 {
+            return false;
+        }
+        let Ok(modified) = metadata.modified() else {
+            return false;
+        };
+        let modified_ms = modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        now.saturating_sub(modified_ms) <= FRESH_AUTH_WINDOW_MS
+    })
+}
+
+/// True when the saved snapshot for `uuid` holds at least one non-empty file.
+fn snapshot_non_empty(app_handle: &dyn AppContext, uuid: &str) -> bool {
+    let Ok(cache_dir) = auth_cache_dir(app_handle, uuid) else {
+        return false;
+    };
+    AUTH_FILES.iter().any(|file_name| {
+        fs::metadata(cache_dir.join(file_name))
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+    })
 }
 
 fn has_auth_snapshot(app_handle: &dyn AppContext, uuid: &str) -> bool {
@@ -299,8 +390,9 @@ fn current_account_from_logs(app_handle: &dyn AppContext) -> Option<String> {
         return None;
     }
 
-    // The log file might be locked by Ubisoft. Try to read with shared access.
-    let content = read_file_shared(&log_path)?;
+    // The log file can be large and is usually locked by Ubisoft. Read only the
+    // tail with shared access; the most recent login is near the end.
+    let content = read_log_tail_shared(&log_path)?;
 
     // Search in reverse for the most recent login
     // Pattern: "User: <uuid>" from AccountStartupUser.cpp
@@ -347,27 +439,40 @@ fn extract_uuid_from_line(line: &str) -> Option<String> {
     None
 }
 
-fn read_file_shared(path: &PathBuf) -> Option<String> {
+/// Number of bytes to read from the tail of the launcher log. The most recent
+/// login sits near the end of the file, so reading the whole multi-megabyte log
+/// just to scan the last few lines is wasteful.
+const LOG_TAIL_BYTES: u64 = 64 * 1024;
+
+/// Open the launcher log (with shared access on Windows, since Ubisoft keeps it
+/// locked) and read only its last `LOG_TAIL_BYTES`. Returns the tail decoded
+/// lossily so a UTF-8 split at the cut point can't fail the read. Files smaller
+/// than the cap are returned whole, so behavior is unchanged for small logs.
+fn read_log_tail_shared(path: &PathBuf) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+
     #[cfg(target_os = "windows")]
-    {
+    let mut file = {
         use std::os::windows::fs::OpenOptionsExt;
         // FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
-        let file = std::fs::OpenOptions::new()
+        std::fs::OpenOptions::new()
             .read(true)
             .share_mode(0x00000001 | 0x00000002 | 0x00000004)
             .open(path)
-            .ok()?;
-        use std::io::Read;
-        let mut content = String::new();
-        std::io::BufReader::new(file)
-            .read_to_string(&mut content)
-            .ok()?;
-        Some(content)
-    }
+            .ok()?
+    };
     #[cfg(not(target_os = "windows"))]
-    {
-        fs::read_to_string(path).ok()
+    let mut file = std::fs::File::open(path).ok()?;
+
+    let len = file.metadata().ok()?.len();
+    let start = len.saturating_sub(LOG_TAIL_BYTES);
+    if start > 0 {
+        file.seek(SeekFrom::Start(start)).ok()?;
     }
+
+    let mut buffer = Vec::with_capacity(LOG_TAIL_BYTES.min(len) as usize);
+    file.read_to_end(&mut buffer).ok()?;
+    Some(String::from_utf8_lossy(&buffer).into_owned())
 }
 
 // ---------------------------------------------------------------------------
@@ -414,11 +519,9 @@ fn validate_uuid(uuid: &str) -> Result<String, String> {
 }
 
 fn read_accounts(app_handle: &dyn AppContext) -> Result<Vec<UbisoftAccount>, String> {
-    // Mark current account as recently used
-    if let Some(current_uuid) = current_account_from_logs(app_handle) {
-        let _ = remember_account_usage(app_handle, &current_uuid);
-    }
-
+    // Read path stays side-effect free: usage is recorded on switch and setup,
+    // not when merely listing accounts. Writing config here would mutate state
+    // on every poll and race concurrent reads.
     let cfg = config::load_config(app_handle);
     let forgotten: HashSet<String> = cfg
         .ubisoft
@@ -524,8 +627,12 @@ fn forget_account_metadata(app_handle: &dyn AppContext, uuid: &str) -> Result<()
         }
     })?;
 
-    // Also remove cached auth snapshot
+    // Also remove cached auth snapshot. Free any keyring entries the snapshot
+    // files point at first, otherwise removing the dir would orphan them.
     if let Ok(cache_dir) = auth_cache_dir(app_handle, uuid) {
+        for file_name in AUTH_FILES {
+            delete_snapshot_secret(&cache_dir.join(file_name));
+        }
         let _ = fs::remove_dir_all(&cache_dir);
     }
 
@@ -668,6 +775,49 @@ pub fn begin_account_setup(app_handle: &dyn AppContext) -> Result<SetupStatus, S
     ))
 }
 
+/// Promote a freshly detected account to a saved snapshot, but only once the
+/// login actually wrote auth material. A new UUID shows up in the log / spool
+/// the instant login starts, well before Ubisoft flushes `user.dat` and
+/// `ConnectSecureStorage.dat` to disk. Flipping to "ready" then would capture
+/// an empty or stale snapshot that opens the login page on restore.
+///
+/// We require the live auth files to be fresh, quit Ubisoft so any in-memory
+/// tokens are flushed, then encrypt the snapshot and confirm it is non-empty.
+/// Returns the detected setup status on success, or `None` to keep polling.
+fn capture_setup_account(
+    app_handle: &dyn AppContext,
+    setup_id: &str,
+    uuid: &str,
+) -> Option<SetupStatus> {
+    if !live_auth_files_fresh() {
+        return None;
+    }
+
+    // Quit and settle so any in-memory auth tokens land on disk before capture.
+    kill_ubisoft();
+    std::thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
+
+    if save_auth_snapshot(app_handle, uuid).is_err() {
+        return None;
+    }
+    if !snapshot_non_empty(app_handle, uuid) {
+        return None;
+    }
+
+    let _ = remember_account_usage(app_handle, uuid);
+    if let Ok(mut jobs) = setup_jobs().lock() {
+        jobs.remove(setup_id);
+    }
+
+    Some(super::make_setup_status(
+        setup_id,
+        "ready",
+        uuid.to_string(),
+        uuid.to_string(),
+        "",
+    ))
+}
+
 pub fn get_account_setup_status(
     app_handle: &dyn AppContext,
     setup_id: &str,
@@ -688,21 +838,9 @@ pub fn get_account_setup_status(
     if let Some(current_uuid) = current_account_from_logs(app_handle) {
         let key = normalize_uuid(&current_uuid);
         if !job.known_uuids.contains(&key) {
-            // New account detected, save its auth snapshot
-            let _ = save_auth_snapshot(app_handle, &current_uuid);
-            let _ = remember_account_usage(app_handle, &current_uuid);
-
-            if let Ok(mut jobs) = setup_jobs().lock() {
-                jobs.remove(setup_id);
+            if let Some(status) = capture_setup_account(app_handle, setup_id, &current_uuid) {
+                return Ok(status);
             }
-
-            return Ok(super::make_setup_status(
-                setup_id,
-                "ready",
-                current_uuid.clone(),
-                current_uuid,
-                "",
-            ));
         }
     }
 
@@ -711,21 +849,9 @@ pub fn get_account_setup_status(
     for uuid in &current_uuids {
         let key = normalize_uuid(uuid);
         if !job.known_uuids.contains(&key) {
-            // New UUID found on filesystem
-            let _ = save_auth_snapshot(app_handle, uuid);
-            let _ = remember_account_usage(app_handle, uuid);
-
-            if let Ok(mut jobs) = setup_jobs().lock() {
-                jobs.remove(setup_id);
+            if let Some(status) = capture_setup_account(app_handle, setup_id, uuid) {
+                return Ok(status);
             }
-
-            return Ok(super::make_setup_status(
-                setup_id,
-                "ready",
-                uuid.clone(),
-                uuid.clone(),
-                "",
-            ));
         }
     }
 
@@ -1008,5 +1134,96 @@ mod tests {
         // The fallback scan requires "User" to appear within 10 chars before the UUID
         let line = "xxxxxxxxxxxxxxxxxxxxxxxxxxx a1b2c3d4-e5f6-7890-abcd-ef1234567890";
         assert_eq!(extract_uuid_from_line(line), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // read_log_tail_shared
+    // -----------------------------------------------------------------------
+
+    fn temp_path(tag: &str) -> PathBuf {
+        let unique = format!(
+            "accshift-ubisoft-{tag}-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        std::env::temp_dir().join(unique)
+    }
+
+    #[test]
+    fn tail_returns_whole_small_file() {
+        let path = temp_path("small");
+        let content = "first line\nUser: a9da419c-1234-5678-9abc-def012345678\nlast line";
+        fs::write(&path, content).unwrap();
+
+        let tail = read_log_tail_shared(&path).unwrap();
+        assert_eq!(tail, content);
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn tail_reads_only_end_of_large_file() {
+        let path = temp_path("large");
+        // Write well over LOG_TAIL_BYTES of filler, then a sentinel at the very end.
+        let filler = "x".repeat((LOG_TAIL_BYTES as usize) + 4096);
+        let sentinel = "TAIL-SENTINEL-LINE";
+        fs::write(&path, format!("{filler}\n{sentinel}")).unwrap();
+
+        let tail = read_log_tail_shared(&path).unwrap();
+        // Only the last ~64KB should come back, not the full file.
+        assert!(tail.len() <= (LOG_TAIL_BYTES as usize) + 1);
+        assert!(tail.ends_with(sentinel));
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn tail_finds_recent_login_near_end() {
+        let path = temp_path("login");
+        let mut content = "x".repeat((LOG_TAIL_BYTES as usize) + 1024);
+        content.push_str(
+            "\nAccountStartupUser.cpp - User: deadbeef-0000-1111-2222-333344445555 logged in",
+        );
+        fs::write(&path, &content).unwrap();
+
+        let tail = read_log_tail_shared(&path).unwrap();
+        let found = tail
+            .lines()
+            .rev()
+            .filter(|l| l.contains("AccountStartupUser.cpp"))
+            .find_map(extract_uuid_from_line);
+        assert_eq!(found, Some("deadbeef-0000-1111-2222-333344445555".to_string()));
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn tail_missing_file_returns_none() {
+        let path = temp_path("missing");
+        let _ = fs::remove_file(&path);
+        assert!(read_log_tail_shared(&path).is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // decrypted_copy_file: legacy plaintext passthrough
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn decrypt_copy_passes_through_legacy_plaintext() {
+        // A snapshot captured before encryption landed has no ACCS header and
+        // must be restored verbatim, without going through decrypt_bytes.
+        let src = temp_path("legacy-src");
+        let dest = temp_path("legacy-dest");
+        let payload = b"plaintext user.dat contents";
+        fs::write(&src, payload).unwrap();
+
+        decrypted_copy_file(&src, &dest).unwrap();
+        assert_eq!(fs::read(&dest).unwrap(), payload);
+
+        let _ = fs::remove_file(&src);
+        let _ = fs::remove_file(&dest);
     }
 }

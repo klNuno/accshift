@@ -184,8 +184,10 @@ fn picker_supported() -> AppError {
 fn run_picker(command: &str, args: &[&str]) -> Option<Result<String, AppError>> {
     let output = Command::new(command).args(args).output().ok()?;
     if !output.status.success() {
-        // Non-zero status usually means the user cancelled — surface as empty.
-        return Some(Ok(String::new()));
+        // Non-zero status means the user cancelled. Returning an empty string
+        // here would be read downstream as "clear the custom path", so signal
+        // the cancellation explicitly and let the caller leave the path alone.
+        return Some(Err(AppError::Cancelled));
     }
     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
     Some(Ok(path))

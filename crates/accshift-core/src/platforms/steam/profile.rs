@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+/// Taille max du XML de profil qu'on accepte de lire (512 KB).
+/// Au-dela on coupe : evite l'OOM sur un flux malveillant ou infini.
+const MAX_PROFILE_BODY: usize = 512 * 1024;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ProfileInfo {
     pub avatar_url: Option<String>,
@@ -23,7 +27,7 @@ pub async fn fetch_profile_info(client: &reqwest::Client, steam_id: &str) -> Opt
     };
 
     let status = response.status();
-    let body = match response.text().await {
+    let body = match read_body_capped(response, MAX_PROFILE_BODY).await {
         Ok(body) => body,
         Err(_) => return None,
     };
@@ -35,11 +39,18 @@ pub async fn fetch_profile_info(client: &reqwest::Client, steam_id: &str) -> Opt
     let mut avatar_url = extract_cdata(&body, "avatarFull");
     let mut display_name = extract_cdata(&body, "steamID");
 
-    let vac_banned = extract_text(&body, "vacBanned")
+    // Les tags de ban (<vacBanned>/<tradeBanState>) vivent hors CDATA. Le nom
+    // de persona est attaquant-controle et siege dans <steamID><![CDATA[...]]>
+    // AVANT les vrais tags, donc un nom forge ("<vacBanned>1</vacBanned>")
+    // injecterait un faux ban via le find brut d'extract_text. On retire toutes
+    // les sections CDATA avant de scanner les bans.
+    let ban_scan = strip_cdata(&body);
+
+    let vac_banned = extract_text(&ban_scan, "vacBanned")
         .map(|v| v == "1")
         .unwrap_or(false);
 
-    let trade_ban_state = extract_text(&body, "tradeBanState").unwrap_or_default();
+    let trade_ban_state = extract_text(&ban_scan, "tradeBanState").unwrap_or_default();
 
     if is_blank(avatar_url.as_deref()) || is_blank(display_name.as_deref()) {
         if let Some(mini_profile) = fetch_mini_profile(client, steam_id).await {
@@ -91,7 +102,7 @@ async fn fetch_mini_profile(client: &reqwest::Client, steam_id: &str) -> Option<
     };
 
     let status = response.status();
-    let body = match response.text().await {
+    let body = match read_body_capped(response, MAX_PROFILE_BODY).await {
         Ok(body) => body,
         Err(_) => return None,
     };
@@ -118,6 +129,63 @@ fn extract_text(body: &str, tag: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Retire toutes les sections `<![CDATA[ ... ]]>` du corps. Sert a obtenir une
+/// copie de travail pour extraire les tags de ban sans que du contenu
+/// attaquant-controle (nom de persona) puisse imiter un tag XML.
+fn strip_cdata(body: &str) -> String {
+    const OPEN: &str = "<![CDATA[";
+    const CLOSE: &str = "]]>";
+
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    while let Some(start) = rest.find(OPEN) {
+        out.push_str(&rest[..start]);
+        let after_open = &rest[start + OPEN.len()..];
+        match after_open.find(CLOSE) {
+            Some(end) => {
+                rest = &after_open[end + CLOSE.len()..];
+            }
+            None => {
+                // CDATA non terminee : on jette tout le reste, il ne contient
+                // aucun tag de ban exploitable.
+                rest = "";
+                break;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Lit le corps d'une reponse en accumulant les chunks avec un plafond dur.
+/// Stoppe en erreur si le `Content-Length` annonce, ou les octets recus,
+/// depassent `max`. Empeche l'OOM sur un flux malveillant/infini qui tiendrait
+/// dans le timeout HTTP.
+async fn read_body_capped(response: reqwest::Response, max: usize) -> Result<String, ()> {
+    if let Some(len) = response.content_length() {
+        if len as usize > max {
+            return Err(());
+        }
+    }
+
+    let mut buf: Vec<u8> = Vec::new();
+    let mut response = response;
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                if buf.len() + chunk.len() > max {
+                    return Err(());
+                }
+                buf.extend_from_slice(&chunk);
+            }
+            Ok(None) => break,
+            Err(_) => return Err(()),
+        }
+    }
+
+    String::from_utf8(buf).map_err(|_| ())
 }
 
 #[cfg(test)]
@@ -178,5 +246,75 @@ mod tests {
     #[test]
     fn is_blank_content() {
         assert!(!is_blank(Some("text")));
+    }
+
+    #[test]
+    fn strip_cdata_removes_section() {
+        let body = "<steamID><![CDATA[Player]]></steamID><vacBanned>0</vacBanned>";
+        let stripped = strip_cdata(body);
+        assert_eq!(stripped, "<steamID></steamID><vacBanned>0</vacBanned>");
+    }
+
+    #[test]
+    fn strip_cdata_no_section() {
+        let body = "<vacBanned>1</vacBanned>";
+        assert_eq!(strip_cdata(body), body);
+    }
+
+    #[test]
+    fn strip_cdata_unterminated_drops_rest() {
+        let body = "<steamID><![CDATA[oops<vacBanned>1</vacBanned>";
+        // Pas de ]]> : tout le reste est jete, aucun tag exploitable ne survit.
+        assert_eq!(strip_cdata(body), "<steamID>");
+    }
+
+    #[test]
+    fn malicious_persona_cannot_inject_vac_ban() {
+        // Nom de persona attaquant-controle qui imite un tag de ban, place
+        // AVANT le vrai <vacBanned> comme dans le XML reel de Steam.
+        let body = concat!(
+            "<profile>",
+            "<steamID><![CDATA[<vacBanned>1</vacBanned>]]></steamID>",
+            "<vacBanned>0</vacBanned>",
+            "<tradeBanState>None</tradeBanState>",
+            "</profile>"
+        );
+
+        // Le nom complet est bien recupere via CDATA.
+        assert_eq!(
+            extract_cdata(body, "steamID"),
+            Some("<vacBanned>1</vacBanned>".into())
+        );
+
+        // Mais le scan de ban se fait sur la copie sans CDATA, donc le faux
+        // tag injecte est ignore et on lit le vrai 0.
+        let ban_scan = strip_cdata(body);
+        let vac_banned = extract_text(&ban_scan, "vacBanned")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        assert!(!vac_banned, "le faux ban injecte via le nom ne doit pas passer");
+
+        let trade_ban_state = extract_text(&ban_scan, "tradeBanState").unwrap_or_default();
+        assert_eq!(trade_ban_state, "None");
+    }
+
+    #[test]
+    fn real_vac_ban_still_detected() {
+        let body = concat!(
+            "<profile>",
+            "<steamID><![CDATA[NormalName]]></steamID>",
+            "<vacBanned>1</vacBanned>",
+            "<tradeBanState>Banned</tradeBanState>",
+            "</profile>"
+        );
+        let ban_scan = strip_cdata(body);
+        let vac_banned = extract_text(&ban_scan, "vacBanned")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        assert!(vac_banned, "un vrai ban hors CDATA doit etre detecte");
+        assert_eq!(
+            extract_text(&ban_scan, "tradeBanState").unwrap_or_default(),
+            "Banned"
+        );
     }
 }

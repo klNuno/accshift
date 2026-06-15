@@ -147,6 +147,10 @@ fn run(
     let http = match reqwest::blocking::Client::builder()
         .user_agent(client::user_agent(&ctx.app_version))
         .timeout(Duration::from_secs(10))
+        // Without an explicit connect timeout, a TCP connect behind a
+        // restrictive firewall can hang on OS-default retries (~21s) before
+        // the overall timeout fires. Cap the connect phase at 5s.
+        .connect_timeout(Duration::from_secs(5))
         .build()
     {
         Ok(http) => http,

@@ -41,6 +41,15 @@ fn keyring_get_bytes(id: &str) -> Result<Vec<u8>, keyring::Error> {
     entry(id)?.get_secret()
 }
 
+fn keyring_delete(id: &str) -> Result<(), keyring::Error> {
+    match entry(id)?.delete_credential() {
+        // A missing entry means the secret is already gone: treat as success so
+        // forget flows stay idempotent.
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
 // The "ciphertext" returned by `encrypt_*` is a UUID that points at the real
 // secret stored in the OS keyring. Same threat model as DPAPI: secrets are
 // bound to the user session, moving the JSON to another machine won't decrypt.
@@ -61,6 +70,15 @@ pub fn decrypt_secret(token: &str) -> Result<String, AppError> {
     keyring_get_password(token).map_err(secret_error)
 }
 
+/// Remove the keyring entry a `encrypt_secret` token points at. An empty token
+/// or a missing entry is a no-op success.
+pub fn delete_secret(token: &str) -> Result<(), AppError> {
+    if token.is_empty() {
+        return Ok(());
+    }
+    keyring_delete(token).map_err(secret_error)
+}
+
 pub fn encrypt_bytes(data: &[u8]) -> Result<Vec<u8>, AppError> {
     if data.is_empty() {
         return Ok(Vec::new());
@@ -76,4 +94,34 @@ pub fn decrypt_bytes(token: &[u8]) -> Result<Vec<u8>, AppError> {
     }
     let id = std::str::from_utf8(token).map_err(|e| secret_error(e.to_string()))?;
     keyring_get_bytes(id).map_err(secret_error)
+}
+
+/// Remove the keyring entry a `encrypt_bytes` token points at. The token is the
+/// UUID stored as UTF-8 bytes. An empty token or a missing entry is a no-op
+/// success.
+pub fn delete_bytes(token: &[u8]) -> Result<(), AppError> {
+    if token.is_empty() {
+        return Ok(());
+    }
+    let id = std::str::from_utf8(token).map_err(|e| secret_error(e.to_string()))?;
+    keyring_delete(id).map_err(secret_error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The full delete path needs a live Secret Service / Keychain backend, so
+    // we only assert the dependency-free contract here: an empty token never
+    // touches the keyring and returns success, keeping forget flows idempotent.
+
+    #[test]
+    fn delete_secret_empty_token_is_ok() {
+        assert!(delete_secret("").is_ok());
+    }
+
+    #[test]
+    fn delete_bytes_empty_token_is_ok() {
+        assert!(delete_bytes(b"").is_ok());
+    }
 }

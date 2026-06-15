@@ -6,19 +6,27 @@
 
 use crate::AppContext;
 use fs4::fs_std::FileExt;
+use std::cell::Cell;
 use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
 const LOCK_FILE_NAME: &str = ".accshift.lock";
 const POLL_INTERVAL_MS: u64 = 50;
 
-/// Number of `LockGuard`s currently alive in this process. Lets nested config
-/// writes (e.g. `update_config` inside a switch that already holds the
-/// operation lock) skip re-acquiring the file lock, which would self-deadlock.
-static GUARDS_HELD: AtomicU32 = AtomicU32::new(0);
+thread_local! {
+    /// Number of `LockGuard`s currently alive **on this thread**. Lets nested
+    /// config writes (e.g. `update_config` inside a switch that already holds
+    /// the operation lock) skip re-acquiring the file lock, which would
+    /// self-deadlock.
+    ///
+    /// This is deliberately thread-local rather than process-global: a switch
+    /// running on one Tauri thread must not let an unrelated write on another
+    /// thread nest past the file lock. Cross-thread callers see a count of 0
+    /// and block on the real cross-process lock.
+    static GUARDS_HELD: Cell<u32> = const { Cell::new(0) };
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum LockError {
@@ -39,23 +47,27 @@ pub struct LockGuard {
 impl Drop for LockGuard {
     fn drop(&mut self) {
         let _ = FileExt::unlock(&self.file);
-        GUARDS_HELD.fetch_sub(1, Ordering::SeqCst);
+        GUARDS_HELD.with(|c| c.set(c.get().saturating_sub(1)));
     }
 }
 
 /// Guard returned by [`acquire_for_write`]. Either owns the file lock, or is
-/// a no-op because this process already holds it at the operation level.
+/// a no-op because this thread already holds it at the operation level.
 pub enum WriteGuard {
     Owned(LockGuard),
     Nested,
 }
 
-/// Take the cross-process lock for a config write. If this process already
+/// Take the cross-process lock for a config write. If **this thread** already
 /// holds the operation lock (switch/forget), the write is nested inside it
-/// and protected by the outer guard — skip the file lock instead of
+/// and protected by the outer guard, so skip the file lock instead of
 /// self-deadlocking on a second handle.
+///
+/// A write running on a different thread (e.g. another Tauri command thread
+/// mid-switch) sees a thread-local count of 0 and falls through to
+/// `acquire_exclusive`, blocking on the real cross-process file lock.
 pub fn acquire_for_write(ctx: &dyn AppContext, timeout: Duration) -> Result<WriteGuard, LockError> {
-    if GUARDS_HELD.load(Ordering::SeqCst) > 0 {
+    if GUARDS_HELD.with(|c| c.get()) > 0 {
         return Ok(WriteGuard::Nested);
     }
     acquire_exclusive(ctx, timeout).map(WriteGuard::Owned)
@@ -87,7 +99,7 @@ pub fn acquire_exclusive(ctx: &dyn AppContext, timeout: Duration) -> Result<Lock
     loop {
         match FileExt::try_lock_exclusive(&file) {
             Ok(true) => {
-                GUARDS_HELD.fetch_add(1, Ordering::SeqCst);
+                GUARDS_HELD.with(|c| c.set(c.get() + 1));
                 return Ok(LockGuard { file, _path: path });
             }
             // fs4 maps "already locked" to Ok(false); an Err is a real I/O
@@ -165,6 +177,55 @@ mod tests {
             let _guard = acquire_exclusive(&*ctx, Duration::from_millis(500)).unwrap();
         }
         // Should now succeed.
+        let again = acquire_exclusive(&*ctx, Duration::from_millis(500));
+        assert!(again.is_ok());
+        cleanup(&ctx.root);
+    }
+
+    #[test]
+    fn nested_write_on_same_thread_skips_file_lock() {
+        let ctx = tmp_ctx("nested-same");
+        // Outer operation lock held by this thread.
+        let _outer = acquire_exclusive(&*ctx, Duration::from_millis(500)).unwrap();
+        // A config write on the same thread nests inside it instead of
+        // deadlocking on a second handle.
+        let nested = acquire_for_write(&*ctx, Duration::from_millis(50)).unwrap();
+        assert!(matches!(nested, WriteGuard::Nested));
+        cleanup(&ctx.root);
+    }
+
+    #[test]
+    fn write_on_other_thread_does_not_nest_and_contends() {
+        let ctx = tmp_ctx("nested-cross");
+        // This thread holds the operation lock for the whole test.
+        let _outer = acquire_exclusive(&*ctx, Duration::from_millis(500)).unwrap();
+
+        // A write attempted on a different thread must NOT see this thread's
+        // guard and must actually try to acquire the file lock, which is held,
+        // so it times out as contended rather than bypassing the lock.
+        let ctx2 = Arc::clone(&ctx);
+        let handle = thread::spawn(move || {
+            acquire_for_write(&*ctx2, Duration::from_millis(150))
+        });
+        let result = handle.join().unwrap();
+        assert!(matches!(result, Err(LockError::Contended)));
+
+        cleanup(&ctx.root);
+    }
+
+    #[test]
+    fn write_on_other_thread_succeeds_when_uncontended() {
+        let ctx = tmp_ctx("cross-uncontended");
+        // No outer lock here: a write on another thread owns the file lock.
+        let ctx2 = Arc::clone(&ctx);
+        let handle = thread::spawn(move || {
+            let guard = acquire_for_write(&*ctx2, Duration::from_millis(500)).unwrap();
+            assert!(matches!(guard, WriteGuard::Owned(_)));
+            // Drop here releases both the file lock and this thread's counter.
+        });
+        handle.join().unwrap();
+
+        // After that thread finishes, the lock is free again.
         let again = acquire_exclusive(&*ctx, Duration::from_millis(500));
         assert!(again.is_ok());
         cleanup(&ctx.root);
