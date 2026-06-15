@@ -1432,6 +1432,14 @@ pub fn switch_profile(app_handle: AppCtx, profile_id: String) -> Result<(), Stri
         return Err("Riot profile not found".into());
     }
 
+    // Riot Client only flushes its in-memory session tokens to
+    // RiotGamesPrivateSettings.yaml on a graceful quit. Quit (and wait for the
+    // process to exit + settle) BEFORE snapshotting the outgoing profile, so the
+    // backup captures rotated tokens rather than the stale pre-rotation ones.
+    // Same quit-then-backup order as begin_profile_setup. This is the single
+    // quit for the whole switch; the target snapshot is restored afterwards.
+    graceful_riot_quit();
+
     if !cfg.riot.current_profile_id.trim().is_empty() && cfg.riot.current_profile_id != target_id {
         let current_id = cfg.riot.current_profile_id.clone();
         if !is_valid_profile_id(&current_id) {
@@ -1442,7 +1450,8 @@ pub fn switch_profile(app_handle: AppCtx, profile_id: String) -> Result<(), Stri
         // Only re-backup if the live settings file actually has tokens (>1000 bytes).
         // begin_profile_setup clears live files to add a new account — without this
         // check, switching after an add overwrites the good snapshot with a default
-        // 484-byte file that has no auth tokens.
+        // 484-byte file that has no auth tokens. Checked after the quit so the
+        // freshly flushed file size is what gates the backup.
         let has_live_tokens = riot_settings_file_ready(&app_handle).unwrap_or(false);
         let should_backup = match current_state {
             Some("ready" | "awaiting_capture" | "setup_pending") => has_live_tokens,
@@ -1461,7 +1470,6 @@ pub fn switch_profile(app_handle: AppCtx, profile_id: String) -> Result<(), Stri
         }
     }
 
-    graceful_riot_quit();
     let restored = restore_live_snapshot(&app_handle, &target_id)?;
 
     // Log the restored settings file size to diagnose overwrite issues

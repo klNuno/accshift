@@ -202,7 +202,10 @@ fn redact_email_like_tokens(value: &str) -> String {
         let mut left = cursor;
         while left > 0 {
             let ch = chars[left - 1];
-            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '%' | '+' | '-') {
+            // `is_alphanumeric` (not `is_ascii_alphanumeric`) so IDN / SMTPUTF8
+            // locals (accented or non-Latin) match in full instead of stopping
+            // at the first non-ASCII char and leaking the rest.
+            if ch.is_alphanumeric() || matches!(ch, '.' | '_' | '%' | '+' | '-') {
                 left -= 1;
             } else {
                 break;
@@ -213,7 +216,9 @@ fn redact_email_like_tokens(value: &str) -> String {
         let mut saw_domain_dot = false;
         while right < chars.len() {
             let ch = chars[right];
-            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-') {
+            // Same widening for the domain so an accented TLD/host is consumed
+            // and redacted rather than left in clear after the placeholder.
+            if ch.is_alphanumeric() || matches!(ch, '.' | '-') {
                 if ch == '.' {
                     saw_domain_dot = true;
                 }
@@ -678,6 +683,35 @@ mod tests {
         assert_eq!(
             redact_email_like_tokens("logged in as test@mail.com successfully"),
             "logged in as <email> successfully"
+        );
+    }
+
+    #[test]
+    fn redact_email_accented_local_part() {
+        // Multibyte local part: the accented name must be dropped whole, not
+        // truncated at the first non-ASCII byte. The truncate-on-match rewinds
+        // `out` by recorded byte offsets, so the 2-byte `é` can't desync it.
+        assert_eq!(
+            redact_email_like_tokens("jérôme@example.com"),
+            "<email>"
+        );
+        assert_eq!(
+            redact_email_like_tokens("connecté en tant que jérôme@example.com ok"),
+            "connecté en tant que <email> ok"
+        );
+    }
+
+    #[test]
+    fn redact_email_accented_domain() {
+        // Non-ASCII tail in the domain must be consumed by the match instead of
+        // being left in clear after the placeholder.
+        assert_eq!(
+            redact_email_like_tokens("john@domain.café"),
+            "<email>"
+        );
+        assert_eq!(
+            redact_email_like_tokens("ping müller@firma.köln now"),
+            "ping <email> now"
         );
     }
 

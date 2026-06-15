@@ -1159,7 +1159,8 @@ async function checkBudget(
       .first<{ count: number }>();
     const count = r?.count ?? 0;
     if (count > cap) {
-      ctx.waitUntil(notifyBudget(env, endpoint, count, cap));
+      // Already over cap: just reject. The single alert was sent when count === cap,
+      // so we never re-notify here (notifyBudget has no rate limit, a flood would spam Resend).
       return json({ error: "daily_budget_reached", endpoint }, 503);
     }
     // One-shot notification at threshold crossing, not on every request beyond.

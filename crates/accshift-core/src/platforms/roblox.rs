@@ -431,8 +431,13 @@ fn persist_rotated_cookie(app_handle: &dyn AppContext, account: &RobloxAccountCo
     };
 
     let mut accounts = load_account_configs(app_handle);
+    // Capture the token the old encrypted cookie points at so we can free it
+    // from the OS keyring (Linux / macOS) after the new one is persisted. The
+    // rotation re-encrypts to a fresh UUID, leaving the previous entry orphaned
+    // otherwise (finding K8). forget_account already does the same.
+    let old_token;
     if let Some(a) = accounts.iter_mut().find(|a| a.user_id == account.user_id) {
-        a.cookie_encrypted = encrypted;
+        old_token = std::mem::replace(&mut a.cookie_encrypted, encrypted);
     } else {
         return;
     }
@@ -445,6 +450,25 @@ fn persist_rotated_cookie(app_handle: &dyn AppContext, account: &RobloxAccountCo
             &e,
         );
         return;
+    }
+
+    // New token is persisted; drop the stale keyring entry. Guard on a
+    // non-empty token that actually changed. Log and continue on failure: a
+    // dangling keyring entry must not fail the rotation.
+    let new_token = accounts
+        .iter()
+        .find(|a| a.user_id == account.user_id)
+        .map(|a| a.cookie_encrypted.as_str())
+        .unwrap_or("");
+    if !old_token.is_empty() && old_token != new_token {
+        if let Err(e) = crate::os::delete_secret(&old_token) {
+            log_platform_error(
+                app_handle,
+                "roblox.switch_account",
+                "Could not delete stale rotated cookie secret",
+                format!("{e}"),
+            );
+        }
     }
 
     log_platform_info(

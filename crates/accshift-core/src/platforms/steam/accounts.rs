@@ -494,45 +494,110 @@ fn parse_login_users(steam_path: &Path) -> Result<Vec<ParsedLoginUser>, AppError
     Ok(users)
 }
 
+/// Counts the net brace delta of a line, ignoring braces inside quoted
+/// strings. A double-quote toggles the in-string state; a backslash escapes
+/// the next char so an escaped quote does not close the string. Returns
+/// (opens, closes) so callers can reason about a line that both opens and
+/// closes a block.
+fn brace_counts(line: &str) -> (i32, i32) {
+    let mut opens = 0;
+    let mut closes = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for ch in line.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' if in_string => escaped = true,
+            '"' => in_string = !in_string,
+            '{' if !in_string => opens += 1,
+            '}' if !in_string => closes += 1,
+            _ => {}
+        }
+    }
+
+    (opens, closes)
+}
+
+/// Removes the block for `steam_id` from a loginusers.vdf string.
+///
+/// Brace accounting counts the real `{`/`}` on each line (skipping braces
+/// inside quoted strings) instead of assuming each brace sits alone on its
+/// own line. That keeps the normal Steam layout working while also handling
+/// VDF condensed by third-party tools, where the opening brace can share the
+/// key line (e.g. `"<steamid>" {`). Without this, the inline brace was never
+/// counted, depth drifted by one, and the skip never terminated, silently
+/// deleting every account after the target.
 fn remove_loginuser_entry(content: &str, steam_id: &str) -> (String, bool) {
     let mut out: Vec<&str> = Vec::new();
     let mut depth: i32 = 0;
     let mut skipping = false;
-    let mut skip_depth: i32 = 0;
+    // Depth the target block must fall back to for the skip to end. Set when
+    // the target's opening brace is seen (it may share the key line).
+    let mut skip_end_depth: i32 = 0;
+    // True once the target key was matched but its `{` has not appeared yet
+    // (only happens when the brace is on its own line).
+    let mut awaiting_open = false;
     let mut removed = false;
 
     for line in content.lines() {
         let trimmed = line.trim();
+        let (opens, closes) = brace_counts(line);
 
         if skipping {
-            if trimmed == "{" {
-                depth += 1;
-                continue;
-            }
-            if trimmed == "}" {
-                depth -= 1;
-                if depth == skip_depth {
-                    skipping = false;
-                }
-                continue;
+            // The block's own braces were already absorbed when the key line
+            // was matched (if inline) or while awaiting/inside it. Walk depth
+            // down until it returns to where the block started.
+            depth += opens - closes;
+            if depth <= skip_end_depth {
+                skipping = false;
             }
             continue;
         }
 
-        let parts: Vec<&str> = trimmed.split('"').collect();
-        if depth == 1 && parts.len() >= 2 && parts[1] == steam_id {
+        if awaiting_open {
+            // The key matched on the previous line; this line carries its
+            // opening brace. From here the regular skip logic takes over.
+            depth += opens - closes;
+            awaiting_open = false;
             skipping = true;
-            skip_depth = depth;
+            if depth <= skip_end_depth {
+                // Degenerate single-line block `{ ... }`; nothing more to skip.
+                skipping = false;
+            }
+            continue;
+        }
+
+        // A top-level account key sits at depth 1 (inside the root "users"
+        // block). Match it before counting this line's braces so the key's
+        // own inline `{` is attributed to the block being removed.
+        let parts: Vec<&str> = trimmed.split('"').collect();
+        let is_target = depth == 1 && parts.len() >= 2 && parts[1] == steam_id;
+
+        if is_target {
             removed = true;
+            skip_end_depth = depth;
+            if opens > 0 {
+                // Inline brace: the block opens on the key line. Account for
+                // this line's net braces and start skipping the body.
+                depth += opens - closes;
+                if depth > skip_end_depth {
+                    skipping = true;
+                }
+                // If depth did not rise (e.g. `"id" {}`), the block is already
+                // closed and there is nothing further to skip.
+            } else {
+                // Brace lands on the next line.
+                awaiting_open = true;
+            }
             continue;
         }
 
         out.push(line);
-        if trimmed == "{" {
-            depth += 1;
-        } else if trimmed == "}" {
-            depth -= 1;
-        }
+        depth += opens - closes;
     }
 
     let mut rebuilt = out.join("\n");
@@ -761,7 +826,7 @@ pub fn clear_integrated_browser_cache() -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_launch_options, steam_id_to_account_id};
+    use super::{parse_launch_options, remove_loginuser_entry, steam_id_to_account_id};
 
     #[test]
     fn parse_launch_options_keeps_quoted_groups() {
@@ -834,5 +899,166 @@ mod tests {
     fn steam_id_to_account_id_max_u32_low_bits() {
         // 4294967295 = 0xFFFFFFFF, low 32 bits = u32::MAX
         assert_eq!(steam_id_to_account_id("4294967295"), Some(u32::MAX));
+    }
+
+    // -----------------------------------------------------------------------
+    // remove_loginuser_entry
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn remove_loginuser_entry_normal_format_removes_only_target() {
+        // Standard Steam layout: every brace sits on its own line.
+        let content = "\"users\"\n\
+{\n\
+\t\"111\"\n\
+\t{\n\
+\t\t\"AccountName\"\t\"first\"\n\
+\t\t\"PersonaName\"\t\"First\"\n\
+\t}\n\
+\t\"222\"\n\
+\t{\n\
+\t\t\"AccountName\"\t\"second\"\n\
+\t\t\"PersonaName\"\t\"Second\"\n\
+\t}\n\
+}\n";
+
+        let (out, removed) = remove_loginuser_entry(content, "111");
+        assert!(removed);
+        assert!(!out.contains("\"111\""));
+        assert!(!out.contains("first"));
+        // The other account survives intact.
+        assert!(out.contains("\"222\""));
+        assert!(out.contains("second"));
+        assert!(out.contains("Second"));
+        // Root structure is preserved.
+        assert!(out.starts_with("\"users\"\n{\n"));
+        assert!(out.ends_with("}\n"));
+    }
+
+    #[test]
+    fn remove_loginuser_entry_inline_brace_keeps_following_accounts() {
+        // Regression test for the silent-wipe bug (finding K4): a third-party
+        // tool condensed the VDF so the opening brace shares the key line.
+        // The old brace accounting drifted by one and deleted every account
+        // after the target. Here removing "111" must keep "222" and "333".
+        let content = "\"users\"\n\
+{\n\
+\t\"111\" {\n\
+\t\t\"AccountName\"\t\"first\"\n\
+\t\t\"PersonaName\"\t\"First\"\n\
+\t}\n\
+\t\"222\" {\n\
+\t\t\"AccountName\"\t\"second\"\n\
+\t\t\"PersonaName\"\t\"Second\"\n\
+\t}\n\
+\t\"333\" {\n\
+\t\t\"AccountName\"\t\"third\"\n\
+\t\t\"PersonaName\"\t\"Third\"\n\
+\t}\n\
+}\n";
+
+        let (out, removed) = remove_loginuser_entry(content, "111");
+        assert!(removed);
+        assert!(!out.contains("\"111\""));
+        assert!(!out.contains("first"));
+        // Both following accounts MUST survive (this is the wipe regression).
+        assert!(out.contains("\"222\""));
+        assert!(out.contains("second"));
+        assert!(out.contains("\"333\""));
+        assert!(out.contains("third"));
+        assert!(out.ends_with("}\n"));
+    }
+
+    #[test]
+    fn remove_loginuser_entry_inline_brace_removes_middle_account() {
+        // Inline-brace layout, target in the middle: the accounts on both
+        // sides must remain.
+        let content = "\"users\"\n\
+{\n\
+\t\"111\" {\n\
+\t\t\"AccountName\"\t\"first\"\n\
+\t}\n\
+\t\"222\" {\n\
+\t\t\"AccountName\"\t\"second\"\n\
+\t}\n\
+\t\"333\" {\n\
+\t\t\"AccountName\"\t\"third\"\n\
+\t}\n\
+}\n";
+
+        let (out, removed) = remove_loginuser_entry(content, "222");
+        assert!(removed);
+        assert!(out.contains("\"111\""));
+        assert!(out.contains("first"));
+        assert!(!out.contains("\"222\""));
+        assert!(!out.contains("second"));
+        assert!(out.contains("\"333\""));
+        assert!(out.contains("third"));
+    }
+
+    #[test]
+    fn remove_loginuser_entry_last_account() {
+        // Removing the final account leaves the earlier ones and a valid
+        // root block.
+        let content = "\"users\"\n\
+{\n\
+\t\"111\"\n\
+\t{\n\
+\t\t\"AccountName\"\t\"first\"\n\
+\t}\n\
+\t\"222\"\n\
+\t{\n\
+\t\t\"AccountName\"\t\"second\"\n\
+\t}\n\
+}\n";
+
+        let (out, removed) = remove_loginuser_entry(content, "222");
+        assert!(removed);
+        assert!(out.contains("\"111\""));
+        assert!(out.contains("first"));
+        assert!(!out.contains("\"222\""));
+        assert!(!out.contains("second"));
+        // Root open/close braces are intact.
+        assert!(out.starts_with("\"users\"\n{\n"));
+        assert!(out.ends_with("}\n"));
+    }
+
+    #[test]
+    fn remove_loginuser_entry_missing_target_is_noop() {
+        let content = "\"users\"\n\
+{\n\
+\t\"111\"\n\
+\t{\n\
+\t\t\"AccountName\"\t\"first\"\n\
+\t}\n\
+}\n";
+
+        let (out, removed) = remove_loginuser_entry(content, "999");
+        assert!(!removed);
+        assert_eq!(out, content);
+    }
+
+    #[test]
+    fn remove_loginuser_entry_ignores_braces_inside_strings() {
+        // A brace inside a quoted value must not move the depth, otherwise the
+        // wrong block boundary is found.
+        let content = "\"users\"\n\
+{\n\
+\t\"111\"\n\
+\t{\n\
+\t\t\"PersonaName\"\t\"weird { name }\"\n\
+\t}\n\
+\t\"222\"\n\
+\t{\n\
+\t\t\"AccountName\"\t\"second\"\n\
+\t}\n\
+}\n";
+
+        let (out, removed) = remove_loginuser_entry(content, "111");
+        assert!(removed);
+        assert!(!out.contains("weird { name }"));
+        assert!(out.contains("\"222\""));
+        assert!(out.contains("second"));
+        assert!(out.ends_with("}\n"));
     }
 }

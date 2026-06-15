@@ -178,6 +178,13 @@ pub fn save_client_storage_store(
     value: Value,
 ) -> Result<(), String> {
     let c = ctx(&app_handle);
+    // Same cross-process lock config writes take: a CLI switch persisting
+    // config at the same instant would otherwise collide on the atomic rename
+    // (Windows sharing violation) or lose updates. Short timeout keeps the UI
+    // responsive; the guard is held across the write and dropped right after.
+    let _write_lock =
+        accshift_core::lock::acquire_for_write(&c, std::time::Duration::from_secs(2))
+            .map_err(|e| e.to_string())?;
     crate::storage::save_client_store(&c, &store_id, &value)?;
     let details = serde_json::json!({
         "storeId": store_id,
