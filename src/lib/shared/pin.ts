@@ -22,6 +22,15 @@ function hexToBytes(hex: string): Uint8Array {
   return bytes;
 }
 
+function constantTimeEqual(a: string, b: string): boolean {
+  const maxLength = Math.max(a.length, b.length);
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < maxLength; i++) {
+    diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  }
+  return diff === 0;
+}
+
 async function pbkdf2Derive(pin: string, salt: Uint8Array): Promise<string> {
   const keyMaterial = await crypto.subtle.importKey(
     "raw",
@@ -62,7 +71,7 @@ export async function verifyPinCode(pinCode: string, storedHash: string): Promis
 
   if (!storedHash.includes(":") && LEGACY_HASH_RE.test(storedHash)) {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalized));
-    return bytesToHex(new Uint8Array(digest)) === storedHash;
+    return constantTimeEqual(bytesToHex(new Uint8Array(digest)), storedHash.toLowerCase());
   }
 
   const colonIdx = storedHash.indexOf(":");
@@ -70,5 +79,5 @@ export async function verifyPinCode(pinCode: string, storedHash: string): Promis
   const salt = hexToBytes(storedHash.slice(0, colonIdx));
   const expectedHash = storedHash.slice(colonIdx + 1);
   const attemptHash = await pbkdf2Derive(normalized, salt);
-  return attemptHash === expectedHash;
+  return constantTimeEqual(attemptHash, expectedHash.toLowerCase());
 }

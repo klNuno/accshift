@@ -60,4 +60,8 @@ describe("parseDeepLink", () => {
     expect(parseDeepLink("accshift://switch/steam/%20")).toBeNull();
     expect(parseDeepLink("")).toBeNull();
   });
+
+  it("rejects URLs above the maximum accepted length", () => {
+    expect(parseDeepLink(`accshift://switch/steam/${"a".repeat(2049)}`)).toBeNull();
+  });
 });

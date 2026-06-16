@@ -41,10 +41,27 @@ pub struct SteamSettings {
 
 pub fn load(ctx: &dyn AppContext) -> AppSettings {
     let Ok(path) = client_store_path(ctx, STORE_SETTINGS) else {
+        eprintln!("Warning: could not resolve GUI settings path; using CLI defaults");
         return AppSettings::default();
     };
     match fs::read_to_string(&path) {
-        Ok(data) => serde_json::from_str::<AppSettings>(&data).unwrap_or_default(),
-        Err(_) => AppSettings::default(),
+        Ok(data) => match serde_json::from_str::<AppSettings>(&data) {
+            Ok(settings) => settings,
+            Err(e) => {
+                eprintln!(
+                    "Warning: could not parse GUI settings at {}: {e}; using CLI defaults",
+                    path.display()
+                );
+                AppSettings::default()
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => AppSettings::default(),
+        Err(e) => {
+            eprintln!(
+                "Warning: could not read GUI settings at {}: {e}; using CLI defaults",
+                path.display()
+            );
+            AppSettings::default()
+        }
     }
 }

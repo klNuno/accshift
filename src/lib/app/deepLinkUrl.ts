@@ -4,13 +4,18 @@ export interface DeepLinkSwitchRequest {
   accountRef: string;
 }
 
+const MAX_DEEP_LINK_URL_LENGTH = 2048;
+
 /**
  * Parses an accshift:// URL. Supported form:
  *   accshift://switch/<platformId>/<accountRef>
  * accountRef matches the account id first, then username, then display name.
  */
 export function parseDeepLink(rawUrl: string): DeepLinkSwitchRequest | null {
-  const match = /^accshift:\/\/([^?#]*)/i.exec(rawUrl.trim());
+  const trimmedUrl = rawUrl.trim();
+  if (trimmedUrl.length > MAX_DEEP_LINK_URL_LENGTH) return null;
+
+  const match = /^accshift:\/\/([^?#]*)/i.exec(trimmedUrl);
   if (!match) return null;
   const segments = match[1]
     .split("/")

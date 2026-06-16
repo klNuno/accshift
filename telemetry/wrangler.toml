@@ -39,6 +39,7 @@ ENVIRONMENT = "production"
 LOG_MAX_BYTES = "10485760" # 10 MB max per upload
 BATCH_MAX_EVENTS = "200" # per /track request
 ADMIN_ALLOWED = "true"
+ALLOWED_ORIGINS = "http://localhost:1420,https://tauri.localhost"
 ALERT_FROM = "onboarding@resend.dev" # replace with a verified domain once set up
 
 # Expected User-Agent prefix. Requests without it are rejected.

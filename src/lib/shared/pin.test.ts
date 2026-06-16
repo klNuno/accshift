@@ -78,6 +78,11 @@ describe("verifyPinCode", () => {
     expect(await verifyPinCode("0000", legacyHash)).toBe(false);
   });
 
+  it("handles uppercase stored hashes", async () => {
+    const hash = await hashPinCode("5678");
+    expect(await verifyPinCode("5678", hash.toUpperCase())).toBe(true);
+  });
+
   it("rejects invalid PIN length", async () => {
     const hash = await hashPinCode("1234");
     expect(await verifyPinCode("12", hash)).toBe(false);

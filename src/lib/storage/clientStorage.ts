@@ -73,6 +73,7 @@ const LEGACY_LOCAL_STORAGE_KEYS: Record<ClientStoreId, string> = {
 
 const memoryStores = new Map<ClientStoreId, unknown>();
 const saveTimers = new Map<ClientStoreId, ReturnType<typeof setTimeout>>();
+const inFlightSaves = new Map<ClientStoreId, Promise<void>>();
 const storeRevisions = new Map<ClientStoreId, number>();
 
 let lastManifest: StorageManifest = {
@@ -143,6 +144,20 @@ async function persistStore(storeId: ClientStoreId) {
   });
 }
 
+function persistStoreTracked(storeId: ClientStoreId): Promise<void> {
+  const previousSave = inFlightSaves.get(storeId) ?? Promise.resolve();
+  const savePromise = previousSave
+    .catch(() => {})
+    .then(() => persistStore(storeId))
+    .finally(() => {
+      if (inFlightSaves.get(storeId) === savePromise) {
+        inFlightSaves.delete(storeId);
+      }
+    });
+  inFlightSaves.set(storeId, savePromise);
+  return savePromise;
+}
+
 function scheduleSave(storeId: ClientStoreId, delayMs = 120) {
   const previousTimer = saveTimers.get(storeId);
   if (previousTimer) {
@@ -150,7 +165,7 @@ function scheduleSave(storeId: ClientStoreId, delayMs = 120) {
   }
   const timer = setTimeout(() => {
     saveTimers.delete(storeId);
-    void persistStore(storeId).catch((reason) => {
+    void persistStoreTracked(storeId).catch((reason) => {
       console.error(`Failed to persist store ${storeId}:`, reason);
     });
   }, delayMs);
@@ -164,7 +179,6 @@ function scheduleSave(storeId: ClientStoreId, delayMs = 120) {
  */
 export async function flushPendingSaves(): Promise<void> {
   const pending = [...saveTimers.keys()];
-  if (pending.length === 0) return;
 
   for (const storeId of pending) {
     const timer = saveTimers.get(storeId);
@@ -176,8 +190,16 @@ export async function flushPendingSaves(): Promise<void> {
 
   await Promise.all(
     pending.map((storeId) =>
-      persistStore(storeId).catch((reason) => {
+      persistStoreTracked(storeId).catch((reason) => {
         console.error(`Failed to flush store ${storeId}:`, reason);
+      }),
+    ),
+  );
+
+  await Promise.all(
+    [...inFlightSaves.entries()].map(([storeId, savePromise]) =>
+      savePromise.catch((reason) => {
+        console.error(`Failed to await in-flight store ${storeId}:`, reason);
       }),
     ),
   );

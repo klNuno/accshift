@@ -309,11 +309,11 @@ pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .map_err(|e| format!("Could not write temp file {}: {e}", tmp_path.display()))?;
 
     let mut rename_result = fs::rename(&tmp_path, path);
-    for _ in 0..2 {
+    for delay_ms in [50, 100, 200] {
         if rename_result.is_ok() {
             return Ok(());
         }
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
         rename_result = fs::rename(&tmp_path, path);
     }
     if rename_result.is_ok() {
@@ -327,7 +327,15 @@ pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     match fs::copy(&tmp_path, path) {
         Ok(_) => {
             let _ = fs::remove_file(&tmp_path);
-            let _ = fs::remove_file(&bak_path);
+            if let Err(e) = fs::remove_file(&bak_path) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    return Err(format!(
+                        "Could not remove stale backup {} after writing {}: {e}",
+                        bak_path.display(),
+                        path.display()
+                    ));
+                }
+            }
             Ok(())
         }
         Err(e) => {

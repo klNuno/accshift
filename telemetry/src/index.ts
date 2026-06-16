@@ -15,7 +15,7 @@
 //   a daily_visitor_hash from IP + UA + date + secret. The IP is never stored,
 //   and the hash is not recomputable across days (date is part of the input).
 // - IP is never stored. Country is derived from request.cf.country.
-// - CORS open: Tauri does not send a reliable Origin for native apps.
+// - CORS is restricted when browsers send Origin; native Tauri requests may omit it.
 
 interface RateLimit {
   limit(options: { key: string }): Promise<{ success: boolean }>;
@@ -39,6 +39,7 @@ export interface Env {
   LOG_MAX_BYTES: string;
   BATCH_MAX_EVENTS: string;
   ADMIN_ALLOWED: string;
+  ALLOWED_ORIGINS: string;
   UA_PREFIX: string;
   BUDGET_TRACK: string;
   BUDGET_LOGS: string;
@@ -67,7 +68,8 @@ interface TrackPayload {
 // ─── Entry point ─────────────────────────────────────────────────
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
+    if (request.method === "OPTIONS")
+      return cors(new Response(null, { status: 204 }), request, env);
 
     const url = new URL(request.url);
     try {
@@ -113,10 +115,10 @@ export default {
           response = json({ error: "not_found" }, 404);
         }
       }
-      return cors(response);
+      return cors(response, request, env);
     } catch (err) {
       console.error("unhandled", err);
-      return cors(json({ error: "internal_error" }, 500));
+      return cors(json({ error: "internal_error" }, 500), request, env);
     }
   },
 
@@ -708,25 +710,25 @@ const ADMIN_DASHBOARD_HTML = String.raw`<!doctype html>
 <script>
 "use strict";
 
-const TOKEN_KEY = "accshift_admin_token";
+let adminToken = "";
 
 function getToken() {
-  let t = sessionStorage.getItem(TOKEN_KEY);
+  let t = adminToken;
   if (!t) {
     t = prompt("Admin token (Bearer)");
     if (!t) throw new Error("no_token");
-    sessionStorage.setItem(TOKEN_KEY, t);
+    adminToken = t;
   }
   return t;
 }
-function forgetToken() { sessionStorage.removeItem(TOKEN_KEY); location.reload(); }
+function forgetToken() { adminToken = ""; location.reload(); }
 
 async function authFetch(url, init) {
   const token = getToken();
   const headers = new Headers(init && init.headers);
   headers.set("Authorization", "Bearer " + token);
   const res = await fetch(url, Object.assign({}, init, { headers }));
-  if (res.status === 401) { sessionStorage.removeItem(TOKEN_KEY); throw new Error("unauthorized"); }
+  if (res.status === 401) { adminToken = ""; throw new Error("unauthorized"); }
   return res;
 }
 
@@ -1116,9 +1118,25 @@ function methodNotAllowed(): Response {
   return json({ error: "method_not_allowed" }, 405);
 }
 
-function cors(res: Response): Response {
+function allowedOrigins(env: Env): Set<string> {
+  return new Set(
+    (env.ALLOWED_ORIGINS || "")
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+  );
+}
+
+function cors(res: Response, request: Request, env: Env): Response {
   const h = new Headers(res.headers);
-  h.set("Access-Control-Allow-Origin", "*");
+  const origin = request.headers.get("Origin");
+  const allowed = allowedOrigins(env);
+  if (origin && allowed.has(origin)) {
+    h.set("Access-Control-Allow-Origin", origin);
+    h.set("Vary", "Origin");
+  } else if (!origin) {
+    h.set("Access-Control-Allow-Origin", "null");
+  }
   h.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   h.set(
     "Access-Control-Allow-Headers",

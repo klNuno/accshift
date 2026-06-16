@@ -62,6 +62,7 @@ export function createAppUpdater({ t, addToast }: AppUpdaterOptions) {
       pendingUpdate = null;
       updateVersion = "";
       updateState = "idle";
+      updateCheckStarted = false;
     }
   }
 

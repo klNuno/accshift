@@ -88,4 +88,33 @@ describe("clientStorage flushPendingSaves", () => {
     await flushPendingSaves();
     expect(saveCalls()).toHaveLength(0);
   });
+
+  it("flushPendingSaves waits for a save already started by the timer", async () => {
+    let releaseSave: (() => void) | undefined;
+    const saveStarted = new Promise<void>((resolve) => {
+      invokeMock.mockImplementationOnce((command: unknown): Promise<unknown> => {
+        if (command !== "save_client_storage_store") return Promise.resolve(undefined);
+        resolve();
+        return new Promise((release) => {
+          releaseSave = () => release(undefined);
+        });
+      });
+    });
+
+    setClientStoreValue(CLIENT_STORE_FOLDERS, { folders: ["slow"] });
+    vi.advanceTimersByTime(120);
+    await saveStarted;
+
+    let flushed = false;
+    const flushPromise = flushPendingSaves().then(() => {
+      flushed = true;
+    });
+    await Promise.resolve();
+    expect(flushed).toBe(false);
+
+    releaseSave?.();
+    await flushPromise;
+    expect(flushed).toBe(true);
+    expect(saveCalls()).toHaveLength(1);
+  });
 });

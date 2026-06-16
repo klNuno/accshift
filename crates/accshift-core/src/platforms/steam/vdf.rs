@@ -46,6 +46,38 @@ fn vdf_tokenize_line(line: &str) -> Vec<String> {
     tokens
 }
 
+fn vdf_braces_outside_quotes(line: &str) -> (usize, usize) {
+    let mut opens = 0;
+    let mut closes = 0;
+    let mut in_quote = false;
+    let mut escaped = false;
+
+    for ch in line.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if in_quote && ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '"' {
+            in_quote = !in_quote;
+            continue;
+        }
+        if in_quote {
+            continue;
+        }
+        match ch {
+            '{' => opens += 1,
+            '}' => closes += 1,
+            _ => {}
+        }
+    }
+
+    (opens, closes)
+}
+
 pub fn parse_vdf(content: &str) -> HashMap<String, HashMap<String, String>> {
     let mut accounts: HashMap<String, HashMap<String, String>> = HashMap::new();
     let mut current_id: Option<String> = None;
@@ -55,22 +87,7 @@ pub fn parse_vdf(content: &str) -> HashMap<String, HashMap<String, String>> {
     for line in content.lines() {
         let trimmed = line.trim();
 
-        if trimmed == "{" {
-            depth += 1;
-            continue;
-        }
-
-        if trimmed == "}" {
-            depth -= 1;
-            if depth == 1 {
-                if let Some(id) = current_id.take() {
-                    accounts.insert(id, current_account.clone());
-                }
-                current_account.clear();
-            }
-            continue;
-        }
-
+        let (opens, closes) = vdf_braces_outside_quotes(trimmed);
         let tokens = vdf_tokenize_line(trimmed);
 
         if tokens.len() >= 2 {
@@ -85,6 +102,23 @@ pub fn parse_vdf(content: &str) -> HashMap<String, HashMap<String, String>> {
 
             if depth == 1 && !key.is_empty() && key.chars().all(|c| c.is_ascii_digit()) {
                 current_id = Some(key.clone());
+            }
+        }
+
+        for _ in 0..opens {
+            depth += 1;
+        }
+
+        for _ in 0..closes {
+            if depth == 0 {
+                continue;
+            }
+            depth -= 1;
+            if depth == 1 {
+                if let Some(id) = current_id.take() {
+                    accounts.insert(id, current_account.clone());
+                }
+                current_account.clear();
             }
         }
     }
@@ -489,6 +523,24 @@ mod tests {
         let parsed = parse_vdf(content);
         assert_eq!(parsed["111"]["accountname"], "acct");
         assert_eq!(parsed["111"]["personaname"], r#"say "hi" now"#);
+    }
+
+    #[test]
+    fn parse_vdf_handles_inline_section_braces() {
+        let content = r#""users" {
+    "111" {
+        "AccountName" "first"
+        "PersonaName" "First User"
+    }
+    "222" {
+        "AccountName" "second"
+    }
+}"#;
+
+        let parsed = parse_vdf(content);
+        assert_eq!(parsed["111"]["accountname"], "first");
+        assert_eq!(parsed["111"]["personaname"], "First User");
+        assert_eq!(parsed["222"]["accountname"], "second");
     }
 
     // ── V2: newline escaping prevents VDF injection ──

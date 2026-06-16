@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 const ROBLOX_PROCESS_NAMES: &[&str] = &["RobloxPlayerBeta.exe", "RobloxStudioBeta.exe"];
 const ROBLOX_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
+const ROBLOX_AUTH_RESPONSE_MAX_BYTES: u64 = 1024 * 1024;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -185,8 +186,14 @@ fn validate_cookie_blocking(cookie: &str) -> Result<AuthenticatedUserResponse, S
         ));
     }
 
-    response
-        .json::<AuthenticatedUserResponse>()
+    let bytes = response
+        .bytes()
+        .map_err(|e| format!("Could not read user response: {e}"))?;
+    if bytes.len() as u64 > ROBLOX_AUTH_RESPONSE_MAX_BYTES {
+        return Err("Roblox user response is too large".into());
+    }
+
+    serde_json::from_slice::<AuthenticatedUserResponse>(&bytes)
         .map_err(|e| format!("Could not parse user response: {e}"))
 }
 

@@ -359,20 +359,18 @@ fn app_profiles_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
 }
 
 fn is_valid_profile_id(profile_id: &str) -> bool {
-    let trimmed = profile_id.trim();
-    !trimmed.is_empty()
-        && trimmed.len() <= 128
-        && trimmed
+    !profile_id.is_empty()
+        && profile_id.len() <= 128
+        && profile_id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
 }
 
 fn normalize_profile_id(profile_id: &str) -> Result<String, String> {
-    let trimmed = profile_id.trim();
-    if !is_valid_profile_id(trimmed) {
+    if profile_id != profile_id.trim() || !is_valid_profile_id(profile_id) {
         return Err("Invalid Riot profile id".into());
     }
-    Ok(trimmed.to_string())
+    Ok(profile_id.to_string())
 }
 
 fn profile_snapshot_path(app_handle: &dyn AppContext, profile_id: &str) -> Result<PathBuf, String> {
@@ -694,18 +692,29 @@ fn read_riot_local_api_access() -> Result<RiotLocalApiAccess, String> {
         )
     })?;
     let parts: Vec<&str> = content.trim().split(':').collect();
-    if parts.len() < 5 {
+    if parts.len() != 5 {
         return Err("Riot lockfile format is invalid".into());
     }
 
     let port = parts[2]
         .parse::<u16>()
         .map_err(|e| format!("Invalid Riot lockfile port: {e}"))?;
+    if port < 1024 {
+        return Err("Riot lockfile port is outside the expected range".into());
+    }
+    let protocol = parts[4].trim();
+    if protocol != "http" && protocol != "https" {
+        return Err("Riot lockfile protocol is invalid".into());
+    }
+    let password = parts[3].trim();
+    if password.is_empty() {
+        return Err("Riot lockfile password is empty".into());
+    }
 
     Ok(RiotLocalApiAccess {
-        protocol: parts[4].trim().to_string(),
+        protocol: protocol.to_string(),
         port,
-        password: parts[3].trim().to_string(),
+        password: password.to_string(),
     })
 }
 

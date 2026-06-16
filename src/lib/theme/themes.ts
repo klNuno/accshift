@@ -218,7 +218,7 @@ export function parseThemeJson(json: string): AppThemeDefinition | null {
     const id = typeof raw.id === "string" ? raw.id.trim() : "";
     const name = typeof raw.name === "string" ? raw.name.trim() : "";
     if (!id || !name) return null;
-    if (!/^[a-zA-Z0-9_-]+$/.test(id)) return null;
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(id)) return null;
     if (!isValidTokens(raw.tokens)) return null;
     if (!HEX_TOKEN_KEYS.every((key) => HEX_COLOR_RE.test((raw.tokens as ThemeTokens)[key].trim())))
       return null;
