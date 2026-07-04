@@ -50,7 +50,7 @@ pub fn list_custom_themes(app: &dyn AppContext) -> Result<Vec<CustomTheme>, Stri
         }
         themes.push(theme);
     }
-    themes.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    themes.sort_by_key(|t| t.name.to_lowercase());
     Ok(themes)
 }
 

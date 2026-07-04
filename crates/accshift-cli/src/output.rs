@@ -89,7 +89,7 @@ pub fn render_accounts(
 
     // Most-recently used first so the active account is at the top. The
     // current account marker already floats it; this matters for siblings.
-    rows.sort_by(|a, b| b.sort_key.cmp(&a.sort_key));
+    rows.sort_by_key(|r| std::cmp::Reverse(r.sort_key));
 
     if rows.is_empty() {
         println!("No accounts configured.");

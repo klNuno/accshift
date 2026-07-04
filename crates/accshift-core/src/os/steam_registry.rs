@@ -66,6 +66,7 @@ fn empty_registry_vdf() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn tmp_path(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
