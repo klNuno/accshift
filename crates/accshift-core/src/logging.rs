@@ -407,6 +407,14 @@ fn sanitize_log_text(value: &str) -> String {
         ("PROGRAMDATA", "%PROGRAMDATA%"),
         ("TEMP", "%TEMP%"),
         ("TMP", "%TEMP%"),
+        // Linux/macOS: AppContext::app_data_dir()/app_local_data_dir() resolve
+        // under $HOME (and under XDG_DATA_HOME/XDG_CONFIG_HOME when those are
+        // set), which embeds the OS account name. Without these, paths logged
+        // from config.rs's save_config_unlocked (portable/local config paths)
+        // leak the username on every successful config save.
+        ("HOME", "%HOME%"),
+        ("XDG_DATA_HOME", "%XDG_DATA_HOME%"),
+        ("XDG_CONFIG_HOME", "%XDG_CONFIG_HOME%"),
     ] {
         if let Ok(path) = std::env::var(env_key) {
             sanitized = replace_case_insensitive(&sanitized, &path, placeholder);
@@ -569,6 +577,12 @@ pub fn install_panic_hook(app_handle: crate::AppCtx) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Serializes the tests that mutate process-global HOME / XDG_* env vars.
+    // sanitize_log_text reads them at call time, so two of these running
+    // concurrently under cargo's parallel runner would clobber each other's
+    // setup (one test's HOME/XDG leaking into the other's assertion).
+    static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn trim_text_shorter_than_max() {
@@ -769,6 +783,70 @@ mod tests {
         assert_eq!(
             sanitize_log_text(input),
             "user <email> <battletag> <uuid>"
+        );
+    }
+
+    // Regression: sanitize_log_text's env-var scrub list used to only cover
+    // Windows vars (USERPROFILE, APPDATA, ...), so a Linux/macOS path under
+    // $HOME (e.g. the portable/local config paths logged by
+    // config.rs's save_config_unlocked) leaked the OS account name into
+    // app.log, and from there into uploaded log bundles, on every save.
+    #[test]
+    fn sanitize_log_text_scrubs_home_dir_path() {
+        let _env = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = std::env::var("HOME").ok();
+        std::env::set_var("HOME", "/home/alice");
+
+        let result = sanitize_log_text(
+            "Saved split app config /home/alice/.local/share/accshift/state/portable-config.json",
+        );
+
+        match previous {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+
+        assert_eq!(
+            result,
+            "Saved split app config %HOME%/.local/share/accshift/state/portable-config.json"
+        );
+    }
+
+    #[test]
+    fn sanitize_log_text_scrubs_xdg_dirs() {
+        let _env = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // Also pin HOME to a value that shares no substring with the XDG
+        // paths below: on a machine where HOME happens to already be set
+        // (e.g. Git Bash on Windows), the HOME substitution runs first in
+        // sanitize_log_text's loop and would otherwise eat part of the XDG
+        // path before the XDG substitution gets a chance to match it.
+        let previous_home = std::env::var("HOME").ok();
+        let previous_data = std::env::var("XDG_DATA_HOME").ok();
+        let previous_config = std::env::var("XDG_CONFIG_HOME").ok();
+        std::env::set_var("HOME", "/home/unrelated-sentinel");
+        std::env::set_var("XDG_DATA_HOME", "/home/alice/.local/share");
+        std::env::set_var("XDG_CONFIG_HOME", "/home/alice/.config");
+
+        let result = sanitize_log_text(
+            "paths /home/alice/.local/share/accshift and /home/alice/.config/accshift",
+        );
+
+        match previous_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        match previous_data {
+            Some(value) => std::env::set_var("XDG_DATA_HOME", value),
+            None => std::env::remove_var("XDG_DATA_HOME"),
+        }
+        match previous_config {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+
+        assert_eq!(
+            result,
+            "paths %XDG_DATA_HOME%/accshift and %XDG_CONFIG_HOME%/accshift"
         );
     }
 }

@@ -198,7 +198,11 @@
                   <div class="launch-item">
                     <span class="launch-game">{gameName(edit.appId)}</span>
                     <code class="launch-value">{edit.value}</code>
-                    <button class="remove-btn" onclick={() => removeLaunchOption(edit.appId)}>&times;</button>
+                    <button
+                      class="remove-btn"
+                      aria-label={t("common.close")}
+                      onclick={() => removeLaunchOption(edit.appId)}
+                    >&times;</button>
                   </div>
                 {/each}
               </div>

@@ -448,6 +448,15 @@
     await loader.switchTo(account);
   }
 
+  // Relaunching to install an update kills the whole process. Never do that
+  // while an account switch is mid-flight (Steam kill/VDF rewrite/relaunch
+  // under the cross-process config lock), or the switch gets aborted
+  // mid-step with no record it was interrupted.
+  function handleApplyUpdate() {
+    if (loader.switchingAccountId) return;
+    void updates.applyReadyUpdate();
+  }
+
   let currentAccountId = $derived(loader.currentAccountId);
   let showUsernamesForActiveTab = $derived(
     shell.activeTab === "steam" && settings.accountDisplay.showUsernames
@@ -655,10 +664,10 @@
     onAddAccount={handleAddAccountClick}
     onOpenSettings={appNavigation.toggleSettingsPanel}
     onBulkEdit={bulkEdit.toggleBulkEdit}
-    onApplyUpdate={updates.applyReadyUpdate}
+    onApplyUpdate={handleApplyUpdate}
     updateCtaLabel={updates.ctaLabel}
     updateCtaTitle={updates.ctaTitle}
-    updateCtaDisabled={updates.ctaDisabled}
+    updateCtaDisabled={updates.ctaDisabled || !!loader.switchingAccountId}
     {activeTab}
     onTabChange={appNavigation.handleTabChange}
     enabledPlatforms={shell.enabledPlatforms}

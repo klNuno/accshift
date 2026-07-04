@@ -2,7 +2,7 @@ use crate::context::AppContext;
 use crate::fs_utils;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -324,23 +324,25 @@ pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if path.exists() {
         let _ = fs::copy(path, &bak_path);
     }
-    match fs::copy(&tmp_path, path) {
+    finalize_copy_over(&tmp_path, path, &bak_path)
+}
+
+/// Copies `tmp_path` over `path` to finish the write when the rename
+/// fallback above triggered. Once the copy lands, `path` already holds the
+/// new content durably, so cleaning up the leftover `.bak` is best-effort
+/// and must never turn an otherwise-successful write into a reported
+/// failure: a stray `.bak` is already handled safely by
+/// `read_json_if_exists`'s recovery logic.
+fn finalize_copy_over(tmp_path: &Path, path: &Path, bak_path: &Path) -> Result<(), String> {
+    match fs::copy(tmp_path, path) {
         Ok(_) => {
-            let _ = fs::remove_file(&tmp_path);
-            if let Err(e) = fs::remove_file(&bak_path) {
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    return Err(format!(
-                        "Could not remove stale backup {} after writing {}: {e}",
-                        bak_path.display(),
-                        path.display()
-                    ));
-                }
-            }
+            let _ = fs::remove_file(tmp_path);
+            let _ = fs::remove_file(bak_path);
             Ok(())
         }
         Err(e) => {
             // Keep the .bak on disk: the next read recovers from it.
-            let _ = fs::remove_file(&tmp_path);
+            let _ = fs::remove_file(tmp_path);
             Err(format!("Could not finalize file {}: {e}", path.display()))
         }
     }
@@ -654,19 +656,33 @@ fn backup_legacy_path(source: &Path, backup_root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Legacy locations already checked this session. Migration can only be
-/// needed once per process; path helpers run on hot paths (every config
-/// load, every manifest build) and must not re-stat the legacy tree each
-/// time.
+/// Legacy locations already migrated (or found to need no migration) this
+/// session. Migration can only be needed once per process; path helpers
+/// run on hot paths (every config load, every manifest build) and must
+/// not re-stat the legacy tree each time.
+///
+/// A pair is only ever inserted by `mark_migration_checked`, which callers
+/// must call *after* a migration attempt actually returns `Ok`. That keeps
+/// a transient failure (locked file, disk full) from being cached as
+/// "done": the next call re-attempts the migration instead of silently
+/// treating an incomplete copy as complete.
+static MIGRATION_CHECKED: std::sync::OnceLock<Mutex<HashSet<(PathBuf, PathBuf)>>> =
+    std::sync::OnceLock::new();
+
 fn migration_checked(from: &Path, to: &Path) -> bool {
-    use std::collections::HashSet;
-    static CHECKED: std::sync::OnceLock<Mutex<HashSet<(PathBuf, PathBuf)>>> =
-        std::sync::OnceLock::new();
-    let mut set = CHECKED
+    MIGRATION_CHECKED
         .get_or_init(|| Mutex::new(HashSet::new()))
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    !set.insert((from.to_path_buf(), to.to_path_buf()))
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(&(from.to_path_buf(), to.to_path_buf()))
+}
+
+fn mark_migration_checked(from: &Path, to: &Path) {
+    MIGRATION_CHECKED
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert((from.to_path_buf(), to.to_path_buf()));
 }
 
 fn backup_and_migrate_dir(
@@ -678,12 +694,15 @@ fn backup_and_migrate_dir(
         return Ok(());
     }
     if from == to || !from.exists() || to.exists() {
+        mark_migration_checked(from, to);
         return Ok(());
     }
     if let Ok(backup_root) = legacy_backup_root(app_handle) {
         let _ = backup_legacy_path(from, &backup_root);
     }
-    migrate_dir_if_missing(from, to)
+    migrate_dir_if_missing(from, to)?;
+    mark_migration_checked(from, to);
+    Ok(())
 }
 
 fn backup_and_migrate_file(
@@ -695,12 +714,15 @@ fn backup_and_migrate_file(
         return Ok(());
     }
     if from == to || !from.exists() || to.exists() {
+        mark_migration_checked(from, to);
         return Ok(());
     }
     if let Ok(backup_root) = legacy_backup_root(app_handle) {
         let _ = backup_legacy_path(from, &backup_root);
     }
-    migrate_file_if_missing(from, to)
+    migrate_file_if_missing(from, to)?;
+    mark_migration_checked(from, to);
+    Ok(())
 }
 
 fn migrate_dir_if_missing(from: &Path, to: &Path) -> Result<(), String> {
@@ -716,7 +738,24 @@ fn migrate_dir_if_missing(from: &Path, to: &Path) -> Result<(), String> {
     match fs::rename(from, to) {
         Ok(()) => Ok(()),
         Err(_) => {
-            fs_utils::copy_dir_recursive(from, to, &[])?;
+            // Copy into a staging directory next to `to` first and only
+            // rename it into place once the copy is fully done, so a
+            // failure partway through the copy never leaves `to`
+            // half-populated (every caller trusts bare `to.exists()` as
+            // "migration complete").
+            let staging = unique_tmp_path(to);
+            let _ = fs::remove_dir_all(&staging);
+            if let Err(e) = fs_utils::copy_dir_recursive(from, &staging, &[]) {
+                let _ = fs::remove_dir_all(&staging);
+                return Err(e);
+            }
+            if let Err(e) = fs::rename(&staging, to) {
+                let _ = fs::remove_dir_all(&staging);
+                return Err(format!(
+                    "Could not finalize migrated directory {}: {e}",
+                    to.display()
+                ));
+            }
             fs::remove_dir_all(from)
                 .map_err(|e| format!("Could not remove legacy dir {}: {e}", from.display()))
         }
@@ -736,8 +775,23 @@ fn migrate_file_if_missing(from: &Path, to: &Path) -> Result<(), String> {
     match fs::rename(from, to) {
         Ok(()) => Ok(()),
         Err(_) => {
-            fs::copy(from, to)
-                .map_err(|e| format!("Could not copy legacy file {}: {e}", from.display()))?;
+            // Copy into a staging file next to `to` first and only rename
+            // it into place once the copy is fully done, so a failure
+            // partway through the copy never leaves `to` partially
+            // written (every caller trusts bare `to.exists()` as
+            // "migration complete").
+            let staging = unique_tmp_path(to);
+            if let Err(e) = fs::copy(from, &staging) {
+                let _ = fs::remove_file(&staging);
+                return Err(format!("Could not copy legacy file {}: {e}", from.display()));
+            }
+            if let Err(e) = fs::rename(&staging, to) {
+                let _ = fs::remove_file(&staging);
+                return Err(format!(
+                    "Could not finalize migrated file {}: {e}",
+                    to.display()
+                ));
+            }
             fs::remove_file(from)
                 .map_err(|e| format!("Could not remove legacy file {}: {e}", from.display()))
         }
@@ -774,5 +828,139 @@ mod tests {
     fn fnv1a64_known_vector() {
         // FNV-1a 64-bit hash of "a" is a known value
         assert_eq!(fnv1a64(b"a"), 0xaf63dc4c8601ec8c);
+    }
+
+    fn unique_test_root(tag: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "accshift-storage-test-{}-{}-{:?}",
+            tag,
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn write_bytes_atomic_round_trip() {
+        let root = unique_test_root("write-round-trip");
+        let path = root.join("data.json");
+
+        write_bytes_atomic(&path, b"hello").unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), b"hello");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn finalize_copy_over_ignores_bak_removal_failure() {
+        // Regression test: once the copy onto `path` has succeeded, the
+        // write is already durable. A leftover `.bak` that fails to
+        // delete (here forced by making it a directory, so remove_file
+        // errors with something other than NotFound) must not turn that
+        // success into a reported failure.
+        let root = unique_test_root("finalize-bak-failure");
+        let path = root.join("data.json");
+        let tmp_path = root.join("data.json.tmp");
+        let bak_path = root.join("data.bak");
+
+        fs::write(&path, b"old content").unwrap();
+        fs::write(&tmp_path, b"new content").unwrap();
+        fs::create_dir_all(&bak_path).unwrap();
+
+        let result = finalize_copy_over(&tmp_path, &path, &bak_path);
+
+        assert!(
+            result.is_ok(),
+            "a failed .bak cleanup must not fail an already-durable write: {result:?}"
+        );
+        assert_eq!(fs::read(&path).unwrap(), b"new content");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn migrate_file_if_missing_moves_content_and_removes_source() {
+        let root = unique_test_root("migrate-file");
+        let from = root.join("legacy.json");
+        let to = root.join("new").join("current.json");
+        fs::write(&from, b"legacy data").unwrap();
+
+        migrate_file_if_missing(&from, &to).unwrap();
+
+        assert!(!from.exists(), "legacy file should be gone after migration");
+        assert_eq!(fs::read(&to).unwrap(), b"legacy data");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn migrate_dir_if_missing_moves_tree_and_removes_source() {
+        let root = unique_test_root("migrate-dir");
+        let from = root.join("legacy");
+        let to = root.join("new").join("current");
+        fs::create_dir_all(&from).unwrap();
+        fs::write(from.join("theme.json"), b"theme data").unwrap();
+
+        migrate_dir_if_missing(&from, &to).unwrap();
+
+        assert!(!from.exists(), "legacy dir should be gone after migration");
+        assert_eq!(fs::read(to.join("theme.json")).unwrap(), b"theme data");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    struct TestCtx {
+        root: PathBuf,
+    }
+
+    impl AppContext for TestCtx {
+        fn app_config_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_data_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_local_data_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_cache_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.root.clone())
+        }
+    }
+
+    #[test]
+    fn backup_and_migrate_file_does_not_cache_a_failed_migration() {
+        // Regression test for the migration_checked/mark_migration_checked
+        // split: a migration that fails must not be recorded as done, or a
+        // transient failure would permanently strand the legacy file with
+        // no retry and no error on every later call.
+        let root = unique_test_root("migration-checked-failure");
+        let ctx = TestCtx { root: root.clone() };
+
+        let from = root.join("legacy.json");
+        fs::write(&from, b"legacy data").unwrap();
+
+        // `to`'s parent is a plain file, so creating it as a directory
+        // during migration is guaranteed to fail on every platform.
+        let blocker = root.join("blocker");
+        fs::write(&blocker, b"not a directory").unwrap();
+        let to = blocker.join("current.json");
+
+        let first = backup_and_migrate_file(&ctx, &from, &to);
+        assert!(
+            first.is_err(),
+            "migration should fail when the target parent can't be created"
+        );
+        assert!(from.exists(), "source must survive a failed migration");
+
+        let second = backup_and_migrate_file(&ctx, &from, &to);
+        assert!(
+            second.is_err(),
+            "a failed migration must not be cached as done: retrying must still surface the error, not silently succeed"
+        );
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

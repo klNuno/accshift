@@ -50,20 +50,32 @@ pub async fn fetch_player_bans(
     }
 
     let mut all_players: Vec<BanInfo> = Vec::new();
+    // On garde la derniere erreur de chunk au lieu d'abandonner tout de suite :
+    // un echec sur un chunk tardif ne doit pas jeter les bans deja recuperes
+    // pour les chunks precedents. On ne remonte l'erreur que si aucun chunk
+    // n'a abouti.
+    let mut last_error: Option<String> = None;
 
     for chunk in steam_ids.chunks(STEAM_BAN_IDS_PER_REQUEST) {
         let ids = chunk.join(",");
-        let url = reqwest::Url::parse_with_params(
+        let url = match reqwest::Url::parse_with_params(
             "https://api.steampowered.com/ISteamUser/GetPlayerBans/v1/",
             &[("key", api_key), ("steamids", ids.as_str())],
-        )
-        .map_err(|e| format!("Failed to build Steam bans URL: {}", e))?;
+        ) {
+            Ok(url) => url,
+            Err(e) => {
+                last_error = Some(format!("Failed to build Steam bans URL: {}", e));
+                continue;
+            }
+        };
 
-        let response = client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to fetch bans: {}", e))?;
+        let response = match client.get(url).send().await {
+            Ok(response) => response,
+            Err(e) => {
+                last_error = Some(format!("Failed to fetch bans: {}", e));
+                continue;
+            }
+        };
 
         if !response.status().is_success() {
             let status = response.status();
@@ -71,7 +83,7 @@ pub async fn fetch_player_bans(
                 .await
                 .unwrap_or_default();
             let body_preview: String = body.chars().take(160).collect();
-            return Err(format!(
+            last_error = Some(format!(
                 "Steam API returned {} while fetching bans{}",
                 status,
                 if body_preview.is_empty() {
@@ -80,12 +92,16 @@ pub async fn fetch_player_bans(
                     format!(": {}", body_preview)
                 }
             ));
+            continue;
         }
 
-        let ban_response: BanResponse = response
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse ban response: {}", e))?;
+        let ban_response: BanResponse = match response.json().await {
+            Ok(value) => value,
+            Err(e) => {
+                last_error = Some(format!("Failed to parse ban response: {}", e));
+                continue;
+            }
+        };
 
         all_players.extend(ban_response.players.into_iter().map(|p| BanInfo {
             steam_id: p.steam_id,
@@ -96,6 +112,14 @@ pub async fn fetch_player_bans(
             number_of_game_bans: p.number_of_game_bans,
             economy_ban: p.economy_ban,
         }));
+    }
+
+    // On ne remonte l'erreur que si aucun chunk n'a produit de resultat :
+    // sinon on renvoie les bans deja recuperes plutot que de tout jeter.
+    if all_players.is_empty() {
+        if let Some(e) = last_error {
+            return Err(e);
+        }
     }
 
     Ok(all_players)

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 #[cfg(not(target_os = "windows"))]
 use super::vdf::vdf_set_nested_value;
-use super::vdf::{parse_vdf, set_persona_state};
+use super::vdf::{parse_vdf, read_persona_state, set_persona_state};
 use crate::error::AppError;
 use crate::fs_utils;
 use crate::os;
@@ -191,12 +191,21 @@ fn switch_autologin_and_relaunch(
 
     match stop_steam(steam_path, force_kill)? {
         StopOutcome::NeedsElevation if run_as_admin => {
-            // Windows-only path: elevated combined kill+relaunch via UAC.
-            // The HKCU registry write is user-scope, so writing now (before
-            // the elevated kill) is safe — Steam does not own it.
+            // Windows-only path: elevated relaunch via UAC. The HKCU registry
+            // write is user-scope, so writing now is safe (Steam does not own
+            // it).
             write_auto_login(next_username)?;
-            let _ = set_login_user_flags(steam_path, next_username);
-            pre_launch();
+            if let Err(e) = set_login_user_flags(steam_path, next_username) {
+                // Keep registry and loginusers.vdf consistent: undo the
+                // autologin write rather than relaunch into a mismatched state.
+                let _ = restore_auto_login_user(&previous);
+                return Err(e);
+            }
+            // Deliberately no pre_launch() here: on this path we did not stop
+            // Steam ourselves (the elevated relaunch forwards to the still
+            // running client), so a Steam-owned write like persona state would
+            // just be overwritten when that client flushes on exit. Skipping it
+            // avoids corrupting localconfig.vdf for no effect.
             let mut args = parse_launch_options(launch_options);
             args.extend(extra_args.iter().map(|s| s.to_string()));
             return os::kill_and_relaunch_steam_elevated(steam_path, &args);
@@ -210,10 +219,17 @@ fn switch_autologin_and_relaunch(
         return Err(e);
     }
 
-    // Linux/macOS: also strip AllowAutoLogin/MostRecent in loginusers.vdf,
+    // Linux/macOS: also flip AllowAutoLogin/MostRecent in loginusers.vdf,
     // otherwise Steam re-logs the most-recent user even with an empty
-    // AutoLoginUser. No-op on Windows.
-    let _ = set_login_user_flags(steam_path, next_username);
+    // AutoLoginUser. No-op on Windows. A failure here would leave Steam
+    // auto-logging the previous account while the registry points at the new
+    // one, so revert the autologin write, relaunch Steam, and fail instead of
+    // launching into an inconsistent state.
+    if let Err(e) = set_login_user_flags(steam_path, next_username) {
+        let _ = restore_auto_login_user(&previous);
+        let _ = launch_steam(steam_path, run_as_admin, launch_options, extra_args);
+        return Err(e);
+    }
 
     pre_launch();
 
@@ -241,7 +257,16 @@ fn kill_steam_client_processes() -> Result<(), AppError> {
             .join()
             .map_err(|_| AppError::KillSteamTimeout)?;
         steam_result?;
-        helper_result
+        // The main client is confirmed gone here. A web helper that merely
+        // lagged past its wait (KillSteamTimeout) is benign: orphaned
+        // steamwebhelper processes exit on their own once the client is dead,
+        // and failing the whole stop on that would leave Steam closed with the
+        // caller never relaunching it. Only propagate a helper failure that
+        // needs elevation, since that means we genuinely could not touch it.
+        match helper_result {
+            Ok(()) | Err(AppError::KillSteamTimeout) => Ok(()),
+            Err(e) => Err(e),
+        }
     })
 }
 
@@ -703,8 +728,16 @@ pub fn switch_account_mode(
         _ => "1",
     };
 
+    // Snapshot the current persona state up front. pre_launch writes the new
+    // state before Steam is relaunched; if the relaunch then fails the switch
+    // is rolled back, and without this we would leave the account stuck in the
+    // requested mode the next time it is switched into.
+    let previous_state =
+        account_id.and_then(|id| read_persona_state(steam_path, id).ok().flatten());
+
     let mut persona_result: Result<(), AppError> = Ok(());
-    switch_autologin_and_relaunch(
+    let mut persona_written = false;
+    let switch_result = switch_autologin_and_relaunch(
         steam_path,
         Some(username),
         run_as_admin,
@@ -714,9 +747,22 @@ pub fn switch_account_mode(
         || {
             if let Some(account_id) = account_id {
                 persona_result = set_persona_state(steam_path, account_id, state);
+                persona_written = persona_result.is_ok();
             }
         },
-    )?;
+    );
+
+    if let Err(e) = switch_result {
+        // The switch failed after the new persona state was written; revert it
+        // so a failed attempt does not silently flip the account into the
+        // requested mode on its next successful switch.
+        if persona_written {
+            if let (Some(id), Some(prev)) = (account_id, &previous_state) {
+                let _ = set_persona_state(steam_path, id, prev);
+            }
+        }
+        return Err(e);
+    }
     // The switch itself succeeded; still surface a persona write failure so
     // the user knows the requested mode did not apply.
     persona_result
@@ -826,7 +872,26 @@ pub fn clear_integrated_browser_cache() -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_launch_options, remove_loginuser_entry, steam_id_to_account_id};
+    use super::{
+        copy_game_settings, parse_launch_options, remove_loginuser_entry, steam_id_to_account_id,
+    };
+    use std::fs;
+    use std::path::PathBuf;
+
+    // SteamID64 whose account ids are 1 and 2, used to build userdata paths.
+    const FROM_ID: &str = "76561197960265729";
+    const TO_ID: &str = "76561197960265730";
+
+    fn copy_test_root(tag: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "accshift-copygames-{}-{}",
+            tag,
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
 
     #[test]
     fn parse_launch_options_keeps_quoted_groups() {
@@ -1060,5 +1125,59 @@ mod tests {
         assert!(out.contains("\"222\""));
         assert!(out.contains("second"));
         assert!(out.ends_with("}\n"));
+    }
+
+    // -----------------------------------------------------------------------
+    // copy_game_settings (stage / backup / swap)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn copy_game_settings_creates_target_when_absent() {
+        let root = copy_test_root("absent");
+        let src = root.join("userdata").join("1").join("730");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("localconfig.vdf"), b"from-data").unwrap();
+        // Destination account dir exists but has no copy of app 730 yet.
+        fs::create_dir_all(root.join("userdata").join("2")).unwrap();
+
+        copy_game_settings(&root, FROM_ID, TO_ID, "730").unwrap();
+
+        let target = root.join("userdata").join("2").join("730");
+        assert_eq!(
+            fs::read_to_string(target.join("localconfig.vdf")).unwrap(),
+            "from-data"
+        );
+        // Staging and backup scratch dirs are cleaned up.
+        assert!(!root.join("userdata").join("2").join(".730.copy-staging").exists());
+        assert!(!root.join("userdata").join("2").join(".730.copy-backup").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn copy_game_settings_overwrites_existing_target() {
+        let root = copy_test_root("overwrite");
+        let src = root.join("userdata").join("1").join("730");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("new.cfg"), b"new").unwrap();
+        // Pre-existing target with different content.
+        let target = root.join("userdata").join("2").join("730");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("old.cfg"), b"old").unwrap();
+
+        copy_game_settings(&root, FROM_ID, TO_ID, "730").unwrap();
+
+        // The new payload replaced the old one; the stale file is gone.
+        assert_eq!(fs::read_to_string(target.join("new.cfg")).unwrap(), "new");
+        assert!(!target.join("old.cfg").exists());
+        // Backup is removed after a successful swap.
+        assert!(!root.join("userdata").join("2").join(".730.copy-backup").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn copy_game_settings_rejects_non_numeric_app_id() {
+        let root = copy_test_root("badid");
+        assert!(copy_game_settings(&root, FROM_ID, TO_ID, "../evil").is_err());
+        let _ = fs::remove_dir_all(&root);
     }
 }

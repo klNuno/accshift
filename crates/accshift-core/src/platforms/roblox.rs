@@ -224,9 +224,14 @@ fn exchange_quick_login_for_cookie(code: &str, private_key: &str) -> Result<Stri
     )?;
 
     if !response.status().is_success() {
-        let status = response.status();
-        let text = response.text().unwrap_or_default();
-        return Err(format!("Login exchange failed (HTTP {status}): {text}"));
+        // Do not include the raw response body in the error: this endpoint
+        // receives the Quick Login code and session private key, and its error
+        // body could echo secret-shaped content that would then reach app.log.
+        // The sibling /login/status path guards the same way.
+        return Err(format!(
+            "Login exchange failed (HTTP {})",
+            response.status()
+        ));
     }
 
     extract_roblosecurity_cookie(response.headers())
@@ -422,6 +427,29 @@ fn persist_rotated_cookie(app_handle: &dyn AppContext, account: &RobloxAccountCo
 
     if live.trim() == stored.trim() {
         return;
+    }
+
+    // The active-account guess in switch_account (max last_used_at) is only a
+    // hint: adding a cookie via add_account_by_cookie bumps last_used_at
+    // without ever writing the registry, so the live registry cookie can
+    // belong to a DIFFERENT account than the one guessed here. Overwriting
+    // this account's stored cookie with a cookie that is not its own would
+    // permanently destroy its real session and alias it to another account's
+    // credentials. Before persisting, confirm the live cookie actually
+    // authenticates as this same user; on any mismatch or doubt, leave the
+    // stored cookie untouched (fail closed).
+    match validate_cookie_blocking(&live) {
+        Ok(user) if user.id.to_string() == account.user_id => {}
+        Ok(_) => return,
+        Err(e) => {
+            log_platform_error(
+                app_handle,
+                "roblox.switch_account",
+                "Could not verify live cookie ownership before rotation; skipping",
+                &e,
+            );
+            return;
+        }
     }
 
     let encrypted = match crate::os::encrypt_secret(&live) {

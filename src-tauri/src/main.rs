@@ -55,7 +55,11 @@ fn main() {
                 "Second instance launch redirected to the running app",
                 None,
             );
-            let _ = app_runtime::show_main_window(app);
+            // Don't force the window visible mid-boot: boot completion shows
+            // it anyway, mirroring the deep-link handler's guard below.
+            if app.state::<app_runtime::BootState>().is_completed() {
+                let _ = app_runtime::show_main_window(app);
+            }
         }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_process::init())
@@ -172,6 +176,11 @@ fn main() {
             win.on_window_event(move |event| {
                 if let tauri::WindowEvent::CloseRequested { .. } = event {
                     let boot_state = app_handle.state::<app_runtime::BootState>();
+                    // Bounded join for the size-save thread spawned below, so the
+                    // process never exits while the write is still in flight and
+                    // silently drops it (the old fire-and-forget spawn_blocking
+                    // had exactly that gap).
+                    let mut size_save_wait: Option<std::sync::mpsc::Receiver<()>> = None;
                     if boot_state.is_completed() {
                         if !matches!(win_for_events.is_maximized(), Ok(true)) {
                             if let Ok(size) = win_for_events.inner_size() {
@@ -179,18 +188,21 @@ fn main() {
                                 // whose cross-process lock can wait up to 5s when
                                 // the CLI holds it. Running it inline would freeze
                                 // the UI thread for that whole stretch, so push it
-                                // onto a blocking task. The telemetry flush below
-                                // keeps the runtime alive while it lands.
+                                // onto its own thread and only join it (bounded)
+                                // after the telemetry flush below.
                                 let save_handle = app_handle.clone();
                                 let width = f64::from(size.width);
                                 let height = f64::from(size.height);
-                                tauri::async_runtime::spawn_blocking(move || {
+                                let (tx, rx) = std::sync::mpsc::channel();
+                                std::thread::spawn(move || {
                                     let _ = config::save_window_size(
                                         &ctx(&save_handle),
                                         width,
                                         height,
                                     );
+                                    let _ = tx.send(());
                                 });
+                                size_save_wait = Some(rx);
                             }
                         }
                     } else {
@@ -219,6 +231,13 @@ fn main() {
                         .handle
                         .track(telemetry::Event::SessionEnded { duration_ms });
                     tstate.shutdown();
+
+                    // Give the size save the same bound save_config's own
+                    // cross-process lock uses, so it either lands before we
+                    // exit or is abandoned deliberately rather than silently.
+                    if let Some(rx) = size_save_wait {
+                        let _ = rx.recv_timeout(std::time::Duration::from_secs(5));
+                    }
                 }
             });
 

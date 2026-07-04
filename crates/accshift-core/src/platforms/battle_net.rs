@@ -444,7 +444,7 @@ fn forget_account_metadata(app_handle: &dyn AppContext, email: &str) -> Result<(
     })
 }
 
-fn write_saved_accounts(accounts: &[String]) -> Result<(), String> {
+fn write_saved_accounts(app_handle: &dyn AppContext, accounts: &[String]) -> Result<(), String> {
     let config_path = battle_net_config_path()?;
     let parent = config_path
         .parent()
@@ -480,7 +480,14 @@ fn write_saved_accounts(accounts: &[String]) -> Result<(), String> {
 
     if config_path.exists() {
         let backup_path = config_path.with_extension("config.backup");
-        let _ = fs::copy(&config_path, &backup_path);
+        if let Err(e) = fs::copy(&config_path, &backup_path) {
+            log_platform_error(
+                app_handle,
+                "battle_net.write_saved_accounts",
+                "Could not create Battle.net config backup before overwrite",
+                format!("backup_path={}; error={e}", backup_path.display()),
+            );
+        }
     }
 
     let json = serde_json::to_string_pretty(&root)
@@ -786,7 +793,7 @@ pub fn switch_account(app_handle: AppCtx, email: String) -> Result<(), String> {
     }
 
     kill_battle_net()?;
-    write_saved_accounts(&reordered)?;
+    write_saved_accounts(&app_handle, &reordered)?;
     remember_account_usage(&app_handle, &target, false)?;
     let result = launch_battle_net(&app_handle);
 
@@ -838,7 +845,7 @@ pub fn begin_account_setup(app_handle: AppCtx) -> Result<SetupStatus, String> {
     drop(jobs);
 
     kill_battle_net()?;
-    write_saved_accounts(&[])?;
+    write_saved_accounts(&app_handle, &[])?;
     launch_battle_net(&app_handle).inspect_err(|e| {
         log_platform_error(
             &app_handle,
@@ -927,7 +934,7 @@ pub fn forget_account(app_handle: AppCtx, email: String) -> Result<(), String> {
         .collect::<Vec<_>>();
 
     kill_battle_net()?;
-    write_saved_accounts(&filtered)?;
+    write_saved_accounts(&app_handle, &filtered)?;
     forget_account_metadata(&app_handle, &target_email)
 }
 
@@ -1010,7 +1017,9 @@ mod tests {
     use super::{
         collect_unique_accounts, encode_saved_account_name, extract_saved_account_names,
         normalize_account_key, normalize_registry_path, parse_saved_account_names,
+        write_saved_accounts,
     };
+    use crate::AppContext;
     use serde_json::json;
     use std::collections::HashSet;
 
@@ -1202,5 +1211,79 @@ mod tests {
             normalize_registry_path("\"C:\\Jeux, Divers\\Battle.net\\Battle.net.exe\",3"),
             "C:\\Jeux, Divers\\Battle.net\\Battle.net.exe"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // write_saved_accounts: a failed best-effort backup must not block the
+    // real config write (regression guard for the "backup-copy failure is
+    // silently swallowed" finding: the fix adds logging, but must not flip
+    // this path to fail closed, since the backup is a manual recovery aid,
+    // not the write itself).
+    // -----------------------------------------------------------------------
+
+    struct TestCtx {
+        root: std::path::PathBuf,
+    }
+
+    impl AppContext for TestCtx {
+        fn app_config_dir(&self) -> Result<std::path::PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_data_dir(&self) -> Result<std::path::PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_local_data_dir(&self) -> Result<std::path::PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_cache_dir(&self) -> Result<std::path::PathBuf, String> {
+            Ok(self.root.clone())
+        }
+    }
+
+    #[test]
+    fn write_saved_accounts_succeeds_when_backup_copy_fails() {
+        let root = std::env::temp_dir().join(format!(
+            "accshift-battlenet-test-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let ctx = TestCtx { root: root.clone() };
+
+        let previous_appdata = std::env::var("APPDATA").ok();
+        std::env::set_var("APPDATA", &root);
+
+        // Seed an existing Battle.net.config so write_saved_accounts takes
+        // the backup-before-overwrite branch.
+        let config_dir = root.join("Battle.net");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let config_path = config_dir.join("Battle.net.config");
+        std::fs::write(&config_path, b"{}").unwrap();
+
+        // Pre-create a directory at the exact backup path so fs::copy fails:
+        // copying a file over an existing directory errors on every OS.
+        let backup_path = config_path.with_extension("config.backup");
+        std::fs::create_dir_all(&backup_path).unwrap();
+
+        let result = write_saved_accounts(&ctx, &["someone@example.com".to_string()]);
+
+        match previous_appdata {
+            Some(value) => std::env::set_var("APPDATA", value),
+            None => std::env::remove_var("APPDATA"),
+        }
+
+        assert!(
+            result.is_ok(),
+            "a failed best-effort backup must not block the real config write: {result:?}"
+        );
+
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        assert!(
+            content.contains("someone@example.com"),
+            "live config must still be overwritten even though the backup copy failed"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

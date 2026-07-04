@@ -81,13 +81,28 @@ pub fn steam_htmlcache_path() -> Result<PathBuf, AppError> {
 // AutoLoginUser via Steam's registry.vdf
 // ---------------------------------------------------------------------------
 
+// True when `path` sits under Flatpak's per-app sandbox data dir
+// (`.var/app/com.valvesoftware.Steam/...`), regardless of which of the two
+// Flatpak candidates in `candidate_steam_paths` it is.
+fn is_flatpak_path(path: &Path) -> bool {
+    path.components()
+        .any(|c| c.as_os_str() == "com.valvesoftware.Steam")
+}
+
 fn registry_vdf_path() -> Result<PathBuf, AppError> {
     let home = home_dir().ok_or_else(|| AppError::PathResolve("$HOME is not set".into()))?;
 
-    // Flatpak isolates everything under .var/app.
-    let flatpak = home.join(".var/app/com.valvesoftware.Steam/.steam/registry.vdf");
-    if flatpak.exists() {
-        return Ok(flatpak);
+    // Mirror whichever install steam_installation_path() actually resolved
+    // instead of picking independently by mere file presence. Flatpak app
+    // data is not removed just because the app stops being used, so a leftover
+    // registry.vdf under .var/app can outlive the Flatpak install; reading or
+    // writing it while launch/relaunch operate against a different (e.g.
+    // native) install would silently desync the two.
+    let is_flatpak = steam_installation_path()
+        .map(|p| is_flatpak_path(&p))
+        .unwrap_or(false);
+    if is_flatpak {
+        return Ok(home.join(".var/app/com.valvesoftware.Steam/.steam/registry.vdf"));
     }
     // Native + Snap installs share ~/.steam/registry.vdf. Snap runs in classic
     // confinement with the real $HOME, so Steam uses ~/.steam/ for its
@@ -126,8 +141,9 @@ pub fn kill_and_relaunch_steam_elevated(
 
 pub fn request_steam_shutdown(steam_path: &Path) -> bool {
     // `steam -shutdown` forwards the request to the running instance through
-    // the launcher script / Snap wrapper, same resolution as launch_steam.
-    Command::new(resolve_steam_launcher(steam_path))
+    // the launcher script / Snap wrapper / Flatpak app, same resolution as
+    // launch_steam.
+    steam_launch_command(steam_path)
         .arg("-shutdown")
         .spawn()
         .is_ok()
@@ -138,18 +154,27 @@ pub fn launch_steam(
     _run_as_admin: bool,
     launch_options: &[String],
 ) -> Result<(), AppError> {
-    // The user-visible launcher is the `steam` shell script sitting next to
-    // the data dir. Native installs place it in /usr/bin too, but using the
-    // known path avoids PATH lookups.
-    let steam_exe = resolve_steam_launcher(steam_path);
-    Command::new(steam_exe)
+    steam_launch_command(steam_path)
         .args(launch_options)
         .spawn()
         .map_err(|e| AppError::ProcessStart(e.to_string()))?;
     Ok(())
 }
 
-fn resolve_steam_launcher(steam_path: &Path) -> PathBuf {
+// Builds the base command to launch/signal Steam for the install `steam_path`
+// resolved to, ready for the caller to append its own arguments (a
+// `-shutdown` request or the account's launch options).
+fn steam_launch_command(steam_path: &Path) -> Command {
+    // Flatpak sandboxes the whole data dir; the exported host launcher lives
+    // in ~/.local/share/flatpak/exports/bin under the app id (not `steam`),
+    // and a sandboxed app must be started via `flatpak run <app-id>`, not by
+    // exec'ing scripts out of the sandboxed data directory.
+    if is_flatpak_path(steam_path) {
+        let mut cmd = Command::new("flatpak");
+        cmd.args(["run", "com.valvesoftware.Steam"]);
+        return cmd;
+    }
+
     // Snap confines the Steam runtime: exec'ing steam.sh straight from the
     // data dir boots partway then dies outside the sandbox. Detect Snap by
     // resolving symlinks (~/.steam/steam points into ~/snap/...) and go
@@ -159,12 +184,15 @@ fn resolve_steam_launcher(steam_path: &Path) -> PathBuf {
         .unwrap_or_else(|_| steam_path.to_path_buf());
     let under_snap = real.components().any(|c| c.as_os_str() == "snap");
     if !under_snap {
+        // The user-visible launcher is the `steam` shell script sitting next
+        // to the data dir. Native installs place it in /usr/bin too, but
+        // using the known path avoids PATH lookups.
         let candidate = steam_path.join("steam.sh");
         if candidate.exists() {
-            return candidate;
+            return Command::new(candidate);
         }
     }
-    PathBuf::from("steam")
+    Command::new("steam")
 }
 
 // ---------------------------------------------------------------------------
@@ -209,27 +237,176 @@ pub fn select_folder(title: &str) -> Result<String, AppError> {
     Err(picker_supported())
 }
 
+// Parses the Windows common-dialog filter format callers build
+// (`"Name|Pattern|Name2|Pattern2|..."`, patterns optionally `;`-separated for
+// multiple extensions in one group) into (name, patterns) pairs so it can be
+// re-rendered into the format zenity/kdialog actually expect.
+fn parse_windows_filter(filter: &str) -> Vec<(&str, Vec<&str>)> {
+    let parts: Vec<&str> = filter.split('|').collect();
+    let mut groups = Vec::new();
+    let mut i = 0;
+    while i + 1 < parts.len() {
+        let name = parts[i];
+        let patterns: Vec<&str> = parts[i + 1]
+            .split(';')
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .collect();
+        if !patterns.is_empty() {
+            groups.push((name, patterns));
+        }
+        i += 2;
+    }
+    groups
+}
+
 pub fn select_file(title: &str, filter: &str) -> Result<String, AppError> {
-    let zenity_args: Vec<&str> = if filter.is_empty() {
-        vec!["--file-selection", "--title", title]
-    } else {
-        vec![
-            "--file-selection",
-            "--title",
-            title,
-            "--file-filter",
-            filter,
-        ]
-    };
-    if let Some(result) = run_picker("zenity", &zenity_args) {
+    let groups = parse_windows_filter(filter);
+
+    // zenity wants one `--file-filter='Name | pattern pattern...'` per group.
+    let mut zenity_args: Vec<String> = vec![
+        "--file-selection".to_string(),
+        "--title".to_string(),
+        title.to_string(),
+    ];
+    for (name, patterns) in &groups {
+        zenity_args.push("--file-filter".to_string());
+        zenity_args.push(format!("{name} | {}", patterns.join(" ")));
+    }
+    let zenity_arg_refs: Vec<&str> = zenity_args.iter().map(String::as_str).collect();
+    if let Some(result) = run_picker("zenity", &zenity_arg_refs) {
         return result;
     }
-    let kdialog_filter = if filter.is_empty() { "*" } else { filter };
+
+    // kdialog wants a single `pattern pattern... | Name` string per group,
+    // groups separated by newlines.
+    let kdialog_filter = if groups.is_empty() {
+        "*".to_string()
+    } else {
+        groups
+            .iter()
+            .map(|(name, patterns)| format!("{} | {name}", patterns.join(" ")))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     if let Some(result) = run_picker(
         "kdialog",
-        &["--getopenfilename", ".", kdialog_filter, "--title", title],
+        &["--getopenfilename", ".", &kdialog_filter, "--title", title],
     ) {
         return result;
     }
     Err(picker_supported())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_flatpak_path_detects_either_flatpak_candidate() {
+        assert!(is_flatpak_path(Path::new(
+            "/home/alice/.var/app/com.valvesoftware.Steam/.local/share/Steam"
+        )));
+        assert!(is_flatpak_path(Path::new(
+            "/home/alice/.var/app/com.valvesoftware.Steam/.steam/steam"
+        )));
+    }
+
+    #[test]
+    fn is_flatpak_path_rejects_native_and_snap_dirs() {
+        assert!(!is_flatpak_path(Path::new("/home/alice/.local/share/Steam")));
+        assert!(!is_flatpak_path(Path::new(
+            "/home/alice/snap/steam/common/.local/share/Steam"
+        )));
+    }
+
+    #[test]
+    fn steam_launch_command_runs_flatpak_via_flatpak_run() {
+        // Regression: resolve_steam_launcher used to have no Flatpak branch
+        // at all and would fall through to a bare "steam" lookup, which does
+        // not exist for a Flatpak-only install (see finding: launch/-shutdown
+        // break for Flatpak-only Steam installs).
+        let path = Path::new("/home/alice/.var/app/com.valvesoftware.Steam/.local/share/Steam");
+        let cmd = steam_launch_command(path);
+        assert_eq!(cmd.get_program().to_str().unwrap(), "flatpak");
+        let args: Vec<&str> = cmd.get_args().map(|a| a.to_str().unwrap()).collect();
+        assert_eq!(args, vec!["run", "com.valvesoftware.Steam"]);
+    }
+
+    #[test]
+    fn steam_launch_command_uses_launcher_script_for_native_install() {
+        let root = std::env::temp_dir().join(format!(
+            "accshift-linux-launcher-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("steam.sh"), "#!/bin/sh\n").unwrap();
+
+        let cmd = steam_launch_command(&root);
+        let expected = root.join("steam.sh");
+        assert_eq!(
+            cmd.get_program().to_str().unwrap(),
+            expected.to_str().unwrap()
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn steam_launch_command_falls_back_to_bare_steam_when_script_missing() {
+        // Non-existent dir: canonicalize fails, falls back to the literal
+        // path, which also has no steam.sh next to it.
+        let root = std::env::temp_dir().join(format!(
+            "accshift-linux-launcher-missing-test-{}",
+            std::process::id()
+        ));
+        let cmd = steam_launch_command(&root);
+        assert_eq!(cmd.get_program().to_str().unwrap(), "steam");
+    }
+
+    #[test]
+    fn parse_windows_filter_splits_name_pattern_pairs() {
+        let groups = parse_windows_filter("Executable files (*.exe)|*.exe|All files (*.*)|*.*");
+        assert_eq!(
+            groups,
+            vec![
+                ("Executable files (*.exe)", vec!["*.exe"]),
+                ("All files (*.*)", vec!["*.*"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_windows_filter_splits_semicolon_separated_patterns_in_one_group() {
+        let groups = parse_windows_filter("Images|*.png;*.jpg");
+        assert_eq!(groups, vec![("Images", vec!["*.png", "*.jpg"])]);
+    }
+
+    #[test]
+    fn parse_windows_filter_returns_empty_for_empty_input() {
+        assert!(parse_windows_filter("").is_empty());
+    }
+
+    #[test]
+    fn select_file_would_have_mangled_multi_group_filter_before_the_fix() {
+        // Regression guard for the exact bug: the old code forwarded the raw
+        // Windows-style filter string unchanged, so zenity/kdialog received
+        // "*.exe|All" style garbage instead of a clean "*.exe" pattern for
+        // the first group. Assert the parsed representation used to build
+        // both dialogs' arguments is the clean, per-group form.
+        let filter = "Executable files (*.exe)|*.exe|All files (*.*)|*.*";
+        let groups = parse_windows_filter(filter);
+        let zenity_rendered: Vec<String> = groups
+            .iter()
+            .map(|(name, patterns)| format!("{name} | {}", patterns.join(" ")))
+            .collect();
+        assert_eq!(
+            zenity_rendered,
+            vec![
+                "Executable files (*.exe) | *.exe".to_string(),
+                "All files (*.*) | *.*".to_string(),
+            ]
+        );
+        assert!(!zenity_rendered[0].contains("*.exe|All"));
+    }
 }

@@ -612,7 +612,38 @@ pub fn migrate_legacy_config(app_handle: &dyn AppContext) -> Option<Result<(), S
     }
 
     // Migrate: load legacy, save as portable+local, delete legacy.
-    let legacy = load_legacy_config(app_handle);
+    //
+    // Parse the legacy file explicitly here instead of via load_legacy_config:
+    // that helper returns AppConfig::default() on a parse error (fine for a
+    // read-only load fallback), but migrating a default would save empty
+    // portable/local files and then delete the only real copy. If the legacy
+    // file is corrupt we must NOT destroy it: keep a backup next to it and
+    // surface an error so the user can recover their accounts and API key.
+    let data = match fs::read_to_string(&legacy_path) {
+        Ok(d) => d,
+        Err(e) => return Some(Err(format!("Could not read legacy config: {e}"))),
+    };
+    let raw = match serde_json::from_str::<RawAppConfig>(&data) {
+        Ok(raw) => raw,
+        Err(e) => {
+            let mut backup = legacy_path.clone();
+            let name = backup
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "config.json".into());
+            backup.set_file_name(format!("{name}.corrupt-backup"));
+            let _ = fs::copy(&legacy_path, &backup);
+            let _ = crate::logging::append_app_log(
+                app_handle,
+                "error",
+                "config.migrate_legacy",
+                "Legacy config is corrupt; kept a backup and skipped migration",
+                Some(&e.to_string()),
+            );
+            return Some(Err(format!("Legacy config is corrupt: {e}")));
+        }
+    };
+    let legacy = normalize_config(raw);
     if let Err(e) = save_config(app_handle, &legacy) {
         return Some(Err(format!("Failed to write migrated config: {e}")));
     }

@@ -63,6 +63,7 @@ export function createAccountLoader(
   let lastNoAccountsToastAt = 0;
   let latestLoadId = 0;
   let latestPrimeRunId = 0;
+  let latestSwitchId = 0;
   const t = (key: MessageKey, params?: TranslationParams) =>
     translateMessage?.(key, params) ?? translate(DEFAULT_LOCALE, key, params);
 
@@ -86,6 +87,17 @@ export function createAccountLoader(
   function resolveVisibleAccounts(source: PlatformAccount[]): PlatformAccount[] {
     if (!getVisibleAccountIds) return source;
     return resolveAccountsByIds(source, getVisibleAccountIds());
+  }
+
+  // A profile fetch started before removeAccount() can still resolve afterward and
+  // repopulate avatar state for an account that is no longer in the list. Sweep it
+  // back out so a stray in-flight response cannot leave an orphaned entry behind.
+  function pruneOrphanedAvatarStates() {
+    for (const accountId of Object.keys(avatars.states)) {
+      if (!accountMap[accountId]) {
+        avatars.removeAvatar(accountId);
+      }
+    }
   }
 
   async function loadWarningStatesForAccounts(
@@ -190,17 +202,24 @@ export function createAccountLoader(
     if (!adapter || switching) return;
     // Invalidate in-flight loads so a pre-switch result cannot clobber currentAccount.
     latestLoadId += 1;
+    // Our own generation token: if a platform/tab change (clearForPlatformChange) or
+    // another switchTo() happens while we await below, switchId stops matching and we
+    // stop applying currentAccount/switching updates to state that no longer belongs to us.
+    const switchId = ++latestSwitchId;
     switching = true;
     switchingAccountId = account.id;
     error = null;
     try {
       await adapter.switchAccount(account);
+      if (switchId !== latestSwitchId) return;
       currentAccount = account.id;
       if (adapter.getProfileInfo) {
         avatars.updateState(account.id, { refreshing: true });
         void adapter
           .getProfileInfo(account.id)
           .then((profile) => {
+            // The account may have been removed while this fetch was in flight.
+            if (!accountMap[account.id]) return;
             avatars.applyProfileUpdate(
               account,
               profile,
@@ -211,15 +230,18 @@ export function createAccountLoader(
             );
           })
           .catch(() => {
+            if (!accountMap[account.id]) return;
             avatars.updateState(account.id, { refreshing: false });
           });
       }
     } catch (e) {
+      if (switchId !== latestSwitchId) return;
       error = String(e);
       const adapter = getAdapter();
       const mapped = adapter?.getSwitchErrorToastMessage?.(error, { t });
       addToast(mapped ?? error);
     }
+    if (switchId !== latestSwitchId) return;
     switching = false;
     switchingAccountId = null;
   }
@@ -301,6 +323,9 @@ export function createAccountLoader(
         );
       }
       await Promise.all(tasks);
+      // A removeAccount() call while these fetches were in flight can have
+      // resurrected avatar state for an account that is gone; sweep it back out.
+      pruneOrphanedAvatarStates();
       return shouldContinue() ? targetAccounts.length : 0;
     };
     if (deferBackground) {
@@ -333,6 +358,7 @@ export function createAccountLoader(
       currentAccount = "";
     }
     avatars.removeAvatar(accountId);
+    pruneOrphanedAvatarStates();
     const { [accountId]: _warning, ...restWarnings } = warningStates;
     warningStates = restWarnings;
   }
@@ -340,10 +366,13 @@ export function createAccountLoader(
   function clearForPlatformChange() {
     latestLoadId += 1;
     latestPrimeRunId += 1;
+    latestSwitchId += 1;
     accounts = [];
     currentAccount = "";
     loading = true;
     error = null;
+    switching = false;
+    switchingAccountId = null;
     avatars.clear();
     warningStates = {};
   }

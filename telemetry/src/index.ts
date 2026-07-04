@@ -263,8 +263,6 @@ async function handleLogs(request: Request, env: Env, ctx: ExecutionContext): Pr
   const ip = clientIp(request);
   const blocked = await enforceRateLimit(env, env.RL_LOGS, ip, "/logs", ctx, true);
   if (blocked) return blocked;
-  const budgetErr = await checkBudget(env, "/logs", intVar(env.BUDGET_LOGS, 2000), ctx);
-  if (budgetErr) return budgetErr;
 
   const maxBytes = parseInt(env.LOG_MAX_BYTES, 10) || 10 * 1024 * 1024;
   const lenHeader = request.headers.get("Content-Length");
@@ -280,6 +278,12 @@ async function handleLogs(request: Request, env: Env, ctx: ExecutionContext): Pr
   const body = await request.arrayBuffer();
   if (body.byteLength === 0) return json({ error: "empty_body" }, 400);
   if (body.byteLength > maxBytes) return json({ error: "payload_too_large", max: maxBytes }, 413);
+
+  // Body is validated (size, content-type, non-empty) BEFORE touching the
+  // daily budget, so malformed or empty requests cannot burn the D1 budget
+  // counter. Mirrors handleTrack's ordering.
+  const budgetErr = await checkBudget(env, "/logs", intVar(env.BUDGET_LOGS, 2000), ctx);
+  if (budgetErr) return budgetErr;
 
   const createdAt = Math.floor(Date.now() / 1000);
   const appVersion = request.headers.get("X-App-Version") ?? "";
@@ -380,10 +384,24 @@ async function purgeExpiredLogs(env: Env): Promise<void> {
   });
   await env.LOGS.delete(keys); // bulk delete, missing keys are no-ops
 
+  // R2's bulk delete does not report per-key success or failure, so verify
+  // each object is actually gone with a HEAD before dropping its D1 index
+  // row. A key that somehow still resolves keeps its row and is retried on
+  // the next cron run instead of being silently orphaned in R2.
+  const stillPresent = new Set<string>();
+  await Promise.all(
+    keys.map(async (key) => {
+      const head = await env.LOGS.head(key);
+      if (head) stillPresent.add(key);
+    }),
+  );
+  const confirmed = rows.filter((r, i) => !stillPresent.has(keys[i]!));
+  if (confirmed.length === 0) return;
+
   // D1 caps bound parameters per statement; delete in chunks via batch.
   const stmts: D1PreparedStatement[] = [];
-  for (let i = 0; i < rows.length; i += 50) {
-    const chunk = rows.slice(i, i + 50);
+  for (let i = 0; i < confirmed.length; i += 50) {
+    const chunk = confirmed.slice(i, i + 50);
     stmts.push(
       env.DB.prepare(
         `DELETE FROM log_uploads WHERE ticket_id IN (${chunk.map(() => "?").join(", ")})`,
@@ -391,7 +409,12 @@ async function purgeExpiredLogs(env: Env): Promise<void> {
     );
   }
   await env.DB.batch(stmts);
-  console.log(`log retention: purged ${rows.length} uploads older than ${LOG_RETENTION_DAYS}d`);
+  console.log(
+    `log retention: purged ${confirmed.length} uploads older than ${LOG_RETENTION_DAYS}d` +
+      (stillPresent.size > 0
+        ? ` (${stillPresent.size} still present in R2, retrying next run)`
+        : ""),
+  );
 }
 
 // ─── /forget (Mode B) ────────────────────────────────────────────
@@ -402,15 +425,18 @@ async function handleForget(request: Request, env: Env, ctx: ExecutionContext): 
   const uaErr = checkUa(request, env);
   if (uaErr) return uaErr;
   const ip = clientIp(request);
-  const blocked = await enforceRateLimit(env, env.RL_RGPD, ip, "/forget", ctx);
+  const blocked = await enforceRateLimit(env, env.RL_RGPD, ip, "/forget", ctx, true);
   if (blocked) return blocked;
-  const budgetErr = await checkBudget(env, "/forget", intVar(env.BUDGET_FORGET, 500), ctx);
-  if (budgetErr) return budgetErr;
 
+  // Parse and validate the body BEFORE touching the daily budget, so malformed
+  // or empty requests cannot burn the D1 budget counter. Mirrors handleTrack.
   const parsed = await readJsonCapped<{ install_id?: string }>(request, RGPD_BODY_MAX_BYTES);
   if (parsed instanceof Response) return parsed;
   const payload = parsed;
   if (!payload || !isUuidV4(payload.install_id)) return json({ error: "bad_install_id" }, 400);
+
+  const budgetErr = await checkBudget(env, "/forget", intVar(env.BUDGET_FORGET, 500), ctx);
+  if (budgetErr) return budgetErr;
 
   const id = payload.install_id!;
   const now = Math.floor(Date.now() / 1000);
@@ -434,16 +460,19 @@ async function handleExport(request: Request, env: Env, ctx: ExecutionContext): 
   const uaErr = checkUa(request, env);
   if (uaErr) return uaErr;
   const ip = clientIp(request);
-  const blocked = await enforceRateLimit(env, env.RL_RGPD, ip, "/export", ctx);
+  const blocked = await enforceRateLimit(env, env.RL_RGPD, ip, "/export", ctx, true);
   if (blocked) return blocked;
-  const budgetErr = await checkBudget(env, "/export", intVar(env.BUDGET_EXPORT, 500), ctx);
-  if (budgetErr) return budgetErr;
 
+  // Parse and validate the body BEFORE touching the daily budget, so malformed
+  // or empty requests cannot burn the D1 budget counter. Mirrors handleTrack.
   const parsed = await readJsonCapped<{ install_id?: string }>(request, RGPD_BODY_MAX_BYTES);
   if (parsed instanceof Response) return parsed;
   const payload = parsed;
   if (!payload || !isUuidV4(payload.install_id)) return json({ error: "bad_install_id" }, 400);
   const id = payload.install_id!;
+
+  const budgetErr = await checkBudget(env, "/export", intVar(env.BUDGET_EXPORT, 500), ctx);
+  if (budgetErr) return budgetErr;
 
   const [pings, snapshots] = await Promise.all([
     env.DB.prepare(
@@ -499,7 +528,12 @@ async function handleAdminQuery(
   if (hasLimitClause(payload.sql)) {
     return json({ error: "limit_not_allowed" }, 400);
   }
-  const capped = `${payload.sql.trim().replace(/;\s*$/, "")} LIMIT ${ADMIN_QUERY_MAX_ROWS}`;
+  // Wrap the caller's SQL in a subquery before appending LIMIT: if the SQL ends
+  // with a `--` line comment, appending LIMIT directly after it would land on
+  // the commented-out line and never apply. Wrapping keeps LIMIT on the outer,
+  // uncommented statement regardless of what the inner query ends with.
+  const innerSql = payload.sql.trim().replace(/;\s*$/, "");
+  const capped = `SELECT * FROM (${innerSql}) LIMIT ${ADMIN_QUERY_MAX_ROWS}`;
 
   const stmt = env.DB.prepare(capped);
   const bound =

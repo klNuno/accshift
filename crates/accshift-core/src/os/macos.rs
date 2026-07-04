@@ -73,6 +73,25 @@ pub fn kill_and_relaunch_steam_elevated(
     launch_steam(steam_path, false, launch_options)
 }
 
+fn resolve_installed_steam_app() -> Option<PathBuf> {
+    // Ask Launch Services (via Spotlight metadata) where Steam.app is
+    // actually installed instead of assuming /Applications. Covers users
+    // who drag-install to ~/Applications or elsewhere.
+    let output = Command::new("mdfind")
+        .arg("kMDItemCFBundleIdentifier == 'com.valvesoftware.steam'")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let app_path = stdout.lines().next()?.trim();
+    if app_path.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(app_path).join("Contents/MacOS/steam_osx"))
+}
+
 pub fn request_steam_shutdown(steam_path: &Path) -> bool {
     // Same mechanism as Windows: invoke the client binary with -shutdown,
     // which forwards the request to the running instance and exits. The
@@ -84,6 +103,10 @@ pub fn request_steam_shutdown(steam_path: &Path) -> bool {
         .join(steam_executable_name());
     let binary = if bundled.exists() {
         bundled
+    } else if let Some(resolved) = resolve_installed_steam_app().filter(|p| p.exists()) {
+        // Steam.app is not under /Applications; ask Spotlight where it is
+        // rather than force-killing just because the hardcoded path misses.
+        resolved
     } else {
         // Bootstrapper bundle ships the same binary.
         PathBuf::from("/Applications/Steam.app/Contents/MacOS/steam_osx")
@@ -99,8 +122,8 @@ pub fn request_steam_shutdown(steam_path: &Path) -> bool {
     };
 
     // The messenger is itself named steam_osx and takes a few seconds to
-    // deliver (it partially boots first). While it lives — or lingers as an
-    // unreaped zombie afterwards — the process-exit wait in the caller counts
+    // deliver (it partially boots first). While it lives (or lingers as an
+    // unreaped zombie afterwards) the process-exit wait in the caller counts
     // it as Steam still running. Reap it before returning, with a watchdog
     // thread so a hung messenger cannot block the switch forever.
     let (tx, rx) = std::sync::mpsc::channel();

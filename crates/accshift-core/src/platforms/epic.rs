@@ -657,21 +657,30 @@ fn remember_account_usage(app_handle: &dyn AppContext, account_id: &str) -> Resu
     })
 }
 
-/// Record usage of the currently logged-in account and capture its snapshot
-/// if one is missing. Runs on the explicit switch / setup paths only, never on
-/// the read path (read_accounts must stay side-effect free).
-fn capture_current_account(app_handle: &dyn AppContext) {
+/// Record usage of the currently logged-in account and refresh its auth
+/// snapshot. Runs on the explicit switch / setup paths only, never on the
+/// read path (read_accounts must stay side-effect free).
+///
+/// Always re-saves the snapshot, not just the first time one is missing:
+/// Epic rotates the launcher's auth tokens during normal use, so a snapshot
+/// captured once and never refreshed would restore stale, already-invalidated
+/// tokens on a later switch back to this account.
+///
+/// Returns Ok(()) when there is no logged-in account to protect (nothing in
+/// the registry yet, or an invalid id). Returns Err when an account IS
+/// currently logged in but its snapshot could not be saved, so the caller
+/// can abort before killing the launcher or overwriting/deleting the live
+/// auth files, instead of stranding that account logged out with no backup.
+fn capture_current_account(app_handle: &dyn AppContext) -> Result<(), String> {
     let Some(current_id) = read_registry_account_id() else {
-        return;
+        return Ok(());
     };
     let key = current_id.to_lowercase();
     if !is_valid_epic_account_id(&key) {
-        return;
+        return Ok(());
     }
     let _ = remember_account_usage(app_handle, &key);
-    if !has_auth_snapshot(app_handle, &key) {
-        let _ = save_auth_snapshot(app_handle, &key);
-    }
+    save_auth_snapshot(app_handle, &key)
 }
 
 fn forget_account_metadata(app_handle: &dyn AppContext, account_id: &str) -> Result<(), String> {
@@ -730,7 +739,10 @@ pub fn switch_account(app_handle: &dyn AppContext, account_id: &str) -> Result<(
     );
 
     // Always record + snapshot the current account before switching away.
-    capture_current_account(app_handle);
+    // Abort here if the snapshot cannot be saved: proceeding would kill the
+    // launcher and overwrite this account's live auth with the target
+    // account's, stranding it logged out with no backup to restore later.
+    capture_current_account(app_handle)?;
 
     // Kill launcher
     kill_epic();
@@ -774,8 +786,11 @@ pub fn begin_account_setup(app_handle: &dyn AppContext) -> Result<SetupStatus, S
         "",
     );
 
-    // Record + snapshot the current account before clearing auth.
-    capture_current_account(app_handle);
+    // Record + snapshot the current account before clearing auth. Abort here
+    // if the snapshot cannot be saved: proceeding would kill the launcher and
+    // delete the live auth files, deleting this account's session with no
+    // backup to restore later.
+    capture_current_account(app_handle)?;
 
     // Collect all known account IDs
     let mut known = discover_account_ids_from_data();

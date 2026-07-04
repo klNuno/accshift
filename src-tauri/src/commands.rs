@@ -259,11 +259,17 @@ pub async fn platform_switch_account(
 ) -> Result<(), String> {
     let service = require_service(&platform_id)?;
     let c = ctx(&app_handle);
-    let _lock = accshift_core::lock::acquire_exclusive(&c, std::time::Duration::from_secs(2))
-        .map_err(|e| e.to_string())?;
     let t0 = std::time::Instant::now();
     let platform_for_event = platform_id.clone();
+    // Acquire the exclusive lock INSIDE spawn_blocking so it lives on the same
+    // blocking-pool thread that runs the switch. The nested config writes the
+    // switch performs skip re-locking only when the guard is held on their own
+    // thread; acquiring on the async task thread here would self-contend and
+    // time out (the file lock is process-wide, the nesting bypass is
+    // thread-local).
     let result = tauri::async_runtime::spawn_blocking(move || {
+        let _lock = accshift_core::lock::acquire_exclusive(&c, std::time::Duration::from_secs(2))
+            .map_err(|e| e.to_string())?;
         service.switch_account(c, &account_id, params)
     })
     .await
@@ -286,11 +292,15 @@ pub async fn platform_forget_account(
 ) -> Result<(), String> {
     let service = require_service(&platform_id)?;
     let c = ctx(&app_handle);
-    let _lock = accshift_core::lock::acquire_exclusive(&c, std::time::Duration::from_secs(2))
-        .map_err(|e| e.to_string())?;
-    tauri::async_runtime::spawn_blocking(move || service.forget_account(c, &account_id))
-        .await
-        .map_err(|e| format!("Task failed: {e}"))?
+    // Lock inside spawn_blocking so the guard and the forget's nested config
+    // writes share one thread (see platform_switch_account for the rationale).
+    tauri::async_runtime::spawn_blocking(move || {
+        let _lock = accshift_core::lock::acquire_exclusive(&c, std::time::Duration::from_secs(2))
+            .map_err(|e| e.to_string())?;
+        service.forget_account(c, &account_id)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[tauri::command]

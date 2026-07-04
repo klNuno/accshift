@@ -11,7 +11,7 @@ use std::path::Path;
 /// content of each `"..."` token and unescaping `\"`, `\\`, `\n` and `\r`.
 ///
 /// Returns the tokens in order. A `"key" "value"` line yields two entries.
-fn vdf_tokenize_line(line: &str) -> Vec<String> {
+pub(crate) fn vdf_tokenize_line(line: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut chars = line.chars().peekable();
 
@@ -44,6 +44,41 @@ fn vdf_tokenize_line(line: &str) -> Vec<String> {
     }
 
     tokens
+}
+
+/// Byte span (opening-quote index, closing-quote index) of the `n`-th (0-based)
+/// quoted token on the line, honoring backslash escapes the same way
+/// [`vdf_tokenize_line`] does. Used to rewrite a single token's value in place
+/// without a naive `rfind('"')`, which would lock onto a later quoted token if
+/// one follows on the same physical line.
+fn nth_quoted_token_span(line: &str, n: usize) -> Option<(usize, usize)> {
+    let mut idx = 0;
+    let mut chars = line.char_indices().peekable();
+
+    while let Some(&(i, c)) = chars.peek() {
+        if c == '"' {
+            let open = i;
+            chars.next(); // consume opening quote
+            let mut close = None;
+            while let Some((j, ch)) = chars.next() {
+                if ch == '\\' {
+                    chars.next(); // skip the escaped char
+                } else if ch == '"' {
+                    close = Some(j);
+                    break;
+                }
+            }
+            let close = close?;
+            if idx == n {
+                return Some((open, close));
+            }
+            idx += 1;
+        } else {
+            chars.next();
+        }
+    }
+
+    None
 }
 
 fn vdf_braces_outside_quotes(line: &str) -> (usize, usize) {
@@ -357,6 +392,72 @@ pub fn set_persona_state(
     Ok(())
 }
 
+/// Read the current `friends.PersonaState` value from an account's
+/// localconfig.vdf, if present. Returns `Ok(None)` when the file or the key is
+/// absent. Uses the same structural targeting as [`set_persona_state`], so a
+/// caller can snapshot the value before a write and roll it back on failure.
+pub fn read_persona_state(
+    steam_path: &Path,
+    account_id: u32,
+) -> Result<Option<String>, crate::error::AppError> {
+    use crate::error::AppError;
+
+    let config_path = steam_path
+        .join("userdata")
+        .join(account_id.to_string())
+        .join("config")
+        .join("localconfig.vdf");
+
+    let content = match fs::read_to_string(&config_path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(AppError::FileRead(format!(
+                "Could not read {}: {e}",
+                config_path.display()
+            )))
+        }
+    };
+
+    Ok(persona_state_in_vdf(&content))
+}
+
+fn persona_state_in_vdf(content: &str) -> Option<String> {
+    let mut section_stack: Vec<String> = Vec::new();
+    let mut pending_section: Option<String> = None;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        if trimmed == "{" {
+            section_stack.push(pending_section.take().unwrap_or_default());
+            continue;
+        }
+        if trimmed == "}" {
+            section_stack.pop();
+            pending_section = None;
+            continue;
+        }
+
+        let tokens = vdf_tokenize_line(trimmed);
+        let in_friends = section_stack.len() == 2
+            && section_stack[0].eq_ignore_ascii_case("UserLocalConfigStore")
+            && section_stack[1].eq_ignore_ascii_case("friends");
+
+        if in_friends && tokens.len() >= 2 && tokens[0].eq_ignore_ascii_case("PersonaState") {
+            return Some(tokens[1].clone());
+        }
+
+        if tokens.len() == 1 {
+            pending_section = Some(tokens[0].clone());
+        } else if tokens.len() >= 2 {
+            pending_section = None;
+        }
+    }
+
+    None
+}
+
 /// Rewrite the `PersonaState` key that lives directly under
 /// `UserLocalConfigStore` -> `friends`, returning the new file content.
 ///
@@ -376,6 +477,9 @@ fn set_persona_state_in_vdf(content: &str, state: &str) -> Option<String> {
 
     let mut result = String::new();
     let mut found = false;
+    // Preserve the file's dominant line ending so a CRLF localconfig.vdf comes
+    // back CRLF rather than being silently rewritten to bare LF on every edit.
+    let newline = if content.contains("\r\n") { "\r\n" } else { "\n" };
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -384,7 +488,7 @@ fn set_persona_state_in_vdf(content: &str, state: &str) -> Option<String> {
             // The previous header token opens a subsection here.
             section_stack.push(pending_section.take().unwrap_or_default());
             result.push_str(line);
-            result.push('\n');
+            result.push_str(newline);
             continue;
         }
 
@@ -392,7 +496,7 @@ fn set_persona_state_in_vdf(content: &str, state: &str) -> Option<String> {
             section_stack.pop();
             pending_section = None;
             result.push_str(line);
-            result.push('\n');
+            result.push_str(newline);
             continue;
         }
 
@@ -408,32 +512,39 @@ fn set_persona_state_in_vdf(content: &str, state: &str) -> Option<String> {
             && tokens.len() >= 2
             && tokens[0].eq_ignore_ascii_case("PersonaState")
         {
-            // Rewrite the value in place, preserving indentation and the key
-            // token exactly as written.
-            if let Some(pos) = line.rfind('"') {
-                if let Some(start) = line[..pos].rfind('"') {
-                    let mut new_line = line[..start + 1].to_string();
-                    new_line.push_str(state);
-                    new_line.push_str(&line[pos..]);
-                    result.push_str(&new_line);
-                    result.push('\n');
-                    found = true;
-                    pending_section = None;
-                    continue;
-                }
+            // Rewrite PersonaState's own value in place, preserving indentation
+            // and the key token exactly as written. Target the 2nd quoted token
+            // (the value) by its byte span rather than rfind('"'): if anything
+            // else is quoted later on the same physical line, rfind would splice
+            // into that trailing token and leave PersonaState untouched while
+            // corrupting unrelated data.
+            if let Some((open, close)) = nth_quoted_token_span(line, 1) {
+                let mut new_line = String::with_capacity(line.len());
+                new_line.push_str(&line[..=open]);
+                new_line.push_str(state);
+                new_line.push_str(&line[close..]);
+                result.push_str(&new_line);
+                result.push_str(newline);
+                found = true;
+                pending_section = None;
+                continue;
             }
         }
 
         // Remember a bare header token so the next `{` knows its section name.
-        // A `"key" "value"` pair is not a section header.
+        // A `"key" "value"` pair is not a section header, so it clears the
+        // pending header. A line with no tokens at all (a `//` comment or a
+        // blank line) is left untouched: clearing pending_section there would
+        // desync the section stack when a comment sits between a header and its
+        // opening brace, silently dropping the persona-state edit.
         if tokens.len() == 1 {
             pending_section = Some(tokens[0].clone());
-        } else {
+        } else if tokens.len() >= 2 {
             pending_section = None;
         }
 
         result.push_str(line);
-        result.push('\n');
+        result.push_str(newline);
     }
 
     if found {
@@ -625,5 +736,70 @@ mod tests {
     fn set_persona_state_returns_none_when_absent() {
         let content = "\"UserLocalConfigStore\"\n{\n\t\"friends\"\n\t{\n\t}\n}\n";
         assert!(set_persona_state_in_vdf(content, "1").is_none());
+    }
+
+    // ── V4: existing-key replace branch (hit on every Linux/macOS switch) ──
+
+    #[test]
+    fn set_nested_value_replaces_existing_key_in_place() {
+        // loginusers.vdf-shaped content where the target key already exists.
+        // set_login_user_flags hits this replace branch on every switch, so it
+        // must swap the value without duplicating the key or touching siblings.
+        let input = "\"users\"\n{\n\t\"76561198000000000\"\n\t{\n\t\t\"AccountName\"\t\t\"alice\"\n\t\t\"AllowAutoLogin\"\t\t\"0\"\n\t\t\"MostRecent\"\t\t\"0\"\n\t}\n}\n";
+        let output = vdf_set_nested_value(input, &["76561198000000000", "AllowAutoLogin"], "1");
+
+        // Value replaced in place.
+        assert!(output.contains("\"AllowAutoLogin\"\t\t\"1\""));
+        assert!(!output.contains("\"AllowAutoLogin\"\t\t\"0\""));
+        // Key not duplicated.
+        assert_eq!(output.matches("\"AllowAutoLogin\"").count(), 1);
+        // Sibling keys untouched.
+        assert!(output.contains("\"AccountName\"\t\t\"alice\""));
+        assert!(output.contains("\"MostRecent\"\t\t\"0\""));
+    }
+
+    // ── V5: PersonaState value rewrite targets its own token ──
+
+    #[test]
+    fn set_persona_state_rewrites_only_its_own_value() {
+        // Two quoted pairs crammed onto one physical line inside friends. The
+        // old rfind('"') scan would have edited the trailing token instead.
+        let content = "\"UserLocalConfigStore\"\n\
+{\n\
+\t\"friends\"\n\
+\t{\n\
+\t\t\"PersonaState\"\t\t\"1\"\t\t\"LastSeenState\"\t\t\"0\"\n\
+\t}\n\
+}\n";
+        let out = set_persona_state_in_vdf(content, "7").expect("should find PersonaState");
+        assert!(out.contains("\"PersonaState\"\t\t\"7\""));
+        // The unrelated trailing token is NOT corrupted.
+        assert!(out.contains("\"LastSeenState\"\t\t\"0\""));
+    }
+
+    // ── V6: a comment between a header and its brace does not desync ──
+
+    #[test]
+    fn set_persona_state_survives_comment_before_brace() {
+        let content = "\"UserLocalConfigStore\"\n\
+{\n\
+\t\"friends\"\n\
+\t// legacy note\n\
+\t{\n\
+\t\t\"PersonaState\"\t\t\"1\"\n\
+\t}\n\
+}\n";
+        let out = set_persona_state_in_vdf(content, "7").expect("comment must not drop the edit");
+        assert!(out.contains("\"PersonaState\"\t\t\"7\""));
+    }
+
+    // ── V7: CRLF files stay CRLF ──
+
+    #[test]
+    fn set_persona_state_preserves_crlf() {
+        let content = "\"UserLocalConfigStore\"\r\n{\r\n\t\"friends\"\r\n\t{\r\n\t\t\"PersonaState\"\t\t\"1\"\r\n\t}\r\n}\r\n";
+        let out = set_persona_state_in_vdf(content, "7").expect("should find PersonaState");
+        assert!(out.contains("\"PersonaState\"\t\t\"7\"\r\n"));
+        assert!(!out.contains("\"7\"\n\t}"), "line ending collapsed to bare LF");
     }
 }

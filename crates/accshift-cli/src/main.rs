@@ -153,7 +153,11 @@ fn cmd_list(format: Format, platform_id: &str, folder: Option<&str>) -> u8 {
 
     let folder_filter = match resolve_folder(&ctx, platform_id, folder) {
         Ok(f) => f,
-        Err(e) => {
+        Err(FolderResolveError::Store(e)) => {
+            emit_err(format, "list", "folder_store_error", &e);
+            return exit::IO;
+        }
+        Err(FolderResolveError::NotFound(e)) => {
             emit_err(format, "list", "unknown_folder", &e);
             return exit::GENERIC;
         }
@@ -215,19 +219,32 @@ fn cmd_list(format: Format, platform_id: &str, folder: Option<&str>) -> u8 {
     exit::OK
 }
 
+/// Distinguishes a genuine "no such folder" result from a folder-store
+/// read/parse failure, so the two are never reported under the same error
+/// code (a corrupt or transiently-locked folders.json must not look like
+/// "no folder with that name").
+enum FolderResolveError {
+    /// folders.json could not be read or parsed at all.
+    Store(String),
+    /// The store loaded fine but no folder matched (or matched ambiguously).
+    NotFound(String),
+}
+
 fn resolve_folder(
     ctx: &accshift_core::AppCtx,
     platform_id: &str,
     folder: Option<&str>,
-) -> Result<Option<std::collections::HashSet<String>>, String> {
+) -> Result<Option<std::collections::HashSet<String>>, FolderResolveError> {
     let Some(name) = folder else {
         return Ok(None);
     };
-    let store = match folders::load(&**ctx)? {
+    let store = match folders::load(&**ctx).map_err(FolderResolveError::Store)? {
         Some(s) => s,
-        None => return Err("No folders configured yet.".into()),
+        None => return Err(FolderResolveError::NotFound("No folders configured yet.".into())),
     };
-    folders::accounts_in_folder(&store, platform_id, name).map(Some)
+    folders::accounts_in_folder(&store, platform_id, name)
+        .map(Some)
+        .map_err(FolderResolveError::NotFound)
 }
 
 struct SwitchOverrides {
@@ -360,7 +377,10 @@ fn cmd_switch(
             // off a variant rather than scraping rendered strings.
             let unknown_account = e.contains("Invalid username") // Steam
                 || e.contains("account not found") // Battle.net, Roblox
-                || e.contains("profile not found"); // Riot
+                || e.contains("profile not found") // Riot
+                || e.contains("No auth snapshot found for account") // Ubisoft, Epic
+                || e.contains("Invalid Ubisoft account UUID")
+                || e.contains("Invalid Epic account ID");
             let (code, status) = if unknown_account {
                 ("unknown_account", exit::UNKNOWN_ACCOUNT)
             } else {

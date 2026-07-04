@@ -600,6 +600,46 @@ fn decrypted_copy_dir(source: &Path, target: &Path, ignored_names: &[&str]) -> R
     Ok(())
 }
 
+/// Copy a file verbatim, no encryption. Used only for the transient rollback
+/// backup in `restore_live_snapshot`: the source is already plaintext on disk
+/// at its live location, and the backup is deleted again within the same call.
+fn plain_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
+    }
+    fs::copy(source, dest)
+        .map(|_| ())
+        .map_err(|e| format!("Could not copy {} to {}: {e}", source.display(), dest.display()))
+}
+
+/// Recursively copy a directory verbatim, no encryption. See `plain_copy_file`.
+fn plain_copy_dir(source: &Path, target: &Path, ignored_names: &[&str]) -> Result<(), String> {
+    if !source.exists() {
+        return Ok(());
+    }
+    fs::create_dir_all(target)
+        .map_err(|e| format!("Could not create directory {}: {e}", target.display()))?;
+    for entry in fs::read_dir(source)
+        .map_err(|e| format!("Could not read directory {}: {e}", source.display()))?
+    {
+        let entry = entry.map_err(|e| format!("Could not read directory entry: {e}"))?;
+        let src_path = entry.path();
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+        if ignored_names.iter().any(|i| i.eq_ignore_ascii_case(&name)) {
+            continue;
+        }
+        let dst_path = target.join(name.as_ref());
+        if src_path.is_dir() {
+            plain_copy_dir(&src_path, &dst_path, ignored_names)?;
+        } else {
+            plain_copy_file(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
 /// Free the OS-keyring entries a profile's encrypted snapshot files point at.
 ///
 /// On Linux/macOS `os::encrypt_bytes` stores the real plaintext in the keyring
@@ -946,6 +986,80 @@ fn clear_live_riot_setup_state(app_handle: &dyn AppContext) -> Result<(), String
     Ok(())
 }
 
+/// Copy every live Riot item into a fresh temp directory so a failure partway
+/// through `restore_live_snapshot`'s copy loop can be rolled back instead of
+/// leaving a mix of the old and new profile's data. Returns the rollback
+/// directory on success; the caller must remove it once it is no longer
+/// needed (on both the success and the failure path).
+fn backup_live_state_for_rollback(install_dir: Option<&Path>) -> Result<PathBuf, String> {
+    let rollback_dir = std::env::temp_dir().join(format!("accshift-riot-rollback-{}", Uuid::new_v4()));
+    fs::create_dir_all(&rollback_dir)
+        .map_err(|e| format!("Could not create Riot rollback dir {}: {e}", rollback_dir.display()))?;
+
+    for item in RIOT_SNAPSHOT_ITEMS {
+        let Some(source_path) = live_path_for(item, install_dir)? else {
+            continue;
+        };
+        if !source_path.exists() {
+            continue;
+        }
+        let target_path = rollback_dir.join(item.snapshot_name);
+        match item.kind {
+            RiotSnapshotKind::Directory => {
+                plain_copy_dir(&source_path, &target_path, item.ignored_names)?
+            }
+            RiotSnapshotKind::File => plain_copy_file(&source_path, &target_path)?,
+        }
+    }
+
+    Ok(rollback_dir)
+}
+
+/// Undo a partially-applied restore: wipe whatever the failed copy loop left
+/// behind and put the pre-restore live state (captured by
+/// `backup_live_state_for_rollback`) back. Best-effort — a failure here is
+/// logged rather than propagated, since the caller is already on an error
+/// path and has no better fallback than leaving whatever state results.
+fn restore_live_state_from_rollback(
+    app_handle: &dyn AppContext,
+    rollback_dir: &Path,
+    install_dir: Option<&Path>,
+) {
+    if let Err(e) = clear_live_riot_state(app_handle) {
+        log_platform_error(
+            app_handle,
+            "riot.restore_rollback",
+            "Could not clear live state before rollback restore",
+            e,
+        );
+    }
+
+    for item in RIOT_SNAPSHOT_ITEMS {
+        let source_path = rollback_dir.join(item.snapshot_name);
+        if !source_path.exists() {
+            continue;
+        }
+        let target_path = match live_path_for(item, install_dir) {
+            Ok(Some(path)) => path,
+            _ => continue,
+        };
+        let result = match item.kind {
+            RiotSnapshotKind::Directory => {
+                plain_copy_dir(&source_path, &target_path, item.ignored_names)
+            }
+            RiotSnapshotKind::File => plain_copy_file(&source_path, &target_path),
+        };
+        if let Err(e) = result {
+            log_platform_error(
+                app_handle,
+                "riot.restore_rollback",
+                "Could not restore live item from rollback backup",
+                format!("item={} error={e}", item.snapshot_name),
+            );
+        }
+    }
+}
+
 fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Result<bool, String> {
     let install_dir = resolve_riot_client_path(app_handle)
         .ok()
@@ -964,7 +1078,18 @@ fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Resul
         }
     }
 
-    clear_live_riot_state(app_handle)?;
+    // Snapshot the current live state before wiping it. If a copy below fails
+    // partway (locked file, disk full, AV scan), we roll the live directories
+    // back to this backup instead of leaving a mix of the old and new
+    // profile's data. If the backup itself can't be made, fail closed and
+    // abort before touching anything live.
+    let rollback_dir = backup_live_state_for_rollback(install_dir.as_deref())?;
+
+    if let Err(e) = clear_live_riot_state(app_handle) {
+        restore_live_state_from_rollback(app_handle, &rollback_dir, install_dir.as_deref());
+        let _ = fs::remove_dir_all(&rollback_dir);
+        return Err(e);
+    }
 
     for item in RIOT_SNAPSHOT_ITEMS {
         let source_path = snapshot_dir.join(item.snapshot_name);
@@ -975,19 +1100,33 @@ fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Resul
         match item.kind {
             RiotSnapshotKind::Directory => {
                 if source_path.exists() {
-                    decrypted_copy_dir(&source_path, &target_path, item.ignored_names)?;
+                    if let Err(e) = decrypted_copy_dir(&source_path, &target_path, item.ignored_names) {
+                        restore_live_state_from_rollback(app_handle, &rollback_dir, install_dir.as_deref());
+                        let _ = fs::remove_dir_all(&rollback_dir);
+                        return Err(e);
+                    }
                 }
             }
             RiotSnapshotKind::File => {
                 if source_path.exists() {
-                    decrypted_copy_file(&source_path, &target_path)?;
+                    if let Err(e) = decrypted_copy_file(&source_path, &target_path) {
+                        restore_live_state_from_rollback(app_handle, &rollback_dir, install_dir.as_deref());
+                        let _ = fs::remove_dir_all(&rollback_dir);
+                        return Err(e);
+                    }
                 } else if !item.optional {
+                    // Should not happen (checked above before the clear), but
+                    // if it does after the clear, restore rather than leave
+                    // the live state wiped with nothing put back.
+                    restore_live_state_from_rollback(app_handle, &rollback_dir, install_dir.as_deref());
+                    let _ = fs::remove_dir_all(&rollback_dir);
                     return Ok(false);
                 }
             }
         }
     }
 
+    let _ = fs::remove_dir_all(&rollback_dir);
     Ok(has_snapshot)
 }
 

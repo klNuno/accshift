@@ -111,7 +111,14 @@ function makeU64(hi: bigint, lo: bigint): bigint {
 }
 
 export function encodeFriendCode(steamId64: string): string {
-  let steamid = BigInt(steamId64);
+  let steamid: bigint;
+  try {
+    steamid = BigInt(steamId64);
+  } catch {
+    // Non-numeric or malformed steam id (e.g. a hand-edited loginusers.vdf key):
+    // fail closed with an empty code instead of throwing and breaking the caller.
+    return "";
+  }
   const h = hashSteamId(steamid);
 
   let r = 0n;

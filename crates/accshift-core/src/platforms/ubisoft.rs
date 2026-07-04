@@ -23,6 +23,10 @@ const UBISOFT_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
 const AUTH_FILES: &[&str] = &["user.dat", "ConnectSecureStorage.dat"];
 /// How long Ubisoft needs to flush auth files after login before we trust them.
 const POST_KILL_SETTLE_MS: u64 = 500;
+/// How long to wait for Ubisoft's processes to actually exit after a kill
+/// signal, mirroring Epic's quit_epic_and_wait, before giving up and
+/// proceeding anyway.
+const QUIT_WAIT_TIMEOUT_MS: u32 = 8000;
 /// An auth file written more than this long ago is considered stale: it belongs
 /// to a previous session, not the login that just completed during setup.
 const FRESH_AUTH_WINDOW_MS: u64 = 5 * 60 * 1000;
@@ -258,11 +262,47 @@ fn restore_auth_snapshot(app_handle: &dyn AppContext, uuid: &str) -> Result<(), 
         ));
     }
 
+    restore_auth_files(&cache_dir, &local_dir)
+}
+
+/// Decrypt and stage each present auth file from `cache_dir` next to its real
+/// destination in `local_dir`, and only rename the staged files into place
+/// once every one of them has landed. `user.dat` and `ConnectSecureStorage.dat`
+/// are a paired credential set: writing them one at a time straight into the
+/// live directory means a failure partway through leaves the target
+/// account's file next to whatever the previous account's file still was.
+/// Staging first keeps a mid-restore failure from touching the live files at
+/// all.
+fn restore_auth_files(cache_dir: &Path, local_dir: &Path) -> Result<(), String> {
+    let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
     for file_name in AUTH_FILES {
         let source = cache_dir.join(file_name);
-        if source.exists() {
-            let dest = local_dir.join(file_name);
-            decrypted_copy_file(&source, &dest)?;
+        if !source.exists() {
+            continue;
+        }
+        let dest = local_dir.join(file_name);
+        let mut staging_name = dest.file_name().unwrap_or_default().to_os_string();
+        staging_name.push(".accshift-restore-tmp");
+        let staging_dest = dest.with_file_name(staging_name);
+
+        if let Err(error) = decrypted_copy_file(&source, &staging_dest) {
+            for (staged_path, _) in &staged {
+                let _ = fs::remove_file(staged_path);
+            }
+            let _ = fs::remove_file(&staging_dest);
+            return Err(error);
+        }
+        staged.push((staging_dest, dest));
+    }
+
+    for (staging_dest, dest) in &staged {
+        if fs::rename(staging_dest, dest).is_err() {
+            // Cross-filesystem rename (EXDEV) or a lingering lock on the
+            // destination: fall back to copy+remove before giving up.
+            if fs::copy(staging_dest, dest).is_err() {
+                return Err(format!("Could not finalize {}", dest.display()));
+            }
+            let _ = fs::remove_file(staging_dest);
         }
     }
 
@@ -491,6 +531,21 @@ fn kill_ubisoft() {
     }
 }
 
+/// Kill Ubisoft and wait for each of its processes to actually exit, instead
+/// of trusting a fixed sleep, so callers don't race the launcher's own
+/// exit-time flush of user.dat / ConnectSecureStorage.dat to disk. Mirrors
+/// Epic's quit_epic_and_wait.
+fn quit_ubisoft_and_wait() {
+    if !is_ubisoft_running() {
+        return;
+    }
+    kill_ubisoft();
+    for process_name in UBISOFT_PROCESS_NAMES {
+        crate::os::wait_for_process_exit(process_name, QUIT_WAIT_TIMEOUT_MS);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
+}
+
 fn launch_ubisoft(app_handle: &dyn AppContext) -> Result<(), String> {
     let executable = resolve_executable(app_handle)?;
     let mut command = Command::new(&executable);
@@ -669,16 +724,26 @@ pub fn switch_account(app_handle: &dyn AppContext, target_uuid: &str) -> Result<
         format!("target={}", super::redact_id(&target_uuid)),
     );
 
-    // Save current account's auth first
+    // Save current account's auth first. Abort before touching live files if
+    // this fails: proceeding would overwrite the outgoing account's session
+    // with the target's, with no backup to recover it from (mirrors the
+    // abort-on-failure guard already used in capture_setup_account).
     if let Some(current_uuid) = current_account_from_logs(app_handle) {
         if normalize_uuid(&current_uuid) != normalize_uuid(&target_uuid) {
-            let _ = save_auth_snapshot(app_handle, &current_uuid);
+            if let Err(error) = save_auth_snapshot(app_handle, &current_uuid) {
+                log_platform_error(
+                    app_handle,
+                    "ubisoft.switch_account",
+                    "Ubisoft auth snapshot save failed, aborting switch",
+                    format!("current={}; error={error}", super::redact_id(&current_uuid)),
+                );
+                return Err(error);
+            }
         }
     }
 
-    // Kill Ubisoft
-    kill_ubisoft();
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    // Kill Ubisoft and wait for it to actually exit before touching auth files.
+    quit_ubisoft_and_wait();
 
     // Restore target account's auth
     restore_auth_snapshot(app_handle, &target_uuid)?;
@@ -715,9 +780,21 @@ pub fn begin_account_setup(app_handle: &dyn AppContext) -> Result<SetupStatus, S
         "",
     );
 
-    // Save current account's auth snapshot before clearing
+    // Save current account's auth snapshot before clearing. Abort before
+    // killing Ubisoft or deleting live auth files if this fails, otherwise
+    // the current account's session is destroyed with no backup to restore
+    // (mirrors the abort-on-failure guard already used in
+    // capture_setup_account).
     if let Some(current_uuid) = current_account_from_logs(app_handle) {
-        let _ = save_auth_snapshot(app_handle, &current_uuid);
+        if let Err(error) = save_auth_snapshot(app_handle, &current_uuid) {
+            log_platform_error(
+                app_handle,
+                "ubisoft.begin_account_setup",
+                "Ubisoft auth snapshot save failed, aborting setup",
+                format!("current={}; error={error}", super::redact_id(&current_uuid)),
+            );
+            return Err(error);
+        }
     }
 
     let known_uuids = discover_uuids(app_handle)
@@ -751,9 +828,9 @@ pub fn begin_account_setup(app_handle: &dyn AppContext) -> Result<SetupStatus, S
     );
     drop(jobs);
 
-    // Kill Ubisoft and remove auth files to force login screen
-    kill_ubisoft();
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    // Kill Ubisoft and wait for it to actually exit before removing auth
+    // files, to force the login screen.
+    quit_ubisoft_and_wait();
     delete_auth_files()?;
 
     // Relaunch
@@ -1225,5 +1302,89 @@ mod tests {
 
         let _ = fs::remove_file(&src);
         let _ = fs::remove_file(&dest);
+    }
+
+    // -----------------------------------------------------------------------
+    // restore_auth_files: staged restore of the paired auth files
+    // -----------------------------------------------------------------------
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let path = temp_path(tag);
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn staging_leftovers(dir: &Path) -> Vec<std::ffi::OsString> {
+        fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name())
+            .filter(|name| name.to_string_lossy().contains("accshift-restore-tmp"))
+            .collect()
+    }
+
+    #[test]
+    fn restore_auth_files_writes_both_files_on_success() {
+        let cache_dir = temp_dir("restore-cache-ok");
+        let local_dir = temp_dir("restore-local-ok");
+
+        fs::write(cache_dir.join("user.dat"), b"new-user-data").unwrap();
+        fs::write(cache_dir.join("ConnectSecureStorage.dat"), b"new-css-data").unwrap();
+
+        restore_auth_files(&cache_dir, &local_dir).unwrap();
+
+        assert_eq!(fs::read(local_dir.join("user.dat")).unwrap(), b"new-user-data");
+        assert_eq!(
+            fs::read(local_dir.join("ConnectSecureStorage.dat")).unwrap(),
+            b"new-css-data"
+        );
+        assert!(staging_leftovers(&local_dir).is_empty());
+
+        let _ = fs::remove_dir_all(&cache_dir);
+        let _ = fs::remove_dir_all(&local_dir);
+    }
+
+    #[test]
+    fn restore_auth_files_leaves_live_files_untouched_when_one_file_fails() {
+        // Regression test: restore_auth_snapshot used to copy AUTH_FILES one
+        // at a time straight into the live directory. If the second file
+        // failed after the first had already been written, the live
+        // directory ended up holding one file from the target account and
+        // one from whatever account was previously logged in.
+        let cache_dir = temp_dir("restore-cache-fail");
+        let local_dir = temp_dir("restore-local-fail");
+
+        // user.dat is a valid snapshot file; ConnectSecureStorage.dat is a
+        // directory instead of a file, so reading it as a snapshot fails
+        // deterministically, standing in for a locked/unreadable file.
+        fs::write(cache_dir.join("user.dat"), b"target-user-data").unwrap();
+        fs::create_dir_all(cache_dir.join("ConnectSecureStorage.dat")).unwrap();
+
+        // Live directory already holds the outgoing account's files.
+        fs::write(local_dir.join("user.dat"), b"previous-user-data").unwrap();
+        fs::write(
+            local_dir.join("ConnectSecureStorage.dat"),
+            b"previous-css-data",
+        )
+        .unwrap();
+
+        let result = restore_auth_files(&cache_dir, &local_dir);
+        assert!(result.is_err());
+
+        // Neither live file should have moved: staging both files before
+        // committing either means a failure on the second file never lets
+        // the first file's write reach the live directory.
+        assert_eq!(
+            fs::read(local_dir.join("user.dat")).unwrap(),
+            b"previous-user-data"
+        );
+        assert_eq!(
+            fs::read(local_dir.join("ConnectSecureStorage.dat")).unwrap(),
+            b"previous-css-data"
+        );
+        assert!(staging_leftovers(&local_dir).is_empty());
+
+        let _ = fs::remove_dir_all(&cache_dir);
+        let _ = fs::remove_dir_all(&local_dir);
     }
 }

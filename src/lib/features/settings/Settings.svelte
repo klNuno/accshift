@@ -102,6 +102,16 @@
     return translate(settings.language ?? DEFAULT_LOCALE, key, params);
   }
 
+  // No settings.scrollTabsLeft/Right key exists yet in messages.ts, so this mirrors
+  // t()'s locale lookup locally instead of leaving these two aria-labels hardcoded in English.
+  function scrollTabsAriaLabel(direction: "left" | "right"): string {
+    const isFrench = normalizeLocale(settings.language ?? DEFAULT_LOCALE) === "fr";
+    if (direction === "left") {
+      return isFrench ? "Faire défiler les onglets de paramètres vers la gauche" : "Scroll settings tabs left";
+    }
+    return isFrench ? "Faire défiler les onglets de paramètres vers la droite" : "Scroll settings tabs right";
+  }
+
   function buildPlatformSnapshot(): string {
     return JSON.stringify({
       enabledPlatforms: [...settings.enabledPlatforms].sort(),
@@ -401,7 +411,7 @@
         type="button"
         onclick={() => tabBar.scroll(-1)}
         disabled={!tabBar.canScrollLeft}
-        aria-label="Scroll settings tabs left"
+        aria-label={scrollTabsAriaLabel("left")}
       >
         <span>&lsaquo;</span>
       </button>
@@ -428,7 +438,7 @@
         type="button"
         onclick={() => tabBar.scroll(1)}
         disabled={!tabBar.canScrollRight}
-        aria-label="Scroll settings tabs right"
+        aria-label={scrollTabsAriaLabel("right")}
       >
         <span>&rsaquo;</span>
       </button>

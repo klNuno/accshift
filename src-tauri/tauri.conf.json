@@ -13,13 +13,13 @@
     "macOSPrivateApi": true,
     "windows": [],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' https://*.steamstatic.com https://steamcdn-a.akamaihd.net; style-src 'self' 'unsafe-inline'; script-src 'self'"
+      "csp": "default-src 'self'; img-src 'self' https://*.steamstatic.com https://steamcdn-a.akamaihd.net https://*.rbxcdn.com; style-src 'self' 'unsafe-inline'; script-src 'self'"
     }
   },
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": ["nsis", "msi", "deb", "rpm", "appimage", "app", "dmg"],
+    "targets": ["nsis", "deb", "rpm", "appimage", "app", "dmg"],
     "category": "Utility",
     "shortDescription": "Multi-platform desktop account switcher",
     "longDescription": "Accshift is a fast desktop account switcher for Steam, Riot, Battle.net, Epic, Ubisoft and Roblox. GUI + CLI, built with Tauri 2 and Svelte 5.",

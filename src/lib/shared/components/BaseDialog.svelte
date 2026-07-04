@@ -10,8 +10,39 @@
     actions: Snippet;
   } = $props();
 
+  let dialogEl = $state<HTMLDivElement | null>(null);
+
+  function getFocusable(): HTMLElement[] {
+    if (!dialogEl) return [];
+    return Array.from(
+      dialogEl.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter((el) => el.offsetParent !== null);
+  }
+
+  function trapFocus(e: KeyboardEvent) {
+    if (e.key !== "Tab") return;
+    const focusable = getFocusable();
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    const withinDialog = active instanceof Node && dialogEl?.contains(active);
+    if (e.shiftKey) {
+      if (!withinDialog || active === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else if (!withinDialog || active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") onCancel();
+    trapFocus(e);
     onKeydown?.(e);
   }
 </script>
@@ -21,7 +52,7 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="overlay" onclick={onCancel}>
-  <div class="dialog" style:width={width} onclick={(e) => e.stopPropagation()}>
+  <div class="dialog" role="dialog" aria-modal="true" tabindex="-1" bind:this={dialogEl} style:width={width} onclick={(e) => e.stopPropagation()}>
     <span class="title">{title}</span>
     {@render children()}
     <div class="actions">

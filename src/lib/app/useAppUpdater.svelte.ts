@@ -74,9 +74,13 @@ export function createAppUpdater({ t, addToast }: AppUpdaterOptions) {
       await pendingUpdate.install();
       await relaunch();
     } catch (error) {
-      updateState = "ready";
       console.error("Failed to restart for update:", error);
+      pendingUpdate = null;
+      updateVersion = "";
+      updateState = "idle";
+      updateCheckStarted = false;
       addToast(t("update.restartFailed"));
+      void startBackgroundUpdateFlow();
     }
   }
 

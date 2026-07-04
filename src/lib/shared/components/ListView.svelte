@@ -76,8 +76,14 @@
 
   let selectedAccountId = $state<string | null>(null);
 
-  // Past ~100 rendered rows the flip animation gets expensive during drags.
-  let flipDuration = $derived(folderItems.length + accountItems.length > 100 ? 0 : 200);
+  // FLIP is only wanted for drag reordering. Outside a drag (sync appending an
+  // account, a folder move via context menu, any other keyed-order change) it
+  // would slide every row from its old position to its new one, an ugly sweep.
+  // Gate it on an active drag via dragItem (set by the parent while dragging).
+  // Past ~100 rendered rows FLIP also gets too expensive even during drags.
+  let flipDuration = $derived(
+    dragItem !== null && folderItems.length + accountItems.length <= 100 ? 200 : 0
+  );
 
   let selectedAccount = $derived(
     selectedAccountId ? accounts[selectedAccountId] ?? null : null
@@ -200,11 +206,13 @@
       {/if}
 
       {#each folderItems as item (item.id)}
-        <div animate:flip={{ duration: flipDuration }}>{@render folderRow(item)}</div>
+        {@const isFolderDragged = dragItem?.type === "folder" && dragItem.id === item.id}
+        <div animate:flip={{ duration: isFolderDragged ? 0 : flipDuration }}>{@render folderRow(item)}</div>
       {/each}
 
       {#each accountItems as item (item.id)}
-        <div animate:flip={{ duration: flipDuration }}>{@render accountRow(item)}</div>
+        {@const isAccountDragged = dragItem?.type === "account" && dragItem.id === item.id}
+        <div animate:flip={{ duration: isAccountDragged ? 0 : flipDuration }}>{@render accountRow(item)}</div>
       {/each}
     {/if}
   </div>

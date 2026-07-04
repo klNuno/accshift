@@ -9,13 +9,18 @@ use std::time::Duration;
 /// fails fast instead of round-tripping a payload that would be rejected.
 const NOTE_MAX_BYTES: usize = 1000;
 
+/// Inert placeholder used when `ACCSHIFT_TELEMETRY_URL` is not set at compile
+/// time. Not a live endpoint on purpose: it only marks builds that forgot to
+/// set the variable so telemetry calls fail instead of silently pointing at
+/// someone else's infrastructure.
+const TELEMETRY_URL_FALLBACK: &str = "https://telemetry.invalid";
+
 /// Telemetry Worker URL.
 ///
-/// Overridable at compile time via `ACCSHIFT_TELEMETRY_URL=...` so forks can
-/// point to their own self-hosted instance.
+/// Must be set at compile time via `ACCSHIFT_TELEMETRY_URL=...`.
 pub const TELEMETRY_URL: &str = match option_env!("ACCSHIFT_TELEMETRY_URL") {
     Some(s) => s,
-    None => "https://accshift.mtsu.dev",
+    None => TELEMETRY_URL_FALLBACK,
 };
 
 /// User-Agent sent with every request.
@@ -289,5 +294,15 @@ mod tests {
         assert_eq!(truncate_utf8("é", 1), "");
         // Ask for 2 bytes: the full character fits.
         assert_eq!(truncate_utf8("é", 2), "é");
+    }
+
+    #[test]
+    fn telemetry_url_fallback_does_not_leak_private_infrastructure() {
+        // Checked against the fallback constant directly (not TELEMETRY_URL,
+        // which may resolve to a real build-time override) so this guard
+        // holds regardless of whether ACCSHIFT_TELEMETRY_URL is set for this
+        // test run. Guards against reintroducing a hardcoded private domain.
+        assert!(!TELEMETRY_URL_FALLBACK.contains("mtsu"));
+        assert!(TELEMETRY_URL_FALLBACK.ends_with(".invalid"));
     }
 }

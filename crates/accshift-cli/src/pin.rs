@@ -61,9 +61,11 @@ pub fn enforce(format: Format, stored_hash: &str) -> Result<(), u8> {
     }
 }
 
-/// Read a PIN from the terminal. Echo-free input is not attempted (no
-/// `rpassword` dependency is available); on a TTY we print a hint that the
-/// input is visible. Returns `None` if no PIN could be read (no stdin, EOF).
+/// Read a PIN from the terminal. Local echo is suppressed with a best-effort,
+/// dependency-free platform call (no `rpassword` crate is available to
+/// `accshift-cli`); if suppression fails for any reason we fall back to a
+/// visible prompt and say so, rather than pretending the input is hidden.
+/// Returns `None` if no PIN could be read (no stdin, EOF).
 fn read_pin(format: Format) -> Option<String> {
     // Only prompt interactively on a real TTY. In a pipe there is no human to
     // answer, so refuse rather than block or silently pass.
@@ -77,17 +79,139 @@ fn read_pin(format: Format) -> Option<String> {
         return None;
     }
 
+    let echo_guard = disable_echo();
+
     // Prompt on stderr so a `--json` stdout stays clean.
-    eprint!("Enter PIN (visible): ");
+    if echo_guard.is_some() {
+        eprint!("Enter PIN: ");
+    } else {
+        eprint!("Enter PIN (visible): ");
+    }
     let _ = std::io::stderr().flush();
 
     let mut line = String::new();
-    match std::io::stdin().read_line(&mut line) {
+    let result = std::io::stdin().read_line(&mut line);
+
+    restore_echo(echo_guard);
+    if echo_guard.is_some() {
+        // With local echo suppressed the terminal never printed the newline
+        // the user typed, so emit one ourselves.
+        eprintln!();
+    }
+
+    match result {
         Ok(0) => None, // EOF, no input
         Ok(_) => Some(line),
         Err(e) => {
             emit_err(format, "switch", "io", &e.to_string());
             None
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Terminal echo suppression (best-effort, no external crate)
+// ---------------------------------------------------------------------------
+//
+// `accshift-cli` has no crypto/terminal crate in its Cargo.toml, so this is
+// hand-rolled the same way the SHA-256/PBKDF2 code below is: minimal, self
+// contained, and platform-gated. `disable_echo` returns `None` whenever it
+// cannot be sure echo was actually turned off, and `read_pin` treats that as
+// "stay visible" rather than silently claiming to hide input it did not hide.
+
+/// Opaque token needed to restore the terminal's previous echo state.
+#[cfg(windows)]
+type EchoGuard = u32;
+#[cfg(unix)]
+type EchoGuard = ();
+#[cfg(not(any(windows, unix)))]
+type EchoGuard = ();
+
+#[cfg(unix)]
+fn disable_echo() -> Option<EchoGuard> {
+    // `stty` is present on effectively every Unix terminal; toggling local
+    // echo through it avoids needing a termios FFI binding (whose struct
+    // layout differs between Linux and macOS) or a new dependency.
+    std::process::Command::new("stty")
+        .arg("-echo")
+        .status()
+        .ok()
+        .filter(|status| status.success())
+        .map(|_| ())
+}
+
+#[cfg(unix)]
+fn restore_echo(guard: Option<EchoGuard>) {
+    if guard.is_some() {
+        let _ = std::process::Command::new("stty").arg("echo").status();
+    }
+}
+
+#[cfg(windows)]
+fn disable_echo() -> Option<EchoGuard> {
+    unsafe {
+        let handle = win32::get_std_input_handle()?;
+        let mut mode: u32 = 0;
+        if win32::GetConsoleMode(handle, &mut mode) == 0 {
+            return None;
+        }
+        if win32::SetConsoleMode(handle, mode & !win32::ENABLE_ECHO_INPUT) == 0 {
+            return None;
+        }
+        Some(mode)
+    }
+}
+
+#[cfg(windows)]
+fn restore_echo(guard: Option<EchoGuard>) {
+    if let Some(mode) = guard {
+        unsafe {
+            if let Some(handle) = win32::get_std_input_handle() {
+                let _ = win32::SetConsoleMode(handle, mode);
+            }
+        }
+    }
+}
+
+#[cfg(not(any(windows, unix)))]
+fn disable_echo() -> Option<EchoGuard> {
+    None
+}
+
+#[cfg(not(any(windows, unix)))]
+fn restore_echo(_guard: Option<EchoGuard>) {}
+
+/// Minimal, hand-written kernel32 bindings for the three calls needed to
+/// toggle console echo. These Win32 signatures are ABI-stable; no
+/// `windows-sys`/`winapi` crate is available to this crate to source them
+/// from instead.
+#[cfg(windows)]
+#[allow(non_snake_case, non_upper_case_globals)]
+mod win32 {
+    use std::ffi::c_void;
+
+    pub type Handle = *mut c_void;
+
+    const STD_INPUT_HANDLE: u32 = 0xFFFF_FFF6; // (DWORD)-10
+    pub const ENABLE_ECHO_INPUT: u32 = 0x0004;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetStdHandle(nStdHandle: u32) -> Handle;
+        pub fn GetConsoleMode(hConsoleHandle: Handle, lpMode: *mut u32) -> i32;
+        pub fn SetConsoleMode(hConsoleHandle: Handle, dwMode: u32) -> i32;
+    }
+
+    /// Returns the standard input handle, or `None` if it is absent/invalid
+    /// (e.g. stdin is not backed by a real console).
+    pub fn get_std_input_handle() -> Option<Handle> {
+        unsafe {
+            let handle = GetStdHandle(STD_INPUT_HANDLE);
+            if handle.is_null() || handle == (-1isize as Handle) {
+                None
+            } else {
+                Some(handle)
+            }
         }
     }
 }
@@ -437,5 +561,22 @@ mod tests {
         assert_eq!(sanitize_pin_digits("123456"), "1234");
         assert_eq!(sanitize_pin_digits("abc"), "");
         assert_eq!(sanitize_pin_digits(""), "");
+    }
+
+    // disable_echo()/restore_echo() talk to the real terminal (stty on Unix,
+    // the console mode on Windows), so a CI runner with no controlling
+    // terminal is expected to get None back rather than an actual toggle.
+    // The point of this test is only to lock the fail-safe contract: neither
+    // call ever panics, and restoring a `None` guard is always a no-op, so
+    // read_pin's "fall back to a visible prompt" branch stays reachable
+    // instead of the whole read failing.
+    #[test]
+    fn echo_toggle_never_panics_and_none_guard_restores_as_no_op() {
+        let guard = disable_echo();
+        // Whatever the environment gave us, restoring it must not panic.
+        restore_echo(guard);
+        // Restoring an explicit `None` (the "could not suppress echo" case)
+        // must always be a safe no-op, on every platform.
+        restore_echo(None);
     }
 }

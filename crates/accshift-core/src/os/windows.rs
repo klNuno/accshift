@@ -293,12 +293,29 @@ pub fn set_auto_login_user(username: &str) -> Result<(), AppError> {
     let steam_key = hkcu
         .open_subkey_with_flags("Software\\Valve\\Steam", KEY_WRITE)
         .map_err(|e| AppError::RegistryWrite(e.to_string()))?;
+
+    // Capture whatever was there before so a partial failure below can be
+    // rolled back instead of leaving the registry pointing at the new
+    // account while the caller is told the write failed.
+    let previous_username: Option<String> = steam_key.get_value("AutoLoginUser").ok();
+
     steam_key
         .set_value("AutoLoginUser", &username)
         .map_err(|e| AppError::RegistryWrite(e.to_string()))?;
-    steam_key
-        .set_value("RememberPassword", &1u32)
-        .map_err(|e| AppError::RegistryWrite(e.to_string()))?;
+
+    if let Err(e) = steam_key.set_value("RememberPassword", &1u32) {
+        // Roll back AutoLoginUser so the reported error matches the actual
+        // registry state instead of leaving it half-applied.
+        match &previous_username {
+            Some(prev) => {
+                let _ = steam_key.set_value("AutoLoginUser", prev);
+            }
+            None => {
+                let _ = steam_key.set_value("AutoLoginUser", &"");
+            }
+        }
+        return Err(AppError::RegistryWrite(e.to_string()));
+    }
     Ok(())
 }
 
@@ -318,10 +335,15 @@ pub fn get_auto_login_user() -> Result<String, AppError> {
     let steam_key = hkcu
         .open_subkey("Software\\Valve\\Steam")
         .map_err(|e| AppError::RegistryOpen(e.to_string()))?;
-    let auto_login_user: String = steam_key
-        .get_value("AutoLoginUser")
-        .unwrap_or_else(|_| String::new());
-    Ok(auto_login_user)
+    // Only a genuinely absent value means "no previous auto-login user".
+    // Any other error (e.g. the value exists but is not REG_SZ) must not be
+    // mistaken for that, since callers use an empty result as a safe-to-clear
+    // signal on the switch-failure rollback path.
+    match steam_key.get_value::<String, _>("AutoLoginUser") {
+        Ok(value) => Ok(value),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(AppError::RegistryRead(e.to_string())),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -393,15 +415,14 @@ pub fn kill_and_relaunch_steam_elevated(
     steam_path: &Path,
     launch_options: &[String],
 ) -> Result<(), AppError> {
-    // Best-effort kill via sysinfo; will fail silently for elevated processes.
-    let _ = super::common::kill_process("steam.exe");
-    let _ = super::common::kill_process("steamwebhelper.exe");
-
-    // Wait for exit (polling on both platforms).
-    super::common::wait_for_process_exit("steam.exe", 10_000);
-    super::common::wait_for_process_exit("steamwebhelper.exe", 5_000);
-
-    // Relaunch elevated via ShellExecute with "runas" verb.
+    // The only caller reaches this path after stop_steam already tried a
+    // same-privilege kill of steam.exe/steamwebhelper.exe and got back
+    // AppError::SteamElevated, i.e. Steam is already confirmed running
+    // elevated and unkillable at our privilege level. Repeating that same
+    // kill+wait cycle here is guaranteed to fail again and only adds dead
+    // time before the UAC prompt, so go straight to the elevated relaunch
+    // and let the elevated Steam instance itself replace/exit via the
+    // runas-launched process.
     let steam_exe = steam_path.join(steam_executable_name());
     let args = quote_windows_args(launch_options);
     shell_execute("runas", &steam_exe.to_string_lossy(), &args)

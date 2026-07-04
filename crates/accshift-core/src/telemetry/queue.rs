@@ -218,6 +218,17 @@ fn flush(
         return;
     };
 
+    // AccountsSnapshot is documented (events.rs) as Mode B only: it must
+    // never leave the process under Mode A, even though Mode A is otherwise
+    // enabled. Drop just those events here rather than gating at track()
+    // time, since the applicable mode is only known for certain at flush.
+    if mode == Mode::A {
+        buffer.retain(|ev| !matches!(ev, Event::AccountsSnapshot { .. }));
+        if buffer.is_empty() {
+            return;
+        }
+    }
+
     let events_json: Vec<Value> = buffer
         .iter()
         .map(|ev| client::event_to_json(ev, ctx))
@@ -289,5 +300,40 @@ mod tests {
         // Mode B rejected because id is invalid; falls back to Mode A.
         let r = resolve_mode(&s);
         assert!(matches!(r, Some((Mode::A, None))));
+    }
+
+    #[test]
+    fn flush_drops_accounts_snapshot_under_mode_a() {
+        // AccountsSnapshot is documented as Mode B only (events.rs). Under
+        // Mode A it must be dropped rather than sent, even though Mode A
+        // itself is enabled and would otherwise flush fine.
+        let http = reqwest::blocking::Client::new();
+        let ctx = TelemetryContext {
+            app_version: "0.0.0".into(),
+            os_version: "test".into(),
+            locale: None,
+        };
+        let consent = Arc::new(Mutex::new(ConsentState {
+            mode_a: true,
+            mode_b: false,
+            install_id: None,
+        }));
+        let mut buffer = vec![Event::AccountsSnapshot {
+            platform: "steam".into(),
+            count: 3,
+        }];
+
+        flush(
+            &http,
+            "http://127.0.0.1:0/track",
+            "test-ua",
+            &ctx,
+            &consent,
+            &mut buffer,
+        );
+
+        // The event was dropped locally (buffer emptied) before any network
+        // send was attempted; no request was made to the unreachable port.
+        assert!(buffer.is_empty());
     }
 }

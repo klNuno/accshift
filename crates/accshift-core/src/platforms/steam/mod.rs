@@ -722,12 +722,18 @@ impl PlatformService for SteamService {
         } else {
             // Persona state lives in userdata/<account_id>/, keyed by steam
             // id — resolve it from loginusers.vdf. Unknown id → plain switch.
+            // Two entries can share the same account_name (deleted/recreated
+            // account, hand-edited VDF); the accounts Vec's relative order for
+            // ties comes from HashMap iteration, not something we control, so
+            // pick the lowest steam_id deterministically instead of the first
+            // match (which would otherwise vary run to run).
             let steam_id = accounts::get_accounts_snapshot(&steam_path)
                 .ok()
                 .and_then(|(accounts, _)| {
                     accounts
                         .into_iter()
-                        .find(|a| a.account_name == account_id)
+                        .filter(|a| a.account_name == account_id)
+                        .min_by(|a, b| a.steam_id.cmp(&b.steam_id))
                         .map(|a| a.steam_id)
                 })
                 .unwrap_or_default();
@@ -809,5 +815,64 @@ impl PlatformService for SteamService {
 
     fn select_path(&self) -> Result<String, String> {
         select_steam_path()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_steam_id_accepts_17_digit_numeric() {
+        assert!(validate_steam_id("76561198000000000").is_ok());
+    }
+
+    #[test]
+    fn validate_steam_id_rejects_too_short() {
+        assert!(validate_steam_id("7656119800000000").is_err());
+    }
+
+    #[test]
+    fn validate_steam_id_rejects_too_long() {
+        assert!(validate_steam_id("765611980000000001").is_err());
+    }
+
+    #[test]
+    fn validate_steam_id_rejects_non_numeric() {
+        assert!(validate_steam_id("7656119800000000a").is_err());
+    }
+
+    #[test]
+    fn validate_steam_id_rejects_empty() {
+        assert!(validate_steam_id("").is_err());
+    }
+
+    #[test]
+    fn validate_username_rejects_empty() {
+        assert!(validate_username("").is_err());
+        assert!(validate_username("   ").is_err());
+    }
+
+    #[test]
+    fn validate_username_rejects_too_long() {
+        let long_name = "a".repeat(129);
+        assert!(validate_username(&long_name).is_err());
+    }
+
+    #[test]
+    fn validate_username_accepts_128_chars() {
+        let max_name = "a".repeat(128);
+        assert!(validate_username(&max_name).is_ok());
+    }
+
+    #[test]
+    fn validate_username_rejects_control_char() {
+        assert!(validate_username("bad\u{0000}name").is_err());
+        assert!(validate_username("bad\nname").is_err());
+    }
+
+    #[test]
+    fn validate_username_accepts_normal_name() {
+        assert!(validate_username("some_user123").is_ok());
     }
 }

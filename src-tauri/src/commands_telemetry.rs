@@ -76,23 +76,10 @@ pub async fn telemetry_set_mode_b(
         // 1. Read the current install_id (needed for /forget before clearing).
         let install_id = config::load_config(&ctx(&app_handle)).telemetry.install_id;
 
-        // 2. Call /forget remotely if an id existed.
-        if !install_id.is_empty() {
-            let id = install_id.clone();
-            let app_version = env!("CARGO_PKG_VERSION").to_string();
-            tauri::async_runtime::spawn_blocking(move || {
-                let ua = telemetry::user_agent(&app_version);
-                let client = reqwest::blocking::Client::builder()
-                    .user_agent(ua.clone())
-                    .build()
-                    .map_err(|e| format!("client: {e}"))?;
-                telemetry::forget(&client, TELEMETRY_URL, &ua, &id)
-            })
-            .await
-            .map_err(|e| format!("task: {e}"))??;
-        }
-
-        // 3. Local mutation: clear install_id and disable the flag.
+        // 2. Local mutation first: clear install_id and disable the flag
+        // unconditionally, regardless of whether the /forget call below
+        // succeeds. The user's opt-out must take effect locally even when
+        // offline or when the telemetry Worker is unreachable.
         let c = ctx(&app_handle);
         let c2 = c.clone();
         tauri::async_runtime::spawn_blocking(move || {
@@ -105,6 +92,30 @@ pub async fn telemetry_set_mode_b(
         .map_err(|e| format!("task: {e}"))??;
         let tstate = app_handle.state::<TelemetryState>();
         refresh_consent_from_config(&tstate, &c);
+
+        // 3. Call /forget remotely if an id existed. This is best-effort
+        // server-side cleanup: a failure here is logged, not returned, so it
+        // never undoes the local opt-out that already happened above.
+        if !install_id.is_empty() {
+            let id = install_id.clone();
+            let app_version = env!("CARGO_PKG_VERSION").to_string();
+            let forget_result = tauri::async_runtime::spawn_blocking(move || {
+                let ua = telemetry::user_agent(&app_version);
+                let client = reqwest::blocking::Client::builder()
+                    .user_agent(ua.clone())
+                    .build()
+                    .map_err(|e| format!("client: {e}"))?;
+                telemetry::forget(&client, TELEMETRY_URL, &ua, &id)
+            })
+            .await
+            .map_err(|e| format!("task: {e}"))?;
+            if let Err(e) = forget_result {
+                eprintln!(
+                    "telemetry: /forget failed after local opt-out, server data may persist: {e}"
+                );
+            }
+        }
+
         Ok(())
     }
 }

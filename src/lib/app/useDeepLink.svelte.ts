@@ -10,13 +10,27 @@ const BOOT_TIMEOUT_MS = 20000;
 const LOAD_TIMEOUT_MS = 15000;
 const POLL_INTERVAL_MS = 100;
 
+// Looks up a deep-link account ref. The id form is authoritative (ids are
+// unique), so an id match always wins. Username/displayName are user-editable
+// text and can collide across accounts (renames, duplicate imports): if more
+// than one account matches on either of those, the ref is ambiguous and we
+// treat it the same as "not found" rather than silently guessing which
+// account the link meant.
 function findAccount(accounts: PlatformAccount[], ref: string): PlatformAccount | undefined {
   const needle = ref.trim().toLowerCase();
-  return (
-    accounts.find((account) => account.id.trim().toLowerCase() === needle) ??
-    accounts.find((account) => account.username.trim().toLowerCase() === needle) ??
-    accounts.find((account) => (account.displayName || "").trim().toLowerCase() === needle)
+
+  const byId = accounts.find((account) => account.id.trim().toLowerCase() === needle);
+  if (byId) return byId;
+
+  const byUsername = accounts.filter((account) => account.username.trim().toLowerCase() === needle);
+  if (byUsername.length === 1) return byUsername[0];
+  if (byUsername.length > 1) return undefined;
+
+  const byDisplayName = accounts.filter(
+    (account) => (account.displayName || "").trim().toLowerCase() === needle,
   );
+  if (byDisplayName.length === 1) return byDisplayName[0];
+  return undefined;
 }
 
 async function waitUntil(condition: () => boolean, timeoutMs: number): Promise<boolean> {
@@ -42,12 +56,23 @@ type DeepLinkDeps = {
   isLoaderLoading: () => boolean;
   getLoaderError: () => string | null;
   switchToAccount: (account: PlatformAccount) => Promise<void>;
+  // Optional gate asked right before a deep-link-triggered switch runs, so a
+  // link can be required to go through an explicit user confirmation instead
+  // of switching accounts unattended. Return false to cancel the switch;
+  // dropped silently, the same way the PIN-lock gate above is. When the host
+  // does not wire this in, the switch proceeds as before (no gate).
+  confirmSwitch?: (account: PlatformAccount, platformName: string) => Promise<boolean> | boolean;
 };
 
 export function createDeepLinkController(deps: DeepLinkDeps) {
   let unlisten: (() => void) | null = null;
   let started = false;
   let busy = false;
+  // A link that arrives while another one is still being handled is queued
+  // instead of dropped, keeping only the most recent one (an automation
+  // firing twice in a row wants "switch to the latest ref", not a replay of
+  // every intermediate request).
+  let pendingUrl: string | null = null;
 
   async function handleSwitch({ platformId, accountRef }: DeepLinkSwitchRequest) {
     // A deep link can be the app's launch trigger; the shell isn't usable yet.
@@ -96,6 +121,11 @@ export function createDeepLinkController(deps: DeepLinkDeps) {
       return;
     }
 
+    if (deps.confirmSwitch) {
+      const allowed = await deps.confirmSwitch(account, platformDef.name);
+      if (!allowed) return;
+    }
+
     await deps.switchToAccount(account);
     if (!deps.getLoaderError()) {
       deps.showToast(
@@ -107,7 +137,10 @@ export function createDeepLinkController(deps: DeepLinkDeps) {
   }
 
   async function handleUrl(rawUrl: string) {
-    if (busy) return;
+    if (busy) {
+      pendingUrl = rawUrl;
+      return;
+    }
     busy = true;
     try {
       await waitUntil(deps.isBootReady, BOOT_TIMEOUT_MS);
@@ -123,6 +156,11 @@ export function createDeepLinkController(deps: DeepLinkDeps) {
       console.error("Deep link handling failed:", error);
     } finally {
       busy = false;
+      if (pendingUrl) {
+        const next = pendingUrl;
+        pendingUrl = null;
+        void handleUrl(next);
+      }
     }
   }
 
