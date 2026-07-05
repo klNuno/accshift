@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 const ROBLOX_PROCESS_NAMES: &[&str] = &["RobloxPlayerBeta.exe", "RobloxStudioBeta.exe"];
 const ROBLOX_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
@@ -45,7 +46,7 @@ pub struct RobloxProfileInfo {
 #[derive(Clone)]
 struct QuickLoginJob {
     code: String,
-    private_key: String,
+    private_key: Zeroizing<String>,
     last_touched_at: u64,
 }
 
@@ -676,7 +677,7 @@ pub fn begin_account_setup(app_handle: &dyn AppContext) -> Result<SetupStatus, S
         setup_id.clone(),
         QuickLoginJob {
             code: login_data.code,
-            private_key: login_data.private_key,
+            private_key: Zeroizing::new(login_data.private_key),
             last_touched_at: super::now_unix_ms(),
         },
     );
@@ -710,7 +711,7 @@ pub fn get_account_setup_status(
     // Poll Roblox Quick Login status
     let body = serde_json::json!({
         "code": job.code,
-        "privateKey": job.private_key,
+        "privateKey": &*job.private_key,
     });
 
     let response = post_with_csrf(

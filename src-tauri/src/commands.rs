@@ -311,9 +311,16 @@ pub async fn platform_begin_setup(
 ) -> Result<SetupStatus, String> {
     let service = require_service(&platform_id)?;
     let c = ctx(&app_handle);
-    tauri::async_runtime::spawn_blocking(move || service.begin_setup(c, params))
-        .await
-        .map_err(|e| format!("Task failed: {e}"))?
+    // Setup flows can stop launchers and touch live auth files before they
+    // persist config, so they need the same operation lock as switch/forget.
+    // Keep the guard on the blocking thread for nested config writes.
+    tauri::async_runtime::spawn_blocking(move || {
+        let _lock = accshift_core::lock::acquire_exclusive(&c, std::time::Duration::from_secs(2))
+            .map_err(|e| e.to_string())?;
+        service.begin_setup(c, params)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[tauri::command]

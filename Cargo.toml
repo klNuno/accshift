@@ -47,6 +47,9 @@ keyring = { version = "3", default-features = false, features = [
   "crypto-rust",
 ] }
 base64 = "0.22"
+pbkdf2 = "0.12"
+sha2 = "0.10"
+zeroize = "1"
 
 [profile.release]
 panic = "abort"
