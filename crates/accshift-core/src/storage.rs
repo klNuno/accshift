@@ -29,6 +29,7 @@ pub const TARGET_CUSTOM_THEMES: &str = "app.themes";
 pub const TARGET_RIOT_SNAPSHOTS: &str = "platform.riot.snapshots";
 pub const TARGET_UBISOFT_SNAPSHOTS: &str = "platform.ubisoft.snapshots";
 pub const TARGET_EPIC_SNAPSHOTS: &str = "platform.epic.snapshots";
+pub const TARGET_GOG_SNAPSHOTS: &str = "platform.gog.snapshots";
 
 const DEV_SCOPE_DIR: &str = "dev";
 
@@ -187,6 +188,21 @@ pub fn epic_snapshots_dir(app_handle: &dyn AppContext) -> Result<PathBuf, String
         .join("epic")
         .join("snapshots");
     let old_legacy = legacy_app_data_root(app_handle)?.join("epic_cache");
+    backup_and_migrate_dir(app_handle, &scoped_legacy, &target)?;
+    backup_and_migrate_dir(app_handle, &old_legacy, &target)?;
+    Ok(target)
+}
+
+pub fn gog_snapshots_dir(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
+    let target = app_local_data_root(app_handle)?
+        .join("platforms")
+        .join("gog")
+        .join("snapshots");
+    let scoped_legacy = raw_app_local_data_root(app_handle)?
+        .join("platforms")
+        .join("gog")
+        .join("snapshots");
+    let old_legacy = legacy_app_data_root(app_handle)?.join("gog_cache");
     backup_and_migrate_dir(app_handle, &scoped_legacy, &target)?;
     backup_and_migrate_dir(app_handle, &old_legacy, &target)?;
     Ok(target)
@@ -526,6 +542,10 @@ fn manifest_targets(app_handle: &dyn AppContext) -> Result<Vec<(String, Manifest
     targets.push((
         TARGET_EPIC_SNAPSHOTS.to_string(),
         ManifestTarget::Dir(epic_snapshots_dir(app_handle)?, 1),
+    ));
+    targets.push((
+        TARGET_GOG_SNAPSHOTS.to_string(),
+        ManifestTarget::Dir(gog_snapshots_dir(app_handle)?, 1),
     ));
 
     Ok(targets)

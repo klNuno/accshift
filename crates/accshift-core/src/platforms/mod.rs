@@ -14,6 +14,8 @@ pub mod battle_net;
 #[cfg(windows)]
 pub mod epic;
 #[cfg(windows)]
+pub mod gog;
+#[cfg(windows)]
 pub mod riot;
 #[cfg(windows)]
 pub mod roblox;
@@ -179,6 +181,7 @@ fn platform_registry() -> &'static HashMap<&'static str, &'static dyn PlatformSe
             map.insert("ubisoft", &ubisoft::UBISOFT_SERVICE);
             map.insert("roblox", &roblox::ROBLOX_SERVICE);
             map.insert("epic", &epic::EPIC_SERVICE);
+            map.insert("gog", &gog::GOG_SERVICE);
         }
         map
     })
@@ -291,7 +294,15 @@ mod tests {
     #[test]
     fn require_service_returns_ok_for_known_platforms() {
         #[cfg(windows)]
-        let platforms: &[&str] = &["steam", "riot", "battle-net", "ubisoft", "roblox", "epic"];
+        let platforms: &[&str] = &[
+            "steam",
+            "riot",
+            "battle-net",
+            "ubisoft",
+            "roblox",
+            "epic",
+            "gog",
+        ];
         #[cfg(not(windows))]
         let platforms: &[&str] = &["steam"];
         for platform in platforms {

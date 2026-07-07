@@ -380,7 +380,8 @@ fn cmd_switch(
                 || e.contains("profile not found") // Riot
                 || e.contains("No auth snapshot found for account") // Ubisoft, Epic
                 || e.contains("Invalid Ubisoft account UUID")
-                || e.contains("Invalid Epic account ID");
+                || e.contains("Invalid Epic account ID")
+                || e.contains("Invalid GOG account ID");
             let (code, status) = if unknown_account {
                 ("unknown_account", exit::UNKNOWN_ACCOUNT)
             } else {
@@ -393,7 +394,15 @@ fn cmd_switch(
 }
 
 fn cmd_platforms(format: Format) -> u8 {
-    let known = ["steam", "riot", "battle-net", "ubisoft", "roblox", "epic"];
+    let known = [
+        "steam",
+        "riot",
+        "battle-net",
+        "ubisoft",
+        "roblox",
+        "epic",
+        "gog",
+    ];
     let available: Vec<&str> = known
         .iter()
         .copied()

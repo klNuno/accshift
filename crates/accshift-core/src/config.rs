@@ -124,6 +124,24 @@ pub struct EpicConfig {
     pub accounts: Vec<EpicAccountConfig>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct GogAccountConfig {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub account_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct GogConfig {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub path_override: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accounts: Vec<GogAccountConfig>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TelemetryConfig {
     #[serde(default = "default_true")]
@@ -169,6 +187,8 @@ pub struct AppConfig {
     pub roblox: RobloxConfig,
     #[serde(default, skip_serializing_if = "is_default_epic_config")]
     pub epic: EpicConfig,
+    #[serde(default, skip_serializing_if = "is_default_gog_config")]
+    pub gog: GogConfig,
     #[serde(default)]
     pub telemetry: TelemetryConfig,
     #[serde(default)]
@@ -191,6 +211,8 @@ struct RawAppConfig {
     roblox: Option<RobloxConfig>,
     #[serde(default)]
     epic: Option<EpicConfig>,
+    #[serde(default)]
+    gog: Option<GogConfig>,
     #[serde(default)]
     telemetry: Option<TelemetryConfig>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -274,6 +296,10 @@ fn is_default_roblox_config(value: &RobloxConfig) -> bool {
 }
 
 fn is_default_epic_config(value: &EpicConfig) -> bool {
+    value.path_override.is_empty() && value.accounts.is_empty()
+}
+
+fn is_default_gog_config(value: &GogConfig) -> bool {
     value.path_override.is_empty() && value.accounts.is_empty()
 }
 
@@ -370,6 +396,7 @@ fn normalize_config(raw: RawAppConfig) -> AppConfig {
     let ubisoft = raw.ubisoft.unwrap_or_default();
     let roblox = raw.roblox.unwrap_or_default();
     let epic = raw.epic.unwrap_or_default();
+    let gog = raw.gog.unwrap_or_default();
     let telemetry = raw.telemetry.unwrap_or_default();
     AppConfig {
         steam,
@@ -378,6 +405,7 @@ fn normalize_config(raw: RawAppConfig) -> AppConfig {
         ubisoft,
         roblox,
         epic,
+        gog,
         telemetry,
         window_width: raw.window_width,
         window_height: raw.window_height,
@@ -562,6 +590,7 @@ fn save_config_unlocked(app_handle: &dyn AppContext, config: &AppConfig) -> Resu
         "ubisoftAccounts": config.ubisoft.accounts.len(),
         "robloxAccounts": config.roblox.accounts.len(),
         "epicAccounts": config.epic.accounts.len(),
+        "gogAccounts": config.gog.accounts.len(),
         "hasWindowSize": config.window_width.is_some() && config.window_height.is_some(),
     })
     .to_string();
@@ -736,6 +765,7 @@ fn portable_config(config: &AppConfig) -> AppConfig {
     portable.battle_net.path_override.clear();
     portable.ubisoft.path_override.clear();
     portable.epic.path_override.clear();
+    portable.gog.path_override.clear();
     portable.telemetry.install_id.clear();
     portable.window_width = None;
     portable.window_height = None;
@@ -754,6 +784,7 @@ fn local_config(config: &AppConfig) -> AppConfig {
     local.battle_net.path_override = config.battle_net.path_override.clone();
     local.ubisoft.path_override = config.ubisoft.path_override.clone();
     local.epic.path_override = config.epic.path_override.clone();
+    local.gog.path_override = config.gog.path_override.clone();
     local.telemetry.install_id = config.telemetry.install_id.clone();
     // mode_a_enabled / mode_b_enabled / onboarding_completed live in the portable
     // file. Reset the defaults here so they do not pollute the later merge step.
@@ -801,6 +832,9 @@ fn merge_split_configs(portable: AppConfig, local: AppConfig) -> AppConfig {
     }
     if !local.epic.path_override.is_empty() {
         merged.epic.path_override = local.epic.path_override;
+    }
+    if !local.gog.path_override.is_empty() {
+        merged.gog.path_override = local.gog.path_override;
     }
     if !local.telemetry.install_id.is_empty() {
         merged.telemetry.install_id = local.telemetry.install_id;
@@ -1022,6 +1056,10 @@ mod tests {
                 path_override: "C:\\Epic".into(),
                 accounts: vec![],
             },
+            gog: GogConfig {
+                path_override: "C:\\GOG".into(),
+                accounts: vec![],
+            },
             roblox: RobloxConfig {
                 accounts: vec![RobloxAccountConfig {
                     user_id: "123".into(),
@@ -1046,6 +1084,7 @@ mod tests {
         assert!(p.battle_net.path_override.is_empty());
         assert!(p.ubisoft.path_override.is_empty());
         assert!(p.epic.path_override.is_empty());
+        assert!(p.gog.path_override.is_empty());
         assert!(p.window_width.is_none());
         assert!(p.window_height.is_none());
 
@@ -1092,6 +1131,10 @@ mod tests {
                 path_override: "C:\\Epic".into(),
                 accounts: vec![],
             },
+            gog: GogConfig {
+                path_override: "C:\\GOG".into(),
+                accounts: vec![],
+            },
             roblox: RobloxConfig {
                 accounts: vec![RobloxAccountConfig {
                     user_id: "456".into(),
@@ -1116,6 +1159,7 @@ mod tests {
         assert_eq!(l.battle_net.path_override, "C:\\BNet");
         assert_eq!(l.ubisoft.path_override, "C:\\Ubi");
         assert_eq!(l.epic.path_override, "C:\\Epic");
+        assert_eq!(l.gog.path_override, "C:\\GOG");
         assert_eq!(l.window_width, Some(1024.0));
         assert_eq!(l.window_height, Some(768.0));
 

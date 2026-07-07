@@ -72,6 +72,17 @@ export const PLATFORM_DEFS: PlatformDef[] = [
     pathPlaceholder:
       "C:\\Program Files (x86)\\Epic Games\\Launcher\\Portal\\Binaries\\Win64\\EpicGamesLauncher.exe",
   },
+  {
+    id: "gog",
+    name: "GOG Galaxy",
+    accent: "#a02de3",
+    implemented: true,
+    supportedOs: ["windows"],
+    settingsTabKey: "settings.gog",
+    settingsComponent: () => import("./gog/GogSettingsTab.svelte"),
+    pathLabelKey: "settings.gogPath",
+    pathPlaceholder: "C:\\Program Files (x86)\\GOG Galaxy\\GalaxyClient.exe",
+  },
 ];
 
 const PLATFORM_LOADERS: Record<string, () => Promise<PlatformAdapter>> = {
@@ -81,6 +92,7 @@ const PLATFORM_LOADERS: Record<string, () => Promise<PlatformAdapter>> = {
   ubisoft: () => import("./ubisoft/adapter").then((mod) => mod.ubisoftAdapter),
   roblox: () => import("./roblox/adapter").then((mod) => mod.robloxAdapter),
   epic: () => import("./epic/adapter").then((mod) => mod.epicAdapter),
+  gog: () => import("./gog/adapter").then((mod) => mod.gogAdapter),
 };
 
 const platformLoadTasks = new Map<string, Promise<PlatformAdapter>>();
