@@ -135,6 +135,17 @@
         class="text-input number-input"
       />
     </label>
+    <ToggleSetting
+      label={t("settings.streamerMode")}
+      enabled={settings.streamerMode === "auto"}
+      accent={neutralAccent}
+      onLabel={t("common.enabled")}
+      offLabel={t("common.disabled")}
+      onToggle={() => {
+        settings.streamerMode = settings.streamerMode === "auto" ? "off" : "auto";
+      }}
+    />
+    <p class="hint">{t("settings.streamerModeHint")}</p>
   </section>
 
   <section class="card">

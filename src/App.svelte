@@ -49,6 +49,8 @@
   import { createAppUpdater } from "$lib/app/useAppUpdater.svelte";
   import { createAppLifecycleController } from "$lib/app/useAppLifecycle.svelte";
   import { createSecureScreenController } from "$lib/app/useSecureScreen.svelte";
+  import { createStreamerModeController } from "$lib/app/useStreamerMode.svelte";
+  import StreamerModeOverlay from "$lib/app/StreamerModeOverlay.svelte";
   import { createBulkEditController } from "$lib/app/useBulkEdit.svelte";
   import { createUiScale } from "$lib/app/useUiScale.svelte";
   import { createSettingsPanel } from "$lib/app/useSettingsPanel.svelte";
@@ -221,6 +223,15 @@
     getAppVersion: () => appVersion,
     onCloseContextMenu: dialogs.closeContextMenu,
     t,
+  });
+  const streamerMode = createStreamerModeController({
+    getSettings: () => shell.settings,
+    setStreamerMode: (mode) => {
+      const latest = getSettings();
+      latest.streamerMode = mode;
+      saveSettings(latest);
+      shell.refreshSettings();
+    },
   });
   const extensionContent = createExtensionContentController({
     t,
@@ -590,6 +601,7 @@
 
     updateCheckTimer = setTimeout(() => { void updates.startBackgroundUpdateFlow(); }, 3500);
     secureScreen.handleAppMounted();
+    streamerMode.start();
 
     void getCurrentWindow()
       .onCloseRequested(async (event) => {
@@ -653,6 +665,7 @@
     window.removeEventListener("focus", lifecycle.handleWindowFocus);
     document.removeEventListener("visibilitychange", lifecycle.handleVisibilityChange);
     secureScreen.handleAppDestroyed();
+    streamerMode.stop();
     windowActivity.stop();
     grid.destroy();
   });
@@ -693,7 +706,7 @@
     {@render titleBar()}
   {/if}
   <div class="app-stage" class:locked={secureScreen.isPinLocked} style={shell.appStageStyle}>
-    <div class="app-shell" class:obscured={secureScreen.isObscured}>
+    <div class="app-shell" class:obscured={secureScreen.isObscured || streamerMode.active}>
       {#if !secureScreen.renderSuspended}
       {#if shell.runtimeOs !== "macos"}
         {@render titleBar()}
@@ -845,6 +858,14 @@
     pinCodeLength={secureScreen.pinCodeLength}
     onPinAttemptChange={secureScreen.setPinAttempt}
     onPinInputRefChange={secureScreen.setPinInputRef}
+    {t}
+  />
+
+  <StreamerModeOverlay
+    active={streamerMode.active}
+    motionPaused={secureScreen.motionPaused}
+    onDismiss={streamerMode.dismiss}
+    onDisablePermanently={streamerMode.disablePermanently}
     {t}
   />
 </div>

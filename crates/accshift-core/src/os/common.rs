@@ -111,6 +111,41 @@ pub fn is_process_running(process_name: &str) -> bool {
     })
 }
 
+/// Executable names (lowercased, extension stripped) of streaming/recording
+/// software whose presence flips the UI into streamer mode. Windows reports
+/// e.g. "Streamlabs OBS.exe" and "XSplit.Core.exe", so the match lowercases and
+/// drops a trailing ".exe" before comparing.
+const STREAMING_SOFTWARE: &[&str] = &[
+    "obs",            // Linux / macOS
+    "obs64",          // Windows 64-bit
+    "obs32",          // Windows 32-bit
+    "streamlabs obs", // Streamlabs Desktop
+    "xsplit.core",    // XSplit Broadcaster
+    "xsplit.broadcaster",
+    "wirecast",
+    "twitchstudio",
+    "twitch studio",
+];
+
+/// Whether a process name matches known streaming software. Lowercases and
+/// strips a trailing ".exe" so Windows ("OBS64.exe") and Unix ("obs") report
+/// the same way.
+fn is_streaming_process_name(name: &str) -> bool {
+    let name = name.to_lowercase();
+    let stem = name.strip_suffix(".exe").unwrap_or(name.as_str());
+    STREAMING_SOFTWARE.contains(&stem)
+}
+
+/// Whether any known streaming/recording app is running right now. Backs the UI
+/// streamer mode, which blurs on-screen identifiers while the user is live.
+pub fn is_streaming_software_running() -> bool {
+    with_refreshed_system(|system| {
+        system.processes().values().any(|process| {
+            is_live(process) && is_streaming_process_name(&process.name().to_string_lossy())
+        })
+    })
+}
+
 /// pids of the live processes currently matching `process_name`. Used by
 /// `wait_for_process_exit` to poll only the relevant entries.
 fn matching_live_pids(process_name: &str) -> Vec<Pid> {
@@ -229,7 +264,26 @@ pub fn open_folder(path: &Path) -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_allowed_url;
+    use super::{is_allowed_url, is_streaming_process_name};
+
+    #[test]
+    fn detects_streaming_software_across_platforms() {
+        // Windows reports the ".exe" suffix and mixed case; Unix reports bare
+        // lowercase names. Both must match.
+        assert!(is_streaming_process_name("OBS64.exe"));
+        assert!(is_streaming_process_name("obs"));
+        assert!(is_streaming_process_name("Streamlabs OBS.exe"));
+        assert!(is_streaming_process_name("XSplit.Core.exe"));
+        assert!(is_streaming_process_name("Twitch Studio.exe"));
+    }
+
+    #[test]
+    fn ignores_unrelated_processes() {
+        assert!(!is_streaming_process_name("steam.exe"));
+        assert!(!is_streaming_process_name("chrome"));
+        assert!(!is_streaming_process_name("obsidian.exe"));
+        assert!(!is_streaming_process_name(""));
+    }
 
     #[test]
     fn allows_expected_schemes() {

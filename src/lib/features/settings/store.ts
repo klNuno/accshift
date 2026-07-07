@@ -18,6 +18,7 @@ const DEFAULTS: AppSettings = {
   backgroundOpacity: 100,
   uiScalePercent: 100,
   animations: "system",
+  streamerMode: "auto",
   suspendGraphicsWhenMinimized: true,
   minimizeOnAccountSwitch: false,
   dataRefresh: {
@@ -135,6 +136,7 @@ function sanitizeSettings(value: unknown): AppSettings {
     backgroundOpacity: clampInt(raw.backgroundOpacity, 0, 100, DEFAULTS.backgroundOpacity),
     uiScalePercent: clampInt(raw.uiScalePercent, 75, 150, DEFAULTS.uiScalePercent),
     animations: raw.animations === "on" || raw.animations === "off" ? raw.animations : "system",
+    streamerMode: raw.streamerMode === "off" ? "off" : "auto",
     suspendGraphicsWhenMinimized: raw.suspendGraphicsWhenMinimized !== false,
     minimizeOnAccountSwitch: Boolean(raw.minimizeOnAccountSwitch),
     dataRefresh: {

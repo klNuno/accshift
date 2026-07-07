@@ -10,6 +10,14 @@ pub fn get_runtime_os() -> String {
     std::env::consts::OS.to_string()
 }
 
+/// True when a known streaming/recording app (OBS, Streamlabs, XSplit...) is
+/// running. The frontend polls this to auto-enable streamer mode, which blurs
+/// on-screen account identifiers while the user is live.
+#[tauri::command(async)]
+pub fn detect_streaming_software() -> bool {
+    crate::os::is_streaming_software_running()
+}
+
 /// Returns "migrated" if legacy config was converted, "none" if no legacy found,
 /// or an error string if migration failed.
 #[tauri::command(async)]

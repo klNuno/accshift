@@ -40,6 +40,9 @@ export interface AccountDisplaySettings {
 /** "system" follows the OS reduced-motion preference; "on"/"off" force it. */
 export type AnimationsMode = "system" | "on" | "off";
 
+/** "auto" blurs the UI when streaming software is detected; "off" never does. */
+export type StreamerMode = "auto" | "off";
+
 export type SteamShutdownMode = "graceful" | "force";
 
 export interface SteamPlatformSettings {
@@ -58,6 +61,7 @@ export interface AppSettings {
   backgroundOpacity: number;
   uiScalePercent: number;
   animations: AnimationsMode;
+  streamerMode: StreamerMode;
   suspendGraphicsWhenMinimized: boolean;
   minimizeOnAccountSwitch: boolean;
   dataRefresh: DataRefreshSettings;

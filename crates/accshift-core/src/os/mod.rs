@@ -32,6 +32,10 @@ pub fn is_process_running(process_name: &str) -> bool {
     common::is_process_running(process_name)
 }
 
+pub fn is_streaming_software_running() -> bool {
+    common::is_streaming_software_running()
+}
+
 pub fn kill_process(process_name: &str) -> Result<(), AppError> {
     common::kill_process(process_name)
 }

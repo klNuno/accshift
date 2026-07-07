@@ -313,6 +313,7 @@ fn main() {
             commands::finish_boot,
             commands::get_boot_payload,
             commands::get_runtime_os,
+            commands::detect_streaming_software,
             commands::migrate_legacy_config,
             commands::load_client_storage_snapshot,
             commands::save_client_storage_store,
