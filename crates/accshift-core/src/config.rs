@@ -153,6 +153,16 @@ pub struct JagexAccountConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct DiscordAccountConfig {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub account_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct JagexConfig {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub path_override: String,
@@ -162,6 +172,18 @@ pub struct JagexConfig {
     /// captured during setup) is the only record of which session is live.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub current_account: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct DiscordConfig {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub path_override: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accounts: Vec<DiscordAccountConfig>,
+    // Discord exposes no readable current-account id (we never parse leveldb),
+    // so the last account switched to is tracked here instead.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub current_account_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -213,6 +235,8 @@ pub struct AppConfig {
     pub gog: GogConfig,
     #[serde(default, skip_serializing_if = "is_default_jagex_config")]
     pub jagex: JagexConfig,
+    #[serde(default, skip_serializing_if = "is_default_discord_config")]
+    pub discord: DiscordConfig,
     #[serde(default)]
     pub telemetry: TelemetryConfig,
     #[serde(default)]
@@ -239,6 +263,7 @@ struct RawAppConfig {
     gog: Option<GogConfig>,
     #[serde(default)]
     jagex: Option<JagexConfig>,
+    discord: Option<DiscordConfig>,
     #[serde(default)]
     telemetry: Option<TelemetryConfig>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -331,6 +356,11 @@ fn is_default_gog_config(value: &GogConfig) -> bool {
 
 fn is_default_jagex_config(value: &JagexConfig) -> bool {
     value.path_override.is_empty() && value.accounts.is_empty() && value.current_account.is_empty()
+}
+fn is_default_discord_config(value: &DiscordConfig) -> bool {
+    value.path_override.is_empty()
+        && value.accounts.is_empty()
+        && value.current_account_id.is_empty()
 }
 
 fn normalize_riot_profile(raw: RawRiotProfileConfig) -> RiotProfileConfig {
@@ -428,6 +458,7 @@ fn normalize_config(raw: RawAppConfig) -> AppConfig {
     let epic = raw.epic.unwrap_or_default();
     let gog = raw.gog.unwrap_or_default();
     let jagex = raw.jagex.unwrap_or_default();
+    let discord = raw.discord.unwrap_or_default();
     let telemetry = raw.telemetry.unwrap_or_default();
     AppConfig {
         steam,
@@ -438,6 +469,7 @@ fn normalize_config(raw: RawAppConfig) -> AppConfig {
         epic,
         gog,
         jagex,
+        discord,
         telemetry,
         window_width: raw.window_width,
         window_height: raw.window_height,
@@ -624,6 +656,7 @@ fn save_config_unlocked(app_handle: &dyn AppContext, config: &AppConfig) -> Resu
         "epicAccounts": config.epic.accounts.len(),
         "gogAccounts": config.gog.accounts.len(),
         "jagexAccounts": config.jagex.accounts.len(),
+        "discordAccounts": config.discord.accounts.len(),
         "hasWindowSize": config.window_width.is_some() && config.window_height.is_some(),
     })
     .to_string();
@@ -800,6 +833,7 @@ fn portable_config(config: &AppConfig) -> AppConfig {
     portable.epic.path_override.clear();
     portable.gog.path_override.clear();
     portable.jagex.path_override.clear();
+    portable.discord.path_override.clear();
     portable.telemetry.install_id.clear();
     portable.window_width = None;
     portable.window_height = None;
@@ -820,6 +854,7 @@ fn local_config(config: &AppConfig) -> AppConfig {
     local.epic.path_override = config.epic.path_override.clone();
     local.gog.path_override = config.gog.path_override.clone();
     local.jagex.path_override = config.jagex.path_override.clone();
+    local.discord.path_override = config.discord.path_override.clone();
     local.telemetry.install_id = config.telemetry.install_id.clone();
     // mode_a_enabled / mode_b_enabled / onboarding_completed live in the portable
     // file. Reset the defaults here so they do not pollute the later merge step.
@@ -873,6 +908,9 @@ fn merge_split_configs(portable: AppConfig, local: AppConfig) -> AppConfig {
     }
     if !local.jagex.path_override.is_empty() {
         merged.jagex.path_override = local.jagex.path_override;
+    }
+    if !local.discord.path_override.is_empty() {
+        merged.discord.path_override = local.discord.path_override;
     }
     if !local.telemetry.install_id.is_empty() {
         merged.telemetry.install_id = local.telemetry.install_id;
@@ -1103,6 +1141,7 @@ mod tests {
                 accounts: vec![],
                 current_account: String::new(),
             },
+            discord: DiscordConfig::default(),
             roblox: RobloxConfig {
                 accounts: vec![RobloxAccountConfig {
                     user_id: "123".into(),
@@ -1184,6 +1223,7 @@ mod tests {
                 accounts: vec![],
                 current_account: String::new(),
             },
+            discord: DiscordConfig::default(),
             roblox: RobloxConfig {
                 accounts: vec![RobloxAccountConfig {
                     user_id: "456".into(),

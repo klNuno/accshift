@@ -31,6 +31,7 @@ pub const TARGET_UBISOFT_SNAPSHOTS: &str = "platform.ubisoft.snapshots";
 pub const TARGET_EPIC_SNAPSHOTS: &str = "platform.epic.snapshots";
 pub const TARGET_GOG_SNAPSHOTS: &str = "platform.gog.snapshots";
 pub const TARGET_JAGEX_SNAPSHOTS: &str = "platform.jagex.snapshots";
+pub const TARGET_DISCORD_SNAPSHOTS: &str = "platform.discord.snapshots";
 
 const DEV_SCOPE_DIR: &str = "dev";
 
@@ -215,6 +216,21 @@ pub fn jagex_snapshots_dir(app_handle: &dyn AppContext) -> Result<PathBuf, Strin
         .join("platforms")
         .join("jagex")
         .join("snapshots"))
+}
+
+pub fn discord_snapshots_dir(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
+    let target = app_local_data_root(app_handle)?
+        .join("platforms")
+        .join("discord")
+        .join("snapshots");
+    let scoped_legacy = raw_app_local_data_root(app_handle)?
+        .join("platforms")
+        .join("discord")
+        .join("snapshots");
+    let old_legacy = legacy_app_data_root(app_handle)?.join("discord_cache");
+    backup_and_migrate_dir(app_handle, &scoped_legacy, &target)?;
+    backup_and_migrate_dir(app_handle, &old_legacy, &target)?;
+    Ok(target)
 }
 
 pub fn client_store_path(app_handle: &dyn AppContext, store_id: &str) -> Result<PathBuf, String> {
@@ -560,6 +576,10 @@ fn manifest_targets(app_handle: &dyn AppContext) -> Result<Vec<(String, Manifest
         TARGET_JAGEX_SNAPSHOTS.to_string(),
         ManifestTarget::Dir(jagex_snapshots_dir(app_handle)?, 1),
     ));
+    targets.push((
+        TARGET_DISCORD_SNAPSHOTS.to_string(),
+        ManifestTarget::Dir(discord_snapshots_dir(app_handle)?, 1),
+    ));
 
     Ok(targets)
 }
@@ -821,7 +841,10 @@ fn migrate_file_if_missing(from: &Path, to: &Path) -> Result<(), String> {
             let staging = unique_tmp_path(to);
             if let Err(e) = fs::copy(from, &staging) {
                 let _ = fs::remove_file(&staging);
-                return Err(format!("Could not copy legacy file {}: {e}", from.display()));
+                return Err(format!(
+                    "Could not copy legacy file {}: {e}",
+                    from.display()
+                ));
             }
             if let Err(e) = fs::rename(&staging, to) {
                 let _ = fs::remove_file(&staging);

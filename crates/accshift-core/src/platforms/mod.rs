@@ -12,6 +12,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(windows)]
 pub mod battle_net;
 #[cfg(windows)]
+pub mod discord;
+#[cfg(windows)]
 pub mod epic;
 #[cfg(windows)]
 pub mod gog;
@@ -185,6 +187,7 @@ fn platform_registry() -> &'static HashMap<&'static str, &'static dyn PlatformSe
             map.insert("epic", &epic::EPIC_SERVICE);
             map.insert("gog", &gog::GOG_SERVICE);
             map.insert("jagex", &jagex::JAGEX_SERVICE);
+            map.insert("discord", &discord::DISCORD_SERVICE);
         }
         map
     })
@@ -306,6 +309,7 @@ mod tests {
             "epic",
             "gog",
             "jagex",
+            "discord",
         ];
         #[cfg(not(windows))]
         let platforms: &[&str] = &["steam"];

@@ -140,7 +140,7 @@ pub fn finish_boot(
 /// Called once on first boot completion, gives the day's observed distribution.
 fn emit_accounts_snapshots(app_handle: &tauri::AppHandle, tstate: &TelemetryState) {
     let cfg = crate::config::load_config(&ctx(app_handle));
-    let counts: [(&str, u64); 7] = [
+    let counts: [(&str, u64); 8] = [
         ("riot", cfg.riot.profiles.len() as u64),
         ("battle_net", cfg.battle_net.accounts.len() as u64),
         ("ubisoft", cfg.ubisoft.accounts.len() as u64),
@@ -148,6 +148,7 @@ fn emit_accounts_snapshots(app_handle: &tauri::AppHandle, tstate: &TelemetryStat
         ("epic", cfg.epic.accounts.len() as u64),
         ("gog", cfg.gog.accounts.len() as u64),
         ("jagex", cfg.jagex.accounts.len() as u64),
+        ("discord", cfg.discord.accounts.len() as u64),
     ];
     for (platform, count) in counts {
         if count > 0 {

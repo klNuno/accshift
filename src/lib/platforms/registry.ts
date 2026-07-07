@@ -94,6 +94,17 @@ export const PLATFORM_DEFS: PlatformDef[] = [
     pathLabelKey: "settings.jagexPath",
     pathPlaceholder: "C:\\Program Files (x86)\\Jagex Launcher\\JagexLauncher.exe",
   },
+  {
+    id: "discord",
+    name: "Discord",
+    accent: "#5865f2",
+    implemented: true,
+    supportedOs: ["windows"],
+    settingsTabKey: "settings.discord",
+    settingsComponent: () => import("./discord/DiscordSettingsTab.svelte"),
+    pathLabelKey: "settings.discordPath",
+    pathPlaceholder: "C:\\Users\\you\\AppData\\Local\\Discord\\Update.exe",
+  },
 ];
 
 const PLATFORM_LOADERS: Record<string, () => Promise<PlatformAdapter>> = {
@@ -105,6 +116,7 @@ const PLATFORM_LOADERS: Record<string, () => Promise<PlatformAdapter>> = {
   epic: () => import("./epic/adapter").then((mod) => mod.epicAdapter),
   gog: () => import("./gog/adapter").then((mod) => mod.gogAdapter),
   jagex: () => import("./jagex/adapter").then((mod) => mod.jagexAdapter),
+  discord: () => import("./discord/adapter").then((mod) => mod.discordAdapter),
 };
 
 const platformLoadTasks = new Map<string, Promise<PlatformAdapter>>();

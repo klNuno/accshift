@@ -382,7 +382,8 @@ fn cmd_switch(
                 || e.contains("Invalid Ubisoft account UUID")
                 || e.contains("Invalid Epic account ID")
                 || e.contains("Invalid GOG account ID")
-                || e.contains("Invalid Jagex account ID");
+                || e.contains("Invalid Jagex account ID")
+                || e.contains("Invalid Discord account ID");
             let (code, status) = if unknown_account {
                 ("unknown_account", exit::UNKNOWN_ACCOUNT)
             } else {
@@ -404,6 +405,7 @@ fn cmd_platforms(format: Format) -> u8 {
         "epic",
         "gog",
         "jagex",
+        "discord",
     ];
     let available: Vec<&str> = known
         .iter()
