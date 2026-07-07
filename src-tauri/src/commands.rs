@@ -623,6 +623,19 @@ pub async fn roblox_get_profile_info(
     crate::platforms::roblox::get_profile_info(user_id, client.inner().clone()).await
 }
 
+/// User ids whose stored Roblox session is dead (blocking network probe per
+/// account), so the UI can badge accounts that need re-login.
+#[cfg(windows)]
+#[tauri::command(async)]
+pub async fn roblox_check_sessions(app_handle: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let c = ctx(&app_handle);
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(crate::platforms::roblox::dead_session_user_ids(&c))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {e}"))?
+}
+
 // ---------------------------------------------------------------------------
 // Theme commands
 // ---------------------------------------------------------------------------

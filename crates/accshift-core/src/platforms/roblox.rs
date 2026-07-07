@@ -198,6 +198,43 @@ fn validate_cookie_blocking(cookie: &str) -> Result<AuthenticatedUserResponse, S
         .map_err(|e| format!("Could not parse user response: {e}"))
 }
 
+/// Ask Roblox whether a cookie is still a valid session. `Some(true)` alive,
+/// `Some(false)` definitively rejected (401/403), `None` when we couldn't tell
+/// (network error, rate limit, 5xx) so the caller never flags a false positive.
+fn probe_cookie_alive(cookie: &str) -> Option<bool> {
+    let response = blocking_client()
+        .ok()?
+        .get("https://users.roblox.com/v1/users/authenticated")
+        .header("Cookie", format!(".ROBLOSECURITY={cookie}"))
+        .send()
+        .ok()?;
+    let status = response.status().as_u16();
+    match status {
+        200 => Some(true),
+        401 | 403 => Some(false),
+        _ => None,
+    }
+}
+
+/// User ids whose stored session cookie Roblox reports as invalid, so the UI can
+/// badge them before the user clicks into a switch that would fail. Empty cookies
+/// count as dead; unknown results (network/rate-limit) are omitted.
+pub fn dead_session_user_ids(app_handle: &dyn AppContext) -> Vec<String> {
+    load_account_configs(app_handle)
+        .into_iter()
+        .filter_map(|account| {
+            let cookie = crate::os::decrypt_secret(&account.cookie_encrypted).ok()?;
+            if cookie.trim().is_empty() {
+                return Some(account.user_id);
+            }
+            match probe_cookie_alive(&cookie) {
+                Some(false) => Some(account.user_id),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
 fn extract_roblosecurity_cookie(headers: &reqwest::header::HeaderMap) -> Option<String> {
     for value in headers.get_all("set-cookie") {
         let Ok(s) = value.to_str() else { continue };

@@ -9,6 +9,7 @@ import { createPlatformAddFlowHandlers } from "$lib/platforms/addFlow";
 import * as service from "./robloxApi";
 import { getRobloxContextMenuItems } from "./contextMenu";
 import { getRobloxCachedProfile, fetchRobloxProfile } from "./profileCache";
+import { getCachedRobloxWarningStates, loadRobloxWarningStates } from "./warnings";
 import type { RobloxAccount } from "./types";
 import { isSafeHttpUrl } from "$lib/shared/url";
 
@@ -66,6 +67,14 @@ export const robloxAdapter: PlatformAdapter = {
 
   getCachedProfile(userId: string) {
     return getRobloxCachedProfile(userId) ?? null;
+  },
+
+  getCachedWarningStates(callbacks) {
+    return getCachedRobloxWarningStates(callbacks);
+  },
+
+  async loadWarningStates(accounts, options) {
+    return loadRobloxWarningStates(accounts, options);
   },
 
   getNoAccountsToastMessage(callbacks) {

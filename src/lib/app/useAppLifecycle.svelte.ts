@@ -221,7 +221,13 @@ export function createAppLifecycleController({
       }
 
       if (configChanged || activeSnapshotsChanged || activeCachesChanged) {
-        await loadAccounts(true, false, true, shell.activeTab === "steam", false);
+        await loadAccounts(
+          true,
+          false,
+          true,
+          shell.activeTab === "steam" || shell.activeTab === "roblox",
+          false,
+        );
       }
     } catch (reason) {
       console.error("Failed to refresh external storage state:", reason);

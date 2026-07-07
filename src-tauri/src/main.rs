@@ -359,6 +359,8 @@ fn main() {
             commands::roblox_add_account_by_cookie,
             #[cfg(windows)]
             commands::roblox_get_profile_info,
+            #[cfg(windows)]
+            commands::roblox_check_sessions,
             // Theme
             commands::list_custom_themes,
             commands::save_custom_theme,

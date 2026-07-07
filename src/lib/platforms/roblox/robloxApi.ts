@@ -20,3 +20,8 @@ export async function addAccountByCookie(cookie: string): Promise<RobloxAccount>
 export async function getProfileInfo(userId: string): Promise<RobloxProfileInfo> {
   return invoke<RobloxProfileInfo>("roblox_get_profile_info", { userId });
 }
+
+/** User ids whose stored Roblox session the backend confirmed as dead. */
+export async function checkSessions(): Promise<string[]> {
+  return invoke<string[]>("roblox_check_sessions");
+}

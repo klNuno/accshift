@@ -386,6 +386,8 @@ export const EN_MESSAGES = {
   "toast.noRobloxAccountsFound":
     "No Roblox accounts found. Add an account using Quick Login or paste a cookie.",
   "roblox.noAccountsHint": "Press + to add a Roblox account via Quick Login.",
+  "roblox.sessionExpired": "Session expired",
+  "roblox.sessionExpiredTooltip": "This account is logged out. Re-add it before switching.",
   "roblox.cookiePasteTitle": "Add account by cookie",
   "roblox.cookiePasteHint":
     "Paste a .ROBLOSECURITY cookie from your browser to add an account directly.",
@@ -872,6 +874,8 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "toast.noRobloxAccountsFound":
     "Aucun compte Roblox trouvé. Ajoute un compte via Quick Login ou colle un cookie.",
   "roblox.noAccountsHint": "Appuie sur + pour ajouter un compte Roblox via Quick Login.",
+  "roblox.sessionExpired": "Session expirée",
+  "roblox.sessionExpiredTooltip": "Ce compte est déconnecté. Reconnecte-le avant de switcher.",
   "roblox.cookiePasteTitle": "Ajouter un compte par cookie",
   "roblox.cookiePasteHint":
     "Colle un cookie .ROBLOSECURITY depuis ton navigateur pour ajouter un compte directement.",
