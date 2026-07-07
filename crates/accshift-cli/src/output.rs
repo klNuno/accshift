@@ -228,7 +228,7 @@ pub fn extract_row(platform_id: &str, account: &Value) -> Option<AccountRow> {
                 folder_id: account_id,
             })
         }
-        "gog" => {
+        "gog" | "jagex" => {
             let account_id = nonempty(get("account_id"))?;
             Some(AccountRow {
                 id: account_id.clone(),
@@ -283,7 +283,7 @@ fn id_header_for(platform_id: &str) -> &'static str {
         "riot" => "PROFILE ID",
         "battle-net" => "EMAIL",
         "ubisoft" => "UUID",
-        "epic" | "gog" => "ACCOUNT ID",
+        "epic" | "gog" | "jagex" => "ACCOUNT ID",
         _ => "ID",
     }
 }
@@ -292,7 +292,7 @@ fn primary_header_for(platform_id: &str) -> &'static str {
     match platform_id {
         "steam" => "NAME",
         "roblox" => "DISPLAY NAME",
-        "riot" | "ubisoft" | "epic" | "gog" => "LABEL",
+        "riot" | "ubisoft" | "epic" | "gog" | "jagex" => "LABEL",
         "battle-net" => "BATTLETAG",
         _ => "LABEL",
     }

@@ -83,6 +83,17 @@ export const PLATFORM_DEFS: PlatformDef[] = [
     pathLabelKey: "settings.gogPath",
     pathPlaceholder: "C:\\Program Files (x86)\\GOG Galaxy\\GalaxyClient.exe",
   },
+  {
+    id: "jagex",
+    name: "Jagex Launcher",
+    accent: "#eab308",
+    implemented: true,
+    supportedOs: ["windows"],
+    settingsTabKey: "settings.jagex",
+    settingsComponent: () => import("./jagex/JagexSettingsTab.svelte"),
+    pathLabelKey: "settings.jagexPath",
+    pathPlaceholder: "C:\\Program Files (x86)\\Jagex Launcher\\JagexLauncher.exe",
+  },
 ];
 
 const PLATFORM_LOADERS: Record<string, () => Promise<PlatformAdapter>> = {
@@ -93,6 +104,7 @@ const PLATFORM_LOADERS: Record<string, () => Promise<PlatformAdapter>> = {
   roblox: () => import("./roblox/adapter").then((mod) => mod.robloxAdapter),
   epic: () => import("./epic/adapter").then((mod) => mod.epicAdapter),
   gog: () => import("./gog/adapter").then((mod) => mod.gogAdapter),
+  jagex: () => import("./jagex/adapter").then((mod) => mod.jagexAdapter),
 };
 
 const platformLoadTasks = new Map<string, Promise<PlatformAdapter>>();

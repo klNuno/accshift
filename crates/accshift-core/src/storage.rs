@@ -30,6 +30,7 @@ pub const TARGET_RIOT_SNAPSHOTS: &str = "platform.riot.snapshots";
 pub const TARGET_UBISOFT_SNAPSHOTS: &str = "platform.ubisoft.snapshots";
 pub const TARGET_EPIC_SNAPSHOTS: &str = "platform.epic.snapshots";
 pub const TARGET_GOG_SNAPSHOTS: &str = "platform.gog.snapshots";
+pub const TARGET_JAGEX_SNAPSHOTS: &str = "platform.jagex.snapshots";
 
 const DEV_SCOPE_DIR: &str = "dev";
 
@@ -206,6 +207,14 @@ pub fn gog_snapshots_dir(app_handle: &dyn AppContext) -> Result<PathBuf, String>
     backup_and_migrate_dir(app_handle, &scoped_legacy, &target)?;
     backup_and_migrate_dir(app_handle, &old_legacy, &target)?;
     Ok(target)
+}
+
+pub fn jagex_snapshots_dir(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
+    // No legacy locations: the platform postdates the storage layout migration.
+    Ok(app_local_data_root(app_handle)?
+        .join("platforms")
+        .join("jagex")
+        .join("snapshots"))
 }
 
 pub fn client_store_path(app_handle: &dyn AppContext, store_id: &str) -> Result<PathBuf, String> {
@@ -546,6 +555,10 @@ fn manifest_targets(app_handle: &dyn AppContext) -> Result<Vec<(String, Manifest
     targets.push((
         TARGET_GOG_SNAPSHOTS.to_string(),
         ManifestTarget::Dir(gog_snapshots_dir(app_handle)?, 1),
+    ));
+    targets.push((
+        TARGET_JAGEX_SNAPSHOTS.to_string(),
+        ManifestTarget::Dir(jagex_snapshots_dir(app_handle)?, 1),
     ));
 
     Ok(targets)

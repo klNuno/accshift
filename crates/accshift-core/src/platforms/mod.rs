@@ -16,6 +16,8 @@ pub mod epic;
 #[cfg(windows)]
 pub mod gog;
 #[cfg(windows)]
+pub mod jagex;
+#[cfg(windows)]
 pub mod riot;
 #[cfg(windows)]
 pub mod roblox;
@@ -182,6 +184,7 @@ fn platform_registry() -> &'static HashMap<&'static str, &'static dyn PlatformSe
             map.insert("roblox", &roblox::ROBLOX_SERVICE);
             map.insert("epic", &epic::EPIC_SERVICE);
             map.insert("gog", &gog::GOG_SERVICE);
+            map.insert("jagex", &jagex::JAGEX_SERVICE);
         }
         map
     })
@@ -302,6 +305,7 @@ mod tests {
             "roblox",
             "epic",
             "gog",
+            "jagex",
         ];
         #[cfg(not(windows))]
         let platforms: &[&str] = &["steam"];
