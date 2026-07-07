@@ -6,7 +6,7 @@
   import { flushPendingSaves } from "$lib/storage/clientStorage";
   import TitleBar from "$lib/shared/components/TitleBar.svelte";
   import { getToasts, addToast, removeToast } from "$lib/features/notifications/store.svelte";
-  import { getSettings, saveSettings } from "$lib/features/settings/store";
+  import { getSettings, saveSettings, ALL_PLATFORMS } from "$lib/features/settings/store";
   import type {
     PlatformAccount,
   } from "$lib/shared/platform";
@@ -51,6 +51,8 @@
   import { createSecureScreenController } from "$lib/app/useSecureScreen.svelte";
   import { createStreamerModeController } from "$lib/app/useStreamerMode.svelte";
   import StreamerModeOverlay from "$lib/app/StreamerModeOverlay.svelte";
+  import { createPersonaController } from "$lib/app/usePersonas.svelte";
+  import PersonasPanel from "$lib/features/personas/PersonasPanel.svelte";
   import { createBulkEditController } from "$lib/app/useBulkEdit.svelte";
   import { createUiScale } from "$lib/app/useUiScale.svelte";
   import { createSettingsPanel } from "$lib/app/useSettingsPanel.svelte";
@@ -139,7 +141,10 @@
   let isSearching = $derived(navigation.isSearching);
   let isAccountSelectionView = $derived(!settingsPanel.showSettings && !!shell.adapter);
   // Remounts the settings/workspace panel on switch so page-entrance replays.
-  let panelKey = $derived(settingsPanel.showSettings ? "__settings__" : activeTab);
+  let showPersonas = $state(false);
+  let panelKey = $derived(
+    settingsPanel.showSettings ? "__settings__" : showPersonas ? "__personas__" : activeTab,
+  );
   let bootReady = $state(false);
   let cardColorVersion = $state(0);
   let cardNoteVersion = $state(0);
@@ -233,6 +238,45 @@
       shell.refreshSettings();
     },
   });
+  const personas = createPersonaController();
+  // Enabled, implemented platforms usable on this OS, offered as persona slots.
+  let personaPlatforms = $derived(
+    ALL_PLATFORMS.filter(
+      (p) =>
+        p.implemented &&
+        p.supportedOs.includes(shell.runtimeOs) &&
+        shell.settings.enabledPlatforms.includes(p.id),
+    ).map((p) => ({ id: p.id, name: p.name, accent: p.accent })),
+  );
+
+  async function loadPlatformAccounts(platformId: string) {
+    const adapter = await ensurePlatformLoaded(platformId);
+    if (!adapter) return [];
+    return adapter.loadAccounts();
+  }
+
+  function openPersonas() {
+    if (settingsPanel.showSettings) settingsPanel.close();
+    showPersonas = true;
+  }
+
+  async function handleSwitchPersona(persona: import("$lib/features/personas/types").Persona) {
+    const result = await personas.switchToPersona(persona);
+    if (!result) return;
+    const nameFor = (id: string) => personaPlatforms.find((p) => p.id === id)?.name ?? id;
+    if (result.failed.length === 0) {
+      addToast(t("personas.switched", { name: persona.name }));
+    } else if (result.succeeded.length === 0) {
+      addToast(t("personas.switchFailed", { name: persona.name }));
+    } else {
+      addToast(
+        t("personas.switchPartial", {
+          name: persona.name,
+          failed: result.failed.map((f) => nameFor(f.platformId)).join(", "),
+        }),
+      );
+    }
+  }
   const extensionContent = createExtensionContentController({
     t,
     getLocale: () => shell.locale,
@@ -675,14 +719,16 @@
   <TitleBar
     onRefresh={handleRefreshClick}
     onAddAccount={handleAddAccountClick}
-    onOpenSettings={appNavigation.toggleSettingsPanel}
+    onOpenSettings={() => { showPersonas = false; appNavigation.toggleSettingsPanel(); }}
+    onOpenPersonas={openPersonas}
+    personasActive={showPersonas}
     onBulkEdit={bulkEdit.toggleBulkEdit}
     onApplyUpdate={handleApplyUpdate}
     updateCtaLabel={updates.ctaLabel}
     updateCtaTitle={updates.ctaTitle}
     updateCtaDisabled={updates.ctaDisabled || !!loader.switchingAccountId}
     {activeTab}
-    onTabChange={appNavigation.handleTabChange}
+    onTabChange={(tab) => { showPersonas = false; appNavigation.handleTabChange(tab); }}
     enabledPlatforms={shell.enabledPlatforms}
     unavailablePlatformIds={shell.unavailablePlatformIds}
     canRefresh={activeTabUsable && !adapterLoading}
@@ -737,6 +783,19 @@
         </div>
       {/if}
     </main>
+  {:else if showPersonas}
+    <PersonasPanel
+      personas={personas.personas}
+      switchingPersonaId={personas.switchingPersonaId}
+      platforms={personaPlatforms}
+      loadAccounts={loadPlatformAccounts}
+      onSwitch={handleSwitchPersona}
+      onCreate={personas.create}
+      onUpdate={personas.update}
+      onDelete={personas.remove}
+      onClose={() => (showPersonas = false)}
+      {t}
+    />
   {:else}
   <AppWorkspace
     compatiblePlatformCount={shell.compatiblePlatforms.length}

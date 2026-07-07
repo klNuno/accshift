@@ -12,6 +12,7 @@ pub const STORAGE_SCHEMA_VERSION: u32 = 1;
 
 pub const STORE_SETTINGS: &str = "client.settings";
 pub const STORE_FOLDERS: &str = "client.folders";
+pub const STORE_PERSONAS: &str = "client.personas";
 pub const STORE_ACCOUNT_CARD_NOTES: &str = "client.account-card-notes";
 pub const STORE_ACCOUNT_CARD_COLORS: &str = "client.account-card-colors";
 pub const STORE_ACCOUNT_DEFAULT_GAME: &str = "client.account-default-game";
@@ -199,6 +200,9 @@ pub fn client_store_path(app_handle: &dyn AppContext, store_id: &str) -> Result<
         STORE_FOLDERS => Ok(app_config_root(app_handle)?
             .join("user")
             .join("folders.json")),
+        STORE_PERSONAS => Ok(app_config_root(app_handle)?
+            .join("user")
+            .join("personas.json")),
         STORE_ACCOUNT_CARD_NOTES => Ok(app_config_root(app_handle)?
             .join("user")
             .join("account-card-notes.json")),
@@ -432,6 +436,7 @@ fn client_store_ids() -> &'static [&'static str] {
     &[
         STORE_SETTINGS,
         STORE_FOLDERS,
+        STORE_PERSONAS,
         STORE_ACCOUNT_CARD_NOTES,
         STORE_ACCOUNT_CARD_COLORS,
         STORE_ACCOUNT_DEFAULT_GAME,
