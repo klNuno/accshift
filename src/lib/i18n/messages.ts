@@ -546,6 +546,8 @@ export const EN_MESSAGES = {
   "bulkEdit.noAccountsSelected": "No accounts selected",
   "bulkEdit.selected": "{count} selected",
   "bulkEdit.loadingGames": "Loading games...",
+  "bulkEdit.copyUrls": "Copy URLs",
+  "bulkEdit.urlsCopied": "{count} profile URL(s) copied",
 } as const;
 
 export type MessageKey = keyof typeof EN_MESSAGES;
@@ -1097,4 +1099,6 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "bulkEdit.noAccountsSelected": "Aucun compte sélectionné",
   "bulkEdit.selected": "{count} sélectionné(s)",
   "bulkEdit.loadingGames": "Chargement des jeux...",
+  "bulkEdit.copyUrls": "Copier les URLs",
+  "bulkEdit.urlsCopied": "{count} URL(s) de profil copiée(s)",
 };

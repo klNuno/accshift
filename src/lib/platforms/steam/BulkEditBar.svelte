@@ -7,6 +7,7 @@
     type LaunchOptionEdit,
     type BulkEditResult,
   } from "./steamApi";
+  import { toProfileUrl } from "./steamIdUtils";
 
   type TriState = "unchanged" | "enabled" | "disabled";
 
@@ -15,6 +16,7 @@
     activeAccountSelected = false,
     onSelectAll,
     onDeselectAll,
+    onCopyUrls,
     onClose,
     onResult,
     t,
@@ -23,10 +25,15 @@
     activeAccountSelected?: boolean;
     onSelectAll: () => void;
     onDeselectAll: () => void;
+    onCopyUrls: (urls: string[]) => void;
     onClose: () => void;
     onResult: (result: BulkEditResult) => void;
     t: (key: MessageKey, params?: TranslationParams) => string;
   } = $props();
+
+  function copyUrls() {
+    onCopyUrls([...selectedIds].map(toProfileUrl));
+  }
 
   let step = $state<"select" | "settings">("select");
   let newsPopup = $state<TriState>("unchanged");
@@ -121,6 +128,9 @@
     <div class="bar-left">
       <button class="tool-btn" onclick={onSelectAll}>{t("bulkEdit.selectAll")}</button>
       <button class="tool-btn" onclick={onDeselectAll}>{t("bulkEdit.deselectAll")}</button>
+      <button class="tool-btn" disabled={selectedIds.size === 0} onclick={copyUrls}>
+        {t("bulkEdit.copyUrls")}
+      </button>
       <span class="count">{t("bulkEdit.selected", { count: selectedIds.size })}</span>
     </div>
     <div class="bar-right">

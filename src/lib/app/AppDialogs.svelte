@@ -42,6 +42,7 @@
     bulkEditActiveAccountSelected,
     onBulkEditSelectAll,
     onBulkEditDeselectAll,
+    onBulkEditCopyUrls,
     onBulkEditClose,
     onBulkEditResult,
     t,
@@ -65,6 +66,7 @@
     bulkEditActiveAccountSelected: boolean;
     onBulkEditSelectAll: () => void;
     onBulkEditDeselectAll: () => void;
+    onBulkEditCopyUrls: (urls: string[]) => void;
     onBulkEditClose: () => void;
     onBulkEditResult: (result: BulkEditResult) => void;
     t: (key: MessageKey, params?: TranslationParams) => string;
@@ -113,6 +115,7 @@
     activeAccountSelected={bulkEditActiveAccountSelected}
     onSelectAll={onBulkEditSelectAll}
     onDeselectAll={onBulkEditDeselectAll}
+    onCopyUrls={onBulkEditCopyUrls}
     onClose={onBulkEditClose}
     onResult={onBulkEditResult}
     {t}

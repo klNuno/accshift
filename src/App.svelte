@@ -543,6 +543,12 @@
     addToast(t("toast.copied", { label }));
   }
 
+  async function copyBulkEditUrls(urls: string[]) {
+    if (urls.length === 0) return;
+    await navigator.clipboard.writeText(urls.join("\n"));
+    addToast(t("bulkEdit.urlsCopied", { count: urls.length }));
+  }
+
   async function loadAccounts(
     silent = false,
     showRefreshedToast = false,
@@ -876,6 +882,7 @@
     bulkEditActiveAccountSelected={bulkEdit.bulkEditActiveAccountSelected}
     onBulkEditSelectAll={bulkEdit.bulkEditSelectAll}
     onBulkEditDeselectAll={bulkEdit.bulkEditDeselectAll}
+    onBulkEditCopyUrls={copyBulkEditUrls}
     onBulkEditClose={bulkEdit.closeBulkEdit}
     onBulkEditResult={dialogs.handleBulkEditResult}
     {t}
