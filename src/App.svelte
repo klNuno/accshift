@@ -256,9 +256,15 @@
   }
 
   function openPersonas() {
+    if (!settings.personasEnabled) return;
     if (settingsPanel.showSettings) settingsPanel.close();
     showPersonas = true;
   }
+
+  // Close the personas panel if the feature gets disabled in settings.
+  $effect(() => {
+    if (!settings.personasEnabled && showPersonas) showPersonas = false;
+  });
 
   async function handleSwitchPersona(persona: import("$lib/features/personas/types").Persona) {
     const result = await personas.switchToPersona(persona);
@@ -728,6 +734,7 @@
     onOpenSettings={() => { showPersonas = false; appNavigation.toggleSettingsPanel(); }}
     onOpenPersonas={openPersonas}
     personasActive={showPersonas}
+    personasVisible={settings.personasEnabled}
     onBulkEdit={bulkEdit.toggleBulkEdit}
     onApplyUpdate={handleApplyUpdate}
     updateCtaLabel={updates.ctaLabel}

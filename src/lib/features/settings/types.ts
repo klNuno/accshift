@@ -66,6 +66,7 @@ export interface AppSettings {
   minimizeOnAccountSwitch: boolean;
   dataRefresh: DataRefreshSettings;
   enabledPlatforms: string[];
+  personasEnabled: boolean;
   defaultPlatformId: string;
   inactivityBlurSeconds: number;
   deepLinksEnabled: boolean;

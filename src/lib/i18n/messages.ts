@@ -89,6 +89,7 @@ export const EN_MESSAGES = {
   "settings.streamerMode": "Streamer mode",
   "settings.streamerModeHint":
     "Blur account details automatically when streaming software is running.",
+  "settings.personasHint": "Show the personas identity switcher",
   "streamer.title": "Streamer mode",
   "streamer.disable": "Disable",
   "streamer.disablePermanently": "Disable permanently",
@@ -643,6 +644,7 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.streamerMode": "Mode streamer",
   "settings.streamerModeHint":
     "Floute automatiquement les infos des comptes quand un logiciel de streaming tourne.",
+  "settings.personasHint": "Afficher le sélecteur d'identités personas",
   "streamer.title": "Mode streamer",
   "streamer.disable": "Désactiver",
   "streamer.disablePermanently": "Désactiver définitivement",

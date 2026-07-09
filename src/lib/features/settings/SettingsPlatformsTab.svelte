@@ -67,6 +67,20 @@
   <section class="card card-wide">
     <h3>{t("settings.platforms")}</h3>
     <div class="platforms">
+      <button
+        class="platform-chip"
+        onclick={() => (settings.personasEnabled = !settings.personasEnabled)}
+        style="--chip-accent:#a855f7;"
+        title={t("personas.title")}
+      >
+        <span class="platform-main">
+          <span>{t("personas.title")}</span>
+          <span class="platform-status">{t("settings.personasHint")}</span>
+        </span>
+        <div class="toggle" class:active={settings.personasEnabled}>
+          <div class="knob"></div>
+        </div>
+      </button>
       {#each visiblePlatformOptions as platform}
         {@const isSelectable = isPlatformSelectable(platform.id)}
         {@const isEnabled = settings.enabledPlatforms.includes(platform.id)}

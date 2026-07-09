@@ -26,6 +26,7 @@ const DEFAULTS: AppSettings = {
     banCheckDays: 7,
   },
   enabledPlatforms: ["steam"],
+  personasEnabled: true,
   defaultPlatformId: "steam",
   inactivityBlurSeconds: 60,
   deepLinksEnabled: true,
@@ -154,6 +155,7 @@ function sanitizeSettings(value: unknown): AppSettings {
       ),
     },
     enabledPlatforms: normalizedEnabledPlatforms,
+    personasEnabled: raw.personasEnabled !== false,
     defaultPlatformId,
     inactivityBlurSeconds: clampInt(
       raw.inactivityBlurSeconds,
