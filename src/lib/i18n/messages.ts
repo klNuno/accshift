@@ -90,7 +90,6 @@ export const EN_MESSAGES = {
   "settings.streamerModeHint":
     "Blur account details automatically when streaming software is running.",
   "streamer.title": "Streamer mode",
-  "streamer.hint": "Account details are hidden while you're streaming.",
   "streamer.disable": "Disable",
   "streamer.disablePermanently": "Disable permanently",
   "personas.title": "Personas",
@@ -645,7 +644,6 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.streamerModeHint":
     "Floute automatiquement les infos des comptes quand un logiciel de streaming tourne.",
   "streamer.title": "Mode streamer",
-  "streamer.hint": "Les infos des comptes sont masquées pendant que tu streames.",
   "streamer.disable": "Désactiver",
   "streamer.disablePermanently": "Désactiver définitivement",
   "personas.title": "Personas",

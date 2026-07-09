@@ -22,7 +22,6 @@
     <span class="streamer-title">
       <WaveText text={t("streamer.title")} active={active && !motionPaused} respectReducedMotion={false} />
     </span>
-    <p class="streamer-hint">{t("streamer.hint")}</p>
     <div class="streamer-actions">
       <button type="button" class="streamer-btn" onclick={onDismiss}>
         {t("streamer.disable")}
@@ -69,14 +68,6 @@
     letter-spacing: -0.01em;
     white-space: nowrap;
     color: var(--afk-text);
-  }
-
-  .streamer-hint {
-    margin: 0;
-    font-size: 13px;
-    color: var(--fg-muted);
-    max-width: 34ch;
-    line-height: 1.4;
   }
 
   .streamer-actions {
