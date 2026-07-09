@@ -787,7 +787,11 @@
       class:visible={secureScreen.isObscured}
       aria-hidden={!secureScreen.isObscured}
     ></div>
+      {/if}
 
+  <!-- Kept mounted across render-suspend (minimize) so avatar <img> nodes are
+       not torn down and reloaded on restore. renderSuspended only happens while
+       minimized, so there is no visible cost to keeping this alive. -->
   {#key panelKey}
   {#if settingsPanel.showSettings}
     <main class="content">
@@ -883,6 +887,7 @@
   {/if}
   {/key}
 
+      {#if !secureScreen.renderSuspended}
   <AppDialogs
     contextMenu={dialogs.contextMenu}
     contextMenuItems={dialogs.contextMenuItems}
