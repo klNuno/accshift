@@ -389,6 +389,12 @@
   }
 
   function handleWorkspaceMouseDown(event: MouseEvent) {
+    // In selection mode the cards are locked (no reorder). A press starts a
+    // paint-selection gesture instead of the drag manager.
+    if (bulkEdit.bulkEditMode) {
+      bulkEdit.handlePaintMouseDown(event);
+      return;
+    }
     if (!isSearching) {
       drag.handleGridMouseDown(event);
     }
@@ -689,6 +695,9 @@
     document.addEventListener("scroll", drag.handleDocScroll, true);
     document.addEventListener("mouseup", drag.handleDocMouseUp);
     document.addEventListener("click", drag.handleCaptureClick, true);
+    document.addEventListener("mousemove", bulkEdit.handlePaintMouseMove);
+    document.addEventListener("mouseup", bulkEdit.handlePaintMouseUp);
+    document.addEventListener("click", bulkEdit.handlePaintCaptureClick, true);
     window.addEventListener("wheel", uiScale.handleCtrlWheelZoom, { passive: false });
     window.addEventListener("keydown", uiScale.handleZoomKeydown);
     window.addEventListener("keydown", handleGlobalKeydown);
@@ -714,6 +723,9 @@
     document.removeEventListener("scroll", drag.handleDocScroll, true);
     document.removeEventListener("mouseup", drag.handleDocMouseUp);
     document.removeEventListener("click", drag.handleCaptureClick, true);
+    document.removeEventListener("mousemove", bulkEdit.handlePaintMouseMove);
+    document.removeEventListener("mouseup", bulkEdit.handlePaintMouseUp);
+    document.removeEventListener("click", bulkEdit.handlePaintCaptureClick, true);
     window.removeEventListener("wheel", uiScale.handleCtrlWheelZoom);
     window.removeEventListener("keydown", uiScale.handleZoomKeydown);
     window.removeEventListener("keydown", handleGlobalKeydown);

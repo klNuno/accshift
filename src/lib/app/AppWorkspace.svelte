@@ -223,7 +223,7 @@
   </main>
 {:else if adapter}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <main class="content" oncontextmenu={onBackgroundContextMenu}>
+  <main class="content" class:selecting={bulkEditMode} oncontextmenu={onBackgroundContextMenu}>
     <div class="toolbar-row">
       <Breadcrumb
         platformName={activePlatformName}
@@ -515,6 +515,12 @@
 
   :global(html[data-motion="reduced"]) .content {
     animation: none;
+  }
+
+  /* Paint-selection drags over cards; stop text from being highlighted. */
+  .content.selecting {
+    user-select: none;
+    -webkit-user-select: none;
   }
 
   .toolbar-row {
