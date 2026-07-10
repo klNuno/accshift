@@ -1,9 +1,33 @@
 use crate::context::{AppContext, AppCtx};
+use crate::error::PlatformError;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Canonical platform identifiers.
+///
+/// Single vocabulary shared by the service registry, the CLI and telemetry —
+/// note the dash in `battle-net` (telemetry used to emit `battle_net` for
+/// account snapshots; it now uses these constants, see
+/// `emit_accounts_snapshots` in the Tauri commands).
+pub mod ids {
+    pub const STEAM: &str = "steam";
+    pub const RIOT: &str = "riot";
+    pub const BATTLE_NET: &str = "battle-net";
+    pub const UBISOFT: &str = "ubisoft";
+    pub const ROBLOX: &str = "roblox";
+    pub const EPIC: &str = "epic";
+    pub const GOG: &str = "gog";
+    pub const JAGEX: &str = "jagex";
+    pub const DISCORD: &str = "discord";
+
+    /// Every platform the app knows about, in display order.
+    pub const ALL: [&str; 9] = [
+        STEAM, RIOT, BATTLE_NET, UBISOFT, ROBLOX, EPIC, GOG, JAGEX, DISCORD,
+    ];
+}
 
 // Native clients for Battle.net, Epic, Riot, Ubisoft and Roblox don't exist
 // on Linux / macOS. We gate them to Windows to keep the non-Windows build
@@ -84,14 +108,21 @@ pub(crate) fn log_platform_error(
     log_platform_event(app_handle, "error", source, message, details);
 }
 
-pub(crate) fn to_logged_error(
+/// Logs the failure and returns the error unchanged, preserving its
+/// [`crate::error::PlatformErrorKind`]. Typical use:
+/// `.map_err(|e| log_platform_failure(&app, "steam.get_accounts", e.into()))`.
+pub(crate) fn log_platform_failure(
     app_handle: &dyn AppContext,
     source: &str,
-    error: impl std::fmt::Display,
-) -> String {
-    let details = error.to_string();
-    log_platform_error(app_handle, source, "Platform operation failed", &details);
-    details
+    error: PlatformError,
+) -> PlatformError {
+    log_platform_error(
+        app_handle,
+        source,
+        "Platform operation failed",
+        &error.message,
+    );
+    error
 }
 
 pub(crate) fn now_unix_ms() -> u64 {
@@ -140,27 +171,32 @@ pub struct SetupStatus {
 /// coercion handle the rest.
 pub trait PlatformService: Send + Sync {
     // Account operations: returns platform-specific JSON.
-    fn get_accounts(&self, app: AppCtx) -> Result<Value, String>;
-    fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, String>;
-    fn get_current_account(&self, app: AppCtx) -> Result<String, String>;
+    fn get_accounts(&self, app: AppCtx) -> Result<Value, PlatformError>;
+    fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, PlatformError>;
+    fn get_current_account(&self, app: AppCtx) -> Result<String, PlatformError>;
     /// `params` carries platform-specific extras (e.g. Steam's runAsAdmin/launchOptions).
-    fn switch_account(&self, app: AppCtx, account_id: &str, params: Value) -> Result<(), String>;
-    fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), String>;
+    fn switch_account(
+        &self,
+        app: AppCtx,
+        account_id: &str,
+        params: Value,
+    ) -> Result<(), PlatformError>;
+    fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), PlatformError>;
 
     // Setup flow
-    fn begin_setup(&self, app: AppCtx, params: Value) -> Result<SetupStatus, String>;
-    fn get_setup_status(&self, app: AppCtx, setup_id: &str) -> Result<SetupStatus, String>;
-    fn cancel_setup(&self, app: AppCtx, setup_id: &str) -> Result<(), String>;
+    fn begin_setup(&self, app: AppCtx, params: Value) -> Result<SetupStatus, PlatformError>;
+    fn get_setup_status(&self, app: AppCtx, setup_id: &str) -> Result<SetupStatus, PlatformError>;
+    fn cancel_setup(&self, app: AppCtx, setup_id: &str) -> Result<(), PlatformError>;
 
     // Path management (default: not supported)
-    fn get_path(&self, _app: AppCtx) -> Result<String, String> {
-        Err("Path management not supported".into())
+    fn get_path(&self, _app: AppCtx) -> Result<String, PlatformError> {
+        Err(PlatformError::other("Path management not supported"))
     }
-    fn set_path(&self, _app: AppCtx, _path: &str) -> Result<(), String> {
+    fn set_path(&self, _app: AppCtx, _path: &str) -> Result<(), PlatformError> {
         Ok(())
     }
-    fn select_path(&self) -> Result<String, String> {
-        Err("Path management not supported".into())
+    fn select_path(&self) -> Result<String, PlatformError> {
+        Err(PlatformError::other("Path management not supported"))
     }
 
     // Account labeling (default: not supported)
@@ -169,8 +205,8 @@ pub trait PlatformService: Send + Sync {
         _app: AppCtx,
         _account_id: &str,
         _label: &str,
-    ) -> Result<(), String> {
-        Err("Account labeling not supported".into())
+    ) -> Result<(), PlatformError> {
+        Err(PlatformError::other("Account labeling not supported"))
     }
 }
 
@@ -179,17 +215,17 @@ fn platform_registry() -> &'static HashMap<&'static str, &'static dyn PlatformSe
         OnceLock::new();
     REGISTRY.get_or_init(|| {
         let mut map: HashMap<&'static str, &'static dyn PlatformService> = HashMap::new();
-        map.insert("steam", &steam::STEAM_SERVICE);
+        map.insert(ids::STEAM, &steam::STEAM_SERVICE);
         #[cfg(windows)]
         {
-            map.insert("riot", &riot::RIOT_SERVICE);
-            map.insert("battle-net", &battle_net::BATTLE_NET_SERVICE);
-            map.insert("ubisoft", &ubisoft::UBISOFT_SERVICE);
-            map.insert("roblox", &roblox::ROBLOX_SERVICE);
-            map.insert("epic", &epic::EPIC_SERVICE);
-            map.insert("gog", &gog::GOG_SERVICE);
-            map.insert("jagex", &jagex::JAGEX_SERVICE);
-            map.insert("discord", &discord::DISCORD_SERVICE);
+            map.insert(ids::RIOT, &riot::RIOT_SERVICE);
+            map.insert(ids::BATTLE_NET, &battle_net::BATTLE_NET_SERVICE);
+            map.insert(ids::UBISOFT, &ubisoft::UBISOFT_SERVICE);
+            map.insert(ids::ROBLOX, &roblox::ROBLOX_SERVICE);
+            map.insert(ids::EPIC, &epic::EPIC_SERVICE);
+            map.insert(ids::GOG, &gog::GOG_SERVICE);
+            map.insert(ids::JAGEX, &jagex::JAGEX_SERVICE);
+            map.insert(ids::DISCORD, &discord::DISCORD_SERVICE);
         }
         map
     })
@@ -199,8 +235,9 @@ pub fn get_service(platform_id: &str) -> Option<&'static dyn PlatformService> {
     platform_registry().get(platform_id).copied()
 }
 
-pub fn require_service(platform_id: &str) -> Result<&'static dyn PlatformService, String> {
-    get_service(platform_id).ok_or_else(|| format!("Unknown platform: {platform_id}"))
+pub fn require_service(platform_id: &str) -> Result<&'static dyn PlatformService, PlatformError> {
+    get_service(platform_id)
+        .ok_or_else(|| PlatformError::other(format!("Unknown platform: {platform_id}")))
 }
 
 #[cfg(test)]
@@ -296,7 +333,9 @@ mod tests {
         let result = require_service("nintendo");
         assert!(result.is_err());
         let err = result.err().unwrap();
-        assert_eq!(err, "Unknown platform: nintendo");
+        // Message is what the webview toast shows — must stay this string.
+        assert_eq!(err.to_string(), "Unknown platform: nintendo");
+        assert_eq!(err.kind, crate::error::PlatformErrorKind::Other);
     }
 
     #[test]

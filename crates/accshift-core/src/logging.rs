@@ -705,10 +705,7 @@ mod tests {
         // Multibyte local part: the accented name must be dropped whole, not
         // truncated at the first non-ASCII byte. The truncate-on-match rewinds
         // `out` by recorded byte offsets, so the 2-byte `é` can't desync it.
-        assert_eq!(
-            redact_email_like_tokens("jérôme@example.com"),
-            "<email>"
-        );
+        assert_eq!(redact_email_like_tokens("jérôme@example.com"), "<email>");
         assert_eq!(
             redact_email_like_tokens("connecté en tant que jérôme@example.com ok"),
             "connecté en tant que <email> ok"
@@ -719,10 +716,7 @@ mod tests {
     fn redact_email_accented_domain() {
         // Non-ASCII tail in the domain must be consumed by the match instead of
         // being left in clear after the placeholder.
-        assert_eq!(
-            redact_email_like_tokens("john@domain.café"),
-            "<email>"
-        );
+        assert_eq!(redact_email_like_tokens("john@domain.café"), "<email>");
         assert_eq!(
             redact_email_like_tokens("ping müller@firma.köln now"),
             "ping <email> now"
@@ -780,10 +774,7 @@ mod tests {
     #[test]
     fn sanitize_log_text_combines_redactions() {
         let input = "user jean@mail.com Hero#1234 550e8400-e29b-41d4-a716-446655440000";
-        assert_eq!(
-            sanitize_log_text(input),
-            "user <email> <battletag> <uuid>"
-        );
+        assert_eq!(sanitize_log_text(input), "user <email> <battletag> <uuid>");
     }
 
     // Regression: sanitize_log_text's env-var scrub list used to only cover

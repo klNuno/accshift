@@ -204,9 +204,7 @@ mod tests {
         // guard and must actually try to acquire the file lock, which is held,
         // so it times out as contended rather than bypassing the lock.
         let ctx2 = Arc::clone(&ctx);
-        let handle = thread::spawn(move || {
-            acquire_for_write(&*ctx2, Duration::from_millis(150))
-        });
+        let handle = thread::spawn(move || acquire_for_write(&*ctx2, Duration::from_millis(150)));
         let result = handle.join().unwrap();
         assert!(matches!(result, Err(LockError::Contended)));
 

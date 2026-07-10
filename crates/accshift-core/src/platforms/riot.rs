@@ -1,4 +1,5 @@
 use crate::config::{self, RiotProfileConfig};
+use crate::error::PlatformError;
 use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
 use crate::{AppContext, AppCtx};
 use serde::{Deserialize, Serialize};
@@ -11,9 +12,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::os;
-use crate::snapshot_crypto::{
-    self, decrypted_copy_file, encrypted_copy_file, DirCopyOptions,
-};
+use crate::snapshot_crypto::{self, decrypted_copy_file, encrypted_copy_file, DirCopyOptions};
 
 const RIOT_CLIENT_PROCESS_NAMES: &[&str] = &[
     "RiotClientServices.exe",
@@ -524,9 +523,13 @@ fn plain_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
     }
-    fs::copy(source, dest)
-        .map(|_| ())
-        .map_err(|e| format!("Could not copy {} to {}: {e}", source.display(), dest.display()))
+    fs::copy(source, dest).map(|_| ()).map_err(|e| {
+        format!(
+            "Could not copy {} to {}: {e}",
+            source.display(),
+            dest.display()
+        )
+    })
 }
 
 /// Recursively copy a directory verbatim, no encryption. See `plain_copy_file`.
@@ -866,9 +869,14 @@ fn clear_live_riot_setup_state(app_handle: &dyn AppContext) -> Result<(), String
 /// directory on success; the caller must remove it once it is no longer
 /// needed (on both the success and the failure path).
 fn backup_live_state_for_rollback(install_dir: Option<&Path>) -> Result<PathBuf, String> {
-    let rollback_dir = std::env::temp_dir().join(format!("accshift-riot-rollback-{}", Uuid::new_v4()));
-    fs::create_dir_all(&rollback_dir)
-        .map_err(|e| format!("Could not create Riot rollback dir {}: {e}", rollback_dir.display()))?;
+    let rollback_dir =
+        std::env::temp_dir().join(format!("accshift-riot-rollback-{}", Uuid::new_v4()));
+    fs::create_dir_all(&rollback_dir).map_err(|e| {
+        format!(
+            "Could not create Riot rollback dir {}: {e}",
+            rollback_dir.display()
+        )
+    })?;
 
     for item in RIOT_SNAPSHOT_ITEMS {
         let Some(source_path) = live_path_for(item, install_dir)? else {
@@ -974,8 +982,14 @@ fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Resul
         match item.kind {
             RiotSnapshotKind::Directory => {
                 if source_path.exists() {
-                    if let Err(e) = decrypted_copy_dir(&source_path, &target_path, item.ignored_names) {
-                        restore_live_state_from_rollback(app_handle, &rollback_dir, install_dir.as_deref());
+                    if let Err(e) =
+                        decrypted_copy_dir(&source_path, &target_path, item.ignored_names)
+                    {
+                        restore_live_state_from_rollback(
+                            app_handle,
+                            &rollback_dir,
+                            install_dir.as_deref(),
+                        );
                         let _ = fs::remove_dir_all(&rollback_dir);
                         return Err(e);
                     }
@@ -984,7 +998,11 @@ fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Resul
             RiotSnapshotKind::File => {
                 if source_path.exists() {
                     if let Err(e) = decrypted_copy_file(&source_path, &target_path) {
-                        restore_live_state_from_rollback(app_handle, &rollback_dir, install_dir.as_deref());
+                        restore_live_state_from_rollback(
+                            app_handle,
+                            &rollback_dir,
+                            install_dir.as_deref(),
+                        );
                         let _ = fs::remove_dir_all(&rollback_dir);
                         return Err(e);
                     }
@@ -992,7 +1010,11 @@ fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Resul
                     // Should not happen (checked above before the clear), but
                     // if it does after the clear, restore rather than leave
                     // the live state wiped with nothing put back.
-                    restore_live_state_from_rollback(app_handle, &rollback_dir, install_dir.as_deref());
+                    restore_live_state_from_rollback(
+                        app_handle,
+                        &rollback_dir,
+                        install_dir.as_deref(),
+                    );
                     let _ = fs::remove_dir_all(&rollback_dir);
                     return Ok(false);
                 }
@@ -1609,29 +1631,34 @@ pub struct RiotService;
 pub static RIOT_SERVICE: RiotService = RiotService;
 
 impl PlatformService for RiotService {
-    fn get_accounts(&self, app: AppCtx) -> Result<Value, String> {
+    fn get_accounts(&self, app: AppCtx) -> Result<Value, PlatformError> {
         let profiles = get_profiles(app.clone())?;
-        serde_json::to_value(profiles).map_err(|e| e.to_string())
+        serde_json::to_value(profiles).map_err(|e| PlatformError::other(e.to_string()))
     }
 
-    fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, String> {
+    fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, PlatformError> {
         let snapshot = get_startup_snapshot(app.clone())?;
-        serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        serde_json::to_value(snapshot).map_err(|e| PlatformError::other(e.to_string()))
     }
 
-    fn get_current_account(&self, app: AppCtx) -> Result<String, String> {
-        get_current_profile(app.clone())
+    fn get_current_account(&self, app: AppCtx) -> Result<String, PlatformError> {
+        get_current_profile(app.clone()).map_err(Into::into)
     }
 
-    fn switch_account(&self, app: AppCtx, account_id: &str, _params: Value) -> Result<(), String> {
-        switch_profile(app.clone(), account_id.to_string())
+    fn switch_account(
+        &self,
+        app: AppCtx,
+        account_id: &str,
+        _params: Value,
+    ) -> Result<(), PlatformError> {
+        switch_profile(app.clone(), account_id.to_string()).map_err(Into::into)
     }
 
-    fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), String> {
-        forget_profile(app.clone(), account_id.to_string())
+    fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), PlatformError> {
+        forget_profile(app.clone(), account_id.to_string()).map_err(Into::into)
     }
 
-    fn begin_setup(&self, app: AppCtx, _params: Value) -> Result<SetupStatus, String> {
+    fn begin_setup(&self, app: AppCtx, _params: Value) -> Result<SetupStatus, PlatformError> {
         let status = begin_profile_setup(app.clone())?;
         Ok(SetupStatus {
             setup_id: status.profile_id,
@@ -1642,7 +1669,7 @@ impl PlatformService for RiotService {
         })
     }
 
-    fn get_setup_status(&self, app: AppCtx, setup_id: &str) -> Result<SetupStatus, String> {
+    fn get_setup_status(&self, app: AppCtx, setup_id: &str) -> Result<SetupStatus, PlatformError> {
         let status = get_profile_setup_status(app.clone(), setup_id.to_string())?;
         Ok(SetupStatus {
             setup_id: status.profile_id,
@@ -1653,20 +1680,20 @@ impl PlatformService for RiotService {
         })
     }
 
-    fn cancel_setup(&self, app: AppCtx, setup_id: &str) -> Result<(), String> {
-        cancel_profile_setup(app.clone(), setup_id.to_string())
+    fn cancel_setup(&self, app: AppCtx, setup_id: &str) -> Result<(), PlatformError> {
+        cancel_profile_setup(app.clone(), setup_id.to_string()).map_err(Into::into)
     }
 
-    fn get_path(&self, app: AppCtx) -> Result<String, String> {
-        get_riot_path(app.clone())
+    fn get_path(&self, app: AppCtx) -> Result<String, PlatformError> {
+        get_riot_path(app.clone()).map_err(Into::into)
     }
 
-    fn set_path(&self, app: AppCtx, path: &str) -> Result<(), String> {
-        set_riot_path(app.clone(), path.to_string())
+    fn set_path(&self, app: AppCtx, path: &str) -> Result<(), PlatformError> {
+        set_riot_path(app.clone(), path.to_string()).map_err(Into::into)
     }
 
-    fn select_path(&self) -> Result<String, String> {
-        select_riot_path()
+    fn select_path(&self) -> Result<String, PlatformError> {
+        select_riot_path().map_err(Into::into)
     }
 }
 

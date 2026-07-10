@@ -137,11 +137,8 @@ mod tests {
     const BASE_CONFIG: &str = "\"UserLocalConfigStore\"\n{\n\t\"news\"\n\t{\n\t\t\"NotifyAvailableGames\"\t\t\"1\"\n\t}\n\t\"friends\"\n\t{\n\t\t\"DoNotDisturb\"\t\t\"0\"\n\t}\n\t\"Software\"\n\t{\n\t}\n}\n";
 
     fn bulk_edit_test_root(tag: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "accshift-bulkedit-{}-{}",
-            tag,
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("accshift-bulkedit-{}-{}", tag, std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         root

@@ -314,7 +314,9 @@ mod tests {
 
     #[test]
     fn is_flatpak_path_rejects_native_and_snap_dirs() {
-        assert!(!is_flatpak_path(Path::new("/home/alice/.local/share/Steam")));
+        assert!(!is_flatpak_path(Path::new(
+            "/home/alice/.local/share/Steam"
+        )));
         assert!(!is_flatpak_path(Path::new(
             "/home/alice/snap/steam/common/.local/share/Steam"
         )));

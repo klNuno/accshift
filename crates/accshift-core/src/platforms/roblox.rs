@@ -1,4 +1,5 @@
 use crate::config::{self, RobloxAccountConfig};
+use crate::error::PlatformError;
 use crate::os::registry;
 use crate::platforms::setup_jobs::{SetupJobs, DEFAULT_SETUP_TTL_MS};
 use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
@@ -998,38 +999,43 @@ pub struct RobloxService;
 pub static ROBLOX_SERVICE: RobloxService = RobloxService;
 
 impl PlatformService for RobloxService {
-    fn get_accounts(&self, app: AppCtx) -> Result<Value, String> {
+    fn get_accounts(&self, app: AppCtx) -> Result<Value, PlatformError> {
         let accounts = get_accounts(&app)?;
-        serde_json::to_value(accounts).map_err(|e| e.to_string())
+        serde_json::to_value(accounts).map_err(|e| PlatformError::other(e.to_string()))
     }
 
-    fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, String> {
+    fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, PlatformError> {
         let snapshot = get_startup_snapshot(&app)?;
-        serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        serde_json::to_value(snapshot).map_err(|e| PlatformError::other(e.to_string()))
     }
 
-    fn get_current_account(&self, _app: AppCtx) -> Result<String, String> {
+    fn get_current_account(&self, _app: AppCtx) -> Result<String, PlatformError> {
         Ok(String::new())
     }
 
-    fn switch_account(&self, app: AppCtx, account_id: &str, _params: Value) -> Result<(), String> {
-        switch_account(&app, account_id)
+    fn switch_account(
+        &self,
+        app: AppCtx,
+        account_id: &str,
+        _params: Value,
+    ) -> Result<(), PlatformError> {
+        switch_account(&app, account_id).map_err(Into::into)
     }
 
-    fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), String> {
-        forget_account(&app, account_id)
+    fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), PlatformError> {
+        forget_account(&app, account_id).map_err(Into::into)
     }
 
-    fn begin_setup(&self, app: AppCtx, _params: Value) -> Result<SetupStatus, String> {
-        begin_account_setup(&app)
+    fn begin_setup(&self, app: AppCtx, _params: Value) -> Result<SetupStatus, PlatformError> {
+        begin_account_setup(&app).map_err(Into::into)
     }
 
-    fn get_setup_status(&self, app: AppCtx, setup_id: &str) -> Result<SetupStatus, String> {
-        get_account_setup_status(&app, setup_id)
+    fn get_setup_status(&self, app: AppCtx, setup_id: &str) -> Result<SetupStatus, PlatformError> {
+        get_account_setup_status(&app, setup_id).map_err(Into::into)
     }
 
-    fn cancel_setup(&self, _app: AppCtx, setup_id: &str) -> Result<(), String> {
-        cancel_account_setup(setup_id)
+    fn cancel_setup(&self, _app: AppCtx, setup_id: &str) -> Result<(), PlatformError> {
+        cancel_account_setup(setup_id).map_err(Into::into)
     }
 }
 

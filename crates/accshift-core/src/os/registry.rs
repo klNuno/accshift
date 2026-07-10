@@ -54,9 +54,8 @@ pub fn write_string(
     let (key, _) = RegKey::predef(root)
         .create_subkey(key_path)
         .map_err(|e| format!("Could not open registry key {key_path}: {e}"))?;
-    key.set_value(value_name, &data).map_err(|e| {
-        format!("Could not write registry value {key_path}\\{value_name}: {e}")
-    })?;
+    key.set_value(value_name, &data)
+        .map_err(|e| format!("Could not write registry value {key_path}\\{value_name}: {e}"))?;
     Ok(())
 }
 

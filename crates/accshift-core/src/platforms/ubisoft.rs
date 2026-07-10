@@ -1,4 +1,6 @@
 use crate::config::{self, UbisoftAccountConfig};
+use crate::error::PlatformError;
+use crate::os::registry::{self, HKEY_LOCAL_MACHINE};
 use crate::platforms::setup_jobs::{SetupJobs, DEFAULT_SETUP_TTL_MS};
 use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
 use crate::snapshot_crypto::{
@@ -12,7 +14,6 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use crate::os::registry::{self, HKEY_LOCAL_MACHINE};
 use std::process::Command;
 use uuid::Uuid;
 
@@ -919,54 +920,64 @@ pub struct UbisoftService;
 pub static UBISOFT_SERVICE: UbisoftService = UbisoftService;
 
 impl PlatformService for UbisoftService {
-    fn get_accounts(&self, app: AppCtx) -> Result<Value, String> {
+    fn get_accounts(&self, app: AppCtx) -> Result<Value, PlatformError> {
         let accounts = get_accounts(&app)?;
-        serde_json::to_value(accounts).map_err(|e| e.to_string())
+        serde_json::to_value(accounts).map_err(|e| PlatformError::other(e.to_string()))
     }
 
-    fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, String> {
+    fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, PlatformError> {
         let snapshot = get_startup_snapshot(&app)?;
-        serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        serde_json::to_value(snapshot).map_err(|e| PlatformError::other(e.to_string()))
     }
 
-    fn get_current_account(&self, app: AppCtx) -> Result<String, String> {
-        get_current_account(&app)
+    fn get_current_account(&self, app: AppCtx) -> Result<String, PlatformError> {
+        get_current_account(&app).map_err(Into::into)
     }
 
-    fn switch_account(&self, app: AppCtx, account_id: &str, _params: Value) -> Result<(), String> {
-        switch_account(&app, account_id)
+    fn switch_account(
+        &self,
+        app: AppCtx,
+        account_id: &str,
+        _params: Value,
+    ) -> Result<(), PlatformError> {
+        switch_account(&app, account_id).map_err(Into::into)
     }
 
-    fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), String> {
-        forget_account(&app, account_id)
+    fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), PlatformError> {
+        forget_account(&app, account_id).map_err(Into::into)
     }
 
-    fn begin_setup(&self, app: AppCtx, _params: Value) -> Result<SetupStatus, String> {
-        begin_account_setup(&app)
+    fn begin_setup(&self, app: AppCtx, _params: Value) -> Result<SetupStatus, PlatformError> {
+        begin_account_setup(&app).map_err(Into::into)
     }
 
-    fn get_setup_status(&self, app: AppCtx, setup_id: &str) -> Result<SetupStatus, String> {
-        get_account_setup_status(&app, setup_id)
+    fn get_setup_status(&self, app: AppCtx, setup_id: &str) -> Result<SetupStatus, PlatformError> {
+        get_account_setup_status(&app, setup_id).map_err(Into::into)
     }
 
-    fn cancel_setup(&self, _app: AppCtx, setup_id: &str) -> Result<(), String> {
-        cancel_account_setup(setup_id)
+    fn cancel_setup(&self, _app: AppCtx, setup_id: &str) -> Result<(), PlatformError> {
+        cancel_account_setup(setup_id).map_err(Into::into)
     }
 
-    fn get_path(&self, app: AppCtx) -> Result<String, String> {
-        get_ubisoft_path(&app)
+    fn get_path(&self, app: AppCtx) -> Result<String, PlatformError> {
+        get_ubisoft_path(&app).map_err(Into::into)
     }
 
-    fn set_path(&self, app: AppCtx, path: &str) -> Result<(), String> {
-        set_ubisoft_path(&app, path)
+    fn set_path(&self, app: AppCtx, path: &str) -> Result<(), PlatformError> {
+        set_ubisoft_path(&app, path).map_err(Into::into)
     }
 
-    fn select_path(&self) -> Result<String, String> {
-        select_ubisoft_path()
+    fn select_path(&self) -> Result<String, PlatformError> {
+        select_ubisoft_path().map_err(Into::into)
     }
 
-    fn set_account_label(&self, app: AppCtx, account_id: &str, label: &str) -> Result<(), String> {
-        set_account_label(&app, account_id, label)
+    fn set_account_label(
+        &self,
+        app: AppCtx,
+        account_id: &str,
+        label: &str,
+    ) -> Result<(), PlatformError> {
+        set_account_label(&app, account_id, label).map_err(Into::into)
     }
 }
 
@@ -1167,7 +1178,10 @@ mod tests {
             .rev()
             .filter(|l| l.contains("AccountStartupUser.cpp"))
             .find_map(extract_uuid_from_line);
-        assert_eq!(found, Some("deadbeef-0000-1111-2222-333344445555".to_string()));
+        assert_eq!(
+            found,
+            Some("deadbeef-0000-1111-2222-333344445555".to_string())
+        );
 
         let _ = fs::remove_file(&path);
     }
@@ -1228,7 +1242,10 @@ mod tests {
 
         restore_auth_files(&cache_dir, &local_dir).unwrap();
 
-        assert_eq!(fs::read(local_dir.join("user.dat")).unwrap(), b"new-user-data");
+        assert_eq!(
+            fs::read(local_dir.join("user.dat")).unwrap(),
+            b"new-user-data"
+        );
         assert_eq!(
             fs::read(local_dir.join("ConnectSecureStorage.dat")).unwrap(),
             b"new-css-data"

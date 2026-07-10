@@ -479,7 +479,11 @@ fn set_persona_state_in_vdf(content: &str, state: &str) -> Option<String> {
     let mut found = false;
     // Preserve the file's dominant line ending so a CRLF localconfig.vdf comes
     // back CRLF rather than being silently rewritten to bare LF on every edit.
-    let newline = if content.contains("\r\n") { "\r\n" } else { "\n" };
+    let newline = if content.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -800,6 +804,9 @@ mod tests {
         let content = "\"UserLocalConfigStore\"\r\n{\r\n\t\"friends\"\r\n\t{\r\n\t\t\"PersonaState\"\t\t\"1\"\r\n\t}\r\n}\r\n";
         let out = set_persona_state_in_vdf(content, "7").expect("should find PersonaState");
         assert!(out.contains("\"PersonaState\"\t\t\"7\"\r\n"));
-        assert!(!out.contains("\"7\"\n\t}"), "line ending collapsed to bare LF");
+        assert!(
+            !out.contains("\"7\"\n\t}"),
+            "line ending collapsed to bare LF"
+        );
     }
 }

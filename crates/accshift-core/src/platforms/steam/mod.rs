@@ -1,7 +1,8 @@
 use crate::config;
+use crate::error::{PlatformError, PlatformErrorKind};
 use crate::os;
 use crate::platforms::{
-    log_platform_error, log_platform_info, to_logged_error, PlatformService, SetupStatus,
+    log_platform_error, log_platform_failure, log_platform_info, PlatformService, SetupStatus,
 };
 use crate::{AppContext, AppCtx};
 pub mod accounts;
@@ -93,17 +94,21 @@ fn is_force_kill(params: &Value) -> bool {
         .unwrap_or(false)
 }
 
-fn resolve_steam_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
+fn resolve_steam_path(app_handle: &dyn AppContext) -> Result<PathBuf, PlatformError> {
     let cfg = config::load_config(app_handle);
     let override_path = cfg.steam.path_override.trim();
     let steam_path = if !override_path.is_empty() {
         PathBuf::from(override_path)
     } else {
-        os::steam_installation_path().map_err(|e| e.to_string())?
+        // AppError::RegistryOpen maps to ClientNotInstalled.
+        os::steam_installation_path()?
     };
 
     if !steam_path.exists() || !steam_path.join("config").join("loginusers.vdf").exists() {
-        return Err("Could not locate Steam installation".into());
+        return Err(PlatformError::new(
+            PlatformErrorKind::ClientNotInstalled,
+            "Could not locate Steam installation",
+        ));
     }
 
     Ok(steam_path)
@@ -141,7 +146,7 @@ fn build_switch_state_details(
     .to_string()
 }
 
-pub fn set_api_key(app_handle: AppCtx, key: String) -> Result<(), String> {
+pub fn set_api_key(app_handle: AppCtx, key: String) -> Result<(), PlatformError> {
     let trimmed = key.trim();
     let encrypted = if trimmed.is_empty() {
         String::new()
@@ -152,6 +157,7 @@ pub fn set_api_key(app_handle: AppCtx, key: String) -> Result<(), String> {
         cfg.steam.api_key = String::new();
         cfg.steam.api_key_encrypted = encrypted;
     })
+    .map_err(Into::into)
 }
 
 pub fn has_api_key(app_handle: AppCtx) -> bool {
@@ -160,10 +166,10 @@ pub fn has_api_key(app_handle: AppCtx) -> bool {
         .unwrap_or(false)
 }
 
-pub fn get_accounts(app_handle: AppCtx) -> Result<Vec<SteamAccount>, String> {
+pub fn get_accounts(app_handle: AppCtx) -> Result<Vec<SteamAccount>, PlatformError> {
     let steam_path = resolve_steam_path(&app_handle)?;
     accounts::get_accounts(&steam_path)
-        .map_err(|e| to_logged_error(&app_handle, "steam.get_accounts", e))
+        .map_err(|e| log_platform_failure(&app_handle, "steam.get_accounts", e.into()))
 }
 
 #[derive(Serialize)]
@@ -173,10 +179,12 @@ struct SteamStartupSnapshot {
     current_account: String,
 }
 
-fn get_startup_snapshot_inner(app_handle: &dyn AppContext) -> Result<SteamStartupSnapshot, String> {
+fn get_startup_snapshot_inner(
+    app_handle: &dyn AppContext,
+) -> Result<SteamStartupSnapshot, PlatformError> {
     let steam_path = resolve_steam_path(app_handle)?;
     let (accounts, current_from_file) = accounts::get_accounts_snapshot(&steam_path)
-        .map_err(|e| to_logged_error(app_handle, "steam.get_startup_snapshot", e))?;
+        .map_err(|e| log_platform_failure(app_handle, "steam.get_startup_snapshot", e.into()))?;
     let current_account = {
         let from_registry = os::get_auto_login_user().unwrap_or_default();
         if from_registry.trim().is_empty() {
@@ -192,7 +200,7 @@ fn get_startup_snapshot_inner(app_handle: &dyn AppContext) -> Result<SteamStartu
     })
 }
 
-pub fn get_current_account(app_handle: AppCtx) -> Result<String, String> {
+pub fn get_current_account(app_handle: AppCtx) -> Result<String, PlatformError> {
     let from_registry = os::get_auto_login_user().unwrap_or_default();
     if !from_registry.trim().is_empty() {
         return Ok(from_registry);
@@ -200,84 +208,7 @@ pub fn get_current_account(app_handle: AppCtx) -> Result<String, String> {
 
     let steam_path = resolve_steam_path(&app_handle)?;
     accounts::get_current_account_name(&steam_path)
-        .map_err(|e| to_logged_error(&app_handle, "steam.get_current_account", e))
-}
-
-pub async fn switch_account_mode(
-    app_handle: AppCtx,
-    username: String,
-    steam_id: String,
-    mode: String,
-    run_as_admin: bool,
-    launch_options: String,
-    shutdown_mode: String,
-) -> Result<(), String> {
-    validate_username(&username)?;
-    validate_steam_id(&steam_id)?;
-    if !["online", "invisible"].contains(&mode.as_str()) {
-        return Err("Invalid mode".into());
-    }
-    let steam_path = resolve_steam_path(&app_handle)?;
-    log_platform_info(
-        &app_handle,
-        "steam.switch_account_mode",
-        "Steam switch mode requested",
-        build_switch_state_details(
-            &steam_path,
-            Some(&username),
-            Some(&steam_id),
-            Some(&mode),
-            run_as_admin,
-            &launch_options,
-        ),
-    );
-
-    let force_kill = shutdown_mode == "force";
-    let app_handle_for_task = app_handle.clone();
-    let username_for_task = username.clone();
-    let steam_id_for_task = steam_id.clone();
-    let mode_for_task = mode.clone();
-    let launch_options_for_task = launch_options.clone();
-    tokio::task::spawn_blocking(move || {
-        let result = accounts::switch_account_mode(
-            &steam_path,
-            &username_for_task,
-            &steam_id_for_task,
-            &mode_for_task,
-            run_as_admin,
-            &launch_options_for_task,
-            force_kill,
-        );
-
-        let post_state = build_switch_state_details(
-            &steam_path,
-            Some(&username_for_task),
-            Some(&steam_id_for_task),
-            Some(&mode_for_task),
-            run_as_admin,
-            &launch_options_for_task,
-        );
-
-        match &result {
-            Ok(()) => log_platform_info(
-                &app_handle_for_task,
-                "steam.switch_account_mode",
-                "Steam switch mode completed",
-                &post_state,
-            ),
-            Err(error) => log_platform_error(
-                &app_handle_for_task,
-                "steam.switch_account_mode",
-                "Steam switch mode failed",
-                format!("error={error}; state={post_state}"),
-            ),
-        }
-
-        result
-    })
-    .await
-    .map_err(|e| format!("Switch account mode task failed: {e}"))?
-    .map_err(|e| to_logged_error(&app_handle, "steam.switch_account_mode", e))
+        .map_err(|e| log_platform_failure(&app_handle, "steam.get_current_account", e.into()))
 }
 
 pub async fn switch_account_and_launch_game(
@@ -287,7 +218,7 @@ pub async fn switch_account_and_launch_game(
     run_as_admin: bool,
     launch_options: String,
     shutdown_mode: String,
-) -> Result<(), String> {
+) -> Result<(), PlatformError> {
     validate_username(&username)?;
     if app_id.is_empty() || !app_id.chars().all(|c| c.is_ascii_digit()) {
         return Err("Invalid app id".into());
@@ -349,8 +280,14 @@ pub async fn switch_account_and_launch_game(
         result
     })
     .await
-    .map_err(|e| format!("Switch+launch task failed: {e}"))?
-    .map_err(|e| to_logged_error(&app_handle, "steam.switch_account_and_launch_game", e))
+    .map_err(|e| PlatformError::other(format!("Switch+launch task failed: {e}")))?
+    .map_err(|e| {
+        log_platform_failure(
+            &app_handle,
+            "steam.switch_account_and_launch_game",
+            e.into(),
+        )
+    })
 }
 
 pub fn begin_account_setup(
@@ -358,10 +295,10 @@ pub fn begin_account_setup(
     run_as_admin: bool,
     launch_options: String,
     force_kill: bool,
-) -> Result<SetupStatus, String> {
+) -> Result<SetupStatus, PlatformError> {
     let steam_path = resolve_steam_path(&app_handle)?;
     let known_accounts = accounts::get_accounts(&steam_path)
-        .map_err(|e| to_logged_error(&app_handle, "steam.begin_account_setup", e))?;
+        .map_err(|e| log_platform_failure(&app_handle, "steam.begin_account_setup", e.into()))?;
     let known_account_ids = known_accounts
         .into_iter()
         .map(|account| account.steam_id)
@@ -372,7 +309,7 @@ pub fn begin_account_setup(
     {
         let mut jobs = steam_setup_jobs()
             .lock()
-            .map_err(|_| "Steam setup storage is unavailable".to_string())?;
+            .map_err(|_| PlatformError::other("Steam setup storage is unavailable"))?;
         jobs.retain(|_, job| !super::setup_expired(job.last_touched_at, STEAM_SETUP_TTL_MS));
         jobs.insert(
             setup_id.clone(),
@@ -420,7 +357,7 @@ pub fn begin_account_setup(
 pub fn get_account_setup_status(
     app_handle: AppCtx,
     setup_id: String,
-) -> Result<SetupStatus, String> {
+) -> Result<SetupStatus, PlatformError> {
     let setup_id = setup_id.trim().to_string();
     if setup_id.is_empty() {
         return Err("Invalid Steam setup id".into());
@@ -429,10 +366,14 @@ pub fn get_account_setup_status(
     let job = {
         let mut jobs = steam_setup_jobs()
             .lock()
-            .map_err(|_| "Steam setup storage is unavailable".to_string())?;
+            .map_err(|_| PlatformError::other("Steam setup storage is unavailable"))?;
         jobs.retain(|_, job| !super::setup_expired(job.last_touched_at, STEAM_SETUP_TTL_MS));
         let Some(job) = jobs.get_mut(&setup_id) else {
-            return Err("Steam setup not found".into());
+            // Unknown id here almost always means the TTL purge dropped it.
+            return Err(PlatformError::new(
+                PlatformErrorKind::SetupExpired,
+                "Steam setup not found",
+            ));
         };
         job.last_touched_at = super::now_unix_ms();
         job.clone()
@@ -452,8 +393,9 @@ pub fn get_account_setup_status(
         ));
     }
 
-    let accounts = accounts::get_accounts(&job.steam_path)
-        .map_err(|e| to_logged_error(&app_handle, "steam.get_account_setup_status", e))?;
+    let accounts = accounts::get_accounts(&job.steam_path).map_err(|e| {
+        log_platform_failure(&app_handle, "steam.get_account_setup_status", e.into())
+    })?;
     let maybe_added = accounts
         .into_iter()
         .filter(|account| !job.known_account_ids.contains(&account.steam_id))
@@ -481,29 +423,34 @@ pub fn get_account_setup_status(
     ))
 }
 
-pub fn cancel_account_setup(_app_handle: AppCtx, setup_id: String) -> Result<(), String> {
+pub fn cancel_account_setup(_app_handle: AppCtx, setup_id: String) -> Result<(), PlatformError> {
     let setup_id = setup_id.trim();
     if setup_id.is_empty() {
         return Ok(());
     }
     let mut jobs = steam_setup_jobs()
         .lock()
-        .map_err(|_| "Steam setup storage is unavailable".to_string())?;
+        .map_err(|_| PlatformError::other("Steam setup storage is unavailable"))?;
     jobs.retain(|_, job| !super::setup_expired(job.last_touched_at, STEAM_SETUP_TTL_MS));
     jobs.remove(setup_id);
     Ok(())
 }
 
-pub fn open_userdata(app_handle: AppCtx, steam_id: String) -> Result<(), String> {
+pub fn open_userdata(app_handle: AppCtx, steam_id: String) -> Result<(), PlatformError> {
     validate_steam_id(&steam_id)?;
     let steam_path = resolve_steam_path(&app_handle)?;
     accounts::open_userdata_with_path(&steam_path, &steam_id)
-        .map_err(|e| to_logged_error(&app_handle, "steam.open_userdata", e))
+        .map_err(|e| log_platform_failure(&app_handle, "steam.open_userdata", e.into()))
 }
 
-pub fn clear_integrated_browser_cache(app_handle: AppCtx) -> Result<(), String> {
-    accounts::clear_integrated_browser_cache()
-        .map_err(|e| to_logged_error(&app_handle, "steam.clear_integrated_browser_cache", e))
+pub fn clear_integrated_browser_cache(app_handle: AppCtx) -> Result<(), PlatformError> {
+    accounts::clear_integrated_browser_cache().map_err(|e| {
+        log_platform_failure(
+            &app_handle,
+            "steam.clear_integrated_browser_cache",
+            e.into(),
+        )
+    })
 }
 
 pub fn copy_game_settings(
@@ -511,27 +458,27 @@ pub fn copy_game_settings(
     from_steam_id: String,
     to_steam_id: String,
     app_id: String,
-) -> Result<(), String> {
+) -> Result<(), PlatformError> {
     validate_steam_id(&from_steam_id)?;
     validate_steam_id(&to_steam_id)?;
     let steam_path = resolve_steam_path(&app_handle)?;
     accounts::copy_game_settings(&steam_path, &from_steam_id, &to_steam_id, &app_id)
-        .map_err(|e| to_logged_error(&app_handle, "steam.copy_game_settings", e))
+        .map_err(|e| log_platform_failure(&app_handle, "steam.copy_game_settings", e.into()))
 }
 
 pub fn get_copyable_games(
     app_handle: AppCtx,
     from_steam_id: String,
     to_steam_id: String,
-) -> Result<Vec<CopyableGame>, String> {
+) -> Result<Vec<CopyableGame>, PlatformError> {
     validate_steam_id(&from_steam_id)?;
     validate_steam_id(&to_steam_id)?;
     let steam_path = resolve_steam_path(&app_handle)?;
     accounts::get_copyable_games(&steam_path, &from_steam_id)
-        .map_err(|e| to_logged_error(&app_handle, "steam.get_copyable_games", e))
+        .map_err(|e| log_platform_failure(&app_handle, "steam.get_copyable_games", e.into()))
 }
 
-pub fn get_steam_path(app_handle: AppCtx) -> Result<String, String> {
+pub fn get_steam_path(app_handle: AppCtx) -> Result<String, PlatformError> {
     let cfg = config::load_config(&app_handle);
     if !cfg.steam.path_override.trim().is_empty() {
         return Ok(cfg.steam.path_override);
@@ -539,7 +486,7 @@ pub fn get_steam_path(app_handle: AppCtx) -> Result<String, String> {
     resolve_steam_path(&app_handle).map(|p| p.to_string_lossy().to_string())
 }
 
-pub fn set_steam_path(app_handle: AppCtx, path: String) -> Result<(), String> {
+pub fn set_steam_path(app_handle: AppCtx, path: String) -> Result<(), PlatformError> {
     let trimmed = path.trim().to_string();
     // The override is later joined with steam.exe and launched — only accept
     // an existing directory that actually looks like a Steam install.
@@ -561,16 +508,17 @@ pub fn set_steam_path(app_handle: AppCtx, path: String) -> Result<(), String> {
             cfg.steam.path_override = trimmed;
         }
     })
+    .map_err(Into::into)
 }
 
-pub fn select_steam_path() -> Result<String, String> {
-    os::select_folder("Select Steam folder").map_err(|e| e.to_string())
+pub fn select_steam_path() -> Result<String, PlatformError> {
+    os::select_folder("Select Steam folder").map_err(Into::into)
 }
 
 pub fn bulk_edit(
     app_handle: AppCtx,
     request: bulk_edit::BulkEditRequest,
-) -> Result<bulk_edit::BulkEditResult, String> {
+) -> Result<bulk_edit::BulkEditResult, PlatformError> {
     for steam_id in &request.steam_ids {
         validate_steam_id(steam_id)?;
     }
@@ -589,9 +537,10 @@ pub fn bulk_edit(
     );
     // Steam keeps localconfig.vdf in memory and rewrites it on exit — edits
     // made while it runs are silently lost. Stop it first; it stays closed.
-    match accounts::stop_steam(&steam_path, false).map_err(|e| e.to_string())? {
+    match accounts::stop_steam(&steam_path, false)? {
         accounts::StopOutcome::NeedsElevation => {
-            return Err(crate::error::AppError::SteamElevated.to_string())
+            // Maps to ClientRunning: retry works once the elevated Steam exits.
+            return Err(crate::error::AppError::SteamElevated.into());
         }
         accounts::StopOutcome::NotRunning | accounts::StopOutcome::Stopped => {}
     }
@@ -612,30 +561,69 @@ pub fn bulk_edit(
 pub fn get_account_games(
     app_handle: AppCtx,
     steam_id: String,
-) -> Result<Vec<CopyableGame>, String> {
+) -> Result<Vec<CopyableGame>, PlatformError> {
     validate_steam_id(&steam_id)?;
     let steam_path = resolve_steam_path(&app_handle)?;
     bulk_edit::get_account_games(&steam_path, &steam_id)
-        .map_err(|e| to_logged_error(&app_handle, "steam.get_account_games", e))
+        .map_err(|e| log_platform_failure(&app_handle, "steam.get_account_games", e.into()))
 }
 
-pub fn open_steam_api_key_page() -> Result<(), String> {
-    os::open_url("https://steamcommunity.com/dev/apikey").map_err(|e| e.to_string())
+pub fn open_steam_api_key_page() -> Result<(), PlatformError> {
+    os::open_url("https://steamcommunity.com/dev/apikey").map_err(Into::into)
 }
 
 pub async fn get_profile_info(
     steam_id: String,
     client: reqwest::Client,
-) -> Result<Option<ProfileInfo>, String> {
+) -> Result<Option<ProfileInfo>, PlatformError> {
     validate_steam_id(&steam_id)?;
     Ok(profile::fetch_profile_info(&client, &steam_id).await)
+}
+
+/// Variante batch de [`get_profile_info`] : une map id -> profil pour tous
+/// les comptes en un appel. Avec cle API : GetPlayerSummaries (100 ids par
+/// requete) ; sans cle : fallback XML parallele cote Rust.
+pub async fn get_profile_infos(
+    app_handle: AppCtx,
+    steam_ids: Vec<String>,
+    client: reqwest::Client,
+) -> Result<HashMap<String, ProfileInfo>, PlatformError> {
+    let mut seen = HashSet::new();
+    let mut unique_steam_ids: Vec<String> = Vec::new();
+
+    for id in steam_ids {
+        validate_steam_id(&id)?;
+        if seen.insert(id.clone()) {
+            unique_steam_ids.push(id);
+        }
+    }
+
+    if unique_steam_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    // Une cle illisible n'est pas bloquante : le fallback XML public couvre.
+    let api_key = match read_api_key(&app_handle) {
+        Ok(value) => value.trim().to_string(),
+        Err(e) => {
+            log_platform_error(
+                &app_handle,
+                "steam.get_profile_infos",
+                "Failed to read Steam API key",
+                e,
+            );
+            String::new()
+        }
+    };
+
+    Ok(profile::fetch_profile_infos(&client, &api_key, &unique_steam_ids).await)
 }
 
 pub async fn get_player_bans(
     app_handle: AppCtx,
     steam_ids: Vec<String>,
     client: reqwest::Client,
-) -> Result<Vec<BanInfo>, String> {
+) -> Result<Vec<BanInfo>, PlatformError> {
     let mut seen = HashSet::new();
     let mut unique_steam_ids: Vec<String> = Vec::new();
 
@@ -661,25 +649,32 @@ pub async fn get_player_bans(
     if api_key.is_empty() {
         return Ok(vec![]);
     }
-    bans::fetch_player_bans(&client, &api_key, unique_steam_ids).await
+    bans::fetch_player_bans(&client, &api_key, unique_steam_ids)
+        .await
+        .map_err(Into::into)
 }
 
 impl PlatformService for SteamService {
-    fn get_accounts(&self, app: AppCtx) -> Result<Value, String> {
+    fn get_accounts(&self, app: AppCtx) -> Result<Value, PlatformError> {
         let accounts = get_accounts(app.clone())?;
-        serde_json::to_value(accounts).map_err(|e| e.to_string())
+        serde_json::to_value(accounts).map_err(|e| PlatformError::other(e.to_string()))
     }
 
-    fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, String> {
+    fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, PlatformError> {
         let snapshot = get_startup_snapshot_inner(&app)?;
-        serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        serde_json::to_value(snapshot).map_err(|e| PlatformError::other(e.to_string()))
     }
 
-    fn get_current_account(&self, app: AppCtx) -> Result<String, String> {
+    fn get_current_account(&self, app: AppCtx) -> Result<String, PlatformError> {
         get_current_account(app.clone())
     }
 
-    fn switch_account(&self, app: AppCtx, account_id: &str, params: Value) -> Result<(), String> {
+    fn switch_account(
+        &self,
+        app: AppCtx,
+        account_id: &str,
+        params: Value,
+    ) -> Result<(), PlatformError> {
         validate_username(account_id)?;
         let run_as_admin = params
             .get("runAsAdmin")
@@ -707,9 +702,12 @@ impl PlatformService for SteamService {
             ),
         );
 
-        // Optional persona mode (CLI --invisible/--online). When absent the
-        // switch leaves the account's persona state untouched.
+        // Optional persona mode (CLI --invisible/--online, GUI context menu).
+        // When absent the switch leaves the account's persona state untouched.
         let mode = params.get("mode").and_then(Value::as_str).unwrap_or("");
+        if !mode.is_empty() && !["online", "invisible"].contains(&mode) {
+            return Err("Invalid mode".into());
+        }
 
         let result = if mode.is_empty() {
             accounts::switch_account(
@@ -721,20 +719,29 @@ impl PlatformService for SteamService {
             )
         } else {
             // Persona state lives in userdata/<account_id>/, keyed by steam
-            // id — resolve it from loginusers.vdf. Unknown id → plain switch.
-            // Two entries can share the same account_name (deleted/recreated
-            // account, hand-edited VDF); the accounts Vec's relative order for
-            // ties comes from HashMap iteration, not something we control, so
-            // pick the lowest steam_id deterministically instead of the first
-            // match (which would otherwise vary run to run).
-            let steam_id = accounts::get_accounts_snapshot(&steam_path)
-                .ok()
-                .and_then(|(accounts, _)| {
-                    accounts
-                        .into_iter()
-                        .filter(|a| a.account_name == account_id)
-                        .min_by(|a, b| a.steam_id.cmp(&b.steam_id))
-                        .map(|a| a.steam_id)
+            // id. Callers that already know it pass it in params (the GUI
+            // context menu does); otherwise resolve it from loginusers.vdf.
+            // Unknown id → plain switch. Two entries can share the same
+            // account_name (deleted/recreated account, hand-edited VDF); the
+            // accounts Vec's relative order for ties comes from HashMap
+            // iteration, not something we control, so pick the lowest
+            // steam_id deterministically instead of the first match (which
+            // would otherwise vary run to run).
+            let steam_id = params
+                .get("steamId")
+                .and_then(Value::as_str)
+                .filter(|id| validate_steam_id(id).is_ok())
+                .map(str::to_string)
+                .or_else(|| {
+                    accounts::get_accounts_snapshot(&steam_path)
+                        .ok()
+                        .and_then(|(accounts, _)| {
+                            accounts
+                                .into_iter()
+                                .filter(|a| a.account_name == account_id)
+                                .min_by(|a, b| a.steam_id.cmp(&b.steam_id))
+                                .map(|a| a.steam_id)
+                        })
                 })
                 .unwrap_or_default();
             accounts::switch_account_mode(
@@ -747,7 +754,7 @@ impl PlatformService for SteamService {
                 force_kill,
             )
         }
-        .map_err(|e| to_logged_error(&app, "steam.switch_account", e));
+        .map_err(|e| log_platform_failure(&app, "steam.switch_account", e.into()));
 
         let post_state = build_switch_state_details(
             &steam_path,
@@ -776,14 +783,14 @@ impl PlatformService for SteamService {
         result
     }
 
-    fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), String> {
+    fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), PlatformError> {
         validate_steam_id(account_id)?;
         let steam_path = resolve_steam_path(&app)?;
         accounts::forget_account(&steam_path, account_id)
-            .map_err(|e| to_logged_error(&app, "steam.forget_account", e))
+            .map_err(|e| log_platform_failure(&app, "steam.forget_account", e.into()))
     }
 
-    fn begin_setup(&self, app: AppCtx, params: Value) -> Result<SetupStatus, String> {
+    fn begin_setup(&self, app: AppCtx, params: Value) -> Result<SetupStatus, PlatformError> {
         let run_as_admin = params
             .get("runAsAdmin")
             .and_then(Value::as_bool)
@@ -797,23 +804,23 @@ impl PlatformService for SteamService {
         begin_account_setup(app.clone(), run_as_admin, launch_options, force_kill)
     }
 
-    fn get_setup_status(&self, app: AppCtx, setup_id: &str) -> Result<SetupStatus, String> {
+    fn get_setup_status(&self, app: AppCtx, setup_id: &str) -> Result<SetupStatus, PlatformError> {
         get_account_setup_status(app.clone(), setup_id.to_string())
     }
 
-    fn cancel_setup(&self, app: AppCtx, setup_id: &str) -> Result<(), String> {
+    fn cancel_setup(&self, app: AppCtx, setup_id: &str) -> Result<(), PlatformError> {
         cancel_account_setup(app.clone(), setup_id.to_string())
     }
 
-    fn get_path(&self, app: AppCtx) -> Result<String, String> {
+    fn get_path(&self, app: AppCtx) -> Result<String, PlatformError> {
         get_steam_path(app.clone())
     }
 
-    fn set_path(&self, app: AppCtx, path: &str) -> Result<(), String> {
+    fn set_path(&self, app: AppCtx, path: &str) -> Result<(), PlatformError> {
         set_steam_path(app.clone(), path.to_string())
     }
 
-    fn select_path(&self) -> Result<String, String> {
+    fn select_path(&self) -> Result<String, PlatformError> {
         select_steam_path()
     }
 }

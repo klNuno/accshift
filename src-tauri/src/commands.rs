@@ -2,8 +2,51 @@ use crate::ctx;
 use crate::platforms::{require_service, SetupStatus};
 use crate::telemetry;
 use crate::telemetry_runtime::TelemetryState;
+use accshift_core::error::PlatformError;
 use serde_json::Value;
+use std::time::Duration;
 use tauri::Manager;
+
+/// Cross-process lock acquisition budget shared by every mutating command.
+/// Short so the UI stays responsive when the CLI holds the lock.
+const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Runs `f` on the blocking pool and flattens the join error. The
+/// "Task failed" message only surfaces when the closure panicked or the
+/// runtime is shutting down; `label` identifies the culprit command.
+async fn run_blocking<T, F>(label: &str, f: F) -> Result<T, PlatformError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, PlatformError> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| PlatformError::other(format!("Task failed ({label}): {e}")))?
+}
+
+/// [`run_blocking`] with the cross-process exclusive lock held around `f`.
+///
+/// The lock is acquired INSIDE the blocking task so it lives on the same
+/// blocking-pool thread that runs `f`. The nested config writes a switch or
+/// forget performs skip re-locking only when the guard is held on their own
+/// thread; acquiring on the async task thread instead would self-contend and
+/// time out (the file lock is process-wide, the nesting bypass is
+/// thread-local).
+async fn run_locked_blocking<T, F>(
+    label: &str,
+    c: accshift_core::AppCtx,
+    f: F,
+) -> Result<T, PlatformError>
+where
+    T: Send + 'static,
+    F: FnOnce(accshift_core::AppCtx) -> Result<T, PlatformError> + Send + 'static,
+{
+    run_blocking(label, move || {
+        let _lock = accshift_core::lock::acquire_exclusive(&c, LOCK_TIMEOUT)?;
+        f(c)
+    })
+    .await
+}
 
 #[tauri::command]
 pub fn get_runtime_os() -> String {
@@ -47,9 +90,9 @@ pub struct BootPayload {
 }
 
 #[tauri::command]
-pub async fn get_boot_payload(app_handle: tauri::AppHandle) -> Result<BootPayload, String> {
+pub async fn get_boot_payload(app_handle: tauri::AppHandle) -> Result<BootPayload, PlatformError> {
     let c = ctx(&app_handle);
-    tauri::async_runtime::spawn_blocking(move || {
+    run_blocking("get_boot_payload", move || {
         // Migration must land before anything reads config or stores.
         let migration = migrate_legacy_config_inner(&c);
         let storage_snapshot = crate::storage::load_client_storage_snapshot(&c)?;
@@ -64,7 +107,6 @@ pub async fn get_boot_payload(app_handle: tauri::AppHandle) -> Result<BootPayloa
         })
     })
     .await
-    .map_err(|e| format!("Task failed: {e}"))?
 }
 
 /// Per-session ceiling on webview-originated log records. The webview is the
@@ -138,17 +180,25 @@ pub fn finish_boot(
 
 /// Emits one `accounts_snapshot` per non-empty platform.
 /// Called once on first boot completion, gives the day's observed distribution.
+///
+/// Platform names come from the canonical registry ids so every telemetry
+/// event shares one vocabulary with `platform_switch` (which receives the
+/// registry id from the frontend). Continuity note: snapshots emitted before
+/// v1.0 used `battle_net` (config field name); dashboards reading
+/// `accounts_snapshot` must alias `battle_net` → `battle-net` across that
+/// boundary. All other ids are unchanged.
 fn emit_accounts_snapshots(app_handle: &tauri::AppHandle, tstate: &TelemetryState) {
+    use crate::platforms::ids;
     let cfg = crate::config::load_config(&ctx(app_handle));
     let counts: [(&str, u64); 8] = [
-        ("riot", cfg.riot.profiles.len() as u64),
-        ("battle_net", cfg.battle_net.accounts.len() as u64),
-        ("ubisoft", cfg.ubisoft.accounts.len() as u64),
-        ("roblox", cfg.roblox.accounts.len() as u64),
-        ("epic", cfg.epic.accounts.len() as u64),
-        ("gog", cfg.gog.accounts.len() as u64),
-        ("jagex", cfg.jagex.accounts.len() as u64),
-        ("discord", cfg.discord.accounts.len() as u64),
+        (ids::RIOT, cfg.riot.profiles.len() as u64),
+        (ids::BATTLE_NET, cfg.battle_net.accounts.len() as u64),
+        (ids::UBISOFT, cfg.ubisoft.accounts.len() as u64),
+        (ids::ROBLOX, cfg.roblox.accounts.len() as u64),
+        (ids::EPIC, cfg.epic.accounts.len() as u64),
+        (ids::GOG, cfg.gog.accounts.len() as u64),
+        (ids::JAGEX, cfg.jagex.accounts.len() as u64),
+        (ids::DISCORD, cfg.discord.accounts.len() as u64),
     ];
     for (platform, count) in counts {
         if count > 0 {
@@ -194,8 +244,7 @@ pub fn save_client_storage_store(
     // (Windows sharing violation) or lose updates. Short timeout keeps the UI
     // responsive; the guard is held across the write and dropped right after.
     let _write_lock =
-        accshift_core::lock::acquire_for_write(&c, std::time::Duration::from_secs(2))
-            .map_err(|e| e.to_string())?;
+        accshift_core::lock::acquire_for_write(&c, LOCK_TIMEOUT).map_err(|e| e.to_string())?;
     crate::storage::save_client_store(&c, &store_id, &value)?;
     let details = serde_json::json!({
         "storeId": store_id,
@@ -241,7 +290,7 @@ pub fn get_storage_manifest(
 pub fn platform_get_accounts(
     app_handle: tauri::AppHandle,
     platform_id: String,
-) -> Result<Value, String> {
+) -> Result<Value, PlatformError> {
     require_service(&platform_id)?.get_accounts(ctx(&app_handle))
 }
 
@@ -249,7 +298,7 @@ pub fn platform_get_accounts(
 pub fn platform_get_startup_snapshot(
     app_handle: tauri::AppHandle,
     platform_id: String,
-) -> Result<Value, String> {
+) -> Result<Value, PlatformError> {
     require_service(&platform_id)?.get_startup_snapshot(ctx(&app_handle))
 }
 
@@ -257,7 +306,7 @@ pub fn platform_get_startup_snapshot(
 pub fn platform_get_current_account(
     app_handle: tauri::AppHandle,
     platform_id: String,
-) -> Result<String, String> {
+) -> Result<String, PlatformError> {
     require_service(&platform_id)?.get_current_account(ctx(&app_handle))
 }
 
@@ -267,24 +316,15 @@ pub async fn platform_switch_account(
     platform_id: String,
     account_id: String,
     params: Value,
-) -> Result<(), String> {
+) -> Result<(), PlatformError> {
     let service = require_service(&platform_id)?;
     let c = ctx(&app_handle);
     let t0 = std::time::Instant::now();
     let platform_for_event = platform_id.clone();
-    // Acquire the exclusive lock INSIDE spawn_blocking so it lives on the same
-    // blocking-pool thread that runs the switch. The nested config writes the
-    // switch performs skip re-locking only when the guard is held on their own
-    // thread; acquiring on the async task thread here would self-contend and
-    // time out (the file lock is process-wide, the nesting bypass is
-    // thread-local).
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let _lock = accshift_core::lock::acquire_exclusive(&c, std::time::Duration::from_secs(2))
-            .map_err(|e| e.to_string())?;
+    let result = run_locked_blocking("platform_switch_account", c, move |c| {
         service.switch_account(c, &account_id, params)
     })
-    .await
-    .map_err(|e| format!("Task failed: {e}"))?;
+    .await;
     let duration_ms = t0.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
     let tstate = app_handle.state::<TelemetryState>();
     tstate.handle.track(telemetry::Event::PlatformSwitch {
@@ -300,18 +340,13 @@ pub async fn platform_forget_account(
     app_handle: tauri::AppHandle,
     platform_id: String,
     account_id: String,
-) -> Result<(), String> {
+) -> Result<(), PlatformError> {
     let service = require_service(&platform_id)?;
     let c = ctx(&app_handle);
-    // Lock inside spawn_blocking so the guard and the forget's nested config
-    // writes share one thread (see platform_switch_account for the rationale).
-    tauri::async_runtime::spawn_blocking(move || {
-        let _lock = accshift_core::lock::acquire_exclusive(&c, std::time::Duration::from_secs(2))
-            .map_err(|e| e.to_string())?;
+    run_locked_blocking("platform_forget_account", c, move |c| {
         service.forget_account(c, &account_id)
     })
     .await
-    .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[tauri::command]
@@ -319,19 +354,15 @@ pub async fn platform_begin_setup(
     app_handle: tauri::AppHandle,
     platform_id: String,
     params: Value,
-) -> Result<SetupStatus, String> {
+) -> Result<SetupStatus, PlatformError> {
     let service = require_service(&platform_id)?;
     let c = ctx(&app_handle);
     // Setup flows can stop launchers and touch live auth files before they
     // persist config, so they need the same operation lock as switch/forget.
-    // Keep the guard on the blocking thread for nested config writes.
-    tauri::async_runtime::spawn_blocking(move || {
-        let _lock = accshift_core::lock::acquire_exclusive(&c, std::time::Duration::from_secs(2))
-            .map_err(|e| e.to_string())?;
+    run_locked_blocking("platform_begin_setup", c, move |c| {
         service.begin_setup(c, params)
     })
     .await
-    .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[tauri::command]
@@ -339,22 +370,22 @@ pub async fn platform_get_setup_status(
     app_handle: tauri::AppHandle,
     platform_id: String,
     setup_id: String,
-) -> Result<SetupStatus, String> {
+) -> Result<SetupStatus, PlatformError> {
     let service = require_service(&platform_id)?;
     let c = ctx(&app_handle);
     // The status poll is not read-only: once login completes it quits the
     // launcher, captures a snapshot and writes config (Riot, Ubisoft, ...), so
-    // it needs the same operation lock as switch/forget/begin_setup. Acquired
-    // inside spawn_blocking for the same nesting reason (see
-    // platform_switch_account).
+    // it needs the same operation lock as switch/forget/begin_setup — with one
+    // twist that keeps it off `run_locked_blocking`:
     //
     // The frontend polls this every ~1.5s and treats an error as a failed
     // setup, so a contended lock (a switch or CLI write in flight) must not
     // fail the poll. Report a non-terminal holding state instead — every
     // platform's add-flow UI keeps its spinner on unknown/waiting states and
     // the next poll picks up the real status once the lock is free.
-    tauri::async_runtime::spawn_blocking(move || {
-        match accshift_core::lock::acquire_exclusive(&c, std::time::Duration::from_secs(2)) {
+    run_blocking(
+        "platform_get_setup_status",
+        move || match accshift_core::lock::acquire_exclusive(&c, LOCK_TIMEOUT) {
             Ok(_lock) => service.get_setup_status(c, &setup_id),
             Err(accshift_core::lock::LockError::Contended) => Ok(SetupStatus {
                 setup_id,
@@ -363,11 +394,10 @@ pub async fn platform_get_setup_status(
                 account_display_name: String::new(),
                 error_message: String::new(),
             }),
-            Err(e) => Err(e.to_string()),
-        }
-    })
+            Err(e) => Err(e.into()),
+        },
+    )
     .await
-    .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[tauri::command]
@@ -375,19 +405,20 @@ pub async fn platform_cancel_setup(
     app_handle: tauri::AppHandle,
     platform_id: String,
     setup_id: String,
-) -> Result<(), String> {
+) -> Result<(), PlatformError> {
     let service = require_service(&platform_id)?;
     let c = ctx(&app_handle);
-    tauri::async_runtime::spawn_blocking(move || service.cancel_setup(c, &setup_id))
-        .await
-        .map_err(|e| format!("Task failed: {e}"))?
+    run_blocking("platform_cancel_setup", move || {
+        service.cancel_setup(c, &setup_id)
+    })
+    .await
 }
 
 #[tauri::command(async)]
 pub fn platform_get_path(
     app_handle: tauri::AppHandle,
     platform_id: String,
-) -> Result<String, String> {
+) -> Result<String, PlatformError> {
     require_service(&platform_id)?.get_path(ctx(&app_handle))
 }
 
@@ -396,18 +427,16 @@ pub async fn platform_set_path(
     app_handle: tauri::AppHandle,
     platform_id: String,
     path: String,
-) -> Result<(), String> {
+) -> Result<(), PlatformError> {
     // Config writes take the cross-process lock (can wait several seconds
     // when the CLI holds it) — keep them off the main thread.
     let service = require_service(&platform_id)?;
     let c = ctx(&app_handle);
-    tauri::async_runtime::spawn_blocking(move || service.set_path(c, &path))
-        .await
-        .map_err(|e| format!("Task failed: {e}"))?
+    run_blocking("platform_set_path", move || service.set_path(c, &path)).await
 }
 
 #[tauri::command]
-pub fn platform_select_path(platform_id: String) -> Result<String, String> {
+pub fn platform_select_path(platform_id: String) -> Result<String, PlatformError> {
     require_service(&platform_id)?.select_path()
 }
 
@@ -417,12 +446,13 @@ pub async fn platform_set_account_label(
     platform_id: String,
     account_id: String,
     label: String,
-) -> Result<(), String> {
+) -> Result<(), PlatformError> {
     let service = require_service(&platform_id)?;
     let c = ctx(&app_handle);
-    tauri::async_runtime::spawn_blocking(move || service.set_account_label(c, &account_id, &label))
-        .await
-        .map_err(|e| format!("Task failed: {e}"))?
+    run_blocking("platform_set_account_label", move || {
+        service.set_account_label(c, &account_id, &label)
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -453,11 +483,15 @@ pub fn close_window(window: tauri::Window) {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub async fn steam_set_api_key(app_handle: tauri::AppHandle, key: String) -> Result<(), String> {
+pub async fn steam_set_api_key(
+    app_handle: tauri::AppHandle,
+    key: String,
+) -> Result<(), PlatformError> {
     let c = ctx(&app_handle);
-    tauri::async_runtime::spawn_blocking(move || crate::platforms::steam::set_api_key(c, key))
-        .await
-        .map_err(|e| format!("Task failed: {e}"))?
+    run_blocking("steam_set_api_key", move || {
+        crate::platforms::steam::set_api_key(c, key)
+    })
+    .await
 }
 
 #[tauri::command(async)]
@@ -466,33 +500,8 @@ pub fn steam_has_api_key(app_handle: tauri::AppHandle) -> bool {
 }
 
 #[tauri::command]
-pub fn steam_open_api_key_page() -> Result<(), String> {
+pub fn steam_open_api_key_page() -> Result<(), PlatformError> {
     crate::platforms::steam::open_steam_api_key_page()
-}
-
-#[tauri::command]
-pub async fn steam_switch_account_mode(
-    app_handle: tauri::AppHandle,
-    username: String,
-    steam_id: String,
-    mode: String,
-    run_as_admin: bool,
-    launch_options: String,
-    shutdown_mode: String,
-) -> Result<(), String> {
-    let c = ctx(&app_handle);
-    let _lock = accshift_core::lock::acquire_exclusive(&c, std::time::Duration::from_secs(2))
-        .map_err(|e| e.to_string())?;
-    crate::platforms::steam::switch_account_mode(
-        c,
-        username,
-        steam_id,
-        mode,
-        run_as_admin,
-        launch_options,
-        shutdown_mode,
-    )
-    .await
 }
 
 #[tauri::command]
@@ -503,10 +512,9 @@ pub async fn steam_switch_account_and_launch_game(
     run_as_admin: bool,
     launch_options: String,
     shutdown_mode: String,
-) -> Result<(), String> {
+) -> Result<(), PlatformError> {
     let c = ctx(&app_handle);
-    let _lock = accshift_core::lock::acquire_exclusive(&c, std::time::Duration::from_secs(2))
-        .map_err(|e| e.to_string())?;
+    let _lock = accshift_core::lock::acquire_exclusive(&c, LOCK_TIMEOUT)?;
     crate::platforms::steam::switch_account_and_launch_game(
         c,
         username,
@@ -522,8 +530,23 @@ pub async fn steam_switch_account_and_launch_game(
 pub async fn steam_get_profile_info(
     steam_id: String,
     client: tauri::State<'_, reqwest::Client>,
-) -> Result<Option<crate::platforms::steam::profile::ProfileInfo>, String> {
+) -> Result<Option<crate::platforms::steam::profile::ProfileInfo>, PlatformError> {
     crate::platforms::steam::get_profile_info(steam_id, client.inner().clone()).await
+}
+
+/// Variante batch de `steam_get_profile_info` : un seul invoke pour N
+/// comptes. Les ids sans resultat sont absents de la map.
+#[tauri::command]
+pub async fn steam_get_profile_infos(
+    app_handle: tauri::AppHandle,
+    steam_ids: Vec<String>,
+    client: tauri::State<'_, reqwest::Client>,
+) -> Result<
+    std::collections::HashMap<String, crate::platforms::steam::profile::ProfileInfo>,
+    PlatformError,
+> {
+    crate::platforms::steam::get_profile_infos(ctx(&app_handle), steam_ids, client.inner().clone())
+        .await
 }
 
 #[tauri::command]
@@ -531,7 +554,7 @@ pub async fn steam_get_player_bans(
     app_handle: tauri::AppHandle,
     steam_ids: Vec<String>,
     client: tauri::State<'_, reqwest::Client>,
-) -> Result<Vec<crate::platforms::steam::bans::BanInfo>, String> {
+) -> Result<Vec<crate::platforms::steam::bans::BanInfo>, PlatformError> {
     crate::platforms::steam::get_player_bans(ctx(&app_handle), steam_ids, client.inner().clone())
         .await
 }
@@ -542,13 +565,12 @@ pub async fn steam_copy_game_settings(
     from_steam_id: String,
     to_steam_id: String,
     app_id: String,
-) -> Result<(), String> {
+) -> Result<(), PlatformError> {
     let c = ctx(&app_handle);
-    tauri::async_runtime::spawn_blocking(move || {
+    run_blocking("steam_copy_game_settings", move || {
         crate::platforms::steam::copy_game_settings(c, from_steam_id, to_steam_id, app_id)
     })
     .await
-    .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[tauri::command(async)]
@@ -556,32 +578,34 @@ pub fn steam_get_copyable_games(
     app_handle: tauri::AppHandle,
     from_steam_id: String,
     to_steam_id: String,
-) -> Result<Vec<crate::platforms::steam::accounts::CopyableGame>, String> {
+) -> Result<Vec<crate::platforms::steam::accounts::CopyableGame>, PlatformError> {
     crate::platforms::steam::get_copyable_games(ctx(&app_handle), from_steam_id, to_steam_id)
 }
 
 #[tauri::command(async)]
-pub fn steam_open_userdata(app_handle: tauri::AppHandle, steam_id: String) -> Result<(), String> {
+pub fn steam_open_userdata(
+    app_handle: tauri::AppHandle,
+    steam_id: String,
+) -> Result<(), PlatformError> {
     crate::platforms::steam::open_userdata(ctx(&app_handle), steam_id)
 }
 
 #[tauri::command]
-pub async fn steam_clear_browser_cache(app_handle: tauri::AppHandle) -> Result<(), String> {
+pub async fn steam_clear_browser_cache(app_handle: tauri::AppHandle) -> Result<(), PlatformError> {
     // Kills Steam (polls up to several seconds) then deletes the cache dir —
     // must not run on the main thread.
     let c = ctx(&app_handle);
-    tauri::async_runtime::spawn_blocking(move || {
+    run_blocking("steam_clear_browser_cache", move || {
         crate::platforms::steam::clear_integrated_browser_cache(c)
     })
     .await
-    .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[tauri::command(async)]
 pub fn steam_bulk_edit(
     app_handle: tauri::AppHandle,
     request: crate::platforms::steam::bulk_edit::BulkEditRequest,
-) -> Result<crate::platforms::steam::bulk_edit::BulkEditResult, String> {
+) -> Result<crate::platforms::steam::bulk_edit::BulkEditResult, PlatformError> {
     crate::platforms::steam::bulk_edit(ctx(&app_handle), request)
 }
 
@@ -589,7 +613,7 @@ pub fn steam_bulk_edit(
 pub fn steam_get_account_games(
     app_handle: tauri::AppHandle,
     steam_id: String,
-) -> Result<Vec<crate::platforms::steam::accounts::CopyableGame>, String> {
+) -> Result<Vec<crate::platforms::steam::accounts::CopyableGame>, PlatformError> {
     crate::platforms::steam::get_account_games(ctx(&app_handle), steam_id)
 }
 
@@ -602,13 +626,12 @@ pub fn steam_get_account_games(
 pub async fn riot_capture_profile(
     app_handle: tauri::AppHandle,
     profile_id: String,
-) -> Result<(), String> {
+) -> Result<(), PlatformError> {
     let c = ctx(&app_handle);
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::platforms::riot::capture_profile(c, profile_id)
+    run_blocking("riot_capture_profile", move || {
+        crate::platforms::riot::capture_profile(c, profile_id).map_err(Into::into)
     })
     .await
-    .map_err(|e| format!("Task failed: {e}"))?
 }
 
 // ---------------------------------------------------------------------------
@@ -616,8 +639,8 @@ pub async fn riot_capture_profile(
 // ---------------------------------------------------------------------------
 
 #[tauri::command(async)]
-pub fn open_url(url: String) -> Result<(), String> {
-    crate::os::open_url(&url).map_err(|e| e.to_string())
+pub fn open_url(url: String) -> Result<(), PlatformError> {
+    crate::os::open_url(&url).map_err(Into::into)
 }
 
 // ---------------------------------------------------------------------------
@@ -631,13 +654,14 @@ pub async fn roblox_add_account_by_cookie(
     app_handle: tauri::AppHandle,
     cookie: String,
     client: tauri::State<'_, reqwest::Client>,
-) -> Result<crate::platforms::roblox::RobloxAccount, String> {
+) -> Result<crate::platforms::roblox::RobloxAccount, PlatformError> {
     crate::platforms::roblox::add_account_by_cookie(
         ctx(&app_handle),
         cookie,
         client.inner().clone(),
     )
     .await
+    .map_err(Into::into)
 }
 
 #[cfg(windows)]
@@ -645,21 +669,24 @@ pub async fn roblox_add_account_by_cookie(
 pub async fn roblox_get_profile_info(
     user_id: String,
     client: tauri::State<'_, reqwest::Client>,
-) -> Result<crate::platforms::roblox::RobloxProfileInfo, String> {
-    crate::platforms::roblox::get_profile_info(user_id, client.inner().clone()).await
+) -> Result<crate::platforms::roblox::RobloxProfileInfo, PlatformError> {
+    crate::platforms::roblox::get_profile_info(user_id, client.inner().clone())
+        .await
+        .map_err(Into::into)
 }
 
 /// User ids whose stored Roblox session is dead (blocking network probe per
 /// account), so the UI can badge accounts that need re-login.
 #[cfg(windows)]
 #[tauri::command(async)]
-pub async fn roblox_check_sessions(app_handle: tauri::AppHandle) -> Result<Vec<String>, String> {
+pub async fn roblox_check_sessions(
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<String>, PlatformError> {
     let c = ctx(&app_handle);
-    tauri::async_runtime::spawn_blocking(move || {
+    run_blocking("roblox_check_sessions", move || {
         Ok(crate::platforms::roblox::dead_session_user_ids(&c))
     })
     .await
-    .map_err(|e| format!("Task failed: {e}"))?
 }
 
 // ---------------------------------------------------------------------------

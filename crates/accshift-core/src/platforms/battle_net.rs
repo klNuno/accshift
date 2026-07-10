@@ -1,4 +1,5 @@
 use crate::config::{self, BattleNetAccountConfig};
+use crate::error::PlatformError;
 use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
 use crate::{AppContext, AppCtx};
 use rusqlite::{Connection, OpenFlags};
@@ -949,50 +950,55 @@ pub struct BattleNetService;
 pub static BATTLE_NET_SERVICE: BattleNetService = BattleNetService;
 
 impl PlatformService for BattleNetService {
-    fn get_accounts(&self, app: AppCtx) -> Result<Value, String> {
+    fn get_accounts(&self, app: AppCtx) -> Result<Value, PlatformError> {
         let accounts = get_accounts(app.clone())?;
-        serde_json::to_value(accounts).map_err(|e| e.to_string())
+        serde_json::to_value(accounts).map_err(|e| PlatformError::other(e.to_string()))
     }
 
-    fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, String> {
+    fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, PlatformError> {
         let snapshot = get_startup_snapshot(app.clone())?;
-        serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        serde_json::to_value(snapshot).map_err(|e| PlatformError::other(e.to_string()))
     }
 
-    fn get_current_account(&self, _app: AppCtx) -> Result<String, String> {
-        get_current_account()
+    fn get_current_account(&self, _app: AppCtx) -> Result<String, PlatformError> {
+        get_current_account().map_err(Into::into)
     }
 
-    fn switch_account(&self, app: AppCtx, account_id: &str, _params: Value) -> Result<(), String> {
-        switch_account(app.clone(), account_id.to_string())
+    fn switch_account(
+        &self,
+        app: AppCtx,
+        account_id: &str,
+        _params: Value,
+    ) -> Result<(), PlatformError> {
+        switch_account(app.clone(), account_id.to_string()).map_err(Into::into)
     }
 
-    fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), String> {
-        forget_account(app.clone(), account_id.to_string())
+    fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), PlatformError> {
+        forget_account(app.clone(), account_id.to_string()).map_err(Into::into)
     }
 
-    fn begin_setup(&self, app: AppCtx, _params: Value) -> Result<SetupStatus, String> {
-        begin_account_setup(app.clone())
+    fn begin_setup(&self, app: AppCtx, _params: Value) -> Result<SetupStatus, PlatformError> {
+        begin_account_setup(app.clone()).map_err(Into::into)
     }
 
-    fn get_setup_status(&self, app: AppCtx, setup_id: &str) -> Result<SetupStatus, String> {
-        get_account_setup_status(app.clone(), setup_id.to_string())
+    fn get_setup_status(&self, app: AppCtx, setup_id: &str) -> Result<SetupStatus, PlatformError> {
+        get_account_setup_status(app.clone(), setup_id.to_string()).map_err(Into::into)
     }
 
-    fn cancel_setup(&self, _app: AppCtx, setup_id: &str) -> Result<(), String> {
-        cancel_account_setup(setup_id.to_string())
+    fn cancel_setup(&self, _app: AppCtx, setup_id: &str) -> Result<(), PlatformError> {
+        cancel_account_setup(setup_id.to_string()).map_err(Into::into)
     }
 
-    fn get_path(&self, app: AppCtx) -> Result<String, String> {
-        get_battle_net_path(app.clone())
+    fn get_path(&self, app: AppCtx) -> Result<String, PlatformError> {
+        get_battle_net_path(app.clone()).map_err(Into::into)
     }
 
-    fn set_path(&self, app: AppCtx, path: &str) -> Result<(), String> {
-        set_battle_net_path(app.clone(), path.to_string())
+    fn set_path(&self, app: AppCtx, path: &str) -> Result<(), PlatformError> {
+        set_battle_net_path(app.clone(), path.to_string()).map_err(Into::into)
     }
 
-    fn select_path(&self) -> Result<String, String> {
-        select_battle_net_path()
+    fn select_path(&self) -> Result<String, PlatformError> {
+        select_battle_net_path().map_err(Into::into)
     }
 }
 
@@ -1153,8 +1159,14 @@ mod tests {
 
     #[test]
     fn encodes_field_with_comma_and_quote() {
-        assert_eq!(encode_saved_account_name("plain@example.com"), "plain@example.com");
-        assert_eq!(encode_saved_account_name("\"a,b\"@x.com"), "\"\"\"a,b\"\"@x.com\"");
+        assert_eq!(
+            encode_saved_account_name("plain@example.com"),
+            "plain@example.com"
+        );
+        assert_eq!(
+            encode_saved_account_name("\"a,b\"@x.com"),
+            "\"\"\"a,b\"\"@x.com\""
+        );
         assert_eq!(encode_saved_account_name("has,comma"), "\"has,comma\"");
     }
 
@@ -1165,7 +1177,10 @@ mod tests {
         let encoded = encode_saved_account_name(original);
         let line = [encoded, encode_saved_account_name("plain@example.com")].join(",");
         let parsed = parse_saved_account_names(&line);
-        assert_eq!(parsed, vec![original.to_string(), "plain@example.com".to_string()]);
+        assert_eq!(
+            parsed,
+            vec![original.to_string(), "plain@example.com".to_string()]
+        );
     }
 
     // -----------------------------------------------------------------------

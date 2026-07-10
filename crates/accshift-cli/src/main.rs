@@ -4,6 +4,7 @@ mod output;
 mod pin;
 mod settings;
 
+use accshift_core::error::PlatformErrorKind;
 use accshift_core::lock::{acquire_exclusive, LockError};
 use accshift_core::platforms::get_service;
 use clap::{Parser, Subcommand};
@@ -166,7 +167,7 @@ fn cmd_list(format: Format, platform_id: &str, folder: Option<&str>) -> u8 {
     let accounts = match service.get_accounts(ctx.clone()) {
         Ok(v) => v,
         Err(e) => {
-            emit_err(format, "list", "platform_error", &e);
+            emit_err(format, "list", "platform_error", &e.to_string());
             return exit::GENERIC;
         }
     };
@@ -240,7 +241,11 @@ fn resolve_folder(
     };
     let store = match folders::load(&**ctx).map_err(FolderResolveError::Store)? {
         Some(s) => s,
-        None => return Err(FolderResolveError::NotFound("No folders configured yet.".into())),
+        None => {
+            return Err(FolderResolveError::NotFound(
+                "No folders configured yet.".into(),
+            ))
+        }
     };
     folders::accounts_in_folder(&store, platform_id, name)
         .map(Some)
@@ -366,48 +371,40 @@ fn cmd_switch(
             exit::OK
         }
         Err(e) => {
-            // String-matching error classification is brittle: several distinct
+            let message = e.to_string();
+            // Typed discriminant first: platforms that already tag their
+            // errors with `PlatformErrorKind::AccountNotFound` are classified
+            // without string scraping. The message matching below stays as a
+            // fallback for the platforms still emitting `Other` (their error
+            // chains are progressively being typed): several distinct
             // failures share the "not found" substring (e.g.
             // `AppError::UserdataNotFound` renders "User data folder not found",
             // and "Steam setup not found" / "... session not found" are state
             // errors, not unknown accounts). Match the precise per-platform
             // "account/profile not found" messages instead of any "not found".
-            // TODO: the proper long-term fix is a typed error discriminant
-            // (e.g. an `error_kind()` returning an enum) so the CLI maps codes
-            // off a variant rather than scraping rendered strings.
-            let unknown_account = e.contains("Invalid username") // Steam
-                || e.contains("account not found") // Battle.net, Roblox
-                || e.contains("profile not found") // Riot
-                || e.contains("No auth snapshot found for account") // Ubisoft, Epic
-                || e.contains("Invalid Ubisoft account UUID")
-                || e.contains("Invalid Epic account ID")
-                || e.contains("Invalid GOG account ID")
-                || e.contains("Invalid Jagex account ID")
-                || e.contains("Invalid Discord account ID");
+            let unknown_account = e.kind == PlatformErrorKind::AccountNotFound
+                || message.contains("Invalid username") // Steam
+                || message.contains("account not found") // Battle.net, Roblox
+                || message.contains("profile not found") // Riot
+                || message.contains("No auth snapshot found for account") // Ubisoft, Epic
+                || message.contains("Invalid Ubisoft account UUID")
+                || message.contains("Invalid Epic account ID")
+                || message.contains("Invalid GOG account ID")
+                || message.contains("Invalid Jagex account ID")
+                || message.contains("Invalid Discord account ID");
             let (code, status) = if unknown_account {
                 ("unknown_account", exit::UNKNOWN_ACCOUNT)
             } else {
                 ("platform_error", exit::GENERIC)
             };
-            emit_err(format, "switch", code, &e);
+            emit_err(format, "switch", code, &message);
             status
         }
     }
 }
 
 fn cmd_platforms(format: Format) -> u8 {
-    let known = [
-        "steam",
-        "riot",
-        "battle-net",
-        "ubisoft",
-        "roblox",
-        "epic",
-        "gog",
-        "jagex",
-        "discord",
-    ];
-    let available: Vec<&str> = known
+    let available: Vec<&str> = accshift_core::platforms::ids::ALL
         .iter()
         .copied()
         .filter(|id| get_service(id).is_some())

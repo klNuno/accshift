@@ -883,11 +883,8 @@ mod tests {
     const TO_ID: &str = "76561197960265730";
 
     fn copy_test_root(tag: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "accshift-copygames-{}-{}",
-            tag,
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("accshift-copygames-{}-{}", tag, std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         root
@@ -1148,8 +1145,16 @@ mod tests {
             "from-data"
         );
         // Staging and backup scratch dirs are cleaned up.
-        assert!(!root.join("userdata").join("2").join(".730.copy-staging").exists());
-        assert!(!root.join("userdata").join("2").join(".730.copy-backup").exists());
+        assert!(!root
+            .join("userdata")
+            .join("2")
+            .join(".730.copy-staging")
+            .exists());
+        assert!(!root
+            .join("userdata")
+            .join("2")
+            .join(".730.copy-backup")
+            .exists());
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -1170,7 +1175,11 @@ mod tests {
         assert_eq!(fs::read_to_string(target.join("new.cfg")).unwrap(), "new");
         assert!(!target.join("old.cfg").exists());
         // Backup is removed after a successful swap.
-        assert!(!root.join("userdata").join("2").join(".730.copy-backup").exists());
+        assert!(!root
+            .join("userdata")
+            .join("2")
+            .join(".730.copy-backup")
+            .exists());
         let _ = fs::remove_dir_all(&root);
     }
 

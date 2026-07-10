@@ -169,7 +169,10 @@ mod tests {
 
     #[test]
     fn missing_build_falls_back_to_product_only() {
-        assert_eq!(format_windows_version("Windows 10 Pro", ""), "Windows 10 Pro");
+        assert_eq!(
+            format_windows_version("Windows 10 Pro", ""),
+            "Windows 10 Pro"
+        );
     }
 
     #[test]

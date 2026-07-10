@@ -195,11 +195,8 @@ fn main() {
                                 let height = f64::from(size.height);
                                 let (tx, rx) = std::sync::mpsc::channel();
                                 std::thread::spawn(move || {
-                                    let _ = config::save_window_size(
-                                        &ctx(&save_handle),
-                                        width,
-                                        height,
-                                    );
+                                    let _ =
+                                        config::save_window_size(&ctx(&save_handle), width, height);
                                     let _ = tx.send(());
                                 });
                                 size_save_wait = Some(rx);
@@ -341,9 +338,9 @@ fn main() {
             commands::steam_set_api_key,
             commands::steam_has_api_key,
             commands::steam_open_api_key_page,
-            commands::steam_switch_account_mode,
             commands::steam_switch_account_and_launch_game,
             commands::steam_get_profile_info,
+            commands::steam_get_profile_infos,
             commands::steam_get_player_bans,
             commands::steam_copy_game_settings,
             commands::steam_get_copyable_games,
