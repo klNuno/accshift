@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getPlatform } from "$lib/shared/platform";
 import type { Persona } from "$lib/features/personas/types";
 import {
   getPersonas,
@@ -51,7 +52,19 @@ export function createPersonaController() {
     try {
       for (const { platformId, accountId } of persona.assignments) {
         try {
-          await invoke("platform_switch_account", { platformId, accountId, params: {} });
+          // Go through the platform adapter, not the raw backend command: some
+          // adapters switch by a key that differs from the account id (Steam
+          // switches by account_name while its id is the steam_id). Writing the
+          // id verbatim would corrupt the platform's autologin state.
+          const adapter = getPlatform(platformId);
+          const account = adapter
+            ? (await adapter.loadAccounts()).find((a) => a.id === accountId)
+            : undefined;
+          if (adapter && account) {
+            await adapter.switchAccount(account);
+          } else {
+            await invoke("platform_switch_account", { platformId, accountId, params: {} });
+          }
           result.succeeded.push(platformId);
         } catch (e) {
           result.failed.push({ platformId, error: String(e) });
