@@ -25,8 +25,10 @@
 | Epic Games           | ✅ Done     | 🚧 Possible     | 🚧 Possible     |
 | Ubisoft Connect      | ✅ Done     | 🚧 Possible     | 🚧 Possible     |
 | Roblox               | ✅ Done     | 🚧 Possible     | 🚧 Possible     |
+| GOG Galaxy           | ✅ Done     | 🚧 Possible     | ⛔ Not feasible |
+| Jagex Launcher       | ✅ Done     | 🚧 Possible     | ⛔ Not feasible |
+| Discord              | ✅ Done     | 🚧 Possible     | 🚧 Possible     |
 | EA app               | 🚧 Possible | 🚧 Possible     | ⛔ Not feasible |
-| Discord              | 🚧 Possible | 🚧 Possible     | 🚧 Possible     |
 | Rockstar Launcher    | 🚧 Possible | ⛔ Not feasible | 🚧 Possible     |
 | GeForce Now          | 🚧 Possible | 🚧 Possible     | 🚧 Possible     |
 | HoYoverse / HoYoPlay | 🚧 Possible | ⛔ Not feasible | ⛔ Not feasible |
@@ -38,6 +40,15 @@
 - `⛔ Not feasible` — not realistic for this OS
 
 Users can propose new platforms through [GitHub Issues](https://github.com/klNuno/accshift/issues).
+
+## Features
+
+- **One-click account switching** for Steam, Riot Games, Battle.net, Epic Games, Ubisoft Connect, Roblox, GOG Galaxy, Jagex Launcher and Discord — no passwords stored, sessions are snapshotted and restored locally with encryption.
+- **Personas** — group one account per platform under a single identity and switch them all in one click.
+- **Streamer mode** — automatically blurs account names and avatars when OBS, Streamlabs, XSplit or Twitch Studio is running.
+- **Folders, search, command palette and keyboard navigation** to manage large account collections.
+- **CLI and deep links** (`accshift://`) for scripting, Stream Deck and automation.
+- **English and French UI**, light/dark/custom themes.
 
 ## Installation
 
@@ -151,4 +162,4 @@ src-tauri/                        # Tauri GUI thin wrapper
 
 ## Disclaimer
 
-This project is not affiliated with Valve, Blizzard, Riot Games, Epic Games, Ubisoft, or Roblox Corporation. Use at your own risk.
+This project is not affiliated with Valve, Blizzard, Riot Games, Epic Games, Ubisoft, Roblox Corporation, CD PROJEKT (GOG), Jagex, or Discord Inc. Use at your own risk.
