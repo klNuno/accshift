@@ -620,6 +620,8 @@ function handleAdminDashboard(_env: Env): Response {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "private, no-store",
+      "Content-Security-Policy":
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'",
       "X-Frame-Options": "DENY",
       "Referrer-Policy": "no-referrer",
     },
@@ -935,7 +937,7 @@ function renderModalLog() {
     if (level && rec.level !== level) continue;
     if (sourceQ && !(rec.source || "").toLowerCase().includes(sourceQ)) continue;
     if (msgQ && !(rec.message || "").toLowerCase().includes(msgQ)) continue;
-    const cls = "lvl-" + (rec.level || "info");
+    const cls = "lvl-" + (["error", "warn", "info", "debug"].includes(rec.level) ? rec.level : "info");
     const ts = rec.tsMs ? new Date(rec.tsMs).toISOString().replace("T", " ").slice(0, 19) : "—";
     out.push(
       '<span class="' + cls + '">[' + esc(rec.level || "?") + ']</span> ' +

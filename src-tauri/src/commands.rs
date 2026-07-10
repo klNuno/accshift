@@ -342,9 +342,32 @@ pub async fn platform_get_setup_status(
 ) -> Result<SetupStatus, String> {
     let service = require_service(&platform_id)?;
     let c = ctx(&app_handle);
-    tauri::async_runtime::spawn_blocking(move || service.get_setup_status(c, &setup_id))
-        .await
-        .map_err(|e| format!("Task failed: {e}"))?
+    // The status poll is not read-only: once login completes it quits the
+    // launcher, captures a snapshot and writes config (Riot, Ubisoft, ...), so
+    // it needs the same operation lock as switch/forget/begin_setup. Acquired
+    // inside spawn_blocking for the same nesting reason (see
+    // platform_switch_account).
+    //
+    // The frontend polls this every ~1.5s and treats an error as a failed
+    // setup, so a contended lock (a switch or CLI write in flight) must not
+    // fail the poll. Report a non-terminal holding state instead — every
+    // platform's add-flow UI keeps its spinner on unknown/waiting states and
+    // the next poll picks up the real status once the lock is free.
+    tauri::async_runtime::spawn_blocking(move || {
+        match accshift_core::lock::acquire_exclusive(&c, std::time::Duration::from_secs(2)) {
+            Ok(_lock) => service.get_setup_status(c, &setup_id),
+            Err(accshift_core::lock::LockError::Contended) => Ok(SetupStatus {
+                setup_id,
+                state: "waiting_for_login".to_string(),
+                account_id: String::new(),
+                account_display_name: String::new(),
+                error_message: String::new(),
+            }),
+            Err(e) => Err(e.to_string()),
+        }
+    })
+    .await
+    .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[tauri::command]
