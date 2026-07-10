@@ -2,8 +2,8 @@
   import { onMount, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import type { MessageKey, TranslationParams } from "$lib/i18n";
-  import tradeOfferGif from "../../../assets/trade-offer.gif";
-  import noThanksGif from "../../../assets/no-thanks.gif";
+  import tradeOfferVideo from "../../../assets/trade-offer.webm";
+  import noThanksVideo from "../../../assets/no-thanks.webm";
   import logoUrl from "/logo.svg";
 
   const REJECT_FADE_DELAY_MS = 1200;
@@ -32,7 +32,7 @@
   let fadingOut = $state(false);
   let titlebarH = $state(0);
   let dealTitleEl = $state<HTMLHeadingElement | null>(null);
-  let gifEl = $state<HTMLImageElement | null>(null);
+  let gifEl = $state<HTMLVideoElement | null>(null);
   let gifSize = $state<{ w: number; h: number } | null>(null);
 
   $effect(() => {
@@ -340,13 +340,18 @@
           {t("onboarding.telemetry.title")}
         </h2>
         {#key rejecting}
-          <img
+          <video
             class="deal-gif"
             bind:this={gifEl}
-            src={rejecting ? noThanksGif : tradeOfferGif}
-            alt={t("onboarding.telemetry.gifAlt")}
+            src={rejecting ? noThanksVideo : tradeOfferVideo}
+            aria-label={t("onboarding.telemetry.gifAlt")}
+            autoplay
+            loop
+            muted
+            playsinline
+            disablepictureinpicture
             style={gifSize ? `width:${gifSize.w}px;height:${gifSize.h}px;` : undefined}
-          />
+          ></video>
         {/key}
         <p class="intro">{t("onboarding.telemetry.intro")}</p>
         <p class="question">{t("onboarding.telemetry.question")}</p>
