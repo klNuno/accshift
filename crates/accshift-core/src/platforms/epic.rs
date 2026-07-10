@@ -1,5 +1,10 @@
 use crate::config::{self, EpicAccountConfig};
+use crate::platforms::setup_jobs::{SetupJobs, DEFAULT_SETUP_TTL_MS};
 use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
+use crate::snapshot_crypto::{
+    decrypted_copy_file, delete_encrypted_file_secret, encrypted_copy_file, read_decrypted_bytes,
+    write_encrypted_bytes,
+};
 use crate::{AppContext, AppCtx};
 use serde::Serialize;
 use serde_json::Value;
@@ -7,16 +12,12 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use crate::os::registry::{self, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
 use std::process::Command;
-use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
-#[cfg(target_os = "windows")]
-use winreg::enums::*;
-#[cfg(target_os = "windows")]
 use winreg::RegKey;
 
 const EPIC_PROCESS_NAMES: &[&str] = &["EpicGamesLauncher.exe"];
-const EPIC_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
 const POST_KILL_SETTLE_MS: u64 = 500;
 /// Longest we wait for the launcher to flush its config to disk and exit after
 /// a quit request before validating the snapshot source.
@@ -63,13 +64,9 @@ pub struct EpicStartupSnapshot {
 #[derive(Clone)]
 struct EpicSetupJob {
     known_account_ids: HashSet<String>,
-    last_touched_at: u64,
 }
 
-fn setup_jobs() -> &'static Mutex<HashMap<String, EpicSetupJob>> {
-    static JOBS: OnceLock<Mutex<HashMap<String, EpicSetupJob>>> = OnceLock::new();
-    JOBS.get_or_init(|| Mutex::new(HashMap::new()))
-}
+static SETUP_JOBS: SetupJobs<EpicSetupJob> = SetupJobs::new("Epic", DEFAULT_SETUP_TTL_MS);
 
 // ---------------------------------------------------------------------------
 // Path helpers
@@ -134,7 +131,6 @@ fn epic_default_executable() -> Option<PathBuf> {
     None
 }
 
-#[cfg(target_os = "windows")]
 fn epic_executable_from_registry() -> Option<PathBuf> {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
 
@@ -180,11 +176,6 @@ fn epic_executable_from_registry() -> Option<PathBuf> {
     None
 }
 
-#[cfg(not(target_os = "windows"))]
-fn epic_executable_from_registry() -> Option<PathBuf> {
-    None
-}
-
 fn resolve_executable(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     let cfg = config::load_config(app_handle);
     let override_path = cfg.epic.path_override.trim().to_string();
@@ -227,56 +218,19 @@ fn resolve_executable(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
 // Registry: current account detection
 // ---------------------------------------------------------------------------
 
-#[cfg(target_os = "windows")]
+/// Registry key holding the last signed-in account id (relative to HKCU).
+const IDENTIFIERS_KEY: &str = "Software\\Epic Games\\Unreal Engine\\Identifiers";
+
 fn read_registry_account_id() -> Option<String> {
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let key = hkcu
-        .open_subkey("Software\\Epic Games\\Unreal Engine\\Identifiers")
-        .ok()?;
-    let value: String = key.get_value("AccountId").ok()?;
-    let trimmed = value.trim().to_string();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
-    }
+    registry::read_string(HKEY_CURRENT_USER, IDENTIFIERS_KEY, "AccountId")
 }
 
-#[cfg(not(target_os = "windows"))]
-fn read_registry_account_id() -> Option<String> {
-    None
-}
-
-#[cfg(target_os = "windows")]
 fn write_registry_account_id(account_id: &str) -> Result<(), String> {
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let (key, _) = hkcu
-        .create_subkey("Software\\Epic Games\\Unreal Engine\\Identifiers")
-        .map_err(|e| format!("Could not open Epic registry key: {e}"))?;
-    key.set_value("AccountId", &account_id)
-        .map_err(|e| format!("Could not write Epic AccountId to registry: {e}"))?;
-    Ok(())
+    registry::write_string(HKEY_CURRENT_USER, IDENTIFIERS_KEY, "AccountId", account_id)
 }
 
-#[cfg(not(target_os = "windows"))]
-fn write_registry_account_id(_account_id: &str) -> Result<(), String> {
-    Err("Epic Games registry is only available on Windows".to_string())
-}
-
-#[cfg(target_os = "windows")]
 fn delete_registry_account_id() -> Result<(), String> {
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    if let Ok(key) = hkcu.open_subkey_with_flags(
-        "Software\\Epic Games\\Unreal Engine\\Identifiers",
-        KEY_WRITE,
-    ) {
-        let _ = key.delete_value("AccountId");
-    }
-    Ok(())
-}
-
-#[cfg(not(target_os = "windows"))]
-fn delete_registry_account_id() -> Result<(), String> {
+    registry::delete_value(HKEY_CURRENT_USER, IDENTIFIERS_KEY, "AccountId");
     Ok(())
 }
 
@@ -318,80 +272,8 @@ fn is_valid_epic_account_id(s: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 fn auth_cache_dir(app_handle: &dyn AppContext, account_id: &str) -> Result<PathBuf, String> {
-    let base = crate::storage::epic_snapshots_dir(app_handle)?.join(account_id);
+    let base = crate::storage::platform_snapshots_dir(app_handle, "epic")?.join(account_id);
     Ok(base)
-}
-
-/// Magic header identifying an encrypted snapshot file (same convention as Riot).
-const ENCRYPTED_HEADER: &[u8] = b"ACCS";
-
-/// Copy a file and encrypt its contents (DPAPI on Windows, keyring token elsewhere).
-fn encrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
-    let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
-    let encrypted = crate::os::encrypt_bytes(&data)
-        .map_err(|e| format!("Could not encrypt {}: {e}", source.display()))?;
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-    }
-    let mut out = Vec::with_capacity(ENCRYPTED_HEADER.len() + encrypted.len());
-    out.extend_from_slice(ENCRYPTED_HEADER);
-    out.extend_from_slice(&encrypted);
-    fs::write(dest, &out).map_err(|e| format!("Could not write {}: {e}", dest.display()))
-}
-
-/// Copy a file, decrypting if it has the header (legacy plaintext files pass through).
-fn decrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
-    let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
-    let content = if data.starts_with(ENCRYPTED_HEADER) {
-        crate::os::decrypt_bytes(&data[ENCRYPTED_HEADER.len()..])
-            .map_err(|e| format!("Could not decrypt {}: {e}", source.display()))?
-    } else {
-        data
-    };
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-    }
-    fs::write(dest, &content).map_err(|e| format!("Could not write {}: {e}", dest.display()))
-}
-
-/// Encrypt raw bytes and write them with the header (no temp plaintext on disk).
-fn write_encrypted_bytes(dest: &Path, data: &[u8]) -> Result<(), String> {
-    let encrypted = crate::os::encrypt_bytes(data)
-        .map_err(|e| format!("Could not encrypt {}: {e}", dest.display()))?;
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-    }
-    let mut out = Vec::with_capacity(ENCRYPTED_HEADER.len() + encrypted.len());
-    out.extend_from_slice(ENCRYPTED_HEADER);
-    out.extend_from_slice(&encrypted);
-    fs::write(dest, &out).map_err(|e| format!("Could not write {}: {e}", dest.display()))
-}
-
-/// Read a snapshot file, decrypting it if it carries the header. Legacy
-/// plaintext files (no header) are returned as-is.
-fn read_decrypted_bytes(path: &Path) -> Result<Vec<u8>, String> {
-    let raw = fs::read(path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
-    if raw.starts_with(ENCRYPTED_HEADER) {
-        crate::os::decrypt_bytes(&raw[ENCRYPTED_HEADER.len()..])
-            .map_err(|e| format!("Could not decrypt {}: {e}", path.display()))
-    } else {
-        Ok(raw)
-    }
-}
-
-/// Release the OS-keyring entry an encrypted snapshot file points at (no-op on
-/// Windows DPAPI, frees the keyring token on Linux / macOS). Legacy plaintext
-/// files have no header and own no secret, so they are skipped.
-fn delete_encrypted_file_secret(path: &Path) {
-    let Ok(data) = fs::read(path) else {
-        return;
-    };
-    if data.starts_with(ENCRYPTED_HEADER) {
-        let _ = crate::os::delete_bytes(&data[ENCRYPTED_HEADER.len()..]);
-    }
 }
 
 fn save_auth_snapshot(app_handle: &dyn AppContext, account_id: &str) -> Result<(), String> {
@@ -492,15 +374,11 @@ fn clear_eos_caches() {
 // ---------------------------------------------------------------------------
 
 fn is_epic_running() -> bool {
-    EPIC_PROCESS_NAMES
-        .iter()
-        .any(|name| crate::os::is_process_running(name))
+    crate::os::any_process_running(EPIC_PROCESS_NAMES)
 }
 
 fn kill_epic() {
-    for process_name in EPIC_PROCESS_NAMES {
-        let _ = crate::os::kill_process(process_name);
-    }
+    crate::os::kill_processes(EPIC_PROCESS_NAMES);
 }
 
 /// Stabilize the launcher before capturing: ask it to close so it flushes its
@@ -508,14 +386,11 @@ fn kill_epic() {
 /// Epic exposes no clean-quit IPC the way Riot does, so kill is the only quit
 /// mechanism, followed by a settle delay so the file write completes.
 fn quit_epic_and_wait() {
-    if !is_epic_running() {
-        return;
-    }
-    kill_epic();
-    for process_name in EPIC_PROCESS_NAMES {
-        crate::os::wait_for_process_exit(process_name, SETUP_QUIT_TIMEOUT_MS);
-    }
-    std::thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
+    crate::os::quit_processes_and_wait(
+        EPIC_PROCESS_NAMES,
+        SETUP_QUIT_TIMEOUT_MS,
+        std::time::Duration::from_millis(POST_KILL_SETTLE_MS),
+    );
 }
 
 /// True when a file exists, is non-empty, and was modified within
@@ -803,20 +678,12 @@ pub fn begin_account_setup(app_handle: &dyn AppContext) -> Result<SetupStatus, S
     }
 
     let setup_id = format!("epic-setup-{}", Uuid::new_v4());
-    let created_at = super::now_unix_ms();
-
-    let mut jobs = setup_jobs()
-        .lock()
-        .map_err(|_| "Epic setup storage is unavailable".to_string())?;
-    jobs.retain(|_, j| !super::setup_expired(j.last_touched_at, EPIC_SETUP_TTL_MS));
-    jobs.insert(
+    SETUP_JOBS.insert(
         setup_id.clone(),
         EpicSetupJob {
             known_account_ids: known,
-            last_touched_at: created_at,
         },
-    );
-    drop(jobs);
+    )?;
 
     // Kill launcher, clear auth files to force login screen
     kill_epic();
@@ -847,17 +714,7 @@ pub fn get_account_setup_status(
     app_handle: &dyn AppContext,
     setup_id: &str,
 ) -> Result<SetupStatus, String> {
-    let job = {
-        let mut jobs = setup_jobs()
-            .lock()
-            .map_err(|_| "Epic setup storage is unavailable".to_string())?;
-        jobs.retain(|_, j| !super::setup_expired(j.last_touched_at, EPIC_SETUP_TTL_MS));
-        let Some(job) = jobs.get_mut(setup_id) else {
-            return Err("Epic setup session not found".into());
-        };
-        job.last_touched_at = super::now_unix_ms();
-        job.clone()
-    };
+    let job = SETUP_JOBS.touch(setup_id)?;
 
     // Detect the new account: registry first, then new files in the Data dir.
     let new_account_id = read_registry_account_id()
@@ -892,9 +749,7 @@ pub fn get_account_setup_status(
         save_auth_snapshot(app_handle, &key)?;
         let _ = remember_account_usage(app_handle, &key);
 
-        if let Ok(mut jobs) = setup_jobs().lock() {
-            jobs.remove(setup_id);
-        }
+        SETUP_JOBS.remove(setup_id);
 
         return Ok(super::make_setup_status(
             setup_id,
@@ -925,12 +780,7 @@ pub fn get_account_setup_status(
 }
 
 pub fn cancel_account_setup(setup_id: &str) -> Result<(), String> {
-    let mut jobs = setup_jobs()
-        .lock()
-        .map_err(|_| "Epic setup storage is unavailable".to_string())?;
-    jobs.retain(|_, j| !super::setup_expired(j.last_touched_at, EPIC_SETUP_TTL_MS));
-    jobs.remove(setup_id);
-    Ok(())
+    SETUP_JOBS.cancel(setup_id)
 }
 
 pub fn forget_account(app_handle: &dyn AppContext, account_id: &str) -> Result<(), String> {
@@ -1116,6 +966,7 @@ mod tests {
 
     #[test]
     fn encrypted_header_is_accs() {
+        use crate::snapshot_crypto::ENCRYPTED_HEADER;
         // Snapshots must reuse Riot's header so the two stay interchangeable.
         assert_eq!(ENCRYPTED_HEADER, b"ACCS");
     }

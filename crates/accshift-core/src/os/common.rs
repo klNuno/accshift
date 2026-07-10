@@ -31,7 +31,12 @@ fn system_mutex() -> &'static Mutex<System> {
 /// that have to discover processes by name.
 fn with_refreshed_system<R>(f: impl FnOnce(&System) -> R) -> R {
     let mut system = system_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    system.refresh_processes(ProcessesToUpdate::All, true);
+    // Callers only read process names, pids and statuses, all of which come
+    // with the bare process enumeration. The default refresh kind would also
+    // collect cpu / memory / disk usage / exe for every process on the box —
+    // pure waste on a path polled every 100ms during switches and every few
+    // seconds by the streamer-mode watcher.
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::new());
     f(&system)
 }
 
@@ -44,7 +49,13 @@ fn with_refreshed_system<R>(f: impl FnOnce(&System) -> R) -> R {
 fn with_refreshed_pids<R>(pids: &[Pid], f: impl FnOnce(&System) -> R) -> R {
     let mut system = system_mutex().lock().unwrap_or_else(|e| e.into_inner());
     if !pids.is_empty() {
-        system.refresh_processes(ProcessesToUpdate::Some(pids), true);
+        // Only the status is read here (see `is_live`); skip the cpu / memory
+        // / disk collection the default refresh kind would do.
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(pids),
+            true,
+            ProcessRefreshKind::new(),
+        );
     }
     f(&system)
 }
@@ -102,12 +113,20 @@ impl<'a> NameMatcher<'a> {
 }
 
 pub fn is_process_running(process_name: &str) -> bool {
-    let matcher = NameMatcher::new(process_name);
+    any_process_running(&[process_name])
+}
+
+/// Whether any of `process_names` has a live process, with a single process
+/// table refresh for the whole batch. Platforms watching several executables
+/// (launcher + services + helpers) should prefer this over calling
+/// `is_process_running` once per name.
+pub fn any_process_running(process_names: &[&str]) -> bool {
+    let matchers: Vec<NameMatcher> = process_names.iter().map(|n| NameMatcher::new(n)).collect();
     with_refreshed_system(|system| {
         system
             .processes()
             .values()
-            .any(|p| matcher.matches(p) && is_live(p))
+            .any(|p| is_live(p) && matchers.iter().any(|m| m.matches(p)))
     })
 }
 
@@ -202,6 +221,31 @@ pub fn kill_process(process_name: &str) -> Result<(), AppError> {
         Err(AppError::SteamElevated)
     } else {
         Err(AppError::KillSteamTimeout)
+    }
+}
+
+/// Kill every process in `process_names`, best effort. Failures are ignored:
+/// callers that need a guarantee re-check with `any_process_running`.
+pub fn kill_processes(process_names: &[&str]) {
+    for process_name in process_names {
+        let _ = kill_process(process_name);
+    }
+}
+
+/// Shut a client down before touching its files: kill every process in
+/// `process_names`, wait up to `timeout_ms` for each to actually exit, then
+/// sleep `settle` so exit-time flushes (config files, leveldb, ...) land on
+/// disk. No-op when none of the processes is running.
+pub fn quit_processes_and_wait(process_names: &[&str], timeout_ms: u32, settle: Duration) {
+    if !any_process_running(process_names) {
+        return;
+    }
+    kill_processes(process_names);
+    for process_name in process_names {
+        wait_for_process_exit(process_name, timeout_ms);
+    }
+    if !settle.is_zero() {
+        std::thread::sleep(settle);
     }
 }
 

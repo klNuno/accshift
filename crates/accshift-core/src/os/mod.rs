@@ -1,11 +1,14 @@
 use crate::error::AppError;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 mod common;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "windows")]
+pub mod registry;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod secrets;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -32,6 +35,23 @@ pub fn is_process_running(process_name: &str) -> bool {
     common::is_process_running(process_name)
 }
 
+/// Whether any of `process_names` is running, using one process-table scan
+/// for the whole batch.
+pub fn any_process_running(process_names: &[&str]) -> bool {
+    common::any_process_running(process_names)
+}
+
+/// Kill every process in `process_names`, best effort.
+pub fn kill_processes(process_names: &[&str]) {
+    common::kill_processes(process_names)
+}
+
+/// Kill `process_names`, wait up to `timeout_ms` for each to exit, then sleep
+/// `settle` so exit-time file flushes complete. No-op when nothing is running.
+pub fn quit_processes_and_wait(process_names: &[&str], timeout_ms: u32, settle: Duration) {
+    common::quit_processes_and_wait(process_names, timeout_ms, settle)
+}
+
 pub fn is_streaming_software_running() -> bool {
     common::is_streaming_software_running()
 }
@@ -42,6 +62,19 @@ pub fn kill_process(process_name: &str) -> Result<(), AppError> {
 
 pub fn wait_for_process_exit(process_name: &str, timeout_ms: u32) -> bool {
     common::wait_for_process_exit(process_name, timeout_ms)
+}
+
+/// A `Command` that won't flash a console window when spawned from the GUI
+/// process. `CREATE_NO_WINDOW` on Windows, plain `Command::new` elsewhere.
+#[cfg(target_os = "windows")]
+pub fn hidden_command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    windows::hidden_command(program)
+}
+
+/// See the Windows variant above.
+#[cfg(not(target_os = "windows"))]
+pub fn hidden_command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    std::process::Command::new(program)
 }
 
 pub fn open_url(url: &str) -> Result<(), AppError> {

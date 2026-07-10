@@ -1,19 +1,22 @@
 use crate::config::{self, JagexAccountConfig};
+use crate::platforms::setup_jobs::{SetupJobs, DEFAULT_SETUP_TTL_MS};
 use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
+use crate::snapshot_crypto::{
+    self, decrypted_copy_file, delete_encrypted_file_secret, encrypted_copy_file,
+    free_dir_secrets, DirCopyOptions,
+};
 use crate::{AppContext, AppCtx};
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
 
 const JAGEX_PROCESS_NAMES: &[&str] = &["JagexLauncher.exe"];
 const JAGEX_EXECUTABLE_NAME: &str = "JagexLauncher.exe";
-const JAGEX_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
 const POST_KILL_SETTLE_MS: u64 = 500;
 /// Longest we wait for the launcher to flush its auth files to disk and exit
 /// after a quit request before validating the snapshot source.
@@ -57,15 +60,8 @@ pub struct JagexStartupSnapshot {
 // Setup job tracking
 // ---------------------------------------------------------------------------
 
-#[derive(Clone)]
-struct JagexSetupJob {
-    last_touched_at: u64,
-}
-
-fn setup_jobs() -> &'static Mutex<HashMap<String, JagexSetupJob>> {
-    static JOBS: OnceLock<Mutex<HashMap<String, JagexSetupJob>>> = OnceLock::new();
-    JOBS.get_or_init(|| Mutex::new(HashMap::new()))
-}
+/// Jagex jobs carry no payload: the setup id and its TTL are the whole state.
+static SETUP_JOBS: SetupJobs<()> = SetupJobs::new("Jagex", DEFAULT_SETUP_TTL_MS);
 
 // ---------------------------------------------------------------------------
 // Path helpers
@@ -149,112 +145,15 @@ fn is_valid_jagex_account_id(s: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 fn auth_cache_dir(app_handle: &dyn AppContext, account_id: &str) -> Result<PathBuf, String> {
-    let base = crate::storage::jagex_snapshots_dir(app_handle)?.join(account_id);
+    let base = crate::storage::platform_snapshots_dir(app_handle, "jagex")?.join(account_id);
     Ok(base)
-}
-
-/// Magic header identifying an encrypted snapshot file (shared with Riot/Epic).
-const ENCRYPTED_HEADER: &[u8] = b"ACCS";
-
-/// Copy a file and encrypt its contents (DPAPI on Windows, keyring token elsewhere).
-fn encrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
-    let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
-    let encrypted = crate::os::encrypt_bytes(&data)
-        .map_err(|e| format!("Could not encrypt {}: {e}", source.display()))?;
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-    }
-    let mut out = Vec::with_capacity(ENCRYPTED_HEADER.len() + encrypted.len());
-    out.extend_from_slice(ENCRYPTED_HEADER);
-    out.extend_from_slice(&encrypted);
-    fs::write(dest, &out).map_err(|e| format!("Could not write {}: {e}", dest.display()))
-}
-
-/// Copy a file, decrypting if it has the header (legacy plaintext files pass through).
-fn decrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
-    let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
-    let content = if data.starts_with(ENCRYPTED_HEADER) {
-        crate::os::decrypt_bytes(&data[ENCRYPTED_HEADER.len()..])
-            .map_err(|e| format!("Could not decrypt {}: {e}", source.display()))?
-    } else {
-        data
-    };
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-    }
-    fs::write(dest, &content).map_err(|e| format!("Could not write {}: {e}", dest.display()))
-}
-
-/// Release the OS-keyring entry an encrypted snapshot file points at (no-op on
-/// Windows DPAPI). Legacy plaintext files have no header and own no secret.
-fn delete_encrypted_file_secret(path: &Path) {
-    let Ok(data) = fs::read(path) else {
-        return;
-    };
-    if data.starts_with(ENCRYPTED_HEADER) {
-        let _ = crate::os::delete_bytes(&data[ENCRYPTED_HEADER.len()..]);
-    }
-}
-
-/// Recursively copy a directory tree, encrypting every file. Missing sources are
-/// a no-op (the account may never have populated that directory).
-fn encrypted_copy_dir(source: &Path, dest: &Path) -> Result<(), String> {
-    if !source.exists() {
-        return Ok(());
-    }
-    fs::create_dir_all(dest)
-        .map_err(|e| format!("Could not create directory {}: {e}", dest.display()))?;
-    for entry in fs::read_dir(source)
-        .map_err(|e| format!("Could not read directory {}: {e}", source.display()))?
-    {
-        let entry = entry.map_err(|e| format!("Could not read directory entry: {e}"))?;
-        let file_type = entry
-            .file_type()
-            .map_err(|e| format!("Could not read file type: {e}"))?;
-        let src_path = entry.path();
-        let dst_path = dest.join(entry.file_name());
-        if file_type.is_dir() {
-            encrypted_copy_dir(&src_path, &dst_path)?;
-        } else if file_type.is_file() {
-            encrypted_copy_file(&src_path, &dst_path)?;
-        }
-        // Symlinks and other special entries are skipped by design.
-    }
-    Ok(())
-}
-
-/// Recursively copy an encrypted snapshot tree back to disk, decrypting files.
-fn decrypted_copy_dir(source: &Path, dest: &Path) -> Result<(), String> {
-    if !source.exists() {
-        return Ok(());
-    }
-    fs::create_dir_all(dest)
-        .map_err(|e| format!("Could not create directory {}: {e}", dest.display()))?;
-    for entry in fs::read_dir(source)
-        .map_err(|e| format!("Could not read directory {}: {e}", source.display()))?
-    {
-        let entry = entry.map_err(|e| format!("Could not read directory entry: {e}"))?;
-        let file_type = entry
-            .file_type()
-            .map_err(|e| format!("Could not read file type: {e}"))?;
-        let src_path = entry.path();
-        let dst_path = dest.join(entry.file_name());
-        if file_type.is_dir() {
-            decrypted_copy_dir(&src_path, &dst_path)?;
-        } else if file_type.is_file() {
-            decrypted_copy_file(&src_path, &dst_path)?;
-        }
-    }
-    Ok(())
 }
 
 /// Snapshot a live session directory: drop the stale snapshot, then encrypt a
 /// fresh copy of the source tree. A missing source just clears the snapshot.
 fn save_dir_snapshot(source: &Path, snapshot_dir: &Path) -> Result<(), String> {
     let _ = fs::remove_dir_all(snapshot_dir);
-    encrypted_copy_dir(source, snapshot_dir)
+    snapshot_crypto::encrypted_copy_dir(source, snapshot_dir, DirCopyOptions::default())
 }
 
 /// Restore a session directory from its encrypted snapshot. Stage a decrypted
@@ -270,7 +169,7 @@ fn restore_dir_snapshot(snapshot_dir: &Path, live_dir: &Path) -> Result<(), Stri
     let staging = live_dir.with_file_name(staging_name);
     let _ = fs::remove_dir_all(&staging);
 
-    decrypted_copy_dir(snapshot_dir, &staging)?;
+    snapshot_crypto::decrypted_copy_dir(snapshot_dir, &staging, DirCopyOptions::default())?;
 
     if live_dir.exists() {
         fs::remove_dir_all(live_dir)
@@ -288,22 +187,6 @@ fn restore_dir_snapshot(snapshot_dir: &Path, live_dir: &Path) -> Result<(), Stri
             crate::fs_utils::copy_dir_recursive(&staging, live_dir, &[])?;
             let _ = fs::remove_dir_all(&staging);
             Ok(())
-        }
-    }
-}
-
-/// Free any keyring entries every encrypted file under `dir` points at before
-/// the directory is removed (no-op under Windows DPAPI).
-fn free_dir_secrets(dir: &Path) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            free_dir_secrets(&path);
-        } else {
-            delete_encrypted_file_secret(&path);
         }
     }
 }
@@ -436,28 +319,17 @@ fn login_artifacts_present() -> bool {
 // ---------------------------------------------------------------------------
 
 fn is_jagex_running() -> bool {
-    JAGEX_PROCESS_NAMES
-        .iter()
-        .any(|name| crate::os::is_process_running(name))
-}
-
-fn kill_jagex() {
-    for process_name in JAGEX_PROCESS_NAMES {
-        let _ = crate::os::kill_process(process_name);
-    }
+    crate::os::any_process_running(JAGEX_PROCESS_NAMES)
 }
 
 /// Kill the launcher and wait for it to actually exit, so callers don't race
 /// its exit-time flush of the auth files to disk.
 fn quit_jagex_and_wait() {
-    if !is_jagex_running() {
-        return;
-    }
-    kill_jagex();
-    for process_name in JAGEX_PROCESS_NAMES {
-        crate::os::wait_for_process_exit(process_name, SETUP_QUIT_TIMEOUT_MS);
-    }
-    std::thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
+    crate::os::quit_processes_and_wait(
+        JAGEX_PROCESS_NAMES,
+        SETUP_QUIT_TIMEOUT_MS,
+        std::time::Duration::from_millis(POST_KILL_SETTLE_MS),
+    );
 }
 
 fn launch_jagex(app_handle: &dyn AppContext) -> Result<(), String> {
@@ -683,19 +555,7 @@ pub fn begin_account_setup(app_handle: &dyn AppContext) -> Result<SetupStatus, S
     capture_current_account(app_handle)?;
 
     let setup_id = format!("jagex-setup-{}", Uuid::new_v4());
-    let created_at = super::now_unix_ms();
-
-    let mut jobs = setup_jobs()
-        .lock()
-        .map_err(|_| "Jagex setup storage is unavailable".to_string())?;
-    jobs.retain(|_, j| !super::setup_expired(j.last_touched_at, JAGEX_SETUP_TTL_MS));
-    jobs.insert(
-        setup_id.clone(),
-        JagexSetupJob {
-            last_touched_at: created_at,
-        },
-    );
-    drop(jobs);
+    SETUP_JOBS.insert(setup_id.clone(), ())?;
 
     // Kill the launcher, clear the live session to force the login screen.
     quit_jagex_and_wait();
@@ -726,16 +586,7 @@ pub fn get_account_setup_status(
     app_handle: &dyn AppContext,
     setup_id: &str,
 ) -> Result<SetupStatus, String> {
-    {
-        let mut jobs = setup_jobs()
-            .lock()
-            .map_err(|_| "Jagex setup storage is unavailable".to_string())?;
-        jobs.retain(|_, j| !super::setup_expired(j.last_touched_at, JAGEX_SETUP_TTL_MS));
-        let Some(job) = jobs.get_mut(setup_id) else {
-            return Err("Jagex setup session not found".into());
-        };
-        job.last_touched_at = super::now_unix_ms();
-    }
+    SETUP_JOBS.touch(setup_id)?;
 
     // Setup deleted the auth dir and credential blob, so fresh session
     // material means the user signed in.
@@ -761,9 +612,7 @@ pub fn get_account_setup_status(
             cfg.jagex.current_account = key.clone();
         })?;
 
-        if let Ok(mut jobs) = setup_jobs().lock() {
-            jobs.remove(setup_id);
-        }
+        SETUP_JOBS.remove(setup_id);
 
         // No display name: Jagex exposes none, the user labels the account.
         return Ok(super::make_setup_status(setup_id, "ready", key, "", ""));
@@ -789,12 +638,7 @@ pub fn get_account_setup_status(
 }
 
 pub fn cancel_account_setup(setup_id: &str) -> Result<(), String> {
-    let mut jobs = setup_jobs()
-        .lock()
-        .map_err(|_| "Jagex setup storage is unavailable".to_string())?;
-    jobs.retain(|_, j| !super::setup_expired(j.last_touched_at, JAGEX_SETUP_TTL_MS));
-    jobs.remove(setup_id);
-    Ok(())
+    SETUP_JOBS.cancel(setup_id)
 }
 
 pub fn forget_account(app_handle: &dyn AppContext, account_id: &str) -> Result<(), String> {
@@ -978,6 +822,7 @@ mod tests {
 
     #[test]
     fn encrypted_header_is_accs() {
+        use crate::snapshot_crypto::ENCRYPTED_HEADER;
         assert_eq!(ENCRYPTED_HEADER, b"ACCS");
     }
 

@@ -1,5 +1,10 @@
 use crate::config::{self, GogAccountConfig};
+use crate::platforms::setup_jobs::{SetupJobs, DEFAULT_SETUP_TTL_MS};
 use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
+use crate::snapshot_crypto::{
+    self, decrypted_copy_file, delete_encrypted_file_secret, encrypted_copy_file,
+    free_dir_secrets, read_decrypted_bytes, write_encrypted_bytes, DirCopyOptions,
+};
 use crate::{AppContext, AppCtx};
 use serde::Serialize;
 use serde_json::Value;
@@ -7,13 +12,9 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use crate::os::registry::{self, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
 use std::process::Command;
-use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
-#[cfg(target_os = "windows")]
-use winreg::enums::*;
-#[cfg(target_os = "windows")]
-use winreg::RegKey;
 
 const GOG_PROCESS_NAMES: &[&str] = &[
     "GalaxyClient.exe",
@@ -22,7 +23,6 @@ const GOG_PROCESS_NAMES: &[&str] = &[
     "GOG Galaxy Notifications Renderer.exe",
 ];
 const GOG_EXECUTABLE_NAME: &str = "GalaxyClient.exe";
-const GOG_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
 const POST_KILL_SETTLE_MS: u64 = 500;
 /// Longest we wait for the client to flush its config to disk and exit after a
 /// quit request before validating the snapshot source.
@@ -77,13 +77,9 @@ pub struct GogStartupSnapshot {
 #[derive(Clone)]
 struct GogSetupJob {
     known_account_ids: HashSet<String>,
-    last_touched_at: u64,
 }
 
-fn setup_jobs() -> &'static Mutex<HashMap<String, GogSetupJob>> {
-    static JOBS: OnceLock<Mutex<HashMap<String, GogSetupJob>>> = OnceLock::new();
-    JOBS.get_or_init(|| Mutex::new(HashMap::new()))
-}
+static SETUP_JOBS: SetupJobs<GogSetupJob> = SetupJobs::new("GOG", DEFAULT_SETUP_TTL_MS);
 
 // ---------------------------------------------------------------------------
 // Path helpers
@@ -126,20 +122,15 @@ fn gog_default_executable() -> Option<PathBuf> {
     None
 }
 
-#[cfg(target_os = "windows")]
 fn gog_executable_from_registry() -> Option<PathBuf> {
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     for subkey in [
         "SOFTWARE\\WOW6432Node\\GOG.com\\GalaxyClient\\paths",
         "SOFTWARE\\GOG.com\\GalaxyClient\\paths",
     ] {
-        let Ok(key) = hklm.open_subkey(subkey) else {
+        let Some(client) = registry::read_string(HKEY_LOCAL_MACHINE, subkey, "client") else {
             continue;
         };
-        let Ok(client) = key.get_value::<String, _>("client") else {
-            continue;
-        };
-        let base = PathBuf::from(client.trim().trim_end_matches('\\'));
+        let base = PathBuf::from(client.trim_end_matches('\\'));
         // The "client" value may point at the install dir or the exe itself.
         if base.is_file() {
             return Some(base);
@@ -149,11 +140,6 @@ fn gog_executable_from_registry() -> Option<PathBuf> {
             return Some(candidate);
         }
     }
-    None
-}
-
-#[cfg(not(target_os = "windows"))]
-fn gog_executable_from_registry() -> Option<PathBuf> {
     None
 }
 
@@ -186,50 +172,17 @@ fn resolve_executable(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
 // Registry: current account detection
 // ---------------------------------------------------------------------------
 
-#[cfg(target_os = "windows")]
 fn read_registry_string(key_path: &str, value_name: &str) -> Option<String> {
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let key = hkcu.open_subkey(key_path).ok()?;
-    let value: String = key.get_value(value_name).ok()?;
-    let trimmed = value.trim().to_string();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
-    }
+    registry::read_string(HKEY_CURRENT_USER, key_path, value_name)
 }
 
-#[cfg(not(target_os = "windows"))]
-fn read_registry_string(_key_path: &str, _value_name: &str) -> Option<String> {
-    None
-}
-
-#[cfg(target_os = "windows")]
 fn write_registry_string(key_path: &str, value_name: &str, data: &str) -> Result<(), String> {
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let (key, _) = hkcu
-        .create_subkey(key_path)
-        .map_err(|e| format!("Could not open GOG registry key {key_path}: {e}"))?;
-    key.set_value(value_name, &data)
-        .map_err(|e| format!("Could not write GOG registry value {value_name}: {e}"))?;
-    Ok(())
+    registry::write_string(HKEY_CURRENT_USER, key_path, value_name, data)
 }
 
-#[cfg(not(target_os = "windows"))]
-fn write_registry_string(_key_path: &str, _value_name: &str, _data: &str) -> Result<(), String> {
-    Err("GOG Galaxy registry is only available on Windows".to_string())
-}
-
-#[cfg(target_os = "windows")]
 fn delete_registry_value(key_path: &str, value_name: &str) {
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    if let Ok(key) = hkcu.open_subkey_with_flags(key_path, KEY_WRITE) {
-        let _ = key.delete_value(value_name);
-    }
+    registry::delete_value(HKEY_CURRENT_USER, key_path, value_name)
 }
-
-#[cfg(not(target_os = "windows"))]
-fn delete_registry_value(_key_path: &str, _value_name: &str) {}
 
 /// The account id is the registry `settings\userId`, read directly (no LevelDB).
 fn read_registry_account_id() -> Option<String> {
@@ -264,137 +217,15 @@ fn is_valid_gog_account_id(s: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 fn auth_cache_dir(app_handle: &dyn AppContext, account_id: &str) -> Result<PathBuf, String> {
-    let base = crate::storage::gog_snapshots_dir(app_handle)?.join(account_id);
+    let base = crate::storage::platform_snapshots_dir(app_handle, "gog")?.join(account_id);
     Ok(base)
-}
-
-/// Magic header identifying an encrypted snapshot file (shared with Riot/Epic).
-const ENCRYPTED_HEADER: &[u8] = b"ACCS";
-
-/// Copy a file and encrypt its contents (DPAPI on Windows, keyring token elsewhere).
-fn encrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
-    let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
-    let encrypted = crate::os::encrypt_bytes(&data)
-        .map_err(|e| format!("Could not encrypt {}: {e}", source.display()))?;
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-    }
-    let mut out = Vec::with_capacity(ENCRYPTED_HEADER.len() + encrypted.len());
-    out.extend_from_slice(ENCRYPTED_HEADER);
-    out.extend_from_slice(&encrypted);
-    fs::write(dest, &out).map_err(|e| format!("Could not write {}: {e}", dest.display()))
-}
-
-/// Copy a file, decrypting if it has the header (legacy plaintext files pass through).
-fn decrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
-    let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
-    let content = if data.starts_with(ENCRYPTED_HEADER) {
-        crate::os::decrypt_bytes(&data[ENCRYPTED_HEADER.len()..])
-            .map_err(|e| format!("Could not decrypt {}: {e}", source.display()))?
-    } else {
-        data
-    };
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-    }
-    fs::write(dest, &content).map_err(|e| format!("Could not write {}: {e}", dest.display()))
-}
-
-/// Encrypt raw bytes and write them with the header (no temp plaintext on disk).
-fn write_encrypted_bytes(dest: &Path, data: &[u8]) -> Result<(), String> {
-    let encrypted = crate::os::encrypt_bytes(data)
-        .map_err(|e| format!("Could not encrypt {}: {e}", dest.display()))?;
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-    }
-    let mut out = Vec::with_capacity(ENCRYPTED_HEADER.len() + encrypted.len());
-    out.extend_from_slice(ENCRYPTED_HEADER);
-    out.extend_from_slice(&encrypted);
-    fs::write(dest, &out).map_err(|e| format!("Could not write {}: {e}", dest.display()))
-}
-
-/// Read a snapshot file, decrypting it if it carries the header.
-fn read_decrypted_bytes(path: &Path) -> Result<Vec<u8>, String> {
-    let raw = fs::read(path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
-    if raw.starts_with(ENCRYPTED_HEADER) {
-        crate::os::decrypt_bytes(&raw[ENCRYPTED_HEADER.len()..])
-            .map_err(|e| format!("Could not decrypt {}: {e}", path.display()))
-    } else {
-        Ok(raw)
-    }
-}
-
-/// Release the OS-keyring entry an encrypted snapshot file points at (no-op on
-/// Windows DPAPI). Legacy plaintext files have no header and own no secret.
-fn delete_encrypted_file_secret(path: &Path) {
-    let Ok(data) = fs::read(path) else {
-        return;
-    };
-    if data.starts_with(ENCRYPTED_HEADER) {
-        let _ = crate::os::delete_bytes(&data[ENCRYPTED_HEADER.len()..]);
-    }
-}
-
-/// Recursively copy a directory tree, encrypting every file. Missing sources are
-/// a no-op (the account may never have populated that directory).
-fn encrypted_copy_dir(source: &Path, dest: &Path) -> Result<(), String> {
-    if !source.exists() {
-        return Ok(());
-    }
-    fs::create_dir_all(dest)
-        .map_err(|e| format!("Could not create directory {}: {e}", dest.display()))?;
-    for entry in fs::read_dir(source)
-        .map_err(|e| format!("Could not read directory {}: {e}", source.display()))?
-    {
-        let entry = entry.map_err(|e| format!("Could not read directory entry: {e}"))?;
-        let file_type = entry
-            .file_type()
-            .map_err(|e| format!("Could not read file type: {e}"))?;
-        let src_path = entry.path();
-        let dst_path = dest.join(entry.file_name());
-        if file_type.is_dir() {
-            encrypted_copy_dir(&src_path, &dst_path)?;
-        } else if file_type.is_file() {
-            encrypted_copy_file(&src_path, &dst_path)?;
-        }
-        // Symlinks and other special entries are skipped by design.
-    }
-    Ok(())
-}
-
-/// Recursively copy an encrypted snapshot tree back to disk, decrypting files.
-fn decrypted_copy_dir(source: &Path, dest: &Path) -> Result<(), String> {
-    if !source.exists() {
-        return Ok(());
-    }
-    fs::create_dir_all(dest)
-        .map_err(|e| format!("Could not create directory {}: {e}", dest.display()))?;
-    for entry in fs::read_dir(source)
-        .map_err(|e| format!("Could not read directory {}: {e}", source.display()))?
-    {
-        let entry = entry.map_err(|e| format!("Could not read directory entry: {e}"))?;
-        let file_type = entry
-            .file_type()
-            .map_err(|e| format!("Could not read file type: {e}"))?;
-        let src_path = entry.path();
-        let dst_path = dest.join(entry.file_name());
-        if file_type.is_dir() {
-            decrypted_copy_dir(&src_path, &dst_path)?;
-        } else if file_type.is_file() {
-            decrypted_copy_file(&src_path, &dst_path)?;
-        }
-    }
-    Ok(())
 }
 
 /// Snapshot a live session directory: drop the stale snapshot, then encrypt a
 /// fresh copy of the source tree. A missing source just clears the snapshot.
 fn save_dir_snapshot(source: &Path, snapshot_dir: &Path) -> Result<(), String> {
     let _ = fs::remove_dir_all(snapshot_dir);
-    encrypted_copy_dir(source, snapshot_dir)
+    snapshot_crypto::encrypted_copy_dir(source, snapshot_dir, DirCopyOptions::default())
 }
 
 /// Restore a session directory from its encrypted snapshot. Stage a decrypted
@@ -410,7 +241,7 @@ fn restore_dir_snapshot(snapshot_dir: &Path, live_dir: &Path) -> Result<(), Stri
     let staging = live_dir.with_file_name(staging_name);
     let _ = fs::remove_dir_all(&staging);
 
-    decrypted_copy_dir(snapshot_dir, &staging)?;
+    snapshot_crypto::decrypted_copy_dir(snapshot_dir, &staging, DirCopyOptions::default())?;
 
     if live_dir.exists() {
         fs::remove_dir_all(live_dir)
@@ -428,22 +259,6 @@ fn restore_dir_snapshot(snapshot_dir: &Path, live_dir: &Path) -> Result<(), Stri
             crate::fs_utils::copy_dir_recursive(&staging, live_dir, &[])?;
             let _ = fs::remove_dir_all(&staging);
             Ok(())
-        }
-    }
-}
-
-/// Free any keyring entries every encrypted file under `dir` points at before
-/// the directory is removed (no-op under Windows DPAPI).
-fn free_dir_secrets(dir: &Path) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            free_dir_secrets(&path);
-        } else {
-            delete_encrypted_file_secret(&path);
         }
     }
 }
@@ -599,28 +414,17 @@ fn clear_session_dirs() {
 // ---------------------------------------------------------------------------
 
 fn is_gog_running() -> bool {
-    GOG_PROCESS_NAMES
-        .iter()
-        .any(|name| crate::os::is_process_running(name))
-}
-
-fn kill_gog() {
-    for process_name in GOG_PROCESS_NAMES {
-        let _ = crate::os::kill_process(process_name);
-    }
+    crate::os::any_process_running(GOG_PROCESS_NAMES)
 }
 
 /// Kill the client and wait for each process to actually exit, so callers don't
 /// race the launcher's exit-time flush of config.json / the session db to disk.
 fn quit_gog_and_wait() {
-    if !is_gog_running() {
-        return;
-    }
-    kill_gog();
-    for process_name in GOG_PROCESS_NAMES {
-        crate::os::wait_for_process_exit(process_name, SETUP_QUIT_TIMEOUT_MS);
-    }
-    std::thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
+    crate::os::quit_processes_and_wait(
+        GOG_PROCESS_NAMES,
+        SETUP_QUIT_TIMEOUT_MS,
+        std::time::Duration::from_millis(POST_KILL_SETTLE_MS),
+    );
 }
 
 /// True when a file exists, is non-empty, and was modified within
@@ -893,20 +697,12 @@ pub fn begin_account_setup(app_handle: &dyn AppContext) -> Result<SetupStatus, S
     }
 
     let setup_id = format!("gog-setup-{}", Uuid::new_v4());
-    let created_at = super::now_unix_ms();
-
-    let mut jobs = setup_jobs()
-        .lock()
-        .map_err(|_| "GOG setup storage is unavailable".to_string())?;
-    jobs.retain(|_, j| !super::setup_expired(j.last_touched_at, GOG_SETUP_TTL_MS));
-    jobs.insert(
+    SETUP_JOBS.insert(
         setup_id.clone(),
         GogSetupJob {
             known_account_ids: known,
-            last_touched_at: created_at,
         },
-    );
-    drop(jobs);
+    )?;
 
     // Kill the client, clear the live session to force the login screen.
     quit_gog_and_wait();
@@ -936,17 +732,7 @@ pub fn get_account_setup_status(
     app_handle: &dyn AppContext,
     setup_id: &str,
 ) -> Result<SetupStatus, String> {
-    let job = {
-        let mut jobs = setup_jobs()
-            .lock()
-            .map_err(|_| "GOG setup storage is unavailable".to_string())?;
-        jobs.retain(|_, j| !super::setup_expired(j.last_touched_at, GOG_SETUP_TTL_MS));
-        let Some(job) = jobs.get_mut(setup_id) else {
-            return Err("GOG setup session not found".into());
-        };
-        job.last_touched_at = super::now_unix_ms();
-        job.clone()
-    };
+    let job = SETUP_JOBS.touch(setup_id)?;
 
     // Detect the new account via the registry user id.
     let new_account_id = read_registry_account_id()
@@ -972,9 +758,7 @@ pub fn get_account_setup_status(
         save_auth_snapshot(app_handle, &key)?;
         let _ = remember_account_usage(app_handle, &key);
 
-        if let Ok(mut jobs) = setup_jobs().lock() {
-            jobs.remove(setup_id);
-        }
+        SETUP_JOBS.remove(setup_id);
 
         return Ok(super::make_setup_status(
             setup_id,
@@ -1005,12 +789,7 @@ pub fn get_account_setup_status(
 }
 
 pub fn cancel_account_setup(setup_id: &str) -> Result<(), String> {
-    let mut jobs = setup_jobs()
-        .lock()
-        .map_err(|_| "GOG setup storage is unavailable".to_string())?;
-    jobs.retain(|_, j| !super::setup_expired(j.last_touched_at, GOG_SETUP_TTL_MS));
-    jobs.remove(setup_id);
-    Ok(())
+    SETUP_JOBS.cancel(setup_id)
 }
 
 pub fn forget_account(app_handle: &dyn AppContext, account_id: &str) -> Result<(), String> {
@@ -1184,6 +963,7 @@ mod tests {
 
     #[test]
     fn encrypted_header_is_accs() {
+        use crate::snapshot_crypto::ENCRYPTED_HEADER;
         assert_eq!(ENCRYPTED_HEADER, b"ACCS");
     }
 

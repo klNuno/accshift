@@ -1,16 +1,16 @@
 use crate::config::{self, RobloxAccountConfig};
+use crate::os::registry;
+use crate::platforms::setup_jobs::{SetupJobs, DEFAULT_SETUP_TTL_MS};
 use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
 use crate::{AppContext, AppCtx};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
 const ROBLOX_PROCESS_NAMES: &[&str] = &["RobloxPlayerBeta.exe", "RobloxStudioBeta.exe"];
-const ROBLOX_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
 const ROBLOX_AUTH_RESPONSE_MAX_BYTES: u64 = 1024 * 1024;
 
 // ---------------------------------------------------------------------------
@@ -47,23 +47,9 @@ pub struct RobloxProfileInfo {
 struct QuickLoginJob {
     code: String,
     private_key: Zeroizing<String>,
-    last_touched_at: u64,
 }
 
-fn setup_jobs() -> &'static Mutex<HashMap<String, QuickLoginJob>> {
-    static JOBS: OnceLock<Mutex<HashMap<String, QuickLoginJob>>> = OnceLock::new();
-    JOBS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn purge_expired_jobs(jobs: &mut HashMap<String, QuickLoginJob>) {
-    jobs.retain(|_, j| !super::setup_expired(j.last_touched_at, ROBLOX_SETUP_TTL_MS));
-}
-
-fn remove_setup_job(setup_id: &str) {
-    if let Ok(mut jobs) = setup_jobs().lock() {
-        jobs.remove(setup_id);
-    }
-}
+static SETUP_JOBS: SetupJobs<QuickLoginJob> = SetupJobs::new("Roblox", DEFAULT_SETUP_TTL_MS);
 
 // ---------------------------------------------------------------------------
 // Roblox API helpers (blocking)
@@ -216,23 +202,53 @@ fn probe_cookie_alive(cookie: &str) -> Option<bool> {
     }
 }
 
+/// Cap on concurrent `probe_cookie_alive` calls: enough to hide the network
+/// latency of large account lists without hammering the auth endpoint into
+/// rate-limiting us.
+const MAX_CONCURRENT_PROBES: usize = 8;
+
 /// User ids whose stored session cookie Roblox reports as invalid, so the UI can
 /// badge them before the user clicks into a switch that would fail. Empty cookies
 /// count as dead; unknown results (network/rate-limit) are omitted.
+///
+/// Probes run in parallel (bounded by `MAX_CONCURRENT_PROBES`): each one is a
+/// full HTTP round-trip with a 10s timeout, so probing N accounts sequentially
+/// made the badge refresh crawl.
 pub fn dead_session_user_ids(app_handle: &dyn AppContext) -> Vec<String> {
-    load_account_configs(app_handle)
-        .into_iter()
-        .filter_map(|account| {
-            let cookie = crate::os::decrypt_secret(&account.cookie_encrypted).ok()?;
-            if cookie.trim().is_empty() {
-                return Some(account.user_id);
+    let mut dead: Vec<String> = Vec::new();
+    let mut to_probe: Vec<(String, Zeroizing<String>)> = Vec::new();
+
+    for account in load_account_configs(app_handle) {
+        let Ok(cookie) = crate::os::decrypt_secret(&account.cookie_encrypted) else {
+            continue;
+        };
+        if cookie.trim().is_empty() {
+            dead.push(account.user_id);
+        } else {
+            to_probe.push((account.user_id, Zeroizing::new(cookie)));
+        }
+    }
+
+    for chunk in to_probe.chunks(MAX_CONCURRENT_PROBES) {
+        let alive_flags: Vec<Option<bool>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = chunk
+                .iter()
+                .map(|(_, cookie)| scope.spawn(move || probe_cookie_alive(cookie)))
+                .collect();
+            handles
+                .into_iter()
+                // A panicked probe reads as None: unknown, never flagged dead.
+                .map(|handle| handle.join().ok().flatten())
+                .collect()
+        });
+        for ((user_id, _), alive) in chunk.iter().zip(alive_flags) {
+            if alive == Some(false) {
+                dead.push(user_id.clone());
             }
-            match probe_cookie_alive(&cookie) {
-                Some(false) => Some(account.user_id),
-                _ => None,
-            }
-        })
-        .collect()
+        }
+    }
+
+    dead
 }
 
 fn extract_roblosecurity_cookie(headers: &reqwest::header::HeaderMap) -> Option<String> {
@@ -357,26 +373,17 @@ fn read_accounts(app_handle: &dyn AppContext) -> Vec<RobloxAccount> {
 // Registry (Windows)
 // ---------------------------------------------------------------------------
 
-#[cfg(target_os = "windows")]
+/// Registry key Roblox Studio keeps the live session cookie under (HKCU).
+const ROBLOX_COOKIE_KEY: &str = "SOFTWARE\\Roblox\\RobloxStudioBrowser\\roblox.com";
+
 fn write_cookie_to_registry(cookie: &str) -> Result<(), String> {
-    use winreg::enums::*;
-    use winreg::RegKey;
-
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let (key, _) = hkcu
-        .create_subkey("SOFTWARE\\Roblox\\RobloxStudioBrowser\\roblox.com")
-        .map_err(|e| format!("Could not open Roblox registry key: {e}"))?;
-
     let value = format!("COOK::<{cookie}>");
-    key.set_value(".ROBLOSECURITY", &value)
-        .map_err(|e| format!("Could not write Roblox cookie to registry: {e}"))?;
-
-    Ok(())
-}
-
-#[cfg(not(target_os = "windows"))]
-fn write_cookie_to_registry(_cookie: &str) -> Result<(), String> {
-    Err("Roblox registry switching is only supported on Windows".to_string())
+    registry::write_string(
+        registry::HKEY_CURRENT_USER,
+        ROBLOX_COOKIE_KEY,
+        ".ROBLOSECURITY",
+        &value,
+    )
 }
 
 /// Unwrap the `COOK::<cookie>` envelope Roblox / Studio store the cookie in.
@@ -384,9 +391,6 @@ fn write_cookie_to_registry(_cookie: &str) -> Result<(), String> {
 /// edits). Returns `None` for an empty result. Pure so it can be unit tested
 /// without touching the registry; the inverse of the format written by
 /// `write_cookie_to_registry`.
-// Only the Windows registry reader and the unit tests call this; on a
-// non-Windows release build it is intentionally dead.
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn unwrap_registry_cookie(value: &str) -> Option<String> {
     let unwrapped = value
         .strip_prefix("COOK::<")
@@ -404,31 +408,13 @@ fn unwrap_registry_cookie(value: &str) -> Option<String> {
 /// Read the live `.ROBLOSECURITY` cookie out of HKCU. Returns `Ok(None)` when
 /// the key or value is missing, which is the normal state on a fresh machine.
 /// Mirrors `write_cookie_to_registry`.
-#[cfg(target_os = "windows")]
 fn read_cookie_from_registry() -> Result<Option<String>, String> {
-    use winreg::enums::*;
-    use winreg::RegKey;
-
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let key = match hkcu.open_subkey("SOFTWARE\\Roblox\\RobloxStudioBrowser\\roblox.com") {
-        Ok(key) => key,
-        // Key absent = no cookie has ever been written. Not an error.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(format!("Could not open Roblox registry key: {e}")),
-    };
-
-    let value: String = match key.get_value(".ROBLOSECURITY") {
-        Ok(v) => v,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(format!("Could not read Roblox cookie from registry: {e}")),
-    };
-
-    Ok(unwrap_registry_cookie(&value))
-}
-
-#[cfg(not(target_os = "windows"))]
-fn read_cookie_from_registry() -> Result<Option<String>, String> {
-    Ok(None)
+    let value = registry::try_read_raw_string(
+        registry::HKEY_CURRENT_USER,
+        ROBLOX_COOKIE_KEY,
+        ".ROBLOSECURITY",
+    )?;
+    Ok(value.as_deref().and_then(unwrap_registry_cookie))
 }
 
 /// Before switching away from the active account, capture any cookie rotation
@@ -553,9 +539,7 @@ fn persist_rotated_cookie(app_handle: &dyn AppContext, account: &RobloxAccountCo
 }
 
 fn kill_roblox() {
-    for name in ROBLOX_PROCESS_NAMES {
-        let _ = crate::os::kill_process(name);
-    }
+    crate::os::kill_processes(ROBLOX_PROCESS_NAMES);
 }
 
 fn request_auth_ticket(cookie: &str) -> Result<String, String> {
@@ -706,18 +690,13 @@ pub fn begin_account_setup(app_handle: &dyn AppContext) -> Result<SetupStatus, S
     let setup_id = format!("roblox-setup-{}", Uuid::new_v4());
     let code = login_data.code.clone();
 
-    let mut jobs = setup_jobs()
-        .lock()
-        .map_err(|_| "Roblox setup storage is unavailable".to_string())?;
-    purge_expired_jobs(&mut jobs);
-    jobs.insert(
+    SETUP_JOBS.insert(
         setup_id.clone(),
         QuickLoginJob {
             code: login_data.code,
             private_key: Zeroizing::new(login_data.private_key),
-            last_touched_at: super::now_unix_ms(),
         },
-    );
+    )?;
 
     // accountDisplayName carries the Quick Login code for UI display
     Ok(super::make_setup_status(
@@ -733,17 +712,7 @@ pub fn get_account_setup_status(
     app_handle: &dyn AppContext,
     setup_id: &str,
 ) -> Result<SetupStatus, String> {
-    let job = {
-        let mut jobs = setup_jobs()
-            .lock()
-            .map_err(|_| "Roblox setup storage is unavailable".to_string())?;
-        purge_expired_jobs(&mut jobs);
-        let Some(job) = jobs.get_mut(setup_id) else {
-            return Err("Roblox setup session not found".to_string());
-        };
-        job.last_touched_at = super::now_unix_ms();
-        job.clone()
-    };
+    let job = SETUP_JOBS.touch(setup_id)?;
 
     // Poll Roblox Quick Login status
     let body = serde_json::json!({
@@ -836,7 +805,7 @@ pub fn get_account_setup_status(
                 Err(e) => {
                     let msg = format!("Could not encrypt cookie: {e}");
                     log_platform_error(app_handle, "roblox.setup_poll", "Encryption failed", &msg);
-                    remove_setup_job(setup_id);
+                    SETUP_JOBS.remove(setup_id);
                     return Ok(super::make_setup_status(setup_id, "failed", "", "", &msg));
                 }
             };
@@ -847,11 +816,11 @@ pub fn get_account_setup_status(
                     "Account storage failed",
                     &e,
                 );
-                remove_setup_job(setup_id);
+                SETUP_JOBS.remove(setup_id);
                 return Ok(super::make_setup_status(setup_id, "failed", "", "", &e));
             }
 
-            remove_setup_job(setup_id);
+            SETUP_JOBS.remove(setup_id);
 
             Ok(super::make_setup_status(
                 setup_id,
@@ -862,7 +831,7 @@ pub fn get_account_setup_status(
             ))
         }
         "Cancelled" => {
-            remove_setup_job(setup_id);
+            SETUP_JOBS.remove(setup_id);
             Ok(super::make_setup_status(
                 setup_id,
                 "failed",
@@ -883,14 +852,7 @@ pub fn get_account_setup_status(
 }
 
 pub fn cancel_account_setup(setup_id: &str) -> Result<(), String> {
-    let job = {
-        let mut jobs = setup_jobs()
-            .lock()
-            .map_err(|_| "Roblox setup storage is unavailable".to_string())?;
-        jobs.remove(setup_id)
-    };
-
-    if let Some(job) = job {
+    if let Some(job) = SETUP_JOBS.take(setup_id)? {
         let body = serde_json::json!({ "code": job.code });
         let _ = post_with_csrf(
             "https://apis.roblox.com/auth-token-service/v1/login/cancel",

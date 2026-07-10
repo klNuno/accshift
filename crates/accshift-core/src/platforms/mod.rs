@@ -23,6 +23,8 @@ pub mod jagex;
 pub mod riot;
 #[cfg(windows)]
 pub mod roblox;
+#[cfg(windows)]
+pub(crate) mod setup_jobs;
 pub mod steam;
 #[cfg(windows)]
 pub mod ubisoft;

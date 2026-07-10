@@ -17,7 +17,9 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn hidden_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+/// A `Command` with `CREATE_NO_WINDOW`, so spawning console tools from the
+/// GUI process doesn't flash a console window. Exposed as `os::hidden_command`.
+pub(crate) fn hidden_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     let mut cmd = Command::new(program);
     cmd.creation_flags(CREATE_NO_WINDOW);
     cmd

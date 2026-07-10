@@ -1,6 +1,10 @@
 use crate::config::{self, UbisoftAccountConfig};
-use crate::os;
+use crate::platforms::setup_jobs::{SetupJobs, DEFAULT_SETUP_TTL_MS};
 use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
+use crate::snapshot_crypto::{
+    decrypted_copy_file, delete_encrypted_file_secret as delete_snapshot_secret,
+    encrypted_copy_file,
+};
 use crate::{AppContext, AppCtx};
 use serde::Serialize;
 use serde_json::Value;
@@ -8,18 +12,13 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use crate::os::registry::{self, HKEY_LOCAL_MACHINE};
 use std::process::Command;
-use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
-#[cfg(target_os = "windows")]
-use winreg::enums::*;
-#[cfg(target_os = "windows")]
-use winreg::RegKey;
 
 const UBISOFT_PROCESS_NAMES: &[&str] =
     &["UbisoftConnect.exe", "UbisoftGameLauncher.exe", "upc.exe"];
 const UBISOFT_EXECUTABLE_NAME: &str = "UbisoftConnect.exe";
-const UBISOFT_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
 const AUTH_FILES: &[&str] = &["user.dat", "ConnectSecureStorage.dat"];
 /// How long Ubisoft needs to flush auth files after login before we trust them.
 const POST_KILL_SETTLE_MS: u64 = 500;
@@ -30,8 +29,6 @@ const QUIT_WAIT_TIMEOUT_MS: u32 = 8000;
 /// An auth file written more than this long ago is considered stale: it belongs
 /// to a previous session, not the login that just completed during setup.
 const FRESH_AUTH_WINDOW_MS: u64 = 5 * 60 * 1000;
-/// Magic header identifying DPAPI/keyring-encrypted snapshot files.
-const ENCRYPTED_HEADER: &[u8] = b"ACCS";
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -52,17 +49,9 @@ pub struct UbisoftStartupSnapshot {
 #[derive(Clone)]
 struct UbisoftSetupJob {
     known_uuids: HashSet<String>,
-    last_touched_at: u64,
 }
 
-fn setup_jobs() -> &'static Mutex<HashMap<String, UbisoftSetupJob>> {
-    static JOBS: OnceLock<Mutex<HashMap<String, UbisoftSetupJob>>> = OnceLock::new();
-    JOBS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn purge_expired_setup_jobs(jobs: &mut HashMap<String, UbisoftSetupJob>) {
-    jobs.retain(|_, job| !super::setup_expired(job.last_touched_at, UBISOFT_SETUP_TTL_MS));
-}
+static SETUP_JOBS: SetupJobs<UbisoftSetupJob> = SetupJobs::new("Ubisoft", DEFAULT_SETUP_TTL_MS);
 
 // ---------------------------------------------------------------------------
 // Path helpers
@@ -94,30 +83,18 @@ fn ubisoft_default_install_dir() -> Option<PathBuf> {
     None
 }
 
-#[cfg(target_os = "windows")]
 fn ubisoft_install_dir_from_registry() -> Option<PathBuf> {
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     for subkey in [
         "SOFTWARE\\Ubisoft\\Launcher",
         "SOFTWARE\\WOW6432Node\\Ubisoft\\Launcher",
     ] {
-        if let Ok(key) = hklm.open_subkey(subkey) {
-            if let Ok(path) = key.get_value::<String, _>("InstallDir") {
-                let trimmed = path.trim().trim_end_matches('\\').to_string();
-                if !trimmed.is_empty() {
-                    let p = PathBuf::from(&trimmed);
-                    if p.exists() {
-                        return Some(p);
-                    }
-                }
+        if let Some(path) = registry::read_string(HKEY_LOCAL_MACHINE, subkey, "InstallDir") {
+            let p = PathBuf::from(path.trim_end_matches('\\'));
+            if p.exists() {
+                return Some(p);
             }
         }
     }
-    None
-}
-
-#[cfg(not(target_os = "windows"))]
-fn ubisoft_install_dir_from_registry() -> Option<PathBuf> {
     None
 }
 
@@ -185,55 +162,8 @@ fn resolve_executable(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
 // ---------------------------------------------------------------------------
 
 fn auth_cache_dir(app_handle: &dyn AppContext, uuid: &str) -> Result<PathBuf, String> {
-    let base = crate::storage::ubisoft_snapshots_dir(app_handle)?.join(uuid);
+    let base = crate::storage::platform_snapshots_dir(app_handle, "ubisoft")?.join(uuid);
     Ok(base)
-}
-
-/// Copy a file and encrypt its contents (DPAPI on Windows, keyring token
-/// elsewhere). The on-disk snapshot is no longer plaintext auth material.
-fn encrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
-    let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
-    let encrypted = os::encrypt_bytes(&data)
-        .map_err(|e| format!("Could not encrypt {}: {e}", source.display()))?;
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-    }
-    let mut out = Vec::with_capacity(ENCRYPTED_HEADER.len() + encrypted.len());
-    out.extend_from_slice(ENCRYPTED_HEADER);
-    out.extend_from_slice(&encrypted);
-    fs::write(dest, &out).map_err(|e| format!("Could not write {}: {e}", dest.display()))
-}
-
-/// Copy a file, decrypting if it carries the header. Legacy plaintext snapshots
-/// (captured before encryption landed) pass through unchanged.
-fn decrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
-    let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
-    let content = if data.starts_with(ENCRYPTED_HEADER) {
-        os::decrypt_bytes(&data[ENCRYPTED_HEADER.len()..])
-            .map_err(|e| format!("Could not decrypt {}: {e}", source.display()))?
-    } else {
-        data
-    };
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-    }
-    fs::write(dest, &content).map_err(|e| format!("Could not write {}: {e}", dest.display()))
-}
-
-/// Free any keyring entry backing an encrypted snapshot file before deleting it.
-/// On Windows the header carries DPAPI ciphertext (no external entry to free),
-/// so the delete is a no-op; on Linux / macOS the payload is a keyring token.
-fn delete_snapshot_secret(path: &Path) {
-    let Ok(data) = fs::read(path) else {
-        return;
-    };
-    if !data.starts_with(ENCRYPTED_HEADER) {
-        return;
-    }
-    let token = &data[ENCRYPTED_HEADER.len()..];
-    let _ = os::delete_bytes(token);
 }
 
 fn save_auth_snapshot(app_handle: &dyn AppContext, uuid: &str) -> Result<(), String> {
@@ -491,7 +421,6 @@ const LOG_TAIL_BYTES: u64 = 64 * 1024;
 fn read_log_tail_shared(path: &PathBuf) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
 
-    #[cfg(target_os = "windows")]
     let mut file = {
         use std::os::windows::fs::OpenOptionsExt;
         // FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
@@ -501,8 +430,6 @@ fn read_log_tail_shared(path: &PathBuf) -> Option<String> {
             .open(path)
             .ok()?
     };
-    #[cfg(not(target_os = "windows"))]
-    let mut file = std::fs::File::open(path).ok()?;
 
     let len = file.metadata().ok()?.len();
     let start = len.saturating_sub(LOG_TAIL_BYTES);
@@ -520,15 +447,11 @@ fn read_log_tail_shared(path: &PathBuf) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 fn is_ubisoft_running() -> bool {
-    UBISOFT_PROCESS_NAMES
-        .iter()
-        .any(|name| crate::os::is_process_running(name))
+    crate::os::any_process_running(UBISOFT_PROCESS_NAMES)
 }
 
 fn kill_ubisoft() {
-    for process_name in UBISOFT_PROCESS_NAMES {
-        let _ = crate::os::kill_process(process_name);
-    }
+    crate::os::kill_processes(UBISOFT_PROCESS_NAMES);
 }
 
 /// Kill Ubisoft and wait for each of its processes to actually exit, instead
@@ -536,14 +459,11 @@ fn kill_ubisoft() {
 /// exit-time flush of user.dat / ConnectSecureStorage.dat to disk. Mirrors
 /// Epic's quit_epic_and_wait.
 fn quit_ubisoft_and_wait() {
-    if !is_ubisoft_running() {
-        return;
-    }
-    kill_ubisoft();
-    for process_name in UBISOFT_PROCESS_NAMES {
-        crate::os::wait_for_process_exit(process_name, QUIT_WAIT_TIMEOUT_MS);
-    }
-    std::thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
+    crate::os::quit_processes_and_wait(
+        UBISOFT_PROCESS_NAMES,
+        QUIT_WAIT_TIMEOUT_MS,
+        std::time::Duration::from_millis(POST_KILL_SETTLE_MS),
+    );
 }
 
 fn launch_ubisoft(app_handle: &dyn AppContext) -> Result<(), String> {
@@ -813,20 +733,12 @@ pub fn begin_account_setup(app_handle: &dyn AppContext) -> Result<SetupStatus, S
     }
 
     let setup_id = format!("ubisoft-setup-{}", Uuid::new_v4());
-    let created_at = super::now_unix_ms();
-
-    let mut jobs = setup_jobs()
-        .lock()
-        .map_err(|_| "Ubisoft setup storage is unavailable".to_string())?;
-    purge_expired_setup_jobs(&mut jobs);
-    jobs.insert(
+    SETUP_JOBS.insert(
         setup_id.clone(),
         UbisoftSetupJob {
             known_uuids: all_known,
-            last_touched_at: created_at,
         },
-    );
-    drop(jobs);
+    )?;
 
     // Kill Ubisoft and wait for it to actually exit before removing auth
     // files, to force the login screen.
@@ -882,9 +794,7 @@ fn capture_setup_account(
     }
 
     let _ = remember_account_usage(app_handle, uuid);
-    if let Ok(mut jobs) = setup_jobs().lock() {
-        jobs.remove(setup_id);
-    }
+    SETUP_JOBS.remove(setup_id);
 
     Some(super::make_setup_status(
         setup_id,
@@ -899,17 +809,7 @@ pub fn get_account_setup_status(
     app_handle: &dyn AppContext,
     setup_id: &str,
 ) -> Result<SetupStatus, String> {
-    let job = {
-        let mut jobs = setup_jobs()
-            .lock()
-            .map_err(|_| "Ubisoft setup storage is unavailable".to_string())?;
-        purge_expired_setup_jobs(&mut jobs);
-        let Some(job) = jobs.get_mut(setup_id) else {
-            return Err("Ubisoft setup session not found".into());
-        };
-        job.last_touched_at = super::now_unix_ms();
-        job.clone()
-    };
+    let job = SETUP_JOBS.touch(setup_id)?;
 
     // Check logs for a new account UUID
     if let Some(current_uuid) = current_account_from_logs(app_handle) {
@@ -952,12 +852,7 @@ pub fn get_account_setup_status(
 }
 
 pub fn cancel_account_setup(setup_id: &str) -> Result<(), String> {
-    let mut jobs = setup_jobs()
-        .lock()
-        .map_err(|_| "Ubisoft setup storage is unavailable".to_string())?;
-    purge_expired_setup_jobs(&mut jobs);
-    jobs.remove(setup_id);
-    Ok(())
+    SETUP_JOBS.cancel(setup_id)
 }
 
 pub fn forget_account(app_handle: &dyn AppContext, uuid: &str) -> Result<(), String> {

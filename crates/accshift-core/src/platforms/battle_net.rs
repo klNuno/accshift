@@ -11,10 +11,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
-#[cfg(target_os = "windows")]
-use winreg::HKEY;
-#[cfg(target_os = "windows")]
-use winreg::{enums::*, RegKey};
+use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+use winreg::{RegKey, HKEY};
 
 const BATTLE_NET_PROCESS_NAMES: &[&str] = &["Battle.net.exe", "Battle.net Launcher.exe"];
 const BATTLE_NET_EXECUTABLE_CANDIDATES: &[&str] = &[
@@ -501,15 +499,11 @@ fn write_saved_accounts(app_handle: &dyn AppContext, accounts: &[String]) -> Res
 }
 
 fn is_battle_net_running() -> bool {
-    BATTLE_NET_PROCESS_NAMES
-        .iter()
-        .any(|name| crate::os::is_process_running(name))
+    crate::os::any_process_running(BATTLE_NET_PROCESS_NAMES)
 }
 
 fn kill_battle_net() -> Result<(), String> {
-    for process_name in BATTLE_NET_PROCESS_NAMES {
-        let _ = crate::os::kill_process(process_name);
-    }
+    crate::os::kill_processes(BATTLE_NET_PROCESS_NAMES);
     // The launcher rewrites Battle.net.config on exit — if it survived the
     // kill (elevated, hung), writing SavedAccountNames now would be silently
     // undone. Refuse instead of pretending the switch worked.
@@ -580,7 +574,6 @@ fn candidate_from_registry_value(raw: &str) -> Option<PathBuf> {
     None
 }
 
-#[cfg(target_os = "windows")]
 fn registry_candidates_from_app_paths(root: HKEY, subkey: &str) -> Vec<PathBuf> {
     let key = RegKey::predef(root);
     let Ok(app_key) = key.open_subkey(subkey) else {
@@ -601,7 +594,6 @@ fn registry_candidates_from_app_paths(root: HKEY, subkey: &str) -> Vec<PathBuf> 
     out
 }
 
-#[cfg(target_os = "windows")]
 fn registry_candidates_from_uninstall(root: HKEY, subkey: &str) -> Vec<PathBuf> {
     let key = RegKey::predef(root);
     let Ok(uninstall_root) = key.open_subkey(subkey) else {
@@ -633,13 +625,11 @@ fn registry_candidates_from_uninstall(root: HKEY, subkey: &str) -> Vec<PathBuf> 
     out
 }
 
-#[cfg(target_os = "windows")]
 enum RegistryLookup {
     AppPaths,
     Uninstall,
 }
 
-#[cfg(target_os = "windows")]
 const REGISTRY_INSTALL_SOURCES: &[(HKEY, &str, RegistryLookup)] = &[
     (
         HKEY_LOCAL_MACHINE,
@@ -678,7 +668,6 @@ const REGISTRY_INSTALL_SOURCES: &[(HKEY, &str, RegistryLookup)] = &[
     ),
 ];
 
-#[cfg(target_os = "windows")]
 fn registry_install_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
     for &(root, subkey, ref lookup) in REGISTRY_INSTALL_SOURCES {
@@ -692,11 +681,6 @@ fn registry_install_candidates() -> Vec<PathBuf> {
         }
     }
     out
-}
-
-#[cfg(not(target_os = "windows"))]
-fn registry_install_candidates() -> Vec<PathBuf> {
-    Vec::new()
 }
 
 fn resolve_battle_net_executable(app_handle: &dyn AppContext) -> Result<PathBuf, String> {

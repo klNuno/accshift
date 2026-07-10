@@ -3,22 +3,17 @@ use crate::platforms::{log_platform_error, log_platform_info, PlatformService, S
 use crate::{AppContext, AppCtx};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
 use uuid::Uuid;
 
 use crate::os;
-
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-
-#[cfg(target_os = "windows")]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
+use crate::snapshot_crypto::{
+    self, decrypted_copy_file, encrypted_copy_file, DirCopyOptions,
+};
 
 const RIOT_CLIENT_PROCESS_NAMES: &[&str] = &[
     "RiotClientServices.exe",
@@ -154,15 +149,6 @@ struct RiotDetectedIdentity {
     account_puuid: String,
 }
 
-fn hidden_command(program: impl AsRef<OsStr>) -> Command {
-    let mut cmd = Command::new(program);
-    #[cfg(target_os = "windows")]
-    {
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    cmd
-}
-
 fn find_profile<'a>(
     cfg: &'a config::AppConfig,
     profile_id: &str,
@@ -184,9 +170,7 @@ fn env_path(name: &str) -> Result<PathBuf, String> {
 }
 
 fn is_any_process_running(process_names: &[&str]) -> bool {
-    process_names
-        .iter()
-        .any(|process_name| os::is_process_running(process_name))
+    os::any_process_running(process_names)
 }
 
 fn running_process_names(process_names: &'static [&'static str]) -> Vec<&'static str> {
@@ -353,7 +337,7 @@ fn resolve_riot_client_path(app_handle: &dyn AppContext) -> Result<PathBuf, Stri
 }
 
 fn app_profiles_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    let root = crate::storage::riot_snapshots_dir(app_handle)?;
+    let root = crate::storage::platform_snapshots_dir(app_handle, "riot")?;
     fs::create_dir_all(&root).map_err(|e| format!("Could not create Riot profiles dir: {e}"))?;
     Ok(root)
 }
@@ -512,92 +496,24 @@ fn snapshot_has_settings(snapshot_dir: &Path) -> bool {
     snapshot_dir.join("RiotGamesPrivateSettings.yaml").exists()
 }
 
-/// Magic header identifying DPAPI-encrypted snapshot files.
-const ENCRYPTED_HEADER: &[u8] = b"ACCS";
-
-/// Copy a file and encrypt its contents with DPAPI.
-fn encrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
-    let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
-    let encrypted = os::encrypt_bytes(&data)
-        .map_err(|e| format!("Could not encrypt {}: {e}", source.display()))?;
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
+/// Riot's directory snapshots keep their historical behavior: symlinks are
+/// followed, and per-item ignored names (e.g. the Riot Client `lockfile`)
+/// are skipped at every depth.
+fn riot_dir_copy_options<'a>(ignored_names: &'a [&'a str]) -> DirCopyOptions<'a> {
+    DirCopyOptions {
+        ignored_names,
+        follow_symlinks: true,
     }
-    let mut out = Vec::with_capacity(ENCRYPTED_HEADER.len() + encrypted.len());
-    out.extend_from_slice(ENCRYPTED_HEADER);
-    out.extend_from_slice(&encrypted);
-    fs::write(dest, &out).map_err(|e| format!("Could not write {}: {e}", dest.display()))
 }
 
-/// Copy a file, decrypting if it has the DPAPI header (legacy plaintext files pass through).
-fn decrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
-    let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
-    let content = if data.starts_with(ENCRYPTED_HEADER) {
-        os::decrypt_bytes(&data[ENCRYPTED_HEADER.len()..])
-            .map_err(|e| format!("Could not decrypt {}: {e}", source.display()))?
-    } else {
-        data
-    };
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-    }
-    fs::write(dest, &content).map_err(|e| format!("Could not write {}: {e}", dest.display()))
-}
-
-/// Recursively copy a directory, encrypting every file with DPAPI.
+/// Recursively copy a directory, encrypting every file (see `snapshot_crypto`).
 fn encrypted_copy_dir(source: &Path, target: &Path, ignored_names: &[&str]) -> Result<(), String> {
-    if !source.exists() {
-        return Ok(());
-    }
-    fs::create_dir_all(target)
-        .map_err(|e| format!("Could not create directory {}: {e}", target.display()))?;
-    for entry in fs::read_dir(source)
-        .map_err(|e| format!("Could not read directory {}: {e}", source.display()))?
-    {
-        let entry = entry.map_err(|e| format!("Could not read directory entry: {e}"))?;
-        let src_path = entry.path();
-        let file_name = entry.file_name();
-        let name = file_name.to_string_lossy();
-        if ignored_names.iter().any(|i| i.eq_ignore_ascii_case(&name)) {
-            continue;
-        }
-        let dst_path = target.join(name.as_ref());
-        if src_path.is_dir() {
-            encrypted_copy_dir(&src_path, &dst_path, ignored_names)?;
-        } else {
-            encrypted_copy_file(&src_path, &dst_path)?;
-        }
-    }
-    Ok(())
+    snapshot_crypto::encrypted_copy_dir(source, target, riot_dir_copy_options(ignored_names))
 }
 
 /// Recursively copy a directory, decrypting every file (handles legacy plaintext).
 fn decrypted_copy_dir(source: &Path, target: &Path, ignored_names: &[&str]) -> Result<(), String> {
-    if !source.exists() {
-        return Ok(());
-    }
-    fs::create_dir_all(target)
-        .map_err(|e| format!("Could not create directory {}: {e}", target.display()))?;
-    for entry in fs::read_dir(source)
-        .map_err(|e| format!("Could not read directory {}: {e}", source.display()))?
-    {
-        let entry = entry.map_err(|e| format!("Could not read directory entry: {e}"))?;
-        let src_path = entry.path();
-        let file_name = entry.file_name();
-        let name = file_name.to_string_lossy();
-        if ignored_names.iter().any(|i| i.eq_ignore_ascii_case(&name)) {
-            continue;
-        }
-        let dst_path = target.join(name.as_ref());
-        if src_path.is_dir() {
-            decrypted_copy_dir(&src_path, &dst_path, ignored_names)?;
-        } else {
-            decrypted_copy_file(&src_path, &dst_path)?;
-        }
-    }
-    Ok(())
+    snapshot_crypto::decrypted_copy_dir(source, target, riot_dir_copy_options(ignored_names))
 }
 
 /// Copy a file verbatim, no encryption. Used only for the transient rollback
@@ -656,51 +572,9 @@ fn free_snapshot_secrets(app_handle: &dyn AppContext, snapshot_dir: &Path) {
     if !snapshot_dir.exists() {
         return;
     }
-    let entries = match fs::read_dir(snapshot_dir) {
-        Ok(entries) => entries,
-        Err(e) => {
-            log_platform_error(
-                app_handle,
-                "riot.free_secrets",
-                "Could not enumerate snapshot directory",
-                format!("dir={} error={e}", snapshot_dir.display()),
-            );
-            return;
-        }
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            free_snapshot_secrets(app_handle, &path);
-            continue;
-        }
-        let data = match fs::read(&path) {
-            Ok(data) => data,
-            Err(e) => {
-                log_platform_error(
-                    app_handle,
-                    "riot.free_secrets",
-                    "Could not read snapshot file",
-                    format!("file={} error={e}", path.display()),
-                );
-                continue;
-            }
-        };
-        // Legacy plaintext files have no token to free.
-        if !data.starts_with(ENCRYPTED_HEADER) {
-            continue;
-        }
-        let token = &data[ENCRYPTED_HEADER.len()..];
-        if let Err(e) = os::delete_bytes(token) {
-            log_platform_error(
-                app_handle,
-                "riot.free_secrets",
-                "Could not free keyring entry for snapshot file",
-                format!("file={} error={e}", path.display()),
-            );
-        }
-    }
+    snapshot_crypto::free_dir_secrets_with_errors(snapshot_dir, &mut |message, detail| {
+        log_platform_error(app_handle, "riot.free_secrets", message, detail);
+    });
 }
 
 fn live_path_for(
@@ -1131,7 +1005,7 @@ fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Resul
 }
 
 fn launch_riot_client(client_path: &Path) -> Result<(), String> {
-    hidden_command(client_path)
+    os::hidden_command(client_path)
         .args(["--launch-product=riot-client", "--launch-patchline=live"])
         .spawn()
         .map_err(|e| format!("Could not launch Riot Client: {e}"))?;

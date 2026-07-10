@@ -150,86 +150,33 @@ pub fn themes_dir(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     Ok(target)
 }
 
-pub fn riot_snapshots_dir(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    let target = app_local_data_root(app_handle)?
-        .join("platforms")
-        .join("riot")
-        .join("snapshots");
-    let scoped_legacy = raw_app_local_data_root(app_handle)?
-        .join("platforms")
-        .join("riot")
-        .join("snapshots");
-    let old_legacy = legacy_app_data_root(app_handle)?.join("riot-profiles");
-    backup_and_migrate_dir(app_handle, &scoped_legacy, &target)?;
-    backup_and_migrate_dir(app_handle, &old_legacy, &target)?;
-    Ok(target)
+/// Pre-layout-migration snapshot location under the legacy root, per platform.
+/// Platforms added after the layout migration (jagex) have none.
+fn old_legacy_snapshots_name(platform_id: &str) -> Option<&'static str> {
+    match platform_id {
+        "riot" => Some("riot-profiles"),
+        "ubisoft" => Some("ubisoft_cache"),
+        "epic" => Some("epic_cache"),
+        "gog" => Some("gog_cache"),
+        "discord" => Some("discord_cache"),
+        _ => None,
+    }
 }
 
-pub fn ubisoft_snapshots_dir(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    let target = app_local_data_root(app_handle)?
-        .join("platforms")
-        .join("ubisoft")
-        .join("snapshots");
-    let scoped_legacy = raw_app_local_data_root(app_handle)?
-        .join("platforms")
-        .join("ubisoft")
-        .join("snapshots");
-    let old_legacy = legacy_app_data_root(app_handle)?.join("ubisoft_cache");
+/// Snapshot directory for a platform (`<local data>/platforms/<id>/snapshots`),
+/// migrating any legacy locations to it on first access.
+pub fn platform_snapshots_dir(
+    app_handle: &dyn AppContext,
+    platform_id: &str,
+) -> Result<PathBuf, String> {
+    let subpath = Path::new("platforms").join(platform_id).join("snapshots");
+    let target = app_local_data_root(app_handle)?.join(&subpath);
+    let scoped_legacy = raw_app_local_data_root(app_handle)?.join(&subpath);
     backup_and_migrate_dir(app_handle, &scoped_legacy, &target)?;
-    backup_and_migrate_dir(app_handle, &old_legacy, &target)?;
-    Ok(target)
-}
-
-pub fn epic_snapshots_dir(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    let target = app_local_data_root(app_handle)?
-        .join("platforms")
-        .join("epic")
-        .join("snapshots");
-    let scoped_legacy = raw_app_local_data_root(app_handle)?
-        .join("platforms")
-        .join("epic")
-        .join("snapshots");
-    let old_legacy = legacy_app_data_root(app_handle)?.join("epic_cache");
-    backup_and_migrate_dir(app_handle, &scoped_legacy, &target)?;
-    backup_and_migrate_dir(app_handle, &old_legacy, &target)?;
-    Ok(target)
-}
-
-pub fn gog_snapshots_dir(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    let target = app_local_data_root(app_handle)?
-        .join("platforms")
-        .join("gog")
-        .join("snapshots");
-    let scoped_legacy = raw_app_local_data_root(app_handle)?
-        .join("platforms")
-        .join("gog")
-        .join("snapshots");
-    let old_legacy = legacy_app_data_root(app_handle)?.join("gog_cache");
-    backup_and_migrate_dir(app_handle, &scoped_legacy, &target)?;
-    backup_and_migrate_dir(app_handle, &old_legacy, &target)?;
-    Ok(target)
-}
-
-pub fn jagex_snapshots_dir(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    // No legacy locations: the platform postdates the storage layout migration.
-    Ok(app_local_data_root(app_handle)?
-        .join("platforms")
-        .join("jagex")
-        .join("snapshots"))
-}
-
-pub fn discord_snapshots_dir(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    let target = app_local_data_root(app_handle)?
-        .join("platforms")
-        .join("discord")
-        .join("snapshots");
-    let scoped_legacy = raw_app_local_data_root(app_handle)?
-        .join("platforms")
-        .join("discord")
-        .join("snapshots");
-    let old_legacy = legacy_app_data_root(app_handle)?.join("discord_cache");
-    backup_and_migrate_dir(app_handle, &scoped_legacy, &target)?;
-    backup_and_migrate_dir(app_handle, &old_legacy, &target)?;
+    if let Some(name) = old_legacy_snapshots_name(platform_id) {
+        let old_legacy = legacy_app_data_root(app_handle)?.join(name);
+        backup_and_migrate_dir(app_handle, &old_legacy, &target)?;
+    }
     Ok(target)
 }
 
@@ -558,27 +505,27 @@ fn manifest_targets(app_handle: &dyn AppContext) -> Result<Vec<(String, Manifest
     ));
     targets.push((
         TARGET_RIOT_SNAPSHOTS.to_string(),
-        ManifestTarget::Dir(riot_snapshots_dir(app_handle)?, 1),
+        ManifestTarget::Dir(platform_snapshots_dir(app_handle, "riot")?, 1),
     ));
     targets.push((
         TARGET_UBISOFT_SNAPSHOTS.to_string(),
-        ManifestTarget::Dir(ubisoft_snapshots_dir(app_handle)?, 1),
+        ManifestTarget::Dir(platform_snapshots_dir(app_handle, "ubisoft")?, 1),
     ));
     targets.push((
         TARGET_EPIC_SNAPSHOTS.to_string(),
-        ManifestTarget::Dir(epic_snapshots_dir(app_handle)?, 1),
+        ManifestTarget::Dir(platform_snapshots_dir(app_handle, "epic")?, 1),
     ));
     targets.push((
         TARGET_GOG_SNAPSHOTS.to_string(),
-        ManifestTarget::Dir(gog_snapshots_dir(app_handle)?, 1),
+        ManifestTarget::Dir(platform_snapshots_dir(app_handle, "gog")?, 1),
     ));
     targets.push((
         TARGET_JAGEX_SNAPSHOTS.to_string(),
-        ManifestTarget::Dir(jagex_snapshots_dir(app_handle)?, 1),
+        ManifestTarget::Dir(platform_snapshots_dir(app_handle, "jagex")?, 1),
     ));
     targets.push((
         TARGET_DISCORD_SNAPSHOTS.to_string(),
-        ManifestTarget::Dir(discord_snapshots_dir(app_handle)?, 1),
+        ManifestTarget::Dir(platform_snapshots_dir(app_handle, "discord")?, 1),
     ));
 
     Ok(targets)
