@@ -1,4 +1,4 @@
-import { getProfileInfo } from "./steamApi";
+import { getProfileInfo, getProfileInfos } from "./steamApi";
 import type { ProfileInfo } from "./types";
 import { CLIENT_STORE_STEAM_PROFILE_CACHE } from "$lib/storage/clientStorage";
 import { createProfileCache } from "$lib/shared/profileCache";
@@ -6,6 +6,9 @@ import { createProfileCache } from "$lib/shared/profileCache";
 const cache = createProfileCache<ProfileInfo>({
   storeId: CLIENT_STORE_STEAM_PROFILE_CACHE,
   fetcher: getProfileInfo,
+  // Refresh path: one invoke (and, with an API key, 1 HTTP request per 100
+  // accounts) instead of one XML request per account.
+  batchFetcher: getProfileInfos,
   getAvatarUrl: (profile) => profile.avatar_url,
   getDisplayName: (profile) => profile.display_name ?? undefined,
   // Profile data can lag right after Steam writes loginusers.vdf: retry a few
@@ -16,3 +19,4 @@ const cache = createProfileCache<ProfileInfo>({
 
 export const getCachedProfile = cache.getCachedProfile;
 export const fetchProfile = cache.fetchProfile;
+export const fetchProfiles = cache.fetchProfiles;

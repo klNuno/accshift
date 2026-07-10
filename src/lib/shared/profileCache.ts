@@ -41,6 +41,12 @@ export interface CachedProfileResult {
 export interface ProfileCacheOptions<TProfile> {
   storeId: ClientStoreId;
   fetcher: (accountId: string) => Promise<TProfile | null>;
+  /**
+   * Optional batch fetcher (one backend call for many accounts). Ids with no
+   * result may be absent from the map. When provided, `fetchProfiles` uses it
+   * with the same retry/negative-cache semantics as the unit path.
+   */
+  batchFetcher?: (accountIds: string[]) => Promise<Record<string, TProfile | null>>;
   getAvatarUrl: (profile: TProfile) => string | null | undefined;
   getDisplayName?: (profile: TProfile) => string | undefined;
   /** Total fetch attempts and the delay between them. Default: single attempt. */
@@ -59,7 +65,14 @@ function delay(ms: number) {
 }
 
 export function createProfileCache<TProfile>(options: ProfileCacheOptions<TProfile>) {
-  const { storeId, fetcher, getAvatarUrl, getDisplayName, cacheNegativeResults = false } = options;
+  const {
+    storeId,
+    fetcher,
+    batchFetcher,
+    getAvatarUrl,
+    getDisplayName,
+    cacheNegativeResults = false,
+  } = options;
   const attempts = options.retry?.attempts ?? 1;
   const retryDelayMs = options.retry?.delayMs ?? 0;
 
@@ -208,9 +221,99 @@ export function createProfileCache<TProfile>(options: ProfileCacheOptions<TProfi
     return task;
   }
 
+  /** Batch counterpart of `fetchWithRetries`: retries only the ids that did
+   * not resolve to a usable avatar yet, mirroring the unit semantics. */
+  async function batchFetchWithRetries(
+    accountIds: string[],
+  ): Promise<Record<string, TProfile | null>> {
+    const results: Record<string, TProfile | null> = {};
+    for (const accountId of accountIds) results[accountId] = null;
+
+    let remaining = accountIds;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const fetched = await batchFetcher!(remaining);
+        for (const [accountId, profile] of Object.entries(fetched)) {
+          if (!profile || !(accountId in results)) continue;
+          results[accountId] = profile;
+          cachePositiveProfile(accountId, profile);
+        }
+      } catch {
+        // Transient failure: retry, or resolve with whatever we got so far.
+      }
+
+      remaining = remaining.filter((accountId) => {
+        const profile = results[accountId];
+        return !profile || !hasSafeAvatarUrl(profile);
+      });
+      if (remaining.length === 0) break;
+      if (attempt < attempts - 1) {
+        await delay(retryDelayMs);
+      }
+    }
+
+    if (cacheNegativeResults) {
+      for (const accountId of accountIds) {
+        const profile = results[accountId];
+        if (profile && !hasSafeAvatarUrl(profile)) {
+          cacheNegativeProfile(accountId, profile);
+        }
+      }
+    }
+    return results;
+  }
+
+  /**
+   * Fetches many profiles at once through `batchFetcher` (falls back to
+   * per-account `fetchProfile` calls when no batch fetcher is configured).
+   * Shares the in-flight map with the unit path so overlapping requests for
+   * the same account are deduplicated in both directions.
+   */
+  async function fetchProfiles(accountIds: string[]): Promise<Record<string, TProfile | null>> {
+    const uniqueIds = Array.from(new Set(accountIds));
+    if (!batchFetcher) {
+      const entries = await Promise.all(
+        uniqueIds.map(async (accountId) => [accountId, await fetchProfile(accountId)] as const),
+      );
+      return Object.fromEntries(entries);
+    }
+
+    const pending: Array<readonly [string, Promise<TProfile | null>]> = [];
+    const toFetch: string[] = [];
+    for (const accountId of uniqueIds) {
+      const existing = inFlight.get(accountId);
+      if (existing) {
+        pending.push([accountId, existing]);
+      } else {
+        toFetch.push(accountId);
+      }
+    }
+
+    if (toFetch.length > 0) {
+      const batchTask = batchFetchWithRetries(toFetch).catch(
+        () => ({}) as Record<string, TProfile | null>,
+      );
+      for (const accountId of toFetch) {
+        const perId = batchTask
+          .then((profiles) => profiles[accountId] ?? null)
+          .finally(() => {
+            inFlight.delete(accountId);
+          });
+        inFlight.set(accountId, perId);
+        pending.push([accountId, perId]);
+      }
+    }
+
+    const entries = await Promise.all(
+      pending.map(async ([accountId, task]) => [accountId, await task] as const),
+    );
+    return Object.fromEntries(entries);
+  }
+
   return {
     getCachedProfile,
     setCachedProfile,
     fetchProfile,
+    fetchProfiles,
   };
 }

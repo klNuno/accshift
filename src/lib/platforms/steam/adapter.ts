@@ -7,10 +7,10 @@ import type {
 import type { ContextMenuAction } from "../../shared/contextMenu/types";
 import { createPlatformAddFlowHandlers } from "$lib/platforms/addFlow";
 import * as service from "./steamApi";
-import { getCachedProfile, fetchProfile } from "./profileCache";
+import { getCachedProfile, fetchProfile, fetchProfiles } from "./profileCache";
 import { getSteamContextMenuItems } from "./contextMenu";
 import { getCachedSteamWarningStates, loadSteamWarningStates } from "./warnings";
-import type { SteamAccount } from "./types";
+import type { ProfileInfo, SteamAccount } from "./types";
 import { isSafeHttpUrl } from "$lib/shared/url";
 
 function toAccount(s: SteamAccount): PlatformAccount {
@@ -19,6 +19,20 @@ function toAccount(s: SteamAccount): PlatformAccount {
     displayName: s.persona_name,
     username: s.account_name,
     lastLoginAt: s.last_login_at ?? null,
+  };
+}
+
+// No data (e.g. transient network failure): null, so the caller keeps any
+// avatar already on screen. `{ avatarUrl: null }` is reserved for profiles
+// that exist but have no avatar.
+function toPlatformProfileInfo(profile: ProfileInfo | null): PlatformProfileInfo | null {
+  if (!profile) {
+    return null;
+  }
+  const avatarUrl = (profile.avatar_url ?? "").trim();
+  return {
+    avatarUrl: avatarUrl && isSafeHttpUrl(avatarUrl) ? avatarUrl : null,
+    displayName: profile.display_name,
   };
 }
 
@@ -60,17 +74,16 @@ export const steamAdapter: PlatformAdapter = {
 
   async getProfileInfo(accountId: string): Promise<PlatformProfileInfo | null> {
     const profile = await fetchProfile(accountId);
-    // No data (e.g. transient network failure): return null so the caller
-    // keeps any avatar already on screen. `{ avatarUrl: null }` is reserved
-    // for profiles that exist but have no avatar.
-    if (!profile) {
-      return null;
+    return toPlatformProfileInfo(profile);
+  },
+
+  async getProfileInfos(accountIds: string[]): Promise<Record<string, PlatformProfileInfo | null>> {
+    const profiles = await fetchProfiles(accountIds);
+    const out: Record<string, PlatformProfileInfo | null> = {};
+    for (const accountId of accountIds) {
+      out[accountId] = toPlatformProfileInfo(profiles[accountId] ?? null);
     }
-    const avatarUrl = (profile.avatar_url ?? "").trim();
-    return {
-      avatarUrl: avatarUrl && isSafeHttpUrl(avatarUrl) ? avatarUrl : null,
-      displayName: profile.display_name,
-    };
+    return out;
   },
 
   getCachedProfile(accountId: string) {

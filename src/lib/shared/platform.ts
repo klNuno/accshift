@@ -194,6 +194,9 @@ export interface PlatformAdapter {
   setAccountLabel?(accountId: string, label: string): Promise<void>;
 
   getProfileInfo?(accountId: string): Promise<PlatformProfileInfo | null>;
+  /** Batch variant of `getProfileInfo`: one backend call for many accounts.
+   * A `null` entry means "no data" (keep whatever avatar is on screen). */
+  getProfileInfos?(accountIds: string[]): Promise<Record<string, PlatformProfileInfo | null>>;
   getCachedProfile?(accountId: string): CachedPlatformProfile | null;
   getCachedWarningStates?(
     callbacks: PlatformUiCallbacks,

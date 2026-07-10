@@ -1,5 +1,5 @@
 import { untrack } from "svelte";
-import type { PlatformAdapter, PlatformAccount } from "./platform";
+import type { PlatformAdapter, PlatformAccount, PlatformProfileInfo } from "./platform";
 
 const BATCH_SIZE = 15;
 
@@ -155,6 +155,44 @@ export function createAvatarLoader(getAdapter: () => PlatformAdapter | undefined
     applyProfileUpdate(account, profile, getAccounts, setAccounts);
   }
 
+  /** Applies a batch of resolved profiles in a single reactive commit:
+   * one `mergeStates` call instead of one record replacement per avatar. */
+  function applyBatchProfileUpdates(
+    accountsToUpdate: PlatformAccount[],
+    profiles: Record<string, PlatformProfileInfo | null>,
+    getAccounts: () => PlatformAccount[],
+    setAccounts: (v: PlatformAccount[]) => void,
+  ) {
+    const updates: Record<string, AvatarState> = {};
+    const displayNameUpdates: Array<readonly [string, string]> = [];
+
+    for (const account of accountsToUpdate) {
+      const profile = profiles[account.id] ?? null;
+      if (profile) {
+        updates[account.id] = {
+          url: profile.avatarUrl,
+          loading: profile.avatarLoading ?? false,
+          refreshing: false,
+        };
+        if (profile.displayName && profile.displayName !== account.displayName) {
+          displayNameUpdates.push([account.id, profile.displayName]);
+        }
+      } else {
+        // No data: keep whatever avatar is on screen, just stop the spinners.
+        updates[account.id] = {
+          url: readState(account.id)?.url || null,
+          loading: false,
+          refreshing: false,
+        };
+      }
+    }
+
+    mergeStates(updates);
+    for (const [accountId, displayName] of displayNameUpdates) {
+      updateAccountDisplayName(getAccounts, setAccounts, accountId, displayName);
+    }
+  }
+
   async function loadProfilesForAccounts(
     accts: PlatformAccount[],
     getAccounts: () => PlatformAccount[],
@@ -165,6 +203,24 @@ export function createAvatarLoader(getAdapter: () => PlatformAdapter | undefined
     const adapter = getAdapter();
     if (!adapter) return;
     const needsRefresh = seedForAccounts(accts, forceRefresh);
+    if (needsRefresh.length === 0) return;
+
+    // Batch path (e.g. Steam): one backend call for every account, then one
+    // reactive commit, instead of N invokes applied one by one.
+    if (adapter.getProfileInfos) {
+      if (!shouldContinue()) return;
+      let profiles: Record<string, PlatformProfileInfo | null> | null = null;
+      try {
+        profiles = await adapter.getProfileInfos(needsRefresh.map((account) => account.id));
+      } catch {
+        // Batch failure: fall through to the per-account path below.
+      }
+      if (!shouldContinue()) return;
+      if (profiles) {
+        applyBatchProfileUpdates(needsRefresh, profiles, getAccounts, setAccounts);
+        return;
+      }
+    }
 
     for (let i = 0; i < needsRefresh.length; i += BATCH_SIZE) {
       if (!shouldContinue()) return;

@@ -84,30 +84,22 @@ export async function switchAccountMode(
   steamId: string,
   mode: string,
 ): Promise<void> {
+  // Same generic command as a plain switch; the backend applies the persona
+  // mode when `mode` is present in params and uses `steamId` to locate the
+  // account's userdata (this path also emits the platform_switch telemetry,
+  // which the old dedicated steam_switch_account_mode command never did).
   const cfg = getSteamLaunchConfig();
-  const details = {
+  await api.switchAccount(
     username,
-    steamId,
-    mode,
-    runAsAdmin: cfg.runAsAdmin,
-    launchOptionsConfigured: cfg.launchOptions.length > 0,
-  };
-  void logAppEvent("info", "frontend.steam.switch_mode", "Switch mode request started", details);
-  try {
-    await invoke("steam_switch_account_mode", { username, steamId, mode, ...cfg });
-    void logAppEvent(
-      "info",
-      "frontend.steam.switch_mode",
-      "Switch mode request completed",
-      details,
-    );
-  } catch (reason) {
-    void logAppEvent("error", "frontend.steam.switch_mode", "Switch mode request failed", {
-      ...details,
-      error: serializeLogValue(reason),
-    });
-    throw reason;
-  }
+    { ...cfg, mode, steamId },
+    {
+      username,
+      steamId,
+      mode,
+      runAsAdmin: cfg.runAsAdmin,
+      launchOptionsConfigured: cfg.launchOptions.length > 0,
+    },
+  );
 }
 
 export async function beginAccountSetup(): Promise<
@@ -141,6 +133,12 @@ export async function getCopyableGames(
 
 export async function getProfileInfo(steamId: string): Promise<ProfileInfo | null> {
   return invoke<ProfileInfo | null>("steam_get_profile_info", { steamId });
+}
+
+/** Batch variant: one invoke for N accounts. Ids with no result (deleted
+ * profile, network failure) are absent from the returned map. */
+export async function getProfileInfos(steamIds: string[]): Promise<Record<string, ProfileInfo>> {
+  return invoke<Record<string, ProfileInfo>>("steam_get_profile_infos", { steamIds });
 }
 
 export async function getPlayerBans(steamIds: string[]): Promise<BanInfo[]> {
