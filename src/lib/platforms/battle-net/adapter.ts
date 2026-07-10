@@ -1,13 +1,11 @@
-import type {
-  PlatformAdapter,
-  PlatformAccount,
-  PlatformContextMenuCallbacks,
-} from "$lib/shared/platform";
-import type { ContextMenuAction } from "$lib/shared/contextMenu/types";
-import { createPlatformAddFlowHandlers } from "$lib/platforms/addFlow";
-import * as service from "./battleNetApi";
-import { getBattleNetContextMenuItems } from "./contextMenu";
-import type { BattleNetAccount } from "./types";
+import type { PlatformAccount } from "$lib/shared/platform";
+import { createGenericAdapter } from "$lib/platforms/genericAdapter";
+
+interface BattleNetAccount {
+  email: string;
+  battleTag?: string;
+  lastLoginAt?: number | null;
+}
 
 function getBattleNetDisplayName(email: string): string {
   const trimmed = email.trim();
@@ -32,43 +30,35 @@ function toAccount(account: BattleNetAccount): PlatformAccount {
   };
 }
 
-export const battleNetAdapter: PlatformAdapter = {
+// Keep raw emails out of log files: only the first chars of the local part are logged.
+function maskEmail(email: string): string {
+  const local = email.split("@")[0] ?? "";
+  return `${local.slice(0, 3)}…`;
+}
+
+export const battleNetAdapter = createGenericAdapter<BattleNetAccount>({
   id: "battle-net",
-  ...createPlatformAddFlowHandlers({
-    beginSetup: service.beginAccountSetup,
-    getSetupStatus: service.getAccountSetupStatus,
-    cancelSetup: service.cancelAccountSetup,
-  }),
-
-  async loadAccounts(): Promise<PlatformAccount[]> {
-    const accounts = await service.getAccounts();
-    return accounts.map(toAccount);
+  i18nPrefix: "battlenet",
+  noAccountsToastKey: "toast.noBattleNetAccountsFound",
+  toAccount,
+  supportsAccountLabels: false,
+  maskSwitchLogId: maskEmail,
+  copyItems: (account) => {
+    const username = (account.displayName || account.username || account.id).trim() || account.id;
+    return [
+      {
+        field: "username",
+        value: username,
+        labelKey: "battlenet.copyLabelUsername",
+        clipboardLabelKey: "battlenet.copyLabelUsername",
+      },
+      {
+        field: "email",
+        value: account.id,
+        labelKey: "battlenet.copyLabelEmail",
+        clipboardLabelKey: "battlenet.copyLabelEmail",
+      },
+    ];
   },
-
-  async getCurrentAccount(): Promise<string> {
-    return service.getCurrentAccount();
-  },
-
-  async getStartupSnapshot() {
-    const snapshot = await service.getStartupSnapshot();
-    return {
-      accounts: snapshot.accounts.map(toAccount),
-      currentAccount: snapshot.currentAccount,
-    };
-  },
-
-  async switchAccount(account: PlatformAccount): Promise<void> {
-    await service.switchAccount(account.id);
-  },
-
-  getContextMenuActions(
-    account: PlatformAccount,
-    callbacks: PlatformContextMenuCallbacks,
-  ): ContextMenuAction[] {
-    return getBattleNetContextMenuItems(account, callbacks);
-  },
-
-  getNoAccountsToastMessage(callbacks) {
-    return callbacks.t("toast.noBattleNetAccountsFound");
-  },
-};
+  forgetToastParams: (display) => ({ email: display }),
+});

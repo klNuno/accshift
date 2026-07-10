@@ -1,6 +1,7 @@
 import type { PlatformAccount, PlatformAddFlowStatus } from "$lib/shared/platform";
 import type { CardExtensionContent } from "$lib/shared/cardExtension";
 import { getPlatform } from "$lib/shared/platform";
+import { getPlatformDefinition } from "$lib/platforms/registry";
 import type { MessageKey, TranslationParams } from "$lib/i18n";
 
 type Translator = (key: MessageKey, params?: TranslationParams) => string;
@@ -154,7 +155,10 @@ export function createPlatformAddFlowController({
 
       if (nextStatus.state === "ready") {
         const adapter = getPlatform(current.platformId);
-        if (current.platformId === "steam" && nextStatus.accountId) {
+        if (
+          getPlatformDefinition(current.platformId)?.capabilities?.primeProfileAfterAdd &&
+          nextStatus.accountId
+        ) {
           void adapter?.getProfileInfo?.(nextStatus.accountId).catch(() => null);
         }
         if (getActiveTab() === current.platformId) {

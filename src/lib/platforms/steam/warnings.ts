@@ -270,7 +270,7 @@ export async function loadSteamWarningStates(
     }
   } catch (e) {
     if (!silent && now - lastBanErrorToastAt >= BAN_ERROR_TOAST_COOLDOWN_MS) {
-      addToast(t("toast.banCheckFailed", { error: String(e) }));
+      addToast(t("toast.banCheckFailedGeneric" as string as MessageKey), { type: "error" });
       lastBanErrorToastAt = now;
     }
     console.error("[ban-check] failed to fetch ban states:", e);

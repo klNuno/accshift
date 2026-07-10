@@ -1,3 +1,18 @@
+export type SteamShutdownMode = "graceful" | "force";
+
+export interface SteamPlatformSettings {
+  runAsAdmin: boolean;
+  launchOptions: string;
+  shutdownMode: SteamShutdownMode;
+}
+
+// Types the `steam` entry of `settings.platformSettings` app-wide.
+declare module "$lib/shared/platform" {
+  interface PlatformSettingsRegistry {
+    steam: SteamPlatformSettings;
+  }
+}
+
 export interface SteamAccount {
   steam_id: string;
   account_name: string;

@@ -1,6 +1,16 @@
-import type { PlatformDef } from "$lib/features/settings/types";
+import type { PlatformDef } from "$lib/shared/platform";
 import { getPlatform, registerPlatform } from "$lib/shared/platform";
 import type { PlatformAdapter } from "$lib/shared/platform";
+import {
+  CLIENT_STORE_ROBLOX_PROFILE_CACHE,
+  CLIENT_STORE_STEAM_BAN_CHECK_STATE,
+  CLIENT_STORE_STEAM_BAN_INFO_CACHE,
+  CLIENT_STORE_STEAM_PROFILE_CACHE,
+  STORAGE_TARGET_EPIC_SNAPSHOTS,
+  STORAGE_TARGET_RIOT_SNAPSHOTS,
+  STORAGE_TARGET_UBISOFT_SNAPSHOTS,
+} from "$lib/storage/clientStorage";
+import { steamSettingsSchema } from "./steam/settingsSchema";
 
 export const PLATFORM_DEFS: PlatformDef[] = [
   {
@@ -17,6 +27,19 @@ export const PLATFORM_DEFS: PlatformDef[] = [
       linux: "~/.local/share/Steam",
       macos: "~/Library/Application Support/Steam",
     },
+    capabilities: {
+      bulkEdit: { loadBar: () => import("./steam/BulkEditBar.svelte") },
+      profileRefresh: { avatars: true, bans: true },
+      accountUsernames: true,
+      primeProfileAfterAdd: true,
+      accountWarnings: true,
+      externalDataStores: [
+        CLIENT_STORE_STEAM_PROFILE_CACHE,
+        CLIENT_STORE_STEAM_BAN_CHECK_STATE,
+        CLIENT_STORE_STEAM_BAN_INFO_CACHE,
+      ],
+      settings: steamSettingsSchema,
+    },
   },
   {
     id: "riot",
@@ -28,6 +51,10 @@ export const PLATFORM_DEFS: PlatformDef[] = [
     settingsComponent: () => import("./riot/RiotSettingsTab.svelte"),
     pathLabelKey: "settings.riotClientPath",
     pathPlaceholder: "C:\\Riot Games\\Riot Client\\RiotClientServices.exe",
+    capabilities: {
+      lastLoginUnknownKey: "time.neverConnected",
+      externalDataStores: [STORAGE_TARGET_RIOT_SNAPSHOTS],
+    },
   },
   {
     id: "battle-net",
@@ -50,6 +77,9 @@ export const PLATFORM_DEFS: PlatformDef[] = [
     settingsComponent: () => import("./ubisoft/UbisoftSettingsTab.svelte"),
     pathLabelKey: "settings.ubisoftPath",
     pathPlaceholder: "C:\\Program Files (x86)\\Ubisoft\\Ubisoft Game Launcher",
+    capabilities: {
+      externalDataStores: [STORAGE_TARGET_UBISOFT_SNAPSHOTS],
+    },
   },
   {
     id: "roblox",
@@ -59,6 +89,10 @@ export const PLATFORM_DEFS: PlatformDef[] = [
     supportedOs: ["windows"],
     settingsTabKey: "settings.roblox",
     settingsComponent: () => import("./roblox/RobloxSettingsTab.svelte"),
+    capabilities: {
+      accountWarnings: true,
+      externalDataStores: [CLIENT_STORE_ROBLOX_PROFILE_CACHE],
+    },
   },
   {
     id: "epic",
@@ -71,6 +105,9 @@ export const PLATFORM_DEFS: PlatformDef[] = [
     pathLabelKey: "settings.epicPath",
     pathPlaceholder:
       "C:\\Program Files (x86)\\Epic Games\\Launcher\\Portal\\Binaries\\Win64\\EpicGamesLauncher.exe",
+    capabilities: {
+      externalDataStores: [STORAGE_TARGET_EPIC_SNAPSHOTS],
+    },
   },
   {
     id: "gog",
@@ -103,7 +140,7 @@ export const PLATFORM_DEFS: PlatformDef[] = [
     settingsTabKey: "settings.discord",
     settingsComponent: () => import("./discord/DiscordSettingsTab.svelte"),
     pathLabelKey: "settings.discordPath",
-    pathPlaceholder: "C:\\Users\\you\\AppData\\Local\\Discord\\Update.exe",
+    pathPlaceholder: "%LOCALAPPDATA%\\Discord\\Update.exe",
   },
 ];
 

@@ -18,7 +18,7 @@ function toAccount(account: RobloxAccount): PlatformAccount {
     id: account.userId,
     displayName: account.displayName || account.username,
     username: account.username,
-    lastLoginAt: account.lastLoginAt ?? null,
+    lastLoginAt: account.lastLoginAt ? Math.floor(account.lastLoginAt / 1000) : null,
   };
 }
 

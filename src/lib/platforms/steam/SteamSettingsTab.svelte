@@ -10,6 +10,9 @@
     accent,
     t,
     apiKey = $bindable(),
+    apiKeyConfigured = false,
+    apiKeyError = false,
+    pathError = false,
     avatarCacheDaysInput = "",
     banCheckDaysInput = "",
     avatarRefreshLoading = false,
@@ -17,18 +20,24 @@
     onChoosePath,
     onOpenSteamApiKeyPage,
     onApiKeyInput = () => {},
+    onClearApiKey = () => {},
     onAvatarCacheDaysInput = () => {},
     onBanCheckDaysInput = () => {},
     onCommitAvatarCacheDays = () => {},
     onCommitBanCheckDays = () => {},
     onRefreshAvatarsNow = async () => {},
     onRefreshBansNow = async () => {},
+    pathLabelKey = "settings.steamFolder",
+    pathPlaceholder = "C:\\Program Files (x86)\\Steam",
   }: {
     settings: AppSettings;
     path: string;
     accent: string;
     t: (key: MessageKey, params?: TranslationParams) => string;
     apiKey: string;
+    apiKeyConfigured?: boolean;
+    apiKeyError?: boolean;
+    pathError?: boolean;
 
     avatarCacheDaysInput?: string;
     banCheckDaysInput?: string;
@@ -37,12 +46,15 @@
     onChoosePath: () => void | Promise<void>;
     onOpenSteamApiKeyPage: () => void | Promise<void>;
     onApiKeyInput?: (value: string) => void;
+    onClearApiKey?: () => void | Promise<void>;
     onAvatarCacheDaysInput?: (value: string) => void;
     onBanCheckDaysInput?: (value: string) => void;
     onCommitAvatarCacheDays?: () => void;
     onCommitBanCheckDays?: () => void;
     onRefreshAvatarsNow?: () => void | Promise<void>;
     onRefreshBansNow?: () => void | Promise<void>;
+    pathLabelKey?: string;
+    pathPlaceholder?: string;
   } = $props();
 </script>
 
@@ -71,6 +83,11 @@
   bind:steamPath={path}
   bind:apiKey
   {accent}
+  {apiKeyConfigured}
+  {apiKeyError}
+  {pathError}
+  {pathLabelKey}
+  {pathPlaceholder}
 
   {avatarCacheDaysInput}
   {banCheckDaysInput}
@@ -79,6 +96,7 @@
   onChooseSteamFolder={onChoosePath}
   onOpenSteamApiKeyPage={onOpenSteamApiKeyPage}
   onApiKeyInput={onApiKeyInput}
+  onClearApiKey={onClearApiKey}
   onAvatarCacheDaysInput={onAvatarCacheDaysInput}
   onBanCheckDaysInput={onBanCheckDaysInput}
   onCommitAvatarCacheDays={onCommitAvatarCacheDays}

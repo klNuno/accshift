@@ -7,6 +7,9 @@
     settings,
     steamPath = $bindable(),
     apiKey = $bindable(),
+    apiKeyConfigured = false,
+    apiKeyError = false,
+    pathError = false,
     avatarCacheDaysInput = "",
     banCheckDaysInput = "",
     avatarRefreshLoading = false,
@@ -14,6 +17,7 @@
     onChooseSteamFolder,
     onOpenSteamApiKeyPage,
     onApiKeyInput = () => {},
+    onClearApiKey = () => {},
     onAvatarCacheDaysInput = () => {},
     onBanCheckDaysInput = () => {},
     onCommitAvatarCacheDays = () => {},
@@ -21,11 +25,16 @@
     onRefreshAvatarsNow = async () => {},
     onRefreshBansNow = async () => {},
     accent = "#2563eb",
+    pathLabelKey = "settings.steamFolder",
+    pathPlaceholder = "C:\\Program Files (x86)\\Steam",
     t,
   }: {
     settings: AppSettings;
     steamPath: string;
     apiKey: string;
+    apiKeyConfigured?: boolean;
+    apiKeyError?: boolean;
+    pathError?: boolean;
     avatarCacheDaysInput?: string;
     banCheckDaysInput?: string;
     avatarRefreshLoading?: boolean;
@@ -33,6 +42,7 @@
     onChooseSteamFolder: () => void | Promise<void>;
     onOpenSteamApiKeyPage: () => void | Promise<void>;
     onApiKeyInput?: (value: string) => void;
+    onClearApiKey?: () => void | Promise<void>;
     onAvatarCacheDaysInput?: (value: string) => void;
     onBanCheckDaysInput?: (value: string) => void;
     onCommitAvatarCacheDays?: () => void;
@@ -40,6 +50,8 @@
     onRefreshAvatarsNow?: () => void | Promise<void>;
     onRefreshBansNow?: () => void | Promise<void>;
     accent?: string;
+    pathLabelKey?: string;
+    pathPlaceholder?: string;
     t: (key: MessageKey, params?: TranslationParams) => string;
   } = $props();
 </script>
@@ -79,17 +91,21 @@
   <h3>{t("settings.steamInstallation")}</h3>
 
   <div class="field">
-    <span class="field-label">{t("settings.steamFolder")}</span>
+    <span class="field-label">{t(pathLabelKey as MessageKey)}</span>
     <div class="input-row">
       <input
         id="steam-folder"
         type="text"
         bind:value={steamPath}
         class="text-input"
-        placeholder="C:\Program Files (x86)\Steam"
+        class:invalid={pathError}
+        placeholder={pathPlaceholder}
       />
       <button class="browse-btn" type="button" onclick={onChooseSteamFolder}>{t("common.choose")}</button>
     </div>
+    {#if pathError}
+      <p class="error-hint">{t("settings.pathInvalidHint")}</p>
+    {/if}
   </div>
 </section>
 
@@ -98,7 +114,12 @@
 
   <div class="field">
     <div class="field-label-row">
-      <span class="field-label">{t("settings.steamWebApiKey")}</span>
+      <span class="field-label">
+        {t("settings.steamWebApiKey")}
+        {#if apiKeyConfigured}
+          <span class="key-badge">{t("common.configured")}</span>
+        {/if}
+      </span>
       <button class="inline-link-btn" type="button" onclick={onOpenSteamApiKeyPage}>{t("settings.getKey")}</button>
     </div>
     <input
@@ -106,13 +127,20 @@
       type="password"
       bind:value={apiKey}
       class="text-input"
+      class:invalid={apiKeyError}
       placeholder={t("settings.pasteApiKey")}
       oninput={(e) => onApiKeyInput((e.currentTarget as HTMLInputElement).value)}
     />
+    {#if apiKeyError}
+      <p class="error-hint">{t("settings.apiKeyInvalidHint")}</p>
+    {/if}
+    {#if apiKeyConfigured}
+      <button class="clear-key-btn" type="button" onclick={onClearApiKey}>{t("settings.clearApiKey")}</button>
+    {/if}
   </div>
 
   <div class="field">
-    <span class="field-label">{t("settings.avatarRefresh")} <span class="hint">({t("settings.zeroEachLaunch")})</span></span>
+    <span class="field-label">{t("settings.avatarRefresh")} <span class="hint">({t("settings.unitDays")}, {t("settings.zeroEachLaunch")})</span></span>
     <div class="input-row">
       <input
         type="number"
@@ -142,7 +170,7 @@
   </div>
 
   <div class="field">
-    <span class="field-label">{t("settings.banCheckDelay")} <span class="hint">({t("settings.zeroEachLaunch")})</span></span>
+    <span class="field-label">{t("settings.banCheckDelay")} <span class="hint">({t("settings.unitDays")}, {t("settings.zeroEachLaunch")})</span></span>
     <div class="input-row">
       <input
         type="number"
@@ -245,6 +273,47 @@
 
   .text-input:focus {
     border-color: color-mix(in srgb, var(--fg-muted) 55%, var(--border));
+  }
+
+  .text-input.invalid,
+  .text-input.invalid:focus {
+    border-color: #ef4444;
+  }
+
+  .error-hint {
+    margin: 0;
+    font-size: 11px;
+    color: #fca5a5;
+  }
+
+  .key-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, #22c55e 45%, var(--border));
+    background: color-mix(in srgb, #22c55e 14%, transparent);
+    color: #4ade80;
+    font-size: 10px;
+    font-weight: 600;
+    vertical-align: middle;
+  }
+
+  .clear-key-btn {
+    align-self: flex-start;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--fg-muted);
+    font-size: 11px;
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: border-color 120ms ease-out, color 120ms ease-out;
+  }
+
+  .clear-key-btn:hover {
+    color: #fca5a5;
+    border-color: color-mix(in srgb, #ef4444 45%, var(--border));
   }
 
   .input-row {

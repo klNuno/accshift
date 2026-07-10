@@ -1,29 +1,7 @@
 import type { Locale } from "$lib/i18n";
+import type { PlatformSettings } from "$lib/shared/platform";
 
-export type RuntimeOs = "windows" | "linux" | "macos" | "unknown";
-
-export type PathPlaceholder = string | Partial<Record<RuntimeOs, string>>;
-
-export interface PlatformDef {
-  id: string;
-  name: string;
-  accent: string;
-  implemented: boolean;
-  supportedOs: RuntimeOs[];
-  settingsTabKey?: string;
-  settingsComponent?: () => Promise<{ default: any }>;
-  pathLabelKey?: string;
-  pathPlaceholder?: PathPlaceholder;
-}
-
-export function resolvePathPlaceholder(
-  placeholder: PathPlaceholder | undefined,
-  os: RuntimeOs,
-): string {
-  if (!placeholder) return "";
-  if (typeof placeholder === "string") return placeholder;
-  return placeholder[os] ?? placeholder.windows ?? placeholder.linux ?? placeholder.macos ?? "";
-}
+export type { PlatformSettings };
 
 export interface DataRefreshSettings {
   avatarCacheDays: number;
@@ -42,18 +20,6 @@ export type AnimationsMode = "system" | "on" | "off";
 
 /** "auto" blurs the UI when streaming software is detected; "off" never does. */
 export type StreamerMode = "auto" | "off";
-
-export type SteamShutdownMode = "graceful" | "force";
-
-export interface SteamPlatformSettings {
-  runAsAdmin: boolean;
-  launchOptions: string;
-  shutdownMode: SteamShutdownMode;
-}
-
-export interface PlatformSettings {
-  steam: SteamPlatformSettings;
-}
 
 export interface AppSettings {
   language: Locale;

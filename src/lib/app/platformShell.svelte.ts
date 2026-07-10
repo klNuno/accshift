@@ -1,5 +1,6 @@
 import { getSettings, ALL_PLATFORMS } from "$lib/features/settings/store";
-import type { AppSettings, PlatformDef, RuntimeOs } from "$lib/features/settings/types";
+import type { AppSettings } from "$lib/features/settings/types";
+import type { PlatformDef, RuntimeOs } from "$lib/shared/platform";
 import { getPlatform } from "$lib/shared/platform";
 import { getPlatformDefinition } from "$lib/platforms/registry";
 import { DEFAULT_LOCALE } from "$lib/i18n";

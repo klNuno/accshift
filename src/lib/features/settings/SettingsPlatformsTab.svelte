@@ -3,7 +3,8 @@
   import { getPlatformDefinition } from "$lib/platforms/registry";
   import { ALL_PLATFORMS } from "./store";
   import type { MessageKey, TranslationParams } from "$lib/i18n";
-  import type { AppSettings, RuntimeOs } from "./types";
+  import type { AppSettings } from "./types";
+  import type { RuntimeOs } from "$lib/shared/platform";
 
   let {
     settings = $bindable(),
@@ -69,6 +70,8 @@
     <div class="platforms">
       <button
         class="platform-chip"
+        role="switch"
+        aria-checked={settings.personasEnabled}
         onclick={() => (settings.personasEnabled = !settings.personasEnabled)}
         style="--chip-accent:#a855f7;"
         title={t("personas.title")}
@@ -77,7 +80,7 @@
           <span>{t("personas.title")}</span>
           <span class="platform-status">{t("settings.personasHint")}</span>
         </span>
-        <div class="toggle" class:active={settings.personasEnabled}>
+        <div class="toggle" class:active={settings.personasEnabled} aria-hidden="true">
           <div class="knob"></div>
         </div>
       </button>
@@ -89,6 +92,8 @@
         <button
           class="platform-chip"
           class:disabled={isLocked}
+          role="switch"
+          aria-checked={isEnabled}
           onclick={() => togglePlatform(platform.id)}
           style={`--chip-accent:${platform.accent};`}
           disabled={isLocked}
@@ -100,7 +105,7 @@
               <span class="platform-status">{statusLabel}</span>
             {/if}
           </span>
-          <div class="toggle" class:active={isEnabled}>
+          <div class="toggle" class:active={isEnabled} aria-hidden="true">
             <div class="knob"></div>
           </div>
         </button>
