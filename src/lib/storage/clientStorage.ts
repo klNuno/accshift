@@ -112,6 +112,7 @@ function isClientStoreId(value: string): value is ClientStoreId {
 }
 
 function readLegacyLocalStorageValue(storeId: ClientStoreId): unknown {
+  if (typeof localStorage === "undefined") return undefined;
   const key = LEGACY_LOCAL_STORAGE_KEYS[storeId];
   const raw = localStorage.getItem(key);
   if (raw == null) return undefined;
