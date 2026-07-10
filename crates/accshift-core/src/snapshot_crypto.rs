@@ -161,7 +161,12 @@ fn copy_dir_with(
             let file_type = entry
                 .file_type()
                 .map_err(|e| format!("Could not read file type: {e}"))?;
-            if file_type.is_dir() {
+            // A Windows junction reports is_symlink()==false / is_dir()==true,
+            // so an is_dir() check alone would recurse through it into its
+            // target. Skip any reparse point up front, same as a symlink.
+            if crate::fs_utils::is_reparse_point(&entry) {
+                // Symlinks and other special entries are skipped by design.
+            } else if file_type.is_dir() {
                 copy_dir_with(&src_path, &dst_path, options, copy_file)?;
             } else if file_type.is_file() {
                 copy_file(&src_path, &dst_path)?;
@@ -305,7 +310,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(fs::read(dest.join("keep.txt")).unwrap(), b"keep");
-        assert_eq!(fs::read(dest.join("nested").join("inner.txt")).unwrap(), b"inner");
+        assert_eq!(
+            fs::read(dest.join("nested").join("inner.txt")).unwrap(),
+            b"inner"
+        );
         assert!(!dest.join("LockFile").exists());
         assert!(!dest.join("nested").join("lockfile").exists());
         let _ = fs::remove_dir_all(&dir);

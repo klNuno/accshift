@@ -7,6 +7,26 @@ fn should_ignore_name(name: &str, ignored_names: &[&str]) -> bool {
         .any(|ignored| ignored.eq_ignore_ascii_case(name))
 }
 
+// A directory junction on Windows (IO_REPARSE_TAG_MOUNT_POINT) reports
+// `is_symlink() == false` while `is_dir() == true`, so an `is_symlink()` guard
+// alone would recurse into (or delete through) it. Treat any reparse point as a
+// link to skip. `DirEntry::metadata()` does not traverse the entry, so this
+// reads the junction's own attributes. Fail closed: if it can't be stat'd, skip.
+#[cfg(windows)]
+pub(crate) fn is_reparse_point(entry: &fs::DirEntry) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    entry
+        .metadata()
+        .map(|m| m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+        .unwrap_or(true)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn is_reparse_point(_entry: &fs::DirEntry) -> bool {
+    false
+}
+
 pub fn copy_dir_recursive(
     source: &Path,
     target: &Path,
@@ -31,12 +51,12 @@ pub fn copy_dir_recursive(
             continue;
         }
 
-        // Skip symlinks entirely: following them can escape the source tree
-        // or loop forever (symlink to an ancestor).
+        // Skip symlinks and Windows junctions entirely: following them can
+        // escape the source tree or loop forever (link to an ancestor).
         let file_type = entry
             .file_type()
             .map_err(|e| format!("Could not stat {}: {e}", src_path.display()))?;
-        if file_type.is_symlink() {
+        if file_type.is_symlink() || is_reparse_point(&entry) {
             continue;
         }
 
