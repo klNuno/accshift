@@ -5,6 +5,7 @@
     accent = "#71717a",
     onLabel = "On",
     offLabel = "Off",
+    disabled = false,
     onToggle,
   }: {
     label: string;
@@ -12,6 +13,7 @@
     accent?: string;
     onLabel?: string;
     offLabel?: string;
+    disabled?: boolean;
     onToggle: () => void;
   } = $props();
 </script>
@@ -19,6 +21,9 @@
 <button
   class="toggle-btn"
   type="button"
+  role="switch"
+  aria-checked={enabled}
+  {disabled}
   style={`--chip-accent:${accent};`}
   onclick={onToggle}
 >
@@ -65,9 +70,14 @@
     font-weight: 600;
   }
 
-  .toggle-btn:hover {
+  .toggle-btn:hover:not(:disabled) {
     border-color: color-mix(in srgb, var(--chip-accent) 55%, var(--border));
     background: color-mix(in srgb, var(--bg-card) 84%, #fff 16%);
+  }
+
+  .toggle-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
   }
 
   .toggle {

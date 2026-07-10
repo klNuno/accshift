@@ -9,13 +9,13 @@
   import type { FolderInfo } from "$lib/features/folders/types";
   import type {
     PlatformAccount,
+    PlatformBulkEditBarComponent,
+    PlatformBulkEditResult,
     PlatformContextMenuConfirmConfig,
   } from "$lib/shared/platform";
   import type { ContextMenuItem, InputDialogConfig } from "$lib/shared/types";
   import type { MessageKey, TranslationParams, Locale } from "$lib/i18n";
-  import type { BulkEditResult } from "$lib/platforms/steam/steamApi";
 
-  type BulkEditBarComponent = (typeof import("$lib/platforms/steam/BulkEditBar.svelte"))["default"];
   type ContextMenuState = {
     x: number;
     y: number;
@@ -61,14 +61,14 @@
     onConfirmDialog: () => void;
     onCancelConfirmDialog: () => void;
     bulkEditMode: boolean;
-    BulkEditBar?: BulkEditBarComponent | null;
+    BulkEditBar?: PlatformBulkEditBarComponent | null;
     bulkEditSelectedIds: Set<string>;
     bulkEditActiveAccountSelected: boolean;
     onBulkEditSelectAll: () => void;
     onBulkEditDeselectAll: () => void;
     onBulkEditCopyUrls: (urls: string[]) => void;
     onBulkEditClose: () => void;
-    onBulkEditResult: (result: BulkEditResult) => void;
+    onBulkEditResult: (result: PlatformBulkEditResult) => void;
     t: (key: MessageKey, params?: TranslationParams) => string;
     toasts: ToastMessage[];
     onToastDone: (id: string) => void;
@@ -91,6 +91,7 @@
     placeholder={inputDialog.placeholder}
     initialValue={inputDialog.initialValue}
     allowEmpty={inputDialog.allowEmpty}
+    maxlength={inputDialog.maxlength}
     {locale}
     onConfirm={inputDialog.onConfirm}
     onCancel={onCancelInputDialog}
@@ -122,7 +123,7 @@
   />
 {/if}
 
-<div class="toast-container">
+<div class="toast-container" role="status" aria-live="polite">
   {#each toasts as toast (toast.id)}
     <div
       animate:flip={{ duration: 200 }}
@@ -134,6 +135,8 @@
         durationMs={toast.durationMs}
         type={toast.type}
         toastAction={toast.toastAction}
+        resetKey={toast.resetKey}
+        dismissLabel={t("toast.dismiss" as string as MessageKey)}
         onDone={() => onToastDone(toast.id)}
       />
     </div>

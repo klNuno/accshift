@@ -33,6 +33,7 @@
   const NOTE_MAX_CHARS = 1000;
 
   let telemetry = $state<TelemetryState | null>(null);
+  let telemetryError = $state(false);
   let modeBBusy = $state(false);
   let exportBusy = $state(false);
   let sendLogsBusy = $state(false);
@@ -41,8 +42,10 @@
   async function refreshTelemetry() {
     try {
       telemetry = await invoke<TelemetryState>("telemetry_get_state");
+      telemetryError = false;
     } catch (e) {
       console.error("telemetry_get_state failed", e);
+      telemetryError = true;
     }
   }
 
@@ -117,7 +120,7 @@
   <section class="card">
     <h3>{t("settings.privacy")}</h3>
     <label class="field">
-      <span class="field-label">{t("settings.inactivityTimeout")} <span class="hint">({t("settings.zeroDisabled")})</span></span>
+      <span class="field-label">{t("settings.inactivityTimeout")} <span class="hint">({t("settings.unitSeconds")}, {t("settings.zeroDisabled")})</span></span>
       <input
         type="number"
         min="0"
@@ -179,6 +182,7 @@
           pattern="[0-9]*"
           oninput={(e) => pinCodeInput = sanitizePinDigits((e.currentTarget as HTMLInputElement).value)}
         />
+        <p class="hint">{t("settings.pinTakesEffectNextLaunch")}</p>
       </div>
     {/if}
   </section>
@@ -203,6 +207,7 @@
         accent={neutralAccent}
         onLabel={t("common.enabled")}
         offLabel={t("common.disabled")}
+        disabled={modeBBusy}
         onToggle={toggleModeB}
       />
       <p class="hint">{t("settings.telemetryModeBHint")}</p>
@@ -240,6 +245,14 @@
         onclick={sendLogs}
       >
         {t("settings.sendLogs")}
+      </button>
+    </section>
+  {:else if telemetryError}
+    <section class="card card-wide">
+      <h3>{t("settings.telemetry")}</h3>
+      <p class="hint">{t("settings.telemetryLoadFailed")}</p>
+      <button type="button" class="btn-export" onclick={refreshTelemetry}>
+        {t("common.retry")}
       </button>
     </section>
   {/if}

@@ -2,27 +2,22 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { addToast } from "$lib/features/notifications/store.svelte";
 import { translate } from "$lib/i18n";
-import type { AppSettings, RuntimeOs } from "$lib/features/settings/types";
+import type { AppSettings } from "$lib/features/settings/types";
+import type { RuntimeOs } from "$lib/shared/platform";
 import { getBootPayload } from "$lib/app/bootPayload";
 import { getInitialActiveTab, isPlatformUsable } from "$lib/app/platformShell.svelte";
+import { getPlatformDefinition } from "$lib/platforms/registry";
 import { applyCustomThemePayloads, loadCustomThemes } from "$lib/theme/themes";
 import {
   CLIENT_STORE_ACCOUNT_CARD_COLORS,
   CLIENT_STORE_ACCOUNT_CARD_NOTES,
   CLIENT_STORE_FOLDER_CARD_COLORS,
   CLIENT_STORE_FOLDERS,
-  CLIENT_STORE_ROBLOX_PROFILE_CACHE,
   CLIENT_STORE_SETTINGS,
-  CLIENT_STORE_STEAM_BAN_CHECK_STATE,
-  CLIENT_STORE_STEAM_BAN_INFO_CACHE,
-  CLIENT_STORE_STEAM_PROFILE_CACHE,
   CLIENT_STORE_VIEW_MODE,
   STORAGE_TARGET_APP_CONFIG_LOCAL,
   STORAGE_TARGET_APP_CONFIG_PORTABLE,
   STORAGE_TARGET_CUSTOM_THEMES,
-  STORAGE_TARGET_EPIC_SNAPSHOTS,
-  STORAGE_TARGET_RIOT_SNAPSHOTS,
-  STORAGE_TARGET_UBISOFT_SNAPSHOTS,
   refreshClientStorageIfChanged,
 } from "$lib/storage/clientStorage";
 
@@ -61,13 +56,6 @@ type AppLifecycleDeps = {
 function semverCore(version: string): string {
   const match = version.match(/\d+\.\d+\.\d+/);
   return match ? match[0] : version;
-}
-
-function getActiveSnapshotTarget(platformId: string): string | null {
-  if (platformId === "riot") return STORAGE_TARGET_RIOT_SNAPSHOTS;
-  if (platformId === "ubisoft") return STORAGE_TARGET_UBISOFT_SNAPSHOTS;
-  if (platformId === "epic") return STORAGE_TARGET_EPIC_SNAPSHOTS;
-  return null;
 }
 
 export function createAppLifecycleController({
@@ -169,14 +157,10 @@ export function createAppLifecycleController({
       const configChanged =
         changed.includes(STORAGE_TARGET_APP_CONFIG_PORTABLE) ||
         changed.includes(STORAGE_TARGET_APP_CONFIG_LOCAL);
-      const snapshotTarget = getActiveSnapshotTarget(shell.activeTab);
-      const activeSnapshotsChanged = snapshotTarget ? changed.includes(snapshotTarget) : false;
-      const activeCachesChanged =
-        (shell.activeTab === "steam" &&
-          (changed.includes(CLIENT_STORE_STEAM_PROFILE_CACHE) ||
-            changed.includes(CLIENT_STORE_STEAM_BAN_CHECK_STATE) ||
-            changed.includes(CLIENT_STORE_STEAM_BAN_INFO_CACHE))) ||
-        (shell.activeTab === "roblox" && changed.includes(CLIENT_STORE_ROBLOX_PROFILE_CACHE));
+      const activeCapabilities = getPlatformDefinition(shell.activeTab)?.capabilities;
+      const activeDataStoresChanged = (activeCapabilities?.externalDataStores ?? []).some(
+        (target) => changed.includes(target),
+      );
 
       if (themesChanged) {
         await loadCustomThemes();
@@ -220,14 +204,8 @@ export function createAppLifecycleController({
         queueGridPadding();
       }
 
-      if (configChanged || activeSnapshotsChanged || activeCachesChanged) {
-        await loadAccounts(
-          true,
-          false,
-          true,
-          shell.activeTab === "steam" || shell.activeTab === "roblox",
-          false,
-        );
+      if (configChanged || activeDataStoresChanged) {
+        await loadAccounts(true, false, true, Boolean(activeCapabilities?.accountWarnings), false);
       }
     } catch (reason) {
       console.error("Failed to refresh external storage state:", reason);

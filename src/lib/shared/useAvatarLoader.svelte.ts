@@ -5,51 +5,66 @@ const BATCH_SIZE = 15;
 
 export type AvatarState = { url: string | null; loading: boolean; refreshing: boolean };
 
+const scheduleFlush =
+  typeof requestAnimationFrame === "function"
+    ? (fn: () => void) => requestAnimationFrame(fn)
+    : (fn: () => void) => queueMicrotask(fn);
+
 export function createAvatarLoader(getAdapter: () => PlatformAdapter | undefined) {
   let avatarStates = $state.raw<Record<string, AvatarState>>({});
 
+  // Coalesce individual resolutions into one record replacement per frame.
+  // Replacing the record per avatar invalidates avatarStates[id] on every
+  // rendered card: N avatars x M cards re-evaluations at boot.
+  let pendingUpdates: Record<string, AvatarState> | null = null;
+
+  function readState(accountId: string): AvatarState | undefined {
+    return pendingUpdates?.[accountId] ?? untrack(() => avatarStates[accountId]);
+  }
+
+  function flushPending() {
+    const updates = pendingUpdates;
+    pendingUpdates = null;
+    if (!updates) return;
+    untrack(() => {
+      avatarStates = { ...avatarStates, ...updates };
+    });
+  }
+
+  function queueUpdate(accountId: string, nextState: AvatarState) {
+    if (!pendingUpdates) {
+      pendingUpdates = {};
+      scheduleFlush(flushPending);
+    }
+    pendingUpdates[accountId] = nextState;
+  }
+
+  function sameState(previous: AvatarState | undefined, next: AvatarState): boolean {
+    return (
+      !!previous &&
+      previous.url === next.url &&
+      previous.loading === next.loading &&
+      previous.refreshing === next.refreshing
+    );
+  }
+
   function updateState(accountId: string, next: Partial<AvatarState>) {
-    const previous = untrack(() => avatarStates[accountId]);
+    const previous = readState(accountId);
     const nextState: AvatarState = {
       url: previous?.url ?? null,
       loading: previous?.loading ?? false,
       refreshing: previous?.refreshing ?? false,
       ...next,
     };
-    if (
-      previous &&
-      previous.url === nextState.url &&
-      previous.loading === nextState.loading &&
-      previous.refreshing === nextState.refreshing
-    ) {
-      return;
-    }
-    untrack(() => {
-      avatarStates = { ...avatarStates, [accountId]: nextState };
-    });
+    if (sameState(previous, nextState)) return;
+    queueUpdate(accountId, nextState);
   }
 
   function mergeStates(updates: Record<string, AvatarState>) {
-    const current = untrack(() => avatarStates);
-    let changed = false;
-    const nextStates: Record<string, AvatarState> = { ...current };
     for (const [accountId, nextState] of Object.entries(updates)) {
-      const previous = current[accountId];
-      if (
-        previous &&
-        previous.url === nextState.url &&
-        previous.loading === nextState.loading &&
-        previous.refreshing === nextState.refreshing
-      ) {
-        continue;
-      }
-      nextStates[accountId] = nextState;
-      changed = true;
+      if (sameState(readState(accountId), nextState)) continue;
+      queueUpdate(accountId, nextState);
     }
-    if (!changed) return;
-    untrack(() => {
-      avatarStates = nextStates;
-    });
   }
 
   function updateAccountDisplayName(
@@ -80,7 +95,7 @@ export function createAvatarLoader(getAdapter: () => PlatformAdapter | undefined
     const updates: Record<string, AvatarState> = {};
 
     for (const account of accts) {
-      const existing = untrack(() => avatarStates[account.id]);
+      const existing = readState(account.id);
       const cached = adapter.getCachedProfile?.(account.id);
       if (cached) {
         const shouldRefresh = cached.expired || forceRefresh;
@@ -120,7 +135,7 @@ export function createAvatarLoader(getAdapter: () => PlatformAdapter | undefined
       return;
     }
     updateState(account.id, {
-      url: avatarStates[account.id]?.url || null,
+      url: readState(account.id)?.url || null,
       loading: false,
       refreshing: false,
     });
@@ -163,11 +178,13 @@ export function createAvatarLoader(getAdapter: () => PlatformAdapter | undefined
   }
 
   function removeAvatar(accountId: string) {
+    if (pendingUpdates) delete pendingUpdates[accountId];
     const { [accountId]: _, ...rest } = avatarStates;
     avatarStates = rest;
   }
 
   function clear() {
+    pendingUpdates = null;
     avatarStates = {};
   }
 

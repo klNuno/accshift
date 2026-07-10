@@ -289,6 +289,10 @@ export const EN_MESSAGES = {
   "toast.deepLinkPlatformDisabled": "{platform} is disabled in Settings",
   "toast.deepLinkAccountNotFound": 'No {platform} account matching "{account}"',
   "toast.deepLinkSwitched": "Switched to {account}",
+  "dialog.deepLinkSwitchTitle": "Switch account?",
+  "dialog.deepLinkSwitchMessage":
+    'An accshift:// link is asking to switch your {platform} account to "{account}". Continue?',
+  "dialog.deepLinkSwitchConfirm": "Switch",
 
   "steam.launchOnline": "Switch online",
   "steam.launchInvisible": "Switch invisible",
@@ -548,6 +552,54 @@ export const EN_MESSAGES = {
   "bulkEdit.loadingGames": "Loading games...",
   "bulkEdit.copyUrls": "Copy URLs",
   "bulkEdit.urlsCopied": "{count} profile URL(s) copied",
+
+  "common.retry": "Retry",
+
+  "app.searchNoResults": 'No results for "{query}"',
+  "app.folderEmpty": "This folder is empty",
+  "app.loadErrorGeneric": "Failed to load accounts. See the console for details.",
+
+  "toast.dismiss": "Dismiss",
+  "toast.switchFailed": "Account switch failed. See the console for details.",
+  "toast.addAccountFailed": "Couldn't add the account. See the console for details.",
+  "toast.banCheckFailedGeneric": "Ban check failed. See the console for details.",
+  "toast.renameAccountFailed": "Rename failed: {error}",
+  "toast.copyFailed": "Couldn't copy to the clipboard",
+  "toast.refreshFailed": "Refresh failed. See the console for details.",
+
+  "dialog.deleteFolderTitle": 'Delete "{name}"?',
+  "dialog.deleteFolderMessage":
+    "Subfolders are deleted too. Accounts inside are moved back up, not removed.",
+
+  "personas.deleteConfirm": "Click again to delete",
+  "personas.discardConfirm": "Click again to discard",
+
+  "context.submenuError": "Couldn't load this menu",
+
+  "settings.scrollTabsLeft": "Scroll settings tabs left",
+  "settings.scrollTabsRight": "Scroll settings tabs right",
+  "settings.apiKeySaveFailed": "Couldn't save the Steam API key",
+  "settings.apiKeyInvalidHint": "The key wasn't saved. Check it and try again.",
+  "settings.apiKeyCleared": "Steam API key cleared",
+  "settings.apiKeyClearFailed": "Couldn't clear the Steam API key",
+  "settings.clearApiKey": "Clear key",
+  "settings.pathSaveFailed": "Couldn't save the {platform} path",
+  "settings.pathInvalidHint": "This path couldn't be saved. Check it and try again.",
+  "settings.pinSaved": "PIN saved",
+  "settings.pinTakesEffectNextLaunch": "Takes effect the next time the app starts",
+  "settings.unitSeconds": "seconds",
+  "settings.unitDays": "days",
+  "settings.telemetryLoadFailed": "Couldn't load telemetry settings",
+
+  "palette.placeholder": "Type a command or account name...",
+  "palette.noResults": "No matching commands",
+  "palette.sectionAccounts": "Accounts",
+  "palette.sectionActions": "Actions",
+  "palette.sectionNavigation": "Navigation",
+  "palette.openTab": "Go to {platform}",
+  "palette.openFolder": 'Open folder "{name}"',
+  "palette.backToParent": "Back to parent folder",
+  "palette.zoomReset": "Reset zoom",
 } as const;
 
 export type MessageKey = keyof typeof EN_MESSAGES;
@@ -845,6 +897,10 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "toast.deepLinkPlatformDisabled": "{platform} est désactivé dans les paramètres",
   "toast.deepLinkAccountNotFound": 'Aucun compte {platform} correspondant à "{account}"',
   "toast.deepLinkSwitched": "Basculé sur {account}",
+  "dialog.deepLinkSwitchTitle": "Changer de compte ?",
+  "dialog.deepLinkSwitchMessage":
+    "Un lien accshift:// demande à basculer votre compte {platform} sur « {account} ». Continuer ?",
+  "dialog.deepLinkSwitchConfirm": "Basculer",
 
   "steam.launchOnline": "Basculer en ligne",
   "steam.launchInvisible": "Basculer en invisible",
@@ -1101,4 +1157,53 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "bulkEdit.loadingGames": "Chargement des jeux...",
   "bulkEdit.copyUrls": "Copier les URLs",
   "bulkEdit.urlsCopied": "{count} URL(s) de profil copiée(s)",
+
+  "common.retry": "Réessayer",
+
+  "app.searchNoResults": "Aucun résultat pour « {query} »",
+  "app.folderEmpty": "Ce dossier est vide",
+  "app.loadErrorGeneric": "Impossible de charger les comptes. Regarde la console pour les détails.",
+
+  "toast.dismiss": "Fermer",
+  "toast.switchFailed": "Le changement de compte a échoué. Regarde la console pour les détails.",
+  "toast.addAccountFailed": "Impossible d'ajouter le compte. Regarde la console pour les détails.",
+  "toast.banCheckFailedGeneric":
+    "La vérification des bans a échoué. Regarde la console pour les détails.",
+  "toast.renameAccountFailed": "Renommage échoué : {error}",
+  "toast.copyFailed": "Impossible de copier dans le presse-papiers",
+  "toast.refreshFailed": "Le rafraîchissement a échoué. Regarde la console pour les détails.",
+
+  "dialog.deleteFolderTitle": "Supprimer « {name} » ?",
+  "dialog.deleteFolderMessage":
+    "Les sous-dossiers sont supprimés aussi. Les comptes qu'ils contiennent remontent d'un niveau, ils ne sont pas supprimés.",
+
+  "personas.deleteConfirm": "Clique encore pour supprimer",
+  "personas.discardConfirm": "Clique encore pour abandonner",
+
+  "context.submenuError": "Impossible de charger ce menu",
+
+  "settings.scrollTabsLeft": "Faire défiler les onglets vers la gauche",
+  "settings.scrollTabsRight": "Faire défiler les onglets vers la droite",
+  "settings.apiKeySaveFailed": "Impossible d'enregistrer la clé API Steam",
+  "settings.apiKeyInvalidHint": "La clé n'a pas été enregistrée. Vérifie-la et réessaie.",
+  "settings.apiKeyCleared": "Clé API Steam effacée",
+  "settings.apiKeyClearFailed": "Impossible d'effacer la clé API Steam",
+  "settings.clearApiKey": "Effacer la clé",
+  "settings.pathSaveFailed": "Impossible d'enregistrer le chemin {platform}",
+  "settings.pathInvalidHint": "Ce chemin n'a pas pu être enregistré. Vérifie-le et réessaie.",
+  "settings.pinSaved": "Code PIN enregistré",
+  "settings.pinTakesEffectNextLaunch": "Prend effet au prochain lancement de l'app",
+  "settings.unitSeconds": "secondes",
+  "settings.unitDays": "jours",
+  "settings.telemetryLoadFailed": "Impossible de charger les paramètres de télémétrie",
+
+  "palette.placeholder": "Tape une commande ou un nom de compte...",
+  "palette.noResults": "Aucune commande ne correspond",
+  "palette.sectionAccounts": "Comptes",
+  "palette.sectionActions": "Actions",
+  "palette.sectionNavigation": "Navigation",
+  "palette.openTab": "Aller à {platform}",
+  "palette.openFolder": "Ouvrir le dossier « {name} »",
+  "palette.backToParent": "Revenir au dossier parent",
+  "palette.zoomReset": "Réinitialiser le zoom",
 };

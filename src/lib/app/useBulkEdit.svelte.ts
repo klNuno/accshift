@@ -1,17 +1,26 @@
-type BulkEditBarType = (typeof import("$lib/platforms/steam/BulkEditBar.svelte"))["default"];
+import type {
+  PlatformBulkEditBarComponent,
+  PlatformBulkEditCapability,
+} from "$lib/shared/platform";
 
 type BulkEditDeps = {
   getCurrentAccountId: () => string | null;
   getVisibleAccountIds: () => string[];
+  /** Bulk edit capability of the active platform, if it declares one. */
+  getBulkEditCapability: () => PlatformBulkEditCapability | null;
 };
 
 export function createBulkEditController({
   getCurrentAccountId,
   getVisibleAccountIds,
+  getBulkEditCapability,
 }: BulkEditDeps) {
   let bulkEditMode = $state(false);
   let bulkEditSelectedIds = $state<Set<string>>(new Set());
-  let BulkEditBar = $state<BulkEditBarType | null>(null);
+  let BulkEditBar = $state<PlatformBulkEditBarComponent | null>(null);
+  // Which platform capability the loaded bar belongs to; a different active
+  // platform must load its own bar component.
+  let loadedBarCapability: PlatformBulkEditCapability | null = null;
   let bulkEditBarLoadPromise: Promise<void> | null = null;
 
   // Paint selection: press on a card, drag over others to select/deselect them.
@@ -53,17 +62,22 @@ export function createBulkEditController({
       bulkEditSelectedIds = new Set();
       return;
     }
-    if (BulkEditBar) {
+    const capability = getBulkEditCapability();
+    if (!capability) return;
+    if (BulkEditBar && loadedBarCapability === capability) {
       bulkEditMode = true;
       return;
     }
     if (!bulkEditBarLoadPromise) {
-      bulkEditBarLoadPromise = import("$lib/platforms/steam/BulkEditBar.svelte")
+      bulkEditBarLoadPromise = capability
+        .loadBar()
         .then((mod) => {
           BulkEditBar = mod.default;
+          loadedBarCapability = capability;
           bulkEditMode = true;
         })
-        .catch(() => {
+        .catch(() => {})
+        .finally(() => {
           bulkEditBarLoadPromise = null;
         });
     }

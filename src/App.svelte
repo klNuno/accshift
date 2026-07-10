@@ -61,6 +61,11 @@
   import { createDeepLinkController } from "$lib/app/useDeepLink.svelte";
   import { COLOR_LABEL_KEYS } from "$lib/shared/contextMenu/accountAppearanceActions";
   import { createDisplayPipeline, matchesSearch } from "$lib/app/useDisplayPipeline.svelte";
+  import { createKeyboardController } from "$lib/shared/keyboard/controller";
+  import type { KeyScope, ShortcutBinding } from "$lib/shared/keyboard/types";
+  import { createCommandRegistry } from "$lib/features/commandPalette/registry";
+  import CommandPalette from "$lib/features/commandPalette/CommandPalette.svelte";
+  import { createCardFocus } from "$lib/app/useCardFocus.svelte";
 
   const shell = createPlatformShellState();
   const t = (key: MessageKey, params?: TranslationParams) => translate(shell.locale, key, params);
@@ -150,7 +155,11 @@
   let cardNoteVersion = $state(0);
   const bulkEdit = createBulkEditController({
     getCurrentAccountId: () => loader.currentAccountId,
-    getVisibleAccountIds: () => loader.accounts.map((a) => a.id),
+    // Select-all must target what the user can actually see: with an active
+    // search or collapsed sections, selecting the whole platform would apply
+    // destructive bulk edits to accounts that are off screen.
+    getVisibleAccountIds: () => display.visibleRenderedAccountIds,
+    getBulkEditCapability: () => shell.activePlatformDef?.capabilities?.bulkEdit ?? null,
   });
 
   const uiScale = createUiScale({
@@ -271,9 +280,9 @@
     if (!result) return;
     const nameFor = (id: string) => personaPlatforms.find((p) => p.id === id)?.name ?? id;
     if (result.failed.length === 0) {
-      addToast(t("personas.switched", { name: persona.name }));
+      addToast(t("personas.switched", { name: persona.name }), { type: "success" });
     } else if (result.succeeded.length === 0) {
-      addToast(t("personas.switchFailed", { name: persona.name }));
+      addToast(t("personas.switchFailed", { name: persona.name }), { type: "error" });
     } else {
       addToast(
         t("personas.switchPartial", {
@@ -308,30 +317,64 @@
     isLoaderLoading: () => loader.loading,
     getLoaderError: () => loader.error,
     switchToAccount: handleAccountSwitch,
+    // A deep link is a remote-originated trigger: require an explicit click
+    // before swapping the live account, so a page opening accshift://switch/...
+    // can't change accounts unattended.
+    confirmSwitch: (account, platformName) =>
+      dialogs.requestConfirm({
+        title: t("dialog.deepLinkSwitchTitle"),
+        message: t("dialog.deepLinkSwitchMessage", {
+          platform: platformName,
+          account: account.displayName || account.username || account.id,
+        }),
+        confirmLabel: t("dialog.deepLinkSwitchConfirm"),
+      }),
   });
 
+  // Runs the settings "refresh now" actions for every platform declaring the
+  // matching profileRefresh capability (currently Steam only).
   async function refreshAvatarsNow() {
-    const steamAdapter = await ensureAdapterReady("steam");
-    if (!steamAdapter?.getProfileInfo) return;
-    try {
-      const steamAccounts = await steamAdapter.loadAccounts();
-      if (steamAccounts.length === 0) { addToast(t("toast.noSteamAccountsFound")); return; }
-      await Promise.all(steamAccounts.map((a) => steamAdapter.getProfileInfo!(a.id).catch(() => null)));
-      if (shell.activeTab === "steam") void loadAccounts(true, false, true, false, false);
-      addToast(t("toast.avatarRefreshComplete", { count: steamAccounts.length }));
-    } catch (error) { addToast(String(error)); }
+    for (const def of ALL_PLATFORMS) {
+      if (!def.capabilities?.profileRefresh?.avatars) continue;
+      const adapter = await ensureAdapterReady(def.id);
+      if (!adapter?.getProfileInfo) continue;
+      try {
+        const accounts = await adapter.loadAccounts();
+        if (accounts.length === 0) {
+          const noAccountsMsg = adapter.getNoAccountsToastMessage?.({ t });
+          if (noAccountsMsg) addToast(noAccountsMsg);
+          continue;
+        }
+        await Promise.all(accounts.map((a) => adapter.getProfileInfo!(a.id).catch(() => null)));
+        if (shell.activeTab === def.id) void loadAccounts(true, false, true, false, false);
+        addToast(t("toast.avatarRefreshComplete", { count: accounts.length }), { type: "success" });
+      } catch (error) {
+        console.error("[avatars] refresh failed:", error);
+        addToast(t("toast.refreshFailed"), { type: "error" });
+      }
+    }
   }
 
   async function refreshBansNow() {
-    const steamAdapter = await ensureAdapterReady("steam");
-    if (!steamAdapter?.loadWarningStates) return;
-    try {
-      const steamAccounts = await steamAdapter.loadAccounts();
-      if (steamAccounts.length === 0) { addToast(t("toast.noSteamAccountsFound")); return; }
-      await steamAdapter.loadWarningStates(steamAccounts, { forceRefresh: true, silent: false, t });
-      if (shell.activeTab === "steam") void loadAccounts(true, false, false, true, false);
-      addToast(t("toast.banRefreshComplete", { count: steamAccounts.length }));
-    } catch (error) { addToast(String(error)); }
+    for (const def of ALL_PLATFORMS) {
+      if (!def.capabilities?.profileRefresh?.bans) continue;
+      const adapter = await ensureAdapterReady(def.id);
+      if (!adapter?.loadWarningStates) continue;
+      try {
+        const accounts = await adapter.loadAccounts();
+        if (accounts.length === 0) {
+          const noAccountsMsg = adapter.getNoAccountsToastMessage?.({ t });
+          if (noAccountsMsg) addToast(noAccountsMsg);
+          continue;
+        }
+        await adapter.loadWarningStates(accounts, { forceRefresh: true, silent: false, t });
+        if (shell.activeTab === def.id) void loadAccounts(true, false, false, true, false);
+        addToast(t("toast.banRefreshComplete", { count: accounts.length }), { type: "success" });
+      } catch (error) {
+        console.error("[bans] refresh failed:", error);
+        addToast(t("toast.refreshFailed"), { type: "error" });
+      }
+    }
   }
 
   let adapterLoading = $derived(loadingAdapterFor === shell.activeTab && !shell.adapter);
@@ -478,41 +521,354 @@
   });
 
 
-  function handleGlobalKeydown(e: KeyboardEvent) {
-    // Ctrl+F → focus search input
-    if ((e.ctrlKey || e.metaKey) && e.key === "f") {
-      e.preventDefault();
-      const searchInput = document.querySelector<HTMLInputElement>(".search-input");
-      if (searchInput) {
-        searchInput.focus();
-        searchInput.select();
-      }
-      return;
-    }
-    // Escape → clear search if focused, or close settings
-    if (e.key === "Escape") {
-      const active = document.activeElement;
-      if (active instanceof HTMLInputElement && active.classList.contains("search-input")) {
-        if (navigation.searchQuery) {
-          navigation.searchQuery = "";
-          active.blur();
-        } else {
-          active.blur();
-        }
-        return;
-      }
-    }
+  // ---- Keyboard: central dispatcher, command palette, card focus ----
+
+  let paletteOpen = $state(false);
+  let searchInputRef: HTMLInputElement | null = null;
+
+  function registerSearchInput(node: HTMLInputElement | null) {
+    searchInputRef = node;
   }
 
+  function focusSearch() {
+    searchInputRef?.focus();
+    searchInputRef?.select();
+  }
+
+  const cardFocus = createCardFocus({
+    getItems: () => {
+      if (display.displaySections) {
+        const items: ItemRef[] = [];
+        for (const section of display.displaySections) {
+          items.push(...section.folderItems, ...section.accountItems);
+        }
+        return items;
+      }
+      return [...display.displayFolderItems, ...display.displayAccountItemsWithPending];
+    },
+    getWrapperRef: () => grid.wrapperRef,
+    getViewMode: () => viewMode,
+  });
+
+  // The focused card is stale as soon as the surrounding context changes.
+  $effect(() => {
+    trackDependencies(
+      shell.activeTab,
+      navigation.currentFolderId,
+      navigation.searchQuery,
+      viewMode,
+      settingsPanel.showSettings,
+    );
+    cardFocus.clear();
+  });
+
+  // Cards remount under {#key}/each blocks, which drops the focus attribute.
+  $effect(() => {
+    void display.visibleRenderedAccountIds;
+    void display.displayFolderItems;
+    cardFocus.syncDom();
+  });
+
+  function activateFocusedCard(): boolean {
+    const item = cardFocus.focusedItem;
+    if (!item) return false;
+    if (item.type === "folder") {
+      handleNavigateToFolder(item.id);
+      return true;
+    }
+    const account = display.renderedAccountMap[item.id];
+    if (!account) return false;
+    handleWorkspaceAccountActivate(account);
+    handleWorkspaceAccountSwitch(account);
+    return true;
+  }
+
+  function openFocusedCardContextMenu(): boolean {
+    const item = cardFocus.focusedItem;
+    if (!item) return false;
+    const el = cardFocus.findElement(item);
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    const syntheticEvent = {
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+      preventDefault: () => {},
+    } as MouseEvent;
+    if (item.type === "folder") {
+      const folder = getFolder(item.id);
+      if (!folder) return false;
+      handleWorkspaceFolderContextMenu(syntheticEvent, folder);
+    } else {
+      const account = display.renderedAccountMap[item.id];
+      if (!account) return false;
+      handleWorkspaceAccountContextMenu(syntheticEvent, account);
+    }
+    return true;
+  }
+
+  function renameFocusedCard(): boolean {
+    const item = cardFocus.focusedItem;
+    if (!item) return false;
+    if (item.type === "folder") {
+      const folder = getFolder(item.id);
+      if (!folder) return false;
+      dialogs.openRenameFolderDialog(folder);
+      return true;
+    }
+    const account = display.renderedAccountMap[item.id];
+    if (!account || !shell.adapter?.setAccountLabel) return false;
+    dialogs.openRenameAccountDialog(account);
+    return true;
+  }
+
+  function cycleTab(direction: 1 | -1) {
+    const usable = shell.enabledPlatforms.filter((p) => !shell.unavailablePlatformIds.has(p.id));
+    if (usable.length < 2) return;
+    const index = usable.findIndex((p) => p.id === shell.activeTab);
+    const next = usable[(index + direction + usable.length) % usable.length];
+    showPersonas = false;
+    void appNavigation.handleTabChange(next.id);
+  }
+
+  const commandRegistry = createCommandRegistry({
+    t,
+    getAccounts: () => loader.accounts,
+    getCurrentAccountId: () => loader.currentAccountId,
+    getEnabledPlatforms: () => shell.enabledPlatforms,
+    getUnavailablePlatformIds: () => shell.unavailablePlatformIds,
+    getActiveTab: () => shell.activeTab,
+    getActiveTabUsable: () => shell.activeTabUsable,
+    getCurrentFolders: () =>
+      navigation.folderItems
+        .map((item) => getFolder(item.id))
+        .filter((folder): folder is FolderInfo => Boolean(folder)),
+    getCurrentFolderId: () => navigation.currentFolderId,
+    isBulkEditAvailable: () =>
+      Boolean(shell.activePlatformDef?.capabilities?.bulkEdit) &&
+      shell.activeTabUsable &&
+      !settingsPanel.showSettings,
+    isPersonasEnabled: () => settings.personasEnabled,
+    getUpdateCtaLabel: () => updates.ctaLabel ?? "",
+    getViewMode: () => viewMode,
+    isMac: () => shell.runtimeOs === "macos",
+    switchToAccount: (account) => {
+      void addFlow.cancelIfConflicting(shell.activeTab, account.id);
+      void handleAccountSwitch(account);
+    },
+    addAccount: handleAddAccountClick,
+    refreshAccounts: handleRefreshClick,
+    newFolder: () => dialogs.openNewFolderDialog(),
+    openFolder: (folderId) => handleNavigateToFolder(folderId),
+    navigateToParent: handleNavigateBack,
+    changeTab: (tab) => {
+      showPersonas = false;
+      void appNavigation.handleTabChange(tab);
+    },
+    toggleSettings: () => {
+      showPersonas = false;
+      void appNavigation.toggleSettingsPanel();
+    },
+    openPersonas,
+    toggleBulkEdit: bulkEdit.toggleBulkEdit,
+    toggleViewMode: () => handleViewModeChange(viewMode === "grid" ? "list" : "grid"),
+    zoomReset: uiScale.resetZoom,
+    applyUpdate: handleApplyUpdate,
+  });
+
+  function currentKeyScope(): KeyScope {
+    if (secureScreen.isPinLocked || streamerMode.active || secureScreen.renderSuspended) {
+      return "locked";
+    }
+    if (paletteOpen) return "palette";
+    if (showTelemetryOnboarding) return "onboarding";
+    if (dialogs.inputDialog || dialogs.confirmDialog) return "dialog";
+    if (dialogs.contextMenu) return "context-menu";
+    if (bulkEdit.bulkEditMode) return "bulk-edit";
+    if (settingsPanel.showSettings) return "settings";
+    if (showPersonas) return "personas";
+    return "app";
+  }
+
+  function isBulkEditToggleAllowed(): boolean {
+    return (
+      Boolean(shell.activePlatformDef?.capabilities?.bulkEdit) &&
+      shell.activeTabUsable &&
+      !settingsPanel.showSettings
+    );
+  }
+
+  const CARD_NAV_SCOPES: KeyScope[] = ["app", "bulk-edit"];
+
+  const keyboardBindings: ShortcutBinding[] = [
+    // WebView built-ins that must never fire in a desktop app shell:
+    // Ctrl+W closes the window, Ctrl+P prints, F3/Ctrl+G open the native
+    // find bar, Ctrl+U/Ctrl+J open browser panels, F7 toggles caret mode.
+    { combo: "mod+w", scopes: ["*"], run: () => {} },
+    { combo: "mod+p", scopes: ["*"], run: () => {} },
+    { combo: "f3", scopes: ["*"], allowInInput: true, run: () => {} },
+    { combo: "mod+g", scopes: ["*"], run: () => {} },
+    { combo: "f7", scopes: ["*"], allowInInput: true, run: () => {} },
+    { combo: "mod+u", scopes: ["*"], run: () => {} },
+    { combo: "mod+j", scopes: ["*"], run: () => {} },
+    // Alt+Right would trigger WebView forward-history through our pushState
+    // entries; Alt+Left is repurposed below and swallowed everywhere else.
+    { combo: "alt+arrowright", scopes: ["*"], allowInInput: true, run: () => {} },
+    { combo: "alt+arrowleft", scopes: ["*"], allowInInput: true, run: () => false },
+
+    // Command palette.
+    {
+      combo: "mod+k",
+      scopes: ["app", "settings", "personas", "bulk-edit", "context-menu"],
+      run: () => {
+        dialogs.closeContextMenu();
+        paletteOpen = true;
+      },
+    },
+    { combo: "mod+k", scopes: ["palette"], allowInInput: true, run: () => (paletteOpen = false) },
+
+    // Escape cascade: exactly one layer closes per press. Scopes whose owner
+    // component already handles Escape correctly (bulk edit steps, settings)
+    // return false so the legacy handler still runs, but only for them.
+    { combo: "escape", scopes: ["palette"], allowInInput: true, run: () => (paletteOpen = false) },
+    {
+      combo: "escape",
+      scopes: ["dialog"],
+      allowInInput: true,
+      run: () => {
+        if (dialogs.inputDialog) dialogs.closeInputDialog();
+        else dialogs.closeConfirmDialog();
+      },
+    },
+    { combo: "escape", scopes: ["context-menu"], allowInInput: true, run: () => false },
+    { combo: "escape", scopes: ["bulk-edit"], allowInInput: true, run: () => false },
+    { combo: "escape", scopes: ["settings"], allowInInput: true, run: () => false },
+    { combo: "escape", scopes: ["onboarding", "locked"], allowInInput: true, run: () => false },
+    { combo: "escape", scopes: ["personas"], allowInInput: true, run: () => (showPersonas = false) },
+    {
+      combo: "escape",
+      scopes: ["app"],
+      allowInInput: true,
+      run: () => {
+        const active = document.activeElement;
+        if (active instanceof HTMLInputElement && active === searchInputRef) {
+          navigation.searchQuery = "";
+          active.blur();
+          return;
+        }
+        if (cardFocus.focusedId) {
+          cardFocus.clear();
+          return;
+        }
+        return false;
+      },
+    },
+
+    // App-level shortcuts.
+    { combo: "mod+f", scopes: ["app", "bulk-edit"], run: focusSearch },
+    { combo: "mod+n", scopes: ["app"], run: handleAddAccountClick },
+    { combo: "mod+shift+n", scopes: ["app"], run: () => dialogs.openNewFolderDialog() },
+    { combo: "mod+r", scopes: ["app"], run: handleRefreshClick },
+    { combo: "f5", scopes: ["app"], allowInInput: true, run: handleRefreshClick },
+    { combo: "f5", scopes: ["*"], allowInInput: true, run: () => {} },
+    { combo: "mod+shift+r", scopes: ["*"], run: () => {} },
+    {
+      combo: "mod+e",
+      scopes: ["app", "bulk-edit"],
+      run: () => {
+        if (isBulkEditToggleAllowed()) bulkEdit.toggleBulkEdit();
+      },
+    },
+    {
+      combo: "mod+,",
+      scopes: ["app", "settings", "personas"],
+      run: () => {
+        showPersonas = false;
+        void appNavigation.toggleSettingsPanel();
+      },
+    },
+    { combo: "mod+shift+p", scopes: ["app"], run: openPersonas },
+    {
+      combo: "mod+shift+l",
+      scopes: ["app"],
+      run: () => handleViewModeChange(viewMode === "grid" ? "list" : "grid"),
+    },
+    { combo: "mod+tab", scopes: ["app"], allowInInput: true, run: () => cycleTab(1) },
+    { combo: "mod+shift+tab", scopes: ["app"], allowInInput: true, run: () => cycleTab(-1) },
+    ...Array.from({ length: 9 }, (_, i): ShortcutBinding => ({
+      combo: `mod+digit${i + 1}`,
+      scopes: ["app", "settings", "personas"],
+      run: () => {
+        const platform = shell.enabledPlatforms[i];
+        if (!platform || shell.unavailablePlatformIds.has(platform.id)) return;
+        showPersonas = false;
+        void appNavigation.handleTabChange(platform.id);
+      },
+    })),
+    { combo: "mod+plus", scopes: ["*"], run: uiScale.zoomIn },
+    // Layouts where "+" is a shifted key (AZERTY and friends).
+    { combo: "mod+shift+plus", scopes: ["*"], run: uiScale.zoomIn },
+    { combo: "mod+minus", scopes: ["*"], run: uiScale.zoomOut },
+    { combo: "mod+digit0", scopes: ["*"], run: uiScale.resetZoom },
+    {
+      combo: "alt+arrowleft",
+      scopes: ["app"],
+      allowInInput: true,
+      run: () => {
+        if (navigation.currentFolderId) handleNavigateBack();
+      },
+    },
+    {
+      combo: "backspace",
+      scopes: ["app"],
+      run: () => {
+        if (!navigation.currentFolderId) return false;
+        handleNavigateBack();
+      },
+    },
+
+    // Card focus navigation (virtual roving focus, also live in bulk edit).
+    { combo: "arrowleft", scopes: CARD_NAV_SCOPES, run: () => (cardFocus.move("left") ? undefined : false) },
+    { combo: "arrowright", scopes: CARD_NAV_SCOPES, run: () => (cardFocus.move("right") ? undefined : false) },
+    { combo: "arrowup", scopes: CARD_NAV_SCOPES, run: () => (cardFocus.move("up") ? undefined : false) },
+    { combo: "arrowdown", scopes: CARD_NAV_SCOPES, run: () => (cardFocus.move("down") ? undefined : false) },
+    { combo: "enter", scopes: CARD_NAV_SCOPES, run: () => (activateFocusedCard() ? undefined : false) },
+    { combo: "f2", scopes: ["app"], run: () => (renameFocusedCard() ? undefined : false) },
+    { combo: "delete", scopes: ["app"], run: () => (openFocusedCardContextMenu() ? undefined : false) },
+    { combo: "shift+f10", scopes: ["app"], run: () => (openFocusedCardContextMenu() ? undefined : false) },
+    { combo: "contextmenu", scopes: ["app"], run: () => (openFocusedCardContextMenu() ? undefined : false) },
+    {
+      combo: "space",
+      scopes: ["bulk-edit"],
+      run: () => {
+        const item = cardFocus.focusedItem;
+        if (!item || item.type !== "account") return false;
+        bulkEdit.toggleBulkEditAccount(item.id);
+      },
+    },
+
+    // Bulk edit selection.
+    { combo: "mod+a", scopes: ["bulk-edit"], run: bulkEdit.bulkEditSelectAll },
+    { combo: "mod+d", scopes: ["bulk-edit"], run: bulkEdit.bulkEditDeselectAll },
+  ];
+
+  const keyboard = createKeyboardController({
+    getScope: currentKeyScope,
+    isMac: () => shell.runtimeOs === "macos",
+    bindings: keyboardBindings,
+  });
+  let detachKeyboard: (() => void) | null = null;
+
   async function handleAccountSwitch(account: PlatformAccount) {
-    if (shell.settings.minimizeOnAccountSwitch) {
+    // Minimize only after a successful switch: minimizing first hid the error
+    // toast (and with suspendGraphicsWhenMinimized, unmounted it entirely).
+    const switched = await loader.switchTo(account);
+    if (switched && shell.settings.minimizeOnAccountSwitch) {
       try {
         await invoke("minimize_window");
       } catch (e) {
-        console.error("Failed to minimize window before switching account:", e);
+        console.error("Failed to minimize window after switching account:", e);
       }
     }
-    await loader.switchTo(account);
   }
 
   // Relaunching to install an update kills the whole process. Never do that
@@ -526,13 +882,13 @@
 
   let currentAccountId = $derived(loader.currentAccountId);
   let showUsernamesForActiveTab = $derived(
-    shell.activeTab === "steam" && settings.accountDisplay.showUsernames
+    !!activePlatformDef?.capabilities?.accountUsernames && settings.accountDisplay.showUsernames
   );
   let showLastLoginForActiveTab = $derived(
     settings.accountDisplay.showLastLoginPerPlatform[shell.activeTab] ?? false
   );
   let lastLoginUnknownKey = $derived<MessageKey>(
-    shell.activeTab === "riot" ? "time.neverConnected" : "time.unknown"
+    activePlatformDef?.capabilities?.lastLoginUnknownKey ?? "time.unknown"
   );
 
   function getAccountCardColor(accountId: string): string {
@@ -551,14 +907,26 @@
   }
 
   async function copyToClipboard(text: string, label: string) {
-    await navigator.clipboard.writeText(text);
-    addToast(t("toast.copied", { label }));
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      console.error("Clipboard write failed:", e);
+      addToast(t("toast.copyFailed"), { type: "error" });
+      return;
+    }
+    addToast(t("toast.copied", { label }), { type: "success" });
   }
 
   async function copyBulkEditUrls(urls: string[]) {
     if (urls.length === 0) return;
-    await navigator.clipboard.writeText(urls.join("\n"));
-    addToast(t("bulkEdit.urlsCopied", { count: urls.length }));
+    try {
+      await navigator.clipboard.writeText(urls.join("\n"));
+    } catch (e) {
+      console.error("Clipboard write failed:", e);
+      addToast(t("toast.copyFailed"), { type: "error" });
+      return;
+    }
+    addToast(t("bulkEdit.urlsCopied", { count: urls.length }), { type: "success" });
   }
 
   async function loadAccounts(
@@ -699,8 +1067,7 @@
     document.addEventListener("mouseup", bulkEdit.handlePaintMouseUp);
     document.addEventListener("click", bulkEdit.handlePaintCaptureClick, true);
     window.addEventListener("wheel", uiScale.handleCtrlWheelZoom, { passive: false });
-    window.addEventListener("keydown", uiScale.handleZoomKeydown);
-    window.addEventListener("keydown", handleGlobalKeydown);
+    detachKeyboard = keyboard.attach();
     window.addEventListener("popstate", appNavigation.handlePopState);
     window.addEventListener("focus", lifecycle.handleWindowFocus);
     document.addEventListener("visibilitychange", lifecycle.handleVisibilityChange);
@@ -727,8 +1094,8 @@
     document.removeEventListener("mouseup", bulkEdit.handlePaintMouseUp);
     document.removeEventListener("click", bulkEdit.handlePaintCaptureClick, true);
     window.removeEventListener("wheel", uiScale.handleCtrlWheelZoom);
-    window.removeEventListener("keydown", uiScale.handleZoomKeydown);
-    window.removeEventListener("keydown", handleGlobalKeydown);
+    detachKeyboard?.();
+    detachKeyboard = null;
     window.removeEventListener("popstate", appNavigation.handlePopState);
     window.removeEventListener("focus", lifecycle.handleWindowFocus);
     document.removeEventListener("visibilitychange", lifecycle.handleVisibilityChange);
@@ -759,7 +1126,7 @@
     canRefresh={activeTabUsable && !adapterLoading}
     canAddAccount={activeTabUsable && !adapterLoading}
     showSettings={settingsPanel.showSettings}
-    showBulkEdit={activeTab === "steam" && !settingsPanel.showSettings && activeTabUsable}
+    showBulkEdit={!!activePlatformDef?.capabilities?.bulkEdit && !settingsPanel.showSettings && activeTabUsable}
     bulkEditActive={bulkEdit.bulkEditMode}
     {locale}
     runtimeOs={shell.runtimeOs}
@@ -777,7 +1144,14 @@
     {@render titleBar()}
   {/if}
   <div class="app-stage" class:locked={secureScreen.isPinLocked} style={shell.appStageStyle}>
-    <div class="app-shell" class:obscured={secureScreen.isObscured || streamerMode.active}>
+    <!-- inert closes the keyboard hole: pointer-events:none on .app-stage.locked
+         only blocks the mouse, Tab+Enter could still reach the controls behind
+         the PIN or streamer overlay. -->
+    <div
+      class="app-shell"
+      class:obscured={secureScreen.isObscured || streamerMode.active}
+      inert={secureScreen.isPinLocked || streamerMode.active}
+    >
       {#if !secureScreen.renderSuspended}
       {#if shell.runtimeOs !== "macos"}
         {@render titleBar()}
@@ -841,6 +1215,7 @@
     searchQuery={navigation.searchQuery}
     {isSearching}
     onSearchQueryChange={handleSearchQueryChange}
+    {registerSearchInput}
     {viewMode}
     onViewModeChange={handleViewModeChange}
     {locale}
@@ -913,6 +1288,14 @@
     {toasts}
     onToastDone={removeToast}
   />
+
+  {#if paletteOpen}
+    <CommandPalette
+      commands={commandRegistry.getCommands()}
+      onClose={() => (paletteOpen = false)}
+      {t}
+    />
+  {/if}
 
   {#if showTelemetryOnboarding && TelemetryOnboardingComp}
     {@const TelemetryOnboardingDyn = TelemetryOnboardingComp}

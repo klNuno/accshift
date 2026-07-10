@@ -1,6 +1,8 @@
-import type { PlatformDef, AppSettings } from "./types";
+import type { AppSettings, PlatformSettings } from "./types";
+import type { PlatformDef } from "$lib/shared/platform";
 import { DEFAULT_LOCALE, detectPreferredLocale, normalizeLocale } from "$lib/i18n";
 import { isValidPinHash } from "$lib/shared/pin";
+import { setProfileCacheDurationProvider } from "$lib/shared/profileCache";
 import { PLATFORM_DEFS } from "$lib/platforms/registry";
 import { getThemeDefinition } from "$lib/theme/themes";
 import {
@@ -11,6 +13,29 @@ import {
 } from "$lib/storage/clientStorage";
 
 export const ALL_PLATFORMS: PlatformDef[] = PLATFORM_DEFS;
+
+// Each platform with a `settings` capability owns its entry of
+// `platformSettings` (defaults + sanitization); the store just aggregates.
+function defaultPlatformSettings(): PlatformSettings {
+  const result: Record<string, unknown> = {};
+  for (const def of PLATFORM_DEFS) {
+    const schema = def.capabilities?.settings;
+    if (schema) result[def.id] = schema.defaults();
+  }
+  return result as PlatformSettings;
+}
+
+function sanitizePlatformSettings(
+  rawMap: Record<string, unknown>,
+  legacyRoot: Record<string, unknown>,
+): PlatformSettings {
+  const result: Record<string, unknown> = {};
+  for (const def of PLATFORM_DEFS) {
+    const schema = def.capabilities?.settings;
+    if (schema) result[def.id] = schema.sanitize(rawMap[def.id], legacyRoot);
+  }
+  return result as PlatformSettings;
+}
 
 const DEFAULTS: AppSettings = {
   language: DEFAULT_LOCALE,
@@ -30,22 +55,21 @@ const DEFAULTS: AppSettings = {
   defaultPlatformId: "steam",
   inactivityBlurSeconds: 60,
   deepLinksEnabled: true,
-  platformSettings: {
-    steam: {
-      runAsAdmin: false,
-      launchOptions: "",
-      shutdownMode: "force",
-    },
-  },
+  platformSettings: defaultPlatformSettings(),
   accountDisplay: {
     showUsernames: true,
+    // These mirror what each platform settings tab used to pass as its
+    // showLastLoginDefault; sanitize applies them for ids missing from storage.
     showLastLoginPerPlatform: {
       steam: false,
       riot: false,
       "battle-net": false,
-      roblox: false,
-      epic: false,
-      ubisoft: false,
+      roblox: true,
+      epic: true,
+      ubisoft: true,
+      gog: true,
+      jagex: true,
+      discord: true,
     },
     showCardNotesInline: false,
     expandedFolders: false,
@@ -103,7 +127,6 @@ function sanitizeSettings(value: unknown): AppSettings {
   const raw = asRecord(value);
   const rawDataRefresh = asRecord(raw.dataRefresh);
   const rawPlatformSettings = asRecord(raw.platformSettings);
-  const rawSteamSettings = asRecord(rawPlatformSettings.steam);
   const rawAccountDisplay = asRecord(raw.accountDisplay);
   const hasLanguage = Object.prototype.hasOwnProperty.call(raw, "language");
   const enabledPlatformsRaw = Array.isArray(raw.enabledPlatforms) ? raw.enabledPlatforms : [];
@@ -164,18 +187,7 @@ function sanitizeSettings(value: unknown): AppSettings {
       DEFAULTS.inactivityBlurSeconds,
     ),
     deepLinksEnabled: raw.deepLinksEnabled !== false,
-    platformSettings: {
-      steam: {
-        runAsAdmin: Boolean(rawSteamSettings.runAsAdmin ?? raw.steamRunAsAdmin),
-        launchOptions:
-          typeof (rawSteamSettings.launchOptions ?? raw.steamLaunchOptions) === "string"
-            ? String(rawSteamSettings.launchOptions ?? raw.steamLaunchOptions)
-                .trim()
-                .slice(0, 256)
-            : "",
-        shutdownMode: rawSteamSettings.shutdownMode === "force" ? "force" : "graceful",
-      },
-    },
+    platformSettings: sanitizePlatformSettings(rawPlatformSettings, raw),
     accountDisplay: {
       showUsernames: rawAccountDisplay.showUsernames !== false && raw.showUsernames !== false,
       showLastLoginPerPlatform: sanitizeShowLastLoginPerPlatform(rawAccountDisplay),
@@ -231,3 +243,7 @@ export function getCacheDuration(): number {
   if (settings.dataRefresh.avatarCacheDays === 0) return 0;
   return settings.dataRefresh.avatarCacheDays * 24 * 60 * 60 * 1000;
 }
+
+// The shared profile cache must not depend on this store (layering); it gets
+// its expiry policy injected here instead.
+setProfileCacheDurationProvider(getCacheDuration);

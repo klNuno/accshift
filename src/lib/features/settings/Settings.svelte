@@ -20,8 +20,8 @@
   import { hashPinCode, sanitizePinDigits } from "$lib/shared/pin";
   import { trackDependencies } from "$lib/shared/trackDependencies";
   import { createNumericInput, clampInt } from "$lib/shared/useNumericInput.svelte";
-  import type { PlatformDef } from "$lib/features/settings/types";
-  import { resolvePathPlaceholder } from "$lib/features/settings/types";
+  import type { PlatformDef } from "$lib/shared/platform";
+  import { resolvePathPlaceholder } from "$lib/shared/platform";
   import { createSettingsTabBar, type SettingsTabDef } from "./useSettingsTabBar.svelte";
   import SettingsGeneralTab from "./SettingsGeneralTab.svelte";
   import SettingsPlatformsTab from "./SettingsPlatformsTab.svelte";
@@ -49,7 +49,9 @@
   let apiKey = $state("");
   let apiKeyConfigured = $state(false);
   let apiKeyTouched = $state(false);
+  let apiKeyError = $state(false);
   let platformPaths = $state<Record<string, string>>({});
+  let platformPathErrors = $state<Record<string, boolean>>({});
   let platformPathsKey = $derived(JSON.stringify(platformPaths));
   let showLastLoginKey = $derived(JSON.stringify(settings.accountDisplay.showLastLoginPerPlatform));
   let pinCodeInput = $state("");
@@ -100,16 +102,6 @@
 
   function t(key: MessageKey, params?: TranslationParams): string {
     return translate(settings.language ?? DEFAULT_LOCALE, key, params);
-  }
-
-  // No settings.scrollTabsLeft/Right key exists yet in messages.ts, so this mirrors
-  // t()'s locale lookup locally instead of leaving these two aria-labels hardcoded in English.
-  function scrollTabsAriaLabel(direction: "left" | "right"): string {
-    const isFrench = normalizeLocale(settings.language ?? DEFAULT_LOCALE) === "fr";
-    if (direction === "left") {
-      return isFrench ? "Faire défiler les onglets de paramètres vers la gauche" : "Scroll settings tabs left";
-    }
-    return isFrench ? "Faire défiler les onglets de paramètres vers la droite" : "Scroll settings tabs right";
   }
 
   function buildPlatformSnapshot(): string {
@@ -172,7 +164,8 @@
   async function persistNow() {
     normalizeSettings();
     const sanitizedPinInput = sanitizePinDigits(pinCodeInput);
-    if (settings.pinEnabled && sanitizedPinInput.length === PIN_CODE_LENGTH) {
+    const pinCommitted = settings.pinEnabled && sanitizedPinInput.length === PIN_CODE_LENGTH;
+    if (pinCommitted) {
       settings.pinHash = await hashPinCode(sanitizedPinInput);
       pinCodeInput = "";
     }
@@ -191,33 +184,74 @@
 
     saveSettings(settings);
     onSettingsUpdated?.();
+    if (pinCommitted) {
+      addToast(t("settings.pinSaved"), { type: "success" });
+    }
 
-    try {
-      if (apiKeyTouched) {
-        const trimmedApiKey = apiKey.trim();
-        await setApiKey(trimmedApiKey);
-        apiKeyConfigured = trimmedApiKey.length > 0;
+    let hadError = false;
+    if (apiKeyTouched) {
+      const trimmedApiKey = apiKey.trim();
+      if (trimmedApiKey.length > 0) {
+        try {
+          await setApiKey(trimmedApiKey);
+          apiKeyConfigured = true;
+          apiKeyTouched = false;
+          apiKey = "";
+          apiKeyError = false;
+        } catch (e) {
+          console.error("Failed to save Steam API key:", e);
+          apiKeyError = true;
+          hadError = true;
+          addToast(t("settings.apiKeySaveFailed"), { type: "error" });
+        }
+      } else {
+        // An emptied input is not a delete request. Removing the stored key
+        // only happens through the explicit clear button (clearApiKey).
         apiKeyTouched = false;
-        apiKey = "";
       }
-      for (const platformId of Object.keys(platformPaths)) {
-        const nextPath = platformPaths[platformId]?.trim() ?? "";
-        if ((prevPaths[platformId] ?? "") !== nextPath) {
+    }
+
+    for (const platformId of Object.keys(platformPaths)) {
+      const nextPath = platformPaths[platformId]?.trim() ?? "";
+      if ((prevPaths[platformId] ?? "") !== nextPath) {
+        try {
           await invoke("platform_set_path", { platformId, path: nextPath });
+          platformPathErrors[platformId] = false;
+        } catch (e) {
+          console.error(`Failed to save ${platformId} path:`, e);
+          platformPathErrors[platformId] = true;
+          hadError = true;
+          const platformName = getPlatformDefinition(platformId)?.name ?? platformId;
+          addToast(t("settings.pathSaveFailed", { platform: platformName }), { type: "error" });
         }
       }
-      lastPersistedSnapshot = snapshot;
-      lastPlatformSnapshot = nextPlatformSnapshot;
-      const now = Date.now();
-      if (now - lastSavedToastAt >= SAVE_TOAST_COOLDOWN_MS) {
-        addToast(t("settings.saved"));
-        lastSavedToastAt = now;
-      }
-      if (platformsChanged) {
-        onPlatformsChanged?.();
-      }
+    }
+
+    lastPlatformSnapshot = nextPlatformSnapshot;
+    if (platformsChanged) {
+      onPlatformsChanged?.();
+    }
+    // Leave lastPersistedSnapshot stale on failure so the next edit retries.
+    if (hadError) return;
+    lastPersistedSnapshot = snapshot;
+    const now = Date.now();
+    if (now - lastSavedToastAt >= SAVE_TOAST_COOLDOWN_MS) {
+      addToast(t("settings.saved"));
+      lastSavedToastAt = now;
+    }
+  }
+
+  async function clearApiKey() {
+    try {
+      await setApiKey("");
+      apiKeyConfigured = false;
+      apiKey = "";
+      apiKeyTouched = false;
+      apiKeyError = false;
+      addToast(t("settings.apiKeyCleared"));
     } catch (e) {
-      console.error("Failed to save settings:", e);
+      console.error("Failed to clear Steam API key:", e);
+      addToast(t("settings.apiKeyClearFailed"), { type: "error" });
     }
   }
 
@@ -345,7 +379,12 @@
   });
 
   onDestroy(() => {
-    if (saveTimer) clearTimeout(saveTimer);
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      // Flush the pending debounced save so closing Settings never drops edits.
+      void persistNow();
+    }
     tabBar.destroy();
   });
 
@@ -411,7 +450,7 @@
         type="button"
         onclick={() => tabBar.scroll(-1)}
         disabled={!tabBar.canScrollLeft}
-        aria-label={scrollTabsAriaLabel("left")}
+        aria-label={t("settings.scrollTabsLeft")}
       >
         <span>&lsaquo;</span>
       </button>
@@ -438,7 +477,7 @@
         type="button"
         onclick={() => tabBar.scroll(1)}
         disabled={!tabBar.canScrollRight}
-        aria-label={scrollTabsAriaLabel("right")}
+        aria-label={t("settings.scrollTabsRight")}
       >
         <span>&rsaquo;</span>
       </button>
@@ -486,6 +525,10 @@
             accent={platformDef.accent}
             {t}
             bind:apiKey
+            {apiKeyConfigured}
+            {apiKeyError}
+            onClearApiKey={clearApiKey}
+            pathError={platformPathErrors[platformId] ?? false}
             avatarCacheDaysInput={avatarCacheDays.input}
             banCheckDaysInput={banCheckDays.input}
             {avatarRefreshLoading}

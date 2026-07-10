@@ -1,7 +1,7 @@
 import { CLIENT_STORE_ACCOUNT_CARD_NOTES } from "$lib/storage/clientStorage";
 import { createCachedMapStore } from "./cachedMapStore";
 
-const MAX_NOTE_LENGTH = 180;
+export const MAX_NOTE_LENGTH = 180;
 
 function sanitizeNote(_key: string, value: string): string | null {
   const clean = value

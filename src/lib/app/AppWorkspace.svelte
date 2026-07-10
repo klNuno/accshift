@@ -42,6 +42,7 @@
     searchQuery,
     isSearching,
     onSearchQueryChange,
+    registerSearchInput = () => {},
     viewMode,
     onViewModeChange,
     locale,
@@ -99,6 +100,7 @@
     searchQuery: string;
     isSearching: boolean;
     onSearchQueryChange: (value: string) => void;
+    registerSearchInput?: (node: HTMLInputElement | null) => void;
     viewMode: ViewMode;
     onViewModeChange: (mode: ViewMode) => void;
     locale: Locale;
@@ -160,6 +162,18 @@
   // Past ~100 rendered cards FLIP also gets too expensive even during drags.
   let flipDuration = $derived(dragIsDragging && renderedItemCount <= 100 ? 200 : 0);
 
+  // Raw loader errors are developer strings; show the adapter's mapped message
+  // (or a generic fallback) and keep the raw detail in the console.
+  let loaderErrorDisplay = $derived(
+    loaderError
+      ? (adapter?.getLoadErrorToastMessage?.(loaderError, { t }) ?? t("app.loadErrorGeneric"))
+      : null,
+  );
+
+  $effect(() => {
+    if (loaderError) console.error("Account load failed:", loaderError);
+  });
+
   function toggleCollapsed(folderId: string) {
     if (collapsedFolders.has(folderId)) {
       collapsedFolders.delete(folderId);
@@ -178,6 +192,17 @@
 
   function handleSearchInput(event: Event) {
     onSearchQueryChange((event.currentTarget as HTMLInputElement).value);
+  }
+
+  // Hands the search input node to App so the global Ctrl+F shortcut can
+  // focus it without a DOM query.
+  function trackSearchInput(node: HTMLInputElement) {
+    registerSearchInput(node);
+    return {
+      destroy() {
+        registerSearchInput(null);
+      },
+    };
   }
 
   function handleWorkspaceMouseDown(event: MouseEvent) {
@@ -207,6 +232,48 @@
   }
 </script>
 
+{#snippet folderCard(folder: FolderInfo, isFolderDragged: boolean)}
+  <FolderCard
+    {folder}
+    cardColor={getFolderCardColor(folder.id)}
+    {accentColor}
+    onOpen={() => onNavigateToFolder(folder.id)}
+    onContextMenu={(event) => onFolderContextMenu(event, folder)}
+    isDragOver={dragOverFolderId === folder.id}
+    isDragged={isFolderDragged}
+  />
+{/snippet}
+
+{#snippet accountCard(account: PlatformAccount, avatarState: AvatarState | null, isAccountDragged: boolean)}
+  <AccountCard
+    {account}
+    cardColor={getEffectiveAccountColor(account.id)}
+    note={getEffectiveAccountNote(account.id)}
+    showNoteInline={bulkEditMode ? false : showCardNotesInline}
+    showUsername={isPendingSetupAccount(account.id) ? false : showUsernames}
+    showLastLogin={isPendingSetupAccount(account.id) ? false : showLastLogin}
+    lastLoginAt={account.lastLoginAt}
+    {lastLoginUnknownKey}
+    {locale}
+    isActive={!bulkEditMode && account.id === currentAccountId}
+    onSwitch={() => onAccountSwitch(account)}
+    onContextMenu={(event) => onAccountContextMenu(event, account)}
+    onActivate={() => onAccountActivate(account)}
+    avatarUrl={avatarState?.url}
+    isLoadingAvatar={isPendingSetupAccount(account.id) ? true : (avatarState?.loading ?? false)}
+    isRefreshingAvatar={avatarState?.refreshing ?? false}
+    isDragged={isAccountDragged}
+    warningInfo={bulkEditMode ? undefined : (isPendingSetupAccount(account.id) ? undefined : warningStates[account.id])}
+    extensionContent={bulkEditMode ? null : (accountExtensionContentById[account.id] ?? null)}
+    forceExtensionOpen={bulkEditMode ? false : isAccountExtensionForcedOpen(account.id)}
+    disableExtension={bulkEditMode || dragIsDragging}
+    disableHoverExtension={isHoverExtensionDisabled(account.id)}
+    isSwitching={switchingAccountId === account.id}
+    singleClickSwitch={bulkEditMode}
+    interactionDisabled={isPendingSetupAccount(account.id)}
+  />
+{/snippet}
+
 {#if compatiblePlatformCount === 0}
   <main class="content">
     <div class="center-msg">
@@ -235,24 +302,33 @@
         class="search-input"
         type="search"
         placeholder={t("app.searchPlaceholder")}
+        aria-label={t("app.searchPlaceholder")}
         value={searchQuery}
         oninput={handleSearchInput}
+        use:trackSearchInput
       />
       <ViewToggle mode={viewMode} onChange={onViewModeChange} {locale} />
     </div>
 
-    {#if loaderError}
-      <div class="error-banner">{loaderError}</div>
+    {#if loaderErrorDisplay}
+      <div class="error-banner">{loaderErrorDisplay}</div>
     {/if}
 
     {#if loaderLoading && renderedAccountCount === 0 && !pendingSetupAccountId}
-      <div class="center-msg"></div>
+      <div class="center-msg">
+        <div class="spinner" style={`border-top-color: ${accentColor};`}></div>
+        <p class="text-sm">{t("app.loading")}</p>
+      </div>
     {:else if renderedAccountCount === 0}
       <div class="center-msg">
         <p>{t("app.noAccountsFound", { platform: activePlatformName })}</p>
         <p class="text-sm mt-1 opacity-70">
           {adapter.getNoAccountsHintMessage?.({ t }) ?? t("app.noAccountsHint", { platform: activePlatformName })}
         </p>
+      </div>
+    {:else if isSearching && renderedItemCount === 0}
+      <div class="center-msg">
+        <p>{t("app.searchNoResults", { query: searchQuery.trim() })}</p>
       </div>
     {:else if viewMode === "list"}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -275,6 +351,8 @@
           {lastLoginUnknownKey}
           pendingSetupId={pendingSetupAccountId}
           {currentFolderId}
+          {isSearching}
+          {bulkEditMode}
           currentAccountId={bulkEditMode ? "" : (currentAccountId ?? "")}
           avatarStates={avatarStates}
           warningStates={bulkEditMode ? {} : warningStates}
@@ -349,15 +427,7 @@
                   {@const isFolderDragged = dragItem?.type === "folder" && dragItem.id === item.id}
                   <div animate:flip={{ duration: isFolderDragged ? 0 : flipDuration }}>
                     {#if folder}
-                      <FolderCard
-                        {folder}
-                        cardColor={getFolderCardColor(folder.id)}
-                        {accentColor}
-                        onOpen={() => onNavigateToFolder(folder.id)}
-                        onContextMenu={(event) => onFolderContextMenu(event, folder)}
-                        isDragOver={dragOverFolderId === folder.id}
-                        isDragged={isFolderDragged}
-                      />
+                      {@render folderCard(folder, isFolderDragged)}
                     {/if}
                   </div>
                 {/each}
@@ -368,33 +438,7 @@
                   {@const isAccountDragged = !bulkEditMode && dragItem?.type === "account" && dragItem.id === item.id}
                   <div animate:flip={{ duration: isAccountDragged ? 0 : flipDuration }}>
                     {#if account}
-                      <AccountCard
-                        {account}
-                        cardColor={getEffectiveAccountColor(account.id)}
-                        note={getEffectiveAccountNote(account.id)}
-                        showNoteInline={bulkEditMode ? false : showCardNotesInline}
-                        showUsername={isPendingSetupAccount(account.id) ? false : showUsernames}
-                        showLastLogin={isPendingSetupAccount(account.id) ? false : showLastLogin}
-                        lastLoginAt={account.lastLoginAt}
-                        {lastLoginUnknownKey}
-                        {locale}
-                        isActive={!bulkEditMode && account.id === currentAccountId}
-                        onSwitch={() => onAccountSwitch(account)}
-                        onContextMenu={(event) => onAccountContextMenu(event, account)}
-                        onActivate={() => onAccountActivate(account)}
-                        avatarUrl={avatarState?.url}
-                        isLoadingAvatar={isPendingSetupAccount(account.id) ? true : (avatarState?.loading ?? false)}
-                        isRefreshingAvatar={avatarState?.refreshing ?? false}
-                        isDragged={isAccountDragged}
-                        warningInfo={bulkEditMode ? undefined : (isPendingSetupAccount(account.id) ? undefined : warningStates[account.id])}
-                        extensionContent={bulkEditMode ? null : (accountExtensionContentById[account.id] ?? null)}
-                        forceExtensionOpen={bulkEditMode ? false : isAccountExtensionForcedOpen(account.id)}
-                        disableExtension={bulkEditMode || dragIsDragging}
-                        disableHoverExtension={isHoverExtensionDisabled(account.id)}
-                        isSwitching={switchingAccountId === account.id}
-                        singleClickSwitch={bulkEditMode}
-                        interactionDisabled={isPendingSetupAccount(account.id)}
-                      />
+                      {@render accountCard(account, avatarState, isAccountDragged)}
                     {/if}
                   </div>
                 {/each}
@@ -420,6 +464,9 @@
               {accentColor}
               {locale}
             />
+            {#if renderedItemCount === 0}
+              <p class="empty-folder-msg">{t("app.folderEmpty")}</p>
+            {/if}
           {/if}
 
           {#each displayFolderItems as item (item.id)}
@@ -427,15 +474,7 @@
             {@const isFolderDragged = dragItem?.type === "folder" && dragItem.id === item.id}
             <div animate:flip={{ duration: isFolderDragged ? 0 : flipDuration }}>
               {#if folder}
-                <FolderCard
-                  {folder}
-                  cardColor={getFolderCardColor(folder.id)}
-                  {accentColor}
-                  onOpen={() => onNavigateToFolder(folder.id)}
-                  onContextMenu={(event) => onFolderContextMenu(event, folder)}
-                  isDragOver={dragOverFolderId === folder.id}
-                  isDragged={isFolderDragged}
-                />
+                {@render folderCard(folder, isFolderDragged)}
               {/if}
             </div>
           {/each}
@@ -446,33 +485,7 @@
             {@const isAccountDragged = !bulkEditMode && dragItem?.type === "account" && dragItem.id === item.id}
             <div animate:flip={{ duration: isAccountDragged ? 0 : flipDuration }}>
               {#if account}
-                <AccountCard
-                  {account}
-                  cardColor={getEffectiveAccountColor(account.id)}
-                  note={getEffectiveAccountNote(account.id)}
-                  showNoteInline={bulkEditMode ? false : showCardNotesInline}
-                  showUsername={isPendingSetupAccount(account.id) ? false : showUsernames}
-                  showLastLogin={isPendingSetupAccount(account.id) ? false : showLastLogin}
-                  lastLoginAt={account.lastLoginAt}
-                  {lastLoginUnknownKey}
-                  {locale}
-                  isActive={!bulkEditMode && account.id === currentAccountId}
-                  onSwitch={() => onAccountSwitch(account)}
-                  onContextMenu={(event) => onAccountContextMenu(event, account)}
-                  onActivate={() => onAccountActivate(account)}
-                  avatarUrl={avatarState?.url}
-                  isLoadingAvatar={isPendingSetupAccount(account.id) ? true : (avatarState?.loading ?? false)}
-                  isRefreshingAvatar={avatarState?.refreshing ?? false}
-                  isDragged={isAccountDragged}
-                  warningInfo={bulkEditMode ? undefined : (isPendingSetupAccount(account.id) ? undefined : warningStates[account.id])}
-                  extensionContent={bulkEditMode ? null : (accountExtensionContentById[account.id] ?? null)}
-                  forceExtensionOpen={bulkEditMode ? false : isAccountExtensionForcedOpen(account.id)}
-                  disableExtension={bulkEditMode || dragIsDragging}
-                  disableHoverExtension={isHoverExtensionDisabled(account.id)}
-                  isSwitching={switchingAccountId === account.id}
-                  singleClickSwitch={bulkEditMode}
-                  interactionDisabled={isPendingSetupAccount(account.id)}
-                />
+                {@render accountCard(account, avatarState, isAccountDragged)}
               {/if}
             </div>
           {/each}
@@ -608,6 +621,21 @@
     justify-content: center;
     padding: 48px 0;
     color: var(--fg-muted);
+  }
+
+  /* Only rendered when the folder holds nothing besides the back card;
+     flex-basis 100% drops it onto its own row below the card. */
+  .empty-folder-msg {
+    flex-basis: 100%;
+    margin: 0;
+    padding: 2px 2px 0;
+    font-size: 12px;
+    color: var(--fg-muted);
+    animation: card-entrance var(--motion-card-entrance) ease-out;
+  }
+
+  :global(html[data-motion="reduced"]) .empty-folder-msg {
+    animation: none;
   }
 
   .spinner {

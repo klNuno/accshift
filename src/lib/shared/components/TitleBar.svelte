@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import type { PlatformDef } from "../../features/settings/types";
+  import type { PlatformDef } from "../platform";
   import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
 
   let {
@@ -103,14 +103,14 @@
 </script>
 
 {#snippet actionButtons()}
-  <button class="btn" onclick={onRefresh} title={translate(locale, "titlebar.refresh")} disabled={!canRefresh}>
+  <button class="btn" onclick={onRefresh} title={translate(locale, "titlebar.refresh")} aria-label={translate(locale, "titlebar.refresh")} disabled={!canRefresh}>
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
       <path d="M21 3v5h-5" />
     </svg>
   </button>
 
-  <button class="btn" data-tour="add-account" onclick={onAddAccount} title={translate(locale, "titlebar.addAccount")} disabled={!canAddAccount}>
+  <button class="btn" data-tour="add-account" onclick={onAddAccount} title={translate(locale, "titlebar.addAccount")} aria-label={translate(locale, "titlebar.addAccount")} disabled={!canAddAccount}>
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <line x1="12" y1="5" x2="12" y2="19" />
       <line x1="5" y1="12" x2="19" y2="12" />
@@ -118,7 +118,7 @@
   </button>
 
   {#if personasVisible}
-    <button class="btn" class:active-mode={personasActive} onclick={onOpenPersonas} title={translate(locale, "titlebar.personas")}>
+    <button class="btn" class:active-mode={personasActive} onclick={onOpenPersonas} title={translate(locale, "titlebar.personas")} aria-label={translate(locale, "titlebar.personas")} aria-pressed={personasActive}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
         <circle cx="9" cy="7" r="4" />
@@ -128,7 +128,7 @@
     </button>
   {/if}
 
-  <button class="btn" onclick={onOpenSettings} title={translate(locale, "titlebar.settings")}>
+  <button class="btn" onclick={onOpenSettings} title={translate(locale, "titlebar.settings")} aria-label={translate(locale, "titlebar.settings")}>
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
       <circle cx="12" cy="12" r="3" />
@@ -136,7 +136,7 @@
   </button>
 
   {#if showBulkEdit}
-    <button class="btn" class:active-mode={bulkEditActive} onclick={onBulkEdit} title={translate(locale, "bulkEdit.title")}>
+    <button class="btn" class:active-mode={bulkEditActive} onclick={onBulkEdit} title={translate(locale, "bulkEdit.title")} aria-label={translate(locale, "bulkEdit.title")} aria-pressed={bulkEditActive}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
@@ -154,7 +154,7 @@
   </div>
 
   {#if enabledPlatforms.length > 1}
-    <div class="tabs" data-tour="platforms">
+    <div class="tabs" data-tour="platforms" role="tablist">
       {#each enabledPlatforms as platform}
         {@const unavailable = unavailablePlatformIds.has(platform.id)}
         {@const tabIconPath = TAB_ICON_PATHS[platform.id]}
@@ -166,6 +166,9 @@
             onclick={() => onTabChange(platform.id)}
             style={!showSettings && activeTab === platform.id ? `color: ${platform.accent};` : ""}
             disabled={unavailable}
+            role="tab"
+            aria-label={platform.name}
+            aria-selected={!showSettings && activeTab === platform.id}
           >
             {#if tabIconPath}
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -268,6 +271,15 @@
     display: flex;
     align-items: center;
     gap: 2px;
+    /* With every platform enabled in a narrow window the centered tabs would
+       run under the action buttons and steal their clicks. Cap and scroll. */
+    max-width: min(46vw, calc(100% - 230px));
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .tabs::-webkit-scrollbar {
+    display: none;
   }
 
   .tab-wrap {
@@ -294,7 +306,8 @@
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   }
 
-  .tab-wrap:hover .tab-tooltip {
+  .tab-wrap:hover .tab-tooltip,
+  .tab-wrap:focus-within .tab-tooltip {
     opacity: 1;
     transition-delay: 300ms;
   }
@@ -308,7 +321,7 @@
     border: none;
     border-radius: 4px;
     background: transparent;
-    color: #52525b;
+    color: var(--fg-subtle);
     cursor: pointer;
     transition: all 120ms ease-out;
   }
@@ -325,7 +338,7 @@
 
   .tab.disabled:hover {
     background: transparent;
-    color: #52525b;
+    color: var(--fg-subtle);
   }
 
   .tab.active {

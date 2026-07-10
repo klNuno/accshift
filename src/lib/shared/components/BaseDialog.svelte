@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import type { Snippet } from "svelte";
 
   let { title, width = "280px", onCancel, onKeydown, children, actions }: {
@@ -11,6 +12,14 @@
   } = $props();
 
   let dialogEl = $state<HTMLDivElement | null>(null);
+  const titleId = `dialog-title-${crypto.randomUUID().slice(0, 8)}`;
+
+  onMount(() => {
+    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    return () => {
+      if (trigger && document.contains(trigger)) trigger.focus();
+    };
+  });
 
   function getFocusable(): HTMLElement[] {
     if (!dialogEl) return [];
@@ -52,8 +61,8 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="overlay" onclick={onCancel}>
-  <div class="dialog" role="dialog" aria-modal="true" tabindex="-1" bind:this={dialogEl} style:width={width} onclick={(e) => e.stopPropagation()}>
-    <span class="title">{title}</span>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} tabindex="-1" bind:this={dialogEl} style:width={width} onclick={(e) => e.stopPropagation()}>
+    <span class="title" id={titleId}>{title}</span>
     {@render children()}
     <div class="actions">
       {@render actions()}

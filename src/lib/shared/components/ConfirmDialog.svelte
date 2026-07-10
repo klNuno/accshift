@@ -15,22 +15,34 @@
   } = $props();
 
   let confirmRef = $state<HTMLButtonElement | null>(null);
+  let cancelRef = $state<HTMLButtonElement | null>(null);
+
+  // Default styling is the danger red, so no explicit color means destructive.
+  let destructive = $derived(!confirmColor || confirmColor.includes("danger"));
 
   onMount(() => {
-    confirmRef?.focus();
+    (destructive ? cancelRef : confirmRef)?.focus();
   });
+
+  function handleEnter(e: KeyboardEvent) {
+    if (e.key !== "Enter") return;
+    const active = document.activeElement;
+    // A focused button handles Enter natively; don't force confirm over it.
+    if (active === confirmRef || active === cancelRef) return;
+    onConfirm();
+  }
 </script>
 
 <BaseDialog
   {title}
   width="min(360px, calc(100vw - 24px))"
   {onCancel}
-  onKeydown={(e) => { if (e.key === "Enter") onConfirm(); }}
+  onKeydown={handleEnter}
 >
   <p class="message">{message}</p>
 
   {#snippet actions()}
-    <button class="btn-cancel" onclick={onCancel}>{cancelLabel || translate(locale, "common.cancel")}</button>
+    <button bind:this={cancelRef} class="btn-cancel" onclick={onCancel}>{cancelLabel || translate(locale, "common.cancel")}</button>
     <button bind:this={confirmRef} class="btn-confirm" style={confirmColor ? `--confirm-bg: ${confirmColor};` : ""} onclick={onConfirm}>{confirmLabel || translate(locale, "common.confirm")}</button>
   {/snippet}
 </BaseDialog>
@@ -64,7 +76,7 @@
     padding: 6px 12px;
     border: none;
     border-radius: 4px;
-    background: var(--confirm-bg, #dc2626);
+    background: var(--confirm-bg, var(--danger));
     color: #fff;
     font-size: 12px;
     font-weight: 600;

@@ -1,5 +1,5 @@
 import type { ItemRef } from "../features/folders/types";
-import { moveItem, reorderItems, getFolder } from "../features/folders/store";
+import { moveItem, reorderItems, getFolder, isFolderDescendant } from "../features/folders/store";
 
 const DRAG_THRESHOLD = 5;
 
@@ -41,6 +41,10 @@ export function createDragManager(options: DragManagerOptions) {
   let lastClientY = 0;
   let hasPointer = false;
   let dragRafId: number | null = null;
+  // Set when Escape cancels an active drag, so the release mouseup and its click are swallowed.
+  let dragCancelled = false;
+  let dragInSectionsMode = false;
+  let pendingRectRefresh = false;
 
   // Snapshot card slots at drag start to keep preview calculations stable while DOM reorders.
   let slotRects: DOMRect[] = [];
@@ -51,6 +55,7 @@ export function createDragManager(options: DragManagerOptions) {
     if (!dragItem) return;
     const wrapperRef = options.getWrapperRef();
     const sectionsEl = wrapperRef?.querySelector("[data-sections-mode]") as HTMLElement | null;
+    dragInSectionsMode = !!sectionsEl;
 
     if (sectionsEl && dragItem.type === "folder") {
       const cards = Array.from(
@@ -89,12 +94,15 @@ export function createDragManager(options: DragManagerOptions) {
   function updateDragAt(clientX: number, clientY: number) {
     if (!isDragging) return;
 
+    // Hit-test before touching the ghost style so the layout read does not
+    // force a reflow right after a write in the same frame.
+    const el = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+
     if (ghostEl) {
       ghostEl.style.left = `${clientX - ghostOffsetX}px`;
       ghostEl.style.top = `${clientY - ghostOffsetY}px`;
     }
 
-    const el = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
     if (!el) {
       dragOverFolderId = null;
       dragOverBack = false;
@@ -105,8 +113,6 @@ export function createDragManager(options: DragManagerOptions) {
     const hover = el.closest(
       "[data-folder-id], [data-back-card], [data-account-id]",
     ) as HTMLElement | null;
-    const wrapperRef = options.getWrapperRef();
-    const inSectionsMode = !!wrapperRef?.querySelector("[data-sections-mode]");
     const isSectionHover = hover?.dataset.sectionCard === "true";
 
     if (hover?.dataset.backCard) {
@@ -115,8 +121,8 @@ export function createDragManager(options: DragManagerOptions) {
       previewIndex = null;
     } else if (
       hover?.dataset.folderId &&
-      !(dragItem?.type === "folder" && dragItem?.id === hover.dataset.folderId) &&
-      !(inSectionsMode && dragItem?.type === "folder" && isSectionHover)
+      !(dragItem?.type === "folder" && isFolderDescendant(hover.dataset.folderId, dragItem.id)) &&
+      !(dragInSectionsMode && dragItem?.type === "folder" && isSectionHover)
     ) {
       dragOverFolderId = hover.dataset.folderId!;
       dragOverBack = false;
@@ -174,11 +180,33 @@ export function createDragManager(options: DragManagerOptions) {
     lastClientX = e.clientX;
     lastClientY = e.clientY;
     hasPointer = true;
+    dragCancelled = false;
     pendingDrag = { item, startX: e.clientX, startY: e.clientY, sourceEl: card };
+    document.addEventListener("keydown", handleDragKeyDown, true);
+  }
+
+  function runDragFrame() {
+    dragRafId = null;
+    if (pendingRectRefresh) {
+      pendingRectRefresh = false;
+      refreshSlotRects();
+    }
+    updateDragAt(lastClientX, lastClientY);
+  }
+
+  function scheduleDragFrame() {
+    if (dragRafId === null) {
+      dragRafId = requestAnimationFrame(runDragFrame);
+    }
   }
 
   function handleDocMouseMove(e: MouseEvent) {
     if (!pendingDrag) return;
+    // The mouseup was missed (button released outside the window): abort without committing.
+    if (e.buttons === 0) {
+      cancelDrag();
+      return;
+    }
     lastClientX = e.clientX;
     lastClientY = e.clientY;
     hasPointer = true;
@@ -226,35 +254,70 @@ export function createDragManager(options: DragManagerOptions) {
       document.body.appendChild(ghostEl);
     }
 
-    if (dragRafId === null) {
-      dragRafId = requestAnimationFrame(() => {
-        dragRafId = null;
-        updateDragAt(lastClientX, lastClientY);
-      });
-    }
+    scheduleDragFrame();
   }
 
   function handleDocScroll() {
     if (!isDragging || !hasPointer) return;
-    refreshSlotRects();
-    updateDragAt(lastClientX, lastClientY);
+    // Slot rects are stale after a scroll; recompute at most once per frame.
+    pendingRectRefresh = true;
+    scheduleDragFrame();
+  }
+
+  function cancelDrag() {
+    if (dragRafId !== null) {
+      cancelAnimationFrame(dragRafId);
+      dragRafId = null;
+    }
+    if (ghostEl) {
+      ghostEl.remove();
+      ghostEl = null;
+    }
+    dragItem = null;
+    dragOverFolderId = null;
+    dragOverBack = false;
+    isDragging = false;
+    pendingDrag = null;
+    previewIndex = null;
+    slotRects = [];
+    dragOldIndex = -1;
+    hasPointer = false;
+    pendingRectRefresh = false;
+    document.removeEventListener("keydown", handleDragKeyDown, true);
+  }
+
+  function handleDragKeyDown(e: KeyboardEvent) {
+    if (e.key !== "Escape") return;
+    if (!pendingDrag && !isDragging) return;
+    // Keep the Escape from also closing overlays while a drag is in flight.
+    e.stopPropagation();
+    if (isDragging) dragCancelled = true;
+    cancelDrag();
   }
 
   function handleDocMouseUp() {
+    if (dragCancelled) {
+      // Release after an Escape cancel: swallow the mouseup and its click.
+      dragCancelled = false;
+      eatNextClick = true;
+      setTimeout(() => {
+        eatNextClick = false;
+      }, 0);
+      return;
+    }
+
     if (!pendingDrag) return;
 
     if (!isDragging) {
-      pendingDrag = null;
+      cancelDrag();
       return;
     }
 
     const currentFolderId = options.getCurrentFolderId();
     const activeTab = options.getActiveTab();
-    const wrapperRef = options.getWrapperRef();
-    const inSectionsMode = !!wrapperRef?.querySelector("[data-sections-mode]");
     // In sections mode, derive the actual source folder for account drags from the source section.
     let sourceFolderId = currentFolderId;
-    if (inSectionsMode && dragItem?.type === "account" && pendingDrag) {
+    if (dragInSectionsMode && dragItem?.type === "account" && pendingDrag) {
       const sectionEl = pendingDrag.sourceEl.closest(
         '[data-section-card="true"]',
       ) as HTMLElement | null;
@@ -288,31 +351,12 @@ export function createDragManager(options: DragManagerOptions) {
       options.onRefresh();
     }
 
-    if (dragRafId !== null) {
-      cancelAnimationFrame(dragRafId);
-      dragRafId = null;
-    }
-
-    // Always cleanup drag ghost when the interaction ends.
-    if (ghostEl) {
-      ghostEl.remove();
-      ghostEl = null;
-    }
-
     eatNextClick = true;
     // If no click event is emitted, clear the guard on the next tick.
     setTimeout(() => {
       eatNextClick = false;
     }, 0);
-    dragItem = null;
-    dragOverFolderId = null;
-    dragOverBack = false;
-    isDragging = false;
-    pendingDrag = null;
-    previewIndex = null;
-    slotRects = [];
-    dragOldIndex = -1;
-    hasPointer = false;
+    cancelDrag();
   }
 
   function handleCaptureClick(e: MouseEvent) {

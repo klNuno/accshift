@@ -280,7 +280,8 @@
     transition: opacity 120ms, background 120ms, color 120ms;
   }
 
-  .card:hover .edit-btn {
+  .card:hover .edit-btn,
+  .edit-btn:focus-visible {
     opacity: 1;
   }
 

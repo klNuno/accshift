@@ -3,10 +3,10 @@
   import type { PlatformAccount } from "../platform";
   import type { AccountWarningPresentation } from "../accountWarnings";
   import type { ItemRef, FolderInfo } from "../../features/folders/types";
-  import type { DisplaySection } from "$lib/app/useDisplayPipeline.svelte";
+  import type { DisplaySection } from "$lib/shared/sections";
   import ListRow from "./ListRow.svelte";
   import PreviewPanel from "./PreviewPanel.svelte";
-  import SectionHeader from "$lib/features/folders/SectionHeader.svelte";
+  import SectionHeader from "./SectionHeader.svelte";
   import { slide } from "svelte/transition";
   import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
 
@@ -30,6 +30,8 @@
     accentColor = "#3b82f6",
     locale = DEFAULT_LOCALE,
     pendingSetupId = null,
+    isSearching = false,
+    bulkEditMode = false,
     dragItem = null,
     dragOverFolderId = null,
     dragOverBack = false,
@@ -61,6 +63,8 @@
     accentColor?: string;
     locale?: Locale;
     pendingSetupId?: string | null;
+    isSearching?: boolean;
+    bulkEditMode?: boolean;
     dragItem?: ItemRef | null;
     dragOverFolderId?: string | null;
     dragOverBack?: boolean;
@@ -88,6 +92,27 @@
   let selectedAccount = $derived(
     selectedAccountId ? accounts[selectedAccountId] ?? null : null
   );
+
+  let visibleAccountIds = $derived.by(() => {
+    const ids = new Set<string>();
+    if (sections) {
+      for (const section of sections) {
+        for (const item of section.accountItems) ids.add(item.id);
+      }
+    } else {
+      for (const item of accountItems) ids.add(item.id);
+    }
+    return ids;
+  });
+
+  // Drop a stale preview selection: bulk edit takes over clicks, and folder
+  // navigation or a search can remove the selected account from the list.
+  $effect(() => {
+    if (!selectedAccountId) return;
+    if (bulkEditMode || !visibleAccountIds.has(selectedAccountId)) {
+      selectedAccountId = null;
+    }
+  });
 
   function selectAccount(id: string) {
     selectedAccountId = id;
@@ -131,10 +156,16 @@
       cardColor={getAccountCardColor(account.id)}
       onClick={() => {
         onAccountActivate(account);
+        if (bulkEditMode) {
+          // Single click toggles the bulk selection (parent handles the toggle
+          // through onSwitch), and must not open the preview panel.
+          if (!isPendingSetup) onSwitch(account);
+          return;
+        }
         selectAccount(account.id);
       }}
       onDblClick={() => {
-        if (isPendingSetup) return;
+        if (isPendingSetup || bulkEditMode) return;
         onSwitch(account);
       }}
       onContextMenu={(e) => onAccountContextMenu(e, account)}
@@ -195,7 +226,7 @@
         </div>
       {/each}
     {:else}
-      {#if currentFolderId}
+      {#if currentFolderId && !isSearching}
         <ListRow
           isBack={true}
           {locale}

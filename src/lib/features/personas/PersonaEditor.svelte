@@ -31,8 +31,15 @@
   let selection = $state<Record<string, string>>({});
   let accountsByPlatform = $state<Record<string, PlatformAccount[]>>({});
   let loading = $state(true);
+  let nameInputRef = $state<HTMLInputElement | null>(null);
+  let baseline = $state("");
+  let confirmingClose = $state(false);
+  let confirmingDelete = $state(false);
+  let closeResetTimer: ReturnType<typeof setTimeout> | undefined;
+  let deleteResetTimer: ReturnType<typeof setTimeout> | undefined;
 
   onMount(async () => {
+    nameInputRef?.focus();
     if (persona) {
       name = persona.name;
       emoji = persona.emoji;
@@ -43,6 +50,7 @@
       initial[p.id] = persona?.assignments.find((a) => a.platformId === p.id)?.accountId ?? "";
     }
     selection = initial;
+    baseline = snapshot();
 
     const loaded: Record<string, PlatformAccount[]> = {};
     await Promise.all(
@@ -58,25 +66,68 @@
     loading = false;
   });
 
-  let assignmentCount = $derived(Object.values(selection).filter((id) => id).length);
+  function snapshot(): string {
+    return JSON.stringify([name, emoji, color, selection]);
+  }
+
+  let dirty = $derived(baseline !== "" && snapshot() !== baseline);
+
+  // A stale accountId (account removed since the persona was saved) renders
+  // the select as empty; treat it as unassigned so it never survives a save.
+  function isValidAssignment(platformId: string): boolean {
+    const id = selection[platformId];
+    if (!id) return false;
+    if (loading) return true;
+    return (accountsByPlatform[platformId] ?? []).some((a) => a.id === id);
+  }
+
+  let assignmentCount = $derived.by(() => platforms.filter((p) => isValidAssignment(p.id)).length);
   let canSave = $derived(name.trim().length > 0 && assignmentCount > 0);
 
   function save() {
-    if (!canSave) return;
+    if (!canSave || loading) return;
     const assignments = platforms
-      .filter((p) => selection[p.id])
+      .filter((p) => isValidAssignment(p.id))
       .map((p) => ({ platformId: p.id, accountId: selection[p.id] }));
     onSave({ name: name.trim(), emoji: emoji || "🎭", color, assignments });
   }
+
+  function requestClose() {
+    if (!dirty || confirmingClose) {
+      onCancel();
+      return;
+    }
+    confirmingClose = true;
+    clearTimeout(closeResetTimer);
+    closeResetTimer = setTimeout(() => (confirmingClose = false), 3000);
+  }
+
+  function requestDelete() {
+    if (!onDelete) return;
+    if (confirmingDelete) {
+      onDelete();
+      return;
+    }
+    confirmingDelete = true;
+    clearTimeout(deleteResetTimer);
+    deleteResetTimer = setTimeout(() => (confirmingDelete = false), 3000);
+  }
+
+  function handleWindowKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") requestClose();
+  }
 </script>
 
+<svelte:window onkeydown={handleWindowKeydown} />
+
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-<div class="editor-backdrop" onclick={onCancel} role="presentation">
+<div class="editor-backdrop" onclick={requestClose} role="presentation">
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div class="editor" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" tabindex="-1">
     <div class="editor-head">
       <span class="editor-avatar" style={`--persona-color:${color};`}>{emoji || "🎭"}</span>
       <input
+        bind:this={nameInputRef}
         class="name-input"
         placeholder={t("personas.namePlaceholder")}
         maxlength={40}
@@ -132,10 +183,14 @@
 
     <div class="editor-actions">
       {#if onDelete}
-        <button type="button" class="btn danger" onclick={onDelete}>{t("personas.delete")}</button>
+        <button type="button" class="btn danger" class:armed={confirmingDelete} onclick={requestDelete}>
+          {confirmingDelete ? t("personas.deleteConfirm") : t("personas.delete")}
+        </button>
       {/if}
       <div class="spacer"></div>
-      <button type="button" class="btn" onclick={onCancel}>{t("common.cancel")}</button>
+      <button type="button" class="btn" class:armed={confirmingClose} onclick={requestClose}>
+        {confirmingClose ? t("personas.discardConfirm") : t("common.cancel")}
+      </button>
       <button type="button" class="btn primary" disabled={!canSave} onclick={save}>
         {t("personas.save")}
       </button>
@@ -344,5 +399,11 @@
 
   .btn.danger {
     color: var(--danger, #ef4444);
+  }
+
+  .btn.armed {
+    background: var(--danger, #ef4444);
+    border-color: transparent;
+    color: #fff;
   }
 </style>

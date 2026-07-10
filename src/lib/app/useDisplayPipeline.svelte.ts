@@ -1,6 +1,8 @@
 import type { PlatformAccount } from "$lib/shared/platform";
 import type { ItemRef } from "$lib/features/folders/types";
-import { getRootSections, type FolderSection } from "$lib/features/folders/store";
+import { getFolder, getItemsInFolder, getRootSections } from "$lib/features/folders/store";
+import type { DisplaySection } from "$lib/shared/sections";
+import { getAccountCardNote } from "$lib/shared/accountCardNotes";
 
 type DisplayPipelineDeps = {
   navigation: {
@@ -27,18 +29,46 @@ type DisplayPipelineDeps = {
   getActiveTab: () => string;
 };
 
-export type DisplaySection = {
-  folder: FolderSection["folder"];
-  folderItems: ItemRef[];
-  accountItems: ItemRef[];
-};
+// Moved to the shared layer so shared components can use it without
+// depending on app code; re-exported here for existing app-layer imports.
+export type { DisplaySection };
+
+const DIACRITICS_RE = /[\u0300-\u036f]/g;
+
+// Accent-insensitive, case-insensitive comparison base.
+export function foldSearchText(value: string): string {
+  return value.normalize("NFD").replace(DIACRITICS_RE, "").toLowerCase();
+}
 
 export function matchesSearch(account: PlatformAccount, query: string): boolean {
+  const q = foldSearchText(query);
   return (
-    account.id.toLowerCase().includes(query) ||
-    account.username.toLowerCase().includes(query) ||
-    (account.displayName || "").toLowerCase().includes(query)
+    foldSearchText(account.id).includes(q) ||
+    foldSearchText(account.username).includes(q) ||
+    foldSearchText(account.displayName || "").includes(q) ||
+    foldSearchText(getAccountCardNote(account.id)).includes(q)
   );
+}
+
+// Walk the platform's folder tree and keep the folders whose name matches.
+function findMatchingFolderItems(platform: string, foldedQuery: string): ItemRef[] {
+  const out: ItemRef[] = [];
+  const seen = new Set<string>();
+  const queue = getItemsInFolder(null, platform).filter((item) => item.type === "folder");
+  for (let i = 0; i < queue.length; i++) {
+    const ref = queue[i];
+    if (seen.has(ref.id)) continue;
+    seen.add(ref.id);
+    const folder = getFolder(ref.id);
+    if (!folder) continue;
+    for (const child of getItemsInFolder(folder.id, platform)) {
+      if (child.type === "folder") queue.push(child);
+    }
+    if (foldSearchText(folder.name).includes(foldedQuery)) {
+      out.push({ type: "folder", id: folder.id });
+    }
+  }
+  return out;
 }
 
 const SEARCH_DEBOUNCE_MS = 80;
@@ -75,7 +105,14 @@ export function createDisplayPipeline(deps: DisplayPipelineDeps) {
 
   let displayFolderItems = $derived.by(() => {
     if (rawSections) return [] as ItemRef[];
-    if (navigation.isSearching) return [] as ItemRef[];
+    if (navigation.isSearching) {
+      // Folders whose name matches the query stay reachable during a search.
+      // Subscribe to currentItems so folder mutations re-fire this derived.
+      void navigation.currentItems;
+      const q = debouncedSearchQuery.trim();
+      if (!q) return [] as ItemRef[];
+      return findMatchingFolderItems(getActiveTab(), foldSearchText(q));
+    }
     if (
       !drag.isDragging ||
       !drag.dragItem ||
@@ -148,7 +185,12 @@ export function createDisplayPipeline(deps: DisplayPipelineDeps) {
     return sections;
   });
 
+  // A drag only churns the preview order, never the set of visible accounts.
+  // Early-out on drag and keep the previous array identity when the contents
+  // did not change, so O(N) consumers (avatar priming, etc.) stay idle.
+  let lastVisibleIds: string[] = [];
   let visibleRenderedAccountIds = $derived.by(() => {
+    if (drag.isDragging && lastVisibleIds.length > 0) return lastVisibleIds;
     const ids: string[] = [];
     const seen = new Set<string>();
     if (displaySections) {
@@ -159,14 +201,20 @@ export function createDisplayPipeline(deps: DisplayPipelineDeps) {
           ids.push(item.id);
         }
       }
-      return ids;
+    } else {
+      for (const item of displayAccountItemsWithPending) {
+        if (item.type !== "account" || seen.has(item.id)) continue;
+        seen.add(item.id);
+        ids.push(item.id);
+      }
     }
-    for (const item of displayAccountItemsWithPending) {
-      if (item.type !== "account" || seen.has(item.id)) continue;
-      seen.add(item.id);
-      ids.push(item.id);
+    if (
+      ids.length !== lastVisibleIds.length ||
+      ids.some((id, index) => id !== lastVisibleIds[index])
+    ) {
+      lastVisibleIds = ids;
     }
-    return ids;
+    return lastVisibleIds;
   });
 
   let renderedAccountMap = $derived.by(() => {

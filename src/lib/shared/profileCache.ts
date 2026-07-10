@@ -1,4 +1,3 @@
-import { getCacheDuration } from "$lib/features/settings/store";
 import {
   getClientStoreRevision,
   getClientStoreValue,
@@ -8,6 +7,19 @@ import {
 import { isSafeHttpUrl } from "$lib/shared/url";
 
 const SESSION_START_MS = Date.now();
+
+// Mirrors the settings default (avatarCacheDays: 7) until the app layer
+// injects the real, settings-backed provider below.
+const DEFAULT_CACHE_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
+
+let cacheDurationProvider: () => number = () => DEFAULT_CACHE_DURATION_MS;
+
+/** Injects the cache expiry policy (in ms; 0 = expire entries older than the
+ * session). Called by the settings layer so this module stays free of
+ * feature-layer imports. */
+export function setProfileCacheDurationProvider(provider: () => number) {
+  cacheDurationProvider = provider;
+}
 
 interface CacheEntry {
   // null = negative entry: profile fetched but exposes no avatar (e.g. private).
@@ -108,7 +120,7 @@ export function createProfileCache<TProfile>(options: ProfileCacheOptions<TProfi
     const entry = cache[accountId];
     if (!entry) return null;
 
-    const duration = getCacheDuration();
+    const duration = cacheDurationProvider();
     const expired =
       duration === 0 ? entry.timestamp < SESSION_START_MS : Date.now() - entry.timestamp > duration;
     return {

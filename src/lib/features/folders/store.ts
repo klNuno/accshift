@@ -182,6 +182,19 @@ export function getFolderPath(folderId: string | null): FolderInfo[] {
   return path;
 }
 
+export function isFolderDescendant(folderId: string | null, ancestorId: string): boolean {
+  const store = getStore();
+  const seen = new Set<string>();
+  let currentId: string | null = folderId;
+  while (currentId) {
+    if (currentId === ancestorId) return true;
+    if (seen.has(currentId)) break;
+    seen.add(currentId);
+    currentId = store.folders.find((f) => f.id === currentId)?.parentId ?? null;
+  }
+  return false;
+}
+
 export function syncAccounts(accountIds: string[], platform: string) {
   const store = getStore();
   const rootKey = getRootKey(platform);
@@ -242,6 +255,9 @@ export function moveItem(
   insertIndex?: number,
 ) {
   const store = getStore();
+  // Moving a folder into its own subtree would create an unreachable cycle.
+  if (itemRef.type === "folder" && isFolderDescendant(toFolderId, itemRef.id)) return;
+
   const fromKey = fromFolderId || getRootKey(platform);
   const toKey = toFolderId || getRootKey(platform);
 
@@ -256,6 +272,11 @@ export function moveItem(
     store.itemOrder[toKey].splice(insertIndex, 0, itemRef);
   } else {
     store.itemOrder[toKey].push(itemRef);
+  }
+
+  if (itemRef.type === "folder") {
+    const folder = store.folders.find((f) => f.id === itemRef.id);
+    if (folder) folder.parentId = toFolderId;
   }
 
   saveStore(store);

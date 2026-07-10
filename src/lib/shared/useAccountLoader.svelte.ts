@@ -1,6 +1,6 @@
 import type { PlatformAdapter, PlatformAccount } from "./platform";
 import { addToast } from "../features/notifications/store.svelte";
-import type { AccountWarningPresentation } from "./accountWarnings";
+import type { AccountWarningChip, AccountWarningPresentation } from "./accountWarnings";
 import { DEFAULT_LOCALE, translate, type MessageKey, type TranslationParams } from "$lib/i18n";
 import { createAvatarLoader } from "./useAvatarLoader.svelte";
 
@@ -27,6 +27,24 @@ function deferBackgroundTask(task: () => void | Promise<void>) {
   setTimeout(() => {
     void task();
   }, 0);
+}
+
+function warningChipsEqual(a?: AccountWarningChip[], b?: AccountWarningChip[]): boolean {
+  const left = a ?? [];
+  const right = b ?? [];
+  if (left.length !== right.length) return false;
+  return left.every((chip, i) => chip.tone === right[i].tone && chip.text === right[i].text);
+}
+
+function warningsEqual(a: AccountWarningPresentation, b: AccountWarningPresentation): boolean {
+  if (a === b) return true;
+  return (
+    a.tooltipText === b.tooltipText &&
+    (a.cardOutlineTone ?? null) === (b.cardOutlineTone ?? null) &&
+    !!a.listHasRed === !!b.listHasRed &&
+    !!a.listHasOrange === !!b.listHasOrange &&
+    warningChipsEqual(a.chips, b.chips)
+  );
 }
 
 export function createAccountLoader(
@@ -59,6 +77,47 @@ export function createAccountLoader(
   let error = $state<string | null>(null);
   const avatars = createAvatarLoader(getAdapter);
   let warningStates = $state.raw<Record<string, AccountWarningPresentation>>({});
+  let pendingWarningStates: Record<string, AccountWarningPresentation> | null = null;
+  let warningFlushQueued = false;
+
+  // Replacing the $state.raw record invalidates every card, so reuse unchanged entry
+  // objects and skip the assignment entirely when nothing changed.
+  function commitWarningStates(next: Record<string, AccountWarningPresentation>) {
+    const prev = warningStates;
+    const merged: Record<string, AccountWarningPresentation> = {};
+    let changed = false;
+    for (const [id, warning] of Object.entries(next)) {
+      const previous = prev[id];
+      if (previous && warningsEqual(previous, warning)) {
+        merged[id] = previous;
+      } else {
+        merged[id] = warning;
+        changed = true;
+      }
+    }
+    if (!changed && Object.keys(prev).length === Object.keys(merged).length) return;
+    warningStates = merged;
+  }
+
+  // Batch results landing in the same tick coalesce into one replacement. Each
+  // adapter returns a full map, so last write wins is safe.
+  function queueWarningStates(next: Record<string, AccountWarningPresentation>) {
+    pendingWarningStates = next;
+    if (warningFlushQueued) return;
+    warningFlushQueued = true;
+    queueMicrotask(() => {
+      warningFlushQueued = false;
+      const queued = pendingWarningStates;
+      pendingWarningStates = null;
+      if (queued) commitWarningStates(queued);
+    });
+  }
+
+  function replaceWarningStates(next: Record<string, AccountWarningPresentation>) {
+    pendingWarningStates = null;
+    commitWarningStates(next);
+  }
+
   let lastLoadErrorToastAt = 0;
   let lastNoAccountsToastAt = 0;
   let latestLoadId = 0;
@@ -111,7 +170,7 @@ export function createAccountLoader(
     if (!shouldContinue()) return;
     const nextWarningStates = await adapter.loadWarningStates(accts, { forceRefresh, silent, t });
     if (!shouldContinue()) return;
-    warningStates = nextWarningStates;
+    queueWarningStates(nextWarningStates);
   }
 
   function createPrimeGuard() {
@@ -135,7 +194,7 @@ export function createAccountLoader(
     loading = true;
     error = null;
     try {
-      warningStates = adapter.getCachedWarningStates?.({ t }) ?? {};
+      replaceWarningStates(adapter.getCachedWarningStates?.({ t }) ?? {});
       let nextAccounts: PlatformAccount[];
       let nextCurrentAccount: string;
       if (adapter.getStartupSnapshot) {
@@ -165,6 +224,7 @@ export function createAccountLoader(
           t(count === 1 ? "toast.accountsRefreshed.single" : "toast.accountsRefreshed.multiple", {
             count,
           }),
+          { type: "success" },
         );
       }
       onAfterLoad?.();
@@ -183,12 +243,13 @@ export function createAccountLoader(
       error = message;
       accounts = [];
       currentAccount = "";
-      warningStates = {};
+      replaceWarningStates({});
+      console.error("[accounts] load failed:", e);
       const errorToast = adapter.getLoadErrorToastMessage?.(message, { t });
       if (errorToast) {
         const now = Date.now();
         if (now - lastLoadErrorToastAt >= LOAD_TOAST_COOLDOWN_MS) {
-          addToast(errorToast);
+          addToast(errorToast, { type: "error" });
           lastLoadErrorToastAt = now;
         }
       }
@@ -197,9 +258,9 @@ export function createAccountLoader(
     loading = false;
   }
 
-  async function switchTo(account: PlatformAccount) {
+  async function switchTo(account: PlatformAccount): Promise<boolean> {
     const adapter = getAdapter();
-    if (!adapter || switching) return;
+    if (!adapter || switching) return false;
     // Invalidate in-flight loads so a pre-switch result cannot clobber currentAccount.
     latestLoadId += 1;
     // Our own generation token: if a platform/tab change (clearForPlatformChange) or
@@ -209,9 +270,11 @@ export function createAccountLoader(
     switching = true;
     switchingAccountId = account.id;
     error = null;
+    let succeeded = false;
     try {
       await adapter.switchAccount(account);
-      if (switchId !== latestSwitchId) return;
+      if (switchId !== latestSwitchId) return false;
+      succeeded = true;
       currentAccount = account.id;
       if (adapter.getProfileInfo) {
         avatars.updateState(account.id, { refreshing: true });
@@ -235,15 +298,17 @@ export function createAccountLoader(
           });
       }
     } catch (e) {
-      if (switchId !== latestSwitchId) return;
+      if (switchId !== latestSwitchId) return false;
       error = String(e);
+      console.error("[accounts] switch failed:", e);
       const adapter = getAdapter();
       const mapped = adapter?.getSwitchErrorToastMessage?.(error, { t });
-      addToast(mapped ?? error);
+      addToast(mapped ?? t("toast.switchFailed"), { type: "error" });
     }
-    if (switchId !== latestSwitchId) return;
+    if (switchId !== latestSwitchId) return succeeded;
     switching = false;
     switchingAccountId = null;
+    return succeeded;
   }
 
   async function addNew() {
@@ -255,7 +320,8 @@ export function createAccountLoader(
       result = await adapter.addAccount();
     } catch (e) {
       error = String(e);
-      addToast(error);
+      console.error("[accounts] add account failed:", e);
+      addToast(t("toast.addAccountFailed" as string as MessageKey), { type: "error" });
       return;
     }
     if (result.setupStatus) {
@@ -360,7 +426,7 @@ export function createAccountLoader(
     avatars.removeAvatar(accountId);
     pruneOrphanedAvatarStates();
     const { [accountId]: _warning, ...restWarnings } = warningStates;
-    warningStates = restWarnings;
+    replaceWarningStates(restWarnings);
   }
 
   function clearForPlatformChange() {
@@ -374,7 +440,7 @@ export function createAccountLoader(
     switching = false;
     switchingAccountId = null;
     avatars.clear();
-    warningStates = {};
+    replaceWarningStates({});
   }
 
   return {

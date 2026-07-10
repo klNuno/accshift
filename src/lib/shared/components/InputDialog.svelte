@@ -4,11 +4,12 @@
   import { trackDependencies } from "$lib/shared/trackDependencies";
   import BaseDialog from "./BaseDialog.svelte";
 
-  let { title, placeholder = "", initialValue = "", allowEmpty = false, onConfirm, onCancel, locale = DEFAULT_LOCALE }: {
+  let { title, placeholder = "", initialValue = "", allowEmpty = false, maxlength = undefined, onConfirm, onCancel, locale = DEFAULT_LOCALE }: {
     title: string;
     placeholder?: string;
     initialValue?: string;
     allowEmpty?: boolean;
+    maxlength?: number;
     onConfirm: (value: string) => void;
     onCancel: () => void;
     locale?: Locale;
@@ -41,8 +42,13 @@
     bind:this={inputRef}
     bind:value={value}
     class="input"
+    aria-label={title}
+    maxlength={maxlength}
     {placeholder}
   />
+  {#if maxlength && value.length >= maxlength - 20}
+    <span class="char-count">{value.length}/{maxlength}</span>
+  {/if}
 
   {#snippet actions()}
     <button class="btn-cancel" onclick={onCancel}>{translate(locale, "common.cancel")}</button>
@@ -66,6 +72,13 @@
 
   .input:focus {
     border-color: var(--bg-elevated);
+  }
+
+  .char-count {
+    align-self: flex-end;
+    margin-top: -8px;
+    font-size: 10px;
+    color: var(--fg-muted);
   }
 
   .btn-cancel {

@@ -66,24 +66,36 @@ export function createUiScale({ getSettings, saveSettings, getGridLayout }: UiSc
     setUiScalePercent(getSettings().uiScalePercent + direction * UI_SCALE_STEP_PERCENT);
   }
 
-  function handleZoomKeydown(e: KeyboardEvent) {
-    if (!e.ctrlKey && !e.metaKey) return;
-    if (e.key !== "0") return;
-    e.preventDefault();
+  function zoomIn() {
+    wheelZoomAccumulator = 0;
+    setUiScalePercent(getSettings().uiScalePercent + UI_SCALE_STEP_PERCENT);
+  }
+
+  function zoomOut() {
+    wheelZoomAccumulator = 0;
+    setUiScalePercent(getSettings().uiScalePercent - UI_SCALE_STEP_PERCENT);
+  }
+
+  function resetZoom() {
     wheelZoomAccumulator = 0;
     setUiScalePercent(100);
   }
 
   function destroy() {
+    // Flush instead of dropping: a wheel-zoom right before closing the app
+    // would otherwise apply visually but never persist.
     if (zoomPersistTimer) {
       clearTimeout(zoomPersistTimer);
       zoomPersistTimer = null;
+      persistUiScalePercent(getSettings().uiScalePercent);
     }
   }
 
   return {
     handleCtrlWheelZoom,
-    handleZoomKeydown,
+    zoomIn,
+    zoomOut,
+    resetZoom,
     destroy,
   };
 }

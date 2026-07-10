@@ -3,7 +3,8 @@ import { getPlatformDefinition } from "$lib/platforms/registry";
 import { isPlatformUsable } from "$lib/app/platformShell.svelte";
 import { parseDeepLink, type DeepLinkSwitchRequest } from "$lib/app/deepLinkUrl";
 import type { PlatformAccount } from "$lib/shared/platform";
-import type { AppSettings, RuntimeOs } from "$lib/features/settings/types";
+import type { AppSettings } from "$lib/features/settings/types";
+import type { RuntimeOs } from "$lib/shared/platform";
 import type { MessageKey, TranslationParams } from "$lib/i18n";
 
 const BOOT_TIMEOUT_MS = 20000;

@@ -1,5 +1,6 @@
 import { getInitialActiveTab, isPlatformUsable } from "$lib/app/platformShell.svelte";
-import type { AppSettings, RuntimeOs } from "$lib/features/settings/types";
+import type { AppSettings } from "$lib/features/settings/types";
+import type { RuntimeOs } from "$lib/shared/platform";
 import type { AppHistoryEntry } from "$lib/app/folderNavigation.svelte";
 
 type AppNavigationDeps = {
