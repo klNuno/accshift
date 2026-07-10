@@ -4,6 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { mount } from "svelte";
 import { fetchBootPayload } from "$lib/app/bootPayload";
 import { initializeClientStorage } from "$lib/storage/clientStorage";
+import { loadLocaleMessages } from "$lib/i18n";
+import { getSettings } from "$lib/features/settings/store";
 
 type LogLevel = "info" | "warn" | "error";
 
@@ -145,6 +147,21 @@ async function bootstrap() {
       "error",
       "frontend.storage",
       "Failed to initialize client storage",
+      serializeLogValue(reason),
+    );
+  }
+
+  try {
+    // Non-EN dictionaries live in their own lazy chunk. Await the persisted
+    // locale BEFORE the first render so a French user never sees an English
+    // flash; for "en" this resolves synchronously.
+    await loadLocaleMessages(getSettings().language);
+  } catch (reason) {
+    // Non-fatal: translate() falls back to English and retries the load.
+    queueLog(
+      "error",
+      "frontend.i18n",
+      "Failed to preload locale messages",
       serializeLogValue(reason),
     );
   }

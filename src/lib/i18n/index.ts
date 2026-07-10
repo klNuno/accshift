@@ -1,6 +1,9 @@
-import { EN_MESSAGES, FR_MESSAGES, type MessageKey } from "./messages";
+import { EN_MESSAGES, type MessageKey } from "./messages";
+import { getDictionary, loadLocaleMessages, type Locale } from "./dictionaries.svelte";
 
-export type Locale = "en" | "fr";
+export type { Locale };
+export { loadLocaleMessages };
+
 export type TranslationValue = string | number | boolean | null | undefined;
 export type TranslationParams = Record<string, TranslationValue>;
 
@@ -12,11 +15,6 @@ export const LANGUAGE_OPTIONS = [
 ] as const satisfies ReadonlyArray<{ code: Locale; labelKey: MessageKey }>;
 
 const LOCALE_SET = new Set<Locale>(LANGUAGE_OPTIONS.map((option) => option.code));
-
-const DICTIONARIES: Record<Locale, Record<MessageKey, string>> = {
-  en: EN_MESSAGES,
-  fr: FR_MESSAGES,
-};
 
 function formatTemplate(template: string, params?: TranslationParams): string {
   if (!params) return template;
@@ -56,9 +54,18 @@ export function detectPreferredLocale(): Locale {
 }
 
 export function translate(locale: Locale, key: MessageKey, params?: TranslationParams): string {
-  const dict = DICTIONARIES[locale] ?? DICTIONARIES[DEFAULT_LOCALE];
-  const fallback = DICTIONARIES[DEFAULT_LOCALE][key];
-  const template = dict[key] ?? fallback ?? key;
+  let dict = getDictionary(locale);
+  if (!dict) {
+    // Locale not loaded yet: kick off (or retry) the lazy load and serve the
+    // English fallback. The reactive dictionary registry re-renders callers
+    // once the load lands, so the strings swap on their own. The persisted
+    // locale is preloaded at boot (main.ts), so this only covers a runtime
+    // language switch or a failed chunk load.
+    loadLocaleMessages(locale).catch(() => {});
+    dict = getDictionary(DEFAULT_LOCALE);
+  }
+  const fallback = EN_MESSAGES[key];
+  const template = dict?.[key] ?? fallback ?? key;
   return formatTemplate(template, params);
 }
 

@@ -4,16 +4,21 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 // path has an actual missing key to exercise, instead of a key that happens to have
 // a real French translation. FR_MESSAGES is typed as Record<MessageKey, string>, so
 // every key is present in the real dictionary and this gap only exists in the mock.
-vi.mock("./messages", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./messages")>();
+vi.mock("./messages.fr", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./messages.fr")>();
   const { "app.loading": _omitted, ...frWithoutLoadingKey } = actual.FR_MESSAGES;
   return {
-    ...actual,
     FR_MESSAGES: frWithoutLoadingKey,
   };
 });
 
-import { detectPreferredLocale, isLocale, normalizeLocale, translate } from "./index";
+import {
+  detectPreferredLocale,
+  isLocale,
+  loadLocaleMessages,
+  normalizeLocale,
+  translate,
+} from "./index";
 
 describe("isLocale", () => {
   it("accepts en", () => expect(isLocale("en")).toBe(true));
@@ -41,7 +46,20 @@ describe("translate", () => {
     expect(result).toContain("5");
   });
 
-  it("falls back to en for missing fr key", () => {
+  it("falls back to en while fr is not loaded yet", () => {
+    // The FR dictionary is lazy-loaded; before loadLocaleMessages resolves,
+    // every fr key must serve the English string.
+    const en = translate("en", "common.close" as any);
+    expect(translate("fr", "common.close" as any)).toBe(en);
+  });
+
+  it("serves fr strings once the locale is loaded", async () => {
+    await loadLocaleMessages("fr");
+    expect(translate("fr", "common.close" as any)).toBe("Fermer");
+  });
+
+  it("falls back to en for missing fr key", async () => {
+    await loadLocaleMessages("fr");
     const en = translate("en", "app.loading" as any);
     const fr = translate("fr", "app.loading" as any);
     // fr has no "app.loading" entry in the mocked dictionary, so it must fall back
