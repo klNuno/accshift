@@ -200,6 +200,12 @@ export async function fetchCs2BridgeAccounts(): Promise<Cs2BridgeAccount[]> {
   return invoke<Cs2BridgeAccount[]>("cs2_bridge_fetch");
 }
 
+/** Ask the bridge to re-check a single account (triggered on account switch)
+ * and return its fresh row. `null` when the bridge is disabled. */
+export async function checkCs2Bridge(steamId: string): Promise<Cs2BridgeAccount | null> {
+  return invoke<Cs2BridgeAccount | null>("cs2_bridge_check", { steamId });
+}
+
 export async function testCs2Bridge(): Promise<Cs2BridgeTestResult> {
   return invoke<Cs2BridgeTestResult>("cs2_bridge_test");
 }

@@ -60,6 +60,19 @@ struct BridgeResponse {
     accounts: Vec<Cs2BridgeAccount>,
 }
 
+/// Corps du POST /check : le SteamID64 du compte que l'on vient d'activer.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CheckRequest<'a> {
+    steam_id: &'a str,
+}
+
+/// Reponse du POST /check : la ligne fraiche du compte demande.
+#[derive(Debug, Deserialize)]
+struct BridgeCheckResponse {
+    account: Cs2BridgeAccount,
+}
+
 fn encrypt_token(token: &str) -> Result<String, String> {
     if token.trim().is_empty() {
         return Ok(String::new());
@@ -189,4 +202,60 @@ async fn fetch_from(
         .await
         .map_err(|e| format!("Failed to parse bridge response: {}", e))?;
     Ok(parsed.accounts)
+}
+
+/// Declenche un check a la demande d'UN compte cote serveur (POST {url}/check
+/// avec {steamId}), puis renvoie sa ligne fraiche. Best-effort, appele au
+/// switch de compte : renvoie None si le bridge est desactive. Erreur si l'URL
+/// n'est pas configuree ou si le serveur ne supporte pas /check (l'appelant
+/// l'avale silencieusement, la lecture periodique reste la source de secours).
+pub async fn check_account(
+    app_handle: &dyn AppContext,
+    client: &reqwest::Client,
+    steam_id: &str,
+) -> Result<Option<Cs2BridgeAccount>, String> {
+    let cfg = config::load_config(app_handle).steam.cs2_bridge;
+    if !cfg.enabled {
+        return Ok(None);
+    }
+    check_from(client, &cfg.url, &cfg.token_encrypted, steam_id)
+        .await
+        .map(Some)
+}
+
+async fn check_from(
+    client: &reqwest::Client,
+    raw_url: &str,
+    token_encrypted: &str,
+    steam_id: &str,
+) -> Result<Cs2BridgeAccount, String> {
+    let url = normalize_url(raw_url)?;
+    if url.is_empty() {
+        return Err("Bridge URL is not configured".to_string());
+    }
+    let token = decrypt_token(token_encrypted)?;
+    let endpoint = format!("{}/check", url);
+
+    let mut request = client.post(endpoint).json(&CheckRequest { steam_id });
+    if !token.is_empty() {
+        request = request.bearer_auth(token);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|e| format!("Bridge check failed: {}", e))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("Bridge check returned {}", status));
+    }
+    if response.content_length().unwrap_or(0) > MAX_RESPONSE_BYTES {
+        return Err("Bridge response too large".to_string());
+    }
+
+    let parsed: BridgeCheckResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse bridge check response: {}", e))?;
+    Ok(parsed.account)
 }

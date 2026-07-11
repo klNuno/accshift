@@ -1,4 +1,9 @@
-import { fetchCs2BridgeAccounts, getCs2BridgeSettings, type Cs2BridgeAccount } from "./steamApi";
+import {
+  checkCs2Bridge,
+  fetchCs2BridgeAccounts,
+  getCs2BridgeSettings,
+  type Cs2BridgeAccount,
+} from "./steamApi";
 import { logAppEvent, serializeLogValue } from "$lib/shared/appLogger";
 
 /** The source refreshes GC stats every ~3h; 5 min keeps hover data fresh
@@ -11,6 +16,7 @@ let enabled = $state(false);
 let enabledKnown = false;
 let lastFetchAt = 0;
 let inFlight: Promise<void> | null = null;
+let checkInFlight: Promise<void> | null = null;
 
 export function getCs2BridgeData(steamId: string): Cs2BridgeAccount | null {
   return dataBySteamId[steamId] ?? null;
@@ -37,6 +43,11 @@ export async function loadCs2BridgeData(force = false): Promise<void> {
 
   inFlight = (async () => {
     try {
+      // Let an on-demand check land first: its POST makes the server re-scan
+      // that account, so a GET issued after it returns the fresh row too.
+      // Fetching concurrently could snapshot the server before the re-scan
+      // finishes and clobber the freshly merged row with stale data.
+      if (checkInFlight) await checkInFlight.catch(() => {});
       if (!enabledKnown) {
         enabled = (await getCs2BridgeSettings()).enabled;
         enabledKnown = true;
@@ -61,4 +72,42 @@ export async function loadCs2BridgeData(force = false): Promise<void> {
     }
   })();
   return inFlight;
+}
+
+/** On switching to a Steam account, ask the bridge to re-check just that
+ * account server-side and merge the fresh row into the cache so the hover card
+ * updates live. Best-effort and silent: on failure the periodic read stays the
+ * fallback. No-op when the bridge is disabled. */
+export async function triggerCs2BridgeCheck(steamId: string): Promise<void> {
+  const run = (async () => {
+    try {
+      // Serialize against the periodic fetch both ways: a full GET replacing
+      // the map after our merge would revert the row to pre-check data.
+      if (inFlight) await inFlight.catch(() => {});
+      if (!enabledKnown) {
+        enabled = (await getCs2BridgeSettings()).enabled;
+        enabledKnown = true;
+      }
+      if (!enabled) return;
+      const account = await checkCs2Bridge(steamId);
+      if (account) {
+        dataBySteamId = { ...dataBySteamId, [account.steamId]: account };
+        version += 1;
+        void logAppEvent("info", "frontend.cs2_bridge", "Bridge check applied", {
+          steamId: account.steamId,
+          level: account.level,
+        });
+      }
+    } catch (error) {
+      console.warn("[cs2-bridge] check failed:", error);
+      void logAppEvent("warn", "frontend.cs2_bridge", "Bridge check failed", {
+        error: serializeLogValue(error),
+      });
+    }
+  })();
+  checkInFlight = run;
+  void run.finally(() => {
+    if (checkInFlight === run) checkInFlight = null;
+  });
+  return run;
 }

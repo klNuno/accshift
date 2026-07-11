@@ -547,6 +547,19 @@ pub async fn cs2_bridge_fetch(
         .map_err(Into::into)
 }
 
+/// Check a la demande d'un compte (declenche au switch). `None` si le bridge
+/// est desactive ; l'appelant frontend avale toute erreur en silence.
+#[tauri::command]
+pub async fn cs2_bridge_check(
+    app_handle: tauri::AppHandle,
+    client: tauri::State<'_, reqwest::Client>,
+    steam_id: String,
+) -> Result<Option<crate::platforms::steam::cs2_bridge::Cs2BridgeAccount>, PlatformError> {
+    crate::platforms::steam::cs2_bridge::check_account(&ctx(&app_handle), client.inner(), &steam_id)
+        .await
+        .map_err(Into::into)
+}
+
 #[tauri::command]
 pub async fn steam_switch_account_and_launch_game(
     app_handle: tauri::AppHandle,

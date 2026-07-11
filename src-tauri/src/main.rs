@@ -378,6 +378,7 @@ fn main() {
             commands::cs2_bridge_get_settings,
             commands::cs2_bridge_set_settings,
             commands::cs2_bridge_fetch,
+            commands::cs2_bridge_check,
             commands::cs2_bridge_test,
             // Riot-specific (Windows-only)
             #[cfg(windows)]

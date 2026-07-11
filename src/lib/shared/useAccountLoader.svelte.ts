@@ -276,6 +276,14 @@ export function createAccountLoader(
       if (switchId !== latestSwitchId) return false;
       succeeded = true;
       currentAccount = account.id;
+      // CS2 bridge: ask the server for an on-demand check of the account we
+      // just activated (Steam only, account.id = SteamID64), then refresh the
+      // hover card. Fire-and-forget, never impacts the switch itself.
+      if (adapter.id === "steam") {
+        void import("$lib/platforms/steam/cs2Bridge.svelte").then((m) =>
+          m.triggerCs2BridgeCheck(account.id),
+        );
+      }
       if (adapter.getProfileInfo) {
         avatars.updateState(account.id, { refreshing: true });
         void adapter
