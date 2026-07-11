@@ -31,6 +31,9 @@ export function createStreamerModeController({ getSettings, setStreamerMode }: S
     polling = true;
     try {
       const detected = await invoke<boolean>("detect_streaming_software");
+      if (detected && !streamingDetected) {
+        void invoke("telemetry_track_streamer_mode").catch(() => {});
+      }
       streamingDetected = detected;
       if (!detected) dismissedThisSession = false;
     } catch (e) {

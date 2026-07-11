@@ -1,9 +1,9 @@
 //! Anonymous telemetry for Accshift.
 //!
 //! Two independent modes:
-//! - **Mode A** (legitimate interest, ON by default): no persistent local
-//!   identifier, no on-disk event storage, server-side daily hash for
-//!   approximate DAU.
+//! - **Mode A** (explicit opt-in): a local random UUID is
+//!   used only to deduplicate aggregate pings; usage events remain linked only
+//!   by a server-side daily hash. There is no on-disk event storage.
 //! - **Mode B** (consent, opt-in): local UUIDv4 `install_id` that enables
 //!   retention metrics, cohorts, per-user feature distribution.
 //!
@@ -15,7 +15,10 @@ pub mod install_id;
 pub mod log_bundle;
 mod queue;
 
-pub use client::{export, forget, upload_logs, user_agent, Mode, TELEMETRY_URL};
+pub use client::{
+    export, forget, record_consent_choice, upload_logs, user_agent, ConsentChoice, Mode,
+    TELEMETRY_URL,
+};
 pub use events::{Event, TelemetryContext};
 pub use queue::{ConsentState, Handle, QueueParams, Worker};
 
@@ -24,12 +27,17 @@ use crate::config::TelemetryConfig;
 /// Converts the persisted configuration into an in-memory consent state.
 pub fn consent_from_config(cfg: &TelemetryConfig) -> ConsentState {
     ConsentState {
-        mode_a: cfg.mode_a_enabled,
-        mode_b: cfg.mode_b_enabled && !cfg.install_id.is_empty(),
+        mode_a: cfg.onboarding_completed && cfg.mode_a_enabled,
+        mode_b: cfg.onboarding_completed && cfg.mode_b_enabled && !cfg.install_id.is_empty(),
         install_id: if cfg.install_id.is_empty() {
             None
         } else {
             Some(cfg.install_id.clone())
+        },
+        anonymous_id: if cfg.anonymous_id.is_empty() {
+            None
+        } else {
+            Some(cfg.anonymous_id.clone())
         },
     }
 }
@@ -56,6 +64,7 @@ mod tests {
             mode_a_enabled: true,
             mode_b_enabled: true,
             install_id: String::new(),
+            anonymous_id: String::new(),
             onboarding_completed: true,
         };
         let state = consent_from_config(&cfg);
@@ -70,6 +79,7 @@ mod tests {
             mode_a_enabled: true,
             mode_b_enabled: true,
             install_id: "550e8400-e29b-41d4-a716-446655440000".into(),
+            anonymous_id: "797f20fe-94de-4e89-98a2-ae3a3273ad1e".into(),
             onboarding_completed: true,
         };
         let state = consent_from_config(&cfg);
@@ -78,13 +88,17 @@ mod tests {
             state.install_id.as_deref(),
             Some("550e8400-e29b-41d4-a716-446655440000")
         );
+        assert_eq!(
+            state.anonymous_id.as_deref(),
+            Some("797f20fe-94de-4e89-98a2-ae3a3273ad1e")
+        );
     }
 
     #[test]
-    fn consent_from_config_default_is_mode_a_only() {
+    fn consent_from_config_default_sends_nothing_before_onboarding() {
         let cfg = TelemetryConfig::default();
         let state = consent_from_config(&cfg);
-        assert!(state.mode_a);
+        assert!(!state.mode_a);
         assert!(!state.mode_b);
     }
 }

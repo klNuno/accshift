@@ -2,6 +2,7 @@
 // =========================
 // Endpoints:
 //   POST /track             - Mode A or B events (batch)
+//   POST /consent           - one aggregate onboarding choice per installation
 //   POST /logs              - log zip upload (explicit user action)
 //   POST /forget            - GDPR art. 17, Mode B only
 //   POST /export            - GDPR art. 20, Mode B only
@@ -11,9 +12,8 @@
 //   (cron)                  - daily purge of log uploads older than 90 days
 //
 // Principles:
-// - Mode A: no persistent identifier stored on the client. The server derives
-//   a daily_visitor_hash from IP + UA + date + secret. The IP is never stored,
-//   and the hash is not recomputable across days (date is part of the input).
+// - Mode A: a random local UUID is HMACed for unique-installation pings only.
+//   Regular usage events keep a daily hash and remain unlinkable across days.
 // - IP is never stored. Country is derived from request.cf.country.
 // - CORS is restricted when browsers send Origin; native Tauri requests may omit it.
 
@@ -42,6 +42,7 @@ export interface Env {
   ALLOWED_ORIGINS: string;
   UA_PREFIX: string;
   BUDGET_TRACK: string;
+  BUDGET_CONSENT: string;
   BUDGET_LOGS: string;
   BUDGET_FORGET: string;
   BUDGET_EXPORT: string;
@@ -62,7 +63,13 @@ interface TelemetryEvent {
 interface TrackPayload {
   mode: "A" | "B";
   install_id?: string;
+  anonymous_id?: string;
   events: TelemetryEvent[];
+}
+
+interface ConsentPayload {
+  choice?: "refused" | "basic" | "enhanced";
+  app_version?: string;
 }
 
 // ─── Entry point ─────────────────────────────────────────────────
@@ -81,6 +88,10 @@ export default {
         case "/track":
           response =
             request.method === "POST" ? await handleTrack(request, env, ctx) : methodNotAllowed();
+          break;
+        case "/consent":
+          response =
+            request.method === "POST" ? await handleConsent(request, env, ctx) : methodNotAllowed();
           break;
         case "/logs":
           response =
@@ -169,6 +180,13 @@ async function handleTrack(request: Request, env: Env, ctx: ExecutionContext): P
   if (payload.mode === "B" && !isUuidV4(payload.install_id)) {
     return json({ error: "bad_install_id" }, 400);
   }
+  if (
+    payload.mode === "A" &&
+    payload.anonymous_id !== undefined &&
+    !isUuidV4(payload.anonymous_id)
+  ) {
+    return json({ error: "bad_anonymous_id" }, 400);
+  }
 
   // Payload is well-formed and carries at least one usable event: now charge
   // the daily budget.
@@ -178,19 +196,24 @@ async function handleTrack(request: Request, env: Env, ctx: ExecutionContext): P
   const country = (request.cf?.country as string | undefined) ?? "XX";
   const todayIso = new Date().toISOString().slice(0, 10);
 
-  let identifier: string;
+  let eventIdentifier: string;
+  let pingIdentifier: string;
   let isPersistent: 0 | 1;
   if (payload.mode === "B") {
-    identifier = payload.install_id!;
+    eventIdentifier = payload.install_id!;
+    pingIdentifier = eventIdentifier;
     isPersistent = 1;
     // GDPR: drop the batch if the install_id is in the forget list.
     const forgotten = await env.DB.prepare("SELECT 1 FROM forgotten WHERE install_id = ?1")
-      .bind(identifier)
+      .bind(eventIdentifier)
       .first();
     if (forgotten) return json({ ok: true, forgotten: true });
   } else {
     const ua = request.headers.get("User-Agent") ?? "";
-    identifier = await dailyVisitorHash(ip, ua, todayIso, env.HASH_SECRET);
+    eventIdentifier = await dailyVisitorHash(ip, ua, todayIso, env.HASH_SECRET);
+    pingIdentifier = payload.anonymous_id
+      ? await stableAnonymousHash(payload.anonymous_id, "basic-ping", env.HASH_SECRET)
+      : eventIdentifier;
     isPersistent = 0;
   }
 
@@ -198,7 +221,7 @@ async function handleTrack(request: Request, env: Env, ctx: ExecutionContext): P
   for (const ev of payload.events) {
     if (!ev.name || typeof ev.name !== "string") continue;
     env.AE.writeDataPoint({
-      indexes: [identifier.slice(0, 96)],
+      indexes: [eventIdentifier.slice(0, 96)],
       blobs: [
         ev.name,
         ev.app_version ?? "",
@@ -227,7 +250,7 @@ async function handleTrack(request: Request, env: Env, ctx: ExecutionContext): P
            country     = excluded.country`,
     )
       .bind(
-        identifier,
+        pingIdentifier,
         isPersistent,
         todayIso,
         pingEvent.app_version ?? "",
@@ -247,13 +270,46 @@ async function handleTrack(request: Request, env: Env, ctx: ExecutionContext): P
           `INSERT INTO accounts_snapshot (install_id, date, platform, count)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(install_id, date, platform) DO UPDATE SET count = excluded.count`,
-        ).bind(identifier, todayIso, s.platform!, Math.max(0, Math.floor(s.count ?? 0))),
+        ).bind(eventIdentifier, todayIso, s.platform!, Math.max(0, Math.floor(s.count ?? 0))),
       );
       await env.DB.batch(stmts);
     }
   }
 
   return json({ ok: true, accepted: payload.events.length });
+}
+
+// ─── /consent ────────────────────────────────────────────────────
+
+const CONSENT_BODY_MAX_BYTES = 4 * 1024;
+const CONSENT_CHOICES = new Set(["refused", "basic", "enhanced"]);
+
+async function handleConsent(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const uaErr = checkUa(request, env);
+  if (uaErr) return uaErr;
+  const ip = clientIp(request);
+  const blocked = await enforceRateLimit(env, env.RL_TRACK, ip, "/consent", ctx, true);
+  if (blocked) return blocked;
+
+  const parsed = await readJsonCapped<ConsentPayload>(request, CONSENT_BODY_MAX_BYTES);
+  if (parsed instanceof Response) return parsed;
+  if (!parsed || typeof parsed.choice !== "string" || !CONSENT_CHOICES.has(parsed.choice)) {
+    return json({ error: "bad_payload" }, 400);
+  }
+
+  const budgetErr = await checkBudget(env, "/consent", intVar(env.BUDGET_CONSENT, 4000), ctx);
+  if (budgetErr) return budgetErr;
+
+  const today = new Date().toISOString().slice(0, 10);
+  await env.DB.prepare(
+    `INSERT INTO consent_choice_counts (date, app_version, choice, count)
+       VALUES (?1, ?2, ?3, 1)
+       ON CONFLICT(date, app_version, choice) DO UPDATE SET count = count + 1`,
+  )
+    .bind(today, parsed.app_version ?? "", parsed.choice)
+    .run();
+
+  return json({ ok: true });
 }
 
 // ─── /logs ───────────────────────────────────────────────────────
@@ -1059,6 +1115,23 @@ async function dailyVisitorHash(
     ["sign"],
   );
   const sig = await crypto.subtle.sign("HMAC", key, enc.encode(`${date}|${ip}|${ua}`));
+  return bytesToHex(new Uint8Array(sig)).slice(0, 32);
+}
+
+async function stableAnonymousHash(
+  anonymousId: string,
+  purpose: string,
+  secret: string,
+): Promise<string> {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(`${purpose}|${anonymousId}`));
   return bytesToHex(new Uint8Array(sig)).slice(0, 32);
 }
 

@@ -20,7 +20,20 @@ impl TelemetryState {
     /// `app_start` is captured by the caller at process start so boot
     /// durations stay accurate regardless of when this runs in setup.
     pub fn new(ctx: &dyn AppContext, app_start: Instant) -> Self {
-        let cfg = accshift_core::config::load_config(ctx);
+        let mut cfg = accshift_core::config::load_config(ctx);
+        if cfg.telemetry.onboarding_completed
+            && cfg.telemetry.mode_a_enabled
+            && !telemetry::install_id::is_valid(&cfg.telemetry.anonymous_id)
+        {
+            let anonymous_id = telemetry::install_id::generate();
+            if accshift_core::config::update_config(ctx, |current| {
+                current.telemetry.anonymous_id = anonymous_id.clone();
+            })
+            .is_ok()
+            {
+                cfg.telemetry.anonymous_id = anonymous_id;
+            }
+        }
         let consent = telemetry::consent_from_config(&cfg.telemetry);
         let tctx = TelemetryContext {
             app_version: env!("CARGO_PKG_VERSION").to_string(),

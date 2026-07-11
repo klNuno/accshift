@@ -18,6 +18,12 @@ pub enum Event {
     /// A persona activation: how many platforms it targeted and how many
     /// switched successfully. No persona name, no account data.
     PersonaSwitch { platforms: u64, succeeded: u64 },
+    /// A new account finished its add flow on a platform. Platform id only.
+    AccountAdded { platform: String },
+    /// The streamer-mode overlay auto-activated (streaming software detected).
+    StreamerModeActivated,
+    /// An accshift:// deep link triggered an action. No URL contents.
+    DeepLinkUsed,
     /// End of session with total duration.
     SessionEnded { duration_ms: u64 },
     /// Snapshot of the number of accounts configured for a platform.
@@ -32,6 +38,9 @@ impl Event {
             Event::AppLaunched { .. } => "app_launched",
             Event::PlatformSwitch { .. } => "platform_switch",
             Event::PersonaSwitch { .. } => "persona_switch",
+            Event::AccountAdded { .. } => "account_added",
+            Event::StreamerModeActivated => "streamer_mode_activated",
+            Event::DeepLinkUsed => "deep_link_used",
             Event::SessionEnded { .. } => "session_ended",
             Event::AccountsSnapshot { .. } => "accounts_snapshot",
         }

@@ -37,6 +37,9 @@ pub async fn telemetry_set_mode_a(
     tauri::async_runtime::spawn_blocking(move || {
         config::update_config(&c2, |cfg| {
             cfg.telemetry.mode_a_enabled = enabled;
+            if enabled && !telemetry::install_id::is_valid(&cfg.telemetry.anonymous_id) {
+                cfg.telemetry.anonymous_id = telemetry::install_id::generate();
+            }
         })
     })
     .await
@@ -137,16 +140,37 @@ pub fn telemetry_track_persona_switch(
     });
 }
 
+/// Records a completed account add flow. Platform id only, no account data.
+#[tauri::command]
+pub fn telemetry_track_account_added(app_handle: tauri::AppHandle, platform_id: String) {
+    let tstate = app_handle.state::<TelemetryState>();
+    tstate.handle.track(telemetry::Event::AccountAdded {
+        platform: platform_id,
+    });
+}
+
+/// Records a streamer-mode overlay auto-activation. No payload.
+#[tauri::command]
+pub fn telemetry_track_streamer_mode(app_handle: tauri::AppHandle) {
+    let tstate = app_handle.state::<TelemetryState>();
+    tstate.handle.track(telemetry::Event::StreamerModeActivated);
+}
+
 /// Marks the onboarding as completed and applies the user's choice from the
-/// three-button consent screen. Mode A defaults to ON, but the user can opt
-/// out from the onboarding dialog itself. Enabling Mode B also generates an
-/// install_id when missing.
+/// three-button consent screen. Nothing is emitted before this choice.
+/// Enabling Mode B also generates an install_id when missing.
 #[tauri::command]
 pub async fn telemetry_complete_onboarding(
     app_handle: tauri::AppHandle,
     mode_a_enabled: bool,
     mode_b_enabled: bool,
 ) -> Result<(), String> {
+    let choice = match (mode_a_enabled, mode_b_enabled) {
+        (false, false) => telemetry::ConsentChoice::Refused,
+        (true, false) => telemetry::ConsentChoice::Basic,
+        (true, true) => telemetry::ConsentChoice::Enhanced,
+        (false, true) => return Err("mode_b_requires_mode_a".into()),
+    };
     let c = ctx(&app_handle);
     let c2 = c.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -154,6 +178,9 @@ pub async fn telemetry_complete_onboarding(
             cfg.telemetry.onboarding_completed = true;
             cfg.telemetry.mode_a_enabled = mode_a_enabled;
             cfg.telemetry.mode_b_enabled = mode_b_enabled;
+            if mode_a_enabled && !telemetry::install_id::is_valid(&cfg.telemetry.anonymous_id) {
+                cfg.telemetry.anonymous_id = telemetry::install_id::generate();
+            }
             if mode_b_enabled && cfg.telemetry.install_id.is_empty() {
                 cfg.telemetry.install_id = telemetry::install_id::generate();
             }
@@ -163,6 +190,29 @@ pub async fn telemetry_complete_onboarding(
     .map_err(|e| format!("task: {e}"))??;
     let tstate = app_handle.state::<TelemetryState>();
     refresh_consent_from_config(&tstate, &c);
+
+    // This one aggregate is recorded even for a refusal so the three choices
+    // have an unbiased denominator. It runs best-effort in the background and
+    // never delays or changes the user's selected privacy mode.
+    let app_version = env!("CARGO_PKG_VERSION").to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let ua = telemetry::user_agent(&app_version);
+        let client = match reqwest::blocking::Client::builder()
+            .user_agent(ua.clone())
+            .build()
+        {
+            Ok(client) => client,
+            Err(e) => {
+                eprintln!("telemetry: consent client failed: {e}");
+                return;
+            }
+        };
+        if let Err(e) =
+            telemetry::record_consent_choice(&client, TELEMETRY_URL, &ua, choice, &app_version)
+        {
+            eprintln!("telemetry: consent choice failed: {e}");
+        }
+    });
     Ok(())
 }
 

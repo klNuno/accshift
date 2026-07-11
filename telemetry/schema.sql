@@ -5,7 +5,8 @@
 -- ─────────────────────────────────────────────────────────────
 -- Daily pings (Mode A + Mode B)
 -- ─────────────────────────────────────────────────────────────
--- Mode A: identifier = daily_visitor_hash (ephemeral, rotates every 24h)
+-- Mode A: identifier = stable HMAC of a random local UUID for new clients;
+-- legacy clients fall back to daily_visitor_hash.
 -- Mode B: identifier = install_id (stable while user is opted in)
 CREATE TABLE IF NOT EXISTS daily_pings (
   identifier    TEXT NOT NULL,
@@ -23,10 +24,24 @@ CREATE INDEX IF NOT EXISTS idx_pings_version  ON daily_pings(app_version, date);
 CREATE INDEX IF NOT EXISTS idx_pings_country  ON daily_pings(country, date);
 
 -- ─────────────────────────────────────────────────────────────
+-- Aggregate onboarding choices
+-- ─────────────────────────────────────────────────────────────
+-- No client or request identifier is stored, including for refusals.
+CREATE TABLE IF NOT EXISTS consent_choice_counts (
+  date        TEXT NOT NULL,
+  app_version TEXT NOT NULL,
+  choice      TEXT NOT NULL CHECK (choice IN ('refused', 'basic', 'enhanced')),
+  count       INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (date, app_version, choice)
+);
+
+CREATE INDEX IF NOT EXISTS idx_consent_choice ON consent_choice_counts(choice, date);
+
+-- ─────────────────────────────────────────────────────────────
 -- Accounts snapshot per platform (Mode B only)
 -- ─────────────────────────────────────────────────────────────
--- Mode A also emits accounts_snapshot events to AE, but they are not stored
--- here because computing a per-user distribution requires a stable install_id.
+-- Mode A drops accounts_snapshot events before upload because computing a
+-- per-user distribution requires a Mode B install_id.
 CREATE TABLE IF NOT EXISTS accounts_snapshot (
   install_id    TEXT NOT NULL,
   date          TEXT NOT NULL,

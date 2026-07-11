@@ -194,6 +194,8 @@ pub struct TelemetryConfig {
     pub mode_b_enabled: bool,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub install_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub anonymous_id: String,
     #[serde(default)]
     pub onboarding_completed: bool,
 }
@@ -204,6 +206,7 @@ impl Default for TelemetryConfig {
             mode_a_enabled: true,
             mode_b_enabled: false,
             install_id: String::new(),
+            anonymous_id: String::new(),
             onboarding_completed: false,
         }
     }
@@ -835,6 +838,7 @@ fn portable_config(config: &AppConfig) -> AppConfig {
     portable.jagex.path_override.clear();
     portable.discord.path_override.clear();
     portable.telemetry.install_id.clear();
+    portable.telemetry.anonymous_id.clear();
     portable.window_width = None;
     portable.window_height = None;
     for account in &mut portable.roblox.accounts {
@@ -856,6 +860,7 @@ fn local_config(config: &AppConfig) -> AppConfig {
     local.jagex.path_override = config.jagex.path_override.clone();
     local.discord.path_override = config.discord.path_override.clone();
     local.telemetry.install_id = config.telemetry.install_id.clone();
+    local.telemetry.anonymous_id = config.telemetry.anonymous_id.clone();
     // mode_a_enabled / mode_b_enabled / onboarding_completed live in the portable
     // file. Reset the defaults here so they do not pollute the later merge step.
     local.telemetry.mode_a_enabled = false;
@@ -914,6 +919,9 @@ fn merge_split_configs(portable: AppConfig, local: AppConfig) -> AppConfig {
     }
     if !local.telemetry.install_id.is_empty() {
         merged.telemetry.install_id = local.telemetry.install_id;
+    }
+    if !local.telemetry.anonymous_id.is_empty() {
+        merged.telemetry.anonymous_id = local.telemetry.anonymous_id;
     }
     if local.window_width.is_some() {
         merged.window_width = local.window_width;
@@ -1420,5 +1428,35 @@ mod tests {
         let l = local_config(&config);
         assert_eq!(l.roblox.accounts.len(), 1);
         assert_eq!(l.roblox.accounts[0].user_id, "valid");
+    }
+
+    #[test]
+    fn telemetry_identifiers_stay_local_and_merge_back() {
+        let config = AppConfig {
+            telemetry: TelemetryConfig {
+                install_id: "550e8400-e29b-41d4-a716-446655440000".into(),
+                anonymous_id: "797f20fe-94de-4e89-98a2-ae3a3273ad1e".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let portable = portable_config(&config);
+        assert!(portable.telemetry.install_id.is_empty());
+        assert!(portable.telemetry.anonymous_id.is_empty());
+
+        let local = local_config(&config);
+        assert_eq!(
+            local.telemetry.install_id,
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
+        assert_eq!(
+            local.telemetry.anonymous_id,
+            "797f20fe-94de-4e89-98a2-ae3a3273ad1e"
+        );
+
+        let merged = merge_split_configs(portable, local);
+        assert_eq!(merged.telemetry.install_id, config.telemetry.install_id);
+        assert_eq!(merged.telemetry.anonymous_id, config.telemetry.anonymous_id);
     }
 }

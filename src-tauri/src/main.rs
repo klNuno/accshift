@@ -272,6 +272,12 @@ fn main() {
                         "Deep link received",
                         Some(&urls),
                     );
+                    // Usage counter only: the URL (which carries account ids)
+                    // is never part of the event.
+                    focus_handle
+                        .state::<telemetry_runtime::TelemetryState>()
+                        .handle
+                        .track(telemetry::Event::DeepLinkUsed);
                     // Don't force the window visible mid-boot: a deep link can be
                     // the launch trigger, and boot completion shows it anyway.
                     if focus_handle
@@ -368,6 +374,8 @@ fn main() {
             commands_telemetry::telemetry_set_mode_b,
             commands_telemetry::telemetry_complete_onboarding,
             commands_telemetry::telemetry_track_persona_switch,
+            commands_telemetry::telemetry_track_account_added,
+            commands_telemetry::telemetry_track_streamer_mode,
             commands_telemetry::telemetry_export,
             commands_telemetry::telemetry_upload_logs,
         ])

@@ -12,6 +12,7 @@ pub struct ConsentState {
     pub mode_a: bool,
     pub mode_b: bool,
     pub install_id: Option<String>,
+    pub anonymous_id: Option<String>,
 }
 
 /// Picks the mode to use for the current request.
@@ -27,7 +28,12 @@ fn resolve_mode(state: &ConsentState) -> Option<(Mode, Option<String>)> {
         }
     }
     if state.mode_a {
-        return Some((Mode::A, None));
+        let anonymous_id = state
+            .anonymous_id
+            .as_ref()
+            .filter(|id| super::install_id::is_valid(id))
+            .cloned();
+        return Some((Mode::A, anonymous_id));
     }
     None
 }
@@ -257,6 +263,7 @@ mod tests {
             mode_a: false,
             mode_b: true,
             install_id: Some("550e8400-e29b-41d4-a716-446655440000".into()),
+            anonymous_id: None,
         };
         let r = resolve_mode(&s);
         assert!(matches!(r, Some((Mode::B, Some(_)))));
@@ -268,6 +275,7 @@ mod tests {
             mode_a: true,
             mode_b: true,
             install_id: None,
+            anonymous_id: None,
         };
         let r = resolve_mode(&s);
         assert!(matches!(r, Some((Mode::A, None))));
@@ -279,9 +287,21 @@ mod tests {
             mode_a: true,
             mode_b: false,
             install_id: Some("550e8400-e29b-41d4-a716-446655440000".into()),
+            anonymous_id: Some("797f20fe-94de-4e89-98a2-ae3a3273ad1e".into()),
         };
         let r = resolve_mode(&s);
-        assert!(matches!(r, Some((Mode::A, None))));
+        assert!(matches!(r, Some((Mode::A, Some(_)))));
+    }
+
+    #[test]
+    fn resolve_mode_omits_invalid_anonymous_id() {
+        let s = ConsentState {
+            mode_a: true,
+            mode_b: false,
+            install_id: None,
+            anonymous_id: Some("not-a-uuid".into()),
+        };
+        assert!(matches!(resolve_mode(&s), Some((Mode::A, None))));
     }
 
     #[test]
@@ -296,6 +316,7 @@ mod tests {
             mode_a: true,
             mode_b: true,
             install_id: Some("not-a-uuid".into()),
+            anonymous_id: None,
         };
         // Mode B rejected because id is invalid; falls back to Mode A.
         let r = resolve_mode(&s);
@@ -317,6 +338,7 @@ mod tests {
             mode_a: true,
             mode_b: false,
             install_id: None,
+            anonymous_id: None,
         }));
         let mut buffer = vec![Event::AccountsSnapshot {
             platform: "steam".into(),

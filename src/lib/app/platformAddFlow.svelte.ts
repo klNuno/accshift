@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import type { PlatformAccount, PlatformAddFlowStatus } from "$lib/shared/platform";
 import type { CardExtensionContent } from "$lib/shared/cardExtension";
 import { getPlatform } from "$lib/shared/platform";
@@ -177,6 +178,7 @@ export function createPlatformAddFlowController({
   }
 
   function handleReady(platformId: string, status: PlatformAddFlowStatus) {
+    void invoke("telemetry_track_account_added", { platformId }).catch(() => {});
     const adapter = getPlatform(platformId);
     if (getPlatformDefinition(platformId)?.capabilities?.primeProfileAfterAdd && status.accountId) {
       void adapter?.getProfileInfo?.(status.accountId).catch(() => null);

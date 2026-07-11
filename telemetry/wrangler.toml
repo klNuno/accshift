@@ -50,6 +50,7 @@ UA_PREFIX = "Accshift/"
 # abuse that would bypass per-IP rate limiters.
 # Values calibrated to stay inside the free tiers of Cloudflare and R2.
 BUDGET_TRACK = "4000" # batches/day, max 200 events/batch = 800k events/day (AE free: 830k/day)
+BUDGET_CONSENT = "4000" # onboarding choices/day
 BUDGET_LOGS = "100" # uploads/day, max 10 MB each = 1 GB/day max (R2 free: 10 GB storage)
 BUDGET_FORGET = "500"
 BUDGET_EXPORT = "500"

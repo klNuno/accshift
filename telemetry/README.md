@@ -9,6 +9,7 @@ Open source so anyone can verify what happens to data sent by the app.
 
 - `POST /track` accepts batches of anonymous events (Mode A) or pseudonymous
   events (Mode B, opt-in)
+- `POST /consent` increments one of three aggregate onboarding-choice counters
 - `POST /logs` accepts a log zip uploaded manually by the user
 - `POST /forget` deletes data tied to an `install_id` (Mode B, GDPR art. 17)
 - `POST /export` exports data tied to an `install_id` (Mode B, GDPR art. 20)
@@ -32,7 +33,11 @@ The Worker stays inside the Cloudflare and Resend free tiers at Accshift's scale
 
 - IP addresses are never stored. Read in memory to derive `country` and
   `daily_visitor_hash`, then dropped.
-- No persistent client identifier is stored on the server in Mode A.
+- Mode A keeps a random UUID locally. The Worker stores only a
+  purpose-specific HMAC for unique-installation pings; regular usage events
+  still use a hash that rotates daily.
+- Onboarding choices store no identifier at all. Even a refusal increments
+  only a date/version/choice aggregate.
 - Anti-abuse rate limiting masks IPs (/24 v4, /48 v6) in alert emails.
 
 ## Configuration (forking)
@@ -58,6 +63,20 @@ npx wrangler r2 bucket create accshift-logs --location weur
 
 # Apply the D1 schema.
 npx wrangler d1 execute accshift-telemetry --file=./schema.sql --remote
+
+# Existing deployments apply each migration once instead.
+npx wrangler d1 execute accshift-telemetry --remote --file=migrations/0002_consent_choices.sql
+```
+
+Choice percentages can be queried through `/admin/query` with:
+
+```sql
+SELECT choice,
+       SUM(count) AS responses,
+       ROUND(100.0 * SUM(count) / (SELECT SUM(count) FROM consent_choice_counts), 1) AS percentage
+FROM consent_choice_counts
+GROUP BY choice
+ORDER BY choice;
 ```
 
 ### Secrets
