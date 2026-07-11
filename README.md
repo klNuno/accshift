@@ -34,18 +34,18 @@
 | HoYoverse / HoYoPlay | 🚧 Possible | ⛔ Not feasible | ⛔ Not feasible |
 | Minecraft Launcher   | 🚧 Possible | 🚧 Possible     | 🚧 Possible     |
 
-- `✅ Done` — GUI and CLI implemented and verified on target
-- `🧪 GUI ready` — GUI + CLI landed, awaiting on-target verification
-- `🚧 Possible` — feasible, priority goes to user requests
-- `⛔ Not feasible` — not realistic for this OS
+- `✅ Done`: GUI and CLI implemented and verified on target
+- `🧪 GUI ready`: GUI + CLI landed, awaiting on-target verification
+- `🚧 Possible`: feasible, priority goes to user requests
+- `⛔ Not feasible`: not realistic for this OS
 
 Users can propose new platforms through [GitHub Issues](https://github.com/klNuno/accshift/issues).
 
 ## Features
 
-- **One-click account switching** for Steam, Riot Games, Battle.net, Epic Games, Ubisoft Connect, Roblox, GOG Galaxy, Jagex Launcher and Discord — no passwords stored, sessions are snapshotted and restored locally with encryption.
-- **Personas** — group one account per platform under a single identity and switch them all in one click.
-- **Streamer mode** — automatically blurs account names and avatars when OBS, Streamlabs, XSplit or Twitch Studio is running.
+- **One-click account switching** for Steam, Riot Games, Battle.net, Epic Games, Ubisoft Connect, Roblox, GOG Galaxy, Jagex Launcher and Discord: no passwords stored, sessions are snapshotted and restored locally with encryption.
+- **Personas**: group one account per platform under a single identity and switch them all in one click.
+- **Streamer mode**: automatically blurs account names and avatars when OBS, Streamlabs, XSplit or Twitch Studio is running.
 - **Folders, search, command palette and keyboard navigation** to manage large account collections.
 - **CLI and deep links** (`accshift://`) for scripting, Stream Deck and automation.
 - **English and French UI**, light/dark/custom themes.
@@ -71,7 +71,7 @@ pnpm tauri dev
 ## CLI
 
 `accshift` also ships as a command-line binary for scripting and AI
-automation. It reads and writes the same config as the GUI — running
+automation. It reads and writes the same config as the GUI: running
 both at once is safe thanks to an exclusive lock on mutating operations.
 
 ### Install
