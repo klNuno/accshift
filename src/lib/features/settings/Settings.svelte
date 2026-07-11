@@ -96,10 +96,33 @@
     tabConfig.filter((tab) => tab.visible ? tab.visible() : true)
   );
 
+  let visibleCoreTabs = $derived(visibleTabs.filter((tab) => !tab.id.startsWith("platform:")));
+  let visiblePlatformTabs = $derived(
+    visibleTabs.filter((tab) => tab.id.startsWith("platform:")) as (SettingsTabDef & { platformDef?: PlatformDef })[],
+  );
+  // Vertical strokes for the three core sections; platform entries use their accent dot.
+  const CORE_TAB_ICONS: Record<string, string> = {
+    general: "M4 21v-7 M4 10V3 M12 21v-9 M12 8V3 M20 21v-5 M20 12V3 M1 14h6 M9 8h6 M17 16h6",
+    platforms: "M3 3h7v7H3z M14 3h7v7h-7z M14 14h7v7h-7z M3 14h7v7H3z",
+    privacy: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
+  };
+
   const tabBar = createSettingsTabBar({
     getVisibleTabs: () => visibleTabs,
     onTabSelected: loadActivePlatformComponent,
   });
+
+  let activeTabLabelKey = $derived(
+    visibleTabs.find((tab) => tab.id === tabBar.activeTab)?.labelKey ?? ("settings.title" as MessageKey),
+  );
+
+  let contentRef = $state<HTMLDivElement | null>(null);
+
+  function selectTab(tabId: string) {
+    tabBar.select(tabId);
+    // A leftover scroll offset from the previous section is disorienting.
+    if (contentRef) contentRef.scrollTop = 0;
+  }
 
   function t(key: MessageKey, params?: TranslationParams): string {
     return translate(settings.language ?? DEFAULT_LOCALE, key, params);
@@ -385,8 +408,6 @@
     lastPersistedSnapshot = buildPersistSnapshot();
     lastPlatformSnapshot = buildPlatformSnapshot();
     hydrated = true;
-
-    tabBar.startObserver();
   });
 
   onDestroy(() => {
@@ -442,62 +463,45 @@
   });
 </script>
 
-<svelte:window onkeydown={handleKeydown} onresize={tabBar.updateScrollState} />
+<svelte:window onkeydown={handleKeydown} />
 
 <div class="settings-panel">
-  <div class="header">
-    <div class="header-actions">
-      <button class="close-btn" onclick={onClose} title={t("common.close")}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18" />
-          <line x1="6" y1="6" x2="18" y2="18" />
-        </svg>
-      </button>
-    </div>
-    <div class="title-wrap">
-      <span class="title">{t("settings.title")}</span>
-    </div>
-  </div>
+  <aside class="settings-sidebar">
+    <span class="sidebar-title">{t("settings.title")}</span>
 
-  <div class="settings-nav-shell" class:compact={tabBar.tabsOverflowing}>
-    {#if tabBar.tabsOverflowing}
-      <button
-        class="tabs-scroll-btn"
-        type="button"
-        onclick={() => tabBar.scroll(-1)}
-        disabled={!tabBar.canScrollLeft}
-        aria-label={t("settings.scrollTabsLeft")}
-      >
-        <span>&lsaquo;</span>
-      </button>
-    {/if}
-
-    <div class="settings-tabs" bind:this={tabBar.tabsRef} onscroll={tabBar.updateScrollState}>
-      {#each visibleTabs as tab}
+    <div class="nav-list" bind:this={tabBar.tabsRef}>
+      {#each visibleCoreTabs as tab (tab.id)}
         <button
-          class="settings-tab"
+          class="nav-item"
           class:active={tabBar.activeTab === tab.id}
           type="button"
           data-settings-tab={tab.id}
-          style={`--tab-accent:${tab.accent};`}
-          onclick={() => tabBar.select(tab.id)}
+          onclick={() => selectTab(tab.id)}
         >
-          <span>{t(tab.labelKey)}</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d={CORE_TAB_ICONS[tab.id] ?? CORE_TAB_ICONS.general} />
+          </svg>
+          <span class="nav-label">{t(tab.labelKey)}</span>
         </button>
       {/each}
-    </div>
 
-    {#if tabBar.tabsOverflowing}
-      <button
-        class="tabs-scroll-btn"
-        type="button"
-        onclick={() => tabBar.scroll(1)}
-        disabled={!tabBar.canScrollRight}
-        aria-label={t("settings.scrollTabsRight")}
-      >
-        <span>&rsaquo;</span>
-      </button>
-    {/if}
+      {#if visiblePlatformTabs.length > 0}
+        <div class="nav-group-label">{t("settings.platforms")}</div>
+        {#each visiblePlatformTabs as tab (tab.id)}
+          <button
+            class="nav-item"
+            class:active={tabBar.activeTab === tab.id}
+            type="button"
+            data-settings-tab={tab.id}
+            style={`--nav-accent:${tab.accent};`}
+            onclick={() => selectTab(tab.id)}
+          >
+            <span class="nav-dot" aria-hidden="true"></span>
+            <span class="nav-label">{t(tab.labelKey)}</span>
+          </button>
+        {/each}
+      {/if}
+    </div>
 
     <button
       class="help-btn"
@@ -506,15 +510,27 @@
       title={t("settings.help")}
       aria-label={t("settings.help")}
     >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="10" />
         <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
         <line x1="12" y1="17" x2="12.01" y2="17" />
       </svg>
+      <span class="nav-label">{t("settings.help")}</span>
     </button>
-  </div>
+  </aside>
 
-  <div class="settings-content">
+  <div class="settings-main">
+    <div class="main-header">
+      <span class="section-title">{t(activeTabLabelKey)}</span>
+      <button class="close-btn" onclick={onClose} title={t("common.close")}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
+    </div>
+
+    <div class="settings-content" bind:this={contentRef}>
     {#if tabBar.activeTab === "general"}
       <SettingsGeneralTab
         bind:settings
@@ -582,6 +598,7 @@
         </div>
       {/if}
     {/if}
+    </div>
   </div>
 </div>
 
@@ -590,8 +607,8 @@
     flex: 1;
     min-height: 0;
     display: flex;
-    flex-direction: column;
-    gap: 12px;
+    flex-direction: row;
+    gap: 14px;
     overflow: hidden;
     animation: page-entrance var(--motion-page-entrance) ease-out;
   }
@@ -600,31 +617,149 @@
     animation: none;
   }
 
-  .header {
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    gap: 12px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .title-wrap {
+  .settings-sidebar {
+    flex: 0 0 168px;
+    min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 6px;
+    padding-right: 12px;
+    border-right: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
   }
 
-  .title {
+  .sidebar-title {
     font-size: 14px;
     font-weight: 700;
     color: var(--fg);
+    padding: 4px 10px 10px;
   }
 
-  .header-actions {
+  .nav-list {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+
+  .nav-list::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-group-label {
+    margin-top: 12px;
+    padding: 0 10px 4px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fg-subtle);
+  }
+
+  .nav-item {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 9px;
+    width: 100%;
+    padding: 8px 10px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--fg-muted);
+    font-size: 12px;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+    transition: background 120ms ease-out, color 120ms ease-out;
+  }
+
+  .nav-item svg {
+    flex: 0 0 auto;
+    opacity: 0.75;
+  }
+
+  .nav-item:hover {
+    background: color-mix(in srgb, var(--bg-card) 82%, #fff 18%);
+    color: var(--fg);
+  }
+
+  .nav-item.active {
+    background: color-mix(in srgb, var(--bg-card) 74%, #fff 26%);
+    color: var(--fg);
+  }
+
+  .nav-item.active svg {
+    opacity: 1;
+  }
+
+  .nav-dot {
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    margin: 3px;
+    border-radius: 999px;
+    background: var(--nav-accent, var(--fg-subtle));
+    opacity: 0.7;
+  }
+
+  .nav-item.active .nav-dot,
+  .nav-item:hover .nav-dot {
+    opacity: 1;
+  }
+
+  .nav-label {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .help-btn {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 8px 10px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--fg-subtle);
+    font-size: 12px;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+    transition: background 120ms ease-out, color 120ms ease-out;
+  }
+
+  .help-btn:hover {
+    background: color-mix(in srgb, var(--bg-card) 82%, #fff 18%);
+    color: var(--fg);
+  }
+
+  .settings-main {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .main-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  }
+
+  .section-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--fg);
   }
 
   .close-btn {
@@ -642,104 +777,6 @@
   .close-btn:hover {
     background: var(--bg-muted);
     color: var(--fg);
-  }
-
-  .settings-nav-shell {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .settings-nav-shell.compact {
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
-  }
-
-  /* Isolated on the far right, visually detached from the category tabs. */
-  .help-btn {
-    display: grid;
-    place-items: center;
-    width: 32px;
-    height: 32px;
-    margin-left: 14px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--bg-card) 92%, #fff 8%);
-    color: var(--fg-muted);
-    cursor: pointer;
-    transition: border-color 120ms ease-out, background 120ms ease-out, color 120ms ease-out;
-  }
-
-  .help-btn:hover {
-    color: var(--fg);
-    border-color: color-mix(in srgb, var(--fg) 35%, var(--border));
-    background: color-mix(in srgb, var(--bg-card) 84%, #fff 16%);
-  }
-
-  .tabs-scroll-btn {
-    width: 28px;
-    height: 28px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--bg-card) 92%, #fff 8%);
-    color: var(--fg);
-    cursor: pointer;
-    transition: border-color 120ms ease-out, background 120ms ease-out;
-  }
-
-  .tabs-scroll-btn:hover {
-    border-color: color-mix(in srgb, var(--fg) 35%, var(--border));
-    background: color-mix(in srgb, var(--bg-card) 84%, #fff 16%);
-  }
-
-  .tabs-scroll-btn:disabled {
-    opacity: 0.38;
-    cursor: not-allowed;
-  }
-
-  .settings-tabs {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: none;
-    padding-bottom: 2px;
-  }
-
-  .settings-tabs::-webkit-scrollbar {
-    display: none;
-  }
-
-  .settings-tab {
-    flex: 0 0 auto;
-    min-width: fit-content;
-    border: 1px solid color-mix(in srgb, var(--tab-accent) 28%, var(--border));
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--bg-card) 88%, #000 12%);
-    color: var(--fg-muted);
-    padding: 9px 14px;
-    font-size: 12px;
-    font-weight: 700;
-    cursor: pointer;
-    transition: transform 120ms ease-out, border-color 120ms ease-out, background 120ms ease-out, color 120ms ease-out;
-  }
-
-  .settings-tab:hover {
-    color: var(--fg);
-    border-color: color-mix(in srgb, var(--tab-accent) 40%, var(--border));
-    background: color-mix(in srgb, var(--bg-card) 76%, #fff 24%);
-  }
-
-  .settings-tab.active {
-    color: var(--fg);
-    border-color: color-mix(in srgb, var(--tab-accent) 65%, var(--border));
-    background: linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--tab-accent) 18%, var(--bg-card)),
-      color-mix(in srgb, var(--bg-card) 82%, #fff 18%)
-    );
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tab-accent) 18%, transparent);
   }
 
   .settings-content {
@@ -854,9 +891,22 @@
       grid-template-columns: 1fr;
     }
 
-    .settings-tab {
-      padding: 8px 12px;
-      font-size: 11px;
+    /* Icon-only sidebar on narrow windows: labels and group headers collapse. */
+    .settings-sidebar {
+      flex-basis: 40px;
+      padding-right: 8px;
+    }
+
+    .sidebar-title,
+    .nav-label,
+    .nav-group-label {
+      display: none;
+    }
+
+    .nav-item,
+    .help-btn {
+      justify-content: center;
+      padding: 8px 6px;
     }
   }
 </style>

@@ -608,9 +608,6 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "personas.deleteMessage": "Supprimer « {name} » ? Les comptes eux-mêmes ne sont pas touchés.",
 
   "context.submenuError": "Impossible de charger ce menu",
-
-  "settings.scrollTabsLeft": "Faire défiler les onglets vers la gauche",
-  "settings.scrollTabsRight": "Faire défiler les onglets vers la droite",
   "settings.apiKeySaveFailed": "Impossible d'enregistrer la clé API Steam",
   "settings.apiKeyInvalidHint": "La clé n'a pas été enregistrée. Vérifie-la et réessaie.",
   "settings.apiKeyCleared": "Clé API Steam effacée",

@@ -600,9 +600,6 @@ export const EN_MESSAGES = {
   "personas.deleteMessage": 'Delete "{name}"? The accounts themselves are not touched.',
 
   "context.submenuError": "Couldn't load this menu",
-
-  "settings.scrollTabsLeft": "Scroll settings tabs left",
-  "settings.scrollTabsRight": "Scroll settings tabs right",
   "settings.apiKeySaveFailed": "Couldn't save the Steam API key",
   "settings.apiKeyInvalidHint": "The key wasn't saved. Check it and try again.",
   "settings.apiKeyCleared": "Steam API key cleared",
