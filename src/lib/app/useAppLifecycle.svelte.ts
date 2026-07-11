@@ -205,7 +205,10 @@ export function createAppLifecycleController({
       }
 
       if (configChanged || activeDataStoresChanged) {
-        await loadAccounts(true, false, true, Boolean(activeCapabilities?.accountWarnings), false);
+        // No forced avatar refresh here: this runs on every window focus while the
+        // platform client is running (its data stores change constantly), and the
+        // profile cache TTL already covers avatar freshness.
+        await loadAccounts(true, false, false, Boolean(activeCapabilities?.accountWarnings), false);
       }
     } catch (reason) {
       console.error("Failed to refresh external storage state:", reason);
