@@ -35,10 +35,18 @@
   function getLocalSpace() {
     const rect = menuRef!.getBoundingClientRect();
     const scale = menuRef!.offsetWidth > 0 ? rect.width / menuRef!.offsetWidth : 1;
+    // Pair the rect with the left/top the DOM is actually painted at (inline
+    // style), never with the reactive adjustedX/Y: when two positioning
+    // passes queue back to back (mount + initial effect), the second runs
+    // after the first updated the state but before Svelte flushed it to the
+    // DOM. Mixing the fresh state with the stale rect shifts the derived
+    // origin by exactly that offset, landing menus at 2x the cursor position.
+    const paintedLeft = Number.parseFloat(menuRef!.style.left) || 0;
+    const paintedTop = Number.parseFloat(menuRef!.style.top) || 0;
     return {
       scale,
-      originLeft: rect.left - adjustedX * scale,
-      originTop: rect.top - adjustedY * scale,
+      originLeft: rect.left - paintedLeft * scale,
+      originTop: rect.top - paintedTop * scale,
     };
   }
 
@@ -83,8 +91,10 @@
     submenuTop = top;
   }
 
+  // The initial $effect run below also positions the menu on mount; a second
+  // onMount call would race it (see getLocalSpace). Mount only takes focus.
   onMount(() => {
-    void positionMenu().then(() => {
+    void tick().then(() => {
       focusableItems("menu")[0]?.focus({ preventScroll: true });
     });
   });
