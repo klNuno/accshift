@@ -24,6 +24,9 @@ type ContextMenuState = {
   account?: PlatformAccount;
   folder?: FolderInfo;
   isBackground?: boolean;
+  /** Pre-built items from a caller outside the account/folder world (e.g.
+   * persona cards), rendered through the same positioned menu. */
+  customItems?: ContextMenuItem[];
 } | null;
 
 type AppDialogsDeps = {
@@ -82,6 +85,7 @@ export function createAppDialogsController({
 
   let contextMenuItems = $derived.by(() => {
     if (!contextMenu) return [];
+    if (contextMenu.customItems) return contextMenu.customItems;
 
     const adapter = getAdapter();
     if (contextMenu.account && adapter) {
@@ -256,13 +260,15 @@ export function createAppDialogsController({
     });
   }
 
-  function promptRenameNewAccount(platformId: string, accountId: string) {
+  function promptRenameNewAccount(platformId: string, accountId: string, displayName?: string) {
     const adapter = getPlatform(platformId);
     if (!adapter?.setAccountLabel) return;
     inputDialog = {
       title: t("platform.renameNewAccount"),
       placeholder: t("platform.renamePlaceholder"),
-      initialValue: "",
+      // Prefill with whatever identity the platform detected (e.g. the
+      // Discord username) so naming is a confirmation, not homework.
+      initialValue: displayName?.trim() ?? "",
       allowEmpty: true,
       onConfirm: async (value) => {
         inputDialog = null;
@@ -348,6 +354,11 @@ export function createAppDialogsController({
     contextMenu = { x: event.clientX, y: event.clientY, folder };
   }
 
+  function openCustomContextMenu(event: MouseEvent, items: ContextMenuItem[]) {
+    event.preventDefault();
+    contextMenu = { x: event.clientX, y: event.clientY, customItems: items };
+  }
+
   return {
     get contextMenu() {
       return contextMenu;
@@ -380,5 +391,6 @@ export function createAppDialogsController({
     openBackgroundContextMenu,
     openAccountContextMenu,
     openFolderContextMenu,
+    openCustomContextMenu,
   };
 }

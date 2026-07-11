@@ -7,19 +7,10 @@ import {
   setClientStoreValue,
 } from "$lib/storage/clientStorage";
 
-export const PERSONA_COLORS = [
-  "#f2a900",
-  "#ef4444",
-  "#3b82f6",
-  "#22c55e",
-  "#a855f7",
-  "#ec4899",
-  "#14b8a6",
-  "#f97316",
-] as const;
-
-const DEFAULT_EMOJI = "🎭";
 const NAME_MAX = 40;
+// Covers are downscaled before storage; anything bigger than this is not a
+// legit cover and would bloat the client store.
+const IMAGE_MAX_CHARS = 400_000;
 const PLATFORM_IDS = new Set(PLATFORM_DEFS.map((platform) => platform.id));
 
 let cache: Persona[] | null = null;
@@ -51,12 +42,15 @@ function sanitizePersona(value: unknown): Persona | null {
     typeof raw.name === "string" && raw.name.trim()
       ? raw.name.trim().slice(0, NAME_MAX)
       : "Persona";
-  const emoji = typeof raw.emoji === "string" && raw.emoji ? raw.emoji.slice(0, 8) : DEFAULT_EMOJI;
   const color =
-    typeof raw.color === "string" && /^#[0-9a-fA-F]{6}$/.test(raw.color)
-      ? raw.color
-      : PERSONA_COLORS[0];
-  return { id, name, emoji, color, assignments: sanitizeAssignments(raw.assignments) };
+    typeof raw.color === "string" && /^#[0-9a-fA-F]{6}$/.test(raw.color) ? raw.color : "";
+  const image =
+    typeof raw.image === "string" &&
+    raw.image.startsWith("data:image/") &&
+    raw.image.length <= IMAGE_MAX_CHARS
+      ? raw.image
+      : null;
+  return { id, name, color, image, assignments: sanitizeAssignments(raw.assignments) };
 }
 
 function sanitizeList(value: unknown): Persona[] {

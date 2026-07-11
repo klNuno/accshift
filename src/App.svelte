@@ -134,8 +134,8 @@
     showToast: (message) => addToast(message),
     copyToClipboard: (text) => copyToClipboard(text, text),
     loadAccounts,
-    onAccountAdded: (platformId, accountId) => {
-      dialogs.promptRenameNewAccount(platformId, accountId);
+    onAccountAdded: (platformId, accountId, displayName) => {
+      dialogs.promptRenameNewAccount(platformId, accountId, displayName);
     },
   });
   let settings = $derived(shell.settings);
@@ -267,6 +267,7 @@
   function openPersonas() {
     if (!settings.personasEnabled) return;
     if (settingsPanel.showSettings) settingsPanel.close();
+    bulkEdit.closeBulkEdit();
     showPersonas = true;
   }
 
@@ -276,8 +277,27 @@
   });
 
   async function handleSwitchPersona(persona: import("$lib/features/personas/types").Persona) {
+    if (personas.switchingPersonaId) return;
+    // Same safeguard as remote-triggered account switches: activating a
+    // persona closes and relaunches several game clients, never do that on a
+    // stray click.
+    const confirmed = await dialogs.requestConfirm({
+      title: t("personas.switchConfirmTitle"),
+      message: t("personas.switchConfirmMessage", {
+        name: persona.name,
+        count: persona.assignments.length,
+      }),
+      confirmLabel: t("personas.switchConfirmAction"),
+    });
+    if (!confirmed) return;
     const result = await personas.switchToPersona(persona);
     if (!result) return;
+    // Usage counters only (how many platforms targeted / landed); the backend
+    // drops the event unless telemetry is opted in.
+    void invoke("telemetry_track_persona_switch", {
+      platforms: persona.assignments.length,
+      succeeded: result.succeeded.length,
+    }).catch(() => {});
     const nameFor = (id: string) => personaPlatforms.find((p) => p.id === id)?.name ?? id;
     if (result.failed.length === 0) {
       addToast(t("personas.switched", { name: persona.name }), { type: "success" });
@@ -1123,10 +1143,10 @@
     onTabChange={(tab) => { showPersonas = false; appNavigation.handleTabChange(tab); }}
     enabledPlatforms={shell.enabledPlatforms}
     unavailablePlatformIds={shell.unavailablePlatformIds}
-    canRefresh={activeTabUsable && !adapterLoading}
-    canAddAccount={activeTabUsable && !adapterLoading}
+    canRefresh={activeTabUsable && !adapterLoading && !showPersonas}
+    canAddAccount={activeTabUsable && !adapterLoading && !showPersonas}
     showSettings={settingsPanel.showSettings}
-    showBulkEdit={!!activePlatformDef?.capabilities?.bulkEdit && !settingsPanel.showSettings && activeTabUsable}
+    showBulkEdit={!!activePlatformDef?.capabilities?.bulkEdit && !settingsPanel.showSettings && !showPersonas && activeTabUsable}
     bulkEditActive={bulkEdit.bulkEditMode}
     {locale}
     runtimeOs={shell.runtimeOs}
@@ -1196,7 +1216,9 @@
       onCreate={personas.create}
       onUpdate={personas.update}
       onDelete={personas.remove}
-      onClose={() => (showPersonas = false)}
+      requestConfirm={dialogs.requestConfirm}
+      showToast={addToast}
+      openContextMenu={dialogs.openCustomContextMenu}
       {t}
     />
   {:else}

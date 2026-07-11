@@ -13,7 +13,7 @@
     "macOSPrivateApi": true,
     "windows": [],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' https://*.steamstatic.com https://steamcdn-a.akamaihd.net https://*.rbxcdn.com; style-src 'self' 'unsafe-inline'; script-src 'self'"
+      "csp": "default-src 'self'; img-src 'self' data: https://*.steamstatic.com https://steamcdn-a.akamaihd.net https://*.rbxcdn.com; style-src 'self' 'unsafe-inline'; script-src 'self'"
     }
   },
   "bundle": {

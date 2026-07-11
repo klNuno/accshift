@@ -102,26 +102,25 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "streamer.disable": "Désactiver",
   "streamer.disablePermanently": "Désactiver définitivement",
   "personas.title": "Personas",
-  "personas.subtitle":
-    "Un clic bascule toutes les plateformes assignées vers les comptes de cette identité.",
   "personas.create": "Nouveau persona",
   "personas.activate": "Basculer vers ce persona",
-  "personas.edit": "Modifier le persona",
+  "personas.edit": "Modifier",
   "personas.delete": "Supprimer",
-  "personas.save": "Enregistrer",
+  "personas.finish": "Terminer",
   "personas.switching": "Bascule en cours...",
   "personas.switched": "Basculé vers {name}",
   "personas.switchPartial": "{name} : échec sur {failed}",
   "personas.switchFailed": "Impossible de basculer vers {name}",
   "personas.namePlaceholder": "Nom du persona",
-  "personas.emoji": "Icône",
-  "personas.color": "Couleur",
-  "personas.accounts": "Comptes par plateforme",
+  "personas.choosePlatforms": "Choisis un compte pour chaque plateforme à inclure",
+  "personas.chooseAccount": "Choisis le compte {platform}",
+  "personas.removeFromPersona": "Retirer de ce persona",
+  "personas.customImage": "Choisir une image...",
+  "personas.removeImage": "Retirer l'image",
+  "personas.imageError": "Impossible de charger cette image.",
   "personas.loadingAccounts": "Chargement des comptes...",
-  "personas.notIncluded": "Non inclus",
-  "personas.noAccountsOnPlatform": "Aucun compte",
-  "personas.noPlatforms": "Aucune plateforme",
-  "personas.emptyHint": "Crée un persona pour basculer plusieurs plateformes d'un coup.",
+  "personas.noAccountsOnPlatform": "Aucun compte sur cette plateforme pour l'instant",
+  "personas.emptyHint": "Un clic bascule chaque plateforme incluse vers son compte.",
   "settings.security": "Sécurité",
   "settings.pinLockOnAfk": "Verrou PIN en AFK",
   "settings.pinCode": "Code PIN",
@@ -216,7 +215,9 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.integrations": "Intégrations",
   "settings.deepLinks": "Autoriser les liens accshift://",
   "settings.deepLinksHint":
-    "Permet aux navigateurs et aux outils comme Stream Deck ou AutoHotkey de déclencher un changement de compte via accshift://switch/<plateforme>/<compte>.",
+    "Laisse d'autres applications changer de compte pour toi : un favori de navigateur, une touche Stream Deck, un script AutoHotkey - tout ce qui peut ouvrir un lien.",
+  "settings.help": "Ouvrir le wiki accshift",
+  "settings.openHelpFailed": "Impossible d'ouvrir le wiki",
 
   "context.loading": "Chargement...",
   "context.noGamesFound": "Aucun jeu trouvé",
@@ -567,7 +568,10 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
 
   "toast.dismiss": "Fermer",
   "toast.switchFailed": "Le changement de compte a échoué. Regarde la console pour les détails.",
-  "toast.addAccountFailed": "Impossible d'ajouter le compte. Regarde la console pour les détails.",
+  "toast.addAccountFailed":
+    "Impossible d'ajouter le compte. Consulte les logs de l'application pour les détails.",
+  "toast.addAccountClientMissing":
+    "{platform} ne semble pas installé. Installe-le, ou renseigne son emplacement dans les Paramètres.",
   "toast.banCheckFailedGeneric":
     "La vérification des bans a échoué. Regarde la console pour les détails.",
   "toast.renameAccountFailed": "Renommage échoué : {error}",
@@ -580,6 +584,12 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
 
   "personas.deleteConfirm": "Clique encore pour supprimer",
   "personas.discardConfirm": "Clique encore pour abandonner",
+  "personas.switchConfirmTitle": "Basculer de persona",
+  "personas.switchConfirmMessage":
+    "Basculer {count} plateforme(s) vers « {name} » ? Chaque client va fermer et se relancer.",
+  "personas.switchConfirmAction": "Basculer",
+  "personas.deleteTitle": "Supprimer le persona",
+  "personas.deleteMessage": "Supprimer « {name} » ? Les comptes eux-mêmes ne sont pas touchés.",
 
   "context.submenuError": "Impossible de charger ce menu",
 

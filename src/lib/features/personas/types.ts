@@ -8,11 +8,15 @@ export interface PersonaAssignment {
  * A persona is a named identity bundle. Activating it switches every assigned
  * platform to the persona's account in one action ("big brother" -> "little
  * brother"). Stored client-side (client.personas).
+ *
+ * `image` is an optional user-picked cover (small data URL); without it the
+ * card renders a mosaic of the assigned accounts' avatars. `color` is an
+ * optional card tint ("" = none), same presets as account cards.
  */
 export interface Persona {
   id: string;
   name: string;
-  emoji: string;
   color: string;
+  image?: string | null;
   assignments: PersonaAssignment[];
 }
