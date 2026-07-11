@@ -17,7 +17,7 @@
     PlatformAdapter,
   } from "$lib/shared/platform";
   import type { AccountWarningPresentation } from "$lib/shared/accountWarnings";
-  import type { CardExtensionContent } from "$lib/shared/cardExtension";
+  import type { AccountUsernameBadge, CardExtensionContent } from "$lib/shared/cardExtension";
   import type { Locale, MessageKey, TranslationParams } from "$lib/i18n";
   import type { ViewMode } from "$lib/shared/viewMode";
 
@@ -80,6 +80,7 @@
     onAccountContextMenu,
     onFolderContextMenu,
     showCardNotesInline,
+    getUsernameBadge = () => null,
     accountExtensionContentById,
     isAccountExtensionForcedOpen,
     isPendingSetupAccount,
@@ -138,6 +139,7 @@
     onAccountContextMenu: (event: MouseEvent, account: PlatformAccount) => void;
     onFolderContextMenu: (event: MouseEvent, folder: FolderInfo) => void;
     showCardNotesInline: boolean;
+    getUsernameBadge?: (accountId: string) => AccountUsernameBadge | null;
     accountExtensionContentById: Record<string, CardExtensionContent | null>;
     isAccountExtensionForcedOpen: (accountId: string) => boolean;
     isPendingSetupAccount: (accountId: string) => boolean;
@@ -264,6 +266,7 @@
     isRefreshingAvatar={avatarState?.refreshing ?? false}
     isDragged={isAccountDragged}
     warningInfo={bulkEditMode ? undefined : (isPendingSetupAccount(account.id) ? undefined : warningStates[account.id])}
+    usernameBadge={bulkEditMode || isPendingSetupAccount(account.id) ? null : getUsernameBadge(account.id)}
     extensionContent={bulkEditMode ? null : (accountExtensionContentById[account.id] ?? null)}
     forceExtensionOpen={bulkEditMode ? false : isAccountExtensionForcedOpen(account.id)}
     disableExtension={bulkEditMode || dragIsDragging}

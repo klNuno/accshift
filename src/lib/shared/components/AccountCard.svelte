@@ -2,7 +2,7 @@
   import { onDestroy } from "svelte";
   import type { PlatformAccount } from "../platform";
   import type { AccountWarningPresentation } from "../accountWarnings";
-  import type { CardExtensionContent } from "$lib/shared/cardExtension";
+  import type { AccountUsernameBadge, CardExtensionContent } from "$lib/shared/cardExtension";
   import { hasCardExtensionContent } from "$lib/shared/cardExtension";
   import CardExtensionPanel from "./CardExtensionPanel.svelte";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
@@ -32,6 +32,7 @@
     lastLoginUnknownKey = "time.unknown",
     lastLoginAt = null,
     note = "",
+    usernameBadge = null,
     singleClickSwitch = false,
     isSwitching = false,
     interactionDisabled = false,
@@ -58,6 +59,7 @@
     lastLoginUnknownKey?: MessageKey;
     lastLoginAt?: number | null;
     note?: string;
+    usernameBadge?: AccountUsernameBadge | null;
     isSwitching?: boolean;
     singleClickSwitch?: boolean;
     interactionDisabled?: boolean;
@@ -370,6 +372,20 @@
               <span class="note-info-icon" aria-label={translate(locale, "card.noteAttached")}>i</span>
             {/if}
             <span class="username-text">{account.username}</span>
+            {#if usernameBadge}
+              <span
+                class={`username-badge tone-${usernameBadge.tone}`}
+                role="img"
+                aria-label={usernameBadge.label}
+                title={usernameBadge.label}
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="8" width="18" height="12" rx="2" />
+                  <path d="M8 8V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                  <path d="M3 13h18" />
+                </svg>
+              </span>
+            {/if}
           </div>
         {/if}
         {#if hasInlineNote}
@@ -418,7 +434,9 @@
     position: absolute;
     inset: 0;
     border-radius: var(--grid-card-radius);
-    background: var(--bg-overlay);
+    /* Layered over the solid theme bg: the panel must stay fully opaque even
+     * on glass themes where --bg-overlay keeps some alpha. */
+    background: linear-gradient(var(--bg-overlay), var(--bg-overlay)), var(--bg-solid);
     opacity: 0;
     transform: translateY(2px) scaleX(0.96);
     transition:
@@ -451,7 +469,12 @@
   }
 
   .extension-surface.custom-color {
-    background: color-mix(in srgb, var(--card-custom-color) 18%, var(--bg-overlay));
+    background:
+      linear-gradient(
+        color-mix(in srgb, var(--card-custom-color) 18%, var(--bg-overlay)),
+        color-mix(in srgb, var(--card-custom-color) 18%, var(--bg-overlay))
+      ),
+      var(--bg-solid);
   }
 
   .extension-surface.active.visible {
@@ -779,6 +802,20 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .username-badge {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+  }
+
+  .username-badge.tone-green {
+    color: #4ade80;
+  }
+
+  .username-badge.tone-slate {
+    color: color-mix(in srgb, var(--fg-subtle) 75%, transparent);
   }
 
   .last-login {

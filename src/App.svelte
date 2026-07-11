@@ -348,6 +348,15 @@
     ];
   }
 
+  function getCs2UsernameBadge(accountId: string) {
+    if (shell.activeTab !== "steam") return null;
+    const data = getCs2BridgeData(accountId);
+    if (!data) return null;
+    return data.caseEarned
+      ? { tone: "green" as const, label: t("card.cs2CaseEarned") }
+      : { tone: "slate" as const, label: t("card.cs2CaseNotEarned") };
+  }
+
   const extensionContent = createExtensionContentController({
     t,
     getLocale: () => shell.locale,
@@ -1024,11 +1033,8 @@
   $effect(() => {
     applyThemeToDocument(shell.activeTheme, shell.settings.backgroundOpacity);
     document.documentElement.lang = shell.locale;
-    // Glass themes need the OS backdrop blur to read as glass, whatever the slider says.
-    const blur = shell.activeTheme.glass
-      ? Math.max(shell.settings.backgroundBlur, 60)
-      : shell.settings.backgroundBlur;
-    void applyWindowBackdrop(blur);
+    // Glass themes need the OS backdrop blur to read as glass.
+    void applyWindowBackdrop(Boolean(shell.activeTheme.glass));
   });
 
   $effect(() => applyMotionPreference(settings.animations));
@@ -1318,6 +1324,7 @@
     onAccountContextMenu={handleWorkspaceAccountContextMenu}
     onFolderContextMenu={handleWorkspaceFolderContextMenu}
     showCardNotesInline={settings.accountDisplay.showCardNotesInline}
+    getUsernameBadge={getCs2UsernameBadge}
     accountExtensionContentById={extensionContent.accountExtensionContentById}
     isAccountExtensionForcedOpen={addFlow.isForcedOpen}
     isPendingSetupAccount={addFlow.isPendingSetupAccount}

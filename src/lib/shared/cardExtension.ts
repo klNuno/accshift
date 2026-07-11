@@ -34,6 +34,13 @@ export interface CardExtensionContent {
   sections: CardExtensionSection[];
 }
 
+/** Small status icon rendered next to the username on the card face,
+ * supplied per platform (e.g. Steam's CS2 weekly case earned or not). */
+export interface AccountUsernameBadge {
+  tone: "green" | "slate";
+  label: string;
+}
+
 export function hasCardExtensionContent(content: CardExtensionContent | null | undefined): boolean {
   if (!content) return false;
   return content.sections.some((section) =>
