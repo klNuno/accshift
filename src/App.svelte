@@ -1034,7 +1034,7 @@
     applyThemeToDocument(shell.activeTheme, shell.settings.backgroundOpacity);
     document.documentElement.lang = shell.locale;
     // Glass themes need the OS backdrop blur to read as glass.
-    void applyWindowBackdrop(Boolean(shell.activeTheme.glass));
+    void applyWindowBackdrop(Boolean(shell.activeTheme.glass), shell.activeTheme.id === "liquid-glass");
   });
 
   $effect(() => applyMotionPreference(settings.animations));
@@ -1221,6 +1221,15 @@
       class:obscured={secureScreen.isObscured || streamerMode.active}
       inert={secureScreen.isPinLocked || streamerMode.active}
     >
+      <!-- Displacement source for the Liquid Glass rim (app.css). Zero-sized,
+           referenced via backdrop-filter: url(#lg-distortion). -->
+      <svg class="lg-filter-defs" aria-hidden="true" focusable="false">
+        <filter id="lg-distortion" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+          <feTurbulence type="fractalNoise" baseFrequency="0.012 0.02" numOctaves="2" seed="7" result="noise" />
+          <feGaussianBlur in="noise" stdDeviation="2" result="soft" />
+          <feDisplacementMap in="SourceGraphic" in2="soft" scale="34" xChannelSelector="R" yChannelSelector="G" />
+        </filter>
+      </svg>
       {#if !secureScreen.renderSuspended}
       {#if shell.runtimeOs !== "macos"}
         {@render titleBar()}
@@ -1478,6 +1487,13 @@
     background: var(--bg);
     transition: filter 320ms ease-out, transform 320ms ease-out, opacity 220ms ease-out;
     will-change: filter, transform;
+  }
+
+  .lg-filter-defs {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
   }
 
   .app-shell.obscured {

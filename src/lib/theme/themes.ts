@@ -307,7 +307,7 @@ export function applyThemeToDocument(
   // OS backdrop blur shows through; regular themes keep opaque-ish surfaces.
   // Liquid Glass goes clearer still: the glaze layer needs the backdrop to
   // dominate for the material to read as glass.
-  const glassCap = theme.id === "liquid-glass" ? 0.38 : 0.55;
+  const glassCap = theme.id === "liquid-glass" ? 0.26 : 0.55;
   const windowOpacity = theme.glass ? Math.min(rawOpacity, glassCap) : rawOpacity;
   const cardOpacity = theme.glass
     ? Math.min(0.72, Math.max(windowOpacity + 0.1, 0.4))
