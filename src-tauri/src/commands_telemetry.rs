@@ -120,6 +120,23 @@ pub async fn telemetry_set_mode_b(
     }
 }
 
+/// Records a persona activation. Called by the UI because a persona switch is
+/// a front-side orchestration (one adapter switch per platform); only counts
+/// are sent, never the persona name or any account data. The tracking handle
+/// itself drops the event unless the user opted in.
+#[tauri::command]
+pub fn telemetry_track_persona_switch(
+    app_handle: tauri::AppHandle,
+    platforms: u64,
+    succeeded: u64,
+) {
+    let tstate = app_handle.state::<TelemetryState>();
+    tstate.handle.track(telemetry::Event::PersonaSwitch {
+        platforms,
+        succeeded,
+    });
+}
+
 /// Marks the onboarding as completed and applies the user's choice from the
 /// three-button consent screen. Mode A defaults to ON, but the user can opt
 /// out from the onboarding dialog itself. Enabling Mode B also generates an

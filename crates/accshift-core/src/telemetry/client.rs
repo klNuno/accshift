@@ -67,6 +67,13 @@ pub fn event_to_json(event: &Event, ctx: &TelemetryContext) -> Value {
             m.insert("duration_ms".into(), Value::from(*duration_ms));
             m.insert("count".into(), Value::from(u64::from(*success)));
         }
+        Event::PersonaSwitch {
+            platforms,
+            succeeded,
+        } => {
+            m.insert("platforms".into(), Value::from(*platforms));
+            m.insert("count".into(), Value::from(*succeeded));
+        }
         Event::SessionEnded { duration_ms } => {
             m.insert("duration_ms".into(), Value::from(*duration_ms));
         }
@@ -260,6 +267,25 @@ mod tests {
         assert_eq!(v["platform"], "steam");
         assert_eq!(v["duration_ms"], 180);
         assert_eq!(v["count"], 1);
+    }
+
+    #[test]
+    fn event_to_json_persona_switch_carries_counts_only() {
+        let ctx = TelemetryContext {
+            app_version: "0.9.0".into(),
+            os_version: "Windows 11 22631".into(),
+            locale: None,
+        };
+        let ev = Event::PersonaSwitch {
+            platforms: 3,
+            succeeded: 2,
+        };
+        let v = event_to_json(&ev, &ctx);
+        assert_eq!(v["name"], "persona_switch");
+        assert_eq!(v["platforms"], 3);
+        assert_eq!(v["count"], 2);
+        // Non-PII by construction: no persona name, no platform id, no account.
+        assert!(v.get("platform").is_none());
     }
 
     #[test]

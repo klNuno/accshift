@@ -367,6 +367,7 @@ fn main() {
             commands_telemetry::telemetry_set_mode_a,
             commands_telemetry::telemetry_set_mode_b,
             commands_telemetry::telemetry_complete_onboarding,
+            commands_telemetry::telemetry_track_persona_switch,
             commands_telemetry::telemetry_export,
             commands_telemetry::telemetry_upload_logs,
         ])

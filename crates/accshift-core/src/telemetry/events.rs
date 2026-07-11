@@ -15,6 +15,9 @@ pub enum Event {
         duration_ms: u64,
         success: bool,
     },
+    /// A persona activation: how many platforms it targeted and how many
+    /// switched successfully. No persona name, no account data.
+    PersonaSwitch { platforms: u64, succeeded: u64 },
     /// End of session with total duration.
     SessionEnded { duration_ms: u64 },
     /// Snapshot of the number of accounts configured for a platform.
@@ -28,6 +31,7 @@ impl Event {
             Event::Ping => "ping",
             Event::AppLaunched { .. } => "app_launched",
             Event::PlatformSwitch { .. } => "platform_switch",
+            Event::PersonaSwitch { .. } => "persona_switch",
             Event::SessionEnded { .. } => "session_ended",
             Event::AccountsSnapshot { .. } => "accounts_snapshot",
         }
