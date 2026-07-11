@@ -267,6 +267,10 @@ export function createAccountLoader(
     // another switchTo() happens while we await below, switchId stops matching and we
     // stop applying currentAccount/switching updates to state that no longer belongs to us.
     const switchId = ++latestSwitchId;
+    // The account we're leaving is the one we just played on, so its GC stats
+    // (XP/level/weekly case) are what changed. Capture it before we overwrite
+    // currentAccount so we can re-check it, not the destination.
+    const previousAccountId = currentAccountId;
     switching = true;
     switchingAccountId = account.id;
     error = null;
@@ -276,12 +280,12 @@ export function createAccountLoader(
       if (switchId !== latestSwitchId) return false;
       succeeded = true;
       currentAccount = account.id;
-      // CS2 bridge: ask the server for an on-demand check of the account we
-      // just activated (Steam only, account.id = SteamID64), then refresh the
-      // hover card. Fire-and-forget, never impacts the switch itself.
-      if (adapter.id === "steam") {
+      // CS2 bridge: re-check the account we just left (Steam only, SteamID64),
+      // then refresh its hover card. Fire-and-forget, never impacts the switch.
+      if (adapter.id === "steam" && previousAccountId && previousAccountId !== account.id) {
+        const sourceId = previousAccountId;
         void import("$lib/platforms/steam/cs2Bridge.svelte").then((m) =>
-          m.triggerCs2BridgeCheck(account.id),
+          m.triggerCs2BridgeCheck(sourceId),
         );
       }
       if (adapter.getProfileInfo) {
