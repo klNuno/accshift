@@ -9,6 +9,7 @@
     "core:window:allow-set-effects",
     "core:window:allow-minimize",
     "core:window:allow-close",
+    "core:window:allow-destroy",
     "process:allow-restart",
     "updater:default",
     "deep-link:default"
