@@ -318,6 +318,16 @@
     }
   }
 
+  const WIKI_URL = "https://github.com/klNuno/accshift/wiki";
+
+  async function openHelp() {
+    try {
+      await invoke("open_url", { url: WIKI_URL });
+    } catch {
+      addToast(t("settings.openHelpFailed"), { type: "error" });
+    }
+  }
+
   async function handleRefreshAvatarsNow() {
     if (avatarRefreshLoading) return;
     avatarRefreshLoading = true;
@@ -411,6 +421,9 @@
       settings.pinEnabled,
       settings.pinHash,
       pinCodeInput,
+      settings.personasEnabled,
+      settings.deepLinksEnabled,
+      settings.streamerMode,
       settings.enabledPlatforms.join(","),
       apiKey,
       apiKeyConfigured,
@@ -482,6 +495,20 @@
         <span>&rsaquo;</span>
       </button>
     {/if}
+
+    <button
+      class="help-btn"
+      type="button"
+      onclick={openHelp}
+      title={t("settings.help")}
+      aria-label={t("settings.help")}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+        <line x1="12" y1="17" x2="12.01" y2="17" />
+      </svg>
+    </button>
   </div>
 
   <div class="settings-content">
@@ -616,13 +643,34 @@
 
   .settings-nav-shell {
     display: grid;
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     gap: 10px;
   }
 
   .settings-nav-shell.compact {
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+  }
+
+  /* Isolated on the far right, visually detached from the category tabs. */
+  .help-btn {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    margin-left: 14px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--bg-card) 92%, #fff 8%);
+    color: var(--fg-muted);
+    cursor: pointer;
+    transition: border-color 120ms ease-out, background 120ms ease-out, color 120ms ease-out;
+  }
+
+  .help-btn:hover {
+    color: var(--fg);
+    border-color: color-mix(in srgb, var(--fg) 35%, var(--border));
+    background: color-mix(in srgb, var(--bg-card) 84%, #fff 16%);
   }
 
   .tabs-scroll-btn {

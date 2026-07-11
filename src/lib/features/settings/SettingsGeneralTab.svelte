@@ -190,6 +190,7 @@
       onToggle={() => settings.deepLinksEnabled = !settings.deepLinksEnabled}
     />
     <p class="hint">{t("settings.deepLinksHint")}</p>
+    <code class="deep-link-example">accshift://switch/steam/&lt;account&gt;</code>
   </section>
 </div>
 
@@ -300,6 +301,19 @@
     display: flex;
     gap: 8px;
     margin-top: 4px;
+  }
+
+  .deep-link-example {
+    display: block;
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    color: var(--fg-muted);
+    background: color-mix(in srgb, var(--bg) 70%, var(--bg-card));
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 9px;
+    overflow-x: auto;
+    white-space: nowrap;
   }
 
   .theme-action-btn {

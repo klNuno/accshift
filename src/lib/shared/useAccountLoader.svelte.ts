@@ -321,7 +321,18 @@ export function createAccountLoader(
     } catch (e) {
       error = String(e);
       console.error("[accounts] add account failed:", e);
-      addToast(t("toast.addAccountFailed" as string as MessageKey), { type: "error" });
+      // "Could not locate <client> executable" is the backend's stable wording
+      // for a missing launcher; surface it as a human answer instead of the
+      // generic failure line.
+      if (/could not locate .* executable/i.test(error)) {
+        const { getPlatformDefinition } = await import("$lib/platforms/registry");
+        const platformName = getPlatformDefinition(adapter.id)?.name ?? adapter.id;
+        addToast(t("toast.addAccountClientMissing", { platform: platformName }), {
+          type: "error",
+        });
+      } else {
+        addToast(t("toast.addAccountFailed"), { type: "error" });
+      }
       return;
     }
     if (result.setupStatus) {
