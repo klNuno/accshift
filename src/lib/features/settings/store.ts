@@ -41,7 +41,6 @@ const DEFAULTS: AppSettings = {
   language: DEFAULT_LOCALE,
   themeId: "dark",
   backgroundOpacity: 100,
-  backgroundBlur: 0,
   uiScalePercent: 100,
   animations: "system",
   streamerMode: "auto",
@@ -52,10 +51,14 @@ const DEFAULTS: AppSettings = {
     banCheckDays: 7,
   },
   enabledPlatforms: ["steam"],
+  healthCheckPerPlatform: {
+    roblox: true,
+  },
   personasEnabled: true,
   defaultPlatformId: "steam",
   inactivityBlurSeconds: 60,
   deepLinksEnabled: true,
+  cliEnabled: true,
   platformSettings: defaultPlatformSettings(),
   accountDisplay: {
     showUsernames: true,
@@ -124,6 +127,15 @@ function sanitizeShowLastLoginPerPlatform(
   return result;
 }
 
+function sanitizeHealthCheckPerPlatform(raw: Record<string, unknown>): Record<string, boolean> {
+  const rawMap = asRecord(raw.healthCheckPerPlatform);
+  const result: Record<string, boolean> = {};
+  for (const id of Object.keys(DEFAULTS.healthCheckPerPlatform)) {
+    result[id] = id in rawMap ? rawMap[id] !== false : DEFAULTS.healthCheckPerPlatform[id];
+  }
+  return result;
+}
+
 function sanitizeSettings(value: unknown): AppSettings {
   const raw = asRecord(value);
   const rawDataRefresh = asRecord(raw.dataRefresh);
@@ -159,7 +171,6 @@ function sanitizeSettings(value: unknown): AppSettings {
           : DEFAULTS.themeId,
     ).id,
     backgroundOpacity: clampInt(raw.backgroundOpacity, 0, 100, DEFAULTS.backgroundOpacity),
-    backgroundBlur: clampInt(raw.backgroundBlur, 0, 100, DEFAULTS.backgroundBlur),
     uiScalePercent: clampInt(raw.uiScalePercent, 75, 150, DEFAULTS.uiScalePercent),
     animations: raw.animations === "on" || raw.animations === "off" ? raw.animations : "system",
     streamerMode: raw.streamerMode === "off" ? "off" : "auto",
@@ -180,6 +191,7 @@ function sanitizeSettings(value: unknown): AppSettings {
       ),
     },
     enabledPlatforms: normalizedEnabledPlatforms,
+    healthCheckPerPlatform: sanitizeHealthCheckPerPlatform(raw),
     personasEnabled: raw.personasEnabled !== false,
     defaultPlatformId,
     inactivityBlurSeconds: clampInt(
@@ -189,6 +201,7 @@ function sanitizeSettings(value: unknown): AppSettings {
       DEFAULTS.inactivityBlurSeconds,
     ),
     deepLinksEnabled: raw.deepLinksEnabled !== false,
+    cliEnabled: raw.cliEnabled !== false,
     platformSettings: sanitizePlatformSettings(rawPlatformSettings, raw),
     accountDisplay: {
       showUsernames: rawAccountDisplay.showUsernames !== false && raw.showUsernames !== false,

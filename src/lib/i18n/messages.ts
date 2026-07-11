@@ -65,8 +65,6 @@ export const EN_MESSAGES = {
   "settings.theme": "Theme",
   "settings.uiZoom": "UI zoom",
   "settings.backgroundOpacity": "Background opacity",
-  "settings.backgroundBlur": "Background blur",
-  "settings.backgroundBlurHint": "Blurs whatever sits behind the window (Windows only).",
   "settings.animations": "Animations",
   "settings.animationsSystem": "Follow system",
   "settings.animationsOn": "Always on",
@@ -213,6 +211,8 @@ export const EN_MESSAGES = {
   "settings.deepLinks": "Allow accshift:// links",
   "settings.deepLinksHint":
     "Let other apps switch accounts for you: bookmarks, Stream Deck, scripts.",
+  "settings.cliEnabled": "Allow the accshift CLI",
+  "settings.cliEnabledHint": "Let the command line tool list and switch accounts.",
   "settings.help": "Open the accshift wiki",
   "settings.openHelpFailed": "Could not open the wiki",
 
@@ -407,6 +407,9 @@ export const EN_MESSAGES = {
   "roblox.cookiePasteHint":
     "Paste a .ROBLOSECURITY cookie from your browser to add an account directly.",
   "settings.showRobloxLastLogin": "Show last login",
+  "settings.robloxHealthCheck": "Session check",
+  "settings.robloxHealthCheckHint":
+    "Flags accounts whose Roblox session expired; one network request per launch.",
   "roblox.copyLabelUsername": "Username",
   "roblox.copyLabelUserId": "User ID",
   "roblox.forget": "Forget",
@@ -606,8 +609,6 @@ export const EN_MESSAGES = {
   "settings.apiKeyClearFailed": "Couldn't clear the Steam API key",
   "settings.clearApiKey": "Clear key",
   "settings.cs2Bridge": "CS2 stats bridge",
-  "settings.cs2BridgeHint":
-    "Show CS2 level, weekly XP and weekly case status on account cards. Paste the bridge link from your CS2 account manager; any server implementing the bridge JSON contract works.",
   "settings.cs2BridgeLink": "Bridge link",
   "settings.cs2BridgeLinkPlaceholder": "https://your-server/api/bridge/accshift/<key>",
   "settings.cs2BridgeTest": "Test",

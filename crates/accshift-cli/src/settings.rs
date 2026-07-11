@@ -9,7 +9,7 @@ use accshift_core::AppContext;
 use serde::Deserialize;
 use std::fs;
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize)]
 pub struct AppSettings {
     #[serde(default, rename = "platformSettings")]
     pub platform_settings: PlatformSettings,
@@ -21,6 +21,26 @@ pub struct AppSettings {
     /// SHA-256 hex is also accepted). Empty when no PIN is set.
     #[serde(default, rename = "pinHash")]
     pub pin_hash: String,
+    /// GUI "Allow the accshift CLI" integration toggle. Defaults open (a
+    /// fresh install or a missing key keeps the CLI usable); the PIN gate
+    /// above is the security boundary, this one is a convenience opt-out.
+    #[serde(default = "default_true", rename = "cliEnabled")]
+    pub cli_enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            platform_settings: PlatformSettings::default(),
+            pin_enabled: false,
+            pin_hash: String::new(),
+            cli_enabled: true,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -187,5 +207,22 @@ mod tests {
 
         assert!(settings.pin_enabled);
         assert_eq!(settings.pin_hash, "deadbeef:cafef00d");
+        assert!(settings.cli_enabled, "missing cliEnabled key defaults open");
+    }
+
+    #[test]
+    fn load_honours_cli_disabled_flag() {
+        let tmp = TempRoot::new("cli-disabled");
+        let ctx = TestCtx {
+            root: tmp.0.clone(),
+        };
+        let path = client_store_path(&ctx, STORE_SETTINGS).expect("resolve settings path");
+        fs::create_dir_all(path.parent().expect("settings path has a parent"))
+            .expect("create settings parent dir");
+        fs::write(&path, br#"{"cliEnabled":false}"#).expect("write settings file");
+
+        let settings = load(&ctx);
+
+        assert!(!settings.cli_enabled);
     }
 }

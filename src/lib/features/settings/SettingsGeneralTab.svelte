@@ -19,14 +19,12 @@
     t,
     uiScale,
     bgOpacity,
-    bgBlur,
     neutralAccent,
   }: {
     settings: AppSettings;
     t: (key: MessageKey, params?: TranslationParams) => string;
     uiScale: { input: string; commit: () => void };
     bgOpacity: { input: string; commit: () => void };
-    bgBlur: { input: string; commit: () => void };
     neutralAccent: string;
   } = $props();
 
@@ -73,8 +71,19 @@
       />
     </label>
 
+    <label class="field">
+      <span class="field-label">{t("settings.animations")}</span>
+      <select class="text-input select-input" bind:value={settings.animations}>
+        <option value="system">{t("settings.animationsSystem")}</option>
+        <option value="on">{t("settings.animationsOn")}</option>
+        <option value="off">{t("settings.animationsOff")}</option>
+      </select>
+    </label>
+  </section>
+
+  <section class="card">
+    <h3>{t("settings.theme")}</h3>
     <div class="field">
-      <span class="field-label">{t("settings.theme")}</span>
       <div class="theme-grid">
         {#each getAllThemes() as theme (theme.id)}
           <button
@@ -132,15 +141,6 @@
     </div>
 
     <label class="field">
-      <span class="field-label">{t("settings.animations")}</span>
-      <select class="text-input select-input" bind:value={settings.animations}>
-        <option value="system">{t("settings.animationsSystem")}</option>
-        <option value="on">{t("settings.animationsOn")}</option>
-        <option value="off">{t("settings.animationsOff")}</option>
-      </select>
-    </label>
-
-    <label class="field">
       <span class="field-label">{t("settings.backgroundOpacity")} - {settings.backgroundOpacity}%</span>
       <input
         type="range"
@@ -154,23 +154,6 @@
         }}
         class="slider-input"
       />
-    </label>
-
-    <label class="field">
-      <span class="field-label">{t("settings.backgroundBlur")} - {settings.backgroundBlur}%</span>
-      <input
-        type="range"
-        min="0"
-        max="100"
-        step="10"
-        value={bgBlur.input}
-        oninput={(e) => {
-          bgBlur.input = (e.currentTarget as HTMLInputElement).value;
-          bgBlur.commit();
-        }}
-        class="slider-input"
-      />
-      <span class="hint">{t("settings.backgroundBlurHint")}</span>
     </label>
   </section>
 
@@ -233,7 +216,15 @@
       offLabel={t("common.disabled")}
       onToggle={() => settings.deepLinksEnabled = !settings.deepLinksEnabled}
     />
-    <code class="deep-link-example">accshift://switch/steam/&lt;account&gt;</code>
+    <ToggleSetting
+      label={t("settings.cliEnabled")}
+      description={t("settings.cliEnabledHint")}
+      enabled={settings.cliEnabled}
+      accent={neutralAccent}
+      onLabel={t("common.enabled")}
+      offLabel={t("common.disabled")}
+      onToggle={() => settings.cliEnabled = !settings.cliEnabled}
+    />
   </section>
 </div>
 
@@ -380,19 +371,6 @@
   .wiki-btn:hover {
     color: var(--fg);
     border-color: color-mix(in srgb, var(--fg) 35%, var(--border));
-  }
-
-  .deep-link-example {
-    display: block;
-    font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, monospace;
-    font-size: 11px;
-    color: var(--fg-muted);
-    background: color-mix(in srgb, var(--bg) 70%, var(--bg-card));
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 7px 9px;
-    overflow-x: auto;
-    white-space: nowrap;
   }
 
   .theme-action-btn {

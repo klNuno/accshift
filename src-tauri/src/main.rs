@@ -165,6 +165,27 @@ fn main() {
                 Some("label=main"),
             );
 
+            #[cfg(windows)]
+            {
+                // Edge autofill pops "saved information" suggestions over plain
+                // text inputs (e.g. Steam launch options). Nothing in the app
+                // wants browser-managed form data, so turn it off entirely.
+                use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings4;
+                use windows_core::Interface;
+                let _ = win.with_webview(|webview| unsafe {
+                    let settings = webview
+                        .controller()
+                        .CoreWebView2()
+                        .and_then(|core| core.Settings());
+                    if let Ok(settings) = settings {
+                        if let Ok(settings) = settings.cast::<ICoreWebView2Settings4>() {
+                            let _ = settings.SetIsGeneralAutofillEnabled(false);
+                            let _ = settings.SetIsPasswordAutosaveEnabled(false);
+                        }
+                    }
+                });
+            }
+
             // Telemetry: build the worker, share the handle with commands.
             // After the window build on purpose — the webview is the slow part
             // of startup, let it begin initializing as early as possible.

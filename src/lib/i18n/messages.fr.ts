@@ -73,9 +73,6 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.theme": "Thème",
   "settings.uiZoom": "Zoom UI",
   "settings.backgroundOpacity": "Opacité du fond",
-  "settings.backgroundBlur": "Flou d'arrière-plan",
-  "settings.backgroundBlurHint":
-    "Floute ce qui se trouve derrière la fenêtre (Windows uniquement).",
   "settings.animations": "Animations",
   "settings.animationsSystem": "Suivre le système",
   "settings.animationsOn": "Toujours actives",
@@ -223,6 +220,8 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.deepLinks": "Autoriser les liens accshift://",
   "settings.deepLinksHint":
     "Laisse d'autres applications changer de compte pour toi : favoris, Stream Deck, scripts.",
+  "settings.cliEnabled": "Autoriser le CLI accshift",
+  "settings.cliEnabledHint": "Laisse l'outil en ligne de commande lister et changer de compte.",
   "settings.help": "Ouvrir le wiki accshift",
   "settings.openHelpFailed": "Impossible d'ouvrir le wiki",
 
@@ -415,6 +414,9 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "roblox.cookiePasteHint":
     "Colle un cookie .ROBLOSECURITY depuis ton navigateur pour ajouter un compte directement.",
   "settings.showRobloxLastLogin": "Afficher la dernière connexion",
+  "settings.robloxHealthCheck": "Vérification de session",
+  "settings.robloxHealthCheckHint":
+    "Signale les comptes dont la session Roblox a expiré ; une requête réseau par lancement.",
   "roblox.copyLabelUsername": "Pseudo",
   "roblox.copyLabelUserId": "ID utilisateur",
   "roblox.forget": "Oublier",
@@ -615,8 +617,6 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.apiKeyClearFailed": "Impossible d'effacer la clé API Steam",
   "settings.clearApiKey": "Effacer la clé",
   "settings.cs2Bridge": "Pont stats CS2",
-  "settings.cs2BridgeHint":
-    "Affiche le niveau CS2, l'XP hebdomadaire et l'état de la caisse sur les cartes de compte. Colle le lien du pont fourni par ton gestionnaire de comptes CS2 ; tout serveur qui implémente le contrat JSON du pont fonctionne.",
   "settings.cs2BridgeLink": "Lien du pont",
   "settings.cs2BridgeLinkPlaceholder": "https://ton-serveur/api/bridge/accshift/<clé>",
   "settings.cs2BridgeTest": "Tester",

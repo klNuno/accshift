@@ -21,6 +21,10 @@ reqwest = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 winreg = { workspace = true }
+# Same versions tauri already pulls in; used to flip WebView2 settings tauri
+# does not expose (autofill popups on plain text inputs).
+webview2-com = "0.38"
+windows-core = "0.61"
 
 [dependencies.mimalloc]
 workspace = true

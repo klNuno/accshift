@@ -25,7 +25,12 @@ mod exit {
     /// PIN lock is enabled but the supplied PIN was wrong, missing, or could
     /// not be read (no TTY). The switch never runs in this case.
     pub const PIN_DENIED: u8 = 6;
+    /// The GUI "Allow the accshift CLI" integration toggle is off.
+    pub const CLI_DISABLED: u8 = 7;
 }
+
+const CLI_DISABLED_MESSAGE: &str =
+    "The accshift CLI is disabled in the app (Settings > General > Integrations).";
 
 const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -138,6 +143,11 @@ fn cmd_list(format: Format, platform_id: &str, folder: Option<&str>) -> u8 {
         Ok(c) => c,
         Err(code) => return code,
     };
+
+    if !settings::load(&*ctx).cli_enabled {
+        emit_err(format, "list", "cli_disabled", CLI_DISABLED_MESSAGE);
+        return exit::CLI_DISABLED;
+    }
 
     let service = match get_service(platform_id) {
         Some(s) => s,
@@ -287,6 +297,11 @@ fn cmd_switch(
     };
 
     let app_settings = settings::load(&*ctx);
+
+    if !app_settings.cli_enabled {
+        emit_err(format, "switch", "cli_disabled", CLI_DISABLED_MESSAGE);
+        return exit::CLI_DISABLED;
+    }
 
     // PIN gate: the GUI can lock account switching behind a 4-digit PIN. Honour
     // the same lock here so the CLI cannot bypass it. Prompt before taking the

@@ -4,6 +4,7 @@ import type {
   PlatformUiCallbacks,
   PlatformWarningLoadOptions,
 } from "$lib/shared/platform";
+import { getSettings } from "$lib/features/settings/store";
 import { checkSessions } from "./robloxApi";
 
 // Dead sessions confirmed by the backend probe this session. Roblox cookies
@@ -30,9 +31,14 @@ function toWarningMap(t: PlatformUiCallbacks["t"]): Record<string, AccountWarnin
   return warnings;
 }
 
+function healthCheckEnabled(): boolean {
+  return getSettings().healthCheckPerPlatform["roblox"] !== false;
+}
+
 export function getCachedRobloxWarningStates(
   callbacks: PlatformUiCallbacks,
 ): Record<string, AccountWarningPresentation> {
+  if (!healthCheckEnabled()) return {};
   return toWarningMap(callbacks.t);
 }
 
@@ -41,6 +47,7 @@ export async function loadRobloxWarningStates(
   options: PlatformWarningLoadOptions,
 ): Promise<Record<string, AccountWarningPresentation>> {
   const { forceRefresh = false, t } = options;
+  if (!healthCheckEnabled()) return {};
   if (accounts.length === 0) return toWarningMap(t);
 
   if (checkedThisSession && !forceRefresh) return toWarningMap(t);

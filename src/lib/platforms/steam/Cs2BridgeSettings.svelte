@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { invoke } from "@tauri-apps/api/core";
   import ToggleSetting from "$lib/features/settings/ToggleSetting.svelte";
   import { addToast } from "$lib/features/notifications/store.svelte";
   import { getCs2BridgeSettings, setCs2BridgeSettings, testCs2Bridge } from "./steamApi";
@@ -92,14 +93,23 @@
     enabled = !enabled;
     await save(null);
   }
+
+  const WIKI_URL = "https://github.com/klNuno/accshift/wiki/CS2-Bridge";
+
+  async function openWiki() {
+    try {
+      await invoke("open_url", { url: WIKI_URL });
+    } catch {
+      addToast(t("settings.openHelpFailed"), { type: "error" });
+    }
+  }
 </script>
 
 <section class="card platform-display-card" style={`--display-accent:${accent};`}>
   <div class="title-row">
     <h3>{t("settings.cs2Bridge")}</h3>
-    <div class="status" title={statusError || statusDetail}>
-      <span class={`status-dot ${status}`} aria-hidden="true"></span>
-      <span class="status-text">
+    <div class="title-side">
+      <span class={`status-pill ${status}`} title={statusError || statusDetail}>
         {#if status === "testing"}
           {t("settings.cs2BridgeStatusTesting")}
         {:else if status === "unknown"}
@@ -108,9 +118,15 @@
           {statusDetail}
         {/if}
       </span>
+      <button
+        type="button"
+        class="wiki-btn"
+        onclick={openWiki}
+        title={t("settings.help")}
+        aria-label={t("settings.help")}
+      >?</button>
     </div>
   </div>
-  <p class="hint-text">{t("settings.cs2BridgeHint")}</p>
 
   <ToggleSetting
     label={t("settings.cs2Bridge")}
@@ -200,47 +216,64 @@
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--display-accent) 12%, transparent);
   }
 
-  .status {
+  .title-side {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     min-width: 0;
   }
 
-  .status-dot {
-    flex: 0 0 auto;
-    width: 8px;
-    height: 8px;
+  /* Same shape as the Configured badge on the API key card. */
+  .status-pill {
+    padding: 1px 7px;
     border-radius: 999px;
-    background: var(--fg-subtle);
-  }
-
-  .status-dot.ok {
-    background: #22c55e;
-    box-shadow: 0 0 6px rgba(34, 197, 94, 0.55);
-  }
-
-  .status-dot.fail {
-    background: #ef4444;
-    box-shadow: 0 0 6px rgba(239, 68, 68, 0.55);
-  }
-
-  .status-dot.testing {
-    background: #eab308;
-  }
-
-  .status-text {
-    font-size: 10px;
+    border: 1px solid color-mix(in srgb, var(--fg-subtle) 45%, var(--border));
+    background: color-mix(in srgb, var(--fg-subtle) 10%, transparent);
     color: var(--fg-muted);
+    font-size: 10px;
+    font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  .hint-text {
-    margin: 0;
-    font-size: 11px;
+  .status-pill.ok {
+    border-color: color-mix(in srgb, #22c55e 45%, var(--border));
+    background: color-mix(in srgb, #22c55e 14%, transparent);
+    color: #4ade80;
+  }
+
+  .status-pill.fail {
+    border-color: color-mix(in srgb, #ef4444 45%, var(--border));
+    background: color-mix(in srgb, #ef4444 14%, transparent);
+    color: #fca5a5;
+  }
+
+  .status-pill.testing {
+    border-color: color-mix(in srgb, #eab308 45%, var(--border));
+    background: color-mix(in srgb, #eab308 14%, transparent);
+    color: #fde047;
+  }
+
+  .wiki-btn {
+    flex: 0 0 auto;
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: transparent;
     color: var(--fg-subtle);
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: border-color 120ms ease-out, color 120ms ease-out;
+  }
+
+  .wiki-btn:hover {
+    color: var(--fg);
+    border-color: color-mix(in srgb, var(--fg) 35%, var(--border));
   }
 
   .field {

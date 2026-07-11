@@ -25,8 +25,6 @@ export interface AppSettings {
   language: Locale;
   themeId: string;
   backgroundOpacity: number;
-  /** 0 disables the OS backdrop blur behind the window; higher = stronger tint. */
-  backgroundBlur: number;
   uiScalePercent: number;
   animations: AnimationsMode;
   streamerMode: StreamerMode;
@@ -34,10 +32,14 @@ export interface AppSettings {
   minimizeOnAccountSwitch: boolean;
   dataRefresh: DataRefreshSettings;
   enabledPlatforms: string[];
+  /** Per-platform opt-out for network account health checks (e.g. Roblox session probe). */
+  healthCheckPerPlatform: Record<string, boolean>;
   personasEnabled: boolean;
   defaultPlatformId: string;
   inactivityBlurSeconds: number;
   deepLinksEnabled: boolean;
+  /** Mirrored by the CLI binary, which refuses list/switch when false. */
+  cliEnabled: boolean;
   platformSettings: PlatformSettings;
   accountDisplay: AccountDisplaySettings;
   pinEnabled: boolean;

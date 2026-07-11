@@ -54,10 +54,10 @@
   let platformPathErrors = $state<Record<string, boolean>>({});
   let platformPathsKey = $derived(JSON.stringify(platformPaths));
   let showLastLoginKey = $derived(JSON.stringify(settings.accountDisplay.showLastLoginPerPlatform));
+  let healthCheckKey = $derived(JSON.stringify(settings.healthCheckPerPlatform));
   let pinCodeInput = $state("");
   const uiScale = createNumericInput(() => settings.uiScalePercent, (v) => { settings.uiScalePercent = v; }, 75, 150);
   const bgOpacity = createNumericInput(() => settings.backgroundOpacity, (v) => { settings.backgroundOpacity = v; }, 0, 100);
-  const bgBlur = createNumericInput(() => settings.backgroundBlur, (v) => { settings.backgroundBlur = v; }, 0, 100);
   const avatarCacheDays = createNumericInput(() => settings.dataRefresh.avatarCacheDays, (v) => { settings.dataRefresh.avatarCacheDays = v; }, 0, 90);
   const banCheckDays = createNumericInput(() => settings.dataRefresh.banCheckDays, (v) => { settings.dataRefresh.banCheckDays = v; }, 0, 90);
   const inactivityBlur = createNumericInput(() => settings.inactivityBlurSeconds, (v) => { settings.inactivityBlurSeconds = v; }, 0, 3600);
@@ -116,7 +116,6 @@
     settings.themeId = getThemeDefinition(settings.themeId).id;
     settings.language = normalizeLocale(settings.language);
     settings.backgroundOpacity = clampInt(settings.backgroundOpacity, 0, 100, 100);
-    settings.backgroundBlur = clampInt(settings.backgroundBlur, 0, 100, 0);
     settings.uiScalePercent = clampInt(settings.uiScalePercent, 75, 150, 100);
     settings.suspendGraphicsWhenMinimized = settings.suspendGraphicsWhenMinimized !== false;
     settings.minimizeOnAccountSwitch = Boolean(settings.minimizeOnAccountSwitch);
@@ -158,7 +157,6 @@
   function refreshNumericInputsFromSettings() {
     uiScale.refresh();
     bgOpacity.refresh();
-    bgBlur.refresh();
     avatarCacheDays.refresh();
     banCheckDays.refresh();
     inactivityBlur.refresh();
@@ -408,7 +406,6 @@
       settings.inactivityBlurSeconds,
       settings.themeId,
       settings.backgroundOpacity,
-      settings.backgroundBlur,
       settings.animations,
       settings.suspendGraphicsWhenMinimized,
       settings.minimizeOnAccountSwitch,
@@ -420,6 +417,7 @@
       settings.accountDisplay.showCardNotesInline,
       settings.accountDisplay.expandedFolders,
       showLastLoginKey,
+      healthCheckKey,
       settings.uiScalePercent,
       settings.defaultPlatformId,
       settings.pinEnabled,
@@ -427,6 +425,7 @@
       pinCodeInput,
       settings.personasEnabled,
       settings.deepLinksEnabled,
+      settings.cliEnabled,
       settings.streamerMode,
       settings.enabledPlatforms.join(","),
       apiKey,
@@ -522,7 +521,6 @@
         {t}
         {uiScale}
         {bgOpacity}
-        {bgBlur}
         neutralAccent={NEUTRAL_CONTROL_ACCENT}
       />
     {/if}

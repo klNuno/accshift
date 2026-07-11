@@ -115,15 +115,15 @@ export const BUILT_IN_THEMES: AppThemeDefinition[] = [
     colorScheme: "dark",
     glass: true,
     tokens: {
-      bgRgb: "16 16 20",
-      bgCard: "#2a2a32",
-      bgCardHover: "#34343e",
-      bgMuted: "#32323c",
-      bgElevated: "#4a4a58",
+      bgRgb: "5 5 8",
+      bgCard: "#131318",
+      bgCardHover: "#1b1b22",
+      bgMuted: "#17171e",
+      bgElevated: "#2a2a34",
       fg: "#f4f4f6",
-      fgMuted: "#b4b4c0",
-      fgSubtle: "#84848f",
-      border: "#3c3c48",
+      fgMuted: "#aeaeba",
+      fgSubtle: "#7c7c88",
+      border: "#2c2c36",
       danger: "#ef4444",
       afkText: "#ffffff",
     },
@@ -153,17 +153,19 @@ export const BUILT_IN_THEMES: AppThemeDefinition[] = [
     colorScheme: "dark",
     glass: true,
     tokens: {
-      bgRgb: "12 20 32",
-      bgCard: "#1c3048",
-      bgCardHover: "#244059",
-      bgMuted: "#203850",
-      bgElevated: "#33526e",
-      fg: "#eaf2fa",
-      fgMuted: "#9fb4c8",
-      fgSubtle: "#6c8299",
-      border: "#2a4258",
+      // Neutral smoke, not a color: the glass look comes from the low window
+      // opacity + the glaze layer in app.css, not from tinted surfaces.
+      bgRgb: "22 24 30",
+      bgCard: "#343841",
+      bgCardHover: "#3e424c",
+      bgMuted: "#383c46",
+      bgElevated: "#4c515c",
+      fg: "#f4f6f9",
+      fgMuted: "#b8bec8",
+      fgSubtle: "#8b919c",
+      border: "#4a4f5a",
       danger: "#ef4444",
-      afkText: "#eaf2fa",
+      afkText: "#f4f6f9",
     },
   },
 ] as const;
@@ -303,7 +305,10 @@ export function applyThemeToDocument(
   const rawOpacity = Math.min(100, Math.max(0, backgroundOpacityPercent)) / 100;
   // Glass themes cap the window fill low and keep surfaces translucent so the
   // OS backdrop blur shows through; regular themes keep opaque-ish surfaces.
-  const windowOpacity = theme.glass ? Math.min(rawOpacity, 0.55) : rawOpacity;
+  // Liquid Glass goes clearer still: the glaze layer needs the backdrop to
+  // dominate for the material to read as glass.
+  const glassCap = theme.id === "liquid-glass" ? 0.38 : 0.55;
+  const windowOpacity = theme.glass ? Math.min(rawOpacity, glassCap) : rawOpacity;
   const cardOpacity = theme.glass
     ? Math.min(0.72, Math.max(windowOpacity + 0.1, 0.4))
     : Math.min(1, Math.max(windowOpacity + 0.14, 0.66));

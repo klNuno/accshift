@@ -76,13 +76,20 @@
 
 <div class="settings-grid">
   <section class="card card-wide">
-    <h3>{t("settings.platforms")}</h3>
-    <input
-      type="search"
-      class="text-input platform-search"
-      placeholder={t("settings.platformSearchPlaceholder")}
-      bind:value={platformSearch}
-    />
+    <div class="card-title-row">
+      <h3>{t("settings.platforms")}</h3>
+      <label class="platform-search">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+        <input
+          type="search"
+          placeholder={t("settings.platformSearchPlaceholder")}
+          bind:value={platformSearch}
+        />
+      </label>
+    </div>
     <div class="platforms">
       {#each filteredPlatformOptions as platform (platform.id)}
         {@const isSelectable = isPlatformSelectable(platform.id)}
@@ -154,8 +161,66 @@
     gap: 8px;
   }
 
+  /* The row carries the header divider so it spans past the search pill. */
+  .card-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  }
+
+  .card-title-row h3 {
+    margin: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+
   .platform-search {
-    max-width: 320px;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    width: 200px;
+    padding: 6px 11px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--bg-card) 88%, #fff 12%);
+    color: var(--fg-subtle);
+    cursor: text;
+    transition: border-color 120ms ease-out, background 120ms ease-out, color 120ms ease-out;
+  }
+
+  .platform-search:hover {
+    background: color-mix(in srgb, var(--bg-card) 84%, #fff 16%);
+  }
+
+  .platform-search:focus-within {
+    border-color: color-mix(in srgb, var(--fg-muted) 45%, var(--border));
+    color: var(--fg-muted);
+  }
+
+  .platform-search svg {
+    flex: 0 0 auto;
+  }
+
+  .platform-search input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--fg);
+    font-size: 12px;
+    padding: 0;
+  }
+
+  .platform-search input::placeholder {
+    color: var(--fg-subtle);
+  }
+
+  .platform-search input::-webkit-search-cancel-button {
+    -webkit-appearance: none;
   }
 
   .no-results {

@@ -49,6 +49,15 @@
     offLabel={t("common.off")}
     onToggle={() => settings.accountDisplay.showLastLoginPerPlatform["roblox"] = !settings.accountDisplay.showLastLoginPerPlatform["roblox"]}
   />
+  <ToggleSetting
+    label={t("settings.robloxHealthCheck")}
+    description={t("settings.robloxHealthCheckHint")}
+    enabled={settings.healthCheckPerPlatform["roblox"] !== false}
+    {accent}
+    onLabel={t("common.enabled")}
+    offLabel={t("common.disabled")}
+    onToggle={() => settings.healthCheckPerPlatform["roblox"] = settings.healthCheckPerPlatform["roblox"] === false}
+  />
 </SettingsCard>
 
 <SettingsCard title={t("roblox.cookiePasteTitle")} {accent}>
