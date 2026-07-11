@@ -1,4 +1,4 @@
-import type { CardExtensionContent } from "$lib/shared/cardExtension";
+import type { CardExtensionContent, CardExtensionSection } from "$lib/shared/cardExtension";
 import { warningChipsToExtensionChips } from "$lib/shared/cardExtension";
 import type { AccountWarningPresentation } from "$lib/shared/accountWarnings";
 import { trackDependencies } from "$lib/shared/trackDependencies";
@@ -15,6 +15,10 @@ type ExtensionContentDeps = {
   getAccountNote: (accountId: string) => string;
   getCardNoteVersion: () => number;
   getShowCardNotesInline: () => boolean;
+  /** Platform-specific sections appended after warnings/notes (e.g. Steam's
+   * CS2 bridge). Version bumps invalidate the memo. */
+  getExtraSections?: (accountId: string) => CardExtensionSection[];
+  getExtraSectionsVersion?: () => number;
 };
 
 export function createExtensionContentController({
@@ -26,6 +30,8 @@ export function createExtensionContentController({
   getAccountNote,
   getCardNoteVersion,
   getShowCardNotesInline,
+  getExtraSections,
+  getExtraSectionsVersion,
 }: ExtensionContentDeps) {
   function createWarningExtensionSection(
     accountId: string,
@@ -63,7 +69,8 @@ export function createExtensionContentController({
     const locale = getLocale();
     const cardNoteVersion = getCardNoteVersion();
     const showCardNotesInline = getShowCardNotesInline();
-    trackDependencies(locale, cardNoteVersion, showCardNotesInline);
+    const extraSectionsVersion = getExtraSectionsVersion?.() ?? 0;
+    trackDependencies(locale, cardNoteVersion, showCardNotesInline, extraSectionsVersion);
     const ids = getVisibleRenderedAccountIds();
     // Build a key that captures all inputs per account
     const keyParts: string[] = [];
@@ -75,7 +82,7 @@ export function createExtensionContentController({
       const s = setup ? JSON.stringify(setup.sections) : "";
       keyParts.push(`${id}:${w?.tooltipText ?? ""}:${w?.chips?.length ?? 0}:${n}:${s}`);
     }
-    const newKey = `${locale}:${cardNoteVersion}:${showCardNotesInline}:${keyParts.join("|")}`;
+    const newKey = `${locale}:${cardNoteVersion}:${showCardNotesInline}:${extraSectionsVersion}:${keyParts.join("|")}`;
     if (newKey === extensionCacheKey) return extensionCache;
 
     const map: Record<string, CardExtensionContent | null> = {};
@@ -90,6 +97,7 @@ export function createExtensionContentController({
       const note = createNoteExtensionSection(accountId);
       if (warn) sections.push(warn);
       if (note) sections.push(note);
+      sections.push(...(getExtraSections?.(accountId) ?? []));
       map[accountId] = sections.length > 0 ? { sections } : null;
     }
     extensionCacheKey = newKey;

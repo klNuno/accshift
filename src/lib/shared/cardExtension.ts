@@ -13,12 +13,20 @@ export interface CardExtensionLink {
   url: string;
 }
 
+export interface CardExtensionProgress {
+  value: number;
+  max: number;
+  /** Small text rendered right of the bar, e.g. "3579/5000". */
+  label?: string;
+}
+
 export interface CardExtensionSection {
   title?: string;
   text?: string;
   lines?: string[];
   link?: CardExtensionLink;
   chips?: CardExtensionChip[];
+  progress?: CardExtensionProgress;
   loading?: boolean;
 }
 
@@ -34,6 +42,7 @@ export function hasCardExtensionContent(content: CardExtensionContent | null | u
       (section.text && section.text.trim()) ||
       (section.lines && section.lines.some((line) => line.trim())) ||
       (section.chips && section.chips.length > 0) ||
+      section.progress ||
       section.loading,
     ),
   );

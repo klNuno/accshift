@@ -1,6 +1,7 @@
 <script lang="ts">
   import ToggleSetting from "$lib/features/settings/ToggleSetting.svelte";
   import SteamSettingsSection from "./SteamSettingsSection.svelte";
+  import Cs2BridgeSettings from "./Cs2BridgeSettings.svelte";
   import type { AppSettings } from "$lib/features/settings/types";
   import type { MessageKey, TranslationParams } from "$lib/i18n";
 
@@ -105,6 +106,8 @@
   onRefreshBansNow={onRefreshBansNow}
   {t}
 />
+
+<Cs2BridgeSettings {accent} {t} />
 
 <style>
   .card {

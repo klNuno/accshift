@@ -67,6 +67,12 @@
   import { createCommandRegistry } from "$lib/features/commandPalette/registry";
   import CommandPalette from "$lib/features/commandPalette/CommandPalette.svelte";
   import { createCardFocus } from "$lib/app/useCardFocus.svelte";
+  import {
+    getCs2BridgeData,
+    getCs2BridgeVersion,
+    loadCs2BridgeData,
+  } from "$lib/platforms/steam/cs2Bridge.svelte";
+  import type { CardExtensionSection } from "$lib/shared/cardExtension";
 
   const shell = createPlatformShellState();
   const t = (key: MessageKey, params?: TranslationParams) => translate(shell.locale, key, params);
@@ -313,6 +319,35 @@
       );
     }
   }
+  // Weekly XP data from the external CS2 manager, rendered as an extra card
+  // extension section on Steam accounts. Refreshed lazily when the tab shows.
+  $effect(() => {
+    if (shell.activeTab !== "steam" || loader.accounts.length === 0) return;
+    void loadCs2BridgeData();
+  });
+
+  function createCs2ExtensionSections(accountId: string): CardExtensionSection[] {
+    if (shell.activeTab !== "steam") return [];
+    const data = getCs2BridgeData(accountId);
+    if (!data || data.level === null || data.xp === null) return [];
+    return [
+      {
+        title: t("card.cs2Section"),
+        text: t("card.cs2Level", { level: data.level }),
+        progress: {
+          value: data.xp,
+          max: data.xpMax,
+          label: `${data.xp}/${data.xpMax}`,
+        },
+        chips: [
+          data.caseEarned
+            ? { text: t("card.cs2CaseEarned"), tone: "green" as const }
+            : { text: t("card.cs2CaseNotEarned"), tone: "slate" as const },
+        ],
+      },
+    ];
+  }
+
   const extensionContent = createExtensionContentController({
     t,
     getLocale: () => shell.locale,
@@ -322,6 +357,8 @@
     getAccountNote,
     getCardNoteVersion: () => cardNoteVersion,
     getShowCardNotesInline: () => settings.accountDisplay.showCardNotesInline,
+    getExtraSections: createCs2ExtensionSections,
+    getExtraSectionsVersion: () => getCs2BridgeVersion(),
   });
 
   const deepLink = createDeepLinkController({

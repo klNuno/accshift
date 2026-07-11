@@ -354,6 +354,10 @@ fn main() {
             commands::steam_clear_browser_cache,
             commands::steam_bulk_edit,
             commands::steam_get_account_games,
+            commands::cs2_bridge_get_settings,
+            commands::cs2_bridge_set_settings,
+            commands::cs2_bridge_fetch,
+            commands::cs2_bridge_test,
             // Riot-specific (Windows-only)
             #[cfg(windows)]
             commands::riot_capture_profile,

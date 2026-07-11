@@ -8,6 +8,7 @@ use crate::{AppContext, AppCtx};
 pub mod accounts;
 pub mod bans;
 pub mod bulk_edit;
+pub mod cs2_bridge;
 pub mod profile;
 pub mod vdf;
 

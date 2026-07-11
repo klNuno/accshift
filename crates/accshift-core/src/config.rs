@@ -16,6 +16,21 @@ pub struct SteamConfig {
     pub api_key_encrypted: String,
     #[serde(default)]
     pub path_override: String,
+    #[serde(default, skip_serializing_if = "is_default_cs2_bridge_config")]
+    pub cs2_bridge: Cs2BridgeConfig,
+}
+
+/// Connection to an external CS2 account manager exposing level/XP/weekly
+/// drop data over HTTP (see the cs2_bridge platform module). `url` is the
+/// full endpoint URL (it may embed a secret link key), fetched as-is.
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct Cs2BridgeConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub url: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub token_encrypted: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -328,7 +343,14 @@ struct RawRiotConfig {
 }
 
 fn is_default_steam_config(value: &SteamConfig) -> bool {
-    value.api_key.is_empty() && value.api_key_encrypted.is_empty() && value.path_override.is_empty()
+    value.api_key.is_empty()
+        && value.api_key_encrypted.is_empty()
+        && value.path_override.is_empty()
+        && is_default_cs2_bridge_config(&value.cs2_bridge)
+}
+
+fn is_default_cs2_bridge_config(value: &Cs2BridgeConfig) -> bool {
+    !value.enabled && value.url.is_empty() && value.token_encrypted.is_empty()
 }
 
 fn is_default_riot_config(value: &RiotConfig) -> bool {
@@ -830,6 +852,9 @@ fn portable_config(config: &AppConfig) -> AppConfig {
     portable.steam.api_key.clear();
     portable.steam.api_key_encrypted.clear();
     portable.steam.path_override.clear();
+    // Bridge config is machine-specific (local URL) and holds an encrypted
+    // secret bound to this machine: keep it out of the portable file.
+    portable.steam.cs2_bridge = Cs2BridgeConfig::default();
     portable.riot.path_override.clear();
     portable.battle_net.path_override.clear();
     portable.ubisoft.path_override.clear();
@@ -852,6 +877,7 @@ fn local_config(config: &AppConfig) -> AppConfig {
     local.steam.api_key = config.steam.api_key.clone();
     local.steam.api_key_encrypted = config.steam.api_key_encrypted.clone();
     local.steam.path_override = config.steam.path_override.clone();
+    local.steam.cs2_bridge = config.steam.cs2_bridge.clone();
     local.riot.path_override = config.riot.path_override.clone();
     local.battle_net.path_override = config.battle_net.path_override.clone();
     local.ubisoft.path_override = config.ubisoft.path_override.clone();
@@ -892,6 +918,9 @@ fn merge_split_configs(portable: AppConfig, local: AppConfig) -> AppConfig {
     }
     if !local.steam.api_key_encrypted.is_empty() {
         merged.steam.api_key_encrypted = local.steam.api_key_encrypted;
+    }
+    if !is_default_cs2_bridge_config(&local.steam.cs2_bridge) {
+        merged.steam.cs2_bridge = local.steam.cs2_bridge;
     }
     if !local.steam.path_override.is_empty() {
         merged.steam.path_override = local.steam.path_override;
@@ -1077,6 +1106,7 @@ mod tests {
                 api_key: "nested-key".into(),
                 api_key_encrypted: "nested-enc".into(),
                 path_override: "D:\\Steam".into(),
+                cs2_bridge: Cs2BridgeConfig::default(),
             }),
             steam_api_key: "legacy-key".into(),
             steam_api_key_encrypted: "legacy-enc".into(),
@@ -1097,6 +1127,7 @@ mod tests {
                 api_key: String::new(),
                 api_key_encrypted: String::new(),
                 path_override: String::new(),
+                cs2_bridge: Cs2BridgeConfig::default(),
             }),
             steam_api_key: "fallback-key".into(),
             steam_api_key_encrypted: "fallback-enc".into(),
@@ -1117,6 +1148,11 @@ mod tests {
                 api_key: "secret".into(),
                 api_key_encrypted: "enc-secret".into(),
                 path_override: "C:\\Steam".into(),
+                cs2_bridge: Cs2BridgeConfig {
+                    enabled: true,
+                    url: "http://127.0.0.1:3000/api/bridge/accshift/key".into(),
+                    token_encrypted: "enc-token".into(),
+                },
             },
             riot: RiotConfig {
                 path_override: "/opt/riot".into(),
@@ -1170,6 +1206,9 @@ mod tests {
         assert!(p.steam.api_key.is_empty());
         assert!(p.steam.api_key_encrypted.is_empty());
         assert!(p.steam.path_override.is_empty());
+        assert!(!p.steam.cs2_bridge.enabled);
+        assert!(p.steam.cs2_bridge.url.is_empty());
+        assert!(p.steam.cs2_bridge.token_encrypted.is_empty());
         assert!(p.riot.path_override.is_empty());
         assert!(p.battle_net.path_override.is_empty());
         assert!(p.ubisoft.path_override.is_empty());
@@ -1195,6 +1234,7 @@ mod tests {
                 api_key: "secret".into(),
                 api_key_encrypted: "enc".into(),
                 path_override: "C:\\Steam".into(),
+                cs2_bridge: Cs2BridgeConfig::default(),
             },
             riot: RiotConfig {
                 path_override: "/opt/riot".into(),
@@ -1280,6 +1320,7 @@ mod tests {
                 api_key: String::new(),
                 api_key_encrypted: String::new(),
                 path_override: String::new(),
+                cs2_bridge: Cs2BridgeConfig::default(),
             },
             riot: RiotConfig {
                 path_override: String::new(),
@@ -1307,6 +1348,7 @@ mod tests {
                 api_key: "local-key".into(),
                 api_key_encrypted: "local-enc".into(),
                 path_override: "C:\\LocalSteam".into(),
+                cs2_bridge: Cs2BridgeConfig::default(),
             },
             riot: RiotConfig {
                 path_override: "/local/riot".into(),

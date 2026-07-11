@@ -504,6 +504,49 @@ pub fn steam_open_api_key_page() -> Result<(), PlatformError> {
     crate::platforms::steam::open_steam_api_key_page()
 }
 
+#[tauri::command(async)]
+pub fn cs2_bridge_get_settings(
+    app_handle: tauri::AppHandle,
+) -> crate::platforms::steam::cs2_bridge::Cs2BridgeSettings {
+    crate::platforms::steam::cs2_bridge::get_settings(&ctx(&app_handle))
+}
+
+#[tauri::command]
+pub async fn cs2_bridge_set_settings(
+    app_handle: tauri::AppHandle,
+    enabled: bool,
+    url: String,
+    token: Option<String>,
+) -> Result<(), PlatformError> {
+    let c = ctx(&app_handle);
+    run_blocking("cs2_bridge_set_settings", move || {
+        crate::platforms::steam::cs2_bridge::set_settings(&c, enabled, url, token)
+            .map_err(Into::into)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn cs2_bridge_test(
+    app_handle: tauri::AppHandle,
+    client: tauri::State<'_, reqwest::Client>,
+) -> Result<crate::platforms::steam::cs2_bridge::Cs2BridgeTestResult, PlatformError> {
+    Ok(
+        crate::platforms::steam::cs2_bridge::test_connection(&ctx(&app_handle), client.inner())
+            .await,
+    )
+}
+
+#[tauri::command]
+pub async fn cs2_bridge_fetch(
+    app_handle: tauri::AppHandle,
+    client: tauri::State<'_, reqwest::Client>,
+) -> Result<Vec<crate::platforms::steam::cs2_bridge::Cs2BridgeAccount>, PlatformError> {
+    crate::platforms::steam::cs2_bridge::fetch_accounts(&ctx(&app_handle), client.inner())
+        .await
+        .map_err(Into::into)
+}
+
 #[tauri::command]
 pub async fn steam_switch_account_and_launch_game(
     app_handle: tauri::AppHandle,

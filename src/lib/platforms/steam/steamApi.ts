@@ -157,6 +157,53 @@ export async function openSteamApiKeyPage(): Promise<void> {
   await invoke("steam_open_api_key_page");
 }
 
+// CS2 bridge (external CS2 account manager — any server implementing the
+// documented JSON contract works; the URL is fetched as-is)
+
+export interface Cs2BridgeSettings {
+  enabled: boolean;
+  url: string;
+  tokenConfigured: boolean;
+}
+
+export interface Cs2BridgeTestResult {
+  ok: boolean;
+  accountCount: number;
+  latencyMs: number;
+  error: string | null;
+}
+
+export interface Cs2BridgeAccount {
+  steamId: string;
+  level: number | null;
+  xp: number | null;
+  xpMax: number;
+  caseEarned: boolean;
+  weekStartTs: number | null;
+  lastUpdated: string | null;
+}
+
+export async function getCs2BridgeSettings(): Promise<Cs2BridgeSettings> {
+  return invoke<Cs2BridgeSettings>("cs2_bridge_get_settings");
+}
+
+/** `token` null keeps the stored token, empty string clears it. */
+export async function setCs2BridgeSettings(
+  enabled: boolean,
+  url: string,
+  token: string | null,
+): Promise<void> {
+  await invoke("cs2_bridge_set_settings", { enabled, url, token });
+}
+
+export async function fetchCs2BridgeAccounts(): Promise<Cs2BridgeAccount[]> {
+  return invoke<Cs2BridgeAccount[]>("cs2_bridge_fetch");
+}
+
+export async function testCs2Bridge(): Promise<Cs2BridgeTestResult> {
+  return invoke<Cs2BridgeTestResult>("cs2_bridge_test");
+}
+
 // Bulk edit
 
 export interface LaunchOptionEdit {

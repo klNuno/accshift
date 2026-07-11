@@ -39,6 +39,23 @@
           {/each}
         </div>
       {/if}
+      {#if section.progress}
+        {@const pct = section.progress.max > 0 ? Math.min(100, Math.max(0, (section.progress.value / section.progress.max) * 100)) : 0}
+        <div class="progress-row">
+          <div
+            class="progress-track"
+            role="progressbar"
+            aria-valuenow={section.progress.value}
+            aria-valuemin={0}
+            aria-valuemax={section.progress.max}
+          >
+            <div class="progress-fill" style={`width:${pct}%`}></div>
+          </div>
+          {#if section.progress.label}
+            <span class="progress-label">{section.progress.label}</span>
+          {/if}
+        </div>
+      {/if}
       {#if section.chips?.length}
         <div class="chips">
           {#each section.chips as chip (`${chip.tone}-${chip.text}`)}
@@ -155,6 +172,36 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+  }
+
+  .progress-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .progress-track {
+    flex: 1 1 auto;
+    height: 5px;
+    min-width: 0;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--border) 80%, transparent);
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--card-custom-color, #60a5fa) 72%, #ffffff);
+  }
+
+  .progress-label {
+    flex: 0 0 auto;
+    font-size: 9px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--fg-muted);
   }
 
   .chips {
