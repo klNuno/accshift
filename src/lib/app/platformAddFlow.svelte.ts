@@ -25,7 +25,7 @@ type PlatformAddFlowDeps = {
     checkBans?: boolean,
     deferBackground?: boolean,
   ) => void;
-  onAccountAdded?: (platformId: string, accountId: string) => void;
+  onAccountAdded?: (platformId: string, accountId: string, displayName?: string) => void;
 };
 
 function getSetupKey(
@@ -154,27 +154,7 @@ export function createPlatformAddFlowController({
       flow = { ...flow, status: nextStatus };
 
       if (nextStatus.state === "ready") {
-        const adapter = getPlatform(current.platformId);
-        if (
-          getPlatformDefinition(current.platformId)?.capabilities?.primeProfileAfterAdd &&
-          nextStatus.accountId
-        ) {
-          void adapter?.getProfileInfo?.(nextStatus.accountId).catch(() => null);
-        }
-        if (getActiveTab() === current.platformId) {
-          loadAccounts(true, false, false, false, false);
-        }
-        showToast(
-          nextStatus.accountDisplayName
-            ? t(getSetupKey(current.platformId, "readyWithProfile"), {
-                profile: nextStatus.accountDisplayName,
-              })
-            : t(getSetupKey(current.platformId, "ready")),
-        );
-        stop();
-        if (adapter?.setAccountLabel && nextStatus.accountId) {
-          onAccountAdded?.(current.platformId, nextStatus.accountId);
-        }
+        handleReady(current.platformId, nextStatus);
         return;
       }
 
@@ -196,9 +176,36 @@ export function createPlatformAddFlowController({
     }
   }
 
+  function handleReady(platformId: string, status: PlatformAddFlowStatus) {
+    const adapter = getPlatform(platformId);
+    if (getPlatformDefinition(platformId)?.capabilities?.primeProfileAfterAdd && status.accountId) {
+      void adapter?.getProfileInfo?.(status.accountId).catch(() => null);
+    }
+    if (getActiveTab() === platformId) {
+      loadAccounts(true, false, false, false, false);
+    }
+    showToast(
+      status.accountDisplayName
+        ? t(getSetupKey(platformId, "readyWithProfile"), {
+            profile: status.accountDisplayName,
+          })
+        : t(getSetupKey(platformId, "ready")),
+    );
+    stop();
+    if (adapter?.setAccountLabel && status.accountId) {
+      onAccountAdded?.(platformId, status.accountId, status.accountDisplayName);
+    }
+  }
+
   function start(platformId: string, status: PlatformAddFlowStatus) {
     flow = { platformId, status };
-    if (status.state !== "ready" && status.state !== "failed") {
+    // Some setups finish instantly (e.g. Discord adopting the already
+    // signed-in session): run the ready handling instead of polling.
+    if (status.state === "ready") {
+      handleReady(platformId, status);
+      return;
+    }
+    if (status.state !== "failed") {
       schedulePoll();
     }
   }

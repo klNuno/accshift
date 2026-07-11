@@ -12,6 +12,7 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::env;
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use uuid::Uuid;
@@ -27,11 +28,16 @@ const SETUP_QUIT_TIMEOUT_MS: u32 = 8000;
 /// window. A fresh sign-in rewrites the token store, so a stale mtime means the
 /// client never persisted a new session and capturing it would be useless.
 const SETUP_FRESH_WINDOW_MS: u64 = 5 * 60 * 1000;
-/// Discord writes leveldb the instant it opens (login screen included). Without
-/// parsing leveldb we cannot tell "at the login screen" from "signed in", so we
-/// give the user at least this long to actually log in before a fresh leveldb is
-/// accepted as a completed sign-in. See `live_source_ready`.
+/// Discord writes leveldb the instant it opens (login screen included), so a
+/// fresh mtime alone cannot tell "at the login screen" from "signed in". Sign-in
+/// is detected by the identity scan (`scan_live_identity`); this minimum age is
+/// kept as a secondary gate so we never capture leveldb that was written in the
+/// first instants after launch. See `live_source_ready`.
 const SETUP_MIN_LOGIN_MS: u64 = 4000;
+
+/// Cap on how many bytes of a single leveldb file the identity scan reads
+/// (the tail is read, where fresh appends live).
+const IDENTITY_SCAN_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
 /// Snapshot source directories under `%AppData%\discord` (all copied
 /// recursively) and the snapshot sub-directory each maps to.
@@ -71,9 +77,16 @@ pub struct DiscordStartupSnapshot {
 
 #[derive(Clone)]
 struct DiscordSetupJob {
-    /// Id we minted for the account being added (Discord exposes none of its own).
+    /// Fallback id minted for the account being added; used when the identity
+    /// scan yields no usable user id (or one that collides with an existing
+    /// account).
     synthetic_id: String,
     started_at: u64,
+    /// User id of the session that was live when setup began (None when logged
+    /// out or unreadable). "Ready" requires a scanned identity DIFFERENT from
+    /// this one, so the pre-setup session lingering on disk never counts as the
+    /// new sign-in.
+    pre_setup_user_id: Option<String>,
 }
 
 static SETUP_JOBS: SetupJobs<DiscordSetupJob> = SetupJobs::new("Discord", DEFAULT_SETUP_TTL_MS);
@@ -141,9 +154,10 @@ fn resolve_executable(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
 // ---------------------------------------------------------------------------
 
 fn is_valid_discord_account_id(s: &str) -> bool {
-    // We mint these ids ourselves (hex UUIDs). They are joined into filesystem
-    // paths (auth_cache_dir), so restrict to alphanumerics and a sane length to
-    // keep path traversal (`..`, slashes) out.
+    // Ids are either minted by us (hex UUIDs) or adopted from Discord's numeric
+    // user ids. They are joined into filesystem paths (auth_cache_dir), so
+    // restrict to alphanumerics and a sane length to keep path traversal
+    // (`..`, slashes) out.
     !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
@@ -298,6 +312,220 @@ fn clear_live_session() {
 }
 
 // ---------------------------------------------------------------------------
+// Live identity scan (raw leveldb byte scan)
+//
+// PRIVACY CONSTRAINT: this scanner only ever extracts the numeric user id and
+// the public username. It must never read out, log, or store tokens or any
+// other value found in leveldb.
+// ---------------------------------------------------------------------------
+
+/// Local Storage key whose value holds the signed-in user's snowflake id.
+const USER_ID_CACHE_KEY: &[u8] = b"user_id_cache";
+/// Local Storage key whose JSON value pairs account ids with usernames.
+const MULTI_ACCOUNT_STORE_KEY: &[u8] = b"MultiAccountStore";
+const USERNAME_KEY: &[u8] = b"username";
+/// Discord snowflakes are 64-bit decimal ids: 15-21 digits in practice.
+const SNOWFLAKE_MIN_DIGITS: usize = 15;
+const SNOWFLAKE_MAX_DIGITS: usize = 21;
+/// How far past `user_id_cache` the value's digit run may start (leveldb puts a
+/// short length/type prefix and a quote between key and value).
+const USER_ID_VALUE_WINDOW: usize = 64;
+/// How far past `MultiAccountStore` its JSON value is scanned.
+const MULTI_ACCOUNT_WINDOW: usize = 16 * 1024;
+/// How far past an `"id":"<digits>"` match the paired `"username"` may appear.
+const USERNAME_LOOKAHEAD: usize = 256;
+const USERNAME_MAX_LEN: usize = 80;
+
+/// Identity gleaned from the live leveldb. Only the numeric user id and the
+/// public username — never tokens or any other value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DiscordIdentity {
+    user_id: String,
+    username: Option<String>,
+}
+
+/// Every starting index of `needle` in `haystack`.
+fn find_all(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
+    let mut out = Vec::new();
+    if needle.is_empty() {
+        return out;
+    }
+    let mut from = 0;
+    while from + needle.len() <= haystack.len() {
+        match haystack[from..]
+            .windows(needle.len())
+            .position(|w| w == needle)
+        {
+            Some(rel) => {
+                out.push(from + rel);
+                from += rel + 1;
+            }
+            None => break,
+        }
+    }
+    out
+}
+
+/// First maximal ASCII digit run in `window` whose length is in `min..=max`.
+fn first_digit_run(window: &[u8], min: usize, max: usize) -> Option<String> {
+    let mut i = 0;
+    while i < window.len() {
+        if window[i].is_ascii_digit() {
+            let start = i;
+            while i < window.len() && window[i].is_ascii_digit() {
+                i += 1;
+            }
+            if (min..=max).contains(&(i - start)) {
+                return String::from_utf8(window[start..i].to_vec()).ok();
+            }
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// Extract the signed-in user's snowflake id from raw leveldb bytes: the digit
+/// run of the quoted value following the LAST `user_id_cache` record (the log
+/// is append-only, so the last record is the current one). Tolerant of leveldb
+/// value prefixes and quote escaping (`"123"` as well as `\"123\"`).
+fn extract_user_id(bytes: &[u8]) -> Option<String> {
+    find_all(bytes, USER_ID_CACHE_KEY)
+        .into_iter()
+        .rev()
+        .find_map(|pos| {
+            let start = pos + USER_ID_CACHE_KEY.len();
+            let end = (start + USER_ID_VALUE_WINDOW).min(bytes.len());
+            first_digit_run(
+                &bytes[start..end],
+                SNOWFLAKE_MIN_DIGITS,
+                SNOWFLAKE_MAX_DIGITS,
+            )
+        })
+}
+
+/// Read a JSON string value that follows a key token, tolerating leveldb quote
+/// escaping (`\"value\"` as well as `"value"`). The separator run between key
+/// and value must contain a `:` so a bare substring match never counts as a
+/// key. Returns None on a missing terminator (truncated value) or invalid UTF-8.
+fn read_quoted_value(bytes: &[u8]) -> Option<String> {
+    let mut i = 0;
+    let mut saw_colon = false;
+    while i < bytes.len() && i < 8 && matches!(bytes[i], b'"' | b'\\' | b':' | b' ') {
+        saw_colon |= bytes[i] == b':';
+        i += 1;
+    }
+    if !saw_colon {
+        return None;
+    }
+    let start = i;
+    while i < bytes.len()
+        && i - start < USERNAME_MAX_LEN
+        && bytes[i] >= 0x20
+        && !matches!(bytes[i], b'"' | b'\\')
+    {
+        i += 1;
+    }
+    if i == start || !matches!(bytes.get(i), Some(b'"') | Some(b'\\')) {
+        return None;
+    }
+    String::from_utf8(bytes[start..i].to_vec()).ok()
+}
+
+/// Find the username paired with `user_id` inside `MultiAccountStore` JSON
+/// fragments: an `"id":"<user_id>"` (boundaries checked so a different, longer
+/// snowflake never matches) followed closely by `"username":"<name>"`. The last
+/// match wins (append-only log). Best-effort: None when nothing matches.
+fn extract_username(bytes: &[u8], user_id: &str) -> Option<String> {
+    let uid = user_id.as_bytes();
+    if uid.is_empty() {
+        return None;
+    }
+    let mut result = None;
+    for store_pos in find_all(bytes, MULTI_ACCOUNT_STORE_KEY) {
+        let end = (store_pos + MULTI_ACCOUNT_WINDOW).min(bytes.len());
+        let window = &bytes[store_pos..end];
+        for id_pos in find_all(window, uid) {
+            // Reject ids embedded in a longer digit run (a different snowflake).
+            let after_idx = id_pos + uid.len();
+            let before_is_digit = id_pos > 0 && window[id_pos - 1].is_ascii_digit();
+            let after_is_digit = window.get(after_idx).is_some_and(|b| b.is_ascii_digit());
+            if before_is_digit || after_is_digit {
+                continue;
+            }
+            let look_end = (after_idx + USERNAME_LOOKAHEAD).min(window.len());
+            let lookahead = &window[after_idx..look_end];
+            if let Some(key_pos) = find_all(lookahead, USERNAME_KEY).into_iter().next() {
+                if let Some(name) = read_quoted_value(&lookahead[key_pos + USERNAME_KEY.len()..]) {
+                    result = Some(name);
+                }
+            }
+        }
+    }
+    result
+}
+
+/// Read at most `cap` bytes from the END of `path` (leveldb logs are
+/// append-only, so fresh records live in the tail).
+fn read_file_tail(path: &Path, cap: u64) -> Option<Vec<u8>> {
+    let mut file = fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    if len > cap {
+        file.seek(SeekFrom::Start(len - cap)).ok()?;
+    }
+    let mut buf = Vec::new();
+    file.take(cap).read_to_end(&mut buf).ok()?;
+    Some(buf)
+}
+
+/// Leveldb files worth scanning, best first: `.log` before `.ldb` (fresh writes
+/// live in the uncompressed .log; .ldb blocks may be snappy-compressed, so a
+/// raw scan of them is strictly best-effort), then most-recently-modified first.
+fn identity_scan_candidates(leveldb: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(leveldb) else {
+        return Vec::new();
+    };
+    let mut files: Vec<(bool, u64, PathBuf)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_log = match path.extension().and_then(|e| e.to_str()) {
+            Some(ext) if ext.eq_ignore_ascii_case("log") => true,
+            Some(ext) if ext.eq_ignore_ascii_case("ldb") => false,
+            _ => continue,
+        };
+        let modified = fs::metadata(&path)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        files.push((is_log, modified, path));
+    }
+    files.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+    files.into_iter().map(|(_, _, path)| path).collect()
+}
+
+/// Best-effort identity scan over the raw bytes of a leveldb directory. Any IO
+/// or parse issue yields None — callers must treat None as "unknown", never as
+/// "logged out".
+fn scan_identity_in_dir(leveldb: &Path) -> Option<DiscordIdentity> {
+    let files = identity_scan_candidates(leveldb);
+    let user_id = files.iter().find_map(|path| {
+        read_file_tail(path, IDENTITY_SCAN_MAX_BYTES).and_then(|bytes| extract_user_id(&bytes))
+    })?;
+    let username = files.iter().find_map(|path| {
+        read_file_tail(path, IDENTITY_SCAN_MAX_BYTES)
+            .and_then(|bytes| extract_username(&bytes, &user_id))
+    });
+    Some(DiscordIdentity { user_id, username })
+}
+
+/// Scan the live leveldb for the signed-in identity. See `scan_identity_in_dir`.
+fn scan_live_identity() -> Option<DiscordIdentity> {
+    scan_identity_in_dir(&discord_leveldb_dir().ok()?)
+}
+
+// ---------------------------------------------------------------------------
 // Process management
 // ---------------------------------------------------------------------------
 
@@ -362,17 +590,12 @@ fn live_source_present() -> bool {
         .unwrap_or(false)
 }
 
-/// Heuristic sign-in detection for the setup flow. Discord does not expose a
-/// readable account id and we never parse leveldb, so "signed in" is inferred
-/// from the token store: leveldb must hold a file that was written recently and
-/// at least `SETUP_MIN_LOGIN_MS` after setup began. The min-age gate keeps the
-/// leveldb Discord writes at the login screen from being captured before the
-/// user actually logs in.
-///
-/// TODO: this cannot distinguish "sitting at the login screen for a while" from
-/// "logged in". A future leveldb-free improvement could watch the Network cookie
-/// jar for the auth cookie, but the current heuristic matches the file-swap-only
-/// contract for this platform.
+/// Freshness gate for the setup flow, used as a SECONDARY condition alongside
+/// the identity scan (`scan_live_identity`): leveldb must hold a file that was
+/// written recently and at least `SETUP_MIN_LOGIN_MS` after setup began. The
+/// min-age gate keeps the leveldb Discord writes right at launch from being
+/// captured mid-boot. On its own this cannot distinguish "sitting at the login
+/// screen" from "signed in" — that decision belongs to the identity scan.
 fn live_source_ready(started_at: u64) -> bool {
     let Ok(leveldb) = discord_leveldb_dir() else {
         return false;
@@ -512,6 +735,23 @@ fn capture_current_account(app_handle: &dyn AppContext) -> Result<(), String> {
     save_auth_snapshot(app_handle, &current_id)
 }
 
+/// Whether `begin_account_setup` should adopt the live signed-in session as
+/// the new account instead of wiping it and forcing a re-login. Adopt only
+/// when nothing tracks the live session yet: the scanned user id is not a
+/// configured account AND no current account is recorded. A recorded current
+/// account means the live session already belongs to a tracked account —
+/// possibly under an opaque synthetic id, which a raw id comparison cannot
+/// detect — so adopting it would duplicate that account.
+fn should_adopt_live_identity<'a>(
+    user_id: &str,
+    current_account_id: &str,
+    mut known_account_ids: impl Iterator<Item = &'a str>,
+) -> bool {
+    current_account_id.trim().is_empty()
+        && is_valid_discord_account_id(user_id)
+        && !known_account_ids.any(|id| id.trim() == user_id)
+}
+
 fn forget_account_metadata(app_handle: &dyn AppContext, account_id: &str) -> Result<(), String> {
     let key = account_id.trim().to_string();
     config::update_config(app_handle, |cfg| {
@@ -616,8 +856,70 @@ pub fn begin_account_setup(app_handle: &dyn AppContext) -> Result<SetupStatus, S
         "",
     );
 
+    let was_running = is_discord_running();
+
     // Kill the client first so leveldb is flushed and unlocked.
     quit_discord_and_wait();
+
+    // Adopt path: when an as-yet-untracked session is already signed in,
+    // capture it as the new account instead of wiping it and forcing a
+    // re-login (which used to sign the user's base account out just to "add"
+    // it). The identity scan is best-effort: on None we fall through to the
+    // classic clear-and-relogin flow.
+    let live_identity = if live_source_present() {
+        scan_live_identity()
+    } else {
+        None
+    };
+    if let Some(identity) = &live_identity {
+        let cfg = config::load_config(app_handle);
+        if should_adopt_live_identity(
+            &identity.user_id,
+            &cfg.discord.current_account_id,
+            cfg.discord.accounts.iter().map(|a| a.account_id.as_str()),
+        ) {
+            save_auth_snapshot(app_handle, &identity.user_id)?;
+            let _ = remember_account_usage(app_handle, &identity.user_id);
+            let _ = set_current_account(app_handle, &identity.user_id);
+            // Freshly created account: seed its label with the scanned
+            // username so the list never shows a raw id.
+            if let Some(username) = &identity.username {
+                let _ = set_account_label(app_handle, &identity.user_id, username);
+            }
+
+            // Put the client back the way we found it: same session, no login.
+            if was_running {
+                let _ = launch_discord(app_handle).inspect_err(|e| {
+                    log_platform_error(
+                        app_handle,
+                        "discord.begin_account_setup",
+                        "Discord relaunch after adopt failed",
+                        e,
+                    );
+                });
+            }
+
+            log_platform_info(
+                app_handle,
+                "discord.begin_account_setup",
+                "Adopted live Discord session",
+                format!("account={}", super::redact_id(&identity.user_id)),
+            );
+
+            // Terminal status: no job is registered, the wizard never polls.
+            let setup_id = format!("discord-setup-{}", Uuid::new_v4());
+            return Ok(super::make_setup_status(
+                &setup_id,
+                "ready",
+                identity.user_id.clone(),
+                identity
+                    .username
+                    .clone()
+                    .unwrap_or_else(|| identity.user_id.clone()),
+                "",
+            ));
+        }
+    }
 
     // Record + snapshot the current account before clearing its session. Abort
     // if the snapshot cannot be saved: proceeding would delete the live session
@@ -631,6 +933,7 @@ pub fn begin_account_setup(app_handle: &dyn AppContext) -> Result<SetupStatus, S
         DiscordSetupJob {
             synthetic_id,
             started_at: super::now_unix_ms(),
+            pre_setup_user_id: live_identity.map(|identity| identity.user_id),
         },
     )?;
 
@@ -661,36 +964,70 @@ pub fn get_account_setup_status(
 ) -> Result<SetupStatus, String> {
     let job = SETUP_JOBS.touch(setup_id)?;
 
-    // Detect sign-in via the freshly written leveldb (see live_source_ready).
-    if live_source_ready(job.started_at) {
-        // Quit the client so leveldb fully flushes, then verify the source is
-        // still present before capturing under our synthetic id.
-        quit_discord_and_wait();
+    // Sign-in detection. Primary signal: the identity scan finds a user id
+    // DIFFERENT from the one live when setup began (usually None — the session
+    // was cleared). The mtime freshness / minimum-age gates of
+    // live_source_ready stay as secondary conditions. When the scanner finds
+    // nothing we keep waiting even if the freshness gates pass: a client idling
+    // at the login screen also writes leveldb, and reporting ready there used
+    // to add an empty account. A user who never signs in keeps polling until
+    // the wizard cancels or the job TTL expires — no extra timeout needed here.
+    let scanned = scan_live_identity()
+        .filter(|identity| job.pre_setup_user_id.as_deref() != Some(identity.user_id.as_str()));
 
-        if !live_source_present() {
-            // Not persisted yet: keep the job pending so the next poll retries.
+    if let Some(identity) = scanned {
+        if live_source_ready(job.started_at) {
+            // Quit the client so leveldb fully flushes, then verify the source
+            // is still present before capturing.
+            quit_discord_and_wait();
+
+            if !live_source_present() {
+                // Not persisted yet: keep the job pending so the next poll retries.
+                return Ok(super::make_setup_status(
+                    setup_id,
+                    "waiting_for_login",
+                    "",
+                    "",
+                    "",
+                ));
+            }
+
+            // Prefer the real user id as the account id; fall back to the
+            // synthetic id when it is unusable or collides with an existing
+            // account. Accounts added before identity scanning keep their
+            // opaque synthetic ids — ids are never migrated.
+            let cfg = config::load_config(app_handle);
+            let collides = cfg
+                .discord
+                .accounts
+                .iter()
+                .any(|a| a.account_id.trim() == identity.user_id);
+            let account_id = if !collides && is_valid_discord_account_id(&identity.user_id) {
+                identity.user_id.clone()
+            } else {
+                job.synthetic_id.clone()
+            };
+
+            save_auth_snapshot(app_handle, &account_id)?;
+            let _ = remember_account_usage(app_handle, &account_id);
+            let _ = set_current_account(app_handle, &account_id);
+            // Freshly created account: seed its label with the scanned
+            // username so the list never shows a raw id.
+            if let Some(username) = &identity.username {
+                let _ = set_account_label(app_handle, &account_id, username);
+            }
+
+            SETUP_JOBS.remove(setup_id);
+
+            let display_name = identity.username.unwrap_or_else(|| account_id.clone());
             return Ok(super::make_setup_status(
                 setup_id,
-                "waiting_for_login",
-                "",
-                "",
+                "ready",
+                account_id,
+                display_name,
                 "",
             ));
         }
-
-        save_auth_snapshot(app_handle, &job.synthetic_id)?;
-        let _ = remember_account_usage(app_handle, &job.synthetic_id);
-        let _ = set_current_account(app_handle, &job.synthetic_id);
-
-        SETUP_JOBS.remove(setup_id);
-
-        return Ok(super::make_setup_status(
-            setup_id,
-            "ready",
-            job.synthetic_id.clone(),
-            job.synthetic_id,
-            "",
-        ));
     }
 
     if is_discord_running() {
@@ -924,6 +1261,193 @@ mod tests {
 
         assert_eq!(fs::read(&dest).unwrap().as_slice(), body);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    // -- identity scanner ---------------------------------------------------
+
+    const UID: &str = "123456789012345678";
+
+    /// Fake leveldb .log bytes: binary record framing around a `user_id_cache`
+    /// entry and (optionally) a `MultiAccountStore` JSON fragment. The token
+    /// value in the fixture exists to prove the scanner never picks it up.
+    fn fake_log_bytes(user_id: &str, username: Option<&str>) -> Vec<u8> {
+        let mut bytes = vec![0u8, 1, 27, 255, 0x03];
+        bytes.extend_from_slice(b"_https://discord.com\x00\x01user_id_cache\x01\"");
+        bytes.extend_from_slice(user_id.as_bytes());
+        bytes.extend_from_slice(b"\"\x00\x00");
+        if let Some(name) = username {
+            bytes.extend_from_slice(b"\x01MultiAccountStore\x01{\"_state\":{\"users\":[{\"id\":\"");
+            bytes.extend_from_slice(user_id.as_bytes());
+            bytes.extend_from_slice(b"\",\"username\":\"");
+            bytes.extend_from_slice(name.as_bytes());
+            bytes.extend_from_slice(b"\",\"token\":\"MUST-NEVER-BE-READ\"}]}}");
+        }
+        bytes
+    }
+
+    #[test]
+    fn extract_user_id_finds_quoted_snowflake() {
+        let bytes = fake_log_bytes(UID, None);
+        assert_eq!(extract_user_id(&bytes).as_deref(), Some(UID));
+    }
+
+    #[test]
+    fn extract_user_id_prefers_last_occurrence() {
+        let mut bytes = fake_log_bytes("999888777666555444", None);
+        bytes.extend_from_slice(&fake_log_bytes(UID, None));
+        assert_eq!(extract_user_id(&bytes).as_deref(), Some(UID));
+    }
+
+    #[test]
+    fn extract_user_id_tolerates_escaped_quotes() {
+        let mut bytes = b"junk\x00user_id_cache\x01\\\"".to_vec();
+        bytes.extend_from_slice(UID.as_bytes());
+        bytes.extend_from_slice(b"\\\"tail");
+        assert_eq!(extract_user_id(&bytes).as_deref(), Some(UID));
+    }
+
+    #[test]
+    fn extract_user_id_rejects_short_digit_runs() {
+        // 8 digits is not a snowflake: must not be mistaken for a user id.
+        let bytes = b"user_id_cache\x01\"12345678\"".to_vec();
+        assert_eq!(extract_user_id(&bytes), None);
+    }
+
+    #[test]
+    fn extract_user_id_without_key_is_none() {
+        let bytes = format!("no key here, just digits {UID}").into_bytes();
+        assert_eq!(extract_user_id(&bytes), None);
+    }
+
+    #[test]
+    fn extract_username_matches_id() {
+        let bytes = fake_log_bytes(UID, Some("cooluser"));
+        assert_eq!(extract_username(&bytes, UID).as_deref(), Some("cooluser"));
+    }
+
+    #[test]
+    fn extract_username_accepts_utf8() {
+        let bytes = fake_log_bytes(UID, Some("émilie"));
+        assert_eq!(extract_username(&bytes, UID).as_deref(), Some("émilie"));
+    }
+
+    #[test]
+    fn extract_username_tolerates_escaped_quotes() {
+        let mut bytes = b"\x01MultiAccountStore\x01{\\\"users\\\":[{\\\"id\\\":\\\"".to_vec();
+        bytes.extend_from_slice(UID.as_bytes());
+        bytes.extend_from_slice(b"\\\",\\\"username\\\":\\\"escapee\\\"}]}");
+        assert_eq!(extract_username(&bytes, UID).as_deref(), Some("escapee"));
+    }
+
+    #[test]
+    fn extract_username_id_mismatch_is_none() {
+        let bytes = fake_log_bytes(UID, Some("cooluser"));
+        assert_eq!(extract_username(&bytes, "999888777666555444"), None);
+    }
+
+    #[test]
+    fn extract_username_without_store_is_none() {
+        let bytes = fake_log_bytes(UID, None);
+        assert_eq!(extract_username(&bytes, UID), None);
+    }
+
+    #[test]
+    fn extract_username_rejects_embedded_id() {
+        // The searched id appears only inside a LONGER snowflake: no match.
+        let longer = format!("9{UID}");
+        let bytes = fake_log_bytes(&longer, Some("otheruser"));
+        assert_eq!(extract_username(&bytes, UID), None);
+    }
+
+    #[test]
+    fn read_quoted_value_requires_colon_separator() {
+        // "username" matched as a bare substring (e.g. `username_history`)
+        // must not yield a value.
+        assert_eq!(read_quoted_value(b"_history\":\"nope\""), None);
+    }
+
+    #[test]
+    fn scan_identity_in_dir_reads_log() {
+        let dir = scratch_dir("scan-log");
+        fs::write(
+            dir.join("000003.log"),
+            fake_log_bytes(UID, Some("cooluser")),
+        )
+        .unwrap();
+        let identity = scan_identity_in_dir(&dir).unwrap();
+        assert_eq!(identity.user_id, UID);
+        assert_eq!(identity.username.as_deref(), Some("cooluser"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_identity_in_dir_empty_is_none() {
+        let dir = scratch_dir("scan-empty");
+        assert_eq!(scan_identity_in_dir(&dir), None);
+        fs::write(dir.join("MANIFEST-000001"), b"not scanned").unwrap();
+        assert_eq!(scan_identity_in_dir(&dir), None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_identity_prefers_log_over_ldb() {
+        let dir = scratch_dir("scan-priority");
+        fs::write(
+            dir.join("000010.ldb"),
+            fake_log_bytes("999888777666555444", Some("stale")),
+        )
+        .unwrap();
+        fs::write(dir.join("000003.log"), fake_log_bytes(UID, Some("fresh"))).unwrap();
+        let identity = scan_identity_in_dir(&dir).unwrap();
+        assert_eq!(identity.user_id, UID);
+        assert_eq!(identity.username.as_deref(), Some("fresh"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // -- adopt decision -----------------------------------------------------
+
+    #[test]
+    fn adopts_untracked_identity() {
+        assert!(should_adopt_live_identity(UID, "", [].iter().copied()));
+        assert!(should_adopt_live_identity(
+            UID,
+            "  ",
+            ["999888777666555444"].iter().copied()
+        ));
+    }
+
+    #[test]
+    fn does_not_adopt_when_current_account_recorded() {
+        // A recorded current account may own the live session under a synthetic
+        // id: adopting would duplicate it.
+        assert!(!should_adopt_live_identity(
+            UID,
+            "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
+            [].iter().copied()
+        ));
+    }
+
+    #[test]
+    fn does_not_adopt_known_identity() {
+        assert!(!should_adopt_live_identity(UID, "", [UID].iter().copied()));
+        // Tolerates padding in stored ids.
+        let padded = format!(" {UID} ");
+        assert!(!should_adopt_live_identity(
+            UID,
+            "",
+            [padded.as_str()].iter().copied()
+        ));
+    }
+
+    #[test]
+    fn does_not_adopt_invalid_identity() {
+        assert!(!should_adopt_live_identity("", "", [].iter().copied()));
+        let too_long = "1".repeat(65);
+        assert!(!should_adopt_live_identity(
+            &too_long,
+            "",
+            [].iter().copied()
+        ));
     }
 
     #[test]
