@@ -122,20 +122,22 @@
       </span>
       <button class="inline-link-btn" type="button" onclick={onOpenSteamApiKeyPage}>{t("settings.getKey")}</button>
     </div>
-    <input
-      id="api-key"
-      type="password"
-      bind:value={apiKey}
-      class="text-input"
-      class:invalid={apiKeyError}
-      placeholder={t("settings.pasteApiKey")}
-      oninput={(e) => onApiKeyInput((e.currentTarget as HTMLInputElement).value)}
-    />
+    <div class="input-row">
+      <input
+        id="api-key"
+        type="password"
+        bind:value={apiKey}
+        class="text-input"
+        class:invalid={apiKeyError}
+        placeholder={t("settings.pasteApiKey")}
+        oninput={(e) => onApiKeyInput((e.currentTarget as HTMLInputElement).value)}
+      />
+      {#if apiKeyConfigured}
+        <button class="clear-key-btn" type="button" onclick={onClearApiKey}>{t("settings.clearApiKey")}</button>
+      {/if}
+    </div>
     {#if apiKeyError}
       <p class="error-hint">{t("settings.apiKeyInvalidHint")}</p>
-    {/if}
-    {#if apiKeyConfigured}
-      <button class="clear-key-btn" type="button" onclick={onClearApiKey}>{t("settings.clearApiKey")}</button>
     {/if}
   </div>
 
@@ -213,9 +215,13 @@
 
   .card h3 {
     margin: 0;
-    font-size: 13px;
-    font-weight: 650;
-    color: var(--fg);
+    padding-bottom: 8px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--fg-muted);
   }
 
   .platform-display-card {
@@ -300,14 +306,15 @@
   }
 
   .clear-key-btn {
-    align-self: flex-start;
+    flex-shrink: 0;
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--bg-card);
     color: var(--fg-muted);
     font-size: 11px;
-    padding: 5px 10px;
+    padding: 0 10px;
     cursor: pointer;
+    white-space: nowrap;
     transition: border-color 120ms ease-out, color 120ms ease-out;
   }
 

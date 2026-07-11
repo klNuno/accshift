@@ -140,6 +140,7 @@
     </label>
     <ToggleSetting
       label={t("settings.streamerMode")}
+      description={t("settings.streamerModeHint")}
       enabled={settings.streamerMode === "auto"}
       accent={neutralAccent}
       onLabel={t("common.enabled")}
@@ -148,7 +149,6 @@
         settings.streamerMode = settings.streamerMode === "auto" ? "off" : "auto";
       }}
     />
-    <p class="hint">{t("settings.streamerModeHint")}</p>
   </section>
 
   <section class="card">
@@ -193,16 +193,17 @@
 
       <ToggleSetting
         label={t("settings.telemetryModeA")}
+        description={t("settings.telemetryModeAHint")}
         enabled={telemetry.mode_a_enabled}
         accent={neutralAccent}
         onLabel={t("common.enabled")}
         offLabel={t("common.disabled")}
         onToggle={toggleModeA}
       />
-      <p class="hint">{t("settings.telemetryModeAHint")}</p>
 
       <ToggleSetting
         label={t("settings.telemetryModeB")}
+        description={t("settings.telemetryModeBHint")}
         enabled={telemetry.mode_b_enabled}
         accent={neutralAccent}
         onLabel={t("common.enabled")}
@@ -210,7 +211,6 @@
         disabled={modeBBusy}
         onToggle={toggleModeB}
       />
-      <p class="hint">{t("settings.telemetryModeBHint")}</p>
 
       {#if telemetry.mode_b_enabled && telemetry.install_id_set}
         <button

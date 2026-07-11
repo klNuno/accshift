@@ -73,6 +73,9 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.theme": "Thème",
   "settings.uiZoom": "Zoom UI",
   "settings.backgroundOpacity": "Opacité du fond",
+  "settings.backgroundBlur": "Flou d'arrière-plan",
+  "settings.backgroundBlurHint":
+    "Floute ce qui se trouve derrière la fenêtre (Windows uniquement).",
   "settings.animations": "Animations",
   "settings.animationsSystem": "Suivre le système",
   "settings.animationsOn": "Toujours actives",
@@ -81,8 +84,11 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.suspendGraphicsWhenMinimized": "Couper le rendu quand minimisé",
   "settings.minimizeOnAccountSwitch": "Minimiser lors d'un changement de compte",
   "settings.platforms": "Plateformes",
+  "settings.platformSearchPlaceholder": "Rechercher une plateforme...",
+  "settings.platformSearchNoResults": "Aucune plateforme ne correspond à la recherche.",
   "settings.accountDisplay": "Affichage des comptes",
-  "settings.defaultOnStartup": "Par défaut au démarrage",
+  "settings.startupAndExtras": "Démarrage",
+  "settings.defaultOnStartup": "Plateforme par défaut au démarrage",
   "settings.platformDisabledSuffix": "(désactivé)",
   "settings.platformUnsupportedOs": "OS non supporté",
   "settings.platformNotImplemented": "Prévu",
@@ -125,10 +131,10 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.pinLockOnAfk": "Verrou PIN en AFK",
   "settings.pinCode": "Code PIN",
   "settings.pinPlaceholder": "4 chiffres",
-  "settings.telemetry": "Statistiques d'utilisation",
+  "settings.telemetry": "Statistiques d'utilisation (anonymes)",
   "settings.telemetryModeA": "Stats anonymes de base",
   "settings.telemetryModeAHint":
-    "Compte combien de fois Accshift est lancé et quelles fonctionnalités sont utilisées. Aucun identifiant sur ta machine, aucune donnée personnelle envoyée. Sert à repérer quoi corriger et améliorer.",
+    "Compte les lancements et les fonctionnalités utilisées. Un identifiant local aléatoire évite les doublons d'installation ; aucune donnée personnelle n'est envoyée.",
   "settings.telemetryModeB": "Stats avancées avec UUID local (opt-in)",
   "settings.telemetryModeBHint":
     "Ajoute un UUID aléatoire stocké uniquement sur ta machine. Permet de mesurer la rétention et quelles fonctionnalités comptent. Toujours aucune donnée personnelle envoyée.",
@@ -137,9 +143,9 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.telemetryExportFailed": "Échec de l'export",
   "settings.telemetryDisableFailed": "Impossible de désactiver les stats avancées",
   "settings.telemetryLearnMore": "Quelles données sont envoyées ?",
-  "settings.sendLogs": "Envoyer mes logs à l'équipe",
+  "settings.sendLogs": "Envoyer mes logs (anonymement)",
   "settings.sendLogsHint":
-    "Inclut les logs de la session courante et de la précédente. Les chemins et emails sont expurgés avant envoi.",
+    "Inclut les logs de la session courante et de la précédente. Chemins, emails et identifiants de comptes sont expurgés avant envoi ; rien dans l'envoi ne permet de t'identifier.",
   "settings.sendLogsNoteLabel": "Quel est le problème ? (optionnel)",
   "settings.sendLogsNotePlaceholder":
     "Décrivez ce qui s'est mal passé, ce que vous faisiez, tout ce qui peut aider à reproduire.",
@@ -172,14 +178,15 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "onboarding.telemetry.question": "Marché conclu ?",
   "onboarding.telemetry.gifAlt": "Mème Trade Offer",
   "onboarding.telemetry.no": "Non merci",
-  "onboarding.telemetry.noHint": "N'envoyer RIEN. JE NE VEUX PAS AIDER ACCSHIFT >:c",
+  "onboarding.telemetry.noHint":
+    "N'envoyer aucune statistique d'utilisation. Seul ce choix anonyme est compté.",
   "onboarding.telemetry.basic": "Oui, basique",
   "onboarding.telemetry.basicDefault": "(par défaut)",
   "onboarding.telemetry.basicHint":
-    "Compteurs anonymes uniquement. Aucun identifiant sur ta machine. Tu aides, mais juste un peu.",
+    "Compteurs anonymes uniquement. Un identifiant local aléatoire évite les doublons. Tu aides, mais juste un peu.",
   "onboarding.telemetry.deal": "MARCHÉ CONCLU",
   "onboarding.telemetry.dealHint":
-    "Ajoute un UUID aléatoire stocké uniquement sur ta machine. Je ne sais toujours pas qui tu es, mais tu aides beaucoup. Merci !",
+    "Ajoute un UUID distinct pour les stats avancées, stocké uniquement sur ta machine. Je ne sais toujours pas qui tu es, mais tu aides beaucoup. Merci !",
   "onboarding.telemetry.back": "Retour",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
@@ -215,7 +222,7 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.integrations": "Intégrations",
   "settings.deepLinks": "Autoriser les liens accshift://",
   "settings.deepLinksHint":
-    "Laisse d'autres applications changer de compte pour toi : un favori de navigateur, une touche Stream Deck, un script AutoHotkey - tout ce qui peut ouvrir un lien.",
+    "Laisse d'autres applications changer de compte pour toi : favoris, Stream Deck, scripts.",
   "settings.help": "Ouvrir le wiki accshift",
   "settings.openHelpFailed": "Impossible d'ouvrir le wiki",
 
@@ -526,6 +533,9 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "theme.dark": "Sombre",
   "theme.light": "Clair",
   "theme.midnight": "Minuit",
+  "theme.glassDark": "Verre sombre",
+  "theme.glassLight": "Verre clair",
+  "theme.liquidGlass": "Verre liquide",
   "theme.custom": "Personnalisé",
   "settings.themeImport": "Importer",
   "settings.themeExport": "Exporter",

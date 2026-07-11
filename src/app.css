@@ -49,6 +49,13 @@
   --motion-page-entrance: 200ms;
 }
 
+/* Placeholders must read as hints, not typed text. */
+input::placeholder,
+textarea::placeholder {
+  color: color-mix(in srgb, var(--fg-subtle) 55%, transparent);
+  opacity: 1;
+}
+
 body {
   margin: 0;
   height: 100vh;

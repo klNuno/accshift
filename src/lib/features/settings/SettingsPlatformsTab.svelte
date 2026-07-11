@@ -18,9 +18,19 @@
     runtimeOs?: RuntimeOs;
   } = $props();
 
+  let platformSearch = $state("");
+
   let visiblePlatformOptions = $derived.by(() =>
     ALL_PLATFORMS.filter((platform) => platform.implemented || settings.enabledPlatforms.includes(platform.id))
   );
+
+  let filteredPlatformOptions = $derived.by(() => {
+    const query = platformSearch.trim().toLowerCase();
+    if (!query) return visiblePlatformOptions;
+    return visiblePlatformOptions.filter((platform) =>
+      platform.name.toLowerCase().includes(query) || platform.id.toLowerCase().includes(query),
+    );
+  });
 
   function isPlatformOsCompatible(platformId: string): boolean {
     const definition = getPlatformDefinition(platformId);
@@ -67,24 +77,14 @@
 <div class="settings-grid">
   <section class="card card-wide">
     <h3>{t("settings.platforms")}</h3>
+    <input
+      type="search"
+      class="text-input platform-search"
+      placeholder={t("settings.platformSearchPlaceholder")}
+      bind:value={platformSearch}
+    />
     <div class="platforms">
-      <button
-        class="platform-chip"
-        role="switch"
-        aria-checked={settings.personasEnabled}
-        onclick={() => (settings.personasEnabled = !settings.personasEnabled)}
-        style="--chip-accent:#a855f7;"
-        title={t("personas.title")}
-      >
-        <span class="platform-main">
-          <span>{t("personas.title")}</span>
-          <span class="platform-status">{t("settings.personasHint")}</span>
-        </span>
-        <div class="toggle" class:active={settings.personasEnabled} aria-hidden="true">
-          <div class="knob"></div>
-        </div>
-      </button>
-      {#each visiblePlatformOptions as platform}
+      {#each filteredPlatformOptions as platform (platform.id)}
         {@const isSelectable = isPlatformSelectable(platform.id)}
         {@const isEnabled = settings.enabledPlatforms.includes(platform.id)}
         {@const isLocked = !isSelectable && !isEnabled}
@@ -109,13 +109,16 @@
             <div class="knob"></div>
           </div>
         </button>
+      {:else}
+        <p class="no-results">{t("settings.platformSearchNoResults")}</p>
       {/each}
     </div>
   </section>
 
   <section class="card">
-    <h3>{t("settings.defaultOnStartup")}</h3>
+    <h3>{t("settings.startupAndExtras")}</h3>
     <label class="field">
+      <span class="field-label">{t("settings.defaultOnStartup")}</span>
       <select class="text-input select-input" bind:value={settings.defaultPlatformId}>
         {#each visiblePlatformOptions as platform}
           {@const disabled = !settings.enabledPlatforms.includes(platform.id) || !isPlatformSelectable(platform.id)}
@@ -125,6 +128,22 @@
         {/each}
       </select>
     </label>
+    <button
+      class="platform-chip"
+      role="switch"
+      aria-checked={settings.personasEnabled}
+      onclick={() => (settings.personasEnabled = !settings.personasEnabled)}
+      style="--chip-accent:#a855f7;"
+      title={t("personas.title")}
+    >
+      <span class="platform-main">
+        <span>{t("personas.title")}</span>
+        <span class="platform-status">{t("settings.personasHint")}</span>
+      </span>
+      <div class="toggle" class:active={settings.personasEnabled} aria-hidden="true">
+        <div class="knob"></div>
+      </div>
+    </button>
   </section>
 </div>
 
@@ -133,6 +152,17 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+  }
+
+  .platform-search {
+    max-width: 320px;
+  }
+
+  .no-results {
+    margin: 0;
+    font-size: 12px;
+    color: var(--fg-subtle);
+    padding: 6px 2px;
   }
 
   .platform-chip {

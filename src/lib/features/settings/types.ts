@@ -25,6 +25,8 @@ export interface AppSettings {
   language: Locale;
   themeId: string;
   backgroundOpacity: number;
+  /** 0 disables the OS backdrop blur behind the window; higher = stronger tint. */
+  backgroundBlur: number;
   uiScalePercent: number;
   animations: AnimationsMode;
   streamerMode: StreamerMode;

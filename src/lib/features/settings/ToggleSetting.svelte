@@ -1,6 +1,7 @@
 <script lang="ts">
   let {
     label,
+    description = "",
     enabled = false,
     accent = "#71717a",
     onLabel = "On",
@@ -9,6 +10,7 @@
     onToggle,
   }: {
     label: string;
+    description?: string;
     enabled: boolean;
     accent?: string;
     onLabel?: string;
@@ -27,7 +29,12 @@
   style={`--chip-accent:${accent};`}
   onclick={onToggle}
 >
-  <span class="label">{label}</span>
+  <span class="main">
+    <span class="label">{label}</span>
+    {#if description}
+      <span class="description">{description}</span>
+    {/if}
+  </span>
   <div class="right">
     <strong>{enabled ? onLabel : offLabel}</strong>
     <div class="toggle" class:active={enabled}>
@@ -52,9 +59,24 @@
     font-size: 12px;
   }
 
+  .main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+  }
+
   .label {
     min-width: 0;
     text-align: left;
+  }
+
+  .description {
+    font-size: 11px;
+    color: var(--fg-subtle);
+    text-align: left;
+    line-height: 1.4;
   }
 
   .right {

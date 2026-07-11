@@ -33,6 +33,7 @@
   import { trackDependencies } from "$lib/shared/trackDependencies";
   import { createPlatformShellState, isPlatformUsable } from "$lib/app/platformShell.svelte";
   import { applyThemeToDocument } from "$lib/theme/themes";
+  import { applyWindowBackdrop } from "$lib/theme/backdrop";
   import { applyMotionPreference } from "$lib/theme/motion";
   import { ensurePlatformLoaded } from "$lib/platforms/registry";
   import {
@@ -986,6 +987,11 @@
   $effect(() => {
     applyThemeToDocument(shell.activeTheme, shell.settings.backgroundOpacity);
     document.documentElement.lang = shell.locale;
+    // Glass themes need the OS backdrop blur to read as glass, whatever the slider says.
+    const blur = shell.activeTheme.glass
+      ? Math.max(shell.settings.backgroundBlur, 60)
+      : shell.settings.backgroundBlur;
+    void applyWindowBackdrop(blur);
   });
 
   $effect(() => applyMotionPreference(settings.animations));

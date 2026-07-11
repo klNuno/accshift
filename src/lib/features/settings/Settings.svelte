@@ -57,6 +57,7 @@
   let pinCodeInput = $state("");
   const uiScale = createNumericInput(() => settings.uiScalePercent, (v) => { settings.uiScalePercent = v; }, 75, 150);
   const bgOpacity = createNumericInput(() => settings.backgroundOpacity, (v) => { settings.backgroundOpacity = v; }, 0, 100);
+  const bgBlur = createNumericInput(() => settings.backgroundBlur, (v) => { settings.backgroundBlur = v; }, 0, 100);
   const avatarCacheDays = createNumericInput(() => settings.dataRefresh.avatarCacheDays, (v) => { settings.dataRefresh.avatarCacheDays = v; }, 0, 90);
   const banCheckDays = createNumericInput(() => settings.dataRefresh.banCheckDays, (v) => { settings.dataRefresh.banCheckDays = v; }, 0, 90);
   const inactivityBlur = createNumericInput(() => settings.inactivityBlurSeconds, (v) => { settings.inactivityBlurSeconds = v; }, 0, 3600);
@@ -115,6 +116,7 @@
     settings.themeId = getThemeDefinition(settings.themeId).id;
     settings.language = normalizeLocale(settings.language);
     settings.backgroundOpacity = clampInt(settings.backgroundOpacity, 0, 100, 100);
+    settings.backgroundBlur = clampInt(settings.backgroundBlur, 0, 100, 0);
     settings.uiScalePercent = clampInt(settings.uiScalePercent, 75, 150, 100);
     settings.suspendGraphicsWhenMinimized = settings.suspendGraphicsWhenMinimized !== false;
     settings.minimizeOnAccountSwitch = Boolean(settings.minimizeOnAccountSwitch);
@@ -156,6 +158,7 @@
   function refreshNumericInputsFromSettings() {
     uiScale.refresh();
     bgOpacity.refresh();
+    bgBlur.refresh();
     avatarCacheDays.refresh();
     banCheckDays.refresh();
     inactivityBlur.refresh();
@@ -405,6 +408,7 @@
       settings.inactivityBlurSeconds,
       settings.themeId,
       settings.backgroundOpacity,
+      settings.backgroundBlur,
       settings.animations,
       settings.suspendGraphicsWhenMinimized,
       settings.minimizeOnAccountSwitch,
@@ -518,6 +522,7 @@
         {t}
         {uiScale}
         {bgOpacity}
+        {bgBlur}
         neutralAccent={NEUTRAL_CONTROL_ACCENT}
       />
     {/if}
@@ -759,10 +764,11 @@
     background: color-mix(in srgb, var(--bg-card) 84%, #000 16%);
     border: 1px solid color-mix(in srgb, var(--border) 80%, #fff 20%);
     border-radius: 12px;
-    padding: 14px;
+    padding: 16px;
     display: flex;
     flex-direction: column;
     gap: 12px;
+    align-self: start;
   }
 
   .settings-panel :global(.card-wide) {
@@ -771,9 +777,13 @@
 
   .settings-panel :global(.card h3) {
     margin: 0;
-    font-size: 13px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+    font-size: 12px;
     font-weight: 700;
-    color: var(--fg);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--fg-muted);
   }
 
   .settings-panel :global(.field) {

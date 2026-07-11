@@ -9,6 +9,7 @@
     exportThemeJson,
   } from "$lib/theme/themes";
   import { LANGUAGE_OPTIONS, type MessageKey, type TranslationParams } from "$lib/i18n";
+  import { invoke } from "@tauri-apps/api/core";
   import { addToast } from "../notifications/store.svelte";
   import ToggleSetting from "./ToggleSetting.svelte";
   import type { AppSettings } from "./types";
@@ -18,14 +19,26 @@
     t,
     uiScale,
     bgOpacity,
+    bgBlur,
     neutralAccent,
   }: {
     settings: AppSettings;
     t: (key: MessageKey, params?: TranslationParams) => string;
     uiScale: { input: string; commit: () => void };
     bgOpacity: { input: string; commit: () => void };
+    bgBlur: { input: string; commit: () => void };
     neutralAccent: string;
   } = $props();
+
+  const INTEGRATIONS_WIKI_URL = "https://github.com/klNuno/accshift/wiki/Settings";
+
+  async function openIntegrationsWiki() {
+    try {
+      await invoke("open_url", { url: INTEGRATIONS_WIKI_URL });
+    } catch {
+      addToast(t("settings.openHelpFailed"), { type: "error" });
+    }
+  }
 </script>
 
 <div class="settings-grid">
@@ -41,7 +54,8 @@
     </label>
 
     <label class="field">
-      <span class="field-label">{t("settings.uiZoom")} - {settings.uiScalePercent}%</span>
+      <span class="field-label">{t("settings.uiZoom")} - {uiScale.input}%</span>
+      <!-- Zoom relayouts the whole app: preview the value while dragging, apply on release. -->
       <input
         type="range"
         min="75"
@@ -49,6 +63,9 @@
         step="5"
         value={uiScale.input}
         oninput={(e) => {
+          uiScale.input = (e.currentTarget as HTMLInputElement).value;
+        }}
+        onchange={(e) => {
           uiScale.input = (e.currentTarget as HTMLInputElement).value;
           uiScale.commit();
         }}
@@ -138,6 +155,23 @@
         class="slider-input"
       />
     </label>
+
+    <label class="field">
+      <span class="field-label">{t("settings.backgroundBlur")} - {settings.backgroundBlur}%</span>
+      <input
+        type="range"
+        min="0"
+        max="100"
+        step="10"
+        value={bgBlur.input}
+        oninput={(e) => {
+          bgBlur.input = (e.currentTarget as HTMLInputElement).value;
+          bgBlur.commit();
+        }}
+        class="slider-input"
+      />
+      <span class="hint">{t("settings.backgroundBlurHint")}</span>
+    </label>
   </section>
 
   <section class="card">
@@ -180,16 +214,25 @@
   </section>
 
   <section class="card">
-    <h3>{t("settings.integrations")}</h3>
+    <div class="card-title-row">
+      <h3>{t("settings.integrations")}</h3>
+      <button
+        type="button"
+        class="wiki-btn"
+        onclick={openIntegrationsWiki}
+        title={t("settings.help")}
+        aria-label={t("settings.help")}
+      >?</button>
+    </div>
     <ToggleSetting
       label={t("settings.deepLinks")}
+      description={t("settings.deepLinksHint")}
       enabled={settings.deepLinksEnabled}
       accent={neutralAccent}
       onLabel={t("common.enabled")}
       offLabel={t("common.disabled")}
       onToggle={() => settings.deepLinksEnabled = !settings.deepLinksEnabled}
     />
-    <p class="hint">{t("settings.deepLinksHint")}</p>
     <code class="deep-link-example">accshift://switch/steam/&lt;account&gt;</code>
   </section>
 </div>
@@ -301,6 +344,42 @@
     display: flex;
     gap: 8px;
     margin-top: 4px;
+  }
+
+  .card-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  }
+
+  /* The row carries the header divider so it spans past the ? button. */
+  .card-title-row h3 {
+    margin: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+
+  .wiki-btn {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--fg-subtle);
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: border-color 120ms ease-out, color 120ms ease-out;
+  }
+
+  .wiki-btn:hover {
+    color: var(--fg);
+    border-color: color-mix(in srgb, var(--fg) 35%, var(--border));
   }
 
   .deep-link-example {

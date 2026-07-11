@@ -20,6 +20,8 @@ export interface AppThemeDefinition {
   labelKey: MessageKey;
   colorScheme: "dark" | "light";
   tokens: ThemeTokens;
+  /** Glassmorphism theme: caps surface opacities low so the backdrop shows through. */
+  glass?: boolean;
   isCustom?: boolean;
   displayName?: string;
 }
@@ -105,6 +107,63 @@ export const BUILT_IN_THEMES: AppThemeDefinition[] = [
       border: "#1c2744",
       danger: "#ef4444",
       afkText: "#dce2f0",
+    },
+  },
+  {
+    id: "glass-dark",
+    labelKey: "theme.glassDark",
+    colorScheme: "dark",
+    glass: true,
+    tokens: {
+      bgRgb: "16 16 20",
+      bgCard: "#2a2a32",
+      bgCardHover: "#34343e",
+      bgMuted: "#32323c",
+      bgElevated: "#4a4a58",
+      fg: "#f4f4f6",
+      fgMuted: "#b4b4c0",
+      fgSubtle: "#84848f",
+      border: "#3c3c48",
+      danger: "#ef4444",
+      afkText: "#ffffff",
+    },
+  },
+  {
+    id: "glass-light",
+    labelKey: "theme.glassLight",
+    colorScheme: "light",
+    glass: true,
+    tokens: {
+      bgRgb: "236 238 244",
+      bgCard: "#fbfbfd",
+      bgCardHover: "#f0f1f6",
+      bgMuted: "#e2e4ec",
+      bgElevated: "#c8ccd8",
+      fg: "#101018",
+      fgMuted: "#3a3a48",
+      fgSubtle: "#5e5e70",
+      border: "#c2c6d2",
+      danger: "#dc2626",
+      afkText: "#000000",
+    },
+  },
+  {
+    id: "liquid-glass",
+    labelKey: "theme.liquidGlass",
+    colorScheme: "dark",
+    glass: true,
+    tokens: {
+      bgRgb: "12 20 32",
+      bgCard: "#1c3048",
+      bgCardHover: "#244059",
+      bgMuted: "#203850",
+      bgElevated: "#33526e",
+      fg: "#eaf2fa",
+      fgMuted: "#9fb4c8",
+      fgSubtle: "#6c8299",
+      border: "#2a4258",
+      danger: "#ef4444",
+      afkText: "#eaf2fa",
     },
   },
 ] as const;
@@ -241,11 +300,22 @@ export function applyThemeToDocument(
   backgroundOpacityPercent: number,
   doc: Document = document,
 ) {
-  const windowOpacity = Math.min(100, Math.max(0, backgroundOpacityPercent)) / 100;
-  const cardOpacity = Math.min(1, Math.max(windowOpacity + 0.14, 0.66));
-  const hoverOpacity = Math.min(1, Math.max(cardOpacity + 0.06, 0.72));
-  const mutedOpacity = Math.min(1, Math.max(windowOpacity + 0.18, 0.72));
-  const elevatedOpacity = Math.min(1, Math.max(windowOpacity + 0.22, 0.78));
+  const rawOpacity = Math.min(100, Math.max(0, backgroundOpacityPercent)) / 100;
+  // Glass themes cap the window fill low and keep surfaces translucent so the
+  // OS backdrop blur shows through; regular themes keep opaque-ish surfaces.
+  const windowOpacity = theme.glass ? Math.min(rawOpacity, 0.55) : rawOpacity;
+  const cardOpacity = theme.glass
+    ? Math.min(0.72, Math.max(windowOpacity + 0.1, 0.4))
+    : Math.min(1, Math.max(windowOpacity + 0.14, 0.66));
+  const hoverOpacity = theme.glass
+    ? Math.min(0.8, cardOpacity + 0.08)
+    : Math.min(1, Math.max(cardOpacity + 0.06, 0.72));
+  const mutedOpacity = theme.glass
+    ? Math.min(0.78, Math.max(windowOpacity + 0.14, 0.46))
+    : Math.min(1, Math.max(windowOpacity + 0.18, 0.72));
+  const elevatedOpacity = theme.glass
+    ? Math.min(0.85, Math.max(windowOpacity + 0.2, 0.55))
+    : Math.min(1, Math.max(windowOpacity + 0.22, 0.78));
   const overlayOpacity = Math.min(1, Math.max(windowOpacity + 0.3, 0.86));
   const root = doc.documentElement;
   const bgCardRgb = hexToRgbTriplet(theme.tokens.bgCard);
@@ -254,6 +324,7 @@ export function applyThemeToDocument(
   const bgElevatedRgb = hexToRgbTriplet(theme.tokens.bgElevated);
 
   root.dataset.theme = theme.id;
+  root.dataset.glass = theme.glass ? "1" : "0";
   root.style.colorScheme = theme.colorScheme;
   root.style.setProperty("--bg-rgb", theme.tokens.bgRgb);
   root.style.setProperty("--bg-opacity", String(windowOpacity));
