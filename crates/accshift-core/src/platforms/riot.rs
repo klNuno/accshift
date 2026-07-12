@@ -458,6 +458,14 @@ fn yaml_has_auth_tokens(contents: &str) -> bool {
             || value == "~"
     };
 
+    // Newer Riot Client versions dropped the `private`/`sessions` blob format
+    // and store the persistent login as browser-style cookies under
+    // `riot-login: persist: session: cookies:`. The `ssid` cookie is the auth
+    // session token; a logged-out or reset file only carries tracking cookies
+    // (`tdid`, `clid`, ...). Match the cookie entry line (`name: "ssid"`).
+    let is_ssid_cookie_line =
+        |value: &str| matches!(value.trim_matches(|ch| ch == '"' || ch == '\''), "ssid");
+
     let mut has_private = false;
     let mut has_sessions = false;
     let mut has_token = false;
@@ -465,6 +473,12 @@ fn yaml_has_auth_tokens(contents: &str) -> bool {
     for line in contents.lines() {
         let trimmed = line.trim();
 
+        let without_dash = trimmed.strip_prefix('-').map(str::trim).unwrap_or(trimmed);
+        if let Some(value) = value_for_key(without_dash, "name") {
+            if is_ssid_cookie_line(value) {
+                has_token = true;
+            }
+        }
         if let Some(value) = value_for_key(trimmed, "private") {
             // Riot writes `private` as an inline base64 blob; a reset file has it
             // empty (`private: ''` / `private:`). Only a non-empty value counts.
@@ -1760,6 +1774,58 @@ riot-login:
   sessions: {}
 ";
         assert!(yaml_has_auth_tokens(yaml));
+    }
+
+    #[test]
+    fn cookie_format_with_ssid_is_ready() {
+        // Newer Riot Client format: persistent login stored as cookies, the
+        // `ssid` cookie being the auth session token.
+        let yaml = "\
+riot-login:
+    persist:
+        region: \"EUW\"
+        session:
+            cookies:
+            -   domain: \"auth.riotgames.com\"
+                name: \"asid\"
+                persistent: false
+            -   domain: \"auth.riotgames.com\"
+                name: \"ssid\"
+                persistent: true
+                value: \"opaque-session-token\"
+";
+        assert!(yaml_has_auth_tokens(yaml));
+    }
+
+    #[test]
+    fn cookie_format_ssid_as_first_mapping_key_is_ready() {
+        // `name` can be the first key of the cookie entry, carrying the dash.
+        let yaml = "cookies:\n- name: \"ssid\"\n  value: \"tok\"\n";
+        assert!(yaml_has_auth_tokens(yaml));
+    }
+
+    #[test]
+    fn cookie_format_with_only_tracking_cookies_is_not_ready() {
+        // Logged-out file: tracking cookies only, no ssid auth cookie.
+        let yaml = "\
+riot-login:
+    persist:
+        session:
+            cookies:
+            -   domain: \"auth.riotgames.com\"
+                name: \"tdid\"
+                persistent: true
+            -   domain: \"auth.riotgames.com\"
+                name: \"clid\"
+                persistent: true
+";
+        assert!(!yaml_has_auth_tokens(yaml));
+    }
+
+    #[test]
+    fn non_ssid_name_keys_do_not_match() {
+        assert!(!yaml_has_auth_tokens("name: \"ssidfoo\"\n"));
+        assert!(!yaml_has_auth_tokens("nickname: \"ssid\"\n"));
     }
 
     #[test]
