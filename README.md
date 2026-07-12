@@ -76,10 +76,16 @@ both at once is safe thanks to an exclusive lock on mutating operations.
 
 ### Install
 
-The CLI binary is produced alongside the GUI by `pnpm tauri build`
-(output: `target/release/accshift.exe` on Windows, `target/release/accshift`
-on Linux/macOS). Drop it anywhere on your `PATH`, or run it by its
-absolute path.
+- **Windows**: the desktop installer ships the CLI next to the app and adds
+  the install directory to your user `PATH` — `accshift` works in any new
+  terminal right after install. A standalone `accshift-cli` binary is also
+  available on [Releases](https://github.com/klNuno/accshift/releases).
+- **Linux / macOS**: build from source for now. The deb/rpm packages install
+  the CLI to `/usr/bin` alongside the app; the macOS `.app` bundles it inside
+  `Contents/MacOS` (symlink it onto your `PATH`, e.g. into `/usr/local/bin`).
+
+Building from source (`pnpm tauri build`) produces the binary at
+`target/release/accshift` (`accshift.exe` on Windows).
 
 ### Commands
 

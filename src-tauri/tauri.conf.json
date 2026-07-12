@@ -4,9 +4,9 @@
   "version": "1.0.0",
   "identifier": "com.accshift.desktop",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "cargo build -p accshift-cli --release && node scripts/stage-cli.mjs && pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "cargo build -p accshift-cli --release && pnpm build",
+    "beforeBuildCommand": "cargo build -p accshift-cli --release && node scripts/stage-cli.mjs && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -20,6 +20,7 @@
     "active": true,
     "createUpdaterArtifacts": true,
     "targets": ["nsis", "deb", "rpm", "appimage", "app", "dmg"],
+    "externalBin": ["binaries/accshift"],
     "category": "Utility",
     "shortDescription": "Multi-platform desktop account switcher",
     "longDescription": "Accshift is a fast desktop account switcher for Steam, Riot, Battle.net, Epic, Ubisoft and Roblox. GUI + CLI, built with Tauri 2 and Svelte 5.",
@@ -38,7 +39,8 @@
         "startMenuFolder": "Accshift",
         "languages": ["English", "French"],
         "displayLanguageSelector": false,
-        "compression": "lzma"
+        "compression": "lzma",
+        "installerHooks": "./windows/hooks.nsh"
       },
       "wix": {
         "language": "en-US",

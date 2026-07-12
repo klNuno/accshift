@@ -5,6 +5,7 @@ node_modules/
 dist/
 target/
 src-tauri/keys/
+src-tauri/binaries/
 
 # IDE
 .vscode/

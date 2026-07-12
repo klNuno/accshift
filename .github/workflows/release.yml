@@ -82,13 +82,24 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: vp exec tauri build
 
+      - name: Stage standalone CLI artifact
+        shell: pwsh
+        run: |
+          $version = "${{ steps.release_tag.outputs.version }}"
+          $cli = "target/release/accshift.exe"
+          if (-not (Test-Path $cli)) {
+            throw "CLI binary not found at $cli"
+          }
+          Copy-Item $cli "target/release/bundle/accshift-cli_${version}_x64.exe"
+
       - name: Generate SHA256 checksums
         shell: pwsh
         run: |
-          $bundleDir = "src-tauri/target/release/bundle"
+          $bundleDir = "target/release/bundle"
           $files = @()
           $files += Get-ChildItem "$bundleDir/nsis/*.exe" -File -ErrorAction SilentlyContinue
           $files += Get-ChildItem "$bundleDir/msi/*.msi" -File -ErrorAction SilentlyContinue
+          $files += Get-ChildItem "$bundleDir/accshift-cli_*.exe" -File -ErrorAction SilentlyContinue
 
           if ($files.Count -eq 0) {
             throw "No release artifacts found in $bundleDir"
@@ -233,7 +244,7 @@ jobs:
           $tag = "${{ steps.release_tag.outputs.tag }}"
           $version = "${{ steps.release_tag.outputs.version }}"
           $repo = "${{ github.repository }}"
-          $bundleDir = "src-tauri/target/release/bundle"
+          $bundleDir = "target/release/bundle"
 
           $primaryAsset = Get-ChildItem "$bundleDir/nsis/*.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $primaryAsset) {
@@ -284,6 +295,7 @@ jobs:
           generate_release_notes: false
           body: ${{ steps.changelog.outputs.body }}
           files: |
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/bundle/latest.json
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/msi/*.msi
+            target/release/bundle/accshift-cli_*.exe
+            target/release/bundle/latest.json
