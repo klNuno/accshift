@@ -361,6 +361,8 @@ fn main() {
             commands::minimize_window,
             commands::toggle_maximize_window,
             commands::close_window,
+            commands::set_keep_backdrop_active,
+            commands::get_desktop_wallpaper,
             // Steam-specific
             commands::steam_set_api_key,
             commands::steam_has_api_key,

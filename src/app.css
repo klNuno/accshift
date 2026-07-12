@@ -170,34 +170,71 @@ html[data-theme="liquid-glass"] .app-shell {
     inset 0 -1px 0 rgba(255, 255, 255, 0.08);
 }
 
-/* Lens band: 12px rim ring cut out with a mask. The plain backdrop-filter
-   comes first so webviews without url() support keep a simple lens; Chromium
-   (WebView2) overrides it with the displacement wobble. */
+/* Lens band: a rim ring whose mask fades from solid at the window edge to
+   transparent ~26px in, so the re-filtered backdrop blends into the untouched
+   interior with no visible seam (a hard content-box mask left a cut line).
+   The union of the two edge gradients forms the ring. The plain
+   backdrop-filter comes first so webviews without url() support keep a simple
+   lens; Chromium (WebView2) overrides it with the displacement wobble. */
 html[data-theme="liquid-glass"] .app-shell::before {
   content: "";
   position: absolute;
   inset: 0;
-  padding: 12px;
   pointer-events: none;
-  z-index: 29;
+  /* Negative z (above the wallpaper at -2, below all app content): the rim's
+     backdrop-filter then refracts only the wallpaper, never the UI painted on
+     top. Keeps buttons and cards crisp while the glassy lens rides the edge. */
+  z-index: -1;
   -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
+    linear-gradient(
+      to right,
+      #000 2px,
+      transparent 26px,
+      transparent calc(100% - 26px),
+      #000 calc(100% - 2px)
+    ),
+    linear-gradient(
+      to bottom,
+      #000 2px,
+      transparent 26px,
+      transparent calc(100% - 26px),
+      #000 calc(100% - 2px)
+    );
+  -webkit-mask-composite: source-over;
   mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  backdrop-filter: blur(3px) brightness(1.16) saturate(1.5);
-  backdrop-filter: url(#lg-distortion) blur(3px) brightness(1.16) saturate(1.5);
+    linear-gradient(
+      to right,
+      #000 2px,
+      transparent 26px,
+      transparent calc(100% - 26px),
+      #000 calc(100% - 2px)
+    ),
+    linear-gradient(
+      to bottom,
+      #000 2px,
+      transparent 26px,
+      transparent calc(100% - 26px),
+      #000 calc(100% - 2px)
+    );
+  mask-composite: add;
+  backdrop-filter: blur(2px) saturate(1.4);
+  backdrop-filter: url(#lg-distortion) blur(2px) saturate(1.4);
   background: conic-gradient(
     from 210deg,
-    rgba(120, 180, 255, 0.1),
-    rgba(255, 120, 200, 0.07) 28%,
-    rgba(255, 185, 110, 0.09) 52%,
-    rgba(130, 255, 220, 0.06) 76%,
-    rgba(120, 180, 255, 0.1)
+    rgba(120, 180, 255, 0.09),
+    rgba(255, 120, 200, 0.06) 28%,
+    rgba(255, 185, 110, 0.08) 52%,
+    rgba(130, 255, 220, 0.05) 76%,
+    rgba(120, 180, 255, 0.09)
   );
+}
+
+/* Native select popups derive their colors from the closed control; on glass
+   themes that background is translucent white and the option list turns
+   unreadable. Options always get an opaque themed surface. */
+select option {
+  background-color: var(--bg-solid);
+  color: var(--fg);
 }
 
 /* Curved sheen: light entering from above and pooling on the top half. */

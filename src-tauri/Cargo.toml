@@ -21,10 +21,22 @@ reqwest = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 winreg = { workspace = true }
+# Wallpaper capture -> JPEG data URL for the liquid glass fake backdrop.
+base64 = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 # Same versions tauri already pulls in; used to flip WebView2 settings tauri
 # does not expose (autofill popups on plain text inputs).
 webview2-com = "0.38"
 windows-core = "0.61"
+# Same windows crate tauri pulls in; used for the WM_NCACTIVATE subclass that
+# keeps DWM system backdrops alive while the window is unfocused.
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Storage_Xps",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
 
 [dependencies.mimalloc]
 workspace = true

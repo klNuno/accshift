@@ -592,6 +592,9 @@
 
   let paletteOpen = $state(false);
   let searchInputRef: HTMLInputElement | null = null;
+  // Registered by the Settings panel while mounted: focuses (and switches to)
+  // the Platforms tab search when mod+f fires in the settings scope.
+  let settingsSearchFocus: (() => void) | null = null;
 
   function registerSearchInput(node: HTMLInputElement | null) {
     searchInputRef = node;
@@ -832,6 +835,9 @@
 
     // App-level shortcuts.
     { combo: "mod+f", scopes: ["app", "bulk-edit"], run: focusSearch },
+    { combo: "mod+f", scopes: ["settings"], run: () => settingsSearchFocus?.() },
+    // Swallow mod+f everywhere else so the WebView2 native find bar never opens.
+    { combo: "mod+f", scopes: ["*"], run: () => {} },
     { combo: "mod+n", scopes: ["app"], run: handleAddAccountClick },
     { combo: "mod+shift+n", scopes: ["app"], run: () => dialogs.openNewFolderDialog() },
     { combo: "mod+r", scopes: ["app"], run: handleRefreshClick },
@@ -1031,13 +1037,79 @@
   );
 
   $effect(() => {
-    applyThemeToDocument(shell.activeTheme, shell.settings.backgroundOpacity);
+    applyThemeToDocument(shell.activeTheme, shell.settings.backgroundOpacity, document, {
+      // Linux compositors expose no portable blur-behind protocol; glass
+      // themes degrade to a near-solid window there.
+      osBackdrop: shell.runtimeOs !== "linux",
+    });
     document.documentElement.lang = shell.locale;
+    document.documentElement.dataset.cardOutlines = shell.settings.accountDisplay
+      .cardColorOutlines
+      ? "1"
+      : "0";
     // Glass themes need the OS backdrop blur to read as glass.
-    void applyWindowBackdrop(Boolean(shell.activeTheme.glass), shell.activeTheme.id === "liquid-glass");
+    void applyWindowBackdrop(Boolean(shell.activeTheme.glass), shell.activeTheme.id);
   });
 
   $effect(() => applyMotionPreference(settings.animations));
+
+  // --- Liquid glass fake backdrop (Windows) ---------------------------------
+  // DWM offers no material that blurs AND refracts what sits behind a
+  // transparent window, so the desktop wallpaper is replicated inside the
+  // shell, aligned to the screen via background-position, and filtered in CSS
+  // (see .liquid-backdrop). Moving the window re-aligns the layer, which makes
+  // it read as true see-through glass.
+  const LIQUID_BACKDROP_BLEED = 40;
+  type WallpaperSnapshot = { dataUrl: string; x: number; y: number; width: number; height: number };
+  let liquidWallpaper = $state<WallpaperSnapshot | null>(null);
+  let liquidBackdropStyle = $state("");
+  const liquidBackdropActive = $derived(
+    shell.activeTheme.id === "liquid-glass" && shell.runtimeOs === "windows"
+  );
+
+  async function updateLiquidBackdropPosition() {
+    const snapshot = liquidWallpaper;
+    if (!snapshot) return;
+    try {
+      const appWindow = getCurrentWindow();
+      const [pos, scale] = await Promise.all([appWindow.outerPosition(), appWindow.scaleFactor()]);
+      // Snapshot rect and window position are physical virtual-screen px;
+      // divide by the window's scale factor to get CSS px.
+      const offsetX = (snapshot.x - pos.x) / scale + LIQUID_BACKDROP_BLEED;
+      const offsetY = (snapshot.y - pos.y) / scale + LIQUID_BACKDROP_BLEED;
+      liquidBackdropStyle =
+        `background-size:${snapshot.width / scale}px ${snapshot.height / scale}px;` +
+        `background-position:${offsetX}px ${offsetY}px;`;
+    } catch {
+      // Window APIs unavailable: keep the plain transparent look.
+    }
+  }
+
+  $effect(() => {
+    if (!liquidBackdropActive) {
+      liquidWallpaper = null;
+      return;
+    }
+    let disposed = false;
+    let unlistenMove: (() => void) | null = null;
+    void invoke<WallpaperSnapshot | null>("get_desktop_wallpaper")
+      .then((snapshot) => {
+        if (disposed || !snapshot) return;
+        liquidWallpaper = snapshot;
+        void updateLiquidBackdropPosition();
+      })
+      .catch(() => {});
+    void getCurrentWindow()
+      .onMoved(() => void updateLiquidBackdropPosition())
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else unlistenMove = unlisten;
+      });
+    return () => {
+      disposed = true;
+      unlistenMove?.();
+    };
+  });
 
   $effect(() => {
     trackDependencies(shell.runtimeOs, shell.settings.enabledPlatforms.join(","));
@@ -1229,7 +1301,22 @@
           <feGaussianBlur in="noise" stdDeviation="2" result="soft" />
           <feDisplacementMap in="SourceGraphic" in2="soft" scale="34" xChannelSelector="R" yChannelSelector="G" />
         </filter>
+        <!-- Softer, larger-scale refraction + light blur for the fake
+             wallpaper backdrop (see .liquid-backdrop). -->
+        <filter id="lg-backdrop-distortion" x="-10%" y="-10%" width="120%" height="120%" color-interpolation-filters="sRGB">
+          <feTurbulence type="fractalNoise" baseFrequency="0.008 0.014" numOctaves="2" seed="11" result="noise" />
+          <feGaussianBlur in="noise" stdDeviation="3" result="soft" />
+          <feDisplacementMap in="SourceGraphic" in2="soft" scale="28" xChannelSelector="R" yChannelSelector="G" result="displaced" />
+          <feGaussianBlur in="displaced" stdDeviation="7" />
+        </filter>
       </svg>
+      {#if liquidBackdropActive && liquidWallpaper}
+        <div
+          class="liquid-backdrop"
+          aria-hidden="true"
+          style={`background-image:url(${liquidWallpaper.dataUrl});${liquidBackdropStyle}`}
+        ></div>
+      {/if}
       {#if !secureScreen.renderSuspended}
       {#if shell.runtimeOs !== "macos"}
         {@render titleBar()}
@@ -1256,6 +1343,7 @@
           onRefreshBansNow={refreshBansNow}
           onAccountAdded={() => void loadAccounts(true)}
           runtimeOs={shell.runtimeOs}
+          registerSearchFocus={(fn) => (settingsSearchFocus = fn)}
         />
       {:else}
         <div class="center-msg">
@@ -1494,6 +1582,33 @@
     width: 0;
     height: 0;
     overflow: hidden;
+  }
+
+  /* Fake see-through material for Liquid Glass on Windows: the desktop
+     wallpaper, screen-aligned via background-size/position (inline style),
+     lightly blurred and refracted. Bleeds past the window so the displacement
+     and blur never sample outside the image. z-index -1 keeps it under all
+     content (the shell's will-change creates the stacking context). */
+  .liquid-backdrop {
+    position: absolute;
+    inset: -40px;
+    /* Below the rim lens (::before, z-index -1) so the rim's backdrop-filter
+       refracts the wallpaper only. Both sit in negative-z, so the app content
+       (titlebar buttons, cards) always paints on top and stays crisp — the
+       rim never blurs the UI, only the desktop. */
+    z-index: -2;
+    pointer-events: none;
+    background-repeat: no-repeat;
+    filter: url(#lg-backdrop-distortion) saturate(1.25);
+  }
+
+  /* The window veil must sit on top of the wallpaper (the shell's own
+     var(--bg) paints underneath the layer), so the layer carries its own. */
+  .liquid-backdrop::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--bg);
   }
 
   .app-shell.obscured {
