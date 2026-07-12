@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getSettings, saveSettings, ALL_PLATFORMS } from "./store";
   import { addToast } from "../notifications/store.svelte";
@@ -35,6 +35,7 @@
     onRefreshBansNow = async () => {},
     onAccountAdded = () => {},
     runtimeOs = "unknown",
+    registerSearchFocus = () => {},
   }: {
     onClose: () => void;
     onPlatformsChanged?: () => void;
@@ -43,6 +44,7 @@
     onRefreshBansNow?: () => void | Promise<void>;
     onAccountAdded?: () => void;
     runtimeOs?: "windows" | "linux" | "macos" | "unknown";
+    registerSearchFocus?: (fn: (() => void) | null) => void;
   } = $props();
 
   let settings = $state(getSettings());
@@ -117,11 +119,20 @@
   );
 
   let contentRef = $state<HTMLDivElement | null>(null);
+  let platformSearchInput: HTMLInputElement | null = null;
 
   function selectTab(tabId: string) {
     tabBar.select(tabId);
     // A leftover scroll offset from the previous section is disorienting.
     if (contentRef) contentRef.scrollTop = 0;
+  }
+
+  /** mod+f while settings are open: jump to the Platforms tab search. */
+  async function focusPlatformSearch() {
+    if (tabBar.activeTab !== "platforms") selectTab("platforms");
+    await tick();
+    platformSearchInput?.focus();
+    platformSearchInput?.select();
   }
 
   function t(key: MessageKey, params?: TranslationParams): string {
@@ -408,6 +419,8 @@
     lastPersistedSnapshot = buildPersistSnapshot();
     lastPlatformSnapshot = buildPlatformSnapshot();
     hydrated = true;
+
+    registerSearchFocus(() => void focusPlatformSearch());
   });
 
   onDestroy(() => {
@@ -417,6 +430,7 @@
       // Flush the pending debounced save so closing Settings never drops edits.
       void persistNow();
     }
+    registerSearchFocus(null);
     tabBar.destroy();
   });
 
@@ -437,6 +451,7 @@
       settings.accountDisplay.showUsernames,
       settings.accountDisplay.showCardNotesInline,
       settings.accountDisplay.expandedFolders,
+      settings.accountDisplay.cardColorOutlines,
       showLastLoginKey,
       healthCheckKey,
       settings.uiScalePercent,
@@ -547,6 +562,7 @@
         bind:platformPaths
         {t}
         {runtimeOs}
+        registerSearchInput={(node) => (platformSearchInput = node)}
       />
     {/if}
 
@@ -821,6 +837,17 @@
     color: var(--fg-muted);
   }
 
+  /* When a header sits inside a title row (Platforms tab: h3 + search pill),
+     the row owns the divider. The h3's own border must yield deterministically
+     — same-specificity scoped overrides lose to the rule above at random
+     depending on Svelte's per-component <style> injection order, which showed
+     up as an intermittent double line. This higher-specificity, same-sheet
+     rule wins every time. */
+  .settings-panel :global(.card-title-row h3) {
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+
   .settings-panel :global(.field) {
     display: flex;
     flex-direction: column;
@@ -841,7 +868,7 @@
     width: 100%;
     border: 1px solid var(--border);
     border-radius: 8px;
-    background: var(--bg-solid);
+    background: var(--bg-input);
     color: var(--fg);
     font-size: 12px;
     padding: 9px 10px;

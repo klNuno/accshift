@@ -13,6 +13,8 @@ export interface AccountDisplaySettings {
   showLastLoginPerPlatform: Record<string, boolean>;
   showCardNotesInline: boolean;
   expandedFolders: boolean;
+  /** Colored outline around cards that carry a custom color. */
+  cardColorOutlines: boolean;
 }
 
 /** "system" follows the OS reduced-motion preference; "on"/"off" force it. */

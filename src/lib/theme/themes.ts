@@ -153,17 +153,18 @@ export const BUILT_IN_THEMES: AppThemeDefinition[] = [
     colorScheme: "dark",
     glass: true,
     tokens: {
-      // Neutral smoke, not a color: the glass look comes from the low window
-      // opacity + the glaze layer in app.css, not from tinted surfaces.
+      // Milky white surfaces at very low alpha (set in applyThemeToDocument):
+      // interior panels must read as frosted glass over the desktop, not as
+      // dark smoked acrylic. bgRgb stays dark as a faint contrast veil.
       bgRgb: "22 24 30",
-      bgCard: "#343841",
-      bgCardHover: "#3e424c",
-      bgMuted: "#383c46",
-      bgElevated: "#4c515c",
-      fg: "#f4f6f9",
-      fgMuted: "#b8bec8",
-      fgSubtle: "#8b919c",
-      border: "#4a4f5a",
+      bgCard: "#ffffff",
+      bgCardHover: "#ffffff",
+      bgMuted: "#ffffff",
+      bgElevated: "#ffffff",
+      fg: "#ffffff",
+      fgMuted: "#dbdfe7",
+      fgSubtle: "#b0b6c2",
+      border: "#a9b1c0",
       danger: "#ef4444",
       afkText: "#f4f6f9",
     },
@@ -297,30 +298,56 @@ export function parseThemeJson(json: string): AppThemeDefinition | null {
   }
 }
 
+/** Fixed window fill per glass theme. The user slider only applies to regular
+ * themes: glass needs a tuned fill for the material to read right, exposing
+ * the slider there just produced broken combinations. */
+const GLASS_WINDOW_OPACITY: Record<string, number> = {
+  "glass-dark": 0.55,
+  "glass-light": 0.55,
+  "liquid-glass": 0.18,
+};
+
 export function applyThemeToDocument(
   theme: AppThemeDefinition,
   backgroundOpacityPercent: number,
   doc: Document = document,
+  opts: { osBackdrop?: boolean } = {},
 ) {
   const rawOpacity = Math.min(100, Math.max(0, backgroundOpacityPercent)) / 100;
-  // Glass themes cap the window fill low and keep surfaces translucent so the
-  // OS backdrop blur shows through; regular themes keep opaque-ish surfaces.
-  // Liquid Glass goes clearer still: the glaze layer needs the backdrop to
-  // dominate for the material to read as glass.
-  const glassCap = theme.id === "liquid-glass" ? 0.26 : 0.55;
-  const windowOpacity = theme.glass ? Math.min(rawOpacity, glassCap) : rawOpacity;
-  const cardOpacity = theme.glass
-    ? Math.min(0.72, Math.max(windowOpacity + 0.1, 0.4))
-    : Math.min(1, Math.max(windowOpacity + 0.14, 0.66));
-  const hoverOpacity = theme.glass
-    ? Math.min(0.8, cardOpacity + 0.08)
-    : Math.min(1, Math.max(cardOpacity + 0.06, 0.72));
-  const mutedOpacity = theme.glass
-    ? Math.min(0.78, Math.max(windowOpacity + 0.14, 0.46))
-    : Math.min(1, Math.max(windowOpacity + 0.18, 0.72));
-  const elevatedOpacity = theme.glass
-    ? Math.min(0.85, Math.max(windowOpacity + 0.2, 0.55))
-    : Math.min(1, Math.max(windowOpacity + 0.22, 0.78));
+  // Without an OS blur behind the window (Linux: no compositor-independent
+  // blur protocol), translucent glass surfaces sit on the raw desktop and
+  // are unreadable; degrade to a near-solid window instead.
+  const osBackdrop = opts.osBackdrop !== false;
+  // Glass themes use a fixed window fill (see GLASS_WINDOW_OPACITY); the
+  // slider only drives regular themes. Liquid Glass runs its own scale:
+  // white surfaces at very low alpha so the blurred desktop dominates
+  // (milky glass) instead of the smoked-acrylic stack.
+  const isLiquid = theme.id === "liquid-glass" && osBackdrop;
+  const windowOpacity = theme.glass
+    ? osBackdrop
+      ? (GLASS_WINDOW_OPACITY[theme.id] ?? 0.55)
+      : 0.96
+    : rawOpacity;
+  const cardOpacity = isLiquid
+    ? 0.13
+    : theme.glass
+      ? Math.min(0.72, Math.max(windowOpacity + 0.1, 0.4))
+      : Math.min(1, Math.max(windowOpacity + 0.14, 0.66));
+  const hoverOpacity = isLiquid
+    ? 0.21
+    : theme.glass
+      ? Math.min(0.8, cardOpacity + 0.08)
+      : Math.min(1, Math.max(cardOpacity + 0.06, 0.72));
+  const mutedOpacity = isLiquid
+    ? 0.16
+    : theme.glass
+      ? Math.min(0.78, Math.max(windowOpacity + 0.14, 0.46))
+      : Math.min(1, Math.max(windowOpacity + 0.18, 0.72));
+  const elevatedOpacity = isLiquid
+    ? 0.34
+    : theme.glass
+      ? Math.min(0.85, Math.max(windowOpacity + 0.2, 0.55))
+      : Math.min(1, Math.max(windowOpacity + 0.22, 0.78));
   const overlayOpacity = Math.min(1, Math.max(windowOpacity + 0.3, 0.86));
   const root = doc.documentElement;
   const bgCardRgb = hexToRgbTriplet(theme.tokens.bgCard);
@@ -334,11 +361,24 @@ export function applyThemeToDocument(
   root.style.setProperty("--bg-rgb", theme.tokens.bgRgb);
   root.style.setProperty("--bg-opacity", String(windowOpacity));
   root.style.setProperty("--bg-solid", `rgb(${theme.tokens.bgRgb})`);
+  // Form controls (text inputs, closed selects). Opaque on regular themes;
+  // on glass a themed translucent fill (tracks bgRgb, so it follows the
+  // colorScheme and keeps the typed text readable) instead of the opaque
+  // slab that read as a hard black box on the glass surfaces.
+  root.style.setProperty(
+    "--bg-input",
+    theme.glass ? `rgb(${theme.tokens.bgRgb} / 0.55)` : `rgb(${theme.tokens.bgRgb})`,
+  );
   root.style.setProperty("--bg-card", `rgb(${bgCardRgb} / ${cardOpacity})`);
   root.style.setProperty("--bg-card-hover", `rgb(${bgCardHoverRgb} / ${hoverOpacity})`);
   root.style.setProperty("--bg-muted", `rgb(${bgMutedRgb} / ${mutedOpacity})`);
   root.style.setProperty("--bg-elevated", `rgb(${bgElevatedRgb} / ${elevatedOpacity})`);
-  root.style.setProperty("--bg-overlay", `rgb(${bgCardRgb} / ${overlayOpacity})`);
+  // Liquid glass: overlays (context menus, dialogs) stay dark and near-opaque
+  // for readability; a white 0.86 sheet would drown the white foreground text.
+  root.style.setProperty(
+    "--bg-overlay",
+    isLiquid ? `rgb(${theme.tokens.bgRgb} / 0.94)` : `rgb(${bgCardRgb} / ${overlayOpacity})`,
+  );
   root.style.setProperty("--fg", theme.tokens.fg);
   root.style.setProperty("--fg-muted", theme.tokens.fgMuted);
   root.style.setProperty("--fg-subtle", theme.tokens.fgSubtle);

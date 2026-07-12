@@ -364,14 +364,16 @@
       </span>
     </div>
 
-    {#if hasUsername || hasInlineNote || showLastLogin}
+    {#if hasUsername || usernameBadge || hasInlineNote || showLastLogin}
       <div class="meta-stack">
-        {#if hasUsername}
+        {#if hasUsername || usernameBadge}
           <div class="username">
             {#if noteText && !showNoteInline}
               <span class="note-info-icon" aria-label={translate(locale, "card.noteAttached")}>i</span>
             {/if}
-            <span class="username-text">{account.username}</span>
+            {#if hasUsername}
+              <span class="username-text">{account.username}</span>
+            {/if}
             {#if usernameBadge}
               <span
                 class={`username-badge tone-${usernameBadge.tone}`}
@@ -415,8 +417,8 @@
 
   .extension-hitbox {
     position: absolute;
-    top: -2px;
-    bottom: -2px;
+    top: 0;
+    bottom: 0;
     width: calc(var(--grid-card-width) + 130px);
     pointer-events: none;
     z-index: 1;
@@ -463,7 +465,8 @@
     box-shadow: 0 14px 28px rgba(0, 0, 0, 0.18);
   }
 
-  .card-shell:hover .extension-surface.visible {
+  /* The active card does not lift on hover, so its panel must not either. */
+  .card-shell:hover .extension-surface.visible:not(.active) {
     transform: translateY(-2px) scaleX(1);
     box-shadow: 0 18px 32px rgba(0, 0, 0, 0.2);
   }
@@ -477,6 +480,9 @@
       var(--bg-solid);
   }
 
+  /* While the panel is open the active ring moves from the card to the
+   * combined surface, so one outline wraps the whole shape instead of two
+   * offset rings. */
   .extension-surface.active.visible {
     box-shadow:
       0 0 0 2px rgba(255, 255, 255, 0.62),
@@ -489,6 +495,43 @@
       0 0 0 2px rgba(255, 255, 255, 0.72),
       0 0 0 5px color-mix(in srgb, var(--card-custom-color) 50%, rgba(9, 9, 11, 0.62)),
       0 14px 28px rgba(0, 0, 0, 0.18);
+  }
+
+  .card-shell.extension-visible .card.active {
+    box-shadow: none;
+  }
+
+  /* Same story for the outlines (custom color, bans): while the panel is
+   * open they live on the surface only, never on the card on top of it. */
+  .card-shell.extension-visible .card {
+    outline: none;
+  }
+
+  .extension-surface.custom-color.visible {
+    outline: 1px solid color-mix(in srgb, var(--card-custom-color) 55%, transparent);
+  }
+
+  /* Glass themes: an opaque slab next to translucent cards reads as a patch.
+   * The panel becomes frosted glass itself (its backdrop = the window veil,
+   * already OS-blurred behind, re-blurred here for readability). */
+  :global(html[data-glass="1"]) .extension-surface {
+    background: color-mix(in srgb, var(--bg-solid) 58%, transparent);
+    backdrop-filter: blur(18px) saturate(1.15);
+  }
+
+  :global(html[data-glass="1"]) .extension-surface.custom-color {
+    background:
+      linear-gradient(
+        color-mix(in srgb, var(--card-custom-color) 16%, transparent),
+        color-mix(in srgb, var(--card-custom-color) 16%, transparent)
+      ),
+      color-mix(in srgb, var(--bg-solid) 58%, transparent);
+  }
+
+  /* User setting: colored card outlines off. */
+  :global(html[data-card-outlines="0"]) .card.custom-color,
+  :global(html[data-card-outlines="0"]) .extension-surface.custom-color.visible {
+    outline: none;
   }
 
   .extension-surface.ban-red.visible {
@@ -509,12 +552,10 @@
 
   .extension-surface.right .details-wrap {
     right: 0;
-    border-left: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
   }
 
   .extension-surface.left .details-wrap {
     left: 0;
-    border-right: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
   }
 
   .card {

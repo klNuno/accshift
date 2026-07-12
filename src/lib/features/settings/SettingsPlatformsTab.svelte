@@ -11,12 +11,23 @@
     platformPaths = $bindable(),
     t,
     runtimeOs = "unknown",
+    registerSearchInput = () => {},
   }: {
     settings: AppSettings;
     platformPaths: Record<string, string>;
     t: (key: MessageKey, params?: TranslationParams) => string;
     runtimeOs?: RuntimeOs;
+    registerSearchInput?: (node: HTMLInputElement | null) => void;
   } = $props();
+
+  function trackSearchInput(node: HTMLInputElement) {
+    registerSearchInput(node);
+    return {
+      destroy() {
+        registerSearchInput(null);
+      },
+    };
+  }
 
   let platformSearch = $state("");
 
@@ -87,6 +98,7 @@
           type="search"
           placeholder={t("settings.platformSearchPlaceholder")}
           bind:value={platformSearch}
+          use:trackSearchInput
         />
       </label>
     </div>

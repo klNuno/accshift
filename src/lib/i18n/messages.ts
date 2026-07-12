@@ -188,6 +188,8 @@ export const EN_MESSAGES = {
   "settings.showUbisoftLastLogin": "Show Ubisoft last login",
   "settings.showNotesUnderCards": "Show notes under cards",
   "settings.expandedFolders": "Expand all folders",
+  "settings.cardColorOutlines": "Colored card outlines",
+  "settings.cardColorOutlinesHint": "Outline account cards that have a custom color.",
   "list.rootSection": "Root",
   "settings.steamLaunch": "Switch",
   "settings.steamInstallation": "Installation",

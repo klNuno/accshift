@@ -8,6 +8,7 @@
     parseThemeJson,
     exportThemeJson,
   } from "$lib/theme/themes";
+  import type { AppThemeDefinition } from "$lib/theme/themes";
   import { LANGUAGE_OPTIONS, type MessageKey, type TranslationParams } from "$lib/i18n";
   import { invoke } from "@tauri-apps/api/core";
   import { addToast } from "../notifications/store.svelte";
@@ -29,6 +30,27 @@
   } = $props();
 
   const INTEGRATIONS_WIKI_URL = "https://github.com/klNuno/accshift/wiki/Settings";
+
+  // Glass themes run a fixed, tuned window fill (see themes.ts); the slider
+  // only applies to regular themes and just bred broken combinations on glass.
+  let isGlassTheme = $derived(Boolean(getThemeDefinition(settings.themeId).glass));
+
+  // Glass themes carry translucent surfaces (liquid glass's cards are white
+  // at ~13% alpha): painted opaque on the swatch they turn into a white box.
+  // The swatch simulates the real stack instead - a fake blurred desktop
+  // under the theme's window veil, with the card at a preview alpha.
+  function swatchStyle(theme: AppThemeDefinition): string {
+    if (!theme.glass) {
+      return `--swatch-bg: rgb(${theme.tokens.bgRgb}); --swatch-card: ${theme.tokens.bgCard}; --swatch-fg: ${theme.tokens.fg}; --swatch-border: ${theme.tokens.border};`;
+    }
+    const isLiquid = theme.id === "liquid-glass";
+    const veil = isLiquid ? 0.2 : 0.6;
+    const cardPct = isLiquid ? 22 : 72;
+    const bg = `linear-gradient(rgb(${theme.tokens.bgRgb} / ${veil}), rgb(${theme.tokens.bgRgb} / ${veil})), linear-gradient(135deg, #8a63a8, #4f6d9e 48%, #a8825f)`;
+    const card = `color-mix(in srgb, ${theme.tokens.bgCard} ${cardPct}%, transparent)`;
+    const border = `color-mix(in srgb, ${theme.tokens.border} 45%, transparent)`;
+    return `--swatch-bg: ${bg}; --swatch-card: ${card}; --swatch-fg: ${theme.tokens.fg}; --swatch-border: ${border};`;
+  }
 
   async function openIntegrationsWiki() {
     try {
@@ -91,7 +113,7 @@
             class="theme-swatch"
             class:selected={settings.themeId === theme.id}
             title={theme.isCustom ? (theme.displayName ?? theme.id) : t(theme.labelKey)}
-            style="--swatch-bg: rgb({theme.tokens.bgRgb}); --swatch-card: {theme.tokens.bgCard}; --swatch-fg: {theme.tokens.fg}; --swatch-border: {theme.tokens.border};"
+            style={swatchStyle(theme)}
             onclick={() => settings.themeId = theme.id}
           >
             <span class="swatch-inner">
@@ -140,21 +162,23 @@
       </div>
     </div>
 
-    <label class="field">
-      <span class="field-label">{t("settings.backgroundOpacity")} - {settings.backgroundOpacity}%</span>
-      <input
-        type="range"
-        min="0"
-        max="100"
-        step="5"
-        value={bgOpacity.input}
-        oninput={(e) => {
-          bgOpacity.input = (e.currentTarget as HTMLInputElement).value;
-          bgOpacity.commit();
-        }}
-        class="slider-input"
-      />
-    </label>
+    {#if !isGlassTheme}
+      <label class="field">
+        <span class="field-label">{t("settings.backgroundOpacity")} - {settings.backgroundOpacity}%</span>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          step="5"
+          value={bgOpacity.input}
+          oninput={(e) => {
+            bgOpacity.input = (e.currentTarget as HTMLInputElement).value;
+            bgOpacity.commit();
+          }}
+          class="slider-input"
+        />
+      </label>
+    {/if}
   </section>
 
   <section class="card">
@@ -173,6 +197,15 @@
       onLabel={t("common.enabled")}
       offLabel={t("common.disabled")}
       onToggle={() => settings.accountDisplay.expandedFolders = !settings.accountDisplay.expandedFolders}
+    />
+    <ToggleSetting
+      label={t("settings.cardColorOutlines")}
+      description={t("settings.cardColorOutlinesHint")}
+      enabled={settings.accountDisplay.cardColorOutlines}
+      accent={neutralAccent}
+      onLabel={t("common.enabled")}
+      offLabel={t("common.disabled")}
+      onToggle={() => settings.accountDisplay.cardColorOutlines = !settings.accountDisplay.cardColorOutlines}
     />
   </section>
 
