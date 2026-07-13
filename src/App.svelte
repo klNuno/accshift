@@ -1036,11 +1036,23 @@
     addFlow.flow?.platformId === activeTab ? addFlow.flow.status.setupId : null
   );
 
+  const LIQUID_BACKDROP_BLEED = 40;
+  const LIQUID_BACKDROP_REFRESH_MS = 5 * 60 * 1000;
+  type WallpaperSnapshot = { dataUrl: string; x: number; y: number; width: number; height: number };
+  let liquidWallpaper = $state<WallpaperSnapshot | null>(null);
+  let liquidBackdropStyle = $state("");
+  const liquidBackdropActive = $derived(
+    shell.activeTheme.id === "liquid-glass" && shell.runtimeOs === "windows"
+  );
+
   $effect(() => {
+    const backdropAvailable =
+      shell.runtimeOs !== "linux" && (!liquidBackdropActive || liquidWallpaper !== null);
     applyThemeToDocument(shell.activeTheme, shell.settings.backgroundOpacity, document, {
       // Linux compositors expose no portable blur-behind protocol; glass
-      // themes degrade to a near-solid window there.
-      osBackdrop: shell.runtimeOs !== "linux",
+      // themes degrade to a near-solid window there. Liquid Glass does the
+      // same on Windows until a real wallpaper snapshot is available.
+      backdropAvailable,
     });
     document.documentElement.lang = shell.locale;
     document.documentElement.dataset.cardOutlines = shell.settings.accountDisplay
@@ -1059,14 +1071,6 @@
   // shell, aligned to the screen via background-position, and filtered in CSS
   // (see .liquid-backdrop). Moving the window re-aligns the layer, which makes
   // it read as true see-through glass.
-  const LIQUID_BACKDROP_BLEED = 40;
-  type WallpaperSnapshot = { dataUrl: string; x: number; y: number; width: number; height: number };
-  let liquidWallpaper = $state<WallpaperSnapshot | null>(null);
-  let liquidBackdropStyle = $state("");
-  const liquidBackdropActive = $derived(
-    shell.activeTheme.id === "liquid-glass" && shell.runtimeOs === "windows"
-  );
-
   async function updateLiquidBackdropPosition() {
     const snapshot = liquidWallpaper;
     if (!snapshot) return;
@@ -1088,26 +1092,68 @@
   $effect(() => {
     if (!liquidBackdropActive) {
       liquidWallpaper = null;
+      liquidBackdropStyle = "";
       return;
     }
     let disposed = false;
     let unlistenMove: (() => void) | null = null;
-    void invoke<WallpaperSnapshot | null>("get_desktop_wallpaper")
-      .then((snapshot) => {
-        if (disposed || !snapshot) return;
+    let unlistenResize: (() => void) | null = null;
+    let unlistenScale: (() => void) | null = null;
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    let refreshInFlight = false;
+
+    const refreshWallpaper = async () => {
+      if (disposed || refreshInFlight) return;
+      refreshInFlight = true;
+      try {
+        const snapshot = await invoke<WallpaperSnapshot | null>("get_desktop_wallpaper");
+        if (disposed) return;
         liquidWallpaper = snapshot;
-        void updateLiquidBackdropPosition();
-      })
-      .catch(() => {});
-    void getCurrentWindow()
+        liquidBackdropStyle = "";
+        if (snapshot) await updateLiquidBackdropPosition();
+      } catch {
+        if (!disposed) {
+          liquidWallpaper = null;
+          liquidBackdropStyle = "";
+        }
+      } finally {
+        refreshInFlight = false;
+      }
+    };
+    const scheduleRefresh = () => {
+      void updateLiquidBackdropPosition();
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => void refreshWallpaper(), 300);
+    };
+
+    void refreshWallpaper();
+    const appWindow = getCurrentWindow();
+    void appWindow
       .onMoved(() => void updateLiquidBackdropPosition())
       .then((unlisten) => {
         if (disposed) unlisten();
         else unlistenMove = unlisten;
       });
+    void appWindow
+      .onResized(scheduleRefresh)
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else unlistenResize = unlisten;
+      });
+    void appWindow
+      .onScaleChanged(scheduleRefresh)
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else unlistenScale = unlisten;
+      });
+    const refreshInterval = setInterval(() => void refreshWallpaper(), LIQUID_BACKDROP_REFRESH_MS);
     return () => {
       disposed = true;
+      if (resizeTimer) clearTimeout(resizeTimer);
+      clearInterval(refreshInterval);
       unlistenMove?.();
+      unlistenResize?.();
+      unlistenScale?.();
     };
   });
 

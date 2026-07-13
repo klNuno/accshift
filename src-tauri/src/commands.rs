@@ -570,6 +570,16 @@ mod wallpaper_capture {
     /// keeps the data URL small on multi-monitor virtual desktops.
     const MAX_EDGE: i32 = 3200;
 
+    pub(super) struct CapturedWallpaper {
+        bgra: Vec<u8>,
+        output_width: i32,
+        output_height: i32,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    }
+
     unsafe extern "system" fn find_progman(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let mut class = [0u16; 16];
         let len = unsafe { GetClassNameW(hwnd, &mut class) } as usize;
@@ -585,7 +595,7 @@ mod wallpaper_capture {
     /// an empty path under Windows Spotlight and slideshows, so reading the
     /// wallpaper file is not an option; capturing the shell window works for
     /// every wallpaper mode without touching other windows on screen.
-    pub fn capture() -> Option<WallpaperSnapshot> {
+    pub(super) fn capture() -> Option<CapturedWallpaper> {
         unsafe {
             let mut progman = HWND::default();
             // Returns Err when the callback stops the enumeration: ignore it.
@@ -702,31 +712,46 @@ mod wallpaper_capture {
             let _ = DeleteDC(full_dc);
             ReleaseDC(None, screen_dc);
 
-            let bgra = pixels?;
-            let mut rgb = Vec::with_capacity((out_w as usize) * (out_h as usize) * 3);
-            for chunk in bgra.chunks_exact(4) {
-                rgb.extend_from_slice(&[chunk[2], chunk[1], chunk[0]]);
-            }
-            let mut jpeg = Vec::new();
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 82)
-                .encode(
-                    &rgb,
-                    out_w as u32,
-                    out_h as u32,
-                    image::ExtendedColorType::Rgb8,
-                )
-                .ok()?;
-            Some(WallpaperSnapshot {
-                data_url: format!(
-                    "data:image/jpeg;base64,{}",
-                    base64::engine::general_purpose::STANDARD.encode(jpeg)
-                ),
+            Some(CapturedWallpaper {
+                bgra: pixels?,
+                output_width: out_w,
+                output_height: out_h,
                 x: rect.left,
                 y: rect.top,
                 width,
                 height,
             })
         }
+    }
+
+    /// Pixel conversion, JPEG compression and base64 encoding are CPU-heavy
+    /// but do not touch DWM/COM. Keep them off the window's UI thread.
+    pub(super) fn encode(capture: CapturedWallpaper) -> Option<WallpaperSnapshot> {
+        let mut rgb = Vec::with_capacity(
+            (capture.output_width as usize) * (capture.output_height as usize) * 3,
+        );
+        for chunk in capture.bgra.chunks_exact(4) {
+            rgb.extend_from_slice(&[chunk[2], chunk[1], chunk[0]]);
+        }
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 82)
+            .encode(
+                &rgb,
+                capture.output_width as u32,
+                capture.output_height as u32,
+                image::ExtendedColorType::Rgb8,
+            )
+            .ok()?;
+        Some(WallpaperSnapshot {
+            data_url: format!(
+                "data:image/jpeg;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(jpeg)
+            ),
+            x: capture.x,
+            y: capture.y,
+            width: capture.width,
+            height: capture.height,
+        })
     }
 }
 
@@ -742,7 +767,8 @@ pub fn get_desktop_wallpaper(window: tauri::WebviewWindow) -> Option<WallpaperSn
         // WinRT work off the UI thread — which owns the process's COM apartment
         // — races the shell's own recomposition (Spotlight rotating the
         // wallpaper) and corrupted a WinRT object refcount, crashing later in an
-        // unrelated worker. Marshal the capture onto the main thread instead.
+        // unrelated worker. Marshal only the DWM/GDI capture onto the main
+        // thread; JPEG/base64 work resumes on this command worker.
         let (tx, rx) = std::sync::mpsc::channel();
         if window
             .run_on_main_thread(move || {
@@ -752,7 +778,8 @@ pub fn get_desktop_wallpaper(window: tauri::WebviewWindow) -> Option<WallpaperSn
         {
             return None;
         }
-        rx.recv().ok().flatten()
+        let capture = rx.recv().ok().flatten()?;
+        wallpaper_capture::encode(capture)
     }
     #[cfg(not(windows))]
     {

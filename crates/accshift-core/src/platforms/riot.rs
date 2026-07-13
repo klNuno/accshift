@@ -448,7 +448,7 @@ fn yaml_has_auth_tokens(contents: &str) -> bool {
         Some(rest.trim())
     }
 
-    let is_empty_yaml_value = |value: &str| {
+    fn is_empty_yaml_value(value: &str) -> bool {
         value.is_empty()
             || value == "{}"
             || value == "[]"
@@ -456,27 +456,56 @@ fn yaml_has_auth_tokens(contents: &str) -> bool {
             || value == "\"\""
             || value == "null"
             || value == "~"
-    };
+    }
+
+    #[derive(Default)]
+    struct CookieEntry {
+        indent: usize,
+        is_ssid: bool,
+        has_value: bool,
+    }
+
+    fn update_cookie_entry(entry: &mut CookieEntry, line: &str) {
+        if let Some(value) = value_for_key(line, "name") {
+            entry.is_ssid = value.trim_matches(|ch| ch == '"' || ch == '\'') == "ssid";
+        }
+        if let Some(value) = value_for_key(line, "value") {
+            entry.has_value = !is_empty_yaml_value(value);
+        }
+    }
 
     // Newer Riot Client versions dropped the `private`/`sessions` blob format
     // and store the persistent login as browser-style cookies under
     // `riot-login: persist: session: cookies:`. The `ssid` cookie is the auth
     // session token; a logged-out or reset file only carries tracking cookies
-    // (`tdid`, `clid`, ...). Match the cookie entry line (`name: "ssid"`).
-    let is_ssid_cookie_line =
-        |value: &str| matches!(value.trim_matches(|ch| ch == '"' || ch == '\''), "ssid");
+    // (`tdid`, `clid`, ...). Both `name` and a non-empty `value` must belong to
+    // the same sequence entry; key order is not stable between client versions.
 
     let mut has_private = false;
     let mut has_sessions = false;
     let mut has_token = false;
+    let mut cookie_entry: Option<CookieEntry> = None;
 
     for line in contents.lines() {
         let trimmed = line.trim();
+        let indent = line.len() - line.trim_start().len();
 
-        let without_dash = trimmed.strip_prefix('-').map(str::trim).unwrap_or(trimmed);
-        if let Some(value) = value_for_key(without_dash, "name") {
-            if is_ssid_cookie_line(value) {
-                has_token = true;
+        if let Some(after_dash) = trimmed.strip_prefix('-') {
+            if let Some(previous) = cookie_entry.take() {
+                has_token |= previous.is_ssid && previous.has_value;
+            }
+            let mut entry = CookieEntry {
+                indent,
+                ..Default::default()
+            };
+            update_cookie_entry(&mut entry, after_dash.trim());
+            cookie_entry = Some(entry);
+        } else if let Some(entry) = cookie_entry.as_mut() {
+            if !trimmed.is_empty() && indent <= entry.indent {
+                let previous = cookie_entry.take().expect("cookie entry exists");
+                has_token |= previous.is_ssid && previous.has_value;
+            } else {
+                update_cookie_entry(entry, trimmed);
             }
         }
         if let Some(value) = value_for_key(trimmed, "private") {
@@ -500,6 +529,9 @@ fn yaml_has_auth_tokens(contents: &str) -> bool {
         {
             has_token = true;
         }
+    }
+    if let Some(entry) = cookie_entry {
+        has_token |= entry.is_ssid && entry.has_value;
     }
 
     has_private || has_sessions || has_token
@@ -1801,6 +1833,27 @@ riot-login:
     fn cookie_format_ssid_as_first_mapping_key_is_ready() {
         // `name` can be the first key of the cookie entry, carrying the dash.
         let yaml = "cookies:\n- name: \"ssid\"\n  value: \"tok\"\n";
+        assert!(yaml_has_auth_tokens(yaml));
+    }
+
+    #[test]
+    fn ssid_cookie_requires_a_non_empty_value_in_the_same_entry() {
+        assert!(!yaml_has_auth_tokens("cookies:\n- name: \"ssid\"\n"));
+        assert!(!yaml_has_auth_tokens(
+            "cookies:\n- name: \"ssid\"\n  value: \"\"\n"
+        ));
+        assert!(!yaml_has_auth_tokens(
+            "cookies:\n- name: \"ssid\"\n  value: null\n"
+        ));
+        assert!(!yaml_has_auth_tokens(
+            "cookies:\n- name: \"ssid\"\n- name: \"tdid\"\n  value: token\n"
+        ));
+    }
+
+    #[test]
+    fn ssid_cookie_accepts_value_before_name() {
+        let yaml =
+            "cookies:\n- value: opaque-session-token\n  persistent: true\n  name: \"ssid\"\n";
         assert!(yaml_has_auth_tokens(yaml));
     }
 

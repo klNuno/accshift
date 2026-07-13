@@ -307,24 +307,28 @@ const GLASS_WINDOW_OPACITY: Record<string, number> = {
   "liquid-glass": 0.18,
 };
 
-export function applyThemeToDocument(
+export interface ThemeSurfaceOpacities {
+  windowOpacity: number;
+  cardOpacity: number;
+  hoverOpacity: number;
+  mutedOpacity: number;
+  elevatedOpacity: number;
+  overlayOpacity: number;
+  isLiquid: boolean;
+}
+
+export function resolveThemeSurfaceOpacities(
   theme: AppThemeDefinition,
   backgroundOpacityPercent: number,
-  doc: Document = document,
-  opts: { osBackdrop?: boolean } = {},
-) {
+  opts: { backdropAvailable?: boolean } = {},
+): ThemeSurfaceOpacities {
   const rawOpacity = Math.min(100, Math.max(0, backgroundOpacityPercent)) / 100;
-  // Without an OS blur behind the window (Linux: no compositor-independent
-  // blur protocol), translucent glass surfaces sit on the raw desktop and
-  // are unreadable; degrade to a near-solid window instead.
-  const osBackdrop = opts.osBackdrop !== false;
-  // Glass themes use a fixed window fill (see GLASS_WINDOW_OPACITY); the
-  // slider only drives regular themes. Liquid Glass runs its own scale:
-  // white surfaces at very low alpha so the blurred desktop dominates
-  // (milky glass) instead of the smoked-acrylic stack.
-  const isLiquid = theme.id === "liquid-glass" && osBackdrop;
+  // A failed wallpaper capture and Linux's missing compositor-independent blur
+  // both need the same readable, near-solid fallback.
+  const backdropAvailable = opts.backdropAvailable !== false;
+  const isLiquid = theme.id === "liquid-glass" && backdropAvailable;
   const windowOpacity = theme.glass
-    ? osBackdrop
+    ? backdropAvailable
       ? (GLASS_WINDOW_OPACITY[theme.id] ?? 0.55)
       : 0.96
     : rawOpacity;
@@ -349,6 +353,36 @@ export function applyThemeToDocument(
       ? Math.min(0.85, Math.max(windowOpacity + 0.2, 0.55))
       : Math.min(1, Math.max(windowOpacity + 0.22, 0.78));
   const overlayOpacity = Math.min(1, Math.max(windowOpacity + 0.3, 0.86));
+  return {
+    windowOpacity,
+    cardOpacity,
+    hoverOpacity,
+    mutedOpacity,
+    elevatedOpacity,
+    overlayOpacity,
+    isLiquid,
+  };
+}
+
+export function applyThemeToDocument(
+  theme: AppThemeDefinition,
+  backgroundOpacityPercent: number,
+  doc: Document = document,
+  opts: { backdropAvailable?: boolean } = {},
+) {
+  // Glass themes use a fixed window fill (see GLASS_WINDOW_OPACITY); the
+  // slider only drives regular themes. Liquid Glass runs its own scale:
+  // white surfaces at very low alpha so the blurred desktop dominates
+  // (milky glass) instead of the smoked-acrylic stack.
+  const {
+    windowOpacity,
+    cardOpacity,
+    hoverOpacity,
+    mutedOpacity,
+    elevatedOpacity,
+    overlayOpacity,
+    isLiquid,
+  } = resolveThemeSurfaceOpacities(theme, backgroundOpacityPercent, opts);
   const root = doc.documentElement;
   const bgCardRgb = hexToRgbTriplet(theme.tokens.bgCard);
   const bgCardHoverRgb = hexToRgbTriplet(theme.tokens.bgCardHover);

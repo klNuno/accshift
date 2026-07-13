@@ -16,7 +16,16 @@ let enabled = $state(false);
 let enabledKnown = false;
 let lastFetchAt = 0;
 let inFlight: Promise<void> | null = null;
-let checkInFlight: Promise<void> | null = null;
+let operationQueue: Promise<void> = Promise.resolve();
+
+/** The bridge exposes one shared server-side check queue. Keep every GET and
+ * POST ordered locally too, so a fetch can never replace a freshly checked row
+ * and rapid account switches cannot overlap checks. */
+function enqueueBridgeOperation(operation: () => Promise<void>): Promise<void> {
+  const run = operationQueue.catch(() => {}).then(operation);
+  operationQueue = run.catch(() => {});
+  return run;
+}
 
 export function getCs2BridgeData(steamId: string): Cs2BridgeAccount | null {
   return dataBySteamId[steamId] ?? null;
@@ -41,13 +50,8 @@ export async function loadCs2BridgeData(force = false): Promise<void> {
   if (inFlight) return inFlight;
   if (!force && lastFetchAt && Date.now() - lastFetchAt < CACHE_TTL_MS) return;
 
-  inFlight = (async () => {
+  const run = enqueueBridgeOperation(async () => {
     try {
-      // Let an on-demand check land first: its POST makes the server re-scan
-      // that account, so a GET issued after it returns the fresh row too.
-      // Fetching concurrently could snapshot the server before the re-scan
-      // finishes and clobber the freshly merged row with stale data.
-      if (checkInFlight) await checkInFlight.catch(() => {});
       if (!enabledKnown) {
         enabled = (await getCs2BridgeSettings()).enabled;
         enabledKnown = true;
@@ -68,10 +72,13 @@ export async function loadCs2BridgeData(force = false): Promise<void> {
       });
     } finally {
       lastFetchAt = Date.now();
-      inFlight = null;
     }
-  })();
-  return inFlight;
+  });
+  inFlight = run;
+  void run.finally(() => {
+    if (inFlight === run) inFlight = null;
+  });
+  return run;
 }
 
 /** On switching to a Steam account, ask the bridge to re-check just that
@@ -79,11 +86,8 @@ export async function loadCs2BridgeData(force = false): Promise<void> {
  * updates live. Best-effort and silent: on failure the periodic read stays the
  * fallback. No-op when the bridge is disabled. */
 export async function triggerCs2BridgeCheck(steamId: string): Promise<void> {
-  const run = (async () => {
+  return enqueueBridgeOperation(async () => {
     try {
-      // Serialize against the periodic fetch both ways: a full GET replacing
-      // the map after our merge would revert the row to pre-check data.
-      if (inFlight) await inFlight.catch(() => {});
       if (!enabledKnown) {
         enabled = (await getCs2BridgeSettings()).enabled;
         enabledKnown = true;
@@ -104,10 +108,5 @@ export async function triggerCs2BridgeCheck(steamId: string): Promise<void> {
         error: serializeLogValue(error),
       });
     }
-  })();
-  checkInFlight = run;
-  void run.finally(() => {
-    if (checkInFlight === run) checkInFlight = null;
   });
-  return run;
 }

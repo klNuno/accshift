@@ -57,11 +57,12 @@ jobs:
           $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $tauriVersion = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
 
-          $cargoMatch = Select-String -Path src-tauri/Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
-          if (-not $cargoMatch) {
-            throw "Could not read version from src-tauri/Cargo.toml"
+          $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
+          $cargoPackage = $metadata.packages | Where-Object { $_.name -eq "accshift-gui" } | Select-Object -First 1
+          if (-not $cargoPackage) {
+            throw "Could not resolve accshift-gui version from cargo metadata"
           }
-          $cargoVersion = $cargoMatch.Matches[0].Groups[1].Value
+          $cargoVersion = $cargoPackage.version
 
           if ($packageVersion -ne $tag -or $tauriVersion -ne $tag -or $cargoVersion -ne $tag) {
             throw "Version mismatch. tag=$tag package.json=$packageVersion tauri.conf.json=$tauriVersion Cargo.toml=$cargoVersion"
