@@ -28,15 +28,9 @@ binding = "DB"
 database_name = "accshift-telemetry"
 database_id = "a7eb2043-c878-48f9-ab21-6cdc7d8ea327"
 
-# ── R2: manual log uploads ──
-[[r2_buckets]]
-binding = "LOGS"
-bucket_name = "accshift-logs"
-
 # ── Public variables (non-secret) ──
 [vars]
 ENVIRONMENT = "production"
-LOG_MAX_BYTES = "10485760" # 10 MB max per upload
 BATCH_MAX_EVENTS = "200" # per /track request
 ADMIN_ALLOWED = "true"
 ALLOWED_ORIGINS = "http://localhost:1420,https://tauri.localhost"
@@ -48,10 +42,9 @@ UA_PREFIX = "Accshift/"
 
 # Global daily budget per endpoint. Last line of defense against a distributed
 # abuse that would bypass per-IP rate limiters.
-# Values calibrated to stay inside the free tiers of Cloudflare and R2.
+# Values calibrated to stay inside the Cloudflare free tier.
 BUDGET_TRACK = "4000" # batches/day, max 200 events/batch = 800k events/day (AE free: 830k/day)
 BUDGET_CONSENT = "4000" # onboarding choices/day
-BUDGET_LOGS = "100" # uploads/day, max 10 MB each = 1 GB/day max (R2 free: 10 GB storage)
 BUDGET_FORGET = "500"
 BUDGET_EXPORT = "500"
 BUDGET_ADMIN = "2000"
@@ -73,12 +66,6 @@ namespace_id = "1001"
 simple = { limit = 30, period = 60 } # 30 batches/min/IP (up to 6000 events/min)
 
 [[unsafe.bindings]]
-name = "RL_LOGS"
-type = "ratelimit"
-namespace_id = "1002"
-simple = { limit = 2, period = 60 } # 2 uploads/min/IP (max 20 MB/min with 10 MB cap)
-
-[[unsafe.bindings]]
 name = "RL_RGPD"
 type = "ratelimit"
 namespace_id = "1003"
@@ -95,10 +82,6 @@ name = "RL_NOTIFY"
 type = "ratelimit"
 namespace_id = "1005"
 simple = { limit = 1, period = 60 } # email throttle: 1/min per (endpoint, IP)
-
-# ── Cron: daily purge of log uploads older than 90 days (D1 + R2) ──
-[triggers]
-crons = ["0 4 * * *"]
 
 # ── Observability ──
 [observability]

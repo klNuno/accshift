@@ -140,14 +140,6 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.telemetryExportFailed": "Échec de l'export",
   "settings.telemetryDisableFailed": "Impossible de désactiver les stats avancées",
   "settings.telemetryLearnMore": "Quelles données sont envoyées ?",
-  "settings.sendLogs": "Envoyer mes logs (anonymement)",
-  "settings.sendLogsHint":
-    "Inclut les logs de la session courante et de la précédente. Chemins, emails et identifiants de comptes sont expurgés avant envoi ; rien dans l'envoi ne permet de t'identifier.",
-  "settings.sendLogsNoteLabel": "Quel est le problème ? (optionnel)",
-  "settings.sendLogsNotePlaceholder":
-    "Décrivez ce qui s'est mal passé, ce que vous faisiez, tout ce qui peut aider à reproduire.",
-  "settings.sendLogsSuccess": "Ticket ID copié : {id}",
-  "settings.sendLogsFailed": "Échec de l'envoi",
   "onboarding.welcome.title": "Bienvenue dans Accshift",
   "onboarding.welcome.version": "v{version}",
   "onboarding.welcome.compatibleWith": "Ton système d'exploitation est compatible avec :",
@@ -226,7 +218,11 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.cliEnabled": "Autoriser le CLI accshift",
   "settings.cliEnabledHint": "Laisse l'outil en ligne de commande lister et changer de compte.",
   "settings.help": "Ouvrir le wiki accshift",
+  "settings.helpShort": "Aide",
   "settings.openHelpFailed": "Impossible d'ouvrir le wiki",
+  "settings.logs": "Logs",
+  "settings.openLogs": "Ouvrir le dossier des logs",
+  "settings.openLogsFailed": "Impossible d'ouvrir le dossier des logs",
 
   "context.loading": "Chargement...",
   "context.noGamesFound": "Aucun jeu trouvé",

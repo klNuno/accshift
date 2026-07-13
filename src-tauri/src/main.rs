@@ -357,6 +357,7 @@ fn main() {
             commands::platform_set_account_label,
             // Utility
             commands::open_url,
+            commands::open_logs_folder,
             // Window
             commands::minimize_window,
             commands::toggle_maximize_window,
@@ -405,7 +406,6 @@ fn main() {
             commands_telemetry::telemetry_track_account_added,
             commands_telemetry::telemetry_track_streamer_mode,
             commands_telemetry::telemetry_export,
-            commands_telemetry::telemetry_upload_logs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

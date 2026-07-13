@@ -132,14 +132,6 @@ export const EN_MESSAGES = {
   "settings.telemetryExportFailed": "Export failed",
   "settings.telemetryDisableFailed": "Could not disable enhanced stats",
   "settings.telemetryLearnMore": "What data is sent?",
-  "settings.sendLogs": "Send my logs (anonymously)",
-  "settings.sendLogsHint":
-    "Bundles the current and previous session logs. Paths, emails and account IDs are redacted before sending, and nothing in the upload identifies you.",
-  "settings.sendLogsNoteLabel": "What's the issue? (optional)",
-  "settings.sendLogsNotePlaceholder":
-    "Describe what went wrong, what you were doing, anything that helps us reproduce.",
-  "settings.sendLogsSuccess": "Ticket ID copied: {id}",
-  "settings.sendLogsFailed": "Log upload failed",
   "onboarding.welcome.title": "Welcome to Accshift",
   "onboarding.welcome.version": "v{version}",
   "onboarding.welcome.compatibleWith": "Your operating system is compatible with:",
@@ -216,7 +208,11 @@ export const EN_MESSAGES = {
   "settings.cliEnabled": "Allow the accshift CLI",
   "settings.cliEnabledHint": "Let the command line tool list and switch accounts.",
   "settings.help": "Open the accshift wiki",
+  "settings.helpShort": "Help",
   "settings.openHelpFailed": "Could not open the wiki",
+  "settings.logs": "Logs",
+  "settings.openLogs": "Open the logs folder",
+  "settings.openLogsFailed": "Could not open the logs folder",
 
   "context.loading": "Loading...",
   "context.noGamesFound": "No games found",

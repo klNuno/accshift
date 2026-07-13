@@ -1,13 +1,7 @@
 use super::events::{Event, TelemetryContext};
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine;
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 use std::time::Duration;
-
-/// Max note bytes after UTF-8 truncation. Mirrors the Worker cap so the client
-/// fails fast instead of round-tripping a payload that would be rejected.
-const NOTE_MAX_BYTES: usize = 1000;
 
 /// Inert placeholder used when `ACCSHIFT_TELEMETRY_URL` is not set at compile
 /// time. Not a live endpoint on purpose: it only marks builds that forgot to
@@ -184,65 +178,6 @@ pub fn record_consent_choice(
         return Err(format!("status: {}", res.status()));
     }
     Ok(())
-}
-
-/// POSTs a log zip to `/logs`. Returns the ticket_id from the response.
-///
-/// `note` carries an optional user-typed reason for the upload. It is
-/// base64-encoded into a header to keep arbitrary UTF-8 (including newlines
-/// and accents) safely transportable through HTTP headers.
-pub fn upload_logs(
-    client: &reqwest::blocking::Client,
-    base_url: &str,
-    user_agent: &str,
-    zip_bytes: Vec<u8>,
-    app_version: &str,
-    os_version: &str,
-    note: Option<&str>,
-) -> Result<String, String> {
-    #[derive(serde::Deserialize)]
-    struct LogsResponse {
-        ticket_id: String,
-    }
-    let url = format!("{base_url}/logs");
-    let mut req = client
-        .post(&url)
-        .header("User-Agent", user_agent)
-        .header("Content-Type", "application/zip")
-        .header("X-App-Version", app_version)
-        .header("X-OS-Version", os_version)
-        .timeout(Duration::from_secs(30));
-
-    if let Some(raw) = note {
-        let trimmed = raw.trim();
-        if !trimmed.is_empty() {
-            let encoded = STANDARD.encode(truncate_utf8(trimmed, NOTE_MAX_BYTES).as_bytes());
-            req = req.header("X-Note-B64", encoded);
-        }
-    }
-
-    let res = req
-        .body(zip_bytes)
-        .send()
-        .map_err(|e| format!("send: {e}"))?;
-    if !res.status().is_success() {
-        return Err(format!("status: {}", res.status()));
-    }
-    let parsed: LogsResponse = res.json().map_err(|e| format!("parse: {e}"))?;
-    Ok(parsed.ticket_id)
-}
-
-/// Truncates a string to at most `max` bytes without splitting a UTF-8 code
-/// point. Returns the original string if it already fits.
-fn truncate_utf8(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        return s;
-    }
-    let mut idx = max;
-    while idx > 0 && !s.is_char_boundary(idx) {
-        idx -= 1;
-    }
-    &s[..idx]
 }
 
 /// Calls `/forget` to delete data associated with an install_id.
@@ -439,24 +374,6 @@ mod tests {
         );
         assert!(payload.get("anonymous_id").is_none());
         assert!(payload.get("install_id").is_none());
-    }
-
-    #[test]
-    fn truncate_utf8_keeps_short_strings() {
-        assert_eq!(truncate_utf8("hello", 10), "hello");
-    }
-
-    #[test]
-    fn truncate_utf8_clips_at_byte_limit() {
-        assert_eq!(truncate_utf8("abcdefghij", 5), "abcde");
-    }
-
-    #[test]
-    fn truncate_utf8_preserves_codepoint_boundaries() {
-        // 'é' is two bytes in UTF-8, asking for 1 byte must yield "".
-        assert_eq!(truncate_utf8("é", 1), "");
-        // Ask for 2 bytes: the full character fits.
-        assert_eq!(truncate_utf8("é", 2), "é");
     }
 
     #[test]

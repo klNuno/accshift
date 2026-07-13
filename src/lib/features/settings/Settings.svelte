@@ -363,6 +363,14 @@
     }
   }
 
+  async function openLogs() {
+    try {
+      await invoke("open_logs_folder");
+    } catch {
+      addToast(t("settings.openLogsFailed"), { type: "error" });
+    }
+  }
+
   async function handleRefreshAvatarsNow() {
     if (avatarRefreshLoading) return;
     avatarRefreshLoading = true;
@@ -518,20 +526,35 @@
       {/if}
     </div>
 
-    <button
-      class="help-btn"
-      type="button"
-      onclick={openHelp}
-      title={t("settings.help")}
-      aria-label={t("settings.help")}
-    >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="10" />
-        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-        <line x1="12" y1="17" x2="12.01" y2="17" />
-      </svg>
-      <span class="nav-label">{t("settings.help")}</span>
-    </button>
+    <div class="sidebar-footer">
+      <button
+        class="help-btn"
+        type="button"
+        onclick={openHelp}
+        title={t("settings.help")}
+        aria-label={t("settings.help")}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
+        <span class="nav-label">{t("settings.helpShort")}</span>
+      </button>
+
+      <button
+        class="help-btn"
+        type="button"
+        onclick={openLogs}
+        title={t("settings.openLogs")}
+        aria-label={t("settings.openLogs")}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+        </svg>
+        <span class="nav-label">{t("settings.logs")}</span>
+      </button>
+    </div>
   </aside>
 
   <div class="settings-main">
@@ -732,11 +755,17 @@
     text-overflow: ellipsis;
   }
 
+  .sidebar-footer {
+    display: flex;
+    gap: 4px;
+  }
+
   .help-btn {
     display: flex;
     align-items: center;
     gap: 9px;
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     padding: 8px 10px;
     border: none;
     border-radius: 8px;
@@ -934,6 +963,11 @@
     .help-btn {
       justify-content: center;
       padding: 8px 6px;
+    }
+
+    /* Two icon-only buttons will not fit side by side in a 40px sidebar. */
+    .sidebar-footer {
+      flex-direction: column;
     }
   }
 </style>

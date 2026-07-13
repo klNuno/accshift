@@ -63,21 +63,6 @@ CREATE TABLE IF NOT EXISTS forgotten (
 );
 
 -- ─────────────────────────────────────────────────────────────
--- Log uploads (ticket traceability, not the log content itself)
--- ─────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS log_uploads (
-  ticket_id   TEXT PRIMARY KEY,
-  created_at  INTEGER NOT NULL,       -- unix seconds
-  size_bytes  INTEGER NOT NULL,
-  app_version TEXT,
-  os_version  TEXT,
-  country     TEXT,
-  note        TEXT                    -- user-typed reason, capped at 1000 chars
-);
-
-CREATE INDEX IF NOT EXISTS idx_uploads_date ON log_uploads(created_at);
-
--- ─────────────────────────────────────────────────────────────
 -- Global daily budget: hard cost cap
 -- ─────────────────────────────────────────────────────────────
 -- Last line of defense: even if all per-IP rate limiters are bypassed

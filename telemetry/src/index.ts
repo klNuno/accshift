@@ -3,19 +3,17 @@
 // Endpoints:
 //   POST /track             - Mode A or B events (batch)
 //   POST /consent           - one aggregate onboarding choice per installation
-//   POST /logs              - log zip upload (explicit user action)
 //   POST /forget            - GDPR art. 17, Mode B only
 //   POST /export            - GDPR art. 20, Mode B only
 //   POST /admin/query       - read-only D1 SELECT for an external dashboard
-//   GET  /admin/dashboard   - inline HTML dashboard for log triage
-//   GET  /admin/logs/<id>   - stream the R2 zip for a ticket_id
-//   (cron)                  - daily purge of log uploads older than 90 days
 //
 // Principles:
 // - Mode A: a random local UUID is HMACed for unique-installation pings only.
 //   Regular usage events keep a daily hash and remain unlinkable across days.
 // - IP is never stored. Country is derived from request.cf.country.
 // - CORS is restricted when browsers send Origin; native Tauri requests may omit it.
+// - The app never uploads log files. Logs stay on the user's machine and are
+//   shared only by hand, so this Worker has no object storage at all.
 
 interface RateLimit {
   limit(options: { key: string }): Promise<{ success: boolean }>;
@@ -24,9 +22,7 @@ interface RateLimit {
 export interface Env {
   AE: AnalyticsEngineDataset;
   DB: D1Database;
-  LOGS: R2Bucket;
   RL_TRACK: RateLimit;
-  RL_LOGS: RateLimit;
   RL_RGPD: RateLimit;
   RL_ADMIN: RateLimit;
   RL_NOTIFY: RateLimit;
@@ -36,14 +32,12 @@ export interface Env {
   ALERT_EMAIL: string;
   ALERT_FROM: string;
   ENVIRONMENT: string;
-  LOG_MAX_BYTES: string;
   BATCH_MAX_EVENTS: string;
   ADMIN_ALLOWED: string;
   ALLOWED_ORIGINS: string;
   UA_PREFIX: string;
   BUDGET_TRACK: string;
   BUDGET_CONSENT: string;
-  BUDGET_LOGS: string;
   BUDGET_FORGET: string;
   BUDGET_EXPORT: string;
   BUDGET_ADMIN: string;
@@ -93,10 +87,6 @@ export default {
           response =
             request.method === "POST" ? await handleConsent(request, env, ctx) : methodNotAllowed();
           break;
-        case "/logs":
-          response =
-            request.method === "POST" ? await handleLogs(request, env, ctx) : methodNotAllowed();
-          break;
         case "/forget":
           response =
             request.method === "POST" ? await handleForget(request, env, ctx) : methodNotAllowed();
@@ -111,34 +101,14 @@ export default {
               ? await handleAdminQuery(request, env, ctx)
               : methodNotAllowed();
           break;
-        case "/admin/dashboard":
-          response = request.method === "GET" ? handleAdminDashboard(env) : methodNotAllowed();
-          break;
-        default: {
-          const logsMatch = url.pathname.match(/^\/admin\/logs\/([0-9A-Z]{4,32})$/);
-          if (logsMatch) {
-            response =
-              request.method === "GET"
-                ? await handleAdminLog(request, env, ctx, logsMatch[1]!)
-                : methodNotAllowed();
-            break;
-          }
+        default:
           response = json({ error: "not_found" }, 404);
-        }
       }
       return cors(response, request, env);
     } catch (err) {
       console.error("unhandled", err);
       return cors(json({ error: "internal_error" }, 500), request, env);
     }
-  },
-
-  async scheduled(
-    _controller: ScheduledController,
-    env: Env,
-    ctx: ExecutionContext,
-  ): Promise<void> {
-    ctx.waitUntil(purgeExpiredLogs(env));
   },
 };
 
@@ -312,167 +282,6 @@ async function handleConsent(request: Request, env: Env, ctx: ExecutionContext):
   return json({ ok: true });
 }
 
-// ─── /logs ───────────────────────────────────────────────────────
-async function handleLogs(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-  const uaErr = checkUa(request, env);
-  if (uaErr) return uaErr;
-  const ip = clientIp(request);
-  const blocked = await enforceRateLimit(env, env.RL_LOGS, ip, "/logs", ctx, true);
-  if (blocked) return blocked;
-
-  const maxBytes = parseInt(env.LOG_MAX_BYTES, 10) || 10 * 1024 * 1024;
-  const lenHeader = request.headers.get("Content-Length");
-  if (lenHeader && parseInt(lenHeader, 10) > maxBytes) {
-    return json({ error: "payload_too_large", max: maxBytes }, 413);
-  }
-
-  const contentType = request.headers.get("Content-Type") ?? "application/zip";
-  if (!contentType.includes("zip") && !contentType.includes("octet-stream")) {
-    return json({ error: "bad_content_type" }, 415);
-  }
-
-  const body = await request.arrayBuffer();
-  if (body.byteLength === 0) return json({ error: "empty_body" }, 400);
-  if (body.byteLength > maxBytes) return json({ error: "payload_too_large", max: maxBytes }, 413);
-
-  // Body is validated (size, content-type, non-empty) BEFORE touching the
-  // daily budget, so malformed or empty requests cannot burn the D1 budget
-  // counter. Mirrors handleTrack's ordering.
-  const budgetErr = await checkBudget(env, "/logs", intVar(env.BUDGET_LOGS, 2000), ctx);
-  if (budgetErr) return budgetErr;
-
-  const createdAt = Math.floor(Date.now() / 1000);
-  const appVersion = request.headers.get("X-App-Version") ?? "";
-  const osVersion = request.headers.get("X-OS-Version") ?? "";
-  const country = (request.cf?.country as string | undefined) ?? "XX";
-  const note = decodeNoteHeader(request.headers.get("X-Note-B64"));
-
-  // D1 first: the PK on ticket_id turns a collision into an INSERT failure
-  // instead of silently overwriting another user's R2 object. Retry with a
-  // fresh id on conflict.
-  let ticketId = "";
-  let inserted = false;
-  for (let attempt = 0; attempt < 3 && !inserted; attempt++) {
-    ticketId = makeTicketId();
-    try {
-      await env.DB.prepare(
-        `INSERT INTO log_uploads (ticket_id, created_at, size_bytes, app_version, os_version, country, note)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
-      )
-        .bind(ticketId, createdAt, body.byteLength, appVersion, osVersion, country, note)
-        .run();
-      inserted = true;
-    } catch (e) {
-      if (!isUniqueConstraintError(e)) throw e;
-    }
-  }
-  if (!inserted) return json({ error: "internal_error" }, 500);
-
-  const yyyymm = new Date(createdAt * 1000).toISOString().slice(0, 7);
-  const key = `logs/${yyyymm}/${ticketId}.zip`;
-  try {
-    await env.LOGS.put(key, body, {
-      httpMetadata: { contentType: "application/zip" },
-      customMetadata: { app_version: appVersion, os_version: osVersion, country },
-    });
-  } catch (e) {
-    console.error("r2 put failed", e);
-    // Best effort: drop the index row so it never points at a missing object.
-    try {
-      await env.DB.prepare("DELETE FROM log_uploads WHERE ticket_id = ?1").bind(ticketId).run();
-    } catch {
-      // leave the orphan row; /admin/logs answers 404 for it
-    }
-    return json({ error: "internal_error" }, 500);
-  }
-
-  return json({ ok: true, ticket_id: ticketId });
-}
-
-function isUniqueConstraintError(e: unknown): boolean {
-  const cause = e instanceof Error && e.cause instanceof Error ? e.cause.message : "";
-  const msg = e instanceof Error ? `${e.message} ${cause}` : String(e);
-  return msg.includes("UNIQUE constraint failed");
-}
-
-const NOTE_MAX_CHARS = 1000;
-
-// Decodes the base64 note header into a plain string, capped at NOTE_MAX_CHARS
-// characters. Invalid base64 or oversized payloads degrade to null instead of
-// failing the upload, since the note is auxiliary metadata.
-function decodeNoteHeader(raw: string | null): string | null {
-  if (!raw) return null;
-  try {
-    const bytes = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
-    const decoded = new TextDecoder("utf-8", { fatal: false, ignoreBOM: false })
-      .decode(bytes)
-      .trim();
-    if (!decoded) return null;
-    return decoded.length > NOTE_MAX_CHARS ? decoded.slice(0, NOTE_MAX_CHARS) : decoded;
-  } catch {
-    return null;
-  }
-}
-
-// ─── Log retention (daily cron) ──────────────────────────────────
-
-const LOG_RETENTION_DAYS = 90;
-const LOG_PURGE_BATCH = 500;
-
-// Deletes log uploads older than LOG_RETENTION_DAYS, capped at LOG_PURGE_BATCH
-// per run. R2 objects go first so a failed run leaves the D1 index rows in
-// place and the next cron retries. The note lives on the same row, so deleting
-// the row removes it too.
-async function purgeExpiredLogs(env: Env): Promise<void> {
-  const cutoff = Math.floor(Date.now() / 1000) - LOG_RETENTION_DAYS * 86400;
-  const expired = await env.DB.prepare(
-    `SELECT ticket_id, created_at FROM log_uploads
-       WHERE created_at < ?1 ORDER BY created_at LIMIT ${LOG_PURGE_BATCH}`,
-  )
-    .bind(cutoff)
-    .all<{ ticket_id: string; created_at: number }>();
-  const rows = expired.results ?? [];
-  if (rows.length === 0) return;
-
-  const keys = rows.map((r) => {
-    const yyyymm = new Date(r.created_at * 1000).toISOString().slice(0, 7);
-    return `logs/${yyyymm}/${r.ticket_id}.zip`;
-  });
-  await env.LOGS.delete(keys); // bulk delete, missing keys are no-ops
-
-  // R2's bulk delete does not report per-key success or failure, so verify
-  // each object is actually gone with a HEAD before dropping its D1 index
-  // row. A key that somehow still resolves keeps its row and is retried on
-  // the next cron run instead of being silently orphaned in R2.
-  const stillPresent = new Set<string>();
-  await Promise.all(
-    keys.map(async (key) => {
-      const head = await env.LOGS.head(key);
-      if (head) stillPresent.add(key);
-    }),
-  );
-  const confirmed = rows.filter((r, i) => !stillPresent.has(keys[i]!));
-  if (confirmed.length === 0) return;
-
-  // D1 caps bound parameters per statement; delete in chunks via batch.
-  const stmts: D1PreparedStatement[] = [];
-  for (let i = 0; i < confirmed.length; i += 50) {
-    const chunk = confirmed.slice(i, i + 50);
-    stmts.push(
-      env.DB.prepare(
-        `DELETE FROM log_uploads WHERE ticket_id IN (${chunk.map(() => "?").join(", ")})`,
-      ).bind(...chunk.map((r) => r.ticket_id)),
-    );
-  }
-  await env.DB.batch(stmts);
-  console.log(
-    `log retention: purged ${confirmed.length} uploads older than ${LOG_RETENTION_DAYS}d` +
-      (stillPresent.size > 0
-        ? ` (${stillPresent.size} still present in R2, retrying next run)`
-        : ""),
-  );
-}
-
 // ─── /forget (Mode B) ────────────────────────────────────────────
 
 const RGPD_BODY_MAX_BYTES = 4 * 1024;
@@ -634,470 +443,6 @@ function hasLimitClause(sql: string): boolean {
   return /\bLIMIT\b/i.test(sql);
 }
 
-// ─── /admin/logs/<ticket_id> (stream R2 zip) ─────────────────────
-
-async function handleAdminLog(
-  request: Request,
-  env: Env,
-  ctx: ExecutionContext,
-  ticketId: string,
-): Promise<Response> {
-  if (env.ADMIN_ALLOWED !== "true") return json({ error: "disabled" }, 403);
-  const authErr = await checkAdminAuth(request, env);
-  if (authErr) return authErr;
-  const ip = clientIp(request);
-  const blocked = await enforceRateLimit(env, env.RL_ADMIN, ip, "/admin/logs", ctx);
-  if (blocked) return blocked;
-  const budgetErr = await checkBudget(env, "/admin/logs", intVar(env.BUDGET_ADMIN, 2000), ctx);
-  if (budgetErr) return budgetErr;
-
-  const row = await env.DB.prepare(`SELECT created_at FROM log_uploads WHERE ticket_id = ?1`)
-    .bind(ticketId)
-    .first<{ created_at: number }>();
-  if (!row) return json({ error: "not_found" }, 404);
-
-  const yyyymm = new Date(row.created_at * 1000).toISOString().slice(0, 7);
-  const key = `logs/${yyyymm}/${ticketId}.zip`;
-  const obj = await env.LOGS.get(key);
-  if (!obj) return json({ error: "r2_missing" }, 404);
-
-  const headers = new Headers();
-  headers.set("Content-Type", "application/zip");
-  headers.set("Content-Disposition", `attachment; filename="${ticketId}.zip"`);
-  if (obj.size) headers.set("Content-Length", String(obj.size));
-  headers.set("Cache-Control", "private, no-store");
-  return new Response(obj.body, { headers });
-}
-
-// ─── /admin/dashboard (inline HTML) ──────────────────────────────
-
-function handleAdminDashboard(_env: Env): Response {
-  return new Response(ADMIN_DASHBOARD_HTML, {
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "private, no-store",
-      "Content-Security-Policy":
-        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'",
-      "X-Frame-Options": "DENY",
-      "Referrer-Policy": "no-referrer",
-    },
-  });
-}
-
-const ADMIN_DASHBOARD_HTML = String.raw`<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex,nofollow">
-<title>Accshift — Log triage</title>
-<style>
-  :root {
-    color-scheme: dark;
-    --bg: #0b0d10;
-    --panel: #14181d;
-    --panel-2: #1a1f26;
-    --line: #262d36;
-    --text: #e6e8eb;
-    --muted: #8a93a0;
-    --accent: #7ab8ff;
-    --warn: #ffb454;
-    --err: #ff6b6b;
-    --ok: #5fd07a;
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 ui-sans-serif, system-ui, sans-serif; }
-  header { display: flex; align-items: center; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 10; }
-  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: 0.2px; }
-  header .spacer { flex: 1; }
-  header button { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; font: inherit; }
-  header button:hover { border-color: var(--accent); }
-  .filters { display: flex; gap: 8px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
-  .filters input, .filters select { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font: inherit; min-width: 0; }
-  .filters input { width: 160px; }
-  .filters .grow { flex: 1; min-width: 200px; }
-  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
-  th { background: var(--panel); color: var(--muted); font-weight: 500; position: sticky; top: 88px; cursor: pointer; user-select: none; }
-  th:hover { color: var(--text); }
-  tbody tr { cursor: pointer; }
-  tbody tr:hover { background: var(--panel-2); }
-  td.note { white-space: normal; max-width: 480px; color: var(--muted); }
-  .pill { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); }
-  .empty { padding: 32px 16px; text-align: center; color: var(--muted); }
-  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 0; max-width: 90vw; max-height: 88vh; width: 1100px; }
-  dialog::backdrop { background: rgba(0,0,0,0.6); }
-  dialog header { background: var(--panel-2); border-bottom: 1px solid var(--line); position: static; }
-  dialog .body { padding: 12px 16px; overflow: auto; max-height: 72vh; }
-  dialog footer { padding: 8px 12px; border-top: 1px solid var(--line); display: flex; gap: 8px; }
-  pre.log { background: #0a0c0f; padding: 8px; border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 60vh; overflow: auto; border: 1px solid var(--line); }
-  .row-meta { display: flex; gap: 12px; padding: 6px 16px; background: var(--panel-2); border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
-  .row-meta b { color: var(--text); font-weight: 500; }
-  .lvl-error { color: var(--err); }
-  .lvl-warn { color: var(--warn); }
-  .lvl-info { color: var(--accent); }
-  .lvl-debug { color: var(--muted); }
-  .tab-bar { display: flex; gap: 4px; padding: 8px 12px 0; }
-  .tab-bar button { background: transparent; color: var(--muted); border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; padding: 6px 12px; cursor: pointer; font: inherit; }
-  .tab-bar button.active { background: #0a0c0f; color: var(--text); border-color: var(--line); }
-  .status { padding: 6px 12px; font-size: 11px; color: var(--muted); }
-</style>
-</head>
-<body>
-<header>
-  <h1>Accshift · log triage</h1>
-  <span class="status" id="status">loading…</span>
-  <span class="spacer"></span>
-  <button id="reload">↻ Reload</button>
-  <button id="logout">⎋ Forget token</button>
-</header>
-<div class="filters">
-  <input id="f-version" placeholder="app version (substring)">
-  <input id="f-os" placeholder="OS version (substring)">
-  <input id="f-country" placeholder="country (2-letter)">
-  <input id="f-from" type="date">
-  <input id="f-to" type="date">
-  <input id="f-note" class="grow" placeholder="note contains…">
-</div>
-<table>
-  <thead><tr>
-    <th data-sort="created_at">When</th>
-    <th data-sort="ticket_id">Ticket</th>
-    <th data-sort="app_version">Version</th>
-    <th data-sort="os_version">OS</th>
-    <th data-sort="country">Country</th>
-    <th data-sort="size_bytes">Size</th>
-    <th>Note</th>
-  </tr></thead>
-  <tbody id="rows"></tbody>
-</table>
-<div class="empty" id="empty" style="display:none">No uploads matching the filters.</div>
-
-<dialog id="modal">
-  <header>
-    <h1 id="m-title">Ticket</h1>
-    <span class="spacer"></span>
-    <button id="m-download">⬇ Download zip</button>
-    <button id="m-copy">⧉ Copy id</button>
-    <button id="m-close">✕</button>
-  </header>
-  <div class="row-meta" id="m-meta"></div>
-  <div class="tab-bar" id="m-tabs"></div>
-  <div class="body">
-    <div class="filters" style="border:none;padding:0 0 8px;background:transparent">
-      <select id="m-level">
-        <option value="">all levels</option>
-        <option value="error">error</option>
-        <option value="warn">warn</option>
-        <option value="info">info</option>
-        <option value="debug">debug</option>
-      </select>
-      <input id="m-source" placeholder="source contains…" class="grow">
-      <input id="m-msg" placeholder="message contains…" class="grow">
-    </div>
-    <pre class="log" id="m-out">Loading…</pre>
-  </div>
-</dialog>
-
-<script>
-"use strict";
-
-let adminToken = "";
-
-function getToken() {
-  let t = adminToken;
-  if (!t) {
-    t = prompt("Admin token (Bearer)");
-    if (!t) throw new Error("no_token");
-    adminToken = t;
-  }
-  return t;
-}
-function forgetToken() { adminToken = ""; location.reload(); }
-
-async function authFetch(url, init) {
-  const token = getToken();
-  const headers = new Headers(init && init.headers);
-  headers.set("Authorization", "Bearer " + token);
-  const res = await fetch(url, Object.assign({}, init, { headers }));
-  if (res.status === 401) { adminToken = ""; throw new Error("unauthorized"); }
-  return res;
-}
-
-let state = {
-  rows: [],
-  sortKey: "created_at",
-  sortDir: -1,
-  filters: { version: "", os: "", country: "", from: "", to: "", note: "" },
-};
-
-async function loadRows() {
-  document.getElementById("status").textContent = "loading…";
-  try {
-    const res = await authFetch("/admin/query", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sql: "SELECT ticket_id, created_at, size_bytes, app_version, os_version, country, note FROM log_uploads ORDER BY created_at DESC" }),
-    });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const data = await res.json();
-    state.rows = data.results || [];
-    document.getElementById("status").textContent = state.rows.length + " uploads";
-    render();
-  } catch (e) {
-    document.getElementById("status").textContent = "error: " + e.message;
-    if (e.message === "unauthorized" || e.message === "no_token") setTimeout(() => location.reload(), 50);
-  }
-}
-
-function fmtBytes(n) {
-  if (n < 1024) return n + " B";
-  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
-  return (n / 1024 / 1024).toFixed(2) + " MB";
-}
-function fmtDate(secs) {
-  const d = new Date(secs * 1000);
-  const pad = (x) => String(x).padStart(2, "0");
-  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
-}
-function esc(s) { return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
-
-function applyFilters(rows) {
-  const f = state.filters;
-  return rows.filter((r) => {
-    if (f.version && !(r.app_version || "").toLowerCase().includes(f.version.toLowerCase())) return false;
-    if (f.os && !(r.os_version || "").toLowerCase().includes(f.os.toLowerCase())) return false;
-    if (f.country && (r.country || "").toLowerCase() !== f.country.toLowerCase()) return false;
-    if (f.note && !(r.note || "").toLowerCase().includes(f.note.toLowerCase())) return false;
-    if (f.from) {
-      const ts = Math.floor(new Date(f.from + "T00:00:00Z").getTime() / 1000);
-      if (r.created_at < ts) return false;
-    }
-    if (f.to) {
-      const ts = Math.floor(new Date(f.to + "T23:59:59Z").getTime() / 1000);
-      if (r.created_at > ts) return false;
-    }
-    return true;
-  });
-}
-
-function render() {
-  const tbody = document.getElementById("rows");
-  const filtered = applyFilters(state.rows);
-  const sorted = filtered.slice().sort((a, b) => {
-    const k = state.sortKey;
-    const av = a[k] ?? "";
-    const bv = b[k] ?? "";
-    if (av < bv) return -1 * state.sortDir;
-    if (av > bv) return 1 * state.sortDir;
-    return 0;
-  });
-  document.getElementById("empty").style.display = sorted.length ? "none" : "block";
-  tbody.innerHTML = sorted.map((r) => (
-    '<tr data-ticket="' + esc(r.ticket_id) + '" data-when="' + r.created_at + '">' +
-    '<td>' + fmtDate(r.created_at) + '</td>' +
-    '<td><span class="pill">' + esc(r.ticket_id) + '</span></td>' +
-    '<td>' + esc(r.app_version) + '</td>' +
-    '<td>' + esc(r.os_version) + '</td>' +
-    '<td>' + esc(r.country || "—") + '</td>' +
-    '<td>' + fmtBytes(r.size_bytes) + '</td>' +
-    '<td class="note">' + esc(r.note || "") + '</td>' +
-    '</tr>'
-  )).join("");
-}
-
-document.getElementById("rows").addEventListener("click", (e) => {
-  const tr = e.target.closest("tr");
-  if (!tr) return;
-  openTicket(tr.dataset.ticket);
-});
-document.querySelectorAll("th[data-sort]").forEach((th) => {
-  th.addEventListener("click", () => {
-    const k = th.dataset.sort;
-    if (state.sortKey === k) state.sortDir *= -1; else { state.sortKey = k; state.sortDir = -1; }
-    render();
-  });
-});
-["version", "os", "country", "from", "to", "note"].forEach((k) => {
-  document.getElementById("f-" + k).addEventListener("input", (e) => {
-    state.filters[k] = e.target.value;
-    render();
-  });
-});
-document.getElementById("reload").addEventListener("click", loadRows);
-document.getElementById("logout").addEventListener("click", forgetToken);
-
-// ─── Ticket modal ────────────────────────────────────────────────
-
-let currentTicket = null;
-let currentFiles = new Map();
-let currentTab = null;
-
-async function openTicket(ticketId) {
-  currentTicket = ticketId;
-  const modal = document.getElementById("modal");
-  document.getElementById("m-title").textContent = "Ticket " + ticketId;
-  document.getElementById("m-out").textContent = "Downloading…";
-  document.getElementById("m-meta").innerHTML = "";
-  document.getElementById("m-tabs").innerHTML = "";
-  modal.showModal();
-  try {
-    const res = await authFetch("/admin/logs/" + encodeURIComponent(ticketId));
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const buf = await res.arrayBuffer();
-    currentFiles = await parseZip(buf);
-    if (currentFiles.size === 0) { document.getElementById("m-out").textContent = "(zip empty)"; return; }
-    const names = Array.from(currentFiles.keys());
-    currentTab = names[0];
-    renderTabs(names);
-    renderModalMeta();
-    renderModalLog();
-  } catch (e) {
-    document.getElementById("m-out").textContent = "Error: " + e.message;
-  }
-}
-
-function renderTabs(names) {
-  const bar = document.getElementById("m-tabs");
-  bar.innerHTML = names.map((n) => '<button data-file="' + esc(n) + '"' + (n === currentTab ? ' class="active"' : "") + ">" + esc(n) + "</button>").join("");
-  bar.querySelectorAll("button").forEach((b) => {
-    b.addEventListener("click", () => { currentTab = b.dataset.file; renderTabs(names); renderModalLog(); });
-  });
-}
-
-function renderModalMeta() {
-  const row = state.rows.find((r) => r.ticket_id === currentTicket);
-  if (!row) return;
-  document.getElementById("m-meta").innerHTML =
-    '<span><b>When:</b> ' + fmtDate(row.created_at) + '</span>' +
-    '<span><b>Version:</b> ' + esc(row.app_version) + '</span>' +
-    '<span><b>OS:</b> ' + esc(row.os_version) + '</span>' +
-    '<span><b>Country:</b> ' + esc(row.country || "—") + '</span>' +
-    '<span><b>Size:</b> ' + fmtBytes(row.size_bytes) + '</span>' +
-    (row.note ? '<span><b>Note:</b> ' + esc(row.note) + '</span>' : "");
-}
-
-function renderModalLog() {
-  const bytes = currentFiles.get(currentTab);
-  if (!bytes) { document.getElementById("m-out").textContent = "(empty)"; return; }
-  const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-  const level = document.getElementById("m-level").value;
-  const sourceQ = document.getElementById("m-source").value.toLowerCase();
-  const msgQ = document.getElementById("m-msg").value.toLowerCase();
-  const lines = text.split("\n");
-  const out = [];
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    let rec;
-    try { rec = JSON.parse(line); } catch { out.push(esc(line)); continue; }
-    if (level && rec.level !== level) continue;
-    if (sourceQ && !(rec.source || "").toLowerCase().includes(sourceQ)) continue;
-    if (msgQ && !(rec.message || "").toLowerCase().includes(msgQ)) continue;
-    const cls = "lvl-" + (["error", "warn", "info", "debug"].includes(rec.level) ? rec.level : "info");
-    const ts = rec.tsMs ? new Date(rec.tsMs).toISOString().replace("T", " ").slice(0, 19) : "—";
-    out.push(
-      '<span class="' + cls + '">[' + esc(rec.level || "?") + ']</span> ' +
-      ts + ' ' + esc(rec.source || "?") + ' — ' + esc(rec.message || "") +
-      (rec.details ? "\n    " + esc(String(rec.details)) : "")
-    );
-  }
-  document.getElementById("m-out").innerHTML = out.join("\n");
-}
-
-["m-level", "m-source", "m-msg"].forEach((id) => document.getElementById(id).addEventListener("input", renderModalLog));
-document.getElementById("m-close").addEventListener("click", () => document.getElementById("modal").close());
-document.getElementById("m-copy").addEventListener("click", () => navigator.clipboard.writeText(currentTicket));
-document.getElementById("m-download").addEventListener("click", async () => {
-  const res = await authFetch("/admin/logs/" + encodeURIComponent(currentTicket));
-  const blob = await res.blob();
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = currentTicket + ".zip";
-  a.click();
-  URL.revokeObjectURL(a.href);
-});
-
-// ─── Minimal ZIP parser (PKZIP, STORE + DEFLATE) ─────────────────
-
-// Cap on the total decompressed size so a zip bomb cannot OOM the tab.
-const ZIP_INFLATE_CAP = 50 * 1024 * 1024;
-
-async function parseZip(buf) {
-  const view = new DataView(buf);
-  const u8 = new Uint8Array(buf);
-  const out = new Map();
-  let p = 0;
-  let inflated = 0;
-  while (p + 4 <= buf.byteLength) {
-    const sig = view.getUint32(p, true);
-    if (sig !== 0x04034b50) break;
-    const flags = view.getUint16(p + 6, true);
-    const method = view.getUint16(p + 8, true);
-    let compressedSize = view.getUint32(p + 18, true);
-    const uncompressedSize = view.getUint32(p + 22, true);
-    const nameLen = view.getUint16(p + 26, true);
-    const extraLen = view.getUint16(p + 28, true);
-    const name = new TextDecoder().decode(u8.subarray(p + 30, p + 30 + nameLen));
-    const dataStart = p + 30 + nameLen + extraLen;
-    if (flags & 0x08) {
-      // Streamed entry: sizes are zero in LFH, find the data descriptor signature.
-      let i = dataStart;
-      while (i + 4 <= buf.byteLength) {
-        if (view.getUint32(i, true) === 0x08074b50) { compressedSize = i - dataStart; break; }
-        i++;
-      }
-    }
-    const dataEnd = dataStart + compressedSize;
-    const slice = u8.subarray(dataStart, dataEnd);
-    let bytes;
-    if (method === 0) bytes = slice;
-    else if (method === 8) bytes = await inflateCapped(slice, ZIP_INFLATE_CAP - inflated);
-    else throw new Error("unsupported compression method " + method);
-    inflated += bytes.byteLength;
-    if (inflated > ZIP_INFLATE_CAP) throw zipTooBigError();
-    if (uncompressedSize && bytes.byteLength !== uncompressedSize) {
-      // size mismatch is non-fatal for display; keep what we got
-    }
-    out.set(name, bytes);
-    let next = dataEnd;
-    if (flags & 0x08) next += 16; // skip data descriptor (sig + crc + 2 sizes)
-    p = next;
-  }
-  return out;
-}
-
-function zipTooBigError() {
-  return new Error("zip contents exceed " + (ZIP_INFLATE_CAP / 1024 / 1024) + " MB decompressed, refusing to display");
-}
-
-// Inflate a deflate-raw slice, aborting once the output exceeds cap bytes.
-async function inflateCapped(slice, cap) {
-  const stream = new Response(slice).body.pipeThrough(new DecompressionStream("deflate-raw"));
-  const reader = stream.getReader();
-  const chunks = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > cap) {
-      await reader.cancel();
-      throw zipTooBigError();
-    }
-    chunks.push(value);
-  }
-  const bytes = new Uint8Array(total);
-  let off = 0;
-  for (const c of chunks) { bytes.set(c, off); off += c.byteLength; }
-  return bytes;
-}
-
-// Bootstrap
-try { getToken(); loadRows(); } catch (e) { document.getElementById("status").textContent = "no token"; }
-</script>
-</body>
-</html>`;
-
 // ─── Utils ───────────────────────────────────────────────────────
 
 async function dailyVisitorHash(
@@ -1143,15 +488,6 @@ function bytesToHex(bytes: Uint8Array): string {
     s += HEX[b >> 4]! + HEX[b & 0x0f]!;
   }
   return s;
-}
-
-function makeTicketId(): string {
-  // 10 chars Crockford base32 (no I, L, O, U).
-  const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-  const rnd = crypto.getRandomValues(new Uint8Array(10));
-  let out = "";
-  for (let i = 0; i < 10; i++) out += alphabet[rnd[i]! % 32];
-  return out;
 }
 
 function isUuidV4(s: unknown): s is string {
@@ -1247,10 +583,7 @@ function cors(res: Response, request: Request, env: Env): Response {
     h.set("Access-Control-Allow-Origin", "null");
   }
   h.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  h.set(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, X-App-Version, X-OS-Version, X-Note-B64",
-  );
+  h.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
   h.set("Access-Control-Max-Age", "86400");
   return new Response(res.body, { status: res.status, headers: h });
 }

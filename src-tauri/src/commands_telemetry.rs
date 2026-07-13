@@ -3,7 +3,7 @@
 use crate::config;
 use crate::ctx;
 use crate::telemetry::{self, TELEMETRY_URL};
-use crate::telemetry_runtime::{detect_os_version, refresh_consent_from_config, TelemetryState};
+use crate::telemetry_runtime::{refresh_consent_from_config, TelemetryState};
 use serde::Serialize;
 use serde_json::Value;
 use tauri::Manager;
@@ -214,44 +214,6 @@ pub async fn telemetry_complete_onboarding(
         }
     });
     Ok(())
-}
-
-/// Bundles the current and previous session logs into a zip and POSTs it to
-/// `/logs`. The optional `note` is the user-typed reason shown in the privacy
-/// tab textarea. Returns the ticket_id the user can copy into a bug report.
-#[tauri::command]
-pub async fn telemetry_upload_logs(
-    app_handle: tauri::AppHandle,
-    note: Option<String>,
-) -> Result<String, String> {
-    let c = ctx(&app_handle);
-    let zip_bytes = tauri::async_runtime::spawn_blocking(move || telemetry::log_bundle::build(&c))
-        .await
-        .map_err(|e| format!("task: {e}"))??;
-    if zip_bytes.is_empty() {
-        return Err("no_logs_found".into());
-    }
-
-    let app_version = env!("CARGO_PKG_VERSION").to_string();
-    let os_version = detect_os_version();
-    tauri::async_runtime::spawn_blocking(move || {
-        let ua = telemetry::user_agent(&app_version);
-        let client = reqwest::blocking::Client::builder()
-            .user_agent(ua.clone())
-            .build()
-            .map_err(|e| format!("client: {e}"))?;
-        telemetry::upload_logs(
-            &client,
-            TELEMETRY_URL,
-            &ua,
-            zip_bytes,
-            &app_version,
-            &os_version,
-            note.as_deref(),
-        )
-    })
-    .await
-    .map_err(|e| format!("task: {e}"))?
 }
 
 #[tauri::command]

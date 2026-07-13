@@ -1,16 +1,19 @@
 # accshift-telemetry
 
-Cloudflare Worker that collects anonymous Accshift telemetry and accepts
-manually uploaded log bundles.
+Cloudflare Worker that collects anonymous Accshift usage statistics.
 
 Open source so anyone can verify what happens to data sent by the app.
+
+The app never uploads log files. Logs are written locally and stay on the
+user's machine; the Settings sidebar only opens the folder holding them, so
+sharing a log is always a deliberate, manual act. The Worker has no object
+storage and no endpoint that accepts a file.
 
 ## What the Worker does
 
 - `POST /track` accepts batches of anonymous events (Mode A) or pseudonymous
   events (Mode B, opt-in)
 - `POST /consent` increments one of three aggregate onboarding-choice counters
-- `POST /logs` accepts a log zip uploaded manually by the user
 - `POST /forget` deletes data tied to an `install_id` (Mode B, GDPR art. 17)
 - `POST /export` exports data tied to an `install_id` (Mode B, GDPR art. 20)
 - `POST /admin/query` runs SELECT-only D1 queries with a bearer token,
@@ -24,7 +27,6 @@ in the parent repository.
 - Cloudflare Workers
 - D1 (long-term aggregates, pseudonyms)
 - Analytics Engine (high-cardinality events, 90 days)
-- R2 (log zip storage)
 - Resend (email alerts on rate limit / budget saturation)
 
 The Worker stays inside the Cloudflare and Resend free tiers at Accshift's scale.
@@ -55,9 +57,6 @@ The Worker stays inside the Cloudflare and Resend free tiers at Accshift's scale
 # D1 database. Take the returned id and put it in wrangler.toml.
 npx wrangler d1 create accshift-telemetry
 
-# R2 bucket. R2 must be enabled in the dashboard first.
-npx wrangler r2 bucket create accshift-logs --location weur
-
 # Analytics Engine: enable in the dashboard, the dataset is created
 # automatically on first write.
 
@@ -66,6 +65,12 @@ npx wrangler d1 execute accshift-telemetry --file=./schema.sql --remote
 
 # Existing deployments apply each migration once instead.
 npx wrangler d1 execute accshift-telemetry --remote --file=migrations/0002_consent_choices.sql
+npx wrangler d1 execute accshift-telemetry --remote --file=migrations/0003_drop_log_uploads.sql
+
+# 0003 drops the log-upload index. The zips themselves lived in an R2 bucket
+# that D1 does not manage, so delete it too (deployments predating the removal
+# of log uploads only).
+npx wrangler r2 bucket delete accshift-logs
 ```
 
 Choice percentages can be queried through `/admin/query` with:

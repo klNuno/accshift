@@ -12,12 +12,10 @@
 mod client;
 mod events;
 pub mod install_id;
-pub mod log_bundle;
 mod queue;
 
 pub use client::{
-    export, forget, record_consent_choice, upload_logs, user_agent, ConsentChoice, Mode,
-    TELEMETRY_URL,
+    export, forget, record_consent_choice, user_agent, ConsentChoice, Mode, TELEMETRY_URL,
 };
 pub use events::{Event, TelemetryContext};
 pub use queue::{ConsentState, Handle, QueueParams, Worker};
