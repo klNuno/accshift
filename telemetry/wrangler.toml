@@ -23,10 +23,16 @@ dataset = "accshift_events"
 
 # ── D1: pings, snapshots, Mode B pseudonyms, forget list ──
 # database_id is filled after `wrangler d1 create accshift-telemetry`.
+#
+# migrations_dir puts wrangler in charge of the schema: it records what it has
+# run in a `d1_migrations` table and applies only what is pending. `pnpm deploy`
+# runs the migrations before uploading the Worker, so code can never reach
+# production ahead of the table it queries.
 [[d1_databases]]
 binding = "DB"
 database_name = "accshift-telemetry"
 database_id = "a7eb2043-c878-48f9-ab21-6cdc7d8ea327"
+migrations_dir = "migrations"
 
 # ── Public variables (non-secret) ──
 [vars]

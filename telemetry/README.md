@@ -59,17 +59,26 @@ npx wrangler d1 create accshift-telemetry
 
 # Analytics Engine: enable in the dashboard, the dataset is created
 # automatically on first write.
+```
 
-# Apply the D1 schema.
-npx wrangler d1 execute accshift-telemetry --file=./schema.sql --remote
+The schema is not applied by hand. `migrations/` is the single source of truth
+and wrangler tracks what it has run in a `d1_migrations` table, so a fresh
+database and a years-old one converge on the same schema:
 
-# Existing deployments apply each migration once instead.
-npx wrangler d1 execute accshift-telemetry --remote --file=migrations/0002_consent_choices.sql
-npx wrangler d1 execute accshift-telemetry --remote --file=migrations/0003_drop_log_uploads.sql
+```bash
+pnpm db:status    # what is pending
+pnpm db:migrate   # apply it
+```
 
-# 0003 drops the log-upload index. The zips themselves lived in an R2 bucket
-# that D1 does not manage, so delete it too (deployments predating the removal
-# of log uploads only).
+`pnpm deploy` runs the pending migrations _before_ uploading the Worker. That
+ordering is the point: it is what stops code from reaching production ahead of a
+table it queries. Use `pnpm deploy:worker-only` to skip it when you know the
+schema has not moved.
+
+Deployments that predate the removal of log uploads also hold an R2 bucket that
+D1 does not manage. Migration 0003 drops the index; delete the bucket yourself:
+
+```bash
 npx wrangler r2 bucket delete accshift-logs
 ```
 
@@ -107,8 +116,12 @@ echo "you@example.com" | npx wrangler secret put ALERT_EMAIL
 ### Deploy
 
 ```bash
-npx wrangler deploy
+pnpm deploy
 ```
+
+Not `wrangler deploy` directly: that uploads the Worker without applying the
+pending migrations, which is how `/consent` once shipped against a table that
+did not exist.
 
 ### Local dev
 

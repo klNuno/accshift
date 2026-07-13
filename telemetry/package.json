@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "db:init": "wrangler d1 execute accshift-telemetry --file=./schema.sql --remote",
-    "db:init:local": "wrangler d1 execute accshift-telemetry --file=./schema.sql --local",
+    "deploy": "wrangler d1 migrations apply accshift-telemetry --remote && wrangler deploy",
+    "deploy:worker-only": "wrangler deploy",
+    "db:migrate": "wrangler d1 migrations apply accshift-telemetry --remote",
+    "db:migrate:local": "wrangler d1 migrations apply accshift-telemetry --local",
+    "db:status": "wrangler d1 migrations list accshift-telemetry --remote",
     "tail": "wrangler tail"
   },
   "devDependencies": {

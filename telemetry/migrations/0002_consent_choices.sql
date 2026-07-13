@@ -1,5 +1,8 @@
--- Apply with:
---   wrangler d1 execute accshift-telemetry --remote --file=migrations/0002_consent_choices.sql
+-- Aggregate onboarding choices, one counter per (date, version, choice).
+-- No client or request identifier is stored, including for refusals.
+--
+-- /consent 500s without this table, so the Worker must never be deployed ahead
+-- of it. `pnpm deploy` applies pending migrations first for exactly that reason.
 
 CREATE TABLE IF NOT EXISTS consent_choice_counts (
   date        TEXT NOT NULL,

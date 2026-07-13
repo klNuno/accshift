@@ -1,6 +1,10 @@
--- Accshift telemetry: D1 schema
--- Used for long-term aggregates (beyond the 90-day Analytics Engine retention)
--- and for Mode B GDPR operations (forget / export).
+-- Accshift telemetry: base D1 schema.
+--
+-- D1 holds long-term aggregates (beyond the 90-day Analytics Engine retention)
+-- and backs the Mode B GDPR operations (forget / export).
+--
+-- Every statement is idempotent, so replaying this file on a database that was
+-- bootstrapped before migrations were tracked is a no-op.
 
 -- ─────────────────────────────────────────────────────────────
 -- Daily pings (Mode A + Mode B)
@@ -22,20 +26,6 @@ CREATE TABLE IF NOT EXISTS daily_pings (
 CREATE INDEX IF NOT EXISTS idx_pings_date     ON daily_pings(date);
 CREATE INDEX IF NOT EXISTS idx_pings_version  ON daily_pings(app_version, date);
 CREATE INDEX IF NOT EXISTS idx_pings_country  ON daily_pings(country, date);
-
--- ─────────────────────────────────────────────────────────────
--- Aggregate onboarding choices
--- ─────────────────────────────────────────────────────────────
--- No client or request identifier is stored, including for refusals.
-CREATE TABLE IF NOT EXISTS consent_choice_counts (
-  date        TEXT NOT NULL,
-  app_version TEXT NOT NULL,
-  choice      TEXT NOT NULL CHECK (choice IN ('refused', 'basic', 'enhanced')),
-  count       INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (date, app_version, choice)
-);
-
-CREATE INDEX IF NOT EXISTS idx_consent_choice ON consent_choice_counts(choice, date);
 
 -- ─────────────────────────────────────────────────────────────
 -- Accounts snapshot per platform (Mode B only)
