@@ -10,7 +10,7 @@
   <a href="./LICENSE"><img src="https://img.shields.io/github/license/klNuno/accshift" alt="License" /></a>
   <a href="https://github.com/klNuno/accshift/stargazers"><img src="https://img.shields.io/github/stars/klNuno/accshift" alt="Stars" /></a>
   <a href="https://github.com/klNuno/accshift/issues"><img src="https://img.shields.io/github/issues/klNuno/accshift" alt="Issues" /></a>
-  <a href="#current-status"><img src="https://img.shields.io/badge/platform-Windows-0078D6?logo=windows" alt="Platform" /></a>
+  <a href="#current-status"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6" alt="Platform" /></a>
   <a href="https://tauri.app/"><img src="https://img.shields.io/badge/Tauri-2.x-24C8DB?logo=tauri" alt="Tauri" /></a>
   <a href="https://svelte.dev/"><img src="https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte" alt="Svelte" /></a>
 </p>
@@ -27,7 +27,7 @@
 | -------------------- | ------------ | --------------- | --------------- |
 | Steam                | ✅ Done      | 🧪 GUI ready    | 🧪 GUI ready    |
 | Riot Games           | ✅ Done      | 🚧 Possible     | ⛔ Not feasible |
-| Battle.net           | ✅ Done      | 🚧 Possible     | ⛔ Not feasible |
+| Battle.net           | ✅ Done      | 🧪 GUI ready    | ⛔ Not feasible |
 | Epic Games           | ✅ Done      | 🚧 Possible     | 🚧 Possible     |
 | Ubisoft Connect      | ✅ Done      | 🚧 Possible     | 🚧 Possible     |
 | Roblox               | ✅ Done      | 🚧 Possible     | 🚧 Possible     |
@@ -58,7 +58,11 @@ Users can propose new platforms through [GitHub Issues](https://github.com/klNun
 
 ## Installation
 
-Download the latest installer from [Releases](https://github.com/klNuno/accshift/releases).
+Grab the build for your OS from [Releases](https://github.com/klNuno/accshift/releases):
+
+- **Windows**: NSIS or MSI installer
+- **Linux**: deb, rpm or AppImage
+- **macOS**: dmg (unsigned for now — run `xattr -cr /Applications/Accshift.app` once if Gatekeeper complains)
 
 ## Building from source
 
@@ -87,9 +91,12 @@ both at once is safe thanks to an exclusive lock on mutating operations.
   terminal right after install. A standalone
   `accshift-cli_<version>_x64.exe` binary is also
   available on [Releases](https://github.com/klNuno/accshift/releases).
-- **Linux / macOS**: build from source for now. The deb/rpm packages install
-  the CLI to `/usr/bin` alongside the app; the macOS `.app` bundles it inside
-  `Contents/MacOS` (symlink it onto your `PATH`, e.g. into `/usr/local/bin`).
+- **Linux**: the deb/rpm packages install the CLI to `/usr/bin` alongside the
+  app. A standalone `accshift-cli_<version>_linux_x86_64` binary is also on
+  Releases.
+- **macOS**: the `.app` bundles the CLI inside `Contents/MacOS` (symlink it
+  onto your `PATH`, e.g. into `/usr/local/bin`). A standalone
+  `accshift-cli_<version>_macos_aarch64` binary is also on Releases.
 
 Building from source (`pnpm tauri build`) produces the binary at
 `target/release/accshift` (`accshift.exe` on Windows).
