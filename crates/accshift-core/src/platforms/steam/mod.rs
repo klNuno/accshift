@@ -364,6 +364,37 @@ pub fn switch_account_and_launch_game(
         ),
     );
 
+    // The frontend routes every "run game as X" through this command; whether
+    // a switch is actually needed is decided here, against live state, not
+    // from cached UI state. loginusers.vdf's MostRecent is written by Steam
+    // itself at login, so it tracks the real session more reliably than the
+    // autologin registry value (which is just our own last write). When Steam
+    // is already running with the target account logged in, a restart would
+    // only cost the user their session. Hand the launch to the running
+    // client instead.
+    let already_on_target = accounts::is_steam_running()
+        && accounts::get_current_account_name(&steam_path)
+            .map(|current| current.eq_ignore_ascii_case(&username))
+            .unwrap_or(false);
+    if already_on_target {
+        return match os::open_url(&format!("steam://rungameid/{app_id}")) {
+            Ok(()) => {
+                log_platform_info(
+                    &app_handle,
+                    "steam.switch_account_and_launch_game",
+                    "Target account already active; launched game without switching",
+                    format!("app_id={app_id}"),
+                );
+                Ok(())
+            }
+            Err(e) => Err(log_platform_failure(
+                &app_handle,
+                "steam.switch_account_and_launch_game",
+                e.into(),
+            )),
+        };
+    }
+
     let force_kill = shutdown_mode == "force";
     let result = accounts::switch_account_and_launch_game(
         &steam_path,
@@ -605,7 +636,7 @@ pub fn get_steam_path(app_handle: AppCtx) -> Result<String, PlatformError> {
 
 pub fn set_steam_path(app_handle: AppCtx, path: String) -> Result<(), PlatformError> {
     let trimmed = path.trim().to_string();
-    // The override is later joined with steam.exe and launched — only accept
+    // The override is later joined with steam.exe and launched. Only accept
     // an existing directory that actually looks like a Steam install.
     if !trimmed.is_empty() {
         let candidate = PathBuf::from(&trimmed);
@@ -652,7 +683,7 @@ pub fn bulk_edit(
             request.launch_options.len()
         ),
     );
-    // Steam keeps localconfig.vdf in memory and rewrites it on exit — edits
+    // Steam keeps localconfig.vdf in memory and rewrites it on exit. Edits
     // made while it runs are silently lost. Stop it first; it stays closed.
     match accounts::stop_steam(&steam_path, false)? {
         accounts::StopOutcome::NeedsElevation => {

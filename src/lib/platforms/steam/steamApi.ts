@@ -37,12 +37,6 @@ export async function switchAccount(username: string): Promise<void> {
   });
 }
 
-export async function launchGame(appId: string): Promise<void> {
-  if (!/^\d+$/.test(appId)) throw new Error("Invalid app id");
-  await invoke("open_url", { url: `steam://rungameid/${appId}` });
-  void logAppEvent("info", "frontend.steam.launch_game", "Launch game request", { appId });
-}
-
 export async function switchAccountAndLaunchGame(
   username: string,
   steamId: string,
@@ -157,7 +151,7 @@ export async function openSteamApiKeyPage(): Promise<void> {
   await invoke("steam_open_api_key_page");
 }
 
-// CS2 bridge (external CS2 account manager — any server implementing the
+// CS2 bridge (external CS2 account manager: any server implementing the
 // documented JSON contract works; the URL is fetched as-is)
 
 export interface Cs2BridgeSettings {

@@ -13,7 +13,6 @@ import {
   forgetAccount,
   getAccountGames,
   getCopyableGames,
-  launchGame,
   openUserdata,
   switchAccountAndLaunchGame,
   switchAccountMode,
@@ -27,10 +26,13 @@ export function getSteamContextMenuItems(
   const defaultGame = getDefaultGame(account.id);
   const isCurrentAccount = callbacks.getCurrentAccountId() === account.id;
 
+  // Always go through the combined backend command: it checks the live Steam
+  // state and skips the restart when the target account is already logged in.
+  // Branching here on cached UI state raced with reality and could launch the
+  // game on the wrong account (stale currentAccountId). `isCurrentAccount`
+  // below is only cosmetic (labels).
   const runGame = (appId: string) =>
-    isCurrentAccount
-      ? launchGame(appId)
-      : switchAccountAndLaunchGame(account.username, account.id, appId);
+    switchAccountAndLaunchGame(account.username, account.id, appId);
 
   const launchItems: ContextMenuAction[] = [
     {

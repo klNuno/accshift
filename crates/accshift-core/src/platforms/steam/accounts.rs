@@ -53,7 +53,7 @@ pub(crate) fn steam_id_to_account_id(steam_id64: &str) -> Option<u32> {
     Some((id & 0xFFFFFFFF) as u32)
 }
 
-fn is_steam_running() -> bool {
+pub(super) fn is_steam_running() -> bool {
     os::is_process_running(os::steam_process_name())
 }
 
@@ -76,7 +76,7 @@ fn kill_process_tree_if_running(process_name: &str) -> Result<(), AppError> {
 }
 
 fn try_graceful_shutdown(steam_path: &Path) -> bool {
-    // Only wait when the shutdown request was actually delivered — otherwise
+    // Only wait when the shutdown request was actually delivered. Otherwise
     // we would burn the full timeout before falling back to a kill.
     if !os::request_steam_shutdown(steam_path) {
         return false;
@@ -127,7 +127,7 @@ fn write_auto_login(next_username: Option<&str>) -> Result<(), AppError> {
 // Flip the per-user AllowAutoLogin / MostRecent flags inside loginusers.vdf.
 //
 // On Linux and macOS, Steam treats `AutoLoginUser=""` in registry.vdf as a
-// hint, not a hard rule — if any user in loginusers.vdf still has
+// hint, not a hard rule. If any user in loginusers.vdf still has
 // `AllowAutoLogin=1` and `MostRecent=1`, Steam silently logs them in at
 // launch. Windows respects the registry value strictly so this step is a
 // no-op there.
@@ -238,6 +238,21 @@ fn switch_autologin_and_relaunch(
     }
 
     pre_launch();
+
+    // Steam is single-instance: a steam.exe alive at this point (bootstrapper
+    // re-exec during a graceful shutdown, updater respawn after the kill)
+    // would receive our arguments (including -applaunch) over IPC and run
+    // the game in the old account's session instead of relaunching. The waits
+    // in `stop_steam` only track the pids they saw at the start, so re-check
+    // by name and put down any newcomer before launching.
+    if is_steam_running() || os::is_process_running(os::steam_web_helper_process_name()) {
+        if let Err(e) = kill_steam_client_processes() {
+            let _ = restore_auto_login_user(&previous);
+            let previous_target = (!previous.trim().is_empty()).then_some(previous.as_str());
+            let _ = set_login_user_flags(steam_path, previous_target);
+            return Err(e);
+        }
+    }
 
     if let Err(e) = launch_steam(steam_path, run_as_admin, launch_options, extra_args) {
         let _ = restore_auto_login_user(&previous);
@@ -704,8 +719,8 @@ pub fn forget_account(steam_path: &Path, steam_id: &str) -> Result<(), AppError>
             fs::read_to_string(&loginusers_path).map_err(|e| AppError::FileRead(e.to_string()))?;
         let (updated, removed) = remove_loginuser_entry(&content, steam_id);
         if removed {
-            // Steam keeps loginusers.vdf in memory and rewrites it on exit —
-            // editing it while Steam runs silently resurrects the entry. Stop
+            // Steam keeps loginusers.vdf in memory and rewrites it on exit.
+            // Editing it while Steam runs silently resurrects the entry. Stop
             // Steam first (graceful, then kill); it stays closed afterwards.
             match stop_steam(steam_path, false)? {
                 StopOutcome::NeedsElevation => return Err(AppError::SteamElevated),
