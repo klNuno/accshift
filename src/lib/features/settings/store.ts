@@ -159,8 +159,11 @@ function sanitizeSettings(value: unknown): AppSettings {
   const defaultPlatformId = normalizedEnabledPlatforms.includes(defaultPlatformIdRaw)
     ? defaultPlatformIdRaw
     : normalizedEnabledPlatforms[0];
-  const pinEnabled = Boolean(raw.pinEnabled);
-  const pinHash = pinEnabled ? sanitizePinHash(raw.pinHash) : "";
+  const requestedPinEnabled = Boolean(raw.pinEnabled);
+  const pinHash = requestedPinEnabled ? sanitizePinHash(raw.pinHash) : "";
+  // An enabled flag without a usable hash provides no protection. Keep that
+  // impossible state out of the rest of the app and require setup again.
+  const pinEnabled = requestedPinEnabled && Boolean(pinHash);
 
   return {
     language: hasLanguage ? normalizeLocale(raw.language) : detectPreferredLocale(),

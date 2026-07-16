@@ -55,6 +55,12 @@ jobs:
       - name: Frontend tests
         run: vp test
 
+      - name: Install telemetry dependencies
+        run: pnpm --dir telemetry install --frozen-lockfile
+
+      - name: Telemetry typecheck
+        run: pnpm --dir telemetry exec tsc --noEmit
+
       - name: Build frontend
         run: vp build
 

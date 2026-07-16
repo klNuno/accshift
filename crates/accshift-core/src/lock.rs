@@ -8,7 +8,9 @@ use crate::AppContext;
 use fs4::fs_std::FileExt;
 use std::cell::Cell;
 use std::fs::{File, OpenOptions};
+use std::marker::PhantomData;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -42,6 +44,10 @@ pub struct LockGuard {
     file: File,
     // `_path` kept around for diagnostics; intentionally unused otherwise.
     _path: PathBuf,
+    // The nesting counter is thread-local, so acquisition and drop must happen
+    // on the same thread. Making the guard !Send turns an async-thread hop into
+    // a compile error instead of corrupting the counter.
+    _not_send: PhantomData<Rc<()>>,
 }
 
 impl Drop for LockGuard {
@@ -100,7 +106,11 @@ pub fn acquire_exclusive(ctx: &dyn AppContext, timeout: Duration) -> Result<Lock
         match FileExt::try_lock_exclusive(&file) {
             Ok(true) => {
                 GUARDS_HELD.with(|c| c.set(c.get() + 1));
-                return Ok(LockGuard { file, _path: path });
+                return Ok(LockGuard {
+                    file,
+                    _path: path,
+                    _not_send: PhantomData,
+                });
             }
             // fs4 maps "already locked" to Ok(false); an Err is a real I/O
             // failure (bad descriptor, filesystem error) — waiting on it
@@ -204,9 +214,14 @@ mod tests {
         // guard and must actually try to acquire the file lock, which is held,
         // so it times out as contended rather than bypassing the lock.
         let ctx2 = Arc::clone(&ctx);
-        let handle = thread::spawn(move || acquire_for_write(&*ctx2, Duration::from_millis(150)));
+        let handle = thread::spawn(move || {
+            matches!(
+                acquire_for_write(&*ctx2, Duration::from_millis(150)),
+                Err(LockError::Contended)
+            )
+        });
         let result = handle.join().unwrap();
-        assert!(matches!(result, Err(LockError::Contended)));
+        assert!(result);
 
         cleanup(&ctx.root);
     }

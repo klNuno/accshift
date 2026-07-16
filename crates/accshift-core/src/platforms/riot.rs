@@ -448,13 +448,49 @@ fn yaml_has_auth_tokens(contents: &str) -> bool {
         Some(rest.trim())
     }
 
+    fn strip_yaml_comment(value: &str) -> &str {
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
+        let mut escaped = false;
+        let mut previous_was_whitespace = true;
+
+        for (index, ch) in value.char_indices() {
+            if in_double_quote && escaped {
+                escaped = false;
+                continue;
+            }
+            if in_double_quote && ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            match ch {
+                '\'' if !in_double_quote => in_single_quote = !in_single_quote,
+                '"' if !in_single_quote => in_double_quote = !in_double_quote,
+                '#' if !in_single_quote
+                    && !in_double_quote
+                    && (index == 0 || previous_was_whitespace) =>
+                {
+                    return value[..index].trim_end();
+                }
+                _ => {}
+            }
+            previous_was_whitespace = ch.is_whitespace();
+        }
+        value.trim_end()
+    }
+
+    fn normalized_yaml_value(value: &str) -> &str {
+        strip_yaml_comment(value.trim()).trim()
+    }
+
     fn is_empty_yaml_value(value: &str) -> bool {
+        let value = normalized_yaml_value(value);
         value.is_empty()
             || value == "{}"
             || value == "[]"
             || value == "''"
             || value == "\"\""
-            || value == "null"
+            || value.eq_ignore_ascii_case("null")
             || value == "~"
     }
 
@@ -467,7 +503,8 @@ fn yaml_has_auth_tokens(contents: &str) -> bool {
 
     fn update_cookie_entry(entry: &mut CookieEntry, line: &str) {
         if let Some(value) = value_for_key(line, "name") {
-            entry.is_ssid = value.trim_matches(|ch| ch == '"' || ch == '\'') == "ssid";
+            entry.is_ssid =
+                normalized_yaml_value(value).trim_matches(|ch| ch == '"' || ch == '\'') == "ssid";
         }
         if let Some(value) = value_for_key(line, "value") {
             entry.has_value = !is_empty_yaml_value(value);
@@ -485,10 +522,21 @@ fn yaml_has_auth_tokens(contents: &str) -> bool {
     let mut has_sessions = false;
     let mut has_token = false;
     let mut cookie_entry: Option<CookieEntry> = None;
+    let mut pending_sessions_indent: Option<usize> = None;
 
     for line in contents.lines() {
         let trimmed = line.trim();
         let indent = line.len() - line.trim_start().len();
+        let meaningful = !trimmed.is_empty() && !trimmed.starts_with('#');
+
+        if let Some(sessions_indent) = pending_sessions_indent {
+            if meaningful {
+                if indent > sessions_indent {
+                    has_sessions = true;
+                }
+                pending_sessions_indent = None;
+            }
+        }
 
         if let Some(after_dash) = trimmed.strip_prefix('-') {
             if let Some(previous) = cookie_entry.take() {
@@ -501,10 +549,10 @@ fn yaml_has_auth_tokens(contents: &str) -> bool {
             update_cookie_entry(&mut entry, after_dash.trim());
             cookie_entry = Some(entry);
         } else if let Some(entry) = cookie_entry.as_mut() {
-            if !trimmed.is_empty() && indent <= entry.indent {
+            if meaningful && indent <= entry.indent {
                 let previous = cookie_entry.take().expect("cookie entry exists");
                 has_token |= previous.is_ssid && previous.has_value;
-            } else {
+            } else if meaningful {
                 update_cookie_entry(entry, trimmed);
             }
         }
@@ -516,18 +564,20 @@ fn yaml_has_auth_tokens(contents: &str) -> bool {
             }
         }
         if let Some(value) = value_for_key(trimmed, "sessions") {
-            // `sessions` is a map: populated when it has nested children (empty
-            // inline value, e.g. `sessions:` with indented entries below) or a
-            // non-empty inline value. Only the explicit empty forms are skipped.
-            if !(value == "{}" || value == "[]" || value == "null" || value == "~") {
+            let value = normalized_yaml_value(value);
+            if value.is_empty() {
+                // A bare `sessions:` is only populated if the next meaningful
+                // line is indented beneath it. Blank lines and comments do not
+                // manufacture a session entry.
+                pending_sessions_indent = Some(indent);
+            } else if !is_empty_yaml_value(value) {
                 has_sessions = true;
             }
         }
-        if trimmed.contains("access_token")
-            || trimmed.contains("refresh_token")
-            || trimmed.contains("id_token")
-        {
-            has_token = true;
+        for key in ["access_token", "refresh_token", "id_token"] {
+            if value_for_key(trimmed, key).is_some_and(|value| !is_empty_yaml_value(value)) {
+                has_token = true;
+            }
         }
     }
     if let Some(entry) = cookie_entry {
@@ -1784,10 +1834,43 @@ sessions:
     }
 
     #[test]
+    fn bare_sessions_key_requires_a_real_indented_child() {
+        assert!(!yaml_has_auth_tokens("sessions:\n"));
+        assert!(!yaml_has_auth_tokens(
+            "sessions: # no entries yet\n  # comment only\n\nother: value\n"
+        ));
+        assert!(!yaml_has_auth_tokens(
+            "sessions:\n# same-level comment\nnext_setting: true\n"
+        ));
+    }
+
+    #[test]
     fn token_entries_are_ready() {
         assert!(yaml_has_auth_tokens("data:\n  access_token: abc.def.ghi\n"));
         assert!(yaml_has_auth_tokens("refresh_token: zzz\n"));
         assert!(yaml_has_auth_tokens("id_token: yyy\n"));
+        assert!(yaml_has_auth_tokens(
+            "access_token: abc.def.ghi # refreshed token\n"
+        ));
+        assert!(yaml_has_auth_tokens(
+            "refresh_token: \"abc # part-of-token\"\n"
+        ));
+    }
+
+    #[test]
+    fn token_entries_require_exact_keys_and_non_empty_values() {
+        let yaml = "\
+# access_token: only-a-comment
+access_token_backup: not-the-key
+my_refresh_token: not-the-key
+id_token_suffix: not-the-key
+access_token:
+refresh_token: ''
+id_token: null
+";
+        assert!(!yaml_has_auth_tokens(yaml));
+        assert!(!yaml_has_auth_tokens("access_token: # comment only\n"));
+        assert!(!yaml_has_auth_tokens("refresh_token: \"\"\nid_token: ~\n"));
     }
 
     #[test]
@@ -1848,6 +1931,9 @@ riot-login:
         assert!(!yaml_has_auth_tokens(
             "cookies:\n- name: \"ssid\"\n- name: \"tdid\"\n  value: token\n"
         ));
+        assert!(!yaml_has_auth_tokens(
+            "cookies:\n- name: \"ssid\"\n  value: # comment only\n"
+        ));
     }
 
     #[test]
@@ -1855,6 +1941,9 @@ riot-login:
         let yaml =
             "cookies:\n- value: opaque-session-token\n  persistent: true\n  name: \"ssid\"\n";
         assert!(yaml_has_auth_tokens(yaml));
+        assert!(yaml_has_auth_tokens(
+            "cookies:\n- name: \"ssid\" # auth cookie\n  value: token # current value\n"
+        ));
     }
 
     #[test]

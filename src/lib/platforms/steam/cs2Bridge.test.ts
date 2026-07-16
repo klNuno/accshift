@@ -90,4 +90,18 @@ describe("CS2 bridge operation queue", () => {
     expect(bridge.getCs2BridgeData("stale")?.steamId).toBe("stale");
     expect(bridge.getCs2BridgeData("fresh")?.steamId).toBe("fresh");
   });
+
+  it("clears a failed full fetch without creating an unhandled rejection", async () => {
+    mocks.fetch.mockResolvedValue([account("fresh")]);
+    const bridge = await import("./cs2Bridge.svelte");
+    const now = vi.spyOn(Date, "now").mockImplementationOnce(() => {
+      throw new Error("clock failed");
+    });
+
+    await expect(bridge.loadCs2BridgeData(true)).rejects.toThrow("clock failed");
+    now.mockRestore();
+
+    await bridge.loadCs2BridgeData(true);
+    expect(mocks.fetch).toHaveBeenCalledTimes(2);
+  });
 });

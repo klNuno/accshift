@@ -30,6 +30,7 @@
   } = $props();
 
   const INTEGRATIONS_WIKI_URL = "https://github.com/klNuno/accshift/wiki/Settings";
+  let availableThemes = $state(getAllThemes());
 
   // Glass themes run a fixed, tuned window fill (see themes.ts); the slider
   // only applies to regular themes and just bred broken combinations on glass.
@@ -107,7 +108,7 @@
     <h3>{t("settings.theme")}</h3>
     <div class="field">
       <div class="theme-grid">
-        {#each getAllThemes() as theme (theme.id)}
+        {#each availableThemes as theme (theme.id)}
           <button
             type="button"
             class="theme-swatch"
@@ -133,6 +134,7 @@
                   e.stopPropagation();
                   void (async () => {
                     await deleteCustomThemeFromRegistry(theme.id);
+                    availableThemes = getAllThemes();
                     if (settings.themeId === theme.id) settings.themeId = "dark";
                     addToast(t("settings.themeDeleted"));
                   })();
@@ -150,6 +152,7 @@
             if (!parsed) { addToast(t("settings.themeInvalidJson")); return; }
             await saveCustomTheme(parsed);
             await loadCustomThemes();
+            availableThemes = getAllThemes();
             settings.themeId = parsed.id;
             addToast(t("settings.themeImported"));
           } catch { addToast(t("settings.themeInvalidJson")); }

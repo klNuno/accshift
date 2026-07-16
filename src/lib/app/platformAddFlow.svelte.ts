@@ -220,6 +220,13 @@ export function createPlatformAddFlowController({
     const display = (flow.status.accountDisplayName || "").trim();
     const error = (flow.status.errorMessage || "").trim();
     const detectedSection = createDetectedSection(flow.platformId, display, t);
+    const closeChip = {
+      text: t("common.close"),
+      tone: "red" as const,
+      onClick: () => {
+        void cancel();
+      },
+    };
 
     if (flow.platformId === "riot") {
       switch (flow.status.state) {
@@ -252,14 +259,7 @@ export function createPlatformAddFlowController({
                 title: t("riot.setupFailed"),
                 text: t("riot.setupFailedMessage"),
               },
-              ...(error
-                ? [
-                    {
-                      lines: [error],
-                      chips: [{ text: t("common.close"), tone: "red" as const }],
-                    },
-                  ]
-                : []),
+              { ...(error ? { lines: [error] } : {}), chips: [closeChip] },
             ],
           };
         case "ready":
@@ -287,6 +287,7 @@ export function createPlatformAddFlowController({
                 title: t("roblox.setupFailed"),
                 text: error || t("roblox.setupFailedMessage"),
               },
+              { chips: [closeChip] },
             ],
           };
         case "ready":
@@ -338,14 +339,7 @@ export function createPlatformAddFlowController({
                 title: t("battlenet.setupFailed"),
                 text: t("battlenet.setupFailedMessage"),
               },
-              ...(error
-                ? [
-                    {
-                      lines: [error],
-                      chips: [{ text: t("common.close"), tone: "red" as const }],
-                    },
-                  ]
-                : []),
+              { ...(error ? { lines: [error] } : {}), chips: [closeChip] },
             ],
           };
         case "ready":
@@ -384,14 +378,7 @@ export function createPlatformAddFlowController({
               title: t(getSetupKey(flow.platformId, "failed")),
               text: t(getSetupKey(flow.platformId, "failedMessage")),
             },
-            ...(error
-              ? [
-                  {
-                    lines: [error],
-                    chips: [{ text: t("common.close"), tone: "red" as const }],
-                  },
-                ]
-              : []),
+            { ...(error ? { lines: [error] } : {}), chips: [closeChip] },
           ],
         };
       case "ready":

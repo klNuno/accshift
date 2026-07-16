@@ -24,14 +24,11 @@ jobs:
         run: |
           $tag = "${env:GITHUB_REF_NAME}"
 
-          if (-not $tag.StartsWith("v")) {
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') {
             throw "Invalid tag '$tag'. Expected format: vX.Y.Z"
           }
 
-          $version = $tag.TrimStart("v")
-          if ([string]::IsNullOrWhiteSpace($version)) {
-            throw "Invalid tag '$tag'. Version is empty."
-          }
+          $version = $tag.Substring(1)
 
           "tag=$tag" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT
@@ -77,8 +74,29 @@ jobs:
             throw "Missing GitHub secret TAURI_SIGNING_PRIVATE_KEY. Auto-update artifacts cannot be signed."
           }
 
+      - name: Validate telemetry endpoint
+        shell: pwsh
+        env:
+          ACCSHIFT_TELEMETRY_URL: ${{ vars.ACCSHIFT_TELEMETRY_URL }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:ACCSHIFT_TELEMETRY_URL)) {
+            throw "Missing GitHub variable ACCSHIFT_TELEMETRY_URL. Official builds must not use the inert fallback."
+          }
+          $uri = $null
+          if (-not [Uri]::TryCreate($env:ACCSHIFT_TELEMETRY_URL, [UriKind]::Absolute, [ref]$uri) -or
+              $uri.Scheme -ne "https" -or
+              [string]::IsNullOrWhiteSpace($uri.Host) -or
+              -not [string]::IsNullOrEmpty($uri.UserInfo) -or
+              -not [string]::IsNullOrEmpty($uri.Query) -or
+              -not [string]::IsNullOrEmpty($uri.Fragment) -or
+              $env:ACCSHIFT_TELEMETRY_URL -ne $env:ACCSHIFT_TELEMETRY_URL.Trim() -or
+              $env:ACCSHIFT_TELEMETRY_URL.EndsWith('/')) {
+            throw "ACCSHIFT_TELEMETRY_URL must be an HTTPS base URL without credentials, query, fragment, or trailing slash."
+          }
+
       - name: Build Tauri bundles
         env:
+          ACCSHIFT_TELEMETRY_URL: ${{ vars.ACCSHIFT_TELEMETRY_URL }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: vp exec tauri build
@@ -120,14 +138,35 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ steps.release_tag.outputs.tag }}"
-          $prevTag = ""
-          try {
-            $prevTag = (git describe --tags --abbrev=0 "$tag^" 2>$null).Trim()
-          } catch {
-            $prevTag = ""
+          $currentVersion = [version]($tag.Substring(1))
+          $previousRelease = git tag --list "v*" |
+            ForEach-Object {
+              if ($_ -match '^v\d+\.\d+\.\d+$') {
+                $candidateVersion = [version]($_.Substring(1))
+                if ($candidateVersion -lt $currentVersion) {
+                  [PSCustomObject]@{ Tag = $_; Version = $candidateVersion }
+                }
+              }
+            } |
+            Sort-Object Version -Descending |
+            Select-Object -First 1
+          $prevTag = if ($null -eq $previousRelease) { "" } else { $previousRelease.Tag }
+          $baseCommit = ""
+
+          if (-not [string]::IsNullOrWhiteSpace($prevTag)) {
+            $previousTree = (git rev-parse "$prevTag^{tree}").Trim()
+            foreach ($commit in git rev-list "$tag^") {
+              if ((git show -s --format="%T" $commit).Trim() -eq $previousTree) {
+                $baseCommit = $commit
+                break
+              }
+            }
+            if ([string]::IsNullOrWhiteSpace($baseCommit)) {
+              throw "Could not find the $prevTag release tree in the current history. Refusing to generate an all-history changelog."
+            }
           }
 
-          $range = if ([string]::IsNullOrWhiteSpace($prevTag)) { $tag } else { "$prevTag..$tag" }
+          $range = if ([string]::IsNullOrWhiteSpace($baseCommit)) { $tag } else { "$baseCommit..$tag" }
 
           # PowerShell returns command output as a string array; join once, then split by separators.
           $recordSeparator = [char]0x1e
@@ -299,4 +338,5 @@ jobs:
             target/release/bundle/nsis/*.exe
             target/release/bundle/msi/*.msi
             target/release/bundle/accshift-cli_*.exe
+            target/release/bundle/SHA256SUMS.txt
             target/release/bundle/latest.json

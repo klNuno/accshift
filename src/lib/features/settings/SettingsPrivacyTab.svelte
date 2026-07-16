@@ -12,12 +12,14 @@
   let {
     settings = $bindable(),
     pinCodeInput = $bindable(),
+    pinSetupPending = $bindable(),
     t,
     inactivityBlur,
     neutralAccent,
   }: {
     settings: AppSettings;
     pinCodeInput: string;
+    pinSetupPending: boolean;
     t: (key: MessageKey, params?: TranslationParams) => string;
     inactivityBlur: { input: string; commit: () => void };
     neutralAccent: string;
@@ -27,6 +29,7 @@
     mode_a_enabled: boolean;
     mode_b_enabled: boolean;
     install_id_set: boolean;
+    forget_pending: boolean;
     onboarding_completed: boolean;
   };
 
@@ -68,7 +71,29 @@
       await refreshTelemetry();
     } catch (e) {
       console.error("telemetry_set_mode_b failed", e);
-      addToast(t("settings.telemetryDisableFailed"));
+      await refreshTelemetry();
+      const failureKey = next
+        ? "settings.telemetryEnableFailed"
+        : telemetry && !telemetry.mode_b_enabled
+          ? "settings.telemetryDeletePending"
+          : "settings.telemetryDisableFailed";
+      addToast(t(failureKey));
+    } finally {
+      modeBBusy = false;
+    }
+  }
+
+  async function retryTelemetryDeletion() {
+    if (modeBBusy) return;
+    modeBBusy = true;
+    try {
+      await invoke("telemetry_retry_forget");
+      await refreshTelemetry();
+      addToast(t("settings.telemetryDeleteCompleted"));
+    } catch (e) {
+      console.error("telemetry_retry_forget failed", e);
+      await refreshTelemetry();
+      addToast(t("settings.telemetryDeleteRetryFailed"));
     } finally {
       modeBBusy = false;
     }
@@ -130,20 +155,23 @@
     <h3>{t("settings.security")}</h3>
     <ToggleSetting
       label={t("settings.pinLockOnAfk")}
-      enabled={settings.pinEnabled}
+      enabled={settings.pinEnabled || pinSetupPending}
       accent={neutralAccent}
       onLabel={t("common.enabled")}
       offLabel={t("common.disabled")}
       onToggle={() => {
-        settings.pinEnabled = !settings.pinEnabled;
-        if (!settings.pinEnabled) {
+        if (settings.pinEnabled || pinSetupPending) {
+          settings.pinEnabled = false;
+          pinSetupPending = false;
           settings.pinHash = "";
           pinCodeInput = "";
+        } else {
+          pinSetupPending = true;
         }
       }}
     />
 
-    {#if settings.pinEnabled}
+    {#if settings.pinEnabled || pinSetupPending}
       <div class="field">
         <span class="field-label">{t("settings.pinCode")}</span>
         <input
@@ -157,7 +185,7 @@
           pattern="[0-9]*"
           oninput={(e) => pinCodeInput = sanitizePinDigits((e.currentTarget as HTMLInputElement).value)}
         />
-        <p class="hint">{t("settings.pinTakesEffectNextLaunch")}</p>
+        <p class="hint">{t("settings.pinRequiredAfterInactivity")}</p>
       </div>
     {/if}
   </section>
@@ -187,7 +215,19 @@
         onToggle={toggleModeB}
       />
 
-      {#if telemetry.mode_b_enabled && telemetry.install_id_set}
+      {#if telemetry.forget_pending}
+        <p class="hint">{t("settings.telemetryDeletePendingHint")}</p>
+        <button
+          type="button"
+          class="btn-export"
+          disabled={modeBBusy}
+          onclick={retryTelemetryDeletion}
+        >
+          {t("settings.telemetryRetryDelete")}
+        </button>
+      {/if}
+
+      {#if telemetry.install_id_set}
         <button
           type="button"
           class="btn-export"

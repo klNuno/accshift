@@ -60,6 +60,13 @@
     onContextMenu(e);
   }
 
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    e.stopPropagation();
+    onClick();
+  }
+
   let hasRedWarning = $derived(Boolean(warningInfo?.listHasRed));
 
   let hasOrangeWarning = $derived(Boolean(warningInfo?.listHasOrange));
@@ -70,8 +77,6 @@
   let avatarSeed = $derived(account ? getAvatarSeed(account.displayName || "", account.username || "", account.id) : "");
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="row"
   class:selected={isSelected}
@@ -82,8 +87,12 @@
   class:ban-orange={hasOrangeWarning}
   class:custom-color={!!account && !!cardColor}
   onclick={onClick}
+  onkeydown={handleKeydown}
   ondblclick={onDblClick}
   oncontextmenu={handleContextMenu}
+  role="button"
+  tabindex="0"
+  aria-pressed={account ? isActive : undefined}
   data-account-id={account?.id}
   data-folder-id={folder?.id}
   data-back-card={isBack ? "true" : undefined}
@@ -92,7 +101,7 @@
 >
   {#if isBack}
     <div class="icon back-icon">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M19 12H5" />
         <path d="M12 19l-7-7 7-7" />
       </svg>
@@ -102,7 +111,7 @@
     </div>
   {:else if folder}
     <div class="icon folder-icon">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
       </svg>
     </div>
@@ -120,11 +129,11 @@
         <div class="loader"></div>
       {:else if isSwitching}
         {#if avatarUrl}
-          <img src={avatarUrl} alt={account.displayName} loading="lazy" decoding="async" draggable={false} class="blurred" />
+          <img src={avatarUrl} alt="" loading="lazy" decoding="async" draggable={false} class="blurred" />
         {/if}
         <div class="loader switching-loader"></div>
       {:else if avatarUrl}
-        <img src={avatarUrl} alt={account.displayName} loading="lazy" decoding="async" draggable={false} />
+        <img src={avatarUrl} alt="" loading="lazy" decoding="async" draggable={false} />
       {:else}
         <span class="initials">{getAvatarInitials(account.displayName || account.username)}</span>
       {/if}

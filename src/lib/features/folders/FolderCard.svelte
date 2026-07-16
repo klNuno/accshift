@@ -16,22 +16,30 @@
     e.stopPropagation();
     onContextMenu(e);
   }
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    e.stopPropagation();
+    onOpen();
+  }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="card"
   class:drag-over={isDragOver}
   class:dragging={isDragged}
   class:custom-color={!!cardColor}
   onclick={onOpen}
+  onkeydown={handleKeydown}
   oncontextmenu={handleContextMenu}
+  role="button"
+  tabindex="0"
   data-folder-id={folder.id}
   style={`--drag-accent: ${accentColor};${cardColor ? ` --folder-custom-color: ${cardColor};` : ""}`}
 >
   <div class="icon-wrap">
-    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
     </svg>
   </div>

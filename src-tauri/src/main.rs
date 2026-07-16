@@ -205,12 +205,12 @@ fn main() {
                     if boot_state.is_completed() {
                         if !matches!(win_for_events.is_maximized(), Ok(true)) {
                             if let Ok(size) = win_for_events.inner_size() {
-                                // This cosmetic write goes through save_config,
-                                // whose cross-process lock can wait up to 5s when
-                                // the CLI holds it. Running it inline would freeze
-                                // the UI thread for that whole stretch, so push it
-                                // onto its own thread and only join it (bounded)
-                                // after the telemetry flush below.
+                                // This cosmetic read-modify-write is atomic and
+                                // takes the cross-process config lock, which can
+                                // wait up to 5s when the CLI holds it. Running it
+                                // inline would freeze the UI thread for that whole
+                                // stretch, so push it onto its own thread and only
+                                // join it (bounded) after the telemetry flush below.
                                 let save_handle = app_handle.clone();
                                 let width = f64::from(size.width);
                                 let height = f64::from(size.height);
@@ -401,6 +401,7 @@ fn main() {
             commands_telemetry::telemetry_get_state,
             commands_telemetry::telemetry_set_mode_a,
             commands_telemetry::telemetry_set_mode_b,
+            commands_telemetry::telemetry_retry_forget,
             commands_telemetry::telemetry_complete_onboarding,
             commands_telemetry::telemetry_track_persona_switch,
             commands_telemetry::telemetry_track_account_added,

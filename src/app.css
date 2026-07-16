@@ -49,6 +49,20 @@
   --motion-page-entrance: 200ms;
 }
 
+/* The in-app motion preference must cover third-party/Svelte transitions and
+   older component-local effects too. Component rules can still opt out of
+   transforms; this layer removes their timing when motion is disabled. */
+html[data-motion="reduced"] *,
+html[data-motion="reduced"] *::before,
+html[data-motion="reduced"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  transition-delay: 0ms !important;
+  scroll-behavior: auto !important;
+}
+
 /* Placeholders must read as hints, not typed text. */
 input::placeholder,
 textarea::placeholder {
@@ -145,10 +159,15 @@ html,
   }
 }
 
-/* Virtual keyboard focus on cards (arrow-key navigation). The cards are
-   plain divs driven by the drag manager, so focus is painted through a data
-   attribute instead of DOM focus. */
+/* Virtual arrow-key focus and native Tab focus share the same treatment. */
 [data-kb-focus] {
+  outline: 2px solid color-mix(in srgb, var(--fg) 65%, transparent);
+  outline-offset: 2px;
+}
+
+[data-account-id]:focus-visible,
+[data-folder-id]:focus-visible,
+[data-back-card]:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--fg) 65%, transparent);
   outline-offset: 2px;
 }

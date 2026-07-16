@@ -362,6 +362,7 @@ async function handleExport(request: Request, env: Env, ctx: ExecutionContext): 
 // ─── /admin/query (read-only D1 SELECT for external dashboard) ───
 
 const ADMIN_QUERY_MAX_ROWS = 1000;
+const ADMIN_QUERY_BODY_MAX_BYTES = 64 * 1024;
 
 async function handleAdminQuery(
   request: Request,
@@ -377,7 +378,12 @@ async function handleAdminQuery(
   const budgetErr = await checkBudget(env, "/admin/query", intVar(env.BUDGET_ADMIN, 2000), ctx);
   if (budgetErr) return budgetErr;
 
-  const payload = await safeJson<{ sql?: string; params?: unknown[] }>(request);
+  const parsed = await readJsonCapped<{ sql?: string; params?: unknown[] }>(
+    request,
+    ADMIN_QUERY_BODY_MAX_BYTES,
+  );
+  if (parsed instanceof Response) return parsed;
+  const payload = parsed;
   if (!payload?.sql || typeof payload.sql !== "string") return json({ error: "bad_sql" }, 400);
 
   // Read-only: only a plain SELECT is allowed. WITH is rejected outright since
@@ -497,28 +503,40 @@ function isUuidV4(s: unknown): s is string {
   );
 }
 
-async function safeJson<T>(request: Request): Promise<T | null> {
-  try {
-    return (await request.json()) as T;
-  } catch {
-    return null;
-  }
-}
-
-// Parses a JSON body with a size cap. Returns a 413 Response when the body
-// exceeds maxBytes, null when the JSON is invalid, the payload otherwise.
-async function readJsonCapped<T>(request: Request, maxBytes: number): Promise<T | Response | null> {
+// Parses a JSON body with a byte cap. The stream is stopped as soon as the cap
+// is crossed, so chunked requests cannot force an unbounded allocation.
+export async function readJsonCapped<T>(
+  request: Request,
+  maxBytes: number,
+): Promise<T | Response | null> {
   const lenHeader = request.headers.get("Content-Length");
   if (lenHeader && parseInt(lenHeader, 10) > maxBytes) {
     return json({ error: "payload_too_large", max: maxBytes }, 413);
   }
-  let text: string;
+
+  const reader = request.body?.getReader();
+  if (!reader) return null;
+  const decoder = new TextDecoder();
+  let totalBytes = 0;
+  let text = "";
   try {
-    text = await request.text();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel();
+        return json({ error: "payload_too_large", max: maxBytes }, 413);
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
   } catch {
     return null;
+  } finally {
+    reader.releaseLock();
   }
-  if (text.length > maxBytes) return json({ error: "payload_too_large", max: maxBytes }, 413);
+
   try {
     return JSON.parse(text) as T;
   } catch {

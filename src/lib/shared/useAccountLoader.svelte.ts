@@ -72,6 +72,7 @@ export function createAccountLoader(
     return matched?.id ?? null;
   });
   let loading = $state(true);
+  let adding = $state(false);
   let switching = $state(false);
   let switchingAccountId = $state<string | null>(null);
   let error = $state<string | null>(null);
@@ -324,36 +325,42 @@ export function createAccountLoader(
   }
 
   async function addNew() {
+    if (adding) return;
     const adapter = getAdapter();
     if (!adapter) return;
-    currentAccount = "";
-    let result: Awaited<ReturnType<PlatformAdapter["addAccount"]>>;
+    adding = true;
     try {
-      result = await adapter.addAccount();
-    } catch (e) {
-      error = String(e);
-      console.error("[accounts] add account failed:", e);
-      // "Could not locate <client> executable" is the backend's stable wording
-      // for a missing launcher; surface it as a human answer instead of the
-      // generic failure line.
-      if (/could not locate .* executable/i.test(error)) {
-        const { getPlatformDefinition } = await import("$lib/platforms/registry");
-        const platformName = getPlatformDefinition(adapter.id)?.name ?? adapter.id;
-        addToast(t("toast.addAccountClientMissing", { platform: platformName }), {
-          type: "error",
-        });
-      } else {
-        addToast(t("toast.addAccountFailed"), { type: "error" });
+      currentAccount = "";
+      let result: Awaited<ReturnType<PlatformAdapter["addAccount"]>>;
+      try {
+        result = await adapter.addAccount();
+      } catch (e) {
+        error = String(e);
+        console.error("[accounts] add account failed:", e);
+        // "Could not locate <client> executable" is the backend's stable wording
+        // for a missing launcher; surface it as a human answer instead of the
+        // generic failure line.
+        if (/could not locate .* executable/i.test(error)) {
+          const { getPlatformDefinition } = await import("$lib/platforms/registry");
+          const platformName = getPlatformDefinition(adapter.id)?.name ?? adapter.id;
+          addToast(t("toast.addAccountClientMissing", { platform: platformName }), {
+            type: "error",
+          });
+        } else {
+          addToast(t("toast.addAccountFailed"), { type: "error" });
+        }
+        return;
       }
-      return;
-    }
-    if (result.setupStatus) {
+      if (result.setupStatus) {
+        return result;
+      }
+      if (adapter.reloadAfterAdd) {
+        await load(undefined, true, false, false, false, false);
+      }
       return result;
+    } finally {
+      adding = false;
     }
-    if (adapter.reloadAfterAdd) {
-      await load(undefined, true, false, false, false, false);
-    }
-    return result;
   }
 
   async function refreshVisibleAccounts(
@@ -484,6 +491,9 @@ export function createAccountLoader(
     },
     get loading() {
       return loading;
+    },
+    get adding() {
+      return adding;
     },
     get switchingAccountId() {
       return switchingAccountId;

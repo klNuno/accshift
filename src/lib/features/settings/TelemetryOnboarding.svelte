@@ -43,6 +43,10 @@
   // jumped straight to red. cancel() on cleanup resets to white for revisits.
   $effect(() => {
     if (step !== "deal" || !dealTitleEl) return;
+    if (document.documentElement.dataset.motion === "reduced") {
+      dealTitleEl.style.color = "#ef4444";
+      return () => dealTitleEl?.style.removeProperty("color");
+    }
     // Midpoint keyframe: plain white->red sRGB lerp reads as "nothing happens
     // then sudden red"; forcing a visible pink at 40% spreads the shift out.
     const anim = dealTitleEl.animate(
@@ -235,11 +239,11 @@
     style={`left:${contextMenuPos.x}px;top:${contextMenuPos.y}px;`}
     role="presentation"
   >
-    <div class="mock-ctx-item">Rename</div>
-    <div class="mock-ctx-item">Set color</div>
-    <div class="mock-ctx-item">Move to folder</div>
+    <div class="mock-ctx-item">{t("onboarding.features.mockRename")}</div>
+    <div class="mock-ctx-item">{t("onboarding.features.mockSetColor")}</div>
+    <div class="mock-ctx-item">{t("onboarding.features.mockMoveToFolder")}</div>
     <div class="mock-ctx-sep"></div>
-    <div class="mock-ctx-item danger">Delete</div>
+    <div class="mock-ctx-item danger">{t("onboarding.features.mockDelete")}</div>
   </div>
 {/if}
 
@@ -325,7 +329,7 @@
                 class="legend-dot"
                 class:on={idx === activeFeatureIdx}
                 onclick={() => (activeFeatureIdx = idx)}
-                aria-label={`Step ${idx + 1}`}
+                aria-label={t("onboarding.features.step", { step: idx + 1 })}
               ></button>
             {/each}
           </div>

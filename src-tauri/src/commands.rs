@@ -408,7 +408,7 @@ pub async fn platform_cancel_setup(
 ) -> Result<(), PlatformError> {
     let service = require_service(&platform_id)?;
     let c = ctx(&app_handle);
-    run_blocking("platform_cancel_setup", move || {
+    run_locked_blocking("platform_cancel_setup", c, move |c| {
         service.cancel_setup(c, &setup_id)
     })
     .await
@@ -880,15 +880,16 @@ pub async fn steam_switch_account_and_launch_game(
     shutdown_mode: String,
 ) -> Result<(), PlatformError> {
     let c = ctx(&app_handle);
-    let _lock = accshift_core::lock::acquire_exclusive(&c, LOCK_TIMEOUT)?;
-    crate::platforms::steam::switch_account_and_launch_game(
-        c,
-        username,
-        app_id,
-        run_as_admin,
-        launch_options,
-        shutdown_mode,
-    )
+    run_locked_blocking("steam_switch_account_and_launch_game", c, move |c| {
+        crate::platforms::steam::switch_account_and_launch_game(
+            c,
+            username,
+            app_id,
+            run_as_admin,
+            launch_options,
+            shutdown_mode,
+        )
+    })
     .await
 }
 
@@ -933,7 +934,7 @@ pub async fn steam_copy_game_settings(
     app_id: String,
 ) -> Result<(), PlatformError> {
     let c = ctx(&app_handle);
-    run_blocking("steam_copy_game_settings", move || {
+    run_locked_blocking("steam_copy_game_settings", c, move |c| {
         crate::platforms::steam::copy_game_settings(c, from_steam_id, to_steam_id, app_id)
     })
     .await
@@ -961,18 +962,22 @@ pub async fn steam_clear_browser_cache(app_handle: tauri::AppHandle) -> Result<(
     // Kills Steam (polls up to several seconds) then deletes the cache dir —
     // must not run on the main thread.
     let c = ctx(&app_handle);
-    run_blocking("steam_clear_browser_cache", move || {
+    run_locked_blocking("steam_clear_browser_cache", c, move |c| {
         crate::platforms::steam::clear_integrated_browser_cache(c)
     })
     .await
 }
 
-#[tauri::command(async)]
-pub fn steam_bulk_edit(
+#[tauri::command]
+pub async fn steam_bulk_edit(
     app_handle: tauri::AppHandle,
     request: crate::platforms::steam::bulk_edit::BulkEditRequest,
 ) -> Result<crate::platforms::steam::bulk_edit::BulkEditResult, PlatformError> {
-    crate::platforms::steam::bulk_edit(ctx(&app_handle), request)
+    let c = ctx(&app_handle);
+    run_locked_blocking("steam_bulk_edit", c, move |c| {
+        crate::platforms::steam::bulk_edit(c, request)
+    })
+    .await
 }
 
 #[tauri::command(async)]
@@ -994,7 +999,7 @@ pub async fn riot_capture_profile(
     profile_id: String,
 ) -> Result<(), PlatformError> {
     let c = ctx(&app_handle);
-    run_blocking("riot_capture_profile", move || {
+    run_locked_blocking("riot_capture_profile", c, move |c| {
         crate::platforms::riot::capture_profile(c, profile_id).map_err(Into::into)
     })
     .await

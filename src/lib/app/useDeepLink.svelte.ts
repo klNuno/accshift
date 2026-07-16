@@ -55,8 +55,7 @@ type DeepLinkDeps = {
   loadAccounts: () => Promise<unknown> | void;
   getAccounts: () => PlatformAccount[];
   isLoaderLoading: () => boolean;
-  getLoaderError: () => string | null;
-  switchToAccount: (account: PlatformAccount) => Promise<void>;
+  switchToAccount: (account: PlatformAccount) => Promise<boolean>;
   // Optional gate asked right before a deep-link-triggered switch runs, so a
   // link can be required to go through an explicit user confirmation instead
   // of switching accounts unattended. Return false to cancel the switch;
@@ -127,8 +126,8 @@ export function createDeepLinkController(deps: DeepLinkDeps) {
       if (!allowed) return;
     }
 
-    await deps.switchToAccount(account);
-    if (!deps.getLoaderError()) {
+    const switched = await deps.switchToAccount(account);
+    if (switched) {
       deps.showToast(
         deps.t("toast.deepLinkSwitched", {
           account: account.displayName || account.username || account.id,

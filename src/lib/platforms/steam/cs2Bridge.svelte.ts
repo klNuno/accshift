@@ -75,16 +75,19 @@ export async function loadCs2BridgeData(force = false): Promise<void> {
     }
   });
   inFlight = run;
-  void run.finally(() => {
+  const clearInFlight = () => {
     if (inFlight === run) inFlight = null;
-  });
+  };
+  // Observe both outcomes directly. `finally()` would create a second rejected
+  // promise when `run` fails, which becomes an unhandled rejection.
+  void run.then(clearInFlight, clearInFlight);
   return run;
 }
 
-/** On switching to a Steam account, ask the bridge to re-check just that
- * account server-side and merge the fresh row into the cache so the hover card
- * updates live. Best-effort and silent: on failure the periodic read stays the
- * fallback. No-op when the bridge is disabled. */
+/** After switching away from a Steam account, ask the bridge to re-check that
+ * previous account server-side and merge the fresh row into the cache so its
+ * hover card updates live. Best-effort and silent: on failure the periodic read
+ * stays the fallback. No-op when the bridge is disabled. */
 export async function triggerCs2BridgeCheck(steamId: string): Promise<void> {
   return enqueueBridgeOperation(async () => {
     try {

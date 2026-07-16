@@ -8,9 +8,10 @@ type UpdateState = "idle" | "checking" | "downloading" | "ready" | "applying";
 type AppUpdaterOptions = {
   t: (key: MessageKey, params?: TranslationParams) => string;
   addToast: (message: string) => void;
+  beforeRelaunch?: () => Promise<void>;
 };
 
-export function createAppUpdater({ t, addToast }: AppUpdaterOptions) {
+export function createAppUpdater({ t, addToast, beforeRelaunch }: AppUpdaterOptions) {
   let updateState = $state<UpdateState>("idle");
   let updateVersion = $state("");
   let pendingUpdate = $state<PendingUpdate | null>(null);
@@ -71,6 +72,7 @@ export function createAppUpdater({ t, addToast }: AppUpdaterOptions) {
 
     try {
       updateState = "applying";
+      await beforeRelaunch?.();
       await pendingUpdate.install();
       await relaunch();
     } catch (error) {

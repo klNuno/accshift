@@ -781,7 +781,8 @@ mod tests {
     // Windows vars (USERPROFILE, APPDATA, ...), so a Linux/macOS path under
     // $HOME (e.g. the portable/local config paths logged by
     // config.rs's save_config_unlocked) leaked the OS account name into
-    // app.log, and from there into uploaded log bundles, on every save.
+    // app.log, where it could later be exposed if the user shared the file,
+    // on every save.
     #[test]
     fn sanitize_log_text_scrubs_home_dir_path() {
         let _env = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());

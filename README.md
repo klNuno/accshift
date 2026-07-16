@@ -15,24 +15,30 @@
   <a href="https://svelte.dev/"><img src="https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte" alt="Svelte" /></a>
 </p>
 
+> [!NOTE]
+> This README documents the upcoming `1.0.0` development tree. The
+> latest stable release is [`v0.9.0`](https://github.com/klNuno/accshift/releases/tag/v0.9.0),
+> so some features described here are not available in the current installer yet.
+> See the [wiki](https://github.com/klNuno/accshift/wiki) for the full user guide.
+
 ## Current Status
 
-| Platform             | Windows     | macOS           | Linux           |
-| -------------------- | ----------- | --------------- | --------------- |
-| Steam                | ✅ Done     | 🧪 GUI ready    | 🧪 GUI ready    |
-| Riot Games           | ✅ Done     | 🚧 Possible     | ⛔ Not feasible |
-| Battle.net           | ✅ Done     | 🚧 Possible     | ⛔ Not feasible |
-| Epic Games           | ✅ Done     | 🚧 Possible     | 🚧 Possible     |
-| Ubisoft Connect      | ✅ Done     | 🚧 Possible     | 🚧 Possible     |
-| Roblox               | ✅ Done     | 🚧 Possible     | 🚧 Possible     |
-| GOG Galaxy           | ✅ Done     | 🚧 Possible     | ⛔ Not feasible |
-| Jagex Launcher       | ✅ Done     | 🚧 Possible     | ⛔ Not feasible |
-| Discord              | ✅ Done     | 🚧 Possible     | 🚧 Possible     |
-| EA app               | 🚧 Possible | 🚧 Possible     | ⛔ Not feasible |
-| Rockstar Launcher    | 🚧 Possible | ⛔ Not feasible | 🚧 Possible     |
-| GeForce Now          | 🚧 Possible | 🚧 Possible     | 🚧 Possible     |
-| HoYoverse / HoYoPlay | 🚧 Possible | ⛔ Not feasible | ⛔ Not feasible |
-| Minecraft Launcher   | 🚧 Possible | 🚧 Possible     | 🚧 Possible     |
+| Platform             | Windows      | macOS           | Linux           |
+| -------------------- | ------------ | --------------- | --------------- |
+| Steam                | ✅ Done      | 🧪 GUI ready    | 🧪 GUI ready    |
+| Riot Games           | ✅ Done      | 🚧 Possible     | ⛔ Not feasible |
+| Battle.net           | ✅ Done      | 🚧 Possible     | ⛔ Not feasible |
+| Epic Games           | ✅ Done      | 🚧 Possible     | 🚧 Possible     |
+| Ubisoft Connect      | ✅ Done      | 🚧 Possible     | 🚧 Possible     |
+| Roblox               | ✅ Done      | 🚧 Possible     | 🚧 Possible     |
+| GOG Galaxy           | 🧪 GUI ready | 🚧 Possible     | ⛔ Not feasible |
+| Jagex Launcher       | 🧪 GUI ready | 🚧 Possible     | ⛔ Not feasible |
+| Discord              | 🧪 GUI ready | 🚧 Possible     | 🚧 Possible     |
+| EA app               | 🚧 Possible  | 🚧 Possible     | ⛔ Not feasible |
+| Rockstar Launcher    | 🚧 Possible  | ⛔ Not feasible | 🚧 Possible     |
+| GeForce Now          | 🚧 Possible  | 🚧 Possible     | 🚧 Possible     |
+| HoYoverse / HoYoPlay | 🚧 Possible  | ⛔ Not feasible | ⛔ Not feasible |
+| Minecraft Launcher   | 🚧 Possible  | 🚧 Possible     | 🚧 Possible     |
 
 - `✅ Done`: GUI and CLI implemented and verified on target
 - `🧪 GUI ready`: GUI + CLI landed, awaiting on-target verification
@@ -43,7 +49,7 @@ Users can propose new platforms through [GitHub Issues](https://github.com/klNun
 
 ## Features
 
-- **One-click account switching** for Steam, Riot Games, Battle.net, Epic Games, Ubisoft Connect, Roblox, GOG Galaxy, Jagex Launcher and Discord: no passwords stored, sessions are snapshotted and restored locally with encryption.
+- **One-click account switching** for Steam, Riot Games, Battle.net, Epic Games, Ubisoft Connect, Roblox, GOG Galaxy, Jagex Launcher and Discord: no passwords stored; sensitive cookies, tokens and session snapshots are encrypted at rest.
 - **Personas**: group one account per platform under a single identity and switch them all in one click.
 - **Streamer mode**: automatically blurs account names and avatars when OBS, Streamlabs, XSplit or Twitch Studio is running.
 - **Folders, search, command palette and keyboard navigation** to manage large account collections.
@@ -77,8 +83,9 @@ both at once is safe thanks to an exclusive lock on mutating operations.
 ### Install
 
 - **Windows**: the desktop installer ships the CLI next to the app and adds
-  the install directory to your user `PATH` — `accshift` works in any new
-  terminal right after install. A standalone `accshift-cli` binary is also
+  the install directory to your user `PATH`; `accshift` works in any new
+  terminal right after install. A standalone
+  `accshift-cli_<version>_x64.exe` binary is also
   available on [Releases](https://github.com/klNuno/accshift/releases).
 - **Linux / macOS**: build from source for now. The deb/rpm packages install
   the CLI to `/usr/bin` alongside the app; the macOS `.app` bundles it inside
@@ -92,10 +99,11 @@ Building from source (`pnpm tauri build`) produces the binary at
 ```bash
 accshift platforms               # list platforms known to this build
 accshift list <platform>         # list accounts for a platform
+accshift list <platform> --folder <name>
 accshift switch <platform> <account-id>
-    [--steam-mode online|invisible]
-    [--shutdown graceful|force]
-    [--run-as-admin]
+    [--online | --invisible]
+    [--graceful | --force]
+    [--admin | --no-admin]
     [--launch-options "..."]
 ```
 
@@ -103,13 +111,12 @@ Example:
 
 ```
 $ accshift list steam
-  ACCOUNT        PERSONA                         STEAM ID
-* microtel91     meetsu (low cortisol edition)   76561198008071583
-  kuba3136       hom dafair                      76561198155223381
-  dzirt522       chien congelé                   76561198120679570
-  ...
+  ACCOUNT      NAME                 STEAM ID
+* alice        Alice                76561198000000001
+  bob          Bob the Builder      76561198000000002
+  carol        carol_gg             76561198000000003
 
-84 accounts.  * = currently signed in
+3 accounts.  * = currently signed in
 ```
 
 Output format:
@@ -123,11 +130,29 @@ Output format:
 ### Output schema
 
 ```json
-{ "schema": "accshift.v1", "ok": true, "command": "list",
-  "data": { "platform": "steam", "accounts": [ ... ] } }
+{
+  "schema": "accshift.v1",
+  "ok": true,
+  "command": "list",
+  "data": {
+    "platform": "steam",
+    "folder": null,
+    "accounts": [],
+    "current": null
+  }
+}
+```
 
-{ "schema": "accshift.v1", "ok": false, "command": "switch",
-  "error": { "code": "lock_contended", "message": "..." } }
+```json
+{
+  "schema": "accshift.v1",
+  "ok": false,
+  "command": "switch",
+  "error": {
+    "code": "lock_contended",
+    "message": "Another accshift instance is running. Retry once it finishes, or close the GUI."
+  }
+}
 ```
 
 ### Exit codes
@@ -140,6 +165,8 @@ Output format:
 | 3    | Unknown account                          |
 | 4    | Another accshift instance holds the lock |
 | 5    | I/O error (paths, permissions)           |
+| 6    | PIN missing, unavailable, or incorrect   |
+| 7    | CLI disabled in Settings                 |
 
 ## Project Structure
 

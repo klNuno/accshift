@@ -209,6 +209,11 @@ pub struct TelemetryConfig {
     pub mode_b_enabled: bool,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub install_id: String,
+    /// Install identifiers whose server-side Mode B data still needs to be
+    /// deleted. Kept locally until `/forget` succeeds so an offline opt-out is
+    /// both immediate and retryable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_forget_install_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub anonymous_id: String,
     #[serde(default)]
@@ -221,6 +226,7 @@ impl Default for TelemetryConfig {
             mode_a_enabled: true,
             mode_b_enabled: false,
             install_id: String::new(),
+            pending_forget_install_ids: Vec::new(),
             anonymous_id: String::new(),
             onboarding_completed: false,
         }
@@ -630,11 +636,22 @@ fn config_io_mutex() -> &'static std::sync::Mutex<()> {
 
 const CONFIG_WRITE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
-pub fn save_config(app_handle: &dyn AppContext, config: &AppConfig) -> Result<(), String> {
-    let _io = config_io_mutex().lock().unwrap_or_else(|e| e.into_inner());
+/// Run a config write with the cross-process lock acquired before the
+/// process-local mutex. Operation-level callers already hold the file lock and
+/// nest through `acquire_for_write`; keeping this order everywhere prevents a
+/// direct writer from holding the mutex while waiting on that outer lock.
+fn with_config_write_locks<T>(
+    app_handle: &dyn AppContext,
+    write: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
     let _write_lock = crate::lock::acquire_for_write(app_handle, CONFIG_WRITE_LOCK_TIMEOUT)
         .map_err(|e| e.to_string())?;
-    save_config_unlocked(app_handle, config)
+    let _io = config_io_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    write()
+}
+
+pub fn save_config(app_handle: &dyn AppContext, config: &AppConfig) -> Result<(), String> {
+    with_config_write_locks(app_handle, || save_config_unlocked(app_handle, config))
 }
 
 fn save_config_unlocked(app_handle: &dyn AppContext, config: &AppConfig) -> Result<(), String> {
@@ -704,12 +721,11 @@ pub fn update_config(
     app_handle: &dyn AppContext,
     mutate: impl FnOnce(&mut AppConfig),
 ) -> Result<(), String> {
-    let _io = config_io_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    let _write_lock = crate::lock::acquire_for_write(app_handle, CONFIG_WRITE_LOCK_TIMEOUT)
-        .map_err(|e| e.to_string())?;
-    let mut cfg = load_config(app_handle);
-    mutate(&mut cfg);
-    save_config_unlocked(app_handle, &cfg)
+    with_config_write_locks(app_handle, || {
+        let mut cfg = load_config(app_handle);
+        mutate(&mut cfg);
+        save_config_unlocked(app_handle, &cfg)
+    })
 }
 
 /// Check for a legacy config.json, migrate it to portable+local, and delete it.
@@ -810,10 +826,10 @@ pub fn save_window_size(
         return Ok(());
     }
 
-    let mut cfg = load_config(app_handle);
-    cfg.window_width = Some(width);
-    cfg.window_height = Some(height);
-    save_config(app_handle, &cfg)
+    update_config(app_handle, |cfg| {
+        cfg.window_width = Some(width);
+        cfg.window_height = Some(height);
+    })
 }
 
 fn is_suspicious_min_window_size(width: f64, height: f64) -> bool {
@@ -863,6 +879,7 @@ fn portable_config(config: &AppConfig) -> AppConfig {
     portable.jagex.path_override.clear();
     portable.discord.path_override.clear();
     portable.telemetry.install_id.clear();
+    portable.telemetry.pending_forget_install_ids.clear();
     portable.telemetry.anonymous_id.clear();
     portable.window_width = None;
     portable.window_height = None;
@@ -886,6 +903,8 @@ fn local_config(config: &AppConfig) -> AppConfig {
     local.jagex.path_override = config.jagex.path_override.clone();
     local.discord.path_override = config.discord.path_override.clone();
     local.telemetry.install_id = config.telemetry.install_id.clone();
+    local.telemetry.pending_forget_install_ids =
+        config.telemetry.pending_forget_install_ids.clone();
     local.telemetry.anonymous_id = config.telemetry.anonymous_id.clone();
     // mode_a_enabled / mode_b_enabled / onboarding_completed live in the portable
     // file. Reset the defaults here so they do not pollute the later merge step.
@@ -948,6 +967,9 @@ fn merge_split_configs(portable: AppConfig, local: AppConfig) -> AppConfig {
     }
     if !local.telemetry.install_id.is_empty() {
         merged.telemetry.install_id = local.telemetry.install_id;
+    }
+    if !local.telemetry.pending_forget_install_ids.is_empty() {
+        merged.telemetry.pending_forget_install_ids = local.telemetry.pending_forget_install_ids;
     }
     if !local.telemetry.anonymous_id.is_empty() {
         merged.telemetry.anonymous_id = local.telemetry.anonymous_id;
@@ -1019,8 +1041,53 @@ mod tests {
         Arc::new(TempCtx { root })
     }
 
+    fn config_io_test_mutex() -> &'static std::sync::Mutex<()> {
+        static MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        MUTEX.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
+    #[test]
+    fn writer_waiting_for_file_lock_does_not_hold_config_mutex() {
+        let _test_guard = config_io_test_mutex()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = tmp_ctx("lock-order");
+        save_config(&*ctx, &AppConfig::default()).unwrap();
+
+        // Models a run_locked_blocking operation: this thread owns the file
+        // lock before entering a nested config update.
+        let outer =
+            crate::lock::acquire_exclusive(&*ctx, std::time::Duration::from_millis(500)).unwrap();
+        let writer_ctx = Arc::clone(&ctx);
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            update_config(&*writer_ctx, |cfg| cfg.window_width = Some(1280.0))
+        });
+
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let mutex_available = !matches!(
+            config_io_mutex().try_lock(),
+            Err(std::sync::TryLockError::WouldBlock)
+        );
+        assert!(
+            mutex_available,
+            "a writer blocked on the file lock must not hold the config mutex"
+        );
+
+        drop(outer);
+        assert!(writer.join().unwrap().is_ok());
+        let _ = std::fs::remove_dir_all(&ctx.root);
+    }
+
     #[test]
     fn save_refuses_to_overwrite_unreadable_local_config() {
+        let _test_guard = config_io_test_mutex()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let ctx = tmp_ctx("unreadable-local");
 
         // An existing local config holding the only copy of the Steam API key.
@@ -1075,6 +1142,31 @@ mod tests {
             save_config(&*ctx, &loaded).is_ok(),
             "save should succeed once the local read recovers"
         );
+
+        let _ = std::fs::remove_dir_all(&ctx.root);
+    }
+
+    #[test]
+    fn save_window_size_preserves_other_config_fields() {
+        let _test_guard = config_io_test_mutex()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = tmp_ctx("window-size-update");
+        let initial = AppConfig {
+            steam: SteamConfig {
+                path_override: "D:\\Games\\Steam".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        save_config(&*ctx, &initial).unwrap();
+
+        save_window_size(&*ctx, 1280.0, 720.0).unwrap();
+
+        let saved = load_config(&*ctx);
+        assert_eq!(saved.steam.path_override, "D:\\Games\\Steam");
+        assert_eq!(saved.window_width, Some(1280.0));
+        assert_eq!(saved.window_height, Some(720.0));
 
         let _ = std::fs::remove_dir_all(&ctx.root);
     }
@@ -1477,6 +1569,7 @@ mod tests {
         let config = AppConfig {
             telemetry: TelemetryConfig {
                 install_id: "550e8400-e29b-41d4-a716-446655440000".into(),
+                pending_forget_install_ids: vec!["2d4d97cc-e7e7-4818-8475-5dd327c1eb3d".into()],
                 anonymous_id: "797f20fe-94de-4e89-98a2-ae3a3273ad1e".into(),
                 ..Default::default()
             },
@@ -1485,6 +1578,7 @@ mod tests {
 
         let portable = portable_config(&config);
         assert!(portable.telemetry.install_id.is_empty());
+        assert!(portable.telemetry.pending_forget_install_ids.is_empty());
         assert!(portable.telemetry.anonymous_id.is_empty());
 
         let local = local_config(&config);
@@ -1496,9 +1590,17 @@ mod tests {
             local.telemetry.anonymous_id,
             "797f20fe-94de-4e89-98a2-ae3a3273ad1e"
         );
+        assert_eq!(
+            local.telemetry.pending_forget_install_ids,
+            ["2d4d97cc-e7e7-4818-8475-5dd327c1eb3d"]
+        );
 
         let merged = merge_split_configs(portable, local);
         assert_eq!(merged.telemetry.install_id, config.telemetry.install_id);
+        assert_eq!(
+            merged.telemetry.pending_forget_install_ids,
+            config.telemetry.pending_forget_install_ids
+        );
         assert_eq!(merged.telemetry.anonymous_id, config.telemetry.anonymous_id);
     }
 }

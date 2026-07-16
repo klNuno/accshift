@@ -52,8 +52,105 @@ fn decrypt_api_key(encrypted_api_key: &str) -> Result<String, String> {
     os::decrypt_secret(encrypted_api_key).map_err(|e| e.to_string())
 }
 
+enum SecretPersistence {
+    Replaced(String),
+    Unused,
+}
+
+fn rotate_secret_with<Encrypt, Persist, Delete, Warn>(
+    plaintext: &str,
+    encrypt: Encrypt,
+    persist: Persist,
+    mut delete: Delete,
+    mut warn: Warn,
+) -> Result<bool, String>
+where
+    Encrypt: FnOnce(&str) -> Result<String, String>,
+    Persist: FnOnce(String) -> Result<SecretPersistence, String>,
+    Delete: FnMut(&str) -> Result<(), String>,
+    Warn: FnMut(&'static str, String),
+{
+    let plaintext = plaintext.trim();
+    let replacement = if plaintext.is_empty() {
+        String::new()
+    } else {
+        encrypt(plaintext)?
+    };
+
+    let previous = match persist(replacement.clone()) {
+        Ok(SecretPersistence::Replaced(previous)) => previous,
+        Ok(SecretPersistence::Unused) => {
+            // A concurrent writer replaced the legacy value while this token
+            // was being prepared. It never became active and has no owner.
+            if !replacement.is_empty() {
+                if let Err(cleanup_error) = delete(&replacement) {
+                    warn("unused", cleanup_error);
+                }
+            }
+            return Ok(false);
+        }
+        Err(error) => {
+            // Encryption may already have created a keyring entry. If the
+            // config write fails, the new token has no owner and must be
+            // removed while the previous token stays untouched.
+            if !replacement.is_empty() {
+                if let Err(cleanup_error) = delete(&replacement) {
+                    warn("replacement", cleanup_error);
+                }
+            }
+            return Err(error);
+        }
+    };
+
+    // The config now points at the replacement (or at no token when clearing),
+    // so the superseded keyring entry can be released. Cleanup is best-effort:
+    // failing after the config commit must not make the UI retry the rotation.
+    if !previous.is_empty() && previous != replacement {
+        if let Err(cleanup_error) = delete(&previous) {
+            warn("previous", cleanup_error);
+        }
+    }
+    Ok(true)
+}
+
+fn warn_secret_cleanup(
+    app_handle: &dyn AppContext,
+    log_target: &str,
+    phase: &'static str,
+    error: String,
+) {
+    log_platform_error(
+        app_handle,
+        log_target,
+        "Could not remove superseded secret from OS storage",
+        format!("phase={phase}; error={error}"),
+    );
+}
+
+pub(super) fn replace_config_secret(
+    app_handle: &dyn AppContext,
+    plaintext: &str,
+    log_target: &str,
+    update: impl FnOnce(&mut config::AppConfig, String) -> String,
+) -> Result<(), String> {
+    rotate_secret_with(
+        plaintext,
+        |value| os::encrypt_secret(value).map_err(|e| e.to_string()),
+        |replacement| {
+            let mut previous = String::new();
+            config::update_config(app_handle, |cfg| {
+                previous = update(cfg, replacement);
+            })?;
+            Ok(SecretPersistence::Replaced(previous))
+        },
+        |token| os::delete_secret(token).map_err(|e| e.to_string()),
+        |phase, error| warn_secret_cleanup(app_handle, log_target, phase, error),
+    )
+    .map(|_| ())
+}
+
 fn read_api_key(app_handle: &dyn AppContext) -> Result<String, String> {
-    let mut cfg = config::load_config(app_handle);
+    let cfg = config::load_config(app_handle);
     let encrypted = cfg.steam.api_key_encrypted.trim();
     if !encrypted.is_empty() {
         return decrypt_api_key(encrypted).map(|v| v.trim().to_string());
@@ -64,10 +161,38 @@ fn read_api_key(app_handle: &dyn AppContext) -> Result<String, String> {
         return Ok(String::new());
     }
 
-    cfg.steam.api_key_encrypted = encrypt_api_key(&legacy)?;
-    cfg.steam.api_key = String::new();
-    config::save_config(app_handle, &cfg)?;
-    Ok(legacy)
+    let migrated = rotate_secret_with(
+        &legacy,
+        encrypt_api_key,
+        |replacement| {
+            let mut persistence = SecretPersistence::Unused;
+            config::update_config(app_handle, |latest| {
+                if latest.steam.api_key_encrypted.trim().is_empty()
+                    && latest.steam.api_key.trim() == legacy
+                {
+                    let previous =
+                        std::mem::replace(&mut latest.steam.api_key_encrypted, replacement);
+                    latest.steam.api_key.clear();
+                    persistence = SecretPersistence::Replaced(previous);
+                }
+            })?;
+            Ok(persistence)
+        },
+        |token| os::delete_secret(token).map_err(|e| e.to_string()),
+        |phase, error| warn_secret_cleanup(app_handle, "steam.migrate_api_key", phase, error),
+    )?;
+    if migrated {
+        return Ok(legacy);
+    }
+
+    // A concurrent setter won the race. Return its value instead of the stale
+    // plaintext observed before taking the config write lock.
+    let latest = config::load_config(app_handle);
+    if !latest.steam.api_key_encrypted.trim().is_empty() {
+        decrypt_api_key(&latest.steam.api_key_encrypted).map(|value| value.trim().to_string())
+    } else {
+        Ok(latest.steam.api_key.trim().to_string())
+    }
 }
 
 fn validate_steam_id(id: &str) -> Result<(), String> {
@@ -148,16 +273,16 @@ fn build_switch_state_details(
 }
 
 pub fn set_api_key(app_handle: AppCtx, key: String) -> Result<(), PlatformError> {
-    let trimmed = key.trim();
-    let encrypted = if trimmed.is_empty() {
-        String::new()
-    } else {
-        encrypt_api_key(trimmed)?
-    };
-    config::update_config(&app_handle, |cfg| {
-        cfg.steam.api_key = String::new();
-        cfg.steam.api_key_encrypted = encrypted;
-    })
+    replace_config_secret(
+        &app_handle,
+        &key,
+        "steam.set_api_key",
+        |cfg, replacement| {
+            let previous = std::mem::replace(&mut cfg.steam.api_key_encrypted, replacement);
+            cfg.steam.api_key = String::new();
+            previous
+        },
+    )
     .map_err(Into::into)
 }
 
@@ -212,7 +337,7 @@ pub fn get_current_account(app_handle: AppCtx) -> Result<String, PlatformError> 
         .map_err(|e| log_platform_failure(&app_handle, "steam.get_current_account", e.into()))
 }
 
-pub async fn switch_account_and_launch_game(
+pub fn switch_account_and_launch_game(
     app_handle: AppCtx,
     username: String,
     app_id: String,
@@ -240,49 +365,40 @@ pub async fn switch_account_and_launch_game(
     );
 
     let force_kill = shutdown_mode == "force";
-    let app_handle_for_task = app_handle.clone();
-    let username_for_task = username.clone();
-    let app_id_for_task = app_id.clone();
-    let launch_options_for_task = launch_options.clone();
-    tokio::task::spawn_blocking(move || {
-        let result = accounts::switch_account_and_launch_game(
-            &steam_path,
-            &username_for_task,
-            &app_id_for_task,
-            run_as_admin,
-            &launch_options_for_task,
-            force_kill,
-        );
+    let result = accounts::switch_account_and_launch_game(
+        &steam_path,
+        &username,
+        &app_id,
+        run_as_admin,
+        &launch_options,
+        force_kill,
+    );
 
-        let post_state = build_switch_state_details(
-            &steam_path,
-            Some(&username_for_task),
-            None,
-            None,
-            run_as_admin,
-            &launch_options_for_task,
-        );
+    let post_state = build_switch_state_details(
+        &steam_path,
+        Some(&username),
+        None,
+        None,
+        run_as_admin,
+        &launch_options,
+    );
 
-        match &result {
-            Ok(()) => log_platform_info(
-                &app_handle_for_task,
-                "steam.switch_account_and_launch_game",
-                "Steam switch+launch completed",
-                &post_state,
-            ),
-            Err(error) => log_platform_error(
-                &app_handle_for_task,
-                "steam.switch_account_and_launch_game",
-                "Steam switch+launch failed",
-                format!("error={error}; state={post_state}"),
-            ),
-        }
+    match &result {
+        Ok(()) => log_platform_info(
+            &app_handle,
+            "steam.switch_account_and_launch_game",
+            "Steam switch+launch completed",
+            &post_state,
+        ),
+        Err(error) => log_platform_error(
+            &app_handle,
+            "steam.switch_account_and_launch_game",
+            "Steam switch+launch failed",
+            format!("error={error}; state={post_state}"),
+        ),
+    }
 
-        result
-    })
-    .await
-    .map_err(|e| PlatformError::other(format!("Switch+launch task failed: {e}")))?
-    .map_err(|e| {
+    result.map_err(|e| {
         log_platform_failure(
             &app_handle,
             "steam.switch_account_and_launch_game",
@@ -829,6 +945,7 @@ impl PlatformService for SteamService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
 
     #[test]
     fn validate_steam_id_accepts_17_digit_numeric() {
@@ -882,5 +999,86 @@ mod tests {
     #[test]
     fn validate_username_accepts_normal_name() {
         assert!(validate_username("some_user123").is_ok());
+    }
+
+    #[test]
+    fn secret_rotation_deletes_previous_token_after_persisting_replacement() {
+        let deleted = RefCell::new(Vec::new());
+        let result = rotate_secret_with(
+            "new secret",
+            |value| {
+                assert_eq!(value, "new secret");
+                Ok("new-token".to_string())
+            },
+            |replacement| {
+                assert_eq!(replacement, "new-token");
+                Ok(SecretPersistence::Replaced("old-token".to_string()))
+            },
+            |token| {
+                deleted.borrow_mut().push(token.to_string());
+                Ok(())
+            },
+            |_, _| panic!("cleanup should succeed"),
+        );
+
+        assert!(result.unwrap());
+        assert_eq!(&*deleted.borrow(), &["old-token"]);
+    }
+
+    #[test]
+    fn secret_rotation_deletes_replacement_when_persist_fails() {
+        let deleted = RefCell::new(Vec::new());
+        let result = rotate_secret_with(
+            "new secret",
+            |_| Ok("new-token".to_string()),
+            |_| Err("config write failed".to_string()),
+            |token| {
+                deleted.borrow_mut().push(token.to_string());
+                Ok(())
+            },
+            |_, _| panic!("cleanup should succeed"),
+        );
+
+        assert_eq!(result.unwrap_err(), "config write failed");
+        assert_eq!(&*deleted.borrow(), &["new-token"]);
+    }
+
+    #[test]
+    fn clearing_secret_skips_encryption_and_deletes_previous_token() {
+        let deleted = RefCell::new(Vec::new());
+        let result = rotate_secret_with(
+            "   ",
+            |_| panic!("empty secrets must not be encrypted"),
+            |replacement| {
+                assert!(replacement.is_empty());
+                Ok(SecretPersistence::Replaced("old-token".to_string()))
+            },
+            |token| {
+                deleted.borrow_mut().push(token.to_string());
+                Ok(())
+            },
+            |_, _| panic!("cleanup should succeed"),
+        );
+
+        assert!(result.unwrap());
+        assert_eq!(&*deleted.borrow(), &["old-token"]);
+    }
+
+    #[test]
+    fn unused_secret_replacement_is_deleted_without_touching_current_token() {
+        let deleted = RefCell::new(Vec::new());
+        let result = rotate_secret_with(
+            "legacy secret",
+            |_| Ok("unused-token".to_string()),
+            |_| Ok(SecretPersistence::Unused),
+            |token| {
+                deleted.borrow_mut().push(token.to_string());
+                Ok(())
+            },
+            |_, _| panic!("cleanup should succeed"),
+        );
+
+        assert!(!result.unwrap());
+        assert_eq!(&*deleted.borrow(), &["unused-token"]);
     }
 }

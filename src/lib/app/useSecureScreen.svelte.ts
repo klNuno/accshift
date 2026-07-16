@@ -126,6 +126,27 @@ export function createSecureScreenController({
   });
 
   $effect(() => {
+    const settings = getSettings();
+    if (
+      !blur.isBlurred ||
+      !getIsAccountSelectionView() ||
+      !settings.pinEnabled ||
+      !isValidPinHash(settings.pinHash || "") ||
+      isPinLocked ||
+      isPinUnlocking
+    ) {
+      return;
+    }
+
+    isPinLocked = true;
+    isPinRetryLocked = false;
+    pinAttempt = "";
+    pinError = "";
+    onCloseContextMenu();
+    setTimeout(() => pinInputRef?.focus(), 0);
+  });
+
+  $effect(() => {
     const sanitizedAttempt = sanitizePinDigits(pinAttempt);
     if (sanitizedAttempt !== pinAttempt) {
       pinAttempt = sanitizedAttempt;

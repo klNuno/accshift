@@ -180,6 +180,21 @@
   });
 
   let updateCheckTimer: ReturnType<typeof setTimeout> | null = null;
+  let settingsFlush: (() => Promise<void>) | null = null;
+  async function flushAppState() {
+    let firstError: unknown = null;
+    try {
+      await settingsFlush?.();
+    } catch (error) {
+      firstError = error;
+    }
+    try {
+      await flushPendingSaves();
+    } catch (error) {
+      firstError ??= error;
+    }
+    if (firstError) throw firstError;
+  }
   // Flush pending storage saves on close, then destroy the window. The flag
   // stops destroy() from re-entering our own preventDefault into a loop.
   let unlistenCloseRequested: UnlistenFn | null = null;
@@ -188,7 +203,7 @@
   let appVersion = $state("");
   let loadingAdapterFor = $state<string | null>(null);
   const visiblePriming = createVisiblePriming(loader);
-  const updates = createAppUpdater({ t, addToast });
+  const updates = createAppUpdater({ t, addToast, beforeRelaunch: flushAppState });
   const appNavigation = createAppNavigationController({
     shell,
     navigation,
@@ -273,7 +288,7 @@
 
   function openPersonas() {
     if (!settings.personasEnabled) return;
-    if (settingsPanel.showSettings) settingsPanel.close();
+    if (settingsPanel.showSettings) appNavigation.closeSettingsPanel();
     bulkEdit.closeBulkEdit();
     showPersonas = true;
   }
@@ -382,7 +397,6 @@
     loadAccounts: () => loadAccounts(true),
     getAccounts: () => loader.accounts,
     isLoaderLoading: () => loader.loading,
-    getLoaderError: () => loader.error,
     switchToAccount: handleAccountSwitch,
     // A deep link is a remote-originated trigger: require an explicit click
     // before swapping the live account, so a page opening accshift://switch/...
@@ -484,7 +498,7 @@
   }
 
   function handleAddAccountClick() {
-    if (!activeTabUsable) return;
+    if (!activeTabUsable || loader.adding || addFlow.flow) return;
     void handleAddAccount();
   }
 
@@ -942,6 +956,7 @@
         console.error("Failed to minimize window after switching account:", e);
       }
     }
+    return switched;
   }
 
   // Relaunching to install an update kills the whole process. Never do that
@@ -1020,6 +1035,7 @@
   }
 
   async function handleAddAccount() {
+    if (loader.adding || addFlow.flow) return;
     const adapterReady = await ensureAdapterReady(shell.activeTab);
     if (!adapterReady) return;
     const platformId = adapterReady.id;
@@ -1170,16 +1186,16 @@
   let tourMockActive = $state(false);
   let tourPrevTab: string | null = null;
 
-  const MOCK_TOUR_ACCOUNTS: PlatformAccount[] = [
-    { id: "__tour_mock_1", displayName: "Account 1", username: "account_1", lastLoginAt: null },
-    { id: "__tour_mock_2", displayName: "Account 2", username: "account_2", lastLoginAt: null },
-    { id: "__tour_mock_3", displayName: "Account 3", username: "account_3", lastLoginAt: null },
-  ];
-  const MOCK_TOUR_ITEMS: ItemRef[] = MOCK_TOUR_ACCOUNTS.map((a) => ({ type: "account" as const, id: a.id }));
-  const MOCK_TOUR_MAP: Record<string, PlatformAccount> = MOCK_TOUR_ACCOUNTS.reduce(
+  let mockTourAccounts = $derived<PlatformAccount[]>([
+    { id: "__tour_mock_1", displayName: t("onboarding.features.mockAccount", { number: 1 }), username: "account_1", lastLoginAt: null },
+    { id: "__tour_mock_2", displayName: t("onboarding.features.mockAccount", { number: 2 }), username: "account_2", lastLoginAt: null },
+    { id: "__tour_mock_3", displayName: t("onboarding.features.mockAccount", { number: 3 }), username: "account_3", lastLoginAt: null },
+  ]);
+  let mockTourItems = $derived<ItemRef[]>(mockTourAccounts.map((a) => ({ type: "account" as const, id: a.id })));
+  let mockTourMap = $derived<Record<string, PlatformAccount>>(mockTourAccounts.reduce(
     (acc, a) => { acc[a.id] = a; return acc; },
     {} as Record<string, PlatformAccount>,
-  );
+  ));
 
   function activateTourMock() {
     tourPrevTab = shell.activeTab;
@@ -1226,7 +1242,7 @@
         isClosing = true;
         event.preventDefault();
         try {
-          await flushPendingSaves();
+          await flushAppState();
         } catch (e) {
           console.error("Failed to flush pending saves on close:", e);
         }
@@ -1311,7 +1327,7 @@
     enabledPlatforms={shell.enabledPlatforms}
     unavailablePlatformIds={shell.unavailablePlatformIds}
     canRefresh={activeTabUsable && !adapterLoading && !showPersonas}
-    canAddAccount={activeTabUsable && !adapterLoading && !showPersonas}
+    canAddAccount={activeTabUsable && !adapterLoading && !loader.adding && !addFlow.flow && !showPersonas}
     showSettings={settingsPanel.showSettings}
     showBulkEdit={!!activePlatformDef?.capabilities?.bulkEdit && !settingsPanel.showSettings && !showPersonas && activeTabUsable}
     bulkEditActive={bulkEdit.bulkEditMode}
@@ -1382,7 +1398,7 @@
     <main class="content">
       {#if settingsPanel.SettingsPanel}
         <settingsPanel.SettingsPanel
-          onClose={settingsPanel.close}
+          onClose={appNavigation.closeSettingsPanel}
           onPlatformsChanged={appNavigation.handlePlatformsChanged}
           onSettingsUpdated={shell.refreshSettings}
           onRefreshAvatarsNow={refreshAvatarsNow}
@@ -1390,6 +1406,7 @@
           onAccountAdded={() => void loadAccounts(true)}
           runtimeOs={shell.runtimeOs}
           registerSearchFocus={(fn) => (settingsSearchFocus = fn)}
+          registerFlush={(fn) => (settingsFlush = fn)}
         />
       {:else}
         <div class="center-msg">
@@ -1435,12 +1452,12 @@
     {locale}
     loaderError={loader.error}
     loaderLoading={loader.loading}
-    renderedAccountCount={tourMockActive ? MOCK_TOUR_ACCOUNTS.length : display.renderedAccountCount}
+    renderedAccountCount={tourMockActive ? mockTourAccounts.length : display.renderedAccountCount}
     {pendingSetupAccountId}
     displayFolderItems={tourMockActive ? [] : display.displayFolderItems}
-    displayAccountItemsWithPending={tourMockActive ? MOCK_TOUR_ITEMS : display.displayAccountItemsWithPending}
+    displayAccountItemsWithPending={tourMockActive ? mockTourItems : display.displayAccountItemsWithPending}
     displaySections={tourMockActive ? null : display.displaySections}
-    renderedAccountMap={tourMockActive ? MOCK_TOUR_MAP : display.renderedAccountMap}
+    renderedAccountMap={tourMockActive ? mockTourMap : display.renderedAccountMap}
     showUsernames={showUsernamesForActiveTab}
     showLastLogin={showLastLoginForActiveTab}
     {lastLoginUnknownKey}

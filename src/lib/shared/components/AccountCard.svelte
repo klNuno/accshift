@@ -250,6 +250,13 @@
     }
   }
 
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    e.stopPropagation();
+    handleClick();
+  }
+
   function handleContextMenu(e: MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
@@ -260,10 +267,9 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="card-shell"
+  role="group"
   data-tour="account-card"
   class:extension-visible={isExtensionVisible}
   style={cardColor ? `--card-custom-color: ${cardColor};` : ""}
@@ -277,6 +283,7 @@
       class:left={panelSide === "left"}
       class:right={panelSide === "right"}
       aria-hidden={!isExtensionVisible}
+      inert={!isExtensionVisible}
     >
       <div
         class="extension-surface"
@@ -298,7 +305,12 @@
   <div
     bind:this={cardRef}
     onclick={handleClick}
+    onkeydown={handleKeydown}
     oncontextmenu={handleContextMenu}
+    role="button"
+    tabindex={interactionDisabled ? -1 : 0}
+    aria-disabled={interactionDisabled || undefined}
+    aria-pressed={isActive}
     data-account-id={account.id}
     class="card entrance"
     class:custom-color={!!cardColor}
@@ -320,7 +332,7 @@
         {:else if avatarUrl}
           <img
             src={avatarUrl}
-            alt={account.displayName}
+            alt=""
             loading="lazy"
             decoding="async"
             draggable={false}
@@ -344,7 +356,7 @@
 
         {#if showConfirm && !isDragged}
           <div class="play-overlay">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="var(--fg)">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="var(--fg)" aria-hidden="true">
               <path d="M8 5v14l11-7z" />
             </svg>
           </div>

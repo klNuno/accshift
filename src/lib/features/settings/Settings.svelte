@@ -26,6 +26,7 @@
   import SettingsGeneralTab from "./SettingsGeneralTab.svelte";
   import SettingsPlatformsTab from "./SettingsPlatformsTab.svelte";
   import SettingsPrivacyTab from "./SettingsPrivacyTab.svelte";
+  import type { AppSettings } from "./types";
 
   let {
     onClose,
@@ -36,8 +37,9 @@
     onAccountAdded = () => {},
     runtimeOs = "unknown",
     registerSearchFocus = () => {},
+    registerFlush = () => {},
   }: {
-    onClose: () => void;
+    onClose: () => void | Promise<void>;
     onPlatformsChanged?: () => void;
     onSettingsUpdated?: () => void;
     onRefreshAvatarsNow?: () => void | Promise<void>;
@@ -45,6 +47,7 @@
     onAccountAdded?: () => void;
     runtimeOs?: "windows" | "linux" | "macos" | "unknown";
     registerSearchFocus?: (fn: (() => void) | null) => void;
+    registerFlush?: (fn: (() => Promise<void>) | null) => void;
   } = $props();
 
   let settings = $state(getSettings());
@@ -58,6 +61,7 @@
   let showLastLoginKey = $derived(JSON.stringify(settings.accountDisplay.showLastLoginPerPlatform));
   let healthCheckKey = $derived(JSON.stringify(settings.healthCheckPerPlatform));
   let pinCodeInput = $state("");
+  let pinSetupPending = $state(false);
   const uiScale = createNumericInput(() => settings.uiScalePercent, (v) => { settings.uiScalePercent = v; }, 75, 150);
   const bgOpacity = createNumericInput(() => settings.backgroundOpacity, (v) => { settings.backgroundOpacity = v; }, 0, 100);
   const avatarCacheDays = createNumericInput(() => settings.dataRefresh.avatarCacheDays, (v) => { settings.dataRefresh.avatarCacheDays = v; }, 0, 90);
@@ -67,6 +71,11 @@
   let banRefreshLoading = $state(false);
   let hydrated = $state(false);
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  let persistChain: Promise<void> = Promise.resolve();
+  let resolveHydrationReady!: () => void;
+  const hydrationReady = new Promise<void>((resolve) => {
+    resolveHydrationReady = resolve;
+  });
   let lastSavedToastAt = 0;
   let lastPersistedSnapshot = "";
   let lastPlatformSnapshot = "";
@@ -174,14 +183,14 @@
     }
   }
 
-  function buildPersistSnapshot(): string {
+  function buildPersistSnapshot(settingsValue: AppSettings = settings): string {
     const pendingApiKey = apiKeyTouched ? apiKey.trim() : "";
     const trimmedPaths: Record<string, string> = {};
     for (const [id, p] of Object.entries(platformPaths)) {
       trimmedPaths[id] = p.trim();
     }
     return JSON.stringify({
-      settings,
+      settings: settingsValue,
       pendingApiKey,
       apiKeyConfigured,
       platformPaths: trimmedPaths,
@@ -196,13 +205,22 @@
     inactivityBlur.refresh();
   }
 
-  async function persistNow() {
+  async function persistCurrentState() {
     normalizeSettings();
     const sanitizedPinInput = sanitizePinDigits(pinCodeInput);
-    const pinCommitted = settings.pinEnabled && sanitizedPinInput.length === PIN_CODE_LENGTH;
-    if (pinCommitted) {
-      settings.pinHash = await hashPinCode(sanitizedPinInput);
-      pinCodeInput = "";
+    const pinRequested = settings.pinEnabled || pinSetupPending;
+    let pinCommitted = false;
+    if (pinRequested && sanitizedPinInput.length === PIN_CODE_LENGTH) {
+      const nextPinHash = await hashPinCode(sanitizedPinInput);
+      if (settings.pinEnabled || pinSetupPending) {
+        settings.pinHash = nextPinHash;
+        settings.pinEnabled = true;
+        pinSetupPending = false;
+        pinCommitted = true;
+        if (sanitizePinDigits(pinCodeInput) === sanitizedPinInput) {
+          pinCodeInput = "";
+        }
+      }
     }
 
     // Capture the snapshot before any await below so edits made while persisting
@@ -274,6 +292,20 @@
       addToast(t("settings.saved"));
       lastSavedToastAt = now;
     }
+  }
+
+  function persistNow(): Promise<void> {
+    const next = persistChain.catch(() => {}).then(persistCurrentState);
+    persistChain = next;
+    return next;
+  }
+
+  function flushSettingsNow(): Promise<void> {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    return persistNow();
   }
 
   async function clearApiKey() {
@@ -391,53 +423,70 @@
     }
   }
 
+  async function closePanel() {
+    await hydrationReady;
+    await flushSettingsNow();
+    await onClose();
+  }
+
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape") onClose();
+    if (e.key === "Escape") void closePanel();
   }
 
   onMount(async () => {
-    const enabledIds = settings.enabledPlatforms;
-    const pathPromises = enabledIds.map((id) =>
-      invoke<string>("platform_get_path", { platformId: id })
-        .then((p: string) => [id, p] as const)
-        .catch(() => [id, ""] as const)
-    );
-    const [apiKeyResult, ...pathResults] = await Promise.allSettled([
-      hasApiKey(),
-      ...pathPromises,
-    ]);
+    registerFlush(async () => {
+      await hydrationReady;
+      await flushSettingsNow();
+    });
 
-    apiKeyConfigured = apiKeyResult.status === "fulfilled" ? apiKeyResult.value : false;
-    apiKey = "";
-    apiKeyTouched = false;
-    const paths: Record<string, string> = {};
-    for (const id of enabledIds) {
-      paths[id] = "";
-    }
-    for (const result of pathResults) {
-      if (result.status === "fulfilled") {
-        const [id, p] = result.value as [string, string];
-        paths[id] = p;
+    try {
+      normalizeSettings();
+      refreshNumericInputsFromSettings();
+      const settingsAtHydrationStart = JSON.parse(JSON.stringify(settings)) as AppSettings;
+      const enabledIds = [...settings.enabledPlatforms];
+      const pathPromises = enabledIds.map((id) =>
+        invoke<string>("platform_get_path", { platformId: id })
+          .then((p: string) => [id, p] as const)
+          .catch(() => [id, ""] as const)
+      );
+      const [apiKeyResult, ...pathResults] = await Promise.allSettled([
+        hasApiKey(),
+        ...pathPromises,
+      ]);
+
+      apiKeyConfigured = apiKeyResult.status === "fulfilled" ? apiKeyResult.value : false;
+      const paths: Record<string, string> = {};
+      for (const id of enabledIds) {
+        paths[id] = "";
       }
+      for (const result of pathResults) {
+        if (result.status === "fulfilled") {
+          const [id, p] = result.value as [string, string];
+          paths[id] = p;
+        }
+      }
+      platformPaths = paths;
+
+      // Baseline the settings that were actually loaded, not edits made while
+      // async API/path hydration was in flight. Those edits remain dirty.
+      lastPersistedSnapshot = buildPersistSnapshot(settingsAtHydrationStart);
+      lastPlatformSnapshot = JSON.stringify({
+        enabledPlatforms: [...settingsAtHydrationStart.enabledPlatforms].sort(),
+        defaultPlatformId: settingsAtHydrationStart.defaultPlatformId,
+      });
+      hydrated = true;
+
+      registerSearchFocus(() => void focusPlatformSearch());
+    } finally {
+      resolveHydrationReady();
     }
-    platformPaths = paths;
-
-    normalizeSettings();
-    refreshNumericInputsFromSettings();
-    lastPersistedSnapshot = buildPersistSnapshot();
-    lastPlatformSnapshot = buildPlatformSnapshot();
-    hydrated = true;
-
-    registerSearchFocus(() => void focusPlatformSearch());
   });
 
   onDestroy(() => {
-    if (saveTimer) {
-      clearTimeout(saveTimer);
-      saveTimer = null;
-      // Flush the pending debounced save so closing Settings never drops edits.
-      void persistNow();
-    }
+    // Keep the final promise registered after unmount. A native close or
+    // updater relaunch can then still await a browser-history-driven close.
+    const finalPersist = hydrationReady.then(flushSettingsNow);
+    registerFlush(() => finalPersist);
     registerSearchFocus(null);
     tabBar.destroy();
   });
@@ -566,7 +615,12 @@
   <div class="settings-main">
     <div class="main-header">
       <span class="section-title">{t(activeTabLabelKey)}</span>
-      <button class="close-btn" onclick={onClose} title={t("common.close")}>
+      <button
+        class="close-btn"
+        onclick={() => void closePanel()}
+        title={t("common.close")}
+        aria-label={t("common.close")}
+      >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="18" y1="6" x2="6" y2="18" />
           <line x1="6" y1="6" x2="18" y2="18" />
@@ -599,6 +653,7 @@
       <SettingsPrivacyTab
         bind:settings
         bind:pinCodeInput
+        bind:pinSetupPending
         {t}
         {inactivityBlur}
         neutralAccent={NEUTRAL_CONTROL_ACCENT}

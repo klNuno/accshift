@@ -54,20 +54,23 @@ export function createAppNavigationController({
   resetVisiblePrimeState,
 }: AppNavigationDeps) {
   async function toggleSettingsPanel() {
-    if (!getShowSettings()) {
-      await addFlow.cancel();
-      closeBulkEdit();
-      history.pushState(
-        {
-          tab: shell.activeTab,
-          folderId: navigation.currentFolderId,
-          showSettings: true,
-        } satisfies AppHistoryEntry,
-        "",
-      );
-      void loadSettingsComponent();
+    if (getShowSettings()) {
+      closeSettingsPanel();
+      return;
     }
-    setShowSettings(!getShowSettings());
+
+    await addFlow.cancel();
+    closeBulkEdit();
+    history.pushState(
+      {
+        tab: shell.activeTab,
+        folderId: navigation.currentFolderId,
+        showSettings: true,
+      } satisfies AppHistoryEntry,
+      "",
+    );
+    setShowSettings(true);
+    void loadSettingsComponent();
   }
 
   function applyAppState(entry: AppHistoryEntry) {
@@ -115,6 +118,23 @@ export function createAppNavigationController({
     if (event.state) {
       applyAppState(event.state as AppHistoryEntry);
     }
+  }
+
+  function closeSettingsPanel() {
+    if (!getShowSettings()) return;
+    const entry = history.state as AppHistoryEntry | null;
+    if (entry?.showSettings) {
+      history.back();
+      return;
+    }
+
+    const nextEntry = {
+      tab: shell.activeTab,
+      folderId: navigation.currentFolderId,
+      showSettings: false,
+    } satisfies AppHistoryEntry;
+    history.replaceState(nextEntry, "");
+    applyAppState(nextEntry);
   }
 
   async function navigateToParentFolder() {
@@ -211,7 +231,7 @@ export function createAppNavigationController({
       {
         tab: shell.activeTab,
         folderId: null,
-        showSettings: false,
+        showSettings: getShowSettings(),
       } satisfies AppHistoryEntry,
       "",
     );
@@ -225,6 +245,7 @@ export function createAppNavigationController({
 
   return {
     toggleSettingsPanel,
+    closeSettingsPanel,
     handlePopState,
     navigateToParentFolder,
     navigateTo,

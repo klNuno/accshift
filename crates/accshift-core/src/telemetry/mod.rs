@@ -62,6 +62,7 @@ mod tests {
             mode_a_enabled: true,
             mode_b_enabled: true,
             install_id: String::new(),
+            pending_forget_install_ids: Vec::new(),
             anonymous_id: String::new(),
             onboarding_completed: true,
         };
@@ -77,6 +78,7 @@ mod tests {
             mode_a_enabled: true,
             mode_b_enabled: true,
             install_id: "550e8400-e29b-41d4-a716-446655440000".into(),
+            pending_forget_install_ids: Vec::new(),
             anonymous_id: "797f20fe-94de-4e89-98a2-ae3a3273ad1e".into(),
             onboarding_completed: true,
         };

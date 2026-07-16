@@ -64,7 +64,7 @@ struct BridgeResponse {
     accounts: Vec<Cs2BridgeAccount>,
 }
 
-/// Corps du POST /check : le SteamID64 du compte que l'on vient d'activer.
+/// Corps du POST /check : le SteamID64 du compte que l'on vient de quitter.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CheckRequest<'a> {
@@ -75,13 +75,6 @@ struct CheckRequest<'a> {
 #[derive(Debug, Deserialize)]
 struct BridgeCheckResponse {
     account: Cs2BridgeAccount,
-}
-
-fn encrypt_token(token: &str) -> Result<String, String> {
-    if token.trim().is_empty() {
-        return Ok(String::new());
-    }
-    os::encrypt_secret(token).map_err(|e| e.to_string())
 }
 
 fn decrypt_token(encrypted: &str) -> Result<String, String> {
@@ -108,17 +101,22 @@ pub fn set_settings(
     token: Option<String>,
 ) -> Result<(), String> {
     let url = normalize_url(&url)?;
-    let token_encrypted = match token {
-        None => None,
-        Some(value) => Some(encrypt_token(value.trim())?),
-    };
-    config::update_config(app_handle, |cfg| {
-        cfg.steam.cs2_bridge.enabled = enabled;
-        cfg.steam.cs2_bridge.url = url;
-        if let Some(encrypted) = token_encrypted {
-            cfg.steam.cs2_bridge.token_encrypted = encrypted;
-        }
-    })
+    match token {
+        Some(value) => super::replace_config_secret(
+            app_handle,
+            &value,
+            "steam.cs2_bridge.set_settings",
+            |cfg, replacement| {
+                cfg.steam.cs2_bridge.enabled = enabled;
+                cfg.steam.cs2_bridge.url = url;
+                std::mem::replace(&mut cfg.steam.cs2_bridge.token_encrypted, replacement)
+            },
+        ),
+        None => config::update_config(app_handle, |cfg| {
+            cfg.steam.cs2_bridge.enabled = enabled;
+            cfg.steam.cs2_bridge.url = url;
+        }),
+    }
 }
 
 /// Vide autorise (bridge pas encore configure) ; sinon http(s) obligatoire.
