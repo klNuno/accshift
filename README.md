@@ -16,32 +16,29 @@
 </p>
 
 > [!NOTE]
-> This README documents the upcoming `1.0.0` development tree. The
-> latest stable release is [`v0.9.0`](https://github.com/klNuno/accshift/releases/tag/v0.9.0),
-> so some features described here are not available in the current installer yet.
 > See the [wiki](https://github.com/klNuno/accshift/wiki) for the full user guide.
 
 ## Current Status
 
-| Platform             | Windows          | macOS           | Linux           |
-| -------------------- | ---------------- | --------------- | --------------- |
-| Steam                | ✅ Done          | ✅ Done         | ✅ Done         |
-| Riot Games           | ✅ Done          | 🚧 Possible     | ⛔ Not feasible |
-| Battle.net           | ✅ Done          | ✅ Done         | ⛔ Not feasible |
-| Epic Games           | ✅ Done          | 🚧 Possible     | 🚧 Possible     |
-| Ubisoft Connect      | ✅ Done          | 🚧 Possible     | 🚧 Possible     |
-| Roblox               | ✅ Done          | 🚧 Possible     | 🚧 Possible     |
-| GOG Galaxy           | 🧪 Needs testing | 🚧 Possible     | ⛔ Not feasible |
-| Jagex Launcher       | 🧪 Needs testing | 🚧 Possible     | ⛔ Not feasible |
-| Discord              | 🧪 Needs testing | 🚧 Possible     | 🚧 Possible     |
-| EA app               | 🚧 Possible      | 🚧 Possible     | ⛔ Not feasible |
-| Rockstar Launcher    | 🚧 Possible      | ⛔ Not feasible | 🚧 Possible     |
-| GeForce Now          | 🚧 Possible      | 🚧 Possible     | 🚧 Possible     |
-| HoYoverse / HoYoPlay | 🚧 Possible      | ⛔ Not feasible | ⛔ Not feasible |
-| Minecraft Launcher   | 🚧 Possible      | 🚧 Possible     | 🚧 Possible     |
+| Platform             | Windows         | macOS           | Linux           |
+| -------------------- | --------------- | --------------- | --------------- |
+| Steam                | ✅ Done         | ✅ Done         | ✅ Done         |
+| Riot Games           | ✅ Done         | 🚧 Possible     | ⛔ Not feasible |
+| Battle.net           | ✅ Done         | ✅ Done         | ⛔ Not feasible |
+| Epic Games           | ✅ Done         | 🚧 Possible     | 🚧 Possible     |
+| Ubisoft Connect      | ✅ Done         | 🚧 Possible     | 🚧 Possible     |
+| Roblox               | ✅ Done         | 🚧 Possible     | 🚧 Possible     |
+| GOG Galaxy           | 🧪 Need testing | 🚧 Possible     | ⛔ Not feasible |
+| Jagex Launcher       | 🧪 Need testing | 🚧 Possible     | ⛔ Not feasible |
+| Discord              | 🧪 Need testing | 🚧 Possible     | 🚧 Possible     |
+| EA app               | 🚧 Possible     | 🚧 Possible     | ⛔ Not feasible |
+| Rockstar Launcher    | 🚧 Possible     | ⛔ Not feasible | 🚧 Possible     |
+| GeForce Now          | 🚧 Possible     | 🚧 Possible     | 🚧 Possible     |
+| HoYoverse / HoYoPlay | 🚧 Possible     | ⛔ Not feasible | ⛔ Not feasible |
+| Minecraft Launcher   | 🚧 Possible     | 🚧 Possible     | 🚧 Possible     |
 
 - `✅ Done`: GUI and CLI implemented and verified on target
-- `🧪 Needs testing`: implemented, awaiting testing with real accounts
+- `🧪 Need testing`: implemented, may still have bugs
 - `🚧 Possible`: feasible, priority goes to user requests
 - `⛔ Not feasible`: not realistic for this OS
 
@@ -62,7 +59,7 @@ Grab the build for your OS from [Releases](https://github.com/klNuno/accshift/re
 
 - **Windows**: NSIS or MSI installer
 - **Linux**: deb, rpm or AppImage
-- **macOS**: dmg (unsigned for now — run `xattr -cr /Applications/Accshift.app` once if Gatekeeper complains)
+- **macOS**: dmg (unsigned for now, run `xattr -cr /Applications/Accshift.app` once if Gatekeeper complains)
 
 ## Building from source
 
