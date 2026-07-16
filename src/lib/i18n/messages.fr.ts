@@ -101,6 +101,9 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.streamerModeHint":
     "Floute automatiquement les infos des comptes quand un logiciel de streaming tourne.",
   "settings.personasHint": "Afficher le sélecteur d'identités personas",
+  "settings.replayOnboarding": "Refaire l'onboarding",
+  "settings.replayOnboardingHint":
+    "Réaffiche la visite guidée et le choix des statistiques d'usage.",
   "streamer.title": "Mode streamer",
   "streamer.disable": "Désactiver",
   "streamer.disablePermanently": "Désactiver définitivement",
@@ -153,7 +156,6 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "onboarding.welcome.compatibleWith": "Ton système d'exploitation est compatible avec :",
   "onboarding.welcome.next": "Fais-moi visiter",
   "onboarding.welcome.skip": "Passer",
-  "onboarding.features.title": "Visite rapide",
   "onboarding.features.hint": "Cette partie de l'app n'est pas visible pour l'instant.",
   "onboarding.features.addAccount.label": "Ajouter un compte",
   "onboarding.features.addAccount.body":

@@ -301,15 +301,10 @@
       </div>
     {:else if step === "features"}
       <div class="step features-step">
-        <div class="features-head">
-          <h2 id="onboarding-title">{t("onboarding.features.title")}</h2>
-          <div class="step-counter">{activeFeatureIdx + 1} / {FEATURES.length}</div>
-        </div>
-
         <div class="feature-bare">
           <div class="feature-accent"></div>
           <div class="feature-text-wrap">
-            <div class="feature-label">{t(FEATURES[activeFeatureIdx].labelKey)}</div>
+            <div class="feature-label" id="onboarding-title">{t(FEATURES[activeFeatureIdx].labelKey)}</div>
             <p class="feature-body">{t(FEATURES[activeFeatureIdx].bodyKey)}</p>
           </div>
         </div>
@@ -559,18 +554,6 @@
     animation: stepIn 220ms ease-out;
   }
   .features-step { gap: 12px; }
-
-  .features-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 10px;
-  }
-  .step-counter {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--fg-subtle);
-  }
 
   .feature-bare {
     display: flex;

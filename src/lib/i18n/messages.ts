@@ -93,6 +93,8 @@ export const EN_MESSAGES = {
   "settings.streamerModeHint":
     "Blur account details automatically when streaming software is running.",
   "settings.personasHint": "Show the personas identity switcher",
+  "settings.replayOnboarding": "Replay onboarding",
+  "settings.replayOnboardingHint": "Show the welcome tour and the usage-statistics choice again.",
   "streamer.title": "Streamer mode",
   "streamer.disable": "Disable",
   "streamer.disablePermanently": "Disable permanently",
@@ -145,7 +147,6 @@ export const EN_MESSAGES = {
   "onboarding.welcome.compatibleWith": "Your operating system is compatible with:",
   "onboarding.welcome.next": "Show me around",
   "onboarding.welcome.skip": "Skip",
-  "onboarding.features.title": "Quick tour",
   "onboarding.features.hint": "This part of the app isn't visible right now.",
   "onboarding.features.addAccount.label": "Add an account",
   "onboarding.features.addAccount.body":

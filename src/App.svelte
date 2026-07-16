@@ -1212,14 +1212,18 @@
     tourPrevTab = null;
   }
 
+  async function openOnboarding() {
+    const onbModule = await import("$lib/features/settings/TelemetryOnboarding.svelte");
+    TelemetryOnboardingComp = onbModule.default as Component<ComponentProps<typeof TelemetryOnboardingType>>;
+    showTelemetryOnboarding = true;
+  }
+
   async function checkTelemetryOnboarding() {
     try {
       type TState = { onboarding_completed: boolean };
       const state = await invoke<TState>("telemetry_get_state");
       if (!state.onboarding_completed) {
-        const onbModule = await import("$lib/features/settings/TelemetryOnboarding.svelte");
-        TelemetryOnboardingComp = onbModule.default as Component<ComponentProps<typeof TelemetryOnboardingType>>;
-        showTelemetryOnboarding = true;
+        await openOnboarding();
       }
     } catch (e) {
       console.error("telemetry_get_state failed", e);
@@ -1404,6 +1408,7 @@
           onRefreshAvatarsNow={refreshAvatarsNow}
           onRefreshBansNow={refreshBansNow}
           onAccountAdded={() => void loadAccounts(true)}
+          onReplayOnboarding={() => void openOnboarding()}
           runtimeOs={shell.runtimeOs}
           registerSearchFocus={(fn) => (settingsSearchFocus = fn)}
           registerFlush={(fn) => (settingsFlush = fn)}

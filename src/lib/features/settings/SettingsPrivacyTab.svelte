@@ -16,6 +16,7 @@
     t,
     inactivityBlur,
     neutralAccent,
+    onReplayOnboarding = () => {},
   }: {
     settings: AppSettings;
     pinCodeInput: string;
@@ -23,6 +24,7 @@
     t: (key: MessageKey, params?: TranslationParams) => string;
     inactivityBlur: { input: string; commit: () => void };
     neutralAccent: string;
+    onReplayOnboarding?: () => void | Promise<void>;
   } = $props();
 
   type TelemetryState = {
@@ -149,6 +151,10 @@
         settings.streamerMode = settings.streamerMode === "auto" ? "off" : "auto";
       }}
     />
+    <button type="button" class="btn-export" onclick={() => void onReplayOnboarding()}>
+      {t("settings.replayOnboarding")}
+    </button>
+    <p class="hint">{t("settings.replayOnboardingHint")}</p>
   </section>
 
   <section class="card">

@@ -35,6 +35,7 @@
     onRefreshAvatarsNow = async () => {},
     onRefreshBansNow = async () => {},
     onAccountAdded = () => {},
+    onReplayOnboarding = () => {},
     runtimeOs = "unknown",
     registerSearchFocus = () => {},
     registerFlush = () => {},
@@ -45,6 +46,7 @@
     onRefreshAvatarsNow?: () => void | Promise<void>;
     onRefreshBansNow?: () => void | Promise<void>;
     onAccountAdded?: () => void;
+    onReplayOnboarding?: () => void;
     runtimeOs?: "windows" | "linux" | "macos" | "unknown";
     registerSearchFocus?: (fn: (() => void) | null) => void;
     registerFlush?: (fn: (() => Promise<void>) | null) => void;
@@ -657,6 +659,10 @@
         {t}
         {inactivityBlur}
         neutralAccent={NEUTRAL_CONTROL_ACCENT}
+        onReplayOnboarding={async () => {
+          await closePanel();
+          onReplayOnboarding();
+        }}
       />
     {/if}
 
