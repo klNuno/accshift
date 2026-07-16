@@ -25,9 +25,9 @@
 
 | Platform             | Windows      | macOS           | Linux           |
 | -------------------- | ------------ | --------------- | --------------- |
-| Steam                | ✅ Done      | 🧪 GUI ready    | 🧪 GUI ready    |
+| Steam                | ✅ Done      | ✅ Done         | ✅ Done         |
 | Riot Games           | ✅ Done      | 🚧 Possible     | ⛔ Not feasible |
-| Battle.net           | ✅ Done      | 🧪 GUI ready    | ⛔ Not feasible |
+| Battle.net           | ✅ Done      | ✅ Done         | ⛔ Not feasible |
 | Epic Games           | ✅ Done      | 🚧 Possible     | 🚧 Possible     |
 | Ubisoft Connect      | ✅ Done      | 🚧 Possible     | 🚧 Possible     |
 | Roblox               | ✅ Done      | 🚧 Possible     | 🚧 Possible     |
