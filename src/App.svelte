@@ -1534,7 +1534,15 @@
     />
   {/if}
 
-  {#if showTelemetryOnboarding && TelemetryOnboardingComp}
+      {/if}
+  </div>
+
+  <!-- Outside .app-stage: the stage carries a scale() transform when the UI
+       zoom isn't 100%, which would turn it into the containing block for the
+       onboarding's fixed-position spotlight/modal and shift every
+       getBoundingClientRect-derived coordinate. At shell level, fixed
+       coordinates match the viewport rects the tour measures. -->
+  {#if !secureScreen.renderSuspended && showTelemetryOnboarding && TelemetryOnboardingComp}
     {@const TelemetryOnboardingDyn = TelemetryOnboardingComp}
     <TelemetryOnboardingDyn
       {t}
@@ -1550,8 +1558,6 @@
       }}
     />
   {/if}
-      {/if}
-  </div>
 
   <AppScreenOverlays
     renderSuspended={secureScreen.renderSuspended}
