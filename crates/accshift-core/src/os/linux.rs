@@ -2,7 +2,7 @@ use crate::error::AppError;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-// Secrets — Secret Service (GNOME Keyring / KWallet) via the `keyring` crate.
+// Secrets: Secret Service (GNOME Keyring / KWallet) via the `keyring` crate.
 // Shared implementation in os/secrets.rs.
 pub use super::secrets::{decrypt_bytes, decrypt_secret, encrypt_bytes, encrypt_secret};
 
@@ -71,7 +71,7 @@ pub fn steam_htmlcache_path() -> Result<PathBuf, AppError> {
             return Ok(cache);
         }
     }
-    // Fall back to the most common location even when it does not exist yet —
+    // Fall back to the most common location even when it does not exist yet:
     // the caller treats a missing dir as a no-op.
     let home = home_dir().ok_or_else(|| AppError::PathResolve("$HOME is not set".into()))?;
     Ok(home.join(".local/share/Steam/config/htmlcache"))
@@ -124,7 +124,7 @@ pub fn clear_auto_login_user() -> Result<(), AppError> {
 }
 
 // ---------------------------------------------------------------------------
-// Process launch — no UAC concept on Linux, so `run_as_admin` is ignored.
+// Process launch: no UAC concept on Linux, so `run_as_admin` is ignored.
 // Callers that really need root should invoke pkexec themselves.
 // ---------------------------------------------------------------------------
 
@@ -196,7 +196,7 @@ fn steam_launch_command(steam_path: &Path) -> Command {
 }
 
 // ---------------------------------------------------------------------------
-// File / folder pickers — shell out to whichever native dialog tool is in
+// File / folder pickers: shell out to whichever native dialog tool is in
 // $PATH. No GUI deps at compile time, no extra runtime libraries beyond what
 // the user's desktop session already provides (Gnome ships zenity, KDE ships
 // kdialog; xdg-desktop-portal works under both).

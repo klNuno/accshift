@@ -934,8 +934,8 @@
   }
 
   /* When a header sits inside a title row (Platforms tab: h3 + search pill),
-     the row owns the divider. The h3's own border must yield deterministically
-     — same-specificity scoped overrides lose to the rule above at random
+     the row owns the divider. The h3's own border must yield deterministically.
+     Same-specificity scoped overrides lose to the rule above at random
      depending on Svelte's per-component <style> injection order, which showed
      up as an intermittent double line. This higher-specificity, same-sheet
      rule wins every time. */

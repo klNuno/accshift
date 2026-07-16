@@ -74,8 +74,8 @@ impl CrossProcessLogGuard {
             guard.as_ref().and_then(|file| file.try_clone().ok())
         };
 
-        // Blocking acquire: serialize against the other process. Best-effort —
-        // if the lock can't be taken we proceed unlocked rather than failing
+        // Blocking acquire: serialize against the other process. Best-effort.
+        // If the lock can't be taken we proceed unlocked rather than failing
         // the log write.
         let locked = clone.and_then(|file| {
             FileExt::lock_exclusive(&file).ok()?;

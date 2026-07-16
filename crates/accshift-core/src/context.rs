@@ -21,7 +21,7 @@ pub trait AppContext: Send + Sync {
 pub type AppCtx = Arc<dyn AppContext>;
 
 // Blanket impl so `&Arc<dyn AppContext>` coerces to `&dyn AppContext` in
-// argument position — callers can write `helper(&ctx)` without `&*ctx`.
+// argument position. Callers can write `helper(&ctx)` without `&*ctx`.
 impl<T: AppContext + ?Sized> AppContext for Arc<T> {
     fn app_config_dir(&self) -> Result<PathBuf, String> {
         (**self).app_config_dir()

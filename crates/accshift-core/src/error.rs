@@ -79,7 +79,7 @@ pub enum PlatformErrorKind {
     Io,
     /// Cryptography failure (secret encryption/decryption, snapshot crypto).
     Crypto,
-    /// Unclassified — the default for errors migrated from plain strings.
+    /// Unclassified: the default for errors migrated from plain strings.
     Other,
 }
 
@@ -88,7 +88,7 @@ pub enum PlatformErrorKind {
 ///
 /// Contract with the frontend: every `catch` around `invoke()` does
 /// `String(e)` (or feeds `e` to a toast) and expects a plain string, so this
-/// type serializes as its `Display` string — the exact message that used to
+/// type serializes as its `Display` string, the exact message that used to
 /// be the `Err(String)` payload. `kind` is not sent over IPC yet; it exists
 /// for the CLI (exit codes) and for a later structured serialization.
 #[derive(Debug, Clone)]
@@ -265,8 +265,8 @@ mod tests {
 
     // Regression: the frontend renders command rejections with `String(e)` and
     // shows them in toasts verbatim. A PlatformError must therefore serialize
-    // as a plain JSON string (the message), NOT as `{ kind, message }` —
-    // otherwise every error toast would read "[object Object]".
+    // as a plain JSON string (the message), NOT as `{ kind, message }`.
+    // Otherwise every error toast would read "[object Object]".
     #[test]
     fn platform_error_serializes_as_plain_string_for_the_webview() {
         let err = PlatformError::new(PlatformErrorKind::ClientRunning, "Steam is still running");

@@ -122,8 +122,8 @@
   }
 
   async function decodeImage(file: File): Promise<ImageBitmap | HTMLImageElement> {
-    // createImageBitmap decodes straight from the file, no intermediate URL —
-    // the app CSP does not allow blob: sources, so an <img src=blobUrl>
+    // createImageBitmap decodes straight from the file, no intermediate URL.
+    // The app CSP does not allow blob: sources, so an <img src=blobUrl>
     // round-trip would be refused before it ever decoded.
     if (typeof createImageBitmap === "function") {
       return createImageBitmap(file);

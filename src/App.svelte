@@ -1668,7 +1668,7 @@
     inset: -40px;
     /* Below the rim lens (::before, z-index -1) so the rim's backdrop-filter
        refracts the wallpaper only. Both sit in negative-z, so the app content
-       (titlebar buttons, cards) always paints on top and stays crisp — the
+       (titlebar buttons, cards) always paints on top and stays crisp: the
        rim never blurs the UI, only the desktop. */
     z-index: -2;
     pointer-events: none;

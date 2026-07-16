@@ -375,12 +375,12 @@ pub async fn platform_get_setup_status(
     let c = ctx(&app_handle);
     // The status poll is not read-only: once login completes it quits the
     // launcher, captures a snapshot and writes config (Riot, Ubisoft, ...), so
-    // it needs the same operation lock as switch/forget/begin_setup — with one
+    // it needs the same operation lock as switch/forget/begin_setup, with one
     // twist that keeps it off `run_locked_blocking`:
     //
     // The frontend polls this every ~1.5s and treats an error as a failed
     // setup, so a contended lock (a switch or CLI write in flight) must not
-    // fail the poll. Report a non-terminal holding state instead — every
+    // fail the poll. Report a non-terminal holding state instead. Every
     // platform's add-flow UI keeps its spinner on unknown/waiting states and
     // the next poll picks up the real status once the lock is free.
     run_blocking(
@@ -429,7 +429,7 @@ pub async fn platform_set_path(
     path: String,
 ) -> Result<(), PlatformError> {
     // Config writes take the cross-process lock (can wait several seconds
-    // when the CLI holds it) — keep them off the main thread.
+    // when the CLI holds it). Keep them off the main thread.
     let service = require_service(&platform_id)?;
     let c = ctx(&app_handle);
     run_blocking("platform_set_path", move || service.set_path(c, &path)).await
@@ -764,11 +764,11 @@ pub fn get_desktop_wallpaper(window: tauri::WebviewWindow) -> Option<WallpaperSn
     {
         // PrintWindow(PW_RENDERFULLCONTENT) on Progman drives DWM/WinRT
         // composition. Tauri runs commands on a worker thread; doing this GDI +
-        // WinRT work off the UI thread — which owns the process's COM apartment
-        // — races the shell's own recomposition (Spotlight rotating the
-        // wallpaper) and corrupted a WinRT object refcount, crashing later in an
-        // unrelated worker. Marshal only the DWM/GDI capture onto the main
-        // thread; JPEG/base64 work resumes on this command worker.
+        // WinRT work off the UI thread (which owns the process's COM apartment)
+        // races the shell's own recomposition (Spotlight rotating the wallpaper)
+        // and corrupted a WinRT object refcount, crashing later in an unrelated
+        // worker. Marshal only the DWM/GDI capture onto the main thread;
+        // JPEG/base64 work resumes on this command worker.
         let (tx, rx) = std::sync::mpsc::channel();
         if window
             .run_on_main_thread(move || {
@@ -959,8 +959,8 @@ pub fn steam_open_userdata(
 
 #[tauri::command]
 pub async fn steam_clear_browser_cache(app_handle: tauri::AppHandle) -> Result<(), PlatformError> {
-    // Kills Steam (polls up to several seconds) then deletes the cache dir —
-    // must not run on the main thread.
+    // Kills Steam (polls up to several seconds) then deletes the cache dir.
+    // Must not run on the main thread.
     let c = ctx(&app_handle);
     run_locked_blocking("steam_clear_browser_cache", c, move |c| {
         crate::platforms::steam::clear_integrated_browser_cache(c)
@@ -989,7 +989,7 @@ pub fn steam_get_account_games(
 }
 
 // ---------------------------------------------------------------------------
-// Riot-specific commands — Windows-only (no Linux/macOS Riot client).
+// Riot-specific commands. Windows-only (no Linux/macOS Riot client).
 // ---------------------------------------------------------------------------
 
 #[cfg(windows)]
@@ -1026,7 +1026,7 @@ pub fn open_logs_folder(app_handle: tauri::AppHandle) -> Result<(), PlatformErro
 }
 
 // ---------------------------------------------------------------------------
-// Roblox-specific commands — Windows-only (cookie write goes through
+// Roblox-specific commands. Windows-only (cookie write goes through
 // registry, no equivalent on Linux/macOS at the moment).
 // ---------------------------------------------------------------------------
 

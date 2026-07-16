@@ -35,7 +35,7 @@ function healthCheckEnabled(): boolean {
   return getSettings().healthCheckPerPlatform["roblox"] !== false;
 }
 
-// A switch that failed with HTTP 401 is proof the stored cookie is dead —
+// A switch that failed with HTTP 401 is proof the stored cookie is dead, so
 // flag the account immediately instead of waiting for the next probe. Not
 // gated on the health-check setting: that setting controls the background
 // network probe, and this signal comes from a user-initiated switch.

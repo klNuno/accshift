@@ -27,13 +27,13 @@ fn system_mutex() -> &'static Mutex<System> {
 ///
 /// A full `ProcessesToUpdate::All` scan walks every process on the box. The
 /// hot polling path only cares about a handful of tracked pids, so it uses
-/// `with_refreshed_pids` instead — this `::All` variant is for the cold paths
+/// `with_refreshed_pids` instead. This `::All` variant is for the cold paths
 /// that have to discover processes by name.
 fn with_refreshed_system<R>(f: impl FnOnce(&System) -> R) -> R {
     let mut system = system_mutex().lock().unwrap_or_else(|e| e.into_inner());
     // Callers only read process names, pids and statuses, all of which come
     // with the bare process enumeration. The default refresh kind would also
-    // collect cpu / memory / disk usage / exe for every process on the box —
+    // collect cpu / memory / disk usage / exe for every process on the box,
     // pure waste on a path polled every 100ms during switches and every few
     // seconds by the streamer-mode watcher.
     system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::new());
@@ -62,7 +62,7 @@ fn with_refreshed_pids<R>(pids: &[Pid], f: impl FnOnce(&System) -> R) -> R {
 
 /// Zombies and dead-but-unreaped processes still show up in the process
 /// table. They hold no files or sockets, so for "is Steam still around"
-/// purposes they count as gone — treating them as alive turns a slow Snap
+/// purposes they count as gone. Treating them as alive turns a slow Snap
 /// teardown into a bogus "Steam is elevated" error.
 fn is_live(process: &sysinfo::Process) -> bool {
     !matches!(
@@ -193,7 +193,7 @@ pub fn kill_process(process_name: &str) -> Result<(), AppError> {
 
         // Graceful shutdown is the caller's responsibility (see
         // `try_graceful_shutdown`). When we reach here, the caller wants the
-        // process gone now — send SIGKILL directly. SIGTERM lets Steam run its
+        // process gone now. Send SIGKILL directly. SIGTERM lets Steam run its
         // exit handlers, which on macOS take >5 seconds and trip the wait
         // below, even though the kill itself succeeded.
         let mut any_failure = false;
@@ -279,7 +279,7 @@ pub fn wait_for_process_exit(process_name: &str, timeout_ms: u32) -> bool {
 
 /// Schemes the app legitimately opens: web links, mail, and the Steam /
 /// Roblox protocol handlers. Everything else (file://, raw paths, arbitrary
-/// protocol handlers) is rejected — this is reachable from the webview.
+/// protocol handlers) is rejected. This is reachable from the webview.
 const ALLOWED_URL_SCHEMES: &[&str] = &["http", "https", "mailto", "steam", "roblox-player"];
 
 fn is_allowed_url(url: &str) -> bool {

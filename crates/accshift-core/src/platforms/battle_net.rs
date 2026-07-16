@@ -539,7 +539,7 @@ fn is_battle_net_running() -> bool {
 
 fn kill_battle_net() -> Result<(), String> {
     crate::os::kill_processes(BATTLE_NET_PROCESS_NAMES);
-    // The launcher rewrites Battle.net.config on exit — if it survived the
+    // The launcher rewrites Battle.net.config on exit. If it survived the
     // kill (elevated, hung), writing SavedAccountNames now would be silently
     // undone. Refuse instead of pretending the switch worked.
     if is_battle_net_running() {
@@ -777,7 +777,7 @@ fn launch_battle_net(app_handle: &dyn AppContext) -> Result<(), String> {
 }
 
 // On macOS the launcher is a single `.app` bundle. Resolve it the same way the
-// Steam backend resolves Steam.app — an explicit override first, then Spotlight
+// Steam backend resolves Steam.app: an explicit override first, then Spotlight
 // by the bundle id (`net.battle.app`, read off the shipped Info.plist), then
 // the default `/Applications` location.
 #[cfg(target_os = "macos")]

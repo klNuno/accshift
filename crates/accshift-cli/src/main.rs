@@ -351,7 +351,7 @@ fn cmd_switch(
         }
     };
 
-    // Only force a persona mode when the user asked for one — a plain switch
+    // Only force a persona mode when the user asked for one. A plain switch
     // must not touch the account's existing online/invisible state.
     let mode = if overrides.invisible {
         Some("invisible")

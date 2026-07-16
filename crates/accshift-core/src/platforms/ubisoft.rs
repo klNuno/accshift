@@ -381,7 +381,7 @@ fn current_account_from_logs(app_handle: &dyn AppContext) -> Option<String> {
 }
 
 fn extract_uuid_from_line(line: &str) -> Option<String> {
-    // Log lines can contain multibyte UTF-8 (usernames, paths) — every slice
+    // Log lines can contain multibyte UTF-8 (usernames, paths). Every slice
     // must go through `get` to avoid panicking on a char boundary.
 
     // Fast path: look for "User: <uuid>" pattern

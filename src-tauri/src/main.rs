@@ -187,7 +187,7 @@ fn main() {
             }
 
             // Telemetry: build the worker, share the handle with commands.
-            // After the window build on purpose — the webview is the slow part
+            // After the window build on purpose: the webview is the slow part
             // of startup, let it begin initializing as early as possible.
             app.manage(telemetry_runtime::TelemetryState::new(
                 &setup_ctx, app_start,

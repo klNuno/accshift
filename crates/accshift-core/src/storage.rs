@@ -260,7 +260,7 @@ where
     };
 
     // Primary file missing or corrupt: a write_bytes_atomic fallback that
-    // crashed mid-replace leaves a valid .bak behind — recover from it.
+    // crashed mid-replace leaves a valid .bak behind. Recover from it.
     let bak_path = path.with_extension("bak");
     if bak_path != path {
         if let Ok(data) = fs::read_to_string(&bak_path) {
@@ -372,7 +372,7 @@ pub fn load_client_storage_snapshot(
     app_handle: &dyn AppContext,
 ) -> Result<ClientStorageSnapshot, String> {
     // Path resolution stays sequential: client_store_path may migrate legacy
-    // files. The reads themselves are independent small JSON files — read
+    // files. The reads themselves are independent small JSON files. Read
     // them in parallel so wall time is the slowest file, not the sum.
     let mut paths = Vec::with_capacity(client_store_ids().len());
     for store_id in client_store_ids() {

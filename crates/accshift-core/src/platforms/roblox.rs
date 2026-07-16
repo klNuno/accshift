@@ -556,7 +556,7 @@ fn request_auth_ticket(cookie: &str) -> Result<String, String> {
 
     if !response.status().is_success() {
         // The webview matches this wording on HTTP 401 to flag the account's
-        // session as expired (roblox/adapter.ts) — keep it stable.
+        // session as expired (roblox/adapter.ts). Keep it stable.
         return Err(format!(
             "Auth ticket request failed (HTTP {})",
             response.status()
@@ -636,7 +636,7 @@ pub fn switch_account(app_handle: &dyn AppContext, user_id: &str) -> Result<(), 
         format!("userId={}", super::redact_id(user_id)),
     );
 
-    // Get an auth ticket BEFORE killing — the API needs the cookie, not a running process
+    // Get an auth ticket BEFORE killing: the API needs the cookie, not a running process
     let ticket = request_auth_ticket(&cookie)?;
 
     kill_roblox();
@@ -964,7 +964,7 @@ pub async fn get_profile_info(
     user_id: String,
     client: reqwest::Client,
 ) -> Result<RobloxProfileInfo, String> {
-    // The id is interpolated into a query string — digits only.
+    // The id is interpolated into a query string, so digits only.
     if user_id.is_empty() || !user_id.chars().all(|c| c.is_ascii_digit()) {
         return Err("Invalid Roblox user id".into());
     }

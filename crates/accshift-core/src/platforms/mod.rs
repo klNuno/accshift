@@ -8,8 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Canonical platform identifiers.
 ///
-/// Single vocabulary shared by the service registry, the CLI and telemetry —
-/// note the dash in `battle-net` (telemetry used to emit `battle_net` for
+/// Single vocabulary shared by the service registry, the CLI and telemetry.
+/// Note the dash in `battle-net` (telemetry used to emit `battle_net` for
 /// account snapshots; it now uses these constants, see
 /// `emit_accounts_snapshots` in the Tauri commands).
 pub mod ids {
@@ -169,7 +169,7 @@ pub struct SetupStatus {
 ///
 /// Methods take `AppCtx` by value because several impls move the context
 /// into `spawn_blocking` closures. Helpers that only borrow take
-/// `&dyn AppContext` — callers with an `AppCtx` pass `&ctx` and let Deref
+/// `&dyn AppContext`. Callers with an `AppCtx` pass `&ctx` and let Deref
 /// coercion handle the rest.
 pub trait PlatformService: Send + Sync {
     // Account operations: returns platform-specific JSON.
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn setup_expired_handles_zero_last_touched() {
-        // last_touched_at = 0 means it was set at epoch — always expired with any real TTL
+        // last_touched_at = 0 means it was set at epoch, always expired with any real TTL
         assert!(setup_expired(0, 1_000));
     }
 
@@ -339,7 +339,7 @@ mod tests {
         let result = require_service("nintendo");
         assert!(result.is_err());
         let err = result.err().unwrap();
-        // Message is what the webview toast shows — must stay this string.
+        // Message is what the webview toast shows, so it must stay this string.
         assert_eq!(err.to_string(), "Unknown platform: nintendo");
         assert_eq!(err.kind, crate::error::PlatformErrorKind::Other);
     }

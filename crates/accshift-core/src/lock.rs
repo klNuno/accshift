@@ -113,8 +113,8 @@ pub fn acquire_exclusive(ctx: &dyn AppContext, timeout: Duration) -> Result<Lock
                 });
             }
             // fs4 maps "already locked" to Ok(false); an Err is a real I/O
-            // failure (bad descriptor, filesystem error) — waiting on it
-            // would just mislabel it as contention.
+            // failure (bad descriptor, filesystem error). Waiting on it would
+            // just mislabel it as contention.
             Err(e) => return Err(LockError::Io(e.to_string())),
             Ok(false) => {
                 if Instant::now() >= deadline {

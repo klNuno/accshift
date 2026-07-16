@@ -28,7 +28,7 @@ const MAC_EFFECTS: Record<string, Effect> = {
  * applyThemeToDocument paints a near-solid window instead (osBackdrop: false).
  *
  * Windows materials: glass dark/light use Acrylic (the only DWM backdrop
- * compatible with transparent(true) — Mica/Tabbed render black on layered
+ * compatible with transparent(true); Mica/Tabbed render black on layered
  * windows). Liquid glass uses NO Windows material at all: the window stays
  * purely transparent and the crisp desktop shows through the CSS surfaces.
  * DWM stops rendering system backdrops on unfocused windows, so a native

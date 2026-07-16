@@ -278,7 +278,7 @@ fn graceful_riot_quit() {
         thread::sleep(std::time::Duration::from_millis(500));
     }
 
-    // Timed out — force kill
+    // Timed out, so force kill
     kill_riot_client_processes();
 }
 
@@ -995,7 +995,7 @@ fn backup_live_state_for_rollback(install_dir: Option<&Path>) -> Result<PathBuf,
 
 /// Undo a partially-applied restore: wipe whatever the failed copy loop left
 /// behind and put the pre-restore live state (captured by
-/// `backup_live_state_for_rollback`) back. Best-effort — a failure here is
+/// `backup_live_state_for_rollback`) back. Best-effort: a failure here is
 /// logged rather than propagated, since the caller is already on an error
 /// path and has no better fallback than leaving whatever state results.
 fn restore_live_state_from_rollback(
@@ -1045,7 +1045,7 @@ fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Resul
     let snapshot_dir = profile_snapshot_dir(app_handle, profile_id)?;
     let has_snapshot = snapshot_has_settings(&snapshot_dir);
 
-    // Validate the snapshot BEFORE wiping the live state — bailing out after
+    // Validate the snapshot BEFORE wiping the live state. Bailing out after
     // the clear would leave the client logged out with nothing restored.
     for item in RIOT_SNAPSHOT_ITEMS {
         if matches!(item.kind, RiotSnapshotKind::File)
@@ -1333,7 +1333,7 @@ fn get_profile_setup_status_internal(
     let access = read_riot_local_api_access().ok();
     let has_lockfile = access.is_some();
 
-    // Identity detection is optional — used to label the profile, not to gate capture.
+    // Identity detection is optional, used to label the profile, not to gate capture.
     // The alias endpoint fails during 2FA, so we must not require it.
     let identity = access
         .as_ref()
@@ -1345,7 +1345,7 @@ fn get_profile_setup_status_internal(
     }
 
     // Login status API is the official way to detect completed auth (including 2FA).
-    // persist=true ("Stay signed in") is required — without it, tokens are session-only
+    // persist=true ("Stay signed in") is required. Without it, tokens are session-only
     // and won't survive a Riot Client restart, making the captured profile useless.
     let login_state = access
         .as_ref()
@@ -1588,7 +1588,7 @@ pub fn switch_profile(app_handle: AppCtx, profile_id: String) -> Result<(), Stri
         let current_state =
             find_profile(&cfg, &current_id).map(|profile| profile.snapshot_state.as_str());
         // Only re-backup if the live settings file actually has tokens (>1000 bytes).
-        // begin_profile_setup clears live files to add a new account — without this
+        // begin_profile_setup clears live files to add a new account. Without this
         // check, switching after an add overwrites the good snapshot with a default
         // 484-byte file that has no auth tokens. Checked after the quit so the
         // freshly flushed file size is what gates the backup.

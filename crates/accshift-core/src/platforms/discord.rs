@@ -337,7 +337,7 @@ const USERNAME_LOOKAHEAD: usize = 256;
 const USERNAME_MAX_LEN: usize = 80;
 
 /// Identity gleaned from the live leveldb. Only the numeric user id and the
-/// public username — never tokens or any other value.
+/// public username, never tokens or any other value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DiscordIdentity {
     user_id: String,
@@ -506,7 +506,7 @@ fn identity_scan_candidates(leveldb: &Path) -> Vec<PathBuf> {
 }
 
 /// Best-effort identity scan over the raw bytes of a leveldb directory. Any IO
-/// or parse issue yields None — callers must treat None as "unknown", never as
+/// or parse issue yields None. Callers must treat None as "unknown", never as
 /// "logged out".
 fn scan_identity_in_dir(leveldb: &Path) -> Option<DiscordIdentity> {
     let files = identity_scan_candidates(leveldb);
@@ -595,7 +595,7 @@ fn live_source_present() -> bool {
 /// written recently and at least `SETUP_MIN_LOGIN_MS` after setup began. The
 /// min-age gate keeps the leveldb Discord writes right at launch from being
 /// captured mid-boot. On its own this cannot distinguish "sitting at the login
-/// screen" from "signed in" — that decision belongs to the identity scan.
+/// screen" from "signed in". That decision belongs to the identity scan.
 fn live_source_ready(started_at: u64) -> bool {
     let Ok(leveldb) = discord_leveldb_dir() else {
         return false;
@@ -739,9 +739,9 @@ fn capture_current_account(app_handle: &dyn AppContext) -> Result<(), String> {
 /// the new account instead of wiping it and forcing a re-login. Adopt only
 /// when nothing tracks the live session yet: the scanned user id is not a
 /// configured account AND no current account is recorded. A recorded current
-/// account means the live session already belongs to a tracked account —
-/// possibly under an opaque synthetic id, which a raw id comparison cannot
-/// detect — so adopting it would duplicate that account.
+/// account means the live session already belongs to a tracked account
+/// (possibly under an opaque synthetic id, which a raw id comparison cannot
+/// detect), so adopting it would duplicate that account.
 fn should_adopt_live_identity<'a>(
     user_id: &str,
     current_account_id: &str,
@@ -965,13 +965,13 @@ pub fn get_account_setup_status(
     let job = SETUP_JOBS.touch(setup_id)?;
 
     // Sign-in detection. Primary signal: the identity scan finds a user id
-    // DIFFERENT from the one live when setup began (usually None — the session
+    // DIFFERENT from the one live when setup began (usually None: the session
     // was cleared). The mtime freshness / minimum-age gates of
     // live_source_ready stay as secondary conditions. When the scanner finds
     // nothing we keep waiting even if the freshness gates pass: a client idling
     // at the login screen also writes leveldb, and reporting ready there used
     // to add an empty account. A user who never signs in keeps polling until
-    // the wizard cancels or the job TTL expires — no extra timeout needed here.
+    // the wizard cancels or the job TTL expires. No extra timeout needed here.
     let scanned = scan_live_identity()
         .filter(|identity| job.pre_setup_user_id.as_deref() != Some(identity.user_id.as_str()));
 
@@ -995,7 +995,7 @@ pub fn get_account_setup_status(
             // Prefer the real user id as the account id; fall back to the
             // synthetic id when it is unusable or collides with an existing
             // account. Accounts added before identity scanning keep their
-            // opaque synthetic ids — ids are never migrated.
+            // opaque synthetic ids: ids are never migrated.
             let cfg = config::load_config(app_handle);
             let collides = cfg
                 .discord

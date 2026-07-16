@@ -5,7 +5,7 @@ const HASH_BYTES = 32;
 
 /** New PBKDF2 format: 32-char salt hex + ":" + 64-char hash hex */
 const PIN_HASH_RE = /^[a-f0-9]{32}:[a-f0-9]{64}$/i;
-/** Legacy SHA-256 format (no salt) — accepted for migration */
+/** Legacy SHA-256 format (no salt), accepted for migration */
 const LEGACY_HASH_RE = /^[a-f0-9]{64}$/i;
 
 function bytesToHex(bytes: Uint8Array): string {
