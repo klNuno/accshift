@@ -148,7 +148,7 @@ fn latest_opened_account_id_from_logs() -> Result<Option<u64>, String> {
         })
         .collect::<Vec<_>>();
 
-    newest_logs.sort_by(|a, b| b.0.cmp(&a.0));
+    newest_logs.sort_by_key(|entry| std::cmp::Reverse(entry.0));
 
     for (_, path) in newest_logs.into_iter().take(8) {
         let Ok(content) = fs::read_to_string(&path) else {
