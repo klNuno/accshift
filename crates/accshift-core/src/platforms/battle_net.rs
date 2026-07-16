@@ -2,6 +2,7 @@ use crate::config::{self, BattleNetAccountConfig};
 use crate::error::PlatformError;
 use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
 use crate::{AppContext, AppCtx};
+#[cfg(windows)]
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -12,14 +13,23 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
+#[cfg(windows)]
 use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+#[cfg(windows)]
 use winreg::{RegKey, HKEY};
 
+// The Windows launcher runs as two processes; the macOS client is a single
+// Mach-O named `Battle.net`.
+#[cfg(windows)]
 const BATTLE_NET_PROCESS_NAMES: &[&str] = &["Battle.net.exe", "Battle.net Launcher.exe"];
+#[cfg(target_os = "macos")]
+const BATTLE_NET_PROCESS_NAMES: &[&str] = &["Battle.net"];
+#[cfg(windows)]
 const BATTLE_NET_EXECUTABLE_CANDIDATES: &[&str] = &[
     "Battle.net\\Battle.net Launcher.exe",
     "Battle.net\\Battle.net.exe",
 ];
+#[cfg(windows)]
 const BATTLE_NET_EXECUTABLE_NAMES: &[&str] = &["Battle.net Launcher.exe", "Battle.net.exe"];
 const BATTLE_NET_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
 
@@ -53,10 +63,22 @@ fn purge_expired_battle_net_setup_jobs(jobs: &mut HashMap<String, BattleNetAccou
     jobs.retain(|_, job| !super::setup_expired(job.last_touched_at, BATTLE_NET_SETUP_TTL_MS));
 }
 
+#[cfg(windows)]
 fn battle_net_config_path() -> Result<PathBuf, String> {
     let app_data = env::var("APPDATA").map_err(|_| "APPDATA is not available".to_string())?;
     Ok(PathBuf::from(app_data)
         .join("Battle.net")
+        .join("Battle.net.config"))
+}
+
+// macOS keeps the same JSON config, only in a different root. The client's own
+// logs confirm it: `ConfigRoot: ~/Library/Application Support/Battle.net`,
+// `User Configuration File: .../Battle.net.config`.
+#[cfg(target_os = "macos")]
+fn battle_net_config_path() -> Result<PathBuf, String> {
+    let home = env::var("HOME").map_err(|_| "HOME is not available".to_string())?;
+    Ok(PathBuf::from(home)
+        .join("Library/Application Support/Battle.net")
         .join("Battle.net.config"))
 }
 
@@ -92,6 +114,7 @@ fn build_battle_net_switch_details(target_email: Option<&str>) -> String {
     .to_string()
 }
 
+#[cfg(windows)]
 fn battle_net_cached_data_path() -> Result<PathBuf, String> {
     let local_app_data =
         env::var("LOCALAPPDATA").map_err(|_| "LOCALAPPDATA is not available".to_string())?;
@@ -100,6 +123,7 @@ fn battle_net_cached_data_path() -> Result<PathBuf, String> {
         .join("CachedData.db"))
 }
 
+#[cfg(windows)]
 fn latest_opened_account_id_from_logs() -> Result<Option<u64>, String> {
     let local_app_data =
         env::var("LOCALAPPDATA").map_err(|_| "LOCALAPPDATA is not available".to_string())?;
@@ -154,6 +178,16 @@ fn latest_opened_account_id_from_logs() -> Result<Option<u64>, String> {
     Ok(None)
 }
 
+// The battle tag is a cosmetic label enriched from the client's SQLite login
+// cache, which only exists on Windows (LOCALAPPDATA\Battle.net\CachedData.db).
+// macOS has no equivalent we read, so accounts simply show without a tag until
+// the user sets one; the switch itself never depends on it.
+#[cfg(not(windows))]
+fn current_battle_tag_from_cache() -> Result<Option<String>, String> {
+    Ok(None)
+}
+
+#[cfg(windows)]
 fn current_battle_tag_from_cache() -> Result<Option<String>, String> {
     let Some(account_id_lo) = latest_opened_account_id_from_logs()? else {
         return Ok(None);
@@ -517,6 +551,7 @@ fn kill_battle_net() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(windows)]
 fn normalize_registry_path(raw: &str) -> String {
     let mut value = raw.trim().trim_matches('"').to_string();
     // Registry icon strings can carry a trailing icon-index argument
@@ -530,6 +565,7 @@ fn normalize_registry_path(raw: &str) -> String {
     value
 }
 
+#[cfg(windows)]
 fn preferred_launcher_path(path: PathBuf) -> PathBuf {
     let is_battle_net_exe = path
         .file_name()
@@ -553,6 +589,7 @@ fn preferred_launcher_path(path: PathBuf) -> PathBuf {
     path
 }
 
+#[cfg(windows)]
 fn candidate_from_registry_value(raw: &str) -> Option<PathBuf> {
     let normalized = normalize_registry_path(raw);
     if normalized.is_empty() {
@@ -575,6 +612,7 @@ fn candidate_from_registry_value(raw: &str) -> Option<PathBuf> {
     None
 }
 
+#[cfg(windows)]
 fn registry_candidates_from_app_paths(root: HKEY, subkey: &str) -> Vec<PathBuf> {
     let key = RegKey::predef(root);
     let Ok(app_key) = key.open_subkey(subkey) else {
@@ -595,6 +633,7 @@ fn registry_candidates_from_app_paths(root: HKEY, subkey: &str) -> Vec<PathBuf> 
     out
 }
 
+#[cfg(windows)]
 fn registry_candidates_from_uninstall(root: HKEY, subkey: &str) -> Vec<PathBuf> {
     let key = RegKey::predef(root);
     let Ok(uninstall_root) = key.open_subkey(subkey) else {
@@ -626,11 +665,13 @@ fn registry_candidates_from_uninstall(root: HKEY, subkey: &str) -> Vec<PathBuf> 
     out
 }
 
+#[cfg(windows)]
 enum RegistryLookup {
     AppPaths,
     Uninstall,
 }
 
+#[cfg(windows)]
 const REGISTRY_INSTALL_SOURCES: &[(HKEY, &str, RegistryLookup)] = &[
     (
         HKEY_LOCAL_MACHINE,
@@ -669,6 +710,7 @@ const REGISTRY_INSTALL_SOURCES: &[(HKEY, &str, RegistryLookup)] = &[
     ),
 ];
 
+#[cfg(windows)]
 fn registry_install_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
     for &(root, subkey, ref lookup) in REGISTRY_INSTALL_SOURCES {
@@ -684,6 +726,7 @@ fn registry_install_candidates() -> Vec<PathBuf> {
     out
 }
 
+#[cfg(windows)]
 fn resolve_battle_net_executable(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     let mut candidates = Vec::new();
     let cfg = config::load_config(app_handle);
@@ -720,6 +763,7 @@ fn resolve_battle_net_executable(app_handle: &dyn AppContext) -> Result<PathBuf,
     Err("Could not locate Battle.net installation".into())
 }
 
+#[cfg(windows)]
 fn launch_battle_net(app_handle: &dyn AppContext) -> Result<(), String> {
     let executable = resolve_battle_net_executable(app_handle)?;
     let mut command = Command::new(&executable);
@@ -729,6 +773,65 @@ fn launch_battle_net(app_handle: &dyn AppContext) -> Result<(), String> {
     command
         .spawn()
         .map_err(|e| format!("Could not launch Battle.net {}: {e}", executable.display()))?;
+    Ok(())
+}
+
+// On macOS the launcher is a single `.app` bundle. Resolve it the same way the
+// Steam backend resolves Steam.app — an explicit override first, then Spotlight
+// by the bundle id (`net.battle.app`, read off the shipped Info.plist), then
+// the default `/Applications` location.
+#[cfg(target_os = "macos")]
+fn resolve_battle_net_executable(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
+    let cfg = config::load_config(app_handle);
+    let override_path = cfg.battle_net.path_override.trim();
+    if !override_path.is_empty() {
+        let path = PathBuf::from(override_path);
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+
+    if let Ok(output) = Command::new("mdfind")
+        .arg("kMDItemCFBundleIdentifier == 'net.battle.app'")
+        .output()
+    {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(app_path) = stdout
+                .lines()
+                .next()
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+            {
+                let path = PathBuf::from(app_path);
+                if path.exists() {
+                    return Ok(path);
+                }
+            }
+        }
+    }
+
+    let default = PathBuf::from("/Applications/Battle.net.app");
+    if default.exists() {
+        return Ok(default);
+    }
+
+    Err("Could not locate Battle.net installation".into())
+}
+
+#[cfg(target_os = "macos")]
+fn launch_battle_net(app_handle: &dyn AppContext) -> Result<(), String> {
+    let app = resolve_battle_net_executable(app_handle)?;
+    // `open` resolves and launches the bundle through Launch Services; it exits
+    // non-zero if the app is missing, so wait for its status rather than
+    // fire-and-forget.
+    let status = Command::new("open")
+        .arg(&app)
+        .status()
+        .map_err(|e| format!("Could not launch Battle.net {}: {e}", app.display()))?;
+    if !status.success() {
+        return Err(format!("Could not launch Battle.net {}", app.display()));
+    }
     Ok(())
 }
 
@@ -1006,9 +1109,11 @@ impl PlatformService for BattleNetService {
 mod tests {
     use super::{
         collect_unique_accounts, encode_saved_account_name, extract_saved_account_names,
-        normalize_account_key, normalize_registry_path, parse_saved_account_names,
-        write_saved_accounts,
+        normalize_account_key, parse_saved_account_names,
     };
+    #[cfg(windows)]
+    use super::{normalize_registry_path, write_saved_accounts};
+    #[cfg(windows)]
     use crate::AppContext;
     use serde_json::json;
     use std::collections::HashSet;
@@ -1187,6 +1292,7 @@ mod tests {
     // normalize_registry_path
     // -----------------------------------------------------------------------
 
+    #[cfg(windows)]
     #[test]
     fn normalize_registry_path_strips_trailing_icon_index() {
         assert_eq!(
@@ -1195,6 +1301,7 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn normalize_registry_path_keeps_comma_in_install_path() {
         // A comma inside the directory name is part of the path, not an icon arg.
@@ -1204,6 +1311,7 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn normalize_registry_path_keeps_comma_path_with_icon_index() {
         assert_eq!(
@@ -1220,10 +1328,15 @@ mod tests {
     // not the write itself).
     // -----------------------------------------------------------------------
 
+    // Seeds an APPDATA-rooted config, so it only exercises the Windows path
+    // layout. The backup-before-overwrite branch it guards is shared, so
+    // covering it on one OS is enough.
+    #[cfg(windows)]
     struct TestCtx {
         root: std::path::PathBuf,
     }
 
+    #[cfg(windows)]
     impl AppContext for TestCtx {
         fn app_config_dir(&self) -> Result<std::path::PathBuf, String> {
             Ok(self.root.clone())
@@ -1239,6 +1352,7 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
     #[test]
     fn write_saved_accounts_succeeds_when_backup_copy_fails() {
         let root = std::env::temp_dir().join(format!(

@@ -61,11 +61,14 @@ export const PLATFORM_DEFS: PlatformDef[] = [
     name: "Battle.net",
     accent: "#38bdf8",
     implemented: true,
-    supportedOs: ["windows"],
+    supportedOs: ["windows", "macos"],
     settingsTabKey: "settings.battleNet",
     settingsComponent: () => import("./battle-net/BattleNetSettingsTab.svelte"),
     pathLabelKey: "settings.battleNetPath",
-    pathPlaceholder: "C:\\Program Files (x86)\\Battle.net\\Battle.net Launcher.exe",
+    pathPlaceholder: {
+      windows: "C:\\Program Files (x86)\\Battle.net\\Battle.net Launcher.exe",
+      macos: "/Applications/Battle.net.app",
+    },
   },
   {
     id: "ubisoft",

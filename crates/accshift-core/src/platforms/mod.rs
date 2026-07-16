@@ -33,7 +33,9 @@ pub mod ids {
 // on Linux / macOS. We gate them to Windows to keep the non-Windows build
 // green; `get_service("riot")` etc. return None outside Windows, and the CLI
 // advertises `available: false` for those platforms via `accshift platforms`.
-#[cfg(windows)]
+// Battle.net has a real native macOS client, so it is available on Windows and
+// macOS (its config format is identical; only the paths and launcher differ).
+#[cfg(any(windows, target_os = "macos"))]
 pub mod battle_net;
 #[cfg(windows)]
 pub mod discord;
@@ -216,6 +218,10 @@ fn platform_registry() -> &'static HashMap<&'static str, &'static dyn PlatformSe
     REGISTRY.get_or_init(|| {
         let mut map: HashMap<&'static str, &'static dyn PlatformService> = HashMap::new();
         map.insert(ids::STEAM, &steam::STEAM_SERVICE);
+        #[cfg(target_os = "macos")]
+        {
+            map.insert(ids::BATTLE_NET, &battle_net::BATTLE_NET_SERVICE);
+        }
         #[cfg(windows)]
         {
             map.insert(ids::RIOT, &riot::RIOT_SERVICE);
