@@ -35,10 +35,23 @@ function healthCheckEnabled(): boolean {
   return getSettings().healthCheckPerPlatform["roblox"] !== false;
 }
 
+// A switch that failed with HTTP 401 is proof the stored cookie is dead —
+// flag the account immediately instead of waiting for the next probe. Not
+// gated on the health-check setting: that setting controls the background
+// network probe, and this signal comes from a user-initiated switch.
+export function markRobloxSessionExpired(userId: string): void {
+  deadUserIds.add(userId);
+}
+
+// A fresh cookie was stored for this account (re-add) or a switch succeeded;
+// the expired flag no longer applies.
+export function clearRobloxSessionExpired(userId: string): void {
+  deadUserIds.delete(userId);
+}
+
 export function getCachedRobloxWarningStates(
   callbacks: PlatformUiCallbacks,
 ): Record<string, AccountWarningPresentation> {
-  if (!healthCheckEnabled()) return {};
   return toWarningMap(callbacks.t);
 }
 
@@ -47,7 +60,9 @@ export async function loadRobloxWarningStates(
   options: PlatformWarningLoadOptions,
 ): Promise<Record<string, AccountWarningPresentation>> {
   const { forceRefresh = false, t } = options;
-  if (!healthCheckEnabled()) return {};
+  // The setting gates the network probe only; entries marked by failed
+  // switches still render so the map must be returned either way.
+  if (!healthCheckEnabled()) return toWarningMap(t);
   if (accounts.length === 0) return toWarningMap(t);
 
   if (checkedThisSession && !forceRefresh) return toWarningMap(t);

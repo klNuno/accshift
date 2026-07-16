@@ -555,6 +555,8 @@ fn request_auth_ticket(cookie: &str) -> Result<String, String> {
     .map_err(|e| format!("Could not request auth ticket: {e}"))?;
 
     if !response.status().is_success() {
+        // The webview matches this wording on HTTP 401 to flag the account's
+        // session as expired (roblox/adapter.ts) — keep it stable.
         return Err(format!(
             "Auth ticket request failed (HTTP {})",
             response.status()

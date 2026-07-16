@@ -416,6 +416,8 @@ export const EN_MESSAGES = {
   "roblox.noAccountsHint": "Press + to add a Roblox account via Quick Login.",
   "roblox.sessionExpired": "Session expired",
   "roblox.sessionExpiredTooltip": "This account is logged out. Re-add it before switching.",
+  "roblox.sessionExpiredSwitchError":
+    "Session expired. Re-add this account to switch. Notes and settings are kept.",
   "roblox.cookiePasteTitle": "Add account by cookie",
   "roblox.cookiePasteHint":
     "Paste a .ROBLOSECURITY cookie from your browser to add an account directly.",

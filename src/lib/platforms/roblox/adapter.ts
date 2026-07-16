@@ -9,9 +9,18 @@ import { createPlatformAddFlowHandlers } from "$lib/platforms/addFlow";
 import * as service from "./robloxApi";
 import { getRobloxContextMenuItems } from "./contextMenu";
 import { getRobloxCachedProfile, fetchRobloxProfile } from "./profileCache";
-import { getCachedRobloxWarningStates, loadRobloxWarningStates } from "./warnings";
+import {
+  getCachedRobloxWarningStates,
+  loadRobloxWarningStates,
+  markRobloxSessionExpired,
+  clearRobloxSessionExpired,
+} from "./warnings";
 import type { RobloxAccount } from "./types";
 import { isSafeHttpUrl } from "$lib/shared/url";
+
+// Stable backend wording from request_auth_ticket (roblox.rs) when the stored
+// .ROBLOSECURITY cookie is rejected server-side.
+const SESSION_EXPIRED_PATTERN = /auth ticket request failed \(http 401/i;
 
 function toAccount(account: RobloxAccount): PlatformAccount {
   return {
@@ -31,6 +40,16 @@ export const robloxAdapter: PlatformAdapter = {
     cancelSetup: service.cancelAccountSetup,
   }),
 
+  // Re-adding an account via Quick Login stores a fresh cookie for the same
+  // user id, so a pending "session expired" flag must be lifted here.
+  async pollAddFlow(setupId: string) {
+    const status = await service.getAccountSetupStatus(setupId);
+    if (status.state === "ready" && status.accountId) {
+      clearRobloxSessionExpired(status.accountId);
+    }
+    return status;
+  },
+
   async loadAccounts(): Promise<PlatformAccount[]> {
     const accounts = await service.getAccounts();
     return accounts.map(toAccount);
@@ -49,7 +68,15 @@ export const robloxAdapter: PlatformAdapter = {
   },
 
   async switchAccount(account: PlatformAccount): Promise<void> {
-    await service.switchAccount(account.id);
+    try {
+      await service.switchAccount(account.id);
+      clearRobloxSessionExpired(account.id);
+    } catch (e) {
+      if (SESSION_EXPIRED_PATTERN.test(String(e))) {
+        markRobloxSessionExpired(account.id);
+      }
+      throw e;
+    }
   },
 
   getContextMenuActions(
@@ -79,6 +106,13 @@ export const robloxAdapter: PlatformAdapter = {
 
   getNoAccountsToastMessage(callbacks) {
     return callbacks.t("toast.noRobloxAccountsFound");
+  },
+
+  getSwitchErrorToastMessage(message, callbacks) {
+    if (SESSION_EXPIRED_PATTERN.test(message)) {
+      return callbacks.t("roblox.sessionExpiredSwitchError");
+    }
+    return null;
   },
 
   getNoAccountsHintMessage(callbacks) {

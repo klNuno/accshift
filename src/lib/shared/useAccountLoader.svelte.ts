@@ -317,6 +317,11 @@ export function createAccountLoader(
       const adapter = getAdapter();
       const mapped = adapter?.getSwitchErrorToastMessage?.(error, { t });
       addToast(mapped ?? t("toast.switchFailed"), { type: "error" });
+      // A failed switch can mark new warning state (e.g. Roblox session
+      // expired); re-render from the platform cache so the card outline
+      // appears immediately instead of on the next full load.
+      const cachedWarnings = adapter?.getCachedWarningStates?.({ t });
+      if (cachedWarnings) replaceWarningStates(cachedWarnings);
     }
     if (switchId !== latestSwitchId) return succeeded;
     switching = false;

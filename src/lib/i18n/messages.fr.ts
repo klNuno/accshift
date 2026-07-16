@@ -425,6 +425,8 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "roblox.noAccountsHint": "Appuie sur + pour ajouter un compte Roblox via Quick Login.",
   "roblox.sessionExpired": "Session expirée",
   "roblox.sessionExpiredTooltip": "Ce compte est déconnecté. Reconnecte-le avant de switcher.",
+  "roblox.sessionExpiredSwitchError":
+    "Session expirée. Re-lie ce compte pour switcher. Notes et réglages conservés.",
   "roblox.cookiePasteTitle": "Ajouter un compte par cookie",
   "roblox.cookiePasteHint":
     "Colle un cookie .ROBLOSECURITY depuis ton navigateur pour ajouter un compte directement.",

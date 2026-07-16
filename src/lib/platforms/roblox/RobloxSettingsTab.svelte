@@ -5,6 +5,7 @@
   import SettingsCard from "$lib/shared/components/SettingsCard.svelte";
   import { addToast } from "$lib/features/notifications/store.svelte";
   import { addAccountByCookie } from "./robloxApi";
+  import { clearRobloxSessionExpired } from "./warnings";
 
   let {
     settings = $bindable(),
@@ -29,6 +30,9 @@
     errorMessage = "";
     try {
       const account = await addAccountByCookie(trimmed);
+      // The paste may re-link an account previously flagged as expired; the
+      // fresh cookie supersedes that state.
+      clearRobloxSessionExpired(account.userId);
       cookieValue = "";
       addToast(t("roblox.setupReadyWithProfile", { profile: account.displayName || account.username }));
       onAccountAdded?.();
