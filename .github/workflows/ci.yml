@@ -55,8 +55,13 @@ jobs:
       - name: Frontend tests
         run: vp test
 
+      # setup-vp only puts `vp` on PATH; the telemetry worker is a plain pnpm
+      # package, so enable the corepack shim (pinned by packageManager in the
+      # root package.json) before calling pnpm directly.
       - name: Install telemetry dependencies
-        run: pnpm --dir telemetry install --frozen-lockfile
+        run: |
+          corepack enable
+          pnpm --dir telemetry install --frozen-lockfile
 
       - name: Telemetry typecheck
         run: pnpm --dir telemetry exec tsc --noEmit
