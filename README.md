@@ -23,25 +23,25 @@
 
 ## Current Status
 
-| Platform             | Windows      | macOS           | Linux           |
-| -------------------- | ------------ | --------------- | --------------- |
-| Steam                | ✅ Done      | ✅ Done         | ✅ Done         |
-| Riot Games           | ✅ Done      | 🚧 Possible     | ⛔ Not feasible |
-| Battle.net           | ✅ Done      | ✅ Done         | ⛔ Not feasible |
-| Epic Games           | ✅ Done      | 🚧 Possible     | 🚧 Possible     |
-| Ubisoft Connect      | ✅ Done      | 🚧 Possible     | 🚧 Possible     |
-| Roblox               | ✅ Done      | 🚧 Possible     | 🚧 Possible     |
-| GOG Galaxy           | 🧪 GUI ready | 🚧 Possible     | ⛔ Not feasible |
-| Jagex Launcher       | 🧪 GUI ready | 🚧 Possible     | ⛔ Not feasible |
-| Discord              | 🧪 GUI ready | 🚧 Possible     | 🚧 Possible     |
-| EA app               | 🚧 Possible  | 🚧 Possible     | ⛔ Not feasible |
-| Rockstar Launcher    | 🚧 Possible  | ⛔ Not feasible | 🚧 Possible     |
-| GeForce Now          | 🚧 Possible  | 🚧 Possible     | 🚧 Possible     |
-| HoYoverse / HoYoPlay | 🚧 Possible  | ⛔ Not feasible | ⛔ Not feasible |
-| Minecraft Launcher   | 🚧 Possible  | 🚧 Possible     | 🚧 Possible     |
+| Platform             | Windows          | macOS           | Linux           |
+| -------------------- | ---------------- | --------------- | --------------- |
+| Steam                | ✅ Done          | ✅ Done         | ✅ Done         |
+| Riot Games           | ✅ Done          | 🚧 Possible     | ⛔ Not feasible |
+| Battle.net           | ✅ Done          | ✅ Done         | ⛔ Not feasible |
+| Epic Games           | ✅ Done          | 🚧 Possible     | 🚧 Possible     |
+| Ubisoft Connect      | ✅ Done          | 🚧 Possible     | 🚧 Possible     |
+| Roblox               | ✅ Done          | 🚧 Possible     | 🚧 Possible     |
+| GOG Galaxy           | 🧪 Needs testing | 🚧 Possible     | ⛔ Not feasible |
+| Jagex Launcher       | 🧪 Needs testing | 🚧 Possible     | ⛔ Not feasible |
+| Discord              | 🧪 Needs testing | 🚧 Possible     | 🚧 Possible     |
+| EA app               | 🚧 Possible      | 🚧 Possible     | ⛔ Not feasible |
+| Rockstar Launcher    | 🚧 Possible      | ⛔ Not feasible | 🚧 Possible     |
+| GeForce Now          | 🚧 Possible      | 🚧 Possible     | 🚧 Possible     |
+| HoYoverse / HoYoPlay | 🚧 Possible      | ⛔ Not feasible | ⛔ Not feasible |
+| Minecraft Launcher   | 🚧 Possible      | 🚧 Possible     | 🚧 Possible     |
 
 - `✅ Done`: GUI and CLI implemented and verified on target
-- `🧪 GUI ready`: GUI + CLI landed, awaiting on-target verification
+- `🧪 Needs testing`: implemented, awaiting testing with real accounts
 - `🚧 Possible`: feasible, priority goes to user requests
 - `⛔ Not feasible`: not realistic for this OS
 
