@@ -64,6 +64,15 @@ jobs:
       - name: Build frontend
         run: vp build
 
+      # tauri-build resolves `externalBin` at build-script time, so clippy,
+      # check, and test all need the staged CLI sidecar to exist. It is
+      # gitignored (scripts/stage-cli.mjs produces it locally as part of
+      # beforeBuildCommand), so a fresh checkout has to stage it explicitly.
+      - name: Stage CLI sidecar for Rust checks
+        run: |
+          cargo build --release -p accshift-cli
+          node scripts/stage-cli.mjs
+
       - name: Cargo fmt
         run: vp run fmt:check
 
