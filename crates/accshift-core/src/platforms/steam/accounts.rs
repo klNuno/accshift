@@ -11,10 +11,16 @@ use crate::fs_utils;
 use crate::os;
 
 const KILL_WAIT_MS: u32 = 5000;
-// Long enough to cover Snap on Linux: the `steam` wrapper takes 3-4s to boot
-// before it even forwards -shutdown, then teardown itself takes several more.
-// Windows and macOS exit in 2-5s; the wait stops as soon as they do.
+// Windows exits in 2-5s; the wait stops as soon as it does.
+#[cfg(windows)]
 const GRACEFUL_SHUTDOWN_WAIT_MS: u32 = 12_000;
+// Linux/macOS need more headroom: the Snap wrapper takes 3-4s to boot before
+// it even forwards -shutdown, the macOS messenger takes several seconds to
+// deliver, and teardown itself has been measured above 15s on slow machines
+// while Steam is still starting up. Falling back to a kill while Steam is
+// rewriting its VDFs on exit risks corrupting them, so wait longer instead.
+#[cfg(not(windows))]
+const GRACEFUL_SHUTDOWN_WAIT_MS: u32 = 20_000;
 pub(crate) const NON_GAME_APP_IDS: &[&str] = &[
     "7",   // Steam client internals
     "760", // Steam community / screenshots

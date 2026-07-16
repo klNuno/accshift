@@ -32,7 +32,8 @@ pub fn set_auto_login_user(path: &Path, username: &str) -> Result<(), AppError> 
     };
     let updated = vdf_set_nested_value(&existing, REGISTRY_PATH, username);
     let updated = vdf_set_nested_value(&updated, REMEMBER_PATH, "1");
-    crate::storage::write_bytes_atomic(path, updated.as_bytes()).map_err(AppError::RegistryWrite)
+    crate::storage::write_bytes_atomic(path, updated.as_bytes())
+        .map_err(|e| AppError::RegistryWrite(describe_write_error(path, e)))
 }
 
 pub fn clear_auto_login_user(path: &Path) -> Result<(), AppError> {
@@ -42,7 +43,26 @@ pub fn clear_auto_login_user(path: &Path) -> Result<(), AppError> {
         Err(e) => return Err(AppError::FileRead(e.to_string())),
     };
     let updated = vdf_set_nested_value(&existing, REGISTRY_PATH, "");
-    crate::storage::write_bytes_atomic(path, updated.as_bytes()).map_err(AppError::RegistryWrite)
+    crate::storage::write_bytes_atomic(path, updated.as_bytes())
+        .map_err(|e| AppError::RegistryWrite(describe_write_error(path, e)))
+}
+
+/// Some users mark registry.vdf immutable (`chattr +i` on Linux, `chflags uchg`
+/// on macOS) to work around a Steam bug that resets AutoLoginUser. The atomic
+/// rename then fails with a bare permission error even though the file's mode
+/// looks writable, which reads as a bug in accshift. Name the likely cause.
+fn describe_write_error(path: &Path, error: String) -> String {
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("permission denied") || lower.contains("operation not permitted") {
+        return format!(
+            "{error}. {} may be write-protected: some guides recommend marking it \
+immutable (`chattr +i` on Linux, `chflags uchg` on macOS) to stop Steam from \
+resetting autologin. Remove the protection (`chattr -i` / `chflags nouchg`) \
+or fix the file permissions, then retry.",
+            path.display()
+        );
+    }
+    error
 }
 
 fn extract_registry_value(content: &str, key: &str) -> Option<String> {
@@ -112,6 +132,28 @@ mod tests {
         clear_auto_login_user(&path).unwrap();
         assert_eq!(get_auto_login_user(&path).unwrap(), "");
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn permission_errors_mention_the_immutable_flag_workaround() {
+        let described = super::describe_write_error(
+            Path::new("/home/alice/.steam/registry.vdf"),
+            "Could not rename: Operation not permitted (os error 1)".to_string(),
+        );
+        assert!(described.contains("chattr"), "{described}");
+        assert!(described.contains("registry.vdf"), "{described}");
+    }
+
+    #[test]
+    fn unrelated_write_errors_pass_through_unchanged() {
+        let described = super::describe_write_error(
+            Path::new("/tmp/registry.vdf"),
+            "Could not write temp file: No space left on device".to_string(),
+        );
+        assert_eq!(
+            described,
+            "Could not write temp file: No space left on device"
+        );
     }
 
     #[test]
