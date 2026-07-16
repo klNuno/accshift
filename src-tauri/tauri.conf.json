@@ -3,6 +3,7 @@
   "productName": "Accshift",
   "version": "1.0.0",
   "identifier": "com.accshift.desktop",
+  "mainBinaryName": "accshift-gui",
   "build": {
     "beforeDevCommand": "cargo build -p accshift-cli --release && node scripts/stage-cli.mjs && pnpm dev",
     "devUrl": "http://localhost:1420",
