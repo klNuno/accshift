@@ -29,6 +29,7 @@
     updateCtaDisabled = false,
     locale = DEFAULT_LOCALE,
     runtimeOs = "unknown",
+    hideActions = false,
   }: {
     onRefresh: () => void;
     onAddAccount: () => void;
@@ -52,6 +53,9 @@
     updateCtaDisabled?: boolean;
     locale?: Locale;
     runtimeOs?: "windows" | "linux" | "macos" | "unknown";
+    /** Onboarding (outside the demo step): keep drag + window controls,
+        hide app actions, tabs and the update CTA. */
+    hideActions?: boolean;
   } = $props();
 
   const isMacOs = $derived(runtimeOs === "macos");
@@ -126,12 +130,12 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="titlebar" class:macos={isMacOs} onmousedown={startDrag}>
   <div class="left">
-    {#if !isMacOs}
+    {#if !isMacOs && !hideActions}
       {@render actionButtons()}
     {/if}
   </div>
 
-  {#if enabledPlatforms.length > 1 || personasVisible}
+  {#if !hideActions && (enabledPlatforms.length > 1 || personasVisible)}
     <div class="tabs" data-tour="platforms" role="tablist">
       {#if personasVisible}
         <!-- Personas behaves like a platform: first tab, same look, own accent. -->
@@ -183,11 +187,11 @@
   {/if}
 
   <div class="right">
-    {#if isMacOs}
+    {#if isMacOs && !hideActions}
       {@render actionButtons()}
     {/if}
 
-    {#if updateCtaLabel}
+    {#if updateCtaLabel && !hideActions}
       <button
         class="update-btn"
         onclick={onApplyUpdate}

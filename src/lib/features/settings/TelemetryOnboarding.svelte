@@ -80,7 +80,8 @@
     if (submitting || rejecting) return;
     if (gifEl) {
       const r = gifEl.getBoundingClientRect();
-      gifSize = { w: r.width, h: r.height };
+      // Zero when the gif is hidden by the short-window media query.
+      if (r.width > 0 && r.height > 0) gifSize = { w: r.width, h: r.height };
     }
     rejecting = true;
     setTimeout(() => { fadingOut = true; }, REJECT_FADE_DELAY_MS);
@@ -421,10 +422,12 @@
     transition: background 280ms ease-out, backdrop-filter 280ms ease-out, opacity 800ms ease-out;
     pointer-events: none;
   }
+  /* pointer-events stays none: the click-shield (below the titlebar) blocks
+     the app, and letting events pass through the dim keeps the titlebar
+     draggable during onboarding. The modal re-enables its own events. */
   .backdrop.dim {
     background: color-mix(in srgb, #000 60%, transparent);
     backdrop-filter: blur(8px);
-    pointer-events: auto;
     display: grid;
     place-items: center;
   }
@@ -512,10 +515,23 @@
     overflow: hidden;
     gap: 12px;
     padding: 18px 22px 16px;
+    max-height: min(92vh, 660px);
   }
   .modal.deal-mode .step {
     min-height: 0;
     gap: 10px;
+  }
+  /* Short windows: tighten spacing first, then drop the gif entirely so the
+     three choice buttons always stay visible without scrolling. */
+  @media (max-height: 640px) {
+    .modal.deal-mode { gap: 8px; padding: 14px 18px 12px; }
+    .modal.deal-mode .step { gap: 8px; }
+    .modal.deal-mode .deal-row { padding: 8px 14px; }
+    .modal.deal-mode .intro { display: none; }
+  }
+  @media (max-height: 520px) {
+    .modal.deal-mode .deal-gif { display: none; }
+    .modal.deal-mode { overflow-y: auto; }
   }
   .modal.dock-bottom {
     position: fixed;
@@ -670,7 +686,9 @@
 
   .deal-title {
     text-align: center;
-    font-size: 24px;
+    /* Scales with both window width and height so the step fits small
+       windows instead of overflowing at a fixed 24px. */
+    font-size: clamp(16px, min(5vw, 3.4vh), 24px);
     font-weight: 900;
     letter-spacing: 0.08em;
     color: #ffffff;
@@ -678,11 +696,11 @@
 
   .deal-gif {
     max-width: 100%;
-    max-height: 36vh;
+    max-height: 32vh;
     width: auto;
     height: auto;
     flex: 0 1 auto;
-    min-height: 80px;
+    min-height: 0;
     object-fit: contain;
     display: block;
     margin: 0 auto;
@@ -700,7 +718,7 @@
   }
   .question {
     margin: 2px 0 0;
-    font-size: 17px;
+    font-size: clamp(14px, min(4vw, 2.6vh), 17px);
     font-weight: 800;
     text-align: center;
     letter-spacing: 0.01em;

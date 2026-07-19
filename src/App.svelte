@@ -1337,6 +1337,7 @@
     bulkEditActive={bulkEdit.bulkEditMode}
     {locale}
     runtimeOs={shell.runtimeOs}
+    hideActions={showTelemetryOnboarding && !tourMockActive}
   />
 {/snippet}
 
