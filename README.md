@@ -2,7 +2,7 @@
 <p align="center">Fast multi-platform desktop account switcher, built with Tauri 2 and Svelte 5.</p>
 
 <p align="center">
-  <img src="./docs/demo-switch.gif" alt="Switching Steam accounts in one click, then from the Ctrl+K command palette" width="860" />
+  <img src="./docs/demo-switch.webp" alt="Switching Steam accounts from the grid, then from the Ctrl+K command palette" />
 </p>
 
 <p align="center">
@@ -55,17 +55,14 @@ Users can propose new platforms through [GitHub Issues](https://github.com/klNun
 
 ### Organise a large library
 
-Right-click any account to recolor its card, add a note or rename it, and group
-accounts into folders.
-
 <p align="center">
-  <img src="./docs/demo-organize.gif" alt="Recoloring an account card from the right-click menu, then opening a folder of smurf accounts" width="860" />
+  <img src="./docs/demo-organize.webp" alt="Recoloring an account card from the right-click menu, then opening a folder of smurf accounts" />
 </p>
 
-### Every platform, every theme
+### One app, every platform and theme
 
 <p align="center">
-  <img src="./docs/demo-themes.gif" alt="Switching to the Riot Games tab, then changing the app theme from the settings panel" width="860" />
+  <img src="./docs/demo-themes.webp" alt="Switching to the Riot Games tab, then changing the app theme from the settings panel" />
 </p>
 
 ## Installation

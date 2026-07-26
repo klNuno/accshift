@@ -1,4 +1,4 @@
-// Records the README demos (docs/demo-*.gif) straight from the webview, one
+// Records the README demos (docs/demo-*.webp) straight from the webview, one
 // shot at a time.
 //
 // Two WebSocket connections to the MCP bridge: one loops native screenshots,
@@ -18,7 +18,7 @@
 //      PowerShell: $env:VITE_DEMO = "1" first, then the same command.
 //   2. Size the window to 940x520 (the framing the clips are cut for).
 //   3. node scripts/record-demo.mjs <shot>     # one of the SHOTS keys, or "all"
-//   4. node scripts/record-demo.mjs --render   # cut the shots into docs/demo-*.gif
+//   4. node scripts/record-demo.mjs --render   # cut the shots into docs/demo-*.webp
 //
 // Requires ffmpeg on PATH for --render.
 
@@ -426,8 +426,7 @@ async function record(shotName) {
 // -------------------------------------------------------------------- render
 
 // The cut. Three short clips rather than one long reel: a README reads better
-// with a few focused loops, and each one keeps its own 256-colour palette
-// instead of sharing a stretched one across every scene.
+// with a few focused loops.
 // `speed` below 1 plays faster (0.8 = 1.25x), which trims the dead air a
 // scripted take always carries.
 const CLIPS = [
@@ -454,11 +453,25 @@ const CLIPS = [
   },
 ];
 const SPEED = 0.8;
-// Native window width, 15 fps and a full palette. Each clip is short enough
-// that the extra weight stays reasonable.
-const GIF_FPS = 15;
-const GIF_WIDTH = 940;
-const GIF_COLORS = 256;
+const CLIP_FPS = 15;
+// Rounded corners, so the clip reads as a window sitting in the page rather
+// than a raw rectangle. They have to be baked into the file: GitHub strips
+// inline styles from README HTML, so no border-radius can be applied there.
+const CORNER_RADIUS = 18;
+// Animated WebP, not GIF. A GIF can only carry 1-bit transparency, and using it
+// for the corners disables the inter-frame delta the format relies on — the
+// same clip weighed 2.7 MB as a transparent GIF against 125 kB here, with
+// aliased corners and a 256-colour palette on top.
+const WEBP_QUALITY = 88;
+
+// Alpha expression knocking the four corners out, evaluated per pixel.
+const cornerAlpha = (r) =>
+  [
+    `gt(hypot(max(0,${r}-X),max(0,${r}-Y)),${r})`,
+    `gt(hypot(max(0,X-(W-1-${r})),max(0,${r}-Y)),${r})`,
+    `gt(hypot(max(0,${r}-X),max(0,Y-(H-1-${r}))),${r})`,
+    `gt(hypot(max(0,X-(W-1-${r})),max(0,Y-(H-1-${r}))),${r})`,
+  ].join("+");
 
 function render() {
   for (const clip of CLIPS) {
@@ -543,8 +556,6 @@ function render() {
       { cwd: ROOT, stdio: "inherit" },
     );
 
-    // Per-clip palette, no dither: the UI is flat fills, and 256 colours cover
-    // the avatar gradients without the noise dithering would add.
     execFileSync(
       FFMPEG,
       [
@@ -554,16 +565,25 @@ function render() {
         "-i",
         mp4,
         "-vf",
-        `fps=${GIF_FPS},scale=${GIF_WIDTH}:-2:flags=lanczos,split[a][b];[a]palettegen=max_colors=${GIF_COLORS}:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle`,
+        `fps=${CLIP_FPS},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(${cornerAlpha(CORNER_RADIUS)},0,255)'`,
+        "-c:v",
+        "libwebp_anim",
+        "-lossless",
+        "0",
+        "-q:v",
+        String(WEBP_QUALITY),
+        "-compression_level",
+        "6",
         "-loop",
         "0",
+        "-an",
         "-y",
-        resolve(`docs/${clip.name}.gif`),
+        resolve(`docs/${clip.name}.webp`),
       ],
       { cwd: ROOT, stdio: "inherit" },
     );
 
-    console.log(`wrote docs/${clip.name}.gif`);
+    console.log(`wrote docs/${clip.name}.webp`);
   }
 }
 
