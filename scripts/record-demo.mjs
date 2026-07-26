@@ -1,5 +1,5 @@
-// Records the README demo (docs/demo.gif) straight from the webview, one shot
-// at a time.
+// Records the README demos (docs/demo-*.gif) straight from the webview, one
+// shot at a time.
 //
 // Two WebSocket connections to the MCP bridge: one loops native screenshots,
 // the other drives the UI. Frames are written with their real timestamps, so
@@ -16,9 +16,9 @@
 //   1. Start the app in demo mode, with the bridge (bash/git-bash):
 //        VITE_DEMO=1 pnpm tauri dev --config src-tauri/tauri.mcp.conf.json --features mcp-bridge
 //      PowerShell: $env:VITE_DEMO = "1" first, then the same command.
-//   2. Size the window to 940x520 (the framing docs/demo.gif is cut for).
+//   2. Size the window to 940x520 (the framing the clips are cut for).
 //   3. node scripts/record-demo.mjs <shot>     # one of the SHOTS keys, or "all"
-//   4. node scripts/record-demo.mjs --render   # concat every shot into docs/
+//   4. node scripts/record-demo.mjs --render   # cut the shots into docs/demo-*.gif
 //
 // Requires ffmpeg on PATH for --render.
 
@@ -425,27 +425,93 @@ async function record(shotName) {
 
 // -------------------------------------------------------------------- render
 
-// The cut: which shots make the final demo, in order, and how much of each is
-// kept. `speed` below 1 plays the clip faster (0.8 = 1.25x), which trims the
-// dead air a scripted take always carries.
-const EDIT = [
-  { shot: "switch", start: 0.4, duration: 3.6 },
-  { shot: "palette", start: 0.6, duration: 5.4 },
-  { shot: "color", start: 0.4, duration: 7.0 },
-  { shot: "folder", start: 0.3, duration: 3.2 },
-  { shot: "riot", start: 0.5, duration: 2.8 },
-  { shot: "theme", start: 0.6, duration: 4.4 },
+// The cut. Three short clips rather than one long reel: a README reads better
+// with a few focused loops, and each one keeps its own 256-colour palette
+// instead of sharing a stretched one across every scene.
+// `speed` below 1 plays faster (0.8 = 1.25x), which trims the dead air a
+// scripted take always carries.
+const CLIPS = [
+  {
+    name: "demo-switch",
+    cuts: [
+      { shot: "switch", start: 0.4, duration: 3.6 },
+      { shot: "palette", start: 0.6, duration: 5.6 },
+    ],
+  },
+  {
+    name: "demo-organize",
+    cuts: [
+      { shot: "color", start: 0.4, duration: 7.0 },
+      { shot: "folder", start: 0.3, duration: 3.4 },
+    ],
+  },
+  {
+    name: "demo-themes",
+    cuts: [
+      { shot: "riot", start: 0.5, duration: 3.0 },
+      { shot: "theme", start: 0.6, duration: 5.0 },
+    ],
+  },
 ];
 const SPEED = 0.8;
+// Native window width, 15 fps and a full palette. Each clip is short enough
+// that the extra weight stays reasonable.
+const GIF_FPS = 15;
+const GIF_WIDTH = 940;
+const GIF_COLORS = 256;
 
 function render() {
-  const parts = [];
-  for (const cut of EDIT) {
-    const dir = join(ROOT, cut.shot);
-    if (!existsSync(join(dir, "frames.txt"))) {
-      console.error(`skipping ${cut.shot}: not recorded`);
+  for (const clip of CLIPS) {
+    const parts = [];
+    for (const cut of clip.cuts) {
+      const dir = join(ROOT, cut.shot);
+      if (!existsSync(join(dir, "frames.txt"))) {
+        console.error(`skipping ${cut.shot}: not recorded`);
+        continue;
+      }
+      execFileSync(
+        FFMPEG,
+        [
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          "-f",
+          "concat",
+          "-safe",
+          "0",
+          "-i",
+          "frames.txt",
+          "-ss",
+          String(cut.start),
+          "-t",
+          String(cut.duration),
+          "-vf",
+          `setpts=${SPEED}*PTS,fps=25,scale=trunc(iw/2)*2:trunc(ih/2)*2`,
+          "-c:v",
+          "libx264",
+          "-crf",
+          "18",
+          "-preset",
+          "medium",
+          "-pix_fmt",
+          "yuv420p",
+          "-an",
+          "-y",
+          join("..", `${cut.shot}.mp4`),
+        ],
+        { cwd: dir, stdio: "inherit" },
+      );
+      parts.push(`${cut.shot}.mp4`);
+    }
+    if (!parts.length) {
+      console.error(`skipping clip ${clip.name}: nothing recorded`);
       continue;
     }
+
+    const listName = `${clip.name}.txt`;
+    writeFileSync(join(ROOT, listName), parts.map((f) => `file '${f}'`).join("\n") + "\n");
+
+    const mp4 = resolve(`docs/${clip.name}.mp4`);
     execFileSync(
       FFMPEG,
       [
@@ -457,86 +523,48 @@ function render() {
         "-safe",
         "0",
         "-i",
-        "frames.txt",
-        "-ss",
-        String(cut.start),
-        "-t",
-        String(cut.duration),
+        listName,
         "-vf",
-        `setpts=${SPEED}*PTS,fps=25,scale=trunc(iw/2)*2:trunc(ih/2)*2`,
+        "fade=t=in:st=0:d=0.3",
         "-c:v",
         "libx264",
         "-crf",
-        "20",
+        "18",
         "-preset",
-        "medium",
+        "slow",
         "-pix_fmt",
         "yuv420p",
+        "-movflags",
+        "+faststart",
         "-an",
         "-y",
-        join("..", `${cut.shot}.mp4`),
+        mp4,
       ],
-      { cwd: dir, stdio: "inherit" },
+      { cwd: ROOT, stdio: "inherit" },
     );
-    parts.push(`${cut.shot}.mp4`);
-    console.log(`cut ${cut.shot}`);
+
+    // Per-clip palette, no dither: the UI is flat fills, and 256 colours cover
+    // the avatar gradients without the noise dithering would add.
+    execFileSync(
+      FFMPEG,
+      [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        mp4,
+        "-vf",
+        `fps=${GIF_FPS},scale=${GIF_WIDTH}:-2:flags=lanczos,split[a][b];[a]palettegen=max_colors=${GIF_COLORS}:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle`,
+        "-loop",
+        "0",
+        "-y",
+        resolve(`docs/${clip.name}.gif`),
+      ],
+      { cwd: ROOT, stdio: "inherit" },
+    );
+
+    console.log(`wrote docs/${clip.name}.gif`);
   }
-  if (!parts.length) throw new Error("no recorded shots found");
-
-  writeFileSync(join(ROOT, "shots.txt"), parts.map((p) => `file '${p}'`).join("\n") + "\n");
-
-  execFileSync(
-    FFMPEG,
-    [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-f",
-      "concat",
-      "-safe",
-      "0",
-      "-i",
-      "shots.txt",
-      "-vf",
-      "fade=t=in:st=0:d=0.35",
-      "-c:v",
-      "libx264",
-      "-crf",
-      "20",
-      "-preset",
-      "slow",
-      "-pix_fmt",
-      "yuv420p",
-      "-movflags",
-      "+faststart",
-      "-an",
-      "-y",
-      resolve("docs/demo.mp4"),
-    ],
-    { cwd: ROOT, stdio: "inherit" },
-  );
-
-  execFileSync(
-    FFMPEG,
-    [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-i",
-      resolve("docs/demo.mp4"),
-      // No dither: the UI is mostly flat fills, and bayer noise doubles the file
-      // size for nothing.
-      "-vf",
-      "fps=11,scale=860:-2:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle",
-      "-loop",
-      "0",
-      "-y",
-      resolve("docs/demo.gif"),
-    ],
-    { cwd: ROOT, stdio: "inherit" },
-  );
-
-  console.log("wrote docs/demo.mp4 and docs/demo.gif");
 }
 
 // ---------------------------------------------------------------------- main
