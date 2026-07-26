@@ -15,9 +15,18 @@ tauri-plugin-process = { workspace = true }
 tauri-plugin-updater = { workspace = true }
 tauri-plugin-deep-link = { workspace = true }
 tauri-plugin-single-instance = { workspace = true }
+# Dev-only agent bridge. Optional so a release build links none of it: the
+# plugin exposes execute_js plus an IPC command runner, and an unauthenticated
+# WebSocket that reaches every command below (Steam sessions, keyring, paths).
+# cfg(debug_assertions) alone would not keep it out of a `tauri dev` handed to
+# someone else, so the feature is the real gate.
+tauri-plugin-mcp-bridge = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
+
+[features]
+mcp-bridge = ["dep:tauri-plugin-mcp-bridge"]
 
 [target.'cfg(windows)'.dependencies]
 winreg = { workspace = true }

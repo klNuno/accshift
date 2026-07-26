@@ -13,6 +13,7 @@
     "fmt:check": "cargo fmt --all --check",
     "clippy": "cargo clippy --workspace -- -D warnings",
     "preview": "vp preview",
+    "dev:mcp": "tauri dev --config src-tauri/tauri.mcp.conf.json --features mcp-bridge",
     "tauri": "tauri",
     "prepare": "vp config"
   },

@@ -23,6 +23,10 @@ tauri-plugin-process = "2.3.1"
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+# Dev-only agent bridge, kept out of every release build by the optional
+# `mcp-bridge` feature on accshift-gui. Version must stay in step with the
+# @hypothesi/tauri-mcp-server pinned in .mcp.json.
+tauri-plugin-mcp-bridge = "0.12.0"
 tauri-build = "2.5.6"
 winreg = "0.55"
 windows-sys = { version = "0.59", features = [

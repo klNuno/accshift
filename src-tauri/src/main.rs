@@ -43,7 +43,7 @@ fn main() {
         }
     };
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         // Must stay the first plugin: it short-circuits duplicate processes and,
         // via its `deep-link` feature, forwards accshift:// URLs from the second
         // instance's argv to this one as deep-link events.
@@ -63,7 +63,21 @@ fn main() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build());
+
+    // Registered after single_instance so the duplicate-process guard still wins
+    // the startup race, and bound to loopback: the plugin's own default is
+    // 0.0.0.0, which would put an unauthenticated WebSocket on the LAN. That
+    // socket answers execute_js, and JS in the webview reaches the IPC commands
+    // that read Steam sessions and the keyring.
+    #[cfg(all(debug_assertions, feature = "mcp-bridge"))]
+    let builder = builder.plugin(
+        tauri_plugin_mcp_bridge::Builder::new()
+            .bind_address("127.0.0.1")
+            .build(),
+    );
+
+    builder
         .manage(app_runtime::BootState::default())
         .manage(client)
         .setup(move |app| {
