@@ -1,6 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "app": {
+    "//": "The bridge returns every execute_js result through window.__TAURI__.core.invoke, which only exists with withGlobalTauri. Without it the plugin logs '__TAURI__ not available' and every webview_* tool times out after 2s. Dev-only, exactly like the capability below.",
+    "withGlobalTauri": true,
     "security": {
       "capabilities": [
         "default",
