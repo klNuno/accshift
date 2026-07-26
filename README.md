@@ -2,7 +2,7 @@
 <p align="center">Fast multi-platform desktop account switcher, built with Tauri 2 and Svelte 5.</p>
 
 <p align="center">
-  <img src="./docs/demo.gif" alt="accshift switching Steam accounts, browsing folders and searching" width="900" />
+  <img src="./docs/demo.gif" alt="accshift switching accounts, searching from the command palette, recoloring a card, browsing folders and changing theme" width="860" />
 </p>
 
 <p align="center">

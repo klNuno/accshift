@@ -35,10 +35,8 @@ import avatar4 from "./avatars/4.svg?no-inline";
 import avatar5 from "./avatars/5.svg?no-inline";
 import avatar6 from "./avatars/6.svg?no-inline";
 import avatar7 from "./avatars/7.svg?no-inline";
-import avatar8 from "./avatars/8.svg?no-inline";
-import avatar9 from "./avatars/9.svg?no-inline";
 
-const AVATARS = [avatar1, avatar2, avatar3, avatar4, avatar5, avatar6, avatar7, avatar8, avatar9];
+const AVATARS = [avatar1, avatar2, avatar3, avatar4, avatar5, avatar6, avatar7];
 
 interface TauriInternals {
   invoke: (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>;
@@ -59,68 +57,69 @@ const NOW = 1_760_000_000;
 const ACCOUNTS: DemoAccount[] = [
   {
     steam_id: "76561198000000001",
-    account_name: "nova_main",
-    persona_name: "Nova",
+    account_name: "",
+    persona_name: "main",
     last_login_at: NOW - 2 * 3600,
     avatar: AVATARS[0],
   },
   {
     steam_id: "76561198000000002",
-    account_name: "kestrel_hq",
-    persona_name: "Kestrel",
+    account_name: "",
+    persona_name: "bro's account",
     last_login_at: NOW - 3 * DAY,
     avatar: AVATARS[1],
   },
   {
     steam_id: "76561198000000003",
-    account_name: "bramble",
-    persona_name: "Bramble",
+    account_name: "",
+    persona_name: "alt",
     last_login_at: NOW - 9 * DAY,
     avatar: AVATARS[2],
   },
   {
     steam_id: "76561198000000004",
-    account_name: "vega_alt",
-    persona_name: "Vega",
+    account_name: "",
+    persona_name: "trading",
     last_login_at: NOW - 21 * DAY,
     avatar: AVATARS[3],
   },
   {
     steam_id: "76561198000000005",
-    account_name: "orion_smurf",
-    persona_name: "Orion",
-    last_login_at: NOW - 34 * DAY,
+    account_name: "",
+    persona_name: "smurf 1",
+    last_login_at: NOW - 12 * DAY,
     avatar: AVATARS[4],
   },
   {
     steam_id: "76561198000000006",
-    account_name: "wren_test",
-    persona_name: "Wren",
-    last_login_at: null,
+    account_name: "",
+    persona_name: "smurf 2",
+    last_login_at: NOW - 27 * DAY,
     avatar: AVATARS[5],
   },
   {
     steam_id: "76561198000000007",
-    account_name: "juno_dev",
-    persona_name: "Juno",
-    last_login_at: NOW - 5 * DAY,
+    account_name: "",
+    persona_name: "smurf 3",
+    last_login_at: null,
     avatar: AVATARS[6],
   },
+];
+
+// Riot keeps captured session snapshots rather than logins, so its cards show
+// a label and a state instead of a username.
+const RIOT_PROFILES = [
+  { id: "riot-1", label: "main", snapshot_state: "ready", last_used_at: (NOW - 3600) * 1000 },
+  { id: "riot-2", label: "smurf", snapshot_state: "ready", last_used_at: (NOW - 6 * DAY) * 1000 },
   {
-    steam_id: "76561198000000008",
-    account_name: "atlas_eu",
-    persona_name: "Atlas",
-    last_login_at: NOW - 12 * DAY,
-    avatar: AVATARS[7],
-  },
-  {
-    steam_id: "76561198000000009",
-    account_name: "pixel_na",
-    persona_name: "Pixel",
-    last_login_at: NOW - 27 * DAY,
-    avatar: AVATARS[8],
+    id: "riot-3",
+    label: "duo account",
+    snapshot_state: "ready",
+    last_used_at: (NOW - 19 * DAY) * 1000,
   },
 ];
+
+let currentRiotProfile = RIOT_PROFILES[0].id;
 
 const FOLDER_SMURFS = "demo-folder-smurfs";
 
@@ -147,6 +146,9 @@ function storageStores(): Record<string, unknown> {
     // mode off so a running OBS on the recording machine cannot blur the cards.
     "client.settings": {
       language: "en",
+      enabledPlatforms: ["steam", "riot"],
+      // The recording machine has reduced motion on at the OS level; "on"
+      // overrides it, which is the whole point of showing the animations.
       animations: "on",
       streamerMode: "off",
       // The AFK blur would drop the ACCSHIFT curtain over the cards mid-take.
@@ -161,15 +163,13 @@ function storageStores(): Record<string, unknown> {
           { type: "account", id: ACCOUNTS[0].steam_id },
           { type: "account", id: ACCOUNTS[1].steam_id },
           { type: "account", id: ACCOUNTS[2].steam_id },
-          { type: "account", id: ACCOUNTS[6].steam_id },
-          { type: "account", id: ACCOUNTS[7].steam_id },
-          { type: "account", id: ACCOUNTS[8].steam_id },
+          { type: "account", id: ACCOUNTS[3].steam_id },
           { type: "folder", id: FOLDER_SMURFS },
         ],
         [FOLDER_SMURFS]: [
-          { type: "account", id: ACCOUNTS[3].steam_id },
           { type: "account", id: ACCOUNTS[4].steam_id },
           { type: "account", id: ACCOUNTS[5].steam_id },
+          { type: "account", id: ACCOUNTS[6].steam_id },
         ],
       },
     },
@@ -226,6 +226,9 @@ const HANDLERS: Record<string, Handler> = {
   migrate_legacy_config: () => "skipped",
   get_runtime_os: () => "windows",
   list_custom_themes: () => [],
+  // Glass themes paint a captured wallpaper behind the window. That is the
+  // recording machine's desktop, so the demo never gets to see it.
+  get_desktop_wallpaper: () => null,
   detect_streaming_software: () => false,
   telemetry_get_state: () => ({
     mode_a_enabled: false,
@@ -236,18 +239,37 @@ const HANDLERS: Record<string, Handler> = {
   }),
   steam_has_api_key: () => true,
   platform_get_path: () => "C:\\Program Files (x86)\\Steam",
-  platform_get_accounts: (args) => (args.platformId === "steam" ? steamAccountsPayload() : []),
-  platform_get_current_account: (args) => (args.platformId === "steam" ? currentAccount : ""),
-  platform_get_startup_snapshot: (args) =>
-    args.platformId === "steam"
-      ? { accounts: steamAccountsPayload(), currentAccount }
-      : { accounts: [], currentAccount: "" },
+  platform_get_accounts: (args) =>
+    args.platformId === "riot"
+      ? RIOT_PROFILES
+      : args.platformId === "steam"
+        ? steamAccountsPayload()
+        : [],
+  platform_get_current_account: (args) =>
+    args.platformId === "riot"
+      ? currentRiotProfile
+      : args.platformId === "steam"
+        ? currentAccount
+        : "",
+  platform_get_startup_snapshot: (args) => {
+    if (args.platformId === "riot") {
+      return { profiles: RIOT_PROFILES, currentProfile: currentRiotProfile };
+    }
+    if (args.platformId === "steam") {
+      return { accounts: steamAccountsPayload(), currentAccount };
+    }
+    return { accounts: [], currentAccount: "" };
+  },
   platform_switch_account: async (args) => {
-    // Roughly what a real Steam switch feels like, so the recording keeps the
+    // Roughly what a real switch feels like, so the recording keeps the
     // spinner on screen long enough to read.
     await delay(900);
     if (typeof args.accountId === "string") {
-      currentAccount = args.accountId;
+      if (args.platformId === "riot") {
+        currentRiotProfile = args.accountId;
+      } else {
+        currentAccount = args.accountId;
+      }
     }
     return null;
   },
