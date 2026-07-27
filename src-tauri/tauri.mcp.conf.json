@@ -1,14 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "app": {
-    "//": "The bridge returns every execute_js result through window.__TAURI__.core.invoke, which only exists with withGlobalTauri. Without it the plugin logs '__TAURI__ not available' and every webview_* tool times out after 2s. Dev-only, exactly like the capability below.",
     "withGlobalTauri": true,
     "security": {
       "capabilities": [
         "default",
         {
           "identifier": "mcp-bridge",
-          "description": "Dev-only agent bridge. Inlined here rather than dropped in capabilities/, which the build script scans whole — a file in there would demand the plugin from every release build too.",
+          "description": "Dev-only agent bridge. Inlined here rather than dropped in capabilities/, which the build script scans whole — a file in there would demand the plugin from every release build too. withGlobalTauri above belongs to the same setup: the bridge returns every execute_js result through window.__TAURI__.core.invoke, and without it the plugin logs '__TAURI__ not available' and every webview_* tool times out after 2s. No comment key here — the config schema rejects unknown properties, '//' included.",
           "windows": ["main"],
           "permissions": ["mcp-bridge:default"]
         }

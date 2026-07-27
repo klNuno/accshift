@@ -3,12 +3,15 @@ import { defineConfig } from "vite-plus";
 import tailwindcss from "@tailwindcss/vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 
-// Demo recording mode: every `invoke` resolves to a fake dataset instead of the
-// real backend, so a capture never shows real accounts and a click can never
-// reach Steam. Only ever set by hand when recording; never in a real build.
-const demoMode = process.env.VITE_DEMO === "1";
-const demoCore = fileURLToPath(new URL("./src/lib/demo/demoCore.ts", import.meta.url));
-// Escape hatch so demoCore can re-export the real module (Channel and friends,
+// Mock mode: every `invoke` resolves to a fake dataset instead of the real
+// backend, so nothing on screen is a real account and no click can reach Steam.
+// `VITE_MOCK=<scenario>` picks one of src/lib/mock/scenarios.ts; `VITE_DEMO=1`
+// is the legacy spelling for the frozen README dataset. Only ever set by hand
+// (see scripts/dev-mock.mjs); never in a real build.
+const mockScenario = process.env.VITE_DEMO === "1" ? "demo" : (process.env.VITE_MOCK ?? "");
+const mockMode = mockScenario !== "";
+const mockCore = fileURLToPath(new URL("./src/lib/mock/index.ts", import.meta.url));
+// Escape hatch so the mock can re-export the real module (Channel and friends,
 // which @tauri-apps/plugin-* import) without the alias below looping back.
 const tauriCoreReal = fileURLToPath(
   new URL("./node_modules/@tauri-apps/api/core.js", import.meta.url),
@@ -34,20 +37,24 @@ export default defineConfig({
       ignored: ["**/src-tauri/**"],
     },
   },
+  // Read by src/lib/mock/runtime.ts. An explicit define rather than
+  // import.meta.env: the value has to exist even when the var comes from the
+  // shell rather than an .env file.
+  define: { __MOCK_SCENARIO__: JSON.stringify(mockScenario) },
   resolve: {
     alias: [
       { find: "$lib", replacement: "/src/lib" },
       // Absolute paths, not "/src/...": the dependency optimizer resolves these
       // from inside node_modules, where a root-relative path does not exist.
-      // The exact-match regex keeps demoCore's own re-export from looping.
-      ...(demoMode
+      // The exact-match regex keeps the mock's own re-export from looping.
+      ...(mockMode
         ? [
             { find: "@tauri-core-real", replacement: tauriCoreReal },
-            { find: /^@tauri-apps\/api\/core$/, replacement: demoCore },
+            { find: /^@tauri-apps\/api\/core$/, replacement: mockCore },
           ]
         : []),
     ],
   },
   // The alias points at app source, which the optimizer must not pre-bundle.
-  optimizeDeps: demoMode ? { exclude: ["@tauri-apps/api"] } : {},
+  optimizeDeps: mockMode ? { exclude: ["@tauri-apps/api"] } : {},
 });
