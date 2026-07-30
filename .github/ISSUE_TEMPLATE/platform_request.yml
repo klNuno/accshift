@@ -1,0 +1,60 @@
+name: Platform request
+description: Ask for support for a launcher or service accshift does not handle yet.
+title: "[Platform]: "
+labels: ["platform request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the "Current Status" table in the
+        [README](https://github.com/klNuno/accshift#current-status) first: the
+        platform may already be implemented, or marked as not feasible on your OS.
+
+  - type: input
+    id: launcher
+    attributes:
+      label: Launcher or service
+      description: Name of the launcher or service, and a link to its download page if it is not well known.
+      placeholder: "EA app"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: operating-systems
+    attributes:
+      label: Operating systems it should work on
+      options:
+        - label: Windows
+        - label: macOS
+        - label: Linux
+
+  - type: textarea
+    id: session-storage
+    attributes:
+      label: How the launcher stores its session
+      description: >
+        If you know, describe where the session lives: config files, registry
+        keys, cookie jars, keychain entries, tokens. Paths and file names help a
+        lot. Leave blank if you do not know.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: can-test
+    attributes:
+      label: Can you help test
+      description: Platform work is hard to review without someone who owns accounts on the service.
+      options:
+        - "Yes, I have multiple accounts and can test builds"
+        - "Yes, but I only have one account"
+        - "No"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: Additional context, prior art, or existing tools that solve this.
+    validations:
+      required: false

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation and setup guides
+    url: https://github.com/klNuno/accshift/wiki
+    about: Per-platform setup, troubleshooting, CLI reference and security details.
+  - name: Questions and ideas
+    url: https://github.com/klNuno/accshift/discussions
+    about: Ask a question or discuss an idea before opening an issue.
+  - name: Report a security vulnerability
+    url: https://github.com/klNuno/accshift/security/advisories/new
+    about: Report privately through GitHub Security Advisories, never as a public issue.

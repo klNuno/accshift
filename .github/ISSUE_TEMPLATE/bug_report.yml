@@ -1,0 +1,114 @@
+name: Bug report
+description: Report something that does not work as documented.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [Troubleshooting](https://github.com/klNuno/accshift/wiki/Troubleshooting)
+        wiki page first. For a security vulnerability, do not open an issue: use
+        [Security Advisories](https://github.com/klNuno/accshift/security/advisories/new).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Describe the actual behaviour.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: Describe what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps that reproduce the problem from a clean start.
+      placeholder: |
+        1. Open accshift
+        2. Go to the Steam tab
+        3. Click switch on account X
+        4. See the error
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Affected platform
+      description: Which launcher integration is affected.
+      options:
+        - Steam
+        - Riot Games
+        - Battle.net
+        - Epic Games
+        - Ubisoft Connect
+        - Roblox
+        - GOG Galaxy
+        - Jagex Launcher
+        - Discord
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS
+        - Linux
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: accshift version
+      description: Shown in Settings, or run `accshift --version`.
+      placeholder: "1.0.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Install method
+      options:
+        - NSIS installer
+        - MSI
+        - deb
+        - rpm
+        - AppImage
+        - dmg
+        - Built from source
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >
+        Relevant excerpt from the log folder, opened with the Logs button in
+        Settings. Redact anything sensitive before pasting.
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: no-secrets
+    attributes:
+      label: Confirmation
+      options:
+        - label: This issue contains no passwords, session tokens, cookies or other credentials.
+          required: true
