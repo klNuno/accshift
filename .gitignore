@@ -4,6 +4,7 @@ node_modules/
 # Build outputs
 dist/
 target/
+scripts/social-card.html
 src-tauri/keys/
 src-tauri/binaries/
 
