@@ -209,10 +209,6 @@ src-tauri/                        # Tauri GUI thin wrapper
   src/main.rs commands.rs app_runtime.rs tauri_context.rs
 ```
 
-## Documentation
-
-Full user guide, per-platform setup and troubleshooting: the [website](https://klnuno.github.io/accshift/) and the [wiki](https://github.com/klNuno/accshift/wiki).
-
 ## Disclaimer
 
 This project is not affiliated with Valve, Blizzard, Riot Games, Epic Games, Ubisoft, Roblox Corporation, CD PROJEKT (GOG), Jagex, or Discord Inc. Use at your own risk.
