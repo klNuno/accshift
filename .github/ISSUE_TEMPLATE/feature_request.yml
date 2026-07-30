@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest a change or an addition that is not a new platform.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For support for a new launcher, use the Platform request template instead.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what makes it hard or impossible today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What you would like accshift to do. Mention whether it applies to the GUI, the CLI, or both.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you looked at, including workarounds you currently use.
+    validations:
+      required: false
