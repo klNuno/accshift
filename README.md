@@ -1,5 +1,5 @@
 <h1 align="center">accshift</h1>
-<p align="center">Fast multi-platform desktop account switcher, built with Tauri 2 and Svelte 5.</p>
+<p align="center">Switch Steam, Valorant, League of Legends, Battle.net, Epic Games, Ubisoft and Roblox accounts in one click. No passwords stored. Windows, macOS and Linux. Built with Tauri 2 and Svelte 5.</p>
 
 <p align="center">
   <img src="./docs/demo-switch.webp" alt="Switching Steam accounts from the grid, then from the Ctrl+K command palette" />
@@ -20,22 +20,22 @@
 
 ## Current Status
 
-| Platform             | Windows         | macOS           | Linux           |
-| -------------------- | --------------- | --------------- | --------------- |
-| Steam                | ✅ Done         | ✅ Done         | ✅ Done         |
-| Riot Games           | ✅ Done         | 🚧 Possible     | ⛔ Not feasible |
-| Battle.net           | ✅ Done         | ✅ Done         | ⛔ Not feasible |
-| Epic Games           | ✅ Done         | 🚧 Possible     | 🚧 Possible     |
-| Ubisoft Connect      | ✅ Done         | 🚧 Possible     | 🚧 Possible     |
-| Roblox               | ✅ Done         | 🚧 Possible     | 🚧 Possible     |
-| GOG Galaxy           | 🧪 Need testing | 🚧 Possible     | ⛔ Not feasible |
-| Jagex Launcher       | 🧪 Need testing | 🚧 Possible     | ⛔ Not feasible |
-| Discord              | 🧪 Need testing | 🚧 Possible     | 🚧 Possible     |
-| EA app               | 🚧 Possible     | 🚧 Possible     | ⛔ Not feasible |
-| Rockstar Launcher    | 🚧 Possible     | ⛔ Not feasible | 🚧 Possible     |
-| GeForce Now          | 🚧 Possible     | 🚧 Possible     | 🚧 Possible     |
-| HoYoverse / HoYoPlay | 🚧 Possible     | ⛔ Not feasible | ⛔ Not feasible |
-| Minecraft Launcher   | 🚧 Possible     | 🚧 Possible     | 🚧 Possible     |
+| Platform                                                | Windows         | macOS           | Linux           |
+| ------------------------------------------------------- | --------------- | --------------- | --------------- |
+| Steam                                                   | ✅ Done         | ✅ Done         | ✅ Done         |
+| Riot Games (Valorant, League of Legends, TFT)           | ✅ Done         | 🚧 Possible     | ⛔ Not feasible |
+| Battle.net (Overwatch 2, Diablo IV, WoW, Call of Duty)  | ✅ Done         | ✅ Done         | ⛔ Not feasible |
+| Epic Games (Fortnite, Rocket League)                    | ✅ Done         | 🚧 Possible     | 🚧 Possible     |
+| Ubisoft Connect (Rainbow Six Siege, The Division 2)     | ✅ Done         | 🚧 Possible     | 🚧 Possible     |
+| Roblox                                                  | ✅ Done         | 🚧 Possible     | 🚧 Possible     |
+| GOG Galaxy (Cyberpunk 2077, The Witcher 3)              | 🧪 Need testing | 🚧 Possible     | ⛔ Not feasible |
+| Jagex Launcher (RuneScape, Old School RuneScape)        | 🧪 Need testing | 🚧 Possible     | ⛔ Not feasible |
+| Discord                                                 | 🧪 Need testing | 🚧 Possible     | 🚧 Possible     |
+| EA app (Apex Legends, The Sims 4, Battlefield)          | 🚧 Possible     | 🚧 Possible     | ⛔ Not feasible |
+| Rockstar Launcher (GTA V, Red Dead Redemption 2)        | 🚧 Possible     | ⛔ Not feasible | 🚧 Possible     |
+| GeForce Now                                             | 🚧 Possible     | 🚧 Possible     | 🚧 Possible     |
+| HoYoverse / HoYoPlay (Genshin Impact, Honkai Star Rail) | 🚧 Possible     | ⛔ Not feasible | ⛔ Not feasible |
+| Minecraft Launcher                                      | 🚧 Possible     | 🚧 Possible     | 🚧 Possible     |
 
 - `✅ Done`: GUI and CLI implemented and verified on target
 - `🧪 Need testing`: implemented, may still have bugs
@@ -46,9 +46,9 @@ Users can propose new platforms through [GitHub Issues](https://github.com/klNun
 
 ## Features
 
-- **One-click account switching** for Steam, Riot Games, Battle.net, Epic Games, Ubisoft Connect, Roblox, GOG Galaxy, Jagex Launcher and Discord: no passwords stored; sensitive cookies, tokens and session snapshots are encrypted at rest.
+- **One-click account switching** for Steam, Riot Games (Valorant, League of Legends), Battle.net (Overwatch 2, Diablo IV), Epic Games (Fortnite, Rocket League), Ubisoft Connect (Rainbow Six Siege), Roblox, GOG Galaxy, Jagex Launcher and Discord: no passwords stored; sensitive cookies, tokens and session snapshots are encrypted at rest.
 - **Personas**: group one account per platform under a single identity and switch them all in one click.
-- **Streamer mode**: automatically blurs account names and avatars when OBS, Streamlabs, XSplit or Twitch Studio is running.
+- **Streamer mode**: automatically blurs account names and avatars when OBS, Streamlabs, XSplit, Wirecast or Twitch Studio is running.
 - **Folders, search, command palette and keyboard navigation** to manage large account collections.
 - **CLI and deep links** (`accshift://`) for scripting, Stream Deck and automation.
 - **English and French UI**, light/dark/custom themes.
@@ -208,6 +208,10 @@ crates/
 src-tauri/                        # Tauri GUI thin wrapper
   src/main.rs commands.rs app_runtime.rs tauri_context.rs
 ```
+
+## Documentation
+
+Full user guide, per-platform setup and troubleshooting: the [website](https://klnuno.github.io/accshift/) and the [wiki](https://github.com/klNuno/accshift/wiki).
 
 ## Disclaimer
 
