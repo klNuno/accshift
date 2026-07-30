@@ -23,8 +23,8 @@
     "targets": ["nsis", "deb", "rpm", "appimage", "app", "dmg"],
     "externalBin": ["binaries/accshift"],
     "category": "Utility",
-    "shortDescription": "Multi-platform desktop account switcher",
-    "longDescription": "Accshift is a fast desktop account switcher for Steam, Riot, Battle.net, Epic, Ubisoft and Roblox. GUI + CLI, built with Tauri 2 and Svelte 5.",
+    "shortDescription": "One-click account switcher for Steam, Riot, Battle.net, Epic and more",
+    "longDescription": "Accshift switches game launcher accounts in one click: Steam, Riot Games (Valorant, League of Legends), Battle.net (Overwatch 2, Diablo IV), Epic Games (Fortnite, Rocket League), Ubisoft Connect, Roblox, GOG Galaxy, Jagex Launcher and Discord. No passwords are stored and session data is encrypted at rest. Includes a GUI and a scriptable CLI. Built with Tauri 2 and Svelte 5.",
     "homepage": "https://github.com/klNuno/accshift",
     "windows": {
       "allowDowngrades": false,

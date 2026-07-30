@@ -5,7 +5,7 @@ members = ["src-tauri", "crates/accshift-core", "crates/accshift-cli"]
 [workspace.package]
 version = "1.0.1"
 edition = "2021"
-authors = ["you"]
+authors = ["meetsu"]
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
