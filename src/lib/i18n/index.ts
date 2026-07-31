@@ -9,9 +9,16 @@ export type TranslationParams = Record<string, TranslationValue>;
 
 export const DEFAULT_LOCALE: Locale = "en";
 
+// Default first, then alphabetical by code. This is the order of the language
+// picker in the settings, so it must stay stable and predictable.
 export const LANGUAGE_OPTIONS = [
   { code: "en", labelKey: "language.english" },
+  { code: "es", labelKey: "language.spanish" },
   { code: "fr", labelKey: "language.french" },
+  { code: "pt", labelKey: "language.portuguese" },
+  { code: "pt-br", labelKey: "language.portugueseBrazil" },
+  { code: "ru", labelKey: "language.russian" },
+  { code: "zh", labelKey: "language.chinese" },
 ] as const satisfies ReadonlyArray<{ code: Locale; labelKey: MessageKey }>;
 
 const LOCALE_SET = new Set<Locale>(LANGUAGE_OPTIONS.map((option) => option.code));
@@ -46,6 +53,11 @@ export function detectPreferredLocale(): Locale {
     if (typeof raw !== "string") continue;
     const normalized = raw.trim().toLowerCase();
     if (!normalized) continue;
+    // Exact tag first, base subtag second. That two-step is what maps the tags
+    // a browser actually reports onto the shipped codes: "pt-BR" hits the
+    // Brazilian dictionary exactly, while "pt-PT", "es-419" and "zh-CN" fall
+    // back to "pt", "es" and "zh". Traditional Chinese ("zh-TW", "zh-Hant")
+    // also lands on the simplified dictionary until a zh-Hant one ships.
     if (isLocale(normalized)) return normalized;
     const base = normalized.split("-")[0];
     if (isLocale(base)) return base;

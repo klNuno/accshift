@@ -89,6 +89,22 @@ describe("detectPreferredLocale", () => {
     expect(detectPreferredLocale()).toBe("en");
   });
 
+  it("prefers the regional dictionary over the base one when both ship", () => {
+    vi.stubGlobal("navigator", { languages: ["pt-BR"], language: "pt-BR" });
+    expect(detectPreferredLocale()).toBe("pt-br");
+  });
+
+  it("maps a regional tag without its own dictionary to the base locale", () => {
+    // pt-PT, es-419 and zh-CN ship no dedicated dictionary: each must land on
+    // its base locale rather than silently falling through to English.
+    vi.stubGlobal("navigator", { languages: ["pt-PT"], language: "pt-PT" });
+    expect(detectPreferredLocale()).toBe("pt");
+    vi.stubGlobal("navigator", { languages: ["es-419"], language: "es-419" });
+    expect(detectPreferredLocale()).toBe("es");
+    vi.stubGlobal("navigator", { languages: ["zh-CN"], language: "zh-CN" });
+    expect(detectPreferredLocale()).toBe("zh");
+  });
+
   it("defaults to en when navigator is undefined", () => {
     vi.stubGlobal("navigator", undefined);
     expect(detectPreferredLocale()).toBe("en");

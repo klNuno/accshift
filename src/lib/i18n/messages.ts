@@ -544,7 +544,12 @@ export const EN_MESSAGES = {
   "color.gray": "Gray",
 
   "language.english": "English",
-  "language.french": "French",
+  "language.french": "Français",
+  "language.spanish": "Español",
+  "language.portuguese": "Português (Portugal)",
+  "language.portugueseBrazil": "Português (Brasil)",
+  "language.russian": "Русский",
+  "language.chinese": "简体中文",
   "theme.dark": "Dark",
   "theme.light": "Light",
   "theme.midnight": "Midnight",

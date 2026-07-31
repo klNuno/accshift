@@ -1,6 +1,10 @@
 import { EN_MESSAGES, type MessageKey } from "./messages";
 
-export type Locale = "en" | "fr";
+// Locale codes are lowercase BCP 47 tags. Region-less codes are deliberate:
+// detectPreferredLocale() falls back to the base subtag, so "pt-PT" reaches
+// "pt", "es-419" reaches "es" and "zh-CN" reaches "zh". Only a variant that
+// needs its own dictionary carries a region, hence "pt-br" next to "pt".
+export type Locale = "en" | "es" | "fr" | "pt" | "pt-br" | "ru" | "zh";
 
 type Dictionary = Record<MessageKey, string>;
 
@@ -9,7 +13,12 @@ type Dictionary = Record<MessageKey, string>;
 // locale is pulled in on demand through a dynamic import so its dictionary
 // stays out of the initial bundle.
 const LOCALE_LOADERS: Partial<Record<Locale, () => Promise<Dictionary>>> = {
+  es: () => import("./messages.es").then((module) => module.ES_MESSAGES),
   fr: () => import("./messages.fr").then((module) => module.FR_MESSAGES),
+  pt: () => import("./messages.pt").then((module) => module.PT_MESSAGES),
+  "pt-br": () => import("./messages.pt-br").then((module) => module.PT_BR_MESSAGES),
+  ru: () => import("./messages.ru").then((module) => module.RU_MESSAGES),
+  zh: () => import("./messages.zh").then((module) => module.ZH_MESSAGES),
 };
 
 // $state.raw: the record is replaced wholesale when a locale finishes

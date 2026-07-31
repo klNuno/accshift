@@ -41,7 +41,13 @@
       const sectionBias = command.section === "accounts" ? 4 : command.section === "actions" ? 2 : 0;
       scored.push({ command, score: score + sectionBias });
     }
-    scored.sort((a, b) => b.score - a.score || a.command.title.localeCompare(b.command.title));
+    // Tie-break alphabetically in the active UI language: App.svelte mirrors the
+    // locale onto <html lang>, and collation is locale dependent (Cyrillic order,
+    // pinyin order for Han, accents in the Latin locales).
+    const collationLocale = document.documentElement.lang || undefined;
+    scored.sort(
+      (a, b) => b.score - a.score || a.command.title.localeCompare(b.command.title, collationLocale),
+    );
     return scored.map((entry) => entry.command);
   });
 
