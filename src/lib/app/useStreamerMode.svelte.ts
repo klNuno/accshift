@@ -27,12 +27,6 @@ export function createStreamerModeController({ getSettings, setStreamerMode }: S
       streamingDetected = false;
       return;
     }
-    // Nothing is painted while the page is hidden, so a scan cannot change
-    // anything the user sees. Skipping it drops the whole idle cost: each
-    // tick is a full process-table refresh in the backend. The detected state
-    // is deliberately left alone, so a stream running before the window was
-    // hidden keeps the overlay armed, and returning to visible polls at once.
-    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
     if (polling) return;
     polling = true;
     try {
@@ -49,28 +43,16 @@ export function createStreamerModeController({ getSettings, setStreamerMode }: S
     }
   }
 
-  // Catches up as soon as the window is shown again, so a stream started while
-  // it was hidden is detected on the next frame rather than up to a tick later.
-  function handleVisibilityChange() {
-    if (document.visibilityState === "visible") void poll();
-  }
-
   function start() {
     if (pollTimer) return;
     void poll();
     pollTimer = setInterval(() => void poll(), POLL_INTERVAL_MS);
-    if (typeof document !== "undefined") {
-      document.addEventListener("visibilitychange", handleVisibilityChange);
-    }
   }
 
   function stop() {
     if (pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;
-    }
-    if (typeof document !== "undefined") {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
     }
   }
 
