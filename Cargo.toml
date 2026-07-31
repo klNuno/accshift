@@ -51,7 +51,7 @@ keyring = { version = "3", default-features = false, features = [
 ] }
 base64 = "0.22"
 pbkdf2 = "0.12"
-sha2 = "0.10"
+sha2 = "0.11"
 zeroize = "1"
 
 [profile.release]
