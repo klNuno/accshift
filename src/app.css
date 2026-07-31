@@ -17,11 +17,13 @@
 
 :root {
   /* CJK families close the stack: Inter and the usual UI faces carry Latin and
-     Cyrillic but no Han, and the Chinese locale would otherwise depend on
-     whatever the webview picks on its own. */
+     Cyrillic but no Han. Naming the Simplified Chinese faces is not cosmetic on
+     Linux, where fontconfig hands out Noto Sans CJK *JP* by default and renders
+     Chinese with Japanese glyph variants. Hiragino Sans GB covers the macOS
+     images that ship without PingFang. */
   font-family:
     Inter, system-ui, Avenir, Helvetica, Arial, "Microsoft YaHei UI", "PingFang SC",
-    "Noto Sans CJK SC", "Noto Sans SC", sans-serif;
+    "Hiragino Sans GB", "Noto Sans CJK SC", "Noto Sans SC", sans-serif;
   line-height: 1.5;
   font-weight: 400;
   font-synthesis: none;
