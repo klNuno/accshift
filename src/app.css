@@ -15,6 +15,35 @@
     U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
+/* Last-resort Han coverage. Windows, macOS and a desktop Linux all ship a CJK
+   face, but a minimal Linux install ships none and would render the Chinese UI
+   as empty boxes. These two are Noto Sans SC cut down to the 489 characters the
+   Chinese dictionary can produce, ~70 KB each. They sit LAST in the stacks
+   below, so a real system face always wins, and the unicode-range keeps the
+   engine from fetching them for anything but Han. See LICENSE.md next to them
+   for the regeneration steps when Chinese strings are added. */
+@font-face {
+  font-family: "Noto Sans SC Subset";
+  src: url("/fonts/NotoSansSC-Subset-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  unicode-range:
+    U+2E80-2EFF, U+3000-303F, U+31C0-31EF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF, U+FE30-FE4F,
+    U+FF00-FFEF;
+}
+
+@font-face {
+  font-family: "Noto Sans SC Subset";
+  src: url("/fonts/NotoSansSC-Subset-Bold.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  unicode-range:
+    U+2E80-2EFF, U+3000-303F, U+31C0-31EF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF, U+FE30-FE4F,
+    U+FF00-FFEF;
+}
+
 :root {
   /* CJK families close the stack: Inter and the usual UI faces carry Latin and
      Cyrillic but no Han. Naming the Simplified Chinese faces is not cosmetic on
@@ -23,7 +52,7 @@
      images that ship without PingFang. */
   font-family:
     Inter, system-ui, Avenir, Helvetica, Arial, "Microsoft YaHei UI", "PingFang SC",
-    "Hiragino Sans GB", "Noto Sans CJK SC", "Noto Sans SC", sans-serif;
+    "Hiragino Sans GB", "Noto Sans CJK SC", "Noto Sans SC", "Noto Sans SC Subset", sans-serif;
   line-height: 1.5;
   font-weight: 400;
   font-synthesis: none;
