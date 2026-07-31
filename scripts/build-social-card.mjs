@@ -36,10 +36,7 @@ const PLATFORMS = [
 ];
 
 async function loadIconPaths() {
-  const src = await readFile(
-    join(REPO_DIR, "src", "lib", "shared", "platformIcons.ts"),
-    "utf8",
-  );
+  const src = await readFile(join(REPO_DIR, "src", "lib", "shared", "platformIcons.ts"), "utf8");
   const body = src.slice(src.indexOf("PLATFORM_ICON_PATHS"));
   const paths = {};
   for (const [, key, d] of body.matchAll(/"?([a-z-]+)"?:\s*\n?\s*"((?:[^"\\]|\\.)*)"/g)) {
@@ -64,13 +61,15 @@ async function loadLogo() {
     MARK_BOX.h + MARK_PAD * 2,
   ].join(" ");
 
-  return svg
-    .replace(/<\?xml[^>]*\?>\s*/, "")
-    // The rounded plate is the same colour as the card, so it contributes
-    // nothing but padding. Dropping it lets the mark run to the crop.
-    .replace(/<rect\b[^>]*\/>/, "")
-    .replace(/\s(width|height)="\d+"/g, "")
-    .replace(/viewBox="[^"]*"/, `viewBox="${viewBox}"`);
+  return (
+    svg
+      .replace(/<\?xml[^>]*\?>\s*/, "")
+      // The rounded plate is the same colour as the card, so it contributes
+      // nothing but padding. Dropping it lets the mark run to the crop.
+      .replace(/<rect\b[^>]*\/>/, "")
+      .replace(/\s(width|height)="\d+"/g, "")
+      .replace(/viewBox="[^"]*"/, `viewBox="${viewBox}"`)
+  );
 }
 
 const icon = (d, label) =>
