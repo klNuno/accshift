@@ -39,7 +39,7 @@ webview2-com = "0.38"
 windows-core = "0.61"
 # Same windows crate tauri pulls in; used for the WM_NCACTIVATE subclass that
 # keeps DWM system backdrops alive while the window is unfocused.
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
   "Win32_Storage_Xps",
