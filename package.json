@@ -33,15 +33,15 @@
     "svelte-check": "^4.7.4",
     "tailwindcss": "^4.3.3",
     "typescript": "^6.0.2",
-    "vite": "npm:@voidzero-dev/vite-plus-core@0.1.13",
+    "vite": "npm:@voidzero-dev/vite-plus-core@0.2.6",
     "vite-plus": "0.2.6",
-    "vitest": "npm:@voidzero-dev/vite-plus-test@0.1.13"
+    "vitest": "4.1.10"
   },
   "packageManager": "pnpm@10.32.1",
   "pnpm": {
     "overrides": {
-      "vite": "npm:@voidzero-dev/vite-plus-core@0.1.13",
-      "vitest": "npm:@voidzero-dev/vite-plus-test@0.1.13"
+      "vite": "npm:@voidzero-dev/vite-plus-core@0.2.6",
+      "vitest": "4.1.10"
     }
   }
 }
