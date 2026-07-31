@@ -553,6 +553,11 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
 
   "language.english": "English",
   "language.french": "Français",
+  "language.spanish": "Español",
+  "language.portuguese": "Português (Portugal)",
+  "language.portugueseBrazil": "Português (Brasil)",
+  "language.russian": "Русский",
+  "language.chinese": "简体中文",
   "theme.dark": "Sombre",
   "theme.light": "Clair",
   "theme.midnight": "Minuit",

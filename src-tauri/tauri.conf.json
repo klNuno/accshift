@@ -38,7 +38,15 @@
         "sidebarImage": "icons/installer/nsis-sidebar.bmp",
         "installMode": "currentUser",
         "startMenuFolder": "Accshift",
-        "languages": ["English", "French"],
+        "languages": [
+          "English",
+          "French",
+          "Spanish",
+          "Portuguese",
+          "PortugueseBR",
+          "Russian",
+          "SimpChinese"
+        ],
         "displayLanguageSelector": false,
         "compression": "lzma",
         "installerHooks": "./windows/hooks.nsh"

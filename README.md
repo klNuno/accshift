@@ -51,7 +51,7 @@ Users can propose new platforms through [GitHub Issues](https://github.com/klNun
 - **Streamer mode**: automatically blurs account names and avatars when OBS, Streamlabs, XSplit, Wirecast or Twitch Studio is running.
 - **Folders, search, command palette and keyboard navigation** to manage large account collections.
 - **CLI and deep links** (`accshift://`) for scripting, Stream Deck and automation.
-- **English and French UI**, light/dark/custom themes.
+- **UI in 7 languages** (English, Spanish, French, Portuguese, Brazilian Portuguese, Russian, Simplified Chinese), light/dark/custom themes.
 
 ### Organise a large library
 
