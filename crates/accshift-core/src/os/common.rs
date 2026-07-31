@@ -130,6 +130,26 @@ pub fn any_process_running(process_names: &[&str]) -> bool {
     })
 }
 
+/// The subset of `process_names` that currently has a live process, resolved
+/// with a single process-table refresh for the whole batch. Callers that need
+/// the matching names (log details, diagnostics) should prefer this over one
+/// `is_process_running` call per name.
+pub fn running_process_names<'a>(process_names: &'a [&'a str]) -> Vec<&'a str> {
+    let matchers: Vec<NameMatcher> = process_names.iter().map(|n| NameMatcher::new(n)).collect();
+    with_refreshed_system(|system| {
+        matchers
+            .iter()
+            .filter(|matcher| {
+                system
+                    .processes()
+                    .values()
+                    .any(|p| is_live(p) && matcher.matches(p))
+            })
+            .map(|matcher| matcher.target)
+            .collect()
+    })
+}
+
 /// Executable names (lowercased, extension stripped) of streaming/recording
 /// software whose presence flips the UI into streamer mode. Windows reports
 /// e.g. "Streamlabs OBS.exe" and "XSplit.Core.exe", so the match lowercases and
@@ -150,6 +170,19 @@ const STREAMING_SOFTWARE: &[&str] = &[
 /// strips a trailing ".exe" so Windows ("OBS64.exe") and Unix ("obs") report
 /// the same way.
 fn is_streaming_process_name(name: &str) -> bool {
+    // Process names are ASCII in practice, and this runs for every entry in
+    // the process table on every streamer-mode poll. Compare in place instead
+    // of allocating a lowercased copy per process.
+    if name.is_ascii() {
+        let stem = if name.len() >= 4 && name[name.len() - 4..].eq_ignore_ascii_case(".exe") {
+            &name[..name.len() - 4]
+        } else {
+            name
+        };
+        return STREAMING_SOFTWARE
+            .iter()
+            .any(|s| s.eq_ignore_ascii_case(stem));
+    }
     let name = name.to_lowercase();
     let stem = name.strip_suffix(".exe").unwrap_or(name.as_str());
     STREAMING_SOFTWARE.contains(&stem)
@@ -237,10 +270,23 @@ pub fn kill_processes(process_names: &[&str]) {
 /// sleep `settle` so exit-time flushes (config files, leveldb, ...) land on
 /// disk. No-op when none of the processes is running.
 pub fn quit_processes_and_wait(process_names: &[&str], timeout_ms: u32, settle: Duration) {
-    if !any_process_running(process_names) {
+    let matchers: Vec<NameMatcher> = process_names.iter().map(|n| NameMatcher::new(n)).collect();
+    // One snapshot: kill every live matching process across all names.
+    let killed_any = with_refreshed_system(|system| {
+        let mut killed = false;
+        for p in system.processes().values() {
+            if is_live(p) && matchers.iter().any(|m| m.matches(p)) {
+                if !p.kill_with(Signal::Kill).unwrap_or(false) {
+                    let _ = p.kill();
+                }
+                killed = true;
+            }
+        }
+        killed
+    });
+    if !killed_any {
         return;
     }
-    kill_processes(process_names);
     for process_name in process_names {
         wait_for_process_exit(process_name, timeout_ms);
     }

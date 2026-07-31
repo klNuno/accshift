@@ -7,6 +7,7 @@ export function createWindowActivity() {
   let isPageVisible = $state(true);
   let started = false;
   let syncing = false;
+  let pendingSync = false;
   let cleanupFns: Array<() => void | Promise<void>> = [];
 
   function updatePageVisibility() {
@@ -16,20 +17,30 @@ export function createWindowActivity() {
 
   async function sync() {
     updatePageVisibility();
-    if (!appWindow || syncing) return;
+    if (!appWindow) return;
+    // A drag-resize fires onResized continuously. Dropping events outright
+    // could leave the last one unanswered, so remember that one arrived and
+    // run a single trailing pass instead of a round-trip pair per event.
+    if (syncing) {
+      pendingSync = true;
+      return;
+    }
     syncing = true;
     try {
-      const [focusedResult, minimizedResult] = await Promise.allSettled([
-        appWindow.isFocused(),
-        appWindow.isMinimized(),
-      ]);
+      do {
+        pendingSync = false;
+        const [focusedResult, minimizedResult] = await Promise.allSettled([
+          appWindow.isFocused(),
+          appWindow.isMinimized(),
+        ]);
 
-      if (focusedResult.status === "fulfilled") {
-        isFocused = focusedResult.value;
-      }
-      if (minimizedResult.status === "fulfilled") {
-        isMinimized = Boolean(minimizedResult.value);
-      }
+        if (focusedResult.status === "fulfilled") {
+          isFocused = focusedResult.value;
+        }
+        if (minimizedResult.status === "fulfilled") {
+          isMinimized = Boolean(minimizedResult.value);
+        }
+      } while (pendingSync);
     } finally {
       syncing = false;
     }
@@ -41,9 +52,13 @@ export function createWindowActivity() {
     updatePageVisibility();
 
     if (typeof window !== "undefined") {
+      // The event itself carries the answer both queries would return: the
+      // window just gained focus, and a focused window is not minimized.
+      // This mirrors what the Tauri onFocusChanged handler below does.
       const handleWindowFocus = () => {
         isFocused = true;
-        void sync();
+        isMinimized = false;
+        updatePageVisibility();
       };
       const handleWindowBlur = () => {
         isFocused = false;

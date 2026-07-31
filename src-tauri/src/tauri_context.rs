@@ -1,6 +1,6 @@
 use accshift_core::{AppContext, AppCtx};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tauri::{AppHandle, Manager};
 
 /// `AppContext` implementation backed by a Tauri `AppHandle`.
@@ -14,10 +14,13 @@ impl TauriAppContext {
     }
 }
 
-/// Build a fresh `AppCtx` wrapping this `AppHandle`. Cheap: Tauri's `AppHandle`
-/// is already internally reference-counted.
+/// Return the process-wide `AppCtx` for this `AppHandle`. Cached: every
+/// `AppHandle` refers to the same app, so one instance serves all callers and
+/// each call is just an `Arc` refcount bump.
 pub fn ctx(handle: &AppHandle) -> AppCtx {
-    Arc::new(TauriAppContext::new(handle.clone())) as AppCtx
+    static CTX: OnceLock<AppCtx> = OnceLock::new();
+    CTX.get_or_init(|| Arc::new(TauriAppContext::new(handle.clone())) as AppCtx)
+        .clone()
 }
 
 impl AppContext for TauriAppContext {

@@ -35,15 +35,27 @@ export function getAvatarSeed(displayName: string, username: string, accountId: 
   return `${stable}::${accountId}::${reversed}`;
 }
 
+// Pure function of the seed, called from inline style expressions for every
+// avatar-less card on each mount and re-render. Memoized so the two 16-bit
+// cycle hashes run once per distinct seed instead of once per render.
+const gradientCache = new Map<string, string>();
+
 export function getAvatarGradientStyle(seed: string): string {
+  const cached = gradientCache.get(seed);
+  if (cached !== undefined) return cached;
+
   const normalized = normalizeSeed(seed || "?");
   const base = bitCycleHash(normalized, 33, 997, 17);
   const fade = bitCycleHash(normalized, 29, 991, 53);
   const hue = (base * 47) % 360;
   const hueFade = (hue + ((fade * 61) % 181) + 37) % 360;
 
-  return [
+  const style = [
     `background-color:hsl(${hue} 72% 43%)`,
     `background-image:linear-gradient(145deg,hsl(${hue} 80% 56%),hsl(${hueFade} 66% 38%))`,
   ].join(";");
+
+  if (gradientCache.size >= 1000) gradientCache.clear();
+  gradientCache.set(seed, style);
+  return style;
 }

@@ -2,7 +2,7 @@ use crate::context::AppContext;
 use crate::fs_utils;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -400,18 +400,36 @@ pub fn load_client_storage_snapshot(
     }
     Ok(ClientStorageSnapshot {
         stores,
-        manifest: build_storage_manifest(app_handle)?,
+        manifest: build_storage_manifest_with_store_paths(app_handle, &paths)?,
     })
 }
 
 pub fn build_storage_manifest(app_handle: &dyn AppContext) -> Result<StorageManifest, String> {
+    let mut store_paths = Vec::with_capacity(client_store_ids().len());
+    for store_id in client_store_ids() {
+        store_paths.push((*store_id, client_store_path(app_handle, store_id)?));
+    }
+    build_storage_manifest_with_store_paths(app_handle, &store_paths)
+}
+
+/// Same manifest as `build_storage_manifest`, but reusing store paths the
+/// caller already resolved: `client_store_path` walks the legacy tree and
+/// allocates a dozen `PathBuf`s per store, so a snapshot load must not pay
+/// for it twice.
+fn build_storage_manifest_with_store_paths(
+    app_handle: &dyn AppContext,
+    store_paths: &[(&str, PathBuf)],
+) -> Result<StorageManifest, String> {
     let mut stores = BTreeMap::new();
-    for (store_id, target) in manifest_targets(app_handle)? {
+    for (store_id, path) in store_paths {
+        stores.insert((*store_id).to_string(), fingerprint_file(path)?);
+    }
+    for (target_id, target) in non_store_manifest_targets(app_handle)? {
         let fingerprint = match target {
             ManifestTarget::File(path) => fingerprint_file(&path)?,
             ManifestTarget::Dir(path, depth) => fingerprint_dir(&path, depth)?,
         };
-        stores.insert(store_id, fingerprint);
+        stores.insert(target_id, fingerprint);
     }
 
     Ok(StorageManifest {
@@ -481,52 +499,47 @@ fn legacy_client_store_path(
     Ok(Some(path))
 }
 
-fn manifest_targets(app_handle: &dyn AppContext) -> Result<Vec<(String, ManifestTarget)>, String> {
-    let mut targets = Vec::new();
-
-    for store_id in client_store_ids() {
-        targets.push((
-            (*store_id).to_string(),
-            ManifestTarget::File(client_store_path(app_handle, store_id)?),
-        ));
-    }
-
-    targets.push((
-        TARGET_APP_CONFIG_PORTABLE.to_string(),
-        ManifestTarget::File(portable_config_path(app_handle)?),
-    ));
-    targets.push((
-        TARGET_APP_CONFIG_LOCAL.to_string(),
-        ManifestTarget::File(local_config_path(app_handle)?),
-    ));
-    targets.push((
-        TARGET_CUSTOM_THEMES.to_string(),
-        ManifestTarget::Dir(themes_dir(app_handle)?, 2),
-    ));
-    targets.push((
-        TARGET_RIOT_SNAPSHOTS.to_string(),
-        ManifestTarget::Dir(platform_snapshots_dir(app_handle, "riot")?, 1),
-    ));
-    targets.push((
-        TARGET_UBISOFT_SNAPSHOTS.to_string(),
-        ManifestTarget::Dir(platform_snapshots_dir(app_handle, "ubisoft")?, 1),
-    ));
-    targets.push((
-        TARGET_EPIC_SNAPSHOTS.to_string(),
-        ManifestTarget::Dir(platform_snapshots_dir(app_handle, "epic")?, 1),
-    ));
-    targets.push((
-        TARGET_GOG_SNAPSHOTS.to_string(),
-        ManifestTarget::Dir(platform_snapshots_dir(app_handle, "gog")?, 1),
-    ));
-    targets.push((
-        TARGET_JAGEX_SNAPSHOTS.to_string(),
-        ManifestTarget::Dir(platform_snapshots_dir(app_handle, "jagex")?, 1),
-    ));
-    targets.push((
-        TARGET_DISCORD_SNAPSHOTS.to_string(),
-        ManifestTarget::Dir(platform_snapshots_dir(app_handle, "discord")?, 1),
-    ));
+fn non_store_manifest_targets(
+    app_handle: &dyn AppContext,
+) -> Result<Vec<(String, ManifestTarget)>, String> {
+    let targets = vec![
+        (
+            TARGET_APP_CONFIG_PORTABLE.to_string(),
+            ManifestTarget::File(portable_config_path(app_handle)?),
+        ),
+        (
+            TARGET_APP_CONFIG_LOCAL.to_string(),
+            ManifestTarget::File(local_config_path(app_handle)?),
+        ),
+        (
+            TARGET_CUSTOM_THEMES.to_string(),
+            ManifestTarget::Dir(themes_dir(app_handle)?, 2),
+        ),
+        (
+            TARGET_RIOT_SNAPSHOTS.to_string(),
+            ManifestTarget::Dir(platform_snapshots_dir(app_handle, "riot")?, 1),
+        ),
+        (
+            TARGET_UBISOFT_SNAPSHOTS.to_string(),
+            ManifestTarget::Dir(platform_snapshots_dir(app_handle, "ubisoft")?, 1),
+        ),
+        (
+            TARGET_EPIC_SNAPSHOTS.to_string(),
+            ManifestTarget::Dir(platform_snapshots_dir(app_handle, "epic")?, 1),
+        ),
+        (
+            TARGET_GOG_SNAPSHOTS.to_string(),
+            ManifestTarget::Dir(platform_snapshots_dir(app_handle, "gog")?, 1),
+        ),
+        (
+            TARGET_JAGEX_SNAPSHOTS.to_string(),
+            ManifestTarget::Dir(platform_snapshots_dir(app_handle, "jagex")?, 1),
+        ),
+        (
+            TARGET_DISCORD_SNAPSHOTS.to_string(),
+            ManifestTarget::Dir(platform_snapshots_dir(app_handle, "discord")?, 1),
+        ),
+    ];
 
     Ok(targets)
 }
@@ -571,11 +584,7 @@ fn collect_dir_entries(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| format!("Could not read directory entry {}: {e}", current.display()))?;
 
-    entries.sort_by(|a, b| {
-        a.file_name()
-            .to_string_lossy()
-            .cmp(&b.file_name().to_string_lossy())
-    });
+    entries.sort_by_cached_key(|entry| entry.file_name().to_string_lossy().into_owned());
 
     for entry in entries {
         let path = entry.path();
@@ -666,28 +675,35 @@ fn backup_legacy_path(source: &Path, backup_root: &Path) -> Result<(), String> {
 /// run on hot paths (every config load, every manifest build) and must
 /// not re-stat the legacy tree each time.
 ///
+/// Shape is `from -> {to}`: each legacy location maps to the set of targets
+/// it has already been checked against, so a lookup borrows both paths
+/// instead of cloning them.
+///
 /// A pair is only ever inserted by `mark_migration_checked`, which callers
 /// must call *after* a migration attempt actually returns `Ok`. That keeps
 /// a transient failure (locked file, disk full) from being cached as
 /// "done": the next call re-attempts the migration instead of silently
 /// treating an incomplete copy as complete.
-static MIGRATION_CHECKED: std::sync::OnceLock<Mutex<HashSet<(PathBuf, PathBuf)>>> =
+static MIGRATION_CHECKED: std::sync::OnceLock<Mutex<HashMap<PathBuf, HashSet<PathBuf>>>> =
     std::sync::OnceLock::new();
 
 fn migration_checked(from: &Path, to: &Path) -> bool {
     MIGRATION_CHECKED
-        .get_or_init(|| Mutex::new(HashSet::new()))
+        .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .contains(&(from.to_path_buf(), to.to_path_buf()))
+        .get(from)
+        .is_some_and(|set| set.contains(to))
 }
 
 fn mark_migration_checked(from: &Path, to: &Path) {
     MIGRATION_CHECKED
-        .get_or_init(|| Mutex::new(HashSet::new()))
+        .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert((from.to_path_buf(), to.to_path_buf()));
+        .entry(from.to_path_buf())
+        .or_default()
+        .insert(to.to_path_buf());
 }
 
 fn backup_and_migrate_dir(

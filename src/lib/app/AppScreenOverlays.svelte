@@ -155,14 +155,11 @@
     pointer-events: none;
     opacity: 0;
     transition: opacity 900ms ease-in-out;
-    transition-delay: 0ms;
     z-index: 300;
   }
 
   .inactive-overlay.visible {
     opacity: 1;
-    transition: opacity 900ms ease-in-out;
-    transition-delay: 0ms;
   }
 
   .accshift-text {
@@ -181,7 +178,6 @@
     max-width: 92vw;
     text-align: center;
     transition: opacity 900ms ease-in-out;
-    transition-delay: 0ms;
   }
 
   .inactive-overlay.visible .accshift-text {

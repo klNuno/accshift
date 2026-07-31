@@ -39,6 +39,11 @@ const SETUP_MIN_LOGIN_MS: u64 = 4000;
 /// (the tail is read, where fresh appends live).
 const IDENTITY_SCAN_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
+/// Budget for the tails cached across the two passes of a single identity scan
+/// (see `scan_identity_in_dir`). Past it, further tails are scanned and dropped
+/// so a directory full of `.ldb` files never pins its whole size in memory.
+const IDENTITY_SCAN_CACHE_MAX_BYTES: u64 = 32 * 1024 * 1024;
+
 /// Snapshot source directories under `%AppData%\discord` (all copied
 /// recursively) and the snapshot sub-directory each maps to.
 const SNAP_LEVELDB: &str = "local_storage_leveldb";
@@ -510,12 +515,32 @@ fn identity_scan_candidates(leveldb: &Path) -> Vec<PathBuf> {
 /// "logged out".
 fn scan_identity_in_dir(leveldb: &Path) -> Option<DiscordIdentity> {
     let files = identity_scan_candidates(leveldb);
-    let user_id = files.iter().find_map(|path| {
-        read_file_tail(path, IDENTITY_SCAN_MAX_BYTES).and_then(|bytes| extract_user_id(&bytes))
-    })?;
-    let username = files.iter().find_map(|path| {
-        read_file_tail(path, IDENTITY_SCAN_MAX_BYTES)
-            .and_then(|bytes| extract_username(&bytes, &user_id))
+    // The user id pass keeps the tails it read (up to a byte budget) so the
+    // username pass reuses them instead of re-reading the same files.
+    let mut cache: Vec<(usize, Vec<u8>)> = Vec::new();
+    let mut cached_bytes: u64 = 0;
+    let mut scanned_id = None;
+    for (index, path) in files.iter().enumerate() {
+        let Some(bytes) = read_file_tail(path, IDENTITY_SCAN_MAX_BYTES) else {
+            continue;
+        };
+        let hit = extract_user_id(&bytes);
+        if cached_bytes + bytes.len() as u64 <= IDENTITY_SCAN_CACHE_MAX_BYTES {
+            cached_bytes += bytes.len() as u64;
+            cache.push((index, bytes));
+        }
+        if hit.is_some() {
+            scanned_id = hit;
+            break;
+        }
+    }
+    let user_id = scanned_id?;
+    let username = files.iter().enumerate().find_map(|(index, path)| {
+        match cache.iter().find(|(i, _)| *i == index) {
+            Some((_, bytes)) => extract_username(bytes, &user_id),
+            None => read_file_tail(path, IDENTITY_SCAN_MAX_BYTES)
+                .and_then(|bytes| extract_username(&bytes, &user_id)),
+        }
     });
     Some(DiscordIdentity { user_id, username })
 }

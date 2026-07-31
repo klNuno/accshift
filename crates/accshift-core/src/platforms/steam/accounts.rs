@@ -368,18 +368,37 @@ pub(crate) fn list_account_games(userdata_root: &Path) -> Result<HashSet<String>
     Ok(ids)
 }
 
-fn extract_manifest_value(content: &str, key: &str) -> Option<String> {
+// Pulls "appid" and "name" out of an appmanifest in a single pass. Both keys
+// sit in the first handful of lines while the file goes on with hundreds of
+// InstalledDepots entries, so stop as soon as both are found.
+fn extract_appid_and_name(content: &str) -> (Option<String>, Option<String>) {
+    let mut app_id = None;
+    let mut name = None;
+
     for line in content.lines() {
         let trimmed = line.trim();
         if !trimmed.starts_with('"') {
             continue;
         }
-        let parts: Vec<&str> = trimmed.split('"').collect();
-        if parts.len() >= 4 && parts[1].eq_ignore_ascii_case(key) {
-            return Some(parts[3].to_string());
+        let mut parts = trimmed.split('"');
+        // Elements 1 and 3 of the split: the quoted key and its quoted value.
+        let Some(key) = parts.nth(1) else {
+            continue;
+        };
+        let Some(value) = parts.nth(1) else {
+            continue;
+        };
+        if app_id.is_none() && key.eq_ignore_ascii_case("appid") {
+            app_id = Some(value.to_string());
+        } else if name.is_none() && key.eq_ignore_ascii_case("name") {
+            name = Some(value.to_string());
+        }
+        if app_id.is_some() && name.is_some() {
+            break;
         }
     }
-    None
+
+    (app_id, name)
 }
 
 fn unescape_vdf_path(input: &str) -> String {
@@ -439,8 +458,7 @@ pub(crate) fn load_app_names(steam_path: &Path) -> HashMap<String, String> {
             let Ok(content) = fs::read_to_string(&path) else {
                 continue;
             };
-            let app_id = extract_manifest_value(&content, "appid");
-            let name = extract_manifest_value(&content, "name");
+            let (app_id, name) = extract_appid_and_name(&content);
             if let (Some(app_id), Some(name)) = (app_id, name) {
                 names.entry(app_id).or_insert(name);
             }

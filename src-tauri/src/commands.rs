@@ -727,26 +727,36 @@ mod wallpaper_capture {
     /// Pixel conversion, JPEG compression and base64 encoding are CPU-heavy
     /// but do not touch DWM/COM. Keep them off the window's UI thread.
     pub(super) fn encode(capture: CapturedWallpaper) -> Option<WallpaperSnapshot> {
-        let mut rgb = Vec::with_capacity(
-            (capture.output_width as usize) * (capture.output_height as usize) * 3,
-        );
-        for chunk in capture.bgra.chunks_exact(4) {
-            rgb.extend_from_slice(&[chunk[2], chunk[1], chunk[0]]);
+        // Convert BGRA to RGB in place instead of allocating a second
+        // full-resolution buffer (up to ~18 MB at MAX_EDGE). Reading the pixel
+        // into locals before writing is required: for the first pixels the
+        // 3-byte write range overlaps their own 4-byte read range.
+        let mut bgra = capture.bgra;
+        let n = bgra.len() / 4;
+        for i in 0..n {
+            let (b, g, r) = (bgra[4 * i], bgra[4 * i + 1], bgra[4 * i + 2]);
+            bgra[3 * i] = r;
+            bgra[3 * i + 1] = g;
+            bgra[3 * i + 2] = b;
         }
+        bgra.truncate(n * 3);
         let mut jpeg = Vec::new();
         image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 82)
             .encode(
-                &rgb,
+                &bgra,
                 capture.output_width as u32,
                 capture.output_height as u32,
                 image::ExtendedColorType::Rgb8,
             )
             .ok()?;
+        // Encode base64 straight into the final String so the multi-MB data
+        // URL is built once, without the format!() intermediate copy.
+        const PREFIX: &str = "data:image/jpeg;base64,";
+        let mut data_url = String::with_capacity(PREFIX.len() + jpeg.len().div_ceil(3) * 4);
+        data_url.push_str(PREFIX);
+        base64::engine::general_purpose::STANDARD.encode_string(&jpeg, &mut data_url);
         Some(WallpaperSnapshot {
-            data_url: format!(
-                "data:image/jpeg;base64,{}",
-                base64::engine::general_purpose::STANDARD.encode(jpeg)
-            ),
+            data_url,
             x: capture.x,
             y: capture.y,
             width: capture.width,

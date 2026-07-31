@@ -151,9 +151,10 @@ pub fn parse_vdf(content: &str) -> HashMap<String, HashMap<String, String>> {
             depth -= 1;
             if depth == 1 {
                 if let Some(id) = current_id.take() {
-                    accounts.insert(id, current_account.clone());
+                    accounts.insert(id, std::mem::take(&mut current_account));
+                } else {
+                    current_account.clear();
                 }
-                current_account.clear();
             }
         }
     }
@@ -223,6 +224,7 @@ pub fn vdf_set_nested_value(content: &str, path: &[&str], value: &str) -> String
             && tokens[0].eq_ignore_ascii_case(target_key)
         {
             found = true;
+            break;
         }
     }
 

@@ -1,4 +1,4 @@
-use crate::config::{self, BattleNetAccountConfig};
+use crate::config::{self, AppConfig, BattleNetAccountConfig};
 use crate::error::PlatformError;
 use crate::platforms::{log_platform_error, log_platform_info, PlatformService, SetupStatus};
 use crate::{AppContext, AppCtx};
@@ -98,17 +98,13 @@ fn build_battle_net_switch_details(target_email: Option<&str>) -> String {
         .ok()
         .and_then(|accounts| accounts.into_iter().next())
         .unwrap_or_default();
-    let running_processes = BATTLE_NET_PROCESS_NAMES
-        .iter()
-        .copied()
-        .filter(|name| crate::os::is_process_running(name))
-        .collect::<Vec<_>>();
+    let running_processes = crate::os::running_process_names(BATTLE_NET_PROCESS_NAMES);
 
     use super::{redact_id, redact_opt};
     serde_json::json!({
         "targetEmail": redact_opt(target_email),
         "currentAccount": redact_id(&current_account),
-        "launcherRunning": is_battle_net_running(),
+        "launcherRunning": !running_processes.is_empty(),
         "runningProcesses": running_processes,
     })
     .to_string()
@@ -350,9 +346,10 @@ fn read_saved_accounts() -> Result<Vec<String>, String> {
     Ok(extract_saved_account_names(&value))
 }
 
-fn known_account_emails(app_handle: &dyn AppContext) -> Result<Vec<String>, String> {
-    let saved_accounts = read_saved_accounts()?;
-    let cfg = config::load_config(app_handle);
+/// Merge the launcher's saved account list with the ones we track in our own
+/// config, first occurrence wins. Takes both inputs so callers that already
+/// read them do not pay for a second disk read and config clone.
+fn known_account_emails_from(saved_accounts: Vec<String>, cfg: &AppConfig) -> Vec<String> {
     let mut accounts = Vec::new();
     let mut seen = HashSet::new();
 
@@ -364,7 +361,7 @@ fn known_account_emails(app_handle: &dyn AppContext) -> Result<Vec<String>, Stri
         accounts.push(email);
     }
 
-    for account in cfg.battle_net.accounts {
+    for account in &cfg.battle_net.accounts {
         let email = account.email.trim().to_string();
         let key = normalize_account_key(&email);
         if email.is_empty() || !seen.insert(key) {
@@ -373,16 +370,26 @@ fn known_account_emails(app_handle: &dyn AppContext) -> Result<Vec<String>, Stri
         accounts.push(email);
     }
 
-    Ok(accounts)
+    accounts
+}
+
+fn known_account_emails(app_handle: &dyn AppContext) -> Result<Vec<String>, String> {
+    let saved_accounts = read_saved_accounts()?;
+    let cfg = config::load_config(app_handle);
+    Ok(known_account_emails_from(saved_accounts, &cfg))
 }
 
 fn read_accounts(app_handle: &dyn AppContext) -> Result<Vec<BattleNetAccount>, String> {
-    if let Some(current_email) = read_saved_accounts()?.into_iter().next() {
-        let _ = remember_account_usage(app_handle, &current_email, true);
+    let saved_accounts = read_saved_accounts()?;
+    if let Some(current_email) = saved_accounts.first() {
+        let _ = remember_account_usage(app_handle, current_email, true);
     }
 
-    let account_emails = known_account_emails(app_handle)?;
+    // Load after `remember_account_usage`: it bumps last_used_at and may store
+    // a freshly fetched battle tag, so a config read before it would report
+    // stale metadata for the current account.
     let cfg = config::load_config(app_handle);
+    let account_emails = known_account_emails_from(saved_accounts, &cfg);
     let metadata_by_key = cfg
         .battle_net
         .accounts
@@ -398,16 +405,17 @@ fn read_accounts(app_handle: &dyn AppContext) -> Result<Vec<BattleNetAccount>, S
 
     Ok(account_emails
         .into_iter()
-        .map(|email| BattleNetAccount {
-            battle_tag: metadata_by_key
-                .get(&normalize_account_key(&email))
-                .map(|account| account.battle_tag.trim().to_string())
-                .filter(|battle_tag| !battle_tag.is_empty())
-                .unwrap_or_default(),
-            last_login_at: metadata_by_key
-                .get(&normalize_account_key(&email))
-                .and_then(|account| account.last_used_at),
-            email,
+        .map(|email| {
+            let key = normalize_account_key(&email);
+            let meta = metadata_by_key.get(&key);
+            BattleNetAccount {
+                battle_tag: meta
+                    .map(|account| account.battle_tag.trim().to_string())
+                    .filter(|battle_tag| !battle_tag.is_empty())
+                    .unwrap_or_default(),
+                last_login_at: meta.and_then(|account| account.last_used_at),
+                email,
+            }
         })
         .collect())
 }
@@ -432,27 +440,26 @@ fn remember_account_usage(
     // Only query battle tag from cache if we don't already have one stored.
     // After a switch, the log-based account_id_lo still points to the PREVIOUS
     // account, so current_battle_tag_from_cache() would return the wrong tag.
-    let existing_tag = config::load_config(app_handle)
-        .battle_net
-        .accounts
-        .iter()
-        .find(|a| normalize_account_key(&a.email) == key)
-        .map(|a| a.battle_tag.trim().to_string())
-        .filter(|t| !t.is_empty());
-
-    let battle_tag = if is_current_account && existing_tag.is_none() {
-        current_battle_tag_from_cache().ok().flatten()
-    } else {
-        None
-    };
-
+    // The check runs inside `update_config`, on the config it already loaded:
+    // a standalone `load_config` here would clone the whole config a second
+    // time on every account-list poll.
     config::update_config(app_handle, |cfg| {
-        if let Some(existing) = cfg
+        let index = cfg
             .battle_net
             .accounts
-            .iter_mut()
-            .find(|account| normalize_account_key(&account.email) == key)
-        {
+            .iter()
+            .position(|account| normalize_account_key(&account.email) == key);
+        let has_tag = index
+            .map(|i| !cfg.battle_net.accounts[i].battle_tag.trim().is_empty())
+            .unwrap_or(false);
+        let battle_tag = if is_current_account && !has_tag {
+            current_battle_tag_from_cache().ok().flatten()
+        } else {
+            None
+        };
+
+        if let Some(i) = index {
+            let existing = &mut cfg.battle_net.accounts[i];
             existing.email = email;
             if let Some(tag) = battle_tag {
                 existing.battle_tag = tag;

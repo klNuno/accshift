@@ -1,4 +1,4 @@
-import { getSettings } from "../features/settings/store";
+import { peekSettings } from "../features/settings/store";
 
 export function createInactivityBlur() {
   const POINTER_ACTIVITY_THROTTLE_MS = 200;
@@ -16,7 +16,7 @@ export function createInactivityBlur() {
 
   function scheduleBlurCheck() {
     clearBlurTimeout();
-    const thresholdMs = getSettings().inactivityBlurSeconds * 1000;
+    const thresholdMs = peekSettings().inactivityBlurSeconds * 1000;
     if (thresholdMs <= 0) {
       isBlurred = false;
       return;
@@ -25,7 +25,7 @@ export function createInactivityBlur() {
     const elapsedMs = Date.now() - lastActivity;
     const remainingMs = Math.max(0, thresholdMs - elapsedMs);
     blurTimeoutId = setTimeout(() => {
-      const settings = getSettings();
+      const settings = peekSettings();
       if (settings.inactivityBlurSeconds <= 0) {
         isBlurred = false;
         return;
@@ -59,7 +59,7 @@ export function createInactivityBlur() {
 
   function start() {
     stop();
-    const threshold = getSettings().inactivityBlurSeconds;
+    const threshold = peekSettings().inactivityBlurSeconds;
     if (threshold === 0) {
       isBlurred = false;
       return;

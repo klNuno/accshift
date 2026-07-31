@@ -216,6 +216,9 @@ export function getAllThemes(): AppThemeDefinition[] {
 }
 
 export function applyCustomThemePayloads(payloads: CustomThemePayload[]): void {
+  // A same-id theme can come back with new tokens; drop the applied-theme memo
+  // so the next apply repaints instead of matching on a stale identity.
+  resetAppliedThemeMemo();
   customThemes.clear();
   for (const payload of payloads) {
     if (!isValidTokens(payload.tokens)) continue;
@@ -252,11 +255,13 @@ export async function saveCustomTheme(theme: AppThemeDefinition): Promise<void> 
     tokens: theme.tokens as unknown as Record<string, string>,
   };
   await invoke("save_custom_theme", { theme: payload });
+  resetAppliedThemeMemo();
   customThemes.set(theme.id, theme);
 }
 
 export async function deleteCustomTheme(themeId: string): Promise<void> {
   await invoke("delete_custom_theme", { themeId });
+  resetAppliedThemeMemo();
   customThemes.delete(themeId);
 }
 
@@ -364,12 +369,43 @@ export function resolveThemeSurfaceOpacities(
   };
 }
 
+/** Inputs of the last application to the real document. The caller is an
+ *  effect that also tracks locale, card outlines and the wallpaper snapshot,
+ *  so it re-runs far more often than the theme actually changes; every such
+ *  re-run rewrote ~20 root custom properties to the same values. Object
+ *  identity is enough: theme definitions and token objects are replaced, never
+ *  mutated in place (edits go through applyCustomThemePayloads / saveCustomTheme,
+ *  which reset this). */
+let lastApplied: {
+  theme: AppThemeDefinition;
+  tokens: AppThemeDefinition["tokens"];
+  opacity: number;
+  backdropAvailable: boolean | undefined;
+} | null = null;
+
+export function resetAppliedThemeMemo() {
+  lastApplied = null;
+}
+
 export function applyThemeToDocument(
   theme: AppThemeDefinition,
   backgroundOpacityPercent: number,
   doc: Document = document,
   opts: { backdropAvailable?: boolean } = {},
 ) {
+  // Only memoize the real document; an explicitly passed doc (theme preview)
+  // always applies.
+  const memoizable = doc === document;
+  if (
+    memoizable &&
+    lastApplied &&
+    lastApplied.theme === theme &&
+    lastApplied.tokens === theme.tokens &&
+    lastApplied.opacity === backgroundOpacityPercent &&
+    lastApplied.backdropAvailable === opts.backdropAvailable
+  ) {
+    return;
+  }
   // Glass themes use a fixed window fill (see GLASS_WINDOW_OPACITY); the
   // slider only drives regular themes. Liquid Glass runs its own scale:
   // white surfaces at very low alpha so the blurred desktop dominates
@@ -419,4 +455,13 @@ export function applyThemeToDocument(
   root.style.setProperty("--border", theme.tokens.border);
   root.style.setProperty("--danger", theme.tokens.danger);
   root.style.setProperty("--afk-text", theme.tokens.afkText);
+
+  if (memoizable) {
+    lastApplied = {
+      theme,
+      tokens: theme.tokens,
+      opacity: backgroundOpacityPercent,
+      backdropAvailable: opts.backdropAvailable,
+    };
+  }
 }

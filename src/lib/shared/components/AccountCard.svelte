@@ -477,6 +477,14 @@
     box-shadow: 0 14px 28px rgba(0, 0, 0, 0.18);
   }
 
+  /* The panel stays mounted at opacity 0 for every card with extension
+     content, so its loading dot would otherwise tick at 60fps on an
+     invisible element, once per card. Paused, not removed: the animation
+     resumes mid-cycle the moment the panel becomes visible. */
+  .extension-surface:not(.visible) :global(.status-dot) {
+    animation-play-state: paused;
+  }
+
   /* The active card does not lift on hover, so its panel must not either. */
   .card-shell:hover .extension-surface.visible:not(.active) {
     transform: translateY(-2px) scaleX(1);

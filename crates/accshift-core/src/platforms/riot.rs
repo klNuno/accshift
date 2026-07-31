@@ -173,11 +173,9 @@ fn is_any_process_running(process_names: &[&str]) -> bool {
 }
 
 fn running_process_names(process_names: &'static [&'static str]) -> Vec<&'static str> {
-    process_names
-        .iter()
-        .copied()
-        .filter(|process_name| os::is_process_running(process_name))
-        .collect()
+    // One process-table refresh for the whole batch instead of one per name.
+    // The order and uniqueness of the input list are preserved.
+    os::running_process_names(process_names)
 }
 
 fn build_riot_switch_details(
@@ -208,8 +206,12 @@ fn ensure_no_riot_game_running(action: &str) -> Result<(), String> {
 
 fn kill_riot_client_processes() {
     for _ in 0..KILL_RETRY_COUNT {
-        for process_name in RIOT_CLIENT_PROCESS_NAMES {
-            let _ = os::kill_process(process_name);
+        // Resolve what is actually running with one refresh, then kill only
+        // those. Calling kill_process per name re-scanned the whole process
+        // table six times per round even when nothing was running.
+        let running = os::running_process_names(RIOT_CLIENT_PROCESS_NAMES);
+        for name in running {
+            let _ = os::kill_process(name);
         }
         if !is_any_process_running(RIOT_CLIENT_PROCESS_NAMES) {
             break;
@@ -284,7 +286,7 @@ fn graceful_riot_quit() {
 
 fn prepare_clean_riot_launch(app_handle: &dyn AppContext) -> Result<(), String> {
     graceful_riot_quit();
-    clear_live_riot_setup_state(app_handle)?;
+    clear_live_riot_setup_state(resolve_riot_install_dir(app_handle).as_deref())?;
     kill_riot_client_processes();
     thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
     Ok(())
@@ -333,6 +335,15 @@ fn resolve_riot_client_path(app_handle: &dyn AppContext) -> Result<PathBuf, Stri
     } else {
         Err("Could not locate Riot Client installation".into())
     }
+}
+
+/// Directory holding the Riot Client executable, or `None` when the install
+/// cannot be located. Callers that need it more than once resolve it here and
+/// pass the result down instead of re-reading `RiotClientInstalls.json`.
+fn resolve_riot_install_dir(app_handle: &dyn AppContext) -> Option<PathBuf> {
+    resolve_riot_client_path(app_handle)
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
 }
 
 fn app_profiles_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
@@ -756,13 +767,23 @@ fn is_generated_profile_label(label: &str) -> bool {
     !index.is_empty() && index.chars().all(|ch| ch.is_ascii_digit())
 }
 
-fn apply_detected_identity(profile: &mut RiotProfileConfig, identity: &RiotDetectedIdentity) {
+/// Returns whether anything actually changed, so callers polling once a second
+/// can skip the config write when the detected identity already matches.
+fn apply_detected_identity(
+    profile: &mut RiotProfileConfig,
+    identity: &RiotDetectedIdentity,
+) -> bool {
     let previous_alias = current_account_alias(profile);
     let next_alias = format_account_alias(&identity.account_name, &identity.account_tag_line);
     let should_sync_label = profile.label.trim().is_empty()
         || is_generated_profile_label(profile.label.trim())
         || (!previous_alias.is_empty()
             && profile.label.trim().eq_ignore_ascii_case(&previous_alias));
+
+    let previous_account_name = profile.account_name.clone();
+    let previous_account_tag_line = profile.account_tag_line.clone();
+    let previous_account_puuid = profile.account_puuid.clone();
+    let previous_label = profile.label.clone();
 
     profile.account_name = trim_or_empty(&identity.account_name);
     profile.account_tag_line = trim_or_empty(&identity.account_tag_line);
@@ -771,6 +792,11 @@ fn apply_detected_identity(profile: &mut RiotProfileConfig, identity: &RiotDetec
     if should_sync_label && !next_alias.is_empty() {
         profile.label = next_alias;
     }
+
+    profile.account_name != previous_account_name
+        || profile.account_tag_line != previous_account_tag_line
+        || profile.account_puuid != previous_account_puuid
+        || profile.label != previous_label
 }
 
 fn make_setup_status(
@@ -884,17 +910,18 @@ fn detect_live_identity() -> Result<RiotDetectedIdentity, String> {
     detect_live_identity_with_access(&access)
 }
 
-fn backup_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Result<(), String> {
-    let install_dir = resolve_riot_client_path(app_handle)
-        .ok()
-        .and_then(|path| path.parent().map(Path::to_path_buf));
+fn backup_live_snapshot(
+    app_handle: &dyn AppContext,
+    profile_id: &str,
+    install_dir: Option<&Path>,
+) -> Result<(), String> {
     let snapshot_dir = profile_snapshot_dir(app_handle, profile_id)?;
     clear_directory(&snapshot_dir)?;
 
     let mut captured_any = false;
 
     for item in RIOT_SNAPSHOT_ITEMS {
-        let Some(source_path) = live_path_for(item, install_dir.as_deref())? else {
+        let Some(source_path) = live_path_for(item, install_dir)? else {
             continue;
         };
         let target_path = snapshot_dir.join(item.snapshot_name);
@@ -926,13 +953,9 @@ fn backup_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Result
     }
 }
 
-fn clear_live_riot_state(app_handle: &dyn AppContext) -> Result<(), String> {
-    let install_dir = resolve_riot_client_path(app_handle)
-        .ok()
-        .and_then(|path| path.parent().map(Path::to_path_buf));
-
+fn clear_live_riot_state(install_dir: Option<&Path>) -> Result<(), String> {
     for item in RIOT_SNAPSHOT_ITEMS {
-        let Some(path) = live_path_for(item, install_dir.as_deref())? else {
+        let Some(path) = live_path_for(item, install_dir)? else {
             continue;
         };
         remove_path_if_exists(&path)?;
@@ -941,16 +964,12 @@ fn clear_live_riot_state(app_handle: &dyn AppContext) -> Result<(), String> {
     Ok(())
 }
 
-fn clear_live_riot_setup_state(app_handle: &dyn AppContext) -> Result<(), String> {
-    let install_dir = resolve_riot_client_path(app_handle)
-        .ok()
-        .and_then(|path| path.parent().map(Path::to_path_buf));
-
+fn clear_live_riot_setup_state(install_dir: Option<&Path>) -> Result<(), String> {
     for item in RIOT_SNAPSHOT_ITEMS {
         if !RIOT_SETUP_RESET_ITEMS.contains(&item.snapshot_name) {
             continue;
         }
-        let Some(path) = live_path_for(item, install_dir.as_deref())? else {
+        let Some(path) = live_path_for(item, install_dir)? else {
             continue;
         };
         remove_path_if_exists(&path)?;
@@ -1003,7 +1022,7 @@ fn restore_live_state_from_rollback(
     rollback_dir: &Path,
     install_dir: Option<&Path>,
 ) {
-    if let Err(e) = clear_live_riot_state(app_handle) {
+    if let Err(e) = clear_live_riot_state(install_dir) {
         log_platform_error(
             app_handle,
             "riot.restore_rollback",
@@ -1063,7 +1082,7 @@ fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Resul
     // abort before touching anything live.
     let rollback_dir = backup_live_state_for_rollback(install_dir.as_deref())?;
 
-    if let Err(e) = clear_live_riot_state(app_handle) {
+    if let Err(e) = clear_live_riot_state(install_dir.as_deref()) {
         restore_live_state_from_rollback(app_handle, &rollback_dir, install_dir.as_deref());
         let _ = fs::remove_dir_all(&rollback_dir);
         return Err(e);
@@ -1304,7 +1323,11 @@ fn capture_profile_into_snapshot(
     profile_id: &str,
     identity: Option<&RiotDetectedIdentity>,
 ) -> Result<(), String> {
-    backup_live_snapshot(app_handle, profile_id)?;
+    backup_live_snapshot(
+        app_handle,
+        profile_id,
+        resolve_riot_install_dir(app_handle).as_deref(),
+    )?;
     cfg.riot.current_profile_id = profile_id.to_string();
     update_profile_state(
         cfg,
@@ -1338,9 +1361,10 @@ fn get_profile_setup_status_internal(
     let identity = access
         .as_ref()
         .and_then(|a| detect_live_identity_with_access(a).ok());
+    let mut identity_changed = false;
     if let Some(ref id) = identity {
         if let Some(target) = find_profile_mut(cfg, profile_id) {
-            apply_detected_identity(target, id);
+            identity_changed = apply_detected_identity(target, id);
         }
     }
 
@@ -1368,7 +1392,13 @@ fn get_profile_setup_status_internal(
     );
 
     if !can_capture {
-        let _ = config::save_config(app_handle, cfg);
+        // This branch is the steady state of the 1s setup poll, and save_config
+        // rewrites both config files and drops the parsed-config cache. Only the
+        // detected identity can have changed here (cleanup_expired_pending_profiles
+        // persists its own edits), so write only when it actually did.
+        if identity_changed {
+            let _ = config::save_config(app_handle, cfg);
+        }
         let (state, error_msg) = if !has_lockfile {
             ("waiting_for_client", "")
         } else if login_state.logged_in && !login_state.persist {
@@ -1440,7 +1470,11 @@ pub fn begin_profile_setup(app_handle: AppCtx) -> Result<RiotProfileSetupStatus,
             let identity = detect_live_identity().ok();
             graceful_riot_quit();
             if riot_settings_file_ready(&app_handle).unwrap_or(false) {
-                if let Err(e) = backup_live_snapshot(&app_handle, &prev_id) {
+                if let Err(e) = backup_live_snapshot(
+                    &app_handle,
+                    &prev_id,
+                    resolve_riot_install_dir(&app_handle).as_deref(),
+                ) {
                     log_platform_error(
                         &app_handle,
                         "riot.begin_setup",
@@ -1493,6 +1527,7 @@ pub fn get_profile_setup_status(
     let profile_id = normalize_profile_id(&profile_id)?;
     let mut cfg = config::load_config(&app_handle);
     cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
+    let previous_used_at = find_profile(&cfg, &profile_id).and_then(|p| p.last_used_at);
     let _ = update_profile_state(
         &mut cfg,
         &profile_id,
@@ -1501,7 +1536,16 @@ pub fn get_profile_setup_status(
         Some(Some(super::now_unix_ms())),
         None,
     );
-    let _ = config::save_config(&app_handle, &cfg);
+    // The bump stays in memory on every tick, but persisting it once a second
+    // rewrites both config files and drops the parsed-config cache. 60s of
+    // granularity is nothing against RIOT_SETUP_TTL_MS (10 minutes): each poll
+    // reloads the persisted state, so an actively polled setup can never expire.
+    // Only an abandoned setup may expire up to 60s earlier after an app restart.
+    let should_persist_used_at = previous_used_at
+        .is_none_or(|used_at| super::now_unix_ms().saturating_sub(used_at) >= 60_000);
+    if should_persist_used_at {
+        let _ = config::save_config(&app_handle, &cfg);
+    }
     get_profile_setup_status_internal(&app_handle, &mut cfg, &profile_id)
 }
 
@@ -1598,7 +1642,11 @@ pub fn switch_profile(app_handle: AppCtx, profile_id: String) -> Result<(), Stri
             _ => false,
         };
         if should_backup {
-            backup_live_snapshot(&app_handle, &current_id)?;
+            backup_live_snapshot(
+                &app_handle,
+                &current_id,
+                resolve_riot_install_dir(&app_handle).as_deref(),
+            )?;
             update_profile_state(
                 &mut cfg,
                 &current_id,

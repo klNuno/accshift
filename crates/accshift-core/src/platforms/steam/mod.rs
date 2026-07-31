@@ -244,17 +244,25 @@ pub struct SteamService;
 
 pub static STEAM_SERVICE: SteamService = SteamService;
 
+/// Callers pass the account state already read for their own use (registry
+/// autologin value and loginusers.vdf MostRecent, both formatted
+/// `<error:...>` on failure) so a switch doesn't re-read them once per log
+/// line.
 fn build_switch_state_details(
-    steam_path: &std::path::Path,
+    auto_login_user: &str,
+    current_from_file: &str,
     requested_username: Option<&str>,
     steam_id: Option<&str>,
     mode: Option<&str>,
     run_as_admin: bool,
     launch_options: &str,
 ) -> String {
-    let auto_login_user = os::get_auto_login_user().unwrap_or_else(|e| format!("<error:{e}>"));
-    let current_from_file =
-        accounts::get_current_account_name(steam_path).unwrap_or_else(|e| format!("<error:{e}>"));
+    // Both booleans come from one process-table scan instead of one per name.
+    let client_processes = [
+        os::steam_process_name(),
+        os::steam_web_helper_process_name(),
+    ];
+    let running = os::running_process_names(&client_processes);
 
     use super::redact_id;
     use super::redact_opt;
@@ -264,10 +272,10 @@ fn build_switch_state_details(
         "mode": mode,
         "runAsAdmin": run_as_admin,
         "launchOptionsConfigured": !launch_options.trim().is_empty(),
-        "autoLoginUser": redact_id(&auto_login_user),
-        "currentAccountFromLoginusers": redact_id(&current_from_file),
-        "steamRunning": os::is_process_running(os::steam_process_name()),
-        "steamWebHelperRunning": os::is_process_running(os::steam_web_helper_process_name()),
+        "autoLoginUser": redact_id(auto_login_user),
+        "currentAccountFromLoginusers": redact_id(current_from_file),
+        "steamRunning": running.contains(&os::steam_process_name()),
+        "steamWebHelperRunning": running.contains(&os::steam_web_helper_process_name()),
     })
     .to_string()
 }
@@ -350,12 +358,21 @@ pub fn switch_account_and_launch_game(
         return Err("Invalid app id".into());
     }
     let steam_path = resolve_steam_path(&app_handle)?;
+    // The pre-switch log line and the already_on_target check below both want
+    // loginusers.vdf's MostRecent entry, so it is read once and shared.
+    let current_result = accounts::get_current_account_name(&steam_path);
+    let auto_login_user = os::get_auto_login_user().unwrap_or_else(|e| format!("<error:{e}>"));
+    let current_from_file = match &current_result {
+        Ok(current) => current.clone(),
+        Err(e) => format!("<error:{e}>"),
+    };
     log_platform_info(
         &app_handle,
         "steam.switch_account_and_launch_game",
         "Steam switch+launch requested",
         build_switch_state_details(
-            &steam_path,
+            &auto_login_user,
+            &current_from_file,
             Some(&username),
             None,
             None,
@@ -373,9 +390,7 @@ pub fn switch_account_and_launch_game(
     // only cost the user their session. Hand the launch to the running
     // client instead.
     let already_on_target = accounts::is_steam_running()
-        && accounts::get_current_account_name(&steam_path)
-            .map(|current| current.eq_ignore_ascii_case(&username))
-            .unwrap_or(false);
+        && matches!(&current_result, Ok(current) if current.eq_ignore_ascii_case(&username));
     if already_on_target {
         return match os::open_url(&format!("steam://rungameid/{app_id}")) {
             Ok(()) => {
@@ -405,8 +420,13 @@ pub fn switch_account_and_launch_game(
         force_kill,
     );
 
+    // The switch just changed exactly this state, so both values are re-read.
+    let post_auto_login_user = os::get_auto_login_user().unwrap_or_else(|e| format!("<error:{e}>"));
+    let post_current_from_file =
+        accounts::get_current_account_name(&steam_path).unwrap_or_else(|e| format!("<error:{e}>"));
     let post_state = build_switch_state_details(
-        &steam_path,
+        &post_auto_login_user,
+        &post_current_from_file,
         Some(&username),
         None,
         None,
@@ -836,12 +856,16 @@ impl PlatformService for SteamService {
         let force_kill = is_force_kill(&params);
         let steam_path = resolve_steam_path(&app)?;
 
+        let auto_login_user = os::get_auto_login_user().unwrap_or_else(|e| format!("<error:{e}>"));
+        let current_from_file = accounts::get_current_account_name(&steam_path)
+            .unwrap_or_else(|e| format!("<error:{e}>"));
         log_platform_info(
             &app,
             "steam.switch_account",
             "Steam switch requested",
             build_switch_state_details(
-                &steam_path,
+                &auto_login_user,
+                &current_from_file,
                 Some(account_id),
                 None,
                 None,
@@ -904,8 +928,15 @@ impl PlatformService for SteamService {
         }
         .map_err(|e| log_platform_failure(&app, "steam.switch_account", e.into()));
 
+        // The switch just changed exactly this state, so both values are
+        // re-read.
+        let post_auto_login_user =
+            os::get_auto_login_user().unwrap_or_else(|e| format!("<error:{e}>"));
+        let post_current_from_file = accounts::get_current_account_name(&steam_path)
+            .unwrap_or_else(|e| format!("<error:{e}>"));
         let post_state = build_switch_state_details(
-            &steam_path,
+            &post_auto_login_user,
+            &post_current_from_file,
             Some(account_id),
             None,
             None,

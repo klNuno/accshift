@@ -77,7 +77,6 @@ body {
   background-color: transparent;
   color: var(--fg);
   width: 100%;
-  overflow-x: hidden;
 }
 
 html,

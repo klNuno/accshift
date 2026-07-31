@@ -19,6 +19,10 @@ function cardSelector(item: ItemRef): string {
  *  Arrow keys move it, Enter/menu keys act on it from App-level bindings. */
 export function createCardFocus({ getItems, getWrapperRef, getViewMode }: CardFocusDeps) {
   let focusedId = $state<string | null>(null);
+  /** Whether a card currently carries the data-kb-focus mark. Lets syncDom
+   *  bail before querying the whole grid when there is nothing to paint and
+   *  nothing to clear, which is every list change for mouse-only users. */
+  let hasMark = false;
 
   function findElement(item: ItemRef): HTMLElement | null {
     const wrapper = getWrapperRef();
@@ -31,16 +35,19 @@ export function createCardFocus({ getItems, getWrapperRef, getViewMode }: CardFo
   }
 
   function syncDom() {
+    if (focusedId === null && !hasMark) return;
     const wrapper = getWrapperRef();
     if (!wrapper) return;
     for (const el of wrapper.querySelectorAll<HTMLElement>("[data-kb-focus]")) {
       delete el.dataset.kbFocus;
     }
+    hasMark = false;
     const item = focusedItem();
     if (!item) return;
     const el = findElement(item);
     if (!el) return;
     el.dataset.kbFocus = "true";
+    hasMark = true;
     el.scrollIntoView({ block: "nearest" });
   }
 

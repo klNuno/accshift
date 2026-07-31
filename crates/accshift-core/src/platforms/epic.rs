@@ -621,8 +621,10 @@ pub fn switch_account(app_handle: &dyn AppContext, account_id: &str) -> Result<(
     capture_current_account(app_handle)?;
 
     // Kill launcher
-    kill_epic();
-    std::thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
+    if is_epic_running() {
+        kill_epic();
+        std::thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
+    }
 
     // Restore target account's auth
     restore_auth_snapshot(app_handle, &account_id)?;
@@ -687,8 +689,10 @@ pub fn begin_account_setup(app_handle: &dyn AppContext) -> Result<SetupStatus, S
     )?;
 
     // Kill launcher, clear auth files to force login screen
-    kill_epic();
-    std::thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
+    if is_epic_running() {
+        kill_epic();
+        std::thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
+    }
     delete_auth_files()?;
     clear_eos_caches();
 

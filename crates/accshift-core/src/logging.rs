@@ -37,59 +37,60 @@ fn log_lock_file_handle() -> &'static Mutex<Option<File>> {
 /// Holds the OS-level exclusive lock on the log sidecar for as long as it is
 /// alive; releases on drop. Acquisition is best-effort: if the sidecar can't be
 /// opened or locked we proceed without it rather than dropping log records,
-/// since logging must not become a hard failure path.
+/// since logging must not become a hard failure path. `Some` means the lock is
+/// held on the canonical cached handle, whose mutex stays held for the
+/// guard's lifetime so the unlock targets that same handle.
 struct CrossProcessLogGuard {
-    file: Option<File>,
+    guard: Option<std::sync::MutexGuard<'static, Option<File>>>,
 }
 
 impl CrossProcessLogGuard {
     fn acquire(app_handle: &dyn AppContext) -> Self {
-        // Get our own handle to the sidecar, then drop the in-process mutex
-        // before blocking on the OS lock: blocking while holding the mutex
-        // would needlessly stall sibling threads that haven't reached the OS
-        // wait yet.
-        let clone = {
-            let mut guard = log_lock_file_handle()
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+        let mut guard = log_lock_file_handle()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
 
-            if guard.is_none() {
-                if let Ok(lock_path) = log_lock_file_path(app_handle) {
-                    if ensure_log_parent(&lock_path).is_ok() {
-                        if let Ok(file) = OpenOptions::new()
-                            .create(true)
-                            .read(true)
-                            .write(true)
-                            .truncate(false)
-                            .open(&lock_path)
-                        {
-                            *guard = Some(file);
-                        }
+        if guard.is_none() {
+            if let Ok(lock_path) = log_lock_file_path(app_handle) {
+                if ensure_log_parent(&lock_path).is_ok() {
+                    if let Ok(file) = OpenOptions::new()
+                        .create(true)
+                        .read(true)
+                        .write(true)
+                        .truncate(false)
+                        .open(&lock_path)
+                    {
+                        *guard = Some(file);
                     }
                 }
             }
+        }
 
-            // Clone rather than move: the OnceLock keeps the canonical handle
-            // open for reuse across calls.
-            guard.as_ref().and_then(|file| file.try_clone().ok())
+        // Blocking acquire on the canonical handle, taken while still holding
+        // the in-process mutex. That wait can't stall a sibling thread: every
+        // acquire site takes the `log_sink` mutex first and keeps it for the
+        // guard's lifetime (lock order log_sink -> LOG_LOCK_FILE everywhere),
+        // so siblings are already serialized before reaching this point.
+        // Best-effort: if the sidecar can't be opened or locked we drop the
+        // mutex and proceed unlocked rather than failing the log write, and
+        // the open is retried on the next call.
+        let locked = match guard.as_ref() {
+            Some(file) => FileExt::lock_exclusive(file).is_ok(),
+            None => false,
         };
 
-        // Blocking acquire: serialize against the other process. Best-effort.
-        // If the lock can't be taken we proceed unlocked rather than failing
-        // the log write.
-        let locked = clone.and_then(|file| {
-            FileExt::lock_exclusive(&file).ok()?;
-            Some(file)
-        });
-
-        CrossProcessLogGuard { file: locked }
+        CrossProcessLogGuard {
+            guard: locked.then_some(guard),
+        }
     }
 }
 
 impl Drop for CrossProcessLogGuard {
     fn drop(&mut self) {
-        if let Some(file) = self.file.take() {
-            let _ = FileExt::unlock(&file);
+        if let Some(guard) = self.guard.take() {
+            if let Some(file) = guard.as_ref() {
+                let _ = FileExt::unlock(file);
+            }
         }
     }
 }
@@ -128,6 +129,12 @@ fn replace_case_insensitive(haystack: &str, needle: &str, replacement: &str) -> 
     let lower_haystack = haystack.to_lowercase();
     let lower_needle = needle.to_lowercase();
 
+    // Nothing to replace: skip the offset map entirely. It costs 8 bytes per
+    // lowercased byte and the loop below would just copy `haystack` verbatim.
+    let Some(first_match) = lower_haystack.find(&lower_needle) else {
+        return haystack.to_string();
+    };
+
     // For every byte offset in `lower_haystack` that starts a char, record the
     // matching byte offset in `haystack`. `to_lowercase` maps each source char
     // to one or more chars without reordering, so the char streams stay
@@ -165,8 +172,9 @@ fn replace_case_insensitive(haystack: &str, needle: &str, replacement: &str) -> 
     let mut out = String::with_capacity(haystack.len());
     let mut search_start = 0usize;
     let mut copied_orig = 0usize;
+    let mut relative_match = Some(first_match);
 
-    while let Some(relative_index) = lower_haystack[search_start..].find(&lower_needle) {
+    while let Some(relative_index) = relative_match {
         let lower_start = search_start + relative_index;
         let lower_end = lower_start + lower_needle.len();
         let orig_start = orig_starts[lower_start];
@@ -175,6 +183,7 @@ fn replace_case_insensitive(haystack: &str, needle: &str, replacement: &str) -> 
         out.push_str(replacement);
         copied_orig = orig_end;
         search_start = lower_end;
+        relative_match = lower_haystack[search_start..].find(&lower_needle);
     }
 
     out.push_str(&haystack[copied_orig..]);
@@ -182,6 +191,11 @@ fn replace_case_insensitive(haystack: &str, needle: &str, replacement: &str) -> 
 }
 
 fn redact_email_like_tokens(value: &str) -> String {
+    // No `@`, no email: skip the char vector and the rewind table.
+    if !value.contains('@') {
+        return value.to_string();
+    }
+
     let chars: Vec<char> = value.chars().collect();
     let mut out = String::with_capacity(value.len());
     // `out_len_at[i]` is the byte length of `out` right before the char at
@@ -264,6 +278,11 @@ fn redact_email_like_tokens(value: &str) -> String {
 /// some locales accented letters) followed by `#` and 4-5 digits; we match
 /// that shape and ignore other `#` uses (e.g. `#define`, `channel #42`).
 fn redact_battletags(value: &str) -> String {
+    // A BattleTag always carries a `#`; without one the loop just copies.
+    if !value.contains('#') {
+        return value.to_string();
+    }
+
     let chars: Vec<char> = value.chars().collect();
     let mut out = String::with_capacity(value.len());
     let mut i = 0usize;
@@ -319,6 +338,26 @@ fn redact_battletags(value: &str) -> String {
 /// approximated by requiring the surrounding chars to be non-hex / non-dash so
 /// we don't clip a longer hex blob (hashes, keys) mid-stream.
 fn redact_uuid_like_tokens(value: &str) -> String {
+    // Both forms need at least 8 consecutive hex digits (first dashed group is
+    // 8, the bare form is 32). ASCII hex digits are single bytes, so a byte
+    // scan is equivalent to a char scan and avoids the char vector.
+    let mut hex_run = 0usize;
+    let mut has_hex_run = false;
+    for byte in value.bytes() {
+        if byte.is_ascii_hexdigit() {
+            hex_run += 1;
+            if hex_run >= 8 {
+                has_hex_run = true;
+                break;
+            }
+        } else {
+            hex_run = 0;
+        }
+    }
+    if !has_hex_run {
+        return value.to_string();
+    }
+
     let chars: Vec<char> = value.chars().collect();
     let mut out = String::with_capacity(value.len());
     let mut i = 0usize;
@@ -388,6 +427,50 @@ fn match_dashed_uuid(chars: &[char], start: usize) -> Option<usize> {
     Some(i)
 }
 
+// Env vars whose values are user-identifying paths, with the placeholder that
+// replaces them. Order matters and is preserved by the resolver below:
+// USERPROFILE first, HOME before the XDG dirs.
+const ENV_SCRUB_KEYS: [(&str, &str); 10] = [
+    ("USERPROFILE", "%USERPROFILE%"),
+    ("OneDrive", "%ONEDRIVE%"),
+    ("APPDATA", "%APPDATA%"),
+    ("LOCALAPPDATA", "%LOCALAPPDATA%"),
+    ("PROGRAMDATA", "%PROGRAMDATA%"),
+    ("TEMP", "%TEMP%"),
+    ("TMP", "%TEMP%"),
+    // Linux/macOS: AppContext::app_data_dir()/app_local_data_dir() resolve
+    // under $HOME (and under XDG_DATA_HOME/XDG_CONFIG_HOME when those are
+    // set), which embeds the OS account name. Without these, paths logged
+    // from config.rs's save_config_unlocked (portable/local config paths)
+    // leak the username on every successful config save.
+    ("HOME", "%HOME%"),
+    ("XDG_DATA_HOME", "%XDG_DATA_HOME%"),
+    ("XDG_CONFIG_HOME", "%XDG_CONFIG_HOME%"),
+];
+
+fn resolve_env_scrub_pairs() -> Vec<(String, &'static str)> {
+    ENV_SCRUB_KEYS
+        .iter()
+        .filter_map(|(env_key, placeholder)| {
+            std::env::var(env_key).ok().map(|path| (path, *placeholder))
+        })
+        .collect()
+}
+
+// These values are fixed for the process lifetime, so resolve them once
+// instead of paying 10 env lookups per sanitized field (4 fields per record).
+#[cfg(not(test))]
+fn resolved_env_scrub_pairs() -> Vec<(String, &'static str)> {
+    static ENV_SCRUB_CACHE: OnceLock<Vec<(String, &'static str)>> = OnceLock::new();
+    ENV_SCRUB_CACHE.get_or_init(resolve_env_scrub_pairs).clone()
+}
+
+// Tests mutate HOME / XDG_* at runtime, so they need a fresh read per call.
+#[cfg(test)]
+fn resolved_env_scrub_pairs() -> Vec<(String, &'static str)> {
+    resolve_env_scrub_pairs()
+}
+
 fn sanitize_log_text(value: &str) -> String {
     // Order matters: collapse emails first (they can contain digits/hex), then
     // BattleTags, then UUID/PUUID. We deliberately do NOT try to redact Steam
@@ -399,26 +482,8 @@ fn sanitize_log_text(value: &str) -> String {
     sanitized = redact_battletags(&sanitized);
     sanitized = redact_uuid_like_tokens(&sanitized);
 
-    for (env_key, placeholder) in [
-        ("USERPROFILE", "%USERPROFILE%"),
-        ("OneDrive", "%ONEDRIVE%"),
-        ("APPDATA", "%APPDATA%"),
-        ("LOCALAPPDATA", "%LOCALAPPDATA%"),
-        ("PROGRAMDATA", "%PROGRAMDATA%"),
-        ("TEMP", "%TEMP%"),
-        ("TMP", "%TEMP%"),
-        // Linux/macOS: AppContext::app_data_dir()/app_local_data_dir() resolve
-        // under $HOME (and under XDG_DATA_HOME/XDG_CONFIG_HOME when those are
-        // set), which embeds the OS account name. Without these, paths logged
-        // from config.rs's save_config_unlocked (portable/local config paths)
-        // leak the username on every successful config save.
-        ("HOME", "%HOME%"),
-        ("XDG_DATA_HOME", "%XDG_DATA_HOME%"),
-        ("XDG_CONFIG_HOME", "%XDG_CONFIG_HOME%"),
-    ] {
-        if let Ok(path) = std::env::var(env_key) {
-            sanitized = replace_case_insensitive(&sanitized, &path, placeholder);
-        }
+    for (path, placeholder) in resolved_env_scrub_pairs() {
+        sanitized = replace_case_insensitive(&sanitized, &path, placeholder);
     }
 
     sanitized
