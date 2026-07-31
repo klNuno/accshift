@@ -360,11 +360,11 @@ fn store_account(
 
 fn read_accounts(app_handle: &dyn AppContext) -> Vec<RobloxAccount> {
     load_account_configs(app_handle)
-        .iter()
+        .into_iter()
         .map(|a| RobloxAccount {
-            user_id: a.user_id.clone(),
-            username: a.username.clone(),
-            display_name: a.display_name.clone(),
+            user_id: a.user_id,
+            username: a.username,
+            display_name: a.display_name,
             last_login_at: a.last_used_at,
         })
         .collect()
@@ -422,10 +422,12 @@ fn read_cookie_from_registry() -> Result<Option<String>, String> {
 /// that Roblox Studio performed in HKCU. Studio refreshes `.ROBLOSECURITY`
 /// in place; if we ignore it and later overwrite the registry with our stored
 /// (now stale) cookie, the user gets logged out. Windows-only; no-op elsewhere.
-fn persist_rotated_cookie(app_handle: &dyn AppContext, account: &RobloxAccountConfig) {
+/// Returns `true` only when the store was actually rewritten, so the caller can
+/// skip re-reading it when nothing changed.
+fn persist_rotated_cookie(app_handle: &dyn AppContext, account: &RobloxAccountConfig) -> bool {
     let live = match read_cookie_from_registry() {
         Ok(Some(cookie)) => cookie,
-        Ok(None) => return,
+        Ok(None) => return false,
         Err(e) => {
             log_platform_error(
                 app_handle,
@@ -433,7 +435,7 @@ fn persist_rotated_cookie(app_handle: &dyn AppContext, account: &RobloxAccountCo
                 "Could not read live Roblox cookie from registry",
                 &e,
             );
-            return;
+            return false;
         }
     };
 
@@ -446,12 +448,12 @@ fn persist_rotated_cookie(app_handle: &dyn AppContext, account: &RobloxAccountCo
                 "Could not decrypt stored cookie for rotation check",
                 format!("{e}"),
             );
-            return;
+            return false;
         }
     };
 
     if live.trim() == stored.trim() {
-        return;
+        return false;
     }
 
     // The active-account guess in switch_account (max last_used_at) is only a
@@ -465,7 +467,7 @@ fn persist_rotated_cookie(app_handle: &dyn AppContext, account: &RobloxAccountCo
     // stored cookie untouched (fail closed).
     match validate_cookie_blocking(&live) {
         Ok(user) if user.id.to_string() == account.user_id => {}
-        Ok(_) => return,
+        Ok(_) => return false,
         Err(e) => {
             log_platform_error(
                 app_handle,
@@ -473,7 +475,7 @@ fn persist_rotated_cookie(app_handle: &dyn AppContext, account: &RobloxAccountCo
                 "Could not verify live cookie ownership before rotation; skipping",
                 &e,
             );
-            return;
+            return false;
         }
     }
 
@@ -486,7 +488,7 @@ fn persist_rotated_cookie(app_handle: &dyn AppContext, account: &RobloxAccountCo
                 "Could not re-encrypt rotated cookie",
                 format!("{e}"),
             );
-            return;
+            return false;
         }
     };
 
@@ -499,7 +501,7 @@ fn persist_rotated_cookie(app_handle: &dyn AppContext, account: &RobloxAccountCo
     if let Some(a) = accounts.iter_mut().find(|a| a.user_id == account.user_id) {
         old_token = std::mem::replace(&mut a.cookie_encrypted, encrypted);
     } else {
-        return;
+        return false;
     }
 
     if let Err(e) = save_account_configs(app_handle, &accounts) {
@@ -509,7 +511,7 @@ fn persist_rotated_cookie(app_handle: &dyn AppContext, account: &RobloxAccountCo
             "Could not persist rotated cookie",
             &e,
         );
-        return;
+        return false;
     }
 
     // New token is persisted; drop the stale keyring entry. Guard on a
@@ -537,6 +539,8 @@ fn persist_rotated_cookie(app_handle: &dyn AppContext, account: &RobloxAccountCo
         "Persisted rotated Roblox cookie from registry",
         format!("userId={}", super::redact_id(&account.user_id)),
     );
+
+    true
 }
 
 fn kill_roblox() {
@@ -610,13 +614,20 @@ pub fn switch_account(app_handle: &dyn AppContext, user_id: &str) -> Result<(), 
     // loaded. This also covers re-loading the already-active account: its own
     // rotation is persisted first, then decrypted below. Windows-only; the
     // helper is a no-op elsewhere.
-    if let Some(active) = accounts.iter().max_by_key(|a| a.last_used_at.unwrap_or(0)) {
-        persist_rotated_cookie(app_handle, active);
-    }
+    let rotated = accounts
+        .iter()
+        .max_by_key(|a| a.last_used_at.unwrap_or(0))
+        .map(|active| persist_rotated_cookie(app_handle, active))
+        .unwrap_or(false);
 
     // Re-read after the possible rotation persist so we decrypt the freshest
-    // stored cookie for the account we are switching to.
-    let accounts = load_account_configs(app_handle);
+    // stored cookie for the account we are switching to. Nothing was rewritten
+    // when the rotation was a no-op, so the vector we already have is current.
+    let accounts = if rotated {
+        load_account_configs(app_handle)
+    } else {
+        accounts
+    };
     let account = accounts
         .iter()
         .find(|a| a.user_id == user_id)

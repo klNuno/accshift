@@ -18,13 +18,21 @@ pub struct TelemetryUiState {
     pub onboarding_completed: bool,
 }
 
-#[tauri::command]
+// `async` so the config read runs on the blocking pool instead of the UI
+// thread, like every other IO-touching command here.
+#[tauri::command(async)]
 pub fn telemetry_get_state(app_handle: tauri::AppHandle) -> TelemetryUiState {
     let cfg = config::load_config(&ctx(&app_handle)).telemetry;
     TelemetryUiState {
         mode_a_enabled: cfg.mode_a_enabled,
         mode_b_enabled: cfg.mode_b_enabled,
-        install_id_set: !telemetry_install_ids(&cfg).is_empty(),
+        // Same predicate as `!telemetry_install_ids(&cfg).is_empty()`, without
+        // building the Vec of cloned ids just to test it for emptiness.
+        install_id_set: !cfg.install_id.is_empty()
+            || cfg
+                .pending_forget_install_ids
+                .iter()
+                .any(|id| !id.is_empty()),
         forget_pending: !cfg.pending_forget_install_ids.is_empty(),
         onboarding_completed: cfg.onboarding_completed,
     }

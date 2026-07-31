@@ -1,5 +1,5 @@
 import { addToast, removeToast } from "$lib/features/notifications/store.svelte";
-import { getSettings } from "$lib/features/settings/store";
+import { peekSettings } from "$lib/features/settings/store";
 import type { AccountWarningChip, AccountWarningPresentation } from "$lib/shared/accountWarnings";
 import type {
   PlatformAccount,
@@ -172,7 +172,7 @@ export async function loadSteamWarningStates(
     return toWarningMap(cachedBans, t);
   }
 
-  const delayDays = getSettings().dataRefresh.banCheckDays;
+  const delayDays = peekSettings().dataRefresh.banCheckDays;
   const now = Date.now();
   const cachedState = readBanCheckState();
   const delayMs = delayDays * 24 * 60 * 60 * 1000;

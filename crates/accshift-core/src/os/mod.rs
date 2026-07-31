@@ -41,6 +41,12 @@ pub fn any_process_running(process_names: &[&str]) -> bool {
     common::any_process_running(process_names)
 }
 
+/// The subset of `process_names` currently running, using one process-table
+/// scan for the whole batch.
+pub fn running_process_names<'a>(process_names: &'a [&'a str]) -> Vec<&'a str> {
+    common::running_process_names(process_names)
+}
+
 /// Kill every process in `process_names`, best effort.
 pub fn kill_processes(process_names: &[&str]) {
     common::kill_processes(process_names)

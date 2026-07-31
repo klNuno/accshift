@@ -359,7 +359,8 @@ async fn read_body_capped(response: reqwest::Response, max: usize) -> Result<Str
         }
     }
 
-    let mut buf: Vec<u8> = Vec::new();
+    let capacity = response.content_length().unwrap_or(0).min(max as u64) as usize;
+    let mut buf: Vec<u8> = Vec::with_capacity(capacity);
     let mut response = response;
     loop {
         match response.chunk().await {

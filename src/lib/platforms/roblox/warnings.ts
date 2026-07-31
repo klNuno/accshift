@@ -4,7 +4,7 @@ import type {
   PlatformUiCallbacks,
   PlatformWarningLoadOptions,
 } from "$lib/shared/platform";
-import { getSettings } from "$lib/features/settings/store";
+import { peekSettings } from "$lib/features/settings/store";
 import { checkSessions } from "./robloxApi";
 
 // Dead sessions confirmed by the backend probe this session. Roblox cookies
@@ -32,7 +32,7 @@ function toWarningMap(t: PlatformUiCallbacks["t"]): Record<string, AccountWarnin
 }
 
 function healthCheckEnabled(): boolean {
-  return getSettings().healthCheckPerPlatform["roblox"] !== false;
+  return peekSettings().healthCheckPerPlatform["roblox"] !== false;
 }
 
 // A switch that failed with HTTP 401 is proof the stored cookie is dead, so

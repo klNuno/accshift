@@ -4,12 +4,28 @@ export function foldText(text: string): string {
   return text.normalize("NFD").replace(DIACRITICS, "").toLowerCase();
 }
 
+/** Folded targets, memoized: the command list holds one entry per account and
+ *  its keywords, and those strings are re-scored unchanged on every keystroke.
+ *  Only targets are cached; queries are transient and high-cardinality. */
+const foldCache = new Map<string, string>();
+
+function foldCached(text: string): string {
+  const hit = foldCache.get(text);
+  if (hit !== undefined) return hit;
+  if (foldCache.size >= 4096) foldCache.clear();
+  const folded = foldText(text);
+  foldCache.set(text, folded);
+  return folded;
+}
+
 /** Subsequence scorer: every query char must appear in order. Consecutive
  *  matches and word starts score higher, so "nf" ranks "New folder" above
  *  "info". Returns null when the query is not a subsequence. */
 export function fuzzyScore(query: string, text: string): number | null {
-  const q = foldText(query);
-  const t = foldText(text);
+  return scoreFolded(foldText(query), foldCached(text));
+}
+
+function scoreFolded(q: string, t: string): number | null {
   if (!q) return 0;
   let score = 0;
   let ti = 0;
@@ -33,10 +49,12 @@ export function fuzzyScore(query: string, text: string): number | null {
 
 /** Best score across a title and optional keywords. */
 export function fuzzyScoreAll(query: string, title: string, keywords?: string[]): number | null {
-  let best = fuzzyScore(query, title);
+  // Fold the query once for the whole command instead of once per target.
+  const q = foldText(query);
+  let best = scoreFolded(q, foldCached(title));
   if (keywords) {
     for (const keyword of keywords) {
-      const s = fuzzyScore(query, keyword);
+      const s = scoreFolded(q, foldCached(keyword));
       // Keyword hits rank slightly below equivalent title hits.
       if (s !== null && (best === null || s - 2 > best)) best = s - 2;
     }

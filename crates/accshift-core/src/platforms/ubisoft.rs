@@ -317,10 +317,18 @@ fn normalize_uuid(uuid: &str) -> String {
 }
 
 fn discover_uuids(app_handle: &dyn AppContext) -> HashSet<String> {
+    discover_uuids_in(app_handle, resolve_install_dir(app_handle).ok().as_deref())
+}
+
+/// Same discovery against an already-resolved install dir, so callers that need
+/// it more than once per operation don't pay for `resolve_install_dir` twice.
+/// `install_dir` is optional on purpose: the spool scan must still run when the
+/// install dir could not be resolved.
+fn discover_uuids_in(_app_handle: &dyn AppContext, install_dir: Option<&Path>) -> HashSet<String> {
     let mut uuids = HashSet::new();
 
     // From savegames directory
-    if let Ok(install_dir) = resolve_install_dir(app_handle) {
+    if let Some(install_dir) = install_dir {
         let savegames = install_dir.join("savegames");
         if let Ok(entries) = fs::read_dir(&savegames) {
             for entry in entries.flatten() {
@@ -356,6 +364,15 @@ fn discover_uuids(app_handle: &dyn AppContext) -> HashSet<String> {
 
 fn current_account_from_logs(app_handle: &dyn AppContext) -> Option<String> {
     let install_dir = resolve_install_dir(app_handle).ok()?;
+    current_account_from_logs_in(app_handle, &install_dir)
+}
+
+/// Same log scan against an already-resolved install dir, for callers that
+/// resolve it once and reuse it.
+fn current_account_from_logs_in(
+    _app_handle: &dyn AppContext,
+    install_dir: &Path,
+) -> Option<String> {
     let log_path = install_dir.join("logs").join("launcher_log.txt");
     if !log_path.exists() {
         return None;
@@ -495,6 +512,13 @@ fn validate_uuid(uuid: &str) -> Result<String, String> {
 }
 
 fn read_accounts(app_handle: &dyn AppContext) -> Result<Vec<UbisoftAccount>, String> {
+    read_accounts_in(app_handle, resolve_install_dir(app_handle).ok().as_deref())
+}
+
+fn read_accounts_in(
+    app_handle: &dyn AppContext,
+    install_dir: Option<&Path>,
+) -> Result<Vec<UbisoftAccount>, String> {
     // Read path stays side-effect free: usage is recorded on switch and setup,
     // not when merely listing accounts. Writing config here would mutate state
     // on every poll and race concurrent reads.
@@ -505,10 +529,10 @@ fn read_accounts(app_handle: &dyn AppContext) -> Result<Vec<UbisoftAccount>, Str
         .iter()
         .map(|u| normalize_uuid(u))
         .collect();
-    let discovered: Vec<String> = discover_uuids(app_handle)
-        .into_iter()
-        .filter(|u| !forgotten.contains(&normalize_uuid(u)))
-        .collect();
+    // Kept as a set: the retain below does a lookup per account, which is O(1)
+    // here and a full scan on a Vec.
+    let mut discovered = discover_uuids_in(app_handle, install_dir);
+    discovered.retain(|u| !forgotten.contains(&normalize_uuid(u)));
 
     let metadata_by_uuid: HashMap<String, &UbisoftAccountConfig> = cfg
         .ubisoft
@@ -624,8 +648,14 @@ pub fn get_accounts(app_handle: &dyn AppContext) -> Result<Vec<UbisoftAccount>, 
 }
 
 pub fn get_startup_snapshot(app_handle: &dyn AppContext) -> Result<UbisoftStartupSnapshot, String> {
-    let accounts = read_accounts(app_handle)?;
-    let current = current_account_from_logs(app_handle).unwrap_or_default();
+    // Resolve the install dir once: both the account scan and the log scan need
+    // it, and resolving costs a config load plus directory and registry probes.
+    let install_dir = resolve_install_dir(app_handle).ok();
+    let accounts = read_accounts_in(app_handle, install_dir.as_deref())?;
+    let current = install_dir
+        .as_deref()
+        .and_then(|dir| current_account_from_logs_in(app_handle, dir))
+        .unwrap_or_default();
     Ok(UbisoftStartupSnapshot {
         accounts,
         current_account: current,
@@ -812,8 +842,16 @@ pub fn get_account_setup_status(
 ) -> Result<SetupStatus, String> {
     let job = SETUP_JOBS.touch(setup_id)?;
 
+    // Resolve the install dir once per poll: the log scan and the filesystem
+    // scan below both need it, and resolving costs a config load plus directory
+    // and registry probes.
+    let install_dir = resolve_install_dir(app_handle).ok();
+
     // Check logs for a new account UUID
-    if let Some(current_uuid) = current_account_from_logs(app_handle) {
+    if let Some(current_uuid) = install_dir
+        .as_deref()
+        .and_then(|dir| current_account_from_logs_in(app_handle, dir))
+    {
         let key = normalize_uuid(&current_uuid);
         if !job.known_uuids.contains(&key) {
             if let Some(status) = capture_setup_account(app_handle, setup_id, &current_uuid) {
@@ -823,7 +861,7 @@ pub fn get_account_setup_status(
     }
 
     // Check filesystem for new UUIDs
-    let current_uuids = discover_uuids(app_handle);
+    let current_uuids = discover_uuids_in(app_handle, install_dir.as_deref());
     for uuid in &current_uuids {
         let key = normalize_uuid(uuid);
         if !job.known_uuids.contains(&key) {

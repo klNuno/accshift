@@ -229,13 +229,22 @@ function loadSettingsFromStorage(): AppSettings {
   return sanitizeSettings(getClientStoreValue(CLIENT_STORE_SETTINGS) ?? {});
 }
 
-export function getSettings(): AppSettings {
+/// Shared, non-cloned view of the settings. Callers must treat it as
+/// read-only: it is the very object `getSettings` clones, so mutating it
+/// corrupts the cache for everyone. Use this on hot paths that read one
+/// scalar and discard the rest; use `getSettings` when the result is kept
+/// or edited.
+export function peekSettings(): Readonly<AppSettings> {
   const revision = getClientStoreRevision(CLIENT_STORE_SETTINGS);
   if (!cachedSettings || cachedSettingsRevision !== revision) {
     cachedSettings = loadSettingsFromStorage();
     cachedSettingsRevision = revision;
   }
-  return cloneSettings(cachedSettings);
+  return cachedSettings;
+}
+
+export function getSettings(): AppSettings {
+  return cloneSettings(peekSettings() as AppSettings);
 }
 
 export function saveSettings(settings: AppSettings) {
@@ -259,7 +268,7 @@ export function saveSettings(settings: AppSettings) {
 }
 
 export function getCacheDuration(): number {
-  const settings = getSettings();
+  const settings = peekSettings();
   if (settings.dataRefresh.avatarCacheDays === 0) return 0;
   return settings.dataRefresh.avatarCacheDays * 24 * 60 * 60 * 1000;
 }

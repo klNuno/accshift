@@ -64,8 +64,25 @@
   onMount(() => {
     const win = getCurrentWindow();
     win.isMaximized().then((v) => (isMaximized = v));
+    // onResized fires continuously during a drag-resize. Coalesce so at most
+    // one query is in flight, with a single trailing pass for the final size,
+    // instead of one round-trip per event whose result is immediately stale.
+    let inFlight = false;
+    let pending = false;
     const unlisten = win.onResized(async () => {
-      isMaximized = await win.isMaximized();
+      if (inFlight) {
+        pending = true;
+        return;
+      }
+      inFlight = true;
+      try {
+        do {
+          pending = false;
+          isMaximized = await win.isMaximized();
+        } while (pending);
+      } finally {
+        inFlight = false;
+      }
     });
     return () => {
       unlisten.then((fn) => fn());
