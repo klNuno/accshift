@@ -25,3 +25,6 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+
+# svelte-check --tsgo scratch tsconfig
+.svelte-check/
