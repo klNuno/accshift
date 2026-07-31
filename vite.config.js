@@ -20,6 +20,12 @@ const tauriCoreReal = fileURLToPath(
 // https://vitejs.dev/config/
 export default defineConfig({
   test: {},
+  // The OFL requires the bundled fonts to ship with their license text
+  // unaltered. Oxfmt renumbers its clause list and reflows the paragraphs, so
+  // the file is formatted by SIL, not by us.
+  fmt: {
+    ignorePatterns: ["public/fonts/LICENSE.md"],
+  },
   staged: {
     "*": "vp check --fix",
   },
