@@ -73,6 +73,28 @@ Grab the build for your OS from [Releases](https://github.com/klNuno/accshift/re
 - **Linux**: deb, rpm or AppImage
 - **macOS**: dmg (unsigned for now, run `xattr -cr /Applications/Accshift.app` once if Gatekeeper complains)
 
+## Privacy
+
+Accshift stores no passwords, and sensitive cookies, tokens and session
+snapshots are encrypted at rest on your machine.
+
+Usage telemetry is a handful of anonymous counters. Nothing is sent before you
+finish the first-launch screen, and **one switch in Settings, Privacy turns it
+all off for good**. The app is identical either way, and no feature is gated on
+it.
+
+What is never sent, in any mode: account names, platform identifiers such as
+SteamID, passwords, tokens, cookies, persona or folder names, file paths, and
+your IP address. An event can say "an account was added on Steam"; it cannot say
+which account. What is sent is nine counters, the app and OS version, the
+locale, and a country code.
+
+Everything is detailed in [docs/analytics.md](./docs/analytics.md): the full
+event list with every field, a real example payload, where the data is stored,
+and how to export or delete it. The client is under
+[`crates/accshift-core/src/telemetry/`](./crates/accshift-core/src/telemetry)
+and the server is in [`server/`](./server), both readable in a sitting.
+
 ## Building from source
 
 ```bash
