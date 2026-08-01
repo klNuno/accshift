@@ -102,7 +102,10 @@ The app could POST to PostHog itself. It does not, for four reasons:
    `person:write` and `query:read`. Nothing more: this key is what `/forget`
    and `/export` use, and a wider scope buys nothing.
 4. Turn on "Discard client IP data" in Settings, Project, General. The Worker
-   already overwrites `$ip`, this removes the property outright.
+   already overwrites `$ip`, this removes the property outright. Verified on
+   the live project: a stored event carries no `$ip` at all, and no `$geoip_*`
+   property either, only `$transformations_succeeded` naming the GeoIP
+   transformation that ran and early-returned on `$geoip_disable`.
 5. Set a billing limit on the project. It is the only hard spend ceiling; the
    Worker's rate limiters bound burst rate, not a monthly total.
 
