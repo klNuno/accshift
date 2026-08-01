@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 
 /// Reponse plafond : la source gere ~500 comptes, 1 MB est deja tres large.
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
-/// Le serveur de reference borne une demande a 100 ids ; au-dela on decoupe.
-const MAX_IDS_PER_REQUEST: usize = 100;
+/// Le serveur de reference borne une demande a 300 ids ; au-dela on decoupe.
+const MAX_IDS_PER_REQUEST: usize = 300;
 /// Le serveur de reference attend jusqu'a 20 s qu'un check GC se termine.
 /// Cette limite par requete remplace le timeout global de 10 s du client.
 const CHECK_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
