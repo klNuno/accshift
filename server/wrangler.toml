@@ -13,32 +13,23 @@ routes = [{ pattern = "accshift.mtsu.dev", custom_domain = true }]
 workers_dev = false
 preview_urls = false
 
-# CPU limit. Free tier has a wide margin for our workload.
-# cpu_ms = 50
-
-# ── Analytics Engine: high-cardinality events, 90-day retention ──
-[[analytics_engine_datasets]]
-binding = "AE"
-dataset = "accshift_events"
-
-# ── D1: pings, snapshots, Mode B pseudonyms, forget list ──
-# database_id is filled after `wrangler d1 create accshift-telemetry`.
-#
-# migrations_dir puts wrangler in charge of the schema: it records what it has
-# run in a `d1_migrations` table and applies only what is pending. `pnpm deploy`
-# runs the migrations before uploading the Worker, so code can never reach
-# production ahead of the table it queries.
-[[d1_databases]]
-binding = "DB"
-database_name = "accshift-telemetry"
-database_id = "a7eb2043-c878-48f9-ab21-6cdc7d8ea327"
-migrations_dir = "migrations"
+# This Worker has no storage binding on purpose. It forwards to PostHog and
+# keeps nothing: no D1, no Analytics Engine, no KV, no object storage. The only
+# state it touches is the rate-limit counters below, which hold no payload.
 
 # ── Public variables (non-secret) ──
 [vars]
 ENVIRONMENT = "production"
 BATCH_MAX_EVENTS = "200" # per /track request
-ADMIN_ALLOWED = "true"
+
+# PostHog EU. Ingestion and the REST API live on different hosts.
+POSTHOG_INGEST_HOST = "https://eu.i.posthog.com"
+POSTHOG_API_HOST = "https://eu.posthog.com"
+
+# Numeric project id, the one in your PostHog dashboard URL. Not a secret.
+# Forks replace it with their own.
+POSTHOG_PROJECT_ID = "238438"
+
 ALLOWED_ORIGINS = "http://localhost:1420,https://tauri.localhost"
 ALERT_FROM = "onboarding@resend.dev" # replace with a verified domain once set up
 
@@ -46,20 +37,16 @@ ALERT_FROM = "onboarding@resend.dev" # replace with a verified domain once set u
 # Cheap filter against opportunistic scripts. Trivially spoofable but effective.
 UA_PREFIX = "Accshift/"
 
-# Global daily budget per endpoint. Last line of defense against a distributed
-# abuse that would bypass per-IP rate limiters.
-# Values calibrated to stay inside the Cloudflare free tier.
-BUDGET_TRACK = "4000" # batches/day, max 200 events/batch = 800k events/day (AE free: 830k/day)
-BUDGET_CONSENT = "4000" # onboarding choices/day
-BUDGET_FORGET = "500"
-BUDGET_EXPORT = "500"
-BUDGET_ADMIN = "2000"
-
 # ── Secrets (set with `wrangler secret put <NAME>`) ──
-# HASH_SECRET       -> salt for daily_visitor_hash
-# ADMIN_TOKEN       -> bearer token for the /admin/query endpoint
-# RESEND_API_KEY    -> Resend API key for email alerts
-# ALERT_EMAIL       -> recipient address for alerts
+# HASH_SECRET               -> salt for the Mode A hashes
+# POSTHOG_PROJECT_API_KEY   -> PostHog write key (phc_...), used for ingestion
+# POSTHOG_PERSONAL_API_KEY  -> PostHog personal key (phx_...) for /forget and
+#                              /export. Scope it to person:read, person:write
+#                              and query:read, nothing more. This key can read
+#                              and delete the whole project, which is why it
+#                              lives here and never in the app binary.
+# RESEND_API_KEY            -> Resend API key for email alerts (optional)
+# ALERT_EMAIL               -> recipient address for alerts (optional)
 
 # ── Rate limiting (native bindings, free) ──
 # The period field accepts only 10 or 60 seconds.
@@ -77,11 +64,16 @@ type = "ratelimit"
 namespace_id = "1003"
 simple = { limit = 5, period = 60 } # forget + export combined, per IP
 
+# Account-wide ceiling, keyed on a constant rather than on the caller. Bounds
+# what a distributed flood can push into the PostHog monthly quota, which is
+# the resource that now costs money. This is a burst ceiling, not the daily
+# budget the Worker used to keep in D1: the hard spend stop is the billing
+# limit configured on the PostHog project itself.
 [[unsafe.bindings]]
-name = "RL_ADMIN"
+name = "RL_GLOBAL"
 type = "ratelimit"
-namespace_id = "1004"
-simple = { limit = 10, period = 60 }
+namespace_id = "1006"
+simple = { limit = 120, period = 60 }
 
 [[unsafe.bindings]]
 name = "RL_NOTIFY"

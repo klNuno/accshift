@@ -55,15 +55,15 @@ jobs:
       - name: Frontend tests
         run: vp test
 
-      # setup-vp only puts `vp` on PATH; the telemetry worker is a plain pnpm
+      # setup-vp only puts `vp` on PATH; the server worker is a plain pnpm
       # package. `corepack enable` writes its pnpm shim next to the real node
       # binary, which is not on PATH here, so drive pnpm through corepack
       # itself (version pinned by packageManager in the root package.json).
-      - name: Install telemetry dependencies
-        run: corepack pnpm --dir telemetry install --frozen-lockfile
+      - name: Install server dependencies
+        run: corepack pnpm --dir server install --frozen-lockfile
 
-      - name: Telemetry typecheck
-        run: corepack pnpm --dir telemetry exec tsc --noEmit
+      - name: Server typecheck
+        run: corepack pnpm --dir server exec tsc --noEmit
 
       - name: Build frontend
         run: vp build
