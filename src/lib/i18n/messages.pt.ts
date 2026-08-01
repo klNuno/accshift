@@ -182,16 +182,15 @@ export const PT_MESSAGES: Record<MessageKey, string> = {
     "O Accshift conta algumas estatísticas de utilização anónimas para eu saber o que corrigir primeiro. Nada de pessoal sai da tua máquina, a aplicação funciona na mesma, e podes mudar de ideias quando quiseres nas definições.",
   "onboarding.telemetry.question": "Negócio fechado?",
   "onboarding.telemetry.gifAlt": "Meme Trade Offer",
-  "onboarding.telemetry.no": "Não, obrigado",
-  "onboarding.telemetry.noHint":
-    "Não enviar estatísticas de utilização. Só esta escolha anónima é contada.",
-  "onboarding.telemetry.basic": "Sim, básico",
+  "onboarding.telemetry.basic": "NÃO! Já chega",
   "onboarding.telemetry.basicDefault": "(predefinido)",
   "onboarding.telemetry.basicHint":
-    "Apenas contadores anónimos. Um ID local aleatório evita contagens duplicadas. Ajudas, mas só um bocadinho.",
+    "Apenas contadores anónimos e nada mais: sem perfil, sem identificador que te siga.",
   "onboarding.telemetry.deal": "NEGÓCIO FECHADO",
   "onboarding.telemetry.dealHint":
     "Adiciona um UUID separado para as estatísticas avançadas, guardado apenas na tua máquina. Continuo sem saber quem és, mas ajudas imenso. Obrigado!",
+  "onboarding.telemetry.optOutNote":
+    "Se REALMENTE não queres ajudar o accshift, podes desativar tudo em Definições -> Privacidade. :c",
   "onboarding.telemetry.back": "Voltar",
   "settings.steam": "Steam",
   "settings.riot": "Riot",

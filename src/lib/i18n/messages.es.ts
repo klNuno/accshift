@@ -182,16 +182,15 @@ export const ES_MESSAGES: Record<MessageKey, string> = {
     "Accshift cuenta unas pocas estadísticas de uso anónimas para saber qué arreglar primero. Nada personal sale de tu máquina, la app funciona igual de todos modos y puedes cambiar de idea cuando quieras en Configuración.",
   "onboarding.telemetry.question": "¿Trato hecho?",
   "onboarding.telemetry.gifAlt": "Meme de oferta de intercambio",
-  "onboarding.telemetry.no": "No, gracias",
-  "onboarding.telemetry.noHint":
-    "No enviar ninguna estadística de uso. Solo se cuenta esta elección anónima.",
-  "onboarding.telemetry.basic": "Sí, básicas",
+  "onboarding.telemetry.basic": "¡NO! Ya está bien",
   "onboarding.telemetry.basicDefault": "(predeterminado)",
   "onboarding.telemetry.basicHint":
-    "Solo contadores anónimos. Un ID local aleatorio evita contar duplicados. Ayudas, pero solo un poco.",
+    "Solo contadores anónimos y nada más: sin perfil, sin identificador que te siga.",
   "onboarding.telemetry.deal": "TRATO",
   "onboarding.telemetry.dealHint":
     "Añade un UUID aparte para las estadísticas ampliadas, guardado solo en tu máquina. Seguimos sin saber quién eres, pero ayudas muchísimo. ¡Gracias!",
+  "onboarding.telemetry.optOutNote":
+    "Si REALMENTE no quieres ayudar a accshift, puedes desactivarlo todo en Configuración -> Privacidad. :c",
   "onboarding.telemetry.back": "Atrás",
   "settings.steam": "Steam",
   "settings.riot": "Riot",

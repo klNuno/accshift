@@ -175,15 +175,13 @@ export const ZH_MESSAGES: Record<MessageKey, string> = {
     "Accshift 会统计少量匿名使用数据，这样我才知道该先修哪里。没有任何个人信息离开你的电脑，开不开都不影响使用，你随时可以在设置里改主意。",
   "onboarding.telemetry.question": "成交吗？",
   "onboarding.telemetry.gifAlt": "交易提议表情包",
-  "onboarding.telemetry.no": "不用了",
-  "onboarding.telemetry.noHint": "不发送任何使用统计。只记录这个匿名选择。",
-  "onboarding.telemetry.basic": "好，基础版",
+  "onboarding.telemetry.basic": "不！够了",
   "onboarding.telemetry.basicDefault": "（默认）",
-  "onboarding.telemetry.basicHint":
-    "只有匿名计数。随机本地 ID 用于避免重复计数。你帮上了忙，但只有一点点。",
+  "onboarding.telemetry.basicHint": "只有匿名计数，仅此而已：没有画像，没有跟着你的标识符。",
   "onboarding.telemetry.deal": "成交",
   "onboarding.telemetry.dealHint":
     "额外增加一个仅保存在本机的 UUID 用于增强统计。依然不知道你是谁，但你帮了大忙。谢谢！",
+  "onboarding.telemetry.optOutNote": "如果你真的不想帮 accshift，可以在设置 -> 隐私里全部关掉。:c",
   "onboarding.telemetry.back": "返回",
   "settings.steam": "Steam",
   "settings.riot": "Riot",

@@ -8,6 +8,7 @@
   import type { AppSettings } from "./types";
 
   const PIN_CODE_LENGTH = 4;
+  const TELEMETRY_DOC_URL = "https://github.com/klNuno/accshift/blob/main/docs/analytics.md";
 
   let {
     settings = $bindable(),
@@ -116,6 +117,13 @@
     }
   }
 
+  async function openTelemetryDoc() {
+    try {
+      await invoke("open_url", { url: TELEMETRY_DOC_URL });
+    } catch {
+      addToast(t("settings.openHelpFailed"), { type: "error" });
+    }
+  }
 </script>
 
 <div class="settings-grid">
@@ -200,6 +208,10 @@
     <section class="card card-wide">
       <h3>{t("settings.telemetry")}</h3>
 
+      <button type="button" class="inline-link-btn" onclick={openTelemetryDoc}>
+        {t("settings.telemetryLearnMore")}
+      </button>
+
       <ToggleSetting
         label={t("settings.telemetryModeA")}
         description={t("settings.telemetryModeAHint")}
@@ -261,6 +273,20 @@
     font-size: 11px;
     color: var(--fg-subtle);
     line-height: 1.4;
+  }
+
+  .inline-link-btn {
+    align-self: flex-start;
+    border: none;
+    background: transparent;
+    color: #60a5fa;
+    font-size: 12px;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  .inline-link-btn:hover {
+    text-decoration: underline;
   }
 
   .btn-export {

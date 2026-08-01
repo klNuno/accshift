@@ -181,16 +181,15 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
     "Accshift считает немного анонимной статистики, чтобы я знал, что чинить первым. Ничего личного вашу машину не покидает, приложение работает одинаково в любом случае, и вы всегда можете передумать в настройках.",
   "onboarding.telemetry.question": "По рукам?",
   "onboarding.telemetry.gifAlt": "Мем с предложением обмена",
-  "onboarding.telemetry.no": "Нет, спасибо",
-  "onboarding.telemetry.noHint":
-    "Не отправлять статистику использования. Учитывается только этот анонимный выбор.",
-  "onboarding.telemetry.basic": "Да, базовая",
+  "onboarding.telemetry.basic": "НЕТ! Хватит уже",
   "onboarding.telemetry.basicDefault": "(по умолчанию)",
   "onboarding.telemetry.basicHint":
-    "Только анонимные счётчики. Случайный локальный ID не даёт посчитать дважды. Помощь есть, но небольшая.",
+    "Только анонимные счётчики и ничего больше: ни профиля, ни идентификатора, который следует за вами.",
   "onboarding.telemetry.deal": "ПО РУКАМ",
   "onboarding.telemetry.dealHint":
     "Добавляет отдельный UUID для расширенной статистики, он хранится только на вашей машине. Кто вы, по-прежнему неизвестно, но помощь огромная. Спасибо!",
+  "onboarding.telemetry.optOutNote":
+    "Если вы ДЕЙСТВИТЕЛЬНО не хотите помогать accshift, всё можно отключить в разделе Настройки -> Приватность. :c",
   "onboarding.telemetry.back": "Назад",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
