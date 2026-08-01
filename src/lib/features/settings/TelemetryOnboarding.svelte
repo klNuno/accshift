@@ -97,6 +97,16 @@
   // minus the animation: anonymous counters on, enhanced off.
   function handleSkip() { void finish(true, false); }
 
+  // No toast on failure: the onboarding backdrop sits above the toast host, so
+  // the user would never see it. The console line is the only useful signal.
+  async function openDoc() {
+    try {
+      await invoke("open_url", { url: TELEMETRY_DOC_URL });
+    } catch (e) {
+      console.error("open_url failed", e);
+    }
+  }
+
   function goWelcome() { step = "welcome"; }
   function goFeatures() { step = "features"; }
   function goDeal() { step = "deal"; }
@@ -398,7 +408,7 @@
             type="button"
             class="learn-more"
             disabled={submitting || rejecting}
-            onclick={() => void invoke("open_url", { url: TELEMETRY_DOC_URL })}
+            onclick={openDoc}
           >
             {t("settings.telemetryLearnMore")}
           </button>

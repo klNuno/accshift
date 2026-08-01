@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBatch, readJsonCapped, type TelemetryEvent } from "./index";
+import { buildBatch, maskIp, readJsonCapped, redactUuids, type TelemetryEvent } from "./index";
 
 function streamingRequest(chunks: Uint8Array[], contentLength?: number): Request {
   const stream = new ReadableStream<Uint8Array>({
@@ -136,5 +136,41 @@ describe("buildBatch", () => {
     expect(item!.properties).not.toHaveProperty("platform");
     expect(item!.properties).not.toHaveProperty("duration_ms");
     expect(item!.properties).not.toHaveProperty("count");
+  });
+});
+
+describe("redactUuids", () => {
+  it("strips an install_id out of an upstream error message", () => {
+    const err =
+      "status 400: SyntaxError in query SELECT timestamp FROM events " +
+      "WHERE distinct_id = '9f8b1c2d-3e4f-4a5b-8c9d-0e1f2a3b4c5d'";
+    const redacted = redactUuids(err);
+    expect(redacted).not.toContain("9f8b1c2d");
+    expect(redacted).toContain("<uuid>");
+    // The rest of the message has to survive, otherwise the log is useless.
+    expect(redacted).toContain("status 400");
+  });
+
+  it("leaves a message without a uuid untouched", () => {
+    expect(redactUuids("status 503: upstream busy")).toBe("status 503: upstream busy");
+  });
+});
+
+describe("maskIp", () => {
+  it("keeps only the /24 of an IPv4 address", () => {
+    expect(maskIp("203.0.113.42")).toBe("203.0.113.x");
+  });
+
+  it("keeps only the /48 of a full IPv6 address", () => {
+    expect(maskIp("2001:db8:85a3:1:2:3:4:5")).toBe("2001:db8:85a3::/48");
+  });
+
+  it("pads a compressed IPv6 address instead of emitting a malformed prefix", () => {
+    expect(maskIp("2001:db8::1")).toBe("2001:db8:0::/48");
+  });
+
+  it("never returns an address for an empty or unparseable input", () => {
+    expect(maskIp("")).toBe("unknown");
+    expect(maskIp("not-an-ip")).toBe("unknown");
   });
 });

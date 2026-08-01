@@ -171,8 +171,12 @@ rather than the production one, since `wrangler dev` writes real events.
   across the whole team, not per key. It is a rare user-triggered action so the
   ceiling is theoretical, but a burst of exports surfaces as 502 to the client.
 - Rate limiting is locked to a 60-second window (Cloudflare granularity).
-- The global limiter is a burst ceiling keyed on a constant, not a daily
-  budget. The hard spend stop is the PostHog project billing limit.
+- Every limiter here, the constant-keyed one included, is enforced **per
+  Cloudflare location**, not account-wide, and Cloudflare calls the API
+  "permissive, eventually consistent, and intentionally designed to not be used
+  as an accurate accounting system". A flood spread across colos multiplies the
+  effective ceiling. These bound a single-origin burst; the hard spend stop is
+  the PostHog project billing limit.
 - A 200 from PostHog's ingestion endpoint means the batch was accepted, not
   that every event in it was valid. Ingestion errors are not visible here.
 - A `/track` batch is rejected with 502 when PostHog is unreachable. The client
