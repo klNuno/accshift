@@ -10,26 +10,27 @@
 # label aggregated over a whole month, so the file can be kept indefinitely
 # without touching the retention promise made in docs/analytics.md.
 #
-# Deployment (micronist, 192.168.1.50):
-#   install -m 755 monthly-stats-snapshot.sh /opt/server/scripts/accshift-stats/run.sh
-#   mkdir -p /opt/server/data/accshift-stats
+# Deployment, on any always-on machine you control:
+#   install -m 755 monthly-stats-snapshot.sh /opt/accshift-stats/run.sh
+#   mkdir -p /opt/accshift-stats/data
 #   printf '%s\n' 'POSTHOG_PERSONAL_API_KEY=phx_...' \
-#                 'POSTHOG_PROJECT_ID=12345' > /opt/secrets/posthog.env
-#   chmod 600 /opt/secrets/posthog.env
-#   echo '5 4 1 * * root /opt/server/scripts/accshift-stats/run.sh' > /etc/cron.d/accshift-stats
+#                 'POSTHOG_PROJECT_ID=12345' > /opt/accshift-stats/posthog.env
+#   chmod 600 /opt/accshift-stats/posthog.env
+#   echo '5 4 1 * * root /opt/accshift-stats/run.sh' > /etc/cron.d/accshift-stats
 #
 # Mint a DEDICATED PostHog personal key for this, scoped to `query:read` only.
 # Do not reuse the Worker's key: that one also carries person:write, and it has
 # no business sitting on a second machine.
 #
-# The output file must NOT live under /var/log on micronist: Armbian keeps that
-# in zram and only flushes hourly, so a freeze loses it. /opt/server is real disk.
+# Keep OUT on real disk. Several distributions hold /var/log in tmpfs or zram
+# and only flush it periodically, so a crash would lose the very file this
+# script exists to write.
 
 set -eu
 
 NAME=accshift-stats
-SECRETS=/opt/secrets/posthog.env
-OUT=/opt/server/data/accshift-stats/monthly.jsonl
+SECRETS=/opt/accshift-stats/posthog.env
+OUT=/opt/accshift-stats/data/monthly.jsonl
 LOG=/var/log/${NAME}.log
 LOCK=/var/lock/${NAME}.lock
 API_HOST=${POSTHOG_API_HOST:-https://eu.posthog.com}

@@ -281,7 +281,7 @@ async function handleForget(request: Request, env: Env, ctx: ExecutionContext): 
 
   const person = await posthogFindPerson(env, id);
   if (person.error) {
-    console.error("posthog person lookup failed", person.error);
+    console.error("posthog person lookup failed", redactUuids(person.error));
     return json({ error: "upstream_unavailable" }, 502);
   }
   // Nothing to delete. Answering ok is what lets the client clear the
@@ -292,7 +292,7 @@ async function handleForget(request: Request, env: Env, ctx: ExecutionContext): 
 
   const deleted = await posthogDeletePerson(env, person.personId);
   if (!deleted.ok) {
-    console.error("posthog person delete failed", deleted.status, deleted.body);
+    console.error("posthog person delete failed", deleted.status, redactUuids(deleted.body));
     return json({ error: "upstream_unavailable" }, 502);
   }
 
@@ -335,7 +335,10 @@ async function handleExport(request: Request, env: Env, ctx: ExecutionContext): 
   ]);
 
   if (events.error) {
-    console.error("posthog export query failed", events.error);
+    // Redacted: a HogQL error echoes the failing query, which carries the
+    // install_id. That is pseudonymous personal data and it has no business
+    // sitting in the Worker's log retention just because a query failed.
+    console.error("posthog export query failed", redactUuids(events.error));
     return json({ error: "upstream_unavailable" }, 502);
   }
 
@@ -622,6 +625,12 @@ function bytesToHex(bytes: Uint8Array): string {
   return s;
 }
 
+// Replaces any UUID in a string with a fixed marker. Used before logging an
+// upstream error message, which may quote back a request that carried one.
+export function redactUuids(s: string): string {
+  return s.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "<uuid>");
+}
+
 function isUuidV4(s: unknown): s is string {
   return (
     typeof s === "string" &&
@@ -720,13 +729,21 @@ function intVar(v: string | undefined, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
-// Account-wide throughput ceiling, on top of the per-IP limiters.
+// Throughput ceiling on a shared key, on top of the per-IP limiters.
 //
 // This replaces the daily budget counters the Worker used to keep in D1. The
 // cost being defended has moved: Cloudflare no longer stores anything, so what
 // a distributed flood can now burn is the PostHog monthly event quota, and
 // burning it would take real data down with it. A limiter keyed on a constant
-// bounds that with no storage at all. The hard spend ceiling lives in the
+// bounds that with no storage at all.
+//
+// It is NOT an account-wide counter, despite the key. Cloudflare documents one
+// limit per key PER LOCATION, cached on the machine running the Worker and
+// updated asynchronously: "The Rate Limiting API is permissive, eventually
+// consistent, and intentionally designed to not be used as an accurate
+// accounting system." A flood spread across colos therefore multiplies the
+// effective ceiling by the number of locations it reaches. This bounds a
+// single-origin burst and nothing more. The hard spend ceiling lives in the
 // PostHog project billing limit, which is the only place that can actually
 // stop a charge.
 async function enforceGlobalLimit(
@@ -746,11 +763,15 @@ function clientIp(request: Request): string {
 
 // Mask an IP keeping only the /24 (v4) or /48 (v6) prefix so an alert email
 // gives a coarse geographic hint without being a full PII.
-function maskIp(ip: string): string {
+export function maskIp(ip: string): string {
   if (!ip) return "unknown";
   if (ip.includes(":")) {
-    const parts = ip.split(":").slice(0, 3);
-    return parts.join(":") + "::/48";
+    // Only the groups before a "::" run are the real prefix. Splitting on ":"
+    // alone turns 2001:db8::1 into the malformed "2001:db8:::/48", and keeping
+    // the tail would put a trailing group in a prefix position.
+    const head = (ip.split("::")[0] ?? "").split(":").filter(Boolean).slice(0, 3);
+    while (head.length < 3) head.push("0");
+    return head.join(":") + "::/48";
   }
   const parts = ip.split(".");
   if (parts.length === 4) return `${parts[0]}.${parts[1]}.${parts[2]}.x`;

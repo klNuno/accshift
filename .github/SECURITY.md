@@ -68,10 +68,13 @@ not vault-protected.
 
 Accounts and settings stay on the machine. Outbound traffic is limited to
 launcher operations you start, optional account lookups and health checks, the
-optional CS2 bridge, update checks, and telemetry you explicitly opt into.
-Telemetry never carries account names or ids, credentials, file paths or local
-file contents.
+optional CS2 bridge, update checks, and anonymous usage counters. Those counters
+never carry account names or ids, credentials, file paths or local file
+contents. They are on after the first-launch screen and off in one click in
+Settings, Privacy; the enhanced tier is a separate opt-in.
 
-Full detail: [Security & Data](https://github.com/klNuno/accshift/wiki/Security)
-and the [Privacy Policy](https://github.com/klNuno/accshift/wiki/Privacy-Policy)
-on the wiki.
+Full detail on what is collected: [analytics](../docs/analytics.md), in this
+repository so that `git log` shows every change to it. See also
+[Security & Data](https://github.com/klNuno/accshift/wiki/Security) and the
+[Privacy Policy](https://github.com/klNuno/accshift/wiki/Privacy-Policy) on the
+wiki.
