@@ -1,0 +1,16 @@
+{
+  "name": "accshift-telemetry",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260201.0",
+    "typescript": "^5.7.2",
+    "wrangler": "^4.84.1"
+  }
+}
