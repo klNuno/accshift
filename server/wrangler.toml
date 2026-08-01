@@ -64,11 +64,11 @@ type = "ratelimit"
 namespace_id = "1003"
 simple = { limit = 5, period = 60 } # forget + export combined, per IP
 
-# Account-wide ceiling, keyed on a constant rather than on the caller. Bounds
-# what a distributed flood can push into the PostHog monthly quota, which is
-# the resource that now costs money. This is a burst ceiling, not the daily
-# budget the Worker used to keep in D1: the hard spend stop is the billing
-# limit configured on the PostHog project itself.
+# Shared ceiling, keyed on a constant rather than on the caller. Bounds what a
+# burst can push into the PostHog monthly quota, which is the resource that now
+# costs money. Not the daily budget the Worker used to keep in D1, and not
+# account-wide either: Cloudflare enforces one limit per key per location. The
+# hard spend stop is the billing limit on the PostHog project itself.
 [[unsafe.bindings]]
 name = "RL_GLOBAL"
 type = "ratelimit"

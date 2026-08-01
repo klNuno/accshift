@@ -538,8 +538,10 @@
     min-height: 0;
     gap: 10px;
   }
-  /* Short windows: tighten spacing first, then drop the gif entirely so the
-     three choice buttons always stay visible without scrolling. */
+  /* Short windows: tighten spacing first, then drop the gif entirely so both
+     choice buttons and the opt-out note under them stay visible without
+     scrolling. The note is never hidden: it is the only place the screen says
+     the anonymous counters keep running. */
   @media (max-height: 640px) {
     .modal.deal-mode { gap: 8px; padding: 14px 18px 12px; }
     .modal.deal-mode .step { gap: 8px; }
