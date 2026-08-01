@@ -149,6 +149,13 @@ emails to the maintainer. Resend never receives event data.
 
 Events older than 12 months are deleted.
 
+Once a month, a handful of totals are copied to a machine the maintainer owns,
+so the project can see a multi-year trend without keeping any raw event. Those
+totals contain no identifier of any kind: every value is a count, or a country,
+version or platform label, summed over a whole month. The script that does it is
+[`scripts/monthly-stats-snapshot.sh`](../scripts/monthly-stats-snapshot.sh), and
+the five queries it runs are the whole of what is kept long term.
+
 ## Your controls
 
 Everything below is in Settings, Privacy.
