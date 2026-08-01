@@ -8,6 +8,7 @@
 
   const REJECT_FADE_DELAY_MS = 1200;
   const REJECT_TOTAL_MS = 2000;
+  const TELEMETRY_DOC_URL = "https://github.com/klNuno/accshift/blob/main/docs/analytics.md";
 
   type Step = "welcome" | "features" | "deal";
   type PlatformLike = { id: string; name: string };
@@ -76,7 +77,11 @@
     }
   }
 
-  function handleNo() {
+  // Declines the enhanced tier, keeping the anonymous counters on. It carries
+  // the refusal styling and the no-thanks clip because that is the joke, but it
+  // is NOT a full opt-out: only Settings, Privacy switches everything off. The
+  // note under both buttons says so, so the label never misleads on its own.
+  function handleEnough() {
     if (submitting || rejecting) return;
     if (gifEl) {
       const r = gifEl.getBoundingClientRect();
@@ -85,10 +90,12 @@
     }
     rejecting = true;
     setTimeout(() => { fadingOut = true; }, REJECT_FADE_DELAY_MS);
-    setTimeout(() => { void finish(false, false); }, REJECT_TOTAL_MS);
+    setTimeout(() => { void finish(true, false); }, REJECT_TOTAL_MS);
   }
-  function handleBasic() { void finish(true, false); }
   function handleDeal() { void finish(true, true); }
+  // Skipping the whole tour lands on the same choice as the "enough" row,
+  // minus the animation: anonymous counters on, enhanced off.
+  function handleSkip() { void finish(true, false); }
 
   function goWelcome() { step = "welcome"; }
   function goFeatures() { step = "features"; }
@@ -292,7 +299,7 @@
           </ul>
         </div>
         <div class="actions split">
-          <button type="button" class="ghost" onclick={handleBasic} disabled={submitting}>
+          <button type="button" class="ghost" onclick={handleSkip} disabled={submitting}>
             {t("onboarding.welcome.skip")}
           </button>
           <button type="button" class="primary" onclick={goFeatures}>
@@ -362,16 +369,7 @@
             class="deal-row no-btn"
             class:no-clicked={rejecting}
             disabled={submitting || rejecting}
-            onclick={handleNo}
-          >
-            <div class="deal-row-label">{t("onboarding.telemetry.no")}</div>
-            <div class="deal-row-body">{t("onboarding.telemetry.noHint")}</div>
-          </button>
-          <button
-            type="button"
-            class="deal-row"
-            disabled={submitting || rejecting}
-            onclick={handleBasic}
+            onclick={handleEnough}
           >
             <div class="deal-row-label">
               {t("onboarding.telemetry.basic")}
@@ -390,11 +388,20 @@
           </button>
         </div>
 
+        <p class="opt-out-note">{t("onboarding.telemetry.optOutNote")}</p>
+
         <div class="actions split">
           <button type="button" class="ghost" onclick={goFeatures} disabled={submitting || rejecting}>
             {t("onboarding.telemetry.back")}
           </button>
-          <span></span>
+          <button
+            type="button"
+            class="learn-more"
+            disabled={submitting || rejecting}
+            onclick={() => void invoke("open_url", { url: TELEMETRY_DOC_URL })}
+          >
+            {t("settings.telemetryLearnMore")}
+          </button>
         </div>
       </div>
     {/if}
@@ -773,6 +780,16 @@
     color: var(--fg-muted);
   }
 
+  /* Kept out of the buttons on purpose: neither choice here is a full opt-out,
+     so the note belongs to both rows rather than to one of them. */
+  .opt-out-note {
+    margin: 0;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--fg-subtle);
+    text-align: center;
+  }
+
   .no-btn:hover:not(:disabled) {
     background: color-mix(in srgb, #ef4444 14%, var(--bg-card));
     border-color: color-mix(in srgb, #ef4444 55%, var(--border));
@@ -850,6 +867,19 @@
     border-color: color-mix(in srgb, var(--fg) 35%, var(--border));
   }
   .ghost:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .learn-more {
+    border: none;
+    background: transparent;
+    color: var(--fg-muted);
+    padding: 0;
+    font-size: 12px;
+    text-decoration: underline;
+    cursor: pointer;
+    transition: color 120ms ease-out;
+  }
+  .learn-more:hover:not(:disabled) { color: var(--fg); }
+  .learn-more:disabled { opacity: 0.5; cursor: not-allowed; }
 
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
   @keyframes modalIn {

@@ -173,15 +173,15 @@ export const EN_MESSAGES = {
     "Accshift counts a few anonymous usage stats so I know what to fix first. Nothing personal leaves your machine, the app works the same either way, and you can change your mind anytime in Settings.",
   "onboarding.telemetry.question": "Deal?",
   "onboarding.telemetry.gifAlt": "Trade offer meme",
-  "onboarding.telemetry.no": "No thanks",
-  "onboarding.telemetry.noHint": "Send no usage statistics. Only this anonymous choice is counted.",
-  "onboarding.telemetry.basic": "Yes, basic",
+  "onboarding.telemetry.basic": "NO! Enough is enough",
   "onboarding.telemetry.basicDefault": "(default)",
   "onboarding.telemetry.basicHint":
-    "Anonymous counters only. A random local ID prevents duplicate counts. You help, but just a little.",
+    "Anonymous counters and nothing else: no profile, no identifier that follows you around.",
   "onboarding.telemetry.deal": "DEAL",
   "onboarding.telemetry.dealHint":
     "Adds a separate UUID for enhanced stats, stored only on your machine. Still no idea who you are, but you help a lot. Thank you!",
+  "onboarding.telemetry.optOutNote":
+    "If you REALLY don't want to help accshift, you can opt-out of everything in Settings -> Privacy. :c",
   "onboarding.telemetry.back": "Back",
   "settings.steam": "Steam",
   "settings.riot": "Riot",

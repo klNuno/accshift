@@ -1,11 +1,13 @@
 //! Anonymous telemetry for Accshift.
 //!
 //! Two independent modes:
-//! - **Mode A** (explicit opt-in): a local random UUID is
-//!   used only to deduplicate aggregate pings; usage events remain linked only
-//!   by a server-side daily hash. There is no on-disk event storage.
-//! - **Mode B** (consent, opt-in): local UUIDv4 `install_id` that enables
-//!   retention metrics, cohorts, per-user feature distribution.
+//! - **Mode A** (on after onboarding, opt-out in Settings): a local random UUID
+//!   is used only to deduplicate aggregate pings; usage events remain linked
+//!   only by a server-side daily hash. There is no on-disk event storage.
+//!   The onboarding screen no longer offers a refusal, so both of its answers
+//!   land here; switching it off is a deliberate action in Settings, Privacy.
+//! - **Mode B** (explicit consent, opt-in): local UUIDv4 `install_id` that
+//!   enables retention metrics, cohorts, per-user feature distribution.
 //!
 //! Queue is RAM only by design, to stay outside the scope of ePrivacy art. 5(3).
 
