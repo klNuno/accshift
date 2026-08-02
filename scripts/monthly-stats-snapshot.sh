@@ -16,7 +16,13 @@
 #   printf '%s\n' 'POSTHOG_PERSONAL_API_KEY=phx_...' \
 #                 'POSTHOG_PROJECT_ID=12345' > /opt/accshift-stats/posthog.env
 #   chmod 600 /opt/accshift-stats/posthog.env
-#   echo '5 4 1 * * root /opt/accshift-stats/run.sh' > /etc/cron.d/accshift-stats
+#   cat > /etc/cron.d/accshift-stats <<'CRON'
+#   SHELL=/bin/sh
+#   PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+#   5 4 1 * * root /opt/accshift-stats/run.sh
+#   CRON
+#
+# Runs on the 1st so "last month" is a closed window that will never change.
 #
 # Mint a DEDICATED PostHog personal key for this, scoped to `query:read` only.
 # Do not reuse the Worker's key: that one also carries person:write, and it has
@@ -35,7 +41,12 @@ LOG=/var/log/${NAME}.log
 LOCK=/var/lock/${NAME}.lock
 API_HOST=${POSTHOG_API_HOST:-https://eu.posthog.com}
 
-log() { echo "$(date -Is) $*" >>"$LOG"; }
+# printf, never echo, on anything that can hold a backslash. This script runs
+# under /bin/sh, which is dash on Debian and Armbian, and dash's echo expands
+# escape sequences with no way to turn it off. A PostHog response embeds "\n"
+# inside its JSON strings, so `echo "$response"` turns them into real newlines
+# and hands jq a broken document.
+log() { printf '%s %s\n' "$(date -Is)" "$*" >>"$LOG"; }
 
 # House rule: always exit 0 so a failure never turns into a cron mail flood.
 # The log line is the alerting surface.
@@ -70,8 +81,8 @@ query() {
     -H "Content-Type: application/json" \
     -X POST "${API_HOST}/api/projects/${POSTHOG_PROJECT_ID}/query/" \
     -d "$body") || return 1
-  echo "$out" | jq -e '.results' 2>/dev/null || {
-    log "[WARN] query $2 returned no results: $(echo "$out" | head -c 300)"
+  printf '%s' "$out" | jq -e '.results' 2>/dev/null || {
+    log "[WARN] query $2 returned no results: $(printf '%s' "$out" | head -c 300)"
     return 1
   }
 }
@@ -120,6 +131,6 @@ if [ -f "$OUT" ] && grep -q "\"month\":\"${MONTH}\"" "$OUT"; then
   exit 0
 fi
 
-echo "$line" >>"$OUT" || die "cannot append to $OUT"
-log "[OK] ${MONTH} installs=$(echo "$line" | jq -r .unique_installs) dau=$(echo "$line" | jq -r .dau_avg)"
+printf '%s\n' "$line" >>"$OUT" || die "cannot append to $OUT"
+log "[OK] ${MONTH} installs=$(printf '%s' "$line" | jq -r .unique_installs) dau=$(printf '%s' "$line" | jq -r .dau_avg)"
 exit 0
