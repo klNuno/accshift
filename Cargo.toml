@@ -29,7 +29,7 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-mcp-bridge = "0.12.0"
 tauri-build = "2.5.6"
 winreg = "0.56"
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Security_Cryptography",
   "Win32_UI_Shell",
