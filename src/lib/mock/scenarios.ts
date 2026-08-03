@@ -2,7 +2,7 @@
  * The datasets the mock can boot on. Picked at build time (`VITE_MOCK=<id>`)
  * and, for everything but `demo`, switchable at runtime with `__mock.use()`.
  *
- * `demo` is a public artifact: it produces `docs/demo-*.webp`. Treat it as
+ * `demo` is a public artifact: it produces `.github/assets/demo-*.webp`. Treat it as
  * frozen — anything you need for a one-off check belongs in `dev` or in a new
  * scenario, never in there.
  */
