@@ -22,17 +22,17 @@
 
 Nine integrations ship today, each verified on the systems listed:
 
-| Platform                                               | Verified on            |
-| ------------------------------------------------------ | ---------------------- |
-| Steam                                                  | Windows, macOS, Linux  |
-| Riot Games (Valorant, League of Legends, TFT)          | Windows                |
-| Battle.net (Overwatch 2, Diablo IV, WoW, Call of Duty) | Windows, macOS         |
-| Epic Games (Fortnite, Rocket League)                   | Windows                |
-| Ubisoft Connect (Rainbow Six Siege, The Division 2)    | Windows                |
-| Roblox                                                 | Windows                |
-| GOG Galaxy (Cyberpunk 2077, The Witcher 3)             | Windows, in testing    |
-| Jagex Launcher (RuneScape, Old School RuneScape)       | Windows, in testing    |
-| Discord                                                | Windows, in testing    |
+| Platform                                               | Verified on           |
+| ------------------------------------------------------ | --------------------- |
+| Steam                                                  | Windows, macOS, Linux |
+| Riot Games (Valorant, League of Legends, TFT)          | Windows               |
+| Battle.net (Overwatch 2, Diablo IV, WoW, Call of Duty) | Windows, macOS        |
+| Epic Games (Fortnite, Rocket League)                   | Windows               |
+| Ubisoft Connect (Rainbow Six Siege, The Division 2)    | Windows               |
+| Roblox                                                 | Windows               |
+| GOG Galaxy (Cyberpunk 2077, The Witcher 3)             | Windows, in testing   |
+| Jagex Launcher (RuneScape, Old School RuneScape)       | Windows, in testing   |
+| Discord                                                | Windows, in testing   |
 
 Five more launchers (EA app, Rockstar, GeForce Now, HoYoPlay, Minecraft) are
 feasible but not built yet, and a few combinations are not realistic on a given
