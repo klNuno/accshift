@@ -41,7 +41,7 @@ sysinfo = { version = "0.32", default-features = false, features = ["system"] }
 open = "5"
 fs4 = { version = "0.13", features = ["sync"] }
 clap = { version = "4", features = ["derive"] }
-directories = "5"
+directories = "6"
 is-terminal = "0.4"
 unicode-width = "0.2"
 keyring = { version = "3", default-features = false, features = [
