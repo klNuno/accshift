@@ -32,7 +32,7 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "uuid",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
  "winreg 0.56.0",
  "zeroize",
 ]
