@@ -187,10 +187,27 @@ pub fn finish_boot(
 /// v1.0 used `battle_net` (config field name); dashboards reading
 /// `accounts_snapshot` must alias `battle_net` → `battle-net` across that
 /// boundary. All other ids are unchanged.
+///
+/// Second continuity note: `steam` was absent from this list in every release
+/// up to and including 1.0.2. The eight other platforms keep their accounts in
+/// the config, so counting them is a field access; Steam keeps its own in
+/// `loginusers.vdf` and was skipped when the list was built from config fields.
+/// Every `accounts_snapshot` emitted by those releases therefore says nothing
+/// about Steam, and no dashboard can reconstruct it.
 fn emit_accounts_snapshots(app_handle: &tauri::AppHandle, tstate: &TelemetryState) {
     use crate::platforms::ids;
-    let cfg = crate::config::load_config(&ctx(app_handle));
-    let counts: [(&str, u64); 8] = [
+    let c = ctx(app_handle);
+    let cfg = crate::config::load_config(&c);
+    // Steam is the one platform whose accounts need a disk read rather than a
+    // config lookup, and the read fails on a machine with no Steam installed
+    // (ClientNotInstalled). That is not worth distinguishing from an empty
+    // library here: both mean zero, and zero is skipped below like any other
+    // empty platform.
+    let steam_count = crate::platforms::steam::get_accounts(c.clone())
+        .map(|accounts| accounts.len() as u64)
+        .unwrap_or(0);
+    let counts: [(&str, u64); 9] = [
+        (ids::STEAM, steam_count),
         (ids::RIOT, cfg.riot.profiles.len() as u64),
         (ids::BATTLE_NET, cfg.battle_net.accounts.len() as u64),
         (ids::UBISOFT, cfg.ubisoft.accounts.len() as u64),

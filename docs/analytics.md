@@ -51,7 +51,7 @@ Nine events, and that is the complete list.
 | `streamer_mode_activated` | Streamer mode auto-enabled       | none                                       |
 | `deep_link_used`          | An `accshift://` link was opened | none                                       |
 | `session_ended`           | You closed the window            | `duration_ms`                              |
-| `accounts_snapshot`       | Daily, enhanced mode only        | `platform`, how many accounts on it        |
+| `accounts_snapshot`       | Each app start, enhanced only    | `platform`, how many accounts on it        |
 
 Every event also carries three common fields: the app version, the OS version,
 and your locale (for example `fr_FR`). The server adds one more, the country
@@ -63,6 +63,11 @@ you typed.
 `accounts_snapshot` is the only event that counts anything about your library,
 and it counts only how many accounts exist per platform. It is sent in enhanced
 mode only: the app drops it before upload in anonymous mode.
+
+Every release up to and including 1.0.2 skipped Steam in this event, because the
+list it was built from only covered platforms whose accounts live in the config
+file. Snapshots recorded by those releases say nothing about Steam, in either
+direction.
 
 This table is checked against the code on every release. Where this page and the
 code disagree, the code is right and the page is a bug worth reporting.
