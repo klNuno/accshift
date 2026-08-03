@@ -324,6 +324,36 @@ fn main() {
                 });
             }
 
+            // Snapshots captured before encryption shipped are still read as
+            // plaintext, and only get encrypted when the account is captured
+            // again. A dormant account never is, so sweep the store once per
+            // launch. Off the boot path on purpose: on Linux and macOS every
+            // upgraded file costs a keyring round trip.
+            let upgrade_ctx = setup_ctx.clone();
+            std::thread::spawn(move || {
+                let mut failures: Vec<String> = Vec::new();
+                let stats = accshift_core::snapshot_crypto::upgrade_legacy_plaintext_snapshots(
+                    &upgrade_ctx,
+                    &mut |message, detail| failures.push(format!("{message} ({detail})")),
+                );
+                if !stats.touched_anything() {
+                    return;
+                }
+                let level = if stats.failed > 0 { "warn" } else { "info" };
+                let _ = logging::append_app_log(
+                    &upgrade_ctx,
+                    level,
+                    "backend.snapshot-upgrade",
+                    &format!(
+                        "Re-encrypted {} legacy plaintext snapshot file(s), {} failed",
+                        stats.upgraded, stats.failed
+                    ),
+                    (!failures.is_empty())
+                        .then(|| failures.join("; "))
+                        .as_deref(),
+                );
+            });
+
             let fallback_handle = app.handle().clone();
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(5000));

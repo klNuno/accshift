@@ -66,6 +66,32 @@ decryptable secrets. Battle.net does not use the snapshot mechanism, and the CS2
 bridge URL itself is stored in plain config, so a secret embedded in that URL is
 not vault-protected.
 
+Snapshots captured before encryption shipped carry no header and were read back
+in the clear. Capturing an account again encrypts it, but that only happens when
+you switch away from it, so an account left untouched since the upgrade kept its
+session material unencrypted. The app now sweeps its own snapshot store once per
+launch, in the background, and rewrites any headerless file encrypted. The
+rewrite stages a temporary file and renames it into place, and a file that
+cannot be encrypted is left exactly as it was rather than deleted.
+
+### What the PIN lock does, and what it does not
+
+The optional 4-digit PIN is an access gate on the app and the CLI, not a
+cryptographic boundary. It is stored as a PBKDF2-HMAC-SHA256 hash (100 000
+iterations, 16-byte random salt, 32-byte output) and checked in constant time,
+so the hash in the settings file does not reveal the PIN. That is the whole of
+its job.
+
+It derives no key and encrypts nothing. Session material is protected by the OS
+backends listed above, which are bound to your OS user session and not to the
+PIN. Someone already running code as your OS user therefore decrypts snapshots
+without ever knowing the PIN, exactly as the out-of-scope list above states.
+
+So the PIN buys resistance to someone reaching your unlocked machine, and
+nothing beyond that. It is not a second factor and it is not a vault password.
+Enable it for a shared desk; do not treat it as protection against malware or
+against another process running as you.
+
 Accounts and settings stay on the machine. Outbound traffic is limited to
 launcher operations you start, optional account lookups and health checks, the
 optional CS2 bridge, update checks, and anonymous usage counters. Those counters
