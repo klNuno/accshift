@@ -1,0 +1,46 @@
+name: Publish to winget
+
+# Submits a pull request to microsoft/winget-pkgs whenever a release is
+# published. Drafts do not trigger it: the `released` event fires when the
+# draft created by release.yml is published.
+#
+# Requires the WINGET_TOKEN secret: a token with write access to the
+# klNuno/winget-pkgs fork, which is where the manifest branch is pushed from
+# before the pull request is opened upstream. The package must already exist
+# in winget-pkgs; the action fails on purpose if it does not.
+on:
+  release:
+    types: [released]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish, for example v1.0.2
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate the winget token secret
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          if [ -z "$WINGET_TOKEN" ]; then
+            echo "Missing GitHub secret WINGET_TOKEN. The manifest cannot be submitted." >&2
+            exit 1
+          fi
+
+      - name: Submit the manifest
+        uses: vedantmgoyal9/winget-releaser@4ffc7888bffd451b357355dc214d43bb9f23917e # v2
+        with:
+          identifier: klNuno.Accshift
+          release-tag: ${{ github.event.release.tag_name || inputs.tag }}
+          # The release attaches Linux, macOS and CLI artifacts too; only the
+          # Windows NSIS installer belongs in the manifest.
+          installers-regex: '^Accshift_[0-9.]+_x64-setup\.exe$'
+          max-versions-to-keep: 3
+          token: ${{ secrets.WINGET_TOKEN }}
