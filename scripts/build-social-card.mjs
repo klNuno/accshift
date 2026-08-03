@@ -4,11 +4,11 @@
 //
 // The logo and the platform glyphs are read from the app sources, so the card
 // cannot drift from what the product actually looks like. Rendering it to
-// docs/social-card.png is a manual step, because it needs a browser:
+// .github/assets/social-card.png is a manual step, because it needs a browser:
 //
 //   node scripts/build-social-card.mjs
 //   open scripts/social-card.html at exactly 1280x640 and screenshot it over
-//   docs/social-card.png
+//   .github/assets/social-card.png
 //
 // Upload the result under Settings > General > Social preview. GitHub has no
 // API for that, so it stays manual.

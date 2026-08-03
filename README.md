@@ -2,7 +2,7 @@
 <p align="center">Switch Steam, Valorant, League of Legends, Battle.net, Epic Games, Ubisoft and Roblox accounts in one click. No passwords stored. Windows, macOS and Linux. Built with Tauri 2 and Svelte 5.</p>
 
 <p align="center">
-  <img src="./docs/demo-switch.webp" alt="Switching Steam accounts from the grid, then from the Ctrl+K command palette" />
+  <img src="./.github/assets/demo-switch.webp" alt="Switching Steam accounts from the grid, then from the Ctrl+K command palette" />
 </p>
 
 <p align="center">
@@ -10,7 +10,7 @@
   <a href="./LICENSE"><img src="https://img.shields.io/github/license/klNuno/accshift" alt="License" /></a>
   <a href="https://github.com/klNuno/accshift/stargazers"><img src="https://img.shields.io/github/stars/klNuno/accshift" alt="Stars" /></a>
   <a href="https://github.com/klNuno/accshift/issues"><img src="https://img.shields.io/github/issues/klNuno/accshift" alt="Issues" /></a>
-  <a href="#current-status"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6" alt="Platform" /></a>
+  <a href="#supported-platforms"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6" alt="Platform" /></a>
   <a href="https://tauri.app/"><img src="https://img.shields.io/badge/Tauri-2.x-24C8DB?logo=tauri" alt="Tauri" /></a>
   <a href="https://svelte.dev/"><img src="https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte" alt="Svelte" /></a>
 </p>
@@ -18,31 +18,28 @@
 > [!NOTE]
 > See the [wiki](https://github.com/klNuno/accshift/wiki) for the full user guide.
 
-## Current Status
+## Supported platforms
 
-| Platform                                                | Windows         | macOS           | Linux           |
-| ------------------------------------------------------- | --------------- | --------------- | --------------- |
-| Steam                                                   | ✅ Done         | ✅ Done         | ✅ Done         |
-| Riot Games (Valorant, League of Legends, TFT)           | ✅ Done         | 🚧 Possible     | ⛔ Not feasible |
-| Battle.net (Overwatch 2, Diablo IV, WoW, Call of Duty)  | ✅ Done         | ✅ Done         | ⛔ Not feasible |
-| Epic Games (Fortnite, Rocket League)                    | ✅ Done         | 🚧 Possible     | 🚧 Possible     |
-| Ubisoft Connect (Rainbow Six Siege, The Division 2)     | ✅ Done         | 🚧 Possible     | 🚧 Possible     |
-| Roblox                                                  | ✅ Done         | 🚧 Possible     | 🚧 Possible     |
-| GOG Galaxy (Cyberpunk 2077, The Witcher 3)              | 🧪 Need testing | 🚧 Possible     | ⛔ Not feasible |
-| Jagex Launcher (RuneScape, Old School RuneScape)        | 🧪 Need testing | 🚧 Possible     | ⛔ Not feasible |
-| Discord                                                 | 🧪 Need testing | 🚧 Possible     | 🚧 Possible     |
-| EA app (Apex Legends, The Sims 4, Battlefield)          | 🚧 Possible     | 🚧 Possible     | ⛔ Not feasible |
-| Rockstar Launcher (GTA V, Red Dead Redemption 2)        | 🚧 Possible     | ⛔ Not feasible | 🚧 Possible     |
-| GeForce Now                                             | 🚧 Possible     | 🚧 Possible     | 🚧 Possible     |
-| HoYoverse / HoYoPlay (Genshin Impact, Honkai Star Rail) | 🚧 Possible     | ⛔ Not feasible | ⛔ Not feasible |
-| Minecraft Launcher                                      | 🚧 Possible     | 🚧 Possible     | 🚧 Possible     |
+Nine integrations ship today, each verified on the systems listed:
 
-- `✅ Done`: GUI and CLI implemented and verified on target
-- `🧪 Need testing`: implemented, may still have bugs
-- `🚧 Possible`: feasible, priority goes to user requests
-- `⛔ Not feasible`: not realistic for this OS
+| Platform                                               | Verified on            |
+| ------------------------------------------------------ | ---------------------- |
+| Steam                                                  | Windows, macOS, Linux  |
+| Riot Games (Valorant, League of Legends, TFT)          | Windows                |
+| Battle.net (Overwatch 2, Diablo IV, WoW, Call of Duty) | Windows, macOS         |
+| Epic Games (Fortnite, Rocket League)                   | Windows                |
+| Ubisoft Connect (Rainbow Six Siege, The Division 2)    | Windows                |
+| Roblox                                                 | Windows                |
+| GOG Galaxy (Cyberpunk 2077, The Witcher 3)             | Windows, in testing    |
+| Jagex Launcher (RuneScape, Old School RuneScape)       | Windows, in testing    |
+| Discord                                                | Windows, in testing    |
 
-Users can propose new platforms through [GitHub Issues](https://github.com/klNuno/accshift/issues).
+Five more launchers (EA app, Rockstar, GeForce Now, HoYoPlay, Minecraft) are
+feasible but not built yet, and a few combinations are not realistic on a given
+OS at all. The full per-OS grid is in
+[docs/platform-support.md](./docs/platform-support.md), and new platforms are
+picked from what users ask for through
+[GitHub Issues](https://github.com/klNuno/accshift/issues/new/choose).
 
 ## Features
 
@@ -56,13 +53,13 @@ Users can propose new platforms through [GitHub Issues](https://github.com/klNun
 ### Organise a large library
 
 <p align="center">
-  <img src="./docs/demo-organize.webp" alt="Recoloring an account card from the right-click menu, then opening a folder of smurf accounts" />
+  <img src="./.github/assets/demo-organize.webp" alt="Recoloring an account card from the right-click menu, then opening a folder of smurf accounts" />
 </p>
 
 ### One app, every platform and theme
 
 <p align="center">
-  <img src="./docs/demo-themes.webp" alt="Switching to the Riot Games tab, then changing the app theme from the settings panel" />
+  <img src="./.github/assets/demo-themes.webp" alt="Switching to the Riot Games tab, then changing the app theme from the settings panel" />
 </p>
 
 ## Installation
@@ -76,7 +73,10 @@ Grab the build for your OS from [Releases](https://github.com/klNuno/accshift/re
 ## Privacy
 
 Accshift stores no passwords, and sensitive cookies, tokens and session
-snapshots are encrypted at rest on your machine.
+snapshots are encrypted at rest on your machine with OS-backed protection:
+DPAPI on Windows, Secret Service on Linux, Keychain on macOS. The threat model,
+what the optional PIN lock does and does not cover, and how to report a
+vulnerability are all in the [security policy](./.github/SECURITY.md).
 
 Usage telemetry is a handful of anonymous counters. Nothing is sent before you
 finish the first-launch screen, and **one switch in Settings, Privacy turns it
@@ -109,102 +109,25 @@ pnpm install
 pnpm tauri dev
 ```
 
+Setup, coding standards and how to propose a new platform are in the
+[contributing guide](./.github/CONTRIBUTING.md).
+
 ## CLI
 
-`accshift` also ships as a command-line binary for scripting and AI
-automation. It reads and writes the same config as the GUI: running
-both at once is safe thanks to an exclusive lock on mutating operations.
-
-### Install
-
-- **Windows**: the desktop installer ships the CLI next to the app and adds
-  the install directory to your user `PATH`; `accshift` works in any new
-  terminal right after install. A standalone
-  `accshift-cli_<version>_x64.exe` binary is also
-  available on [Releases](https://github.com/klNuno/accshift/releases).
-- **Linux**: the deb/rpm packages install the CLI to `/usr/bin` alongside the
-  app. A standalone `accshift-cli_<version>_linux_x86_64` binary is also on
-  Releases.
-- **macOS**: the `.app` bundles the CLI inside `Contents/MacOS` (symlink it
-  onto your `PATH`, e.g. into `/usr/local/bin`). A standalone
-  `accshift-cli_<version>_macos_aarch64` binary is also on Releases.
-
-Building from source (`pnpm tauri build`) produces the binary at
-`target/release/accshift` (`accshift.exe` on Windows).
-
-### Commands
+`accshift` also ships as a command-line binary for scripting, Stream Deck
+macros and AI automation. It reads and writes the same config as the GUI:
+running both at once is safe thanks to an exclusive lock on mutating
+operations.
 
 ```bash
 accshift platforms               # list platforms known to this build
 accshift list <platform>         # list accounts for a platform
-accshift list <platform> --folder <name>
 accshift switch <platform> <account-id>
-    [--online | --invisible]
-    [--graceful | --force]
-    [--admin | --no-admin]
-    [--launch-options "..."]
 ```
 
-Example:
-
-```
-$ accshift list steam
-  ACCOUNT      NAME                 STEAM ID
-* alice        Alice                76561198000000001
-  bob          Bob the Builder      76561198000000002
-  carol        carol_gg             76561198000000003
-
-3 accounts.  * = currently signed in
-```
-
-Output format:
-
-- **Default**: a readable table for humans on a TTY, auto-switched to
-  JSON when stdout is piped (so scripts and AI tools get a stable
-  contract without extra flags).
-- `--json` forces the JSON envelope everywhere.
-- Errors always go to stderr so stdout stays parseable.
-
-### Output schema
-
-```json
-{
-  "schema": "accshift.v1",
-  "ok": true,
-  "command": "list",
-  "data": {
-    "platform": "steam",
-    "folder": null,
-    "accounts": [],
-    "current": null
-  }
-}
-```
-
-```json
-{
-  "schema": "accshift.v1",
-  "ok": false,
-  "command": "switch",
-  "error": {
-    "code": "lock_contended",
-    "message": "Another accshift instance is running. Retry once it finishes, or close the GUI."
-  }
-}
-```
-
-### Exit codes
-
-| Code | Meaning                                  |
-| ---- | ---------------------------------------- |
-| 0    | Success                                  |
-| 1    | Generic error                            |
-| 2    | Unknown platform on this OS              |
-| 3    | Unknown account                          |
-| 4    | Another accshift instance holds the lock |
-| 5    | I/O error (paths, permissions)           |
-| 6    | PIN missing, unavailable, or incorrect   |
-| 7    | CLI disabled in Settings                 |
+Output is a table on a TTY and JSON when piped, so scripts get a stable
+contract without an extra flag. Install steps, every flag, the versioned JSON
+envelope and the exit codes are in [docs/cli.md](./docs/cli.md).
 
 ## Project Structure
 

@@ -55,10 +55,11 @@ Two extra steps CI performs that are easy to miss locally:
   cargo build --release -p accshift-cli
   node scripts/stage-cli.mjs
   ```
-- The telemetry worker is a separate pnpm package and is typechecked on its own:
+- The telemetry worker in `server/` is a separate pnpm package and is
+  typechecked on its own:
   ```bash
-  pnpm --dir telemetry install --frozen-lockfile
-  pnpm --dir telemetry exec tsc --noEmit
+  pnpm --dir server install --frozen-lockfile
+  pnpm --dir server exec tsc --noEmit
   ```
 
 `cargo audit --file Cargo.lock` runs on Ubuntu only. If your change touches

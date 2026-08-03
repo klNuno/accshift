@@ -9,7 +9,7 @@
  *    / `roblox_*` command is refused rather than forwarded. A real switch would
  *    stop Steam, rewrite the autologin in HKCU and relaunch the client.
  * 2. **A `demo` build ignores every runtime override.** That scenario produces
- *    `docs/demo-*.webp`; a leftover `__mock.use("huge")` in localStorage must
+ *    `.github/assets/demo-*.webp`; a leftover `__mock.use("huge")` in localStorage must
  *    not be able to poison a take days later.
  *
  * Boot plumbing the mock does not fake (`log_app_event`, `finish_boot`, window
