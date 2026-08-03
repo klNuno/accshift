@@ -10,22 +10,22 @@ a machine-level secret accshift cannot reach does not.
 
 ## Grid
 
-| Platform                                                | Windows         | macOS           | Linux           |
-| ------------------------------------------------------- | --------------- | --------------- | --------------- |
-| Steam                                                   | Done            | Done            | Done            |
-| Riot Games (Valorant, League of Legends, TFT)           | Done            | Possible        | Not feasible    |
-| Battle.net (Overwatch 2, Diablo IV, WoW, Call of Duty)  | Done            | Done            | Not feasible    |
-| Epic Games (Fortnite, Rocket League)                    | Done            | Possible        | Possible        |
-| Ubisoft Connect (Rainbow Six Siege, The Division 2)     | Done            | Possible        | Possible        |
-| Roblox                                                  | Done            | Possible        | Possible        |
-| GOG Galaxy (Cyberpunk 2077, The Witcher 3)              | Need testing    | Possible        | Not feasible    |
-| Jagex Launcher (RuneScape, Old School RuneScape)        | Need testing    | Possible        | Not feasible    |
-| Discord                                                 | Need testing    | Possible        | Possible        |
-| EA app (Apex Legends, The Sims 4, Battlefield)          | Possible        | Possible        | Not feasible    |
-| Rockstar Launcher (GTA V, Red Dead Redemption 2)        | Possible        | Not feasible    | Possible        |
-| GeForce Now                                             | Possible        | Possible        | Possible        |
-| HoYoverse / HoYoPlay (Genshin Impact, Honkai Star Rail) | Possible        | Not feasible    | Not feasible    |
-| Minecraft Launcher                                      | Possible        | Possible        | Possible        |
+| Platform                                                | Windows      | macOS        | Linux        |
+| ------------------------------------------------------- | ------------ | ------------ | ------------ |
+| Steam                                                   | Done         | Done         | Done         |
+| Riot Games (Valorant, League of Legends, TFT)           | Done         | Possible     | Not feasible |
+| Battle.net (Overwatch 2, Diablo IV, WoW, Call of Duty)  | Done         | Done         | Not feasible |
+| Epic Games (Fortnite, Rocket League)                    | Done         | Possible     | Possible     |
+| Ubisoft Connect (Rainbow Six Siege, The Division 2)     | Done         | Possible     | Possible     |
+| Roblox                                                  | Done         | Possible     | Possible     |
+| GOG Galaxy (Cyberpunk 2077, The Witcher 3)              | Need testing | Possible     | Not feasible |
+| Jagex Launcher (RuneScape, Old School RuneScape)        | Need testing | Possible     | Not feasible |
+| Discord                                                 | Need testing | Possible     | Possible     |
+| EA app (Apex Legends, The Sims 4, Battlefield)          | Possible     | Possible     | Not feasible |
+| Rockstar Launcher (GTA V, Red Dead Redemption 2)        | Possible     | Not feasible | Possible     |
+| GeForce Now                                             | Possible     | Possible     | Possible     |
+| HoYoverse / HoYoPlay (Genshin Impact, Honkai Star Rail) | Possible     | Not feasible | Not feasible |
+| Minecraft Launcher                                      | Possible     | Possible     | Possible     |
 
 ## What the states mean
 
