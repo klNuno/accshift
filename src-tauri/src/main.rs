@@ -43,30 +43,39 @@ fn main() {
         }
     };
 
-    let builder = tauri::Builder::default()
-        // Must stay the first plugin: it short-circuits duplicate processes and,
-        // via its `deep-link` feature, forwards accshift:// URLs from the second
-        // instance's argv to this one as deep-link events.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            let _ = logging::append_app_log(
-                &ctx(app),
-                "info",
-                "backend.single-instance",
-                "Second instance launch redirected to the running app",
-                None,
-            );
-            // Don't force the window visible mid-boot: boot completion shows
-            // it anyway, mirroring the deep-link handler's guard below.
-            if app.state::<app_runtime::BootState>().is_completed() {
-                let _ = app_runtime::show_main_window(app);
-            }
-        }))
+    let builder = tauri::Builder::default();
+
+    // Must stay the first plugin: it short-circuits duplicate processes and,
+    // via its `deep-link` feature, forwards accshift:// URLs from the second
+    // instance's argv to this one as deep-link events.
+    //
+    // Skipped in a dev build carrying the MCP bridge: that session shares the
+    // production identifier, so the guard would refuse to start whenever an
+    // installed Accshift is already running. Both instances still write the
+    // same loginusers.vdf and the same Steam registry keys, so never run a
+    // switch in both at once.
+    #[cfg(not(all(debug_assertions, feature = "mcp-bridge")))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        let _ = logging::append_app_log(
+            &ctx(app),
+            "info",
+            "backend.single-instance",
+            "Second instance launch redirected to the running app",
+            None,
+        );
+        // Don't force the window visible mid-boot: boot completion shows
+        // it anyway, mirroring the deep-link handler's guard below.
+        if app.state::<app_runtime::BootState>().is_completed() {
+            let _ = app_runtime::show_main_window(app);
+        }
+    }));
+
+    let builder = builder
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build());
 
-    // Registered after single_instance so the duplicate-process guard still wins
-    // the startup race, and bound to loopback: the plugin's own default is
+    // Bound to loopback: the plugin's own default is
     // 0.0.0.0, which would put an unauthenticated WebSocket on the LAN. That
     // socket answers execute_js, and JS in the webview reaches the IPC commands
     // that read Steam sessions and the keyring.
