@@ -602,6 +602,9 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "bulkEdit.loadingGames": "Загрузка игр...",
   "bulkEdit.copyUrls": "Копировать ссылки",
   "bulkEdit.urlsCopied": "Скопировано ссылок на профиль: {count}",
+  "bulkEdit.cardColor": "Цвет карточки",
+  "bulkEdit.colorApplied": "Цвет применён к карточкам: {count}",
+  "bulkEdit.colorCleared": "Цвет снят с карточек: {count}",
 
   "common.retry": "Повторить",
 

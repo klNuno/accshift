@@ -589,6 +589,9 @@ export const EN_MESSAGES = {
   "bulkEdit.loadingGames": "Loading games...",
   "bulkEdit.copyUrls": "Copy URLs",
   "bulkEdit.urlsCopied": "{count} profile URL(s) copied",
+  "bulkEdit.cardColor": "Card color",
+  "bulkEdit.colorApplied": "Color applied to {count} card(s)",
+  "bulkEdit.colorCleared": "Color cleared on {count} card(s)",
 
   "common.retry": "Retry",
 

@@ -598,6 +598,9 @@ export const PT_BR_MESSAGES: Record<MessageKey, string> = {
   "bulkEdit.loadingGames": "Carregando jogos...",
   "bulkEdit.copyUrls": "Copiar URLs",
   "bulkEdit.urlsCopied": "{count} URL(s) de perfil copiada(s)",
+  "bulkEdit.cardColor": "Cor do card",
+  "bulkEdit.colorApplied": "Cor aplicada a {count} card(s)",
+  "bulkEdit.colorCleared": "Cor removida de {count} card(s)",
 
   "common.retry": "Tentar de novo",
 

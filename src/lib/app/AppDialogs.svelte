@@ -43,6 +43,7 @@
     onBulkEditSelectAll,
     onBulkEditDeselectAll,
     onBulkEditCopyUrls,
+    onBulkEditSetCardColor,
     onBulkEditClose,
     onBulkEditResult,
     t,
@@ -67,6 +68,7 @@
     onBulkEditSelectAll: () => void;
     onBulkEditDeselectAll: () => void;
     onBulkEditCopyUrls: (urls: string[]) => void;
+    onBulkEditSetCardColor: (color: string) => void;
     onBulkEditClose: () => void;
     onBulkEditResult: (result: PlatformBulkEditResult) => void;
     t: (key: MessageKey, params?: TranslationParams) => string;
@@ -117,6 +119,7 @@
     onSelectAll={onBulkEditSelectAll}
     onDeselectAll={onBulkEditDeselectAll}
     onCopyUrls={onBulkEditCopyUrls}
+    onSetCardColor={onBulkEditSetCardColor}
     onClose={onBulkEditClose}
     onResult={onBulkEditResult}
     {t}

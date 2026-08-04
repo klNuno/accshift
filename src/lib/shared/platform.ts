@@ -92,6 +92,8 @@ export interface PlatformBulkEditBarProps {
   onSelectAll: () => void;
   onDeselectAll: () => void;
   onCopyUrls: (urls: string[]) => void;
+  /** Applies a card color (hex, or "" to clear) to every selected account. */
+  onSetCardColor: (color: string) => void;
   onClose: () => void;
   onResult: (result: PlatformBulkEditResult) => void;
   t: (key: MessageKey, params?: TranslationParams) => string;
