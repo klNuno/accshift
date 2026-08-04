@@ -548,9 +548,12 @@
       color-mix(in srgb, var(--bg-solid) 58%, transparent);
   }
 
-  /* User setting: colored card outlines off. */
-  :global(html[data-card-outlines="0"]) .card.custom-color,
-  :global(html[data-card-outlines="0"]) .extension-surface.custom-color.visible {
+  /* User setting: colored card outlines off. The ban rings are not decoration,
+     they survive it: without the :not() guards this selector outranks them
+     (one more element in the compound) and a banned colored card loses its
+     marker entirely. */
+  :global(html[data-card-outlines="0"]) .card.custom-color:not(.ban-red):not(.ban-yellow),
+  :global(html[data-card-outlines="0"]) .extension-surface.custom-color.visible:not(.ban-red):not(.ban-yellow) {
     outline: none;
   }
 
