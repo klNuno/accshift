@@ -14,12 +14,18 @@
 mod client;
 mod events;
 pub mod install_id;
+mod platform_info;
 mod queue;
+mod time;
 
 pub use client::{
     export, forget, record_consent_choice, user_agent, ConsentChoice, Mode, TELEMETRY_URL,
 };
-pub use events::{Event, TelemetryContext};
+pub use events::{
+    code_from, error_code_for_kind, platform_code, sanitize_code, Event, TelemetryContext,
+    UpdateStage, CLI_COMMANDS, ERROR_CODES, OPERATIONS, UI_LANGUAGES, UNKNOWN_CODE,
+};
+pub use platform_info::{detect_arch, detect_locale, detect_os, detect_os_version};
 pub use queue::{ConsentState, Handle, QueueParams, Worker};
 
 use crate::config::TelemetryConfig;
@@ -42,16 +48,19 @@ pub fn consent_from_config(cfg: &TelemetryConfig) -> ConsentState {
     }
 }
 
-/// Best-effort detection of the current OS locale.
-/// Returns None if it cannot be determined; the `/track` API tolerates absence.
-pub fn detect_locale() -> Option<String> {
-    // `LANG` and `LC_ALL` on Linux/macOS, POSIX-style fallback on Windows
-    // via env. Tauri exposes a similar API but we avoid that dep here.
-    std::env::var("LC_ALL")
-        .or_else(|_| std::env::var("LANG"))
-        .ok()
-        .map(|v| v.split('.').next().unwrap_or(&v).to_string())
-        .filter(|s| !s.is_empty() && s != "C")
+/// Builds the invariant context every event is merged with.
+///
+/// `surface` distinguishes the app from the CLI. Both report the same OS
+/// fields, which is why detection lives in the core crate.
+pub fn context_for(app_version: impl Into<String>, surface: &str) -> TelemetryContext {
+    TelemetryContext {
+        app_version: app_version.into(),
+        os: detect_os().to_string(),
+        arch: detect_arch().to_string(),
+        os_version: detect_os_version(),
+        locale: detect_locale(),
+        surface: surface.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -67,6 +76,7 @@ mod tests {
             pending_forget_install_ids: Vec::new(),
             anonymous_id: String::new(),
             onboarding_completed: true,
+            first_run_reported: true,
         };
         let state = consent_from_config(&cfg);
         assert!(state.mode_a);
@@ -83,6 +93,7 @@ mod tests {
             pending_forget_install_ids: Vec::new(),
             anonymous_id: "797f20fe-94de-4e89-98a2-ae3a3273ad1e".into(),
             onboarding_completed: true,
+            first_run_reported: true,
         };
         let state = consent_from_config(&cfg);
         assert!(state.mode_b);

@@ -7,6 +7,7 @@ import type { RuntimeOs } from "$lib/shared/platform";
 import { getBootPayload } from "$lib/app/bootPayload";
 import { getInitialActiveTab, isPlatformUsable } from "$lib/app/platformShell.svelte";
 import { getPlatformDefinition } from "$lib/platforms/registry";
+import { trackSettingsSnapshot } from "$lib/app/telemetryClient";
 import { applyCustomThemePayloads, loadCustomThemes } from "$lib/theme/themes";
 import {
   CLIENT_STORE_ACCOUNT_CARD_COLORS,
@@ -123,6 +124,21 @@ export function createAppLifecycleController({
     }
 
     markBootReady();
+
+    // Once per launch, after the settings have been read. Answers the
+    // questions the event stream alone cannot: which translations are
+    // actually in use, and whether a platform nobody switches on is unpopular
+    // or simply switched off. The backend drops it outside the enhanced tier.
+    trackSettingsSnapshot({
+      uiLanguage: shell.settings.language,
+      enabledPlatforms: shell.settings.enabledPlatforms,
+      personasEnabled: shell.settings.personasEnabled,
+      pinEnabled: shell.settings.pinEnabled,
+      cliEnabled: shell.settings.cliEnabled,
+      deepLinksEnabled: shell.settings.deepLinksEnabled,
+      streamerMode: shell.settings.streamerMode,
+      animations: shell.settings.animations,
+    });
 
     if (isPlatformUsable(shell.activeTab, shell.runtimeOs)) {
       await loadAccounts(false, false, false, false, true);

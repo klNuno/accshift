@@ -75,6 +75,17 @@ The app could POST to PostHog itself. It does not, for four reasons:
   retention metrics, cohorts and per-installation deletion possible, and it is
   why it is a separate opt-in.
 - Country is stored as an event property.
+- Every property is validated in `buildBatch` before it is forwarded, and any
+  property not written there cannot reach PostHog at all. Codes must match
+  `[a-z0-9_]{1,40}`, platform ids `[a-z0-9_-]{1,32}`, versions
+  `[A-Za-z0-9.+-]{1,32}`; counts must be finite and non-negative. The app maps
+  these onto closed vocabularies before sending, and this is the half of that
+  guarantee that does not assume the client is the one we shipped.
+- Events are stored under `client_ts`, the instant they happened on the
+  machine, when it parses and sits within 24 hours of the Worker's clock.
+  Otherwise they fall back to arrival time. A batch covers up to five minutes,
+  so stamping it all at arrival used to flatten that window onto one point and
+  lose the ordering inside it.
 - Onboarding choices store no identifier at all. Even a refusal is recorded
   against a single shared aggregate id, never one tied to an installation.
 - Anti-abuse rate limiting masks IPs (/24 v4, /48 v6) in alert emails.

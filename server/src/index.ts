@@ -57,10 +57,35 @@ export interface TelemetryEvent {
   name: string;
   app_version: string;
   os_version: string;
+  // Fixed identifiers, so grouping by platform no longer means parsing
+  // `os_version` prose on the dashboard side.
+  os?: string;
+  arch?: string;
+  surface?: string;
   locale?: string;
+  // When the event happened on the client, RFC 3339 UTC with second
+  // resolution. A batch spans up to five minutes, so stamping every event
+  // with its arrival time collapsed that window onto one point.
+  client_ts?: string;
   platform?: string;
   duration_ms?: number;
   count?: number;
+  success?: boolean;
+  succeeded?: number;
+  platforms?: number;
+  dropped_events?: number;
+  error_code?: string;
+  operation?: string;
+  target_version?: string;
+  command?: string;
+  ui_language?: string;
+  enabled_platforms?: string[];
+  personas_enabled?: boolean;
+  pin_enabled?: boolean;
+  cli_enabled?: boolean;
+  deep_links_enabled?: boolean;
+  streamer_mode?: string;
+  animations?: string;
 }
 
 interface TrackPayload {
@@ -405,6 +430,64 @@ export interface BatchIdentifiers {
   pingIdentifier: string;
 }
 
+// ─── Property validation ─────────────────────────────────────────
+//
+// Everything below runs on a payload a modified client could have written, so
+// each value is checked for shape before it is forwarded. The app already
+// maps these fields onto closed vocabularies; this is the half of that
+// guarantee that does not depend on the client being the one we shipped.
+
+const CODE_RE = /^[a-z0-9_]{1,40}$/;
+const PLATFORM_RE = /^[a-z0-9_-]{1,32}$/;
+const VERSION_RE = /^[A-Za-z0-9.+-]{1,32}$/;
+const CLIENT_TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+
+const MAX_ENABLED_PLATFORMS = 16;
+
+/// How far a client timestamp may sit from the server's clock.
+///
+/// A wrong client clock is common (a machine fresh out of a long sleep, a
+/// dual-boot with local-time RTC). Beyond a day the value stops being a
+/// better estimate than arrival time and starts dragging events into weeks
+/// that never happened, so it is dropped rather than trusted.
+const MAX_CLOCK_SKEW_MS = 24 * 60 * 60 * 1000;
+
+function code(value: unknown): string | undefined {
+  return typeof value === "string" && CODE_RE.test(value) ? value : undefined;
+}
+
+function platformId(value: unknown): string | undefined {
+  return typeof value === "string" && PLATFORM_RE.test(value) ? value : undefined;
+}
+
+function version(value: unknown): string | undefined {
+  return typeof value === "string" && VERSION_RE.test(value) ? value : undefined;
+}
+
+function count(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function flag(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function platformList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const ids = value.map(platformId).filter((id): id is string => id !== undefined);
+  return ids.length === 0 ? undefined : ids.slice(0, MAX_ENABLED_PLATFORMS);
+}
+
+// Picks the timestamp an event is stored under: the client's own, when it is
+// well-formed and plausible, otherwise the moment the batch arrived.
+export function eventTimestamp(clientTs: unknown, serverIso: string): string {
+  if (typeof clientTs !== "string" || !CLIENT_TS_RE.test(clientTs)) return serverIso;
+  const parsed = Date.parse(clientTs);
+  const server = Date.parse(serverIso);
+  if (!Number.isFinite(parsed) || !Number.isFinite(server)) return serverIso;
+  return Math.abs(parsed - server) > MAX_CLOCK_SKEW_MS ? serverIso : clientTs;
+}
+
 // Turns a validated /track payload into PostHog batch items.
 //
 // Pure on purpose: this is where the privacy model becomes concrete bytes, so
@@ -432,11 +515,37 @@ export function buildBatch(
       os_version: ev.os_version ?? "",
     };
     // Optional fields are omitted rather than sent empty, so an absent value
-    // stays distinguishable from an empty one on the dashboard side.
-    if (ev.locale) properties.locale = ev.locale;
-    if (ev.platform) properties.platform = ev.platform;
-    if (typeof ev.duration_ms === "number") properties.duration_ms = ev.duration_ms;
-    if (typeof ev.count === "number") properties.count = ev.count;
+    // stays distinguishable from an empty one on the dashboard side. Each one
+    // is validated: this function is the only place a property can be written,
+    // so anything not listed here cannot reach PostHog at all.
+    const optional: Array<[string, unknown]> = [
+      ["os", code(ev.os)],
+      ["arch", code(ev.arch)],
+      ["surface", code(ev.surface)],
+      ["locale", typeof ev.locale === "string" && ev.locale.length <= 35 ? ev.locale : undefined],
+      ["platform", platformId(ev.platform)],
+      ["duration_ms", count(ev.duration_ms)],
+      ["count", count(ev.count)],
+      ["success", flag(ev.success)],
+      ["succeeded", count(ev.succeeded)],
+      ["platforms", count(ev.platforms)],
+      ["dropped_events", count(ev.dropped_events)],
+      ["error_code", code(ev.error_code)],
+      ["operation", code(ev.operation)],
+      ["target_version", version(ev.target_version)],
+      ["command", code(ev.command)],
+      ["ui_language", code(ev.ui_language)],
+      ["enabled_platforms", platformList(ev.enabled_platforms)],
+      ["personas_enabled", flag(ev.personas_enabled)],
+      ["pin_enabled", flag(ev.pin_enabled)],
+      ["cli_enabled", flag(ev.cli_enabled)],
+      ["deep_links_enabled", flag(ev.deep_links_enabled)],
+      ["streamer_mode", code(ev.streamer_mode)],
+      ["animations", code(ev.animations)],
+    ];
+    for (const [key, value] of optional) {
+      if (value !== undefined) properties[key] = value;
+    }
     // Person properties are Mode B only, by construction: Mode A has no person
     // to attach them to.
     if (isModeB) {
@@ -447,7 +556,12 @@ export function buildBatch(
         ...(ev.locale ? { locale: ev.locale } : {}),
       };
     }
-    return { event: ev.name, distinct_id: distinctId, timestamp, properties };
+    return {
+      event: ev.name,
+      distinct_id: distinctId,
+      timestamp: eventTimestamp(ev.client_ts, timestamp),
+      properties,
+    };
   });
 }
 

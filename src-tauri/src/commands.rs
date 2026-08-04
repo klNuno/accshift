@@ -161,21 +161,44 @@ pub fn finish_boot(
     };
     let _ = crate::logging::append_app_log(&ctx(&app_handle), "info", &source, message, None);
 
-    // Telemetry: first boot completion triggers app_launched, ping, accounts_snapshot.
+    // Telemetry: first boot completion triggers first_run, app_launched and
+    // accounts_snapshot. `ping` is not emitted here: the queue owns it, so
+    // that an app left open for three days reports three days instead of one.
     if was_first_completion {
         let duration_ms = tstate
             .app_start
             .elapsed()
             .as_millis()
             .min(u128::from(u64::MAX)) as u64;
+        emit_first_run_once(&app_handle, &tstate);
         tstate
             .handle
             .track(telemetry::Event::AppLaunched { duration_ms });
-        tstate.handle.track(telemetry::Event::Ping);
         emit_accounts_snapshots(&app_handle, &tstate);
     }
 
     crate::app_runtime::show_main_window(&app_handle)
+}
+
+/// Emits `first_run` on the first launch that has consent, then never again.
+///
+/// The flag is only persisted when the event was actually queued. An
+/// installation that turns telemetry on later still reports its first run at
+/// the next launch, rather than having burned the event while nothing was
+/// being sent.
+fn emit_first_run_once(app_handle: &tauri::AppHandle, tstate: &TelemetryState) {
+    let c = ctx(app_handle);
+    let cfg = crate::config::load_config(&c);
+    if cfg.telemetry.first_run_reported || !cfg.telemetry.onboarding_completed {
+        return;
+    }
+    if !cfg.telemetry.mode_a_enabled && !cfg.telemetry.mode_b_enabled {
+        return;
+    }
+    tstate.handle.track(telemetry::Event::FirstRun);
+    let _ = crate::config::update_config(&c, |current| {
+        current.telemetry.first_run_reported = true;
+    });
 }
 
 /// Emits one `accounts_snapshot` per non-empty platform.
@@ -344,10 +367,18 @@ pub async fn platform_switch_account(
     .await;
     let duration_ms = t0.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
     let tstate = app_handle.state::<TelemetryState>();
+    // A switch that failed used to be indistinguishable from any other failed
+    // switch, which made "what should I fix first" unanswerable. The code is
+    // the typed error family, never the message.
+    let error_code = result
+        .as_ref()
+        .err()
+        .map(|e| telemetry::error_code_for_kind(e.kind).to_string());
     tstate.handle.track(telemetry::Event::PlatformSwitch {
         platform: platform_for_event,
         duration_ms,
         success: result.is_ok(),
+        error_code,
     });
     result
 }

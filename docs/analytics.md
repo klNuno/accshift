@@ -19,6 +19,11 @@ the counters, so turning those off is a separate and deliberate action. Said
 plainly, without dressing it up: **the anonymous tier is opt-out, the enhanced
 tier is opt-in.**
 
+The `accshift` command-line binary reads the same two switches. It reports one
+event per command, it never sends a daily ping (a command you run five times is
+one person, not five), and with both switches off it starts no reporting at
+all.
+
 ## What is never collected
 
 Accshift manages game accounts, so this list matters more than the one below it.
@@ -35,39 +40,69 @@ None of the following ever leaves your machine, in any mode:
 
 An event says "an account was added on Steam". It cannot say which account,
 because the app never puts that in the payload. The Rust code that builds the
-payload is 40 lines long and is linked at the bottom of this page.
+payload is one function, and it is linked at the bottom of this page.
 
 ## What is collected
 
-Nine events, and that is the complete list.
+Eighteen events, and that is the complete list.
 
-| Event                     | When                             | Fields beyond the common ones              |
-| ------------------------- | -------------------------------- | ------------------------------------------ |
-| `ping`                    | Once a day while the app runs    | none                                       |
-| `app_launched`            | Startup finished                 | `duration_ms`                              |
-| `platform_switch`         | You switched an account          | `platform`, `duration_ms`, success flag    |
-| `persona_switch`          | You activated a persona          | number of platforms, number that succeeded |
-| `account_added`           | You finished adding an account   | `platform`                                 |
-| `streamer_mode_activated` | Streamer mode auto-enabled       | none                                       |
-| `deep_link_used`          | An `accshift://` link was opened | none                                       |
-| `session_ended`           | You closed the window            | `duration_ms`                              |
-| `accounts_snapshot`       | Each app start, enhanced only    | `platform`, how many accounts on it        |
+| Event                     | When                                     | Fields beyond the common ones                                 |
+| ------------------------- | ---------------------------------------- | ------------------------------------------------------------- |
+| `ping`                    | Once a day while the app runs            | `dropped_events`, only if any were                            |
+| `first_run`               | The first launch of an installation      | none                                                          |
+| `app_launched`            | Startup finished                         | `duration_ms`                                                 |
+| `platform_switch`         | You switched an account                  | `platform`, `duration_ms`, `success`, `error_code` on failure |
+| `persona_switch`          | You activated a persona                  | number of platforms, number that succeeded                    |
+| `account_add_started`     | You opened an add-account flow           | `platform`                                                    |
+| `account_add_cancelled`   | You closed one without adding an account | `platform`                                                    |
+| `account_added`           | You finished adding an account           | `platform`                                                    |
+| `operation_failed`        | A named operation failed                 | `operation`, `error_code`, `platform`                         |
+| `update_available`        | An update was found                      | `target_version`                                              |
+| `update_downloaded`       | It finished downloading                  | `target_version`                                              |
+| `update_applied`          | It was installed                         | `target_version`                                              |
+| `update_failed`           | Any of the three above failed            | `target_version`, `error_code`                                |
+| `cli_command`             | A CLI command finished                   | `command`, `success`, `error_code`                            |
+| `streamer_mode_activated` | Streamer mode auto-enabled               | none                                                          |
+| `deep_link_used`          | An `accshift://` link was opened         | none                                                          |
+| `session_ended`           | You closed the window                    | `duration_ms`                                                 |
+| `accounts_snapshot`       | Each app start, enhanced only            | `platform`, how many accounts on it                           |
+| `settings_snapshot`       | Each app start, enhanced only            | the settings listed below                                     |
 
-Every event also carries three common fields: the app version, the OS version,
-and your locale (for example `fr_FR`). The server adds one more, the country
+One more event exists and is not in that table because it is not tied to an
+installation at all: `consent_choice`, recorded once when you answer the
+first-launch screen. It carries the answer and the app version, and lands on a
+single shared counter so the three possible answers have a denominator.
+
+Every event also carries seven common fields: the app version, a fixed OS
+identifier (`windows`, `macos`, `linux`), the architecture, the OS version,
+your locale (for example `fr-FR`), whether it came from the app or the CLI, and
+the time it happened, to the second. The server adds one more, the country
 code, derived from your IP address without storing the address itself.
 
 `platform` is always a fixed identifier like `steam` or `riot`, never anything
-you typed.
+you typed. So are `error_code`, `operation` and `command`: each is matched
+against a fixed list in the code, and anything unrecognised is recorded as
+`other` rather than sent as it was. That is what makes it impossible for an
+error message, which routinely contains a file path with your username in it,
+to travel inside one of those fields.
 
-`accounts_snapshot` is the only event that counts anything about your library,
-and it counts only how many accounts exist per platform. It is sent in enhanced
-mode only: the app drops it before upload in anonymous mode.
+`accounts_snapshot` counts how many accounts exist per platform, and nothing
+else about your library. `settings_snapshot` reports your interface language,
+which platforms are enabled, and whether personas, the PIN lock, the CLI and
+deep links are on. No theme name, because a custom theme is one you named
+yourself. Both are sent in enhanced mode only: the app drops them before upload
+in anonymous mode. Nine low-entropy settings together are a weak fingerprint,
+and the anonymous tier exists precisely so that two events cannot be tied to
+one installation across days.
 
-Every release up to and including 1.0.2 skipped Steam in this event, because the
-list it was built from only covered platforms whose accounts live in the config
-file. Snapshots recorded by those releases say nothing about Steam, in either
-direction.
+Every release up to and including 1.0.2 skipped Steam in `accounts_snapshot`,
+because the list it was built from only covered platforms whose accounts live
+in the config file. Snapshots recorded by those releases say nothing about
+Steam, in either direction.
+
+`first_run` means "first launch that knew how to report one", so for an
+installation that predates the release introducing it, it fires on the first
+launch after the update rather than on the day it was installed.
 
 This table is checked against the code on every release. Where this page and the
 code disagree, the code is right and the page is a bug worth reporting.
@@ -84,25 +119,42 @@ This is a real batch, exactly as it leaves the machine in anonymous mode:
     {
       "name": "ping",
       "app_version": "1.4.2",
-      "os_version": "Windows 11 (10.0.26200)",
-      "locale": "fr_FR"
+      "os": "windows",
+      "arch": "x86_64",
+      "os_version": "Windows 11 Pro 26200",
+      "surface": "gui",
+      "client_ts": "2026-08-04T12:34:56Z",
+      "locale": "fr-FR"
     },
     {
       "name": "platform_switch",
       "app_version": "1.4.2",
-      "os_version": "Windows 11 (10.0.26200)",
-      "locale": "fr_FR",
+      "os": "windows",
+      "arch": "x86_64",
+      "os_version": "Windows 11 Pro 26200",
+      "surface": "gui",
+      "client_ts": "2026-08-04T12:36:02Z",
+      "locale": "fr-FR",
       "platform": "steam",
       "duration_ms": 842,
+      "success": true,
       "count": 1
     }
   ]
 }
 ```
 
-That is the whole thing. Batches are sent at most once every five minutes and
-are held in memory only: telemetry is never written to your disk, so an app that
-never reaches the network simply forgets its events.
+That is the whole thing. `count` duplicates `success` here for one boring
+reason: it carried the success flag before `success` existed, and the
+dashboards built against it still read it.
+
+Batches are sent at most once every five minutes, the first one about twenty
+seconds after launch, and are held in memory only: telemetry is never written
+to your disk, so an app that never reaches the network simply forgets its
+events. A batch that fails to send is kept in memory and retried, with the
+delay doubling up to an hour; at most 200 events are held that way, and the
+oldest are discarded past that. `ping` reports how many were lost, which is the
+only reason that count exists.
 
 ## The two switches
 
@@ -186,14 +238,17 @@ the app.
 Nothing here has to be taken on trust. The code that decides what is sent is
 small and self-contained:
 
-| What                                     | Where                                                                                             |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| The event list and every field           | [`crates/accshift-core/src/telemetry/events.rs`](../crates/accshift-core/src/telemetry/events.rs) |
-| The exact payload built for the network  | [`crates/accshift-core/src/telemetry/client.rs`](../crates/accshift-core/src/telemetry/client.rs) |
-| The queue, and why it never touches disk | [`crates/accshift-core/src/telemetry/queue.rs`](../crates/accshift-core/src/telemetry/queue.rs)   |
-| The consent gate                         | [`crates/accshift-core/src/telemetry/mod.rs`](../crates/accshift-core/src/telemetry/mod.rs)       |
-| The server, in full                      | [`server/src/index.ts`](../server/src/index.ts)                                                   |
-| The server's own README                  | [`server/README.md`](../server/README.md)                                                         |
+| What                                        | Where                                                                                                           |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| The event list and every field              | [`crates/accshift-core/src/telemetry/events.rs`](../crates/accshift-core/src/telemetry/events.rs)               |
+| The fixed vocabularies codes are matched to | [`crates/accshift-core/src/telemetry/events.rs`](../crates/accshift-core/src/telemetry/events.rs)               |
+| The exact payload built for the network     | [`crates/accshift-core/src/telemetry/client.rs`](../crates/accshift-core/src/telemetry/client.rs)               |
+| The queue, and why it never touches disk    | [`crates/accshift-core/src/telemetry/queue.rs`](../crates/accshift-core/src/telemetry/queue.rs)                 |
+| The consent gate                            | [`crates/accshift-core/src/telemetry/mod.rs`](../crates/accshift-core/src/telemetry/mod.rs)                     |
+| What the OS fields are read from            | [`crates/accshift-core/src/telemetry/platform_info.rs`](../crates/accshift-core/src/telemetry/platform_info.rs) |
+| The CLI's own reporting                     | [`crates/accshift-cli/src/telemetry.rs`](../crates/accshift-cli/src/telemetry.rs)                               |
+| The server, in full                         | [`server/src/index.ts`](../server/src/index.ts)                                                                 |
+| The server's own README                     | [`server/README.md`](../server/README.md)                                                                       |
 
 This page is versioned alongside the code it describes, so `git log` on it shows
 every change ever made to what gets collected.
