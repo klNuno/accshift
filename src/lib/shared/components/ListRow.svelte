@@ -228,6 +228,18 @@
     border-color: rgba(234, 179, 8, 0.45);
   }
 
+  /* Same reason as the grid card: a custom row color would otherwise swallow
+     the ban border, and .row.selected.custom-color even outranks it. */
+  .row.custom-color.ban-red,
+  .row.selected.custom-color.ban-red {
+    border-color: rgb(239, 68, 68);
+  }
+
+  .row.custom-color.ban-orange:not(.ban-red),
+  .row.selected.custom-color.ban-orange:not(.ban-red) {
+    border-color: rgb(234, 179, 8);
+  }
+
   .avatar {
     position: relative;
     width: 32px;

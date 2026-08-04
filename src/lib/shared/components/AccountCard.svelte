@@ -667,6 +667,19 @@
     outline: 2px solid rgba(234, 179, 8, 0.6);
   }
 
+  /* A custom card color paints a saturated background right under the outline,
+     and a 0.6 alpha ring reads as part of that fill instead of a ban marker.
+     Keep the translucent ring on the neutral cards, go opaque on colored ones. */
+  .card.custom-color.ban-red,
+  .card.custom-color.active.ban-red {
+    outline-color: rgb(239, 68, 68);
+  }
+
+  .card.custom-color.ban-yellow:not(.ban-red),
+  .card.custom-color.active.ban-yellow:not(.ban-red) {
+    outline-color: rgb(234, 179, 8);
+  }
+
   .card.dragging {
     opacity: 0.4;
     transform: scale(0.95);
