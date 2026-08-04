@@ -8,6 +8,8 @@
     type BulkEditResult,
   } from "./steamApi";
   import { toProfileUrl } from "./steamIdUtils";
+  import { ACCOUNT_CARD_COLOR_PRESETS } from "$lib/shared/accountCardColors";
+  import { COLOR_LABEL_KEYS } from "$lib/shared/contextMenu/accountAppearanceActions";
 
   type TriState = "unchanged" | "enabled" | "disabled";
 
@@ -17,6 +19,7 @@
     onSelectAll,
     onDeselectAll,
     onCopyUrls,
+    onSetCardColor,
     onClose,
     onResult,
     t,
@@ -26,6 +29,7 @@
     onSelectAll: () => void;
     onDeselectAll: () => void;
     onCopyUrls: (urls: string[]) => void;
+    onSetCardColor: (color: string) => void;
     onClose: () => void;
     onResult: (result: BulkEditResult) => void;
     t: (key: MessageKey, params?: TranslationParams) => string;
@@ -33,6 +37,26 @@
 
   function copyUrls() {
     onCopyUrls([...selectedIds].map(toProfileUrl));
+  }
+
+  let colorMenuOpen = $state(false);
+  let colorWrapRef = $state<HTMLDivElement | null>(null);
+
+  function toggleColorMenu() {
+    colorMenuOpen = !colorMenuOpen;
+  }
+
+  function applyColor(color: string) {
+    colorMenuOpen = false;
+    onSetCardColor(color);
+  }
+
+  // Click anywhere outside the popover closes it. Capture phase so a click on
+  // another bar button both closes this and runs its own action.
+  function handleWindowPointerDown(event: PointerEvent) {
+    if (!colorMenuOpen) return;
+    if (colorWrapRef?.contains(event.target as Node)) return;
+    colorMenuOpen = false;
   }
 
   let step = $state<"select" | "settings">("select");
@@ -116,12 +140,16 @@
 
   function handleOverlayKeydown(e: KeyboardEvent) {
     if (e.key !== "Escape") return;
+    if (colorMenuOpen) {
+      colorMenuOpen = false;
+      return;
+    }
     if (step === "settings") step = "select";
     else onClose();
   }
 </script>
 
-<svelte:window onkeydown={handleOverlayKeydown} />
+<svelte:window onkeydown={handleOverlayKeydown} onpointerdown={handleWindowPointerDown} />
 
 {#if step === "select"}
   <div class="bar">
@@ -131,6 +159,35 @@
       <button class="tool-btn" disabled={selectedIds.size === 0} onclick={copyUrls}>
         {t("bulkEdit.copyUrls")}
       </button>
+      <div class="color-wrap" bind:this={colorWrapRef}>
+        <button
+          class="tool-btn"
+          class:active={colorMenuOpen}
+          disabled={selectedIds.size === 0}
+          aria-expanded={colorMenuOpen}
+          onclick={toggleColorMenu}
+        >
+          {t("bulkEdit.cardColor")}
+        </button>
+        {#if colorMenuOpen}
+          <div class="color-popover" role="group" aria-label={t("bulkEdit.cardColor")}>
+            {#each ACCOUNT_CARD_COLOR_PRESETS as preset (preset.id)}
+              <button
+                class="swatch"
+                title={t(COLOR_LABEL_KEYS[preset.id])}
+                aria-label={t(COLOR_LABEL_KEYS[preset.id])}
+                onclick={() => applyColor(preset.color)}
+              >
+                {#if preset.color}
+                  <span class="swatch-fill" style={`background:${preset.color};`}></span>
+                {:else}
+                  <span class="swatch-fill default"></span>
+                {/if}
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
       <span class="count">{t("bulkEdit.selected", { count: selectedIds.size })}</span>
     </div>
     <div class="bar-right">
@@ -293,6 +350,61 @@
   .tool-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .tool-btn.active {
+    background: var(--bg-card-hover);
+    color: var(--fg);
+  }
+
+  /* ── Card color popover ── */
+
+  .color-wrap {
+    position: relative;
+    display: flex;
+  }
+
+  .color-popover {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 0;
+    z-index: 101;
+    display: flex;
+    gap: 6px;
+    padding: 7px 8px;
+    background: var(--bg-overlay);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  }
+
+  .swatch {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: transparent;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+  }
+
+  .swatch:hover,
+  .swatch:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 35%, transparent);
+  }
+
+  .swatch-fill {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    display: block;
+  }
+
+  .swatch-fill.default {
+    background: linear-gradient(135deg, var(--bg-muted) 0 50%, var(--bg-elevated) 50% 100%);
   }
 
   .btn-secondary {

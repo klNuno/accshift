@@ -90,8 +90,13 @@ export function createBulkEditController({
     bulkEditSelectedIds = next;
   }
 
+  // Additive: the selection spans the whole platform, not just the current
+  // folder, so selecting all inside a folder must not drop what was already
+  // picked at the root (or in another folder). "Deselect all" is the reset.
   function bulkEditSelectAll() {
-    bulkEditSelectedIds = new Set(getVisibleAccountIds());
+    const next = new Set(bulkEditSelectedIds);
+    for (const id of getVisibleAccountIds()) next.add(id);
+    bulkEditSelectedIds = next;
   }
 
   function bulkEditDeselectAll() {

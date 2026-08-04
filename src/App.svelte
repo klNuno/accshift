@@ -24,6 +24,7 @@
   import { createAccountLoader } from "$lib/shared/useAccountLoader.svelte";
   import {
     getAccountCardColor as getStoredAccountCardColor,
+    setAccountCardColor,
   } from "$lib/shared/accountCardColors";
   import { getAccountCardNote as getStoredAccountCardNote } from "$lib/shared/accountCardNotes";
   import {
@@ -1017,6 +1018,22 @@
     addToast(t("bulkEdit.urlsCopied", { count: urls.length }), { type: "success" });
   }
 
+  // Card colors are a client-side store, so a bulk color needs no platform
+  // round trip: write every selected id, then bump the version that the card
+  // color getters track.
+  function applyBulkEditCardColor(color: string) {
+    const ids = [...bulkEdit.bulkEditSelectedIds];
+    if (ids.length === 0) return;
+    for (const id of ids) setAccountCardColor(id, color);
+    cardColorVersion += 1;
+    addToast(
+      color
+        ? t("bulkEdit.colorApplied", { count: ids.length })
+        : t("bulkEdit.colorCleared", { count: ids.length }),
+      { type: "success" },
+    );
+  }
+
   async function loadAccounts(
     silent = false,
     showRefreshedToast = false,
@@ -1520,6 +1537,7 @@
     onBulkEditSelectAll={bulkEdit.bulkEditSelectAll}
     onBulkEditDeselectAll={bulkEdit.bulkEditDeselectAll}
     onBulkEditCopyUrls={copyBulkEditUrls}
+    onBulkEditSetCardColor={applyBulkEditCardColor}
     onBulkEditClose={bulkEdit.closeBulkEdit}
     onBulkEditResult={dialogs.handleBulkEditResult}
     {t}

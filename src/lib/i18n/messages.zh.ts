@@ -570,6 +570,9 @@ export const ZH_MESSAGES: Record<MessageKey, string> = {
   "bulkEdit.loadingGames": "正在加载游戏...",
   "bulkEdit.copyUrls": "复制链接",
   "bulkEdit.urlsCopied": "已复制 {count} 个个人资料链接",
+  "bulkEdit.cardColor": "卡片颜色",
+  "bulkEdit.colorApplied": "已为 {count} 张卡片应用颜色",
+  "bulkEdit.colorCleared": "已清除 {count} 张卡片的颜色",
 
   "common.retry": "重试",
 
