@@ -1,4 +1,9 @@
-import { invoke } from "@tauri-apps/api/core";
+import {
+  trackAccountAdded,
+  trackAccountAddCancelled,
+  trackAccountAddStarted,
+  trackOperationFailed,
+} from "$lib/app/telemetryClient";
 import type { PlatformAccount, PlatformAddFlowStatus } from "$lib/shared/platform";
 import type { CardExtensionContent } from "$lib/shared/cardExtension";
 import { getPlatform } from "$lib/shared/platform";
@@ -111,6 +116,11 @@ export function createPlatformAddFlowController({
   async function cancel() {
     const current = flow;
     const flowAdapter = current ? getPlatform(current.platformId) : undefined;
+    if (current) {
+      // Counted whether or not the adapter has anything to cancel: what the
+      // funnel measures is the user walking away, not the cleanup.
+      trackAccountAddCancelled(current.platformId);
+    }
     if (!current || !flowAdapter?.cancelAddFlow) {
       stop();
       return;
@@ -160,12 +170,14 @@ export function createPlatformAddFlowController({
       }
 
       if (nextStatus.state === "failed") {
+        reportAddFailure(current.platformId);
         return;
       }
 
       schedulePoll();
     } catch (error) {
       if (!flow || flow.status.setupId !== current.status.setupId) return;
+      reportAddFailure(current.platformId);
       flow = {
         ...flow,
         status: {
@@ -177,8 +189,18 @@ export function createPlatformAddFlowController({
     }
   }
 
+  /**
+   * The adapters report a failed setup as a message, not a typed kind, so the
+   * code lands on `other`. The platform and the count are the part that
+   * answers "which setup should I fix first"; a typed reason can be added
+   * once the adapters carry one.
+   */
+  function reportAddFailure(platformId: string) {
+    trackOperationFailed("account_add", "other", platformId);
+  }
+
   function handleReady(platformId: string, status: PlatformAddFlowStatus) {
-    void invoke("telemetry_track_account_added", { platformId }).catch(() => {});
+    trackAccountAdded(platformId);
     const adapter = getPlatform(platformId);
     if (getPlatformDefinition(platformId)?.capabilities?.primeProfileAfterAdd && status.accountId) {
       void adapter?.getProfileInfo?.(status.accountId).catch(() => null);
@@ -201,15 +223,21 @@ export function createPlatformAddFlowController({
 
   function start(platformId: string, status: PlatformAddFlowStatus) {
     flow = { platformId, status };
+    // The opening of the flow is the denominator the funnel was missing:
+    // `account_added` alone counts successes and says nothing about how many
+    // people give up halfway through a platform's setup.
+    trackAccountAddStarted(platformId);
     // Some setups finish instantly (e.g. Discord adopting the already
     // signed-in session): run the ready handling instead of polling.
     if (status.state === "ready") {
       handleReady(platformId, status);
       return;
     }
-    if (status.state !== "failed") {
-      schedulePoll();
+    if (status.state === "failed") {
+      reportAddFailure(platformId);
+      return;
     }
+    schedulePoll();
   }
 
   function getSetupExtensionContent(accountId: string): CardExtensionContent | null {

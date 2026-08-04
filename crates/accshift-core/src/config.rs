@@ -218,6 +218,14 @@ pub struct TelemetryConfig {
     pub anonymous_id: String,
     #[serde(default)]
     pub onboarding_completed: bool,
+    /// Whether the one-shot `first_run` event has already been emitted.
+    ///
+    /// Existing installations default to false and will report a `first_run`
+    /// on their next launch, so the event means "first launch that knew how
+    /// to report one". Dashboards must read it against the release that
+    /// introduced it, not as an install date for the whole population.
+    #[serde(default)]
+    pub first_run_reported: bool,
 }
 
 impl Default for TelemetryConfig {
@@ -229,6 +237,7 @@ impl Default for TelemetryConfig {
             pending_forget_install_ids: Vec::new(),
             anonymous_id: String::new(),
             onboarding_completed: false,
+            first_run_reported: false,
         }
     }
 }

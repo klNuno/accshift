@@ -1,7 +1,11 @@
-use super::events::{Event, TelemetryContext};
+use super::events::{
+    code_from, platform_code, Event, TelemetryContext, CLI_COMMANDS, ERROR_CODES, OPERATIONS,
+    UI_LANGUAGES,
+};
+use super::time::to_rfc3339_utc;
 use serde::Serialize;
 use serde_json::{json, Map, Value};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 /// Inert placeholder used when `ACCSHIFT_TELEMETRY_URL` is not set at compile
 /// time. Not a live endpoint on purpose: it only marks builds that forgot to
@@ -38,17 +42,54 @@ impl Mode {
     }
 }
 
+/// Maximum length of a version string sent as a property.
+const MAX_VERSION_LEN: usize = 32;
+
+/// Reduces a version string to digits, letters, dots and dashes.
+///
+/// The updater hands us whatever the release manifest declared, which is
+/// remote input. It has never been anything but a semver string, and this is
+/// what keeps it that way.
+fn sanitize_version(raw: &str) -> Option<String> {
+    let cleaned: String = raw
+        .trim()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-' || *c == '+')
+        .take(MAX_VERSION_LEN)
+        .collect();
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
 /// Serializes an event to flat JSON for the `/track` endpoint.
-pub fn event_to_json(event: &Event, ctx: &TelemetryContext) -> Value {
+///
+/// `client_ts` is the instant the event happened, not the instant the batch
+/// leaves: a batch covers up to a full flush interval, so a single
+/// server-side stamp would flatten it.
+pub fn event_to_json(event: &Event, ctx: &TelemetryContext, client_ts: SystemTime) -> Value {
     let mut m = Map::new();
     m.insert("name".into(), Value::from(event.name()));
     m.insert("app_version".into(), Value::from(ctx.app_version.clone()));
+    m.insert("os".into(), Value::from(ctx.os.clone()));
+    m.insert("arch".into(), Value::from(ctx.arch.clone()));
     m.insert("os_version".into(), Value::from(ctx.os_version.clone()));
+    m.insert("surface".into(), Value::from(ctx.surface.clone()));
+    m.insert("client_ts".into(), Value::from(to_rfc3339_utc(client_ts)));
     if let Some(locale) = &ctx.locale {
         m.insert("locale".into(), Value::from(locale.clone()));
     }
     match event {
-        Event::Ping => {}
+        Event::Ping { dropped_events } => {
+            // Only sent when non-zero: a queue that never overflowed must not
+            // add a property to every single ping just to say so.
+            if *dropped_events > 0 {
+                m.insert("dropped_events".into(), Value::from(*dropped_events));
+            }
+        }
+        Event::FirstRun => {}
         Event::AppLaunched { duration_ms } => {
             m.insert("duration_ms".into(), Value::from(*duration_ms));
         }
@@ -56,20 +97,83 @@ pub fn event_to_json(event: &Event, ctx: &TelemetryContext) -> Value {
             platform,
             duration_ms,
             success,
+            error_code,
         } => {
-            m.insert("platform".into(), Value::from(platform.clone()));
+            m.insert("platform".into(), Value::from(platform_code(platform)));
             m.insert("duration_ms".into(), Value::from(*duration_ms));
+            m.insert("success".into(), Value::from(*success));
+            // `count` carried the success flag before `success` existed, and
+            // every dashboard built against it still reads it. Kept as-is.
             m.insert("count".into(), Value::from(u64::from(*success)));
+            if let Some(code) = error_code {
+                m.insert(
+                    "error_code".into(),
+                    Value::from(code_from(code, ERROR_CODES)),
+                );
+            }
         }
         Event::PersonaSwitch {
             platforms,
             succeeded,
         } => {
             m.insert("platforms".into(), Value::from(*platforms));
+            m.insert("succeeded".into(), Value::from(*succeeded));
+            // Same continuity reason as platform_switch above.
             m.insert("count".into(), Value::from(*succeeded));
         }
-        Event::AccountAdded { platform } => {
-            m.insert("platform".into(), Value::from(platform.clone()));
+        Event::AccountAddStarted { platform }
+        | Event::AccountAddCancelled { platform }
+        | Event::AccountAdded { platform } => {
+            m.insert("platform".into(), Value::from(platform_code(platform)));
+        }
+        Event::OperationFailed {
+            operation,
+            platform,
+            error_code,
+        } => {
+            m.insert(
+                "operation".into(),
+                Value::from(code_from(operation, OPERATIONS)),
+            );
+            m.insert(
+                "error_code".into(),
+                Value::from(code_from(error_code, ERROR_CODES)),
+            );
+            if let Some(platform) = platform {
+                m.insert("platform".into(), Value::from(platform_code(platform)));
+            }
+        }
+        Event::Update {
+            target_version,
+            error_code,
+            ..
+        } => {
+            if let Some(version) = target_version.as_deref().and_then(sanitize_version) {
+                m.insert("target_version".into(), Value::from(version));
+            }
+            if let Some(code) = error_code {
+                m.insert(
+                    "error_code".into(),
+                    Value::from(code_from(code, ERROR_CODES)),
+                );
+            }
+        }
+        Event::CliCommand {
+            command,
+            success,
+            error_code,
+        } => {
+            m.insert(
+                "command".into(),
+                Value::from(code_from(command, CLI_COMMANDS)),
+            );
+            m.insert("success".into(), Value::from(*success));
+            if let Some(code) = error_code {
+                m.insert(
+                    "error_code".into(),
+                    Value::from(code_from(code, ERROR_CODES)),
+                );
+            }
         }
         Event::StreamerModeActivated => {}
         Event::DeepLinkUsed => {}
@@ -77,8 +181,43 @@ pub fn event_to_json(event: &Event, ctx: &TelemetryContext) -> Value {
             m.insert("duration_ms".into(), Value::from(*duration_ms));
         }
         Event::AccountsSnapshot { platform, count } => {
-            m.insert("platform".into(), Value::from(platform.clone()));
+            m.insert("platform".into(), Value::from(platform_code(platform)));
             m.insert("count".into(), Value::from(*count));
+        }
+        Event::SettingsSnapshot {
+            ui_language,
+            enabled_platforms,
+            personas_enabled,
+            pin_enabled,
+            cli_enabled,
+            deep_links_enabled,
+            streamer_mode,
+            animations,
+        } => {
+            m.insert(
+                "ui_language".into(),
+                Value::from(code_from(ui_language, UI_LANGUAGES)),
+            );
+            let platforms: Vec<Value> = enabled_platforms
+                .iter()
+                .map(|id| Value::from(platform_code(id)))
+                .collect();
+            m.insert("enabled_platforms".into(), Value::Array(platforms));
+            m.insert("personas_enabled".into(), Value::from(*personas_enabled));
+            m.insert("pin_enabled".into(), Value::from(*pin_enabled));
+            m.insert("cli_enabled".into(), Value::from(*cli_enabled));
+            m.insert(
+                "deep_links_enabled".into(),
+                Value::from(*deep_links_enabled),
+            );
+            m.insert(
+                "streamer_mode".into(),
+                Value::from(code_from(streamer_mode, &["auto", "off"])),
+            );
+            m.insert(
+                "animations".into(),
+                Value::from(code_from(animations, &["system", "on", "off"])),
+            );
         }
     }
     Value::Object(m)
@@ -228,55 +367,136 @@ pub fn export(
 mod tests {
     use super::*;
 
-    #[test]
-    fn event_to_json_ping_has_only_invariants() {
-        let ctx = TelemetryContext {
+    use super::super::events::UpdateStage;
+    use std::time::UNIX_EPOCH;
+
+    fn ctx_with_locale(locale: Option<&str>) -> TelemetryContext {
+        TelemetryContext {
             app_version: "0.9.0".into(),
+            os: "windows".into(),
+            arch: "x86_64".into(),
             os_version: "Windows 11 22631".into(),
-            locale: Some("fr-FR".into()),
-        };
-        let v = event_to_json(&Event::Ping, &ctx);
-        assert_eq!(v["name"], "ping");
-        assert_eq!(v["app_version"], "0.9.0");
-        assert_eq!(v["os_version"], "Windows 11 22631");
-        assert_eq!(v["locale"], "fr-FR");
-        assert!(v.get("duration_ms").is_none());
-        assert!(v.get("platform").is_none());
+            locale: locale.map(str::to_string),
+            surface: "gui".into(),
+        }
+    }
+
+    fn at(secs: u64) -> SystemTime {
+        UNIX_EPOCH + Duration::from_secs(secs)
     }
 
     #[test]
-    fn event_to_json_platform_switch_encodes_success_as_count() {
-        let ctx = TelemetryContext {
-            app_version: "0.9.0".into(),
-            os_version: "Windows 11 22631".into(),
-            locale: None,
-        };
+    fn event_to_json_ping_has_only_invariants() {
+        let ctx = ctx_with_locale(Some("fr-FR"));
+        let v = event_to_json(&Event::Ping { dropped_events: 0 }, &ctx, at(1_785_846_896));
+        assert_eq!(v["name"], "ping");
+        assert_eq!(v["app_version"], "0.9.0");
+        assert_eq!(v["os"], "windows");
+        assert_eq!(v["arch"], "x86_64");
+        assert_eq!(v["os_version"], "Windows 11 22631");
+        assert_eq!(v["surface"], "gui");
+        assert_eq!(v["locale"], "fr-FR");
+        assert_eq!(v["client_ts"], "2026-08-04T12:34:56Z");
+        assert!(v.get("duration_ms").is_none());
+        assert!(v.get("platform").is_none());
+        // A queue that never overflowed says nothing rather than zero.
+        assert!(v.get("dropped_events").is_none());
+    }
+
+    #[test]
+    fn event_to_json_ping_reports_dropped_events_when_any() {
+        let ctx = ctx_with_locale(None);
+        let v = event_to_json(&Event::Ping { dropped_events: 12 }, &ctx, at(0));
+        assert_eq!(v["dropped_events"], 12);
+    }
+
+    #[test]
+    fn event_to_json_platform_switch_keeps_count_and_adds_success() {
+        let ctx = ctx_with_locale(None);
         let ev = Event::PlatformSwitch {
             platform: "steam".into(),
             duration_ms: 180,
             success: true,
+            error_code: None,
         };
-        let v = event_to_json(&ev, &ctx);
+        let v = event_to_json(&ev, &ctx, at(0));
         assert_eq!(v["name"], "platform_switch");
         assert_eq!(v["platform"], "steam");
         assert_eq!(v["duration_ms"], 180);
+        assert_eq!(v["success"], true);
+        // Continuity: dashboards built before `success` existed read `count`.
         assert_eq!(v["count"], 1);
+        assert!(v.get("error_code").is_none());
+    }
+
+    #[test]
+    fn event_to_json_platform_switch_classifies_a_failure() {
+        let ctx = ctx_with_locale(None);
+        let ev = Event::PlatformSwitch {
+            platform: "riot".into(),
+            duration_ms: 40,
+            success: false,
+            error_code: Some("client_running".into()),
+        };
+        let v = event_to_json(&ev, &ctx, at(0));
+        assert_eq!(v["success"], false);
+        assert_eq!(v["count"], 0);
+        assert_eq!(v["error_code"], "client_running");
+    }
+
+    #[test]
+    fn event_to_json_never_lets_a_message_through_a_code_field() {
+        let ctx = ctx_with_locale(None);
+        let ev = Event::OperationFailed {
+            operation: "profile_capture".into(),
+            platform: Some("riot".into()),
+            error_code: r"C:\Users\alice\riot missing".to_string(),
+        };
+        let v = event_to_json(&ev, &ctx, at(0));
+        assert_eq!(v["operation"], "profile_capture");
+        assert_eq!(v["platform"], "riot");
+        // A raw message is not normalized into a code, it is discarded.
+        assert_eq!(v["error_code"], "other");
+    }
+
+    #[test]
+    fn event_to_json_rejects_an_unknown_platform_id() {
+        let ctx = ctx_with_locale(None);
+        let v = event_to_json(
+            &Event::AccountAdded {
+                platform: "MyPrivateLauncher".into(),
+            },
+            &ctx,
+            at(0),
+        );
+        assert_eq!(v["platform"], "other");
+    }
+
+    #[test]
+    fn event_to_json_keeps_the_battle_net_id_verbatim() {
+        // Renaming it on the wire would break the dashboards a second time.
+        let ctx = ctx_with_locale(None);
+        let v = event_to_json(
+            &Event::AccountAdded {
+                platform: "battle-net".into(),
+            },
+            &ctx,
+            at(0),
+        );
+        assert_eq!(v["platform"], "battle-net");
     }
 
     #[test]
     fn event_to_json_persona_switch_carries_counts_only() {
-        let ctx = TelemetryContext {
-            app_version: "0.9.0".into(),
-            os_version: "Windows 11 22631".into(),
-            locale: None,
-        };
+        let ctx = ctx_with_locale(None);
         let ev = Event::PersonaSwitch {
             platforms: 3,
             succeeded: 2,
         };
-        let v = event_to_json(&ev, &ctx);
+        let v = event_to_json(&ev, &ctx, at(0));
         assert_eq!(v["name"], "persona_switch");
         assert_eq!(v["platforms"], 3);
+        assert_eq!(v["succeeded"], 2);
         assert_eq!(v["count"], 2);
         // Non-PII by construction: no persona name, no platform id, no account.
         assert!(v.get("platform").is_none());
@@ -284,27 +504,24 @@ mod tests {
 
     #[test]
     fn event_to_json_feature_events_carry_no_pii() {
-        let ctx = TelemetryContext {
-            app_version: "0.9.0".into(),
-            os_version: "Windows 11 22631".into(),
-            locale: None,
-        };
+        let ctx = ctx_with_locale(None);
         let v = event_to_json(
             &Event::AccountAdded {
                 platform: "discord".into(),
             },
             &ctx,
+            at(0),
         );
         assert_eq!(v["name"], "account_added");
         // Platform id only: no account name, id, or display name.
         assert_eq!(v["platform"], "discord");
         assert!(v.get("account").is_none());
 
-        let v = event_to_json(&Event::StreamerModeActivated, &ctx);
+        let v = event_to_json(&Event::StreamerModeActivated, &ctx, at(0));
         assert_eq!(v["name"], "streamer_mode_activated");
         assert!(v.get("platform").is_none());
 
-        let v = event_to_json(&Event::DeepLinkUsed, &ctx);
+        let v = event_to_json(&Event::DeepLinkUsed, &ctx, at(0));
         assert_eq!(v["name"], "deep_link_used");
         // No URL contents: a deep link carries account ids in its path.
         assert!(v.get("url").is_none());
@@ -312,13 +529,92 @@ mod tests {
     }
 
     #[test]
-    fn event_to_json_omits_locale_when_none() {
+    fn event_to_json_update_sanitizes_the_remote_version() {
+        let ctx = ctx_with_locale(None);
+        let v = event_to_json(
+            &Event::Update {
+                stage: UpdateStage::Available,
+                target_version: Some("1.4.2".into()),
+                error_code: None,
+            },
+            &ctx,
+            at(0),
+        );
+        assert_eq!(v["name"], "update_available");
+        assert_eq!(v["target_version"], "1.4.2");
+
+        // The manifest is remote input; it never reaches PostHog verbatim.
+        let v = event_to_json(
+            &Event::Update {
+                stage: UpdateStage::Failed,
+                target_version: Some("1.4.2 <script>alert(1)</script>".into()),
+                error_code: Some("download failed".into()),
+            },
+            &ctx,
+            at(0),
+        );
+        assert_eq!(v["name"], "update_failed");
+        assert_eq!(v["target_version"], "1.4.2scriptalert1script");
+        assert_eq!(v["error_code"], "download_failed");
+    }
+
+    #[test]
+    fn event_to_json_settings_snapshot_is_all_low_cardinality_codes() {
+        let ctx = ctx_with_locale(None);
+        let v = event_to_json(
+            &Event::SettingsSnapshot {
+                ui_language: "pt-BR".into(),
+                enabled_platforms: vec!["steam".into(), "battle-net".into()],
+                personas_enabled: true,
+                pin_enabled: false,
+                cli_enabled: true,
+                deep_links_enabled: true,
+                streamer_mode: "auto".into(),
+                animations: "system".into(),
+            },
+            &ctx,
+            at(0),
+        );
+        assert_eq!(v["name"], "settings_snapshot");
+        assert_eq!(v["ui_language"], "pt_br");
+        assert_eq!(v["enabled_platforms"], json!(["steam", "battle-net"]));
+        assert_eq!(v["personas_enabled"], true);
+        assert_eq!(v["pin_enabled"], false);
+        // A user-named custom theme has no field to travel in.
+        assert!(v.get("theme").is_none());
+    }
+
+    #[test]
+    fn event_to_json_cli_command_carries_no_arguments() {
         let ctx = TelemetryContext {
-            app_version: "0.9.0".into(),
-            os_version: "Windows 11 22631".into(),
-            locale: None,
+            surface: "cli".into(),
+            ..ctx_with_locale(None)
         };
-        let v = event_to_json(&Event::Ping, &ctx);
+        let v = event_to_json(
+            &Event::CliCommand {
+                command: "switch".into(),
+                success: false,
+                error_code: Some("account_not_found".into()),
+            },
+            &ctx,
+            at(0),
+        );
+        assert_eq!(v["name"], "cli_command");
+        assert_eq!(v["surface"], "cli");
+        assert_eq!(v["command"], "switch");
+        assert_eq!(v["success"], false);
+        // The CLI's own `unknown_account` exit code maps onto the one error
+        // vocabulary shared with the app, so both surfaces stay comparable.
+        assert_eq!(v["error_code"], "account_not_found");
+        // The account id and every other argument stay on the machine.
+        assert!(v.get("account_id").is_none());
+        assert!(v.get("args").is_none());
+    }
+
+    #[test]
+    fn event_to_json_omits_locale_when_none() {
+        let ctx = ctx_with_locale(None);
+        let v = event_to_json(&Event::Ping { dropped_events: 0 }, &ctx, at(0));
         assert!(v.get("locale").is_none());
     }
 

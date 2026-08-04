@@ -211,6 +211,101 @@ pub fn telemetry_track_account_added(app_handle: tauri::AppHandle, platform_id: 
     });
 }
 
+/// Records the opening of an add-account flow, so the abandonment rate of a
+/// platform's setup becomes visible instead of only its successes.
+#[tauri::command]
+pub fn telemetry_track_account_add_started(app_handle: tauri::AppHandle, platform_id: String) {
+    let tstate = app_handle.state::<TelemetryState>();
+    tstate.handle.track(telemetry::Event::AccountAddStarted {
+        platform: platform_id,
+    });
+}
+
+/// Records an add-account flow abandoned before it produced an account.
+#[tauri::command]
+pub fn telemetry_track_account_add_cancelled(app_handle: tauri::AppHandle, platform_id: String) {
+    let tstate = app_handle.state::<TelemetryState>();
+    tstate.handle.track(telemetry::Event::AccountAddCancelled {
+        platform: platform_id,
+    });
+}
+
+/// Records a failed operation. Both `operation` and `error_code` are mapped
+/// onto closed vocabularies before they leave the process, so a caller cannot
+/// turn either into a free-text field.
+#[tauri::command]
+pub fn telemetry_track_operation_failed(
+    app_handle: tauri::AppHandle,
+    operation: String,
+    error_code: String,
+    platform_id: Option<String>,
+) {
+    let tstate = app_handle.state::<TelemetryState>();
+    tstate.handle.track(telemetry::Event::OperationFailed {
+        operation,
+        platform: platform_id,
+        error_code,
+    });
+}
+
+/// Records a stage of the updater flow.
+///
+/// An update that fails silently used to look exactly like a user who stopped
+/// launching the app: both simply stop reporting a new `app_version`.
+#[tauri::command]
+pub fn telemetry_track_update(
+    app_handle: tauri::AppHandle,
+    stage: String,
+    target_version: Option<String>,
+    error_code: Option<String>,
+) {
+    let stage = match stage.as_str() {
+        "available" => telemetry::UpdateStage::Available,
+        "downloaded" => telemetry::UpdateStage::Downloaded,
+        "applied" => telemetry::UpdateStage::Applied,
+        "failed" => telemetry::UpdateStage::Failed,
+        // An unknown stage is a frontend bug, not a user event.
+        _ => return,
+    };
+    let tstate = app_handle.state::<TelemetryState>();
+    tstate.handle.track(telemetry::Event::Update {
+        stage,
+        target_version,
+        error_code,
+    });
+}
+
+/// Records the non-identifying app settings once per launch.
+///
+/// Mode B only, enforced by the queue: nine low-entropy fields together are a
+/// weak fingerprint, and Mode A exists so that two events cannot be tied to
+/// one installation across days.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub fn telemetry_track_settings_snapshot(
+    app_handle: tauri::AppHandle,
+    ui_language: String,
+    enabled_platforms: Vec<String>,
+    personas_enabled: bool,
+    pin_enabled: bool,
+    cli_enabled: bool,
+    deep_links_enabled: bool,
+    streamer_mode: String,
+    animations: String,
+) {
+    let tstate = app_handle.state::<TelemetryState>();
+    tstate.handle.track(telemetry::Event::SettingsSnapshot {
+        ui_language,
+        enabled_platforms,
+        personas_enabled,
+        pin_enabled,
+        cli_enabled,
+        deep_links_enabled,
+        streamer_mode,
+        animations,
+    });
+}
+
 /// Records a streamer-mode overlay auto-activation. No payload.
 #[tauri::command]
 pub fn telemetry_track_streamer_mode(app_handle: tauri::AppHandle) {

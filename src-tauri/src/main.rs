@@ -449,6 +449,11 @@ fn main() {
             commands_telemetry::telemetry_complete_onboarding,
             commands_telemetry::telemetry_track_persona_switch,
             commands_telemetry::telemetry_track_account_added,
+            commands_telemetry::telemetry_track_account_add_started,
+            commands_telemetry::telemetry_track_account_add_cancelled,
+            commands_telemetry::telemetry_track_operation_failed,
+            commands_telemetry::telemetry_track_update,
+            commands_telemetry::telemetry_track_settings_snapshot,
             commands_telemetry::telemetry_track_streamer_mode,
             commands_telemetry::telemetry_export,
         ])

@@ -3,6 +3,7 @@ mod folders;
 mod output;
 mod pin;
 mod settings;
+mod telemetry;
 
 use accshift_core::error::PlatformErrorKind;
 use accshift_core::lock::{acquire_exclusive, LockError};
@@ -93,9 +94,29 @@ enum Command {
     },
 }
 
+impl Command {
+    /// Subcommand name for telemetry. Never its arguments: an account id or a
+    /// folder name is exactly what must stay on the machine.
+    fn name(&self) -> &'static str {
+        match self {
+            Command::List { .. } => "list",
+            Command::Platforms => "platforms",
+            Command::Switch { .. } => "switch",
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let format = Format::resolve(cli.json);
+
+    // Started before the command so a run that ends in an error still gets
+    // reported, and dropped silently when consent is absent.
+    let reporter = CliAppContext::new()
+        .ok()
+        .map(|c| Arc::new(c) as accshift_core::AppCtx)
+        .and_then(|ctx| telemetry::CliTelemetry::start(&ctx));
+    let command_name = cli.command.name();
 
     let exit = match cli.command {
         Command::List { platform, folder } => cmd_list(format, &platform, folder.as_deref()),
@@ -125,6 +146,10 @@ fn main() -> ExitCode {
             },
         ),
     };
+
+    if let Some(reporter) = reporter {
+        reporter.finish(command_name, telemetry::error_code_for_exit(exit));
+    }
 
     ExitCode::from(exit)
 }

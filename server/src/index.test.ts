@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildBatch, maskIp, readJsonCapped, redactUuids, type TelemetryEvent } from "./index";
+import {
+  buildBatch,
+  eventTimestamp,
+  maskIp,
+  readJsonCapped,
+  redactUuids,
+  type TelemetryEvent,
+} from "./index";
 
 function streamingRequest(chunks: Uint8Array[], contentLength?: number): Request {
   const stream = new ReadableStream<Uint8Array>({
@@ -136,6 +143,128 @@ describe("buildBatch", () => {
     expect(item!.properties).not.toHaveProperty("platform");
     expect(item!.properties).not.toHaveProperty("duration_ms");
     expect(item!.properties).not.toHaveProperty("count");
+  });
+
+  it("forwards the new event properties the app reports", () => {
+    const failed: TelemetryEvent = {
+      name: "platform_switch",
+      app_version: "1.2.3",
+      os_version: "Windows 11",
+      os: "windows",
+      arch: "x86_64",
+      surface: "gui",
+      platform: "battle-net",
+      duration_ms: 900,
+      count: 0,
+      success: false,
+      error_code: "client_running",
+    };
+    const [item] = buildBatch("A", [failed], IDS, "FR", TS);
+
+    expect(item!.properties.os).toBe("windows");
+    expect(item!.properties.arch).toBe("x86_64");
+    expect(item!.properties.surface).toBe("gui");
+    // The dashed registry id has to survive verbatim; renaming it on the wire
+    // would break the dashboards a second time.
+    expect(item!.properties.platform).toBe("battle-net");
+    expect(item!.properties.success).toBe(false);
+    expect(item!.properties.error_code).toBe("client_running");
+  });
+
+  it("drops a property whose shape is not the one the app sends", () => {
+    // A modified client is the threat here: the app maps these onto closed
+    // vocabularies, and this is the half of that guarantee that does not
+    // depend on the client being ours.
+    const hostile = {
+      name: "operation_failed",
+      app_version: "1.2.3",
+      os_version: "Windows 11",
+      operation: "account_add",
+      error_code: "C:\\Users\\alice\\steam missing",
+      platform: "steam; DROP TABLE",
+      enabled_platforms: ["steam", "../../etc/passwd"],
+      duration_ms: -5,
+      target_version: "<script>alert(1)</script>",
+    } as unknown as TelemetryEvent;
+    const [item] = buildBatch("A", [hostile], IDS, "FR", TS);
+
+    expect(item!.properties.operation).toBe("account_add");
+    expect(item!.properties).not.toHaveProperty("error_code");
+    expect(item!.properties).not.toHaveProperty("platform");
+    expect(item!.properties).not.toHaveProperty("duration_ms");
+    expect(item!.properties).not.toHaveProperty("target_version");
+    // The valid entries of a list survive; the rest is discarded.
+    expect(item!.properties.enabled_platforms).toEqual(["steam"]);
+  });
+
+  it("keeps a settings snapshot as booleans and codes", () => {
+    const snapshot: TelemetryEvent = {
+      name: "settings_snapshot",
+      app_version: "1.2.3",
+      os_version: "Windows 11",
+      ui_language: "pt_br",
+      enabled_platforms: ["steam", "riot"],
+      personas_enabled: true,
+      pin_enabled: false,
+      cli_enabled: true,
+      deep_links_enabled: true,
+      streamer_mode: "auto",
+      animations: "system",
+    };
+    const [item] = buildBatch("B", [snapshot], IDS, "BR", TS);
+
+    expect(item!.properties.ui_language).toBe("pt_br");
+    expect(item!.properties.enabled_platforms).toEqual(["steam", "riot"]);
+    expect(item!.properties.pin_enabled).toBe(false);
+    // False must survive: `if (ev.pin_enabled)` would have dropped it.
+    expect(item!.properties).toHaveProperty("pin_enabled");
+  });
+
+  it("stamps each event with the instant it happened", () => {
+    const first = { ...launch, client_ts: "2026-01-15T09:58:01Z" };
+    const second = { ...launch, client_ts: "2026-01-15T09:59:47Z" };
+    const batch = buildBatch("A", [first, second], IDS, "FR", TS);
+
+    // Both events arrived in the same batch; flattening them onto TS would
+    // lose the ordering and the two minutes between them.
+    expect(batch[0]!.timestamp).toBe("2026-01-15T09:58:01Z");
+    expect(batch[1]!.timestamp).toBe("2026-01-15T09:59:47Z");
+  });
+
+  it("falls back to arrival time when the client clock is unusable", () => {
+    const batch = buildBatch(
+      "A",
+      [
+        { ...launch, client_ts: "2031-01-15T10:00:00Z" },
+        { ...launch, client_ts: "not-a-timestamp" },
+        { ...launch },
+      ],
+      IDS,
+      "FR",
+      TS,
+    );
+
+    for (const item of batch) expect(item.timestamp).toBe(TS);
+  });
+});
+
+describe("eventTimestamp", () => {
+  const SERVER = "2026-01-15T10:00:00.000Z";
+
+  it("trusts a plausible client timestamp", () => {
+    expect(eventTimestamp("2026-01-15T09:55:00Z", SERVER)).toBe("2026-01-15T09:55:00Z");
+  });
+
+  it("rejects a timestamp beyond a day of skew in either direction", () => {
+    expect(eventTimestamp("2026-01-13T10:00:00Z", SERVER)).toBe(SERVER);
+    expect(eventTimestamp("2026-01-17T10:00:00Z", SERVER)).toBe(SERVER);
+  });
+
+  it("rejects anything that is not the exact wire format", () => {
+    expect(eventTimestamp("2026-01-15T10:00:00.123Z", SERVER)).toBe(SERVER);
+    expect(eventTimestamp("2026-01-15 10:00:00", SERVER)).toBe(SERVER);
+    expect(eventTimestamp(42, SERVER)).toBe(SERVER);
+    expect(eventTimestamp(undefined, SERVER)).toBe(SERVER);
   });
 });
 
