@@ -264,6 +264,7 @@
     avatarUrl={avatarState?.url}
     isLoadingAvatar={isPendingSetupAccount(account.id) ? true : (avatarState?.loading ?? false)}
     isRefreshingAvatar={avatarState?.refreshing ?? false}
+    avatarPending={!avatarState}
     isDragged={isAccountDragged}
     warningInfo={bulkEditMode ? undefined : (isPendingSetupAccount(account.id) ? undefined : warningStates[account.id])}
     usernameBadge={bulkEditMode || isPendingSetupAccount(account.id) ? null : getUsernameBadge(account.id)}

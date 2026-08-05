@@ -3,6 +3,7 @@
   import type { AccountWarningPresentation } from "../accountWarnings";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
   import { getAvatarGradientStyle, getAvatarInitials, getAvatarSeed } from "$lib/shared/avatarFallback";
+  import { fadeInOnLoad } from "$lib/shared/avatarFadeIn";
   import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
 
   let {
@@ -10,6 +11,7 @@
     isActive = false,
     avatarUrl = null,
     isLoadingAvatar = false,
+    avatarPending = false,
     showUsername = true,
     showLastLogin = false,
     allowMetaWrap = false,
@@ -27,6 +29,9 @@
     isActive?: boolean;
     avatarUrl?: string | null;
     isLoadingAvatar?: boolean;
+    /** No avatar state resolved yet: the initials fallback is deferred so a
+        fast profile never flashes a placeholder first. */
+    avatarPending?: boolean;
     showUsername?: boolean;
     showLastLogin?: boolean;
     allowMetaWrap?: boolean;
@@ -53,16 +58,21 @@
   class:custom-color={!!cardColor}
   style={cardColor ? `--preview-custom-color: ${cardColor};` : ""}
 >
-  <div
-    class="avatar-large"
-    style={!avatarUrl && !isLoadingAvatar ? getAvatarGradientStyle(avatarSeed) : ""}
-  >
-    {#if isLoadingAvatar}
-      <div class="loader"></div>
-    {:else if avatarUrl}
-      <img src={avatarUrl} alt={account.displayName} loading="lazy" decoding="async" />
+  <div class="avatar-large">
+    {#if avatarUrl}
+      <img src={avatarUrl} alt={account.displayName} loading="lazy" decoding="async" use:fadeInOnLoad />
+    {:else if isLoadingAvatar}
+      <div class="loader deferred"></div>
     {:else}
-      <span class="initials">{getAvatarInitials(account.displayName || account.username)}</span>
+      <!-- Gradient on this layer, not on .avatar-large: it fades in with the
+           initials instead of snapping under them. -->
+      <div
+        class="avatar-fallback"
+        class:deferred={avatarPending}
+        style={getAvatarGradientStyle(avatarSeed)}
+      >
+        <span class="initials">{getAvatarInitials(account.displayName || account.username)}</span>
+      </div>
     {/if}
   </div>
 
@@ -132,6 +142,7 @@
   }
 
   .avatar-large {
+    position: relative;
     width: 120px;
     height: 120px;
     border-radius: 8px;
@@ -147,6 +158,24 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
+    /* fadeInOnLoad flips the inline opacity once the picture is decoded. */
+    opacity: 0;
+    transition: opacity var(--motion-avatar-fade) ease-out;
+  }
+
+  .avatar-fallback {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Unresolved avatar: `backwards` keeps the placeholder hidden during the
+     delay, so a fast profile never flashes one. */
+  .avatar-fallback.deferred {
+    animation: avatar-placeholder-in var(--motion-avatar-fade) ease-out
+      var(--motion-avatar-defer) backwards;
   }
 
   .avatar-large .initials {
@@ -261,6 +290,13 @@
     border: 4px solid color-mix(in srgb, var(--fg) 24%, transparent);
     border-top-color: var(--fg);
     animation: spin 0.75s linear infinite;
+  }
+
+  /* Spinner must keep spinning: the deferred reveal is a second animation on
+     the same element, not a replacement. */
+  .loader.deferred {
+    animation: spin 0.75s linear infinite,
+      avatar-placeholder-in var(--motion-avatar-fade) ease-out var(--motion-avatar-defer) backwards;
   }
 
   .ban-badges {

@@ -7,6 +7,7 @@
   import CardExtensionPanel from "./CardExtensionPanel.svelte";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
   import { getAvatarGradientStyle, getAvatarInitials, getAvatarSeed } from "$lib/shared/avatarFallback";
+  import { fadeInOnLoad } from "$lib/shared/avatarFadeIn";
   import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
   import { trackDependencies } from "$lib/shared/trackDependencies";
 
@@ -20,6 +21,7 @@
     avatarUrl = null,
     isLoadingAvatar = false,
     isRefreshingAvatar = false,
+    avatarPending = false,
     warningInfo = undefined,
     extensionContent = null,
     forceExtensionOpen = false,
@@ -47,6 +49,10 @@
     avatarUrl?: string | null;
     isLoadingAvatar?: boolean;
     isRefreshingAvatar?: boolean;
+    /** No avatar state resolved yet for this account. The gradient + initials
+        fallback still renders, but deferred, so an avatar that lands fast never
+        flashes a placeholder first. */
+    avatarPending?: boolean;
     warningInfo?: AccountWarningPresentation;
     extensionContent?: CardExtensionContent | null;
     forceExtensionOpen?: boolean;
@@ -319,39 +325,40 @@
     class:ban-red={hasRedWarning}
     class:ban-yellow={hasOrangeWarning}
   >
-    <div
-      class="avatar"
-      class:active={isActive}
-      style={!avatarUrl && !isLoadingAvatar ? getAvatarGradientStyle(avatarSeed) : ""}
-    >
+    <div class="avatar" class:active={isActive}>
       <div class="avatar-media">
-        {#if isLoadingAvatar}
-          <div class="loader-anchor">
-            <div class="loader"></div>
-          </div>
-        {:else if avatarUrl}
+        {#if avatarUrl}
           <img
             src={avatarUrl}
             alt=""
             loading="lazy"
             decoding="async"
             draggable={false}
+            use:fadeInOnLoad
             class:blurred={isRefreshingAvatar || showConfirm || isSwitching}
           />
-          {#if isRefreshingAvatar || isSwitching}
-            <div class="loader-anchor">
-              <div class="loader"></div>
-            </div>
-          {/if}
-        {:else}
-          <span class="initials" class:blurred-text={showConfirm || isSwitching}>
-            {getAvatarInitials(account.displayName || account.username)}
-          </span>
-          {#if isSwitching}
-            <div class="loader-anchor">
-              <div class="loader"></div>
-            </div>
-          {/if}
+        {:else if !isLoadingAvatar}
+          <!-- Gradient lives on this layer, not on .avatar: it has to fade in
+               with the initials instead of snapping under them. -->
+          <div
+            class="avatar-fallback"
+            class:deferred={avatarPending}
+            style={getAvatarGradientStyle(avatarSeed)}
+          >
+            <span class="initials" class:blurred-text={showConfirm || isSwitching}>
+              {getAvatarInitials(account.displayName || account.username)}
+            </span>
+          </div>
+        {/if}
+
+        {#if isLoadingAvatar}
+          <div class="loader-anchor deferred">
+            <div class="loader"></div>
+          </div>
+        {:else if isRefreshingAvatar || isSwitching}
+          <div class="loader-anchor">
+            <div class="loader"></div>
+          </div>
         {/if}
 
         {#if showConfirm && !isDragged}
@@ -718,13 +725,33 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    transition: transform 220ms ease-out, filter 300ms ease-out;
+    /* fadeInOnLoad flips the inline opacity once the picture is decoded. */
+    opacity: 0;
+    transition: opacity var(--motion-avatar-fade) ease-out, transform 220ms ease-out,
+      filter 300ms ease-out;
     -webkit-user-drag: none;
     user-select: none;
   }
 
   .avatar-media img.blurred {
     filter: blur(6px) brightness(0.5);
+  }
+
+  .avatar-fallback {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Unresolved avatar: hold the initials back, `backwards` keeps them hidden
+     during the delay so a fast profile never flashes a placeholder. */
+  .avatar-fallback.deferred,
+  .loader-anchor.deferred {
+    animation: avatar-placeholder-in var(--motion-avatar-fade) ease-out
+      var(--motion-avatar-defer) backwards;
   }
 
   .avatar-media .initials {
