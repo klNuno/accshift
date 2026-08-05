@@ -220,30 +220,35 @@
     {/if}
 
     {#if !isMacOs}
-      <button class="win-btn" onclick={minimize} title={translate(locale, "titlebar.minimize")}>
-        <svg width="12" height="12" viewBox="0 0 12 12">
-          <rect x="1" y="5.5" width="10" height="1" fill="currentColor" />
-        </svg>
-      </button>
-
-      <button class="win-btn" onclick={toggleMaximize} title={translate(locale, isMaximized ? "titlebar.restore" : "titlebar.maximize")}>
-        {#if isMaximized}
+      <!-- Caption strip: full titlebar height, flush to the window edge, no gap
+           between the three. Matches the native Windows hit areas instead of
+           three small floating squares. -->
+      <div class="win-controls">
+        <button class="win-btn" onclick={minimize} title={translate(locale, "titlebar.minimize")}>
           <svg width="12" height="12" viewBox="0 0 12 12">
-            <rect x="1.6" y="3.4" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1.2" />
-            <path d="M3.4 3.4V1.6h7v7H8.6" fill="none" stroke="currentColor" stroke-width="1.2" />
+            <rect x="1" y="5.5" width="10" height="1" fill="currentColor" />
           </svg>
-        {:else}
-          <svg width="12" height="12" viewBox="0 0 12 12">
-            <rect x="1.6" y="1.6" width="8.8" height="8.8" fill="none" stroke="currentColor" stroke-width="1.2" />
-          </svg>
-        {/if}
-      </button>
+        </button>
 
-      <button class="win-btn close" onclick={close} title={translate(locale, "titlebar.close")}>
-        <svg width="12" height="12" viewBox="0 0 12 12">
-          <path d="M1 1l10 10M11 1L1 11" stroke="currentColor" stroke-width="1.2" />
-        </svg>
-      </button>
+        <button class="win-btn" onclick={toggleMaximize} title={translate(locale, isMaximized ? "titlebar.restore" : "titlebar.maximize")}>
+          {#if isMaximized}
+            <svg width="12" height="12" viewBox="0 0 12 12">
+              <rect x="1.6" y="3.4" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1.2" />
+              <path d="M3.4 3.4V1.6h7v7H8.6" fill="none" stroke="currentColor" stroke-width="1.2" />
+            </svg>
+          {:else}
+            <svg width="12" height="12" viewBox="0 0 12 12">
+              <rect x="1.6" y="1.6" width="8.8" height="8.8" fill="none" stroke="currentColor" stroke-width="1.2" />
+            </svg>
+          {/if}
+        </button>
+
+        <button class="win-btn close" onclick={close} title={translate(locale, "titlebar.close")}>
+          <svg width="12" height="12" viewBox="0 0 12 12">
+            <path d="M1 1l10 10M11 1L1 11" stroke="currentColor" stroke-width="1.2" />
+          </svg>
+        </button>
+      </div>
     {/if}
   </div>
 </div>
@@ -410,10 +415,17 @@
   .right {
     display: flex;
     align-items: center;
+    /* Full titlebar height so the caption buttons can bleed to the top and
+       bottom edges instead of floating in the middle. */
+    align-self: stretch;
     gap: 6px;
     flex: 1;
     justify-content: flex-end;
-    padding-right: 2px;
+  }
+
+  /* macOS has no caption strip here: keep the old breathing room. */
+  .titlebar.macos .right {
+    padding-right: 8px;
   }
 
   .update-btn {
@@ -439,17 +451,29 @@
     cursor: default;
   }
 
+  .win-controls {
+    display: flex;
+    align-self: stretch;
+    margin-left: 4px;
+  }
+
   .win-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 36px;
-    height: 36px;
+    /* Native Windows caption metrics: 46px wide, full titlebar height. */
+    width: 46px;
+    align-self: stretch;
+    padding: 0;
     border: none;
     background: transparent;
     color: var(--fg-muted);
     cursor: pointer;
-    transition: background 120ms;
+    transition: background 120ms ease-out, color 120ms ease-out;
+  }
+
+  .win-btn svg {
+    transition: transform 120ms ease-out;
   }
 
   .win-btn:hover {
@@ -457,8 +481,23 @@
     color: var(--fg);
   }
 
+  /* Pressed reads as a deeper fill, not a shrinking button: a scaled caption
+     button would break the flush strip. */
+  .win-btn:active {
+    background: var(--bg-elevated);
+  }
+
+  .win-btn:active svg {
+    transform: scale(0.9);
+  }
+
   .win-btn.close:hover {
     background: var(--danger);
-    color: var(--fg);
+    color: #fff;
+  }
+
+  .win-btn.close:active {
+    background: color-mix(in srgb, var(--danger) 78%, #000);
+    color: #fff;
   }
 </style>
