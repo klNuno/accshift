@@ -4,6 +4,7 @@
   import type { FolderInfo } from "../../features/folders/types";
   import { formatRelativeTimeCompact } from "$lib/shared/time";
   import { getAvatarGradientStyle, getAvatarInitials, getAvatarSeed } from "$lib/shared/avatarFallback";
+  import { fadeInOnLoad } from "$lib/shared/avatarFadeIn";
   import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
 
   let {
@@ -16,6 +17,7 @@
     isDragOver = false,
     avatarUrl = null,
     isLoadingAvatar = false,
+    avatarPending = false,
     isSwitching = false,
     allowMetaWrap = false,
     warningInfo = undefined,
@@ -39,6 +41,9 @@
     isDragOver?: boolean;
     avatarUrl?: string | null;
     isLoadingAvatar?: boolean;
+    /** No avatar state resolved yet: the initials fallback is deferred so a
+        fast profile never flashes a placeholder first. */
+    avatarPending?: boolean;
     isSwitching?: boolean;
     allowMetaWrap?: boolean;
     warningInfo?: AccountWarningPresentation;
@@ -123,19 +128,32 @@
       class="avatar"
       class:ban-red={hasRedWarning}
       class:ban-orange={hasOrangeWarning}
-      style={!avatarUrl && !isLoadingAvatar ? getAvatarGradientStyle(avatarSeed) : ""}
     >
+      {#if avatarUrl}
+        <img
+          src={avatarUrl}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          draggable={false}
+          use:fadeInOnLoad
+          class:blurred={isSwitching}
+        />
+      {:else if !isLoadingAvatar}
+        <!-- Gradient on this layer, not on .avatar: it fades in with the
+             initials instead of snapping under them. -->
+        <div
+          class="avatar-fallback"
+          class:deferred={avatarPending}
+          style={getAvatarGradientStyle(avatarSeed)}
+        >
+          <span class="initials">{getAvatarInitials(account.displayName || account.username)}</span>
+        </div>
+      {/if}
       {#if isLoadingAvatar}
-        <div class="loader"></div>
+        <div class="loader deferred"></div>
       {:else if isSwitching}
-        {#if avatarUrl}
-          <img src={avatarUrl} alt="" loading="lazy" decoding="async" draggable={false} class="blurred" />
-        {/if}
         <div class="loader switching-loader"></div>
-      {:else if avatarUrl}
-        <img src={avatarUrl} alt="" loading="lazy" decoding="async" draggable={false} />
-      {:else}
-        <span class="initials">{getAvatarInitials(account.displayName || account.username)}</span>
       {/if}
     </div>
     <div class="info">
@@ -270,8 +288,26 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
+    /* fadeInOnLoad flips the inline opacity once the picture is decoded. */
+    opacity: 0;
+    transition: opacity var(--motion-avatar-fade) ease-out;
     -webkit-user-drag: none;
     user-select: none;
+  }
+
+  .avatar-fallback {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Unresolved avatar: `backwards` keeps the placeholder hidden during the
+     delay, so a fast profile never flashes one. */
+  .avatar-fallback.deferred {
+    animation: avatar-placeholder-in var(--motion-avatar-fade) ease-out
+      var(--motion-avatar-defer) backwards;
   }
 
   .avatar .initials {
@@ -348,6 +384,13 @@
     border: 2px solid color-mix(in srgb, var(--fg) 24%, transparent);
     border-top-color: var(--fg);
     animation: spin 0.75s linear infinite;
+  }
+
+  /* Spinner must keep spinning: the deferred reveal is a second animation on
+     the same element, not a replacement. */
+  .loader.deferred {
+    animation: spin 0.75s linear infinite,
+      avatar-placeholder-in var(--motion-avatar-fade) ease-out var(--motion-avatar-defer) backwards;
   }
 
   .switching-loader {

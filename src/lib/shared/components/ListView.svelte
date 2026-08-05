@@ -150,6 +150,7 @@
       isSelected={selectedAccountId === account.id}
       avatarUrl={avatarState?.url}
       isLoadingAvatar={isPendingSetup || (avatarState?.loading ?? false)}
+      avatarPending={!avatarState}
       isSwitching={switchingAccountId === account.id}
       allowMetaWrap={isPendingSetup}
       warningInfo={warningStates[account.id]}
@@ -261,6 +262,7 @@
         isActive={selectedAccount.id === currentAccountId}
         avatarUrl={selectedAvatarState?.url}
         isLoadingAvatar={selectedIsPendingSetup || (selectedAvatarState?.loading ?? false)}
+        avatarPending={!selectedAvatarState}
         showSwitchButton={!selectedIsPendingSetup}
         allowMetaWrap={selectedIsPendingSetup}
         accountNote={getAccountNote(selectedAccount.id)}

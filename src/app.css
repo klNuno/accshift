@@ -89,6 +89,12 @@
      Details in .claude/CLAUDE.md, section "Animations". */
   --motion-card-entrance: 260ms;
   --motion-page-entrance: 200ms;
+  /* Avatars: an <img> stays transparent until its bytes are decoded, then
+     fades in. The defer delay is how long a still-unresolved avatar shows a
+     bare box before falling back to initials or a spinner, so a profile that
+     resolves quickly never flashes a placeholder. */
+  --motion-avatar-fade: 220ms;
+  --motion-avatar-defer: 380ms;
 }
 
 /* The in-app motion preference must cover third-party/Svelte transitions and
@@ -177,6 +183,18 @@ html,
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* Avatar placeholder (initials or spinner) revealing itself after the defer
+   delay. `backwards` keeps it invisible during the delay, so it never shows
+   at all when the real avatar lands first. */
+@keyframes avatar-placeholder-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 
