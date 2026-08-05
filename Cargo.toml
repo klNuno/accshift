@@ -3,7 +3,7 @@ resolver = "2"
 members = ["src-tauri", "crates/accshift-core", "crates/accshift-cli"]
 
 [workspace.package]
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 authors = ["meetsu"]
 
