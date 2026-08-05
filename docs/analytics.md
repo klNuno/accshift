@@ -44,7 +44,7 @@ payload is one function, and it is linked at the bottom of this page.
 
 ## What is collected
 
-Eighteen events, and that is the complete list.
+Nineteen events, and that is the complete list.
 
 | Event                     | When                                     | Fields beyond the common ones                                 |
 | ------------------------- | ---------------------------------------- | ------------------------------------------------------------- |
