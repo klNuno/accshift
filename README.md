@@ -1,5 +1,5 @@
 <h1 align="center">accshift</h1>
-<p align="center">Switch Steam, Valorant, League of Legends, Battle.net, Epic Games, Ubisoft and Roblox accounts in one click. No passwords stored. Windows, macOS and Linux. Built with Tauri 2 and Svelte 5.</p>
+<p align="center">Switch Steam, Riot Games, Battle.net, Epic Games, Ubisoft and Roblox accounts in one click. No passwords stored. Windows, macOS and Linux. Built with Tauri 2 and Svelte 5.</p>
 
 <p align="center">
   <img src="./.github/assets/demo-switch.webp" alt="Switching Steam accounts from the grid, then from the Ctrl+K command palette" />
@@ -20,43 +20,56 @@
 
 ## Supported platforms
 
-Nine integrations ship today, each verified on the systems listed:
+| Platform        | Windows | macOS | Linux |
+| --------------- | ------- | ----- | ----- |
+| Steam           | ✅      | ✅    | ✅    |
+| Riot Games      | ✅      |       |       |
+| Battle.net      | ✅      | ✅    |       |
+| Epic Games      | ✅      |       |       |
+| Ubisoft Connect | ✅      |       |       |
+| Roblox          | ✅      |       |       |
+| GOG Galaxy      | ⚠️      |       |       |
+| Jagex Launcher  | ⚠️      |       |       |
+| Discord         | ⚠️      |       |       |
 
-| Platform                                               | Verified on           |
-| ------------------------------------------------------ | --------------------- |
-| Steam                                                  | Windows, macOS, Linux |
-| Riot Games (Valorant, League of Legends, TFT)          | Windows               |
-| Battle.net (Overwatch 2, Diablo IV, WoW, Call of Duty) | Windows, macOS        |
-| Epic Games (Fortnite, Rocket League)                   | Windows               |
-| Ubisoft Connect (Rainbow Six Siege, The Division 2)    | Windows               |
-| Roblox                                                 | Windows               |
-| GOG Galaxy (Cyberpunk 2077, The Witcher 3)             | Windows, in testing   |
-| Jagex Launcher (RuneScape, Old School RuneScape)       | Windows, in testing   |
-| Discord                                                | Windows, in testing   |
+⚠️ means the integration is built and working on my machine, but too few users
+have reported back for me to call it stable. Expect bugs, and
+[open an issue](https://github.com/klNuno/accshift/issues/new/choose) if you hit
+one.
 
-Five more launchers (EA app, Rockstar, GeForce Now, HoYoPlay, Minecraft) are
-feasible but not built yet, and a few combinations are not realistic on a given
-OS at all. The full per-OS grid is in
-[docs/platform-support.md](./docs/platform-support.md), and new platforms are
-picked from what users ask for through
-[GitHub Issues](https://github.com/klNuno/accshift/issues/new/choose).
+You can request any platform to be added here: [GitHub Issues](https://github.com/klNuno/accshift/issues/new/choose).
 
 ## Features
 
-- **One-click account switching** for Steam, Riot Games (Valorant, League of Legends), Battle.net (Overwatch 2, Diablo IV), Epic Games (Fortnite, Rocket League), Ubisoft Connect (Rainbow Six Siege), Roblox, GOG Galaxy, Jagex Launcher and Discord: no passwords stored; sensitive cookies, tokens and session snapshots are encrypted at rest.
-- **Personas**: group one account per platform under a single identity and switch them all in one click.
-- **Streamer mode**: automatically blurs account names and avatars when OBS, Streamlabs, XSplit, Wirecast or Twitch Studio is running.
-- **Folders, search, command palette and keyboard navigation** to manage large account collections.
-- **CLI and deep links** (`accshift://`) for scripting, Stream Deck and automation.
-- **UI in 7 languages** (English, Spanish, French, Portuguese, Brazilian Portuguese, Russian, Simplified Chinese), light/dark/custom themes.
+- **One-click switching**: pick an account, the launcher restarts already signed in. No passwords stored
+- **Streamer mode**: automatically blurs account names and avatars when OBS, Streamlabs, XSplit, Wirecast or Twitch Studio is running
+- **CLI and deep links** (`accshift://`) for scripting, Stream Deck and automation
+- **Personas**: group one account per platform under a single identity and switch them all in one click
+- Update accshift directly inside the app
+
+### Steam goes further
+
+- Copy any Steam game settings to another account
+- Easy access to copy account info **(username, SteamID64, CS2 friend code, profile URL)**
+- **Bulk edit**: edit multiple accounts at once (disable the Steam game news popup at launch, toggle do not disturb, set launch options for any game)
+- Game and community ban tracking
+- Switch to an account in online or invisible mode, or switch and launch any game directly (remembers the last game chosen)
+- **CS2 Bridge**: connect any app tracking your accounts to display CS2 level, XP progression and weekly drop inside Accshift, see [CS2-Bridge](https://github.com/klNuno/accshift/wiki/CS2-Bridge)
 
 ### Organise a large library
+
+- **Folders, search and command palette** to manage large account collections
+- Color and rename account cards, add private notes, reorder by drag and drop
 
 <p align="center">
   <img src="./.github/assets/demo-organize.webp" alt="Recoloring an account card from the right-click menu, then opening a folder of smurf accounts" />
 </p>
 
 ### One app, every platform and theme
+
+- **UI in 7 languages** (English, Spanish, French, Portuguese, Brazilian Portuguese, Russian, Simplified Chinese)
+- Optional **PIN lock**, on app launch and after a period of inactivity
+- Light, Dark and Midnight themes, light and dark acrylic variants, and an experimental Liquid Glass theme
 
 <p align="center">
   <img src="./.github/assets/demo-themes.webp" alt="Switching to the Riot Games tab, then changing the app theme from the settings panel" />
@@ -72,11 +85,13 @@ Grab the build for your OS from [Releases](https://github.com/klNuno/accshift/re
 
 ## Privacy
 
-Accshift stores no passwords, and sensitive cookies, tokens and session
-snapshots are encrypted at rest on your machine with OS-backed protection:
-DPAPI on Windows, Secret Service on Linux, Keychain on macOS. The threat model,
-what the optional PIN lock does and does not cover, and how to report a
-vulnerability are all in the [security policy](./.github/SECURITY.md).
+**Accshift stores no passwords nor sensitive cookies.**
+
+Tokens and session snapshots are encrypted at rest on your machine with
+OS-backed protections: DPAPI on Windows, Secret Service on Linux, Keychain on
+macOS. The threat model, what the optional PIN lock does and does not cover,
+and how to report a vulnerability are in the
+[security policy](./.github/SECURITY.md).
 
 Usage telemetry is a handful of anonymous counters. Nothing is sent before you
 finish the first-launch screen, and **one switch in Settings, Privacy turns it
@@ -156,4 +171,4 @@ src-tauri/                        # Tauri GUI thin wrapper
 
 ## Disclaimer
 
-This project is not affiliated with Valve, Blizzard, Riot Games, Epic Games, Ubisoft, Roblox Corporation, CD PROJEKT (GOG), Jagex, or Discord Inc. Use at your own risk.
+This project is not affiliated with Valve (Counter-Strike 2, Dota 2), Blizzard (Overwatch 2, Diablo IV, WoW, Call of Duty), Riot Games (Valorant, League of Legends, TFT), Epic Games (Fortnite, Rocket League), Ubisoft (Rainbow Six Siege, The Division 2), Roblox Corporation, CD PROJEKT (GOG) (Cyberpunk 2077, The Witcher 3), Jagex (RuneScape, Old School RuneScape), or Discord. Use at your own risk.

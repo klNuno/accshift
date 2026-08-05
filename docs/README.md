@@ -5,8 +5,6 @@ answers.
 
 - [cli.md](./cli.md): how do I install and script the `accshift` command, what
   does it print, and what does each exit code mean?
-- [platform-support.md](./platform-support.md): which launchers work on which
-  OS today, which are merely feasible, and how do I get one built?
 - [analytics.md](./analytics.md): what does the app send, what does it never
   send, and how do I turn it off, export it or delete it?
 
