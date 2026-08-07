@@ -36,7 +36,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 # Same versions tauri already pulls in; used to flip WebView2 settings tauri
 # does not expose (autofill popups on plain text inputs).
 webview2-com = "0.38"
-windows-core = "0.61"
+windows-core = "0.62"
 # Same windows crate tauri pulls in; used for the WM_NCACTIVATE subclass that
 # keeps DWM system backdrops alive while the window is unfocused.
 windows = { version = "0.62", features = [
