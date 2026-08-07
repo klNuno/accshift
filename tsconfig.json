@@ -15,9 +15,8 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "types": ["vite/client"],
-    "baseUrl": ".",
     "paths": {
-      "$lib/*": ["src/lib/*"]
+      "$lib/*": ["./src/lib/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.svelte"],
