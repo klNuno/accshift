@@ -264,7 +264,7 @@
                 {#each launchOptionEdits as edit (edit.appId)}
                   <div class="launch-item">
                     <span class="launch-game">{gameName(edit.appId)}</span>
-                    <code class="launch-value">{edit.value}</code>
+                    <span class="launch-value">{edit.value}</span>
                     <button
                       class="remove-btn"
                       aria-label={t("common.close")}

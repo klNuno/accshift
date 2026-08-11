@@ -183,7 +183,7 @@
        Courier New, Han to the CJK families, so the overlay never shows tofu. */
     font-family:
       "VT323", "Courier New", "Microsoft YaHei UI", "PingFang SC", "Hiragino Sans GB",
-      "Noto Sans CJK SC", "Noto Sans SC Subset", monospace !important;
+      "Noto Sans CJK SC", "Noto Sans SC Subset", sans-serif !important;
     font-size: 1.18em;
     font-weight: 700;
     line-height: 0.9;
