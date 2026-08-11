@@ -1,15 +1,8 @@
 # Bundled font licenses
 
-Both faces in this directory ship under the SIL Open Font License 1.1, whose
+The font faces in this directory ship under the SIL Open Font License 1.1, whose
 full text is reproduced below. They are used unmodified except for the glyph
 subsetting described under Noto Sans SC.
-
-## VT323-Regular.woff2
-
-Copyright 2011, The VT323 Project Authors (peter.hull@oikoi.com)
-
-Used for the pixel lettering of the AFK and streamer overlays. Latin only, see
-the unicode-range on its @font-face in src/app.css.
 
 ## NotoSansSC-Subset-Regular.woff2, NotoSansSC-Subset-Bold.woff2
 

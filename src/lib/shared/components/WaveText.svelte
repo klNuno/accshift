@@ -179,21 +179,15 @@
     display: inline-flex;
     align-items: baseline;
     white-space: nowrap;
-    /* VT323 is latin-only (see the unicode-range in app.css). Cyrillic falls to
-       Courier New, Han to the CJK families, so the overlay never shows tofu. */
-    font-family:
-      "VT323", "Courier New", "Microsoft YaHei UI", "PingFang SC", "Hiragino Sans GB",
-      "Noto Sans CJK SC", "Noto Sans SC Subset", monospace !important;
-    font-size: 1.18em;
-    font-weight: 700;
-    line-height: 0.9;
-    letter-spacing: 0.03em;
+    font-family: inherit;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.01em;
     text-transform: uppercase;
     color: color-mix(in srgb, var(--afk-text) 35%, transparent);
     /* Two text-shadow layers (sharp + soft glow) instead of five. Each
        letter is composited on its own layer (will-change: transform set in
-       JS during animation), so the shadow is rasterized once. Five-layer
-       stacks with 52px blur radii melted VM GPUs. */
+       JS during animation), so the shadow is rasterized once. */
     text-shadow:
       0 0 3px color-mix(in srgb, var(--afk-text) 55%, transparent),
       0 0 14px color-mix(in srgb, var(--afk-text) 50%, transparent);
