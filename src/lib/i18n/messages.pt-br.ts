@@ -154,6 +154,7 @@ export const PT_BR_MESSAGES: Record<MessageKey, string> = {
   "onboarding.welcome.title": "Bem-vindo ao Accshift",
   "onboarding.welcome.version": "v{version}",
   "onboarding.welcome.compatibleWith": "Seu sistema operacional é compatível com:",
+  "onboarding.welcome.detectedPlatforms": "Estas são as plataformas detectadas no seu computador:",
   "onboarding.welcome.next": "Quero conhecer",
   "onboarding.welcome.skip": "Pular",
   "onboarding.features.hint": "Esta parte do app não está visível agora.",

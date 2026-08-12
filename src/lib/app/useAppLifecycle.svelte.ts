@@ -5,6 +5,8 @@ import { translate } from "$lib/i18n";
 import type { AppSettings } from "$lib/features/settings/types";
 import type { RuntimeOs } from "$lib/shared/platform";
 import { getBootPayload } from "$lib/app/bootPayload";
+import { setDetectedPlatforms } from "$lib/app/detectedPlatforms.svelte";
+import { getSettings, hasStoredSettings, saveSettings } from "$lib/features/settings/store";
 import { getInitialActiveTab, isPlatformUsable } from "$lib/app/platformShell.svelte";
 import { getPlatformDefinition } from "$lib/platforms/registry";
 import { trackSettingsSnapshot } from "$lib/app/telemetryClient";
@@ -74,6 +76,30 @@ export function createAppLifecycleController({
 }: AppLifecycleDeps) {
   let externalStorageRefreshInFlight = false;
 
+  /// On a fresh install, enable the platforms whose launcher is on the machine
+  /// instead of the hardcoded Steam default: someone who installed accshift for
+  /// Riot or Roblox should not land on an empty Steam tab. Runs once, before
+  /// the first tab is picked, and only while nothing is persisted. Detection
+  /// finding nothing leaves the default alone and retries on the next launch,
+  /// which covers a launcher installed after accshift.
+  async function enableDetectedPlatformsOnFirstRun() {
+    if (hasStoredSettings()) return;
+
+    const detected = await invoke<string[]>("platform_detect_installed").catch((reason) => {
+      console.error("Failed to detect installed platforms:", reason);
+      return [] as string[];
+    });
+    const usable = detected.filter((platformId) => isPlatformUsable(platformId, shell.runtimeOs));
+    setDetectedPlatforms(usable);
+    if (usable.length === 0) return;
+
+    const settings = getSettings();
+    settings.enabledPlatforms = usable;
+    settings.defaultPlatformId = usable[0];
+    saveSettings(settings);
+    shell.refreshSettings();
+  }
+
   async function initializeAppShell() {
     // The boot payload (fetched in main.ts before mount) carries the
     // migration result, custom themes and runtime OS in one round trip.
@@ -118,6 +144,7 @@ export function createAppLifecycleController({
         : "unknown";
 
     shell.setRuntimeOs(normalizedOs);
+    await enableDetectedPlatformsOnFirstRun();
     const nextTab = getInitialActiveTab(shell.settings, shell.runtimeOs);
     if (nextTab !== shell.activeTab) {
       shell.setActiveTab(nextTab);

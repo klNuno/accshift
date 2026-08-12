@@ -145,6 +145,7 @@ export const EN_MESSAGES = {
   "onboarding.welcome.title": "Welcome to Accshift",
   "onboarding.welcome.version": "v{version}",
   "onboarding.welcome.compatibleWith": "Your operating system is compatible with:",
+  "onboarding.welcome.detectedPlatforms": "We found these platforms on your machine:",
   "onboarding.welcome.next": "Show me around",
   "onboarding.welcome.skip": "Skip",
   "onboarding.features.hint": "This part of the app isn't visible right now.",

@@ -44,6 +44,13 @@ export interface MockSpec {
   handlers?: Record<string, Handler>;
 }
 
+function detectedPlatforms(spec: MockSpec): string[] {
+  const settings = spec.stores["client.settings"] as { enabledPlatforms?: unknown } | undefined;
+  const enabled = settings?.enabledPlatforms;
+  if (!Array.isArray(enabled)) return [];
+  return enabled.filter((id): id is string => typeof id === "string");
+}
+
 export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -182,6 +189,11 @@ export function createHandlers(spec: MockSpec): Record<string, Handler> {
     // real desktop of whoever is running this, so the mock never yields one.
     get_desktop_wallpaper: () => null,
     detect_streaming_software: () => false,
+    // Never probes the real disk: a scenario declares which launchers its
+    // machine has through the platforms it enables, and detection answers
+    // exactly that. Otherwise a capture would depend on what is installed on
+    // the recording machine.
+    platform_detect_installed: () => detectedPlatforms(spec),
     telemetry_get_state: () => ({
       mode_a_enabled: false,
       mode_b_enabled: false,

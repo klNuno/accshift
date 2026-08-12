@@ -153,6 +153,7 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "onboarding.welcome.title": "Добро пожаловать в Accshift",
   "onboarding.welcome.version": "v{version}",
   "onboarding.welcome.compatibleWith": "Ваша операционная система совместима с:",
+  "onboarding.welcome.detectedPlatforms": "На вашем компьютере обнаружены эти платформы:",
   "onboarding.welcome.next": "Показать обзор",
   "onboarding.welcome.skip": "Пропустить",
   "onboarding.features.hint": "Эта часть приложения сейчас не видна.",

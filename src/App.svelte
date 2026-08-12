@@ -11,6 +11,7 @@
     PlatformAccount,
   } from "$lib/shared/platform";
   import { getPlatform } from "$lib/shared/platform";
+  import { getDetectedPlatforms } from "$lib/app/detectedPlatforms.svelte";
   import type { ItemRef, FolderInfo } from "$lib/features/folders/types";
   import {
     syncAccounts,
@@ -272,6 +273,15 @@
   });
   const personas = createPersonaController();
   // Enabled, implemented platforms usable on this OS, offered as persona slots.
+  // Detection returns ids; the onboarding shows names. Empty until the first
+  // launch detects something, which is exactly when it has nothing to show.
+  let detectedPlatformDefs = $derived(
+    ALL_PLATFORMS.filter((p) => getDetectedPlatforms().includes(p.id)).map((p) => ({
+      id: p.id,
+      name: p.name,
+    })),
+  );
+
   let personaPlatforms = $derived(
     ALL_PLATFORMS.filter(
       (p) =>
@@ -1567,6 +1577,7 @@
       {t}
       version={appVersion}
       compatiblePlatforms={shell.compatiblePlatforms}
+      detectedPlatforms={detectedPlatformDefs}
       onTourActive={(active) => {
         if (active) activateTourMock();
         else deactivateTourMock();

@@ -3,6 +3,7 @@ use crate::error::PlatformError;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -201,6 +202,27 @@ pub trait PlatformService: Send + Sync {
         Err(PlatformError::other("Path management not supported"))
     }
 
+    /// Whether this launcher looks present on this machine.
+    ///
+    /// Only used to pick the platforms enabled by default on a fresh install,
+    /// never to gate a feature: a user can always switch a platform on by
+    /// hand, and detection has no way to be exhaustive.
+    ///
+    /// The default reads `get_path`, which every path-managing platform
+    /// resolves from the real install (or from the user's override) and fails
+    /// when it finds nothing. Existence is rechecked here because an override
+    /// can outlive the folder it points at. Platforms without path management
+    /// override this.
+    fn is_installed(&self, app: AppCtx) -> bool {
+        match self.get_path(app) {
+            Ok(path) => {
+                let trimmed = path.trim();
+                !trimmed.is_empty() && Path::new(trimmed).exists()
+            }
+            Err(_) => false,
+        }
+    }
+
     // Account labeling (default: not supported)
     fn set_account_label(
         &self,
@@ -241,6 +263,17 @@ pub fn get_service(platform_id: &str) -> Option<&'static dyn PlatformService> {
     platform_registry().get(platform_id).copied()
 }
 
+/// Ids of the platforms whose launcher was found on this machine, in
+/// `ids::ALL` order. Platforms with no service on this OS are skipped, so the
+/// result is always a set the app can actually enable.
+pub fn detect_installed(app: AppCtx) -> Vec<String> {
+    ids::ALL
+        .iter()
+        .filter(|id| get_service(id).is_some_and(|service| service.is_installed(app.clone())))
+        .map(|id| (*id).to_string())
+        .collect()
+}
+
 pub fn require_service(platform_id: &str) -> Result<&'static dyn PlatformService, PlatformError> {
     get_service(platform_id)
         .ok_or_else(|| PlatformError::other(format!("Unknown platform: {platform_id}")))
@@ -249,6 +282,53 @@ pub fn require_service(platform_id: &str) -> Result<&'static dyn PlatformService
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Detection reads the real machine, so what it finds cannot be asserted.
+    // The shape can: an id nobody can enable, a duplicate or a reordering
+    // would each break the caller, which feeds the result straight into
+    // `enabledPlatforms`.
+    struct TempCtx {
+        root: std::path::PathBuf,
+    }
+
+    impl AppContext for TempCtx {
+        fn app_config_dir(&self) -> Result<std::path::PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_data_dir(&self) -> Result<std::path::PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_local_data_dir(&self) -> Result<std::path::PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_cache_dir(&self) -> Result<std::path::PathBuf, String> {
+            Ok(self.root.clone())
+        }
+    }
+
+    #[test]
+    fn detect_installed_only_returns_enableable_ids_in_display_order() {
+        let ctx: AppCtx = std::sync::Arc::new(TempCtx {
+            root: std::env::temp_dir().join(format!("accshift-detect-test-{}", std::process::id())),
+        });
+
+        let detected = detect_installed(ctx);
+
+        for id in &detected {
+            assert!(
+                get_service(id).is_some(),
+                "detected {id} has no service on this OS"
+            );
+        }
+
+        let mut expected_order = detected.clone();
+        expected_order.sort_by_key(|id| ids::ALL.iter().position(|known| known == id));
+        expected_order.dedup();
+        assert_eq!(
+            detected, expected_order,
+            "ids must follow ids::ALL, once each"
+        );
+    }
 
     #[test]
     fn now_unix_ms_returns_positive_timestamp() {
