@@ -407,6 +407,7 @@ fn main() {
             commands::platform_get_path,
             commands::platform_set_path,
             commands::platform_select_path,
+            commands::platform_detect_installed,
             commands::platform_set_account_label,
             // Utility
             commands::open_url,

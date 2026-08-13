@@ -483,6 +483,22 @@ pub async fn platform_set_path(
     run_blocking("platform_set_path", move || service.set_path(c, &path)).await
 }
 
+/// Ids of the platforms whose launcher is installed on this machine.
+///
+/// Called once, on a fresh install, so the app enables the tabs the user
+/// actually has instead of assuming Steam. Filesystem and registry probes
+/// only, hence the blocking pool. An empty list is a valid answer and the
+/// frontend falls back on its own default.
+#[tauri::command]
+pub async fn platform_detect_installed(app_handle: tauri::AppHandle) -> Vec<String> {
+    let c = ctx(&app_handle);
+    run_blocking("platform_detect_installed", move || {
+        Ok(crate::platforms::detect_installed(c))
+    })
+    .await
+    .unwrap_or_default()
+}
+
 #[tauri::command]
 pub fn platform_select_path(platform_id: String) -> Result<String, PlatformError> {
     require_service(&platform_id)?.select_path()

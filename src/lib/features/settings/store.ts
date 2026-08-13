@@ -229,6 +229,13 @@ function loadSettingsFromStorage(): AppSettings {
   return sanitizeSettings(getClientStoreValue(CLIENT_STORE_SETTINGS) ?? {});
 }
 
+/// Whether settings were ever persisted. False only on a fresh install, which
+/// is the single moment the app may pick `enabledPlatforms` itself: once the
+/// store exists the set belongs to the user, however it got there.
+export function hasStoredSettings(): boolean {
+  return getClientStoreValue(CLIENT_STORE_SETTINGS) != null;
+}
+
 /// Shared, non-cloned view of the settings. Callers must treat it as
 /// read-only: it is the very object `getSettings` clones, so mutating it
 /// corrupts the cache for everyone. Use this on hot paths that read one

@@ -17,15 +17,30 @@
     t,
     version,
     compatiblePlatforms,
+    detectedPlatforms,
     onTourActive,
     onComplete,
   }: {
     t: (key: MessageKey, params?: TranslationParams) => string;
     version: string;
     compatiblePlatforms: PlatformLike[];
+    /** What launcher detection found. Empty when it did not run or found nothing. */
+    detectedPlatforms: PlatformLike[];
     onTourActive: (active: boolean) => void;
     onComplete: () => void;
   } = $props();
+
+  // Naming what is installed beats naming what the OS allows, but only when
+  // detection actually found something: on an empty result the compatibility
+  // list is all there is to show.
+  const welcomePlatforms = $derived(
+    detectedPlatforms.length > 0 ? detectedPlatforms : compatiblePlatforms,
+  );
+  const welcomeLabelKey = $derived<MessageKey>(
+    detectedPlatforms.length > 0
+      ? "onboarding.welcome.detectedPlatforms"
+      : "onboarding.welcome.compatibleWith",
+  );
 
   let step = $state<Step>("welcome");
   let submitting = $state(false);
@@ -301,9 +316,9 @@
             {t("onboarding.welcome.title")}
             <span class="version-plain">{t("onboarding.welcome.version", { version: version || "?" })}</span>
           </h2>
-          <p class="compat-label">{t("onboarding.welcome.compatibleWith")}</p>
+          <p class="compat-label">{t(welcomeLabelKey)}</p>
           <ul class="compat-list">
-            {#each compatiblePlatforms as p (p.id)}
+            {#each welcomePlatforms as p (p.id)}
               <li class="compat-chip">{p.name}</li>
             {/each}
           </ul>

@@ -6,6 +6,8 @@ use crate::platforms::{log_platform_error, log_platform_info, PlatformService, S
 use crate::{AppContext, AppCtx};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::env;
+use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 use uuid::Uuid;
@@ -1049,6 +1051,16 @@ impl PlatformService for RobloxService {
 
     fn cancel_setup(&self, _app: AppCtx, setup_id: &str) -> Result<(), PlatformError> {
         cancel_account_setup(setup_id).map_err(Into::into)
+    }
+
+    /// Roblox has no launcher path to resolve: the player installs itself
+    /// under LOCALAPPDATA and the session lives in HKCU. Either one means the
+    /// machine has seen Roblox, which is what the caller asks about.
+    fn is_installed(&self, _app: AppCtx) -> bool {
+        let player_installed = env::var("LOCALAPPDATA")
+            .map(|dir| PathBuf::from(dir).join("Roblox").is_dir())
+            .unwrap_or(false);
+        player_installed || matches!(read_cookie_from_registry(), Ok(Some(_)))
     }
 }
 

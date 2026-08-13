@@ -149,6 +149,7 @@ export const ZH_MESSAGES: Record<MessageKey, string> = {
   "onboarding.welcome.title": "欢迎使用 Accshift",
   "onboarding.welcome.version": "v{version}",
   "onboarding.welcome.compatibleWith": "你的操作系统兼容以下平台：",
+  "onboarding.welcome.detectedPlatforms": "在你的电脑上检测到以下平台：",
   "onboarding.welcome.next": "带我看看",
   "onboarding.welcome.skip": "跳过",
   "onboarding.features.hint": "应用的这一部分目前不可见。",
