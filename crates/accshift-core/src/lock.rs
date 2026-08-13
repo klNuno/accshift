@@ -5,7 +5,7 @@
 //! when the returned `LockGuard` is dropped.
 
 use crate::AppContext;
-use fs4::fs_std::FileExt;
+use fs4::{FileExt, TryLockError};
 use std::cell::Cell;
 use std::fs::{File, OpenOptions};
 use std::marker::PhantomData;
@@ -103,8 +103,8 @@ pub fn acquire_exclusive(ctx: &dyn AppContext, timeout: Duration) -> Result<Lock
 
     let deadline = Instant::now() + timeout;
     loop {
-        match FileExt::try_lock_exclusive(&file) {
-            Ok(true) => {
+        match FileExt::try_lock(&file) {
+            Ok(()) => {
                 GUARDS_HELD.with(|c| c.set(c.get() + 1));
                 return Ok(LockGuard {
                     file,
@@ -112,11 +112,11 @@ pub fn acquire_exclusive(ctx: &dyn AppContext, timeout: Duration) -> Result<Lock
                     _not_send: PhantomData,
                 });
             }
-            // fs4 maps "already locked" to Ok(false); an Err is a real I/O
+            // fs4 maps "already locked" to WouldBlock; Error is a real I/O
             // failure (bad descriptor, filesystem error). Waiting on it would
             // just mislabel it as contention.
-            Err(e) => return Err(LockError::Io(e.to_string())),
-            Ok(false) => {
+            Err(TryLockError::Error(e)) => return Err(LockError::Io(e.to_string())),
+            Err(TryLockError::WouldBlock) => {
                 if Instant::now() >= deadline {
                     return Err(LockError::Contended);
                 }

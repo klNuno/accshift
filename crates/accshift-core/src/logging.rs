@@ -1,5 +1,5 @@
 use crate::context::AppContext;
-use fs4::fs_std::FileExt;
+use fs4::FileExt;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -75,7 +75,7 @@ impl CrossProcessLogGuard {
         // mutex and proceed unlocked rather than failing the log write, and
         // the open is retried on the next call.
         let locked = match guard.as_ref() {
-            Some(file) => FileExt::lock_exclusive(file).is_ok(),
+            Some(file) => FileExt::lock(file).is_ok(),
             None => false,
         };
 
