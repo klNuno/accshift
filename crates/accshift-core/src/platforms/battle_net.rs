@@ -208,7 +208,7 @@ fn current_battle_tag_from_cache() -> Result<Option<String>, String> {
         .map_err(|e| format!("Could not query Battle.net login cache: {e}"))?;
 
     let mut rows = statement
-        .query([account_id_lo])
+        .query([account_id_lo as i64])
         .map_err(|e| format!("Could not read Battle.net login cache: {e}"))?;
 
     let Some(row) = rows

@@ -16,7 +16,7 @@ reqwest = { version = "0.12", default-features = false, features = [
   "blocking",
 ] }
 thiserror = "2"
-rusqlite = { version = "0.34", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 tauri = "2.11.5"
 tauri-plugin-process = "2.3.1"
@@ -40,7 +40,7 @@ mimalloc = { version = "0.1", default-features = false }
 tokio = { version = "=1.47", features = ["rt", "rt-multi-thread", "macros"] }
 sysinfo = { version = "0.32", default-features = false, features = ["system"] }
 open = "5"
-fs4 = { version = "0.13", features = ["sync"] }
+fs4 = { version = "1.1", features = ["sync"] }
 clap = { version = "4", features = ["derive"] }
 directories = "6"
 is-terminal = "0.4"
