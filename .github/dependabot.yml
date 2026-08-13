@@ -20,6 +20,28 @@ updates:
           - minor
           - patch
 
+  # The telemetry worker has its own lockfile and is not a pnpm workspace
+  # member, so the root npm entry above never sees it. Without this block its
+  # dependencies only ever move when a security alert forces them.
+  - package-ecosystem: npm
+    directory: /server
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    groups:
+      server-npm-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
   - package-ecosystem: cargo
     directory: /
     schedule:

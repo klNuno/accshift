@@ -688,8 +688,13 @@ async function posthogQuery(env: Env, query: string, name: string): Promise<Quer
   }
 }
 
+// Trailing slashes are stripped by hand rather than with /\/+$/: on a host
+// made of slashes that regex backtracks quadratically, and CodeQL flags it.
 function trimHost(host: string): string {
-  return (host || "").replace(/\/+$/, "");
+  const value = host || "";
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end--;
+  return value.slice(0, end);
 }
 
 // ─── Utils ───────────────────────────────────────────────────────
