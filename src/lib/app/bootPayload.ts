@@ -1,15 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { CustomThemePayload } from "$lib/theme/themes";
 import type { StorageManifest } from "$lib/storage/clientStorage";
-import { registerUserPlatforms, type PlatformDescriptor } from "$lib/platforms/registry";
+import { registerUserPlatforms } from "$lib/platforms/registry";
+import type { UserPlatformReport } from "$lib/platforms/descriptors";
 
-/** What the backend read in the user's descriptor folder at boot. */
-export interface UserPlatformReport {
-  dir: string;
-  loaded: PlatformDescriptor[];
-  skipped: { id: string; reason: string }[];
-  rejected: { source: string; field: string; problem: string }[];
-}
+export type { UserPlatformReport };
 
 export interface BootPayload {
   migration: string;

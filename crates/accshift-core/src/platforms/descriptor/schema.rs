@@ -374,6 +374,20 @@ pub enum Charset {
 }
 
 impl Charset {
+    /// An id of `length` characters this charset accepts.
+    ///
+    /// Used to plan a switch for a platform that has no accounts yet, so the
+    /// preview can show which files and keys a real switch would touch without
+    /// the user having to sign in first. A UUID ignores `length`, since only
+    /// the canonical 8-4-4-4-12 form is accepted.
+    pub fn sample(&self, length: usize) -> String {
+        match self {
+            Charset::Uuid => "00000000-0000-0000-0000-000000000000".to_string(),
+            Charset::Digits => "0".repeat(length),
+            Charset::Hex | Charset::Alphanumeric => "a".repeat(length),
+        }
+    }
+
     pub fn accepts(&self, value: &str) -> bool {
         if let Charset::Uuid = self {
             return value.len() == 36

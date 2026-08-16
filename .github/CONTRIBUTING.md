@@ -80,11 +80,17 @@ that the exclusive lock is still respected on mutating operations.
 
 ## Proposing a new platform
 
+Most platforms are a JSON descriptor rather than code, so you can build and try
+one without compiling the app: see
+[platform-descriptors.md](../docs/platform-descriptors.md) for the format, the
+sandbox rules and the dry run that shows what a switch would touch.
+
 Open a GitHub Issue using the **Platform request** template rather than sending
-an unsolicited implementation. The template asks for the launcher name, the
-operating systems it should support, how the launcher stores its session, and
-whether you can help test. Platform work is hard to review without someone who
-owns an account on that service, so the testing answer matters.
+an unsolicited implementation, and attach your descriptor if you have one. The
+template asks for the launcher name, the operating systems it should support,
+how the launcher stores its session, and whether you can help test. Platform
+work is hard to review without someone who owns an account on that service, so
+the testing answer matters.
 
 The README's "Current Status" table lists which platforms are already done,
 implemented but untested, feasible, or not realistic for a given OS.

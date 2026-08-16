@@ -27,6 +27,7 @@
 pub mod config_bridge;
 pub mod engine;
 pub mod hooks;
+pub mod library;
 pub mod paths;
 pub mod plan;
 pub mod reg;

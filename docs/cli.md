@@ -37,6 +37,7 @@ accshift switch <platform> <account-id>
     [--admin | --no-admin]
     [--launch-options "..."]
 accshift dry-run <platform> <account-id>
+accshift descriptors             # what the user descriptor folder holds
 ```
 
 `--graceful` asks the launcher to close itself and waits for it, which is what
@@ -52,6 +53,15 @@ busy.
 
 Platforms still implemented in code (Steam, Battle.net, Riot, Roblox) have no
 plan to show and answer `dry_run_unsupported`.
+
+`descriptors` reads the folder where a user drops platforms of their own and
+reports both halves: the descriptors that loaded, and every file that was
+refused with the field that caused it. A platform missing from `platforms` is
+explained here rather than silently absent. It exits zero either way, rejected
+files included: the command was asked what the folder holds and it answered, so
+a script reads `rejected` instead of guessing from a status that would also mean
+"could not look". The format itself is in
+[platform-descriptors.md](./platform-descriptors.md).
 
 Example:
 

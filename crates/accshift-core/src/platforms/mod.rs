@@ -386,6 +386,15 @@ pub fn reload_user_platforms(app: &dyn AppContext) -> UserPlatformReport {
     report
 }
 
+/// Whether this build compiled a platform in under that id.
+///
+/// The one question that separates "the user may add this" from "this is ours":
+/// a shipped id is never overridable by a file in a folder, and never removable
+/// by deleting one.
+pub fn is_shipped(platform_id: &str) -> bool {
+    platform_registry().contains_key(platform_id)
+}
+
 pub fn get_service(platform_id: &str) -> Option<&'static dyn PlatformService> {
     if let Some(service) = platform_registry().get(platform_id) {
         return Some(*service);

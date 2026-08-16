@@ -3,6 +3,9 @@
 Technical reference for accshift. One line per document, naming the question it
 answers.
 
+- [platform-descriptors.md](./platform-descriptors.md): how do I add a platform
+  without compiling anything, what may a descriptor touch, and what does each
+  field mean?
 - [cli.md](./cli.md): how do I install and script the `accshift` command, what
   does it print, and what does each exit code mean?
 - [analytics.md](./analytics.md): what does the app send, what does it never

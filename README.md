@@ -39,6 +39,11 @@ one.
 
 You can request any platform to be added here: [GitHub Issues](https://github.com/klNuno/accshift/issues/new/choose).
 
+Most of these are a JSON descriptor rather than code, so you can add a launcher
+of your own without compiling anything: the format, the sandbox rules and the
+dry run are in
+[docs/platform-descriptors.md](./docs/platform-descriptors.md).
+
 ## Features
 
 - **One-click switching**: pick an account, the launcher restarts already signed in. No passwords stored
@@ -157,7 +162,8 @@ src/lib/                          # Svelte frontend (GUI)
 crates/
   accshift-core/                  # platform logic, config, storage, OS
     src/
-      platforms/steam riot ...    # platform implementations
+      platforms/steam riot ...    # hand-written platforms
+      platforms/descriptor/       # JSON-described platforms and their engine
       os/windows linux macos      # per-OS primitives (sysinfo/open/keyring)
       context.rs                  # AppContext trait (replaces tauri::AppHandle)
       lock.rs                     # fs4 exclusive lock

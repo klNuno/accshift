@@ -409,6 +409,14 @@ fn main() {
             commands::platform_select_path,
             commands::platform_detect_installed,
             commands::platform_set_account_label,
+            commands::platform_dry_run,
+            // Platforms the user added themselves, from a descriptor file
+            commands::reload_user_platforms,
+            commands::descriptor_select_file,
+            commands::descriptor_preview_file,
+            commands::descriptor_install_file,
+            commands::descriptor_remove,
+            commands::open_descriptors_folder,
             // Utility
             commands::open_url,
             commands::open_logs_folder,
