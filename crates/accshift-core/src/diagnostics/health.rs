@@ -89,15 +89,19 @@ impl CheckResult {
         }
     }
 
+    /// Redacted, like everything else that can be read by someone other than
+    /// the machine that produced it. A check result quotes real paths, and
+    /// this value is what the diagnostic report and the UI display: the
+    /// redaction on the way to the log file would not cover either of them.
     pub fn to_json(&self) -> Value {
-        json!({
+        super::redact::sanitize_value(&json!({
             "check": self.check,
             "status": self.status.as_str(),
             "code": self.code,
             "detail": self.detail,
             "action": self.action,
             "fields": Value::Object(self.fields.clone()),
-        })
+        }))
     }
 }
 
@@ -120,11 +124,13 @@ impl Report {
         self.results.iter().filter(|r| r.status == Status::Warn)
     }
 
-    /// First blocking reason, in the order the checks were declared.
+    /// First blocking reason, in the order the checks were declared. Redacted:
+    /// this string is handed back to the caller as an error, and an error
+    /// message is the thing users paste.
     pub fn blocking_reason(&self) -> Option<String> {
-        self.failures()
-            .next()
-            .map(|failure| format!("{} ({})", failure.detail, failure.action))
+        self.failures().next().map(|failure| {
+            super::redact::sanitize_log_text(&format!("{} ({})", failure.detail, failure.action))
+        })
     }
 
     pub fn to_json(&self) -> Value {
@@ -622,6 +628,34 @@ mod tests {
             "a finding without an action is a dead end"
         );
         assert_eq!(failure.fields["platform"], json!("steam"));
+    }
+
+    // A check result quotes real paths, and the diagnostic report prints it
+    // verbatim. The redaction on the way to the log file does not cover that
+    // road, so the serialized form has to scrub on its own.
+    #[test]
+    fn a_serialized_check_result_is_redacted() {
+        let result = CheckResult::from_code(
+            "path",
+            Status::Fail,
+            &catalog::HEALTH_PATH_MISSING,
+            "missing for player@example.com at 3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+            Map::new(),
+        );
+
+        let detail = result.to_json()["detail"]
+            .as_str()
+            .expect("detail")
+            .to_string();
+        assert!(!detail.contains("player@example.com"), "{detail}");
+        assert!(!detail.contains("3f2504e0"), "{detail}");
+
+        let report = Report {
+            results: vec![result],
+        };
+        let reason = report.blocking_reason().expect("a blocking reason");
+        assert!(!reason.contains("player@example.com"), "{reason}");
+        assert!(!reason.contains("3f2504e0"), "{reason}");
     }
 
     #[test]
