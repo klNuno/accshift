@@ -153,6 +153,10 @@ export interface PlatformDef {
   pathLabelKey?: string;
   pathPlaceholder?: PathPlaceholder;
   capabilities?: PlatformCapabilities;
+  /** Built from a descriptor the user dropped in their data folder rather
+   * than one shipped with the app. The UI says so, and the entry disappears
+   * when the file does. */
+  userProvided?: boolean;
 }
 
 export function resolvePathPlaceholder(

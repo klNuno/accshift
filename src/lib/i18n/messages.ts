@@ -81,6 +81,7 @@ export const EN_MESSAGES = {
   "settings.platformDisabledSuffix": "(disabled)",
   "settings.platformUnsupportedOs": "Unsupported OS",
   "settings.platformNotImplemented": "Planned",
+  "settings.platformUserProvided": "Added from your descriptors folder",
   "settings.dataRefresh": "Data Refresh",
   "settings.avatarRefresh": "Avatar refresh",
   "settings.banCheckDelay": "Ban check delay",
@@ -248,6 +249,12 @@ export const EN_MESSAGES = {
   "platform.renamePlaceholder": "Account name",
   "platform.newAccountPending": "Waiting...",
   "platform.renameNewAccount": "Name this account",
+  "platform.copyLabelAccountId": "Account ID",
+  "platform.forget": "Forget",
+  "platform.forgetConfirmTitle": 'Forget "{display}"?',
+  "platform.forgetConfirmMessage":
+    "This will remove this account and its saved session from Accshift.",
+  "platform.forgotAccount": "Forgot {display}",
 
   "dialog.newFolderTitle": "New folder",
   "dialog.renameFolderTitle": "Rename folder",

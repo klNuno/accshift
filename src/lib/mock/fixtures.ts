@@ -175,6 +175,9 @@ export function createHandlers(spec: MockSpec): Record<string, Handler> {
       runtimeOs: spec.runtimeOs,
       storageSnapshot: snapshot(),
       customThemes: [],
+      // A mock session never reads the real descriptor folder: a screenshot
+      // must not depend on what the recording machine has lying in it.
+      userPlatforms: { dir: "", loaded: [], skipped: [], rejected: [] },
     }),
     load_client_storage_snapshot: () => snapshot(),
     get_storage_manifest: () => manifest(),

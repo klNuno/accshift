@@ -83,8 +83,8 @@ pub fn render_descriptors(report: &UserPlatformReport) {
         println!("No platforms added. Drop a .json descriptor in the folder above.");
     } else {
         println!("Added platforms:");
-        for id in &report.loaded {
-            println!("  {id}");
+        for descriptor in &report.loaded {
+            println!("  {} ({})", descriptor.id, descriptor.name);
         }
     }
 

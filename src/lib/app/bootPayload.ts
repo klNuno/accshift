@@ -1,6 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { CustomThemePayload } from "$lib/theme/themes";
 import type { StorageManifest } from "$lib/storage/clientStorage";
+import { registerUserPlatforms, type PlatformDescriptor } from "$lib/platforms/registry";
+
+/** What the backend read in the user's descriptor folder at boot. */
+export interface UserPlatformReport {
+  dir: string;
+  loaded: PlatformDescriptor[];
+  skipped: { id: string; reason: string }[];
+  rejected: { source: string; field: string; problem: string }[];
+}
 
 export interface BootPayload {
   migration: string;
@@ -10,6 +19,7 @@ export interface BootPayload {
     stores: Record<string, unknown>;
   };
   customThemes: CustomThemePayload[];
+  userPlatforms: UserPlatformReport;
 }
 
 let payload: BootPayload | null = null;
@@ -22,6 +32,9 @@ let payload: BootPayload | null = null;
  */
 export async function fetchBootPayload(): Promise<BootPayload> {
   payload = await invoke<BootPayload>("get_boot_payload");
+  // The platforms the user added themselves only exist once this lands, so
+  // the registry is filled here rather than at import time.
+  registerUserPlatforms(payload.userPlatforms?.loaded ?? []);
   return payload;
 }
 

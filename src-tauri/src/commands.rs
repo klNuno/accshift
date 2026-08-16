@@ -78,8 +78,8 @@ fn migrate_legacy_config_inner(c: &dyn accshift_core::AppContext) -> String {
 
 /// Everything the frontend needs before it can show the window, in one IPC
 /// round trip: legacy config migration, client storage snapshot, custom
-/// themes and the runtime OS. Replaces four sequential invokes on the boot
-/// critical path.
+/// themes, the runtime OS and the platforms the user added themselves.
+/// Replaces four sequential invokes on the boot critical path.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BootPayload {
@@ -87,6 +87,10 @@ pub struct BootPayload {
     runtime_os: &'static str,
     storage_snapshot: crate::storage::ClientStorageSnapshot,
     custom_themes: Vec<crate::themes::CustomTheme>,
+    /// The descriptor folder as it was read at boot: what loaded, what did
+    /// not, and why. Each loaded descriptor travels whole, so the frontend
+    /// describes a user-added platform from the same file the engine runs.
+    user_platforms: crate::platforms::UserPlatformReport,
 }
 
 #[tauri::command]
@@ -99,11 +103,16 @@ pub async fn get_boot_payload(app_handle: tauri::AppHandle) -> Result<BootPayloa
         // Missing themes dir is normal on first run; the frontend treats an
         // empty list and "no custom themes" the same way.
         let custom_themes = crate::themes::list_custom_themes(&c).unwrap_or_default();
+        // Reading the descriptor folder is what makes a user-added platform
+        // answer at all, so it has to happen before the frontend asks for
+        // accounts. A rejected file is reported, never fatal.
+        let user_platforms = crate::platforms::reload_user_platforms(&c);
         Ok(BootPayload {
             migration,
             runtime_os: std::env::consts::OS,
             storage_snapshot,
             custom_themes,
+            user_platforms,
         })
     })
     .await

@@ -60,6 +60,9 @@
     if (!definition) return t("settings.platformNotImplemented");
     if (!definition.implemented) return t("settings.platformNotImplemented");
     if (!isPlatformOsCompatible(platformId)) return t("settings.platformUnsupportedOs");
+    // Where a platform came from is worth saying: a descriptor the user wrote
+    // is theirs to fix, and it disappears the day they delete the file.
+    if (definition.userProvided) return t("settings.platformUserProvided");
     return "";
   }
 

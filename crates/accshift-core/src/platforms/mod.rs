@@ -1,6 +1,6 @@
 use crate::context::{AppContext, AppCtx};
 use crate::error::PlatformError;
-use descriptor::{DescriptorOrigin, DescriptorService};
+use descriptor::{Descriptor, DescriptorOrigin, DescriptorService};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -316,8 +316,11 @@ pub struct RejectedDescriptor {
 pub struct UserPlatformReport {
     /// The folder that was read, so a caller can say where to drop a file.
     pub dir: String,
-    /// Ids now answering to [`get_service`], in load order.
-    pub loaded: Vec<String>,
+    /// The descriptors now answering to [`get_service`], in load order. The
+    /// whole descriptor travels, not just the id: the frontend builds its
+    /// platform entry from it and so needs no second description of a platform
+    /// this build was never compiled to know about.
+    pub loaded: Vec<Descriptor>,
     pub skipped: Vec<SkippedPlatform>,
     pub rejected: Vec<RejectedDescriptor>,
 }
@@ -372,9 +375,9 @@ pub fn reload_user_platforms(app: &dyn AppContext) -> UserPlatformReport {
             });
             continue;
         }
+        report.loaded.push(descriptor.clone());
         let service = DescriptorService::new(descriptor, DescriptorOrigin::User(path));
-        fresh.insert(id.clone(), Box::leak(Box::new(service)));
-        report.loaded.push(id);
+        fresh.insert(id, Box::leak(Box::new(service)));
     }
 
     if let Ok(mut registry) = user_registry().write() {
@@ -485,7 +488,11 @@ mod tests {
         drop_in(&ctx, "acme.json", &fixture("acme", &root));
         let report = reload_user_platforms(&ctx);
 
-        assert_eq!(report.loaded, vec!["acme".to_string()], "{report:?}");
+        let loaded_ids = |report: &UserPlatformReport| -> Vec<String> {
+            report.loaded.iter().map(|d| d.id.clone()).collect()
+        };
+
+        assert_eq!(loaded_ids(&report), vec!["acme".to_string()], "{report:?}");
         assert!(report.rejected.is_empty(), "{report:?}");
         assert!(
             get_service("acme").is_some(),
@@ -497,7 +504,7 @@ mod tests {
         // in a folder must not be able to take over Steam.
         drop_in(&ctx, "steam.json", &fixture("steam", &root));
         let report = reload_user_platforms(&ctx);
-        assert!(report.loaded.contains(&"acme".to_string()));
+        assert!(loaded_ids(&report).contains(&"acme".to_string()));
         assert!(
             report
                 .skipped
@@ -518,7 +525,7 @@ mod tests {
             &fixture("broken", &root).replace("\"schemaVersion\": 1", "\"schemaVersion\": 99"),
         );
         let report = reload_user_platforms(&ctx);
-        assert!(report.loaded.contains(&"acme".to_string()));
+        assert!(loaded_ids(&report).contains(&"acme".to_string()));
         assert_eq!(report.rejected.len(), 1, "{report:?}");
         assert_eq!(report.rejected[0].source, "broken.json");
         assert_eq!(report.rejected[0].field, "schemaVersion");
