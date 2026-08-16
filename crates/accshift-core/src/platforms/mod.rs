@@ -39,10 +39,9 @@ pub mod ids {
 #[cfg(any(windows, target_os = "macos"))]
 pub mod battle_net;
 /// Platforms described by a JSON descriptor and run by a single engine. GOG,
-/// Jagex, Epic and Ubisoft live here instead of in a module of their own.
+/// Jagex, Epic, Ubisoft and Discord live here instead of in a module of their
+/// own.
 pub mod descriptor;
-#[cfg(windows)]
-pub mod discord;
 #[cfg(windows)]
 pub mod riot;
 #[cfg(windows)]
@@ -255,7 +254,6 @@ fn platform_registry() -> &'static HashMap<&'static str, &'static dyn PlatformSe
             map.insert(ids::RIOT, &riot::RIOT_SERVICE);
             map.insert(ids::BATTLE_NET, &battle_net::BATTLE_NET_SERVICE);
             map.insert(ids::ROBLOX, &roblox::ROBLOX_SERVICE);
-            map.insert(ids::DISCORD, &discord::DISCORD_SERVICE);
         }
         // Descriptor-driven platforms register last so a hand-written module
         // always wins: converting one means deleting its module, never having

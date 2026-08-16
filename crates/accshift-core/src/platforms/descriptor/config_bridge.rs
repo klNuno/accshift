@@ -12,7 +12,8 @@
 //! anyone who upgrades.
 
 use crate::config::{
-    self, EpicAccountConfig, GogAccountConfig, JagexAccountConfig, UbisoftAccountConfig,
+    self, DiscordAccountConfig, EpicAccountConfig, GogAccountConfig, JagexAccountConfig,
+    UbisoftAccountConfig,
 };
 use crate::platforms::ids;
 use crate::AppContext;
@@ -72,6 +73,7 @@ impl_account_row!(GogAccountConfig, account_id);
 impl_account_row!(JagexAccountConfig, account_id);
 impl_account_row!(EpicAccountConfig, account_id);
 impl_account_row!(UbisoftAccountConfig, uuid);
+impl_account_row!(DiscordAccountConfig, account_id);
 
 /// Runs the same body against whichever section the platform owns.
 ///
@@ -95,6 +97,10 @@ macro_rules! with_accounts {
             }
             ids::UBISOFT => {
                 let $accounts = &mut $cfg.ubisoft.accounts;
+                $body
+            }
+            ids::DISCORD => {
+                let $accounts = &mut $cfg.discord.accounts;
                 $body
             }
             _ => {}
@@ -147,6 +153,7 @@ pub fn accounts(app: &dyn AppContext, platform_id: &str) -> Vec<AccountRecord> {
         ids::JAGEX => rows(&cfg.jagex.accounts),
         ids::EPIC => rows(&cfg.epic.accounts),
         ids::UBISOFT => rows(&cfg.ubisoft.accounts),
+        ids::DISCORD => rows(&cfg.discord.accounts),
         _ => Vec::new(),
     }
 }
@@ -224,13 +231,16 @@ pub fn set_current_account(
 fn current_account_field<'a>(cfg: &'a config::AppConfig, platform_id: &str) -> Option<&'a String> {
     match platform_id {
         ids::JAGEX => Some(&cfg.jagex.current_account),
+        ids::DISCORD => Some(&cfg.discord.current_account_id),
         _ => None,
     }
 }
 
 fn set_current_account_field(cfg: &mut config::AppConfig, platform_id: &str, value: String) {
-    if platform_id == ids::JAGEX {
-        cfg.jagex.current_account = value;
+    match platform_id {
+        ids::JAGEX => cfg.jagex.current_account = value,
+        ids::DISCORD => cfg.discord.current_account_id = value,
+        _ => {}
     }
 }
 
@@ -285,6 +295,7 @@ pub fn path_override(app: &dyn AppContext, platform_id: &str) -> String {
         ids::JAGEX => cfg.jagex.path_override.trim().to_string(),
         ids::EPIC => cfg.epic.path_override.trim().to_string(),
         ids::UBISOFT => cfg.ubisoft.path_override.trim().to_string(),
+        ids::DISCORD => cfg.discord.path_override.trim().to_string(),
         _ => String::new(),
     }
 }
@@ -300,6 +311,7 @@ pub fn set_path_override(
         ids::JAGEX => cfg.jagex.path_override = path.clone(),
         ids::EPIC => cfg.epic.path_override = path.clone(),
         ids::UBISOFT => cfg.ubisoft.path_override = path.clone(),
+        ids::DISCORD => cfg.discord.path_override = path.clone(),
         _ => {}
     })
 }

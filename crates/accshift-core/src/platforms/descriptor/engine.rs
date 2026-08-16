@@ -14,7 +14,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -33,6 +33,7 @@ use crate::snapshot_crypto::{
 use crate::{AppContext, AppCtx};
 
 use super::config_bridge;
+use super::hooks::{self, HookContext, HookIdentity};
 use super::paths::{PathResolver, Sandbox};
 use super::plan::{DryRunPlan, PlanAction, PlanStep, PlanTargetKind};
 use super::reg;
@@ -73,6 +74,8 @@ struct DescriptorStartupSnapshot {
 #[derive(Clone, Default)]
 struct SetupJob {
     known_account_ids: HashSet<String>,
+    /// When the flow began, for the conditions that hold only after a delay.
+    started_at: u64,
 }
 
 pub struct DescriptorService {
@@ -235,7 +238,7 @@ impl DescriptorService {
                 command.current_dir(install_dir);
             }
         }
-        command.args(&launch.args);
+        command.args(launch.args_for(&executable));
         command.spawn().map_err(|e| {
             format!(
                 "Could not launch {} {}: {e}",
@@ -345,16 +348,42 @@ impl DescriptorService {
     /// Takes a runtime the caller already built, so a poll that touches
     /// several things does not resolve the launcher once per step.
     fn read_identity_in(&self, runtime: &Runtime<'_>) -> Option<String> {
-        let raw = match &runtime.profile.identity.source {
-            IdentitySource::Registry { root, key, value } => reg::read(*root, key, value),
-            IdentitySource::LogTail { .. } => self.read_identity_from_log(runtime),
+        self.read_identity_detail(runtime).map(|found| found.id)
+    }
+
+    /// The signed-in account with whatever name came with it. Only a native
+    /// hook reports a name; every other source knows the id alone.
+    fn read_identity_detail(&self, runtime: &Runtime<'_>) -> Option<HookIdentity> {
+        let found = match &runtime.profile.identity.source {
+            IdentitySource::Registry { root, key, value } => {
+                reg::read(*root, key, value).map(bare_identity)
+            }
+            IdentitySource::LogTail { .. } => {
+                self.read_identity_from_log(runtime).map(bare_identity)
+            }
             // Nothing readable: the account is whatever we last put there.
             IdentitySource::Synthetic => None,
-            // Reserved for the two platforms whose discovery needs code.
-            IdentitySource::NativeHook { .. } => None,
+            IdentitySource::NativeHook { name, paths } => {
+                let hook = hooks::hook(name)?;
+                // Only paths the descriptor declared, and only after the
+                // sandbox has cleared them: a hook cannot widen its own reach.
+                let resolved = paths
+                    .iter()
+                    .filter_map(|(key, template)| {
+                        runtime.path(template).ok().map(|path| (key.clone(), path))
+                    })
+                    .collect();
+                hook.identity(&HookContext::new(resolved))
+            }
         }?;
-        let id = self.normalise_id(&raw);
-        self.id_is_valid(&id).then_some(id)
+        let id = self.normalise_id(&found.id);
+        self.id_is_valid(&id).then_some(HookIdentity {
+            id,
+            display_name: found
+                .display_name
+                .map(|name| name.trim().to_string())
+                .filter(|name| !name.is_empty()),
+        })
     }
 
     /// Reads the id out of the launcher's own log, most recent line first.
@@ -799,8 +828,26 @@ impl DescriptorService {
         let Some(current_id) = self.current_account_id(app) else {
             return Ok(());
         };
+        if !self.capture_worth_running(app) {
+            // Nothing live to capture: keeping the snapshot taken while the
+            // account was signed in beats replacing it with an empty one.
+            return Ok(());
+        }
         let _ = config_bridge::touch_account(app, &self.descriptor.id, &current_id, now_unix_ms());
         self.save_snapshot(app, &current_id)
+    }
+
+    /// Whether the descriptor's own gate on capturing is satisfied.
+    fn capture_worth_running(&self, app: &dyn AppContext) -> bool {
+        let Ok(runtime) = self.runtime(app) else {
+            return true;
+        };
+        runtime
+            .profile
+            .state
+            .capture_when
+            .iter()
+            .all(|condition| self.condition_holds(&runtime, condition, ConditionInput::default()))
     }
 
     // -----------------------------------------------------------------------
@@ -816,11 +863,18 @@ impl DescriptorService {
             .collect::<HashSet<_>>();
         // The account signed in right now counts as discovered, unless it is
         // one the user forgot and has not used since.
-        if let Some(id) = self
-            .read_identity_in(&runtime)
-            .filter(|id| !blocked.contains(id))
-        {
-            discovered.insert(id);
+        //
+        // Only where the launcher itself decides who is current: a platform we
+        // track ourselves holds ids we minted, and an account added before the
+        // engine could read an id keeps its opaque one. Listing the live id
+        // there would show that same account a second time under its real name.
+        if runtime.profile.identity.current == CurrentSource::Identity {
+            if let Some(id) = self
+                .read_identity_in(&runtime)
+                .filter(|id| !blocked.contains(id))
+            {
+                discovered.insert(id);
+            }
         }
         let stored = config_bridge::accounts(app, &self.descriptor.id);
 
@@ -884,6 +938,13 @@ impl DescriptorService {
             format!("target={}", redact_id(&account_id)),
         );
 
+        let close_first = self.closes_before_capture();
+        if close_first {
+            // This client holds its session in memory and writes it out as it
+            // exits, so capturing it while it runs would store nothing.
+            self.quit_and_wait();
+        }
+
         // Snapshot the outgoing account first. Aborting here is the point:
         // going further would overwrite its live session with the target's.
         self.capture_current_account(app)?;
@@ -899,7 +960,9 @@ impl DescriptorService {
             config_bridge::set_current_account(app, &self.descriptor.id, "")?;
         }
 
-        self.quit_and_wait();
+        if !close_first {
+            self.quit_and_wait();
+        }
         self.restore_snapshot(app, &account_id)?;
         self.clear_caches(app);
         config_bridge::touch_account(app, &self.descriptor.id, &account_id, now_unix_ms())?;
@@ -934,29 +997,45 @@ impl DescriptorService {
             "",
         );
 
-        self.capture_current_account(app)?;
+        let was_running = self.is_running();
+        let close_first = self.closes_before_capture();
+        if close_first {
+            self.quit_and_wait();
+        }
 
         // Everything that already exists, so the flow can tell the account the
         // user is about to add from the ones that were there before.
         let runtime = self.runtime(app)?;
+        let stored: HashSet<String> = config_bridge::accounts(app, &self.descriptor.id)
+            .iter()
+            .map(|account| self.normalise_id(&account.account_id))
+            .filter(|id| !id.is_empty())
+            .collect();
+        let live = self.read_identity_detail(&runtime);
         let mut known: HashSet<String> = self.discovered_ids(app, &runtime).into_iter().collect();
-        known.extend(self.read_identity_in(&runtime));
-        for account in config_bridge::accounts(app, &self.descriptor.id) {
-            let id = self.normalise_id(&account.account_id);
-            if !id.is_empty() {
-                known.insert(id);
+        known.extend(live.as_ref().map(|found| found.id.clone()));
+        known.extend(stored.iter().cloned());
+
+        if runtime.profile.setup.adopt_signed_in {
+            if let Some(status) = self.try_adopt(app, live, &stored, was_running)? {
+                return Ok(status);
             }
         }
+
+        self.capture_current_account(app)?;
 
         let setup_id = format!("{}-setup-{}", self.descriptor.id, Uuid::new_v4());
         self.jobs.insert(
             setup_id.clone(),
             SetupJob {
                 known_account_ids: known,
+                started_at: now_unix_ms(),
             },
         )?;
 
-        self.quit_and_wait();
+        if !close_first {
+            self.quit_and_wait();
+        }
         self.clear_live_state(app)?;
         if self
             .profile()
@@ -985,6 +1064,110 @@ impl DescriptorService {
         ))
     }
 
+    /// Takes the session that is already signed in as the account being added,
+    /// when nothing tracks it yet.
+    ///
+    /// Without this, adding an account starts by wiping the one the user was
+    /// already using, so their first account is signed out just to be listed.
+    /// Adopting is refused as soon as a current account is recorded: that
+    /// session already belongs to a tracked account, possibly under an id we
+    /// minted ourselves, and adopting would list it twice.
+    fn try_adopt(
+        &self,
+        app: &dyn AppContext,
+        live: Option<HookIdentity>,
+        stored: &HashSet<String>,
+        was_running: bool,
+    ) -> Result<Option<SetupStatus>, String> {
+        if self
+            .current_account_id(app)
+            .is_some_and(|current| !current.is_empty())
+        {
+            return Ok(None);
+        }
+        let Some(found) = live else {
+            return Ok(None);
+        };
+        if stored.contains(&found.id) {
+            return Ok(None);
+        }
+
+        self.save_snapshot(app, &found.id)?;
+        if self.declares_snapshot_marker() && !self.snapshot_has_content(app, &found.id) {
+            // Nothing was captured, so there is no session to adopt after all.
+            // Fall through to the sign-in flow rather than list an account
+            // that restores to a login screen.
+            self.delete_snapshot(app, &found.id);
+            return Ok(None);
+        }
+        config_bridge::touch_account(app, &self.descriptor.id, &found.id, now_unix_ms())?;
+        if self
+            .profile()
+            .map(|profile| profile.identity.current == CurrentSource::Config)
+            .unwrap_or(false)
+        {
+            config_bridge::set_current_account(app, &self.descriptor.id, &found.id)?;
+        }
+        let display_name = self.seed_label(app, &found);
+
+        // Put the client back the way we found it: same session, no sign-in.
+        if was_running {
+            let _ = self.launch(app).inspect_err(|e| {
+                log_platform_error(
+                    app,
+                    &format!("{}.begin_account_setup", self.descriptor.id),
+                    &format!("{} relaunch after adopt failed", self.descriptor.short_name),
+                    e.clone(),
+                );
+            });
+        }
+
+        log_platform_info(
+            app,
+            &format!("{}.begin_account_setup", self.descriptor.id),
+            &format!("Adopted live {} session", self.descriptor.short_name),
+            format!("account={}", redact_id(&found.id)),
+        );
+
+        // Terminal status: no job is registered, so the wizard never polls.
+        let setup_id = format!("{}-setup-{}", self.descriptor.id, Uuid::new_v4());
+        Ok(Some(make_setup_status(
+            &setup_id,
+            "ready",
+            found.id,
+            display_name,
+            "",
+        )))
+    }
+
+    /// Names a freshly captured account after whatever the platform calls it,
+    /// so the list never opens on a raw id. Returns the name to report.
+    fn seed_label(&self, app: &dyn AppContext, found: &HookIdentity) -> String {
+        match &found.display_name {
+            Some(name) => {
+                let _ = config_bridge::set_label(app, &self.descriptor.id, &found.id, name);
+                name.clone()
+            }
+            None => {
+                let from_id = self
+                    .profile()
+                    .map(|profile| profile.setup.display_name_from_id)
+                    .unwrap_or(false);
+                if from_id {
+                    found.id.clone()
+                } else {
+                    String::new()
+                }
+            }
+        }
+    }
+
+    fn closes_before_capture(&self) -> bool {
+        self.profile()
+            .map(|profile| profile.close.before_capture)
+            .unwrap_or(false)
+    }
+
     fn setup_status(&self, app: &dyn AppContext, setup_id: &str) -> Result<SetupStatus, String> {
         let job = self.jobs.touch(setup_id)?;
         let runtime = self.runtime(app)?;
@@ -992,19 +1175,24 @@ impl DescriptorService {
 
         // The launcher's own marker first, then anything the platform leaves on
         // disk: some write the id where we can read it only after a restart.
-        let new_identity = self
-            .read_identity_in(&runtime)
-            .filter(|id| !job.known_account_ids.contains(id))
-            .or_else(|| {
-                self.discovered_ids(app, &runtime)
-                    .into_iter()
-                    .find(|id| !job.known_account_ids.contains(id))
-            });
+        let found = self
+            .read_identity_detail(&runtime)
+            .filter(|found| !job.known_account_ids.contains(&found.id));
+        let new_identity = found.as_ref().map(|found| found.id.clone()).or_else(|| {
+            self.discovered_ids(app, &runtime)
+                .into_iter()
+                .find(|id| !job.known_account_ids.contains(id))
+        });
+        let input = ConditionInput {
+            new_identity: new_identity.as_deref(),
+            started_at: Some(job.started_at),
+        };
 
         let triggered = !setup.trigger.is_empty()
-            && setup.trigger.iter().all(|condition| {
-                self.condition_holds(&runtime, condition, new_identity.as_deref())
-            });
+            && setup
+                .trigger
+                .iter()
+                .all(|condition| self.condition_holds(&runtime, condition, input));
 
         if triggered {
             // A trigger only says the user got through the login screen. The
@@ -1012,9 +1200,10 @@ impl DescriptorService {
             // and the conditions re-checked before anything is captured.
             self.quit_and_wait();
 
-            let still_holds = setup.confirm.iter().all(|condition| {
-                self.condition_holds(&runtime, condition, new_identity.as_deref())
-            });
+            let still_holds = setup
+                .confirm
+                .iter()
+                .all(|condition| self.condition_holds(&runtime, condition, input));
             if !still_holds {
                 return Ok(make_setup_status(setup_id, "waiting_for_login", "", "", ""));
             }
@@ -1045,10 +1234,13 @@ impl DescriptorService {
 
             self.jobs.remove(setup_id);
 
-            let display_name = if setup.display_name_from_id {
-                key.clone()
-            } else {
-                String::new()
+            // A hook that read a name off the platform names the account with
+            // it, so the list never opens on a raw id. The id is checked first
+            // because a synthetic key belongs to no identity that was read.
+            let display_name = match found.filter(|found| found.id == key) {
+                Some(found) => self.seed_label(app, &found),
+                None if setup.display_name_from_id => key.clone(),
+                None => String::new(),
             };
             return Ok(make_setup_status(setup_id, "ready", key, display_name, ""));
         }
@@ -1069,14 +1261,20 @@ impl DescriptorService {
         &self,
         runtime: &Runtime<'_>,
         condition: &Condition,
-        new_identity: Option<&str>,
+        input: ConditionInput<'_>,
     ) -> bool {
         match condition {
-            Condition::NewIdentity => new_identity.is_some(),
+            Condition::NewIdentity => input.new_identity.is_some(),
             Condition::IdentityPresent => self.read_identity_in(runtime).is_some(),
+            Condition::SinceStart { ms } => match input.started_at {
+                Some(started_at) => now_unix_ms().saturating_sub(started_at) >= *ms,
+                // Asked outside a setup flow, where there is no start to
+                // measure from. Nothing has elapsed, so it does not hold.
+                None => false,
+            },
             Condition::AnyOf { conditions } => conditions
                 .iter()
-                .any(|nested| self.condition_holds(runtime, nested, new_identity)),
+                .any(|nested| self.condition_holds(runtime, nested, input)),
             Condition::PathNonEmpty { path, recursive } => match runtime.spec_path(path) {
                 Ok(resolved) => path_has_content(&resolved, *recursive),
                 Err(_) => false,
@@ -1354,14 +1552,21 @@ fn profile_uses_install_dir(profile: &OsProfile) -> bool {
         let Discovery::DirectoryEntries { path, .. } = entry;
         placeholders.extend(path.placeholders());
     }
-    if let IdentitySource::LogTail { path, .. } = &profile.identity.source {
-        placeholders.extend(path.placeholders());
+    match &profile.identity.source {
+        IdentitySource::LogTail { path, .. } => placeholders.extend(path.placeholders()),
+        IdentitySource::NativeHook { paths, .. } => {
+            for path in paths.values() {
+                placeholders.extend(path.placeholders());
+            }
+        }
+        _ => {}
     }
     for condition in profile
         .setup
         .trigger
         .iter()
         .chain(profile.setup.confirm.iter())
+        .chain(profile.state.capture_when.iter())
     {
         collect_condition_placeholders(condition, &mut placeholders);
     }
@@ -1370,7 +1575,7 @@ fn profile_uses_install_dir(profile: &OsProfile) -> bool {
 
 fn collect_condition_placeholders(condition: &Condition, out: &mut Vec<String>) {
     match condition {
-        Condition::NewIdentity | Condition::IdentityPresent => {}
+        Condition::NewIdentity | Condition::IdentityPresent | Condition::SinceStart { .. } => {}
         Condition::AnyOf { conditions } => {
             for nested in conditions {
                 collect_condition_placeholders(nested, out);
@@ -1397,6 +1602,23 @@ fn locate_binary(base: &Path, executable: &Executable) -> Option<PathBuf> {
     }
     let candidate = base.join(&executable.file_name);
     candidate.is_file().then_some(candidate)
+}
+
+/// What a condition is allowed to know beyond the machine itself.
+#[derive(Clone, Copy, Default)]
+struct ConditionInput<'a> {
+    /// The account the setup flow is watching for, once one shows up.
+    new_identity: Option<&'a str>,
+    /// When the setup flow started, absent outside one.
+    started_at: Option<u64>,
+}
+
+/// An id with no name attached, which is every source but a native hook.
+fn bare_identity(id: String) -> HookIdentity {
+    HookIdentity {
+        id,
+        display_name: None,
+    }
 }
 
 /// Where a decrypted file waits until every one of its siblings has landed.
@@ -1438,23 +1660,57 @@ fn read_log_tail(path: &Path, tail_bytes: u64) -> Option<String> {
     Some(String::from_utf8_lossy(&buffer).into_owned())
 }
 
-/// True when a file exists, is non-empty, and was written within `window_ms`.
-/// A stale timestamp means the launcher never flushed the new session, so
-/// capturing it would store the previous account's material.
+/// True when a path holds material written within `window_ms`. A stale
+/// timestamp means the launcher never flushed the new session, so capturing it
+/// would store the previous account's material.
+///
+/// A file qualifies when it is non-empty and its own mtime is recent. A
+/// directory is judged on the newest mtime anywhere below it: a launcher that
+/// keeps its session in a store of many files rewrites some of them and leaves
+/// the directory's own mtime untouched.
 fn file_is_fresh(path: &Path, window_ms: u64) -> bool {
     let Ok(meta) = fs::metadata(path) else {
         return false;
     };
+    if meta.is_dir() {
+        return dir_newest_modified(path)
+            .is_some_and(|modified| written_within(modified, window_ms));
+    }
     if meta.len() == 0 {
         return false;
     }
     let Ok(modified) = meta.modified() else {
         return true;
     };
+    written_within(modified, window_ms)
+}
+
+/// A timestamp the clock cannot make sense of is not evidence of staleness, so
+/// it counts as fresh rather than blocking a capture that is probably right.
+fn written_within(modified: SystemTime, window_ms: u64) -> bool {
     let Ok(elapsed) = modified.elapsed() else {
         return true;
     };
     (elapsed.as_millis() as u64) <= window_ms
+}
+
+/// The newest modification time of any file under `dir`, at any depth.
+fn dir_newest_modified(dir: &Path) -> Option<SystemTime> {
+    let mut newest: Option<SystemTime> = None;
+    for entry in fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        let candidate = if path.is_dir() {
+            dir_newest_modified(&path)
+        } else {
+            fs::metadata(&path)
+                .ok()
+                .and_then(|meta| meta.modified().ok())
+        };
+        if let Some(time) = candidate {
+            newest = Some(newest.map_or(time, |current| current.max(time)));
+        }
+    }
+    newest
 }
 
 /// A non-empty file, or (when `recursive`) a directory holding one anywhere
@@ -2340,5 +2596,259 @@ mod tests {
         assert!(path_has_content(&dir, true));
         assert!(!path_has_content(&dir, false));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_directory_is_fresh_on_the_newest_file_below_it() {
+        // A store of many files is rewritten file by file, so the directory's
+        // own mtime says nothing about the session inside it.
+        let root = scratch("dir-freshness");
+        let store = root.join("leveldb");
+        fs::create_dir_all(&store).unwrap();
+        assert!(!file_is_fresh(&store, 60_000));
+
+        let old = store.join("000001.ldb");
+        fs::write(&old, b"data").unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(600))
+            .unwrap();
+        assert!(!file_is_fresh(&store, 60_000));
+
+        fs::write(store.join("000002.log"), b"data").unwrap();
+        assert!(file_is_fresh(&store, 60_000));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // -----------------------------------------------------------------------
+    // Native hook: a platform whose id no template can point at
+    // -----------------------------------------------------------------------
+
+    /// Modelled on Discord: the id comes from a compiled hook reading a binary
+    /// store, the launcher is closed before the outgoing account is captured,
+    /// and the flow adopts a session nothing tracks yet. The id is `discord` so
+    /// the allowlist accepts the hook and the config bridge finds its section.
+    fn hook_fixture(live_root: &Path) -> String {
+        let live = live_root.display().to_string().replace('\\', "/");
+        format!(
+            r#"{{
+              "id": "discord",
+              "schemaVersion": 1,
+              "name": "Test Chat",
+              "shortName": "Test",
+              "os": {{
+                "windows": {{ {profile} }},
+                "linux": {{ {profile} }},
+                "macos": {{ {profile} }}
+              }}
+            }}"#,
+            profile = hook_profile(&live)
+        )
+    }
+
+    fn hook_profile(live: &str) -> String {
+        format!(
+            r#"
+              "roots": {{ "files": ["{live}"] }},
+              "detect": {{ "pathExists": ["{live}"] }},
+              "identity": {{
+                "source": {{
+                  "kind": "nativeHook",
+                  "name": "discord-leveldb",
+                  "paths": {{ "leveldb": "{live}/Local Storage/leveldb" }}
+                }},
+                "format": {{ "charset": "alphanumeric", "maxLength": 64 }},
+                "current": "config"
+              }},
+              "state": {{
+                "directories": [
+                  {{
+                    "live": "{live}/Local Storage/leveldb",
+                    "snapshot": "local_storage_leveldb",
+                    "snapshotMarker": true,
+                    "clearOnSetup": true
+                  }}
+                ],
+                "captureWhen": [
+                  {{ "kind": "pathNonEmpty", "path": "{live}/Local Storage/leveldb", "recursive": true }}
+                ]
+              }},
+              "close": {{ "processes": ["nothing-here.exe"], "beforeCapture": true }},
+              "setup": {{ "adoptSignedIn": true, "displayNameFromId": true }}
+            "#
+        )
+    }
+
+    fn hook_service(live_root: &Path) -> DescriptorService {
+        let descriptor = Descriptor::parse("test", &hook_fixture(live_root)).unwrap();
+        DescriptorService::new(descriptor, DescriptorOrigin::Embedded)
+    }
+
+    const SNOWFLAKE: &str = "123456789012345678";
+
+    fn seed_store(live: &Path, user_id: &str, username: Option<&str>) {
+        let store = live.join("Local Storage").join("leveldb");
+        fs::create_dir_all(&store).unwrap();
+        fs::write(
+            store.join("000003.log"),
+            super::super::hooks::discord::fake_log_bytes(user_id, username),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_native_hook_reports_the_id_and_the_name_that_came_with_it() {
+        let _config = config_guard();
+        let root = scratch("hook-identity");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        seed_store(&live, SNOWFLAKE, Some("bebou"));
+
+        let service = hook_service(&live);
+        let runtime = service.runtime(&ctx).unwrap();
+        let found = service.read_identity_detail(&runtime).unwrap();
+        assert_eq!(found.id, SNOWFLAKE);
+        assert_eq!(found.display_name.as_deref(), Some("bebou"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_hook_only_ever_sees_the_paths_the_descriptor_declared() {
+        // The store sits where the descriptor says it does, and the hook builds
+        // no path of its own: moving it leaves the hook with nothing to read.
+        let _config = config_guard();
+        let root = scratch("hook-sandbox");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let store = live.join("Session Storage");
+        fs::create_dir_all(&store).unwrap();
+        fs::write(
+            store.join("000003.log"),
+            super::super::hooks::discord::fake_log_bytes(SNOWFLAKE, None),
+        )
+        .unwrap();
+
+        assert!(hook_service(&live).read_identity(&ctx).is_none());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_capture_gate_that_does_not_hold_stops_the_capture() {
+        let _config = config_guard();
+        let root = scratch("capture-gate");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = hook_service(&live);
+
+        // The store exists but holds nothing: the user signed out by hand.
+        fs::create_dir_all(live.join("Local Storage").join("leveldb")).unwrap();
+        assert!(!service.capture_worth_running(&ctx));
+
+        seed_store(&live, SNOWFLAKE, None);
+        assert!(service.capture_worth_running(&ctx));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_signed_out_session_never_overwrites_the_snapshot_it_would_replace() {
+        let _config = config_guard();
+        let root = scratch("capture-gate-keeps");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = hook_service(&live);
+
+        config_bridge::set_current_account(&ctx, "discord", SNOWFLAKE).unwrap();
+        let snapshot = service.snapshot_root(&ctx, SNOWFLAKE).unwrap();
+        fs::create_dir_all(snapshot.join("local_storage_leveldb")).unwrap();
+        fs::write(snapshot.join("local_storage_leveldb").join("kept"), b"x").unwrap();
+
+        // Live store present but empty, so the gate refuses.
+        fs::create_dir_all(live.join("Local Storage").join("leveldb")).unwrap();
+        service.capture_current_account(&ctx).unwrap();
+        assert!(snapshot.join("local_storage_leveldb").join("kept").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_platform_we_track_ourselves_does_not_list_the_live_id_as_an_account() {
+        // The config holds ids we minted, so listing the id the launcher
+        // reports would show the same account twice under two names.
+        let _config = config_guard();
+        let root = scratch("hook-listing");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        seed_store(&live, SNOWFLAKE, Some("bebou"));
+
+        let accounts = hook_service(&live).read_accounts(&ctx).unwrap();
+        assert!(accounts.is_empty(), "{accounts:?}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn adding_an_account_adopts_the_session_already_signed_in() {
+        // Otherwise adding a first account starts by signing the user out of
+        // the one they were already using.
+        let _config = config_guard();
+        let root = scratch("hook-adopt");
+        let live = root.join("live");
+        let ctx: AppCtx = Arc::new(TempCtx { root: root.clone() });
+        seed_store(&live, SNOWFLAKE, Some("bebou"));
+
+        let service = hook_service(&live);
+        let status = service.begin_setup(ctx.clone(), Value::Null).unwrap();
+        assert_eq!(status.state, "ready");
+        assert_eq!(status.account_id, SNOWFLAKE);
+        assert_eq!(status.account_display_name, "bebou");
+
+        // The session it adopted is still there, and it is now the account the
+        // config points at, labelled with the name the hook read.
+        assert!(live
+            .join("Local Storage")
+            .join("leveldb")
+            .join("000003.log")
+            .exists());
+        assert_eq!(
+            config_bridge::current_account(&*ctx, "discord").as_deref(),
+            Some(SNOWFLAKE)
+        );
+        let accounts = service.read_accounts(&*ctx).unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].label, "bebou");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_session_that_already_belongs_to_an_account_is_not_adopted_twice() {
+        let _config = config_guard();
+        let root = scratch("hook-adopt-once");
+        let live = root.join("live");
+        let ctx: AppCtx = Arc::new(TempCtx { root: root.clone() });
+        seed_store(&live, SNOWFLAKE, Some("bebou"));
+
+        let service = hook_service(&live);
+        service.begin_setup(ctx.clone(), Value::Null).unwrap();
+
+        // Second run: a current account is recorded, so the flow clears the
+        // live session and waits for a sign-in instead of adopting again.
+        let status = service.begin_setup(ctx.clone(), Value::Null).unwrap();
+        assert_eq!(status.state, "waiting_for_client");
+        assert_eq!(service.read_accounts(&*ctx).unwrap().len(), 1);
+        assert!(!live.join("Local Storage").join("leveldb").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_hand_off_argument_is_passed_only_to_the_binary_that_understands_it() {
+        let launch: super::super::schema::Launch = serde_json::from_value(serde_json::json!({
+            "args": ["--processStart", "Client.exe"],
+            "argsOnlyFor": "Update.exe",
+        }))
+        .unwrap();
+        assert_eq!(launch.args_for(Path::new("C:/App/Update.exe")).len(), 2);
+        assert!(launch.args_for(Path::new("C:/App/Client.exe")).is_empty());
     }
 }

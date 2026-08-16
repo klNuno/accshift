@@ -8,12 +8,10 @@
 //! Shipped descriptors are compiled in and read-only. Every one of them is
 //! validated by the test at the bottom of this file, so a broken descriptor
 //! fails the build rather than a user's switch.
-//!
-//! Steam stays hand-written: VDF parsing, ban checks, CS2 and bulk edit are not
-//! a file-copy problem and would need more escape hatches than data.
 
 pub mod config_bridge;
 pub mod engine;
+pub mod hooks;
 pub mod paths;
 pub mod plan;
 pub mod reg;
@@ -30,6 +28,7 @@ const EMBEDDED: &[(&str, &str)] = &[
     ("jagex.json", include_str!("descriptors/jagex.json")),
     ("epic.json", include_str!("descriptors/epic.json")),
     ("ubisoft.json", include_str!("descriptors/ubisoft.json")),
+    ("discord.json", include_str!("descriptors/discord.json")),
 ];
 
 /// Parses every shipped descriptor, keeping the failures rather than hiding
@@ -131,6 +130,7 @@ mod tests {
             (ids::JAGEX, "Jagex", "Jagex Launcher"),
             (ids::EPIC, "Epic", "Epic Games Launcher"),
             (ids::UBISOFT, "Ubisoft", "Ubisoft Connect"),
+            (ids::DISCORD, "Discord", "Discord"),
         ] {
             let descriptor = loaded.iter().find(|d| d.id == id).unwrap();
             assert_eq!(descriptor.short_name, short_name);
@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn every_shipped_platform_has_a_service_on_windows() {
         let ids: Vec<&str> = services().iter().map(|s| s.id()).collect();
-        for expected in ["gog", "jagex", "epic", "ubisoft"] {
+        for expected in ["gog", "jagex", "epic", "ubisoft", "discord"] {
             assert!(ids.contains(&expected), "{expected} has no service");
         }
     }

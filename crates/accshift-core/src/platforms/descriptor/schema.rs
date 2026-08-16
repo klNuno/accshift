@@ -10,11 +10,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
 
+use super::hooks;
+
 /// Schema version this build understands. A descriptor declaring anything else
 /// is refused rather than interpreted with the wrong meaning.
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 
-/// Platforms allowed to name a `nativeHook`. The escape hatch exists for the
+/// Platforms allowed to name a native hook. The escape hatch exists for the
 /// two clients whose identity discovery cannot be expressed as data (Riot's
 /// local HTTPS API, Discord's leveldb scan). Opening it wider would turn the
 /// descriptors back into code.
@@ -135,10 +137,6 @@ pub struct OsProfile {
     pub launch: Option<Launch>,
     #[serde(default)]
     pub setup: Setup,
-    /// Name of a compiled-in step this descriptor delegates to. Restricted to
-    /// [`NATIVE_HOOK_ALLOWLIST`].
-    #[serde(default)]
-    pub native_hook: Option<String>,
 }
 
 /// The sandbox. Every path a descriptor reads or writes as state must sit
@@ -326,8 +324,14 @@ pub enum IdentitySource {
         #[serde(default)]
         near_word: String,
     },
-    /// Discovery needs code the descriptor cannot express.
-    NativeHook { name: String },
+    /// Discovery needs code the descriptor cannot express. `name` picks one of
+    /// the compiled hooks; `paths` supplies the locations it works on, so the
+    /// hook stays inside the sandbox instead of building paths of its own.
+    NativeHook {
+        name: String,
+        #[serde(default)]
+        paths: BTreeMap<String, PathTemplate>,
+    },
 }
 
 fn default_tail_bytes() -> u64 {
@@ -411,6 +415,11 @@ pub struct State {
     /// sign-in show the wrong name, or fail outright.
     #[serde(default)]
     pub caches: Vec<PathTemplate>,
+    /// Conditions that must all hold for a capture to run at all. A session the
+    /// user signed out of by hand would otherwise be captured as an empty
+    /// snapshot, overwriting the good one taken while they were signed in.
+    #[serde(default)]
+    pub capture_when: Vec<Condition>,
 }
 
 impl State {
@@ -494,6 +503,11 @@ pub struct Close {
     /// Extra wait after the last exit, so exit-time flushes land.
     #[serde(default = "default_settle_ms")]
     pub settle_ms: u64,
+    /// Close the launcher before the outgoing account is captured, instead of
+    /// after. Clients that keep their session in memory and only write it out
+    /// on exit are captured empty otherwise.
+    #[serde(default)]
+    pub before_capture: bool,
 }
 
 impl Default for Close {
@@ -502,6 +516,7 @@ impl Default for Close {
             processes: Vec::new(),
             timeout_ms: default_quit_timeout_ms(),
             settle_ms: default_settle_ms(),
+            before_capture: false,
         }
     }
 }
@@ -521,10 +536,34 @@ fn default_settle_ms() -> u64 {
 pub struct Launch {
     #[serde(default)]
     pub args: Vec<String>,
+    /// Pass `args` only when the resolved binary carries this name, empty to
+    /// always pass them. A launcher reached through an updater stub needs a
+    /// hand-off argument the real client does not understand, and the user's
+    /// path override may well point straight at the real client.
+    #[serde(default)]
+    pub args_only_for: String,
     /// Start the process in the directory holding the binary. Some launchers
     /// resolve their own resources relative to it.
     #[serde(default = "default_true")]
     pub working_directory_is_install_dir: bool,
+}
+
+impl Launch {
+    /// The arguments to pass to the binary that was actually resolved.
+    pub fn args_for(&self, executable: &std::path::Path) -> &[String] {
+        if self.args_only_for.is_empty() {
+            return &self.args;
+        }
+        let matches = executable
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case(&self.args_only_for));
+        if matches {
+            &self.args
+        } else {
+            &[]
+        }
+    }
 }
 
 /// The "sign in to add an account" flow.
@@ -549,6 +588,12 @@ pub struct Setup {
     /// accounts appear by signing in, others only through this flow.
     #[serde(default)]
     pub missing_snapshot_hint: String,
+    /// When the flow starts on a session nothing tracks yet, take that session
+    /// as the new account instead of wiping it and asking the user to sign in
+    /// again. Without this, adding a first account signs the user out of the
+    /// one they were already using.
+    #[serde(default)]
+    pub adopt_signed_in: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -574,6 +619,10 @@ pub enum Condition {
     /// Holds as soon as one of the nested conditions does. Launchers that write
     /// a paired credential set may refresh either half on a sign-in.
     AnyOf { conditions: Vec<Condition> },
+    /// Holds once the flow has been running this long. Clients that write their
+    /// session store the instant they open need it: without a floor, the write
+    /// that happens at launch reads as a sign-in.
+    SinceStart { ms: u64 },
 }
 
 fn default_true() -> bool {
@@ -816,22 +865,17 @@ impl OsProfile {
         field: &str,
         platform_id: &str,
     ) -> Result<(), DescriptorError> {
-        if let Some(hook) = &self.native_hook {
+        // The escape hatch is per platform, and it is checked here rather than
+        // where the source is validated so the allowlist reads once.
+        if let IdentitySource::NativeHook { name, .. } = &self.identity.source {
             if !NATIVE_HOOK_ALLOWLIST.contains(&platform_id) {
                 return Err(DescriptorError::new(
                     source,
-                    format!("{field}.nativeHook"),
+                    format!("{field}.identity.source.name"),
                     format!(
-                        "expected no native hook: only {} may name one, found `{hook}` on `{platform_id}`",
+                        "expected no native hook: only {} may name one, found `{name}` on `{platform_id}`",
                         NATIVE_HOOK_ALLOWLIST.join(", ")
                     ),
-                ));
-            }
-            if hook.trim().is_empty() {
-                return Err(DescriptorError::new(
-                    source,
-                    format!("{field}.nativeHook"),
-                    "expected a hook name, found an empty string",
                 ));
             }
         }
@@ -881,6 +925,24 @@ impl OsProfile {
         self.identity
             .validate(source, &format!("{field}.identity"), &self.roots)?;
         self.validate_state(source, field)?;
+
+        if let Some(launch) = &self.launch {
+            let guard = launch.args_only_for.trim();
+            if !guard.is_empty() && guard.contains(['/', '\\']) {
+                return Err(DescriptorError::new(
+                    source,
+                    format!("{field}.launch.argsOnlyFor"),
+                    format!("expected a bare binary name, found `{guard}`"),
+                ));
+            }
+            if !guard.is_empty() && launch.args.is_empty() {
+                return Err(DescriptorError::new(
+                    source,
+                    format!("{field}.launch.args"),
+                    "expected the arguments `argsOnlyFor` guards, found none",
+                ));
+            }
+        }
 
         for (index, process) in self.close.processes.iter().enumerate() {
             if process.trim().is_empty() || process.contains(['/', '\\']) {
@@ -932,6 +994,13 @@ impl OsProfile {
             let at = format!("{field}.state.caches[{index}]");
             path.validate(source, &at)?;
             validate_in_file_roots(source, &at, path, &self.roots)?;
+        }
+        for (index, condition) in self.state.capture_when.iter().enumerate() {
+            condition.validate(
+                source,
+                &format!("{field}.state.captureWhen[{index}]"),
+                &self.roots,
+            )?;
         }
         for (index, item) in self.state.registry_values.iter().enumerate() {
             let at = format!("{field}.state.registryValues[{index}]");
@@ -1159,13 +1228,26 @@ impl Identity {
                     ));
                 }
             }
-            IdentitySource::NativeHook { name } => {
-                if name.trim().is_empty() {
-                    return Err(DescriptorError::new(
-                        source,
-                        format!("{field}.source.name"),
-                        "expected a hook name, found an empty string",
-                    ));
+            IdentitySource::NativeHook { name, paths } => {
+                let hook = validate_hook_name(source, &format!("{field}.source.name"), name)?;
+                // The hook only ever sees paths the descriptor declared here,
+                // so they are held to the sandbox like any other.
+                for (key, path) in paths {
+                    let at = format!("{field}.source.paths.{key}");
+                    path.validate(source, &at)?;
+                    validate_in_file_roots(source, &at, path, roots)?;
+                }
+                for required in hook.required_paths() {
+                    if !paths.contains_key(*required) {
+                        return Err(DescriptorError::new(
+                            source,
+                            format!("{field}.source.paths"),
+                            format!(
+                                "expected a `{required}` path for hook `{name}`, found {}",
+                                describe_keys(paths)
+                            ),
+                        ));
+                    }
                 }
             }
         }
@@ -1204,12 +1286,57 @@ impl Condition {
                 }
                 Ok(())
             }
+            Condition::SinceStart { ms } => {
+                if *ms == 0 {
+                    return Err(DescriptorError::new(
+                        source,
+                        format!("{field}.ms"),
+                        "expected a delay above zero, found 0: a condition that always holds is not one",
+                    ));
+                }
+                Ok(())
+            }
         }
     }
 }
 
 /// Name of the placeholder standing for the launcher's install directory.
 pub const INSTALL_DIR: &str = "installDir";
+
+/// Resolves a hook name against the compiled registry. A descriptor naming a
+/// hook this build does not have would otherwise be a step that silently does
+/// nothing on the machine where it matters.
+fn validate_hook_name(
+    source: &str,
+    field: &str,
+    name: &str,
+) -> Result<&'static dyn hooks::NativeHook, DescriptorError> {
+    if name.trim().is_empty() {
+        return Err(DescriptorError::new(
+            source,
+            field,
+            "expected a hook name, found an empty string",
+        ));
+    }
+    hooks::hook(name).ok_or_else(|| {
+        DescriptorError::new(
+            source,
+            field,
+            format!(
+                "expected one of {}, found `{name}`",
+                hooks::names().join(", ")
+            ),
+        )
+    })
+}
+
+fn describe_keys(paths: &BTreeMap<String, PathTemplate>) -> String {
+    if paths.is_empty() {
+        "none".to_string()
+    } else {
+        paths.keys().cloned().collect::<Vec<_>>().join(", ")
+    }
+}
 
 fn validate_snapshot_name(source: &str, field: &str, name: &str) -> Result<(), DescriptorError> {
     let ok = !name.trim().is_empty()
@@ -1481,13 +1608,23 @@ mod tests {
         assert_eq!(err.field, "os.windows.detect");
     }
 
+    /// A `nativeHook` identity source naming the one compiled hook, on the
+    /// demo descriptor's own roots.
+    fn hook_source() -> serde_json::Value {
+        serde_json::json!({
+            "kind": "nativeHook",
+            "name": "discord-leveldb",
+            "paths": { "leveldb": "${LOCALAPPDATA}/Demo/store" },
+        })
+    }
+
     #[test]
     fn native_hook_is_refused_outside_the_allowlist() {
         let err = with_windows(|v| {
-            v["os"]["windows"]["nativeHook"] = serde_json::json!("scan_leveldb");
+            v["os"]["windows"]["identity"]["source"] = hook_source();
         })
         .unwrap_err();
-        assert_eq!(err.field, "os.windows.nativeHook");
+        assert_eq!(err.field, "os.windows.identity.source.name");
         assert!(err.problem.contains("riot, discord"), "{}", err.problem);
     }
 
@@ -1495,13 +1632,63 @@ mod tests {
     fn native_hook_is_accepted_for_the_two_platforms_entitled_to_one() {
         let descriptor = with_windows(|v| {
             v["id"] = serde_json::json!("discord");
-            v["os"]["windows"]["nativeHook"] = serde_json::json!("scan_leveldb");
+            v["os"]["windows"]["identity"]["source"] = hook_source();
         })
         .unwrap();
-        assert_eq!(
-            descriptor.os[&Os::Windows].native_hook.as_deref(),
-            Some("scan_leveldb")
+        match &descriptor.os[&Os::Windows].identity.source {
+            IdentitySource::NativeHook { name, paths } => {
+                assert_eq!(name, "discord-leveldb");
+                assert!(paths.contains_key("leveldb"));
+            }
+            other => panic!("expected a native hook source, found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_hook_this_build_does_not_have_names_the_field_and_the_known_names() {
+        let err = with_windows(|v| {
+            v["id"] = serde_json::json!("discord");
+            v["os"]["windows"]["identity"]["source"] = serde_json::json!({
+                "kind": "nativeHook",
+                "name": "scan_leveldb",
+                "paths": { "leveldb": "${LOCALAPPDATA}/Demo/store" },
+            });
+        })
+        .unwrap_err();
+        assert_eq!(err.field, "os.windows.identity.source.name");
+        assert!(err.problem.contains("discord-leveldb"), "{}", err.problem);
+    }
+
+    #[test]
+    fn a_hook_missing_the_path_it_works_on_is_refused() {
+        let err = with_windows(|v| {
+            v["id"] = serde_json::json!("discord");
+            v["os"]["windows"]["identity"]["source"] = serde_json::json!({
+                "kind": "nativeHook",
+                "name": "discord-leveldb",
+            });
+        })
+        .unwrap_err();
+        assert_eq!(err.field, "os.windows.identity.source.paths");
+        assert!(
+            err.problem.contains("`leveldb`") && err.problem.contains("none"),
+            "{}",
+            err.problem
         );
+    }
+
+    #[test]
+    fn a_hook_path_outside_the_roots_is_refused() {
+        let err = with_windows(|v| {
+            v["id"] = serde_json::json!("discord");
+            v["os"]["windows"]["identity"]["source"] = serde_json::json!({
+                "kind": "nativeHook",
+                "name": "discord-leveldb",
+                "paths": { "leveldb": "${APPDATA}/Elsewhere/store" },
+            });
+        })
+        .unwrap_err();
+        assert_eq!(err.field, "os.windows.identity.source.paths.leveldb");
     }
 
     #[test]
