@@ -38,19 +38,17 @@ pub mod ids {
 // macOS (its config format is identical; only the paths and launcher differ).
 #[cfg(any(windows, target_os = "macos"))]
 pub mod battle_net;
+/// Platforms described by a JSON descriptor and run by a single engine. GOG
+/// and Jagex live here instead of in a module of their own.
+pub mod descriptor;
 #[cfg(windows)]
 pub mod discord;
 #[cfg(windows)]
 pub mod epic;
 #[cfg(windows)]
-pub mod gog;
-#[cfg(windows)]
-pub mod jagex;
-#[cfg(windows)]
 pub mod riot;
 #[cfg(windows)]
 pub mod roblox;
-#[cfg(windows)]
 pub(crate) mod setup_jobs;
 pub mod steam;
 #[cfg(windows)]
@@ -232,6 +230,18 @@ pub trait PlatformService: Send + Sync {
     ) -> Result<(), PlatformError> {
         Err(PlatformError::other("Account labeling not supported"))
     }
+
+    /// Everything switching to `account_id` would read, copy, write and close,
+    /// without doing any of it.
+    ///
+    /// Only descriptor-driven platforms answer this today: the hand-written
+    /// modules would each need their own plan, and the point of the descriptors
+    /// is that they no longer have to.
+    fn dry_run(&self, _app: AppCtx, _account_id: &str) -> Result<Value, PlatformError> {
+        Err(PlatformError::other(
+            "Dry run is only available for platforms described by a descriptor",
+        ))
+    }
 }
 
 fn platform_registry() -> &'static HashMap<&'static str, &'static dyn PlatformService> {
@@ -251,9 +261,19 @@ fn platform_registry() -> &'static HashMap<&'static str, &'static dyn PlatformSe
             map.insert(ids::UBISOFT, &ubisoft::UBISOFT_SERVICE);
             map.insert(ids::ROBLOX, &roblox::ROBLOX_SERVICE);
             map.insert(ids::EPIC, &epic::EPIC_SERVICE);
-            map.insert(ids::GOG, &gog::GOG_SERVICE);
-            map.insert(ids::JAGEX, &jagex::JAGEX_SERVICE);
             map.insert(ids::DISCORD, &discord::DISCORD_SERVICE);
+        }
+        // Descriptor-driven platforms register last so a hand-written module
+        // always wins: converting one means deleting its module, never having
+        // two services answer for the same id.
+        for service in descriptor::services() {
+            let id = ids::ALL
+                .iter()
+                .find(|known| **known == service.id())
+                .copied()
+                .unwrap_or_else(|| Box::leak(service.id().to_string().into_boxed_str()));
+            map.entry(id)
+                .or_insert(*service as &'static dyn PlatformService);
         }
         map
     })

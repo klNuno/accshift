@@ -1,0 +1,86 @@
+{
+  "id": "jagex",
+  "schemaVersion": 1,
+  "name": "Jagex Launcher",
+  "shortName": "Jagex",
+  "os": {
+    "windows": {
+      "roots": {
+        "files": ["${LOCALAPPDATA}/jagex launcher", "${LOCALAPPDATA}/Microsoft/Credentials"]
+      },
+      "detect": { "executableResolves": true },
+      "executable": {
+        "fileName": "JagexLauncher.exe",
+        "candidates": [
+          { "kind": "path", "template": "${ProgramFiles(x86)}/Jagex Launcher/JagexLauncher.exe" },
+          { "kind": "path", "template": "${ProgramFiles}/Jagex Launcher/JagexLauncher.exe" }
+        ]
+      },
+      "identity": {
+        "source": { "kind": "synthetic" },
+        "format": { "charset": "alphanumeric", "maxLength": 64 },
+        "current": "config"
+      },
+      "state": {
+        "files": [
+          {
+            "live": "${LOCALAPPDATA}/jagex launcher/settings.json",
+            "snapshot": "settings.json",
+            "snapshotMarker": true
+          },
+          {
+            "live": "${LOCALAPPDATA}/jagex launcher/launcher-win.production.json",
+            "snapshot": "launcher-win.production.json"
+          },
+          {
+            "live": "${LOCALAPPDATA}/Microsoft/Credentials/C5F6B4FF052E05B4F26961945E953169",
+            "snapshot": "credman_blob.bin",
+            "clearOnSetup": true,
+            "snapshotMarker": true,
+            "removeLiveBeforeRestore": true
+          }
+        ],
+        "directories": [
+          {
+            "live": "${LOCALAPPDATA}/jagex launcher/auth",
+            "snapshot": "auth",
+            "clearOnSetup": true,
+            "snapshotMarker": true
+          }
+        ]
+      },
+      "close": {
+        "processes": ["JagexLauncher.exe"],
+        "timeoutMs": 8000,
+        "settleMs": 500
+      },
+      "launch": {},
+      "setup": {
+        "trigger": [
+          {
+            "kind": "pathNonEmpty",
+            "path": "${LOCALAPPDATA}/Microsoft/Credentials/C5F6B4FF052E05B4F26961945E953169"
+          },
+          {
+            "kind": "pathNonEmpty",
+            "path": "${LOCALAPPDATA}/jagex launcher/auth",
+            "recursive": true
+          }
+        ],
+        "confirm": [
+          {
+            "kind": "pathNonEmpty",
+            "path": "${LOCALAPPDATA}/Microsoft/Credentials/C5F6B4FF052E05B4F26961945E953169"
+          },
+          {
+            "kind": "pathNonEmpty",
+            "path": "${LOCALAPPDATA}/jagex launcher/auth",
+            "recursive": true
+          }
+        ],
+        "displayNameFromId": false,
+        "missingSnapshotHint": "Add this account through setup first."
+      }
+    }
+  }
+}

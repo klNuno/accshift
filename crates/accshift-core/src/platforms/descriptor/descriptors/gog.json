@@ -1,0 +1,115 @@
+{
+  "id": "gog",
+  "schemaVersion": 1,
+  "name": "GOG Galaxy",
+  "shortName": "GOG",
+  "os": {
+    "windows": {
+      "roots": {
+        "files": ["${LOCALAPPDATA}/GOG.com", "${ProgramData}/GOG.com"],
+        "registry": [{ "root": "HKCU", "key": "Software\\GOG.com\\Galaxy" }]
+      },
+      "detect": { "executableResolves": true },
+      "executable": {
+        "fileName": "GalaxyClient.exe",
+        "candidates": [
+          { "kind": "path", "template": "${ProgramFiles(x86)}/GOG Galaxy/GalaxyClient.exe" },
+          { "kind": "path", "template": "${ProgramFiles}/GOG Galaxy/GalaxyClient.exe" },
+          {
+            "kind": "registry",
+            "root": "HKLM",
+            "key": "SOFTWARE\\WOW6432Node\\GOG.com\\GalaxyClient\\paths",
+            "value": "client"
+          },
+          {
+            "kind": "registry",
+            "root": "HKLM",
+            "key": "SOFTWARE\\GOG.com\\GalaxyClient\\paths",
+            "value": "client"
+          }
+        ]
+      },
+      "identity": {
+        "source": {
+          "kind": "registry",
+          "root": "HKCU",
+          "key": "Software\\GOG.com\\Galaxy\\settings",
+          "value": "userId"
+        },
+        "format": { "charset": "digits", "maxLength": 32 },
+        "current": "identity"
+      },
+      "state": {
+        "files": [
+          {
+            "live": "${LOCALAPPDATA}/GOG.com/Galaxy/Configuration/config.json",
+            "snapshot": "config.json",
+            "clearOnSetup": true,
+            "snapshotMarker": true,
+            "clearSnapshotWhenSourceMissing": false
+          }
+        ],
+        "registryValues": [
+          {
+            "root": "HKCU",
+            "key": "Software\\GOG.com\\Galaxy",
+            "value": "refreshToken",
+            "snapshot": "registry_refresh_token.txt",
+            "clearOnSetup": true
+          },
+          {
+            "root": "HKCU",
+            "key": "Software\\GOG.com\\Galaxy\\settings",
+            "value": "username",
+            "snapshot": "registry_username.txt",
+            "clearOnSetup": true
+          },
+          {
+            "root": "HKCU",
+            "key": "Software\\GOG.com\\Galaxy\\settings",
+            "value": "userId",
+            "snapshot": "registry_user_id.txt",
+            "clearOnSetup": true,
+            "snapshotMarker": true
+          }
+        ],
+        "directories": [
+          {
+            "live": "${ProgramData}/GOG.com/Galaxy/webcache/common",
+            "snapshot": "webcache-common",
+            "clearOnSetup": true
+          },
+          {
+            "live": "${ProgramData}/GOG.com/Galaxy/storage",
+            "snapshot": "storage",
+            "clearOnSetup": true
+          }
+        ]
+      },
+      "close": {
+        "processes": [
+          "GalaxyClient.exe",
+          "GalaxyClientService.exe",
+          "GalaxyCommunication.exe",
+          "GOG Galaxy Notifications Renderer.exe"
+        ],
+        "timeoutMs": 8000,
+        "settleMs": 500
+      },
+      "launch": {},
+      "setup": {
+        "trigger": [{ "kind": "newIdentity" }],
+        "confirm": [
+          {
+            "kind": "pathFresh",
+            "path": "${LOCALAPPDATA}/GOG.com/Galaxy/Configuration/config.json",
+            "windowMs": 300000
+          },
+          { "kind": "identityPresent" }
+        ],
+        "displayNameFromId": true,
+        "missingSnapshotHint": "Sign in to this account once first."
+      }
+    }
+  }
+}

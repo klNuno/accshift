@@ -554,6 +554,16 @@ fn local_config_unreadable() -> bool {
     LOCAL_CONFIG_UNREADABLE.load(std::sync::atomic::Ordering::SeqCst)
 }
 
+/// Serializes every test that reads or writes config, wherever it lives. The
+/// poison flag above and the config cache are process-global, so a config read
+/// from another module's test clears the flag mid-assertion here and the
+/// poisoning tests fail for reasons that have nothing to do with them.
+#[cfg(test)]
+pub(crate) fn config_io_test_mutex() -> &'static std::sync::Mutex<()> {
+    static MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    MUTEX.get_or_init(|| std::sync::Mutex::new(()))
+}
+
 fn file_sig(path: &std::path::Path) -> FileSig {
     let meta = fs::metadata(path).ok()?;
     Some((meta.modified().ok()?, meta.len()))
@@ -1048,11 +1058,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         Arc::new(TempCtx { root })
-    }
-
-    fn config_io_test_mutex() -> &'static std::sync::Mutex<()> {
-        static MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        MUTEX.get_or_init(|| std::sync::Mutex::new(()))
     }
 
     #[test]
