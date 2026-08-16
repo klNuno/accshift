@@ -90,6 +90,11 @@ export const PT_BR_MESSAGES: Record<MessageKey, string> = {
   "settings.platformUnsupportedOs": "Sistema não suportado",
   "settings.platformNotImplemented": "Planejada",
   "settings.platformUserProvided": "Adicionada a partir da sua pasta de descritores",
+  "settings.customPlatforms": "Plataformas personalizadas",
+  "settings.customPlatformsHint":
+    "Os arquivos de descritor desta pasta são lidos ao iniciar o aplicativo.",
+  "settings.customPlatformsNone": "Nenhum descritor carregado desta pasta.",
+  "settings.customPlatformsProblems": "Arquivos que não carregaram",
   "settings.dataRefresh": "Atualização de dados",
   "settings.avatarRefresh": "Atualizar avatares",
   "settings.banCheckDelay": "Intervalo da checagem de banimentos",

@@ -90,6 +90,11 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.platformUnsupportedOs": "OS non supporté",
   "settings.platformNotImplemented": "Prévu",
   "settings.platformUserProvided": "Ajoutée depuis votre dossier de descripteurs",
+  "settings.customPlatforms": "Plateformes personnalisées",
+  "settings.customPlatformsHint":
+    "Les fichiers de descripteur de ce dossier sont lus au démarrage de l'application.",
+  "settings.customPlatformsNone": "Aucun descripteur chargé depuis ce dossier.",
+  "settings.customPlatformsProblems": "Fichiers non chargés",
   "settings.dataRefresh": "Rafraîchissement des données",
   "settings.avatarRefresh": "Rafraîchissement avatar",
   "settings.banCheckDelay": "Délai vérification ban",

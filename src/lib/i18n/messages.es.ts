@@ -90,6 +90,11 @@ export const ES_MESSAGES: Record<MessageKey, string> = {
   "settings.platformUnsupportedOs": "Sistema no compatible",
   "settings.platformNotImplemented": "Planeado",
   "settings.platformUserProvided": "Añadida desde tu carpeta de descriptores",
+  "settings.customPlatforms": "Plataformas personalizadas",
+  "settings.customPlatformsHint":
+    "Los archivos de descriptor de esta carpeta se leen al iniciar la aplicación.",
+  "settings.customPlatformsNone": "Ningún descriptor cargado desde esta carpeta.",
+  "settings.customPlatformsProblems": "Archivos que no se cargaron",
   "settings.dataRefresh": "Actualización de datos",
   "settings.avatarRefresh": "Actualizar avatares",
   "settings.banCheckDelay": "Intervalo de revisión de baneos",

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { getPlatformDefinition } from "$lib/platforms/registry";
+  import { getBootPayload } from "$lib/app/bootPayload";
   import { ALL_PLATFORMS } from "./store";
   import type { MessageKey, TranslationParams } from "$lib/i18n";
   import type { AppSettings } from "./types";
@@ -65,6 +66,23 @@
     if (definition.userProvided) return t("settings.platformUserProvided");
     return "";
   }
+
+  // What the backend read in the descriptor folder at startup. A file that was
+  // refused says so here or nowhere: the engine names the offending field, and
+  // dropping that on the floor is exactly the silent failure descriptors are
+  // meant to replace.
+  const userPlatforms = getBootPayload()?.userPlatforms;
+
+  const descriptorProblems = [
+    ...(userPlatforms?.rejected ?? []).map((entry) => ({
+      name: entry.source,
+      detail: entry.field ? `${entry.field}: ${entry.problem}` : entry.problem,
+    })),
+    ...(userPlatforms?.skipped ?? []).map((entry) => ({
+      name: entry.id,
+      detail: entry.reason,
+    })),
+  ];
 
   function togglePlatform(id: string) {
     if (settings.enabledPlatforms.includes(id)) {
@@ -167,6 +185,33 @@
       </div>
     </button>
   </section>
+
+  {#if userPlatforms?.dir}
+    <section class="card card-wide">
+      <h3>{t("settings.customPlatforms")}</h3>
+      <div class="descriptor-head">
+        <p class="descriptor-hint">{t("settings.customPlatformsHint")}</p>
+        <p class="descriptor-dir">{userPlatforms.dir}</p>
+      </div>
+      {#if userPlatforms.loaded.length}
+        <ul class="descriptor-list">
+          {#each userPlatforms.loaded as descriptor (descriptor.id)}
+            <li><span class="descriptor-name">{descriptor.name}</span> <code>{descriptor.id}</code></li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="descriptor-hint">{t("settings.customPlatformsNone")}</p>
+      {/if}
+      {#if descriptorProblems.length}
+        <h4 class="descriptor-subtitle">{t("settings.customPlatformsProblems")}</h4>
+        <ul class="descriptor-list">
+          {#each descriptorProblems as problem (problem.name + problem.detail)}
+            <li><span class="descriptor-name">{problem.name}</span> <span class="descriptor-detail">{problem.detail}</span></li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+  {/if}
 </div>
 
 <style>
@@ -236,6 +281,54 @@
 
   .platform-search input::-webkit-search-cancel-button {
     -webkit-appearance: none;
+  }
+
+  .descriptor-head {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .descriptor-hint {
+    margin: 0;
+    font-size: 12px;
+    color: var(--fg-subtle);
+  }
+
+  /* Wraps rather than clipping: the point of showing the folder is that the
+     user can find it, and a truncated path does not help with that. */
+  .descriptor-dir {
+    margin: 0;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 11px;
+    color: var(--fg-muted);
+    overflow-wrap: anywhere;
+  }
+
+  .descriptor-subtitle {
+    margin: 4px 0 0;
+    font-size: 12px;
+    color: var(--fg-muted);
+  }
+
+  .descriptor-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+  }
+
+  .descriptor-name {
+    color: var(--fg);
+  }
+
+  .descriptor-detail,
+  .descriptor-list code {
+    color: var(--fg-subtle);
+    font-size: 11px;
   }
 
   .no-results {

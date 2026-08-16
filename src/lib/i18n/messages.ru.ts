@@ -89,6 +89,11 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "settings.platformUnsupportedOs": "ОС не поддерживается",
   "settings.platformNotImplemented": "В планах",
   "settings.platformUserProvided": "Добавлена из вашей папки дескрипторов",
+  "settings.customPlatforms": "Пользовательские платформы",
+  "settings.customPlatformsHint":
+    "Файлы дескрипторов в этой папке читаются при запуске приложения.",
+  "settings.customPlatformsNone": "Из этой папки не загружен ни один дескриптор.",
+  "settings.customPlatformsProblems": "Файлы, которые не загрузились",
   "settings.dataRefresh": "Обновление данных",
   "settings.avatarRefresh": "Обновление аватаров",
   "settings.banCheckDelay": "Задержка проверки банов",
