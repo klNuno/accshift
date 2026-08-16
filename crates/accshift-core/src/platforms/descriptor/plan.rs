@@ -4,11 +4,11 @@
 //! cannot drift from the real thing. Nothing here opens a file for writing,
 //! kills a process or starts one.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// What a step would do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PlanAction {
     /// Value read, nothing changed.
@@ -26,7 +26,7 @@ pub enum PlanAction {
 }
 
 /// What kind of thing a step points at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PlanTargetKind {
     File,
@@ -36,7 +36,10 @@ pub enum PlanTargetKind {
     Executable,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// A plan is serialized for the GUI and the CLI's `--json`, and read back by
+/// the CLI to render it. Both halves live here so the two never drift: a field
+/// left out of the JSON is a field that comes back as its default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanStep {
     pub action: PlanAction,
@@ -44,15 +47,15 @@ pub struct PlanStep {
     /// The live path, registry value or process name, fully resolved.
     pub target: String,
     /// Where the data goes or comes from, for a capture or a restore.
-    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub snapshot: String,
     /// Why this step would be skipped, or anything else worth reading.
-    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
 }
 
 /// Everything an operation would do, in the order it would do it.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DryRunPlan {
     pub platform_id: String,
@@ -192,6 +195,37 @@ mod tests {
         assert!(lines[0].contains("C:\\live\\config.json"));
         assert!(lines[0].contains("<- C:\\snap\\config.json"));
         assert!(lines[1].starts_with("close"));
+    }
+
+    #[test]
+    fn a_plan_survives_the_json_it_travels_as() {
+        // The CLI renders the plan it read back out of the envelope, so a
+        // field that does not round-trip is a line missing from the dry run.
+        let mut plan = DryRunPlan::new("gog", "switch", "123").with_roots(["C:\\root".to_string()]);
+        plan.path_step(
+            PlanAction::Capture,
+            PlanTargetKind::File,
+            Path::new("C:\\live\\config.json"),
+            Path::new("C:\\snap\\config.json"),
+            "not present",
+        );
+        plan.simple_step(
+            PlanAction::Close,
+            PlanTargetKind::Process,
+            "GalaxyClient.exe",
+            "",
+        );
+        plan.warn("No snapshot stored for account 123");
+
+        let json = serde_json::to_value(&plan).unwrap();
+        let back: DryRunPlan = serde_json::from_value(json).unwrap();
+
+        assert_eq!(back.render_lines(), plan.render_lines());
+        assert_eq!(back.roots, plan.roots);
+        assert_eq!(back.warnings, plan.warnings);
+        assert_eq!(back.platform_id, "gog");
+        assert_eq!(back.operation, "switch");
+        assert!(!back.applied);
     }
 
     #[test]

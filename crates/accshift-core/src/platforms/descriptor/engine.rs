@@ -1889,6 +1889,10 @@ impl PlatformService for DescriptorService {
         config_bridge::set_label(&app, &self.descriptor.id, &account_id, label).map_err(Into::into)
     }
 
+    fn supports_dry_run(&self) -> bool {
+        true
+    }
+
     fn dry_run(&self, app: AppCtx, account_id: &str) -> Result<Value, PlatformError> {
         let plan = self.plan_switch(&app, account_id)?;
         serde_json::to_value(plan).map_err(|e| PlatformError::other(e.to_string()))

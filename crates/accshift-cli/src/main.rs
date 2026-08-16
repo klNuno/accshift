@@ -7,6 +7,7 @@ mod telemetry;
 
 use accshift_core::error::PlatformErrorKind;
 use accshift_core::lock::{acquire_exclusive, LockError};
+use accshift_core::platforms::descriptor::plan::DryRunPlan;
 use accshift_core::platforms::get_service;
 use clap::{Parser, Subcommand};
 use context::CliAppContext;
@@ -92,6 +93,17 @@ enum Command {
         #[arg(long)]
         launch_options: Option<String>,
     },
+    /// List the descriptors in the user folder, and why any was refused.
+    Descriptors,
+    /// Print everything a switch would read, copy, write, close and launch,
+    /// without doing any of it.
+    #[command(name = "dry-run")]
+    DryRun {
+        /// Platform identifier (see `accshift platforms`).
+        platform: String,
+        /// Account identifier (see `accshift list <platform>`).
+        account_id: String,
+    },
 }
 
 impl Command {
@@ -102,6 +114,8 @@ impl Command {
             Command::List { .. } => "list",
             Command::Platforms => "platforms",
             Command::Switch { .. } => "switch",
+            Command::Descriptors => "descriptors",
+            Command::DryRun { .. } => "dry-run",
         }
     }
 }
@@ -145,6 +159,11 @@ fn main() -> ExitCode {
                 launch_options,
             },
         ),
+        Command::Descriptors => cmd_descriptors(format),
+        Command::DryRun {
+            platform,
+            account_id,
+        } => cmd_dry_run(format, &platform, &account_id),
     };
 
     if let Some(reporter) = reporter {
@@ -155,12 +174,18 @@ fn main() -> ExitCode {
 }
 
 fn build_ctx(format: Format, command: &str) -> Result<accshift_core::AppCtx, u8> {
-    CliAppContext::new()
+    let ctx = CliAppContext::new()
         .map(|c| Arc::new(c) as accshift_core::AppCtx)
         .map_err(|e| {
             emit_err(format, command, "io", &e);
             exit::IO
-        })
+        })?;
+    // Each invocation is a fresh process, so reading the descriptor folder
+    // here is the CLI's hot reload: a file dropped in a second ago is a
+    // platform this run already knows about. Failures are the report's
+    // business, not this one's; `accshift descriptors` prints them.
+    let _ = accshift_core::platforms::reload_user_platforms(&*ctx);
+    Ok(ctx)
 }
 
 fn cmd_list(format: Format, platform_id: &str, folder: Option<&str>) -> u8 {
@@ -412,41 +437,120 @@ fn cmd_switch(
         }
         Err(e) => {
             let message = e.to_string();
-            // Typed discriminant first: platforms that already tag their
-            // errors with `PlatformErrorKind::AccountNotFound` are classified
-            // without string scraping. The message matching below stays as a
-            // fallback for the platforms still emitting `Other` (their error
-            // chains are progressively being typed): several distinct
-            // failures share the "not found" substring (e.g.
-            // `AppError::UserdataNotFound` renders "User data folder not found",
-            // and "Steam setup not found" / "... session not found" are state
-            // errors, not unknown accounts). Match the precise per-platform
-            // "account/profile not found" messages instead of any "not found".
-            let unknown_account = e.kind == PlatformErrorKind::AccountNotFound
-                || message.contains("Invalid username") // Steam
-                || message.contains("account not found") // Battle.net, Roblox
-                || message.contains("profile not found") // Riot
-                || message.contains("No auth snapshot found for account") // Ubisoft, Epic
-                || message.contains("Invalid Ubisoft account UUID")
-                || message.contains("Invalid Epic account ID")
-                || message.contains("Invalid GOG account ID")
-                || message.contains("Invalid Jagex account ID")
-                || message.contains("Invalid Discord account ID");
-            let (code, status) = if unknown_account {
-                ("unknown_account", exit::UNKNOWN_ACCOUNT)
-            } else {
-                ("platform_error", exit::GENERIC)
-            };
+            let (code, status) = classify(&e, &message);
             emit_err(format, "switch", code, &message);
             status
         }
     }
 }
 
+/// Maps a platform failure onto the CLI's error code and exit status.
+///
+/// Typed discriminant first: platforms that already tag their errors with
+/// `PlatformErrorKind::AccountNotFound` are classified without string
+/// scraping. The message matching below stays as a fallback for the platforms
+/// still emitting `Other` (their error chains are progressively being typed):
+/// several distinct failures share the "not found" substring (e.g.
+/// `AppError::UserdataNotFound` renders "User data folder not found", and
+/// "Steam setup not found" / "... session not found" are state errors, not
+/// unknown accounts). Match the precise per-platform "account/profile not
+/// found" messages instead of any "not found".
+fn classify(error: &accshift_core::error::PlatformError, message: &str) -> (&'static str, u8) {
+    let unknown_account = error.kind == PlatformErrorKind::AccountNotFound
+        || message.contains("Invalid username") // Steam
+        || message.contains("account not found") // Battle.net, Roblox
+        || message.contains("profile not found") // Riot
+        || message.contains("No auth snapshot found for account") // Ubisoft, Epic
+        || message.contains("Invalid Ubisoft account UUID")
+        || message.contains("Invalid Epic account ID")
+        || message.contains("Invalid GOG account ID")
+        || message.contains("Invalid Jagex account ID")
+        || message.contains("Invalid Discord account ID");
+    if unknown_account {
+        ("unknown_account", exit::UNKNOWN_ACCOUNT)
+    } else {
+        ("platform_error", exit::GENERIC)
+    }
+}
+
+/// The dry run: the same walk over the same descriptor a switch would take,
+/// stopping short of every write.
+///
+/// Deliberately outside the operation lock. It changes nothing, so making it
+/// contend with a running switch would only teach users to run it less.
+fn cmd_dry_run(format: Format, platform_id: &str, account_id: &str) -> u8 {
+    let ctx = match build_ctx(format, "dry-run") {
+        Ok(c) => c,
+        Err(code) => return code,
+    };
+
+    if !settings::load(&*ctx).cli_enabled {
+        emit_err(format, "dry-run", "cli_disabled", CLI_DISABLED_MESSAGE);
+        return exit::CLI_DISABLED;
+    }
+
+    let service = match get_service(platform_id) {
+        Some(s) => s,
+        None => {
+            emit_err(
+                format,
+                "dry-run",
+                "platform_unavailable",
+                &format!("Unknown platform: {platform_id}"),
+            );
+            return exit::PLATFORM_UNAVAILABLE;
+        }
+    };
+
+    // Asked rather than inferred from the error text: a platform with no plan
+    // is a different answer from a plan that failed to build.
+    if !service.supports_dry_run() {
+        emit_err(
+            format,
+            "dry-run",
+            "dry_run_unsupported",
+            &format!("{platform_id} is not described by a descriptor, so it has no plan to show."),
+        );
+        return exit::GENERIC;
+    }
+
+    let value = match service.dry_run(ctx, account_id) {
+        Ok(v) => v,
+        Err(e) => {
+            let message = e.to_string();
+            let (code, status) = classify(&e, &message);
+            emit_err(format, "dry-run", code, &message);
+            return status;
+        }
+    };
+
+    match format {
+        Format::Json => {
+            emit_json_ok("dry-run", &value);
+            exit::OK
+        }
+        Format::Human => match serde_json::from_value::<DryRunPlan>(value) {
+            Ok(plan) => {
+                output::render_dry_run(&plan);
+                exit::OK
+            }
+            Err(e) => {
+                emit_err(format, "dry-run", "platform_error", &e.to_string());
+                exit::GENERIC
+            }
+        },
+    }
+}
+
 fn cmd_platforms(format: Format) -> u8 {
-    let available: Vec<&str> = accshift_core::platforms::ids::ALL
-        .iter()
-        .copied()
+    // Through `build_ctx`, so the listing includes the platforms the user
+    // added themselves rather than only the ones this build shipped with.
+    if let Err(code) = build_ctx(format, "platforms") {
+        return code;
+    }
+
+    let available: Vec<String> = accshift_core::platforms::all_ids()
+        .into_iter()
         .filter(|id| get_service(id).is_some())
         .collect();
 
@@ -455,5 +559,29 @@ fn cmd_platforms(format: Format) -> u8 {
         Format::Human => output::render_platforms(&available),
     }
 
+    exit::OK
+}
+
+/// What the user's descriptor folder holds, and what it refused.
+///
+/// The counterpart of the validation: a descriptor that does not load says so
+/// here, naming the file and the field, instead of a platform quietly missing
+/// from `accshift platforms`.
+fn cmd_descriptors(format: Format) -> u8 {
+    let ctx = match build_ctx(format, "descriptors") {
+        Ok(c) => c,
+        Err(code) => return code,
+    };
+
+    let report = accshift_core::platforms::reload_user_platforms(&*ctx);
+
+    match format {
+        Format::Json => emit_json_ok("descriptors", &report),
+        Format::Human => output::render_descriptors(&report),
+    }
+
+    // Zero even with rejected files: the command was asked what the folder
+    // holds and answered. A script reads `rejected`, it does not guess from a
+    // status that would also mean "could not look".
     exit::OK
 }

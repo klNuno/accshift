@@ -4,6 +4,8 @@
 //! Piped or with `--json`: a stable `accshift.v1` envelope on stdout.
 //! Errors always go to stderr so stdout stays parseable.
 
+use accshift_core::platforms::descriptor::plan::DryRunPlan;
+use accshift_core::platforms::UserPlatformReport;
 use is_terminal::IsTerminal;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -62,13 +64,51 @@ pub fn emit_err(format: Format, command: &str, code: &str, message: &str) {
 // Human renderers
 // ---------------------------------------------------------------------------
 
-pub fn render_platforms(platforms: &[&str]) {
+pub fn render_platforms(platforms: &[String]) {
     if platforms.is_empty() {
         println!("No platforms available on this OS.");
         return;
     }
     for id in platforms {
         println!("{id}");
+    }
+}
+
+/// The user's descriptor folder: where it is, what it gave, what it cost.
+pub fn render_descriptors(report: &UserPlatformReport) {
+    println!("Folder: {}", report.dir);
+
+    println!();
+    if report.loaded.is_empty() {
+        println!("No platforms added. Drop a .json descriptor in the folder above.");
+    } else {
+        println!("Added platforms:");
+        for id in &report.loaded {
+            println!("  {id}");
+        }
+    }
+
+    if !report.skipped.is_empty() {
+        println!();
+        println!("Read but not added:");
+        for skipped in &report.skipped {
+            println!("  {}: {}", skipped.id, skipped.reason);
+        }
+    }
+
+    if !report.rejected.is_empty() {
+        println!();
+        println!("Refused:");
+        for rejected in &report.rejected {
+            if rejected.field.is_empty() {
+                println!("  {}: {}", rejected.source, rejected.problem);
+            } else {
+                println!(
+                    "  {}: field `{}` {}",
+                    rejected.source, rejected.field, rejected.problem
+                );
+            }
+        }
     }
 }
 
@@ -140,6 +180,42 @@ pub fn render_accounts(
 
 pub fn render_switch_ok(platform_id: &str, account_id: &str) {
     println!("Switched {platform_id} to {account_id}.");
+}
+
+/// The dry run, read top to bottom: what stays untouched, then what would
+/// happen in order, then what would go wrong.
+pub fn render_dry_run(plan: &DryRunPlan) {
+    println!(
+        "Dry run: {} {} to {}. Nothing below is written.",
+        plan.operation, plan.platform_id, plan.account_id,
+    );
+
+    println!();
+    if plan.roots.is_empty() {
+        println!("Roots: none resolved on this machine.");
+    } else {
+        println!("Roots (a step outside these is refused):");
+        for root in &plan.roots {
+            println!("  {root}");
+        }
+    }
+
+    println!();
+    if plan.steps.is_empty() {
+        println!("No steps: the descriptor resolved nothing here.");
+    } else {
+        for line in plan.render_lines() {
+            println!("  {line}");
+        }
+    }
+
+    if !plan.warnings.is_empty() {
+        println!();
+        println!("Would not go through:");
+        for warning in &plan.warnings {
+            println!("  {warning}");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
