@@ -9,6 +9,7 @@ use tauri::Manager;
 
 mod app_runtime;
 mod commands;
+mod commands_diagnostics;
 mod commands_telemetry;
 mod tauri_context;
 mod telemetry_runtime;
@@ -420,6 +421,7 @@ fn main() {
             // Utility
             commands::open_url,
             commands::open_logs_folder,
+            commands_diagnostics::diagnostics,
             // Window
             commands::minimize_window,
             commands::toggle_maximize_window,

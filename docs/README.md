@@ -10,6 +10,8 @@ answers.
   does it print, and what does each exit code mean?
 - [analytics.md](./analytics.md): what does the app send, what does it never
   send, and how do I turn it off, export it or delete it?
+- [logging.md](./logging.md): what does a log record contain, how do I replay a
+  failed attempt from its identifier, and how much disk does the log use?
 
 Elsewhere:
 
