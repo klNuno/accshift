@@ -1,19 +1,23 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { MessageKey } from "$lib/i18n";
+import {
+  DENSITY_SCALE,
+  THEME_CONTRACT_VERSION,
+  THEME_TOKEN_SPECS,
+  type ThemeTokens,
+} from "./tokens";
+import {
+  parseThemeDocument,
+  resolveThemeTokens,
+  serializeThemeDocument,
+  type ThemeDocument,
+  type ThemeParseResult,
+} from "./schema";
+import midnightDocument from "./builtin/midnight.json";
+import glassDarkDocument from "./builtin/glass-dark.json";
 
-export interface ThemeTokens {
-  bgRgb: string;
-  bgCard: string;
-  bgCardHover: string;
-  bgMuted: string;
-  bgElevated: string;
-  fg: string;
-  fgMuted: string;
-  fgSubtle: string;
-  border: string;
-  danger: string;
-  afkText: string;
-}
+export type { ThemeTokens };
+export { THEME_CONTRACT_VERSION };
 
 export interface AppThemeDefinition {
   id: string;
@@ -24,12 +28,20 @@ export interface AppThemeDefinition {
   glass?: boolean;
   isCustom?: boolean;
   displayName?: string;
+  /** What the theme was resolved from: what export writes and the editor edits. */
+  document: ThemeDocument;
 }
 
+/** A theme file as it crosses the IPC boundary, identical to the on-disk shape. */
 export interface CustomThemePayload {
+  schemaVersion?: number;
   id: string;
   name: string;
+  author?: string | null;
+  version?: string | null;
   colorScheme: string;
+  extends?: string | null;
+  glass?: boolean | null;
   tokens: Record<string, string>;
 }
 
@@ -54,84 +66,102 @@ function hexToRgbTriplet(color: string): string {
   return `${r} ${g} ${b}`;
 }
 
-export const BUILT_IN_THEMES: AppThemeDefinition[] = [
+/**
+ * The two roots. Every other theme, built in or written by a user, is these
+ * plus a handful of overrides, and any token a theme fails to provide is taken
+ * from the root of its colour scheme. They are therefore the only token sets
+ * that must be complete, which `themes.test.ts` enforces.
+ */
+const DARK_TOKENS: ThemeTokens = {
+  bgRgb: "9 9 11",
+  bgCard: "#1c1c1f",
+  bgCardHover: "#252528",
+  bgMuted: "#27272a",
+  bgElevated: "#3f3f46",
+  fg: "#fafafa",
+  fgMuted: "#a1a1aa",
+  fgSubtle: "#71717a",
+  border: "#27272a",
+  danger: "#dc2626",
+  afkText: "#ffffff",
+  accent: "#2563eb",
+  accentFg: "#ffffff",
+  success: "#22c55e",
+  warning: "#eab308",
+  radiusSm: "4px",
+  radiusMd: "8px",
+  radiusLg: "12px",
+  elevationLow: "0 2px 8px rgb(0 0 0 / 0.18)",
+  elevationMedium: "0 8px 24px rgb(0 0 0 / 0.32)",
+  elevationHigh: "0 18px 48px rgb(0 0 0 / 0.45)",
+  density: "cozy",
+  fontUi: "Inter",
+};
+
+const LIGHT_TOKENS: ThemeTokens = {
+  bgRgb: "241 241 243",
+  bgCard: "#d8d8de",
+  bgCardHover: "#cfcfd7",
+  bgMuted: "#c4c4ce",
+  bgElevated: "#aeaebc",
+  fg: "#0b0b0f",
+  fgMuted: "#2b2b36",
+  fgSubtle: "#4e4e5d",
+  border: "#b8b8c5",
+  danger: "#dc2626",
+  afkText: "#000000",
+  accent: "#2563eb",
+  accentFg: "#ffffff",
+  // Light surfaces need the darker end of the scale: the vivid greens and
+  // ambers that read well on a dark card fall under 2:1 on a pale one.
+  success: "#15803d",
+  warning: "#a16207",
+  radiusSm: "4px",
+  radiusMd: "8px",
+  radiusLg: "12px",
+  elevationLow: "0 2px 8px rgb(0 0 0 / 0.10)",
+  elevationMedium: "0 8px 24px rgb(0 0 0 / 0.16)",
+  elevationHigh: "0 18px 48px rgb(0 0 0 / 0.22)",
+  density: "cozy",
+  fontUi: "Inter",
+};
+
+export const ROOT_TOKENS: Record<"dark" | "light", ThemeTokens> = {
+  dark: DARK_TOKENS,
+  light: LIGHT_TOKENS,
+};
+
+export const DEFAULT_THEME_ID = "dark";
+
+/**
+ * Built-in theme documents. `midnight` and `glass-dark` are loaded from JSON
+ * files written in the public theme format, the same one an exported theme
+ * uses: if the format could not express a shipped theme it would not be worth
+ * handing to users.
+ */
+const BUILT_IN_DOCUMENTS: ThemeDocument[] = [
   {
+    schemaVersion: THEME_CONTRACT_VERSION,
     id: "dark",
-    labelKey: "theme.dark",
+    name: "Dark",
     colorScheme: "dark",
-    tokens: {
-      bgRgb: "9 9 11",
-      bgCard: "#1c1c1f",
-      bgCardHover: "#252528",
-      bgMuted: "#27272a",
-      bgElevated: "#3f3f46",
-      fg: "#fafafa",
-      fgMuted: "#a1a1aa",
-      fgSubtle: "#71717a",
-      border: "#27272a",
-      danger: "#dc2626",
-      afkText: "#ffffff",
-    },
+    tokens: { ...DARK_TOKENS },
   },
   {
+    schemaVersion: THEME_CONTRACT_VERSION,
     id: "light",
-    labelKey: "theme.light",
+    name: "Light",
     colorScheme: "light",
-    tokens: {
-      bgRgb: "241 241 243",
-      bgCard: "#d8d8de",
-      bgCardHover: "#cfcfd7",
-      bgMuted: "#c4c4ce",
-      bgElevated: "#aeaebc",
-      fg: "#0b0b0f",
-      fgMuted: "#2b2b36",
-      fgSubtle: "#4e4e5d",
-      border: "#b8b8c5",
-      danger: "#dc2626",
-      afkText: "#000000",
-    },
+    tokens: { ...LIGHT_TOKENS },
   },
+  midnightDocument as ThemeDocument,
+  glassDarkDocument as ThemeDocument,
   {
-    id: "midnight",
-    labelKey: "theme.midnight",
-    colorScheme: "dark",
-    tokens: {
-      bgRgb: "10 14 28",
-      bgCard: "#141c30",
-      bgCardHover: "#1a2440",
-      bgMuted: "#1c2744",
-      bgElevated: "#283a5c",
-      fg: "#e4e8f0",
-      fgMuted: "#8892a8",
-      fgSubtle: "#5a6580",
-      border: "#1c2744",
-      danger: "#ef4444",
-      afkText: "#dce2f0",
-    },
-  },
-  {
-    id: "glass-dark",
-    labelKey: "theme.glassDark",
-    colorScheme: "dark",
-    glass: true,
-    tokens: {
-      bgRgb: "5 5 8",
-      bgCard: "#131318",
-      bgCardHover: "#1b1b22",
-      bgMuted: "#17171e",
-      bgElevated: "#2a2a34",
-      fg: "#f4f4f6",
-      fgMuted: "#aeaeba",
-      fgSubtle: "#7c7c88",
-      border: "#2c2c36",
-      danger: "#ef4444",
-      afkText: "#ffffff",
-    },
-  },
-  {
+    schemaVersion: THEME_CONTRACT_VERSION,
     id: "glass-light",
-    labelKey: "theme.glassLight",
+    name: "Glass Light",
     colorScheme: "light",
+    extends: "light",
     glass: true,
     tokens: {
       bgRgb: "236 238 244",
@@ -148,9 +178,11 @@ export const BUILT_IN_THEMES: AppThemeDefinition[] = [
     },
   },
   {
+    schemaVersion: THEME_CONTRACT_VERSION,
     id: "liquid-glass",
-    labelKey: "theme.liquidGlass",
+    name: "Liquid Glass",
     colorScheme: "dark",
+    extends: "dark",
     glass: true,
     tokens: {
       // Milky white surfaces at very low alpha (set in applyThemeToDocument):
@@ -169,69 +201,95 @@ export const BUILT_IN_THEMES: AppThemeDefinition[] = [
       afkText: "#f4f6f9",
     },
   },
-] as const;
-
-const DEFAULT_THEME_ID = "dark";
-const BUILT_IN_THEME_MAP = new Map(BUILT_IN_THEMES.map((theme) => [theme.id, theme]));
-const customThemes = new Map<string, AppThemeDefinition>();
-
-const REQUIRED_TOKEN_KEYS: (keyof ThemeTokens)[] = [
-  "bgRgb",
-  "bgCard",
-  "bgCardHover",
-  "bgMuted",
-  "bgElevated",
-  "fg",
-  "fgMuted",
-  "fgSubtle",
-  "border",
-  "danger",
-  "afkText",
 ];
 
-// Tokens converted via hexToRgbTriplet in applyThemeToDocument; must be 6-digit hex.
-const HEX_TOKEN_KEYS: (keyof ThemeTokens)[] = ["bgCard", "bgCardHover", "bgMuted", "bgElevated"];
-const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+const BUILT_IN_LABEL_KEYS: Record<string, MessageKey> = {
+  dark: "theme.dark",
+  light: "theme.light",
+  midnight: "theme.midnight",
+  "glass-dark": "theme.glassDark",
+  "glass-light": "theme.glassLight",
+  "liquid-glass": "theme.liquidGlass",
+};
 
-function isValidTokens(tokens: unknown): tokens is ThemeTokens {
-  if (!tokens || typeof tokens !== "object") return false;
-  const record = tokens as Record<string, unknown>;
-  return REQUIRED_TOKEN_KEYS.every(
-    (key) => typeof record[key] === "string" && (record[key] as string).trim().length > 0,
-  );
+const builtInDocuments = new Map(BUILT_IN_DOCUMENTS.map((document) => [document.id, document]));
+const customDocuments = new Map<string, ThemeDocument>();
+const resolvedCache = new Map<string, AppThemeDefinition>();
+
+export function getThemeDocument(id: string): ThemeDocument | undefined {
+  return customDocuments.get(id) ?? builtInDocuments.get(id);
+}
+
+/**
+ * Turns a document into the theme the app paints with. Unknown bases, cycles
+ * and holes are absorbed by the resolver, so this never fails: the worst a
+ * broken file can do is look exactly like the built-in it should have extended.
+ */
+export function themeFromDocument(document: ThemeDocument): AppThemeDefinition {
+  const resolved = resolveThemeTokens(document, getThemeDocument, ROOT_TOKENS);
+  const isCustom = !builtInDocuments.has(document.id);
+  return {
+    id: document.id,
+    labelKey: isCustom ? ("theme.custom" as MessageKey) : BUILT_IN_LABEL_KEYS[document.id],
+    colorScheme: document.colorScheme,
+    tokens: resolved.tokens,
+    glass: document.glass ? true : undefined,
+    isCustom: isCustom || undefined,
+    displayName: document.name,
+    document,
+  };
+}
+
+function resolveById(id: string): AppThemeDefinition | undefined {
+  const cached = resolvedCache.get(id);
+  if (cached) return cached;
+  const document = getThemeDocument(id);
+  if (!document) return undefined;
+  const theme = themeFromDocument(document);
+  resolvedCache.set(id, theme);
+  return theme;
 }
 
 export function getThemeDefinition(themeId: string | null | undefined): AppThemeDefinition {
-  if (!themeId) return BUILT_IN_THEME_MAP.get(DEFAULT_THEME_ID)!;
-  return (
-    customThemes.get(themeId) ??
-    BUILT_IN_THEME_MAP.get(themeId) ??
-    BUILT_IN_THEME_MAP.get(DEFAULT_THEME_ID)!
-  );
+  return (themeId ? resolveById(themeId) : undefined) ?? resolveById(DEFAULT_THEME_ID)!;
 }
 
 export function getAllThemes(): AppThemeDefinition[] {
-  const custom = [...customThemes.values()].filter((t) => !BUILT_IN_THEME_MAP.has(t.id));
-  return [...BUILT_IN_THEMES, ...custom];
+  return [
+    ...BUILT_IN_DOCUMENTS.map((document) => resolveById(document.id)!),
+    ...[...customDocuments.keys()]
+      .filter((id) => !builtInDocuments.has(id))
+      .map((id) => resolveById(id)!),
+  ];
 }
 
-export function applyCustomThemePayloads(payloads: CustomThemePayload[]): void {
+export const BUILT_IN_THEMES: AppThemeDefinition[] = BUILT_IN_DOCUMENTS.map((document) =>
+  resolveById(document.id)!,
+);
+
+/** Built-in themes are read only: editing one means editing a copy of it. */
+export function isBuiltInTheme(id: string): boolean {
+  return builtInDocuments.has(id);
+}
+
+function invalidateResolved() {
+  resolvedCache.clear();
   // A same-id theme can come back with new tokens; drop the applied-theme memo
   // so the next apply repaints instead of matching on a stale identity.
   resetAppliedThemeMemo();
-  customThemes.clear();
+}
+
+export function applyCustomThemePayloads(payloads: CustomThemePayload[]): void {
+  invalidateResolved();
+  customDocuments.clear();
   for (const payload of payloads) {
-    if (!isValidTokens(payload.tokens)) continue;
-    if (BUILT_IN_THEME_MAP.has(payload.id)) continue;
-    const colorScheme = payload.colorScheme === "light" ? "light" : "dark";
-    customThemes.set(payload.id, {
-      id: payload.id,
-      labelKey: "theme.custom" as MessageKey,
-      colorScheme,
-      tokens: payload.tokens as ThemeTokens,
-      isCustom: true,
-      displayName: payload.name,
-    });
+    // A file that fails to parse is skipped rather than surfaced: it was
+    // already on disk when the app started, and a modal at boot helps nobody.
+    // The editor and the import path report the same failures out loud.
+    const { document } = parseThemeDocument(payload);
+    if (!document) continue;
+    if (builtInDocuments.has(document.id)) continue;
+    customDocuments.set(document.id, document);
   }
 }
 
@@ -244,63 +302,56 @@ export async function loadCustomThemes(): Promise<void> {
   }
 }
 
-export async function saveCustomTheme(theme: AppThemeDefinition): Promise<void> {
-  if (BUILT_IN_THEME_MAP.has(theme.id)) {
-    throw new Error(`Cannot overwrite built-in theme: ${theme.id}`);
+export async function saveThemeDocument(document: ThemeDocument): Promise<void> {
+  if (builtInDocuments.has(document.id)) {
+    throw new Error(`Cannot overwrite built-in theme: ${document.id}`);
   }
   const payload: CustomThemePayload = {
-    id: theme.id,
-    name: theme.displayName ?? theme.id,
-    colorScheme: theme.colorScheme,
-    tokens: theme.tokens as unknown as Record<string, string>,
+    schemaVersion: document.schemaVersion,
+    id: document.id,
+    name: document.name,
+    author: document.author ?? null,
+    version: document.version ?? null,
+    colorScheme: document.colorScheme,
+    extends: document.extends ?? null,
+    glass: document.glass ?? null,
+    tokens: document.tokens as Record<string, string>,
   };
   await invoke("save_custom_theme", { theme: payload });
-  resetAppliedThemeMemo();
-  customThemes.set(theme.id, theme);
+  invalidateResolved();
+  customDocuments.set(document.id, document);
 }
 
 export async function deleteCustomTheme(themeId: string): Promise<void> {
   await invoke("delete_custom_theme", { themeId });
-  resetAppliedThemeMemo();
-  customThemes.delete(themeId);
+  invalidateResolved();
+  customDocuments.delete(themeId);
 }
 
+/** The shareable file: one self-contained JSON document, metadata included. */
 export function exportThemeJson(theme: AppThemeDefinition): string {
-  return JSON.stringify(
-    {
-      id: theme.id,
-      name: theme.displayName ?? theme.id,
-      colorScheme: theme.colorScheme,
-      tokens: theme.tokens,
-    },
-    null,
-    2,
-  );
+  return serializeThemeDocument(theme.document);
 }
 
-export function parseThemeJson(json: string): AppThemeDefinition | null {
-  try {
-    const raw = JSON.parse(json);
-    if (!raw || typeof raw !== "object") return null;
-    const id = typeof raw.id === "string" ? raw.id.trim() : "";
-    const name = typeof raw.name === "string" ? raw.name.trim() : "";
-    if (!id || !name) return null;
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(id)) return null;
-    if (!isValidTokens(raw.tokens)) return null;
-    if (!HEX_TOKEN_KEYS.every((key) => HEX_COLOR_RE.test((raw.tokens as ThemeTokens)[key].trim())))
-      return null;
-    const colorScheme = raw.colorScheme === "light" ? "light" : "dark";
-    return {
-      id,
-      labelKey: "theme.custom" as MessageKey,
-      colorScheme,
-      tokens: raw.tokens as ThemeTokens,
-      isCustom: true,
-      displayName: name,
-    };
-  } catch {
-    return null;
+export function importThemeJson(json: string): ThemeParseResult {
+  return parseThemeDocument(json);
+}
+
+/** An id derived from a name, unique against everything already registered. */
+export function suggestThemeId(name: string): string {
+  const base =
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48) || "theme";
+  let candidate = base;
+  let counter = 2;
+  while (getThemeDocument(candidate)) {
+    candidate = `${base}-${counter}`;
+    counter += 1;
   }
+  return candidate;
 }
 
 /** Fixed window fill per glass theme. The user slider only applies to regular
@@ -372,16 +423,18 @@ export function resolveThemeSurfaceOpacities(
 /** Inputs of the last application to the real document. The caller is an
  *  effect that also tracks locale, card outlines and the wallpaper snapshot,
  *  so it re-runs far more often than the theme actually changes; every such
- *  re-run rewrote ~20 root custom properties to the same values. Object
+ *  re-run rewrote ~30 root custom properties to the same values. Object
  *  identity is enough: theme definitions and token objects are replaced, never
- *  mutated in place (edits go through applyCustomThemePayloads / saveCustomTheme,
+ *  mutated in place (edits go through applyCustomThemePayloads / saveThemeDocument,
  *  which reset this). */
-let lastApplied: {
+interface AppliedTheme {
   theme: AppThemeDefinition;
   tokens: AppThemeDefinition["tokens"];
   opacity: number;
   backdropAvailable: boolean | undefined;
-} | null = null;
+}
+
+let lastApplied: AppliedTheme | null = null;
 
 export function resetAppliedThemeMemo() {
   lastApplied = null;
@@ -393,9 +446,10 @@ export function applyThemeToDocument(
   doc: Document = document,
   opts: { backdropAvailable?: boolean } = {},
 ) {
-  // Only memoize the real document; an explicitly passed doc (theme preview)
-  // always applies.
-  const memoizable = doc === document;
+  // Only memoize the real document; an explicitly passed doc (theme preview,
+  // tests) always applies. `globalThis.document` rather than the bare global so
+  // this stays callable where there is no DOM at all.
+  const memoizable = doc === globalThis.document;
   if (
     memoizable &&
     lastApplied &&
@@ -455,6 +509,21 @@ export function applyThemeToDocument(
   root.style.setProperty("--border", theme.tokens.border);
   root.style.setProperty("--danger", theme.tokens.danger);
   root.style.setProperty("--afk-text", theme.tokens.afkText);
+  root.style.setProperty("--accent", theme.tokens.accent);
+  root.style.setProperty("--accent-fg", theme.tokens.accentFg);
+  root.style.setProperty("--success", theme.tokens.success);
+  root.style.setProperty("--warning", theme.tokens.warning);
+  root.style.setProperty("--radius-sm", theme.tokens.radiusSm);
+  root.style.setProperty("--radius-md", theme.tokens.radiusMd);
+  root.style.setProperty("--radius-lg", theme.tokens.radiusLg);
+  root.style.setProperty("--elevation-low", theme.tokens.elevationLow);
+  root.style.setProperty("--elevation-medium", theme.tokens.elevationMedium);
+  root.style.setProperty("--elevation-high", theme.tokens.elevationHigh);
+  root.style.setProperty("--density-scale", String(DENSITY_SCALE[theme.tokens.density] ?? 1));
+  // The theme font goes in front of the base stack rather than replacing it:
+  // the tail of that stack is what covers Cyrillic and Han, and a theme is
+  // never asked to think about the Chinese UI.
+  root.style.setProperty("--font-ui", `${theme.tokens.fontUi}, var(--font-stack-base)`);
 
   if (memoizable) {
     lastApplied = {
@@ -465,3 +534,57 @@ export function applyThemeToDocument(
     };
   }
 }
+
+/**
+ * Live preview for the editor.
+ *
+ * The saved theme is applied by an effect in App.svelte that also knows
+ * whether a backdrop is available, which the editor does not. Rather than
+ * thread that down, the preview reuses the inputs of the last real apply and
+ * restores them on the way out, so cancelling puts back exactly what was on
+ * screen, Linux and failed-wallpaper cases included.
+ */
+let previewSnapshot: AppliedTheme | null = null;
+
+export function beginThemePreview(): void {
+  previewSnapshot = lastApplied;
+}
+
+export function previewThemeDocument(document: ThemeDocument): AppThemeDefinition {
+  const theme = themeFromDocument(document);
+  applyThemeToDocument(theme, previewSnapshot?.opacity ?? 100, globalThis.document, {
+    backdropAvailable: previewSnapshot?.backdropAvailable,
+  });
+  return theme;
+}
+
+export function endThemePreview(): void {
+  const snapshot = previewSnapshot;
+  previewSnapshot = null;
+  resetAppliedThemeMemo();
+  if (!snapshot) return;
+  applyThemeToDocument(snapshot.theme, snapshot.opacity, globalThis.document, {
+    backdropAvailable: snapshot.backdropAvailable,
+  });
+}
+
+/**
+ * Ends a preview by keeping it. Saving a theme that is already the selected
+ * one changes no setting, so nothing downstream re-applies: the editor hands
+ * the saved document back here instead, and what the preview painted becomes
+ * what the app is running.
+ */
+export function commitThemePreview(document: ThemeDocument): void {
+  const snapshot = previewSnapshot;
+  previewSnapshot = null;
+  resetAppliedThemeMemo();
+  applyThemeToDocument(
+    getThemeDefinition(document.id),
+    snapshot?.opacity ?? 100,
+    globalThis.document,
+    { backdropAvailable: snapshot?.backdropAvailable },
+  );
+}
+
+/** Token specs re-exported so consumers only ever import from one module. */
+export { THEME_TOKEN_SPECS };

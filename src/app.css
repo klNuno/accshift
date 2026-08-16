@@ -50,9 +50,13 @@
      Linux, where fontconfig hands out Noto Sans CJK *JP* by default and renders
      Chinese with Japanese glyph variants. Hiragino Sans GB covers the macOS
      images that ship without PingFang. */
-  font-family:
-    Inter, system-ui, Avenir, Helvetica, Arial, "Microsoft YaHei UI", "PingFang SC",
-    "Hiragino Sans GB", "Noto Sans CJK SC", "Noto Sans SC", "Noto Sans SC Subset", sans-serif;
+  --font-stack-base:
+    system-ui, Avenir, Helvetica, Arial, "Microsoft YaHei UI", "PingFang SC", "Hiragino Sans GB",
+    "Noto Sans CJK SC", "Noto Sans SC", "Noto Sans SC Subset", sans-serif;
+  /* The theme's own font token is prepended to that stack (see themes.ts), so
+     a theme picks the Latin face and never has to know about the CJK tail. */
+  --font-ui: Inter, var(--font-stack-base);
+  font-family: var(--font-ui);
   line-height: 1.5;
   font-weight: 400;
   font-synthesis: none;
@@ -76,11 +80,31 @@
   --border: #27272a;
   --danger: #dc2626;
   --afk-text: #ffffff;
-  --grid-card-width: 100px;
-  --grid-card-min-height: 136px;
-  --grid-card-padding: 8px;
-  --grid-card-radius: 8px;
-  --grid-card-avatar-size: 68px;
+
+  /* Theme contract, version 2. Every value here is the dark built-in, and is
+     overwritten on <html> by applyThemeToDocument as soon as a theme is
+     applied: these are what the app paints with before that lands, and what a
+     theme that omits a token silently falls back to. Each one is documented in
+     docs/theming.md. */
+  --accent: #2563eb;
+  --accent-fg: #ffffff;
+  --success: #22c55e;
+  --warning: #eab308;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --elevation-low: 0 2px 8px rgb(0 0 0 / 0.18);
+  --elevation-medium: 0 8px 24px rgb(0 0 0 / 0.32);
+  --elevation-high: 0 18px 48px rgb(0 0 0 / 0.45);
+  --density-scale: 1;
+
+  /* Card grid metrics, in terms of the shape tokens: density and the medium
+     radius are what a theme turns to reshape the account grid. */
+  --grid-card-width: calc(100px * var(--density-scale));
+  --grid-card-min-height: calc(136px * var(--density-scale));
+  --grid-card-padding: calc(8px * var(--density-scale));
+  --grid-card-radius: var(--radius-md);
+  --grid-card-avatar-size: calc(68px * var(--density-scale));
 
   /* Motion tokens. Entrances fade in place (opacity + scale or a small
      translateY). Never animate horizontal position: an element whose layout
@@ -109,6 +133,11 @@ html[data-motion="reduced"] *::after {
   transition-duration: 0.01ms !important;
   transition-delay: 0ms !important;
   scroll-behavior: auto !important;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--fg);
 }
 
 /* Placeholders must read as hints, not typed text. */
