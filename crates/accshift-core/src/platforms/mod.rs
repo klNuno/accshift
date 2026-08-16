@@ -38,21 +38,17 @@ pub mod ids {
 // macOS (its config format is identical; only the paths and launcher differ).
 #[cfg(any(windows, target_os = "macos"))]
 pub mod battle_net;
-/// Platforms described by a JSON descriptor and run by a single engine. GOG
-/// and Jagex live here instead of in a module of their own.
+/// Platforms described by a JSON descriptor and run by a single engine. GOG,
+/// Jagex, Epic and Ubisoft live here instead of in a module of their own.
 pub mod descriptor;
 #[cfg(windows)]
 pub mod discord;
-#[cfg(windows)]
-pub mod epic;
 #[cfg(windows)]
 pub mod riot;
 #[cfg(windows)]
 pub mod roblox;
 pub(crate) mod setup_jobs;
 pub mod steam;
-#[cfg(windows)]
-pub mod ubisoft;
 
 pub(crate) fn redact_id(value: &str) -> String {
     let chars: Vec<char> = value.chars().collect();
@@ -258,9 +254,7 @@ fn platform_registry() -> &'static HashMap<&'static str, &'static dyn PlatformSe
         {
             map.insert(ids::RIOT, &riot::RIOT_SERVICE);
             map.insert(ids::BATTLE_NET, &battle_net::BATTLE_NET_SERVICE);
-            map.insert(ids::UBISOFT, &ubisoft::UBISOFT_SERVICE);
             map.insert(ids::ROBLOX, &roblox::ROBLOX_SERVICE);
-            map.insert(ids::EPIC, &epic::EPIC_SERVICE);
             map.insert(ids::DISCORD, &discord::DISCORD_SERVICE);
         }
         // Descriptor-driven platforms register last so a hand-written module

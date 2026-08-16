@@ -198,6 +198,11 @@ pub struct Executable {
     pub file_name: String,
     #[serde(default)]
     pub candidates: Vec<ExecutableCandidate>,
+    /// Sub-directories tried inside a candidate that resolved to a directory,
+    /// before the directory itself. Launchers shipping per-architecture
+    /// binaries (`Binaries/Win64`, `Binaries/Win32`) need this and nothing else.
+    #[serde(default)]
+    pub relative_probes: Vec<String>,
     /// Filter shown by the "select executable" dialog.
     #[serde(default = "default_exe_filter")]
     pub select_filter: String,
@@ -225,6 +230,18 @@ pub enum ExecutableCandidate {
         key: String,
         value: String,
     },
+    /// The install directory recorded by an uninstall entry, found by its
+    /// display name. Launchers that register no path of their own still
+    /// register one here.
+    UninstallEntry {
+        display_name: String,
+        #[serde(default = "default_install_location")]
+        value: String,
+    },
+}
+
+fn default_install_location() -> String {
+    "InstallLocation".to_string()
 }
 
 /// Where the account id comes from and what it is allowed to look like.
@@ -235,6 +252,46 @@ pub struct Identity {
     pub format: IdFormat,
     /// Which account counts as "currently signed in".
     pub current: CurrentSource,
+    /// Extra places accounts leave a trace, so accounts added outside accshift
+    /// still show up. The signed-in account comes from `source`; these only
+    /// widen the list.
+    #[serde(default)]
+    pub discovery: Vec<Discovery>,
+    /// Remember forgotten ids so `discovery` cannot resurrect them. Only
+    /// meaningful with a `discovery` entry, and only for platforms whose config
+    /// section carries the list.
+    #[serde(default)]
+    pub blocklist_on_forget: bool,
+}
+
+/// A place account ids can be enumerated from.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum Discovery {
+    /// Entry names of a directory, each one an account id once the declared
+    /// prefixes and the extension are stripped.
+    DirectoryEntries {
+        path: PathTemplate,
+        #[serde(default)]
+        entries: EntryKind,
+        #[serde(default)]
+        strip_prefixes: Vec<String>,
+        #[serde(default)]
+        strip_extension: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EntryKind {
+    #[default]
+    Any,
+    Directories,
+    Files,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -252,8 +309,29 @@ pub enum IdentitySource {
     },
     /// The launcher exposes no id: we mint one when the account is captured.
     Synthetic,
+    /// The id sits in a log the launcher appends to. The tail is read with
+    /// shared access, most recent line first, since launchers keep the file
+    /// open and the log can be megabytes long.
+    LogTail {
+        path: PathTemplate,
+        #[serde(default = "default_tail_bytes")]
+        tail_bytes: u64,
+        /// Only lines holding this text are considered.
+        line_contains: String,
+        /// Text the id follows directly, tried first.
+        #[serde(default)]
+        prefix: String,
+        /// Fallback: any id in the line preceded within ten characters by this
+        /// word. Empty disables the fallback.
+        #[serde(default)]
+        near_word: String,
+    },
     /// Discovery needs code the descriptor cannot express.
     NativeHook { name: String },
+}
+
+fn default_tail_bytes() -> u64 {
+    64 * 1024
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -261,6 +339,22 @@ pub enum IdentitySource {
 pub struct IdFormat {
     pub charset: Charset,
     pub max_length: usize,
+    /// Shortest acceptable id. Ids of a fixed width set this to `maxLength`,
+    /// which is what makes a truncated id a rejection instead of a new account.
+    #[serde(default = "default_min_length")]
+    pub min_length: usize,
+    /// Fold the id to lowercase before it is compared or stored, for launchers
+    /// that write the same id in either case.
+    #[serde(default)]
+    pub lowercase: bool,
+    /// Replaces "Invalid <shortName> account ID: <id>" when the platform's own
+    /// wording is load-bearing. The CLI maps exit codes off these strings.
+    #[serde(default)]
+    pub invalid_message: String,
+}
+
+fn default_min_length() -> usize {
+    1
 }
 
 /// Account ids are joined into snapshot paths, so the charset is a path
@@ -271,14 +365,24 @@ pub enum Charset {
     Digits,
     Hex,
     Alphanumeric,
+    /// The canonical 8-4-4-4-12 form, dashes included.
+    Uuid,
 }
 
 impl Charset {
     pub fn accepts(&self, value: &str) -> bool {
+        if let Charset::Uuid = self {
+            return value.len() == 36
+                && value.chars().enumerate().all(|(index, c)| match index {
+                    8 | 13 | 18 | 23 => c == '-',
+                    _ => c.is_ascii_hexdigit(),
+                });
+        }
         value.chars().all(|c| match self {
             Charset::Digits => c.is_ascii_digit(),
             Charset::Hex => c.is_ascii_hexdigit(),
             Charset::Alphanumeric => c.is_ascii_alphanumeric(),
+            Charset::Uuid => unreachable!("handled above"),
         })
     }
 }
@@ -302,11 +406,19 @@ pub struct State {
     pub directories: Vec<DirItem>,
     #[serde(default)]
     pub registry_values: Vec<RegistryItem>,
+    /// Directories wiped once the incoming session is in place, and never
+    /// captured. A launcher cache keyed to the outgoing account makes the next
+    /// sign-in show the wrong name, or fail outright.
+    #[serde(default)]
+    pub caches: Vec<PathTemplate>,
 }
 
 impl State {
     pub fn is_empty(&self) -> bool {
-        self.files.is_empty() && self.directories.is_empty() && self.registry_values.is_empty()
+        self.files.is_empty()
+            && self.directories.is_empty()
+            && self.registry_values.is_empty()
+            && self.caches.is_empty()
     }
 }
 
@@ -314,7 +426,7 @@ impl State {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FileItem {
     /// Live location on disk.
-    pub live: PathTemplate,
+    pub live: PathSpec,
     /// File name inside the account's snapshot directory.
     pub snapshot: String,
     /// Deleted when a setup flow clears the live session.
@@ -336,7 +448,7 @@ pub struct FileItem {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DirItem {
-    pub live: PathTemplate,
+    pub live: PathSpec,
     /// Directory name inside the account's snapshot directory.
     pub snapshot: String,
     #[serde(default)]
@@ -363,6 +475,11 @@ pub struct RegistryItem {
     pub clear_on_setup: bool,
     #[serde(default)]
     pub snapshot_marker: bool,
+    /// Drop a stale snapshot when the value is gone at capture time. Left off
+    /// where the value is the account id itself: a transient read failure would
+    /// otherwise erase the only copy of it.
+    #[serde(default = "default_true")]
+    pub clear_snapshot_when_source_missing: bool,
 }
 
 /// How the launcher is shut down before its files are touched.
@@ -447,13 +564,16 @@ pub enum Condition {
     IdentityPresent,
     /// A file with content, or a directory holding one somewhere below it.
     PathNonEmpty {
-        path: PathTemplate,
+        path: PathSpec,
         #[serde(default)]
         recursive: bool,
     },
     /// A non-empty file written within the window. A stale mtime means the
     /// launcher never flushed the new session.
-    PathFresh { path: PathTemplate, window_ms: u64 },
+    PathFresh { path: PathSpec, window_ms: u64 },
+    /// Holds as soon as one of the nested conditions does. Launchers that write
+    /// a paired credential set may refresh either half on a sign-in.
+    AnyOf { conditions: Vec<Condition> },
 }
 
 fn default_true() -> bool {
@@ -561,6 +681,56 @@ impl PathTemplate {
         }
 
         Ok(())
+    }
+}
+
+/// One location, or several tried in order.
+///
+/// Written as a plain string in the ordinary case. An array means the launcher
+/// keeps the same thing in one of several places depending on how it was
+/// installed: the first candidate that exists wins, and the first one listed is
+/// used when none do, so a file that does not exist yet is created where the
+/// launcher expects it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum PathSpec {
+    One(PathTemplate),
+    FirstExisting(Vec<PathTemplate>),
+}
+
+impl PathSpec {
+    pub fn candidates(&self) -> &[PathTemplate] {
+        match self {
+            PathSpec::One(template) => std::slice::from_ref(template),
+            PathSpec::FirstExisting(templates) => templates,
+        }
+    }
+
+    /// Placeholder names used by any candidate.
+    pub fn placeholders(&self) -> Vec<String> {
+        self.candidates()
+            .iter()
+            .flat_map(|template| template.placeholders())
+            .collect()
+    }
+
+    fn validate(&self, source: &str, field: &str) -> Result<(), DescriptorError> {
+        match self {
+            PathSpec::One(template) => template.validate(source, field),
+            PathSpec::FirstExisting(templates) => {
+                if templates.is_empty() {
+                    return Err(DescriptorError::new(
+                        source,
+                        field,
+                        "expected at least one path template, found an empty list",
+                    ));
+                }
+                for (index, template) in templates.iter().enumerate() {
+                    template.validate(source, &format!("{field}[{index}]"))?;
+                }
+                Ok(())
+            }
+        }
     }
 }
 
@@ -748,17 +918,20 @@ impl OsProfile {
 
         for (index, item) in self.state.files.iter().enumerate() {
             let at = format!("{field}.state.files[{index}]");
-            item.live.validate(source, &format!("{at}.live"))?;
-            validate_in_file_roots(source, &format!("{at}.live"), &item.live, &self.roots)?;
+            validate_spec_in_file_roots(source, &format!("{at}.live"), &item.live, &self.roots)?;
             validate_snapshot_name(source, &format!("{at}.snapshot"), &item.snapshot)?;
             snapshot_names.push(&item.snapshot);
         }
         for (index, item) in self.state.directories.iter().enumerate() {
             let at = format!("{field}.state.directories[{index}]");
-            item.live.validate(source, &format!("{at}.live"))?;
-            validate_in_file_roots(source, &format!("{at}.live"), &item.live, &self.roots)?;
+            validate_spec_in_file_roots(source, &format!("{at}.live"), &item.live, &self.roots)?;
             validate_snapshot_name(source, &format!("{at}.snapshot"), &item.snapshot)?;
             snapshot_names.push(&item.snapshot);
+        }
+        for (index, path) in self.state.caches.iter().enumerate() {
+            let at = format!("{field}.state.caches[{index}]");
+            path.validate(source, &at)?;
+            validate_in_file_roots(source, &at, path, &self.roots)?;
         }
         for (index, item) in self.state.registry_values.iter().enumerate() {
             let at = format!("{field}.state.registryValues[{index}]");
@@ -816,6 +989,22 @@ impl Executable {
                 "expected at least one place to look for the binary, found none",
             ));
         }
+        for (index, probe) in self.relative_probes.iter().enumerate() {
+            let bad = probe.trim().is_empty()
+                || probe != probe.trim()
+                || probe.starts_with(['/', '\\'])
+                || probe.contains(':')
+                || probe
+                    .split(['/', '\\'])
+                    .any(|part| part == ".." || part.is_empty());
+            if bad {
+                return Err(DescriptorError::new(
+                    source,
+                    format!("{field}.relativeProbes[{index}]"),
+                    format!("expected a relative sub-directory, found `{probe}`"),
+                ));
+            }
+        }
         for (index, candidate) in self.candidates.iter().enumerate() {
             let at = format!("{field}.candidates[{index}]");
             match candidate {
@@ -839,6 +1028,25 @@ impl Executable {
                         ));
                     }
                 }
+                ExecutableCandidate::UninstallEntry {
+                    display_name,
+                    value,
+                } => {
+                    if display_name.trim().is_empty() {
+                        return Err(DescriptorError::new(
+                            source,
+                            format!("{at}.displayName"),
+                            "expected the name the launcher registers under, found an empty string",
+                        ));
+                    }
+                    if value.trim().is_empty() {
+                        return Err(DescriptorError::new(
+                            source,
+                            format!("{at}.value"),
+                            "expected a registry value name, found an empty string",
+                        ));
+                    }
+                }
             }
         }
         Ok(())
@@ -852,6 +1060,45 @@ impl Identity {
                 source,
                 format!("{field}.format.maxLength"),
                 format!("expected 1 to 256, found {}", self.format.max_length),
+            ));
+        }
+        if self.format.min_length == 0 || self.format.min_length > self.format.max_length {
+            return Err(DescriptorError::new(
+                source,
+                format!("{field}.format.minLength"),
+                format!(
+                    "expected 1 to maxLength ({}), found {}",
+                    self.format.max_length, self.format.min_length
+                ),
+            ));
+        }
+        for (index, discovery) in self.discovery.iter().enumerate() {
+            let at = format!("{field}.discovery[{index}]");
+            match discovery {
+                Discovery::DirectoryEntries {
+                    path,
+                    strip_prefixes,
+                    ..
+                } => {
+                    path.validate(source, &format!("{at}.path"))?;
+                    validate_in_file_roots(source, &format!("{at}.path"), path, roots)?;
+                    for (prefix_index, prefix) in strip_prefixes.iter().enumerate() {
+                        if prefix.is_empty() {
+                            return Err(DescriptorError::new(
+                                source,
+                                format!("{at}.stripPrefixes[{prefix_index}]"),
+                                "expected a prefix to strip, found an empty string",
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        if self.blocklist_on_forget && self.discovery.is_empty() {
+            return Err(DescriptorError::new(
+                source,
+                format!("{field}.blocklistOnForget"),
+                "expected at least one `discovery` entry: nothing can resurrect a forgotten account without one",
             ));
         }
         match &self.source {
@@ -881,6 +1128,37 @@ impl Identity {
                     ));
                 }
             }
+            IdentitySource::LogTail {
+                path,
+                tail_bytes,
+                line_contains,
+                prefix,
+                near_word,
+            } => {
+                path.validate(source, &format!("{field}.source.path"))?;
+                validate_in_file_roots(source, &format!("{field}.source.path"), path, roots)?;
+                if *tail_bytes == 0 {
+                    return Err(DescriptorError::new(
+                        source,
+                        format!("{field}.source.tailBytes"),
+                        "expected a tail size above zero, found 0",
+                    ));
+                }
+                if line_contains.trim().is_empty() {
+                    return Err(DescriptorError::new(
+                        source,
+                        format!("{field}.source.lineContains"),
+                        "expected the marker that identifies a sign-in line, found an empty string",
+                    ));
+                }
+                if prefix.is_empty() && near_word.is_empty() {
+                    return Err(DescriptorError::new(
+                        source,
+                        format!("{field}.source.prefix"),
+                        "expected `prefix` or `nearWord`, found neither: without one, any id on the line would do",
+                    ));
+                }
+            }
             IdentitySource::NativeHook { name } => {
                 if name.trim().is_empty() {
                     return Err(DescriptorError::new(
@@ -899,13 +1177,24 @@ impl Condition {
     fn validate(&self, source: &str, field: &str, roots: &Roots) -> Result<(), DescriptorError> {
         match self {
             Condition::NewIdentity | Condition::IdentityPresent => Ok(()),
+            Condition::AnyOf { conditions } => {
+                if conditions.is_empty() {
+                    return Err(DescriptorError::new(
+                        source,
+                        format!("{field}.conditions"),
+                        "expected at least one nested condition, found an empty list",
+                    ));
+                }
+                for (index, nested) in conditions.iter().enumerate() {
+                    nested.validate(source, &format!("{field}.conditions[{index}]"), roots)?;
+                }
+                Ok(())
+            }
             Condition::PathNonEmpty { path, .. } => {
-                path.validate(source, &format!("{field}.path"))?;
-                validate_in_file_roots(source, &format!("{field}.path"), path, roots)
+                validate_spec_in_file_roots(source, &format!("{field}.path"), path, roots)
             }
             Condition::PathFresh { path, window_ms } => {
-                path.validate(source, &format!("{field}.path"))?;
-                validate_in_file_roots(source, &format!("{field}.path"), path, roots)?;
+                validate_spec_in_file_roots(source, &format!("{field}.path"), path, roots)?;
                 if *window_ms == 0 {
                     return Err(DescriptorError::new(
                         source,
@@ -994,6 +1283,27 @@ fn validate_in_file_roots(
             ),
         ))
     }
+}
+
+/// Same check for a spec: every candidate has to sit inside the roots, since
+/// any of them may be the one that ends up being read or written.
+fn validate_spec_in_file_roots(
+    source: &str,
+    field: &str,
+    spec: &PathSpec,
+    roots: &Roots,
+) -> Result<(), DescriptorError> {
+    spec.validate(source, field)?;
+    let many = matches!(spec, PathSpec::FirstExisting(_));
+    for (index, template) in spec.candidates().iter().enumerate() {
+        let at = if many {
+            format!("{field}[{index}]")
+        } else {
+            field.to_string()
+        };
+        validate_in_file_roots(source, &at, template, roots)?;
+    }
+    Ok(())
 }
 
 fn validate_in_registry_roots(
@@ -1231,12 +1541,170 @@ mod tests {
     }
 
     #[test]
+    fn a_live_path_may_list_several_candidates() {
+        let descriptor = with_windows(|v| {
+            v["os"]["windows"]["state"]["files"][0]["live"] = serde_json::json!([
+                "${LOCALAPPDATA}/Demo/Config/Windows/session.json",
+                "${LOCALAPPDATA}/Demo/Config/WindowsEditor/session.json"
+            ]);
+        })
+        .unwrap();
+        let profile = &descriptor.os[&Os::Windows];
+        assert_eq!(profile.state.files[0].live.candidates().len(), 2);
+    }
+
+    #[test]
+    fn every_candidate_of_a_path_list_is_checked_against_the_roots() {
+        // The engine picks whichever exists, so one candidate outside the
+        // sandbox is enough to let a switch write where it must not.
+        let err = with_windows(|v| {
+            v["os"]["windows"]["state"]["files"][0]["live"] = serde_json::json!([
+                "${LOCALAPPDATA}/Demo/session.json",
+                "${APPDATA}/Elsewhere/session.json"
+            ]);
+        })
+        .unwrap_err();
+        assert_eq!(err.field, "os.windows.state.files[0].live[1]");
+        assert!(err.problem.contains("declared roots"), "{}", err.problem);
+    }
+
+    #[test]
+    fn an_empty_path_list_is_refused() {
+        let err = with_windows(|v| {
+            v["os"]["windows"]["state"]["files"][0]["live"] = serde_json::json!([]);
+        })
+        .unwrap_err();
+        assert!(err.problem.contains("empty list"), "{}", err.problem);
+    }
+
+    #[test]
+    fn a_cache_outside_the_roots_is_refused() {
+        let err = with_windows(|v| {
+            v["os"]["windows"]["state"]["caches"] =
+                serde_json::json!(["${APPDATA}/Elsewhere/Cache"]);
+        })
+        .unwrap_err();
+        assert_eq!(err.field, "os.windows.state.caches[0]");
+        assert!(err.problem.contains("declared roots"), "{}", err.problem);
+    }
+
+    #[test]
+    fn min_length_above_max_length_is_refused() {
+        let err = with_windows(|v| {
+            v["os"]["windows"]["identity"]["format"]["minLength"] = serde_json::json!(64);
+        })
+        .unwrap_err();
+        assert_eq!(err.field, "os.windows.identity.format.minLength");
+        assert_eq!(err.problem, "expected 1 to maxLength (32), found 64");
+    }
+
+    #[test]
+    fn a_relative_probe_that_climbs_out_is_refused() {
+        let err = with_windows(|v| {
+            v["os"]["windows"]["executable"]["relativeProbes"] =
+                serde_json::json!(["../../Windows/System32"]);
+        })
+        .unwrap_err();
+        assert_eq!(err.field, "os.windows.executable.relativeProbes[0]");
+        assert!(
+            err.problem.contains("relative sub-directory"),
+            "{}",
+            err.problem
+        );
+    }
+
+    #[test]
+    fn any_of_with_no_nested_condition_is_refused() {
+        let err = with_windows(|v| {
+            v["os"]["windows"]["setup"] = serde_json::json!({
+                "trigger": [{ "kind": "anyOf", "conditions": [] }]
+            });
+        })
+        .unwrap_err();
+        assert!(err.field.ends_with(".conditions"), "{}", err.field);
+    }
+
+    #[test]
+    fn a_nested_condition_is_validated_like_any_other() {
+        let err = with_windows(|v| {
+            v["os"]["windows"]["setup"] = serde_json::json!({
+                "trigger": [{ "kind": "anyOf", "conditions": [
+                    { "kind": "pathFresh", "path": "${LOCALAPPDATA}/Demo/session.json", "windowMs": 1000 },
+                    { "kind": "pathFresh", "path": "${APPDATA}/Elsewhere/session.json", "windowMs": 1000 }
+                ]}]
+            });
+        })
+        .unwrap_err();
+        assert_eq!(err.field, "os.windows.setup[0].conditions[1].path");
+    }
+
+    #[test]
+    fn forgetting_cannot_be_made_sticky_without_something_to_hold_back() {
+        let err = with_windows(|v| {
+            v["os"]["windows"]["identity"]["blocklistOnForget"] = serde_json::json!(true);
+        })
+        .unwrap_err();
+        assert_eq!(err.field, "os.windows.identity.blocklistOnForget");
+        assert!(err.problem.contains("discovery"), "{}", err.problem);
+    }
+
+    #[test]
+    fn a_log_source_with_no_way_to_find_the_id_is_refused() {
+        // Without a prefix or a nearby word, any identifier on the line would
+        // match, and log lines carry plenty that are not account ids.
+        let err = with_windows(|v| {
+            v["os"]["windows"]["identity"]["source"] = serde_json::json!({
+                "kind": "logTail",
+                "path": "${LOCALAPPDATA}/Demo/launcher.log",
+                "lineContains": "Login"
+            });
+        })
+        .unwrap_err();
+        assert_eq!(err.field, "os.windows.identity.source.prefix");
+    }
+
+    #[test]
+    fn a_log_source_outside_the_roots_is_refused() {
+        let err = with_windows(|v| {
+            v["os"]["windows"]["identity"]["source"] = serde_json::json!({
+                "kind": "logTail",
+                "path": "${APPDATA}/Elsewhere/launcher.log",
+                "lineContains": "Login",
+                "prefix": "User: "
+            });
+        })
+        .unwrap_err();
+        assert_eq!(err.field, "os.windows.identity.source.path");
+    }
+
+    #[test]
+    fn an_uninstall_entry_needs_the_name_the_launcher_registers_under() {
+        let err = with_windows(|v| {
+            v["os"]["windows"]["executable"]["candidates"] =
+                serde_json::json!([{ "kind": "uninstallEntry", "displayName": "  " }]);
+        })
+        .unwrap_err();
+        assert_eq!(err.field, "os.windows.executable.candidates[0].displayName");
+    }
+
+    #[test]
     fn charset_guards_the_account_id() {
         assert!(Charset::Digits.accepts("12345"));
         assert!(!Charset::Digits.accepts("12a45"));
         assert!(Charset::Alphanumeric.accepts("a3f0c2d1"));
         assert!(!Charset::Alphanumeric.accepts("a3f0-c2d1"));
         assert!(!Charset::Alphanumeric.accepts("../evil"));
+    }
+
+    #[test]
+    fn uuid_charset_wants_the_canonical_shape_and_nothing_else() {
+        assert!(Charset::Uuid.accepts("a9da419c-1234-5678-9abc-def012345678"));
+        assert!(Charset::Uuid.accepts("A9DA419C-1234-5678-9ABC-DEF012345678"));
+        // Dashes in the wrong places, a non-hex digit, and the wrong length.
+        assert!(!Charset::Uuid.accepts("a9da41-c-1234-5678-9abc-def012345678"));
+        assert!(!Charset::Uuid.accepts("g9da419c-1234-5678-9abc-def012345678"));
+        assert!(!Charset::Uuid.accepts("a9da419c-1234-5678-9abc-def01234567"));
+        assert!(!Charset::Uuid.accepts(""));
     }
 
     #[test]

@@ -379,7 +379,10 @@ fn is_default_battle_net_config(value: &BattleNetConfig) -> bool {
 }
 
 fn is_default_ubisoft_config(value: &UbisoftConfig) -> bool {
-    value.path_override.is_empty() && value.accounts.is_empty()
+    // The blocklist counts: forgetting the last Ubisoft account leaves a
+    // section that holds nothing else, and skipping it here would drop the
+    // forget on the next save and rediscover the account from disk.
+    value.path_override.is_empty() && value.accounts.is_empty() && value.forgotten_uuids.is_empty()
 }
 
 fn is_default_roblox_config(value: &RobloxConfig) -> bool {

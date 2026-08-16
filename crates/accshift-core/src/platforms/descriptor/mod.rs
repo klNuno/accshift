@@ -28,6 +28,8 @@ pub use schema::{Descriptor, DescriptorError};
 const EMBEDDED: &[(&str, &str)] = &[
     ("gog.json", include_str!("descriptors/gog.json")),
     ("jagex.json", include_str!("descriptors/jagex.json")),
+    ("epic.json", include_str!("descriptors/epic.json")),
+    ("ubisoft.json", include_str!("descriptors/ubisoft.json")),
 ];
 
 /// Parses every shipped descriptor, keeping the failures rather than hiding
@@ -120,24 +122,41 @@ mod tests {
     }
 
     #[test]
-    fn gog_keeps_the_error_strings_the_cli_classifies_on() {
+    fn shipped_descriptors_keep_the_error_strings_the_cli_classifies_on() {
         // `accshift switch` maps exit codes by matching these substrings, so
-        // renaming the platform in the descriptor would silently change them.
+        // renaming a platform in its descriptor would silently change them.
         let (loaded, _) = load_embedded();
-        let gog = loaded.iter().find(|d| d.id == ids::GOG).unwrap();
-        assert_eq!(gog.short_name, "GOG");
-        assert_eq!(gog.name, "GOG Galaxy");
+        for (id, short_name, name) in [
+            (ids::GOG, "GOG", "GOG Galaxy"),
+            (ids::JAGEX, "Jagex", "Jagex Launcher"),
+            (ids::EPIC, "Epic", "Epic Games Launcher"),
+            (ids::UBISOFT, "Ubisoft", "Ubisoft Connect"),
+        ] {
+            let descriptor = loaded.iter().find(|d| d.id == id).unwrap();
+            assert_eq!(descriptor.short_name, short_name);
+            assert_eq!(descriptor.name, name);
+        }
+    }
 
-        let jagex = loaded.iter().find(|d| d.id == ids::JAGEX).unwrap();
-        assert_eq!(jagex.short_name, "Jagex");
-        assert_eq!(jagex.name, "Jagex Launcher");
+    #[test]
+    fn ubisoft_keeps_its_own_wording_for_a_bad_account_id() {
+        // The generic message would read "Invalid Ubisoft account ID", and the
+        // CLI classifies the exit code on the string the module used to emit.
+        let (loaded, _) = load_embedded();
+        let ubisoft = loaded.iter().find(|d| d.id == ids::UBISOFT).unwrap();
+        let profile = ubisoft.os.values().next().unwrap();
+        assert_eq!(
+            profile.identity.format.invalid_message,
+            "Invalid Ubisoft account UUID"
+        );
     }
 
     #[cfg(windows)]
     #[test]
-    fn both_shipped_platforms_have_a_service_on_windows() {
+    fn every_shipped_platform_has_a_service_on_windows() {
         let ids: Vec<&str> = services().iter().map(|s| s.id()).collect();
-        assert!(ids.contains(&"gog"));
-        assert!(ids.contains(&"jagex"));
+        for expected in ["gog", "jagex", "epic", "ubisoft"] {
+            assert!(ids.contains(&expected), "{expected} has no service");
+        }
     }
 }

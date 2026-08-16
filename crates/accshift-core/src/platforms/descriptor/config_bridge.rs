@@ -11,7 +11,10 @@
 //! That is deliberate: the alternative is silently dropping the accounts of
 //! anyone who upgrades.
 
-use crate::config::{self, GogAccountConfig, JagexAccountConfig};
+use crate::config::{
+    self, EpicAccountConfig, GogAccountConfig, JagexAccountConfig, UbisoftAccountConfig,
+};
+use crate::platforms::ids;
 use crate::AppContext;
 
 /// One account as the config stores it, whichever section it came from.
@@ -22,36 +25,76 @@ pub struct AccountRecord {
     pub last_used_at: Option<u64>,
 }
 
-/// Runs the same body against whichever config section the platform owns.
+/// One stored account row, whichever typed section it lives in.
 ///
-/// Each arm binds `$accounts` to that section's account vector and `$new`
-/// to a constructor for its account type; the vectors have different element
-/// types, so a function taking `&mut Vec<_>` could not do this.
-macro_rules! with_section {
-    ($cfg:expr, $platform:expr, |$accounts:ident, $new:ident| $body:block) => {
+/// The sections hold different types with the same three fields under
+/// different names, so the operations below are written once against this and
+/// monomorphised per section.
+trait AccountRow {
+    fn create(account_id: String, label: String, last_used_at: Option<u64>) -> Self;
+    fn account_id(&self) -> &str;
+    fn label(&self) -> &str;
+    fn set_label(&mut self, label: String);
+    fn last_used_at(&self) -> Option<u64>;
+    fn set_last_used_at(&mut self, at: Option<u64>);
+}
+
+macro_rules! impl_account_row {
+    ($type:ty, $id_field:ident) => {
+        impl AccountRow for $type {
+            fn create(account_id: String, label: String, last_used_at: Option<u64>) -> Self {
+                Self {
+                    $id_field: account_id,
+                    label,
+                    last_used_at,
+                }
+            }
+            fn account_id(&self) -> &str {
+                &self.$id_field
+            }
+            fn label(&self) -> &str {
+                &self.label
+            }
+            fn set_label(&mut self, label: String) {
+                self.label = label;
+            }
+            fn last_used_at(&self) -> Option<u64> {
+                self.last_used_at
+            }
+            fn set_last_used_at(&mut self, at: Option<u64>) {
+                self.last_used_at = at;
+            }
+        }
+    };
+}
+
+impl_account_row!(GogAccountConfig, account_id);
+impl_account_row!(JagexAccountConfig, account_id);
+impl_account_row!(EpicAccountConfig, account_id);
+impl_account_row!(UbisoftAccountConfig, uuid);
+
+/// Runs the same body against whichever section the platform owns.
+///
+/// Each arm binds `$accounts` to that section's account vector. The vectors
+/// hold different types, so a function taking `&mut Vec<_>` could not do this;
+/// the body is generic over [`AccountRow`] instead.
+macro_rules! with_accounts {
+    ($cfg:expr, $platform:expr, |$accounts:ident| $body:block) => {
         match $platform {
-            crate::platforms::ids::GOG => {
+            ids::GOG => {
                 let $accounts = &mut $cfg.gog.accounts;
-                #[allow(unused)]
-                let $new = |account_id: String, label: String, last_used_at: Option<u64>| {
-                    GogAccountConfig {
-                        account_id,
-                        label,
-                        last_used_at,
-                    }
-                };
                 $body
             }
-            crate::platforms::ids::JAGEX => {
+            ids::JAGEX => {
                 let $accounts = &mut $cfg.jagex.accounts;
-                #[allow(unused)]
-                let $new = |account_id: String, label: String, last_used_at: Option<u64>| {
-                    JagexAccountConfig {
-                        account_id,
-                        label,
-                        last_used_at,
-                    }
-                };
+                $body
+            }
+            ids::EPIC => {
+                let $accounts = &mut $cfg.epic.accounts;
+                $body
+            }
+            ids::UBISOFT => {
+                let $accounts = &mut $cfg.ubisoft.accounts;
                 $body
             }
             _ => {}
@@ -59,27 +102,51 @@ macro_rules! with_section {
     };
 }
 
+/// Ids are compared folded: a config written before the platform declared a
+/// spelling still matches the id the engine hands in today.
+fn same_account(stored: &str, key: &str) -> bool {
+    stored.trim().eq_ignore_ascii_case(key)
+}
+
+fn rows<T: AccountRow>(accounts: &[T]) -> Vec<AccountRecord> {
+    accounts
+        .iter()
+        .map(|account| AccountRecord {
+            account_id: account.account_id().trim().to_string(),
+            label: account.label().trim().to_string(),
+            last_used_at: account.last_used_at(),
+        })
+        .collect()
+}
+
+fn touch_row<T: AccountRow>(accounts: &mut Vec<T>, key: &str, now: u64) {
+    match accounts
+        .iter_mut()
+        .find(|account| same_account(account.account_id(), key))
+    {
+        Some(existing) => existing.set_last_used_at(Some(now)),
+        None => accounts.push(T::create(key.to_string(), String::new(), Some(now))),
+    }
+}
+
+fn label_row<T: AccountRow>(accounts: &mut Vec<T>, key: &str, label: &str) {
+    match accounts
+        .iter_mut()
+        .find(|account| same_account(account.account_id(), key))
+    {
+        Some(existing) => existing.set_label(label.to_string()),
+        None => accounts.push(T::create(key.to_string(), label.to_string(), None)),
+    }
+}
+
 /// Every account the config holds for this platform, in stored order.
 pub fn accounts(app: &dyn AppContext, platform_id: &str) -> Vec<AccountRecord> {
     let cfg = config::load_config(app);
-    let mapped = |account_id: &str, label: &str, last_used_at: Option<u64>| AccountRecord {
-        account_id: account_id.trim().to_string(),
-        label: label.trim().to_string(),
-        last_used_at,
-    };
     match platform_id {
-        crate::platforms::ids::GOG => cfg
-            .gog
-            .accounts
-            .iter()
-            .map(|a| mapped(&a.account_id, &a.label, a.last_used_at))
-            .collect(),
-        crate::platforms::ids::JAGEX => cfg
-            .jagex
-            .accounts
-            .iter()
-            .map(|a| mapped(&a.account_id, &a.label, a.last_used_at))
-            .collect(),
+        ids::GOG => rows(&cfg.gog.accounts),
+        ids::JAGEX => rows(&cfg.jagex.accounts),
+        ids::EPIC => rows(&cfg.epic.accounts),
+        ids::UBISOFT => rows(&cfg.ubisoft.accounts),
         _ => Vec::new(),
     }
 }
@@ -93,12 +160,12 @@ pub fn touch_account(
 ) -> Result<(), String> {
     let key = account_id.trim().to_string();
     config::update_config(app, |cfg| {
-        with_section!(cfg, platform_id, |accounts, new| {
-            match accounts.iter_mut().find(|a| a.account_id.trim() == key) {
-                Some(existing) => existing.last_used_at = Some(now),
-                None => accounts.push(new(key.clone(), String::new(), Some(now))),
-            }
+        with_accounts!(cfg, platform_id, |accounts| {
+            touch_row(accounts, &key, now);
         });
+        // Using an account again is the plainest possible statement that the
+        // user no longer wants it forgotten.
+        unblock_in(cfg, platform_id, &key);
     })
 }
 
@@ -112,11 +179,8 @@ pub fn set_label(
     let key = account_id.trim().to_string();
     let label = label.trim().to_string();
     config::update_config(app, |cfg| {
-        with_section!(cfg, platform_id, |accounts, new| {
-            match accounts.iter_mut().find(|a| a.account_id.trim() == key) {
-                Some(existing) => existing.label = label.clone(),
-                None => accounts.push(new(key.clone(), label.clone(), None)),
-            }
+        with_accounts!(cfg, platform_id, |accounts| {
+            label_row(accounts, &key, &label);
         });
     })
 }
@@ -129,8 +193,8 @@ pub fn remove_account(
 ) -> Result<(), String> {
     let key = account_id.trim().to_string();
     config::update_config(app, |cfg| {
-        with_section!(cfg, platform_id, |accounts, _new| {
-            accounts.retain(|a| a.account_id.trim() != key);
+        with_accounts!(cfg, platform_id, |accounts| {
+            accounts.retain(|account| !same_account(account.account_id(), &key));
         });
         if current_account_field(cfg, platform_id).is_some_and(|current| current.trim() == key) {
             set_current_account_field(cfg, platform_id, String::new());
@@ -159,14 +223,57 @@ pub fn set_current_account(
 
 fn current_account_field<'a>(cfg: &'a config::AppConfig, platform_id: &str) -> Option<&'a String> {
     match platform_id {
-        crate::platforms::ids::JAGEX => Some(&cfg.jagex.current_account),
+        ids::JAGEX => Some(&cfg.jagex.current_account),
         _ => None,
     }
 }
 
 fn set_current_account_field(cfg: &mut config::AppConfig, platform_id: &str, value: String) {
-    if platform_id == crate::platforms::ids::JAGEX {
+    if platform_id == ids::JAGEX {
         cfg.jagex.current_account = value;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Forget blocklist
+// ---------------------------------------------------------------------------
+
+/// Ids the user forgot while they were still on disk. Only a platform whose
+/// accounts can be rediscovered from the filesystem carries one.
+pub fn blocklist(app: &dyn AppContext, platform_id: &str) -> Vec<String> {
+    let cfg = config::load_config(app);
+    match platform_id {
+        ids::UBISOFT => cfg.ubisoft.forgotten_uuids.clone(),
+        _ => Vec::new(),
+    }
+}
+
+pub fn block_account(
+    app: &dyn AppContext,
+    platform_id: &str,
+    account_id: &str,
+) -> Result<(), String> {
+    let key = account_id.trim().to_string();
+    config::update_config(app, |cfg| {
+        if platform_id != ids::UBISOFT {
+            return;
+        }
+        if !cfg
+            .ubisoft
+            .forgotten_uuids
+            .iter()
+            .any(|stored| same_account(stored, &key))
+        {
+            cfg.ubisoft.forgotten_uuids.push(key.clone());
+        }
+    })
+}
+
+fn unblock_in(cfg: &mut config::AppConfig, platform_id: &str, key: &str) {
+    if platform_id == ids::UBISOFT {
+        cfg.ubisoft
+            .forgotten_uuids
+            .retain(|stored| !same_account(stored, key));
     }
 }
 
@@ -174,8 +281,10 @@ fn set_current_account_field(cfg: &mut config::AppConfig, platform_id: &str, val
 pub fn path_override(app: &dyn AppContext, platform_id: &str) -> String {
     let cfg = config::load_config(app);
     match platform_id {
-        crate::platforms::ids::GOG => cfg.gog.path_override.trim().to_string(),
-        crate::platforms::ids::JAGEX => cfg.jagex.path_override.trim().to_string(),
+        ids::GOG => cfg.gog.path_override.trim().to_string(),
+        ids::JAGEX => cfg.jagex.path_override.trim().to_string(),
+        ids::EPIC => cfg.epic.path_override.trim().to_string(),
+        ids::UBISOFT => cfg.ubisoft.path_override.trim().to_string(),
         _ => String::new(),
     }
 }
@@ -187,8 +296,10 @@ pub fn set_path_override(
 ) -> Result<(), String> {
     let path = path.trim().to_string();
     config::update_config(app, |cfg| match platform_id {
-        crate::platforms::ids::GOG => cfg.gog.path_override = path.clone(),
-        crate::platforms::ids::JAGEX => cfg.jagex.path_override = path.clone(),
+        ids::GOG => cfg.gog.path_override = path.clone(),
+        ids::JAGEX => cfg.jagex.path_override = path.clone(),
+        ids::EPIC => cfg.epic.path_override = path.clone(),
+        ids::UBISOFT => cfg.ubisoft.path_override = path.clone(),
         _ => {}
     })
 }
