@@ -680,6 +680,14 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
     "Le thème de base {base} n'existe pas, les valeurs intégrées sont utilisées",
   "themeEditor.issueContrast":
     "{token} sur {against} : {ratio} pour 1, sous la cible de {target} pour 1",
+  "themeEditor.beta": "Bêta",
+  "themeEditor.betaNote":
+    "Le format de thème bouge encore : un thème écrit aujourd'hui peut demander une retouche après une mise à jour.",
+  "themeEditor.customCss": "CSS personnalisé",
+  "themeEditor.customCssHelp":
+    "Appliqué par-dessus le thème, pour ce que les valeurs ci-dessus n'atteignent pas. Ni @import ni url() : un thème ne va rien chercher à l'extérieur.",
+  "themeEditor.issueUnsafeCss": "{construct} est interdit dans un thème, le CSS n'est pas appliqué",
+  "themeEditor.issueCssTooLong": "CSS trop long : {length} caractères, la limite est {limit}",
 
   "bulkEdit.title": "Édition en masse",
   "bulkEdit.selectAccounts": "Sélectionner les comptes",

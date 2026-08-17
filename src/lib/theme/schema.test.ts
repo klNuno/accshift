@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_THEME_CSS_LENGTH,
   duplicateThemeDocument,
   parseThemeDocument,
   resolveThemeTokens,
@@ -103,6 +104,41 @@ describe("parseThemeDocument", () => {
     ]);
   });
 
+  it("keeps custom CSS but drops what would let a theme reach out", () => {
+    const clean = parseThemeDocument({
+      schemaVersion: 2,
+      id: "styled",
+      name: "Styled",
+      colorScheme: "dark",
+      tokens: {},
+      css: ".account-card { letter-spacing: 0.02em; }",
+    });
+
+    expect(clean.document?.css).toContain("letter-spacing");
+    expect(clean.rejectedCss).toBeNull();
+
+    for (const css of [
+      '@import "https://example.com/x.css";',
+      ".card { background: url(https://example.com/x.png); }",
+      ".card { color: red; }</style><script>alert(1)</script>",
+    ]) {
+      const result = parseThemeDocument({
+        schemaVersion: 2,
+        id: "hostile",
+        name: "Hostile",
+        colorScheme: "dark",
+        tokens: { accent: "#123456" },
+        css,
+      });
+
+      // The theme still applies: only the CSS is dropped, and the caller is
+      // told which construct did it.
+      expect(result.document?.css, css).toBeUndefined();
+      expect(result.document?.tokens.accent, css).toBe("#123456");
+      expect(result.rejectedCss, css).not.toBeNull();
+    }
+  });
+
   it("round trips through the exported file, byte for byte", () => {
     const source = doc({
       id: "nord",
@@ -112,6 +148,7 @@ describe("parseThemeDocument", () => {
       extends: "dark",
       glass: true,
       tokens: { accent: "#88c0d0", radiusMd: "10px" },
+      css: ".account-card { letter-spacing: 0.02em; }",
     });
 
     const json = serializeThemeDocument(source);
@@ -236,6 +273,22 @@ describe("validateThemeDocument", () => {
     expect(issuesFor(derived).some((issue) => issue.code === "missingToken")).toBe(false);
   });
 
+  it("blocks CSS that reaches outside the window, and CSS past the cap", () => {
+    const hostile = doc({
+      tokens: readable.tokens,
+      css: "@import url(https://example.com/x.css);",
+    });
+    const huge = doc({ tokens: readable.tokens, css: `/*${"x".repeat(MAX_THEME_CSS_LENGTH)}*/` });
+
+    const unsafe = issuesFor(hostile).find((issue) => issue.code === "unsafeCss");
+    const tooLong = issuesFor(huge).find((issue) => issue.code === "cssTooLong");
+
+    expect(unsafe?.level).toBe("error");
+    expect(unsafe?.construct).toBe("@import");
+    expect(tooLong?.level).toBe("error");
+    expect(tooLong?.limit).toBe(MAX_THEME_CSS_LENGTH);
+  });
+
   it("reports a value the editor refuses to store", () => {
     const broken = doc({ tokens: { ...readable.tokens, radiusMd: "12 pixels" } });
 
@@ -249,12 +302,19 @@ describe("validateThemeDocument", () => {
 
 describe("duplicateThemeDocument", () => {
   it("extends the source instead of copying its tokens", () => {
-    const source = doc({ id: "glass-dark", glass: true, tokens: { fg: "#f4f4f6" } });
+    const source = doc({
+      id: "glass-dark",
+      glass: true,
+      tokens: { fg: "#f4f4f6" },
+      css: ".account-card { letter-spacing: 0.02em; }",
+    });
 
     const copy = duplicateThemeDocument(source, "my-glass", "My Glass");
 
     expect(copy.extends).toBe("glass-dark");
     expect(copy.tokens).toEqual({});
+    // CSS does not travel through `extends`, so a copy has to carry it.
+    expect(copy.css).toBe(source.css);
     expect(copy.glass).toBe(true);
     expect(copy.colorScheme).toBe(source.colorScheme);
   });

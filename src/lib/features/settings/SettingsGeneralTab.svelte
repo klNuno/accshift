@@ -108,6 +108,13 @@
     availableThemes = getAllThemes();
     settings.themeId = document.id;
     addToast(t(result.migratedFrom ? "settings.themeMigrated" : "settings.themeImported"));
+    // The theme applied without its CSS: silence here would look like the file
+    // simply did nothing.
+    if (result.rejectedCss) {
+      addToast(t("themeEditor.issueUnsafeCss", { construct: result.rejectedCss }), {
+        type: "error",
+      });
+    }
   }
 
   async function openIntegrationsWiki() {

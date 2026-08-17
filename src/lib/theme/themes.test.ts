@@ -11,6 +11,12 @@ import {
 import { resolveThemeTokens, validateThemeDocument } from "./schema";
 import { THEME_TOKEN_KEYS, THEME_TOKEN_SPECS, isValidTokenValue } from "./tokens";
 
+interface StubElement {
+  id: string;
+  textContent: string;
+  remove(): void;
+}
+
 /** Enough of a Document for applyThemeToDocument, in a test with no DOM. */
 function stubDocument() {
   const properties = new Map<string, string>();
@@ -23,7 +29,31 @@ function stubDocument() {
       },
     },
   };
-  return { doc: { documentElement } as unknown as Document, properties };
+  const head: StubElement[] = [];
+  const doc = {
+    documentElement,
+    head: {
+      appendChild(element: StubElement) {
+        head.push(element);
+        return element;
+      },
+    },
+    createElement() {
+      const element: StubElement = {
+        id: "",
+        textContent: "",
+        remove() {
+          const index = head.indexOf(element);
+          if (index !== -1) head.splice(index, 1);
+        },
+      };
+      return element;
+    },
+    getElementById(id: string) {
+      return head.find((element) => element.id === id) ?? null;
+    },
+  };
+  return { doc: doc as unknown as Document, properties, head };
 }
 
 describe("theme surface fallback", () => {
@@ -185,5 +215,25 @@ describe("applyThemeToDocument", () => {
 
     expect(properties.get("--accent")).toBe("#ff0088");
     expect(properties.get("--fg")).toBe(ROOT_TOKENS.light.fg);
+  });
+
+  it("carries the theme's own CSS and takes it away with the theme", () => {
+    const { doc, head } = stubDocument();
+    const withCss = themeFromDocument({
+      schemaVersion: 2,
+      id: "with-css",
+      name: "With CSS",
+      colorScheme: "dark",
+      tokens: {},
+      css: ".account-card { letter-spacing: 0.02em; }",
+    });
+
+    applyThemeToDocument(withCss, 100, doc);
+    expect(head).toHaveLength(1);
+    expect(head[0].textContent).toContain("letter-spacing");
+
+    // Switching to a theme without CSS must not leave the previous rules on.
+    applyThemeToDocument(getThemeDefinition("dark"), 100, doc);
+    expect(head).toHaveLength(0);
   });
 });

@@ -685,6 +685,14 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "themeEditor.issueUnknownBase":
     "Базовая тема {base} не найдена, используются встроенные значения",
   "themeEditor.issueContrast": "{token} на {against}: {ratio} к 1, ниже цели {target} к 1",
+  "themeEditor.beta": "Бета",
+  "themeEditor.betaNote":
+    "Формат темы ещё меняется: тему, написанную сегодня, возможно, придётся поправить после обновления.",
+  "themeEditor.customCss": "Свой CSS",
+  "themeEditor.customCssHelp":
+    "Применяется поверх темы, для того, до чего значения выше не достают. Без @import и url(): тема ничего не загружает извне.",
+  "themeEditor.issueUnsafeCss": "{construct} в теме запрещён, CSS не применяется",
+  "themeEditor.issueCssTooLong": "CSS слишком длинный: {length} символов, предел {limit}",
 
   "bulkEdit.title": "Массовое изменение",
   "bulkEdit.selectAccounts": "Выберите аккаунты",

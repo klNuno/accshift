@@ -27,6 +27,8 @@ export interface AppThemeDefinition {
   /** Glassmorphism theme: caps surface opacities low so the backdrop shows through. */
   glass?: boolean;
   isCustom?: boolean;
+  /** Raw CSS the theme carries, already checked by the parser. */
+  css?: string;
   displayName?: string;
   /** What the theme was resolved from: what export writes and the editor edits. */
   document: ThemeDocument;
@@ -43,6 +45,7 @@ export interface CustomThemePayload {
   extends?: string | null;
   glass?: boolean | null;
   tokens: Record<string, string>;
+  css?: string | null;
 }
 
 function hexToRgbTriplet(color: string): string {
@@ -235,6 +238,7 @@ export function themeFromDocument(document: ThemeDocument): AppThemeDefinition {
     tokens: resolved.tokens,
     glass: document.glass ? true : undefined,
     isCustom: isCustom || undefined,
+    css: document.css,
     displayName: document.name,
     document,
   };
@@ -316,6 +320,7 @@ export async function saveThemeDocument(document: ThemeDocument): Promise<void> 
     extends: document.extends ?? null,
     glass: document.glass ?? null,
     tokens: document.tokens as Record<string, string>,
+    css: document.css ?? null,
   };
   await invoke("save_custom_theme", { theme: payload });
   invalidateResolved();
@@ -418,6 +423,32 @@ export function resolveThemeSurfaceOpacities(
     overlayOpacity,
     isLiquid,
   };
+}
+
+const THEME_CSS_ELEMENT_ID = "accshift-theme-css";
+
+/**
+ * Writes the theme's own CSS into the document.
+ *
+ * It goes last in the head, so a theme can reach a rule the tokens do not
+ * cover, and it is a single element that is rewritten or removed on every
+ * apply: switching themes must never leave the previous one's CSS behind.
+ * What may appear in it is decided by the parser, never here.
+ */
+function applyThemeCss(css: string | undefined, doc: Document): void {
+  const head = doc.head;
+  if (!head) return;
+  const existing = doc.getElementById(THEME_CSS_ELEMENT_ID);
+  if (!css?.trim()) {
+    existing?.remove();
+    return;
+  }
+  const element = existing ?? doc.createElement("style");
+  if (!existing) {
+    element.id = THEME_CSS_ELEMENT_ID;
+    head.appendChild(element);
+  }
+  if (element.textContent !== css) element.textContent = css;
 }
 
 /** Inputs of the last application to the real document. The caller is an
@@ -524,6 +555,7 @@ export function applyThemeToDocument(
   // the tail of that stack is what covers Cyrillic and Han, and a theme is
   // never asked to think about the Chinese UI.
   root.style.setProperty("--font-ui", `${theme.tokens.fontUi}, var(--font-stack-base)`);
+  applyThemeCss(theme.css, doc);
 
   if (memoizable) {
     lastApplied = {

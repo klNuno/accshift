@@ -26,6 +26,12 @@ export interface ThemeDocument {
   extends?: string;
   glass?: boolean;
   tokens: Partial<Record<ThemeTokenKey, string>>;
+  /**
+   * Raw CSS appended to the document when the theme is applied, for what the
+   * tokens cannot express. Never inherited through `extends`: a rule written
+   * against one theme's markup has no reason to follow a copy of it.
+   */
+  css?: string;
 }
 
 export type ThemeParseErrorCode =
@@ -42,6 +48,8 @@ export interface ThemeParseResult {
   migratedFrom: number | null;
   /** Keys refused because they are unknown or malformed. */
   rejectedTokens: string[];
+  /** Construct that got the custom CSS dropped, when the file carried one. */
+  rejectedCss: string | null;
   /** Version the file declares, kept for the "written for a newer accshift" message. */
   declaredVersion: number;
 }
@@ -51,6 +59,30 @@ const MAX_NAME_LENGTH = 64;
 const MAX_META_LENGTH = 64;
 /** Guard against a file that extends a chain built to spin the resolver. */
 const MAX_EXTENDS_DEPTH = 8;
+export const MAX_THEME_CSS_LENGTH = 20000;
+
+/**
+ * Constructs a theme's custom CSS may not contain.
+ *
+ * CSS cannot run code here, but it can still reach out: a `url()` or an
+ * `@import` turns applying a shared theme into a request that tells its author
+ * the app started, and `</style` ends the tag and hands the rest to the HTML
+ * parser. A theme is a file people pass around, so what it can do stops at
+ * painting the window it is applied to.
+ */
+const FORBIDDEN_CSS: ReadonlyArray<{ label: string; pattern: RegExp }> = [
+  { label: "@import", pattern: /@import\b/i },
+  { label: "url()", pattern: /\burl\s*\(/i },
+  { label: "expression()", pattern: /\bexpression\s*\(/i },
+  { label: "javascript:", pattern: /javascript\s*:/i },
+  { label: "-moz-binding", pattern: /-moz-binding/i },
+  { label: "</style", pattern: /<\/\s*style/i },
+];
+
+/** The construct that makes this CSS unusable, or null when it is clean. */
+export function unsafeCssConstruct(css: string): string | null {
+  return FORBIDDEN_CSS.find((entry) => entry.pattern.test(css))?.label ?? null;
+}
 
 function readString(value: unknown, maxLength: number): string {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -71,6 +103,7 @@ export function parseThemeDocument(input: unknown): ThemeParseResult {
     error: null,
     migratedFrom: null,
     rejectedTokens: [],
+    rejectedCss: null,
     declaredVersion: THEME_CONTRACT_VERSION,
   };
 
@@ -139,11 +172,22 @@ export function parseThemeDocument(input: unknown): ThemeParseResult {
   if (version) document.version = version;
   if (typeof record.glass === "boolean") document.glass = record.glass;
 
+  // Same treatment as a malformed token: the rest of the theme still applies,
+  // and the caller is told what was dropped rather than left with a file that
+  // silently does less than it says.
+  let rejectedCss: string | null = null;
+  const css = typeof record.css === "string" ? record.css.slice(0, MAX_THEME_CSS_LENGTH) : "";
+  if (css.trim()) {
+    rejectedCss = unsafeCssConstruct(css);
+    if (!rejectedCss) document.css = css;
+  }
+
   return {
     document,
     error: null,
     migratedFrom: declaredVersion < THEME_CONTRACT_VERSION ? declaredVersion : null,
     rejectedTokens,
+    rejectedCss,
     declaredVersion,
   };
 }
@@ -166,6 +210,7 @@ export function serializeThemeDocument(document: ThemeDocument): string {
   if (document.extends) ordered.extends = document.extends;
   if (document.glass) ordered.glass = document.glass;
   ordered.tokens = tokens;
+  if (document.css?.trim()) ordered.css = document.css;
   return JSON.stringify(ordered, null, 2);
 }
 
@@ -232,6 +277,8 @@ export type ThemeIssueCode =
   | "unknownToken"
   | "missingToken"
   | "unknownBase"
+  | "unsafeCss"
+  | "cssTooLong"
   | "contrast";
 
 export interface ThemeIssue {
@@ -244,6 +291,11 @@ export interface ThemeIssue {
   target?: number;
   expected?: string;
   base?: string;
+  /** Forbidden construct found in the custom CSS. */
+  construct?: string;
+  /** Character count of the custom CSS, against its cap. */
+  length?: number;
+  limit?: number;
 }
 
 interface ContrastCheck {
@@ -319,6 +371,20 @@ export function validateThemeDocument(
     issues.push({ level: "warning", code: "unknownBase", base: resolved.brokenExtends });
   }
 
+  const css = document.css ?? "";
+  const construct = css.trim() ? unsafeCssConstruct(css) : null;
+  if (construct) {
+    issues.push({ level: "error", code: "unsafeCss", construct });
+  }
+  if (css.length > MAX_THEME_CSS_LENGTH) {
+    issues.push({
+      level: "error",
+      code: "cssTooLong",
+      length: css.length,
+      limit: MAX_THEME_CSS_LENGTH,
+    });
+  }
+
   // Inheriting from the theme you named is the point; inheriting because a
   // token is nowhere in the chain is a hole the author should know about.
   if (!document.extends) {
@@ -367,5 +433,8 @@ export function duplicateThemeDocument(
     extends: source.id,
     glass: source.glass,
     tokens: {},
+    // Copied rather than inherited: custom CSS does not travel through
+    // `extends`, so a duplicate that dropped it would not look like its source.
+    ...(source.css ? { css: source.css } : {}),
   };
 }

@@ -49,6 +49,7 @@ themes with it.
 | `extends`       | no       | Id of the theme this one inherits from.                                               |
 | `glass`         | no       | `true` puts the theme on the translucent surface scale.                               |
 | `tokens`        | yes      | Map of token name to value. Only the tokens the theme cares about.                    |
+| `css`           | no       | Raw CSS applied on top of the theme. See Custom CSS below.                            |
 
 Unknown fields are ignored. Unknown or malformed tokens are dropped, and the
 rest of the file still applies.
@@ -84,6 +85,31 @@ construction, so resolution always produces a complete token set.
 The chain is capped at eight documents. A cycle, a missing base or a chain that
 runs past the cap stops the walk and lets the root fill the rest: the theme
 still paints, and the editor says which base it could not find.
+
+## Custom CSS
+
+`css` holds raw CSS, applied after the app stylesheet when the theme is active
+and removed the moment another theme is selected. It is there for what the
+tokens cannot express, a spacing tweak or a rule on one specific element, and
+it is the part of a theme most likely to break: the class names it targets are
+internal and change between releases.
+
+Custom CSS is not inherited through `extends`. A rule written against one
+theme's markup has no reason to follow every theme that inherits from it.
+Duplicating a theme copies its CSS instead.
+
+Four constructs are refused, and a file carrying one applies with its CSS
+dropped rather than being rejected whole:
+
+| Refused        | Why                                                                  |
+| -------------- | -------------------------------------------------------------------- |
+| `@import`      | Fetches a remote stylesheet, which tells its author the app started. |
+| `url()`        | Same, through a background image or a font.                          |
+| `expression()` | Legacy Internet Explorer construct that evaluates script.            |
+| `</style`      | Ends the tag and hands the rest of the file to the HTML parser.      |
+
+`javascript:` and `-moz-binding` are refused for the same reason. The cap is
+20 000 characters, and the theme file itself may not exceed 64 KB.
 
 ## Tokens
 
@@ -199,6 +225,7 @@ Nothing that a theme file can contain takes the interface down.
   startup and refused with a message on import.
 - A file declaring a contract version this build does not know is refused
   whole.
+- Custom CSS holding a refused construct is dropped; the tokens still apply.
 
 Files that fail at startup are skipped silently, because they were already on
 disk before you did anything and a dialog at launch helps nobody. The editor
@@ -206,7 +233,9 @@ and the import path report the same failures out loud.
 
 ## Editing in the app
 
-Settings, Appearance, under the theme picker.
+Settings, Appearance, under the theme picker. The editor is marked beta: the
+contract is still moving, and a theme written today may need a pass after an
+update.
 
 - **Customize** copies the selected theme into a new one that extends it, so
   you start from a built-in without duplicating its palette. On a theme you
@@ -219,6 +248,8 @@ Settings, Appearance, under the theme picker.
 - The checks panel lists everything wrong with the theme, worst first. Refused
   values block saving, because they would be dropped on the next load and the
   theme would silently differ. Contrast problems do not block: they warn.
+- The custom CSS field takes raw CSS and applies it as you type. A refused
+  construct blocks saving, for the same reason a refused value does.
 - **Export** copies the theme to the clipboard as one self-contained file,
   metadata included. **Import** reads one back from the clipboard.
 

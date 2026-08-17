@@ -13,6 +13,7 @@
     type ThemeTokenKind,
   } from "./tokens";
   import {
+    MAX_THEME_CSS_LENGTH,
     resolveThemeTokens,
     serializeThemeDocument,
     validateThemeDocument,
@@ -81,6 +82,7 @@
   let base = $state(initial.extends ?? "");
   let glass = $state(Boolean(initial.glass));
   let tokens = $state<Partial<Record<ThemeTokenKey, string>>>({ ...initial.tokens });
+  let css = $state(initial.css ?? "");
   let saved = false;
 
   // Snapshot the running theme now, at component init: the preview effect below
@@ -101,6 +103,7 @@
     ...(base ? { extends: base } : {}),
     ...(glass ? { glass: true } : {}),
     tokens,
+    ...(css.trim() ? { css } : {}),
   });
 
   const resolved = $derived(resolveThemeTokens(draft, getThemeDocument, ROOT_TOKENS));
@@ -110,9 +113,11 @@
     resolveThemeSurfaceOpacities(themeFromDocument(draft), backgroundOpacity).cardOpacity,
   );
   const issues = $derived(validateThemeDocument(draft, resolved, { cardAlpha }));
-  // A refused value is the one problem that cannot be saved: it would be
-  // dropped on the next load and the theme would silently differ.
-  const blocked = $derived(issues.some((issue) => issue.code === "invalidValue"));
+  // Problems that cannot be saved: each one would be dropped on the next load,
+  // leaving a theme that silently differs from what the editor showed. A tight
+  // contrast is a judgement call and stays the author's to make.
+  const BLOCKING_CODES = ["invalidValue", "unsafeCss", "cssTooLong"];
+  const blocked = $derived(issues.some((issue) => BLOCKING_CODES.includes(issue.code)));
 
   $effect(() => {
     previewThemeDocument(draft);
@@ -150,6 +155,13 @@
         return t("themeEditor.issueMissingToken", { token: tokenLabel(String(issue.token)) });
       case "unknownBase":
         return t("themeEditor.issueUnknownBase", { base: String(issue.base) });
+      case "unsafeCss":
+        return t("themeEditor.issueUnsafeCss", { construct: String(issue.construct) });
+      case "cssTooLong":
+        return t("themeEditor.issueCssTooLong", {
+          length: Number(issue.length),
+          limit: Number(issue.limit),
+        });
       case "contrast":
         return t("themeEditor.issueContrast", {
           token: tokenLabel(String(issue.token)),
@@ -201,6 +213,9 @@
 
   const COLOR_KINDS: readonly ThemeTokenKind[] = ["rgbTriplet", "hexColor", "color"];
 
+  /** Code, so it is not translated: a CSS selector reads the same everywhere. */
+  const CSS_PLACEHOLDER = ".account-card { letter-spacing: 0.02em; }";
+
   async function save() {
     if (blocked) return;
     const document = draft;
@@ -217,6 +232,11 @@
 
 <BaseDialog title={t("themeEditor.title")} width="min(720px, 92vw)" {onCancel}>
   <div class="editor-body">
+    <p class="beta-note">
+      <span class="beta-pill">{t("themeEditor.beta")}</span>
+      {t("themeEditor.betaNote")}
+    </p>
+
     <div class="meta-grid">
       <label class="field">
         <span class="field-label">{t("themeEditor.name")}</span>
@@ -328,6 +348,20 @@
     {/each}
 
     <section class="token-group">
+      <h4>{t("themeEditor.customCss")}</h4>
+      <p class="css-help">{t("themeEditor.customCssHelp")}</p>
+      <textarea
+        class="css-input"
+        rows="6"
+        spellcheck="false"
+        maxlength={MAX_THEME_CSS_LENGTH}
+        placeholder={CSS_PLACEHOLDER}
+        aria-label={t("themeEditor.customCss")}
+        bind:value={css}
+      ></textarea>
+    </section>
+
+    <section class="token-group">
       <h4>{t("themeEditor.issues")}</h4>
       {#if issues.length === 0}
         <p class="issue-line ok">{t("themeEditor.noIssues")}</p>
@@ -362,6 +396,47 @@
     max-height: min(62vh, 560px);
     overflow-y: auto;
     padding-right: 4px;
+  }
+
+  .beta-note {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    font-size: 11px;
+    color: var(--fg-subtle);
+  }
+
+  .beta-pill {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-muted);
+  }
+
+  .css-help {
+    margin: 0 0 6px;
+    font-size: 11px;
+    color: var(--fg-subtle);
+  }
+
+  .css-input {
+    width: 100%;
+    resize: vertical;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    color: var(--fg);
+    /* Monospace here is the exception the rule allows: the field holds CSS. */
+    font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.5;
   }
 
   .meta-grid {

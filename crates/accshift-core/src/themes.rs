@@ -32,6 +32,10 @@ pub struct CustomTheme {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glass: Option<bool>,
     pub tokens: serde_json::Value,
+    /// Raw CSS the theme carries. Stored verbatim: what it is allowed to
+    /// contain is decided where it is applied, in `src/lib/theme/schema.ts`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub css: Option<String>,
 }
 
 fn legacy_schema_version() -> u32 {
@@ -189,13 +193,15 @@ mod tests {
             "colorScheme": "dark",
             "extends": "dark",
             "glass": true,
-            "tokens": { "accent": "#88c0d0" }
+            "tokens": { "accent": "#88c0d0" },
+            "css": ".account-card { letter-spacing: 0.02em; }"
         }"##;
         let theme: CustomTheme = serde_json::from_str(json).unwrap();
         assert_eq!(theme.schema_version, 2);
         assert_eq!(theme.author.as_deref(), Some("someone"));
         assert_eq!(theme.extends.as_deref(), Some("dark"));
         assert_eq!(theme.glass, Some(true));
+        assert!(theme.css.as_deref().unwrap().contains("letter-spacing"));
 
         let written = serde_json::to_string(&theme).unwrap();
         assert!(written.contains("\"schemaVersion\":2"));
@@ -206,12 +212,14 @@ mod tests {
             version: None,
             extends: None,
             glass: None,
+            css: None,
             ..theme
         };
         let written = serde_json::to_string(&bare).unwrap();
         assert!(!written.contains("author"));
         assert!(!written.contains("extends"));
         assert!(!written.contains("glass"));
+        assert!(!written.contains("css"));
     }
 
     #[test]
@@ -262,6 +270,7 @@ mod tests {
             extends: None,
             glass: None,
             tokens: serde_json::json!({}),
+            css: None,
         };
         assert!(save_custom_theme(&ctx, &theme).is_err());
 

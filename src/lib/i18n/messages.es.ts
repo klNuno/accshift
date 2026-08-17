@@ -682,6 +682,14 @@ export const ES_MESSAGES: Record<MessageKey, string> = {
   "themeEditor.issueUnknownBase": "El tema base {base} no existe, se usan los valores integrados",
   "themeEditor.issueContrast":
     "{token} sobre {against}: {ratio} a 1, por debajo del objetivo de {target} a 1",
+  "themeEditor.beta": "Beta",
+  "themeEditor.betaNote":
+    "El formato de tema aún cambia: un tema escrito hoy puede necesitar un ajuste tras una actualización.",
+  "themeEditor.customCss": "CSS personalizado",
+  "themeEditor.customCssHelp":
+    "Se aplica sobre el tema, para lo que los valores de arriba no alcanzan. Sin @import ni url(): un tema nunca descarga nada.",
+  "themeEditor.issueUnsafeCss": "{construct} no está permitido en un tema, el CSS no se aplica",
+  "themeEditor.issueCssTooLong": "CSS demasiado largo: {length} caracteres, el límite es {limit}",
 
   "settings.themeInvalidJson": "JSON de tema inválido",
 

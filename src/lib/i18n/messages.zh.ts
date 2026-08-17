@@ -652,6 +652,13 @@ export const ZH_MESSAGES: Record<MessageKey, string> = {
   "themeEditor.issueUnknownBase": "基础主题 {base} 不存在，使用内置值",
   "themeEditor.issueContrast":
     "{token} 在 {against} 上的对比度为 {ratio}:1，低于 {target}:1 的目标",
+  "themeEditor.beta": "测试版",
+  "themeEditor.betaNote": "主题格式仍在变动：今天写的主题在更新后可能需要调整。",
+  "themeEditor.customCss": "自定义 CSS",
+  "themeEditor.customCssHelp":
+    "叠加在主题之上，用于上面的取值无法覆盖的部分。不允许 @import 和 url()：主题不会向外请求任何内容。",
+  "themeEditor.issueUnsafeCss": "主题中不允许 {construct}，该 CSS 不会生效",
+  "themeEditor.issueCssTooLong": "CSS 过长：{length} 个字符，上限为 {limit}",
 
   "bulkEdit.title": "批量编辑",
   "bulkEdit.selectAccounts": "选择账号",

@@ -671,6 +671,14 @@ export const EN_MESSAGES = {
   "themeEditor.issueMissingToken": "{token} is not set, the built-in value is used",
   "themeEditor.issueUnknownBase": "Base theme {base} does not exist, built-in values are used",
   "themeEditor.issueContrast": "{token} on {against}: {ratio} to 1, below the {target} to 1 target",
+  "themeEditor.beta": "Beta",
+  "themeEditor.betaNote":
+    "The theme format is still moving: a theme written today may need a pass after an update.",
+  "themeEditor.customCss": "Custom CSS",
+  "themeEditor.customCssHelp":
+    "Applied on top of the theme, for what the values above cannot reach. No @import and no url(): a theme never fetches anything.",
+  "themeEditor.issueUnsafeCss": "{construct} is not allowed in a theme, the CSS is not applied",
+  "themeEditor.issueCssTooLong": "CSS too long: {length} characters, the limit is {limit}",
 
   "bulkEdit.title": "Bulk edit",
   "bulkEdit.selectAccounts": "Select accounts",
