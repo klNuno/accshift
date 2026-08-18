@@ -36,7 +36,7 @@ fn with_refreshed_system<R>(f: impl FnOnce(&System) -> R) -> R {
     // collect cpu / memory / disk usage / exe for every process on the box,
     // pure waste on a path polled every 100ms during switches and every few
     // seconds by the streamer-mode watcher.
-    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::new());
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
     f(&system)
 }
 
@@ -54,7 +54,7 @@ fn with_refreshed_pids<R>(pids: &[Pid], f: impl FnOnce(&System) -> R) -> R {
         system.refresh_processes_specifics(
             ProcessesToUpdate::Some(pids),
             true,
-            ProcessRefreshKind::new(),
+            ProcessRefreshKind::nothing(),
         );
     }
     f(&system)
