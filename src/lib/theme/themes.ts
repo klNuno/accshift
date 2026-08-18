@@ -1,7 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { MessageKey } from "$lib/i18n";
 import {
+  AVATAR_RADIUS,
   DENSITY_SCALE,
+  FONT_SMOOTHING_MAC_VALUE,
+  FONT_SMOOTHING_VALUE,
   THEME_CONTRACT_VERSION,
   THEME_TOKEN_SPECS,
   type ThemeTokens,
@@ -75,6 +78,28 @@ function hexToRgbTriplet(color: string): string {
  * from the root of its colour scheme. They are therefore the only token sets
  * that must be complete, which `themes.test.ts` enforces.
  */
+/**
+ * Version 3 tokens, and the values the app had hardcoded before they existed.
+ * They describe structure rather than colour, so both roots carry the same
+ * ones: a light theme is not built differently from a dark one, it is lit
+ * differently.
+ */
+const SHARED_STRUCTURE_TOKENS = {
+  bgImage: "none",
+  cardBgImage: "none",
+  borderWidth: "1px",
+  borderStyle: "solid",
+  avatarShape: "rounded",
+  focusRing: "solid",
+  overlayBlur: "4px",
+  fontDisplay: "Inter",
+  lineHeight: "1.5",
+  letterSpacing: "0",
+  labelCase: "none",
+  fontSmoothing: "auto",
+  motionScale: "1",
+} as const;
+
 const DARK_TOKENS: ThemeTokens = {
   bgRgb: "9 9 11",
   bgCard: "#1c1c1f",
@@ -99,6 +124,7 @@ const DARK_TOKENS: ThemeTokens = {
   elevationHigh: "0 18px 48px rgb(0 0 0 / 0.45)",
   density: "cozy",
   fontUi: "Inter",
+  ...SHARED_STRUCTURE_TOKENS,
 };
 
 const LIGHT_TOKENS: ThemeTokens = {
@@ -127,6 +153,7 @@ const LIGHT_TOKENS: ThemeTokens = {
   elevationHigh: "0 18px 48px rgb(0 0 0 / 0.22)",
   density: "cozy",
   fontUi: "Inter",
+  ...SHARED_STRUCTURE_TOKENS,
 };
 
 export const ROOT_TOKENS: Record<"dark" | "light", ThemeTokens> = {
@@ -555,6 +582,36 @@ export function applyThemeToDocument(
   // the tail of that stack is what covers Cyrillic and Han, and a theme is
   // never asked to think about the Chinese UI.
   root.style.setProperty("--font-ui", `${theme.tokens.fontUi}, var(--font-stack-base)`);
+  root.style.setProperty("--font-display", `${theme.tokens.fontDisplay}, var(--font-ui)`);
+
+  // Structure. A glass theme paints its surfaces from the backdrop, so a
+  // gradient laid over them would fill in the very transparency the material
+  // is made of: those two stay off there whatever the theme asks for.
+  const surfaceImagesAllowed = !theme.glass;
+  root.style.setProperty("--bg-image", surfaceImagesAllowed ? theme.tokens.bgImage : "none");
+  root.style.setProperty(
+    "--card-bg-image",
+    surfaceImagesAllowed ? theme.tokens.cardBgImage : "none",
+  );
+  root.style.setProperty("--border-width", theme.tokens.borderWidth);
+  root.style.setProperty("--border-style", theme.tokens.borderStyle);
+  root.style.setProperty("--avatar-radius", AVATAR_RADIUS[theme.tokens.avatarShape] ?? "50%");
+  root.style.setProperty("--focus-ring-style", theme.tokens.focusRing);
+  root.style.setProperty("--overlay-blur", theme.tokens.overlayBlur);
+  root.style.setProperty("--line-height", theme.tokens.lineHeight);
+  root.style.setProperty("--letter-spacing", theme.tokens.letterSpacing);
+  root.style.setProperty("--label-transform", theme.tokens.labelCase);
+  root.style.setProperty(
+    "--font-smoothing",
+    FONT_SMOOTHING_VALUE[theme.tokens.fontSmoothing] ?? "antialiased",
+  );
+  root.style.setProperty(
+    "--font-smoothing-mac",
+    FONT_SMOOTHING_MAC_VALUE[theme.tokens.fontSmoothing] ?? "grayscale",
+  );
+  // The animations setting still wins: a theme can slow the interface down or
+  // stop it, it cannot start it again for someone who turned motion off.
+  root.style.setProperty("--motion-scale", theme.tokens.motionScale);
   applyThemeCss(theme.css, doc);
 
   if (memoizable) {

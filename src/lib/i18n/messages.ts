@@ -614,6 +614,7 @@ export const EN_MESSAGES = {
   "themeGroup.semantic": "Status colors",
   "themeGroup.shape": "Shape and density",
   "themeGroup.typography": "Typography",
+  "themeGroup.motion": "Motion",
 
   "themeKind.rgbTriplet": "RGB triplet",
   "themeKind.hexColor": "hex color",
@@ -622,10 +623,20 @@ export const EN_MESSAGES = {
   "themeKind.shadow": "shadow",
   "themeKind.choice": "choice",
   "themeKind.fontStack": "font",
+  "themeKind.signedLength": "spacing",
+  "themeKind.gradient": "gradient",
+  "themeKind.number": "number",
 
   "themeDensity.compact": "Compact",
   "themeDensity.cozy": "Cozy",
   "themeDensity.comfortable": "Comfortable",
+
+  "themeAvatarShape.circle": "Circle",
+  "themeAvatarShape.rounded": "Rounded",
+  "themeAvatarShape.square": "Square",
+
+  "themeSmoothing.auto": "Smoothed",
+  "themeSmoothing.none": "Pixel",
 
   "themeToken.bgRgb": "Window background",
   "themeToken.bgCard": "Card background",
@@ -650,6 +661,19 @@ export const EN_MESSAGES = {
   "themeToken.elevationHigh": "High shadow",
   "themeToken.density": "Density",
   "themeToken.fontUi": "Interface font",
+  "themeToken.bgImage": "Window gradient",
+  "themeToken.cardBgImage": "Surface gradient",
+  "themeToken.borderWidth": "Border width",
+  "themeToken.borderStyle": "Border style",
+  "themeToken.avatarShape": "Avatar shape",
+  "themeToken.focusRing": "Focus ring",
+  "themeToken.overlayBlur": "Overlay blur",
+  "themeToken.fontDisplay": "Heading font",
+  "themeToken.lineHeight": "Line height",
+  "themeToken.letterSpacing": "Letter spacing",
+  "themeToken.labelCase": "Label case",
+  "themeToken.fontSmoothing": "Font smoothing",
+  "themeToken.motionScale": "Animation speed",
 
   "themeEditor.title": "Theme editor",
   "themeEditor.name": "Name",

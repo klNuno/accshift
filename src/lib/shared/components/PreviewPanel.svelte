@@ -145,7 +145,8 @@
     position: relative;
     width: 120px;
     height: 120px;
-    border-radius: 8px;
+    --avatar-radius-default: 8px;
+    border-radius: var(--avatar-radius);
     overflow: hidden;
     display: flex;
     align-items: center;
@@ -237,7 +238,7 @@
     max-width: 100%;
     padding: 8px 10px;
     border-radius: 6px;
-    border: 1px solid var(--border);
+    border: var(--border-width) var(--border-style) var(--border);
     background: color-mix(in srgb, var(--bg-muted) 74%, transparent);
     box-sizing: border-box;
   }

@@ -598,6 +598,12 @@
     border-radius: var(--grid-card-radius);
     text-align: center;
     background: var(--bg-card);
+    /* The theme's card gradient, if it sets one. Declared after the shorthand
+       so it is not reset by it. */
+    background-image: var(--card-bg-image);
+    /* No border of its own: the card is read from its surface and its shadow,
+       and giving it one here would shift every card's layout by the border
+       width on themes that never asked for it. */
     border: none;
     cursor: pointer;
     transition: background 180ms ease-out, transform 180ms ease-out, box-shadow 180ms ease-out;
@@ -701,7 +707,10 @@
     width: var(--grid-card-avatar-size);
     height: var(--grid-card-avatar-size);
     margin: 0 auto 8px;
-    border-radius: 6px;
+    /* The rounding this avatar has when the theme leaves the shape alone; the
+       theme's avatarShape token turns it into a circle or squares it off. */
+    --avatar-radius-default: 6px;
+    border-radius: var(--avatar-radius);
     display: flex;
     align-items: center;
     justify-content: center;

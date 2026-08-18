@@ -623,6 +623,7 @@ export const PT_BR_MESSAGES: Record<MessageKey, string> = {
   "themeGroup.semantic": "Cores de status",
   "themeGroup.shape": "Forma e densidade",
   "themeGroup.typography": "Tipografia",
+  "themeGroup.motion": "Movimento",
 
   "themeKind.rgbTriplet": "trio RGB",
   "themeKind.hexColor": "cor hexadecimal",
@@ -631,10 +632,20 @@ export const PT_BR_MESSAGES: Record<MessageKey, string> = {
   "themeKind.shadow": "sombra",
   "themeKind.choice": "opção",
   "themeKind.fontStack": "fonte",
+  "themeKind.signedLength": "espaçamento",
+  "themeKind.gradient": "gradiente",
+  "themeKind.number": "número",
 
   "themeDensity.compact": "Compacta",
   "themeDensity.cozy": "Normal",
   "themeDensity.comfortable": "Ampla",
+
+  "themeAvatarShape.circle": "Redondo",
+  "themeAvatarShape.rounded": "Arredondado",
+  "themeAvatarShape.square": "Quadrado",
+
+  "themeSmoothing.auto": "Suavizado",
+  "themeSmoothing.none": "Pixel",
 
   "themeToken.bgRgb": "Fundo da janela",
   "themeToken.bgCard": "Fundo dos cartões",
@@ -659,6 +670,19 @@ export const PT_BR_MESSAGES: Record<MessageKey, string> = {
   "themeToken.elevationHigh": "Sombra forte",
   "themeToken.density": "Densidade",
   "themeToken.fontUi": "Fonte da interface",
+  "themeToken.bgImage": "Gradiente da janela",
+  "themeToken.cardBgImage": "Gradiente das superfícies",
+  "themeToken.borderWidth": "Espessura das bordas",
+  "themeToken.borderStyle": "Estilo das bordas",
+  "themeToken.avatarShape": "Forma dos avatares",
+  "themeToken.focusRing": "Contorno de foco",
+  "themeToken.overlayBlur": "Desfoque do fundo",
+  "themeToken.fontDisplay": "Fonte dos títulos",
+  "themeToken.lineHeight": "Altura da linha",
+  "themeToken.letterSpacing": "Espaçamento entre letras",
+  "themeToken.labelCase": "Maiúsculas dos rótulos",
+  "themeToken.fontSmoothing": "Suavização do texto",
+  "themeToken.motionScale": "Velocidade das animações",
 
   "themeEditor.title": "Editor de temas",
   "themeEditor.name": "Nome",

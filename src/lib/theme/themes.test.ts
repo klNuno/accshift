@@ -201,6 +201,59 @@ describe("applyThemeToDocument", () => {
     expect(properties.get("--font-ui")).toBe("Inter, var(--font-stack-base)");
   });
 
+  it("turns the structure tokens into what CSS can actually use", () => {
+    const { doc, properties } = stubDocument();
+    const theme = themeFromDocument({
+      schemaVersion: 3,
+      id: "bevelled",
+      name: "Bevelled",
+      colorScheme: "light",
+      tokens: {
+        avatarShape: "circle",
+        fontSmoothing: "none",
+        borderStyle: "ridge",
+        borderWidth: "2px",
+        motionScale: "0",
+        fontDisplay: "Tahoma",
+        cardBgImage: "linear-gradient(180deg, #ffffff, #c0c0c0)",
+      },
+    });
+
+    applyThemeToDocument(theme, 100, doc);
+
+    // A name in the file, a length in CSS.
+    expect(properties.get("--avatar-radius")).toBe("50%");
+    // One name, two properties, and macOS needs the opposite keyword.
+    expect(properties.get("--font-smoothing")).toBe("none");
+    expect(properties.get("--font-smoothing-mac")).toBe("auto");
+    expect(properties.get("--border-style")).toBe("ridge");
+    expect(properties.get("--border-width")).toBe("2px");
+    expect(properties.get("--motion-scale")).toBe("0");
+    // The display font falls back to the interface font, never to nothing.
+    expect(properties.get("--font-display")).toBe("Tahoma, var(--font-ui)");
+    expect(properties.get("--card-bg-image")).toBe("linear-gradient(180deg, #ffffff, #c0c0c0)");
+  });
+
+  it("keeps a gradient off the surfaces a glass theme reads the desktop through", () => {
+    const { doc, properties } = stubDocument();
+    const theme = themeFromDocument({
+      schemaVersion: 3,
+      id: "glassy",
+      name: "Glassy",
+      colorScheme: "dark",
+      glass: true,
+      tokens: {
+        bgImage: "linear-gradient(180deg, #ffffff, #000000)",
+        cardBgImage: "linear-gradient(180deg, #ffffff, #000000)",
+      },
+    });
+
+    applyThemeToDocument(theme, 100, doc);
+
+    expect(properties.get("--bg-image")).toBe("none");
+    expect(properties.get("--card-bg-image")).toBe("none");
+  });
+
   it("paints a theme it has never seen without falling over", () => {
     const { doc, properties } = stubDocument();
     const theme = themeFromDocument({

@@ -23,7 +23,7 @@ themes with it.
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "id": "nord",
   "name": "Nord",
   "author": "someone",
@@ -61,11 +61,22 @@ bumped when a token is added, removed, or changes meaning.
 
 - **1**: the eleven original colour tokens.
 - **2**: accent and status colours, radii, elevations, density, interface font.
+- **3**: structure. Surface gradients, border weight and style, avatar shape,
+  focus ring, overlay blur, heading font, line height, letter spacing, label
+  case, font smoothing, animation speed. Version 2 said what a theme was
+  painted with; version 3 says what it is made of.
 
 A file with no `schemaVersion` is a version 1 file. It is migrated on load by
 being pointed at the built-in theme of its own colour scheme, so its eleven
 colours keep winning and the tokens added since are inherited rather than
 missing. Nothing is rewritten on disk until you save the theme from the editor.
+
+Every later version migrates by doing nothing, which is what the contract is
+built for: a token a file does not set is resolved from what it extends and
+finally from the root, and the version 3 roots hold exactly the values the
+interface used to hardcode. A version 2 theme therefore renders in a version 3
+build pixel for pixel as it did before, and the editor does not call it
+incomplete for saying nothing about its border style.
 
 A file that declares a version this build does not know is refused whole, with
 a message saying it needs a newer accshift. Applying half of it would produce a
@@ -126,6 +137,12 @@ you can see what a value affects by searching the stylesheets for it.
 | `bgMuted`     | `--bg-muted`      | hex colour  | 1     | Recessed surfaces: inputs, empty states, badges.                                     |
 | `bgElevated`  | `--bg-elevated`   | hex colour  | 1     | Surfaces raised above a card: menus, popovers.                                       |
 | `border`      | `--border`        | colour      | 1     | Every separator and outline.                                                         |
+| `bgImage`     | `--bg-image`      | gradient    | 3     | Gradient laid over the window fill. `none` by default.                               |
+| `cardBgImage` | `--card-bg-image` | gradient    | 3     | Gradient laid over cards, dialogs, menus and toasts. `none` by default.              |
+
+Both gradients are forced to `none` on a glass theme. Those surfaces are made
+of the desktop showing through, and a gradient over them fills in the very
+transparency the material is.
 
 The four `bg*` tokens are painted at an alpha the app computes from the theme
 kind and the opacity slider, which is why they must be plain hex: the value is
@@ -152,41 +169,70 @@ split into channels before it reaches CSS.
 
 ### Shape and density
 
-| Token             | CSS                  | Kind   | Since | Role                                                                 |
-| ----------------- | -------------------- | ------ | ----- | -------------------------------------------------------------------- |
-| `radiusSm`        | `--radius-sm`        | length | 2     | Badges, inputs, small controls.                                      |
-| `radiusMd`        | `--radius-md`        | length | 2     | Cards and panels.                                                    |
-| `radiusLg`        | `--radius-lg`        | length | 2     | Dialogs and large containers.                                        |
-| `elevationLow`    | `--elevation-low`    | shadow | 2     | Resting shadow.                                                      |
-| `elevationMedium` | `--elevation-medium` | shadow | 2     | Hovered and floating surfaces.                                       |
-| `elevationHigh`   | `--elevation-high`   | shadow | 2     | Dialogs and menus.                                                   |
-| `density`         | `--density-scale`    | choice | 2     | `compact`, `cozy` or `comfortable`. Scales the account grid metrics. |
+| Token             | CSS                  | Kind   | Since | Role                                                                                                           |
+| ----------------- | -------------------- | ------ | ----- | -------------------------------------------------------------------------------------------------------------- |
+| `radiusSm`        | `--radius-sm`        | length | 2     | Badges, inputs, small controls.                                                                                |
+| `radiusMd`        | `--radius-md`        | length | 2     | Cards and panels.                                                                                              |
+| `radiusLg`        | `--radius-lg`        | length | 2     | Dialogs and large containers.                                                                                  |
+| `elevationLow`    | `--elevation-low`    | shadow | 2     | Resting shadow.                                                                                                |
+| `elevationMedium` | `--elevation-medium` | shadow | 2     | Hovered and floating surfaces.                                                                                 |
+| `elevationHigh`   | `--elevation-high`   | shadow | 2     | Dialogs and menus.                                                                                             |
+| `density`         | `--density-scale`    | choice | 2     | `compact`, `cozy` or `comfortable`. Scales the account grid metrics.                                           |
+| `borderWidth`     | `--border-width`     | length | 3     | Weight of every themed border.                                                                                 |
+| `borderStyle`     | `--border-style`     | choice | 3     | `solid`, `dashed`, `dotted`, `double`, `groove`, `ridge`, `inset`, `outset`, `none`. A 2px `ridge` is a bevel. |
+| `avatarShape`     | `--avatar-radius`    | choice | 3     | `circle`, `rounded` or `square`. `rounded` keeps the rounding each avatar size already had.                    |
+| `focusRing`       | `--focus-ring-style` | choice | 3     | `solid`, `dashed`, `dotted` or `double`. Line style of the keyboard focus outline.                             |
+| `overlayBlur`     | `--overlay-blur`     | length | 3     | Blur behind dialogs and the command palette. `0` for a hard-edged theme.                                       |
+
+Border width and style reach the surfaces that own a themed border: dialogs,
+menus, toasts, the command palette, settings cards, list rows, tooltips. The
+account card has none of its own on purpose, because giving it one would shift
+every card's layout on themes that never asked for it.
 
 ### Typography
 
-| Token    | CSS         | Kind | Since | Role                                                                                                                                |
-| -------- | ----------- | ---- | ----- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `fontUi` | `--font-ui` | font | 2     | Interface font. It is placed in front of the bundled stack, never in place of it, so the Cyrillic and Han fallbacks stay behind it. |
+| Token           | CSS                 | Kind    | Since | Role                                                                                                                                |
+| --------------- | ------------------- | ------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `fontUi`        | `--font-ui`         | font    | 2     | Interface font. It is placed in front of the bundled stack, never in place of it, so the Cyrillic and Han fallbacks stay behind it. |
+| `fontDisplay`   | `--font-display`    | font    | 3     | Headings, window titles, buttons and field labels. Falls back to `fontUi`.                                                          |
+| `lineHeight`    | `--line-height`     | number  | 3     | Between 1 and 2.5.                                                                                                                  |
+| `letterSpacing` | `--letter-spacing`  | spacing | 3     | May be negative, to tighten tracking.                                                                                               |
+| `labelCase`     | `--label-transform` | choice  | 3     | `none` or `uppercase`, on headings, buttons and field labels.                                                                       |
+| `fontSmoothing` | `--font-smoothing`  | choice  | 3     | `auto` or `none`. `none` is the unsmoothed pixel look, and also turns off the macOS smoothing.                                      |
+
+### Motion
+
+| Token         | CSS              | Kind   | Since | Role                                                                    |
+| ------------- | ---------------- | ------ | ----- | ----------------------------------------------------------------------- |
+| `motionScale` | `--motion-scale` | number | 3     | Multiplies every animation duration, 0 to 3. `0` freezes the interface. |
+
+The animations setting still wins. A theme can slow the interface down or stop
+it; it cannot start it again for someone who turned motion off.
 
 ## Accepted values
 
 Values are validated per kind. A value that fails is dropped, and the inherited
 one is used in its place.
 
-| Kind        | Accepted                                          | Example                       |
-| ----------- | ------------------------------------------------- | ----------------------------- |
-| rgb triplet | Three numbers 0 to 255, space separated           | `9 9 11`                      |
-| hex colour  | `#rgb` or `#rrggbb`                               | `#1c1c1f`                     |
-| colour      | Hex, `rgb()`, `rgba()`, or `white` and `black`    | `#fafafa`                     |
-| length      | A number with `px`, `rem` or `em`, or bare `0`    | `8px`                         |
-| shadow      | `none`, or shadow syntax: numbers, units, colours | `0 2px 8px rgb(0 0 0 / 0.18)` |
-| choice      | One of the values the token lists                 | `cozy`                        |
-| font        | Family names, quotes and commas                   | `"Inter", sans-serif`         |
+| Kind        | Accepted                                          | Example                                     |
+| ----------- | ------------------------------------------------- | ------------------------------------------- |
+| rgb triplet | Three numbers 0 to 255, space separated           | `9 9 11`                                    |
+| hex colour  | `#rgb` or `#rrggbb`                               | `#1c1c1f`                                   |
+| colour      | Hex, `rgb()`, `rgba()`, or `white` and `black`    | `#fafafa`                                   |
+| length      | A number with `px`, `rem` or `em`, or bare `0`    | `8px`                                       |
+| spacing     | A length that may be negative                     | `-0.02em`                                   |
+| shadow      | `none`, or shadow syntax: numbers, units, colours | `0 2px 8px rgb(0 0 0 / 0.18)`               |
+| gradient    | `none`, or one `*-gradient()` function            | `linear-gradient(180deg, #ffffff, #c0c0c0)` |
+| number      | A plain number inside the token's own bounds      | `1.5`                                       |
+| choice      | One of the values the token lists                 | `cozy`                                      |
+| font        | Family names, quotes and commas                   | `"Inter", sans-serif`                       |
 
-Values are capped at 200 characters, and shadows may not contain `url(`,
-`var(` or `expression(`. Theme files travel between users and their values are
+Values are capped at 200 characters, 400 for a gradient, which carries colour
+stops. Shadows and gradients may not contain `url(`, `var(` or `expression(`,
+and a gradient must be a gradient function and nothing else: no bare image, no
+layered background. Theme files travel between users and their values are
 written straight into custom properties, so a value is allowed to describe a
-colour and nothing else.
+surface and nothing else.
 
 ## Contrast
 
@@ -218,6 +264,8 @@ at 13 percent over a dark window, which reads as dark.
 Nothing that a theme file can contain takes the interface down.
 
 - A token that is missing anywhere in the chain comes from the built-in root.
+  Only a missing colour is reported as a hole; leaving the structure tokens
+  alone is what most themes do.
 - A value that fails validation is dropped, and the inherited value is used.
 - A token name that is not in this document is ignored.
 - A base that does not exist, or a cycle, resolves against the root instead.
@@ -268,6 +316,11 @@ For contributors. Adding a token is a contract change, so it takes five steps:
    a value.
 5. Add the `themeToken.<key>` label to every dictionary in `src/lib/i18n`, and
    its row to the token reference above.
+
+A token whose value is a CSS keyword the author also types into the file, like
+`ridge` or `uppercase`, keeps that keyword in the editor dropdown untranslated:
+translating it would name the same thing two ways. Choices that are words of
+ours, like `cozy` or `circle`, do get a translation.
 
 Older files keep working without a migration entry as long as the resolver can
 fill the new token from the root, which is exactly what version 1 files get.

@@ -24,7 +24,9 @@
 <style>
   .card {
     background: color-mix(in srgb, var(--bg-card) 84%, #000 16%);
-    border: 1px solid color-mix(in srgb, var(--border) 80%, #fff 20%);
+    background-image: var(--card-bg-image);
+    border: var(--border-width) var(--border-style)
+      color-mix(in srgb, var(--border) 80%, #fff 20%);
     border-radius: 12px;
     padding: 14px;
     display: flex;

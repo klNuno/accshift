@@ -438,7 +438,8 @@
     min-width: 220px;
     padding: 4px;
     background: var(--bg-overlay);
-    border: 1px solid var(--border);
+    background-image: var(--card-bg-image);
+    border: var(--border-width) var(--border-style) var(--border);
     border-radius: 6px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
   }
@@ -542,7 +543,8 @@
     overflow-y: auto;
     padding: 4px;
     background: var(--bg-overlay);
-    border: 1px solid var(--border);
+    background-image: var(--card-bg-image);
+    border: var(--border-width) var(--border-style) var(--border);
     border-radius: 6px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
   }

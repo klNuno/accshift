@@ -119,8 +119,9 @@
     overflow: hidden;
     max-width: min(380px, calc(100vw - 32px));
     background: var(--bg-overlay);
+    background-image: var(--card-bg-image);
     border-radius: var(--radius-md);
-    border: 1px solid var(--border);
+    border: var(--border-width) var(--border-style) var(--border);
     box-shadow: var(--elevation-medium);
     margin-top: 8px;
     --toast-accent: var(--fg-subtle);

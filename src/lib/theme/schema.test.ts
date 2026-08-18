@@ -8,7 +8,13 @@ import {
   validateThemeDocument,
   type ThemeDocument,
 } from "./schema";
-import { THEME_CONTRACT_VERSION, THEME_TOKEN_KEYS, type ThemeTokens } from "./tokens";
+import {
+  THEME_CONTRACT_VERSION,
+  THEME_TOKEN_KEYS,
+  THEME_TOKEN_SPECS,
+  isEssentialToken,
+  type ThemeTokens,
+} from "./tokens";
 
 /** Roots whose every value names itself, so a test can see where one came from. */
 function labelledRoot(scheme: string): ThemeTokens {
@@ -32,6 +38,11 @@ function doc(overrides: Partial<ThemeDocument> = {}): ThemeDocument {
     ...overrides,
   };
 }
+
+/** Tokens a theme may leave out without being called incomplete. */
+const STRUCTURE_KEYS: readonly string[] = THEME_TOKEN_SPECS.filter(
+  (spec) => !isEssentialToken(spec.key),
+).map((spec) => spec.key);
 
 function registry(...documents: ThemeDocument[]) {
   const byId = new Map(documents.map((document) => [document.id, document]));
@@ -102,6 +113,38 @@ describe("parseThemeDocument", () => {
       "elevationLow",
       "somethingElse",
     ]);
+  });
+
+  it("takes the version 3 structure tokens and refuses what they must not carry", () => {
+    const result = parseThemeDocument({
+      schemaVersion: 3,
+      id: "structured",
+      name: "Structured",
+      colorScheme: "light",
+      tokens: {
+        bgImage: "linear-gradient(180deg, #ffffff 0%, #c0c0c0 100%)",
+        borderStyle: "ridge",
+        avatarShape: "square",
+        letterSpacing: "-0.02em",
+        lineHeight: "1.2",
+        motionScale: "0",
+        // A gradient is the one token that could name a remote file.
+        cardBgImage: "linear-gradient(#fff, url(https://example.com/x.png))",
+        // Out of the bounds the spec declares, not merely an odd choice.
+        fontSmoothing: "subpixel",
+        focusRing: "ridge",
+      },
+    });
+
+    expect(result.document?.tokens).toEqual({
+      bgImage: "linear-gradient(180deg, #ffffff 0%, #c0c0c0 100%)",
+      borderStyle: "ridge",
+      avatarShape: "square",
+      letterSpacing: "-0.02em",
+      lineHeight: "1.2",
+      motionScale: "0",
+    });
+    expect(result.rejectedTokens.sort()).toEqual(["cardBgImage", "focusRing", "fontSmoothing"]);
   });
 
   it("keeps custom CSS but drops what would let a theme reach out", () => {
@@ -271,6 +314,22 @@ describe("validateThemeDocument", () => {
 
     expect(issuesFor(standalone).some((issue) => issue.code === "missingToken")).toBe(true);
     expect(issuesFor(derived).some((issue) => issue.code === "missingToken")).toBe(false);
+  });
+
+  it("does not call a theme incomplete for leaving the structure alone", () => {
+    // What every theme written before version 3 looks like: a full palette and
+    // not one word about border style, tracking or motion.
+    const palette = doc({
+      tokens: Object.fromEntries(
+        THEME_TOKEN_KEYS.filter((key) => !STRUCTURE_KEYS.includes(key)).map((key) => [
+          key,
+          `dark-${key}`,
+        ]),
+      ),
+    });
+
+    const missing = issuesFor(palette).filter((issue) => issue.code === "missingToken");
+    expect(missing).toEqual([]);
   });
 
   it("blocks CSS that reaches outside the window, and CSS past the cap", () => {

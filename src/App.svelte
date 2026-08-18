@@ -1676,7 +1676,10 @@
     /* The shell owns the window background. Panels swapped under {#key}
        replay page-entrance (opacity 0 -> 1); if they painted the background
        themselves the window would flash transparent on every switch. */
-    background: var(--bg);
+    background-color: var(--bg);
+    /* The theme's own gradient, laid over that fill. `none` by default, and
+       forced off on glass themes, where the surface is the desktop. */
+    background-image: var(--bg-image);
     transition: filter 320ms ease-out, transform 320ms ease-out, opacity 220ms ease-out;
     will-change: filter, transform;
   }

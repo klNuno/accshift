@@ -2,6 +2,7 @@ import {
   THEME_CONTRACT_VERSION,
   THEME_TOKEN_KEYS,
   getTokenSpec,
+  isEssentialToken,
   isThemeTokenKey,
   isValidTokenValue,
   type ThemeTokenKey,
@@ -96,6 +97,12 @@ function readString(value: unknown, maxLength: number): string {
  * built-in theme of its own colour scheme, so its eleven colours keep winning
  * and the tokens added since are inherited instead of missing. A file that
  * declares a version we do not know is refused whole, never half applied.
+ *
+ * Every later version migrates by doing nothing at all, which is the property
+ * the contract is built for: a token a file does not set is resolved from what
+ * it extends and finally from the built-in root, so a version 2 file gets the
+ * version 3 structure tokens the app already painted with before they had
+ * names.
  */
 export function parseThemeDocument(input: unknown): ThemeParseResult {
   const empty: ThemeParseResult = {
@@ -386,9 +393,12 @@ export function validateThemeDocument(
   }
 
   // Inheriting from the theme you named is the point; inheriting because a
-  // token is nowhere in the chain is a hole the author should know about.
+  // colour is nowhere in the chain is a hole the author should know about. A
+  // theme written before version 3 sets no letter spacing and no border
+  // style, and it is complete all the same.
   if (!document.extends) {
     for (const key of resolved.filledFromRoot) {
+      if (!isEssentialToken(key)) continue;
       issues.push({ level: "warning", code: "missingToken", token: key });
     }
   }

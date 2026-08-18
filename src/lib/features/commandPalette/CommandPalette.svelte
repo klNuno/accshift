@@ -198,7 +198,7 @@
     justify-content: center;
     align-items: flex-start;
     background: color-mix(in srgb, var(--bg) 45%, transparent);
-    backdrop-filter: blur(3px);
+    backdrop-filter: blur(var(--overlay-blur));
     animation: overlay-fade-in 120ms ease-out;
   }
 
@@ -206,7 +206,8 @@
     margin-top: 12vh;
     width: min(520px, calc(100vw - 48px));
     background: var(--bg-card);
-    border: 1px solid var(--border);
+    background-image: var(--card-bg-image);
+    border: var(--border-width) var(--border-style) var(--border);
     border-radius: 10px;
     box-shadow: 0 18px 48px color-mix(in srgb, var(--bg) 60%, transparent);
     display: flex;

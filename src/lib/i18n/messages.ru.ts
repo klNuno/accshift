@@ -627,6 +627,7 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "themeGroup.semantic": "Цвета состояний",
   "themeGroup.shape": "Форма и плотность",
   "themeGroup.typography": "Типографика",
+  "themeGroup.motion": "Движение",
 
   "themeKind.rgbTriplet": "триплет RGB",
   "themeKind.hexColor": "шестнадцатеричный цвет",
@@ -635,10 +636,20 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "themeKind.shadow": "тень",
   "themeKind.choice": "вариант",
   "themeKind.fontStack": "шрифт",
+  "themeKind.signedLength": "интервал",
+  "themeKind.gradient": "градиент",
+  "themeKind.number": "число",
 
   "themeDensity.compact": "Плотная",
   "themeDensity.cozy": "Обычная",
   "themeDensity.comfortable": "Свободная",
+
+  "themeAvatarShape.circle": "Круг",
+  "themeAvatarShape.rounded": "Скруглённый",
+  "themeAvatarShape.square": "Квадрат",
+
+  "themeSmoothing.auto": "Сглаженный",
+  "themeSmoothing.none": "Пиксельный",
 
   "themeToken.bgRgb": "Фон окна",
   "themeToken.bgCard": "Фон карточек",
@@ -663,6 +674,19 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "themeToken.elevationHigh": "Сильная тень",
   "themeToken.density": "Плотность",
   "themeToken.fontUi": "Шрифт интерфейса",
+  "themeToken.bgImage": "Градиент окна",
+  "themeToken.cardBgImage": "Градиент поверхностей",
+  "themeToken.borderWidth": "Толщина границ",
+  "themeToken.borderStyle": "Стиль границ",
+  "themeToken.avatarShape": "Форма аватаров",
+  "themeToken.focusRing": "Рамка фокуса",
+  "themeToken.overlayBlur": "Размытие фона",
+  "themeToken.fontDisplay": "Шрифт заголовков",
+  "themeToken.lineHeight": "Высота строки",
+  "themeToken.letterSpacing": "Межбуквенный интервал",
+  "themeToken.labelCase": "Регистр подписей",
+  "themeToken.fontSmoothing": "Сглаживание текста",
+  "themeToken.motionScale": "Скорость анимаций",
 
   "themeEditor.title": "Редактор тем",
   "themeEditor.name": "Название",

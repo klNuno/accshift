@@ -56,13 +56,21 @@
   /* The theme's own font token is prepended to that stack (see themes.ts), so
      a theme picks the Latin face and never has to know about the CJK tail. */
   --font-ui: Inter, var(--font-stack-base);
+  /* Headings and window titles. Falls back to the interface font, so a theme
+     that names only one face still looks deliberate. */
+  --font-display: var(--font-ui);
+  --line-height: 1.5;
+  --letter-spacing: 0;
+  --font-smoothing: antialiased;
+  --font-smoothing-mac: grayscale;
   font-family: var(--font-ui);
-  line-height: 1.5;
+  line-height: var(--line-height);
+  letter-spacing: var(--letter-spacing);
   font-weight: 400;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  -webkit-font-smoothing: var(--font-smoothing);
+  -moz-osx-font-smoothing: var(--font-smoothing-mac);
   color-scheme: dark;
 
   --bg-rgb: 9 9 11;
@@ -98,6 +106,19 @@
   --elevation-high: 0 18px 48px rgb(0 0 0 / 0.45);
   --density-scale: 1;
 
+  /* Contract version 3: what a theme is made of rather than painted with.
+     These are the values the interface used to hardcode, so a theme written
+     before they existed keeps rendering exactly as it did. */
+  --bg-image: none;
+  --card-bg-image: none;
+  --border-width: 1px;
+  --border-style: solid;
+  --avatar-radius: var(--avatar-radius-default, 6px);
+  --focus-ring-style: solid;
+  --overlay-blur: 4px;
+  --label-transform: none;
+  --motion-scale: 1;
+
   /* Card grid metrics, in terms of the shape tokens: density and the medium
      radius are what a theme turns to reshape the account grid. */
   --grid-card-width: calc(100px * var(--density-scale));
@@ -111,14 +132,41 @@
      settles after mount (centering transform, computed padding) combined
      with a transform transition or FLIP reads as a ghost sideways slide.
      Details in .claude/CLAUDE.md, section "Animations". */
-  --motion-card-entrance: 260ms;
-  --motion-page-entrance: 200ms;
+  --motion-card-entrance: calc(260ms * var(--motion-scale));
+  --motion-page-entrance: calc(200ms * var(--motion-scale));
   /* Avatars: an <img> stays transparent until its bytes are decoded, then
      fades in. The defer delay is how long a still-unresolved avatar shows a
      bare box before falling back to initials or a spinner, so a profile that
      resolves quickly never flashes a placeholder. */
-  --motion-avatar-fade: 220ms;
+  --motion-avatar-fade: calc(220ms * var(--motion-scale));
+  /* Not scaled: this one is a readability delay, not an animation. Stretching
+     it with a slow theme would leave a blank avatar box on screen for a
+     second, and a theme at scale 0 would flash the placeholder every time. */
   --motion-avatar-defer: 380ms;
+}
+
+/* Headings and window titles take the display face and the theme's label case.
+   The case is a token rather than a stylesheet decision because a brutalist or
+   a terminal theme lives on it, and a theme that wants none simply says none. */
+h1,
+h2,
+h3,
+h4,
+.title,
+.section-title,
+button,
+.field-label {
+  font-family: var(--font-display);
+  text-transform: var(--label-transform);
+}
+
+/* Body copy keeps its own face: a display font set for headings has no
+   business reflowing an account name or a path. */
+p,
+input,
+textarea,
+select {
+  font-family: var(--font-ui);
 }
 
 /* The in-app motion preference must cover third-party/Svelte transitions and
@@ -249,14 +297,14 @@ html,
 
 /* Virtual arrow-key focus and native Tab focus share the same treatment. */
 [data-kb-focus] {
-  outline: 2px solid color-mix(in srgb, var(--fg) 65%, transparent);
+  outline: 2px var(--focus-ring-style) color-mix(in srgb, var(--fg) 65%, transparent);
   outline-offset: 2px;
 }
 
 [data-account-id]:focus-visible,
 [data-folder-id]:focus-visible,
 [data-back-card]:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--fg) 65%, transparent);
+  outline: 2px var(--focus-ring-style) color-mix(in srgb, var(--fg) 65%, transparent);
   outline-offset: 2px;
 }
 

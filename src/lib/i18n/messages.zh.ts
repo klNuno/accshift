@@ -594,6 +594,7 @@ export const ZH_MESSAGES: Record<MessageKey, string> = {
   "themeGroup.semantic": "状态颜色",
   "themeGroup.shape": "形状与密度",
   "themeGroup.typography": "字体排印",
+  "themeGroup.motion": "动效",
 
   "themeKind.rgbTriplet": "RGB 三元组",
   "themeKind.hexColor": "十六进制颜色",
@@ -602,10 +603,20 @@ export const ZH_MESSAGES: Record<MessageKey, string> = {
   "themeKind.shadow": "阴影",
   "themeKind.choice": "选项",
   "themeKind.fontStack": "字体",
+  "themeKind.signedLength": "字距",
+  "themeKind.gradient": "渐变",
+  "themeKind.number": "数值",
 
   "themeDensity.compact": "紧凑",
   "themeDensity.cozy": "适中",
   "themeDensity.comfortable": "宽松",
+
+  "themeAvatarShape.circle": "圆形",
+  "themeAvatarShape.rounded": "圆角",
+  "themeAvatarShape.square": "方形",
+
+  "themeSmoothing.auto": "平滑",
+  "themeSmoothing.none": "像素",
 
   "themeToken.bgRgb": "窗口背景",
   "themeToken.bgCard": "卡片背景",
@@ -630,6 +641,19 @@ export const ZH_MESSAGES: Record<MessageKey, string> = {
   "themeToken.elevationHigh": "深阴影",
   "themeToken.density": "密度",
   "themeToken.fontUi": "界面字体",
+  "themeToken.bgImage": "窗口渐变",
+  "themeToken.cardBgImage": "表面渐变",
+  "themeToken.borderWidth": "边框粗细",
+  "themeToken.borderStyle": "边框样式",
+  "themeToken.avatarShape": "头像形状",
+  "themeToken.focusRing": "焦点边框",
+  "themeToken.overlayBlur": "背景模糊",
+  "themeToken.fontDisplay": "标题字体",
+  "themeToken.lineHeight": "行高",
+  "themeToken.letterSpacing": "字间距",
+  "themeToken.labelCase": "标签大小写",
+  "themeToken.fontSmoothing": "文字平滑",
+  "themeToken.motionScale": "动画速度",
 
   "themeEditor.title": "主题编辑器",
   "themeEditor.name": "名称",

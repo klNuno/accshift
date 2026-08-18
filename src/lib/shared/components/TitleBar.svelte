@@ -317,7 +317,7 @@
     transform: translateX(-50%) translateY(4px);
     padding: 4px 8px;
     background: var(--bg-overlay);
-    border: 1px solid var(--border);
+    border: var(--border-width) var(--border-style) var(--border);
     border-radius: 4px;
     font-size: 11px;
     font-weight: 500;

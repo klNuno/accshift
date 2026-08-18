@@ -621,6 +621,7 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "themeGroup.semantic": "Couleurs d'état",
   "themeGroup.shape": "Forme et densité",
   "themeGroup.typography": "Typographie",
+  "themeGroup.motion": "Mouvement",
 
   "themeKind.rgbTriplet": "triplet RVB",
   "themeKind.hexColor": "couleur hexadécimale",
@@ -629,10 +630,20 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "themeKind.shadow": "ombre",
   "themeKind.choice": "choix",
   "themeKind.fontStack": "police",
+  "themeKind.signedLength": "espacement",
+  "themeKind.gradient": "dégradé",
+  "themeKind.number": "nombre",
 
   "themeDensity.compact": "Compact",
   "themeDensity.cozy": "Normal",
   "themeDensity.comfortable": "Confortable",
+
+  "themeAvatarShape.circle": "Rond",
+  "themeAvatarShape.rounded": "Arrondi",
+  "themeAvatarShape.square": "Carré",
+
+  "themeSmoothing.auto": "Lissé",
+  "themeSmoothing.none": "Pixel",
 
   "themeToken.bgRgb": "Fond de la fenêtre",
   "themeToken.bgCard": "Fond des cartes",
@@ -657,6 +668,19 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "themeToken.elevationHigh": "Ombre forte",
   "themeToken.density": "Densité",
   "themeToken.fontUi": "Police de l'interface",
+  "themeToken.bgImage": "Dégradé de la fenêtre",
+  "themeToken.cardBgImage": "Dégradé des surfaces",
+  "themeToken.borderWidth": "Épaisseur des bordures",
+  "themeToken.borderStyle": "Style des bordures",
+  "themeToken.avatarShape": "Forme des avatars",
+  "themeToken.focusRing": "Contour de focus",
+  "themeToken.overlayBlur": "Flou d'arrière-plan",
+  "themeToken.fontDisplay": "Police des titres",
+  "themeToken.lineHeight": "Hauteur de ligne",
+  "themeToken.letterSpacing": "Interlettrage",
+  "themeToken.labelCase": "Casse des libellés",
+  "themeToken.fontSmoothing": "Lissage du texte",
+  "themeToken.motionScale": "Vitesse des animations",
 
   "themeEditor.title": "Éditeur de thème",
   "themeEditor.name": "Nom",

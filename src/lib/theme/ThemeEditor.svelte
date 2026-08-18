@@ -53,6 +53,7 @@
     semantic: "themeGroup.semantic",
     shape: "themeGroup.shape",
     typography: "themeGroup.typography",
+    motion: "themeGroup.motion",
   };
 
   const KIND_LABELS: Record<ThemeTokenKind, MessageKey> = {
@@ -60,16 +61,39 @@
     hexColor: "themeKind.hexColor",
     color: "themeKind.color",
     length: "themeKind.length",
+    signedLength: "themeKind.signedLength",
     shadow: "themeKind.shadow",
+    gradient: "themeKind.gradient",
+    number: "themeKind.number",
     choice: "themeKind.choice",
     fontStack: "themeKind.fontStack",
   };
 
+  /**
+   * Choices that are words of ours get a translation. The ones that are CSS
+   * keywords (`ridge`, `dotted`, `uppercase`) deliberately do not: the author
+   * types those same words into the theme file, and a translated dropdown
+   * would name them one thing here and another there.
+   */
   const CHOICE_LABELS: Record<string, MessageKey> = {
     compact: "themeDensity.compact",
     cozy: "themeDensity.cozy",
     comfortable: "themeDensity.comfortable",
+    circle: "themeAvatarShape.circle",
+    rounded: "themeAvatarShape.rounded",
+    square: "themeAvatarShape.square",
   };
+
+  /** Same choice word, different meaning per token: `none` is a border style
+   *  under borderStyle and a smoothing mode under fontSmoothing. */
+  const CHOICE_LABELS_BY_TOKEN: Partial<Record<ThemeTokenKey, Record<string, MessageKey>>> = {
+    fontSmoothing: { auto: "themeSmoothing.auto", none: "themeSmoothing.none" },
+  };
+
+  function choiceLabel(key: ThemeTokenKey, choice: string): string {
+    const messageKey = CHOICE_LABELS_BY_TOKEN[key]?.[choice] ?? CHOICE_LABELS[choice];
+    return messageKey ? t(messageKey) : choice;
+  }
 
   // The editor opens on a document and owns it from there: the parent mounts a
   // fresh one per session, so the fields start from this snapshot and the prop
@@ -313,9 +337,7 @@
                   onchange={(e) => setToken(spec.key, e.currentTarget.value)}
                 >
                   {#each spec.choices ?? [] as choice (choice)}
-                    <option value={choice}
-                      >{CHOICE_LABELS[choice] ? t(CHOICE_LABELS[choice]) : choice}</option
-                    >
+                    <option value={choice}>{choiceLabel(spec.key, choice)}</option>
                   {/each}
                 </select>
               {:else}
