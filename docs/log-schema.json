@@ -1,0 +1,63 @@
+{
+  "$id": "https://accshift.app/schemas/log-record.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One line of app.log. The file is JSONL: one record per line, never pretty-printed.",
+  "properties": {
+    "code": {
+      "description": "Catalog code. Every possible value is in log-catalog.json.",
+      "type": "string"
+    },
+    "durMs": {
+      "description": "Duration of the operation, on its closing record.",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "errKind": {
+      "description": "Machine-readable error family, so failures group without parsing msg.",
+      "type": "string"
+    },
+    "fields": {
+      "description": "Typed payload declared by the code. `_defects` lists validation failures, `_truncatedFields` counts values dropped or marked to fit the size budget.",
+      "type": "object"
+    },
+    "level": {
+      "description": "Severity. May be raised above the catalog default by the call site.",
+      "enum": ["trace", "debug", "info", "warn", "error"]
+    },
+    "msg": {
+      "description": "Human sentence. Never parse this: parse fields.",
+      "type": "string"
+    },
+    "opId": {
+      "description": "One per user-visible operation. Shared by every record of that attempt.",
+      "pattern": "^op-[0-9a-f]{12}$",
+      "type": "string"
+    },
+    "outcome": {
+      "description": "How an operation ended. Absent on records that do not close one.",
+      "enum": ["success", "failure", "cancelled"]
+    },
+    "runId": {
+      "description": "One per process launch. Scopes everything to a single session.",
+      "pattern": "^run-[0-9a-f]{12}$",
+      "type": "string"
+    },
+    "schemaVersion": {
+      "const": 2,
+      "description": "Version of this record shape. Version 1 is the legacy line: {tsMs, level, source, message, details}, no code and no fields."
+    },
+    "source": {
+      "description": "Dotted module the record came from, e.g. platform.steam. Drives the per-module level filter.",
+      "type": "string"
+    },
+    "tsMs": {
+      "description": "Unix milliseconds when the record was built.",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": ["schemaVersion", "tsMs", "level", "code", "source", "runId", "fields"],
+  "title": "accshift log record",
+  "type": "object"
+}

@@ -1,0 +1,723 @@
+//! Redaction applied to everything that reaches the log file.
+//!
+//! Moved out of `logging.rs` when the structured event layer landed: the
+//! legacy facade and the new event pipeline must scrub identically, and the
+//! new pipeline needs a recursive walk over `fields` that the string-only
+//! entry point could not express.
+//!
+//! The rule this module encodes: a log line never carries a token, a
+//! password, a cookie, a `.maFile` body, or a filesystem path that still
+//! contains the OS account name. What it cannot recognise by shape (Steam
+//! login names, persona names) is kept out at the call sites instead, which
+//! is why nothing here tries to guess free-form words.
+
+use serde_json::{Map, Value};
+
+/// Redact every string reachable from `value`, keys included.
+///
+/// Object keys are scrubbed too: a field can carry a map whose keys are
+/// user data (a path -> status map, for instance), and "recursively, without
+/// exception" has to mean exactly that.
+pub fn sanitize_value(value: &Value) -> Value {
+    match value {
+        Value::String(text) => Value::String(sanitize_log_text(text)),
+        Value::Array(items) => Value::Array(items.iter().map(sanitize_value).collect()),
+        Value::Object(map) => {
+            let mut out = Map::with_capacity(map.len());
+            for (key, item) in map {
+                out.insert(sanitize_log_text(key), sanitize_value(item));
+            }
+            Value::Object(out)
+        }
+        other => other.clone(),
+    }
+}
+
+pub fn sanitize_log_text(value: &str) -> String {
+    // Order matters: collapse emails first (they can contain digits/hex), then
+    // BattleTags, then UUID/PUUID. We deliberately do NOT try to redact Steam
+    // login names or persona names here: they're free-form words with no stable
+    // shape, so any heuristic broad enough to catch them would also redact
+    // ordinary log text (verbs, product names). Steam account identifiers stay
+    // out of the log layer and are handled at the call sites instead.
+    let mut sanitized = redact_email_like_tokens(value);
+    sanitized = redact_battletags(&sanitized);
+    sanitized = redact_uuid_like_tokens(&sanitized);
+
+    for (path, placeholder) in resolved_env_scrub_pairs() {
+        sanitized = replace_case_insensitive(&sanitized, &path, placeholder);
+    }
+
+    sanitized
+}
+
+/// Truncate `value` to `max_bytes`, never splitting a UTF-8 char.
+pub fn trim_text(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) && end > 0 {
+        end -= 1;
+    }
+    value[..end].to_string()
+}
+
+fn replace_case_insensitive(haystack: &str, needle: &str, replacement: &str) -> String {
+    if needle.is_empty() {
+        return haystack.to_string();
+    }
+
+    // Unicode-aware case fold so accented usernames (C:\Users\Jérôme) match a
+    // differently-cased log path. `to_lowercase` can change byte length (and
+    // even char count) versus the original, so we can't index the original
+    // with offsets taken from the lowercased strings. Build a per-char map
+    // from each lowercased-byte offset back to the original byte offset, then
+    // copy spans out of the original.
+    let lower_haystack = haystack.to_lowercase();
+    let lower_needle = needle.to_lowercase();
+
+    // Nothing to replace: skip the offset map entirely. It costs 8 bytes per
+    // lowercased byte and the loop below would just copy `haystack` verbatim.
+    let Some(first_match) = lower_haystack.find(&lower_needle) else {
+        return haystack.to_string();
+    };
+
+    // For every byte offset in `lower_haystack` that starts a char, record the
+    // matching byte offset in `haystack`. `to_lowercase` maps each source char
+    // to one or more chars without reordering, so the char streams stay
+    // aligned: the i-th lowercased char comes from the i-th original char.
+    let mut orig_starts: Vec<usize> = Vec::with_capacity(lower_haystack.len() + 1);
+    {
+        let mut orig_chars = haystack.char_indices();
+        let mut pending_orig = orig_chars.next();
+        // How many lowercased chars the current original char expands into.
+        let mut remaining_in_current = 0usize;
+        let mut current_orig_offset = 0usize;
+        for (lower_offset, _) in lower_haystack.char_indices() {
+            while remaining_in_current == 0 {
+                if let Some((offset, ch)) = pending_orig.take() {
+                    current_orig_offset = offset;
+                    remaining_in_current = ch.to_lowercase().count();
+                    pending_orig = orig_chars.next();
+                } else {
+                    break;
+                }
+            }
+            // Pad the lookup table for byte offsets inside this lowercased char.
+            while orig_starts.len() <= lower_offset {
+                orig_starts.push(current_orig_offset);
+            }
+            remaining_in_current = remaining_in_current.saturating_sub(1);
+        }
+        // Terminal entry maps the end of the lowercased string to the end of
+        // the original, so a match that runs to the tail copies correctly.
+        while orig_starts.len() <= lower_haystack.len() {
+            orig_starts.push(haystack.len());
+        }
+    }
+
+    let mut out = String::with_capacity(haystack.len());
+    let mut search_start = 0usize;
+    let mut copied_orig = 0usize;
+    let mut relative_match = Some(first_match);
+
+    while let Some(relative_index) = relative_match {
+        let lower_start = search_start + relative_index;
+        let lower_end = lower_start + lower_needle.len();
+        let orig_start = orig_starts[lower_start];
+        let orig_end = orig_starts[lower_end];
+        out.push_str(&haystack[copied_orig..orig_start]);
+        out.push_str(replacement);
+        copied_orig = orig_end;
+        search_start = lower_end;
+        relative_match = lower_haystack[search_start..].find(&lower_needle);
+    }
+
+    out.push_str(&haystack[copied_orig..]);
+    out
+}
+
+fn redact_email_like_tokens(value: &str) -> String {
+    // No `@`, no email: skip the char vector and the rewind table.
+    if !value.contains('@') {
+        return value.to_string();
+    }
+
+    let chars: Vec<char> = value.chars().collect();
+    let mut out = String::with_capacity(value.len());
+    // `out_len_at[i]` is the byte length of `out` right before the char at
+    // index `i` was emitted. We push an entry every time we copy a char into
+    // `out`, so on an email match we can rewind `out` to where the local part
+    // began (`left`) and drop the already-written name.
+    let mut out_len_at: Vec<usize> = Vec::with_capacity(chars.len());
+    let mut cursor = 0usize;
+
+    while cursor < chars.len() {
+        if chars[cursor] != '@' {
+            out_len_at.push(out.len());
+            out.push(chars[cursor]);
+            cursor += 1;
+            continue;
+        }
+
+        let mut left = cursor;
+        while left > 0 {
+            let ch = chars[left - 1];
+            // `is_alphanumeric` (not `is_ascii_alphanumeric`) so IDN / SMTPUTF8
+            // locals (accented or non-Latin) match in full instead of stopping
+            // at the first non-ASCII char and leaking the rest.
+            if ch.is_alphanumeric() || matches!(ch, '.' | '_' | '%' | '+' | '-') {
+                left -= 1;
+            } else {
+                break;
+            }
+        }
+
+        let mut right = cursor + 1;
+        let mut saw_domain_dot = false;
+        while right < chars.len() {
+            let ch = chars[right];
+            // Same widening for the domain so an accented TLD/host is consumed
+            // and redacted rather than left in clear after the placeholder.
+            if ch.is_alphanumeric() || matches!(ch, '.' | '-') {
+                if ch == '.' {
+                    saw_domain_dot = true;
+                }
+                right += 1;
+            } else {
+                break;
+            }
+        }
+
+        let local_len = cursor.saturating_sub(left);
+        let domain_len = right.saturating_sub(cursor + 1);
+        if local_len == 0 || domain_len < 3 || !saw_domain_dot {
+            out_len_at.push(out.len());
+            out.push(chars[cursor]);
+            cursor += 1;
+            continue;
+        }
+
+        // The local part was already copied into `out` char-by-char in earlier
+        // iterations. Rewind to where it began so the whole local@domain span
+        // collapses to a single placeholder instead of leaking the name.
+        let local_start_len = out_len_at.get(left).copied().unwrap_or(out.len());
+        out.truncate(local_start_len);
+        out_len_at.truncate(left);
+
+        out.push_str("<email>");
+        // Keep `out_len_at` indexed by original char position so a later email
+        // in the same string still rewinds to the right spot: chars `left`
+        // through `right - 1` (local@domain) all collapse into the placeholder,
+        // each mapping to the byte where the placeholder started.
+        for _ in left..right {
+            out_len_at.push(local_start_len);
+        }
+        cursor = right;
+    }
+
+    out
+}
+
+/// Redact Battle.net BattleTags (`Name#1234`). The discriminator is the part
+/// that ties a tag to a specific account, so the whole `Name#1234` collapses
+/// to `<battletag>`. A BattleTag name is 3-12 chars (letters, digits, and on
+/// some locales accented letters) followed by `#` and 4-5 digits; we match
+/// that shape and ignore other `#` uses (e.g. `#define`, `channel #42`).
+fn redact_battletags(value: &str) -> String {
+    // A BattleTag always carries a `#`; without one the loop just copies.
+    if !value.contains('#') {
+        return value.to_string();
+    }
+
+    let chars: Vec<char> = value.chars().collect();
+    let mut out = String::with_capacity(value.len());
+    let mut i = 0usize;
+
+    while i < chars.len() {
+        if chars[i] != '#' {
+            out.push(chars[i]);
+            i += 1;
+            continue;
+        }
+
+        // Walk back over the name part.
+        let mut name_start = i;
+        while name_start > 0 {
+            let ch = chars[name_start - 1];
+            if ch.is_alphanumeric() {
+                name_start -= 1;
+            } else {
+                break;
+            }
+        }
+
+        // Walk forward over the digit discriminator.
+        let mut digits_end = i + 1;
+        while digits_end < chars.len() && chars[digits_end].is_ascii_digit() {
+            digits_end += 1;
+        }
+
+        let name_len = i - name_start;
+        let digit_len = digits_end - (i + 1);
+        // Blizzard names are 3-12 chars; the discriminator is 4-5 digits. A
+        // following alphanumeric run would mean we clipped a longer token, so
+        // bail and leave the `#` alone.
+        let trailing_ok = digits_end >= chars.len() || !chars[digits_end].is_alphanumeric();
+        if (3..=12).contains(&name_len) && (4..=5).contains(&digit_len) && trailing_ok {
+            // The name was already copied char-by-char; drop it before the tag.
+            for _ in 0..name_len {
+                out.pop();
+            }
+            out.push_str("<battletag>");
+            i = digits_end;
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+
+    out
+}
+
+/// Redact UUID / Riot PUUID tokens: canonical 8-4-4-4-12 hex with dashes, and
+/// bare 32-hex strings (PUUIDs are often logged dashless). Word boundaries are
+/// approximated by requiring the surrounding chars to be non-hex / non-dash so
+/// we don't clip a longer hex blob (hashes, keys) mid-stream.
+fn redact_uuid_like_tokens(value: &str) -> String {
+    // Both forms need at least 8 consecutive hex digits (first dashed group is
+    // 8, the bare form is 32). ASCII hex digits are single bytes, so a byte
+    // scan is equivalent to a char scan and avoids the char vector.
+    let mut hex_run = 0usize;
+    let mut has_hex_run = false;
+    for byte in value.bytes() {
+        if byte.is_ascii_hexdigit() {
+            hex_run += 1;
+            if hex_run >= 8 {
+                has_hex_run = true;
+                break;
+            }
+        } else {
+            hex_run = 0;
+        }
+    }
+    if !has_hex_run {
+        return value.to_string();
+    }
+
+    let chars: Vec<char> = value.chars().collect();
+    let mut out = String::with_capacity(value.len());
+    let mut i = 0usize;
+
+    let is_hex = |c: char| c.is_ascii_hexdigit();
+    let is_boundary_char = |c: char| !(c.is_ascii_hexdigit() || c == '-');
+
+    while i < chars.len() {
+        // Only consider a token start at a boundary (start of string or after a
+        // non-hex, non-dash char).
+        let at_boundary = i == 0 || is_boundary_char(chars[i - 1]);
+        if !at_boundary || !is_hex(chars[i]) {
+            out.push(chars[i]);
+            i += 1;
+            continue;
+        }
+
+        // Canonical 8-4-4-4-12 dashed form.
+        if let Some(end) = match_dashed_uuid(&chars, i) {
+            let trailing_ok = end >= chars.len() || is_boundary_char(chars[end]);
+            if trailing_ok {
+                out.push_str("<uuid>");
+                i = end;
+                continue;
+            }
+        }
+
+        // Bare 32-hex form (dashless PUUID).
+        let mut run_end = i;
+        while run_end < chars.len() && is_hex(chars[run_end]) {
+            run_end += 1;
+        }
+        let run_len = run_end - i;
+        let trailing_ok = run_end >= chars.len() || is_boundary_char(chars[run_end]);
+        if run_len == 32 && trailing_ok {
+            out.push_str("<uuid>");
+            i = run_end;
+            continue;
+        }
+
+        out.push(chars[i]);
+        i += 1;
+    }
+
+    out
+}
+
+/// Match a canonical 8-4-4-4-12 hex UUID starting at char index `start`.
+/// Returns the exclusive end char index on success.
+fn match_dashed_uuid(chars: &[char], start: usize) -> Option<usize> {
+    const GROUPS: [usize; 5] = [8, 4, 4, 4, 12];
+    let mut i = start;
+    for (group_idx, &group_len) in GROUPS.iter().enumerate() {
+        for _ in 0..group_len {
+            if i >= chars.len() || !chars[i].is_ascii_hexdigit() {
+                return None;
+            }
+            i += 1;
+        }
+        if group_idx < GROUPS.len() - 1 {
+            if i >= chars.len() || chars[i] != '-' {
+                return None;
+            }
+            i += 1;
+        }
+    }
+    Some(i)
+}
+
+// Env vars whose values are user-identifying paths, with the placeholder that
+// replaces them. Order matters and is preserved by the resolver below:
+// USERPROFILE first, HOME before the XDG dirs.
+const ENV_SCRUB_KEYS: [(&str, &str); 10] = [
+    ("USERPROFILE", "%USERPROFILE%"),
+    ("OneDrive", "%ONEDRIVE%"),
+    ("APPDATA", "%APPDATA%"),
+    ("LOCALAPPDATA", "%LOCALAPPDATA%"),
+    ("PROGRAMDATA", "%PROGRAMDATA%"),
+    ("TEMP", "%TEMP%"),
+    ("TMP", "%TEMP%"),
+    // Linux/macOS: AppContext::app_data_dir()/app_local_data_dir() resolve
+    // under $HOME (and under XDG_DATA_HOME/XDG_CONFIG_HOME when those are
+    // set), which embeds the OS account name. Without these, paths logged
+    // from config.rs's save_config_unlocked (portable/local config paths)
+    // leak the username on every successful config save.
+    ("HOME", "%HOME%"),
+    ("XDG_DATA_HOME", "%XDG_DATA_HOME%"),
+    ("XDG_CONFIG_HOME", "%XDG_CONFIG_HOME%"),
+];
+
+fn resolve_env_scrub_pairs() -> Vec<(String, &'static str)> {
+    ENV_SCRUB_KEYS
+        .iter()
+        .filter_map(|(env_key, placeholder)| {
+            std::env::var(env_key).ok().map(|path| (path, *placeholder))
+        })
+        .collect()
+}
+
+// These values are fixed for the process lifetime, so resolve them once
+// instead of paying 10 env lookups per sanitized field (4 fields per record).
+#[cfg(not(test))]
+fn resolved_env_scrub_pairs() -> Vec<(String, &'static str)> {
+    static ENV_SCRUB_CACHE: std::sync::OnceLock<Vec<(String, &'static str)>> =
+        std::sync::OnceLock::new();
+    ENV_SCRUB_CACHE.get_or_init(resolve_env_scrub_pairs).clone()
+}
+
+// Tests mutate HOME / XDG_* at runtime, so they need a fresh read per call.
+#[cfg(test)]
+fn resolved_env_scrub_pairs() -> Vec<(String, &'static str)> {
+    resolve_env_scrub_pairs()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // Serializes the tests that mutate process-global HOME / XDG_* env vars.
+    // sanitize_log_text reads them at call time, so two of these running
+    // concurrently under cargo's parallel runner would clobber each other's
+    // setup (one test's HOME/XDG leaking into the other's assertion).
+    static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn trim_text_shorter_than_max() {
+        assert_eq!(trim_text("hello", 10), "hello");
+    }
+
+    #[test]
+    fn trim_text_exact_max() {
+        assert_eq!(trim_text("hello", 5), "hello");
+    }
+
+    #[test]
+    fn trim_text_truncates_at_boundary() {
+        assert_eq!(trim_text("hello world", 5), "hello");
+    }
+
+    #[test]
+    fn trim_text_respects_utf8_boundary() {
+        // é is 2 bytes in UTF-8, max_bytes=3 should not split it
+        let result = trim_text("héllo", 2);
+        assert_eq!(result, "h");
+    }
+
+    #[test]
+    fn trim_text_empty_string() {
+        assert_eq!(trim_text("", 10), "");
+    }
+
+    #[test]
+    fn replace_case_insensitive_basic() {
+        assert_eq!(
+            replace_case_insensitive("Hello WORLD", "world", "earth"),
+            "Hello earth"
+        );
+    }
+
+    #[test]
+    fn replace_case_insensitive_multiple() {
+        assert_eq!(replace_case_insensitive("aAbBaA", "aa", "X"), "XbBX");
+    }
+
+    #[test]
+    fn replace_case_insensitive_empty_needle() {
+        assert_eq!(replace_case_insensitive("hello", "", "X"), "hello");
+    }
+
+    #[test]
+    fn replace_case_insensitive_no_match() {
+        assert_eq!(replace_case_insensitive("hello", "xyz", "X"), "hello");
+    }
+
+    #[test]
+    fn replace_case_insensitive_accented_username() {
+        // The log path lowercases the accented username differently than the
+        // env var; Unicode-aware folding must still match it.
+        assert_eq!(
+            replace_case_insensitive(
+                r"C:\Users\Jérôme\AppData",
+                r"C:\Users\JÉRÔME",
+                "%USERPROFILE%"
+            ),
+            r"%USERPROFILE%\AppData"
+        );
+    }
+
+    #[test]
+    fn replace_case_insensitive_accented_changes_length() {
+        // German ß lowercases to itself but uppercases to "SS": folding must
+        // not desync the offset map between lowercased and original.
+        assert_eq!(
+            replace_case_insensitive("straße end", "STRASSE", "X"),
+            "straße end"
+        );
+        assert_eq!(replace_case_insensitive("STRAßE x", "straße", "Y"), "Y x");
+    }
+
+    #[test]
+    fn redact_email_basic() {
+        // The whole local@domain collapses; the local part must not leak.
+        assert_eq!(redact_email_like_tokens("user@example.com"), "<email>");
+    }
+
+    #[test]
+    fn redact_email_drops_local_part_with_name() {
+        // Regression: previously left "jean.dupont<email>", leaking the name.
+        assert_eq!(
+            redact_email_like_tokens("jean.dupont@example.com"),
+            "<email>"
+        );
+    }
+
+    #[test]
+    fn redact_email_multiple() {
+        assert_eq!(
+            redact_email_like_tokens("a@b.co and c@d.com"),
+            "<email> and <email>"
+        );
+    }
+
+    #[test]
+    fn redact_email_no_email() {
+        assert_eq!(redact_email_like_tokens("hello world"), "hello world");
+    }
+
+    #[test]
+    fn redact_email_at_without_domain() {
+        assert_eq!(redact_email_like_tokens("just @ sign"), "just @ sign");
+    }
+
+    #[test]
+    fn redact_email_preserves_surrounding_text() {
+        assert_eq!(
+            redact_email_like_tokens("logged in as test@mail.com successfully"),
+            "logged in as <email> successfully"
+        );
+    }
+
+    #[test]
+    fn redact_email_accented_local_part() {
+        // Multibyte local part: the accented name must be dropped whole, not
+        // truncated at the first non-ASCII byte. The truncate-on-match rewinds
+        // `out` by recorded byte offsets, so the 2-byte `é` can't desync it.
+        assert_eq!(redact_email_like_tokens("jérôme@example.com"), "<email>");
+        assert_eq!(
+            redact_email_like_tokens("connecté en tant que jérôme@example.com ok"),
+            "connecté en tant que <email> ok"
+        );
+    }
+
+    #[test]
+    fn redact_email_accented_domain() {
+        // Non-ASCII tail in the domain must be consumed by the match instead of
+        // being left in clear after the placeholder.
+        assert_eq!(redact_email_like_tokens("john@domain.café"), "<email>");
+        assert_eq!(
+            redact_email_like_tokens("ping müller@firma.köln now"),
+            "ping <email> now"
+        );
+    }
+
+    #[test]
+    fn redact_battletag_basic() {
+        assert_eq!(
+            redact_battletags("playing as Hero#1234 now"),
+            "playing as <battletag> now"
+        );
+    }
+
+    #[test]
+    fn redact_battletag_five_digit_discriminator() {
+        assert_eq!(redact_battletags("Tag#12345"), "<battletag>");
+    }
+
+    #[test]
+    fn redact_battletag_ignores_non_tag_hashes() {
+        // Too few discriminator digits, or a name that's too short.
+        assert_eq!(redact_battletags("see channel #42"), "see channel #42");
+        assert_eq!(redact_battletags("#define FOO 1"), "#define FOO 1");
+        assert_eq!(redact_battletags("ab#1234"), "ab#1234");
+    }
+
+    #[test]
+    fn redact_uuid_dashed() {
+        assert_eq!(
+            redact_uuid_like_tokens("id=550e8400-e29b-41d4-a716-446655440000 done"),
+            "id=<uuid> done"
+        );
+    }
+
+    #[test]
+    fn redact_uuid_bare_32_hex() {
+        // Dashless PUUID form.
+        assert_eq!(
+            redact_uuid_like_tokens("puuid 550e8400e29b41d4a716446655440000 ok"),
+            "puuid <uuid> ok"
+        );
+    }
+
+    #[test]
+    fn redact_uuid_ignores_short_or_long_hex() {
+        // Not 32 hex chars, not a dashed UUID: left alone.
+        assert_eq!(redact_uuid_like_tokens("deadbeef"), "deadbeef");
+        assert_eq!(
+            redact_uuid_like_tokens("abc123def4567890abc123def4567890ab"),
+            "abc123def4567890abc123def4567890ab"
+        );
+    }
+
+    #[test]
+    fn sanitize_log_text_combines_redactions() {
+        let input = "user jean@mail.com Hero#1234 550e8400-e29b-41d4-a716-446655440000";
+        assert_eq!(sanitize_log_text(input), "user <email> <battletag> <uuid>");
+    }
+
+    // Regression: sanitize_log_text's env-var scrub list used to only cover
+    // Windows vars (USERPROFILE, APPDATA, ...), so a Linux/macOS path under
+    // $HOME (e.g. the portable/local config paths logged by
+    // config.rs's save_config_unlocked) leaked the OS account name into
+    // app.log, where it could later be exposed if the user shared the file,
+    // on every save.
+    #[test]
+    fn sanitize_log_text_scrubs_home_dir_path() {
+        let _env = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = std::env::var("HOME").ok();
+        std::env::set_var("HOME", "/home/alice");
+
+        let result = sanitize_log_text(
+            "Saved split app config /home/alice/.local/share/accshift/state/portable-config.json",
+        );
+
+        match previous {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+
+        assert_eq!(
+            result,
+            "Saved split app config %HOME%/.local/share/accshift/state/portable-config.json"
+        );
+    }
+
+    #[test]
+    fn sanitize_log_text_scrubs_xdg_dirs() {
+        let _env = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // Also pin HOME to a value that shares no substring with the XDG
+        // paths below: on a machine where HOME happens to already be set
+        // (e.g. Git Bash on Windows), the HOME substitution runs first in
+        // sanitize_log_text's loop and would otherwise eat part of the XDG
+        // path before the XDG substitution gets a chance to match it.
+        let previous_home = std::env::var("HOME").ok();
+        let previous_data = std::env::var("XDG_DATA_HOME").ok();
+        let previous_config = std::env::var("XDG_CONFIG_HOME").ok();
+        std::env::set_var("HOME", "/home/unrelated-sentinel");
+        std::env::set_var("XDG_DATA_HOME", "/home/alice/.local/share");
+        std::env::set_var("XDG_CONFIG_HOME", "/home/alice/.config");
+
+        let result = sanitize_log_text(
+            "paths /home/alice/.local/share/accshift and /home/alice/.config/accshift",
+        );
+
+        match previous_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        match previous_data {
+            Some(value) => std::env::set_var("XDG_DATA_HOME", value),
+            None => std::env::remove_var("XDG_DATA_HOME"),
+        }
+        match previous_config {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+
+        assert_eq!(
+            result,
+            "paths %XDG_DATA_HOME%/accshift and %XDG_CONFIG_HOME%/accshift"
+        );
+    }
+
+    // The whole point of the structured layer: `fields` is data, not prose,
+    // so nothing in it may escape the scrub the message string already got.
+    #[test]
+    fn sanitize_value_walks_nested_structures() {
+        let input = json!({
+            "account": "player@mail.com",
+            "tags": ["Hero#1234", "plain"],
+            "nested": { "puuid": "550e8400e29b41d4a716446655440000" },
+            "count": 3,
+            "ok": true,
+        });
+
+        let output = sanitize_value(&input);
+
+        assert_eq!(output["account"], json!("<email>"));
+        assert_eq!(output["tags"], json!(["<battletag>", "plain"]));
+        assert_eq!(output["nested"]["puuid"], json!("<uuid>"));
+        // Non-string leaves pass through untouched.
+        assert_eq!(output["count"], json!(3));
+        assert_eq!(output["ok"], json!(true));
+    }
+
+    // A map keyed by user data (path -> status, tag -> count) would otherwise
+    // leak through the key half of every entry.
+    #[test]
+    fn sanitize_value_scrubs_object_keys() {
+        let input = json!({ "Hero#1234": "ok", "user@mail.com": 1 });
+        let output = sanitize_value(&input);
+        assert_eq!(output, json!({ "<battletag>": "ok", "<email>": 1 }));
+    }
+}

@@ -1,0 +1,616 @@
+{
+  "events": [
+    {
+      "action": "Look for a locked file, an antivirus scan, or a launcher refusing to exit.",
+      "aliases": [],
+      "code": "anomaly.operation.slow",
+      "level": "warn",
+      "meaning": "An operation took far longer than its own rolling baseline.",
+      "optionalFields": [
+        {
+          "name": "platform",
+          "type": "string"
+        }
+      ],
+      "requiredFields": [
+        {
+          "name": "op",
+          "type": "string"
+        },
+        {
+          "name": "durMs",
+          "type": "integer"
+        },
+        {
+          "name": "baselineMs",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "action": "Run the health checks for that platform; the launcher path or its config is likely stale.",
+      "aliases": [],
+      "code": "anomaly.platform.consecutive_failures",
+      "level": "warn",
+      "meaning": "A platform failed several operations in a row.",
+      "optionalFields": [
+        {
+          "name": "op",
+          "type": "string"
+        }
+      ],
+      "requiredFields": [
+        {
+          "name": "platform",
+          "type": "string"
+        },
+        {
+          "name": "failures",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "action": "Treat the switch as failed: the target files were not replaced.",
+      "aliases": [],
+      "code": "anomaly.restore.no_write",
+      "level": "error",
+      "meaning": "A restore reported success without writing a single byte.",
+      "optionalFields": [
+        {
+          "name": "path",
+          "type": "string"
+        }
+      ],
+      "requiredFields": [
+        {
+          "name": "platform",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "action": "The account was probably not signed in when captured; recapture it.",
+      "aliases": [],
+      "code": "anomaly.snapshot.empty",
+      "level": "warn",
+      "meaning": "A session snapshot was captured but contains nothing.",
+      "optionalFields": [
+        {
+          "name": "path",
+          "type": "string"
+        }
+      ],
+      "requiredFields": [
+        {
+          "name": "platform",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "action": "None. Use the runId to scope everything that follows to this launch.",
+      "aliases": [],
+      "code": "app.session.started",
+      "level": "info",
+      "meaning": "A new accshift process started logging under this runId.",
+      "optionalFields": [
+        {
+          "name": "binary",
+          "type": "string"
+        }
+      ],
+      "requiredFields": [
+        {
+          "name": "appVersion",
+          "type": "string"
+        },
+        {
+          "name": "os",
+          "type": "string"
+        },
+        {
+          "name": "arch",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "action": "None. The user decides whether to paste it.",
+      "aliases": [],
+      "code": "diagnostics.bundle.written",
+      "level": "info",
+      "meaning": "A diagnostic report was written locally. Nothing was sent anywhere.",
+      "optionalFields": [],
+      "requiredFields": [
+        {
+          "name": "path",
+          "type": "string"
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "action": "Reproduce the bug now; the level reverts without any further action.",
+      "aliases": [],
+      "code": "diagnostics.debug.enabled",
+      "level": "info",
+      "meaning": "Temporary verbose logging was turned on and will expire on its own.",
+      "optionalFields": [
+        {
+          "name": "modules",
+          "type": "string[]"
+        }
+      ],
+      "requiredFields": [
+        {
+          "name": "durationMs",
+          "type": "integer"
+        },
+        {
+          "name": "newLevel",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "action": "None.",
+      "aliases": [],
+      "code": "diagnostics.debug.expired",
+      "level": "info",
+      "meaning": "Temporary verbose logging reached its deadline and the normal level is back.",
+      "optionalFields": [],
+      "requiredFields": []
+    },
+    {
+      "action": "Fix the call site: the catalog entry lists what the code requires.",
+      "aliases": [],
+      "code": "diagnostics.event.invalid",
+      "level": "error",
+      "meaning": "An event was emitted with a missing or mistyped mandatory field.",
+      "optionalFields": [],
+      "requiredFields": [
+        {
+          "name": "offendingCode",
+          "type": "string"
+        },
+        {
+          "name": "defects",
+          "type": "string[]"
+        }
+      ]
+    },
+    {
+      "action": "None. Remember that a lowered level hides records permanently, not retroactively.",
+      "aliases": [],
+      "code": "diagnostics.level.changed",
+      "level": "info",
+      "meaning": "A per-module log level was changed at runtime.",
+      "optionalFields": [],
+      "requiredFields": [
+        {
+          "name": "module",
+          "type": "string"
+        },
+        {
+          "name": "newLevel",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "action": "None. Visible at debug level so a clean preflight is provable, not assumed.",
+      "aliases": [],
+      "code": "health.check.passed",
+      "level": "debug",
+      "meaning": "An invariant was verified and holds.",
+      "optionalFields": [
+        {
+          "name": "platform",
+          "type": "string"
+        },
+        {
+          "name": "detail",
+          "type": "string"
+        }
+      ],
+      "requiredFields": [
+        {
+          "name": "check",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "action": "Expect out-of-order timestamps; sort by runId then by file order, not by tsMs alone.",
+      "aliases": [],
+      "code": "health.clock.skew",
+      "level": "warn",
+      "meaning": "The system clock moved backwards compared to records already on disk.",
+      "optionalFields": [],
+      "requiredFields": [
+        {
+          "name": "skewMs",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "action": "Free space on that volume; snapshot writes and log rotation both need room.",
+      "aliases": [],
+      "code": "health.disk.low",
+      "level": "warn",
+      "meaning": "The volume holding this path is close to full.",
+      "optionalFields": [],
+      "requiredFields": [
+        {
+          "name": "path",
+          "type": "string"
+        },
+        {
+          "name": "availableBytes",
+          "type": "integer"
+        },
+        {
+          "name": "requiredBytes",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "action": "Close the launcher (or the other accshift instance) and retry.",
+      "aliases": [],
+      "code": "health.file.locked",
+      "level": "warn",
+      "meaning": "A file the operation must rewrite is held by another process.",
+      "optionalFields": [
+        {
+          "name": "platform",
+          "type": "string"
+        },
+        {
+          "name": "holder",
+          "type": "string"
+        }
+      ],
+      "requiredFields": [
+        {
+          "name": "path",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "action": "Quit the launcher, or let the switch close it (graceful, then force).",
+      "aliases": [],
+      "code": "health.launcher.running",
+      "level": "warn",
+      "meaning": "The launcher is still alive when the operation needs it stopped.",
+      "optionalFields": [],
+      "requiredFields": [
+        {
+          "name": "platform",
+          "type": "string"
+        },
+        {
+          "name": "processes",
+          "type": "string[]"
+        }
+      ]
+    },
+    {
+      "action": "Set the path override for that platform, or reinstall the launcher.",
+      "aliases": [],
+      "code": "health.path.missing",
+      "level": "error",
+      "meaning": "A path the operation needs does not exist.",
+      "optionalFields": [
+        {
+          "name": "platform",
+          "type": "string"
+        }
+      ],
+      "requiredFields": [
+        {
+          "name": "path",
+          "type": "string"
+        },
+        {
+          "name": "purpose",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "action": "Check the folder ACLs, an antivirus lock, or run the operation without elevation mismatch.",
+      "aliases": [],
+      "code": "health.path.permission_denied",
+      "level": "error",
+      "meaning": "A path exists but this process cannot write to it.",
+      "optionalFields": [
+        {
+          "name": "platform",
+          "type": "string"
+        },
+        {
+          "name": "reason",
+          "type": "string"
+        }
+      ],
+      "requiredFields": [
+        {
+          "name": "path",
+          "type": "string"
+        },
+        {
+          "name": "purpose",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "action": "Restore the .bak sibling if there is one, otherwise recapture the account.",
+      "aliases": [],
+      "code": "health.profile.corrupt",
+      "level": "error",
+      "meaning": "A stored profile or config file is not valid JSON any more.",
+      "optionalFields": [
+        {
+          "name": "platform",
+          "type": "string"
+        }
+      ],
+      "requiredFields": [
+        {
+          "name": "path",
+          "type": "string"
+        },
+        {
+          "name": "reason",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "action": "None, unless files vanish faster than you can read them: raise the budget then.",
+      "aliases": [],
+      "code": "log.retention.purged",
+      "level": "info",
+      "meaning": "Rotated log files were deleted to stay inside the announced disk budget.",
+      "optionalFields": [],
+      "requiredFields": [
+        {
+          "name": "removedFiles",
+          "type": "integer"
+        },
+        {
+          "name": "freedBytes",
+          "type": "integer"
+        },
+        {
+          "name": "reason",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "action": "None. Confirms the retention policy is running.",
+      "aliases": [],
+      "code": "log.rotated",
+      "level": "info",
+      "meaning": "The active log file was shifted to app.1.log and a fresh one opened.",
+      "optionalFields": [],
+      "requiredFields": [
+        {
+          "name": "reason",
+          "type": "string"
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        },
+        {
+          "name": "keptFiles",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "action": "Check free space and write permissions on the log directory.",
+      "aliases": [],
+      "code": "log.write.failed",
+      "level": "error",
+      "meaning": "A log record could not be written to disk and was dropped.",
+      "optionalFields": [
+        {
+          "name": "path",
+          "type": "string"
+        }
+      ],
+      "requiredFields": [
+        {
+          "name": "reason",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "action": "On outcome=failure, read errKind then the steps sharing this opId.",
+      "aliases": [],
+      "code": "op.finished",
+      "level": "info",
+      "meaning": "An operation ended; durMs and outcome say how long it took and how it went.",
+      "optionalFields": [
+        {
+          "name": "platform",
+          "type": "string"
+        },
+        {
+          "name": "steps",
+          "type": "integer"
+        },
+        {
+          "name": "detail",
+          "type": "string"
+        }
+      ],
+      "requiredFields": [
+        {
+          "name": "op",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "action": "None. Query by opId to replay the whole attempt.",
+      "aliases": [],
+      "code": "op.started",
+      "level": "debug",
+      "meaning": "A user-visible operation started and was assigned an opId.",
+      "optionalFields": [
+        {
+          "name": "platform",
+          "type": "string"
+        },
+        {
+          "name": "trigger",
+          "type": "string"
+        }
+      ],
+      "requiredFields": [
+        {
+          "name": "op",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "action": "None. The last step before a failure is where to start reading.",
+      "aliases": [],
+      "code": "op.step",
+      "level": "debug",
+      "meaning": "An operation reached a named step.",
+      "optionalFields": [
+        {
+          "name": "platform",
+          "type": "string"
+        },
+        {
+          "name": "detail",
+          "type": "string"
+        }
+      ],
+      "requiredFields": [
+        {
+          "name": "op",
+          "type": "string"
+        },
+        {
+          "name": "step",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "action": "None. entries=0 also raises anomaly.snapshot.empty.",
+      "aliases": [],
+      "code": "platform.snapshot.captured",
+      "level": "info",
+      "meaning": "A session snapshot was captured for an account.",
+      "optionalFields": [],
+      "requiredFields": [
+        {
+          "name": "platform",
+          "type": "string"
+        },
+        {
+          "name": "entries",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "action": "None. bytes=0 also raises anomaly.restore.no_write.",
+      "aliases": [],
+      "code": "platform.snapshot.restored",
+      "level": "info",
+      "meaning": "A session snapshot was written back over the launcher's files.",
+      "optionalFields": [],
+      "requiredFields": [
+        {
+          "name": "platform",
+          "type": "string"
+        },
+        {
+          "name": "bytes",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "action": "Replay the opId: the preceding op.step and health.* records name the blocking condition.",
+      "aliases": [],
+      "code": "platform.switch.failed",
+      "level": "error",
+      "meaning": "An account switch failed at a named stage.",
+      "optionalFields": [
+        {
+          "name": "reason",
+          "type": "string"
+        }
+      ],
+      "requiredFields": [
+        {
+          "name": "platform",
+          "type": "string"
+        },
+        {
+          "name": "stage",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "action": "None. Pairs with platform.switch.succeeded or .failed on the same opId.",
+      "aliases": [],
+      "code": "platform.switch.started",
+      "level": "info",
+      "meaning": "An account switch began for this platform.",
+      "optionalFields": [
+        {
+          "name": "mode",
+          "type": "string"
+        }
+      ],
+      "requiredFields": [
+        {
+          "name": "platform",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "action": "None.",
+      "aliases": [],
+      "code": "platform.switch.succeeded",
+      "level": "info",
+      "meaning": "The launcher was relaunched signed in as the requested account.",
+      "optionalFields": [
+        {
+          "name": "mode",
+          "type": "string"
+        }
+      ],
+      "requiredFields": [
+        {
+          "name": "platform",
+          "type": "string"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 2
+}

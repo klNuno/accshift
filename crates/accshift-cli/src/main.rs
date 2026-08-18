@@ -1,4 +1,5 @@
 mod context;
+mod diagnostics;
 mod folders;
 mod output;
 mod pin;
@@ -104,6 +105,11 @@ enum Command {
         /// Account identifier (see `accshift list <platform>`).
         account_id: String,
     },
+    /// Read the log, explain a code, check the invariants, pack a report.
+    Diag {
+        #[command(subcommand)]
+        action: diagnostics::Diag,
+    },
 }
 
 impl Command {
@@ -116,6 +122,7 @@ impl Command {
             Command::Switch { .. } => "switch",
             Command::Descriptors => "descriptors",
             Command::DryRun { .. } => "dry-run",
+            Command::Diag { action } => action.name(),
         }
     }
 }
@@ -164,6 +171,7 @@ fn main() -> ExitCode {
             platform,
             account_id,
         } => cmd_dry_run(format, &platform, &account_id),
+        Command::Diag { action } => diagnostics::run(format, action),
     };
 
     if let Some(reporter) = reporter {

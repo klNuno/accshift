@@ -1,495 +1,208 @@
+//! The log file: one sink, one lock, a bounded amount of disk.
+//!
+//! This module owns the plumbing and nothing else. What a record contains, and
+//! how it is read back, lives in [`crate::diagnostics`].
+//!
+//! Two processes write this file. The GUI and the CLI are separate binaries
+//! pointing at the same `app.log`, so every mutation (append, rotate, purge)
+//! happens under an OS advisory lock on an `app.log.lock` sidecar, and the
+//! sidecar also carries a rotation generation counter. A process that finds a
+//! generation newer than its own knows the file it holds open has been renamed
+//! out from under it and reopens instead of appending into a rotated file.
+//!
+//! Retention is announced rather than implicit: at most
+//! [`MAX_LOG_FILE_BYTES`] per file, [`ROTATED_FILES_KEPT`] rotated files kept
+//! beside the active one, nothing older than [`RETENTION_DAYS`] days. That is
+//! [`disk_budget_bytes`], and `docs/logging.md` states the same number.
+
 use crate::context::AppContext;
+use crate::diagnostics::redact::{sanitize_log_text, trim_text};
 use fs4::FileExt;
+use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const LOG_FILE_NAME: &str = "app.log";
-const PREVIOUS_LOG_FILE_NAME: &str = "app.previous.log";
 const LOG_LOCK_FILE_NAME: &str = "app.log.lock";
+/// Live file, taken aside before the numbered chain is touched.
+const ROTATING_LOG_FILE_NAME: &str = "app.log.rotating";
+
+/// Written by builds that rotated on session start only. Migrated into the
+/// numbered chain the first time this code rotates, and still readable in the
+/// meantime.
+pub const LEGACY_PREVIOUS_LOG_FILE_NAME: &str = "app.previous.log";
+
+/// Size at which the active file is rotated.
+pub const MAX_LOG_FILE_BYTES: u64 = 2 * 1024 * 1024;
+/// Rotated files kept beside the active one: `app.1.log` to `app.4.log`.
+pub const ROTATED_FILES_KEPT: u32 = 4;
+/// Nothing rotated survives longer than this, however small the chain is.
+pub const RETENTION_DAYS: u64 = 14;
+
 const MAX_MESSAGE_BYTES: usize = 512;
 const MAX_DETAILS_BYTES: usize = 16_384;
 
-// Open append handle kept for the whole session. Opening the file on every
-// record costs a few syscalls per log line (plus antivirus re-scans on
-// Windows); the mutex also serializes writers, so it doubles as the old
-// LOG_LOCK.
-static LOG_SINK: OnceLock<Mutex<Option<File>>> = OnceLock::new();
-
-fn log_sink() -> &'static Mutex<Option<File>> {
-    LOG_SINK.get_or_init(|| Mutex::new(None))
+/// Worst case on disk, the number `docs/logging.md` announces to the user.
+pub const fn disk_budget_bytes() -> u64 {
+    MAX_LOG_FILE_BYTES * (ROTATED_FILES_KEPT as u64 + 1)
 }
 
-// Sidecar file used purely as a cross-process advisory lock. The in-process
-// `LOG_SINK` mutex only serializes threads within one binary; the GUI and CLI
-// are separate processes that append the same app.log, so a rotation rename in
-// one can race an append in the other. An OS advisory lock on this sidecar
-// serializes the two processes. Kept open for the whole session to avoid
-// re-opening it on every write.
-static LOG_LOCK_FILE: OnceLock<Mutex<Option<File>>> = OnceLock::new();
-
-fn log_lock_file_handle() -> &'static Mutex<Option<File>> {
-    LOG_LOCK_FILE.get_or_init(|| Mutex::new(None))
+/// Retention as data, for the diagnostic report and the docs test.
+pub fn retention_policy() -> serde_json::Value {
+    serde_json::json!({
+        "maxFileBytes": MAX_LOG_FILE_BYTES,
+        "rotatedFilesKept": ROTATED_FILES_KEPT,
+        "retentionDays": RETENTION_DAYS,
+        "diskBudgetBytes": disk_budget_bytes(),
+    })
 }
 
-/// Holds the OS-level exclusive lock on the log sidecar for as long as it is
-/// alive; releases on drop. Acquisition is best-effort: if the sidecar can't be
-/// opened or locked we proceed without it rather than dropping log records,
-/// since logging must not become a hard failure path. `Some` means the lock is
-/// held on the canonical cached handle, whose mutex stays held for the
-/// guard's lifetime so the unlock targets that same handle.
-struct CrossProcessLogGuard {
-    guard: Option<std::sync::MutexGuard<'static, Option<File>>>,
+/// Everything one log file needs, kept open for the session.
+///
+/// Opening the file per record costs syscalls and, on Windows, an antivirus
+/// re-scan each time. The map is keyed by path because a process can hold more
+/// than one context (the test suite does; the app does not).
+#[derive(Default)]
+struct Sink {
+    file: Option<File>,
+    lock: Option<File>,
+    /// Rotation generation this process last saw. Compared against the sidecar
+    /// on every acquire.
+    generation: u64,
+    /// Bytes in the open file, tracked incrementally so a write does not need
+    /// a stat.
+    size: u64,
 }
 
-impl CrossProcessLogGuard {
-    fn acquire(app_handle: &dyn AppContext) -> Self {
-        let mut guard = log_lock_file_handle()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+fn sinks() -> &'static Mutex<HashMap<PathBuf, Sink>> {
+    static SINKS: OnceLock<Mutex<HashMap<PathBuf, Sink>>> = OnceLock::new();
+    SINKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
-        if guard.is_none() {
-            if let Ok(lock_path) = log_lock_file_path(app_handle) {
-                if ensure_log_parent(&lock_path).is_ok() {
-                    if let Ok(file) = OpenOptions::new()
-                        .create(true)
-                        .read(true)
-                        .write(true)
-                        .truncate(false)
-                        .open(&lock_path)
-                    {
-                        *guard = Some(file);
-                    }
-                }
-            }
+impl Sink {
+    fn ensure_lock_file(&mut self, path: &Path) {
+        if self.lock.is_some() {
+            return;
         }
+        let lock_path = path.with_file_name(LOG_LOCK_FILE_NAME);
+        if ensure_parent(&lock_path).is_err() {
+            return;
+        }
+        self.lock = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .ok();
+    }
 
-        // Blocking acquire on the canonical handle, taken while still holding
-        // the in-process mutex. That wait can't stall a sibling thread: every
-        // acquire site takes the `log_sink` mutex first and keeps it for the
-        // guard's lifetime (lock order log_sink -> LOG_LOCK_FILE everywhere),
-        // so siblings are already serialized before reaching this point.
-        // Best-effort: if the sidecar can't be opened or locked we drop the
-        // mutex and proceed unlocked rather than failing the log write, and
-        // the open is retried on the next call.
-        let locked = match guard.as_ref() {
-            Some(file) => FileExt::lock(file).is_ok(),
-            None => false,
+    /// Generation stored in the sidecar, or 0 when there is none yet.
+    fn stored_generation(&self) -> u64 {
+        let Some(lock) = self.lock.as_ref() else {
+            return self.generation;
         };
-
-        CrossProcessLogGuard {
-            guard: locked.then_some(guard),
+        let mut buffer = [0u8; 8];
+        let mut handle = lock;
+        if handle.seek(SeekFrom::Start(0)).is_err() {
+            return self.generation;
+        }
+        match handle.read_exact(&mut buffer) {
+            Ok(()) => u64::from_le_bytes(buffer),
+            // No counter yet: a fresh sidecar, or one written by an older build.
+            Err(_) => 0,
         }
     }
-}
 
-impl Drop for CrossProcessLogGuard {
-    fn drop(&mut self) {
-        if let Some(guard) = self.guard.take() {
-            if let Some(file) = guard.as_ref() {
-                let _ = FileExt::unlock(file);
-            }
+    fn store_generation(&mut self, generation: u64) {
+        self.generation = generation;
+        let Some(lock) = self.lock.as_ref() else {
+            return;
+        };
+        let mut handle = lock;
+        if handle.seek(SeekFrom::Start(0)).is_ok() {
+            let _ = handle.write_all(&generation.to_le_bytes());
+            let _ = handle.flush();
         }
     }
-}
 
-fn open_append_handle(path: &Path) -> Result<File, String> {
-    OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|reason| format!("Could not open log file {}: {reason}", path.display()))
-}
-
-fn trim_text(value: &str, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value.to_string();
+    fn open_if_needed(&mut self, path: &Path) -> Result<(), String> {
+        if self.file.is_some() {
+            return Ok(());
+        }
+        ensure_parent(path)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|reason| format!("Could not open log file {}: {reason}", path.display()))?;
+        self.size = file.metadata().map(|meta| meta.len()).unwrap_or(0);
+        self.file = Some(file);
+        Ok(())
     }
 
-    let mut end = max_bytes;
-    while !value.is_char_boundary(end) && end > 0 {
-        end -= 1;
+    fn append(&mut self, path: &Path, line: &str) -> Result<(), String> {
+        let Some(file) = self.file.as_mut() else {
+            return Err("log sink is not open".to_string());
+        };
+        if let Err(reason) = writeln!(file, "{line}") {
+            // Drop the dead handle so the next record reopens the file.
+            self.file = None;
+            return Err(format!(
+                "Could not write log file {}: {reason}",
+                path.display()
+            ));
+        }
+        self.size += line.len() as u64 + 1;
+        Ok(())
     }
-    value[..end].to_string()
 }
 
-fn replace_case_insensitive(haystack: &str, needle: &str, replacement: &str) -> String {
-    if needle.is_empty() {
-        return haystack.to_string();
-    }
+/// Run `job` with the sink for this context open and locked.
+///
+/// Lock order is always in-process mutex, then OS lock, and `job` must never
+/// re-enter this function: the mutex is not reentrant, and the record types
+/// that would want to (a rotation notice) are written by `job` itself.
+fn with_sink<T>(
+    app_handle: &dyn AppContext,
+    job: impl FnOnce(&Path, &mut Sink) -> Result<T, String>,
+) -> Result<T, String> {
+    let path = log_file_path(app_handle)?;
+    let mut map = sinks().lock().unwrap_or_else(|error| error.into_inner());
+    let sink = map.entry(path.clone()).or_default();
 
-    // Unicode-aware case fold so accented usernames (C:\Users\Jérôme) match a
-    // differently-cased log path. `to_lowercase` can change byte length (and
-    // even char count) versus the original, so we can't index the original
-    // with offsets taken from the lowercased strings. Build a per-char map
-    // from each lowercased-byte offset back to the original byte offset, then
-    // copy spans out of the original.
-    let lower_haystack = haystack.to_lowercase();
-    let lower_needle = needle.to_lowercase();
-
-    // Nothing to replace: skip the offset map entirely. It costs 8 bytes per
-    // lowercased byte and the loop below would just copy `haystack` verbatim.
-    let Some(first_match) = lower_haystack.find(&lower_needle) else {
-        return haystack.to_string();
+    sink.ensure_lock_file(&path);
+    // Best effort, as before: a sidecar that cannot be opened or locked must
+    // not turn logging into a failure path. The window it leaves is a rotation
+    // racing an append between two processes, which costs at most the records
+    // written in that instant.
+    let locked = match sink.lock.as_ref() {
+        Some(lock) => FileExt::lock(lock).is_ok(),
+        None => false,
     };
 
-    // For every byte offset in `lower_haystack` that starts a char, record the
-    // matching byte offset in `haystack`. `to_lowercase` maps each source char
-    // to one or more chars without reordering, so the char streams stay
-    // aligned: the i-th lowercased char comes from the i-th original char.
-    let mut orig_starts: Vec<usize> = Vec::with_capacity(lower_haystack.len() + 1);
-    {
-        let mut orig_chars = haystack.char_indices();
-        let mut pending_orig = orig_chars.next();
-        // How many lowercased chars the current original char expands into.
-        let mut remaining_in_current = 0usize;
-        let mut current_orig_offset = 0usize;
-        for (lower_offset, _) in lower_haystack.char_indices() {
-            while remaining_in_current == 0 {
-                if let Some((offset, ch)) = pending_orig.take() {
-                    current_orig_offset = offset;
-                    remaining_in_current = ch.to_lowercase().count();
-                    pending_orig = orig_chars.next();
-                } else {
-                    break;
-                }
-            }
-            // Pad the lookup table for byte offsets inside this lowercased char.
-            while orig_starts.len() <= lower_offset {
-                orig_starts.push(current_orig_offset);
-            }
-            remaining_in_current = remaining_in_current.saturating_sub(1);
-        }
-        // Terminal entry maps the end of the lowercased string to the end of
-        // the original, so a match that runs to the tail copies correctly.
-        while orig_starts.len() <= lower_haystack.len() {
-            orig_starts.push(haystack.len());
-        }
+    // Another process may have rotated while we were not holding the lock. The
+    // handle we keep open would then point at the renamed file.
+    let stored = sink.stored_generation();
+    if stored != sink.generation {
+        sink.generation = stored;
+        sink.file = None;
     }
 
-    let mut out = String::with_capacity(haystack.len());
-    let mut search_start = 0usize;
-    let mut copied_orig = 0usize;
-    let mut relative_match = Some(first_match);
+    let outcome = job(&path, sink);
 
-    while let Some(relative_index) = relative_match {
-        let lower_start = search_start + relative_index;
-        let lower_end = lower_start + lower_needle.len();
-        let orig_start = orig_starts[lower_start];
-        let orig_end = orig_starts[lower_end];
-        out.push_str(&haystack[copied_orig..orig_start]);
-        out.push_str(replacement);
-        copied_orig = orig_end;
-        search_start = lower_end;
-        relative_match = lower_haystack[search_start..].find(&lower_needle);
+    if locked {
+        if let Some(lock) = sink.lock.as_ref() {
+            let _ = FileExt::unlock(lock);
+        }
     }
-
-    out.push_str(&haystack[copied_orig..]);
-    out
+    outcome
 }
 
-fn redact_email_like_tokens(value: &str) -> String {
-    // No `@`, no email: skip the char vector and the rewind table.
-    if !value.contains('@') {
-        return value.to_string();
-    }
-
-    let chars: Vec<char> = value.chars().collect();
-    let mut out = String::with_capacity(value.len());
-    // `out_len_at[i]` is the byte length of `out` right before the char at
-    // index `i` was emitted. We push an entry every time we copy a char into
-    // `out`, so on an email match we can rewind `out` to where the local part
-    // began (`left`) and drop the already-written name.
-    let mut out_len_at: Vec<usize> = Vec::with_capacity(chars.len());
-    let mut cursor = 0usize;
-
-    while cursor < chars.len() {
-        if chars[cursor] != '@' {
-            out_len_at.push(out.len());
-            out.push(chars[cursor]);
-            cursor += 1;
-            continue;
-        }
-
-        let mut left = cursor;
-        while left > 0 {
-            let ch = chars[left - 1];
-            // `is_alphanumeric` (not `is_ascii_alphanumeric`) so IDN / SMTPUTF8
-            // locals (accented or non-Latin) match in full instead of stopping
-            // at the first non-ASCII char and leaking the rest.
-            if ch.is_alphanumeric() || matches!(ch, '.' | '_' | '%' | '+' | '-') {
-                left -= 1;
-            } else {
-                break;
-            }
-        }
-
-        let mut right = cursor + 1;
-        let mut saw_domain_dot = false;
-        while right < chars.len() {
-            let ch = chars[right];
-            // Same widening for the domain so an accented TLD/host is consumed
-            // and redacted rather than left in clear after the placeholder.
-            if ch.is_alphanumeric() || matches!(ch, '.' | '-') {
-                if ch == '.' {
-                    saw_domain_dot = true;
-                }
-                right += 1;
-            } else {
-                break;
-            }
-        }
-
-        let local_len = cursor.saturating_sub(left);
-        let domain_len = right.saturating_sub(cursor + 1);
-        if local_len == 0 || domain_len < 3 || !saw_domain_dot {
-            out_len_at.push(out.len());
-            out.push(chars[cursor]);
-            cursor += 1;
-            continue;
-        }
-
-        // The local part was already copied into `out` char-by-char in earlier
-        // iterations. Rewind to where it began so the whole local@domain span
-        // collapses to a single placeholder instead of leaking the name.
-        let local_start_len = out_len_at.get(left).copied().unwrap_or(out.len());
-        out.truncate(local_start_len);
-        out_len_at.truncate(left);
-
-        out.push_str("<email>");
-        // Keep `out_len_at` indexed by original char position so a later email
-        // in the same string still rewinds to the right spot: chars `left`
-        // through `right - 1` (local@domain) all collapse into the placeholder,
-        // each mapping to the byte where the placeholder started.
-        for _ in left..right {
-            out_len_at.push(local_start_len);
-        }
-        cursor = right;
-    }
-
-    out
-}
-
-/// Redact Battle.net BattleTags (`Name#1234`). The discriminator is the part
-/// that ties a tag to a specific account, so the whole `Name#1234` collapses
-/// to `<battletag>`. A BattleTag name is 3-12 chars (letters, digits, and on
-/// some locales accented letters) followed by `#` and 4-5 digits; we match
-/// that shape and ignore other `#` uses (e.g. `#define`, `channel #42`).
-fn redact_battletags(value: &str) -> String {
-    // A BattleTag always carries a `#`; without one the loop just copies.
-    if !value.contains('#') {
-        return value.to_string();
-    }
-
-    let chars: Vec<char> = value.chars().collect();
-    let mut out = String::with_capacity(value.len());
-    let mut i = 0usize;
-
-    while i < chars.len() {
-        if chars[i] != '#' {
-            out.push(chars[i]);
-            i += 1;
-            continue;
-        }
-
-        // Walk back over the name part.
-        let mut name_start = i;
-        while name_start > 0 {
-            let ch = chars[name_start - 1];
-            if ch.is_alphanumeric() {
-                name_start -= 1;
-            } else {
-                break;
-            }
-        }
-
-        // Walk forward over the digit discriminator.
-        let mut digits_end = i + 1;
-        while digits_end < chars.len() && chars[digits_end].is_ascii_digit() {
-            digits_end += 1;
-        }
-
-        let name_len = i - name_start;
-        let digit_len = digits_end - (i + 1);
-        // Blizzard names are 3-12 chars; the discriminator is 4-5 digits. A
-        // following alphanumeric run would mean we clipped a longer token, so
-        // bail and leave the `#` alone.
-        let trailing_ok = digits_end >= chars.len() || !chars[digits_end].is_alphanumeric();
-        if (3..=12).contains(&name_len) && (4..=5).contains(&digit_len) && trailing_ok {
-            // The name was already copied char-by-char; drop it before the tag.
-            for _ in 0..name_len {
-                out.pop();
-            }
-            out.push_str("<battletag>");
-            i = digits_end;
-        } else {
-            out.push(chars[i]);
-            i += 1;
-        }
-    }
-
-    out
-}
-
-/// Redact UUID / Riot PUUID tokens: canonical 8-4-4-4-12 hex with dashes, and
-/// bare 32-hex strings (PUUIDs are often logged dashless). Word boundaries are
-/// approximated by requiring the surrounding chars to be non-hex / non-dash so
-/// we don't clip a longer hex blob (hashes, keys) mid-stream.
-fn redact_uuid_like_tokens(value: &str) -> String {
-    // Both forms need at least 8 consecutive hex digits (first dashed group is
-    // 8, the bare form is 32). ASCII hex digits are single bytes, so a byte
-    // scan is equivalent to a char scan and avoids the char vector.
-    let mut hex_run = 0usize;
-    let mut has_hex_run = false;
-    for byte in value.bytes() {
-        if byte.is_ascii_hexdigit() {
-            hex_run += 1;
-            if hex_run >= 8 {
-                has_hex_run = true;
-                break;
-            }
-        } else {
-            hex_run = 0;
-        }
-    }
-    if !has_hex_run {
-        return value.to_string();
-    }
-
-    let chars: Vec<char> = value.chars().collect();
-    let mut out = String::with_capacity(value.len());
-    let mut i = 0usize;
-
-    let is_hex = |c: char| c.is_ascii_hexdigit();
-    let is_boundary_char = |c: char| !(c.is_ascii_hexdigit() || c == '-');
-
-    while i < chars.len() {
-        // Only consider a token start at a boundary (start of string or after a
-        // non-hex, non-dash char).
-        let at_boundary = i == 0 || is_boundary_char(chars[i - 1]);
-        if !at_boundary || !is_hex(chars[i]) {
-            out.push(chars[i]);
-            i += 1;
-            continue;
-        }
-
-        // Canonical 8-4-4-4-12 dashed form.
-        if let Some(end) = match_dashed_uuid(&chars, i) {
-            let trailing_ok = end >= chars.len() || is_boundary_char(chars[end]);
-            if trailing_ok {
-                out.push_str("<uuid>");
-                i = end;
-                continue;
-            }
-        }
-
-        // Bare 32-hex form (dashless PUUID).
-        let mut run_end = i;
-        while run_end < chars.len() && is_hex(chars[run_end]) {
-            run_end += 1;
-        }
-        let run_len = run_end - i;
-        let trailing_ok = run_end >= chars.len() || is_boundary_char(chars[run_end]);
-        if run_len == 32 && trailing_ok {
-            out.push_str("<uuid>");
-            i = run_end;
-            continue;
-        }
-
-        out.push(chars[i]);
-        i += 1;
-    }
-
-    out
-}
-
-/// Match a canonical 8-4-4-4-12 hex UUID starting at char index `start`.
-/// Returns the exclusive end char index on success.
-fn match_dashed_uuid(chars: &[char], start: usize) -> Option<usize> {
-    const GROUPS: [usize; 5] = [8, 4, 4, 4, 12];
-    let mut i = start;
-    for (group_idx, &group_len) in GROUPS.iter().enumerate() {
-        for _ in 0..group_len {
-            if i >= chars.len() || !chars[i].is_ascii_hexdigit() {
-                return None;
-            }
-            i += 1;
-        }
-        if group_idx < GROUPS.len() - 1 {
-            if i >= chars.len() || chars[i] != '-' {
-                return None;
-            }
-            i += 1;
-        }
-    }
-    Some(i)
-}
-
-// Env vars whose values are user-identifying paths, with the placeholder that
-// replaces them. Order matters and is preserved by the resolver below:
-// USERPROFILE first, HOME before the XDG dirs.
-const ENV_SCRUB_KEYS: [(&str, &str); 10] = [
-    ("USERPROFILE", "%USERPROFILE%"),
-    ("OneDrive", "%ONEDRIVE%"),
-    ("APPDATA", "%APPDATA%"),
-    ("LOCALAPPDATA", "%LOCALAPPDATA%"),
-    ("PROGRAMDATA", "%PROGRAMDATA%"),
-    ("TEMP", "%TEMP%"),
-    ("TMP", "%TEMP%"),
-    // Linux/macOS: AppContext::app_data_dir()/app_local_data_dir() resolve
-    // under $HOME (and under XDG_DATA_HOME/XDG_CONFIG_HOME when those are
-    // set), which embeds the OS account name. Without these, paths logged
-    // from config.rs's save_config_unlocked (portable/local config paths)
-    // leak the username on every successful config save.
-    ("HOME", "%HOME%"),
-    ("XDG_DATA_HOME", "%XDG_DATA_HOME%"),
-    ("XDG_CONFIG_HOME", "%XDG_CONFIG_HOME%"),
-];
-
-fn resolve_env_scrub_pairs() -> Vec<(String, &'static str)> {
-    ENV_SCRUB_KEYS
-        .iter()
-        .filter_map(|(env_key, placeholder)| {
-            std::env::var(env_key).ok().map(|path| (path, *placeholder))
-        })
-        .collect()
-}
-
-// These values are fixed for the process lifetime, so resolve them once
-// instead of paying 10 env lookups per sanitized field (4 fields per record).
-#[cfg(not(test))]
-fn resolved_env_scrub_pairs() -> Vec<(String, &'static str)> {
-    static ENV_SCRUB_CACHE: OnceLock<Vec<(String, &'static str)>> = OnceLock::new();
-    ENV_SCRUB_CACHE.get_or_init(resolve_env_scrub_pairs).clone()
-}
-
-// Tests mutate HOME / XDG_* at runtime, so they need a fresh read per call.
-#[cfg(test)]
-fn resolved_env_scrub_pairs() -> Vec<(String, &'static str)> {
-    resolve_env_scrub_pairs()
-}
-
-fn sanitize_log_text(value: &str) -> String {
-    // Order matters: collapse emails first (they can contain digits/hex), then
-    // BattleTags, then UUID/PUUID. We deliberately do NOT try to redact Steam
-    // login names or persona names here: they're free-form words with no stable
-    // shape, so any heuristic broad enough to catch them would also redact
-    // ordinary log text (verbs, product names). Steam account identifiers stay
-    // out of the log layer and are handled at the call sites instead.
-    let mut sanitized = redact_email_like_tokens(value);
-    sanitized = redact_battletags(&sanitized);
-    sanitized = redact_uuid_like_tokens(&sanitized);
-
-    for (path, placeholder) in resolved_env_scrub_pairs() {
-        sanitized = replace_case_insensitive(&sanitized, &path, placeholder);
-    }
-
-    sanitized
-}
-
-fn ensure_log_parent(path: &Path) -> Result<(), String> {
+fn ensure_parent(path: &Path) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| "Log file path has no parent directory".to_string())?;
@@ -509,58 +222,233 @@ pub fn log_file_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     Ok(crate::storage::app_log_root(app_handle)?.join(LOG_FILE_NAME))
 }
 
-fn previous_log_file_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    let current_path = log_file_path(app_handle)?;
-    Ok(current_path.with_file_name(PREVIOUS_LOG_FILE_NAME))
+/// `app.1.log` is the most recent rotated file, `app.4.log` the oldest.
+pub fn rotated_log_file_path(app_handle: &dyn AppContext, index: u32) -> Result<PathBuf, String> {
+    Ok(log_file_path(app_handle)?.with_file_name(format!("app.{index}.log")))
 }
 
-fn log_lock_file_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    let current_path = log_file_path(app_handle)?;
-    Ok(current_path.with_file_name(LOG_LOCK_FILE_NAME))
+fn rotated_path(current: &Path, index: u32) -> PathBuf {
+    current.with_file_name(format!("app.{index}.log"))
 }
 
-pub fn begin_log_session(app_handle: &dyn AppContext) -> Result<(), String> {
-    // Best-effort logging must keep working even if a writer panicked.
-    let mut guard = log_sink().lock().unwrap_or_else(|e| e.into_inner());
-    // Hold the cross-process lock across the whole rotation so another instance
-    // (GUI vs CLI) can't append into app.log while we rename it out from under
-    // it. Acquired after the in-process mutex to keep a single lock order with
-    // `append_app_log`. Released when `_xproc` drops at the end of this fn.
-    let _xproc = CrossProcessLogGuard::acquire(app_handle);
-    // Release any handle from a previous session before rotating: Windows
-    // refuses the rename while the file is open.
-    *guard = None;
+fn rotating_path(current: &Path) -> PathBuf {
+    current.with_file_name(ROTATING_LOG_FILE_NAME)
+}
 
-    let current_path = log_file_path(app_handle)?;
-    ensure_log_parent(&current_path)?;
+/// Drop the oldest slot, then shift `app.1.log` through `app.3.log` up by one.
+/// The live file is already aside: this must not run until that rename worked.
+fn shift_rotated_files(current: &Path) {
+    let oldest = rotated_path(current, ROTATED_FILES_KEPT);
+    let _ = fs::remove_file(&oldest);
+    for index in (1..ROTATED_FILES_KEPT).rev() {
+        let from = rotated_path(current, index);
+        if from.exists() {
+            let _ = fs::rename(&from, rotated_path(current, index + 1));
+        }
+    }
+}
 
-    let previous_path = previous_log_file_path(app_handle)?;
-    if previous_path.exists() {
-        let _ = fs::remove_file(&previous_path);
+pub fn log_lock_file_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
+    Ok(log_file_path(app_handle)?.with_file_name(LOG_LOCK_FILE_NAME))
+}
+
+// ---------------------------------------------------------------------------
+// Rotation and retention
+// ---------------------------------------------------------------------------
+
+/// Shift the chain, purge what falls outside the policy, open a fresh file.
+///
+/// Called with the sink locked. Writes its own notice directly into the new
+/// file rather than going through the normal emit path, which would deadlock on
+/// the mutex this is already holding.
+fn rotate(path: &Path, sink: &mut Sink, reason: &str) -> Result<(), String> {
+    let rotated_bytes = sink.size;
+
+    // Windows refuses to rename an open file. Close our handle first; another
+    // process can still hold `app.log` without FILE_SHARE_DELETE (the GUI
+    // append handle, or a reader that used File::open).
+    sink.file = None;
+
+    if !path.exists() {
+        sink.open_if_needed(path)?;
+        return Ok(());
     }
 
-    if current_path.exists() {
-        fs::rename(&current_path, &previous_path).map_err(|reason| {
-            format!(
-                "Could not move current log {} to previous log {}: {reason}",
-                current_path.display(),
-                previous_path.display()
-            )
-        })?;
+    let staging = rotating_path(path);
+    // A leftover file from a crash would block the next rename on Windows.
+    // A directory left here is a test (or a user) blocking rotation on purpose.
+    if staging.is_file() {
+        let _ = fs::remove_file(&staging);
+    }
+    if fs::rename(path, &staging).is_err() {
+        // Live file did not move. Keep appending; do not touch the chain.
+        sink.open_if_needed(path)?;
+        return Ok(());
     }
 
-    fs::write(&current_path, "").map_err(|reason| {
-        format!(
-            "Could not initialize log file {}: {reason}",
-            current_path.display()
-        )
-    })?;
+    shift_rotated_files(path);
+    if let Err(error) = fs::rename(&staging, rotated_path(path, 1)) {
+        // Put the live file back. The chain has already moved; losing that
+        // slot is better than deleting the records we just took aside.
+        let _ = fs::rename(&staging, path);
+        sink.open_if_needed(path)?;
+        return Err(format!(
+            "Could not rotate log file {}: {error}",
+            path.display()
+        ));
+    }
 
-    *guard = Some(open_append_handle(&current_path)?);
+    // Every writer of this file has to learn that its open handle is stale.
+    let generation = sink.generation.wrapping_add(1);
+    sink.store_generation(generation);
+
+    sink.open_if_needed(path)?;
+
+    let purged = purge(path);
+
+    let notice = crate::diagnostics::event(&crate::diagnostics::catalog::LOG_ROTATED)
+        .source("log")
+        .msg("Log rotated")
+        .field("reason", reason)
+        .field("bytes", rotated_bytes)
+        .field("keptFiles", u64::from(ROTATED_FILES_KEPT))
+        .render();
+    sink.append(path, &notice)?;
+
+    if purged.files > 0 {
+        let notice = crate::diagnostics::event(&crate::diagnostics::catalog::LOG_RETENTION_PURGED)
+            .source("log")
+            .msg("Old log files removed")
+            .field("removedFiles", purged.files)
+            .field("freedBytes", purged.bytes)
+            .field("reason", purged.reason)
+            .render();
+        sink.append(path, &notice)?;
+    }
 
     Ok(())
 }
 
+#[derive(Default)]
+struct Purged {
+    files: u64,
+    bytes: u64,
+    reason: &'static str,
+}
+
+/// Delete rotated files that fall outside the retention policy. The file-count
+/// budget is already enforced by the shift above, so this only handles age.
+fn purge(current: &Path) -> Purged {
+    let mut purged = Purged {
+        reason: "age",
+        ..Default::default()
+    };
+    let max_age = std::time::Duration::from_secs(RETENTION_DAYS * 24 * 60 * 60);
+
+    for index in 1..=ROTATED_FILES_KEPT {
+        let path = rotated_path(current, index);
+        let Ok(meta) = fs::metadata(&path) else {
+            continue;
+        };
+        let too_old = meta
+            .modified()
+            .ok()
+            .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+            .is_some_and(|age| age > max_age);
+        if too_old {
+            let size = meta.len();
+            if fs::remove_file(&path).is_ok() {
+                purged.files += 1;
+                purged.bytes += size;
+            }
+        }
+    }
+
+    purged
+}
+
+// ---------------------------------------------------------------------------
+// Writing
+// ---------------------------------------------------------------------------
+
+/// Append one already-rendered line. The single writing path: every record,
+/// legacy or structured, goes through here and is therefore subject to the same
+/// lock, the same rotation and the same budget.
+pub(crate) fn write_line(app_handle: &dyn AppContext, line: &str) -> Result<(), String> {
+    with_sink(app_handle, |path, sink| {
+        sink.open_if_needed(path)?;
+        // Rotate before the write that would breach the cap, never after: the
+        // announced budget is a ceiling, not an average.
+        if sink.size > 0 && sink.size + line.len() as u64 + 1 > MAX_LOG_FILE_BYTES {
+            rotate(path, sink, "size")?;
+        }
+        sink.append(path, line)
+    })
+}
+
+/// Start a session: rotate the previous one out of the way, then say so.
+///
+/// Called once per process launch by the GUI. Everything else opens the sink
+/// lazily and appends.
+pub fn begin_log_session(app_handle: &dyn AppContext) -> Result<(), String> {
+    with_sink(app_handle, |path, sink| {
+        ensure_parent(path)?;
+        migrate_legacy_previous(path);
+        sink.open_if_needed(path)?;
+        if sink.size > 0 {
+            rotate(path, sink, "session")?;
+        }
+        Ok(())
+    })?;
+
+    // Both of these write records, so they run once the sink lock is gone.
+    crate::diagnostics::levels::expire_temporary_debug(app_handle);
+    emit_session_started(app_handle);
+
+    Ok(())
+}
+
+/// A file left by a build that only kept one previous session. Fold it into
+/// the numbered chain so it stays readable instead of being orphaned.
+fn migrate_legacy_previous(current: &Path) {
+    let legacy = current.with_file_name(LEGACY_PREVIOUS_LOG_FILE_NAME);
+    if !legacy.exists() {
+        return;
+    }
+    let first = rotated_path(current, 1);
+    if first.exists() {
+        // The chain already holds newer sessions; the orphan is the oldest
+        // thing here and the budget has no room for it.
+        let _ = fs::remove_file(&legacy);
+    } else {
+        let _ = fs::rename(&legacy, &first);
+    }
+}
+
+fn emit_session_started(app_handle: &dyn AppContext) {
+    let binary = std::env::current_exe()
+        .ok()
+        .and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().to_string())
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+
+    crate::diagnostics::event(&crate::diagnostics::catalog::SESSION_STARTED)
+        .source("app")
+        .msg("Session started")
+        .field("appVersion", env!("CARGO_PKG_VERSION"))
+        .field("os", std::env::consts::OS)
+        .field("arch", std::env::consts::ARCH)
+        .field("binary", binary)
+        .emit(app_handle);
+}
+
+/// Legacy record, kept for the call sites that have not migrated.
+///
+/// The line shape is unchanged on purpose: readers of an existing `app.log`
+/// keep working, and [`crate::diagnostics::query`] parses both. New call sites
+/// should use [`crate::diagnostics::event`], which is queryable.
 pub fn append_app_log(
     app_handle: &dyn AppContext,
     level: &str,
@@ -576,32 +464,7 @@ pub fn append_app_log(
         "details": details.map(|value| trim_text(&sanitize_log_text(value), MAX_DETAILS_BYTES)),
     });
 
-    let mut guard = log_sink().lock().unwrap_or_else(|e| e.into_inner());
-    // Serialize the append against a cross-process rotation: without this an
-    // O_APPEND write here could land in app.log just as another instance
-    // renames it to app.previous.log. Same lock order as `begin_log_session`
-    // (in-process mutex first, then the OS lock). Released at fn return.
-    let _xproc = CrossProcessLogGuard::acquire(app_handle);
-
-    if guard.is_none() {
-        // Writer without a session (CLI, tests): open lazily and keep it.
-        let path = log_file_path(app_handle)?;
-        ensure_log_parent(&path)?;
-        *guard = Some(open_append_handle(&path)?);
-    }
-
-    let file = guard.as_mut().expect("log sink populated above");
-    if let Err(reason) = writeln!(file, "{record}") {
-        // Drop the dead handle so the next record reopens the file.
-        *guard = None;
-        let path = log_file_path(app_handle)?;
-        return Err(format!(
-            "Could not write log file {}: {reason}",
-            path.display()
-        ));
-    }
-
-    Ok(())
+    write_line(app_handle, &record.to_string())
 }
 
 pub fn install_panic_hook(app_handle: crate::AppCtx) {
@@ -642,268 +505,274 @@ pub fn install_panic_hook(app_handle: crate::AppCtx) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostics::test_support::TestCtx;
+    use serde_json::Value;
 
-    // Serializes the tests that mutate process-global HOME / XDG_* env vars.
-    // sanitize_log_text reads them at call time, so two of these running
-    // concurrently under cargo's parallel runner would clobber each other's
-    // setup (one test's HOME/XDG leaking into the other's assertion).
-    static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    #[test]
-    fn trim_text_shorter_than_max() {
-        assert_eq!(trim_text("hello", 10), "hello");
+    fn read_lines(path: &Path) -> Vec<Value> {
+        fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("every line must be JSON"))
+            .collect()
     }
 
+    // The 38 existing call sites still write this shape, and external readers
+    // (support, the user's own grep) already know it.
     #[test]
-    fn trim_text_exact_max() {
-        assert_eq!(trim_text("hello", 5), "hello");
-    }
+    fn the_legacy_line_shape_is_unchanged() {
+        let ctx = TestCtx::ctx("logging-legacy-shape");
+        append_app_log(&*ctx, "warning", "steam.switch", "hello", Some("detail")).expect("append");
 
-    #[test]
-    fn trim_text_truncates_at_boundary() {
-        assert_eq!(trim_text("hello world", 5), "hello");
-    }
-
-    #[test]
-    fn trim_text_respects_utf8_boundary() {
-        // é is 2 bytes in UTF-8, max_bytes=3 should not split it
-        let result = trim_text("héllo", 2);
-        assert_eq!(result, "h");
-    }
-
-    #[test]
-    fn trim_text_empty_string() {
-        assert_eq!(trim_text("", 10), "");
-    }
-
-    #[test]
-    fn replace_case_insensitive_basic() {
+        let path = log_file_path(&*ctx).expect("path");
+        let records = read_lines(&path);
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record["level"], serde_json::json!("warning"));
+        assert_eq!(record["source"], serde_json::json!("steam.switch"));
+        assert_eq!(record["message"], serde_json::json!("hello"));
+        assert_eq!(record["details"], serde_json::json!("detail"));
+        assert!(record["tsMs"].as_u64().is_some());
         assert_eq!(
-            replace_case_insensitive("Hello WORLD", "world", "earth"),
-            "Hello earth"
+            record.as_object().expect("object").len(),
+            5,
+            "the facade must not grow columns"
         );
     }
 
     #[test]
-    fn replace_case_insensitive_multiple() {
-        assert_eq!(replace_case_insensitive("aAbBaA", "aa", "X"), "XbBX");
-    }
-
-    #[test]
-    fn replace_case_insensitive_empty_needle() {
-        assert_eq!(replace_case_insensitive("hello", "", "X"), "hello");
-    }
-
-    #[test]
-    fn replace_case_insensitive_no_match() {
-        assert_eq!(replace_case_insensitive("hello", "xyz", "X"), "hello");
-    }
-
-    #[test]
-    fn replace_case_insensitive_accented_username() {
-        // The log path lowercases the accented username differently than the
-        // env var; Unicode-aware folding must still match it.
-        assert_eq!(
-            replace_case_insensitive(
-                r"C:\Users\Jérôme\AppData",
-                r"C:\Users\JÉRÔME",
-                "%USERPROFILE%"
-            ),
-            r"%USERPROFILE%\AppData"
-        );
-    }
-
-    #[test]
-    fn replace_case_insensitive_accented_changes_length() {
-        // German ß lowercases to itself but uppercases to "SS": folding must
-        // not desync the offset map between lowercased and original.
-        assert_eq!(
-            replace_case_insensitive("straße end", "STRASSE", "X"),
-            "straße end"
-        );
-        assert_eq!(replace_case_insensitive("STRAßE x", "straße", "Y"), "Y x");
-    }
-
-    #[test]
-    fn redact_email_basic() {
-        // The whole local@domain collapses; the local part must not leak.
-        assert_eq!(redact_email_like_tokens("user@example.com"), "<email>");
-    }
-
-    #[test]
-    fn redact_email_drops_local_part_with_name() {
-        // Regression: previously left "jean.dupont<email>", leaking the name.
-        assert_eq!(
-            redact_email_like_tokens("jean.dupont@example.com"),
-            "<email>"
-        );
-    }
-
-    #[test]
-    fn redact_email_multiple() {
-        assert_eq!(
-            redact_email_like_tokens("a@b.co and c@d.com"),
-            "<email> and <email>"
-        );
-    }
-
-    #[test]
-    fn redact_email_no_email() {
-        assert_eq!(redact_email_like_tokens("hello world"), "hello world");
-    }
-
-    #[test]
-    fn redact_email_at_without_domain() {
-        assert_eq!(redact_email_like_tokens("just @ sign"), "just @ sign");
-    }
-
-    #[test]
-    fn redact_email_preserves_surrounding_text() {
-        assert_eq!(
-            redact_email_like_tokens("logged in as test@mail.com successfully"),
-            "logged in as <email> successfully"
-        );
-    }
-
-    #[test]
-    fn redact_email_accented_local_part() {
-        // Multibyte local part: the accented name must be dropped whole, not
-        // truncated at the first non-ASCII byte. The truncate-on-match rewinds
-        // `out` by recorded byte offsets, so the 2-byte `é` can't desync it.
-        assert_eq!(redact_email_like_tokens("jérôme@example.com"), "<email>");
-        assert_eq!(
-            redact_email_like_tokens("connecté en tant que jérôme@example.com ok"),
-            "connecté en tant que <email> ok"
-        );
-    }
-
-    #[test]
-    fn redact_email_accented_domain() {
-        // Non-ASCII tail in the domain must be consumed by the match instead of
-        // being left in clear after the placeholder.
-        assert_eq!(redact_email_like_tokens("john@domain.café"), "<email>");
-        assert_eq!(
-            redact_email_like_tokens("ping müller@firma.köln now"),
-            "ping <email> now"
-        );
-    }
-
-    #[test]
-    fn redact_battletag_basic() {
-        assert_eq!(
-            redact_battletags("playing as Hero#1234 now"),
-            "playing as <battletag> now"
-        );
-    }
-
-    #[test]
-    fn redact_battletag_five_digit_discriminator() {
-        assert_eq!(redact_battletags("Tag#12345"), "<battletag>");
-    }
-
-    #[test]
-    fn redact_battletag_ignores_non_tag_hashes() {
-        // Too few discriminator digits, or a name that's too short.
-        assert_eq!(redact_battletags("see channel #42"), "see channel #42");
-        assert_eq!(redact_battletags("#define FOO 1"), "#define FOO 1");
-        assert_eq!(redact_battletags("ab#1234"), "ab#1234");
-    }
-
-    #[test]
-    fn redact_uuid_dashed() {
-        assert_eq!(
-            redact_uuid_like_tokens("id=550e8400-e29b-41d4-a716-446655440000 done"),
-            "id=<uuid> done"
-        );
-    }
-
-    #[test]
-    fn redact_uuid_bare_32_hex() {
-        // Dashless PUUID form.
-        assert_eq!(
-            redact_uuid_like_tokens("puuid 550e8400e29b41d4a716446655440000 ok"),
-            "puuid <uuid> ok"
-        );
-    }
-
-    #[test]
-    fn redact_uuid_ignores_short_or_long_hex() {
-        // Not 32 hex chars, not a dashed UUID: left alone.
-        assert_eq!(redact_uuid_like_tokens("deadbeef"), "deadbeef");
-        assert_eq!(
-            redact_uuid_like_tokens("abc123def4567890abc123def4567890ab"),
-            "abc123def4567890abc123def4567890ab"
-        );
-    }
-
-    #[test]
-    fn sanitize_log_text_combines_redactions() {
-        let input = "user jean@mail.com Hero#1234 550e8400-e29b-41d4-a716-446655440000";
-        assert_eq!(sanitize_log_text(input), "user <email> <battletag> <uuid>");
-    }
-
-    // Regression: sanitize_log_text's env-var scrub list used to only cover
-    // Windows vars (USERPROFILE, APPDATA, ...), so a Linux/macOS path under
-    // $HOME (e.g. the portable/local config paths logged by
-    // config.rs's save_config_unlocked) leaked the OS account name into
-    // app.log, where it could later be exposed if the user shared the file,
-    // on every save.
-    #[test]
-    fn sanitize_log_text_scrubs_home_dir_path() {
-        let _env = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
-        let previous = std::env::var("HOME").ok();
-        std::env::set_var("HOME", "/home/alice");
-
-        let result = sanitize_log_text(
-            "Saved split app config /home/alice/.local/share/accshift/state/portable-config.json",
-        );
-
-        match previous {
-            Some(value) => std::env::set_var("HOME", value),
-            None => std::env::remove_var("HOME"),
+    fn the_active_file_stays_under_the_size_cap() {
+        let ctx = TestCtx::ctx("logging-rotation");
+        let path = log_file_path(&*ctx).expect("path");
+        // The facade caps a message at 512 bytes, so the line size is known:
+        // roughly 620 bytes each, and 12000 of them cross the 2 MiB cap three
+        // times over.
+        let filler = "x".repeat(4_000);
+        for _ in 0..12_000 {
+            append_app_log(&*ctx, "info", "test", &filler, None).expect("append");
         }
 
-        assert_eq!(
-            result,
-            "Saved split app config %HOME%/.local/share/accshift/state/portable-config.json"
+        let active = fs::metadata(&path).expect("metadata").len();
+        assert!(
+            active <= MAX_LOG_FILE_BYTES,
+            "active file is {active} bytes, cap is {MAX_LOG_FILE_BYTES}"
+        );
+        assert!(
+            rotated_path(&path, 1).exists(),
+            "crossing the cap must produce a rotated file"
+        );
+
+        // The announced budget is a ceiling for the whole chain, not per file.
+        let mut total = active;
+        for index in 1..=ROTATED_FILES_KEPT {
+            total += fs::metadata(rotated_path(&path, index))
+                .map(|meta| meta.len())
+                .unwrap_or(0);
+        }
+        assert!(
+            total <= disk_budget_bytes(),
+            "chain is {total} bytes, budget is {}",
+            disk_budget_bytes()
+        );
+        assert!(
+            !rotated_path(&path, ROTATED_FILES_KEPT + 1).exists(),
+            "nothing may survive past the last kept slot"
+        );
+        assert!(
+            !rotating_path(&path).exists(),
+            "the staging name must not survive a finished rotation"
         );
     }
 
     #[test]
-    fn sanitize_log_text_scrubs_xdg_dirs() {
-        let _env = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
-        // Also pin HOME to a value that shares no substring with the XDG
-        // paths below: on a machine where HOME happens to already be set
-        // (e.g. Git Bash on Windows), the HOME substitution runs first in
-        // sanitize_log_text's loop and would otherwise eat part of the XDG
-        // path before the XDG substitution gets a chance to match it.
-        let previous_home = std::env::var("HOME").ok();
-        let previous_data = std::env::var("XDG_DATA_HOME").ok();
-        let previous_config = std::env::var("XDG_CONFIG_HOME").ok();
-        std::env::set_var("HOME", "/home/unrelated-sentinel");
-        std::env::set_var("XDG_DATA_HOME", "/home/alice/.local/share");
-        std::env::set_var("XDG_CONFIG_HOME", "/home/alice/.config");
+    fn rotation_announces_itself_in_the_new_file() {
+        let ctx = TestCtx::ctx("logging-rotation-notice");
+        let path = log_file_path(&*ctx).expect("path");
+        let filler = "x".repeat(4_000);
+        for _ in 0..4_000 {
+            append_app_log(&*ctx, "info", "test", &filler, None).expect("append");
+        }
 
-        let result = sanitize_log_text(
-            "paths /home/alice/.local/share/accshift and /home/alice/.config/accshift",
+        let first = read_lines(&path).into_iter().next().expect("a first line");
+        assert_eq!(first["code"], serde_json::json!("log.rotated"));
+        assert_eq!(first["fields"]["reason"], serde_json::json!("size"));
+        assert!(first["fields"]["bytes"].as_u64().is_some_and(|b| b > 0));
+    }
+
+    #[test]
+    fn a_session_rotates_the_previous_one_out_of_the_way() {
+        let ctx = TestCtx::ctx("logging-session");
+        append_app_log(&*ctx, "info", "test", "from the previous session", None).expect("append");
+
+        begin_log_session(&*ctx).expect("session");
+
+        let path = log_file_path(&*ctx).expect("path");
+        let previous = read_lines(&rotated_path(&path, 1));
+        assert_eq!(previous.len(), 1);
+        assert_eq!(
+            previous[0]["message"],
+            serde_json::json!("from the previous session")
         );
 
-        match previous_home {
-            Some(value) => std::env::set_var("HOME", value),
-            None => std::env::remove_var("HOME"),
-        }
-        match previous_data {
-            Some(value) => std::env::set_var("XDG_DATA_HOME", value),
-            None => std::env::remove_var("XDG_DATA_HOME"),
-        }
-        match previous_config {
-            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
-            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        let current = read_lines(&path);
+        assert_eq!(current[0]["code"], serde_json::json!("log.rotated"));
+        assert!(
+            current
+                .iter()
+                .any(|record| record["code"] == serde_json::json!("app.session.started")),
+            "a session must be able to say when it started"
+        );
+    }
+
+    // Staging rename fails (a non-empty directory occupies the temp name, the
+    // same outcome as another process holding app.log without FILE_SHARE_DELETE
+    // on Windows). The oldest slot must still be there, and writes must work.
+    #[test]
+    fn a_failed_rotation_does_not_delete_the_chain() {
+        let ctx = TestCtx::ctx("logging-rotate-fail");
+        let path = log_file_path(&*ctx).expect("path");
+        ensure_parent(&path).expect("parent");
+
+        append_app_log(&*ctx, "info", "test", "active", None).expect("seed live");
+        for index in 1..=ROTATED_FILES_KEPT {
+            fs::write(
+                rotated_path(&path, index),
+                format!("{{\"tsMs\":{index},\"message\":\"slot{index}\"}}\n"),
+            )
+            .expect("seed slot");
         }
 
+        let staging = rotating_path(&path);
+        fs::create_dir_all(&staging).expect("staging dir");
+        fs::write(staging.join("blocker"), b"x").expect("block rename");
+
+        begin_log_session(&*ctx).expect("session must keep writing");
+
+        let oldest = rotated_path(&path, ROTATED_FILES_KEPT);
+        assert!(
+            oldest.exists(),
+            "a failed live rename must not drop the oldest file"
+        );
         assert_eq!(
-            result,
-            "paths %XDG_DATA_HOME%/accshift and %XDG_CONFIG_HOME%/accshift"
+            fs::read_to_string(&oldest).expect("read oldest"),
+            format!("{{\"tsMs\":{ROTATED_FILES_KEPT},\"message\":\"slot{ROTATED_FILES_KEPT}\"}}\n")
+        );
+        let newest_rotated = fs::read_to_string(rotated_path(&path, 1)).expect("read .1");
+        assert!(
+            newest_rotated.contains("slot1"),
+            "the numbered chain must stay where it was: {newest_rotated}"
+        );
+
+        append_app_log(&*ctx, "info", "test", "after-failed-rotate", None)
+            .expect("app.log must still accept writes");
+        let current = fs::read_to_string(&path).expect("read live");
+        assert!(
+            current.contains("after-failed-rotate"),
+            "writes after a failed rotate land in the live file: {current}"
+        );
+
+        let _ = fs::remove_dir_all(&staging);
+    }
+
+    // An empty file is not worth a rotation slot: the CLI runs often and would
+    // otherwise push the GUI's history out of the chain in four invocations.
+    #[test]
+    fn an_empty_session_does_not_burn_a_slot() {
+        let ctx = TestCtx::ctx("logging-session-empty");
+        begin_log_session(&*ctx).expect("session");
+
+        let path = log_file_path(&*ctx).expect("path");
+        assert!(!rotated_path(&path, 1).exists());
+    }
+
+    #[test]
+    fn a_legacy_previous_file_joins_the_chain() {
+        let ctx = TestCtx::ctx("logging-legacy-migration");
+        let path = log_file_path(&*ctx).expect("path");
+        ensure_parent(&path).expect("parent");
+        fs::write(
+            path.with_file_name(LEGACY_PREVIOUS_LOG_FILE_NAME),
+            "{\"tsMs\":1,\"level\":\"info\",\"source\":\"old\",\"message\":\"kept\"}\n",
+        )
+        .expect("seed");
+
+        begin_log_session(&*ctx).expect("session");
+
+        assert!(!path.with_file_name(LEGACY_PREVIOUS_LOG_FILE_NAME).exists());
+        let migrated = read_lines(&rotated_path(&path, 1));
+        assert_eq!(migrated[0]["message"], serde_json::json!("kept"));
+    }
+
+    // The other process rotated. Our open handle now points at app.1.log, and
+    // appending into it would write the newest records into the oldest file.
+    #[test]
+    fn a_rotation_by_another_process_forces_a_reopen() {
+        let ctx = TestCtx::ctx("logging-generation");
+        append_app_log(&*ctx, "info", "test", "before", None).expect("append");
+        let path = log_file_path(&*ctx).expect("path");
+
+        // Simulate the peer: rename the file and bump the counter, exactly what
+        // `rotate` does, without going through this process' sink.
+        {
+            let mut map = sinks().lock().expect("sinks");
+            let sink = map.get_mut(&path).expect("sink");
+            let stale_generation = sink.generation;
+            sink.file = None;
+            fs::rename(&path, rotated_path(&path, 1)).expect("rename");
+
+            let lock_path = path.with_file_name(LOG_LOCK_FILE_NAME);
+            let lock = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&lock_path)
+                .expect("lock file");
+            let mut handle = &lock;
+            handle
+                .write_all(&(stale_generation + 1).to_le_bytes())
+                .expect("bump");
+        }
+
+        append_app_log(&*ctx, "info", "test", "after", None).expect("append");
+
+        let current = read_lines(&path);
+        assert_eq!(current.len(), 1, "the new file holds only the new record");
+        assert_eq!(current[0]["message"], serde_json::json!("after"));
+        let rotated = read_lines(&rotated_path(&path, 1));
+        assert_eq!(rotated[0]["message"], serde_json::json!("before"));
+    }
+
+    #[test]
+    fn files_older_than_the_retention_window_are_purged() {
+        let ctx = TestCtx::ctx("logging-retention");
+        let path = log_file_path(&*ctx).expect("path");
+        ensure_parent(&path).expect("parent");
+
+        let stale = rotated_path(&path, 2);
+        fs::write(&stale, "{\"tsMs\":1}\n").expect("seed");
+        let ancient =
+            SystemTime::now() - std::time::Duration::from_secs((RETENTION_DAYS + 1) * 24 * 60 * 60);
+        let handle = OpenOptions::new().write(true).open(&stale).expect("open");
+        handle
+            .set_modified(ancient)
+            .expect("backdate the file so the sweep can see it as old");
+        drop(handle);
+
+        let purged = purge(&path);
+
+        assert_eq!(purged.files, 1);
+        assert!(!stale.exists());
+    }
+
+    #[test]
+    fn the_announced_budget_matches_the_policy() {
+        let policy = retention_policy();
+        assert_eq!(
+            policy["diskBudgetBytes"].as_u64(),
+            Some(disk_budget_bytes())
+        );
+        assert_eq!(
+            disk_budget_bytes(),
+            MAX_LOG_FILE_BYTES * (u64::from(ROTATED_FILES_KEPT) + 1)
         );
     }
 }
