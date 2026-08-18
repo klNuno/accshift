@@ -33,15 +33,27 @@ pub use event::{event, new_op_id, run_id, EventBuilder, Level, Outcome, SCHEMA_V
 pub use ops::{with_operation, Op};
 pub use redact::sanitize_log_text;
 
-use std::fs;
-use std::path::Path;
+use fs4::FileExt;
+use std::fs::{self, OpenOptions};
+use std::path::{Path, PathBuf};
+
+fn atomic_lock_path(path: &Path) -> PathBuf {
+    let mut name = path
+        .file_name()
+        .map(|name| name.to_os_string())
+        .unwrap_or_else(|| std::ffi::OsString::from("file"));
+    name.push(".lock");
+    path.with_file_name(name)
+}
 
 /// Write through a sibling temporary file and rename over the target.
 ///
 /// The state files here (levels, anomaly counters) are read by another process
 /// while this one writes them. A partial write would be read as corrupt, and
 /// corrupt means the defaults come back, which silently loses whatever the
-/// user just set.
+/// user just set. The GUI and the CLI share the same `*.tmp` name, so the
+/// write and the rename sit under an exclusive sidecar lock, same shape as
+/// [`anomaly::with_state`].
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
@@ -49,14 +61,33 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::create_dir_all(parent)
         .map_err(|reason| format!("Could not create {}: {reason}", parent.display()))?;
 
+    let lock_path = atomic_lock_path(path);
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|reason| format!("Could not open {}: {reason}", lock_path.display()))?;
+    // Best effort, same as the log sink and the anomaly counters: a lock that
+    // cannot be taken must not turn a settings write into a hard failure.
+    let locked = FileExt::lock(&lock_file).is_ok();
+
     let temp = path.with_extension("tmp");
-    fs::write(&temp, bytes)
-        .map_err(|reason| format!("Could not write {}: {reason}", temp.display()))?;
-    // Rename replaces the target on both platforms this ships on.
-    fs::rename(&temp, path).map_err(|reason| {
-        let _ = fs::remove_file(&temp);
-        format!("Could not replace {}: {reason}", path.display())
-    })
+    let outcome = fs::write(&temp, bytes)
+        .map_err(|reason| format!("Could not write {}: {reason}", temp.display()))
+        .and_then(|()| {
+            // Rename replaces the target on both platforms this ships on.
+            fs::rename(&temp, path).map_err(|reason| {
+                let _ = fs::remove_file(&temp);
+                format!("Could not replace {}: {reason}", path.display())
+            })
+        });
+
+    if locked {
+        let _ = FileExt::unlock(&lock_file);
+    }
+    outcome
 }
 
 #[cfg(test)]
@@ -141,5 +172,36 @@ mod tests {
             !path.with_extension("tmp").exists(),
             "the temporary file must not survive"
         );
+        assert!(
+            atomic_lock_path(&path).exists(),
+            "the sidecar lock file is how two processes serialize"
+        );
+    }
+
+    #[test]
+    fn write_atomic_never_leaves_a_mixed_payload() {
+        let dir = std::env::temp_dir()
+            .join("accshift-diagnostics-tests")
+            .join(format!("atomic-race-{}", std::process::id()));
+        let path = dir.join("state.json");
+        let payloads: Vec<Vec<u8>> = (0..8)
+            .map(|index| format!("payload-{index:02}-{}", "x".repeat(512)).into_bytes())
+            .collect();
+
+        std::thread::scope(|scope| {
+            for payload in &payloads {
+                let path = path.clone();
+                scope.spawn(move || {
+                    write_atomic(&path, payload).expect("write");
+                });
+            }
+        });
+
+        let written = fs::read(&path).expect("read");
+        assert!(
+            payloads.iter().any(|payload| payload == &written),
+            "the file must be one complete payload, not a mix"
+        );
+        assert!(!path.with_extension("tmp").exists());
     }
 }

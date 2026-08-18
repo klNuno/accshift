@@ -27,6 +27,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const LOG_FILE_NAME: &str = "app.log";
 const LOG_LOCK_FILE_NAME: &str = "app.log.lock";
+/// Live file, taken aside before the numbered chain is touched.
+const ROTATING_LOG_FILE_NAME: &str = "app.log.rotating";
 
 /// Written by builds that rotated on session start only. Migrated into the
 /// numbered chain the first time this code rotates, and still readable in the
@@ -229,6 +231,23 @@ fn rotated_path(current: &Path, index: u32) -> PathBuf {
     current.with_file_name(format!("app.{index}.log"))
 }
 
+fn rotating_path(current: &Path) -> PathBuf {
+    current.with_file_name(ROTATING_LOG_FILE_NAME)
+}
+
+/// Drop the oldest slot, then shift `app.1.log` through `app.3.log` up by one.
+/// The live file is already aside: this must not run until that rename worked.
+fn shift_rotated_files(current: &Path) {
+    let oldest = rotated_path(current, ROTATED_FILES_KEPT);
+    let _ = fs::remove_file(&oldest);
+    for index in (1..ROTATED_FILES_KEPT).rev() {
+        let from = rotated_path(current, index);
+        if from.exists() {
+            let _ = fs::rename(&from, rotated_path(current, index + 1));
+        }
+    }
+}
+
 pub fn log_lock_file_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     Ok(log_file_path(app_handle)?.with_file_name(LOG_LOCK_FILE_NAME))
 }
@@ -245,20 +264,38 @@ pub fn log_lock_file_path(app_handle: &dyn AppContext) -> Result<PathBuf, String
 fn rotate(path: &Path, sink: &mut Sink, reason: &str) -> Result<(), String> {
     let rotated_bytes = sink.size;
 
-    // Windows refuses to rename an open file.
+    // Windows refuses to rename an open file. Close our handle first; another
+    // process can still hold `app.log` without FILE_SHARE_DELETE (the GUI
+    // append handle, or a reader that used File::open).
     sink.file = None;
 
-    let oldest = rotated_path(path, ROTATED_FILES_KEPT);
-    let _ = fs::remove_file(&oldest);
-    for index in (1..ROTATED_FILES_KEPT).rev() {
-        let from = rotated_path(path, index);
-        if from.exists() {
-            let _ = fs::rename(&from, rotated_path(path, index + 1));
-        }
+    if !path.exists() {
+        sink.open_if_needed(path)?;
+        return Ok(());
     }
-    if path.exists() {
-        fs::rename(path, rotated_path(path, 1))
-            .map_err(|error| format!("Could not rotate log file {}: {error}", path.display()))?;
+
+    let staging = rotating_path(path);
+    // A leftover file from a crash would block the next rename on Windows.
+    // A directory left here is a test (or a user) blocking rotation on purpose.
+    if staging.is_file() {
+        let _ = fs::remove_file(&staging);
+    }
+    if fs::rename(path, &staging).is_err() {
+        // Live file did not move. Keep appending; do not touch the chain.
+        sink.open_if_needed(path)?;
+        return Ok(());
+    }
+
+    shift_rotated_files(path);
+    if let Err(error) = fs::rename(&staging, rotated_path(path, 1)) {
+        // Put the live file back. The chain has already moved; losing that
+        // slot is better than deleting the records we just took aside.
+        let _ = fs::rename(&staging, path);
+        sink.open_if_needed(path)?;
+        return Err(format!(
+            "Could not rotate log file {}: {error}",
+            path.display()
+        ));
     }
 
     // Every writer of this file has to learn that its open handle is stale.
@@ -541,6 +578,10 @@ mod tests {
             !rotated_path(&path, ROTATED_FILES_KEPT + 1).exists(),
             "nothing may survive past the last kept slot"
         );
+        assert!(
+            !rotating_path(&path).exists(),
+            "the staging name must not survive a finished rotation"
+        );
     }
 
     #[test]
@@ -581,6 +622,56 @@ mod tests {
                 .any(|record| record["code"] == serde_json::json!("app.session.started")),
             "a session must be able to say when it started"
         );
+    }
+
+    // Staging rename fails (a non-empty directory occupies the temp name, the
+    // same outcome as another process holding app.log without FILE_SHARE_DELETE
+    // on Windows). The oldest slot must still be there, and writes must work.
+    #[test]
+    fn a_failed_rotation_does_not_delete_the_chain() {
+        let ctx = TestCtx::ctx("logging-rotate-fail");
+        let path = log_file_path(&*ctx).expect("path");
+        ensure_parent(&path).expect("parent");
+
+        append_app_log(&*ctx, "info", "test", "active", None).expect("seed live");
+        for index in 1..=ROTATED_FILES_KEPT {
+            fs::write(
+                rotated_path(&path, index),
+                format!("{{\"tsMs\":{index},\"message\":\"slot{index}\"}}\n"),
+            )
+            .expect("seed slot");
+        }
+
+        let staging = rotating_path(&path);
+        fs::create_dir_all(&staging).expect("staging dir");
+        fs::write(staging.join("blocker"), b"x").expect("block rename");
+
+        begin_log_session(&*ctx).expect("session must keep writing");
+
+        let oldest = rotated_path(&path, ROTATED_FILES_KEPT);
+        assert!(
+            oldest.exists(),
+            "a failed live rename must not drop the oldest file"
+        );
+        assert_eq!(
+            fs::read_to_string(&oldest).expect("read oldest"),
+            format!("{{\"tsMs\":{ROTATED_FILES_KEPT},\"message\":\"slot{ROTATED_FILES_KEPT}\"}}\n")
+        );
+        let newest_rotated = fs::read_to_string(rotated_path(&path, 1)).expect("read .1");
+        assert!(
+            newest_rotated.contains("slot1"),
+            "the numbered chain must stay where it was: {newest_rotated}"
+        );
+
+        append_app_log(&*ctx, "info", "test", "after-failed-rotate", None)
+            .expect("app.log must still accept writes");
+        let current = fs::read_to_string(&path).expect("read live");
+        assert!(
+            current.contains("after-failed-rotate"),
+            "writes after a failed rotate land in the live file: {current}"
+        );
+
+        let _ = fs::remove_dir_all(&staging);
     }
 
     // An empty file is not worth a rotation slot: the CLI runs often and would

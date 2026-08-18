@@ -8,7 +8,9 @@
 
 use crate::exit;
 use crate::output::{emit_err, emit_json_ok, Format};
-use accshift_core::diagnostics::{bundle, event::Level, health, levels, query, schema};
+use accshift_core::diagnostics::{
+    bundle, event::Level, health, levels, query, sanitize_log_text, schema,
+};
 use clap::Subcommand;
 use serde_json::{json, Value};
 
@@ -298,6 +300,15 @@ fn text(value: &Value) -> String {
     value.as_str().unwrap_or_default().to_string()
 }
 
+fn format_check_line(result: &health::CheckResult) -> String {
+    format!(
+        "{:<5} {:<16} {}",
+        result.status.as_str(),
+        result.check,
+        sanitize_log_text(&result.detail)
+    )
+}
+
 fn cmd_check(format: Format) -> u8 {
     let ctx = match crate::build_ctx(format, "diag-check") {
         Ok(ctx) => ctx,
@@ -311,12 +322,7 @@ fn cmd_check(format: Format) -> u8 {
         Format::Json => emit_json_ok("diag-check", report.to_json()),
         Format::Human => {
             for result in &report.results {
-                println!(
-                    "{:<5} {:<16} {}",
-                    result.status.as_str(),
-                    result.check,
-                    result.detail
-                );
+                println!("{}", format_check_line(result));
                 if !result.action.is_empty() {
                     println!("      {}", result.action);
                 }
@@ -565,5 +571,31 @@ mod tests {
         let since = parse_since("1h").expect("duration");
         assert!(since <= now);
         assert!(now - since >= 3_600_000);
+    }
+
+    #[test]
+    fn human_check_output_redacts_paths_in_detail() {
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .expect("a home directory to redact");
+        let raw = format!("writable, {home}\\accshift\\logs");
+        let result = health::CheckResult {
+            check: "logdir",
+            status: health::Status::Pass,
+            code: None,
+            detail: raw.clone(),
+            action: "",
+            fields: Default::default(),
+        };
+
+        let line = format_check_line(&result);
+        assert!(
+            !line.contains(&home),
+            "human output must not print the account path: {line}"
+        );
+        assert!(
+            raw.contains(&home),
+            "the fixture itself must carry a real path, or the test is a no-op"
+        );
     }
 }
