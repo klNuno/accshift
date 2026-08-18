@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 2,
+  "id": "midnight",
+  "name": "Midnight",
+  "author": "accshift",
+  "version": "1.0.0",
+  "colorScheme": "dark",
+  "extends": "dark",
+  "tokens": {
+    "bgRgb": "10 14 28",
+    "bgCard": "#141c30",
+    "bgCardHover": "#1a2440",
+    "bgMuted": "#1c2744",
+    "bgElevated": "#283a5c",
+    "fg": "#e4e8f0",
+    "fgMuted": "#8892a8",
+    "fgSubtle": "#5a6580",
+    "border": "#1c2744",
+    "danger": "#ef4444",
+    "afkText": "#dce2f0"
+  }
+}

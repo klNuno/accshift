@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 2,
+  "id": "glass-dark",
+  "name": "Glass Dark",
+  "author": "accshift",
+  "version": "1.0.0",
+  "colorScheme": "dark",
+  "extends": "dark",
+  "glass": true,
+  "tokens": {
+    "bgRgb": "5 5 8",
+    "bgCard": "#131318",
+    "bgCardHover": "#1b1b22",
+    "bgMuted": "#17171e",
+    "bgElevated": "#2a2a34",
+    "fg": "#f4f4f6",
+    "fgMuted": "#aeaeba",
+    "fgSubtle": "#7c7c88",
+    "border": "#2c2c36",
+    "danger": "#ef4444",
+    "afkText": "#ffffff"
+  }
+}

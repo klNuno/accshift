@@ -83,7 +83,6 @@
   onmouseenter={handleMouseEnter}
   onmouseleave={handleMouseLeave}
 >
-  <div class="accent-bar"></div>
   <div class="toast-body">
     <svg class="toast-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       {#if type === "success"}
@@ -112,37 +111,35 @@
 </div>
 
 <style>
+  /* Status is carried by the icon alone. A coloured edge or a tinted panel
+     reads as a banner, and the toast sits over the account grid where it
+     would compete with the cards for attention. */
   .toast {
     display: flex;
     overflow: hidden;
     max-width: min(380px, calc(100vw - 32px));
-    background: var(--bg-card);
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    background: var(--bg-overlay);
+    background-image: var(--card-bg-image);
+    border-radius: var(--radius-md);
+    border: var(--border-width) var(--border-style) var(--border);
+    box-shadow: var(--elevation-medium);
     margin-top: 8px;
-    --toast-accent: var(--fg-muted);
+    --toast-accent: var(--fg-subtle);
   }
 
   .toast.success {
-    --toast-accent: #22c55e;
+    --toast-accent: var(--success);
   }
 
   .toast.error {
-    --toast-accent: #ef4444;
-  }
-
-  .accent-bar {
-    width: 3px;
-    flex-shrink: 0;
-    background: var(--toast-accent);
+    --toast-accent: var(--danger);
   }
 
   .toast-body {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 12px;
+    padding: 9px 12px;
     min-width: 0;
   }
 
@@ -175,19 +172,22 @@
   .toast-action {
     flex-shrink: 0;
     margin-left: 4px;
-    padding: 2px 8px;
-    border: none;
-    border-radius: 3px;
-    background: color-mix(in srgb, var(--toast-accent) 20%, transparent);
-    color: var(--toast-accent);
+    padding: 3px 9px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-muted);
+    color: var(--fg);
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 500;
     cursor: pointer;
-    transition: background 100ms;
+    transition:
+      background 100ms,
+      border-color 100ms;
   }
 
   .toast-action:hover {
-    background: color-mix(in srgb, var(--toast-accent) 32%, transparent);
+    background: var(--bg-elevated);
+    border-color: var(--bg-elevated);
   }
 
   .toast-close {
@@ -199,7 +199,7 @@
     height: 18px;
     padding: 0;
     border: none;
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--fg-muted);
     cursor: pointer;

@@ -195,7 +195,9 @@
     cursor: pointer;
     transition: background 100ms;
     user-select: none;
-    border: 1px solid transparent;
+    /* Always there, transparent until a state colours it: the row must not
+       change height when it is selected or given a colour. */
+    border: var(--border-width) var(--border-style) transparent;
   }
 
   .row:hover {
@@ -262,7 +264,8 @@
     position: relative;
     width: 32px;
     height: 32px;
-    border-radius: 4px;
+    --avatar-radius-default: 4px;
+    border-radius: var(--avatar-radius);
     overflow: hidden;
     display: flex;
     align-items: center;

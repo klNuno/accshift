@@ -2,13 +2,17 @@
   import {
     getThemeDefinition,
     getAllThemes,
-    loadCustomThemes,
-    saveCustomTheme,
+    isBuiltInTheme,
+    saveThemeDocument,
     deleteCustomTheme as deleteCustomThemeFromRegistry,
-    parseThemeJson,
+    importThemeJson,
     exportThemeJson,
+    suggestThemeId,
   } from "$lib/theme/themes";
   import type { AppThemeDefinition } from "$lib/theme/themes";
+  import { duplicateThemeDocument, type ThemeDocument } from "$lib/theme/schema";
+  import type { ThemeParseErrorCode } from "$lib/theme/schema";
+  import ThemeEditor from "$lib/theme/ThemeEditor.svelte";
   import { LANGUAGE_OPTIONS, type MessageKey, type TranslationParams } from "$lib/i18n";
   import { invoke } from "@tauri-apps/api/core";
   import { addToast } from "../notifications/store.svelte";
@@ -51,6 +55,66 @@
     const card = `color-mix(in srgb, ${theme.tokens.bgCard} ${cardPct}%, transparent)`;
     const border = `color-mix(in srgb, ${theme.tokens.border} 45%, transparent)`;
     return `--swatch-bg: ${bg}; --swatch-card: ${card}; --swatch-fg: ${theme.tokens.fg}; --swatch-border: ${border};`;
+  }
+
+  let editing = $state<ThemeDocument | null>(null);
+  let canEditSelected = $derived(!isBuiltInTheme(settings.themeId));
+
+  const IMPORT_ERRORS: Record<ThemeParseErrorCode, MessageKey> = {
+    invalidJson: "settings.themeInvalidJson",
+    invalidShape: "settings.themeInvalidJson",
+    invalidId: "settings.themeInvalidId",
+    invalidName: "settings.themeInvalidName",
+    unsupportedVersion: "settings.themeUnsupportedVersion",
+  };
+
+  /** A built-in is read only, so editing one means editing a copy of it. */
+  function startFromSelected() {
+    const current = getThemeDefinition(settings.themeId);
+    if (!isBuiltInTheme(current.id)) {
+      editing = current.document;
+      return;
+    }
+    const name = t("settings.themeCopyName", { name: current.displayName ?? current.id });
+    editing = duplicateThemeDocument(current.document, suggestThemeId(name), name);
+  }
+
+  async function importFromClipboard() {
+    let json: string;
+    try {
+      json = await navigator.clipboard.readText();
+    } catch {
+      addToast(t("settings.themeInvalidJson"), { type: "error" });
+      return;
+    }
+    const result = importThemeJson(json);
+    if (!result.document) {
+      addToast(t(result.error ? IMPORT_ERRORS[result.error] : "settings.themeInvalidJson"), {
+        type: "error",
+      });
+      return;
+    }
+    // An id that collides with a built-in cannot be stored, and refusing the
+    // file over a name clash would be unhelpful: give the copy its own id.
+    const document = isBuiltInTheme(result.document.id)
+      ? { ...result.document, id: suggestThemeId(result.document.name) }
+      : result.document;
+    try {
+      await saveThemeDocument(document);
+    } catch {
+      addToast(t("settings.themeInvalidJson"), { type: "error" });
+      return;
+    }
+    availableThemes = getAllThemes();
+    settings.themeId = document.id;
+    addToast(t(result.migratedFrom ? "settings.themeMigrated" : "settings.themeImported"));
+    // The theme applied without its CSS: silence here would look like the file
+    // simply did nothing.
+    if (result.rejectedCss) {
+      addToast(t("themeEditor.issueUnsafeCss", { construct: result.rejectedCss }), {
+        type: "error",
+      });
+    }
   }
 
   async function openIntegrationsWiki() {
@@ -145,18 +209,10 @@
         {/each}
       </div>
       <div class="theme-actions-row">
-        <button type="button" class="theme-action-btn" onclick={async () => {
-          try {
-            const json = await navigator.clipboard.readText();
-            const parsed = parseThemeJson(json);
-            if (!parsed) { addToast(t("settings.themeInvalidJson")); return; }
-            await saveCustomTheme(parsed);
-            await loadCustomThemes();
-            availableThemes = getAllThemes();
-            settings.themeId = parsed.id;
-            addToast(t("settings.themeImported"));
-          } catch { addToast(t("settings.themeInvalidJson")); }
-        }}>{t("settings.themeImport")}</button>
+        <button type="button" class="theme-action-btn" onclick={startFromSelected}>
+          {canEditSelected ? t("settings.themeEdit") : t("settings.themeCustomize")}
+        </button>
+        <button type="button" class="theme-action-btn" onclick={importFromClipboard}>{t("settings.themeImport")}</button>
         <button type="button" class="theme-action-btn" onclick={() => {
           const theme = getThemeDefinition(settings.themeId);
           navigator.clipboard.writeText(exportThemeJson(theme));
@@ -263,6 +319,21 @@
     />
   </section>
 </div>
+
+{#if editing}
+  <ThemeEditor
+    source={editing}
+    backgroundOpacity={settings.backgroundOpacity}
+    {t}
+    onCancel={() => editing = null}
+    onSaved={(document) => {
+      editing = null;
+      availableThemes = getAllThemes();
+      settings.themeId = document.id;
+      addToast(t("settings.themeSaved"));
+    }}
+  />
+{/if}
 
 <style>
   .theme-grid {

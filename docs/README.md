@@ -12,6 +12,9 @@ answers.
   send, and how do I turn it off, export it or delete it?
 - [logging.md](./logging.md): what does a log record contain, how do I replay a
   failed attempt from its identifier, and how much disk does the log use?
+- [theming.md](./theming.md): what goes in a theme file, what does each token
+  control, and what happens to a theme that is incomplete or written for an
+  older version of the format?
 
 Elsewhere:
 

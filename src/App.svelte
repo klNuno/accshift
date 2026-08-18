@@ -34,7 +34,7 @@
   import { DEFAULT_LOCALE, translate, type MessageKey, type TranslationParams } from "$lib/i18n";
   import { trackDependencies } from "$lib/shared/trackDependencies";
   import { createPlatformShellState, isPlatformUsable } from "$lib/app/platformShell.svelte";
-  import { applyThemeToDocument } from "$lib/theme/themes";
+  import { applyThemeToDocument, themeUsesLiquidGlass } from "$lib/theme/themes";
   import { applyWindowBackdrop } from "$lib/theme/backdrop";
   import { applyMotionPreference } from "$lib/theme/motion";
   import { ensurePlatformLoaded } from "$lib/platforms/registry";
@@ -1085,7 +1085,7 @@
   let liquidWallpaper = $state<WallpaperSnapshot | null>(null);
   let liquidBackdropStyle = $state("");
   const liquidBackdropActive = $derived(
-    shell.activeTheme.id === "liquid-glass" && shell.runtimeOs === "windows"
+    themeUsesLiquidGlass(shell.activeTheme) && shell.runtimeOs === "windows"
   );
 
   $effect(() => {
@@ -1103,7 +1103,11 @@
       ? "1"
       : "0";
     // Glass themes need the OS backdrop blur to read as glass.
-    void applyWindowBackdrop(Boolean(shell.activeTheme.glass), shell.activeTheme.id);
+    void applyWindowBackdrop(
+      Boolean(shell.activeTheme.glass),
+      shell.activeTheme.id,
+      themeUsesLiquidGlass(shell.activeTheme),
+    );
   });
 
   $effect(() => applyMotionPreference(settings.animations));
@@ -1676,7 +1680,10 @@
     /* The shell owns the window background. Panels swapped under {#key}
        replay page-entrance (opacity 0 -> 1); if they painted the background
        themselves the window would flash transparent on every switch. */
-    background: var(--bg);
+    background-color: var(--bg);
+    /* The theme's own gradient, laid over that fill. `none` by default, and
+       forced off on glass themes, where the surface is the desktop. */
+    background-image: var(--bg-image);
     transition: filter 320ms ease-out, transform 320ms ease-out, opacity 220ms ease-out;
     will-change: filter, transform;
   }

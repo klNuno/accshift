@@ -35,23 +35,28 @@ const MAC_EFFECTS: Record<string, Effect> = {
  * WM_NCACTIVATE subclass (set_keep_backdrop_active) keeps them alive while an
  * acrylic glass theme is active.
  */
-export async function applyWindowBackdrop(glass: boolean, themeId: string): Promise<void> {
-  const key = glass ? `backdrop:${themeId}` : "off";
+export async function applyWindowBackdrop(
+  glass: boolean,
+  themeId: string,
+  liquid = themeId === "liquid-glass",
+): Promise<void> {
+  const materialId = liquid ? "liquid-glass" : themeId;
+  const key = glass ? `backdrop:${materialId}` : "off";
   if (key === appliedKey) return;
   try {
     const appWindow = getCurrentWindow();
-    const acrylic = glass && themeId !== "liquid-glass";
+    const acrylic = glass && !liquid;
     if (glass) {
       if (!acrylic) {
         // apply_effects with no Windows effect in the list is a no-op there,
         // so drop any acrylic left by a previous glass theme explicitly.
         await appWindow.clearEffects();
       }
-      const tint = ACRYLIC_TINTS[themeId];
+      const tint = ACRYLIC_TINTS[materialId];
       await appWindow.setEffects({
         effects: [
           ...(acrylic ? [Effect.Acrylic] : []),
-          MAC_EFFECTS[themeId] ?? Effect.UnderWindowBackground,
+          MAC_EFFECTS[materialId] ?? Effect.UnderWindowBackground,
         ],
         ...(tint ? { color: tint } : {}),
       });

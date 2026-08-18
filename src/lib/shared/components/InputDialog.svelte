@@ -60,7 +60,7 @@
   .input {
     width: 100%;
     padding: 8px 10px;
-    border: 1px solid var(--border);
+    border: var(--border-width) var(--border-style) var(--border);
     border-radius: 4px;
     background: var(--bg-solid);
     color: var(--fg);
@@ -83,7 +83,7 @@
 
   .btn-cancel {
     padding: 6px 12px;
-    border: 1px solid var(--border);
+    border: var(--border-width) var(--border-style) var(--border);
     border-radius: 4px;
     background: transparent;
     color: var(--fg-muted);

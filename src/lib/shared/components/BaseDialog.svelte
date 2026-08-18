@@ -79,14 +79,15 @@
     align-items: center;
     justify-content: center;
     background: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(4px);
+    backdrop-filter: blur(var(--overlay-blur));
     animation: overlay-fade-in 100ms ease-out;
   }
 
   .dialog {
     padding: 16px;
     background: var(--bg-overlay);
-    border: 1px solid var(--border);
+    background-image: var(--card-bg-image);
+    border: var(--border-width) var(--border-style) var(--border);
     border-radius: 8px;
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
     display: flex;
