@@ -10,12 +10,14 @@ import {
   type ThemeTokens,
 } from "./tokens";
 import {
+  documentIsLiquidGlass,
   parseThemeDocument,
   resolveThemeTokens,
   serializeThemeDocument,
   type ThemeDocument,
   type ThemeParseResult,
 } from "./schema";
+import { applyWindowBackdrop } from "./backdrop";
 import midnightDocument from "./builtin/midnight.json";
 import glassDarkDocument from "./builtin/glass-dark.json";
 
@@ -405,6 +407,13 @@ export interface ThemeSurfaceOpacities {
   isLiquid: boolean;
 }
 
+/** True for Liquid Glass and for any theme that extends it. Customize
+ *  duplicates the built-in under a new id, so the material must follow
+ *  `extends`, not the shipped id. */
+export function themeUsesLiquidGlass(theme: AppThemeDefinition): boolean {
+  return documentIsLiquidGlass(theme.document, getThemeDocument);
+}
+
 export function resolveThemeSurfaceOpacities(
   theme: AppThemeDefinition,
   backgroundOpacityPercent: number,
@@ -414,10 +423,11 @@ export function resolveThemeSurfaceOpacities(
   // A failed wallpaper capture and Linux's missing compositor-independent blur
   // both need the same readable, near-solid fallback.
   const backdropAvailable = opts.backdropAvailable !== false;
-  const isLiquid = theme.id === "liquid-glass" && backdropAvailable;
+  const liquid = themeUsesLiquidGlass(theme);
+  const isLiquid = liquid && backdropAvailable;
   const windowOpacity = theme.glass
     ? backdropAvailable
-      ? (GLASS_WINDOW_OPACITY[theme.id] ?? 0.55)
+      ? (liquid ? GLASS_WINDOW_OPACITY["liquid-glass"] : (GLASS_WINDOW_OPACITY[theme.id] ?? 0.55))
       : 0.96
     : rawOpacity;
   const cardOpacity = isLiquid
@@ -502,12 +512,18 @@ export function applyThemeToDocument(
   theme: AppThemeDefinition,
   backgroundOpacityPercent: number,
   doc: Document = document,
-  opts: { backdropAvailable?: boolean } = {},
+  opts: { backdropAvailable?: boolean; preview?: boolean } = {},
 ) {
   // Only memoize the real document; an explicitly passed doc (theme preview,
   // tests) always applies. `globalThis.document` rather than the bare global so
   // this stays callable where there is no DOM at all.
   const memoizable = doc === globalThis.document;
+  // The App effect re-applies the saved theme whenever wallpaper, locale or
+  // outlines tick. While the editor owns the document, those writes would
+  // paint over the draft until the next keystroke.
+  if (memoizable && previewSnapshot && !opts.preview) {
+    return;
+  }
   if (
     memoizable &&
     lastApplied &&
@@ -643,7 +659,9 @@ export function previewThemeDocument(document: ThemeDocument): AppThemeDefinitio
   const theme = themeFromDocument(document);
   applyThemeToDocument(theme, previewSnapshot?.opacity ?? 100, globalThis.document, {
     backdropAvailable: previewSnapshot?.backdropAvailable,
+    preview: true,
   });
+  void applyWindowBackdrop(Boolean(theme.glass), theme.id, themeUsesLiquidGlass(theme));
   return theme;
 }
 
@@ -655,6 +673,11 @@ export function endThemePreview(): void {
   applyThemeToDocument(snapshot.theme, snapshot.opacity, globalThis.document, {
     backdropAvailable: snapshot.backdropAvailable,
   });
+  void applyWindowBackdrop(
+    Boolean(snapshot.theme.glass),
+    snapshot.theme.id,
+    themeUsesLiquidGlass(snapshot.theme),
+  );
 }
 
 /**
@@ -667,12 +690,11 @@ export function commitThemePreview(document: ThemeDocument): void {
   const snapshot = previewSnapshot;
   previewSnapshot = null;
   resetAppliedThemeMemo();
-  applyThemeToDocument(
-    getThemeDefinition(document.id),
-    snapshot?.opacity ?? 100,
-    globalThis.document,
-    { backdropAvailable: snapshot?.backdropAvailable },
-  );
+  const theme = getThemeDefinition(document.id);
+  applyThemeToDocument(theme, snapshot?.opacity ?? 100, globalThis.document, {
+    backdropAvailable: snapshot?.backdropAvailable,
+  });
+  void applyWindowBackdrop(Boolean(theme.glass), theme.id, themeUsesLiquidGlass(theme));
 }
 
 /** Token specs re-exported so consumers only ever import from one module. */

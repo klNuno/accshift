@@ -80,9 +80,42 @@ const FORBIDDEN_CSS: ReadonlyArray<{ label: string; pattern: RegExp }> = [
   { label: "</style", pattern: /<\/\s*style/i },
 ];
 
+// Strip comments and decode hex escapes so a CSS comment in the middle of
+// `url` and a hex-escaped `url(` match the same constructs a style tag would.
+function normalizeCssForSafety(css: string): string {
+  const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  return withoutComments.replace(
+    /\\([0-9a-fA-F]{1,6})(?:\r\n|[ \t\f\n\r])?/g,
+    (_, hex: string) => {
+      const code = Number.parseInt(hex, 16);
+      if (code === 0 || code > 0x10ffff) return "";
+      return String.fromCodePoint(code);
+    },
+  );
+}
+
 /** The construct that makes this CSS unusable, or null when it is clean. */
 export function unsafeCssConstruct(css: string): string | null {
-  return FORBIDDEN_CSS.find((entry) => entry.pattern.test(css))?.label ?? null;
+  const normalized = normalizeCssForSafety(css);
+  return FORBIDDEN_CSS.find((entry) => entry.pattern.test(normalized))?.label ?? null;
+}
+
+/** True when this document is Liquid Glass or walks to it through extends. */
+export function documentIsLiquidGlass(
+  document: ThemeDocument,
+  getDocument: (id: string) => ThemeDocument | undefined,
+): boolean {
+  let current: ThemeDocument | undefined = document;
+  const seen = new Set<string>();
+  for (let depth = 0; current && depth < MAX_EXTENDS_DEPTH; depth++) {
+    if (current.id === "liquid-glass") return true;
+    const parentId = current.extends;
+    if (!parentId || seen.has(parentId)) return false;
+    if (parentId === "liquid-glass") return true;
+    seen.add(parentId);
+    current = getDocument(parentId);
+  }
+  return false;
 }
 
 function readString(value: unknown, maxLength: number): string {

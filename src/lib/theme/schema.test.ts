@@ -164,6 +164,9 @@ describe("parseThemeDocument", () => {
       '@import "https://example.com/x.css";',
       ".card { background: url(https://example.com/x.png); }",
       ".card { color: red; }</style><script>alert(1)</script>",
+      ".card { background: \\75\\72\\6c(https://example.com/x.png); }",
+      ".card { background: u/**/rl(https://example.com/x.png); }",
+      "@\\69mport url(https://example.com/x.css);",
     ]) {
       const result = parseThemeDocument({
         schemaVersion: 2,

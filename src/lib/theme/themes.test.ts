@@ -7,6 +7,7 @@ import {
   getThemeDefinition,
   resolveThemeSurfaceOpacities,
   themeFromDocument,
+  themeUsesLiquidGlass,
 } from "./themes";
 import { resolveThemeTokens, validateThemeDocument } from "./schema";
 import { THEME_TOKEN_KEYS, THEME_TOKEN_SPECS, isValidTokenValue } from "./tokens";
@@ -84,6 +85,24 @@ describe("theme surface fallback", () => {
     });
 
     expect(values.windowOpacity).toBe(0.42);
+  });
+
+  it("treats a theme that extends Liquid Glass as liquid", () => {
+    const copy = themeFromDocument({
+      schemaVersion: 3,
+      id: "my-liquid",
+      name: "My Liquid",
+      colorScheme: "dark",
+      extends: "liquid-glass",
+      glass: true,
+      tokens: {},
+    });
+
+    expect(themeUsesLiquidGlass(copy)).toBe(true);
+    const values = resolveThemeSurfaceOpacities(copy, 50, { backdropAvailable: true });
+    expect(values.isLiquid).toBe(true);
+    expect(values.windowOpacity).toBe(0.18);
+    expect(values.cardOpacity).toBe(0.13);
   });
 });
 
