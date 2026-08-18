@@ -1,0 +1,108 @@
+{
+  "id": "discord",
+  "schemaVersion": 1,
+  "name": "Discord",
+  "shortName": "Discord",
+  "os": {
+    "windows": {
+      "roots": {
+        "files": ["${APPDATA}/discord"]
+      },
+      "detect": { "executableResolves": true },
+      "executable": {
+        "fileName": "Update.exe",
+        "candidates": [{ "kind": "path", "template": "${LOCALAPPDATA}/Discord" }]
+      },
+      "identity": {
+        "source": {
+          "kind": "nativeHook",
+          "name": "discord-leveldb",
+          "paths": { "leveldb": "${APPDATA}/discord/Local Storage/leveldb" }
+        },
+        "format": { "charset": "alphanumeric", "maxLength": 64 },
+        "current": "config"
+      },
+      "state": {
+        "files": [
+          {
+            "live": "${APPDATA}/discord/settings.json",
+            "snapshot": "settings.json",
+            "clearOnSetup": true,
+            "snapshotMarker": true
+          },
+          {
+            "live": "${APPDATA}/discord/Preferences",
+            "snapshot": "Preferences",
+            "clearOnSetup": true
+          },
+          {
+            "live": "${APPDATA}/discord/TransportSecurity",
+            "snapshot": "TransportSecurity",
+            "clearOnSetup": true
+          }
+        ],
+        "directories": [
+          {
+            "live": "${APPDATA}/discord/Local Storage/leveldb",
+            "snapshot": "local_storage_leveldb",
+            "clearOnSetup": true,
+            "snapshotMarker": true
+          },
+          {
+            "live": "${APPDATA}/discord/Session Storage",
+            "snapshot": "session_storage",
+            "clearOnSetup": true
+          },
+          {
+            "live": "${APPDATA}/discord/Network",
+            "snapshot": "network",
+            "clearOnSetup": true
+          },
+          {
+            "live": "${APPDATA}/discord/blob_storage",
+            "snapshot": "blob_storage",
+            "clearOnSetup": true
+          }
+        ],
+        "captureWhen": [
+          {
+            "kind": "pathNonEmpty",
+            "path": "${APPDATA}/discord/Local Storage/leveldb",
+            "recursive": true
+          }
+        ]
+      },
+      "close": {
+        "processes": ["Discord.exe"],
+        "timeoutMs": 8000,
+        "settleMs": 500,
+        "beforeCapture": true
+      },
+      "launch": {
+        "args": ["--processStart", "Discord.exe"],
+        "argsOnlyFor": "Update.exe"
+      },
+      "setup": {
+        "trigger": [
+          { "kind": "newIdentity" },
+          {
+            "kind": "pathFresh",
+            "path": "${APPDATA}/discord/Local Storage/leveldb",
+            "windowMs": 300000
+          },
+          { "kind": "sinceStart", "ms": 4000 }
+        ],
+        "confirm": [
+          {
+            "kind": "pathNonEmpty",
+            "path": "${APPDATA}/discord/Local Storage/leveldb",
+            "recursive": true
+          }
+        ],
+        "displayNameFromId": true,
+        "missingSnapshotHint": "Sign in to this account once first.",
+        "adoptSignedIn": true
+      }
+    }
+  }
+}

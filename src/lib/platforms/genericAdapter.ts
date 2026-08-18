@@ -41,6 +41,10 @@ export interface GenericAdapterConfig<TRaw> {
   copyItems?: (account: PlatformAccount) => CopyItemConfig[];
   /** Extra params for the `${i18nPrefix}.forgotAccount` toast. */
   forgetToastParams?: (display: string) => TranslationParams;
+  /** Params for the no-accounts toast and hint. Platforms with a prefix of
+   * their own spell the name into the string; a platform added from a
+   * descriptor shares one wording and passes its name here instead. */
+  messageParams?: TranslationParams;
   /** false = backend has no set_account_label command (Battle.net). */
   supportsAccountLabels?: boolean;
   /** Redacts the account id in switch logs (Battle.net masks emails). */
@@ -131,7 +135,7 @@ export function createGenericAdapter<TRaw = GenericRawAccount>(
     getContextMenuActions,
 
     getNoAccountsToastMessage(callbacks) {
-      return callbacks.t(config.noAccountsToastKey);
+      return callbacks.t(config.noAccountsToastKey, config.messageParams);
     },
   };
 
@@ -142,7 +146,7 @@ export function createGenericAdapter<TRaw = GenericRawAccount>(
 
   if (config.noAccountsHintKey) {
     const hintKey = config.noAccountsHintKey;
-    adapter.getNoAccountsHintMessage = (callbacks) => callbacks.t(hintKey);
+    adapter.getNoAccountsHintMessage = (callbacks) => callbacks.t(hintKey, config.messageParams);
   }
 
   return adapter;

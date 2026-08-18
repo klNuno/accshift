@@ -168,6 +168,15 @@ export function createHandlers(spec: MockSpec): Record<string, Handler> {
 
   const manifest = () => ({ schemaVersion: 1, stores: {} });
   const snapshot = () => ({ manifest: manifest(), stores: stores() });
+  // A fixed, invented folder rather than the real one: the descriptor card has
+  // to be on screen for a capture, and the path it shows must be the same on
+  // every machine that records one.
+  const emptyUserPlatforms = () => ({
+    dir: "C:\\Users\\player\\AppData\\Roaming\\accshift\\platforms",
+    loaded: [],
+    skipped: [],
+    rejected: [],
+  });
 
   const handlers: Record<string, Handler> = {
     get_boot_payload: () => ({
@@ -175,6 +184,9 @@ export function createHandlers(spec: MockSpec): Record<string, Handler> {
       runtimeOs: spec.runtimeOs,
       storageSnapshot: snapshot(),
       customThemes: [],
+      // A mock session never reads the real descriptor folder: a screenshot
+      // must not depend on what the recording machine has lying in it.
+      userPlatforms: emptyUserPlatforms(),
     }),
     load_client_storage_snapshot: () => snapshot(),
     get_storage_manifest: () => manifest(),
@@ -238,6 +250,28 @@ export function createHandlers(spec: MockSpec): Record<string, Handler> {
       return null;
     },
     platform_set_account_label: () => null,
+    // The descriptor folder is the recording machine's, so a mock session
+    // reports it empty and every call that would change it does nothing. The
+    // picker in particular must never open a real file dialog.
+    reload_user_platforms: () => emptyUserPlatforms(),
+    descriptor_install_file: () => emptyUserPlatforms(),
+    descriptor_remove: () => emptyUserPlatforms(),
+    descriptor_select_file: () => {
+      throw "cancelled";
+    },
+    descriptor_preview_file: () => {
+      throw "a mock session adds no platform";
+    },
+    open_descriptors_folder: () => null,
+    platform_dry_run: (args) => ({
+      platformId: String(args.platformId ?? ""),
+      operation: "switch",
+      accountId: String(args.accountId ?? ""),
+      applied: false,
+      roots: [],
+      steps: [],
+      warnings: [],
+    }),
     steam_get_profile_info: (args) =>
       profileInfo(findAccount(String(args.accountId ?? args.steamId ?? ""))),
     steam_get_profile_infos: (args) => {

@@ -1,5 +1,6 @@
 use crate::context::AppContext;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 
 pub const DEFAULT_WINDOW_WIDTH: f64 = 1000.0;
@@ -201,6 +202,38 @@ pub struct DiscordConfig {
     pub current_account_id: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct CustomAccountConfig {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub account_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<u64>,
+}
+
+/// The section of a platform this build was never compiled to know about.
+///
+/// Every shipped platform has a typed section written before its descriptor
+/// existed, and keeps it so nobody's accounts move. A platform the user added
+/// has no such history, so one shape carries every field the engine asks the
+/// config for: giving each new platform its own struct would mean compiling to
+/// add one, which is the thing descriptors exist to avoid.
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct CustomPlatformConfig {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub path_override: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accounts: Vec<CustomAccountConfig>,
+    /// Set only when the descriptor says the launcher exposes no readable
+    /// account id, mirroring `jagex.current_account`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub current_account: String,
+    /// Ids forgotten while still on disk, mirroring `ubisoft.forgotten_uuids`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forgotten_ids: Vec<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TelemetryConfig {
     #[serde(default = "default_true")]
@@ -270,6 +303,9 @@ pub struct AppConfig {
     pub jagex: JagexConfig,
     #[serde(default, skip_serializing_if = "is_default_discord_config")]
     pub discord: DiscordConfig,
+    /// Platforms that arrived as a user descriptor, keyed by their id.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub custom_platforms: BTreeMap<String, CustomPlatformConfig>,
     #[serde(default)]
     pub telemetry: TelemetryConfig,
     #[serde(default)]
@@ -297,6 +333,8 @@ struct RawAppConfig {
     #[serde(default)]
     jagex: Option<JagexConfig>,
     discord: Option<DiscordConfig>,
+    #[serde(default)]
+    custom_platforms: Option<BTreeMap<String, CustomPlatformConfig>>,
     #[serde(default)]
     telemetry: Option<TelemetryConfig>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -379,7 +417,10 @@ fn is_default_battle_net_config(value: &BattleNetConfig) -> bool {
 }
 
 fn is_default_ubisoft_config(value: &UbisoftConfig) -> bool {
-    value.path_override.is_empty() && value.accounts.is_empty()
+    // The blocklist counts: forgetting the last Ubisoft account leaves a
+    // section that holds nothing else, and skipping it here would drop the
+    // forget on the next save and rediscover the account from disk.
+    value.path_override.is_empty() && value.accounts.is_empty() && value.forgotten_uuids.is_empty()
 }
 
 fn is_default_roblox_config(value: &RobloxConfig) -> bool {
@@ -499,6 +540,7 @@ fn normalize_config(raw: RawAppConfig) -> AppConfig {
     let gog = raw.gog.unwrap_or_default();
     let jagex = raw.jagex.unwrap_or_default();
     let discord = raw.discord.unwrap_or_default();
+    let custom_platforms = raw.custom_platforms.unwrap_or_default();
     let telemetry = raw.telemetry.unwrap_or_default();
     AppConfig {
         steam,
@@ -510,6 +552,7 @@ fn normalize_config(raw: RawAppConfig) -> AppConfig {
         gog,
         jagex,
         discord,
+        custom_platforms,
         telemetry,
         window_width: raw.window_width,
         window_height: raw.window_height,
@@ -552,6 +595,16 @@ fn set_local_config_unreadable(unreadable: bool) {
 
 fn local_config_unreadable() -> bool {
     LOCAL_CONFIG_UNREADABLE.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Serializes every test that reads or writes config, wherever it lives. The
+/// poison flag above and the config cache are process-global, so a config read
+/// from another module's test clears the flag mid-assertion here and the
+/// poisoning tests fail for reasons that have nothing to do with them.
+#[cfg(test)]
+pub(crate) fn config_io_test_mutex() -> &'static std::sync::Mutex<()> {
+    static MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    MUTEX.get_or_init(|| std::sync::Mutex::new(()))
 }
 
 fn file_sig(path: &std::path::Path) -> FileSig {
@@ -887,6 +940,9 @@ fn portable_config(config: &AppConfig) -> AppConfig {
     portable.gog.path_override.clear();
     portable.jagex.path_override.clear();
     portable.discord.path_override.clear();
+    for section in portable.custom_platforms.values_mut() {
+        section.path_override.clear();
+    }
     portable.telemetry.install_id.clear();
     portable.telemetry.pending_forget_install_ids.clear();
     portable.telemetry.anonymous_id.clear();
@@ -911,6 +967,22 @@ fn local_config(config: &AppConfig) -> AppConfig {
     local.gog.path_override = config.gog.path_override.clone();
     local.jagex.path_override = config.jagex.path_override.clone();
     local.discord.path_override = config.discord.path_override.clone();
+    // Same rule as every shipped section: where a launcher lives is a fact
+    // about this machine, so it never travels in the portable file.
+    local.custom_platforms = config
+        .custom_platforms
+        .iter()
+        .filter(|(_, section)| !section.path_override.trim().is_empty())
+        .map(|(id, section)| {
+            (
+                id.clone(),
+                CustomPlatformConfig {
+                    path_override: section.path_override.clone(),
+                    ..CustomPlatformConfig::default()
+                },
+            )
+        })
+        .collect();
     local.telemetry.install_id = config.telemetry.install_id.clone();
     local.telemetry.pending_forget_install_ids =
         config.telemetry.pending_forget_install_ids.clone();
@@ -973,6 +1045,14 @@ fn merge_split_configs(portable: AppConfig, local: AppConfig) -> AppConfig {
     }
     if !local.discord.path_override.is_empty() {
         merged.discord.path_override = local.discord.path_override;
+    }
+    for (id, section) in local.custom_platforms {
+        if section.path_override.trim().is_empty() {
+            continue;
+        }
+        // `or_default` and not `get_mut`: the portable file has no section for
+        // a platform the user only ever pointed at a path for.
+        merged.custom_platforms.entry(id).or_default().path_override = section.path_override;
     }
     if !local.telemetry.install_id.is_empty() {
         merged.telemetry.install_id = local.telemetry.install_id;
@@ -1048,11 +1128,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         Arc::new(TempCtx { root })
-    }
-
-    fn config_io_test_mutex() -> &'static std::sync::Mutex<()> {
-        static MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        MUTEX.get_or_init(|| std::sync::Mutex::new(()))
     }
 
     #[test]
@@ -1296,6 +1371,7 @@ mod tests {
                     last_used_at: Some(1000),
                 }],
             },
+            custom_platforms: Default::default(),
             telemetry: TelemetryConfig::default(),
             window_width: Some(1200.0),
             window_height: Some(800.0),
@@ -1382,6 +1458,7 @@ mod tests {
                     last_used_at: Some(2000),
                 }],
             },
+            custom_platforms: Default::default(),
             telemetry: TelemetryConfig::default(),
             window_width: Some(1024.0),
             window_height: Some(768.0),

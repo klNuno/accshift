@@ -1,0 +1,114 @@
+{
+  "id": "ubisoft",
+  "schemaVersion": 1,
+  "name": "Ubisoft Connect",
+  "shortName": "Ubisoft",
+  "os": {
+    "windows": {
+      "roots": {
+        "files": [
+          "${LOCALAPPDATA}/Ubisoft Game Launcher",
+          "${installDir}/savegames",
+          "${installDir}/logs"
+        ]
+      },
+      "detect": { "executableResolves": true },
+      "executable": {
+        "fileName": "UbisoftConnect.exe",
+        "candidates": [
+          { "kind": "path", "template": "${ProgramFiles(x86)}/Ubisoft/Ubisoft Game Launcher" },
+          { "kind": "path", "template": "${ProgramFiles}/Ubisoft/Ubisoft Game Launcher" },
+          {
+            "kind": "registry",
+            "root": "HKLM",
+            "key": "SOFTWARE\\Ubisoft\\Launcher",
+            "value": "InstallDir"
+          },
+          {
+            "kind": "registry",
+            "root": "HKLM",
+            "key": "SOFTWARE\\WOW6432Node\\Ubisoft\\Launcher",
+            "value": "InstallDir"
+          }
+        ]
+      },
+      "identity": {
+        "source": {
+          "kind": "logTail",
+          "path": "${installDir}/logs/launcher_log.txt",
+          "tailBytes": 65536,
+          "lineContains": "AccountStartupUser.cpp",
+          "prefix": "User: ",
+          "nearWord": "User"
+        },
+        "format": {
+          "charset": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "lowercase": true,
+          "invalidMessage": "Invalid Ubisoft account UUID"
+        },
+        "current": "identity",
+        "discovery": [
+          {
+            "kind": "directoryEntries",
+            "path": "${installDir}/savegames",
+            "entries": "directories"
+          },
+          {
+            "kind": "directoryEntries",
+            "path": "${LOCALAPPDATA}/Ubisoft Game Launcher/spool",
+            "entries": "directories"
+          }
+        ],
+        "blocklistOnForget": true
+      },
+      "state": {
+        "files": [
+          {
+            "live": "${LOCALAPPDATA}/Ubisoft Game Launcher/user.dat",
+            "snapshot": "user.dat",
+            "clearOnSetup": true,
+            "snapshotMarker": true,
+            "clearSnapshotWhenSourceMissing": false
+          },
+          {
+            "live": "${LOCALAPPDATA}/Ubisoft Game Launcher/ConnectSecureStorage.dat",
+            "snapshot": "ConnectSecureStorage.dat",
+            "clearOnSetup": true,
+            "snapshotMarker": true,
+            "clearSnapshotWhenSourceMissing": false
+          }
+        ]
+      },
+      "close": {
+        "processes": ["UbisoftConnect.exe", "UbisoftGameLauncher.exe", "upc.exe"],
+        "timeoutMs": 8000,
+        "settleMs": 500
+      },
+      "launch": {},
+      "setup": {
+        "trigger": [
+          { "kind": "newIdentity" },
+          {
+            "kind": "anyOf",
+            "conditions": [
+              {
+                "kind": "pathFresh",
+                "path": "${LOCALAPPDATA}/Ubisoft Game Launcher/user.dat",
+                "windowMs": 300000
+              },
+              {
+                "kind": "pathFresh",
+                "path": "${LOCALAPPDATA}/Ubisoft Game Launcher/ConnectSecureStorage.dat",
+                "windowMs": 300000
+              }
+            ]
+          }
+        ],
+        "displayNameFromId": true,
+        "missingSnapshotHint": "Sign in to this account once first."
+      }
+    }
+  }
+}

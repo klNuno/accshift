@@ -1,10 +1,11 @@
 use crate::context::{AppContext, AppCtx};
 use crate::error::PlatformError;
+use descriptor::{Descriptor, DescriptorOrigin, DescriptorService};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Canonical platform identifiers.
@@ -38,23 +39,16 @@ pub mod ids {
 // macOS (its config format is identical; only the paths and launcher differ).
 #[cfg(any(windows, target_os = "macos"))]
 pub mod battle_net;
-#[cfg(windows)]
-pub mod discord;
-#[cfg(windows)]
-pub mod epic;
-#[cfg(windows)]
-pub mod gog;
-#[cfg(windows)]
-pub mod jagex;
+/// Platforms described by a JSON descriptor and run by a single engine. GOG,
+/// Jagex, Epic, Ubisoft and Discord live here instead of in a module of their
+/// own.
+pub mod descriptor;
 #[cfg(windows)]
 pub mod riot;
 #[cfg(windows)]
 pub mod roblox;
-#[cfg(windows)]
 pub(crate) mod setup_jobs;
 pub mod steam;
-#[cfg(windows)]
-pub mod ubisoft;
 
 pub(crate) fn redact_id(value: &str) -> String {
     let chars: Vec<char> = value.chars().collect();
@@ -232,6 +226,26 @@ pub trait PlatformService: Send + Sync {
     ) -> Result<(), PlatformError> {
         Err(PlatformError::other("Account labeling not supported"))
     }
+
+    /// Whether [`Self::dry_run`] answers on this platform.
+    ///
+    /// Asked before calling, so a caller reports "this platform has no plan"
+    /// without reading an error message to find out.
+    fn supports_dry_run(&self) -> bool {
+        false
+    }
+
+    /// Everything switching to `account_id` would read, copy, write and close,
+    /// without doing any of it.
+    ///
+    /// Only descriptor-driven platforms answer this today: the hand-written
+    /// modules would each need their own plan, and the point of the descriptors
+    /// is that they no longer have to.
+    fn dry_run(&self, _app: AppCtx, _account_id: &str) -> Result<Value, PlatformError> {
+        Err(PlatformError::other(
+            "Dry run is only available for platforms described by a descriptor",
+        ))
+    }
 }
 
 fn platform_registry() -> &'static HashMap<&'static str, &'static dyn PlatformService> {
@@ -248,29 +262,168 @@ fn platform_registry() -> &'static HashMap<&'static str, &'static dyn PlatformSe
         {
             map.insert(ids::RIOT, &riot::RIOT_SERVICE);
             map.insert(ids::BATTLE_NET, &battle_net::BATTLE_NET_SERVICE);
-            map.insert(ids::UBISOFT, &ubisoft::UBISOFT_SERVICE);
             map.insert(ids::ROBLOX, &roblox::ROBLOX_SERVICE);
-            map.insert(ids::EPIC, &epic::EPIC_SERVICE);
-            map.insert(ids::GOG, &gog::GOG_SERVICE);
-            map.insert(ids::JAGEX, &jagex::JAGEX_SERVICE);
-            map.insert(ids::DISCORD, &discord::DISCORD_SERVICE);
+        }
+        // Descriptor-driven platforms register last so a hand-written module
+        // always wins: converting one means deleting its module, never having
+        // two services answer for the same id.
+        for service in descriptor::services() {
+            let id = ids::ALL
+                .iter()
+                .find(|known| **known == service.id())
+                .copied()
+                .unwrap_or_else(|| Box::leak(service.id().to_string().into_boxed_str()));
+            map.entry(id)
+                .or_insert(*service as &'static dyn PlatformService);
         }
         map
     })
 }
 
+/// Services built from the user's own descriptors, keyed by platform id.
+///
+/// Separate from [`platform_registry`] because that one is built once with no
+/// context to hand, and a user descriptor is a file only an [`AppContext`] can
+/// locate. Shipped platforms are looked up first, so a dropped-in file can
+/// never take over an id this build already answers for.
+fn user_registry() -> &'static RwLock<HashMap<String, &'static DescriptorService>> {
+    static USER: OnceLock<RwLock<HashMap<String, &'static DescriptorService>>> = OnceLock::new();
+    USER.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// A descriptor read fine but was not registered.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkippedPlatform {
+    pub id: String,
+    pub reason: String,
+}
+
+/// A file in the user's folder that is not a usable descriptor.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RejectedDescriptor {
+    /// The file name, as the user sees it in the folder.
+    pub source: String,
+    /// Dotted path of the offending field, empty when the whole file failed.
+    pub field: String,
+    pub problem: String,
+}
+
+/// What the last read of the user's descriptor folder produced.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserPlatformReport {
+    /// The folder that was read, so a caller can say where to drop a file.
+    pub dir: String,
+    /// The descriptors now answering to [`get_service`], in load order. The
+    /// whole descriptor travels, not just the id: the frontend builds its
+    /// platform entry from it and so needs no second description of a platform
+    /// this build was never compiled to know about.
+    pub loaded: Vec<Descriptor>,
+    pub skipped: Vec<SkippedPlatform>,
+    pub rejected: Vec<RejectedDescriptor>,
+}
+
+/// Reads the user's descriptor folder and makes every platform in it answer to
+/// [`get_service`]. Calling it again is the hot reload: the folder is the
+/// truth, so an id whose file is gone stops answering.
+///
+/// Services are leaked, because the registry hands out `&'static dyn
+/// PlatformService`. A reload therefore leaks the descriptors it replaces, a
+/// few kilobytes each: bounded by how often a human edits a file, and the
+/// alternative is handing out a reference that can dangle mid-switch.
+pub fn reload_user_platforms(app: &dyn AppContext) -> UserPlatformReport {
+    let mut report = UserPlatformReport {
+        dir: descriptor::user_dir(app)
+            .map(|dir| dir.display().to_string())
+            .unwrap_or_default(),
+        ..UserPlatformReport::default()
+    };
+
+    let (descriptors, errors) = descriptor::load_user(app);
+    report.rejected = errors
+        .into_iter()
+        .map(|error| RejectedDescriptor {
+            source: error.source,
+            field: error.field,
+            problem: error.problem,
+        })
+        .collect();
+
+    let mut fresh: HashMap<String, &'static DescriptorService> = HashMap::new();
+    for (path, descriptor) in descriptors {
+        let id = descriptor.id.clone();
+        if platform_registry().contains_key(id.as_str()) {
+            report.skipped.push(SkippedPlatform {
+                id: id.clone(),
+                reason: format!("`{id}` is a platform this build already ships"),
+            });
+            continue;
+        }
+        if fresh.contains_key(&id) {
+            report.skipped.push(SkippedPlatform {
+                id: id.clone(),
+                reason: format!("another file in this folder already declares `{id}`"),
+            });
+            continue;
+        }
+        if descriptor.current_profile().is_none() {
+            report.skipped.push(SkippedPlatform {
+                id: id.clone(),
+                reason: format!("`{id}` declares no profile for this operating system"),
+            });
+            continue;
+        }
+        report.loaded.push(descriptor.clone());
+        let service = DescriptorService::new(descriptor, DescriptorOrigin::User(path));
+        fresh.insert(id, Box::leak(Box::new(service)));
+    }
+
+    if let Ok(mut registry) = user_registry().write() {
+        *registry = fresh;
+    }
+    report
+}
+
+/// Whether this build compiled a platform in under that id.
+///
+/// The one question that separates "the user may add this" from "this is ours":
+/// a shipped id is never overridable by a file in a folder, and never removable
+/// by deleting one.
+pub fn is_shipped(platform_id: &str) -> bool {
+    platform_registry().contains_key(platform_id)
+}
+
 pub fn get_service(platform_id: &str) -> Option<&'static dyn PlatformService> {
-    platform_registry().get(platform_id).copied()
+    if let Some(service) = platform_registry().get(platform_id) {
+        return Some(*service);
+    }
+    let registry = user_registry().read().ok()?;
+    registry
+        .get(platform_id)
+        .map(|service| *service as &'static dyn PlatformService)
+}
+
+/// Every platform id the app can reach right now: the shipped ones in display
+/// order, then whatever the user added, sorted.
+pub fn all_ids() -> Vec<String> {
+    let mut all: Vec<String> = ids::ALL.iter().map(|id| (*id).to_string()).collect();
+    if let Ok(registry) = user_registry().read() {
+        let mut user: Vec<String> = registry.keys().cloned().collect();
+        user.sort();
+        all.extend(user);
+    }
+    all
 }
 
 /// Ids of the platforms whose launcher was found on this machine, in
-/// `ids::ALL` order. Platforms with no service on this OS are skipped, so the
+/// [`all_ids`] order. Platforms with no service on this OS are skipped, so the
 /// result is always a set the app can actually enable.
 pub fn detect_installed(app: AppCtx) -> Vec<String> {
-    ids::ALL
-        .iter()
+    all_ids()
+        .into_iter()
         .filter(|id| get_service(id).is_some_and(|service| service.is_installed(app.clone())))
-        .map(|id| (*id).to_string())
         .collect()
 }
 
@@ -321,13 +474,83 @@ mod tests {
             );
         }
 
+        let order = all_ids();
         let mut expected_order = detected.clone();
-        expected_order.sort_by_key(|id| ids::ALL.iter().position(|known| known == id));
+        expected_order.sort_by_key(|id| order.iter().position(|known| known == id));
         expected_order.dedup();
         assert_eq!(
             detected, expected_order,
             "ids must follow ids::ALL, once each"
         );
+    }
+
+    /// The whole life of a user descriptor, in one test because the registry
+    /// it writes to is process-global: splitting these would let two of them
+    /// overwrite each other's folder mid-assertion.
+    #[test]
+    fn a_descriptor_dropped_in_the_user_folder_becomes_a_platform() {
+        use descriptor::test_support::{drop_in, fixture, scratch};
+
+        let root = scratch("registry");
+        let ctx = TempCtx { root: root.clone() };
+
+        drop_in(&ctx, "acme.json", &fixture("acme", &root));
+        let report = reload_user_platforms(&ctx);
+
+        let loaded_ids = |report: &UserPlatformReport| -> Vec<String> {
+            report.loaded.iter().map(|d| d.id.clone()).collect()
+        };
+
+        assert_eq!(loaded_ids(&report), vec!["acme".to_string()], "{report:?}");
+        assert!(report.rejected.is_empty(), "{report:?}");
+        assert!(
+            get_service("acme").is_some(),
+            "no compilation happened, and the platform answers"
+        );
+        assert!(all_ids().contains(&"acme".to_string()));
+
+        // A shipped id is refused by name rather than shadowed: a file dropped
+        // in a folder must not be able to take over Steam.
+        drop_in(&ctx, "steam.json", &fixture("steam", &root));
+        let report = reload_user_platforms(&ctx);
+        assert!(loaded_ids(&report).contains(&"acme".to_string()));
+        assert!(
+            report
+                .skipped
+                .iter()
+                .any(|skipped| skipped.id == "steam" && skipped.reason.contains("already ships")),
+            "{report:?}"
+        );
+        assert!(
+            !user_registry().read().unwrap().contains_key("steam"),
+            "steam must still answer with the service this build shipped"
+        );
+
+        // A file that does not validate names its field, and the platforms
+        // around it still load.
+        drop_in(
+            &ctx,
+            "broken.json",
+            &fixture("broken", &root).replace("\"schemaVersion\": 1", "\"schemaVersion\": 99"),
+        );
+        let report = reload_user_platforms(&ctx);
+        assert!(loaded_ids(&report).contains(&"acme".to_string()));
+        assert_eq!(report.rejected.len(), 1, "{report:?}");
+        assert_eq!(report.rejected[0].source, "broken.json");
+        assert_eq!(report.rejected[0].field, "schemaVersion");
+
+        // The folder is the truth: deleting the file un-registers the platform
+        // without restarting anything.
+        let dir = descriptor::user_dir(&ctx).unwrap();
+        std::fs::remove_file(dir.join("acme.json")).unwrap();
+        let report = reload_user_platforms(&ctx);
+        assert!(report.loaded.is_empty(), "{report:?}");
+        assert!(get_service("acme").is_none());
+        assert!(!all_ids().contains(&"acme".to_string()));
+
+        let _ = std::fs::remove_dir_all(&root);
+        // Leave the process-global registry as it was found.
+        reload_user_platforms(&ctx);
     }
 
     #[test]

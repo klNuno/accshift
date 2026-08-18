@@ -1,6 +1,19 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { getPlatformDefinition } from "$lib/platforms/registry";
+  import { getBootPayload } from "$lib/app/bootPayload";
+  import ConfirmDialog from "$lib/shared/components/ConfirmDialog.svelte";
+  import DescriptorPreviewDialog from "$lib/platforms/DescriptorPreviewDialog.svelte";
+  import {
+    installDescriptorFile,
+    openDescriptorsFolder,
+    previewDescriptorFile,
+    reloadUserPlatforms,
+    removeDescriptor,
+    selectDescriptorFile,
+    type DescriptorPreview,
+    type UserPlatformReport,
+  } from "$lib/platforms/descriptors";
   import { ALL_PLATFORMS } from "./store";
   import type { MessageKey, TranslationParams } from "$lib/i18n";
   import type { AppSettings } from "./types";
@@ -31,8 +44,13 @@
 
   let platformSearch = $state("");
 
+  // `ALL_PLATFORMS` is a plain array the descriptor calls edit in place, so the
+  // lists below read this copy instead: adding or removing a descriptor swaps
+  // it, and everything derived from it redraws.
+  let knownPlatforms = $state([...ALL_PLATFORMS]);
+
   let visiblePlatformOptions = $derived.by(() =>
-    ALL_PLATFORMS.filter((platform) => platform.implemented || settings.enabledPlatforms.includes(platform.id))
+    knownPlatforms.filter((platform) => platform.implemented || settings.enabledPlatforms.includes(platform.id))
   );
 
   let filteredPlatformOptions = $derived.by(() => {
@@ -60,7 +78,105 @@
     if (!definition) return t("settings.platformNotImplemented");
     if (!definition.implemented) return t("settings.platformNotImplemented");
     if (!isPlatformOsCompatible(platformId)) return t("settings.platformUnsupportedOs");
+    // Where a platform came from is worth saying: a descriptor the user wrote
+    // is theirs to fix, and it disappears the day they delete the file.
+    if (definition.userProvided) return t("settings.platformUserProvided");
     return "";
+  }
+
+  // What the backend last read in the descriptor folder. A file that was
+  // refused says so here or nowhere: the engine names the offending field, and
+  // dropping that on the floor is exactly the silent failure descriptors are
+  // meant to replace.
+  let userPlatforms = $state<UserPlatformReport | undefined>(getBootPayload()?.userPlatforms);
+
+  let descriptorProblems = $derived([
+    ...(userPlatforms?.rejected ?? []).map((entry) => ({
+      name: entry.source,
+      detail: entry.field ? `${entry.field}: ${entry.problem}` : entry.problem,
+    })),
+    ...(userPlatforms?.skipped ?? []).map((entry) => ({
+      name: entry.id,
+      detail: entry.reason,
+    })),
+  ]);
+
+  let descriptorBusy = $state(false);
+  let descriptorNotice = $state("");
+  let descriptorError = $state("");
+  let preview = $state<DescriptorPreview | null>(null);
+  // The preview only carries the file's name, for display. Installing needs the
+  // path the picker returned, so it is held here until the user decides.
+  let previewPath = $state("");
+  let pendingRemoval = $state<{ id: string; name: string } | null>(null);
+
+  /** Takes a fresh report and republishes the lists that were built from it. */
+  function applyReport(report: UserPlatformReport) {
+    userPlatforms = report;
+    knownPlatforms = [...ALL_PLATFORMS];
+  }
+
+  /**
+   * Runs one folder operation with the buttons disabled, and puts whatever the
+   * backend says on screen. A descriptor that will not load is the user's file
+   * to fix, so the engine's own wording reaches them rather than a generic
+   * failure.
+   */
+  async function runDescriptorTask(task: () => Promise<void>) {
+    descriptorBusy = true;
+    descriptorError = "";
+    try {
+      await task();
+    } catch (error) {
+      descriptorNotice = "";
+      descriptorError = String(error);
+    } finally {
+      descriptorBusy = false;
+    }
+  }
+
+  function reloadDescriptors() {
+    void runDescriptorTask(async () => {
+      applyReport(await reloadUserPlatforms());
+      descriptorNotice = "";
+    });
+  }
+
+  function pickDescriptor() {
+    void runDescriptorTask(async () => {
+      const path = await selectDescriptorFile();
+      if (!path) return;
+      descriptorNotice = "";
+      preview = await previewDescriptorFile(path);
+      previewPath = path;
+    });
+  }
+
+  function confirmInstall() {
+    const picked = preview;
+    if (!picked) return;
+    const path = previewPath;
+    void runDescriptorTask(async () => {
+      applyReport(await installDescriptorFile(path));
+      descriptorNotice = t("descriptor.installed", { platform: picked.descriptor.name });
+      preview = null;
+    });
+  }
+
+  function confirmRemoval() {
+    const target = pendingRemoval;
+    pendingRemoval = null;
+    if (!target) return;
+    void runDescriptorTask(async () => {
+      applyReport(await removeDescriptor(target.id));
+      descriptorNotice = t("descriptor.removed", { platform: target.name });
+      // The platform stops existing, so it cannot stay in the enabled set.
+      settings.enabledPlatforms = settings.enabledPlatforms.filter((id) => id !== target.id);
+    });
+  }
+
+  function openFolder() {
+    void runDescriptorTask(() => openDescriptorsFolder());
   }
 
   function togglePlatform(id: string) {
@@ -164,7 +280,81 @@
       </div>
     </button>
   </section>
+
+  {#if userPlatforms?.dir}
+    <section class="card card-wide">
+      <h3>{t("settings.customPlatforms")}</h3>
+      <div class="descriptor-head">
+        <p class="descriptor-hint">{t("settings.customPlatformsHint")}</p>
+        <p class="descriptor-dir">{userPlatforms.dir}</p>
+      </div>
+      <div class="descriptor-actions">
+        <button class="descriptor-button primary" disabled={descriptorBusy} onclick={pickDescriptor}>
+          {t("descriptor.addFromFile")}
+        </button>
+        <button class="descriptor-button" disabled={descriptorBusy} onclick={reloadDescriptors}>
+          {t("descriptor.reload")}
+        </button>
+        <button class="descriptor-button" disabled={descriptorBusy} onclick={openFolder}>
+          {t("descriptor.openFolder")}
+        </button>
+      </div>
+      {#if descriptorError}
+        <p class="descriptor-detail descriptor-failed">{descriptorError}</p>
+      {:else if descriptorNotice}
+        <p class="descriptor-detail">{descriptorNotice}</p>
+      {/if}
+      {#if userPlatforms.loaded.length}
+        <ul class="descriptor-list">
+          {#each userPlatforms.loaded as descriptor (descriptor.id)}
+            <li class="descriptor-row">
+              <span class="descriptor-name">{descriptor.name}</span>
+              <code>{descriptor.id}</code>
+              <button
+                class="descriptor-button descriptor-remove"
+                disabled={descriptorBusy}
+                onclick={() => (pendingRemoval = { id: descriptor.id, name: descriptor.name })}
+              >
+                {t("descriptor.remove")}
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="descriptor-hint">{t("settings.customPlatformsNone")}</p>
+      {/if}
+      {#if descriptorProblems.length}
+        <h4 class="descriptor-subtitle">{t("settings.customPlatformsProblems")}</h4>
+        <ul class="descriptor-list">
+          {#each descriptorProblems as problem (problem.name + problem.detail)}
+            <li><span class="descriptor-name">{problem.name}</span> <span class="descriptor-detail">{problem.detail}</span></li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+  {/if}
 </div>
+
+{#if preview}
+  <DescriptorPreviewDialog
+    preview={preview}
+    busy={descriptorBusy}
+    {t}
+    onCancel={() => (preview = null)}
+    onConfirm={confirmInstall}
+  />
+{/if}
+
+{#if pendingRemoval}
+  <ConfirmDialog
+    title={t("descriptor.removeConfirmTitle", { platform: pendingRemoval.name })}
+    message={t("descriptor.removeConfirmMessage")}
+    confirmLabel={t("descriptor.remove")}
+    cancelLabel={t("common.cancel")}
+    onConfirm={confirmRemoval}
+    onCancel={() => (pendingRemoval = null)}
+  />
+{/if}
 
 <style>
   .platforms {
@@ -233,6 +423,112 @@
 
   .platform-search input::-webkit-search-cancel-button {
     -webkit-appearance: none;
+  }
+
+  .descriptor-head {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .descriptor-hint {
+    margin: 0;
+    font-size: 12px;
+    color: var(--fg-subtle);
+  }
+
+  /* Wraps rather than clipping: the point of showing the folder is that the
+     user can find it, and a truncated path does not help with that. */
+  .descriptor-dir {
+    margin: 0;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 11px;
+    color: var(--fg-muted);
+    overflow-wrap: anywhere;
+  }
+
+  .descriptor-subtitle {
+    margin: 4px 0 0;
+    font-size: 12px;
+    color: var(--fg-muted);
+  }
+
+  .descriptor-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+  }
+
+  .descriptor-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* The remove button sits at the far edge so it is never next to the name it
+     would delete, and the row reads name first, action last. */
+  .descriptor-remove {
+    margin-left: auto;
+  }
+
+  .descriptor-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .descriptor-button {
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--fg-muted);
+    font-size: 11px;
+    cursor: pointer;
+    transition: border-color 120ms ease-out, background 120ms ease-out, color 120ms ease-out;
+  }
+
+  .descriptor-button:hover:not(:disabled) {
+    background: var(--bg-muted);
+    color: var(--fg);
+  }
+
+  .descriptor-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Adding a platform is the action this card exists for, so it carries the
+     app's primary button rather than sitting level with reload and open. */
+  .descriptor-button.primary {
+    border-color: transparent;
+    background: var(--fg);
+    color: var(--bg-solid);
+    font-weight: 600;
+  }
+
+  .descriptor-button.primary:hover:not(:disabled) {
+    background: var(--fg);
+    color: var(--bg-solid);
+    filter: brightness(0.9);
+  }
+
+  .descriptor-name {
+    color: var(--fg);
+  }
+
+  .descriptor-detail,
+  .descriptor-list code {
+    color: var(--fg-subtle);
+    font-size: 11px;
+  }
+
+  .descriptor-failed {
+    color: var(--danger);
   }
 
   .no-results {

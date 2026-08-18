@@ -82,7 +82,9 @@ const DEFAULTS: AppSettings = {
   pinEnabled: false,
   pinHash: "",
 };
-const PLATFORM_IDS = new Set(ALL_PLATFORMS.map((platform) => platform.id));
+// Read per call: a platform the user added from a descriptor only joins
+// ALL_PLATFORMS once the boot payload lands, after this module is imported.
+const platformIds = () => new Set(ALL_PLATFORMS.map((platform) => platform.id));
 let cachedSettings: AppSettings | null = null;
 let cachedSettingsRevision = -1;
 
@@ -115,7 +117,7 @@ function sanitizeShowLastLoginPerPlatform(
   const rawMap = asRecord(rawAccountDisplay.showLastLoginPerPlatform);
   const defaults = DEFAULTS.accountDisplay.showLastLoginPerPlatform;
   const result: Record<string, boolean> = {};
-  for (const id of PLATFORM_IDS) {
+  for (const id of platformIds()) {
     const legacyKey = LEGACY_LAST_LOGIN_KEYS[id];
     if (id in rawMap) {
       result[id] = Boolean(rawMap[id]);
@@ -143,12 +145,13 @@ function sanitizeSettings(value: unknown): AppSettings {
   const rawPlatformSettings = asRecord(raw.platformSettings);
   const rawAccountDisplay = asRecord(raw.accountDisplay);
   const hasLanguage = Object.prototype.hasOwnProperty.call(raw, "language");
+  const known = platformIds();
   const enabledPlatformsRaw = Array.isArray(raw.enabledPlatforms) ? raw.enabledPlatforms : [];
   const enabledPlatforms = Array.from(
     new Set(
       enabledPlatformsRaw
         .filter((platformId): platformId is string => typeof platformId === "string")
-        .filter((platformId) => PLATFORM_IDS.has(platformId)),
+        .filter((platformId) => known.has(platformId)),
     ),
   );
   const normalizedEnabledPlatforms =

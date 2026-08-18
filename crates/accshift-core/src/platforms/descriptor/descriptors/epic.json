@@ -1,0 +1,106 @@
+{
+  "id": "epic",
+  "schemaVersion": 1,
+  "name": "Epic Games Launcher",
+  "shortName": "Epic",
+  "os": {
+    "windows": {
+      "roots": {
+        "files": ["${LOCALAPPDATA}/EpicGamesLauncher", "${LOCALAPPDATA}/Epic Games"],
+        "registry": [{ "root": "HKCU", "key": "Software\\Epic Games\\Unreal Engine\\Identifiers" }]
+      },
+      "detect": { "executableResolves": true },
+      "executable": {
+        "fileName": "EpicGamesLauncher.exe",
+        "candidates": [
+          {
+            "kind": "path",
+            "template": "${ProgramFiles(x86)}/Epic Games/Launcher/Portal/Binaries/Win64/EpicGamesLauncher.exe"
+          },
+          {
+            "kind": "path",
+            "template": "${ProgramFiles}/Epic Games/Launcher/Portal/Binaries/Win64/EpicGamesLauncher.exe"
+          },
+          {
+            "kind": "path",
+            "template": "${ProgramFiles(x86)}/Epic Games/Launcher/Portal/Binaries/Win32/EpicGamesLauncher.exe"
+          },
+          {
+            "kind": "path",
+            "template": "${ProgramFiles}/Epic Games/Launcher/Portal/Binaries/Win32/EpicGamesLauncher.exe"
+          },
+          { "kind": "uninstallEntry", "displayName": "Epic Games Launcher" }
+        ],
+        "relativeProbes": ["Launcher/Portal/Binaries/Win64", "Launcher/Portal/Binaries/Win32"]
+      },
+      "identity": {
+        "source": {
+          "kind": "registry",
+          "root": "HKCU",
+          "key": "Software\\Epic Games\\Unreal Engine\\Identifiers",
+          "value": "AccountId"
+        },
+        "format": { "charset": "hex", "maxLength": 32, "minLength": 32, "lowercase": true },
+        "current": "identity",
+        "discovery": [
+          {
+            "kind": "directoryEntries",
+            "path": "${LOCALAPPDATA}/EpicGamesLauncher/Saved/Data",
+            "stripPrefixes": ["OC_"],
+            "stripExtension": true
+          }
+        ]
+      },
+      "state": {
+        "files": [
+          {
+            "live": [
+              "${LOCALAPPDATA}/EpicGamesLauncher/Saved/Config/Windows/GameUserSettings.ini",
+              "${LOCALAPPDATA}/EpicGamesLauncher/Saved/Config/WindowsEditor/GameUserSettings.ini"
+            ],
+            "snapshot": "GameUserSettings.ini",
+            "clearOnSetup": true,
+            "snapshotMarker": true,
+            "clearSnapshotWhenSourceMissing": false
+          }
+        ],
+        "registryValues": [
+          {
+            "root": "HKCU",
+            "key": "Software\\Epic Games\\Unreal Engine\\Identifiers",
+            "value": "AccountId",
+            "snapshot": "registry_account_id.txt",
+            "clearOnSetup": true,
+            "clearSnapshotWhenSourceMissing": false
+          }
+        ],
+        "caches": [
+          "${LOCALAPPDATA}/Epic Games/Epic Online Services/UI Helper/Cache/Cache",
+          "${LOCALAPPDATA}/Epic Games/Epic Online Services/UI Helper/Cache/GPUCache",
+          "${LOCALAPPDATA}/Epic Games/EOSOverlay/BrowserCache/Cache"
+        ]
+      },
+      "close": {
+        "processes": ["EpicGamesLauncher.exe"],
+        "timeoutMs": 8000,
+        "settleMs": 500
+      },
+      "launch": {},
+      "setup": {
+        "trigger": [{ "kind": "newIdentity" }],
+        "confirm": [
+          {
+            "kind": "pathFresh",
+            "path": [
+              "${LOCALAPPDATA}/EpicGamesLauncher/Saved/Config/Windows/GameUserSettings.ini",
+              "${LOCALAPPDATA}/EpicGamesLauncher/Saved/Config/WindowsEditor/GameUserSettings.ini"
+            ],
+            "windowMs": 300000
+          }
+        ],
+        "displayNameFromId": true,
+        "missingSnapshotHint": "Sign in to this account once first."
+      }
+    }
+  }
+}

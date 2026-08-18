@@ -11,13 +11,16 @@ const NAME_MAX = 40;
 // Covers are downscaled before storage; anything bigger than this is not a
 // legit cover and would bloat the client store.
 const IMAGE_MAX_CHARS = 400_000;
-const PLATFORM_IDS = new Set(PLATFORM_DEFS.map((platform) => platform.id));
+// Read per call: a platform the user added from a descriptor only joins
+// PLATFORM_DEFS once the boot payload lands, after this module is imported.
+const platformIds = () => new Set(PLATFORM_DEFS.map((platform) => platform.id));
 
 let cache: Persona[] | null = null;
 let cacheRevision = -1;
 
 function sanitizeAssignments(value: unknown): PersonaAssignment[] {
   if (!Array.isArray(value)) return [];
+  const known = platformIds();
   const seen = new Set<string>();
   const result: PersonaAssignment[] = [];
   for (const raw of value) {
@@ -25,7 +28,7 @@ function sanitizeAssignments(value: unknown): PersonaAssignment[] {
     const platformId = (raw as Record<string, unknown>).platformId;
     const accountId = (raw as Record<string, unknown>).accountId;
     if (typeof platformId !== "string" || typeof accountId !== "string") continue;
-    if (!PLATFORM_IDS.has(platformId) || seen.has(platformId)) continue;
+    if (!known.has(platformId) || seen.has(platformId)) continue;
     if (!accountId) continue;
     seen.add(platformId);
     result.push({ platformId, accountId });

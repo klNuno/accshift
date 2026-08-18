@@ -36,11 +36,32 @@ accshift switch <platform> <account-id>
     [--graceful | --force]
     [--admin | --no-admin]
     [--launch-options "..."]
+accshift dry-run <platform> <account-id>
+accshift descriptors             # what the user descriptor folder holds
 ```
 
 `--graceful` asks the launcher to close itself and waits for it, which is what
 you want by default because a launcher killed mid-write can corrupt its own
 config. `--force` terminates it instead, for the cases where it will not go.
+
+`dry-run` prints the switch instead of performing it: every file, folder and
+registry value it would read, copy back or delete, every process it would
+close, and the launcher it would start. It walks the same descriptor the real
+switch walks, so the two cannot disagree. It opens nothing for writing and
+takes no lock, so it is safe to run at any time, including while the GUI is
+busy.
+
+Platforms still implemented in code (Steam, Battle.net, Riot, Roblox) have no
+plan to show and answer `dry_run_unsupported`.
+
+`descriptors` reads the folder where a user drops platforms of their own and
+reports both halves: the descriptors that loaded, and every file that was
+refused with the field that caused it. A platform missing from `platforms` is
+explained here rather than silently absent. It exits zero either way, rejected
+files included: the command was asked what the folder holds and it answered, so
+a script reads `rejected` instead of guessing from a status that would also mean
+"could not look". The format itself is in
+[platform-descriptors.md](./platform-descriptors.md).
 
 Example:
 
@@ -52,6 +73,21 @@ $ accshift list steam
   carol        carol_gg             76561198000000003
 
 3 accounts.  * = currently signed in
+```
+
+```
+$ accshift dry-run gog 51000000000000000
+Dry run: switch gog to 51000000000000000. Nothing below is written.
+
+Roots (a step outside these is refused):
+  C:\Users\you\AppData\Local\GOG.com
+  C:\ProgramData\GOG.com
+
+  capture  C:\Users\you\AppData\Local\GOG.com\Galaxy\Configuration\config.json  <- ...\snapshots\51000000000000001\config.json
+  capture  HKCU\Software\GOG.com\Galaxy\refreshToken  <- ...\snapshots\51000000000000001\registry_refresh_token.txt
+  close    GalaxyClient.exe
+  restore  C:\Users\you\AppData\Local\GOG.com\Galaxy\Configuration\config.json  <- ...\snapshots\51000000000000000\config.json
+  launch   C:\Program Files (x86)\GOG Galaxy\GalaxyClient.exe
 ```
 
 ## Output format
