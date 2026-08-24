@@ -84,14 +84,11 @@ const FORBIDDEN_CSS: ReadonlyArray<{ label: string; pattern: RegExp }> = [
 // `url` and a hex-escaped `url(` match the same constructs a style tag would.
 function normalizeCssForSafety(css: string): string {
   const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
-  return withoutComments.replace(
-    /\\([0-9a-fA-F]{1,6})(?:\r\n|[ \t\f\n\r])?/g,
-    (_, hex: string) => {
-      const code = Number.parseInt(hex, 16);
-      if (code === 0 || code > 0x10ffff) return "";
-      return String.fromCodePoint(code);
-    },
-  );
+  return withoutComments.replace(/\\([0-9a-fA-F]{1,6})(?:\r\n|[ \t\f\n\r])?/g, (_, hex: string) => {
+    const code = Number.parseInt(hex, 16);
+    if (code === 0 || code > 0x10ffff) return "";
+    return String.fromCodePoint(code);
+  });
 }
 
 /** The construct that makes this CSS unusable, or null when it is clean. */
