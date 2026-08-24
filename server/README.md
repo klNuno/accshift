@@ -154,9 +154,26 @@ but do not do it casually.
 
 ### Deploy
 
+A merge to `main` that touches `server/` deploys the Worker
+(`.github/workflows/worker.yml`). Nothing else does, and nothing has to be
+remembered: this workflow exists because the manual step was skipped once and
+the live Worker sat three weeks behind `index.ts`, silently dropping every
+property the app had learned to send in between.
+
+It needs two repository secrets:
+
+- `CLOUDFLARE_API_TOKEN`, scoped to "Edit Cloudflare Workers" on this account
+- `CLOUDFLARE_ACCOUNT_ID`
+
+Deploying by hand stays available for a fork or an emergency:
+
 ```bash
 pnpm deploy
 ```
+
+Whichever route it takes, verify the deploy landed rather than trusting a green
+job: send one event and check that a property added since the last deploy is
+present on it, not null.
 
 ### Local dev
 

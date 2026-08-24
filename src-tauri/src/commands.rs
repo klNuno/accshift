@@ -1,5 +1,5 @@
 use crate::ctx;
-use crate::platforms::{require_service, SetupStatus};
+use crate::platforms::{ids, require_service, SetupStatus};
 use crate::telemetry;
 use crate::telemetry_runtime::TelemetryState;
 use accshift_core::error::PlatformError;
@@ -46,6 +46,37 @@ where
         f(c)
     })
     .await
+}
+
+/// Reports a failed operation to telemetry, then hands the result straight
+/// back to the caller.
+///
+/// Both halves of the event come from closed vocabularies:
+/// `telemetry::OPERATIONS` for the name, `error_code_for_kind` for the typed
+/// error family. Wrapping a command in this therefore cannot turn a message,
+/// a path or an account name into a property, whatever the failure carried.
+///
+/// It exists because `operation_failed` declared eleven operations and only
+/// ever emitted one: every other feature failed silently as far as any
+/// dashboard was concerned, so "which one breaks on real machines" had no
+/// answer. Only the `Err` branch touches the queue; a success costs nothing.
+fn track_operation<T>(
+    app_handle: &tauri::AppHandle,
+    operation: &str,
+    platform_id: Option<&str>,
+    result: Result<T, PlatformError>,
+) -> Result<T, PlatformError> {
+    if let Err(error) = &result {
+        app_handle
+            .state::<TelemetryState>()
+            .handle
+            .track(telemetry::Event::OperationFailed {
+                operation: operation.to_string(),
+                platform: platform_id.map(str::to_string),
+                error_code: telemetry::error_code_for_kind(error.kind).to_string(),
+            });
+    }
+    result
 }
 
 #[tauri::command]
@@ -227,7 +258,6 @@ fn emit_first_run_once(app_handle: &tauri::AppHandle, tstate: &TelemetryState) {
 /// Every `accounts_snapshot` emitted by those releases therefore says nothing
 /// about Steam, and no dashboard can reconstruct it.
 fn emit_accounts_snapshots(app_handle: &tauri::AppHandle, tstate: &TelemetryState) {
-    use crate::platforms::ids;
     let c = ctx(app_handle);
     let cfg = crate::config::load_config(&c);
     // Steam is the one platform whose accounts need a disk read rather than a
@@ -400,10 +430,11 @@ pub async fn platform_forget_account(
 ) -> Result<(), PlatformError> {
     let service = require_service(&platform_id)?;
     let c = ctx(&app_handle);
-    run_locked_blocking("platform_forget_account", c, move |c| {
+    let result = run_locked_blocking("platform_forget_account", c, move |c| {
         service.forget_account(c, &account_id)
     })
-    .await
+    .await;
+    track_operation(&app_handle, "account_forget", Some(&platform_id), result)
 }
 
 #[tauri::command]
@@ -416,10 +447,16 @@ pub async fn platform_begin_setup(
     let c = ctx(&app_handle);
     // Setup flows can stop launchers and touch live auth files before they
     // persist config, so they need the same operation lock as switch/forget.
-    run_locked_blocking("platform_begin_setup", c, move |c| {
+    // A setup that never opens is invisible to the add funnel otherwise: the
+    // frontend swallows this error into a toast, so no `account_add_started`
+    // and no failure is recorded. The typed kind here is also the only place
+    // the funnel gets a real reason (`client_not_installed`, `client_running`)
+    // instead of the `other` a mid-flow failure collapses to.
+    let result = run_locked_blocking("platform_begin_setup", c, move |c| {
         service.begin_setup(c, params)
     })
-    .await
+    .await;
+    track_operation(&app_handle, "account_add", Some(&platform_id), result)
 }
 
 #[tauri::command]
@@ -1043,9 +1080,11 @@ pub async fn cs2_bridge_fetch(
     app_handle: tauri::AppHandle,
     client: tauri::State<'_, reqwest::Client>,
 ) -> Result<Vec<crate::platforms::steam::cs2_bridge::Cs2BridgeAccount>, PlatformError> {
-    crate::platforms::steam::cs2_bridge::fetch_accounts(&ctx(&app_handle), client.inner())
-        .await
-        .map_err(Into::into)
+    let result =
+        crate::platforms::steam::cs2_bridge::fetch_accounts(&ctx(&app_handle), client.inner())
+            .await
+            .map_err(Into::into);
+    track_operation(&app_handle, "cs2_bridge_fetch", Some(ids::STEAM), result)
 }
 
 /// Check a la demande d'un compte (declenche au switch). `None` si le bridge
@@ -1103,8 +1142,13 @@ pub async fn steam_get_profile_infos(
     std::collections::HashMap<String, crate::platforms::steam::profile::ProfileInfo>,
     PlatformError,
 > {
-    crate::platforms::steam::get_profile_infos(ctx(&app_handle), steam_ids, client.inner().clone())
-        .await
+    let result = crate::platforms::steam::get_profile_infos(
+        ctx(&app_handle),
+        steam_ids,
+        client.inner().clone(),
+    )
+    .await;
+    track_operation(&app_handle, "avatar_refresh", Some(ids::STEAM), result)
 }
 
 #[tauri::command]
@@ -1113,8 +1157,13 @@ pub async fn steam_get_player_bans(
     steam_ids: Vec<String>,
     client: tauri::State<'_, reqwest::Client>,
 ) -> Result<Vec<crate::platforms::steam::bans::BanInfo>, PlatformError> {
-    crate::platforms::steam::get_player_bans(ctx(&app_handle), steam_ids, client.inner().clone())
-        .await
+    let result = crate::platforms::steam::get_player_bans(
+        ctx(&app_handle),
+        steam_ids,
+        client.inner().clone(),
+    )
+    .await;
+    track_operation(&app_handle, "ban_check", Some(ids::STEAM), result)
 }
 
 #[tauri::command]
@@ -1125,10 +1174,11 @@ pub async fn steam_copy_game_settings(
     app_id: String,
 ) -> Result<(), PlatformError> {
     let c = ctx(&app_handle);
-    run_locked_blocking("steam_copy_game_settings", c, move |c| {
+    let result = run_locked_blocking("steam_copy_game_settings", c, move |c| {
         crate::platforms::steam::copy_game_settings(c, from_steam_id, to_steam_id, app_id)
     })
-    .await
+    .await;
+    track_operation(&app_handle, "game_settings_copy", Some(ids::STEAM), result)
 }
 
 #[tauri::command(async)]
@@ -1165,10 +1215,11 @@ pub async fn steam_bulk_edit(
     request: crate::platforms::steam::bulk_edit::BulkEditRequest,
 ) -> Result<crate::platforms::steam::bulk_edit::BulkEditResult, PlatformError> {
     let c = ctx(&app_handle);
-    run_locked_blocking("steam_bulk_edit", c, move |c| {
+    let result = run_locked_blocking("steam_bulk_edit", c, move |c| {
         crate::platforms::steam::bulk_edit(c, request)
     })
-    .await
+    .await;
+    track_operation(&app_handle, "bulk_edit", Some(ids::STEAM), result)
 }
 
 #[tauri::command(async)]
@@ -1190,10 +1241,11 @@ pub async fn riot_capture_profile(
     profile_id: String,
 ) -> Result<(), PlatformError> {
     let c = ctx(&app_handle);
-    run_locked_blocking("riot_capture_profile", c, move |c| {
+    let result = run_locked_blocking("riot_capture_profile", c, move |c| {
         crate::platforms::riot::capture_profile(c, profile_id).map_err(Into::into)
     })
-    .await
+    .await;
+    track_operation(&app_handle, "profile_capture", Some(ids::RIOT), result)
 }
 
 // ---------------------------------------------------------------------------
@@ -1228,13 +1280,18 @@ pub async fn roblox_add_account_by_cookie(
     cookie: String,
     client: tauri::State<'_, reqwest::Client>,
 ) -> Result<crate::platforms::roblox::RobloxAccount, PlatformError> {
-    crate::platforms::roblox::add_account_by_cookie(
+    // The cookie paste is a second way into "add a Roblox account", next to
+    // Quick Login, and it never went through the add-flow controller that
+    // reports the other platforms. Its failures land here; its start and its
+    // success are reported by the settings tab that owns the form.
+    let result = crate::platforms::roblox::add_account_by_cookie(
         ctx(&app_handle),
         cookie,
         client.inner().clone(),
     )
     .await
-    .map_err(Into::into)
+    .map_err(Into::into);
+    track_operation(&app_handle, "account_add", Some(ids::ROBLOX), result)
 }
 
 #[cfg(windows)]
@@ -1284,4 +1341,32 @@ pub fn save_custom_theme(
 #[tauri::command(async)]
 pub fn delete_custom_theme(app_handle: tauri::AppHandle, theme_id: String) -> Result<(), String> {
     crate::themes::delete_custom_theme(&ctx(&app_handle), &theme_id)
+}
+
+#[cfg(test)]
+mod tests {
+    /// Guards every `track_operation` call site against a typo.
+    ///
+    /// `code_from` maps an unlisted operation onto `other` rather than
+    /// dropping it, which is the right behaviour on the wire and the worst one
+    /// to debug: a misspelt name produces a plausible event that quietly joins
+    /// the pile of unclassified failures. Reading the call sites out of the
+    /// source keeps this from becoming a second list that drifts from them.
+    #[test]
+    fn tracked_operations_are_in_the_vocabulary() {
+        let source = include_str!("commands.rs");
+        // Assembled at runtime so the marker never appears whole in this file:
+        // written as one literal, the scan below would match its own source.
+        let marker = format!("{}(&app_handle, {}", "track_operation", '"');
+        let mut sites = 0;
+        for call in source.split(marker.as_str()).skip(1) {
+            let name = call.split('"').next().expect("operation name literal");
+            assert!(
+                crate::telemetry::OPERATIONS.contains(&name),
+                "`{name}` is not in telemetry::OPERATIONS and would be reported as `other`"
+            );
+            sites += 1;
+        }
+        assert!(sites >= 8, "expected the wired call sites, found {sites}");
+    }
 }

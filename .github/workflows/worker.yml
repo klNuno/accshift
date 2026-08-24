@@ -1,0 +1,59 @@
+name: Deploy telemetry worker
+
+# The Worker was deployed by hand, so `server/src/index.ts` and the live
+# endpoint drifted apart: v1.0.3 shipped `surface`, `ui_language`,
+# `enabled_platforms` and eight other properties that the deployed revision
+# had never heard of and dropped on the floor. Every one of them read as null
+# in PostHog for three weeks and nothing anywhere said so.
+#
+# A merge to main that touches `server/` is now the deploy. Nothing to
+# remember, and no way for the two to disagree again.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "server/**"
+      - ".github/workflows/worker.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Two deploys racing would leave the live Worker on whichever finished last,
+# not on the newest commit.
+concurrency:
+  group: deploy-telemetry-worker
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Only used for the Node runtime here; the Worker itself is a plain pnpm
+      # package driven through corepack, exactly as CI does it.
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@313600b80b104eadebb9111787d37a2e83e014ca # v1.17.0
+        with:
+          node-version: 22
+          cache: true
+
+      - name: Install server dependencies
+        run: corepack pnpm --dir server install --frozen-lockfile
+
+      # CI already typechecks on the pull request. Repeated here because this
+      # job is what reaches production, and a green PR that went stale behind a
+      # merge must not push a broken Worker.
+      - name: Typecheck
+        run: corepack pnpm --dir server exec tsc --noEmit
+
+      - name: Deploy
+        run: corepack pnpm --dir server exec wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

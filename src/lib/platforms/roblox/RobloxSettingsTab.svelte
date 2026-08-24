@@ -6,6 +6,7 @@
   import { addToast } from "$lib/features/notifications/store.svelte";
   import { addAccountByCookie } from "./robloxApi";
   import { clearRobloxSessionExpired } from "./warnings";
+  import { trackAccountAdded, trackAccountAddStarted } from "$lib/app/telemetryClient";
 
   let {
     settings = $bindable(),
@@ -28,8 +29,15 @@
     if (!trimmed || isAdding) return;
     isAdding = true;
     errorMessage = "";
+    // The cookie paste is the second door into "add a Roblox account" and it
+    // bypasses the add-flow controller, which is where every other platform
+    // reports its funnel. Roblox therefore counted zero adds forever while
+    // reporting a hundred snapshots. The failure half is reported backend-side
+    // by `roblox_add_account_by_cookie`, which has the typed error kind.
+    trackAccountAddStarted("roblox");
     try {
       const account = await addAccountByCookie(trimmed);
+      trackAccountAdded("roblox");
       // The paste may re-link an account previously flagged as expired; the
       // fresh cookie supersedes that state.
       clearRobloxSessionExpired(account.userId);
