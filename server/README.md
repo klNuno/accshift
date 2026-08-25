@@ -162,8 +162,30 @@ property the app had learned to send in between.
 
 It needs two repository secrets:
 
-- `CLOUDFLARE_API_TOKEN`, scoped to "Edit Cloudflare Workers" on this account
-- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`, the id `npx wrangler whoami` prints
+
+The `wrangler login` session on a developer's machine cannot be reused here: it
+is an OAuth session, not a credential a runner can carry. Create an API token
+instead, from the "Edit Cloudflare Workers" template (Cloudflare dashboard, My
+Profile, API Tokens, Create Token). The template fills the permission list but
+leaves both resource selectors empty, and each one has to be set:
+
+- Account Resources: include the account that owns the Worker.
+- Zone Resources: include the zone of the `routes` custom domain. The template
+  carries `Zone > Workers Routes > Edit` precisely for this. Every
+  `wrangler deploy` reattaches the custom domain, so a token missing the zone
+  fails at that step rather than at upload.
+
+Verify the token before trusting the workflow with it, since a scope mistake
+only surfaces on the next merge:
+
+```bash
+CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... npx wrangler deploy
+```
+
+A successful run prints `Deployed accshift-telemetry triggers` followed by the
+custom domain, which is the line proving the zone permission resolved.
 
 Deploying by hand stays available for a fork or an emergency:
 
