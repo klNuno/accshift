@@ -427,7 +427,9 @@ export function resolveThemeSurfaceOpacities(
   const isLiquid = liquid && backdropAvailable;
   const windowOpacity = theme.glass
     ? backdropAvailable
-      ? (liquid ? GLASS_WINDOW_OPACITY["liquid-glass"] : (GLASS_WINDOW_OPACITY[theme.id] ?? 0.55))
+      ? liquid
+        ? GLASS_WINDOW_OPACITY["liquid-glass"]
+        : (GLASS_WINDOW_OPACITY[theme.id] ?? 0.55)
       : 0.96
     : rawOpacity;
   const cardOpacity = isLiquid

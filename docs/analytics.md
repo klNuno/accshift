@@ -104,6 +104,15 @@ Steam, in either direction.
 installation that predates the release introducing it, it fires on the first
 launch after the update rather than on the day it was installed.
 
+Between 5 and 24 August 2026 the server was running a revision older than the
+app. Version 1.0.3 started sending eleven properties it did not recognise, and
+an unrecognised property is dropped rather than stored, so `surface`, the OS
+and architecture identifiers, `success`, `error_code`, `operation`, `command`
+and every field of `settings_snapshot` are empty on the events recorded in that
+window. Less was collected than this page describes, never more. Deploying the
+server is now part of merging a change to it, so the two cannot drift apart
+again.
+
 This table is checked against the code on every release. Where this page and the
 code disagree, the code is right and the page is a bug worth reporting.
 

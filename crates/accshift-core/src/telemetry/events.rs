@@ -169,6 +169,9 @@ pub const OPERATIONS: &[&str] = &[
     "account_add",
     "account_forget",
     "profile_capture",
+    // Reserved. Roblox's session probe swallows every per-account failure and
+    // answers with a list either way, so there is no failure for the command
+    // to report yet.
     "session_check",
     "bulk_edit",
     "game_settings_copy",
