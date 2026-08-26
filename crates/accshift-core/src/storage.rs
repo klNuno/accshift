@@ -180,50 +180,116 @@ pub fn platform_snapshots_dir(
     Ok(target)
 }
 
+/// Which root a client store hangs off.
+#[derive(Clone, Copy)]
+enum StoreRoot {
+    Config,
+    Cache,
+}
+
+/// Where one client store's file lives, in the current layout and in the
+/// pre-scoping one it migrates from. A new store is one row here; the two
+/// resolvers below read the same row, so they cannot drift apart.
+struct ClientStoreLayout {
+    id: &'static str,
+    root: StoreRoot,
+    /// Path under the current root.
+    current: &'static [&'static str],
+    /// Path under the un-scoped root, for stores that predate the migration.
+    legacy: Option<&'static [&'static str]>,
+}
+
+const CLIENT_STORES: &[ClientStoreLayout] = &[
+    layout(STORE_SETTINGS, &["user", "settings.json"]),
+    layout(STORE_FOLDERS, &["user", "folders.json"]),
+    // Personas landed after the migration, so there is no legacy copy to move.
+    ClientStoreLayout {
+        id: STORE_PERSONAS,
+        root: StoreRoot::Config,
+        current: &["user", "personas.json"],
+        legacy: None,
+    },
+    layout(
+        STORE_ACCOUNT_CARD_NOTES,
+        &["user", "account-card-notes.json"],
+    ),
+    layout(
+        STORE_ACCOUNT_CARD_COLORS,
+        &["user", "account-card-colors.json"],
+    ),
+    layout(
+        STORE_ACCOUNT_DEFAULT_GAME,
+        &["user", "account-default-game.json"],
+    ),
+    layout(
+        STORE_FOLDER_CARD_COLORS,
+        &["user", "folder-card-colors.json"],
+    ),
+    layout(STORE_VIEW_MODE, &["user", "view-mode.json"]),
+    cache_layout(
+        STORE_STEAM_PROFILE_CACHE,
+        &["platforms", "steam", "profiles.json"],
+        &["steam", "profiles.json"],
+    ),
+    cache_layout(
+        STORE_ROBLOX_PROFILE_CACHE,
+        &["platforms", "roblox", "profiles.json"],
+        &["roblox", "profiles.json"],
+    ),
+    cache_layout(
+        STORE_STEAM_BAN_CHECK_STATE,
+        &["platforms", "steam", "ban-check-state.json"],
+        &["steam", "ban-check-state.json"],
+    ),
+    cache_layout(
+        STORE_STEAM_BAN_INFO_CACHE,
+        &["platforms", "steam", "ban-info-cache.json"],
+        &["steam", "ban-info-cache.json"],
+    ),
+];
+
+/// Config store whose legacy path is the same relative path under the
+/// un-scoped config root.
+const fn layout(id: &'static str, current: &'static [&'static str]) -> ClientStoreLayout {
+    ClientStoreLayout {
+        id,
+        root: StoreRoot::Config,
+        current,
+        legacy: Some(current),
+    }
+}
+
+const fn cache_layout(
+    id: &'static str,
+    current: &'static [&'static str],
+    legacy: &'static [&'static str],
+) -> ClientStoreLayout {
+    ClientStoreLayout {
+        id,
+        root: StoreRoot::Cache,
+        current,
+        legacy: Some(legacy),
+    }
+}
+
+fn client_store_layout(store_id: &str) -> Option<&'static ClientStoreLayout> {
+    CLIENT_STORES.iter().find(|store| store.id == store_id)
+}
+
+fn join_all(root: PathBuf, segments: &[&str]) -> PathBuf {
+    segments
+        .iter()
+        .fold(root, |path, segment| path.join(segment))
+}
+
 pub fn client_store_path(app_handle: &dyn AppContext, store_id: &str) -> Result<PathBuf, String> {
-    let target = match store_id {
-        STORE_SETTINGS => Ok(app_config_root(app_handle)?
-            .join("user")
-            .join("settings.json")),
-        STORE_FOLDERS => Ok(app_config_root(app_handle)?
-            .join("user")
-            .join("folders.json")),
-        STORE_PERSONAS => Ok(app_config_root(app_handle)?
-            .join("user")
-            .join("personas.json")),
-        STORE_ACCOUNT_CARD_NOTES => Ok(app_config_root(app_handle)?
-            .join("user")
-            .join("account-card-notes.json")),
-        STORE_ACCOUNT_CARD_COLORS => Ok(app_config_root(app_handle)?
-            .join("user")
-            .join("account-card-colors.json")),
-        STORE_ACCOUNT_DEFAULT_GAME => Ok(app_config_root(app_handle)?
-            .join("user")
-            .join("account-default-game.json")),
-        STORE_FOLDER_CARD_COLORS => Ok(app_config_root(app_handle)?
-            .join("user")
-            .join("folder-card-colors.json")),
-        STORE_VIEW_MODE => Ok(app_config_root(app_handle)?
-            .join("user")
-            .join("view-mode.json")),
-        STORE_STEAM_PROFILE_CACHE => Ok(app_cache_root(app_handle)?
-            .join("platforms")
-            .join("steam")
-            .join("profiles.json")),
-        STORE_ROBLOX_PROFILE_CACHE => Ok(app_cache_root(app_handle)?
-            .join("platforms")
-            .join("roblox")
-            .join("profiles.json")),
-        STORE_STEAM_BAN_CHECK_STATE => Ok(app_cache_root(app_handle)?
-            .join("platforms")
-            .join("steam")
-            .join("ban-check-state.json")),
-        STORE_STEAM_BAN_INFO_CACHE => Ok(app_cache_root(app_handle)?
-            .join("platforms")
-            .join("steam")
-            .join("ban-info-cache.json")),
-        _ => Err(format!("Unknown client store id: {store_id}")),
-    }?;
+    let layout = client_store_layout(store_id)
+        .ok_or_else(|| format!("Unknown client store id: {store_id}"))?;
+    let root = match layout.root {
+        StoreRoot::Config => app_config_root(app_handle)?,
+        StoreRoot::Cache => app_cache_root(app_handle)?,
+    };
+    let target = join_all(root, layout.current);
 
     if let Some(legacy) = legacy_client_store_path(app_handle, store_id)? {
         backup_and_migrate_file(app_handle, &legacy, &target)?;
@@ -374,9 +440,9 @@ pub fn load_client_storage_snapshot(
     // Path resolution stays sequential: client_store_path may migrate legacy
     // files. The reads themselves are independent small JSON files. Read
     // them in parallel so wall time is the slowest file, not the sum.
-    let mut paths = Vec::with_capacity(client_store_ids().len());
-    for store_id in client_store_ids() {
-        paths.push((*store_id, client_store_path(app_handle, store_id)?));
+    let mut paths = Vec::with_capacity(CLIENT_STORES.len());
+    for store in CLIENT_STORES {
+        paths.push((store.id, client_store_path(app_handle, store.id)?));
     }
 
     let results: Vec<Result<Option<Value>, String>> = std::thread::scope(|scope| {
@@ -405,9 +471,9 @@ pub fn load_client_storage_snapshot(
 }
 
 pub fn build_storage_manifest(app_handle: &dyn AppContext) -> Result<StorageManifest, String> {
-    let mut store_paths = Vec::with_capacity(client_store_ids().len());
-    for store_id in client_store_ids() {
-        store_paths.push((*store_id, client_store_path(app_handle, store_id)?));
+    let mut store_paths = Vec::with_capacity(CLIENT_STORES.len());
+    for store in CLIENT_STORES {
+        store_paths.push((store.id, client_store_path(app_handle, store.id)?));
     }
     build_storage_manifest_with_store_paths(app_handle, &store_paths)
 }
@@ -438,65 +504,22 @@ fn build_storage_manifest_with_store_paths(
     })
 }
 
-fn client_store_ids() -> &'static [&'static str] {
-    &[
-        STORE_SETTINGS,
-        STORE_FOLDERS,
-        STORE_PERSONAS,
-        STORE_ACCOUNT_CARD_NOTES,
-        STORE_ACCOUNT_CARD_COLORS,
-        STORE_ACCOUNT_DEFAULT_GAME,
-        STORE_FOLDER_CARD_COLORS,
-        STORE_VIEW_MODE,
-        STORE_STEAM_PROFILE_CACHE,
-        STORE_ROBLOX_PROFILE_CACHE,
-        STORE_STEAM_BAN_CHECK_STATE,
-        STORE_STEAM_BAN_INFO_CACHE,
-    ]
-}
-
 fn legacy_client_store_path(
     app_handle: &dyn AppContext,
     store_id: &str,
 ) -> Result<Option<PathBuf>, String> {
-    let path = match store_id {
-        STORE_SETTINGS => raw_app_config_root(app_handle)?
-            .join("user")
-            .join("settings.json"),
-        STORE_FOLDERS => raw_app_config_root(app_handle)?
-            .join("user")
-            .join("folders.json"),
-        STORE_ACCOUNT_CARD_NOTES => raw_app_config_root(app_handle)?
-            .join("user")
-            .join("account-card-notes.json"),
-        STORE_ACCOUNT_CARD_COLORS => raw_app_config_root(app_handle)?
-            .join("user")
-            .join("account-card-colors.json"),
-        STORE_ACCOUNT_DEFAULT_GAME => raw_app_config_root(app_handle)?
-            .join("user")
-            .join("account-default-game.json"),
-        STORE_FOLDER_CARD_COLORS => raw_app_config_root(app_handle)?
-            .join("user")
-            .join("folder-card-colors.json"),
-        STORE_VIEW_MODE => raw_app_config_root(app_handle)?
-            .join("user")
-            .join("view-mode.json"),
-        STORE_STEAM_PROFILE_CACHE => raw_app_cache_root(app_handle)?
-            .join("steam")
-            .join("profiles.json"),
-        STORE_ROBLOX_PROFILE_CACHE => raw_app_cache_root(app_handle)?
-            .join("roblox")
-            .join("profiles.json"),
-        STORE_STEAM_BAN_CHECK_STATE => raw_app_cache_root(app_handle)?
-            .join("steam")
-            .join("ban-check-state.json"),
-        STORE_STEAM_BAN_INFO_CACHE => raw_app_cache_root(app_handle)?
-            .join("steam")
-            .join("ban-info-cache.json"),
-        _ => return Ok(None),
+    let Some(layout) = client_store_layout(store_id) else {
+        return Ok(None);
+    };
+    let Some(legacy) = layout.legacy else {
+        return Ok(None);
+    };
+    let root = match layout.root {
+        StoreRoot::Config => raw_app_config_root(app_handle)?,
+        StoreRoot::Cache => raw_app_cache_root(app_handle)?,
     };
 
-    Ok(Some(path))
+    Ok(Some(join_all(root, legacy)))
 }
 
 fn non_store_manifest_targets(

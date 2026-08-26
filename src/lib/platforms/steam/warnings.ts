@@ -154,6 +154,82 @@ export function getCachedSteamWarningStates(
   return toWarningMap(readBanInfoCache(), callbacks.t);
 }
 
+const NO_IDS: ReadonlySet<string> = new Set<string>();
+
+/**
+ * Which Steam IDs already count as checked, so the caller can skip them.
+ *
+ * With no delay configured the answer is "whatever this session already
+ * fetched"; inside a configured delay window it is the persisted set. A forced
+ * refresh, or a window that has lapsed, checks everything again.
+ */
+export function alreadyCheckedBanIds(plan: {
+  forceRefresh: boolean;
+  delayDays: number;
+  withinDelayWindow: boolean;
+  sessionCheckedIds: ReadonlySet<string>;
+  cachedCheckedIds: ReadonlySet<string>;
+}): ReadonlySet<string> {
+  if (plan.forceRefresh) return NO_IDS;
+  if (plan.delayDays === 0) return plan.sessionCheckedIds;
+  return plan.withinDelayWindow ? plan.cachedCheckedIds : NO_IDS;
+}
+
+/** Folds the API rows into the cache. Rows without a Steam ID are unusable. */
+function mergeBanRows(bans: BanInfo[], cachedBans: Record<string, BanInfo>) {
+  let bannedCount = 0;
+  let malformedRows = 0;
+  const returnedIds = new Set<string>();
+
+  for (const ban of bans) {
+    if (typeof ban.steam_id !== "string" || ban.steam_id.length === 0) {
+      malformedRows++;
+      continue;
+    }
+    cachedBans[ban.steam_id] = ban;
+    returnedIds.add(ban.steam_id);
+    if (ban.vac_banned || ban.community_banned || ban.number_of_game_bans > 0) {
+      bannedCount++;
+    }
+  }
+
+  return { bannedCount, malformedRows, returnedIds };
+}
+
+/**
+ * Persists what the delay window needs to skip next time. With no delay
+ * configured there is nothing to remember, so the stored state is dropped
+ * rather than left behind to expire.
+ */
+function recordBanCheckState(args: {
+  delayDays: number;
+  now: number;
+  coversEveryAccount: boolean;
+  steamIds: string[];
+  idsToFetch: string[];
+  previouslyCheckedIds: string[];
+}) {
+  if (args.delayDays === 0) {
+    setClientStoreValue(CLIENT_STORE_STEAM_BAN_CHECK_STATE, null, { immediate: true });
+    return;
+  }
+  writeBanCheckState({
+    lastSuccessAt: args.now,
+    checkedSteamIds: args.coversEveryAccount
+      ? args.steamIds
+      : Array.from(new Set([...args.previouslyCheckedIds, ...args.idsToFetch])),
+  });
+}
+
+/** Replaces any pending check toast with a fresh one. Returns its id. */
+function showCheckingToast(t: PlatformWarningLoadOptions["t"]): string {
+  if (activeBanCheckToastId) {
+    removeToast(activeBanCheckToastId);
+  }
+  activeBanCheckToastId = addToast(t("toast.banChecking"), { durationMs: null });
+  return activeBanCheckToastId;
+}
+
 export async function loadSteamWarningStates(
   accounts: PlatformAccount[],
   options: PlatformWarningLoadOptions,
@@ -178,18 +254,14 @@ export async function loadSteamWarningStates(
   const delayMs = delayDays * 24 * 60 * 60 * 1000;
   const withinDelayWindow =
     delayDays > 0 && !!cachedState && now - cachedState.lastSuccessAt < delayMs;
-  const cachedCheckedIds = new Set(cachedState?.checkedSteamIds ?? []);
-
-  let idsToFetch: string[] = [];
-  if (forceRefresh) {
-    idsToFetch = steamIds;
-  } else if (delayDays === 0) {
-    idsToFetch = steamIds.filter((id) => !sessionBanCheckedIds.has(id));
-  } else if (withinDelayWindow) {
-    idsToFetch = steamIds.filter((id) => !cachedCheckedIds.has(id));
-  } else {
-    idsToFetch = steamIds;
-  }
+  const alreadyChecked = alreadyCheckedBanIds({
+    forceRefresh,
+    delayDays,
+    withinDelayWindow,
+    sessionCheckedIds: sessionBanCheckedIds,
+    cachedCheckedIds: new Set(cachedState?.checkedSteamIds ?? []),
+  });
+  const idsToFetch = steamIds.filter((id) => !alreadyChecked.has(id));
 
   if (idsToFetch.length === 0) {
     console.info("[ban-check] skipped: no accounts to check", {
@@ -200,32 +272,11 @@ export async function loadSteamWarningStates(
     return toWarningMap(cachedBans, t);
   }
 
-  let checkingToastId: string | null = null;
-  if (!silent) {
-    if (activeBanCheckToastId) {
-      removeToast(activeBanCheckToastId);
-    }
-    activeBanCheckToastId = addToast(t("toast.banChecking"), { durationMs: null });
-    checkingToastId = activeBanCheckToastId;
-  }
+  const checkingToastId = silent ? null : showCheckingToast(t);
 
   try {
     const bans = await getPlayerBans(idsToFetch);
-    let bannedCount = 0;
-    const returnedIds = new Set<string>();
-    let malformedRows = 0;
-
-    for (const ban of bans) {
-      if (typeof ban.steam_id !== "string" || ban.steam_id.length === 0) {
-        malformedRows++;
-        continue;
-      }
-      cachedBans[ban.steam_id] = ban;
-      returnedIds.add(ban.steam_id);
-      if (ban.vac_banned || ban.community_banned || ban.number_of_game_bans > 0) {
-        bannedCount++;
-      }
-    }
+    const { bannedCount, malformedRows, returnedIds } = mergeBanRows(bans, cachedBans);
 
     if (malformedRows > 0) {
       console.error("[ban-check] malformed ban rows without steam_id", {
@@ -246,18 +297,14 @@ export async function loadSteamWarningStates(
       });
     }
 
-    if (delayDays > 0) {
-      const mergedCheckedIds =
-        forceRefresh || !withinDelayWindow
-          ? steamIds
-          : Array.from(new Set([...(cachedState?.checkedSteamIds ?? []), ...idsToFetch]));
-      writeBanCheckState({
-        lastSuccessAt: now,
-        checkedSteamIds: mergedCheckedIds,
-      });
-    } else {
-      setClientStoreValue(CLIENT_STORE_STEAM_BAN_CHECK_STATE, null, { immediate: true });
-    }
+    recordBanCheckState({
+      delayDays,
+      now,
+      coversEveryAccount: forceRefresh || !withinDelayWindow,
+      steamIds,
+      idsToFetch,
+      previouslyCheckedIds: cachedState?.checkedSteamIds ?? [],
+    });
 
     writeBanInfoCache(cachedBans);
 

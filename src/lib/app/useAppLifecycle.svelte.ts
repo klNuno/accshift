@@ -175,6 +175,22 @@ export function createAppLifecycleController({
     }
   }
 
+  /** A change to any of these means the settings snapshot on screen is stale. */
+  const SETTINGS_TARGETS = [CLIENT_STORE_SETTINGS, STORAGE_TARGET_CUSTOM_THEMES];
+  /** Card tints, account and folder alike. */
+  const CARD_COLOR_TARGETS = [CLIENT_STORE_ACCOUNT_CARD_COLORS, CLIENT_STORE_FOLDER_CARD_COLORS];
+  /** Anything that changes what the grid shows or how it shows it. */
+  const GRID_TARGETS = [
+    CLIENT_STORE_FOLDERS,
+    CLIENT_STORE_ACCOUNT_CARD_NOTES,
+    CLIENT_STORE_ACCOUNT_CARD_COLORS,
+    CLIENT_STORE_FOLDER_CARD_COLORS,
+    CLIENT_STORE_VIEW_MODE,
+    CLIENT_STORE_SETTINGS,
+  ];
+  /** The app config, whichever of the two files it was written to. */
+  const APP_CONFIG_TARGETS = [STORAGE_TARGET_APP_CONFIG_PORTABLE, STORAGE_TARGET_APP_CONFIG_LOCAL];
+
   async function refreshExternalStorageState() {
     if (externalStorageRefreshInFlight) return;
     externalStorageRefreshInFlight = true;
@@ -190,26 +206,15 @@ export function createAppLifecycleController({
         details: JSON.stringify({ changed, activeTab: shell.activeTab }),
       }).catch(() => {});
 
-      const settingsChanged = changed.includes(CLIENT_STORE_SETTINGS);
-      const foldersChanged = changed.includes(CLIENT_STORE_FOLDERS);
-      const notesChanged = changed.includes(CLIENT_STORE_ACCOUNT_CARD_NOTES);
-      const accountColorsChanged = changed.includes(CLIENT_STORE_ACCOUNT_CARD_COLORS);
-      const folderColorsChanged = changed.includes(CLIENT_STORE_FOLDER_CARD_COLORS);
-      const viewModeChanged = changed.includes(CLIENT_STORE_VIEW_MODE);
-      const themesChanged = changed.includes(STORAGE_TARGET_CUSTOM_THEMES);
-      const configChanged =
-        changed.includes(STORAGE_TARGET_APP_CONFIG_PORTABLE) ||
-        changed.includes(STORAGE_TARGET_APP_CONFIG_LOCAL);
+      const touched = new Set(changed);
+      const anyOf = (targets: readonly string[]) => targets.some((target) => touched.has(target));
       const activeCapabilities = getPlatformDefinition(shell.activeTab)?.capabilities;
-      const activeDataStoresChanged = (activeCapabilities?.externalDataStores ?? []).some(
-        (target) => changed.includes(target),
-      );
 
-      if (themesChanged) {
+      if (touched.has(STORAGE_TARGET_CUSTOM_THEMES)) {
         await loadCustomThemes();
       }
 
-      if (settingsChanged || themesChanged) {
+      if (anyOf(SETTINGS_TARGETS)) {
         shell.refreshSettings();
         if (
           !shell.settings.enabledPlatforms.includes(shell.activeTab) ||
@@ -225,29 +230,22 @@ export function createAppLifecycleController({
         }
       }
 
-      if (viewModeChanged) {
+      if (touched.has(CLIENT_STORE_VIEW_MODE)) {
         syncViewModeFromStorage();
       }
-      if (accountColorsChanged || folderColorsChanged) {
+      if (anyOf(CARD_COLOR_TARGETS)) {
         bumpCardColorVersion();
       }
-      if (notesChanged) {
+      if (touched.has(CLIENT_STORE_ACCOUNT_CARD_NOTES)) {
         bumpCardNoteVersion();
       }
-      if (
-        foldersChanged ||
-        notesChanged ||
-        accountColorsChanged ||
-        folderColorsChanged ||
-        viewModeChanged ||
-        settingsChanged
-      ) {
+      if (anyOf(GRID_TARGETS)) {
         navigation.refreshCurrentItems();
         loader.prepareVisibleAccounts();
         queueGridPadding();
       }
 
-      if (configChanged || activeDataStoresChanged) {
+      if (anyOf(APP_CONFIG_TARGETS) || anyOf(activeCapabilities?.externalDataStores ?? [])) {
         // No forced avatar refresh here: this runs on every window focus while the
         // platform client is running (its data stores change constantly), and the
         // profile cache TTL already covers avatar freshness.
