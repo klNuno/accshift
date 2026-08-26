@@ -207,23 +207,96 @@
     inactivityBlur.refresh();
   }
 
-  async function persistCurrentState() {
-    normalizeSettings();
-    const sanitizedPinInput = sanitizePinDigits(pinCodeInput);
-    const pinRequested = settings.pinEnabled || pinSetupPending;
-    let pinCommitted = false;
-    if (pinRequested && sanitizedPinInput.length === PIN_CODE_LENGTH) {
-      const nextPinHash = await hashPinCode(sanitizedPinInput);
-      if (settings.pinEnabled || pinSetupPending) {
-        settings.pinHash = nextPinHash;
-        settings.pinEnabled = true;
-        pinSetupPending = false;
-        pinCommitted = true;
-        if (sanitizePinDigits(pinCodeInput) === sanitizedPinInput) {
-          pinCodeInput = "";
-        }
+  /**
+   * Commit a freshly typed PIN into the settings. True when one was written, so
+   * the caller knows to show the confirmation toast.
+   *
+   * Both guards are re-tested after the hash await: the user can toggle the PIN
+   * off or keep typing while it runs, and neither of those edits should be
+   * overwritten by a hash computed from what the field held before.
+   */
+  async function commitPinCode(): Promise<boolean> {
+    const sanitized = sanitizePinDigits(pinCodeInput);
+    if (!settings.pinEnabled && !pinSetupPending) return false;
+    if (sanitized.length !== PIN_CODE_LENGTH) return false;
+
+    const nextPinHash = await hashPinCode(sanitized);
+    if (!settings.pinEnabled && !pinSetupPending) return false;
+
+    settings.pinHash = nextPinHash;
+    settings.pinEnabled = true;
+    pinSetupPending = false;
+    if (sanitizePinDigits(pinCodeInput) === sanitized) {
+      pinCodeInput = "";
+    }
+    return true;
+  }
+
+  /**
+   * Push the typed Steam API key. False when it failed, so the caller holds the
+   * persisted snapshot stale and the next edit retries.
+   */
+  async function saveApiKey(): Promise<boolean> {
+    if (!apiKeyTouched) return true;
+
+    const trimmedApiKey = apiKey.trim();
+    if (trimmedApiKey.length === 0) {
+      // An emptied input is not a delete request. Removing the stored key only
+      // happens through the explicit clear button (clearApiKey).
+      apiKeyTouched = false;
+      return true;
+    }
+
+    try {
+      await setApiKey(trimmedApiKey);
+      apiKeyConfigured = true;
+      apiKeyTouched = false;
+      apiKey = "";
+      apiKeyError = false;
+      return true;
+    } catch (e) {
+      console.error("Failed to save Steam API key:", e);
+      apiKeyError = true;
+      addToast(t("settings.apiKeySaveFailed"), { type: "error" });
+      return false;
+    }
+  }
+
+  /**
+   * Push every platform path the user changed since `prevPaths` was captured.
+   * False when at least one failed; the ones that landed stay landed.
+   */
+  async function savePlatformPaths(prevPaths: Record<string, string>): Promise<boolean> {
+    let allSaved = true;
+    for (const platformId of Object.keys(platformPaths)) {
+      const nextPath = platformPaths[platformId]?.trim() ?? "";
+      if ((prevPaths[platformId] ?? "") === nextPath) continue;
+      try {
+        await invoke("platform_set_path", { platformId, path: nextPath });
+        platformPathErrors[platformId] = false;
+      } catch (e) {
+        console.error(`Failed to save ${platformId} path:`, e);
+        platformPathErrors[platformId] = true;
+        allSaved = false;
+        const platformName = getPlatformDefinition(platformId)?.name ?? platformId;
+        addToast(t("settings.pathSaveFailed", { platform: platformName }), { type: "error" });
       }
     }
+    return allSaved;
+  }
+
+  /** Platform paths as of the last successful save, to diff the current ones against. */
+  function lastSavedPlatformPaths(): Record<string, string> {
+    if (!lastPersistedSnapshot) return {};
+    const previous = JSON.parse(lastPersistedSnapshot) as {
+      platformPaths?: Record<string, string>;
+    };
+    return previous.platformPaths ?? {};
+  }
+
+  async function persistCurrentState() {
+    normalizeSettings();
+    const pinCommitted = await commitPinCode();
 
     // Capture the snapshot before any await below so edits made while persisting
     // stay dirty and get picked up by the next debounced save.
@@ -232,10 +305,7 @@
 
     const nextPlatformSnapshot = buildPlatformSnapshot();
     const platformsChanged = nextPlatformSnapshot !== lastPlatformSnapshot;
-    const previousState = lastPersistedSnapshot
-      ? JSON.parse(lastPersistedSnapshot) as { platformPaths?: Record<string, string> }
-      : {};
-    const prevPaths = previousState.platformPaths ?? {};
+    const prevPaths = lastSavedPlatformPaths();
 
     saveSettings(settings);
     onSettingsUpdated?.();
@@ -243,51 +313,16 @@
       addToast(t("settings.pinSaved"), { type: "success" });
     }
 
-    let hadError = false;
-    if (apiKeyTouched) {
-      const trimmedApiKey = apiKey.trim();
-      if (trimmedApiKey.length > 0) {
-        try {
-          await setApiKey(trimmedApiKey);
-          apiKeyConfigured = true;
-          apiKeyTouched = false;
-          apiKey = "";
-          apiKeyError = false;
-        } catch (e) {
-          console.error("Failed to save Steam API key:", e);
-          apiKeyError = true;
-          hadError = true;
-          addToast(t("settings.apiKeySaveFailed"), { type: "error" });
-        }
-      } else {
-        // An emptied input is not a delete request. Removing the stored key
-        // only happens through the explicit clear button (clearApiKey).
-        apiKeyTouched = false;
-      }
-    }
-
-    for (const platformId of Object.keys(platformPaths)) {
-      const nextPath = platformPaths[platformId]?.trim() ?? "";
-      if ((prevPaths[platformId] ?? "") !== nextPath) {
-        try {
-          await invoke("platform_set_path", { platformId, path: nextPath });
-          platformPathErrors[platformId] = false;
-        } catch (e) {
-          console.error(`Failed to save ${platformId} path:`, e);
-          platformPathErrors[platformId] = true;
-          hadError = true;
-          const platformName = getPlatformDefinition(platformId)?.name ?? platformId;
-          addToast(t("settings.pathSaveFailed", { platform: platformName }), { type: "error" });
-        }
-      }
-    }
+    const apiKeySaved = await saveApiKey();
+    const pathsSaved = await savePlatformPaths(prevPaths);
 
     lastPlatformSnapshot = nextPlatformSnapshot;
     if (platformsChanged) {
       onPlatformsChanged?.();
     }
     // Leave lastPersistedSnapshot stale on failure so the next edit retries.
-    if (hadError) return;
+    if (!apiKeySaved || !pathsSaved) return;
+
     lastPersistedSnapshot = snapshot;
     const now = Date.now();
     if (now - lastSavedToastAt >= SAVE_TOAST_COOLDOWN_MS) {
