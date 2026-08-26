@@ -122,8 +122,12 @@ pub struct RobloxConfig {
     pub accounts: Vec<RobloxAccountConfig>,
 }
 
+/// The account record shared by every platform whose entry is just an id, a
+/// user label and a last-used stamp: Epic, GOG, Jagex, Discord, and every
+/// platform a user descriptor adds. The field names are the ones already on
+/// disk, so the aliases below keep each platform's config file byte-identical.
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
-pub struct EpicAccountConfig {
+pub struct SimpleAccountConfig {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub account_id: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -131,6 +135,12 @@ pub struct EpicAccountConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_used_at: Option<u64>,
 }
+
+pub type EpicAccountConfig = SimpleAccountConfig;
+pub type GogAccountConfig = SimpleAccountConfig;
+pub type JagexAccountConfig = SimpleAccountConfig;
+pub type DiscordAccountConfig = SimpleAccountConfig;
+pub type CustomAccountConfig = SimpleAccountConfig;
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct EpicConfig {
@@ -141,41 +151,11 @@ pub struct EpicConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
-pub struct GogAccountConfig {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub account_id: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub label: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_used_at: Option<u64>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct GogConfig {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub path_override: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub accounts: Vec<GogAccountConfig>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
-pub struct JagexAccountConfig {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub account_id: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub label: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_used_at: Option<u64>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
-pub struct DiscordAccountConfig {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub account_id: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub label: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_used_at: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -200,16 +180,6 @@ pub struct DiscordConfig {
     // so the last account switched to is tracked here instead.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub current_account_id: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
-pub struct CustomAccountConfig {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub account_id: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub label: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_used_at: Option<u64>,
 }
 
 /// The section of a platform this build was never compiled to know about.
@@ -579,22 +549,42 @@ fn config_cache() -> &'static std::sync::Mutex<Option<CachedConfig>> {
     CACHE.get_or_init(|| std::sync::Mutex::new(None))
 }
 
-/// Process-global poison flag: set when `load_config` finds the local config
-/// file present on disk but unreadable/unparseable (and no valid `.bak` to
-/// recover from). The local file holds the only copy of the Steam API key,
-/// Roblox cookies and path overrides; treating a transient read failure as
-/// "empty defaults" and then saving would silently wipe those secrets. While
-/// poisoned, every local-config write is refused so a corrupt-but-present file
-/// is left untouched until the next successful read clears the flag.
-static LOCAL_CONFIG_UNREADABLE: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-fn set_local_config_unreadable(unreadable: bool) {
-    LOCAL_CONFIG_UNREADABLE.store(unreadable, std::sync::atomic::Ordering::SeqCst);
+/// Poisoned local config files: a path lands here when `load_config` finds it
+/// present on disk but unreadable/unparseable (and no valid `.bak` to recover
+/// from). The local file holds the only copy of the Steam API key, Roblox
+/// cookies and path overrides; treating a transient read failure as "empty
+/// defaults" and then saving would silently wipe those secrets. While poisoned,
+/// every write to that file is refused, so a corrupt-but-present file is left
+/// untouched until the next successful read clears it.
+///
+/// Keyed by path rather than a single process-global flag. A running app only
+/// ever has one local config, so this changes nothing there; the test binary
+/// has one per test, and a global flag let any test's successful read clear the
+/// poison another test had just set.
+fn poisoned_local_configs(
+) -> &'static std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>> {
+    static POISONED: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>,
+    > = std::sync::OnceLock::new();
+    POISONED.get_or_init(Default::default)
 }
 
-fn local_config_unreadable() -> bool {
-    LOCAL_CONFIG_UNREADABLE.load(std::sync::atomic::Ordering::SeqCst)
+fn set_local_config_unreadable(path: &std::path::Path, unreadable: bool) {
+    let mut poisoned = poisoned_local_configs()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if unreadable {
+        poisoned.insert(path.to_path_buf());
+    } else {
+        poisoned.remove(path);
+    }
+}
+
+fn local_config_unreadable(path: &std::path::Path) -> bool {
+    poisoned_local_configs()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(path)
 }
 
 /// Serializes every test that reads or writes config, wherever it lives. The
@@ -654,11 +644,11 @@ pub fn load_config(app_handle: &dyn AppContext) -> AppConfig {
     // later save can't clobber the only copy of the secrets with defaults.
     let local = match crate::storage::read_json_if_exists::<AppConfig>(&local_path) {
         Ok(local) => {
-            set_local_config_unreadable(false);
+            set_local_config_unreadable(&local_path, false);
             local
         }
         Err(e) => {
-            set_local_config_unreadable(true);
+            set_local_config_unreadable(&local_path, true);
             let _ = crate::logging::append_app_log(
                 app_handle,
                 "error",
@@ -732,7 +722,7 @@ fn save_config_unlocked(app_handle: &dyn AppContext, config: &AppConfig) -> Resu
     // overwrite the user's Steam API key / Roblox cookies / path overrides
     // with the empty defaults that the failed read produced. Refuse until a
     // successful read clears the poison flag.
-    if local_config_unreadable() {
+    if local_config_unreadable(&local_path) {
         let message = format!(
             "Refusing to write local config: the existing file at {} could not be read on the \
              last load (it may be corrupt or locked). Writing now would wipe stored secrets. \
@@ -954,19 +944,86 @@ fn portable_config(config: &AppConfig) -> AppConfig {
     portable
 }
 
+/// The `path_override` of every shipped platform section, in a fixed order. A
+/// new shipped platform is one line here instead of one copied line in
+/// `local_config` plus one copied `if` in `merge_split_configs`. Platforms that
+/// arrived as a descriptor live in `custom_platforms` and are handled by the
+/// loops beside these calls.
+fn path_overrides(config: &AppConfig) -> [&String; 8] {
+    [
+        &config.steam.path_override,
+        &config.riot.path_override,
+        &config.battle_net.path_override,
+        &config.ubisoft.path_override,
+        &config.epic.path_override,
+        &config.gog.path_override,
+        &config.jagex.path_override,
+        &config.discord.path_override,
+    ]
+}
+
+/// Same sections as [`path_overrides`], in the same order.
+fn path_overrides_mut(config: &mut AppConfig) -> [&mut String; 8] {
+    [
+        &mut config.steam.path_override,
+        &mut config.riot.path_override,
+        &mut config.battle_net.path_override,
+        &mut config.ubisoft.path_override,
+        &mut config.epic.path_override,
+        &mut config.gog.path_override,
+        &mut config.jagex.path_override,
+        &mut config.discord.path_override,
+    ]
+}
+
+/// A value the machine-local config file may or may not carry. "Unset" is
+/// what [`AppConfig::default`] leaves behind, so an unset local value never
+/// overwrites the portable one during the merge.
+trait LocalOverride {
+    fn is_set(&self) -> bool;
+}
+
+impl LocalOverride for String {
+    fn is_set(&self) -> bool {
+        !self.is_empty()
+    }
+}
+
+impl LocalOverride for Vec<String> {
+    fn is_set(&self) -> bool {
+        !self.is_empty()
+    }
+}
+
+impl<T> LocalOverride for Option<T> {
+    fn is_set(&self) -> bool {
+        self.is_some()
+    }
+}
+
+impl LocalOverride for Cs2BridgeConfig {
+    fn is_set(&self) -> bool {
+        !is_default_cs2_bridge_config(self)
+    }
+}
+
+fn overwrite_if_set<T: LocalOverride>(target: &mut T, local: T) {
+    if local.is_set() {
+        *target = local;
+    }
+}
+
 fn local_config(config: &AppConfig) -> AppConfig {
     let mut local = AppConfig::default();
     local.steam.api_key = config.steam.api_key.clone();
     local.steam.api_key_encrypted = config.steam.api_key_encrypted.clone();
-    local.steam.path_override = config.steam.path_override.clone();
     local.steam.cs2_bridge = config.steam.cs2_bridge.clone();
-    local.riot.path_override = config.riot.path_override.clone();
-    local.battle_net.path_override = config.battle_net.path_override.clone();
-    local.ubisoft.path_override = config.ubisoft.path_override.clone();
-    local.epic.path_override = config.epic.path_override.clone();
-    local.gog.path_override = config.gog.path_override.clone();
-    local.jagex.path_override = config.jagex.path_override.clone();
-    local.discord.path_override = config.discord.path_override.clone();
+    for (target, source) in path_overrides_mut(&mut local)
+        .into_iter()
+        .zip(path_overrides(config))
+    {
+        target.clone_from(source);
+    }
     // Same rule as every shipped section: where a launcher lives is a fact
     // about this machine, so it never travels in the portable file.
     local.custom_platforms = config
@@ -1010,42 +1067,22 @@ fn local_config(config: &AppConfig) -> AppConfig {
     local
 }
 
-fn merge_split_configs(portable: AppConfig, local: AppConfig) -> AppConfig {
+fn merge_split_configs(portable: AppConfig, mut local: AppConfig) -> AppConfig {
     let mut merged = portable;
 
-    if !local.steam.api_key.is_empty() {
-        merged.steam.api_key = local.steam.api_key;
+    // Whole-struct borrow, so it has to run before any field is moved out.
+    for (target, source) in path_overrides_mut(&mut merged)
+        .into_iter()
+        .zip(path_overrides_mut(&mut local))
+    {
+        overwrite_if_set(target, std::mem::take(source));
     }
-    if !local.steam.api_key_encrypted.is_empty() {
-        merged.steam.api_key_encrypted = local.steam.api_key_encrypted;
-    }
-    if !is_default_cs2_bridge_config(&local.steam.cs2_bridge) {
-        merged.steam.cs2_bridge = local.steam.cs2_bridge;
-    }
-    if !local.steam.path_override.is_empty() {
-        merged.steam.path_override = local.steam.path_override;
-    }
-    if !local.riot.path_override.is_empty() {
-        merged.riot.path_override = local.riot.path_override;
-    }
-    if !local.battle_net.path_override.is_empty() {
-        merged.battle_net.path_override = local.battle_net.path_override;
-    }
-    if !local.ubisoft.path_override.is_empty() {
-        merged.ubisoft.path_override = local.ubisoft.path_override;
-    }
-    if !local.epic.path_override.is_empty() {
-        merged.epic.path_override = local.epic.path_override;
-    }
-    if !local.gog.path_override.is_empty() {
-        merged.gog.path_override = local.gog.path_override;
-    }
-    if !local.jagex.path_override.is_empty() {
-        merged.jagex.path_override = local.jagex.path_override;
-    }
-    if !local.discord.path_override.is_empty() {
-        merged.discord.path_override = local.discord.path_override;
-    }
+    overwrite_if_set(&mut merged.steam.api_key, local.steam.api_key);
+    overwrite_if_set(
+        &mut merged.steam.api_key_encrypted,
+        local.steam.api_key_encrypted,
+    );
+    overwrite_if_set(&mut merged.steam.cs2_bridge, local.steam.cs2_bridge);
     for (id, section) in local.custom_platforms {
         if section.path_override.trim().is_empty() {
             continue;
@@ -1054,21 +1091,17 @@ fn merge_split_configs(portable: AppConfig, local: AppConfig) -> AppConfig {
         // a platform the user only ever pointed at a path for.
         merged.custom_platforms.entry(id).or_default().path_override = section.path_override;
     }
-    if !local.telemetry.install_id.is_empty() {
-        merged.telemetry.install_id = local.telemetry.install_id;
-    }
-    if !local.telemetry.pending_forget_install_ids.is_empty() {
-        merged.telemetry.pending_forget_install_ids = local.telemetry.pending_forget_install_ids;
-    }
-    if !local.telemetry.anonymous_id.is_empty() {
-        merged.telemetry.anonymous_id = local.telemetry.anonymous_id;
-    }
-    if local.window_width.is_some() {
-        merged.window_width = local.window_width;
-    }
-    if local.window_height.is_some() {
-        merged.window_height = local.window_height;
-    }
+    overwrite_if_set(&mut merged.telemetry.install_id, local.telemetry.install_id);
+    overwrite_if_set(
+        &mut merged.telemetry.pending_forget_install_ids,
+        local.telemetry.pending_forget_install_ids,
+    );
+    overwrite_if_set(
+        &mut merged.telemetry.anonymous_id,
+        local.telemetry.anonymous_id,
+    );
+    overwrite_if_set(&mut merged.window_width, local.window_width);
+    overwrite_if_set(&mut merged.window_height, local.window_height);
 
     for local_account in local.roblox.accounts {
         if local_account.user_id.trim().is_empty() {
@@ -1183,7 +1216,7 @@ mod tests {
         // A read of the existing-but-corrupt file must poison local writes.
         let _ = load_config(&*ctx);
         assert!(
-            local_config_unreadable(),
+            local_config_unreadable(&local_path),
             "corrupt existing local config should poison local writes"
         );
 
@@ -1218,7 +1251,7 @@ mod tests {
         crate::storage::write_json_atomic(&local_path, &valid).unwrap();
         let loaded = load_config(&*ctx);
         assert!(
-            !local_config_unreadable(),
+            !local_config_unreadable(&local_path),
             "successful local read should clear the poison flag"
         );
         assert_eq!(loaded.steam.api_key, "kept-secret");

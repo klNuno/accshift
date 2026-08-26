@@ -5,8 +5,14 @@
 // GUI binary (NSIS install dir, /usr/bin for deb/rpm, Contents/MacOS for the
 // .app). This script copies the freshly built CLI from the workspace target
 // dir to that location. Runs as part of `beforeBuildCommand`.
+//
+// It also runs ahead of `cargo check`, `clippy` and `cargo test`: tauri-build
+// resolves `externalBin` at build-script time, so a fresh clone fails all three
+// with `resource path binariesccshift-<triple>.exe doesn't exist` until the
+// sidecar is staged. Those checks only need the file to exist, so a missing CLI
+// is built here rather than left as a trap.
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,6 +34,11 @@ const ext = triple.includes("windows") ? ".exe" : "";
 const src = join(root, "target", "release", `accshift${ext}`);
 const destDir = join(root, "src-tauri", "binaries");
 const dest = join(destDir, `accshift-${triple}${ext}`);
+
+if (!existsSync(src)) {
+  console.log("CLI not built yet, building it now");
+  execFileSync("cargo", ["build", "--release", "-p", "accshift-cli"], { stdio: "inherit" });
+}
 
 mkdirSync(destDir, { recursive: true });
 copyFileSync(src, dest);

@@ -11,10 +11,7 @@
 //! that arrives as a user descriptor has no such history and needs no line: it
 //! falls through to `config.custom_platforms`, a generic section keyed by id.
 
-use crate::config::{
-    self, CustomAccountConfig, CustomPlatformConfig, DiscordAccountConfig, EpicAccountConfig,
-    GogAccountConfig, JagexAccountConfig, UbisoftAccountConfig,
-};
+use crate::config::{self, CustomPlatformConfig, SimpleAccountConfig, UbisoftAccountConfig};
 use crate::platforms::ids;
 use crate::AppContext;
 
@@ -28,7 +25,7 @@ pub struct AccountRecord {
 
 /// One stored account row, whichever typed section it lives in.
 ///
-/// The sections hold different types with the same three fields under
+/// The sections hold two record types with the same three fields under
 /// different names, so the operations below are written once against this and
 /// monomorphised per section.
 trait AccountRow {
@@ -69,12 +66,10 @@ macro_rules! impl_account_row {
     };
 }
 
-impl_account_row!(GogAccountConfig, account_id);
-impl_account_row!(JagexAccountConfig, account_id);
-impl_account_row!(EpicAccountConfig, account_id);
+// GOG, Jagex, Epic, Discord and every descriptor-added platform share one
+// record type, so they share one impl. Ubisoft keys on `uuid` and needs its own.
+impl_account_row!(SimpleAccountConfig, account_id);
 impl_account_row!(UbisoftAccountConfig, uuid);
-impl_account_row!(DiscordAccountConfig, account_id);
-impl_account_row!(CustomAccountConfig, account_id);
 
 /// Runs the same body against whichever section the platform owns.
 ///

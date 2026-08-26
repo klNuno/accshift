@@ -45,13 +45,13 @@
   import AppWorkspace from "$lib/app/AppWorkspace.svelte";
   import AppDialogs from "$lib/app/AppDialogs.svelte";
   import AppScreenOverlays from "$lib/app/AppScreenOverlays.svelte";
-  import type { Component, ComponentProps } from "svelte";
-  import type TelemetryOnboardingType from "$lib/features/settings/TelemetryOnboarding.svelte";
   import { createAppDialogsController } from "$lib/app/useAppDialogs.svelte";
   import { createAppNavigationController } from "$lib/app/useAppNavigation.svelte";
   import { createAppUpdater } from "$lib/app/useAppUpdater.svelte";
   import { createAppLifecycleController } from "$lib/app/useAppLifecycle.svelte";
   import { createSecureScreenController } from "$lib/app/useSecureScreen.svelte";
+  import { createLiquidBackdrop } from "$lib/app/useLiquidBackdrop.svelte";
+  import { createOnboardingTour } from "$lib/app/useOnboardingTour.svelte";
   import { createStreamerModeController } from "$lib/app/useStreamerMode.svelte";
   import StreamerModeOverlay from "$lib/app/StreamerModeOverlay.svelte";
   import { createPersonaController } from "$lib/app/usePersonas.svelte";
@@ -70,10 +70,13 @@
   import CommandPalette from "$lib/features/commandPalette/CommandPalette.svelte";
   import { createCardFocus } from "$lib/app/useCardFocus.svelte";
   import {
-    getCs2BridgeData,
     getCs2BridgeVersion,
     loadCs2BridgeData,
   } from "$lib/platforms/steam/cs2Bridge.svelte";
+  import {
+    cs2ExtensionSections,
+    cs2UsernameBadge,
+  } from "$lib/platforms/steam/cs2CardContent";
   import type { CardExtensionSection } from "$lib/shared/cardExtension";
 
   const shell = createPlatformShellState();
@@ -352,35 +355,13 @@
     void loadCs2BridgeData();
   });
 
+  // The CS2 card extras are Steam's alone; every other tab shows nothing.
   function createCs2ExtensionSections(accountId: string): CardExtensionSection[] {
-    if (shell.activeTab !== "steam") return [];
-    const data = getCs2BridgeData(accountId);
-    if (!data || data.level === null || data.xp === null) return [];
-    return [
-      {
-        title: t("card.cs2Section"),
-        text: t("card.cs2Level", { level: data.level }),
-        progress: {
-          value: data.xp,
-          max: data.xpMax,
-          label: `${data.xp}/${data.xpMax}`,
-        },
-        chips: [
-          data.caseEarned
-            ? { text: t("card.cs2CaseEarned"), tone: "green" as const }
-            : { text: t("card.cs2CaseNotEarned"), tone: "slate" as const },
-        ],
-      },
-    ];
+    return shell.activeTab === "steam" ? cs2ExtensionSections(accountId, t) : [];
   }
 
   function getCs2UsernameBadge(accountId: string) {
-    if (shell.activeTab !== "steam") return null;
-    const data = getCs2BridgeData(accountId);
-    if (!data) return null;
-    return data.caseEarned
-      ? { tone: "green" as const, label: t("card.cs2CaseEarned") }
-      : { tone: "slate" as const, label: t("card.cs2CaseNotEarned") };
+    return shell.activeTab === "steam" ? cs2UsernameBadge(accountId, t) : null;
   }
 
   const extensionContent = createExtensionContentController({
@@ -775,7 +756,7 @@
       return "locked";
     }
     if (paletteOpen) return "palette";
-    if (showTelemetryOnboarding) return "onboarding";
+    if (onboarding.open) return "onboarding";
     if (dialogs.inputDialog || dialogs.confirmDialog) return "dialog";
     if (dialogs.contextMenu) return "context-menu";
     if (bulkEdit.bulkEditMode) return "bulk-edit";
@@ -1079,18 +1060,14 @@
     addFlow.flow?.platformId === activeTab ? addFlow.flow.status.setupId : null
   );
 
-  const LIQUID_BACKDROP_BLEED = 40;
-  const LIQUID_BACKDROP_REFRESH_MS = 5 * 60 * 1000;
-  type WallpaperSnapshot = { dataUrl: string; x: number; y: number; width: number; height: number };
-  let liquidWallpaper = $state<WallpaperSnapshot | null>(null);
-  let liquidBackdropStyle = $state("");
   const liquidBackdropActive = $derived(
     themeUsesLiquidGlass(shell.activeTheme) && shell.runtimeOs === "windows"
   );
+  const liquidBackdrop = createLiquidBackdrop({ isActive: () => liquidBackdropActive });
 
   $effect(() => {
     const backdropAvailable =
-      shell.runtimeOs !== "linux" && (!liquidBackdropActive || liquidWallpaper !== null);
+      shell.runtimeOs !== "linux" && (!liquidBackdropActive || liquidBackdrop.wallpaper !== null);
     applyThemeToDocument(shell.activeTheme, shell.settings.backgroundOpacity, document, {
       // Linux compositors expose no portable blur-behind protocol; glass
       // themes degrade to a near-solid window there. Liquid Glass does the
@@ -1098,8 +1075,7 @@
       backdropAvailable,
     });
     document.documentElement.lang = shell.locale;
-    document.documentElement.dataset.cardOutlines = shell.settings.accountDisplay
-      .cardColorOutlines
+    document.documentElement.dataset.cardOutlines = shell.settings.accountDisplay.cardColorOutlines
       ? "1"
       : "0";
     // Glass themes need the OS backdrop blur to read as glass.
@@ -1112,98 +1088,6 @@
 
   $effect(() => applyMotionPreference(settings.animations));
 
-  // --- Liquid glass fake backdrop (Windows) ---------------------------------
-  // DWM offers no material that blurs AND refracts what sits behind a
-  // transparent window, so the desktop wallpaper is replicated inside the
-  // shell, aligned to the screen via background-position, and filtered in CSS
-  // (see .liquid-backdrop). Moving the window re-aligns the layer, which makes
-  // it read as true see-through glass.
-  async function updateLiquidBackdropPosition() {
-    const snapshot = liquidWallpaper;
-    if (!snapshot) return;
-    try {
-      const appWindow = getCurrentWindow();
-      const [pos, scale] = await Promise.all([appWindow.outerPosition(), appWindow.scaleFactor()]);
-      // Snapshot rect and window position are physical virtual-screen px;
-      // divide by the window's scale factor to get CSS px.
-      const offsetX = (snapshot.x - pos.x) / scale + LIQUID_BACKDROP_BLEED;
-      const offsetY = (snapshot.y - pos.y) / scale + LIQUID_BACKDROP_BLEED;
-      liquidBackdropStyle =
-        `background-size:${snapshot.width / scale}px ${snapshot.height / scale}px;` +
-        `background-position:${offsetX}px ${offsetY}px;`;
-    } catch {
-      // Window APIs unavailable: keep the plain transparent look.
-    }
-  }
-
-  $effect(() => {
-    if (!liquidBackdropActive) {
-      liquidWallpaper = null;
-      liquidBackdropStyle = "";
-      return;
-    }
-    let disposed = false;
-    let unlistenMove: (() => void) | null = null;
-    let unlistenResize: (() => void) | null = null;
-    let unlistenScale: (() => void) | null = null;
-    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
-    let refreshInFlight = false;
-
-    const refreshWallpaper = async () => {
-      if (disposed || refreshInFlight) return;
-      refreshInFlight = true;
-      try {
-        const snapshot = await invoke<WallpaperSnapshot | null>("get_desktop_wallpaper");
-        if (disposed) return;
-        liquidWallpaper = snapshot;
-        liquidBackdropStyle = "";
-        if (snapshot) await updateLiquidBackdropPosition();
-      } catch {
-        if (!disposed) {
-          liquidWallpaper = null;
-          liquidBackdropStyle = "";
-        }
-      } finally {
-        refreshInFlight = false;
-      }
-    };
-    const scheduleRefresh = () => {
-      void updateLiquidBackdropPosition();
-      if (resizeTimer) clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => void refreshWallpaper(), 300);
-    };
-
-    void refreshWallpaper();
-    const appWindow = getCurrentWindow();
-    void appWindow
-      .onMoved(() => void updateLiquidBackdropPosition())
-      .then((unlisten) => {
-        if (disposed) unlisten();
-        else unlistenMove = unlisten;
-      });
-    void appWindow
-      .onResized(scheduleRefresh)
-      .then((unlisten) => {
-        if (disposed) unlisten();
-        else unlistenResize = unlisten;
-      });
-    void appWindow
-      .onScaleChanged(scheduleRefresh)
-      .then((unlisten) => {
-        if (disposed) unlisten();
-        else unlistenScale = unlisten;
-      });
-    const refreshInterval = setInterval(() => void refreshWallpaper(), LIQUID_BACKDROP_REFRESH_MS);
-    return () => {
-      disposed = true;
-      if (resizeTimer) clearTimeout(resizeTimer);
-      clearInterval(refreshInterval);
-      unlistenMove?.();
-      unlistenResize?.();
-      unlistenScale?.();
-    };
-  });
-
   $effect(() => {
     trackDependencies(shell.runtimeOs, shell.settings.enabledPlatforms.join(","));
     if (shell.ensureActiveTab()) {
@@ -1212,59 +1096,16 @@
     }
   });
 
-  let showTelemetryOnboarding = $state(false);
-  let TelemetryOnboardingComp = $state<Component<ComponentProps<typeof TelemetryOnboardingType>> | null>(null);
-  let tourMockActive = $state(false);
-  let tourPrevTab: string | null = null;
-
-  let mockTourAccounts = $derived<PlatformAccount[]>([
-    { id: "__tour_mock_1", displayName: t("onboarding.features.mockAccount", { number: 1 }), username: "account_1", lastLoginAt: null },
-    { id: "__tour_mock_2", displayName: t("onboarding.features.mockAccount", { number: 2 }), username: "account_2", lastLoginAt: null },
-    { id: "__tour_mock_3", displayName: t("onboarding.features.mockAccount", { number: 3 }), username: "account_3", lastLoginAt: null },
-  ]);
-  let mockTourItems = $derived<ItemRef[]>(mockTourAccounts.map((a) => ({ type: "account" as const, id: a.id })));
-  let mockTourMap = $derived<Record<string, PlatformAccount>>(mockTourAccounts.reduce(
-    (acc, a) => { acc[a.id] = a; return acc; },
-    {} as Record<string, PlatformAccount>,
-  ));
-
-  function activateTourMock() {
-    tourPrevTab = shell.activeTab;
-    if (shell.activeTab !== "steam") {
-      shell.setActiveTab("steam");
-    }
-    tourMockActive = true;
-  }
-  function deactivateTourMock() {
-    tourMockActive = false;
-    if (tourPrevTab && tourPrevTab !== shell.activeTab) {
-      shell.setActiveTab(tourPrevTab);
-    }
-    tourPrevTab = null;
-  }
-
-  async function openOnboarding() {
-    const onbModule = await import("$lib/features/settings/TelemetryOnboarding.svelte");
-    TelemetryOnboardingComp = onbModule.default as Component<ComponentProps<typeof TelemetryOnboardingType>>;
-    showTelemetryOnboarding = true;
-  }
-
-  async function checkTelemetryOnboarding() {
-    try {
-      type TState = { onboarding_completed: boolean };
-      const state = await invoke<TState>("telemetry_get_state");
-      if (!state.onboarding_completed) {
-        await openOnboarding();
-      }
-    } catch (e) {
-      console.error("telemetry_get_state failed", e);
-    }
-  }
+  const onboarding = createOnboardingTour({
+    t,
+    getActiveTab: () => shell.activeTab,
+    setActiveTab: (tab) => shell.setActiveTab(tab),
+  });
 
   onMount(() => {
     void lifecycle.initializeAppShell();
     void windowActivity.start();
-    void checkTelemetryOnboarding();
+    void onboarding.openIfNeverCompleted();
     void deepLink.start();
 
     updateCheckTimer = setTimeout(() => { void updates.startBackgroundUpdateFlow(); }, 3500);
@@ -1368,7 +1209,7 @@
     bulkEditActive={bulkEdit.bulkEditMode}
     {locale}
     runtimeOs={shell.runtimeOs}
-    hideActions={showTelemetryOnboarding && !tourMockActive}
+    hideActions={onboarding.open && !onboarding.mockActive}
   />
 {/snippet}
 
@@ -1408,11 +1249,11 @@
           <feGaussianBlur in="displaced" stdDeviation="7" />
         </filter>
       </svg>
-      {#if liquidBackdropActive && liquidWallpaper}
+      {#if liquidBackdropActive && liquidBackdrop.wallpaper}
         <div
           class="liquid-backdrop"
           aria-hidden="true"
-          style={`background-image:url(${liquidWallpaper.dataUrl});${liquidBackdropStyle}`}
+          style={`background-image:url(${liquidBackdrop.wallpaper.dataUrl});${liquidBackdrop.style}`}
         ></div>
       {/if}
       {#if !secureScreen.renderSuspended}
@@ -1440,7 +1281,7 @@
           onRefreshAvatarsNow={refreshAvatarsNow}
           onRefreshBansNow={refreshBansNow}
           onAccountAdded={() => void loadAccounts(true)}
-          onReplayOnboarding={() => void openOnboarding()}
+          onReplayOnboarding={() => void onboarding.openOnboarding()}
           runtimeOs={shell.runtimeOs}
           registerSearchFocus={(fn) => (settingsSearchFocus = fn)}
           registerFlush={(fn) => (settingsFlush = fn)}
@@ -1489,12 +1330,12 @@
     {locale}
     loaderError={loader.error}
     loaderLoading={loader.loading}
-    renderedAccountCount={tourMockActive ? mockTourAccounts.length : display.renderedAccountCount}
+    renderedAccountCount={onboarding.mockActive ? onboarding.mockAccounts.length : display.renderedAccountCount}
     {pendingSetupAccountId}
-    displayFolderItems={tourMockActive ? [] : display.displayFolderItems}
-    displayAccountItemsWithPending={tourMockActive ? mockTourItems : display.displayAccountItemsWithPending}
-    displaySections={tourMockActive ? null : display.displaySections}
-    renderedAccountMap={tourMockActive ? mockTourMap : display.renderedAccountMap}
+    displayFolderItems={onboarding.mockActive ? [] : display.displayFolderItems}
+    displayAccountItemsWithPending={onboarding.mockActive ? onboarding.mockItems : display.displayAccountItemsWithPending}
+    displaySections={onboarding.mockActive ? null : display.displaySections}
+    renderedAccountMap={onboarding.mockActive ? onboarding.mockMap : display.renderedAccountMap}
     showUsernames={showUsernamesForActiveTab}
     showLastLogin={showLastLoginForActiveTab}
     {lastLoginUnknownKey}
@@ -1575,21 +1416,15 @@
        onboarding's fixed-position spotlight/modal and shift every
        getBoundingClientRect-derived coordinate. At shell level, fixed
        coordinates match the viewport rects the tour measures. -->
-  {#if !secureScreen.renderSuspended && showTelemetryOnboarding && TelemetryOnboardingComp}
-    {@const TelemetryOnboardingDyn = TelemetryOnboardingComp}
+  {#if !secureScreen.renderSuspended && onboarding.open && onboarding.component}
+    {@const TelemetryOnboardingDyn = onboarding.component}
     <TelemetryOnboardingDyn
       {t}
       version={appVersion}
       compatiblePlatforms={shell.compatiblePlatforms}
       detectedPlatforms={detectedPlatformDefs}
-      onTourActive={(active) => {
-        if (active) activateTourMock();
-        else deactivateTourMock();
-      }}
-      onComplete={() => {
-        showTelemetryOnboarding = false;
-        deactivateTourMock();
-      }}
+      onTourActive={(active) => onboarding.setMockActive(active)}
+      onComplete={() => onboarding.close()}
     />
   {/if}
 
