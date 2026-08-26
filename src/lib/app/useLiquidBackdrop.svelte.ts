@@ -49,10 +49,7 @@ export function createLiquidBackdrop({ isActive }: LiquidBackdropDeps) {
     if (!snapshot) return;
     try {
       const appWindow = getCurrentWindow();
-      const [pos, scale] = await Promise.all([
-        appWindow.outerPosition(),
-        appWindow.scaleFactor(),
-      ]);
+      const [pos, scale] = await Promise.all([appWindow.outerPosition(), appWindow.scaleFactor()]);
       const offsetX = (snapshot.x - pos.x) / scale + BLEED_PX;
       const offsetY = (snapshot.y - pos.y) / scale + BLEED_PX;
       style =
@@ -80,9 +77,7 @@ export function createLiquidBackdrop({ isActive }: LiquidBackdropDeps) {
       if (disposed || refreshInFlight) return;
       refreshInFlight = true;
       try {
-        const snapshot = await invoke<WallpaperSnapshot | null>(
-          "get_desktop_wallpaper",
-        );
+        const snapshot = await invoke<WallpaperSnapshot | null>("get_desktop_wallpaper");
         if (disposed) return;
         wallpaper = snapshot;
         style = "";
@@ -122,10 +117,7 @@ export function createLiquidBackdrop({ isActive }: LiquidBackdropDeps) {
       if (disposed) unlisten();
       else unlistenScale = unlisten;
     });
-    const refreshInterval = setInterval(
-      () => void refreshWallpaper(),
-      REFRESH_MS,
-    );
+    const refreshInterval = setInterval(() => void refreshWallpaper(), REFRESH_MS);
 
     return () => {
       disposed = true;

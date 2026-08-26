@@ -28,15 +28,9 @@ const TOUR_PLATFORM = "steam";
  * The onboarding component itself is imported on demand: most launches never
  * show it.
  */
-export function createOnboardingTour({
-  t,
-  getActiveTab,
-  setActiveTab,
-}: OnboardingTourDeps) {
+export function createOnboardingTour({ t, getActiveTab, setActiveTab }: OnboardingTourDeps) {
   let open = $state(false);
-  let component = $state<Component<
-    ComponentProps<typeof TelemetryOnboardingType>
-  > | null>(null);
+  let component = $state<Component<ComponentProps<typeof TelemetryOnboardingType>> | null>(null);
   let mockActive = $state(false);
   let previousTab: string | null = null;
 
@@ -75,11 +69,8 @@ export function createOnboardingTour({
   }
 
   async function openOnboarding() {
-    const onbModule =
-      await import("$lib/features/settings/TelemetryOnboarding.svelte");
-    component = onbModule.default as Component<
-      ComponentProps<typeof TelemetryOnboardingType>
-    >;
+    const onbModule = await import("$lib/features/settings/TelemetryOnboarding.svelte");
+    component = onbModule.default as Component<ComponentProps<typeof TelemetryOnboardingType>>;
     open = true;
   }
 
@@ -124,8 +115,7 @@ export function createOnboardingTour({
     },
     openOnboarding,
     openIfNeverCompleted,
-    setMockActive: (active: boolean) =>
-      active ? activateMock() : deactivateMock(),
+    setMockActive: (active: boolean) => (active ? activateMock() : deactivateMock()),
     close,
   };
 }

@@ -2,10 +2,7 @@ import type { CardExtensionSection } from "$lib/shared/cardExtension";
 import type { MessageKey } from "$lib/i18n";
 import { getCs2BridgeData } from "./cs2Bridge.svelte";
 
-type Translate = (
-  key: MessageKey,
-  params?: Record<string, string | number>,
-) => string;
+type Translate = (key: MessageKey, params?: Record<string, string | number>) => string;
 
 /**
  * The CS2 level, XP bar and weekly-case chip an account card shows when the
@@ -14,10 +11,7 @@ type Translate = (
  * Empty until the bridge has both a level and an XP reading: a partial row
  * would render a progress bar with nothing behind it.
  */
-export function cs2ExtensionSections(
-  accountId: string,
-  t: Translate,
-): CardExtensionSection[] {
+export function cs2ExtensionSections(accountId: string, t: Translate): CardExtensionSection[] {
   const data = getCs2BridgeData(accountId);
   if (!data || data.level === null || data.xp === null) return [];
   return [
