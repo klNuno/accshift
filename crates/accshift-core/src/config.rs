@@ -579,22 +579,42 @@ fn config_cache() -> &'static std::sync::Mutex<Option<CachedConfig>> {
     CACHE.get_or_init(|| std::sync::Mutex::new(None))
 }
 
-/// Process-global poison flag: set when `load_config` finds the local config
-/// file present on disk but unreadable/unparseable (and no valid `.bak` to
-/// recover from). The local file holds the only copy of the Steam API key,
-/// Roblox cookies and path overrides; treating a transient read failure as
-/// "empty defaults" and then saving would silently wipe those secrets. While
-/// poisoned, every local-config write is refused so a corrupt-but-present file
-/// is left untouched until the next successful read clears the flag.
-static LOCAL_CONFIG_UNREADABLE: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-fn set_local_config_unreadable(unreadable: bool) {
-    LOCAL_CONFIG_UNREADABLE.store(unreadable, std::sync::atomic::Ordering::SeqCst);
+/// Poisoned local config files: a path lands here when `load_config` finds it
+/// present on disk but unreadable/unparseable (and no valid `.bak` to recover
+/// from). The local file holds the only copy of the Steam API key, Roblox
+/// cookies and path overrides; treating a transient read failure as "empty
+/// defaults" and then saving would silently wipe those secrets. While poisoned,
+/// every write to that file is refused, so a corrupt-but-present file is left
+/// untouched until the next successful read clears it.
+///
+/// Keyed by path rather than a single process-global flag. A running app only
+/// ever has one local config, so this changes nothing there; the test binary
+/// has one per test, and a global flag let any test's successful read clear the
+/// poison another test had just set.
+fn poisoned_local_configs(
+) -> &'static std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>> {
+    static POISONED: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>,
+    > = std::sync::OnceLock::new();
+    POISONED.get_or_init(Default::default)
 }
 
-fn local_config_unreadable() -> bool {
-    LOCAL_CONFIG_UNREADABLE.load(std::sync::atomic::Ordering::SeqCst)
+fn set_local_config_unreadable(path: &std::path::Path, unreadable: bool) {
+    let mut poisoned = poisoned_local_configs()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if unreadable {
+        poisoned.insert(path.to_path_buf());
+    } else {
+        poisoned.remove(path);
+    }
+}
+
+fn local_config_unreadable(path: &std::path::Path) -> bool {
+    poisoned_local_configs()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(path)
 }
 
 /// Serializes every test that reads or writes config, wherever it lives. The
@@ -654,11 +674,11 @@ pub fn load_config(app_handle: &dyn AppContext) -> AppConfig {
     // later save can't clobber the only copy of the secrets with defaults.
     let local = match crate::storage::read_json_if_exists::<AppConfig>(&local_path) {
         Ok(local) => {
-            set_local_config_unreadable(false);
+            set_local_config_unreadable(&local_path, false);
             local
         }
         Err(e) => {
-            set_local_config_unreadable(true);
+            set_local_config_unreadable(&local_path, true);
             let _ = crate::logging::append_app_log(
                 app_handle,
                 "error",
@@ -732,7 +752,7 @@ fn save_config_unlocked(app_handle: &dyn AppContext, config: &AppConfig) -> Resu
     // overwrite the user's Steam API key / Roblox cookies / path overrides
     // with the empty defaults that the failed read produced. Refuse until a
     // successful read clears the poison flag.
-    if local_config_unreadable() {
+    if local_config_unreadable(&local_path) {
         let message = format!(
             "Refusing to write local config: the existing file at {} could not be read on the \
              last load (it may be corrupt or locked). Writing now would wipe stored secrets. \
@@ -1183,7 +1203,7 @@ mod tests {
         // A read of the existing-but-corrupt file must poison local writes.
         let _ = load_config(&*ctx);
         assert!(
-            local_config_unreadable(),
+            local_config_unreadable(&local_path),
             "corrupt existing local config should poison local writes"
         );
 
@@ -1218,7 +1238,7 @@ mod tests {
         crate::storage::write_json_atomic(&local_path, &valid).unwrap();
         let loaded = load_config(&*ctx);
         assert!(
-            !local_config_unreadable(),
+            !local_config_unreadable(&local_path),
             "successful local read should clear the poison flag"
         );
         assert_eq!(loaded.steam.api_key, "kept-secret");
