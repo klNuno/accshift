@@ -414,6 +414,62 @@ export function themeUsesLiquidGlass(theme: AppThemeDefinition): boolean {
   return documentIsLiquidGlass(theme.document, getThemeDocument);
 }
 
+/**
+ * How solid one card surface sits above the window fill.
+ *
+ * The four of them answer the same question and differ only in numbers: a
+ * fixed alpha while the live backdrop does the work, otherwise the base plus a
+ * bump, held between a floor and a cap. Written once, a fifth surface is a row
+ * here rather than a fourth copy of the same three-way ternary.
+ */
+interface SurfaceRule {
+  /** Used as-is while the liquid backdrop is live. */
+  liquid: number;
+  /** Cap, bump and floor on a glass theme with no live backdrop. */
+  glass: readonly [cap: number, bump: number, floor: number];
+  /** The same three on a regular theme. */
+  plain: readonly [cap: number, bump: number, floor: number];
+}
+
+const SURFACE_RULES = {
+  card: { liquid: 0.13, glass: [0.72, 0.1, 0.4], plain: [1, 0.14, 0.66] },
+  // Hover has no glass floor of its own: it is built on the card, which
+  // already floors at 0.4, so anything lower cannot reach it.
+  hover: { liquid: 0.21, glass: [0.8, 0.08, 0], plain: [1, 0.06, 0.72] },
+  muted: { liquid: 0.16, glass: [0.78, 0.14, 0.46], plain: [1, 0.18, 0.72] },
+  elevated: { liquid: 0.34, glass: [0.85, 0.2, 0.55], plain: [1, 0.22, 0.78] },
+} as const satisfies Record<string, SurfaceRule>;
+
+function surfaceOpacity(
+  rule: SurfaceRule,
+  base: number,
+  isLiquid: boolean,
+  glass: boolean,
+): number {
+  if (isLiquid) return rule.liquid;
+  const [cap, bump, floor] = glass ? rule.glass : rule.plain;
+  return Math.min(cap, Math.max(base + bump, floor));
+}
+
+/**
+ * How solid the window itself is.
+ *
+ * A regular theme follows the slider. A glass theme ignores it: the fill is
+ * what its blur was designed against, and with no backdrop to blur it falls
+ * back to near-solid so the text stays readable.
+ */
+function windowFill(
+  theme: AppThemeDefinition,
+  rawOpacity: number,
+  backdropAvailable: boolean,
+  liquid: boolean,
+): number {
+  if (!theme.glass) return rawOpacity;
+  if (!backdropAvailable) return 0.96;
+  if (liquid) return GLASS_WINDOW_OPACITY["liquid-glass"];
+  return GLASS_WINDOW_OPACITY[theme.id] ?? 0.55;
+}
+
 export function resolveThemeSurfaceOpacities(
   theme: AppThemeDefinition,
   backgroundOpacityPercent: number,
@@ -425,33 +481,14 @@ export function resolveThemeSurfaceOpacities(
   const backdropAvailable = opts.backdropAvailable !== false;
   const liquid = themeUsesLiquidGlass(theme);
   const isLiquid = liquid && backdropAvailable;
-  const windowOpacity = theme.glass
-    ? backdropAvailable
-      ? liquid
-        ? GLASS_WINDOW_OPACITY["liquid-glass"]
-        : (GLASS_WINDOW_OPACITY[theme.id] ?? 0.55)
-      : 0.96
-    : rawOpacity;
-  const cardOpacity = isLiquid
-    ? 0.13
-    : theme.glass
-      ? Math.min(0.72, Math.max(windowOpacity + 0.1, 0.4))
-      : Math.min(1, Math.max(windowOpacity + 0.14, 0.66));
-  const hoverOpacity = isLiquid
-    ? 0.21
-    : theme.glass
-      ? Math.min(0.8, cardOpacity + 0.08)
-      : Math.min(1, Math.max(cardOpacity + 0.06, 0.72));
-  const mutedOpacity = isLiquid
-    ? 0.16
-    : theme.glass
-      ? Math.min(0.78, Math.max(windowOpacity + 0.14, 0.46))
-      : Math.min(1, Math.max(windowOpacity + 0.18, 0.72));
-  const elevatedOpacity = isLiquid
-    ? 0.34
-    : theme.glass
-      ? Math.min(0.85, Math.max(windowOpacity + 0.2, 0.55))
-      : Math.min(1, Math.max(windowOpacity + 0.22, 0.78));
+  const glass = theme.glass === true;
+  const windowOpacity = windowFill(theme, rawOpacity, backdropAvailable, liquid);
+  const cardOpacity = surfaceOpacity(SURFACE_RULES.card, windowOpacity, isLiquid, glass);
+  // Hover builds on the card rather than on the window: the two must stay a
+  // step apart whatever the slider does to the fill underneath them.
+  const hoverOpacity = surfaceOpacity(SURFACE_RULES.hover, cardOpacity, isLiquid, glass);
+  const mutedOpacity = surfaceOpacity(SURFACE_RULES.muted, windowOpacity, isLiquid, glass);
+  const elevatedOpacity = surfaceOpacity(SURFACE_RULES.elevated, windowOpacity, isLiquid, glass);
   const overlayOpacity = Math.min(1, Math.max(windowOpacity + 0.3, 0.86));
   return {
     windowOpacity,
