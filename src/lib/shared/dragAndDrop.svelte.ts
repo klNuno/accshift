@@ -1,4 +1,5 @@
 import type { ItemRef } from "../features/folders/types";
+import { previewIndexAt } from "./dropGeometry";
 import { moveItem, reorderItems, getFolder, isFolderDescendant } from "../features/folders/store";
 
 const DRAG_THRESHOLD = 5;
@@ -91,68 +92,63 @@ export function createDragManager(options: DragManagerOptions) {
     dragOldIndex = items.findIndex((i) => i.id === dragItem!.id);
   }
 
+  /**
+   * What the pointer is over, as one value rather than three flags.
+   *
+   * The three states used to be decided and written in the same breath, which
+   * meant every one of them had to remember to clear the other two. Naming
+   * them first means the flags are assigned once, from one answer.
+   */
+  type DropTarget =
+    | { kind: "none" }
+    | { kind: "back" }
+    | { kind: "folder"; id: string }
+    | { kind: "reorder" };
+
+  function dropTargetAt(el: HTMLElement | null): DropTarget {
+    if (!el) return { kind: "none" };
+    const hover = el.closest(
+      "[data-folder-id], [data-back-card], [data-account-id]",
+    ) as HTMLElement | null;
+    // Anything that is not one of those cards is the grid itself, so the drag
+    // is a reorder rather than a move into something.
+    if (!hover) return { kind: "reorder" };
+
+    const { backCard, folderId, sectionCard } = hover.dataset;
+    if (backCard) return { kind: "back" };
+    if (!folderId) return { kind: "reorder" };
+    if (dragItem?.type === "folder") {
+      // A folder cannot swallow itself or its own subtree.
+      if (isFolderDescendant(folderId, dragItem.id)) return { kind: "reorder" };
+      // In sections mode a section takes accounts, never another folder:
+      // folders reorder among the sections instead.
+      if (dragInSectionsMode && sectionCard === "true") return { kind: "reorder" };
+    }
+    return { kind: "folder", id: folderId };
+  }
+
   function updateDragAt(clientX: number, clientY: number) {
     if (!isDragging) return;
 
     // Hit-test before touching the ghost style so the layout read does not
     // force a reflow right after a write in the same frame.
-    const el = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+    const target = dropTargetAt(document.elementFromPoint(clientX, clientY) as HTMLElement | null);
 
     if (ghostEl) {
       ghostEl.style.left = `${clientX - ghostOffsetX}px`;
       ghostEl.style.top = `${clientY - ghostOffsetY}px`;
     }
 
-    if (!el) {
-      dragOverFolderId = null;
-      dragOverBack = false;
+    dragOverBack = target.kind === "back";
+    dragOverFolderId = target.kind === "folder" ? target.id : null;
+    if (target.kind !== "reorder") {
       previewIndex = null;
       return;
     }
-
-    const hover = el.closest(
-      "[data-folder-id], [data-back-card], [data-account-id]",
-    ) as HTMLElement | null;
-    const isSectionHover = hover?.dataset.sectionCard === "true";
-
-    if (hover?.dataset.backCard) {
-      dragOverBack = true;
-      dragOverFolderId = null;
-      previewIndex = null;
-    } else if (
-      hover?.dataset.folderId &&
-      !(dragItem?.type === "folder" && isFolderDescendant(hover.dataset.folderId, dragItem.id)) &&
-      !(dragInSectionsMode && dragItem?.type === "folder" && isSectionHover)
-    ) {
-      dragOverFolderId = hover.dataset.folderId!;
-      dragOverBack = false;
-      previewIndex = null;
-    } else {
-      dragOverFolderId = null;
-      dragOverBack = false;
-      if (slotRects.length > 0 && dragOldIndex >= 0) {
-        let bestIdx = 0;
-        let bestDist = Infinity;
-        for (let i = 0; i < slotRects.length; i++) {
-          const r = slotRects[i];
-          const dist =
-            (clientX - (r.left + r.width / 2)) ** 2 + (clientY - (r.top + r.height / 2)) ** 2;
-          if (dist < bestDist) {
-            bestDist = dist;
-            bestIdx = i;
-          }
-        }
-        const r = slotRects[bestIdx];
-        let dropIdx: number;
-        if (dragIsListMode) {
-          dropIdx = clientY > r.top + r.height / 2 ? bestIdx + 1 : bestIdx;
-        } else {
-          dropIdx = clientX > r.left + r.width / 2 ? bestIdx + 1 : bestIdx;
-        }
-        const insertAt = dropIdx > dragOldIndex ? dropIdx - 1 : dropIdx;
-        previewIndex = Math.max(0, Math.min(insertAt, slotRects.length - 1));
-      }
-    }
+    // Left alone when the layout offers no slot: a drag never changes the
+    // snapshot it started with, so there is nothing new to show.
+    const at = previewIndexAt(clientX, clientY, slotRects, dragOldIndex, dragIsListMode);
+    if (at !== null) previewIndex = at;
   }
 
   function handleGridMouseDown(e: MouseEvent) {
@@ -295,14 +291,24 @@ export function createDragManager(options: DragManagerOptions) {
     cancelDrag();
   }
 
+  /**
+   * Eats the click the browser fires right after a drag release, so dropping a
+   * card never also activates it. Cleared on the next tick because a release
+   * that emits no click at all would otherwise leave the guard armed for the
+   * next real one.
+   */
+  function swallowNextClick() {
+    eatNextClick = true;
+    setTimeout(() => {
+      eatNextClick = false;
+    }, 0);
+  }
+
   function handleDocMouseUp() {
     if (dragCancelled) {
       // Release after an Escape cancel: swallow the mouseup and its click.
       dragCancelled = false;
-      eatNextClick = true;
-      setTimeout(() => {
-        eatNextClick = false;
-      }, 0);
+      swallowNextClick();
       return;
     }
 
@@ -351,11 +357,7 @@ export function createDragManager(options: DragManagerOptions) {
       options.onRefresh();
     }
 
-    eatNextClick = true;
-    // If no click event is emitted, clear the guard on the next tick.
-    setTimeout(() => {
-      eatNextClick = false;
-    }, 0);
+    swallowNextClick();
     cancelDrag();
   }
 
