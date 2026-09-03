@@ -35,6 +35,20 @@ mod exit {
 const CLI_DISABLED_MESSAGE: &str =
     "The accshift CLI is disabled in the app (Settings > General > Integrations).";
 
+/// Subcommands that stay reachable while the GUI's "Allow the accshift CLI"
+/// toggle is off.
+///
+/// Empty on purpose. The gate used to sit inside `list`, `switch` and
+/// `dry-run` only, so `platforms`, `descriptors` and every `diag` action ran
+/// on a machine whose owner had switched the CLI off, and `diag bundle` wrote
+/// a report carrying the redacted config summary. The support argument for
+/// leaving `diag` open does not hold either: the GUI has its own diagnostics
+/// screen, so a user whose app misbehaves still gets a report without the
+/// toggle, and the refusal names the exact setting to flip. Anything added
+/// here must be reachable by someone who has deliberately turned the CLI off,
+/// which means: reads nothing about the machine and writes nothing at all.
+const CLI_GATE_EXEMPT: &[&str] = &[];
+
 const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Parser)]
@@ -127,6 +141,56 @@ impl Command {
     }
 }
 
+/// What the GUI's "Allow the accshift CLI" toggle says about this run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CliGate {
+    /// The toggle is on, or has never been written (a fresh install).
+    Allow,
+    /// The toggle is off.
+    Disabled,
+    /// The settings file could not even be located, so the toggle cannot be
+    /// read. Refused rather than assumed open.
+    Unavailable(String),
+}
+
+fn resolve_cli_gate() -> CliGate {
+    match CliAppContext::new() {
+        Err(reason) => CliGate::Unavailable(reason),
+        Ok(ctx) => {
+            if settings::load(&ctx).cli_enabled {
+                CliGate::Allow
+            } else {
+                CliGate::Disabled
+            }
+        }
+    }
+}
+
+/// The single gate, in front of the single dispatch.
+///
+/// It runs before the command is even handed its arguments, so a refused run
+/// opens nothing, reads nothing and writes nothing. `--help` and `--version`
+/// never reach here: clap answers them and exits during `Cli::parse`.
+fn run(format: Format, command: Command, gate: CliGate) -> u8 {
+    let name = command.name();
+
+    if !CLI_GATE_EXEMPT.contains(&name) {
+        match &gate {
+            CliGate::Disabled => {
+                emit_err(format, name, "cli_disabled", CLI_DISABLED_MESSAGE);
+                return exit::CLI_DISABLED;
+            }
+            CliGate::Unavailable(reason) => {
+                emit_err(format, name, "io", reason);
+                return exit::IO;
+            }
+            CliGate::Allow => {}
+        }
+    }
+
+    dispatch(format, command)
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let format = Format::resolve(cli.json);
@@ -139,7 +203,17 @@ fn main() -> ExitCode {
         .and_then(|ctx| telemetry::CliTelemetry::start(&ctx));
     let command_name = cli.command.name();
 
-    let exit = match cli.command {
+    let exit = run(format, cli.command, resolve_cli_gate());
+
+    if let Some(reporter) = reporter {
+        reporter.finish(command_name, telemetry::error_code_for_exit(exit));
+    }
+
+    ExitCode::from(exit)
+}
+
+fn dispatch(format: Format, command: Command) -> u8 {
+    match command {
         Command::List { platform, folder } => cmd_list(format, &platform, folder.as_deref()),
         Command::Platforms => cmd_platforms(format),
         Command::Switch {
@@ -172,13 +246,7 @@ fn main() -> ExitCode {
             account_id,
         } => cmd_dry_run(format, &platform, &account_id),
         Command::Diag { action } => diagnostics::run(format, action),
-    };
-
-    if let Some(reporter) = reporter {
-        reporter.finish(command_name, telemetry::error_code_for_exit(exit));
     }
-
-    ExitCode::from(exit)
 }
 
 fn build_ctx(format: Format, command: &str) -> Result<accshift_core::AppCtx, u8> {
@@ -206,11 +274,6 @@ fn cmd_list(format: Format, platform_id: &str, folder: Option<&str>) -> u8 {
         Ok(c) => c,
         Err(code) => return code,
     };
-
-    if !settings::load(&*ctx).cli_enabled {
-        emit_err(format, "list", "cli_disabled", CLI_DISABLED_MESSAGE);
-        return exit::CLI_DISABLED;
-    }
 
     let service = match get_service(platform_id) {
         Some(s) => s,
@@ -361,11 +424,6 @@ fn cmd_switch(
 
     let app_settings = settings::load(&*ctx);
 
-    if !app_settings.cli_enabled {
-        emit_err(format, "switch", "cli_disabled", CLI_DISABLED_MESSAGE);
-        return exit::CLI_DISABLED;
-    }
-
     // PIN gate: the GUI can lock account switching behind a 4-digit PIN. Honour
     // the same lock here so the CLI cannot bypass it. Prompt before taking the
     // lock so we never hold it while waiting on stdin.
@@ -497,11 +555,6 @@ fn cmd_dry_run(format: Format, platform_id: &str, account_id: &str) -> u8 {
         Err(code) => return code,
     };
 
-    if !settings::load(&*ctx).cli_enabled {
-        emit_err(format, "dry-run", "cli_disabled", CLI_DISABLED_MESSAGE);
-        return exit::CLI_DISABLED;
-    }
-
     let service = match get_service(platform_id) {
         Some(s) => s,
         None => {
@@ -597,4 +650,217 @@ fn cmd_descriptors(format: Format) -> u8 {
     // holds and answered. A script reads `rejected`, it does not guess from a
     // status that would also mean "could not look".
     exit::OK
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diagnostics::Diag;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Every subcommand the binary answers, one per `Command`/`Diag` variant.
+    /// Adding a subcommand means adding it here, and
+    /// `every_subcommand_is_listed` says so out loud when the count drifts.
+    fn every_command() -> Vec<Command> {
+        vec![
+            Command::List {
+                platform: "steam".into(),
+                folder: None,
+            },
+            Command::Platforms,
+            Command::Switch {
+                platform: "steam".into(),
+                account_id: "alice".into(),
+                online: false,
+                invisible: false,
+                graceful: false,
+                force: false,
+                admin: false,
+                no_admin: false,
+                launch_options: None,
+            },
+            Command::Descriptors,
+            Command::DryRun {
+                platform: "steam".into(),
+                account_id: "alice".into(),
+            },
+            Command::Diag {
+                action: Diag::Logs {
+                    codes: Vec::new(),
+                    level: None,
+                    op_id: None,
+                    run_id: None,
+                    platform: None,
+                    source: None,
+                    since: None,
+                    contains: None,
+                    limit: 1,
+                    all: false,
+                },
+            },
+            Command::Diag {
+                action: Diag::Explain {
+                    code: "no-such-code".into(),
+                },
+            },
+            Command::Diag {
+                action: Diag::Check,
+            },
+            Command::Diag {
+                action: Diag::Level {
+                    module: None,
+                    set: None,
+                    reset: false,
+                    debug_for: None,
+                    stop_debug: false,
+                },
+            },
+            Command::Diag {
+                action: Diag::Bundle {
+                    records: 1,
+                    level: "info".into(),
+                    op_id: None,
+                    no_config: false,
+                    print: false,
+                },
+            },
+            Command::Diag {
+                action: Diag::Schema { write: None },
+            },
+        ]
+    }
+
+    /// Unique temp directory per test, removed on drop.
+    struct TempRoot(PathBuf);
+
+    impl TempRoot {
+        fn new(tag: &str) -> Self {
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!(
+                "accshift-cli-gate-test-{tag}-{}-{n}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).expect("create temp test dir");
+            Self(dir)
+        }
+
+        fn entries(&self) -> usize {
+            fs::read_dir(&self.0)
+                .expect("read temp test dir")
+                .filter_map(Result::ok)
+                .count()
+        }
+    }
+
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn every_subcommand_is_listed() {
+        let mut names: Vec<&str> = every_command().iter().map(Command::name).collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            vec![
+                "descriptors",
+                "diag-bundle",
+                "diag-check",
+                "diag-explain",
+                "diag-level",
+                "diag-logs",
+                "diag-schema",
+                "dry-run",
+                "list",
+                "platforms",
+                "switch",
+            ],
+            "a subcommand was added or renamed without updating every_command()"
+        );
+    }
+
+    #[test]
+    fn the_exemption_list_is_empty() {
+        assert!(
+            CLI_GATE_EXEMPT.is_empty(),
+            "an exemption was added: document it in docs/cli.md and say why the \
+             command is safe for someone who deliberately switched the CLI off"
+        );
+    }
+
+    #[test]
+    fn the_toggle_off_refuses_every_subcommand_the_same_way() {
+        for command in every_command() {
+            let name = command.name();
+            assert_eq!(
+                run(Format::Json, command, CliGate::Disabled),
+                exit::CLI_DISABLED,
+                "{name} ran with the CLI toggle off"
+            );
+        }
+    }
+
+    #[test]
+    fn unreadable_settings_refuse_every_subcommand_too() {
+        for command in every_command() {
+            let name = command.name();
+            assert_eq!(
+                run(
+                    Format::Json,
+                    command,
+                    CliGate::Unavailable("no home directory".into())
+                ),
+                exit::IO,
+                "{name} ran without a settings file to check"
+            );
+        }
+    }
+
+    #[test]
+    fn a_refused_subcommand_writes_nothing() {
+        // `diag schema --write <dir>` is the one subcommand whose writes land
+        // somewhere a test can own, so it is the one that can prove a refusal
+        // stops before the command body.
+        let tmp = TempRoot::new("refused");
+
+        let code = run(
+            Format::Json,
+            Command::Diag {
+                action: Diag::Schema {
+                    write: Some(tmp.0.clone()),
+                },
+            },
+            CliGate::Disabled,
+        );
+
+        assert_eq!(code, exit::CLI_DISABLED);
+        assert_eq!(tmp.entries(), 0, "a refused run still wrote to disk");
+    }
+
+    #[test]
+    fn the_toggle_on_reaches_the_command() {
+        let tmp = TempRoot::new("allowed");
+
+        let code = run(
+            Format::Json,
+            Command::Diag {
+                action: Diag::Schema {
+                    write: Some(tmp.0.clone()),
+                },
+            },
+            CliGate::Allow,
+        );
+
+        assert_eq!(code, exit::OK);
+        assert!(
+            tmp.entries() > 0,
+            "dispatch never reached the command with the toggle on"
+        );
+    }
 }

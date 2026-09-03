@@ -75,12 +75,12 @@ fn apply_for_account(
 
     if let Some(news) = request.news_popup {
         let val = if news { "1" } else { "0" };
-        content = vdf_set_nested_value(&content, &["news", "NotifyAvailableGames"], val);
+        content = vdf_set_nested_value(&content, &["news", "NotifyAvailableGames"], val)?;
     }
 
     if let Some(dnd) = request.do_not_disturb {
         let val = if dnd { "1" } else { "0" };
-        content = vdf_set_nested_value(&content, &["friends", "DoNotDisturb"], val);
+        content = vdf_set_nested_value(&content, &["friends", "DoNotDisturb"], val)?;
     }
 
     for edit in &request.launch_options {
@@ -98,7 +98,7 @@ fn apply_for_account(
                 "LaunchOptions",
             ],
             &edit.value,
-        );
+        )?;
     }
 
     crate::storage::write_bytes_atomic(&config_path, content.as_bytes()).map_err(AppError::FileRead)

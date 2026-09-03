@@ -152,6 +152,7 @@ fn main() {
             commands::minimize_window,
             commands::toggle_maximize_window,
             commands::close_window,
+            commands::set_maximize_button_rect,
             commands::set_keep_backdrop_active,
             commands::get_desktop_wallpaper,
             // Steam-specific

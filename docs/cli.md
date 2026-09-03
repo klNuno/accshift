@@ -38,7 +38,12 @@ accshift switch <platform> <account-id>
     [--launch-options "..."]
 accshift dry-run <platform> <account-id>
 accshift descriptors             # what the user descriptor folder holds
+accshift diag <action>           # logs, explain, check, level, bundle, schema
 ```
+
+Every one of these needs the "Allow the accshift CLI" toggle in the app
+(Settings > General > Integrations). With it off they all exit 7 and do
+nothing, `diag` included.
 
 `--graceful` asks the launcher to close itself and waits for it, which is what
 you want by default because a launcher killed mid-write can corrupt its own
@@ -156,3 +161,12 @@ and can be turned off entirely from Settings. An automated pipeline that starts
 returning 7 has not broken, it has been switched off on purpose. What the PIN
 lock does and does not protect is covered in the
 [security policy](../.github/SECURITY.md).
+
+Code 7 covers every subcommand, `platforms`, `descriptors` and all of `diag`
+included, and the check runs before the command is handed its arguments, so a
+refused run reads nothing and writes nothing. There is no exemption list: the
+`CLI_GATE_EXEMPT` const in `crates/accshift-cli/src/main.rs` is empty on
+purpose. Until 1.0.4 the toggle only covered `list`, `switch` and `dry-run`, so
+`diag bundle` still wrote a report carrying the redacted config summary on a
+machine whose owner had switched the CLI off. Diagnostics stay reachable
+without the CLI: the app has its own diagnostics screen.

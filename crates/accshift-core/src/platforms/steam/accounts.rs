@@ -154,8 +154,8 @@ fn set_login_user_flags(steam_path: &Path, target: Option<&str>) -> Result<(), A
             .map(|t| account_name == t && !account_name.is_empty())
             .unwrap_or(false);
         let flag = if is_target { "1" } else { "0" };
-        updated = vdf_set_nested_value(&updated, &[steam_id.as_str(), "AllowAutoLogin"], flag);
-        updated = vdf_set_nested_value(&updated, &[steam_id.as_str(), "MostRecent"], flag);
+        updated = vdf_set_nested_value(&updated, &[steam_id.as_str(), "AllowAutoLogin"], flag)?;
+        updated = vdf_set_nested_value(&updated, &[steam_id.as_str(), "MostRecent"], flag)?;
     }
 
     crate::storage::write_bytes_atomic(&path, updated.as_bytes()).map_err(AppError::FileRead)
