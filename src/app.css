@@ -96,6 +96,12 @@
      docs/theming.md. */
   --accent: #2563eb;
   --accent-fg: #ffffff;
+  /* The accent used as text or as a hairline icon rather than as a fill.
+     `--accent` is chosen to sit under `--accent-fg`, so on a card it lands
+     around 3:1 and fails small copy. Pulled toward the foreground it keeps
+     its hue and clears the contrast on a dark and on a light theme alike,
+     which a fixed light blue never did. */
+  --accent-text: color-mix(in srgb, var(--accent) 55%, var(--fg));
   --success: #22c55e;
   --warning: #eab308;
   --radius-sm: 4px;
@@ -118,6 +124,59 @@
   --overlay-blur: 4px;
   --label-transform: none;
   --motion-scale: 1;
+
+  /* Stacking order, declared once. Every z-index in the app names a level
+     here, so what covers what is readable in one place instead of being
+     spread over a dozen components as bare numbers nobody can compare. The
+     values leave gaps: a new layer slots between two of them without
+     renumbering anything. Not a theme token, a theme has no say in this.
+
+     The two negative levels sit inside the shell's stacking context, under
+     every piece of app content: the Liquid Glass wallpaper and the rim lens
+     that refracts it. */
+  --z-wallpaper: -2;
+  --z-rim-lens: -1;
+
+  /* The five card levels are local. An account card shell isolates its own
+     stacking context, so they only ever compete with each other, except
+     --z-card-extension which lifts the hovered shell over its neighbours. */
+  --z-card-base: 1;
+  --z-card-face: 2;
+  --z-card-dragging: 8;
+  --z-card-active: 18;
+  --z-card-extension: 24;
+
+  /* Window chrome, in the window's own stacking context. */
+  --z-sheen: 30;
+  --z-frost: 40;
+  --z-sticky: 100;
+  --z-sticky-popover: 101;
+  --z-screen: 300;
+  --z-screen-top: 320;
+  --z-streamer: 400;
+  --z-lock: 500;
+  /* Above the lock and the away screen on purpose: an error raised while the
+     screen is locked has to stay readable, and a toast carries no account
+     data of its own. */
+  --z-toast: 600;
+  --z-dialog: 1100;
+  --z-menu: 1200;
+
+  /* The onboarding tour points at the interface, so it sits over all of it.
+     Its five layers keep their own order: click shield, dimmed backdrop,
+     spotlight cutout, docked card, then the cleared backdrop that stops the
+     card from being darkened. */
+  --z-tour-shield: 8990;
+  --z-tour-backdrop: 9000;
+  --z-tour-spotlight: 9001;
+  --z-tour-card: 9002;
+  --z-tour-clear: 9003;
+
+  /* The drag ghost is appended to <body> and follows the pointer, so it has
+     to clear everything it could be dragged over. Above the tour as well:
+     the tour's click shield makes that combination unreachable, and the
+     ghost has no business being clipped by a layer it can float across. */
+  --z-drag-ghost: 9999;
 
   /* Card grid metrics, in terms of the shape tokens: density and the medium
      radius are what a theme turns to reshape the account grid. */
@@ -336,10 +395,10 @@ html[data-theme="liquid-glass"] .app-shell::before {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  /* Negative z (above the wallpaper at -2, below all app content): the rim's
+  /* Negative z (above the wallpaper, below all app content): the rim's
      backdrop-filter then refracts only the wallpaper, never the UI painted on
      top. Keeps buttons and cards crisp while the glassy lens rides the edge. */
-  z-index: -1;
+  z-index: var(--z-rim-lens);
   -webkit-mask:
     linear-gradient(
       to right,
@@ -398,7 +457,7 @@ html[data-theme="liquid-glass"] .app-shell::after {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 30;
+  z-index: var(--z-sheen);
   background:
     radial-gradient(
       140% 80% at 50% -35%,

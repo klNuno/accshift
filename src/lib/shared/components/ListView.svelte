@@ -27,7 +27,7 @@
     getAccountNote = () => "",
     getAccountCardColor = () => "",
     getFolderCardColor = () => "",
-    accentColor = "#3b82f6",
+    accentColor = "var(--accent)",
     locale = DEFAULT_LOCALE,
     pendingSetupId = null,
     isSearching = false,

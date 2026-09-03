@@ -279,7 +279,7 @@
     align-self: flex-start;
     border: none;
     background: transparent;
-    color: #60a5fa;
+    color: var(--accent-text);
     font-size: 12px;
     padding: 0;
     cursor: pointer;

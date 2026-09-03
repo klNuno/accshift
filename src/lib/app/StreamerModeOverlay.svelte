@@ -81,7 +81,7 @@
     opacity: 0;
     pointer-events: none;
     transition: opacity 320ms ease-in-out;
-    z-index: 400;
+    z-index: var(--z-streamer);
   }
 
   .streamer-overlay.visible {

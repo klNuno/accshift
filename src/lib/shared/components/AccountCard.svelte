@@ -440,7 +440,7 @@
   }
 
   .card-shell.extension-visible {
-    z-index: 24;
+    z-index: var(--z-card-extension);
   }
 
   .extension-hitbox {
@@ -449,7 +449,7 @@
     bottom: 0;
     width: calc(var(--grid-card-width) + 130px);
     pointer-events: none;
-    z-index: 1;
+    z-index: var(--z-card-base);
   }
 
   .extension-hitbox.right {
@@ -521,15 +521,19 @@
    * offset rings. */
   .extension-surface.active.visible {
     box-shadow:
-      0 0 0 2px rgba(255, 255, 255, 0.62),
-      0 0 0 4px rgba(9, 9, 11, 0.45),
+      0 0 0 2px color-mix(in srgb, var(--fg) 62%, transparent),
+      0 0 0 4px color-mix(in srgb, var(--bg-solid) 45%, transparent),
       0 14px 28px rgba(0, 0, 0, 0.18);
   }
 
   .extension-surface.custom-color.active.visible {
     box-shadow:
-      0 0 0 2px rgba(255, 255, 255, 0.72),
-      0 0 0 5px color-mix(in srgb, var(--card-custom-color) 50%, rgba(9, 9, 11, 0.62)),
+      0 0 0 2px color-mix(in srgb, var(--fg) 72%, transparent),
+      0 0 0 5px color-mix(
+        in srgb,
+        var(--card-custom-color) 50%,
+        color-mix(in srgb, var(--bg-solid) 62%, transparent)
+      ),
       0 14px 28px rgba(0, 0, 0, 0.18);
   }
 
@@ -599,7 +603,7 @@
 
   .card {
     position: relative;
-    z-index: 2;
+    z-index: var(--z-card-face);
     width: var(--grid-card-width);
     min-height: var(--grid-card-min-height);
     padding: var(--grid-card-padding);
@@ -657,12 +661,16 @@
     transform: translateY(0) scale(0.985);
   }
 
+  /* Two rings: a bright halo against the window ground, then a dark band
+     that separates it from whatever is behind. Built from --fg and
+     --bg-solid rather than a white and a near-black, so the pair swaps
+     round on a light theme instead of the halo vanishing into it. */
   .card.active {
     box-shadow:
-      0 0 0 2px rgba(255, 255, 255, 0.62),
-      0 0 0 4px rgba(9, 9, 11, 0.45);
+      0 0 0 2px color-mix(in srgb, var(--fg) 62%, transparent),
+      0 0 0 4px color-mix(in srgb, var(--bg-solid) 45%, transparent);
     cursor: pointer;
-    z-index: 18;
+    z-index: var(--z-card-active);
   }
 
   .card.active:not(.custom-color) {
@@ -672,8 +680,12 @@
   .card.custom-color.active {
     background: color-mix(in srgb, var(--card-custom-color) 24%, var(--bg-card));
     box-shadow:
-      0 0 0 2px rgba(255, 255, 255, 0.72),
-      0 0 0 5px color-mix(in srgb, var(--card-custom-color) 50%, rgba(9, 9, 11, 0.62));
+      0 0 0 2px color-mix(in srgb, var(--fg) 72%, transparent),
+      0 0 0 5px color-mix(
+        in srgb,
+        var(--card-custom-color) 50%,
+        color-mix(in srgb, var(--bg-solid) 62%, transparent)
+      );
   }
 
   .card.ban-red {
@@ -708,7 +720,7 @@
   .card.dragging {
     opacity: 0.4;
     transform: scale(0.95);
-    z-index: 8;
+    z-index: var(--z-card-dragging);
   }
 
   .avatar {
@@ -836,7 +848,7 @@
   }
 
   .avatar.active {
-    outline: 2px solid rgba(255, 255, 255, 0.2);
+    outline: 2px solid color-mix(in srgb, var(--fg) 20%, transparent);
   }
 
   .name {
@@ -907,8 +919,8 @@
     width: 12px;
     height: 12px;
     border-radius: 999px;
-    border: 1px solid rgba(255, 255, 255, 0.92);
-    color: #fff;
+    border: 1px solid color-mix(in srgb, var(--fg) 92%, transparent);
+    color: var(--fg);
     font-size: 8px;
     font-weight: 700;
     line-height: 1;

@@ -56,18 +56,24 @@
   });
 
   // WAAPI rather than a CSS transition: the transition raced the mount and
-  // jumped straight to red. cancel() on cleanup resets to white for revisits.
+  // jumped straight to red. cancel() on cleanup resets to the theme
+  // foreground for revisits.
   $effect(() => {
     if (step !== "deal" || !dealTitleEl) return;
     if (document.documentElement.dataset.motion === "reduced") {
       dealTitleEl.style.color = "#ef4444";
       return () => dealTitleEl?.style.removeProperty("color");
     }
-    // Midpoint keyframe: plain white->red sRGB lerp reads as "nothing happens
-    // then sudden red"; forcing a visible pink at 40% spreads the shift out.
+    // Midpoint keyframe: a plain foreground-to-red sRGB lerp reads as
+    // "nothing happens then sudden red"; forcing a visible pink at 40%
+    // spreads the shift out.
+    // The start colour is read off the element rather than written as
+    // var(--fg): a WAAPI keyframe is not a custom property substitution
+    // site, so a var() there would animate from nothing.
+    const startColor = getComputedStyle(dealTitleEl).color;
     const anim = dealTitleEl.animate(
       [
-        { color: "#ffffff", textShadow: "0 0 0px rgba(239, 68, 68, 0)" },
+        { color: startColor, textShadow: "0 0 0px rgba(239, 68, 68, 0)" },
         { color: "#f0a3a3", textShadow: "0 0 6px rgba(239, 68, 68, 0.2)", offset: 0.4 },
         { color: "#ef4444", textShadow: "0 0 18px rgba(239, 68, 68, 0.6)" },
       ],
@@ -439,7 +445,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    z-index: 8990;
+    z-index: var(--z-tour-shield);
     background: transparent;
     pointer-events: auto;
     transition: opacity 800ms ease-out;
@@ -449,7 +455,7 @@
   .backdrop {
     position: fixed;
     inset: 0;
-    z-index: 9000;
+    z-index: var(--z-tour-backdrop);
     animation: fadeIn 200ms ease-out;
     transition: background 280ms ease-out, backdrop-filter 280ms ease-out, opacity 800ms ease-out;
     pointer-events: none;
@@ -464,12 +470,12 @@
     place-items: center;
   }
   /* During the tour the spotlight box-shadow does the dimming; the backdrop
-     goes transparent and above it (z 9003 > 9001) so the docked explanation
-     card is not darkened. */
+     goes transparent and above it (--z-tour-clear sits over
+     --z-tour-spotlight) so the docked explanation card is not darkened. */
   .backdrop.clear {
     background: transparent;
     backdrop-filter: blur(0px);
-    z-index: 9003;
+    z-index: var(--z-tour-clear);
   }
   .backdrop.fading { opacity: 0; }
 
@@ -477,12 +483,12 @@
     position: fixed;
     border-radius: 14px;
     pointer-events: none;
-    z-index: 9001;
+    z-index: var(--z-tour-spotlight);
     box-shadow:
       0 0 0 9999px color-mix(in srgb, #000 55%, transparent),
-      0 0 0 2px #60a5fa,
-      0 0 28px color-mix(in srgb, #60a5fa 70%, transparent),
-      inset 0 0 0 2px color-mix(in srgb, #60a5fa 90%, transparent);
+      0 0 0 2px var(--accent),
+      0 0 28px color-mix(in srgb, var(--accent) 70%, transparent),
+      inset 0 0 0 2px color-mix(in srgb, var(--accent) 90%, transparent);
     transition: left 260ms cubic-bezier(0.22, 1, 0.36, 1),
                 top 260ms cubic-bezier(0.22, 1, 0.36, 1),
                 width 260ms cubic-bezier(0.22, 1, 0.36, 1),
@@ -500,7 +506,7 @@
     padding: 4px;
     display: flex;
     flex-direction: column;
-    z-index: 9001;
+    z-index: var(--z-tour-spotlight);
     animation: ctxIn 180ms ease-out;
     pointer-events: none;
   }
@@ -575,7 +581,7 @@
     width: min(94vw, 460px);
     padding: 16px 18px 14px;
     gap: 10px;
-    z-index: 9002;
+    z-index: var(--z-tour-card);
     animation: dockIn 280ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
@@ -615,7 +621,7 @@
     flex: 0 0 auto;
     width: 3px;
     align-self: stretch;
-    background: #60a5fa;
+    background: var(--accent);
     border-radius: 2px;
   }
   .feature-text-wrap {
@@ -657,7 +663,7 @@
     transition: background 140ms ease-out, transform 140ms ease-out;
   }
   .legend-dot.on {
-    background: #60a5fa;
+    background: var(--accent);
     transform: scale(1.25);
   }
 
@@ -713,7 +719,7 @@
     padding: 4px 10px;
     border-radius: 999px;
     border: 1px solid var(--border);
-    background: color-mix(in srgb, var(--bg-card) 88%, #fff 12%);
+    background: color-mix(in srgb, var(--bg-card) 88%, var(--fg) 12%);
     font-size: 12px;
     font-weight: 600;
   }
@@ -725,7 +731,7 @@
     font-size: clamp(16px, min(5vw, 3.4vh), 24px);
     font-weight: 900;
     letter-spacing: 0.08em;
-    color: #ffffff;
+    color: var(--fg);
   }
 
   .deal-gif {
@@ -771,7 +777,7 @@
     padding: 11px 16px;
     border-radius: 12px;
     border: 1px solid var(--border);
-    background: color-mix(in srgb, var(--bg-card) 88%, #fff 12%);
+    background: color-mix(in srgb, var(--bg-card) 88%, var(--fg) 12%);
     color: var(--fg);
     text-align: left;
     cursor: pointer;
@@ -784,7 +790,7 @@
   .deal-row:hover:not(:disabled) {
     transform: translateY(-1px);
     border-color: color-mix(in srgb, var(--fg) 45%, var(--border));
-    background: color-mix(in srgb, var(--bg-card) 80%, #fff 20%);
+    background: color-mix(in srgb, var(--bg-card) 80%, var(--fg) 20%);
   }
   .deal-row:disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -825,6 +831,10 @@
   .no-btn:hover:not(:disabled) .deal-row-body {
     color: #ef4444;
   }
+  /* The two whites below stay literal: the fill under them is a fixed red
+     no theme touches, so they are the same relationship --accent-fg has
+     with --accent. Pulling them to --fg would put near-black on that red
+     on a light theme, which reads worse, not better. */
   .no-btn.no-clicked,
   .no-btn.no-clicked:disabled {
     background: #ef4444 !important;
@@ -838,21 +848,21 @@
   }
 
   .deal-row.deal-accent {
-    border-color: rgba(255, 255, 255, 0.65);
-    background: color-mix(in srgb, var(--bg-card) 86%, #fff 14%);
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18),
-                0 6px 22px rgba(255, 255, 255, 0.08);
+    border-color: color-mix(in srgb, var(--fg) 65%, transparent);
+    background: color-mix(in srgb, var(--bg-card) 86%, var(--fg) 14%);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 18%, transparent),
+                0 6px 22px color-mix(in srgb, var(--fg) 8%, transparent);
   }
   .deal-row.deal-accent .deal-row-label {
-    color: #ffffff;
+    color: var(--fg);
     letter-spacing: 0.04em;
   }
   .deal-row.deal-accent:hover:not(:disabled) {
     transform: translateY(-2px);
-    border-color: #ffffff;
-    background: color-mix(in srgb, var(--bg-card) 78%, #fff 22%);
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.45),
-                0 14px 32px rgba(255, 255, 255, 0.16);
+    border-color: var(--fg);
+    background: color-mix(in srgb, var(--bg-card) 78%, var(--fg) 22%);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 45%, transparent),
+                0 14px 32px color-mix(in srgb, var(--fg) 16%, transparent);
   }
 
   .actions {

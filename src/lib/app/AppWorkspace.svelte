@@ -213,7 +213,7 @@
 
   function getEffectiveAccountColor(accountId: string): string {
     if (!bulkEditMode) return getAccountCardColor(accountId);
-    return bulkEditSelectedIds.has(accountId) ? "#2563eb" : "";
+    return bulkEditSelectedIds.has(accountId) ? "var(--accent)" : "";
   }
 
   function getEffectiveAccountNote(accountId: string): string {
@@ -646,7 +646,7 @@
     width: 20px;
     height: 20px;
     border: 2px solid var(--border);
-    border-top-color: #3b82f6;
+    border-top-color: var(--accent);
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
   }

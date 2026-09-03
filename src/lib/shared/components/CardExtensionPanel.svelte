@@ -122,7 +122,7 @@
     margin-top: 5px;
     border-radius: 999px;
     flex: 0 0 auto;
-    background: color-mix(in srgb, var(--card-custom-color, #60a5fa) 52%, #ffffff);
+    background: color-mix(in srgb, var(--card-custom-color, var(--accent)) 52%, #ffffff);
     opacity: 0.9;
     animation: pulseDot 1.5s ease-in-out infinite;
   }
@@ -193,7 +193,7 @@
   .progress-fill {
     height: 100%;
     border-radius: 999px;
-    background: color-mix(in srgb, var(--card-custom-color, #60a5fa) 72%, #ffffff);
+    background: color-mix(in srgb, var(--card-custom-color, var(--accent)) 72%, #ffffff);
   }
 
   .progress-label {

@@ -23,7 +23,7 @@
     lastLoginAtSec = null,
     accountNote = "",
     cardColor = "",
-    accentColor = "#3b82f6",
+    accentColor = "var(--accent)",
     locale = DEFAULT_LOCALE,
     onSwitch,
     warningInfo = undefined,

@@ -29,7 +29,7 @@
     showLastLogin = false,
     lastLoginUnknownKey = "time.unknown",
     lastLoginAtSec = null,
-    accentColor = "#3b82f6",
+    accentColor = "var(--accent)",
     locale = DEFAULT_LOCALE,
     onClick,
     onContextMenu = (_e: MouseEvent) => {},
@@ -244,8 +244,8 @@
   }
 
   .row.drag-over {
-    border-color: var(--drag-accent, #3b82f6);
-    background: color-mix(in srgb, var(--drag-accent, #3b82f6) 10%, transparent);
+    border-color: var(--drag-accent, var(--accent));
+    background: color-mix(in srgb, var(--drag-accent, var(--accent)) 10%, transparent);
   }
 
   .row.ban-red {

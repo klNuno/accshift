@@ -326,7 +326,7 @@
     pointer-events: none;
     opacity: 0;
     transition: opacity 120ms ease-out;
-    z-index: 100;
+    z-index: var(--z-sticky);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   }
 
@@ -408,8 +408,8 @@
   }
 
   .btn.active-mode {
-    background: color-mix(in srgb, #2563eb 24%, var(--bg-muted));
-    color: #60a5fa;
+    background: color-mix(in srgb, var(--accent) 24%, var(--bg-muted));
+    color: var(--accent-text);
   }
 
   .right {

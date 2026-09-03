@@ -1533,16 +1533,16 @@
   /* Fake see-through material for Liquid Glass on Windows: the desktop
      wallpaper, screen-aligned via background-size/position (inline style),
      lightly blurred and refracted. Bleeds past the window so the displacement
-     and blur never sample outside the image. z-index -1 keeps it under all
-     content (the shell's will-change creates the stacking context). */
+     and blur never sample outside the image. A negative z keeps it under
+     all content (the shell's will-change creates the stacking context). */
   .liquid-backdrop {
     position: absolute;
     inset: -40px;
-    /* Below the rim lens (::before, z-index -1) so the rim's backdrop-filter
-       refracts the wallpaper only. Both sit in negative-z, so the app content
-       (titlebar buttons, cards) always paints on top and stays crisp: the
-       rim never blurs the UI, only the desktop. */
-    z-index: -2;
+    /* Below the rim lens (::before, --z-rim-lens) so the rim's
+       backdrop-filter refracts the wallpaper only. Both sit in negative-z,
+       so the app content (titlebar buttons, cards) always paints on top and
+       stays crisp: the rim never blurs the UI, only the desktop. */
+    z-index: var(--z-wallpaper);
     pointer-events: none;
     background-repeat: no-repeat;
     filter: url(#lg-backdrop-distortion) saturate(1.25);
@@ -1568,7 +1568,7 @@
     inset: 0;
     opacity: 0;
     pointer-events: none;
-    z-index: 40;
+    z-index: var(--z-frost);
     background:
       linear-gradient(
         to bottom,
@@ -1620,7 +1620,7 @@
     width: 20px;
     height: 20px;
     border: 2px solid var(--border);
-    border-top-color: #3b82f6;
+    border-top-color: var(--accent);
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
   }

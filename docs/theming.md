@@ -167,6 +167,13 @@ split into channels before it reaches CSS.
 | `warning`  | `--warning`   | colour | 2     | Warnings and degraded states.      |
 | `danger`   | `--danger`    | colour | 1     | Errors and destructive actions.    |
 
+A theme does not set `--accent-text`: the stylesheet derives it from `accent`
+and `fg`, and the interface uses it wherever the accent carries small text or a
+hairline icon instead of filling a shape. The contrast target below asks
+`accent` for 3:1 against a card, which is a fill ratio, not a body-copy one, so
+a raw accent used as 11px text would sit under the readable line on plenty of
+otherwise valid themes.
+
 ### Shape and density
 
 | Token             | CSS                  | Kind   | Since | Role                                                                                                           |
