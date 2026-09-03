@@ -184,6 +184,7 @@
         }
       }}
     />
+    <p class="hint">{t("settings.pinScreenLockOnly")}</p>
 
     {#if settings.pinEnabled || pinSetupPending}
       <div class="field">

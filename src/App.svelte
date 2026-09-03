@@ -263,6 +263,15 @@
     getIsAccountSelectionView: () => isAccountSelectionView,
     getAppVersion: () => appVersion,
     onCloseContextMenu: dialogs.closeContextMenu,
+    // Re-read from the store rather than writing `shell.settings` back: the
+    // unlock can happen while the settings panel holds its own draft, and only
+    // the hash may travel.
+    persistPinHash: (hash) => {
+      const latest = getSettings();
+      latest.pinHash = hash;
+      saveSettings(latest);
+      shell.refreshSettings();
+    },
     t,
   });
   const streamerMode = createStreamerModeController({

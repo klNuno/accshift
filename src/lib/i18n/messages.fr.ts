@@ -800,9 +800,15 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.cs2BridgeClearToken": "Effacer le token",
   "settings.pathSaveFailed": "Impossible d'enregistrer le chemin {platform}",
   "settings.pathInvalidHint": "Ce chemin n'a pas pu être enregistré. Vérifie-le et réessaie.",
+  "settings.pathSteamNeverSignedIn":
+    "Steam trouvé, connecte-toi une fois pour qu'il crée son historique de connexion",
+  "settings.pathNotSteamFolder": "Ce dossier ne ressemble pas à une installation Steam",
+  "settings.pathNotADirectory": "Le chemin doit être un dossier existant",
   "settings.pinSaved": "Code PIN enregistré",
   "settings.pinTakesEffectNextLaunch": "Prend effet au prochain lancement de l'app",
   "settings.pinRequiredAfterInactivity": "Demandé après inactivité et au lancement de l'app",
+  "settings.pinScreenLockOnly":
+    "Le PIN verrouille seulement cette fenêtre. Il ne protège rien sur le disque.",
   "settings.unitSeconds": "secondes",
   "settings.unitDays": "jours",
   "settings.telemetryLoadFailed": "Impossible de charger les paramètres de télémétrie",
