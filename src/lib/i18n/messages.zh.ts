@@ -274,6 +274,7 @@ export const ZH_MESSAGES: Record<MessageKey, string> = {
   "platform.renameTitle": "重命名账号",
   "platform.renamePlaceholder": "账号名称",
   "platform.newAccountPending": "等待中...",
+  "platform.setupBusy": "另一个 accshift 操作正在运行。正在等待其完成。",
   "platform.renameNewAccount": "为该账号命名",
   "platform.copyLabelAccountId": "账号 ID",
   "platform.forget": "移除",

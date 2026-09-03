@@ -477,13 +477,18 @@ pub async fn platform_get_setup_status(
     // fail the poll. Report a non-terminal holding state instead. Every
     // platform's add-flow UI keeps its spinner on unknown/waiting states and
     // the next poll picks up the real status once the lock is free.
+    //
+    // That holding state is `busy`, not `waiting_for_login`: the wizard used to
+    // say "waiting for you to log in" for as long as a CLI switch or a slow
+    // Steam operation held the lock, which blames the user for someone else's
+    // work. `busy` says what is actually happening.
     run_blocking(
         "platform_get_setup_status",
         move || match accshift_core::lock::acquire_exclusive(&c, LOCK_TIMEOUT) {
             Ok(_lock) => service.get_setup_status(c, &setup_id),
             Err(accshift_core::lock::LockError::Contended) => Ok(SetupStatus {
                 setup_id,
-                state: "waiting_for_login".to_string(),
+                state: "busy".to_string(),
                 account_id: String::new(),
                 account_display_name: String::new(),
                 error_message: String::new(),
@@ -545,7 +550,10 @@ pub async fn platform_detect_installed(app_handle: tauri::AppHandle) -> Vec<Stri
     .unwrap_or_default()
 }
 
-#[tauri::command]
+/// Opens a folder picker. `command(async)`: the dialog is a child process the
+/// call waits on, and on the main thread that freezes the window for as long as
+/// the picker is open, close button included.
+#[tauri::command(async)]
 pub fn platform_select_path(platform_id: String) -> Result<String, PlatformError> {
     require_service(&platform_id)?.select_path()
 }
@@ -606,7 +614,11 @@ pub async fn reload_user_platforms(
 
 /// Opens a file picker on a descriptor to add. Cancelling is an error, which
 /// the caller reads as "leave everything alone".
-#[tauri::command]
+///
+/// `command(async)` for the same reason as [`platform_select_path`]: the dialog
+/// is a child process this call waits on, and waiting on the main thread makes
+/// the window unresponsive while the picker is up.
+#[tauri::command(async)]
 pub fn descriptor_select_file() -> Result<String, PlatformError> {
     accshift_core::os::select_file(
         "Select a platform descriptor",
@@ -757,7 +769,7 @@ pub fn set_keep_backdrop_active(window: tauri::WebviewWindow, enabled: bool) {
 /// Desktop wallpaper snapshot for the liquid glass fake backdrop: a JPEG data
 /// URL plus the physical virtual-screen rect it covers, so the frontend can
 /// align it under the window.
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WallpaperSnapshot {
     pub data_url: String,
@@ -771,6 +783,9 @@ pub struct WallpaperSnapshot {
 mod wallpaper_capture {
     use super::WallpaperSnapshot;
     use base64::Engine;
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+    use std::time::SystemTime;
     use windows::core::BOOL;
     use windows::Win32::Foundation::{HWND, LPARAM, RECT};
     use windows::Win32::Graphics::Gdi::{
@@ -779,7 +794,10 @@ mod wallpaper_capture {
         BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HALFTONE, SRCCOPY,
     };
     use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
-    use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetClassNameW, GetWindowRect};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetClassNameW, GetSystemMetrics, GetWindowRect, SM_CXVIRTUALSCREEN,
+        SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    };
 
     /// Semi-documented since Win 8.1; makes PrintWindow capture DWM-composed
     /// content, which is where the wallpaper actually lives on Windows 11.
@@ -981,22 +999,97 @@ mod wallpaper_capture {
             height: capture.height,
         })
     }
+
+    /// What the last answer was computed from.
+    ///
+    /// The shell rewrites `TranscodedWallpaper` whenever the desktop picture
+    /// changes, Spotlight rotations and slideshow ticks included, and it also
+    /// rewrites it when the fit mode changes. Its size and mtime therefore
+    /// identify the picture as rendered, which `SPI_GETDESKWALLPAPER` cannot do
+    /// (it answers an empty path under Spotlight). The virtual-screen rect
+    /// closes the other half: same picture, new monitor layout, different
+    /// capture.
+    #[derive(PartialEq, Eq)]
+    pub(super) struct WallpaperKey {
+        modified: Option<SystemTime>,
+        len: u64,
+        virtual_rect: (i32, i32, i32, i32),
+    }
+
+    static CACHE: Mutex<Option<(WallpaperKey, WallpaperSnapshot)>> = Mutex::new(None);
+
+    fn transcoded_wallpaper_path() -> Option<PathBuf> {
+        let appdata = std::env::var_os("APPDATA")?;
+        let mut path = PathBuf::from(appdata);
+        path.push("Microsoft");
+        path.push("Windows");
+        path.push("Themes");
+        path.push("TranscodedWallpaper");
+        Some(path)
+    }
+
+    /// `None` when the identity cannot be read, which disables caching rather
+    /// than risking a stale backdrop.
+    pub(super) fn current_key() -> Option<WallpaperKey> {
+        let meta = std::fs::metadata(transcoded_wallpaper_path()?).ok()?;
+        let virtual_rect = unsafe {
+            (
+                GetSystemMetrics(SM_XVIRTUALSCREEN),
+                GetSystemMetrics(SM_YVIRTUALSCREEN),
+                GetSystemMetrics(SM_CXVIRTUALSCREEN),
+                GetSystemMetrics(SM_CYVIRTUALSCREEN),
+            )
+        };
+        Some(WallpaperKey {
+            modified: meta.modified().ok(),
+            len: meta.len(),
+            virtual_rect,
+        })
+    }
+
+    pub(super) fn cached(key: &WallpaperKey) -> Option<WallpaperSnapshot> {
+        let guard = CACHE.lock().unwrap_or_else(|error| error.into_inner());
+        let (stored, snapshot) = guard.as_ref()?;
+        (stored == key).then(|| snapshot.clone())
+    }
+
+    pub(super) fn store(key: WallpaperKey, snapshot: &WallpaperSnapshot) {
+        let mut guard = CACHE.lock().unwrap_or_else(|error| error.into_inner());
+        *guard = Some((key, snapshot.clone()));
+    }
 }
 
 /// Feeds the liquid glass fake backdrop: no DWM material can blur/distort
 /// what sits behind a transparent window without the acrylic gray smoke, so
 /// the frontend replicates the wallpaper inside the window and filters it.
-#[tauri::command]
+/// `command(async)` is load bearing twice over. A plain `#[tauri::command]`
+/// runs on the main thread, so the full-resolution capture, the JPEG encode and
+/// the base64 of several megabytes would all hitch the UI, and
+/// `run_on_main_thread` below would execute inline instead of posting to the
+/// event loop.
+#[tauri::command(async)]
 pub fn get_desktop_wallpaper(window: tauri::WebviewWindow) -> Option<WallpaperSnapshot> {
     #[cfg(windows)]
     {
+        // The frontend asks at theme activation, 300 ms after every resize, on
+        // every scale change and every five minutes. The picture behind the
+        // window is the same one nearly every time, so answer from the cache
+        // rather than recapture and re-encode it.
+        let key = wallpaper_capture::current_key();
+        if let Some(key) = key.as_ref() {
+            if let Some(hit) = wallpaper_capture::cached(key) {
+                return Some(hit);
+            }
+        }
+
         // PrintWindow(PW_RENDERFULLCONTENT) on Progman drives DWM/WinRT
-        // composition. Tauri runs commands on a worker thread; doing this GDI +
-        // WinRT work off the UI thread (which owns the process's COM apartment)
-        // races the shell's own recomposition (Spotlight rotating the wallpaper)
-        // and corrupted a WinRT object refcount, crashing later in an unrelated
-        // worker. Marshal only the DWM/GDI capture onto the main thread;
-        // JPEG/base64 work resumes on this command worker.
+        // composition. Doing that GDI + WinRT work off the UI thread (which owns
+        // the process's COM apartment) races the shell's own recomposition
+        // (Spotlight rotating the wallpaper) and corrupted a WinRT object
+        // refcount, crashing later in an unrelated worker. So the capture, and
+        // only the capture, is posted to the main thread; its raw pixels come
+        // back through this channel and the JPEG plus base64 work runs here, on
+        // the command's own thread.
         let (tx, rx) = std::sync::mpsc::channel();
         if window
             .run_on_main_thread(move || {
@@ -1006,8 +1099,14 @@ pub fn get_desktop_wallpaper(window: tauri::WebviewWindow) -> Option<WallpaperSn
         {
             return None;
         }
-        let capture = rx.recv().ok().flatten()?;
-        wallpaper_capture::encode(capture)
+        // Bounded so a main thread that never drains its event loop cannot pin
+        // this task forever; the closure's send just fails once nobody listens.
+        let capture = rx.recv_timeout(Duration::from_secs(5)).ok().flatten()?;
+        let snapshot = wallpaper_capture::encode(capture)?;
+        if let Some(key) = key {
+            wallpaper_capture::store(key, &snapshot);
+        }
+        Some(snapshot)
     }
     #[cfg(not(windows))]
     {
@@ -1037,7 +1136,9 @@ pub fn steam_has_api_key(app_handle: tauri::AppHandle) -> bool {
     crate::platforms::steam::has_api_key(ctx(&app_handle))
 }
 
-#[tauri::command]
+/// `command(async)`: handing a URL to the shell spawns the default browser, and
+/// a cold browser start takes long enough to be felt on the main thread.
+#[tauri::command(async)]
 pub fn steam_open_api_key_page() -> Result<(), PlatformError> {
     crate::platforms::steam::open_steam_api_key_page()
 }

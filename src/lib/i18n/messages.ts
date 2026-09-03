@@ -276,6 +276,7 @@ export const EN_MESSAGES = {
   "platform.renameTitle": "Rename account",
   "platform.renamePlaceholder": "Account name",
   "platform.newAccountPending": "Waiting...",
+  "platform.setupBusy": "Another accshift operation is running. Waiting for it to finish.",
   "platform.renameNewAccount": "Name this account",
   "platform.copyLabelAccountId": "Account ID",
   "platform.forget": "Forget",

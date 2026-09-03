@@ -286,6 +286,8 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "platform.renameTitle": "Переименовать аккаунт",
   "platform.renamePlaceholder": "Имя аккаунта",
   "platform.newAccountPending": "Ожидание...",
+  "platform.setupBusy":
+    "Выполняется другая операция accshift. Ожидание её завершения.",
   "platform.renameNewAccount": "Назовите этот аккаунт",
   "platform.copyLabelAccountId": "ID аккаунта",
   "platform.forget": "Забыть",

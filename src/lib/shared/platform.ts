@@ -65,6 +65,9 @@ export interface CachedPlatformProfile {
 export type PlatformAddFlowState =
   | "waiting_for_client"
   | "waiting_for_login"
+  // Another accshift operation holds the cross-process lock, so the poll could
+  // not read the real status. Non-terminal: the next poll picks it up.
+  | "busy"
   | "capturing"
   | "ready"
   | "failed";

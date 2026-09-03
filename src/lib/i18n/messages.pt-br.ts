@@ -286,6 +286,8 @@ export const PT_BR_MESSAGES: Record<MessageKey, string> = {
   "platform.renameTitle": "Renomear conta",
   "platform.renamePlaceholder": "Nome da conta",
   "platform.newAccountPending": "Aguardando...",
+  "platform.setupBusy":
+    "Outra operação do accshift está em andamento. Aguardando que ela termine.",
   "platform.renameNewAccount": "Dê um nome a esta conta",
   "platform.copyLabelAccountId": "ID da conta",
   "platform.forget": "Esquecer",
