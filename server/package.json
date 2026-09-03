@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
+    "test": "node ../node_modules/vitest/vitest.mjs run --root .. server/src",
     "deploy": "wrangler deploy",
     "tail": "wrangler tail"
   },

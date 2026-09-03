@@ -95,9 +95,7 @@ export function createPlatformAddFlowController({
     return {
       id: setupId,
       displayName: detectedName || t("platform.newAccountPending"),
-      username: detectedName
-        ? t(getSetupKey(flow.platformId, "connected"))
-        : pendingUsername(flow),
+      username: detectedName ? t(getSetupKey(flow.platformId, "connected")) : pendingUsername(flow),
       lastLoginAtSec: null,
     } satisfies PlatformAccount;
   });
