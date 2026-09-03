@@ -13,12 +13,14 @@ import { getCachedSteamWarningStates, loadSteamWarningStates } from "./warnings"
 import type { ProfileInfo, SteamAccount } from "./types";
 import { isSafeHttpUrl } from "$lib/shared/url";
 
-function toAccount(s: SteamAccount): PlatformAccount {
+/** Steam is the one platform whose stored stamp is already Unix SECONDS: it
+ * comes straight out of loginusers.vdf, not from `now_unix_ms`. */
+export function toSteamAccount(s: SteamAccount): PlatformAccount {
   return {
     id: s.steam_id,
     displayName: s.persona_name,
     username: s.account_name,
-    lastLoginAt: s.last_login_at ?? null,
+    lastLoginAtSec: s.last_login_at ?? null,
   };
 }
 
@@ -46,7 +48,7 @@ export const steamAdapter: PlatformAdapter = {
 
   async loadAccounts(): Promise<PlatformAccount[]> {
     const accounts = await service.getAccounts();
-    return accounts.map(toAccount);
+    return accounts.map(toSteamAccount);
   },
 
   async getCurrentAccount(): Promise<string> {
@@ -56,7 +58,7 @@ export const steamAdapter: PlatformAdapter = {
   async getStartupSnapshot() {
     const snapshot = await service.getStartupSnapshot();
     return {
-      accounts: snapshot.accounts.map(toAccount),
+      accounts: snapshot.accounts.map(toSteamAccount),
       currentAccount: snapshot.currentAccount,
     };
   },

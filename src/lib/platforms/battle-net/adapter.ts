@@ -1,9 +1,14 @@
 import type { PlatformAccount } from "$lib/shared/platform";
 import { createGenericAdapter } from "$lib/platforms/genericAdapter";
+import { unixMsToSeconds } from "$lib/shared/time";
 
-interface BattleNetAccount {
+/** Backend payload of `platform_get_accounts` for Battle.net. Field names are
+ * the serde camelCase of `BattleNetAccount` in battle_net.rs. */
+export interface BattleNetRawAccount {
   email: string;
   battleTag?: string;
+  /** Unix MILLISECONDS (`now_unix_ms`), despite the wire name. Renaming it
+   * would break the mapping, so `toBattleNetAccount` converts instead. */
   lastLoginAt?: number | null;
 }
 
@@ -13,7 +18,7 @@ function getBattleNetDisplayName(email: string): string {
   return candidate || trimmed;
 }
 
-function getBattleNetLabel(account: BattleNetAccount): string {
+function getBattleNetLabel(account: BattleNetRawAccount): string {
   const battleTag = (account.battleTag ?? "").trim();
   if (battleTag) {
     return battleTag.split("#")[0]?.trim() || battleTag;
@@ -21,12 +26,12 @@ function getBattleNetLabel(account: BattleNetAccount): string {
   return getBattleNetDisplayName(account.email);
 }
 
-function toAccount(account: BattleNetAccount): PlatformAccount {
+export function toBattleNetAccount(account: BattleNetRawAccount): PlatformAccount {
   return {
     id: account.email,
     displayName: getBattleNetLabel(account),
     username: "",
-    lastLoginAt: account.lastLoginAt ?? null,
+    lastLoginAtSec: unixMsToSeconds(account.lastLoginAt),
   };
 }
 
@@ -36,11 +41,11 @@ function maskEmail(email: string): string {
   return `${local.slice(0, 3)}…`;
 }
 
-export const battleNetAdapter = createGenericAdapter<BattleNetAccount>({
+export const battleNetAdapter = createGenericAdapter<BattleNetRawAccount>({
   id: "battle-net",
   i18nPrefix: "battlenet",
   noAccountsToastKey: "toast.noBattleNetAccountsFound",
-  toAccount,
+  toAccount: toBattleNetAccount,
   supportsAccountLabels: false,
   maskSwitchLogId: maskEmail,
   copyItems: (account) => {

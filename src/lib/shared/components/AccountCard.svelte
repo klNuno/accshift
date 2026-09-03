@@ -5,7 +5,10 @@
   import type { AccountUsernameBadge, CardExtensionContent } from "$lib/shared/cardExtension";
   import { hasCardExtensionContent } from "$lib/shared/cardExtension";
   import CardExtensionPanel from "./CardExtensionPanel.svelte";
-  import { formatRelativeTimeCompact } from "$lib/shared/time";
+  import {
+    formatAbsoluteDateTimeFromUnixSeconds,
+    formatRelativeTimeCompact,
+  } from "$lib/shared/time";
   import { getAvatarGradientStyle, getAvatarInitials, getAvatarSeed } from "$lib/shared/avatarFallback";
   import { fadeInOnLoad } from "$lib/shared/avatarFadeIn";
   import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
@@ -32,7 +35,7 @@
     showNoteInline = false,
     showLastLogin = false,
     lastLoginUnknownKey = "time.unknown",
-    lastLoginAt = null,
+    lastLoginAtSec = null,
     note = "",
     usernameBadge = null,
     singleClickSwitch = false,
@@ -63,7 +66,7 @@
     showNoteInline?: boolean;
     showLastLogin?: boolean;
     lastLoginUnknownKey?: MessageKey;
-    lastLoginAt?: number | null;
+    lastLoginAtSec?: number | null;
     note?: string;
     usernameBadge?: AccountUsernameBadge | null;
     isSwitching?: boolean;
@@ -91,6 +94,12 @@
   const EXTENSION_DETAIL_WIDTH_PX = 130;
   const EXTENSION_VIEWPORT_GAP_PX = 12;
   const noteText = $derived(note.trim());
+  const lastLoginLabel = $derived(
+    formatRelativeTimeCompact(lastLoginAtSec, locale, lastLoginUnknownKey)
+  );
+  // Empty when the timestamp is unusable, which drops the attribute rather
+  // than showing an empty tooltip.
+  const lastLoginTitle = $derived(formatAbsoluteDateTimeFromUnixSeconds(lastLoginAtSec, locale));
   const hasUsername = $derived(Boolean(showUsername && account.username.trim()));
   const hasRedWarning = $derived(warningInfo?.cardOutlineTone === "red");
   const hasOrangeWarning = $derived(warningInfo?.cardOutlineTone === "orange");
@@ -413,7 +422,7 @@
           <div class="note">{noteText}</div>
         {/if}
         {#if showLastLogin}
-          <div class="last-login">{formatRelativeTimeCompact(lastLoginAt, locale, lastLoginUnknownKey)}</div>
+          <div class="last-login" title={lastLoginTitle || undefined}>{lastLoginLabel}</div>
         {/if}
       </div>
     {/if}

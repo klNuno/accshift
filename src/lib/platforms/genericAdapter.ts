@@ -11,12 +11,15 @@ import {
 } from "$lib/shared/contextMenu/platformMenuBuilder";
 import { createPlatformAddFlowHandlers } from "$lib/platforms/addFlow";
 import { createPlatformApi } from "$lib/platforms/platformApi";
+import { unixMsToSeconds } from "$lib/shared/time";
 
 /** Raw account shape shared by the simple snapshot-based platforms
  * (GOG, Jagex, Discord, Epic). Custom shapes supply their own `toAccount`. */
 export interface GenericRawAccount {
   accountId: string;
   label: string;
+  /** Unix MILLISECONDS: the backend stamps these with `platforms::now_unix_ms`.
+   * `toAccount` divides before the value reaches the UI. */
   lastUsedAt?: number | null;
   snapshotSaved?: boolean;
 }
@@ -51,12 +54,12 @@ export interface GenericAdapterConfig<TRaw> {
   maskSwitchLogId?: (accountId: string) => string;
 }
 
-function defaultToAccount(raw: GenericRawAccount): PlatformAccount {
+export function defaultToAccount(raw: GenericRawAccount): PlatformAccount {
   return {
     id: raw.accountId,
     displayName: raw.label || raw.accountId,
     username: raw.accountId,
-    lastLoginAt: raw.lastUsedAt ?? null,
+    lastLoginAtSec: unixMsToSeconds(raw.lastUsedAt),
   };
 }
 

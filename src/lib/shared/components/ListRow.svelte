@@ -2,7 +2,10 @@
   import type { PlatformAccount } from "../platform";
   import type { AccountWarningPresentation } from "../accountWarnings";
   import type { FolderInfo } from "../../features/folders/types";
-  import { formatRelativeTimeCompact } from "$lib/shared/time";
+  import {
+    formatAbsoluteDateTimeFromUnixSeconds,
+    formatRelativeTimeCompact,
+  } from "$lib/shared/time";
   import { getAvatarGradientStyle, getAvatarInitials, getAvatarSeed } from "$lib/shared/avatarFallback";
   import { fadeInOnLoad } from "$lib/shared/avatarFadeIn";
   import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
@@ -25,7 +28,7 @@
     showUsername = true,
     showLastLogin = false,
     lastLoginUnknownKey = "time.unknown",
-    lastLoginAt = null,
+    lastLoginAtSec = null,
     accentColor = "#3b82f6",
     locale = DEFAULT_LOCALE,
     onClick,
@@ -51,7 +54,7 @@
     showUsername?: boolean;
     showLastLogin?: boolean;
     lastLoginUnknownKey?: MessageKey;
-    lastLoginAt?: number | null;
+    lastLoginAtSec?: number | null;
     accentColor?: string;
     locale?: Locale;
     onClick: () => void;
@@ -71,6 +74,11 @@
     e.stopPropagation();
     onClick();
   }
+
+  let lastLoginLabel = $derived(formatRelativeTimeCompact(lastLoginAtSec, locale, lastLoginUnknownKey));
+  // Empty when the timestamp is unusable, which drops the attribute rather
+  // than showing an empty tooltip.
+  let lastLoginTitle = $derived(formatAbsoluteDateTimeFromUnixSeconds(lastLoginAtSec, locale));
 
   let hasRedWarning = $derived(Boolean(warningInfo?.listHasRed));
 
@@ -164,7 +172,7 @@
             <span class="username-text">{account.username}</span>
           {/if}
           {#if showLastLogin}
-            <span class="meta-text">{formatRelativeTimeCompact(lastLoginAt, locale, lastLoginUnknownKey)}</span>
+            <span class="meta-text" title={lastLoginTitle || undefined}>{lastLoginLabel}</span>
           {/if}
         </span>
       {/if}

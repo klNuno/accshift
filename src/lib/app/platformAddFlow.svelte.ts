@@ -98,7 +98,7 @@ export function createPlatformAddFlowController({
       username: detectedName
         ? t(getSetupKey(flow.platformId, "connected"))
         : t(getSetupKey(flow.platformId, "waitingForLogin")),
-      lastLoginAt: null,
+      lastLoginAtSec: null,
     } satisfies PlatformAccount;
   });
 

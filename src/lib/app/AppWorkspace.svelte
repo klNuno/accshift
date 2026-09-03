@@ -254,7 +254,7 @@
     showNoteInline={bulkEditMode ? false : showCardNotesInline}
     showUsername={isPendingSetupAccount(account.id) ? false : showUsernames}
     showLastLogin={isPendingSetupAccount(account.id) ? false : showLastLogin}
-    lastLoginAt={account.lastLoginAt}
+    lastLoginAtSec={account.lastLoginAtSec}
     {lastLoginUnknownKey}
     {locale}
     isActive={!bulkEditMode && account.id === currentAccountId}

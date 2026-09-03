@@ -1,7 +1,10 @@
 <script lang="ts">
   import type { PlatformAccount } from "../platform";
   import type { AccountWarningPresentation } from "../accountWarnings";
-  import { formatRelativeTimeCompact } from "$lib/shared/time";
+  import {
+    formatAbsoluteDateTimeFromUnixSeconds,
+    formatRelativeTimeCompact,
+  } from "$lib/shared/time";
   import { getAvatarGradientStyle, getAvatarInitials, getAvatarSeed } from "$lib/shared/avatarFallback";
   import { fadeInOnLoad } from "$lib/shared/avatarFadeIn";
   import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
@@ -17,7 +20,7 @@
     allowMetaWrap = false,
     showSwitchButton = true,
     lastLoginUnknownKey = "time.unknown",
-    lastLoginAt = null,
+    lastLoginAtSec = null,
     accountNote = "",
     cardColor = "",
     accentColor = "#3b82f6",
@@ -37,7 +40,7 @@
     allowMetaWrap?: boolean;
     showSwitchButton?: boolean;
     lastLoginUnknownKey?: MessageKey;
-    lastLoginAt?: number | null;
+    lastLoginAtSec?: number | null;
     accountNote?: string;
     cardColor?: string;
     accentColor?: string;
@@ -47,6 +50,10 @@
   } = $props();
 
   let hasUsername = $derived(Boolean(showUsername && account.username.trim()));
+  let lastLoginLabel = $derived(formatRelativeTimeCompact(lastLoginAtSec, locale, lastLoginUnknownKey));
+  // Empty when the timestamp is unusable, which drops the attribute rather
+  // than showing an empty tooltip.
+  let lastLoginTitle = $derived(formatAbsoluteDateTimeFromUnixSeconds(lastLoginAtSec, locale));
   let banWarnings = $derived.by(() => {
     return warningInfo?.chips ?? [];
   });
@@ -83,7 +90,7 @@
         <span class="username">{account.username}</span>
       {/if}
       {#if showLastLogin}
-        <span class="meta">{formatRelativeTimeCompact(lastLoginAt, locale, lastLoginUnknownKey)}</span>
+        <span class="meta" title={lastLoginTitle || undefined}>{lastLoginLabel}</span>
       {/if}
     </div>
   {/if}
