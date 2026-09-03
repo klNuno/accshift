@@ -211,7 +211,10 @@ export const EN_MESSAGES = {
   "onboarding.telemetry.dealHint":
     "Adds a separate UUID for enhanced stats, stored only on your machine. Still no idea who you are, but you help a lot. Thank you!",
   "onboarding.telemetry.optOutNote":
-    "If you REALLY don't want to help accshift, you can opt-out of everything in Settings -> Privacy. :c",
+    "Whatever you pick, you can change it later in Settings -> Privacy. :c",
+  "onboarding.telemetry.refuse": "No thanks, turn it all off",
+  "onboarding.telemetry.refuseHint":
+    "Nothing is measured and nothing is sent, not even the anonymous counters.",
   "onboarding.telemetry.back": "Back",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
@@ -267,6 +270,8 @@ export const EN_MESSAGES = {
   "context.menu.copy": "Copy...",
   "context.menu.deleteFolder": "Delete folder",
   "context.menu.folderColor": "Folder color",
+  "context.menu.moveToFolder": "Move to folder",
+  "context.menu.moveToRoot": "No folder",
   "context.menu.editCardAndColor": "Edit card and color",
   "context.menu.cardColor": "Card color",
   "context.menu.addNote": "Add note",
@@ -292,6 +297,7 @@ export const EN_MESSAGES = {
   "dialog.cardNotePlaceholder": "Write a short note",
 
   "card.noteAttached": "Note attached",
+  "card.clickAgainToSwitch": "Click again to switch",
   "card.extensionWarnings": "Warnings",
   "card.extensionNote": "Note",
   "card.cs2Section": "CS2",

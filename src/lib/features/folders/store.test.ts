@@ -16,7 +16,7 @@ vi.mock("$lib/storage/clientStorage", () => ({
   },
 }));
 
-import { createFolder, getItemsInFolder } from "./store";
+import { createFolder, findItemFolderId, getItemsInFolder, listFolders, moveItem } from "./store";
 
 /** Replaces what the client store holds and invalidates the module's cache. */
 function loadStore(value: unknown) {
@@ -75,5 +75,66 @@ describe("folder store sanitizing", () => {
 
     createFolder("New", null, "steam");
     expect(Object.keys((mocks.saved as FolderStore).itemOrder)).not.toContain("root:");
+  });
+});
+
+describe("moving an account without a drag", () => {
+  const STORE = {
+    version: 1,
+    folders: [
+      { id: "smurfs", name: "Smurfs", parentId: null, platform: "steam" },
+      { id: "old", name: "Old", parentId: "smurfs", platform: "steam" },
+      { id: "riot-folder", name: "Ranked", parentId: null, platform: "riot" },
+    ],
+    itemOrder: {
+      "root:steam": [
+        { type: "folder", id: "smurfs" },
+        { type: "account", id: "at-root" },
+      ],
+      smurfs: [
+        { type: "folder", id: "old" },
+        { type: "account", id: "in-smurfs" },
+      ],
+      old: [{ type: "account", id: "in-old" }],
+      "root:riot": [{ type: "folder", id: "riot-folder" }],
+    },
+  };
+
+  beforeEach(() => {
+    loadStore(STORE);
+  });
+
+  it("lists only the folders of the active platform", () => {
+    expect(listFolders("steam").map((folder) => folder.id)).toEqual(["smurfs", "old"]);
+    expect(listFolders("riot").map((folder) => folder.id)).toEqual(["riot-folder"]);
+  });
+
+  it("finds the folder holding an account, nested one included", () => {
+    expect(findItemFolderId({ type: "account", id: "in-smurfs" }, "steam")).toBe("smurfs");
+    expect(findItemFolderId({ type: "account", id: "in-old" }, "steam")).toBe("old");
+  });
+
+  it("reads an account at the platform root as no folder", () => {
+    expect(findItemFolderId({ type: "account", id: "at-root" }, "steam")).toBeNull();
+    expect(findItemFolderId({ type: "account", id: "unknown" }, "steam")).toBeNull();
+  });
+
+  it("puts a root account into a folder, the same move a drop performs", () => {
+    moveItem({ type: "account", id: "at-root" }, null, "old", "steam");
+    expect(getItemsInFolder("old", "steam")).toEqual([
+      { type: "account", id: "in-old" },
+      { type: "account", id: "at-root" },
+    ]);
+    expect(getItemsInFolder(null, "steam")).toEqual([{ type: "folder", id: "smurfs" }]);
+  });
+
+  it("sends an account back to the root", () => {
+    moveItem({ type: "account", id: "in-old" }, "old", null, "steam");
+    expect(getItemsInFolder("old", "steam")).toEqual([]);
+    expect(getItemsInFolder(null, "steam")).toEqual([
+      { type: "folder", id: "smurfs" },
+      { type: "account", id: "at-root" },
+      { type: "account", id: "in-old" },
+    ]);
   });
 });

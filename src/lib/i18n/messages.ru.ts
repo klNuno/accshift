@@ -220,7 +220,10 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "onboarding.telemetry.dealHint":
     "Добавляет отдельный UUID для расширенной статистики, он хранится только на вашей машине. Кто вы, по-прежнему неизвестно, но помощь огромная. Спасибо!",
   "onboarding.telemetry.optOutNote":
-    "Если вы ДЕЙСТВИТЕЛЬНО не хотите помогать accshift, всё можно отключить в разделе Настройки -> Приватность. :c",
+    "Что бы вы ни выбрали, это можно изменить позже в разделе Настройки -> Приватность. :c",
+  "onboarding.telemetry.refuse": "Нет, спасибо, отключить всё",
+  "onboarding.telemetry.refuseHint":
+    "Ничего не измеряется и не отправляется, даже анонимные счётчики.",
   "onboarding.telemetry.back": "Назад",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
@@ -277,6 +280,8 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "context.menu.copy": "Копировать...",
   "context.menu.deleteFolder": "Удалить папку",
   "context.menu.folderColor": "Цвет папки",
+  "context.menu.moveToFolder": "Переместить в папку",
+  "context.menu.moveToRoot": "Без папки",
   "context.menu.editCardAndColor": "Изменить карточку и цвет",
   "context.menu.cardColor": "Цвет карточки",
   "context.menu.addNote": "Добавить заметку",
@@ -301,6 +306,7 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "dialog.cardNotePlaceholder": "Напишите короткую заметку",
 
   "card.noteAttached": "Есть заметка",
+  "card.clickAgainToSwitch": "Нажмите ещё раз для смены",
   "card.extensionWarnings": "Предупреждения",
   "card.extensionNote": "Заметка",
   "card.cs2Section": "CS2",

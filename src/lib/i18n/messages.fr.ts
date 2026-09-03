@@ -221,7 +221,10 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "onboarding.telemetry.dealHint":
     "Ajoute un UUID distinct pour les stats avancées, stocké uniquement sur ta machine. Je ne sais toujours pas qui tu es, mais tu aides beaucoup. Merci !",
   "onboarding.telemetry.optOutNote":
-    "Si tu ne veux VRAIMENT pas aider accshift, tu peux tout désactiver dans Paramètres -> Confidentialité. :c",
+    "Quel que soit ton choix, tu pourras le changer plus tard dans Paramètres -> Confidentialité. :c",
+  "onboarding.telemetry.refuse": "Non merci, tout couper",
+  "onboarding.telemetry.refuseHint":
+    "Rien n'est mesuré, rien n'est envoyé, pas même les compteurs anonymes.",
   "onboarding.telemetry.back": "Retour",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
@@ -278,6 +281,8 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "context.menu.copy": "Copier...",
   "context.menu.deleteFolder": "Supprimer le dossier",
   "context.menu.folderColor": "Couleur du dossier",
+  "context.menu.moveToFolder": "Déplacer vers un dossier",
+  "context.menu.moveToRoot": "Aucun dossier",
   "context.menu.editCardAndColor": "Modifier carte et couleur",
   "context.menu.cardColor": "Couleur de carte",
   "context.menu.addNote": "Ajouter une note",
@@ -302,6 +307,7 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "dialog.cardNotePlaceholder": "Écris une note courte",
 
   "card.noteAttached": "Note attachée",
+  "card.clickAgainToSwitch": "Cliquez encore pour changer",
   "card.extensionWarnings": "Alertes",
   "card.extensionNote": "Note",
   "card.cs2Section": "CS2",

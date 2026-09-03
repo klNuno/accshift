@@ -266,10 +266,34 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    // The grid's roving focus claims these two first, from a window listener
+    // in the capture phase. What reaches the card is a card that was tabbed
+    // to: real DOM focus, no roving focus, and until now no way to the menu.
+    if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+      e.preventDefault();
+      e.stopPropagation();
+      openContextMenuFromCard();
+      return;
+    }
     if (e.key !== "Enter" && e.key !== " ") return;
     e.preventDefault();
     e.stopPropagation();
     handleClick();
+  }
+
+  /** Opens the context menu at the middle of the card, since a key press
+   *  carries no pointer position. */
+  function openContextMenuFromCard() {
+    if (interactionDisabled || !cardRef) return;
+    const rect = cardRef.getBoundingClientRect();
+    onActivate();
+    showConfirm = false;
+    onContextMenu({
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+      preventDefault: () => {},
+      stopPropagation: () => {},
+    } as MouseEvent);
   }
 
   function handleContextMenu(e: MouseEvent) {
@@ -424,6 +448,15 @@
         {#if showLastLogin}
           <div class="last-login" title={lastLoginTitle || undefined}>{lastLoginLabel}</div>
         {/if}
+      </div>
+    {/if}
+
+    <!-- Armed state: the first click only arms the card, and nothing said so.
+         Absolutely positioned so an armed card keeps the exact size of the
+         others; the scrim keeps it readable over the meta lines it covers. -->
+    {#if showConfirm && !isDragged}
+      <div class="confirm-hint" aria-live="polite">
+        {translate(locale, "card.clickAgainToSwitch")}
       </div>
     {/if}
   </div>
@@ -808,6 +841,27 @@
   @keyframes fadeIn {
     from { opacity: 0; transform: scale(0.8); }
     to { opacity: 1; transform: scale(1); }
+  }
+
+  .confirm-hint {
+    position: absolute;
+    left: var(--grid-card-padding);
+    right: var(--grid-card-padding);
+    bottom: 4px;
+    padding: 2px 3px;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--bg-solid) 82%, transparent);
+    color: var(--fg);
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 1.2;
+    text-align: center;
+    pointer-events: none;
+    animation: fadeIn 150ms ease-out;
+  }
+
+  :global(html[data-motion="reduced"]) :is(.confirm-hint, .play-overlay) {
+    animation: none;
   }
 
   .loader {

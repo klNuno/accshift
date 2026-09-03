@@ -100,8 +100,8 @@
 
   // Declines the enhanced tier, keeping the anonymous counters on. It carries
   // the refusal styling and the no-thanks clip because that is the joke, but it
-  // is NOT a full opt-out: only Settings, Privacy switches everything off. The
-  // note under both buttons says so, so the label never misleads on its own.
+  // is NOT a full opt-out: the third button under it is. The hint on each row
+  // says which is which, so no label misleads on its own.
   function handleEnough() {
     if (submitting || rejecting) return;
     if (gifEl) {
@@ -114,6 +114,10 @@
     setTimeout(() => { void finish(true, false); }, REJECT_TOTAL_MS);
   }
   function handleDeal() { void finish(true, true); }
+  // The real opt-out, same screen as the two yes answers: both modes off, and
+  // the onboarding still marked as seen. (false, false) is the Refused choice
+  // the backend already understood, so nothing is ever emitted afterwards.
+  function handleRefuse() { void finish(false, false); }
   // Skipping the whole tour lands on the same choice as the "enough" row,
   // minus the animation: anonymous counters on, enhanced off.
   function handleSkip() { void finish(true, false); }
@@ -417,6 +421,15 @@
             <div class="deal-row-label">{t("onboarding.telemetry.deal")}</div>
             <div class="deal-row-body">{t("onboarding.telemetry.dealHint")}</div>
           </button>
+          <button
+            type="button"
+            class="refuse-row"
+            disabled={submitting || rejecting}
+            onclick={handleRefuse}
+          >
+            <span class="refuse-label">{t("onboarding.telemetry.refuse")}</span>
+            <span class="refuse-body">{t("onboarding.telemetry.refuseHint")}</span>
+          </button>
         </div>
 
         <p class="opt-out-note">{t("onboarding.telemetry.optOutNote")}</p>
@@ -567,6 +580,7 @@
     .modal.deal-mode { gap: 8px; padding: 14px 18px 12px; }
     .modal.deal-mode .step { gap: 8px; }
     .modal.deal-mode .deal-row { padding: 8px 14px; }
+    .modal.deal-mode .refuse-row { margin-top: 0; padding: 4px 12px; }
     .modal.deal-mode .intro { display: none; }
   }
   @media (max-height: 520px) {
@@ -813,8 +827,41 @@
     color: var(--fg-muted);
   }
 
-  /* Kept out of the buttons on purpose: neither choice here is a full opt-out,
-     so the note belongs to both rows rather than to one of them. */
+  /* Third answer: a real opt-out, deliberately lighter than the two rows above
+     it. Plain text on the panel rather than a card, so it reads as the quiet
+     way out instead of a third offer, and it is never hidden. */
+  .refuse-row {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    margin-top: 2px;
+    padding: 7px 12px;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--fg-subtle);
+    cursor: pointer;
+    transition: color 140ms ease-out, background 140ms ease-out;
+  }
+  .refuse-row:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--fg) 8%, transparent);
+    color: var(--fg-muted);
+  }
+  .refuse-row:disabled { opacity: 0.5; cursor: not-allowed; }
+  .refuse-label {
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: underline;
+  }
+  .refuse-body {
+    font-size: 11px;
+    line-height: 1.45;
+    text-align: center;
+  }
+
+  /* Kept out of the buttons on purpose: the note covers all three answers,
+     so it belongs to the group rather than to one of them. */
   .opt-out-note {
     margin: 0;
     font-size: 11px;

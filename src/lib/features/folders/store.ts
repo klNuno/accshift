@@ -176,6 +176,30 @@ export function getFolder(id: string): FolderInfo | undefined {
   return getStore().folders.find((f) => f.id === id);
 }
 
+/** Every folder of one platform, in creation order. */
+export function listFolders(platform: string): FolderInfo[] {
+  return getStore().folders.filter((f) => f.platform === platform);
+}
+
+/**
+ * The folder holding this item, or null when it sits at the platform root.
+ *
+ * The view's current folder is not an answer: sections mode shows accounts
+ * from several folders at once, so a move has to read the item's real bucket
+ * rather than the folder being browsed.
+ */
+export function findItemFolderId(itemRef: ItemRef, platform: string): string | null {
+  const store = getStore();
+  for (const folder of store.folders) {
+    if (folder.platform !== platform) continue;
+    const items = store.itemOrder[folder.id] || [];
+    if (items.some((item) => item.type === itemRef.type && item.id === itemRef.id)) {
+      return folder.id;
+    }
+  }
+  return null;
+}
+
 export function getFolderPath(folderId: string | null): FolderInfo[] {
   if (!folderId) return [];
   const store = getStore();

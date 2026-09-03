@@ -22,7 +22,19 @@ export interface AddToastOptions {
 
 const MAX_TOASTS = 5;
 const DEFAULT_DURATION_MS = 3000;
-const ERROR_DURATION_MS = 6000;
+
+/**
+ * How long a toast stays, `null` meaning until the user dismisses it.
+ *
+ * An error never counts down. It is often the only trace of what failed, and
+ * the old six second timer took it off screen while it was still being read.
+ * An explicit duration does not override that; the close button and the hover
+ * pause are the ways out. Every other type keeps its timer.
+ */
+export function resolveToastDuration(type: ToastType, requested?: number | null): number | null {
+  if (type === "error") return null;
+  return requested !== undefined ? requested : DEFAULT_DURATION_MS;
+}
 
 let toasts = $state<ToastMessage[]>([]);
 
@@ -32,12 +44,7 @@ export function getToasts() {
 
 export function addToast(message: string, options: AddToastOptions = {}): string {
   const type = options.type ?? "info";
-  const durationMs =
-    options.durationMs !== undefined
-      ? options.durationMs
-      : type === "error"
-        ? ERROR_DURATION_MS
-        : DEFAULT_DURATION_MS;
+  const durationMs = resolveToastDuration(type, options.durationMs);
   // Same message already on screen: restart its timer instead of stacking a duplicate.
   const existing = toasts.find((t) => t.message === message);
   if (existing) {

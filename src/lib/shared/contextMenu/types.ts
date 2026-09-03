@@ -2,6 +2,7 @@ import type { ContextMenuItem } from "../types";
 
 export const ACCOUNT_CONTEXT_GROUP_ORDER = [
   "platform.primary",
+  "account.folder",
   "platform.copy",
   "platform.data",
   "platform.danger",

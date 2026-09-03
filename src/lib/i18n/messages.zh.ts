@@ -210,7 +210,9 @@ export const ZH_MESSAGES: Record<MessageKey, string> = {
   "onboarding.telemetry.deal": "成交",
   "onboarding.telemetry.dealHint":
     "额外增加一个仅保存在本机的 UUID 用于增强统计。依然不知道你是谁，但你帮了大忙。谢谢！",
-  "onboarding.telemetry.optOutNote": "如果你真的不想帮 accshift，可以在设置 -> 隐私里全部关掉。:c",
+  "onboarding.telemetry.optOutNote": "无论你选哪个，之后都可以在设置 -> 隐私里改。:c",
+  "onboarding.telemetry.refuse": "不用了，全部关闭",
+  "onboarding.telemetry.refuseHint": "什么都不统计、不发送，连匿名计数也没有。",
   "onboarding.telemetry.back": "返回",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
@@ -265,6 +267,8 @@ export const ZH_MESSAGES: Record<MessageKey, string> = {
   "context.menu.copy": "复制...",
   "context.menu.deleteFolder": "删除文件夹",
   "context.menu.folderColor": "文件夹颜色",
+  "context.menu.moveToFolder": "移动到文件夹",
+  "context.menu.moveToRoot": "不放入文件夹",
   "context.menu.editCardAndColor": "编辑卡片和颜色",
   "context.menu.cardColor": "卡片颜色",
   "context.menu.addNote": "添加备注",
@@ -289,6 +293,7 @@ export const ZH_MESSAGES: Record<MessageKey, string> = {
   "dialog.cardNotePlaceholder": "写一条简短备注",
 
   "card.noteAttached": "已附备注",
+  "card.clickAgainToSwitch": "再次点击以切换",
   "card.extensionWarnings": "警告",
   "card.extensionNote": "备注",
   "card.cs2Section": "CS2",
