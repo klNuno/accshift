@@ -133,6 +133,18 @@ pub fn secrets_index_path(app_handle: &dyn AppContext) -> Result<PathBuf, String
         .join("secret-entries.txt"))
 }
 
+/// Where a Riot restore stages the encrypted copy of the live session it may
+/// have to put back. It sits in the state directory next to the local config,
+/// because like it, it describes this machine and never moves with the user's
+/// data. Each restore creates one subdirectory in it and removes it again on
+/// every exit path; a leftover means the process died mid-restore and is swept
+/// on the next launch.
+pub fn riot_rollback_dir(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
+    Ok(app_local_data_root(app_handle)?
+        .join("state")
+        .join("riot-rollback"))
+}
+
 pub fn legacy_config_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     Ok(legacy_app_data_root(app_handle)?.join("config.json"))
 }

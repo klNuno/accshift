@@ -474,8 +474,12 @@ pub(crate) fn wire_deep_links(app: &tauri::App, setup_ctx: &AppCtx) {
     });
 }
 
-/// Re-encrypt any snapshot still stored as plaintext, then free the keyring
-/// entries no snapshot points at any more. Once per launch.
+/// Re-encrypt any snapshot still stored as plaintext, sweep the Riot rollback
+/// copies a crash left behind, then free the keyring entries no snapshot points
+/// at any more. Once per launch.
+///
+/// The rollback sweep runs before the collector so the entries it frees are
+/// already gone from disk when the live set is read.
 ///
 /// Snapshots captured before encryption shipped only get encrypted when the
 /// account is captured again, and a dormant account never is. Off the boot path
@@ -510,6 +514,8 @@ pub(crate) fn spawn_snapshot_upgrade(upgrade_ctx: AppCtx) {
             );
         }
 
+        sweep_riot_rollback_copies(&upgrade_ctx);
+
         let mut sweep_failures: Vec<String> = Vec::new();
         let swept = accshift_core::secrets::gc(&upgrade_ctx, &mut |message, detail| {
             sweep_failures.push(format!("{message} ({detail})"))
@@ -531,6 +537,39 @@ pub(crate) fn spawn_snapshot_upgrade(upgrade_ctx: AppCtx) {
         }
     });
 }
+
+/// Remove the Riot rollback copies a process that died mid-restore left
+/// behind, encrypted ones under the app's state directory and the plaintext
+/// ones older builds wrote into the system temp directory. Silent when there
+/// is nothing to sweep, which is every launch after a clean run.
+///
+/// Riot is a Windows-only platform, so there is nothing to sweep elsewhere.
+#[cfg(windows)]
+fn sweep_riot_rollback_copies(upgrade_ctx: &AppCtx) {
+    let mut failures: Vec<String> = Vec::new();
+    let swept = accshift_core::platforms::riot::sweep_rollback_dirs(upgrade_ctx, &mut |m, d| {
+        failures.push(format!("{m} ({d})"))
+    });
+    if !swept.touched_anything() {
+        return;
+    }
+    let level = if swept.failed > 0 { "warn" } else { "info" };
+    let _ = logging::append_app_log(
+        upgrade_ctx,
+        level,
+        "backend.riot-rollback-sweep",
+        &format!(
+            "Removed {} leftover Riot rollback copy(ies), {} failed",
+            swept.removed, swept.failed
+        ),
+        (!failures.is_empty())
+            .then(|| failures.join("; "))
+            .as_deref(),
+    );
+}
+
+#[cfg(not(windows))]
+fn sweep_riot_rollback_copies(_upgrade_ctx: &AppCtx) {}
 
 /// Show the window anyway if the frontend never reports boot done.
 pub(crate) fn spawn_boot_failsafe(fallback_handle: AppHandle) {
