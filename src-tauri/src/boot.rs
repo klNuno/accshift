@@ -8,9 +8,11 @@
 
 use crate::{app_runtime, config, ctx, logging, telemetry, telemetry_runtime};
 use accshift_core::AppCtx;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
+use std::sync::Mutex;
 use tauri::webview::PageLoadEvent;
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::{AppHandle, Manager, Monitor, WebviewWindow};
 
 /// Shared HTTP client. A process that cannot build one cannot reach Steam, so
 /// there is nothing useful left to boot into.
@@ -39,8 +41,10 @@ fn navigation_allowed(url: &tauri::Url) -> bool {
         || (cfg!(debug_assertions) && is_http && matches!(host, Some("localhost" | "127.0.0.1")))
 }
 
-/// Build the main window: last saved size, frameless and transparent, with the
-/// navigation guard and the page-load log wired in.
+/// Build the main window: last saved size and placement, frameless and
+/// transparent, with the navigation guard and the page-load log wired in.
+///
+/// Both saved values are logical pixels, which is the unit the builder takes.
 ///
 /// It is built hidden. Boot completion (or the failsafe below) shows it.
 pub(crate) fn build_main_window(
@@ -49,6 +53,7 @@ pub(crate) fn build_main_window(
 ) -> Result<WebviewWindow, Box<dyn std::error::Error>> {
     let (start_width, start_height) = config::load_window_size(setup_ctx)
         .unwrap_or((config::DEFAULT_WINDOW_WIDTH, config::DEFAULT_WINDOW_HEIGHT));
+    let saved_position = config::load_window_position(setup_ctx);
 
     let navigation_log_ctx = setup_ctx.clone();
     let page_load_log_ctx = setup_ctx.clone();
@@ -61,7 +66,6 @@ pub(crate) fn build_main_window(
             .visible(false)
             .transparent(true)
             .background_color(tauri::webview::Color(0, 0, 0, 0))
-            .center()
             .resizable(true)
             .on_navigation(move |url| {
                 let allowed = navigation_allowed(url);
@@ -93,6 +97,12 @@ pub(crate) fn build_main_window(
                 );
             });
 
+    // First launch, or a config with no placement in it, still opens centered.
+    window_builder = match saved_position {
+        Some((x, y)) => window_builder.position(x, y),
+        None => window_builder.center(),
+    };
+
     #[cfg(target_os = "macos")]
     {
         // Native traffic lights float over our custom titlebar. WKWebView
@@ -112,6 +122,21 @@ pub(crate) fn build_main_window(
     }
 
     let win = window_builder.build()?;
+
+    // The monitor the window was saved on may be unplugged, or the desktop
+    // rearranged. The window is still hidden here, so recentering it costs no
+    // visible jump.
+    if saved_position.is_some() && !window_sits_on_a_monitor(&win) {
+        let _ = win.center();
+        let _ = logging::append_app_log(
+            setup_ctx,
+            "info",
+            "backend.window",
+            "Saved window position is off every monitor; centered instead",
+            None,
+        );
+    }
+
     let _ = logging::append_app_log(
         setup_ctx,
         "info",
@@ -120,6 +145,74 @@ pub(crate) fn build_main_window(
         Some("label=main"),
     );
     Ok(win)
+}
+
+/// True when the window overlaps the work area of at least one attached
+/// monitor. Everything here is physical pixels, which is what both the window
+/// and the monitor report, so no scale factor is involved.
+///
+/// A window whose monitor list cannot be read is left where it is: with no
+/// monitors to compare against there is no evidence it sits anywhere wrong.
+fn window_sits_on_a_monitor(win: &WebviewWindow) -> bool {
+    let (Ok(position), Ok(size), Ok(monitors)) = (
+        win.outer_position(),
+        win.outer_size(),
+        win.available_monitors(),
+    ) else {
+        return true;
+    };
+    if monitors.is_empty() {
+        return true;
+    }
+    let window = Rect::at(
+        f64::from(position.x),
+        f64::from(position.y),
+        f64::from(size.width),
+        f64::from(size.height),
+    );
+    monitors
+        .iter()
+        .any(|monitor| window.overlaps(&work_area_rect(monitor)))
+}
+
+fn work_area_rect(monitor: &Monitor) -> Rect {
+    let area = monitor.work_area();
+    Rect::at(
+        f64::from(area.position.x),
+        f64::from(area.position.y),
+        f64::from(area.size.width),
+        f64::from(area.size.height),
+    )
+}
+
+/// Screen rectangle in physical pixels, origin top left.
+#[derive(Clone, Copy, Debug)]
+struct Rect {
+    left: f64,
+    top: f64,
+    right: f64,
+    bottom: f64,
+}
+
+impl Rect {
+    fn at(left: f64, top: f64, width: f64, height: f64) -> Self {
+        Self {
+            left,
+            top,
+            right: left + width,
+            bottom: top + height,
+        }
+    }
+
+    /// True when the two rectangles share any area. Touching edges do not
+    /// count: a window whose right edge is exactly a monitor's left edge shows
+    /// nothing on it.
+    fn overlaps(&self, other: &Self) -> bool {
+        self.left < other.right
+            && self.right > other.left
+            && self.top < other.bottom
+            && self.bottom > other.top
+    }
 }
 
 /// Turn off Edge's form autofill.
@@ -147,56 +240,164 @@ pub(crate) fn disable_webview_autofill(win: &WebviewWindow) {
 #[cfg(not(windows))]
 pub(crate) fn disable_webview_autofill(_win: &WebviewWindow) {}
 
-/// Persist the window size on its own thread, and hand back the channel that
-/// says when the write landed. `None` means nothing was queued.
+/// Size and placement of the main window, in the logical pixels the config
+/// stores and the window builder consumes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct WindowGeometry {
+    width: f64,
+    height: f64,
+    x: f64,
+    y: f64,
+}
+
+/// Last geometry a move event reported, waiting to be written.
+static PENDING_GEOMETRY: Mutex<Option<WindowGeometry>> = Mutex::new(None);
+/// Whether a thread is already draining `PENDING_GEOMETRY`.
+static GEOMETRY_SAVER_RUNNING: AtomicBool = AtomicBool::new(false);
+/// Quiet time after the last move event before the write goes out. A window
+/// drag emits dozens of events per second and each save takes the
+/// cross-process config lock, so only the last one is worth writing.
+const GEOMETRY_SAVE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(700);
+
+/// Read the window's live geometry, converted to logical pixels once.
+///
+/// This is the bug fix for the launch-over-launch growth: `inner_size` and
+/// `outer_position` are physical, the builder is logical, so on a 125% display
+/// storing the raw numbers multiplied the window by 1.25 every launch.
+///
+/// `None` when nothing worth saving is on screen: a maximized window would
+/// store the screen size as the restored size, a minimized one reports a
+/// parking position far off every monitor (-32000 on Windows), and a window
+/// whose size or position cannot be read has nothing to offer.
+fn current_geometry(win: &WebviewWindow) -> Option<WindowGeometry> {
+    if matches!(win.is_maximized(), Ok(true)) || matches!(win.is_minimized(), Ok(true)) {
+        return None;
+    }
+    let scale = win.scale_factor().ok()?;
+    let size = win.inner_size().ok()?;
+    let position = win.outer_position().ok()?;
+    let size = size.to_logical::<f64>(scale);
+    let position = position.to_logical::<f64>(scale);
+    Some(WindowGeometry {
+        width: size.width,
+        height: size.height,
+        x: position.x,
+        y: position.y,
+    })
+}
+
+/// Whether saving is allowed at all. A window closed or moved before boot
+/// completed never got its saved geometry applied, so saving now would
+/// overwrite the real one with the default.
+fn geometry_save_allowed(app_handle: &AppHandle) -> bool {
+    app_handle.state::<app_runtime::BootState>().is_completed()
+}
+
+/// Persist the window geometry on its own thread, and hand back the channel
+/// that says when the write landed. `None` means nothing was queued.
 ///
 /// The save is a read-modify-write that takes the cross-process config lock,
 /// which can wait up to 5s while the CLI holds it. Running it inline would
 /// freeze the UI thread for that whole stretch.
-///
-/// Three reasons to skip it, and the first is not cosmetic: a window closed
-/// before boot completed never got its saved size applied, so saving now would
-/// overwrite the real one with the default.
-fn spawn_window_size_save(app_handle: &AppHandle, win: &WebviewWindow) -> Option<Receiver<()>> {
-    if !app_handle.state::<app_runtime::BootState>().is_completed() {
+fn spawn_window_geometry_save(app_handle: &AppHandle, win: &WebviewWindow) -> Option<Receiver<()>> {
+    if !geometry_save_allowed(app_handle) {
         let _ = logging::append_app_log(
             &ctx(app_handle),
             "info",
             "backend.window",
-            "Skipped window size save because boot was not completed",
+            "Skipped window geometry save because boot was not completed",
             None,
         );
         return None;
     }
-    if matches!(win.is_maximized(), Ok(true)) {
-        return None;
-    }
-    let size = win.inner_size().ok()?;
+    let geometry = current_geometry(win)?;
+    // This write is newer than anything the debounce still holds, and it must
+    // not be undone by a thread waking up after it.
+    take_pending_geometry();
 
     let save_handle = app_handle.clone();
-    let width = f64::from(size.width);
-    let height = f64::from(size.height);
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = config::save_window_size(&ctx(&save_handle), width, height);
+        save_geometry(&save_handle, geometry);
         let _ = tx.send(());
     });
     Some(rx)
 }
 
-/// What runs when the user closes the window: queue the size save, hide, end
-/// the telemetry session, then wait out the size save.
+fn save_geometry(app_handle: &AppHandle, geometry: WindowGeometry) {
+    let _ = config::save_window_geometry(
+        &ctx(app_handle),
+        geometry.width,
+        geometry.height,
+        Some((geometry.x, geometry.y)),
+    );
+}
+
+fn take_pending_geometry() -> Option<WindowGeometry> {
+    PENDING_GEOMETRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+}
+
+/// Queue a debounced geometry save. Called from the move handler, so it does
+/// no IO of its own: it stamps the value and lets a background thread write the
+/// last one once the drag stops.
+fn queue_window_geometry_save(app_handle: &AppHandle, win: &WebviewWindow) {
+    if !geometry_save_allowed(app_handle) {
+        return;
+    }
+    let Some(geometry) = current_geometry(win) else {
+        return;
+    };
+    *PENDING_GEOMETRY.lock().unwrap_or_else(|e| e.into_inner()) = Some(geometry);
+    if GEOMETRY_SAVER_RUNNING.swap(true, Ordering::SeqCst) {
+        // A thread is already waiting; it will pick this value up.
+        return;
+    }
+
+    let save_handle = app_handle.clone();
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(GEOMETRY_SAVE_DEBOUNCE);
+            match take_pending_geometry() {
+                Some(geometry) => save_geometry(&save_handle, geometry),
+                None => {
+                    GEOMETRY_SAVER_RUNNING.store(false, Ordering::SeqCst);
+                    // A move that landed between the take above and this
+                    // release would otherwise sit unwritten until the next one.
+                    let missed = PENDING_GEOMETRY
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .is_some();
+                    if missed && !GEOMETRY_SAVER_RUNNING.swap(true, Ordering::SeqCst) {
+                        continue;
+                    }
+                    break;
+                }
+            }
+        }
+    });
+}
+
+/// Window events that outlive a single frame: the close sequence, and the
+/// debounced geometry save behind every move.
 ///
-/// This handler runs on the UI thread, so the hide comes before the telemetry
-/// flush: anything slow ahead of it shows up as a frozen window rather than a
-/// closed app.
-pub(crate) fn install_close_handler(app_handle: AppHandle, win: &WebviewWindow) {
+/// On close: queue the geometry save, hide, end the telemetry session, then
+/// wait out the save. This handler runs on the UI thread, so the hide comes
+/// before the telemetry flush: anything slow ahead of it shows up as a frozen
+/// window rather than a closed app.
+pub(crate) fn install_window_event_handlers(app_handle: AppHandle, win: &WebviewWindow) {
     let win_for_events = win.clone();
     win.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::Moved(_)) {
+            queue_window_geometry_save(&app_handle, &win_for_events);
+            return;
+        }
         if !matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
             return;
         }
-        let size_save_wait = spawn_window_size_save(&app_handle, &win_for_events);
+        let geometry_save_wait = spawn_window_geometry_save(&app_handle, &win_for_events);
 
         let _ = win_for_events.hide();
 
@@ -211,10 +412,10 @@ pub(crate) fn install_close_handler(app_handle: AppHandle, win: &WebviewWindow) 
             .track(telemetry::Event::SessionEnded { duration_ms });
         tstate.shutdown();
 
-        // Give the size save the same bound save_config's own cross-process
+        // Give the geometry save the same bound save_config's own cross-process
         // lock uses, so it either lands before we exit or is abandoned
         // deliberately rather than silently.
-        if let Some(rx) = size_save_wait {
+        if let Some(rx) = geometry_save_wait {
             let _ = rx.recv_timeout(std::time::Duration::from_secs(5));
         }
     });
@@ -326,4 +527,61 @@ pub(crate) fn spawn_boot_failsafe(fallback_handle: AppHandle) {
         );
         let _ = app_runtime::show_main_window(&fallback_handle);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tauri::{PhysicalPosition, PhysicalSize};
+
+    // The unit bug in one assertion: a 1000x520 logical window on a 125%
+    // display reports 1250x650 physical. Storing that raw is what made the
+    // window grow by 25% at every launch, because the builder reads the stored
+    // number as logical.
+    #[test]
+    fn a_physical_window_size_converts_back_to_the_logical_one() {
+        let scale = 1.25;
+        let physical = PhysicalSize::new(1250_u32, 650_u32);
+        let logical = physical.to_logical::<f64>(scale);
+
+        assert_eq!((logical.width, logical.height), (1000.0, 520.0));
+        assert_eq!(
+            (
+                accshift_core::config::logical_from_physical(1250.0, scale),
+                accshift_core::config::logical_from_physical(650.0, scale),
+            ),
+            (logical.width, logical.height),
+            "the config helper and the tauri conversion must agree"
+        );
+    }
+
+    #[test]
+    fn a_physical_window_position_converts_back_to_the_logical_one() {
+        let physical = PhysicalPosition::new(-2400_i32, 150_i32);
+        let logical = physical.to_logical::<f64>(1.5);
+        assert_eq!((logical.x, logical.y), (-1600.0, 100.0));
+    }
+
+    #[test]
+    fn a_window_overlapping_a_monitor_is_kept() {
+        let monitor = Rect::at(0.0, 0.0, 1920.0, 1040.0);
+        // Fully inside.
+        assert!(Rect::at(100.0, 100.0, 1000.0, 520.0).overlaps(&monitor));
+        // Half off the right edge, still reachable.
+        assert!(Rect::at(1900.0, 100.0, 1000.0, 520.0).overlaps(&monitor));
+        // A second monitor to the left of the primary one.
+        assert!(Rect::at(-1800.0, 40.0, 1000.0, 520.0)
+            .overlaps(&Rect::at(-1920.0, 0.0, 1920.0, 1040.0)));
+    }
+
+    #[test]
+    fn a_window_off_every_monitor_is_rejected() {
+        let monitor = Rect::at(0.0, 0.0, 1920.0, 1040.0);
+        // The unplugged second monitor case.
+        assert!(!Rect::at(-1800.0, 40.0, 1000.0, 520.0).overlaps(&monitor));
+        // Below the taskbar, off the work area.
+        assert!(!Rect::at(100.0, 1040.0, 1000.0, 520.0).overlaps(&monitor));
+        // Touching edges share no pixel.
+        assert!(!Rect::at(1920.0, 0.0, 1000.0, 520.0).overlaps(&monitor));
+    }
 }

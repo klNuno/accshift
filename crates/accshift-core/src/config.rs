@@ -3,10 +3,25 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 
+// Every window measurement here is in LOGICAL pixels, which is what
+// `WebviewWindowBuilder::inner_size` and `::position` consume. Callers that
+// read a live window get physical pixels and must divide by the scale factor
+// first (see `logical_from_physical`), or the window grows by that factor at
+// every launch on a scaled display.
 pub const DEFAULT_WINDOW_WIDTH: f64 = 1000.0;
 pub const DEFAULT_WINDOW_HEIGHT: f64 = 520.0;
 pub const MIN_WINDOW_WIDTH: f64 = 400.0;
 pub const MIN_WINDOW_HEIGHT: f64 = 300.0;
+/// Upper bound on a restored window, in logical pixels. Windows itself refuses
+/// to create a window wider or taller than this, so a config claiming more is
+/// corrupt whatever produced it.
+pub const MAX_WINDOW_WIDTH: f64 = 16_384.0;
+pub const MAX_WINDOW_HEIGHT: f64 = 16_384.0;
+/// Upper bound on a restored window origin, in logical pixels. A multi-monitor
+/// desktop can put a window at a negative coordinate, so this bounds the
+/// magnitude and not the sign. Whether the saved spot is still on a monitor is
+/// a question only the GUI can answer.
+const MAX_WINDOW_ORIGIN: f64 = 32_768.0;
 const WINDOW_SIZE_EPSILON: f64 = 1.0;
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -282,6 +297,13 @@ pub struct AppConfig {
     pub window_width: Option<f64>,
     #[serde(default)]
     pub window_height: Option<f64>,
+    /// Window origin in logical pixels. Absent means "no saved placement", and
+    /// the GUI centers the window, which is also what every config written
+    /// before this field existed says.
+    #[serde(default)]
+    pub window_x: Option<f64>,
+    #[serde(default)]
+    pub window_y: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -317,6 +339,10 @@ struct RawAppConfig {
     window_width: Option<f64>,
     #[serde(default)]
     window_height: Option<f64>,
+    #[serde(default)]
+    window_x: Option<f64>,
+    #[serde(default)]
+    window_y: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -526,6 +552,8 @@ fn normalize_config(raw: RawAppConfig) -> AppConfig {
         telemetry,
         window_width: raw.window_width,
         window_height: raw.window_height,
+        window_x: raw.window_x,
+        window_y: raw.window_y,
     }
 }
 
@@ -752,6 +780,7 @@ fn save_config_unlocked(app_handle: &dyn AppContext, config: &AppConfig) -> Resu
         "jagexAccounts": config.jagex.accounts.len(),
         "discordAccounts": config.discord.accounts.len(),
         "hasWindowSize": config.window_width.is_some() && config.window_height.is_some(),
+        "hasWindowPosition": config.window_x.is_some() && config.window_y.is_some(),
     })
     .to_string();
     let _ = crate::logging::append_app_log(
@@ -849,20 +878,54 @@ pub fn migrate_legacy_config(app_handle: &dyn AppContext) -> Option<Result<(), S
     Some(Ok(()))
 }
 
+/// Turn a physical-pixel measurement into the logical pixels this config
+/// stores. Same arithmetic as `dpi::PhysicalSize::to_logical`, kept here so the
+/// save-then-restore round trip is testable without a live window.
+pub fn logical_from_physical(physical: f64, scale_factor: f64) -> f64 {
+    if !scale_factor.is_finite() || scale_factor <= 0.0 {
+        return physical;
+    }
+    physical / scale_factor
+}
+
+/// The saved size as the window builder should get it, or `None` when there is
+/// nothing usable to restore.
+///
+/// A size at the minimum is treated as a bug rather than a preference (a window
+/// collapsed by a runtime glitch), and anything past the maximum is a corrupt
+/// file: clamping it keeps the window reachable instead of opening it off
+/// screen or failing to open at all.
+pub fn clamp_window_size(width: f64, height: f64) -> Option<(f64, f64)> {
+    if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+    if is_suspicious_min_window_size(width, height) {
+        return None;
+    }
+    Some((
+        width.clamp(MIN_WINDOW_WIDTH, MAX_WINDOW_WIDTH),
+        height.clamp(MIN_WINDOW_HEIGHT, MAX_WINDOW_HEIGHT),
+    ))
+}
+
+/// The saved origin, or `None` when it is missing or nonsense. The caller still
+/// has to check it against the monitors actually attached today.
+pub fn clamp_window_position(x: f64, y: f64) -> Option<(f64, f64)> {
+    let sane = x.is_finite()
+        && y.is_finite()
+        && x.abs() <= MAX_WINDOW_ORIGIN
+        && y.abs() <= MAX_WINDOW_ORIGIN;
+    sane.then_some((x, y))
+}
+
 pub fn load_window_size(app_handle: &dyn AppContext) -> Option<(f64, f64)> {
     let cfg = load_config(app_handle);
-    let width = cfg.window_width?;
-    let height = cfg.window_height?;
-    if width.is_finite()
-        && height.is_finite()
-        && width > 0.0
-        && height > 0.0
-        && !is_suspicious_min_window_size(width, height)
-    {
-        Some((width, height))
-    } else {
-        None
-    }
+    clamp_window_size(cfg.window_width?, cfg.window_height?)
+}
+
+pub fn load_window_position(app_handle: &dyn AppContext) -> Option<(f64, f64)> {
+    let cfg = load_config(app_handle);
+    clamp_window_position(cfg.window_x?, cfg.window_y?)
 }
 
 pub fn save_window_size(
@@ -870,17 +933,36 @@ pub fn save_window_size(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
-    if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
-        return Ok(());
-    }
+    save_window_geometry(app_handle, width, height, None)
+}
 
-    if is_suspicious_min_window_size(width, height) {
+/// Persist the window geometry, in logical pixels.
+///
+/// A `None` position leaves the stored placement alone, so a caller that only
+/// knows the size never erases where the user put the window. A value that
+/// fails validation is dropped rather than written, and a call where nothing
+/// survives validation touches no file at all.
+pub fn save_window_geometry(
+    app_handle: &dyn AppContext,
+    width: f64,
+    height: f64,
+    position: Option<(f64, f64)>,
+) -> Result<(), String> {
+    let size = clamp_window_size(width, height);
+    let position = position.and_then(|(x, y)| clamp_window_position(x, y));
+    if size.is_none() && position.is_none() {
         return Ok(());
     }
 
     update_config(app_handle, |cfg| {
-        cfg.window_width = Some(width);
-        cfg.window_height = Some(height);
+        if let Some((width, height)) = size {
+            cfg.window_width = Some(width);
+            cfg.window_height = Some(height);
+        }
+        if let Some((x, y)) = position {
+            cfg.window_x = Some(x);
+            cfg.window_y = Some(y);
+        }
     })
 }
 
@@ -938,6 +1020,8 @@ fn portable_config(config: &AppConfig) -> AppConfig {
     portable.telemetry.anonymous_id.clear();
     portable.window_width = None;
     portable.window_height = None;
+    portable.window_x = None;
+    portable.window_y = None;
     for account in &mut portable.roblox.accounts {
         account.cookie_encrypted.clear();
     }
@@ -1051,6 +1135,8 @@ fn local_config(config: &AppConfig) -> AppConfig {
     local.telemetry.onboarding_completed = false;
     local.window_width = config.window_width;
     local.window_height = config.window_height;
+    local.window_x = config.window_x;
+    local.window_y = config.window_y;
     local.roblox.accounts = config
         .roblox
         .accounts
@@ -1102,6 +1188,8 @@ fn merge_split_configs(portable: AppConfig, mut local: AppConfig) -> AppConfig {
     );
     overwrite_if_set(&mut merged.window_width, local.window_width);
     overwrite_if_set(&mut merged.window_height, local.window_height);
+    overwrite_if_set(&mut merged.window_x, local.window_x);
+    overwrite_if_set(&mut merged.window_y, local.window_y);
 
     for local_account in local.roblox.accounts {
         if local_account.user_id.trim().is_empty() {
@@ -1288,6 +1376,108 @@ mod tests {
         let _ = std::fs::remove_dir_all(&ctx.root);
     }
 
+    // Regression for the launch-over-launch growth: the window reports a
+    // physical size, the builder consumes logical pixels, so a config that
+    // stored the physical number grew the window by the scale factor every
+    // time. The saver converts once, and the round trip is an identity at any
+    // scale.
+    #[test]
+    fn window_size_round_trips_in_logical_pixels_at_scale_1_5() {
+        let _test_guard = config_io_test_mutex()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = tmp_ctx("window-size-dpi");
+        save_config(&*ctx, &AppConfig::default()).unwrap();
+
+        let scale = 1.5_f64;
+        let (logical_width, logical_height) = (DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT);
+        // What the window would report on a 150% display.
+        let physical_width = logical_width * scale;
+        let physical_height = logical_height * scale;
+
+        save_window_geometry(
+            &*ctx,
+            logical_from_physical(physical_width, scale),
+            logical_from_physical(physical_height, scale),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            load_window_size(&*ctx),
+            Some((logical_width, logical_height)),
+            "a saved size must come back unchanged, not scaled"
+        );
+
+        // Second launch: the restored size is what the window is built with, so
+        // feeding it back through the same path must not move either.
+        let (restored_width, restored_height) = load_window_size(&*ctx).unwrap();
+        save_window_geometry(
+            &*ctx,
+            logical_from_physical(restored_width * scale, scale),
+            logical_from_physical(restored_height * scale, scale),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            load_window_size(&*ctx),
+            Some((logical_width, logical_height))
+        );
+
+        let _ = std::fs::remove_dir_all(&ctx.root);
+    }
+
+    #[test]
+    fn window_size_is_clamped_to_something_openable() {
+        assert_eq!(clamp_window_size(f64::NAN, 600.0), None);
+        assert_eq!(clamp_window_size(0.0, 600.0), None);
+        // A window collapsed to the minimum is a glitch, not a preference.
+        assert_eq!(clamp_window_size(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT), None);
+        assert_eq!(
+            clamp_window_size(1.0e9, 1.0e9),
+            Some((MAX_WINDOW_WIDTH, MAX_WINDOW_HEIGHT))
+        );
+        assert_eq!(
+            clamp_window_size(200.0, 4000.0),
+            Some((MIN_WINDOW_WIDTH, 4000.0))
+        );
+        assert_eq!(clamp_window_size(1280.0, 720.0), Some((1280.0, 720.0)));
+    }
+
+    #[test]
+    fn window_position_round_trips_and_survives_a_missing_field() {
+        let _test_guard = config_io_test_mutex()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = tmp_ctx("window-position");
+        save_config(&*ctx, &AppConfig::default()).unwrap();
+
+        // A config written before the field existed means "center me".
+        assert_eq!(load_window_position(&*ctx), None);
+
+        // A second monitor to the left gives a negative origin, which is valid.
+        save_window_geometry(&*ctx, 1280.0, 720.0, Some((-1920.0, 240.0))).unwrap();
+        assert_eq!(load_window_position(&*ctx), Some((-1920.0, 240.0)));
+
+        // A size-only save must not erase the placement.
+        save_window_size(&*ctx, 1000.0, 600.0).unwrap();
+        assert_eq!(load_window_position(&*ctx), Some((-1920.0, 240.0)));
+        assert_eq!(load_window_size(&*ctx), Some((1000.0, 600.0)));
+
+        let _ = std::fs::remove_dir_all(&ctx.root);
+    }
+
+    #[test]
+    fn a_nonsense_window_position_is_refused() {
+        assert_eq!(clamp_window_position(f64::NAN, 0.0), None);
+        assert_eq!(clamp_window_position(0.0, f64::INFINITY), None);
+        assert_eq!(clamp_window_position(1.0e9, 0.0), None);
+        assert_eq!(
+            clamp_window_position(-1920.0, -80.0),
+            Some((-1920.0, -80.0))
+        );
+    }
+
     #[test]
     fn normalize_config_migrates_legacy_steam_fields() {
         let raw = RawAppConfig {
@@ -1408,6 +1598,8 @@ mod tests {
             telemetry: TelemetryConfig::default(),
             window_width: Some(1200.0),
             window_height: Some(800.0),
+            window_x: Some(120.0),
+            window_y: Some(64.0),
         };
 
         let p = portable_config(&config);
@@ -1427,6 +1619,8 @@ mod tests {
         assert!(p.jagex.path_override.is_empty());
         assert!(p.window_width.is_none());
         assert!(p.window_height.is_none());
+        assert!(p.window_x.is_none());
+        assert!(p.window_y.is_none());
 
         // Roblox cookies stripped
         assert!(p.roblox.accounts[0].cookie_encrypted.is_empty());
@@ -1495,6 +1689,8 @@ mod tests {
             telemetry: TelemetryConfig::default(),
             window_width: Some(1024.0),
             window_height: Some(768.0),
+            window_x: Some(-1920.0),
+            window_y: Some(40.0),
         };
 
         let l = local_config(&config);
@@ -1511,6 +1707,8 @@ mod tests {
         assert_eq!(l.jagex.path_override, "C:\\Jagex");
         assert_eq!(l.window_width, Some(1024.0));
         assert_eq!(l.window_height, Some(768.0));
+        assert_eq!(l.window_x, Some(-1920.0));
+        assert_eq!(l.window_y, Some(40.0));
 
         // Roblox local keeps user_id + cookie, but not username/display_name
         assert_eq!(l.roblox.accounts.len(), 1);
