@@ -10,7 +10,7 @@ import {
   STORAGE_TARGET_EPIC_SNAPSHOTS,
   STORAGE_TARGET_RIOT_SNAPSHOTS,
   STORAGE_TARGET_UBISOFT_SNAPSHOTS,
-} from "$lib/storage/clientStorage";
+} from "$lib/storage/storeIds";
 import { steamSettingsSchema } from "./steam/settingsSchema";
 
 /** The part of a descriptor this side reads. The rest of the file drives the
