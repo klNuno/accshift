@@ -266,7 +266,7 @@ export const ES_MESSAGES: Record<MessageKey, string> = {
     "Deja que otras apps cambien de cuenta por ti: marcadores, Stream Deck, scripts.",
   "settings.cliEnabled": "Permitir la CLI de accshift",
   "settings.cliEnabledHint":
-    "Deja que la herramienta de línea de comandos liste y cambie de cuenta.",
+    "Deja que la herramienta de línea de comandos liste y cambie de cuenta. Desactivado, todos los comandos accshift se niegan a ejecutarse, diag incluido; la aplicación en sí no se ve afectada.",
   "settings.help": "Abrir la wiki de accshift",
   "settings.helpShort": "Ayuda",
   "settings.openHelpFailed": "No se pudo abrir la wiki",

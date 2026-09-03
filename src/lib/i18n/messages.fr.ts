@@ -265,7 +265,8 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.deepLinksHint":
     "Laisse d'autres applications changer de compte pour toi : favoris, Stream Deck, scripts.",
   "settings.cliEnabled": "Autoriser le CLI accshift",
-  "settings.cliEnabledHint": "Laisse l'outil en ligne de commande lister et changer de compte.",
+  "settings.cliEnabledHint":
+    "Laisse l'outil en ligne de commande lister et changer de compte. Désactivé, toute commande accshift refuse de s'exécuter, diag compris ; l'application elle-même n'est pas concernée.",
   "settings.help": "Ouvrir le wiki accshift",
   "settings.helpShort": "Aide",
   "settings.openHelpFailed": "Impossible d'ouvrir le wiki",

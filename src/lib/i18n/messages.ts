@@ -254,7 +254,8 @@ export const EN_MESSAGES = {
   "settings.deepLinksHint":
     "Let other apps switch accounts for you: bookmarks, Stream Deck, scripts.",
   "settings.cliEnabled": "Allow the accshift CLI",
-  "settings.cliEnabledHint": "Let the command line tool list and switch accounts.",
+  "settings.cliEnabledHint":
+    "Let the command line tool list and switch accounts. When off, every accshift command refuses to run, diag included; the app itself is unaffected.",
   "settings.help": "Open the accshift wiki",
   "settings.helpShort": "Help",
   "settings.openHelpFailed": "Could not open the wiki",

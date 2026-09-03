@@ -251,7 +251,8 @@ export const ZH_MESSAGES: Record<MessageKey, string> = {
   "settings.deepLinks": "允许 accshift:// 链接",
   "settings.deepLinksHint": "让其他应用替你切换账号：书签、Stream Deck、脚本。",
   "settings.cliEnabled": "允许 accshift 命令行工具",
-  "settings.cliEnabledHint": "让命令行工具列出并切换账号。",
+  "settings.cliEnabledHint":
+    "让命令行工具列出并切换账号。关闭后，所有 accshift 命令都会拒绝运行，包括 diag；应用本身不受影响。",
   "settings.help": "打开 accshift 维基",
   "settings.helpShort": "帮助",
   "settings.openHelpFailed": "无法打开维基",

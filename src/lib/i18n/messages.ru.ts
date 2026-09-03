@@ -264,7 +264,7 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
     "Позволяет другим приложениям менять аккаунт за вас: закладки, Stream Deck, скрипты.",
   "settings.cliEnabled": "Разрешить CLI accshift",
   "settings.cliEnabledHint":
-    "Позволяет утилите командной строки показывать список и менять аккаунты.",
+    "Позволяет утилите командной строки показывать список и менять аккаунты. Если выключено, любая команда accshift отказывается выполняться, включая diag; само приложение не затронуто.",
   "settings.help": "Открыть вики accshift",
   "settings.helpShort": "Справка",
   "settings.openHelpFailed": "Не удалось открыть вики",

@@ -263,7 +263,8 @@ export const PT_BR_MESSAGES: Record<MessageKey, string> = {
   "settings.deepLinksHint":
     "Deixe outros apps trocarem de conta por você: favoritos, Stream Deck, scripts.",
   "settings.cliEnabled": "Permitir a CLI do accshift",
-  "settings.cliEnabledHint": "Deixa a ferramenta de linha de comando listar e trocar de contas.",
+  "settings.cliEnabledHint":
+    "Deixa a ferramenta de linha de comando listar e trocar de contas. Desativado, todo comando accshift se recusa a rodar, diag incluído; o aplicativo em si não é afetado.",
   "settings.help": "Abrir a wiki do accshift",
   "settings.helpShort": "Ajuda",
   "settings.openHelpFailed": "Não foi possível abrir a wiki",
