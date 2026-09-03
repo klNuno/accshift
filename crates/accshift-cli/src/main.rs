@@ -193,6 +193,11 @@ fn build_ctx(format: Format, command: &str) -> Result<accshift_core::AppCtx, u8>
     // platform this run already knows about. Failures are the report's
     // business, not this one's; `accshift descriptors` prints them.
     let _ = accshift_core::platforms::reload_user_platforms(&*ctx);
+    // A capture from here creates the same keyring entries the GUI's do, so
+    // they go in the same index or the GUI's collector cannot tell them from
+    // orphans. The CLI never sweeps: a one-shot process has no idea what else
+    // is running.
+    accshift_core::secrets::init(&*ctx);
     Ok(ctx)
 }
 

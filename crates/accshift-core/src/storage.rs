@@ -124,6 +124,15 @@ pub fn local_config_path(app_handle: &dyn AppContext) -> Result<PathBuf, String>
     Ok(target)
 }
 
+/// Where the list of OS keyring entry ids the app created lives. It sits in
+/// the state directory next to the local config, because like it, it describes
+/// this machine and never moves with the user's data.
+pub fn secrets_index_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
+    Ok(app_local_data_root(app_handle)?
+        .join("state")
+        .join("secret-entries.txt"))
+}
+
 pub fn legacy_config_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     Ok(legacy_app_data_root(app_handle)?.join("config.json"))
 }

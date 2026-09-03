@@ -2,15 +2,15 @@
 //!
 //! Every platform that captures auth material to disk (Riot, Ubisoft, Epic,
 //! GOG, Jagex, Discord) stores it in the same on-disk format: a 4-byte magic
-//! header followed by the output of `os::encrypt_bytes` (DPAPI ciphertext on
-//! Windows, a keyring token on Linux/macOS). Files without the header are
-//! legacy plaintext snapshots and pass through reads unchanged.
+//! header followed by the output of [`crate::secrets::encrypt_bytes`] (DPAPI
+//! ciphertext on Windows, a keyring token on Linux/macOS). Files without the
+//! header are legacy plaintext snapshots and pass through reads unchanged.
 //!
 //! The format is load-bearing: snapshots written by older builds must keep
-//! decrypting, so the header, key derivation (delegated to `crate::os`) and
-//! layout must not change.
+//! decrypting, so the header, key derivation (delegated to [`crate::secrets`],
+//! and through it to `crate::os`) and layout must not change.
 
-use crate::os;
+use crate::secrets;
 use crate::AppContext;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -47,7 +47,7 @@ pub struct DirCopyOptions<'a> {
 /// elsewhere). The on-disk snapshot is never plaintext auth material.
 pub fn encrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
     let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
-    let encrypted = os::encrypt_bytes(&data)
+    let encrypted = secrets::encrypt_bytes(&data)
         .map_err(|e| format!("Could not encrypt {}: {e}", source.display()))?;
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)
@@ -64,7 +64,7 @@ pub fn encrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
 pub fn decrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
     let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
     let content = if data.starts_with(ENCRYPTED_HEADER) {
-        os::decrypt_bytes(&data[ENCRYPTED_HEADER.len()..])
+        secrets::decrypt_bytes(&data[ENCRYPTED_HEADER.len()..])
             .map_err(|e| format!("Could not decrypt {}: {e}", source.display()))?
     } else {
         data
@@ -78,7 +78,7 @@ pub fn decrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
 
 /// Encrypt raw bytes and write them with the header (no temp plaintext on disk).
 pub fn write_encrypted_bytes(dest: &Path, data: &[u8]) -> Result<(), String> {
-    let encrypted = os::encrypt_bytes(data)
+    let encrypted = secrets::encrypt_bytes(data)
         .map_err(|e| format!("Could not encrypt {}: {e}", dest.display()))?;
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)
@@ -95,7 +95,7 @@ pub fn write_encrypted_bytes(dest: &Path, data: &[u8]) -> Result<(), String> {
 pub fn read_decrypted_bytes(path: &Path) -> Result<Vec<u8>, String> {
     let raw = fs::read(path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
     if raw.starts_with(ENCRYPTED_HEADER) {
-        os::decrypt_bytes(&raw[ENCRYPTED_HEADER.len()..])
+        secrets::decrypt_bytes(&raw[ENCRYPTED_HEADER.len()..])
             .map_err(|e| format!("Could not decrypt {}: {e}", path.display()))
     } else {
         Ok(raw)
@@ -110,7 +110,7 @@ pub fn delete_encrypted_file_secret(path: &Path) {
         return;
     };
     if data.starts_with(ENCRYPTED_HEADER) {
-        let _ = os::delete_bytes(&data[ENCRYPTED_HEADER.len()..]);
+        let _ = secrets::delete_bytes(&data[ENCRYPTED_HEADER.len()..]);
     }
 }
 
@@ -241,7 +241,7 @@ pub fn free_dir_secrets_with_errors(dir: &Path, report: &mut dyn FnMut(&str, Str
             continue;
         }
         let token = &data[ENCRYPTED_HEADER.len()..];
-        if let Err(e) = os::delete_bytes(token) {
+        if let Err(e) = secrets::delete_bytes(token) {
             report(
                 "Could not free keyring entry for snapshot file",
                 format!("file={} error={e}", path.display()),
@@ -308,7 +308,7 @@ pub fn upgrade_legacy_plaintext_file(path: &Path) -> Result<bool, String> {
         return Ok(false);
     }
 
-    let encrypted = os::encrypt_bytes(&data)
+    let encrypted = secrets::encrypt_bytes(&data)
         .map_err(|e| format!("Could not encrypt {}: {e}", path.display()))?;
     let mut out = Vec::with_capacity(ENCRYPTED_HEADER.len() + encrypted.len());
     out.extend_from_slice(ENCRYPTED_HEADER);
@@ -319,12 +319,12 @@ pub fn upgrade_legacy_plaintext_file(path: &Path) -> Result<bool, String> {
         let _ = fs::remove_file(&tmp);
         // On Linux/macOS the ciphertext is a keyring pointer, so a token that
         // never reached a file would leak an entry. Release it.
-        let _ = os::delete_bytes(&out[ENCRYPTED_HEADER.len()..]);
+        let _ = secrets::delete_bytes(&out[ENCRYPTED_HEADER.len()..]);
         return Err(format!("Could not write {}: {e}", tmp.display()));
     }
     if let Err(e) = fs::rename(&tmp, path) {
         let _ = fs::remove_file(&tmp);
-        let _ = os::delete_bytes(&out[ENCRYPTED_HEADER.len()..]);
+        let _ = secrets::delete_bytes(&out[ENCRYPTED_HEADER.len()..]);
         return Err(format!("Could not replace {}: {e}", path.display()));
     }
     Ok(true)

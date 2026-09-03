@@ -474,35 +474,61 @@ pub(crate) fn wire_deep_links(app: &tauri::App, setup_ctx: &AppCtx) {
     });
 }
 
-/// Re-encrypt any snapshot still stored as plaintext, once per launch.
+/// Re-encrypt any snapshot still stored as plaintext, then free the keyring
+/// entries no snapshot points at any more. Once per launch.
 ///
 /// Snapshots captured before encryption shipped only get encrypted when the
 /// account is captured again, and a dormant account never is. Off the boot path
 /// on purpose: on Linux and macOS every upgraded file costs a keyring round
 /// trip.
+///
+/// The index the collector reads is armed here, synchronously, so it is in
+/// place before anything in this process can capture a snapshot. The sweep
+/// itself runs after the upgrade, which is what turns a rewritten legacy file's
+/// old entry into an orphan.
 pub(crate) fn spawn_snapshot_upgrade(upgrade_ctx: AppCtx) {
+    accshift_core::secrets::init(&upgrade_ctx);
     std::thread::spawn(move || {
         let mut failures: Vec<String> = Vec::new();
         let stats = accshift_core::snapshot_crypto::upgrade_legacy_plaintext_snapshots(
             &upgrade_ctx,
             &mut |message, detail| failures.push(format!("{message} ({detail})")),
         );
-        if !stats.touched_anything() {
-            return;
+        if stats.touched_anything() {
+            let level = if stats.failed > 0 { "warn" } else { "info" };
+            let _ = logging::append_app_log(
+                &upgrade_ctx,
+                level,
+                "backend.snapshot-upgrade",
+                &format!(
+                    "Re-encrypted {} legacy plaintext snapshot file(s), {} failed",
+                    stats.upgraded, stats.failed
+                ),
+                (!failures.is_empty())
+                    .then(|| failures.join("; "))
+                    .as_deref(),
+            );
         }
-        let level = if stats.failed > 0 { "warn" } else { "info" };
-        let _ = logging::append_app_log(
-            &upgrade_ctx,
-            level,
-            "backend.snapshot-upgrade",
-            &format!(
-                "Re-encrypted {} legacy plaintext snapshot file(s), {} failed",
-                stats.upgraded, stats.failed
-            ),
-            (!failures.is_empty())
-                .then(|| failures.join("; "))
-                .as_deref(),
-        );
+
+        let mut sweep_failures: Vec<String> = Vec::new();
+        let swept = accshift_core::secrets::gc(&upgrade_ctx, &mut |message, detail| {
+            sweep_failures.push(format!("{message} ({detail})"))
+        });
+        if swept.touched_anything() {
+            let level = if swept.failed > 0 { "warn" } else { "info" };
+            let _ = logging::append_app_log(
+                &upgrade_ctx,
+                level,
+                "backend.secrets-gc",
+                &format!(
+                    "Freed {} orphaned keyring entry(ies), {} failed",
+                    swept.freed, swept.failed
+                ),
+                (!sweep_failures.is_empty())
+                    .then(|| sweep_failures.join("; "))
+                    .as_deref(),
+            );
+        }
     });
 }
 
