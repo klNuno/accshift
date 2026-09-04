@@ -733,6 +733,11 @@ pub struct MaximizeButtonRect {
 /// Pulled out of the window procedure on purpose: this is the whole decision
 /// behind the Snap Layouts flyout, and it is the only part of the feature that
 /// can be checked without a Windows 11 machine and a real mouse.
+///
+/// Compiled on Windows (the window procedure calls it) and when tests run
+/// (so linux/macOS CI still covers the geometry). Left out of a normal
+/// unix `cargo clippy` of the binary, where it would be dead code.
+#[cfg(any(windows, test))]
 pub fn hit_test_maximize(point: (f64, f64), rect: MaximizeButtonRect, scale: f64) -> bool {
     if !scale.is_finite() || scale <= 0.0 || rect.width <= 0.0 || rect.height <= 0.0 {
         return false;

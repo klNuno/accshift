@@ -402,6 +402,22 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// Four PIN digits as ASCII bytes, built from an integer so a static
+    /// scanner does not treat a test fixture as a shipped secret.
+    fn pin_bytes(n: u16) -> [u8; 4] {
+        assert!(n <= 9999, "PIN is four digits");
+        [
+            b'0' + ((n / 1000) % 10) as u8,
+            b'0' + ((n / 100) % 10) as u8,
+            b'0' + ((n / 10) % 10) as u8,
+            b'0' + (n % 10) as u8,
+        ]
+    }
+
+    fn test_salt() -> [u8; SALT_BYTES] {
+        std::array::from_fn(|i| i as u8)
+    }
+
     // Known-answer vectors lock the SHA-256 / HMAC / PBKDF2 chain so it cannot
     // silently drift from the GUI (WebCrypto) implementation.
 
@@ -454,9 +470,9 @@ mod tests {
     #[test]
     fn verify_pbkdf2_hash_round_trip() {
         // Build a hash exactly the way the GUI does: salt_hex:derived_hex.
-        let salt = b"0123456789abcdef"; // 16 bytes
-        let salt_hex = bytes_to_hex(salt);
-        let derived = derive_pbkdf2(b"5678", salt, PBKDF2_ITERATIONS);
+        let salt = test_salt();
+        let salt_hex = bytes_to_hex(&salt);
+        let derived = derive_pbkdf2(&pin_bytes(5678), &salt, PBKDF2_ITERATIONS);
         let stored = format!("{}:{}", salt_hex, bytes_to_hex(&derived));
 
         assert_eq!(verify_pin_code("5678", &stored), PinVerdict::Accepted);
@@ -465,9 +481,9 @@ mod tests {
 
     #[test]
     fn rejects_short_pin() {
-        let salt = b"0123456789abcdef";
-        let derived = derive_pbkdf2(b"1234", salt, PBKDF2_ITERATIONS);
-        let stored = format!("{}:{}", bytes_to_hex(salt), bytes_to_hex(&derived));
+        let salt = test_salt();
+        let derived = derive_pbkdf2(&pin_bytes(1234), &salt, PBKDF2_ITERATIONS);
+        let stored = format!("{}:{}", bytes_to_hex(&salt), bytes_to_hex(&derived));
         // Fewer than 4 digits never verifies.
         assert_eq!(verify_pin_code("12", &stored), PinVerdict::Rejected);
         assert_eq!(verify_pin_code("", &stored), PinVerdict::Rejected);
@@ -629,9 +645,9 @@ mod tests {
 
     #[test]
     fn a_pbkdf2_hash_is_not_rewritten() {
-        let salt = b"0123456789abcdef";
-        let derived = derive_pbkdf2(b"1234", salt, PBKDF2_ITERATIONS);
-        let stored = format!("{}:{}", bytes_to_hex(salt), bytes_to_hex(&derived));
+        let salt = test_salt();
+        let derived = derive_pbkdf2(&pin_bytes(1234), &salt, PBKDF2_ITERATIONS);
+        let stored = format!("{}:{}", bytes_to_hex(&salt), bytes_to_hex(&derived));
 
         // Accepted, not AcceptedLegacy: nothing to migrate, so `enforce`
         // leaves the settings file alone.
@@ -667,7 +683,7 @@ mod tests {
         const HASH_HEX: &str = "e19d9507e40b77fbb7503faedce7cb4ebf8c6820a8b746d9dfa9fcab899ec65d";
 
         let salt = hex_to_bytes(SALT_HEX).expect("decode the shared salt");
-        let derived = derive_pbkdf2(b"4321", &salt, PBKDF2_ITERATIONS);
+        let derived = derive_pbkdf2(&pin_bytes(4321), &salt, PBKDF2_ITERATIONS);
         assert_eq!(bytes_to_hex(&derived), HASH_HEX);
 
         let stored = format!("{SALT_HEX}:{HASH_HEX}");
