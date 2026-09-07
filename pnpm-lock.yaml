@@ -16,18 +16,18 @@ importers:
         specifier: 2.11.1
         version: 2.11.1
       '@tauri-apps/plugin-deep-link':
-        specifier: ^2.4.9
-        version: 2.4.9
+        specifier: ^2.4.10
+        version: 2.4.10
       '@tauri-apps/plugin-process':
         specifier: ^2.3.1
         version: 2.3.1
       '@tauri-apps/plugin-updater':
-        specifier: ^2.10.1
-        version: 2.10.1
+        specifier: ^2.11.0
+        version: 2.11.0
     devDependencies:
       '@sveltejs/vite-plugin-svelte':
         specifier: ^7.3.0
-        version: 7.3.0(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))(svelte@5.56.10(@typescript-eslint/types@8.58.0))
+        version: 7.3.0(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))(svelte@5.57.0(@typescript-eslint/types@8.58.0))
       '@tailwindcss/vite':
         specifier: ^4.3.3
         version: 4.3.3(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))
@@ -38,11 +38,11 @@ importers:
         specifier: ^5.0.8
         version: 5.0.8
       svelte:
-        specifier: ^5.56.10
-        version: 5.56.10(@typescript-eslint/types@8.58.0)
+        specifier: ^5.57.0
+        version: 5.57.0(@typescript-eslint/types@8.58.0)
       svelte-check:
         specifier: ^4.7.6
-        version: 4.7.6(picomatch@4.0.5)(svelte@5.56.10(@typescript-eslint/types@8.58.0))(typescript@6.0.3)
+        version: 4.7.6(picomatch@4.0.5)(svelte@5.57.0(@typescript-eslint/types@8.58.0))(typescript@6.0.3)
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
@@ -54,7 +54,7 @@ importers:
         version: '@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3)'
       vite-plus:
         specifier: 0.3.0
-        version: 0.3.0(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))(jiti@2.7.0)(svelte@5.56.10(@typescript-eslint/types@8.58.0))(typescript@6.0.3)
+        version: 0.3.0(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))(jiti@2.7.0)(svelte@5.57.0(@typescript-eslint/types@8.58.0))(typescript@6.0.3)
       vitest:
         specifier: 4.1.11
         version: 4.1.11(@vitest/browser-preview@4.1.11)(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))
@@ -86,8 +86,8 @@ packages:
     resolution: {integrity: sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw==}
     engines: {node: '>=6.0.0'}
 
-  '@jridgewell/sourcemap-codec@1.5.5':
-    resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
+  '@jridgewell/sourcemap-codec@1.6.0':
+    resolution: {integrity: sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw==}
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
@@ -579,14 +579,14 @@ packages:
     engines: {node: '>= 10'}
     hasBin: true
 
-  '@tauri-apps/plugin-deep-link@2.4.9':
-    resolution: {integrity: sha512-u0SKOUHnJ1wqeqXsDFq2+kASCBj9xxbG0g9XZWPy9SOmU4wXtp6b/wiYpm6oH6/5fBTQsLqnLhIvqLBRpgHJlA==}
+  '@tauri-apps/plugin-deep-link@2.4.10':
+    resolution: {integrity: sha512-SuXI47ORUzYuwG6c8dluLDrStTvli5bAZDRa2+VuUEzK/9TEa7FZz7UKXBQriL7+CPFXRHQsz5tSocc47tRXQQ==}
 
   '@tauri-apps/plugin-process@2.3.1':
     resolution: {integrity: sha512-nCa4fGVaDL/B9ai03VyPOjfAHRHSBz5v6F/ObsB73r/dA3MHHhZtldaDMIc0V/pnUw9ehzr2iEG+XkSEyC0JJA==}
 
-  '@tauri-apps/plugin-updater@2.10.1':
-    resolution: {integrity: sha512-NFYMg+tWOZPJdzE/PpFj2qfqwAWwNS3kXrb1tm1gnBJ9mYzZ4WDRrwy8udzWoAnfGCHLuePNLY1WVCNHnh3eRA==}
+  '@tauri-apps/plugin-updater@2.11.0':
+    resolution: {integrity: sha512-AE36XkOoSna24G40jZMY15nzAnkXEPL/73tGoseGrtGOHuI/cZwWzHpZFLjKXDPgzYZ435z1gHu28LgrsBwIxQ==}
 
   '@testing-library/dom@10.4.1':
     resolution: {integrity: sha512-o4PXJQidqJl82ckFaXUeoAW+XysPLauYI43Abki5hABd853iMhitooc6znOnczgbTYmEP6U6/y1ZyKAIsvMKGg==}
@@ -612,9 +612,6 @@ packages:
 
   '@types/estree@1.0.9':
     resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
-
-  '@types/trusted-types@2.0.7':
-    resolution: {integrity: sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw==}
 
   '@typescript-eslint/types@8.58.0':
     resolution: {integrity: sha512-O9CjxypDT89fbHxRfETNoAnHj/i6IpRK0CvbVN3qibxlLdo5p5hcLmUuCCrHMpxiWSwKyI8mCP7qRNYuOJ0Uww==}
@@ -1057,8 +1054,8 @@ packages:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
 
-  devalue@5.9.1:
-    resolution: {integrity: sha512-+17vil3EVQRzvtDJSFuTWEb8XJRvXqAiV3qZyQWD398QeXUa6CxsUyMdD1fxzEhUrd4FojitFz7lhIHBTlV4fw==}
+  devalue@5.9.2:
+    resolution: {integrity: sha512-po4PAY5c53tw5XMocSnf8A/5OHhbbUftpr93aEN6BBoAdntUmK7vu7wOATqvt7cXO7m1Cl4gMVn6p7n6n4mj0w==}
 
   dom-accessibility-api@0.5.16:
     resolution: {integrity: sha512-X7BJ2yElsnOJ30pZF4uIIDfBEVgF4XEBxL9Bxhy6dnrm5hkzqmsWHGTiHqRiITNhMyFLyAiWndIJP7Z1NTteDg==}
@@ -1073,8 +1070,8 @@ packages:
   esm-env@1.2.2:
     resolution: {integrity: sha512-Epxrv+Nr/CaL4ZcFGPJIYLWFom+YeV1DqMLHJoEd9SYRxNbaFruBwfEX/kkHUJf55j2+TUbmDcmuilbP1TmXHA==}
 
-  esrap@2.3.5:
-    resolution: {integrity: sha512-KciPkeZZX8srrh6xELzLR2cBaWOzgBQ4CwggO6Dh/KMlrfOcIcfyXCVy/Vvc3/OlS5gvFOd5tcxUYuaGM8o45A==}
+  esrap@2.3.6:
+    resolution: {integrity: sha512-yc0OC12UjPqLoc+fe+v5GNs4TOjAigUw3sTikfC+xeBPGUw7gDRz3DtYaqEhxyMVJojcSWJw7jT0QWR+CbuE/A==}
     peerDependencies:
       '@typescript-eslint/types': ^8.2.0
     peerDependenciesMeta:
@@ -1390,8 +1387,8 @@ packages:
       svelte: ^4.0.0 || ^5.0.0-next.0
       typescript: ^5.0.0 || ^6.0.0
 
-  svelte@5.56.10:
-    resolution: {integrity: sha512-Lcxbj8I/KAbpY+VjtY4ENQBV0dDCipfGAhqb51XQZ67CIQqXgsv/8dPkbILaj4Fb6/b6JAEM/PIVbILXgDQy2g==}
+  svelte@5.57.0:
+    resolution: {integrity: sha512-NdbDn7fl4be1ViUG0oq/lvG6OZy3oENolV2ONjiqqsfVoeAfzaQAKUcEX3MrQod/Bebv1PgwET9rfXhgn9s4Kg==}
     engines: {node: '>=18'}
 
   tailwindcss@4.3.3:
@@ -1514,8 +1511,8 @@ packages:
   yuku-parser@0.5.48:
     resolution: {integrity: sha512-OWBfhrpgK9+/4+IXG9oT8Bao4AhViQA7vdyNNH7EUg8dQYgwa70XtIBWTpCEme1P1ECyoDNYkn0wT63f8XRcVA==}
 
-  zimmerframe@1.1.4:
-    resolution: {integrity: sha512-B58NGBEoc8Y9MWWCQGl/gq9xBCe4IiKM0a2x7GZdQKOW5Exr8S1W24J6OgM1njK8xCRGvAJIL/MxXHf6SkmQKQ==}
+  zimmerframe@1.1.5:
+    resolution: {integrity: sha512-msJxIvYDYcoNL+PJsu+7qmpDWsYmAxTY+2TNYXXF0hzBzBk0BMecOqDOG/EckUoKCuKwObfbugIl8QpqHDXeFA==}
 
 snapshots:
 
@@ -1533,7 +1530,7 @@ snapshots:
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
       '@jridgewell/trace-mapping': 0.3.31
 
   '@jridgewell/remapping@2.3.5':
@@ -1543,12 +1540,12 @@ snapshots:
 
   '@jridgewell/resolve-uri@3.1.2': {}
 
-  '@jridgewell/sourcemap-codec@1.5.5': {}
+  '@jridgewell/sourcemap-codec@1.6.0': {}
 
   '@jridgewell/trace-mapping@0.3.31':
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
 
   '@oxc-project/runtime@0.142.0': {}
 
@@ -1702,12 +1699,12 @@ snapshots:
 
   '@sveltejs/load-config@0.2.3': {}
 
-  '@sveltejs/vite-plugin-svelte@7.3.0(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))(svelte@5.56.10(@typescript-eslint/types@8.58.0))':
+  '@sveltejs/vite-plugin-svelte@7.3.0(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))(svelte@5.57.0(@typescript-eslint/types@8.58.0))':
     dependencies:
       deepmerge: 4.3.1
       magic-string: 1.2.0
       obug: 2.1.4
-      svelte: 5.56.10(@typescript-eslint/types@8.58.0)
+      svelte: 5.57.0(@typescript-eslint/types@8.58.0)
       vite: '@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3)'
       vitefu: 1.1.3(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))
 
@@ -1828,7 +1825,7 @@ snapshots:
       '@tauri-apps/cli-win32-ia32-msvc': 2.11.4
       '@tauri-apps/cli-win32-x64-msvc': 2.11.4
 
-  '@tauri-apps/plugin-deep-link@2.4.9':
+  '@tauri-apps/plugin-deep-link@2.4.10':
     dependencies:
       '@tauri-apps/api': 2.11.1
 
@@ -1836,7 +1833,7 @@ snapshots:
     dependencies:
       '@tauri-apps/api': 2.11.1
 
-  '@tauri-apps/plugin-updater@2.10.1':
+  '@tauri-apps/plugin-updater@2.11.0':
     dependencies:
       '@tauri-apps/api': 2.11.1
 
@@ -1867,8 +1864,6 @@ snapshots:
   '@types/deep-eql@4.0.2': {}
 
   '@types/estree@1.0.9': {}
-
-  '@types/trusted-types@2.0.7': {}
 
   '@typescript-eslint/types@8.58.0':
     optional: true
@@ -2133,7 +2128,7 @@ snapshots:
 
   detect-libc@2.1.2: {}
 
-  devalue@5.9.1: {}
+  devalue@5.9.2: {}
 
   dom-accessibility-api@0.5.16: {}
 
@@ -2146,9 +2141,9 @@ snapshots:
 
   esm-env@1.2.2: {}
 
-  esrap@2.3.5(@typescript-eslint/types@8.58.0):
+  esrap@2.3.6(@typescript-eslint/types@8.58.0):
     dependencies:
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
     optionalDependencies:
       '@typescript-eslint/types': 8.58.0
 
@@ -2279,11 +2274,11 @@ snapshots:
 
   magic-string@0.30.21:
     dependencies:
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
 
   magic-string@1.2.0:
     dependencies:
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
 
   mri@1.2.0: {}
 
@@ -2295,7 +2290,7 @@ snapshots:
 
   obug@2.1.4: {}
 
-  oxfmt@0.64.0(svelte@5.56.10(@typescript-eslint/types@8.58.0))(vite-plus@0.3.0(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))(jiti@2.7.0)(svelte@5.56.10(@typescript-eslint/types@8.58.0))(typescript@6.0.3)):
+  oxfmt@0.64.0(svelte@5.57.0(@typescript-eslint/types@8.58.0))(vite-plus@0.3.0(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))(jiti@2.7.0)(svelte@5.57.0(@typescript-eslint/types@8.58.0))(typescript@6.0.3)):
     dependencies:
       tinypool: 2.1.0
     optionalDependencies:
@@ -2318,8 +2313,8 @@ snapshots:
       '@oxfmt/binding-win32-arm64-msvc': 0.64.0
       '@oxfmt/binding-win32-ia32-msvc': 0.64.0
       '@oxfmt/binding-win32-x64-msvc': 0.64.0
-      svelte: 5.56.10(@typescript-eslint/types@8.58.0)
-      vite-plus: 0.3.0(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))(jiti@2.7.0)(svelte@5.56.10(@typescript-eslint/types@8.58.0))(typescript@6.0.3)
+      svelte: 5.57.0(@typescript-eslint/types@8.58.0)
+      vite-plus: 0.3.0(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))(jiti@2.7.0)(svelte@5.57.0(@typescript-eslint/types@8.58.0))(typescript@6.0.3)
 
   oxlint-tsgolint@7.0.2001:
     optionalDependencies:
@@ -2330,7 +2325,7 @@ snapshots:
       '@oxlint-tsgolint/win32-arm64': 7.0.2001
       '@oxlint-tsgolint/win32-x64': 7.0.2001
 
-  oxlint@1.79.0(oxlint-tsgolint@7.0.2001)(vite-plus@0.3.0(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))(jiti@2.7.0)(svelte@5.56.10(@typescript-eslint/types@8.58.0))(typescript@6.0.3)):
+  oxlint@1.79.0(oxlint-tsgolint@7.0.2001)(vite-plus@0.3.0(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))(jiti@2.7.0)(svelte@5.57.0(@typescript-eslint/types@8.58.0))(typescript@6.0.3)):
     optionalDependencies:
       '@oxlint/binding-android-arm-eabi': 1.79.0
       '@oxlint/binding-android-arm64': 1.79.0
@@ -2352,7 +2347,7 @@ snapshots:
       '@oxlint/binding-win32-ia32-msvc': 1.79.0
       '@oxlint/binding-win32-x64-msvc': 1.79.0
       oxlint-tsgolint: 7.0.2001
-      vite-plus: 0.3.0(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))(jiti@2.7.0)(svelte@5.56.10(@typescript-eslint/types@8.58.0))(typescript@6.0.3)
+      vite-plus: 0.3.0(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))(jiti@2.7.0)(svelte@5.57.0(@typescript-eslint/types@8.58.0))(typescript@6.0.3)
 
   pathe@2.0.3: {}
 
@@ -2402,7 +2397,7 @@ snapshots:
 
   std-env@4.2.0: {}
 
-  svelte-check@4.7.6(picomatch@4.0.5)(svelte@5.56.10(@typescript-eslint/types@8.58.0))(typescript@6.0.3):
+  svelte-check@4.7.6(picomatch@4.0.5)(svelte@5.57.0(@typescript-eslint/types@8.58.0))(typescript@6.0.3):
     dependencies:
       '@jridgewell/trace-mapping': 0.3.31
       '@sveltejs/load-config': 0.2.3
@@ -2410,29 +2405,28 @@ snapshots:
       fdir: 6.5.0(picomatch@4.0.5)
       picocolors: 1.1.1
       sade: 1.8.1
-      svelte: 5.56.10(@typescript-eslint/types@8.58.0)
+      svelte: 5.57.0(@typescript-eslint/types@8.58.0)
       typescript: 6.0.3
     transitivePeerDependencies:
       - picomatch
 
-  svelte@5.56.10(@typescript-eslint/types@8.58.0):
+  svelte@5.57.0(@typescript-eslint/types@8.58.0):
     dependencies:
       '@jridgewell/remapping': 2.3.5
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
       '@sveltejs/acorn-typescript': 1.0.13(acorn@8.18.0)
       '@types/estree': 1.0.9
-      '@types/trusted-types': 2.0.7
       acorn: 8.18.0
       aria-query: 5.3.1
       axobject-query: 4.1.0
       clsx: 2.1.1
-      devalue: 5.9.1
+      devalue: 5.9.2
       esm-env: 1.2.2
-      esrap: 2.3.5(@typescript-eslint/types@8.58.0)
+      esrap: 2.3.6(@typescript-eslint/types@8.58.0)
       is-reference: 3.0.3
       locate-character: 3.0.0
       magic-string: 0.30.21
-      zimmerframe: 1.1.4
+      zimmerframe: 1.1.5
     transitivePeerDependencies:
       - '@typescript-eslint/types'
 
@@ -2457,7 +2451,7 @@ snapshots:
 
   typescript@6.0.3: {}
 
-  vite-plus@0.3.0(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))(jiti@2.7.0)(svelte@5.56.10(@typescript-eslint/types@8.58.0))(typescript@6.0.3):
+  vite-plus@0.3.0(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))(jiti@2.7.0)(svelte@5.57.0(@typescript-eslint/types@8.58.0))(typescript@6.0.3):
     dependencies:
       '@oxc-project/types': 0.146.0
       '@oxlint/plugins': 1.79.0
@@ -2471,8 +2465,8 @@ snapshots:
       '@vitest/spy': 4.1.11
       '@vitest/utils': 4.1.11
       '@voidzero-dev/vite-plus-core': 0.3.0(jiti@2.7.0)(typescript@6.0.3)
-      oxfmt: 0.64.0(svelte@5.56.10(@typescript-eslint/types@8.58.0))(vite-plus@0.3.0(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))(jiti@2.7.0)(svelte@5.56.10(@typescript-eslint/types@8.58.0))(typescript@6.0.3))
-      oxlint: 1.79.0(oxlint-tsgolint@7.0.2001)(vite-plus@0.3.0(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))(jiti@2.7.0)(svelte@5.56.10(@typescript-eslint/types@8.58.0))(typescript@6.0.3))
+      oxfmt: 0.64.0(svelte@5.57.0(@typescript-eslint/types@8.58.0))(vite-plus@0.3.0(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))(jiti@2.7.0)(svelte@5.57.0(@typescript-eslint/types@8.58.0))(typescript@6.0.3))
+      oxlint: 1.79.0(oxlint-tsgolint@7.0.2001)(vite-plus@0.3.0(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))(jiti@2.7.0)(svelte@5.57.0(@typescript-eslint/types@8.58.0))(typescript@6.0.3))
       oxlint-tsgolint: 7.0.2001
       vitest: 4.1.11(@vitest/browser-preview@4.1.11)(@voidzero-dev/vite-plus-core@0.2.8(jiti@2.7.0)(typescript@6.0.3))
     optionalDependencies:
@@ -2585,4 +2579,4 @@ snapshots:
       '@yuku-parser/binding-win32-arm64': 0.5.48
       '@yuku-parser/binding-win32-x64': 0.5.48
 
-  zimmerframe@1.1.4: {}
+  zimmerframe@1.1.5: {}
