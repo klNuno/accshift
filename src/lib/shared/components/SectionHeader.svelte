@@ -6,7 +6,7 @@
     label,
     count,
     cardColor = "",
-    accentColor = "#3b82f6",
+    accentColor = "var(--accent)",
     collapsed = false,
     showChevron = true,
     showCount = true,

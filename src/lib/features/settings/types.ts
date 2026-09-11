@@ -40,7 +40,7 @@ export interface AppSettings {
   defaultPlatformId: string;
   inactivityBlurSeconds: number;
   deepLinksEnabled: boolean;
-  /** Mirrored by the CLI binary, which refuses list/switch when false. */
+  /** Mirrored by the CLI binary, which refuses every subcommand when false. */
   cliEnabled: boolean;
   platformSettings: PlatformSettings;
   accountDisplay: AccountDisplaySettings;

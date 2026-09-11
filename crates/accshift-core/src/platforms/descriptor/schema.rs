@@ -483,6 +483,15 @@ pub struct DirItem {
     pub ignored_names: Vec<String>,
     #[serde(default)]
     pub follow_symlinks: bool,
+    /// Drop a stale snapshot when the live directory is gone at capture time,
+    /// so a later restore cannot resurrect another account's session.
+    ///
+    /// Left off where a missing directory means the launcher has not written it
+    /// yet rather than the account signing out: the capture would otherwise
+    /// throw away the only copy the user has, and an empty copy is worse than a
+    /// slightly old one.
+    #[serde(default = "default_true")]
+    pub clear_snapshot_when_source_missing: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -849,7 +858,7 @@ impl Descriptor {
             ));
         }
         for (os, profile) in &self.os {
-            profile.validate(source, &format!("os.{}", os.as_str()), &self.id)?;
+            profile.validate(source, &format!("os.{}", os.as_str()), &self.id, *os)?;
         }
         Ok(())
     }
@@ -878,6 +887,7 @@ impl OsProfile {
         source: &str,
         field: &str,
         platform_id: &str,
+        os: Os,
     ) -> Result<(), DescriptorError> {
         // The escape hatch is per platform, and it is checked here rather than
         // where the source is validated so the allowlist reads once.
@@ -895,7 +905,9 @@ impl OsProfile {
         }
 
         for (index, root) in self.roots.files.iter().enumerate() {
-            root.validate(source, &format!("{field}.roots.files[{index}]"))?;
+            let at = format!("{field}.roots.files[{index}]");
+            root.validate(source, &at)?;
+            validate_root_placeholders(source, &at, root, os)?;
         }
         for (index, root) in self.roots.registry.iter().enumerate() {
             validate_registry_key(
@@ -1382,6 +1394,71 @@ fn validate_registry_key(source: &str, field: &str, key: &str) -> Result<(), Des
             format!("expected a backslash-separated registry key, found `{key}`"),
         ))
     }
+}
+
+/// Placeholders a root may be written with, per OS.
+///
+/// The list is deliberately short: a root is a well-known per-user or
+/// machine-wide directory, plus the launcher's own install directory. Anything
+/// else is either a typo or a variable only some machines carry, and since a
+/// root that does not resolve now stops the whole profile rather than being
+/// dropped, the descriptor is refused at load instead of on a user's machine.
+fn known_root_placeholders(os: Os) -> &'static [&'static str] {
+    match os {
+        Os::Windows => &[
+            INSTALL_DIR,
+            "APPDATA",
+            "LOCALAPPDATA",
+            "ProgramData",
+            "ProgramFiles",
+            "ProgramFiles(x86)",
+            "PUBLIC",
+            "SystemDrive",
+            "USERPROFILE",
+        ],
+        Os::Macos => &[INSTALL_DIR, "HOME"],
+        Os::Linux => &[
+            INSTALL_DIR,
+            "HOME",
+            "XDG_CACHE_HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "XDG_STATE_HOME",
+        ],
+    }
+}
+
+/// Refuses a root written against a placeholder that has no meaning on the OS
+/// the profile targets.
+fn validate_root_placeholders(
+    source: &str,
+    field: &str,
+    root: &PathTemplate,
+    os: Os,
+) -> Result<(), DescriptorError> {
+    let known = known_root_placeholders(os);
+    for name in root.placeholders() {
+        // Windows environment variable names are case-insensitive, and the
+        // resolver folds case when it looks one up, so the check does too.
+        let matches = known.iter().any(|candidate| {
+            if os == Os::Windows {
+                candidate.eq_ignore_ascii_case(&name)
+            } else {
+                *candidate == name
+            }
+        });
+        if !matches {
+            return Err(DescriptorError::new(
+                source,
+                field,
+                format!(
+                    "expected a root built from one of {}, found `${{{name}}}`",
+                    known.join(", ")
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The sandbox check the loader can make ahead of time: a template whose

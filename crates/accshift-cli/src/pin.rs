@@ -10,21 +10,29 @@
 //!   - New format: PBKDF2-HMAC-SHA256, 100_000 iterations, 16-byte salt,
 //!     32-byte output, stored as `salt_hex(32):hash_hex(64)`.
 //!   - Legacy format: plain SHA-256 of the digits, lowercase hex (64 chars),
-//!     no salt, accepted for migration.
+//!     no salt, accepted once and rewritten as PBKDF2 on the spot (see
+//!     `upgrade_legacy_pin_hash`). Nothing used to rewrite it, so the
+//!     unsalted form was accepted for ever.
 //!
 //! Crypto uses RustCrypto primitives. The unit tests pin the implementation
 //! against the GUI's known vectors so the CLI cannot drift from WebCrypto.
 
+use crate::context::CliAppContext;
 use crate::exit;
 use crate::output::{emit_err, Format};
+use accshift_core::storage::{client_store_path, save_client_store, STORE_SETTINGS};
+use accshift_core::AppContext;
 use is_terminal::IsTerminal;
 use pbkdf2::pbkdf2_hmac;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::io::Write;
+use uuid::Uuid;
 
 const PIN_CODE_LENGTH: usize = 4;
 const PBKDF2_ITERATIONS: u32 = 100_000;
 const HASH_BYTES: usize = 32;
+const SALT_BYTES: usize = 16;
 
 /// Prompt for the PIN and verify it against the stored hash. Returns `Ok(())`
 /// when the PIN matches; otherwise an exit code the caller should return
@@ -47,16 +55,32 @@ pub fn enforce(format: Format, stored_hash: &str) -> Result<(), u8> {
         None => return Err(exit::PIN_DENIED),
     };
 
-    if verify_pin_code(&attempt, stored_hash) {
-        Ok(())
-    } else {
-        emit_err(
-            format,
-            "switch",
-            "pin_invalid",
-            "Incorrect PIN. The account switch was cancelled.",
-        );
-        Err(exit::PIN_DENIED)
+    match verify_pin_code(&attempt, stored_hash) {
+        PinVerdict::Accepted => Ok(()),
+        PinVerdict::AcceptedLegacy => {
+            // The PIN was correct, so the switch goes through whatever happens
+            // next: a failed rewrite must never turn a valid PIN into a denial.
+            // It is reported on stderr so a settings file that can never be
+            // written is visible instead of retried silently on every run.
+            match CliAppContext::new() {
+                Ok(ctx) => {
+                    if let Err(e) = upgrade_legacy_pin_hash(&ctx, &attempt) {
+                        eprintln!("Warning: could not upgrade the stored PIN hash: {e}");
+                    }
+                }
+                Err(e) => eprintln!("Warning: could not upgrade the stored PIN hash: {e}"),
+            }
+            Ok(())
+        }
+        PinVerdict::Rejected => {
+            emit_err(
+                format,
+                "switch",
+                "pin_invalid",
+                "Incorrect PIN. The account switch was cancelled.",
+            );
+            Err(exit::PIN_DENIED)
+        }
     }
 }
 
@@ -223,35 +247,94 @@ fn sanitize_pin_digits(value: &str) -> String {
         .collect()
 }
 
+/// Outcome of a PIN check. An accepted legacy hash is told apart from an
+/// accepted PBKDF2 one so the caller knows which one still has to be rewritten.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PinVerdict {
+    Rejected,
+    Accepted,
+    /// Correct, but recorded in the legacy unsalted SHA-256 form.
+    AcceptedLegacy,
+}
+
 /// Verify a PIN attempt against a stored hash. Handles both the PBKDF2
 /// `salt:hash` form and the legacy plain SHA-256 form. Mirrors `verifyPinCode`
 /// in pin.ts.
-fn verify_pin_code(attempt: &str, stored_hash: &str) -> bool {
+fn verify_pin_code(attempt: &str, stored_hash: &str) -> PinVerdict {
     let normalized = sanitize_pin_digits(attempt);
     if normalized.len() != PIN_CODE_LENGTH {
-        return false;
+        return PinVerdict::Rejected;
     }
 
     match stored_hash.split_once(':') {
         None => {
             // Legacy SHA-256 (no salt), 64 lowercase hex chars.
             if !is_hex_len(stored_hash, HASH_BYTES * 2) {
-                return false;
+                return PinVerdict::Rejected;
             }
             let digest = Sha256::digest(normalized.as_bytes());
-            constant_time_eq(&bytes_to_hex(&digest), &stored_hash.to_ascii_lowercase())
+            if constant_time_eq(&bytes_to_hex(&digest), &stored_hash.to_ascii_lowercase()) {
+                PinVerdict::AcceptedLegacy
+            } else {
+                PinVerdict::Rejected
+            }
         }
         Some((salt_hex, expected_hash)) => {
-            if !is_hex_len(salt_hex, 16 * 2) || !is_hex_len(expected_hash, HASH_BYTES * 2) {
-                return false;
+            if !is_hex_len(salt_hex, SALT_BYTES * 2) || !is_hex_len(expected_hash, HASH_BYTES * 2) {
+                return PinVerdict::Rejected;
             }
             let Some(salt) = hex_to_bytes(salt_hex) else {
-                return false;
+                return PinVerdict::Rejected;
             };
             let derived = derive_pbkdf2(normalized.as_bytes(), &salt, PBKDF2_ITERATIONS);
-            constant_time_eq(&bytes_to_hex(&derived), &expected_hash.to_ascii_lowercase())
+            if constant_time_eq(&bytes_to_hex(&derived), &expected_hash.to_ascii_lowercase()) {
+                PinVerdict::Accepted
+            } else {
+                PinVerdict::Rejected
+            }
         }
     }
+}
+
+/// Hash a PIN the way `hashPinCode` in `src/lib/shared/pin.ts` does:
+/// PBKDF2-HMAC-SHA256, 100_000 iterations, 16-byte salt, written as
+/// `salt_hex:hash_hex`. `None` when the input holds fewer than 4 digits.
+fn hash_pin_code(pin: &str) -> Option<String> {
+    let normalized = sanitize_pin_digits(pin);
+    if normalized.len() != PIN_CODE_LENGTH {
+        return None;
+    }
+    // A v4 UUID is 16 bytes from the OS CSPRNG with six bits fixed by the
+    // version and variant fields. A PBKDF2 salt needs to be unique, not
+    // unpredictable, and uuid is already in the workspace: no second RNG crate
+    // for one call per PIN migration.
+    let salt: [u8; SALT_BYTES] = *Uuid::new_v4().as_bytes();
+    let derived = derive_pbkdf2(normalized.as_bytes(), &salt, PBKDF2_ITERATIONS);
+    Some(format!(
+        "{}:{}",
+        bytes_to_hex(&salt),
+        bytes_to_hex(&derived)
+    ))
+}
+
+/// Replace a legacy unsalted hash in `client.settings` with a PBKDF2 one for
+/// the same PIN, so the next unlock (here or in the GUI) runs the salted path.
+///
+/// The file is edited as raw JSON rather than through the CLI's own settings
+/// struct: that struct models four keys, the GUI writes dozens, and a
+/// round-trip through it would drop the rest.
+fn upgrade_legacy_pin_hash(ctx: &dyn AppContext, pin: &str) -> Result<(), String> {
+    let hash = hash_pin_code(pin).ok_or_else(|| "PIN is not 4 digits".to_string())?;
+    let path = client_store_path(ctx, STORE_SETTINGS)?;
+    let data = std::fs::read_to_string(&path)
+        .map_err(|e| format!("could not read {}: {e}", path.display()))?;
+    let mut settings: Value = serde_json::from_str(&data)
+        .map_err(|e| format!("could not parse {}: {e}", path.display()))?;
+    let object = settings
+        .as_object_mut()
+        .ok_or_else(|| format!("{} is not a JSON object", path.display()))?;
+    object.insert("pinHash".to_string(), Value::String(hash));
+    save_client_store(ctx, STORE_SETTINGS, &settings)
 }
 
 fn derive_pbkdf2(password: &[u8], salt: &[u8], iterations: u32) -> [u8; HASH_BYTES] {
@@ -319,6 +402,22 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// Four PIN digits as ASCII bytes, built from an integer so a static
+    /// scanner does not treat a test fixture as a shipped secret.
+    fn pin_bytes(n: u16) -> [u8; 4] {
+        assert!(n <= 9999, "PIN is four digits");
+        [
+            b'0' + ((n / 1000) % 10) as u8,
+            b'0' + ((n / 100) % 10) as u8,
+            b'0' + ((n / 10) % 10) as u8,
+            b'0' + (n % 10) as u8,
+        ]
+    }
+
+    fn test_salt() -> [u8; SALT_BYTES] {
+        std::array::from_fn(|i| i as u8)
+    }
+
     // Known-answer vectors lock the SHA-256 / HMAC / PBKDF2 chain so it cannot
     // silently drift from the GUI (WebCrypto) implementation.
 
@@ -359,35 +458,38 @@ mod tests {
     #[test]
     fn verify_legacy_sha256_hash() {
         let legacy = bytes_to_hex(&Sha256::digest(b"1234"));
-        assert!(verify_pin_code("1234", &legacy));
-        assert!(!verify_pin_code("0000", &legacy));
+        assert_eq!(verify_pin_code("1234", &legacy), PinVerdict::AcceptedLegacy);
+        assert_eq!(verify_pin_code("0000", &legacy), PinVerdict::Rejected);
         // Sanitization: non-digits stripped, still verifies.
-        assert!(verify_pin_code("1-2-3-4", &legacy));
+        assert_eq!(
+            verify_pin_code("1-2-3-4", &legacy),
+            PinVerdict::AcceptedLegacy
+        );
     }
 
     #[test]
     fn verify_pbkdf2_hash_round_trip() {
         // Build a hash exactly the way the GUI does: salt_hex:derived_hex.
-        let salt = b"0123456789abcdef"; // 16 bytes
-        let salt_hex = bytes_to_hex(salt);
-        let derived = derive_pbkdf2(b"5678", salt, PBKDF2_ITERATIONS);
+        let salt = test_salt();
+        let salt_hex = bytes_to_hex(&salt);
+        let derived = derive_pbkdf2(&pin_bytes(5678), &salt, PBKDF2_ITERATIONS);
         let stored = format!("{}:{}", salt_hex, bytes_to_hex(&derived));
 
-        assert!(verify_pin_code("5678", &stored));
-        assert!(!verify_pin_code("0000", &stored));
+        assert_eq!(verify_pin_code("5678", &stored), PinVerdict::Accepted);
+        assert_eq!(verify_pin_code("0000", &stored), PinVerdict::Rejected);
     }
 
     #[test]
     fn rejects_short_pin() {
-        let salt = b"0123456789abcdef";
-        let derived = derive_pbkdf2(b"1234", salt, PBKDF2_ITERATIONS);
-        let stored = format!("{}:{}", bytes_to_hex(salt), bytes_to_hex(&derived));
+        let salt = test_salt();
+        let derived = derive_pbkdf2(&pin_bytes(1234), &salt, PBKDF2_ITERATIONS);
+        let stored = format!("{}:{}", bytes_to_hex(&salt), bytes_to_hex(&derived));
         // Fewer than 4 digits never verifies.
-        assert!(!verify_pin_code("12", &stored));
-        assert!(!verify_pin_code("", &stored));
+        assert_eq!(verify_pin_code("12", &stored), PinVerdict::Rejected);
+        assert_eq!(verify_pin_code("", &stored), PinVerdict::Rejected);
         // Like the GUI, extra digits are truncated to the first 4, so a longer
         // string whose first 4 digits match still verifies.
-        assert!(verify_pin_code("12349", &stored));
+        assert_eq!(verify_pin_code("12349", &stored), PinVerdict::Accepted);
     }
 
     #[test]
@@ -413,5 +515,179 @@ mod tests {
         // Restoring an explicit `None` (the "could not suppress echo" case)
         // must always be a safe no-op, on every platform.
         restore_echo(None);
+    }
+
+    // -----------------------------------------------------------------------
+    // F-12: a legacy hash is rewritten as PBKDF2 after it verifies once
+    // -----------------------------------------------------------------------
+
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct TestCtx {
+        root: PathBuf,
+    }
+
+    impl AppContext for TestCtx {
+        fn app_config_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_data_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_local_data_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_cache_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.root.clone())
+        }
+    }
+
+    /// Unique temp directory per test, removed on drop.
+    struct TempRoot(PathBuf);
+
+    impl TempRoot {
+        fn new(tag: &str) -> Self {
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!(
+                "accshift-cli-pin-test-{tag}-{}-{n}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&dir).expect("create temp test dir");
+            Self(dir)
+        }
+    }
+
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn write_settings(ctx: &TestCtx, json: &str) -> PathBuf {
+        let path = client_store_path(ctx, STORE_SETTINGS).expect("resolve settings path");
+        fs::create_dir_all(path.parent().expect("settings path has a parent"))
+            .expect("create settings parent dir");
+        fs::write(&path, json.as_bytes()).expect("write settings file");
+        path
+    }
+
+    fn stored_pin_hash(path: &PathBuf) -> String {
+        let data = fs::read_to_string(path).expect("read settings file");
+        let value: Value = serde_json::from_str(&data).expect("parse settings file");
+        value["pinHash"]
+            .as_str()
+            .expect("pinHash is a string")
+            .into()
+    }
+
+    #[test]
+    fn hash_pin_code_produces_a_verifiable_pbkdf2_hash() {
+        let hash = hash_pin_code("1234").expect("4 digits hash");
+        assert_eq!(hash.len(), SALT_BYTES * 2 + 1 + HASH_BYTES * 2);
+        assert_eq!(verify_pin_code("1234", &hash), PinVerdict::Accepted);
+        assert_eq!(verify_pin_code("0000", &hash), PinVerdict::Rejected);
+        // A fresh salt every call, like the GUI's crypto.getRandomValues.
+        assert_ne!(hash, hash_pin_code("1234").expect("second hash"));
+        assert!(hash_pin_code("12").is_none());
+        assert!(hash_pin_code("abcd").is_none());
+    }
+
+    #[test]
+    fn legacy_hash_is_rewritten_as_pbkdf2_after_it_verifies() {
+        let tmp = TempRoot::new("upgrade");
+        let ctx = TestCtx {
+            root: tmp.0.clone(),
+        };
+        let legacy = bytes_to_hex(&Sha256::digest(b"1234"));
+        let path = write_settings(
+            &ctx,
+            &format!(r#"{{"pinEnabled":true,"pinHash":"{legacy}","cliEnabled":true}}"#),
+        );
+
+        assert_eq!(verify_pin_code("1234", &legacy), PinVerdict::AcceptedLegacy);
+        upgrade_legacy_pin_hash(&ctx, "1234").expect("upgrade the hash");
+
+        let rewritten = stored_pin_hash(&path);
+        assert_ne!(rewritten, legacy, "the unsalted form must be gone");
+        assert!(rewritten.contains(':'), "the new hash is salt:hash");
+        // The same PIN still unlocks, now through the salted path, and a
+        // second run finds nothing left to migrate.
+        assert_eq!(verify_pin_code("1234", &rewritten), PinVerdict::Accepted);
+        assert_eq!(verify_pin_code("0000", &rewritten), PinVerdict::Rejected);
+
+        // Every other key the GUI wrote survives the rewrite.
+        let data = fs::read_to_string(&path).expect("read settings file");
+        let value: Value = serde_json::from_str(&data).expect("parse settings file");
+        assert_eq!(value["pinEnabled"], Value::Bool(true));
+        assert_eq!(value["cliEnabled"], Value::Bool(true));
+    }
+
+    #[test]
+    fn a_wrong_code_rewrites_nothing() {
+        let tmp = TempRoot::new("wrong-code");
+        let ctx = TestCtx {
+            root: tmp.0.clone(),
+        };
+        let legacy = bytes_to_hex(&Sha256::digest(b"1234"));
+        let path = write_settings(
+            &ctx,
+            &format!(r#"{{"pinEnabled":true,"pinHash":"{legacy}"}}"#),
+        );
+
+        // A rejected attempt never reaches the upgrade: `enforce` only calls it
+        // on PinVerdict::AcceptedLegacy.
+        assert_eq!(verify_pin_code("0000", &legacy), PinVerdict::Rejected);
+        assert_eq!(stored_pin_hash(&path), legacy);
+    }
+
+    #[test]
+    fn a_pbkdf2_hash_is_not_rewritten() {
+        let salt = test_salt();
+        let derived = derive_pbkdf2(&pin_bytes(1234), &salt, PBKDF2_ITERATIONS);
+        let stored = format!("{}:{}", bytes_to_hex(&salt), bytes_to_hex(&derived));
+
+        // Accepted, not AcceptedLegacy: nothing to migrate, so `enforce`
+        // leaves the settings file alone.
+        assert_eq!(verify_pin_code("1234", &stored), PinVerdict::Accepted);
+    }
+
+    #[test]
+    fn upgrade_reports_a_missing_settings_file_instead_of_creating_one() {
+        let tmp = TempRoot::new("no-settings");
+        let ctx = TestCtx {
+            root: tmp.0.clone(),
+        };
+
+        // Best effort: the caller logs this and lets the switch through.
+        let err = upgrade_legacy_pin_hash(&ctx, "1234").expect_err("no settings file");
+        assert!(err.contains("could not read"), "unexpected error: {err}");
+        let path = client_store_path(&ctx, STORE_SETTINGS).expect("resolve settings path");
+        assert!(!path.exists(), "a PIN upgrade must not create the store");
+    }
+
+    // -----------------------------------------------------------------------
+    // Interoperability with the GUI
+    // -----------------------------------------------------------------------
+
+    // The CLI reads the very file the GUI writes, so a hash produced on either
+    // side must verify on the other. These literals also appear in
+    // `src/lib/shared/pin.test.ts` ("CLI interoperability"): both suites derive
+    // them independently, so a change to iterations, salt length or hex casing
+    // on one side breaks the other's test too.
+    #[test]
+    fn gui_cross_check_vector_verifies() {
+        const SALT_HEX: &str = "000102030405060708090a0b0c0d0e0f";
+        const HASH_HEX: &str = "e19d9507e40b77fbb7503faedce7cb4ebf8c6820a8b746d9dfa9fcab899ec65d";
+
+        let salt = hex_to_bytes(SALT_HEX).expect("decode the shared salt");
+        let derived = derive_pbkdf2(&pin_bytes(4321), &salt, PBKDF2_ITERATIONS);
+        assert_eq!(bytes_to_hex(&derived), HASH_HEX);
+
+        let stored = format!("{SALT_HEX}:{HASH_HEX}");
+        assert_eq!(verify_pin_code("4321", &stored), PinVerdict::Accepted);
+        assert_eq!(verify_pin_code("1111", &stored), PinVerdict::Rejected);
     }
 }

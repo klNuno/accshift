@@ -420,8 +420,8 @@
   .finish-btn {
     border: none;
     border-radius: 8px;
-    background: color-mix(in srgb, var(--accent, #3b82f6) 88%, #000 12%);
-    color: #fff;
+    background: color-mix(in srgb, var(--accent) 88%, #000 12%);
+    color: var(--accent-fg);
     padding: 9px 18px;
     font-size: 13px;
     font-weight: 700;
@@ -570,8 +570,8 @@
   }
 
   .account-card.selected {
-    border-color: var(--accent, #3b82f6);
-    box-shadow: inset 0 0 0 1px var(--accent, #3b82f6);
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
   }
 
   .account-avatar {

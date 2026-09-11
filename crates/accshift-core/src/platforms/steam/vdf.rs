@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
@@ -162,6 +161,267 @@ pub fn parse_vdf(content: &str) -> HashMap<String, HashMap<String, String>> {
     accounts
 }
 
+/// A meaningful element of a VDF line: a quoted token, or a brace that opens or
+/// closes a section outside any quoted token.
+#[derive(Debug, Clone, PartialEq)]
+enum VdfItem {
+    Token(String),
+    Open,
+    Close,
+}
+
+/// Scan a line into its items, in order, each paired with the byte index it
+/// starts at.
+///
+/// This is what makes `"key" {` structure rather than noise. The old writer
+/// compared the trimmed line against `{` and `}`, so a file written with the
+/// brace on the header line was walked without ever entering the block and the
+/// write silently changed nothing. Scanning stops at a `//` comment outside
+/// quotes, so a brace inside a comment cannot desync the section stack.
+fn vdf_scan_line(line: &str) -> Vec<(usize, VdfItem)> {
+    let mut items = Vec::new();
+    let bytes = line.as_bytes();
+    let mut chars = line.char_indices().peekable();
+
+    while let Some(&(i, c)) = chars.peek() {
+        match c {
+            '"' => {
+                chars.next(); // consume opening quote
+                let mut token = String::new();
+                while let Some((_, ch)) = chars.next() {
+                    if ch == '\\' {
+                        match chars.next() {
+                            Some((_, 'n')) => token.push('\n'),
+                            Some((_, 'r')) => token.push('\r'),
+                            Some((_, 't')) => token.push('\t'),
+                            Some((_, '\\')) => token.push('\\'),
+                            Some((_, '"')) => token.push('"'),
+                            // Unknown escape: keep the following char verbatim.
+                            Some((_, other)) => token.push(other),
+                            None => break,
+                        }
+                    } else if ch == '"' {
+                        break; // closing quote
+                    } else {
+                        token.push(ch);
+                    }
+                }
+                items.push((i, VdfItem::Token(token)));
+            }
+            '{' => {
+                items.push((i, VdfItem::Open));
+                chars.next();
+            }
+            '}' => {
+                items.push((i, VdfItem::Close));
+                chars.next();
+            }
+            '/' if bytes.get(i + 1) == Some(&b'/') => break,
+            _ => {
+                chars.next();
+            }
+        }
+    }
+
+    items
+}
+
+/// How many leading names of `sections` the open section stack has entered.
+///
+/// `sections` is relative to the root section, so the comparison starts at
+/// `stack[1]`: the root's own name is whatever the file calls it.
+fn vdf_matched_sections(stack: &[String], sections: &[&str]) -> usize {
+    if stack.is_empty() {
+        return 0;
+    }
+    let inner = &stack[1..];
+    let mut matched = 0;
+    while matched < sections.len()
+        && matched < inner.len()
+        && inner[matched].eq_ignore_ascii_case(sections[matched])
+    {
+        matched += 1;
+    }
+    matched
+}
+
+/// The file's indentation unit: a tab as soon as any indented line uses one,
+/// otherwise the narrowest run of leading spaces in the file. Steam writes
+/// tabs, which is also the fallback for a file with no indented line at all.
+fn vdf_indent_unit(content: &str) -> String {
+    let mut min_spaces: Option<usize> = None;
+
+    for line in content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let indent = &line[..line.len() - line.trim_start().len()];
+        if indent.contains('\t') {
+            return "\t".to_string();
+        }
+        if !indent.is_empty() {
+            min_spaces = Some(min_spaces.map_or(indent.len(), |m: usize| m.min(indent.len())));
+        }
+    }
+
+    match min_spaces {
+        Some(n) => " ".repeat(n),
+        None => "\t".to_string(),
+    }
+}
+
+/// True when the tokens buffered so far are the `"target_key" "value"` pair at
+/// exactly the section path we are aiming at.
+fn vdf_is_target_pair(
+    stack: &[String],
+    sections: &[&str],
+    target_key: &str,
+    pending: &[String],
+) -> bool {
+    pending.len() >= 2
+        && stack.len() == sections.len() + 1
+        && vdf_matched_sections(stack, sections) == sections.len()
+        && pending[0].eq_ignore_ascii_case(target_key)
+}
+
+/// Name for the section a `{` is about to open: the last token on the same
+/// line, or the bare header token carried over from a previous line.
+///
+/// The carried token is what makes the standalone-brace layout work at all, so
+/// it survives a line with no tokens (a `//` comment or a blank line sitting
+/// between a header and its brace) and is dropped by a `"key" "value"` pair,
+/// which is never a header.
+fn vdf_take_section_name(pending: &mut Vec<String>, carried: &mut Option<String>) -> String {
+    let name = match pending.pop() {
+        Some(token) => token,
+        None => carried.take().unwrap_or_default(),
+    };
+    pending.clear();
+    *carried = None;
+    name
+}
+
+/// Remember a bare header token for the `{` on a following line.
+fn vdf_carry_header(pending: &[String], carried: &mut Option<String>) {
+    match pending.len() {
+        1 => *carried = Some(pending[0].clone()),
+        0 => {}
+        _ => *carried = None,
+    }
+}
+
+/// Does `sections` + `target_key` already name a key in `content`?
+fn vdf_key_exists(content: &str, sections: &[&str], target_key: &str) -> bool {
+    let mut stack: Vec<String> = Vec::new();
+    let mut carried: Option<String> = None;
+
+    for line in content.lines() {
+        let mut pending: Vec<String> = Vec::new();
+        for (_, item) in vdf_scan_line(line) {
+            match item {
+                VdfItem::Token(token) => pending.push(token),
+                VdfItem::Open => {
+                    let name = vdf_take_section_name(&mut pending, &mut carried);
+                    stack.push(name);
+                }
+                VdfItem::Close => {
+                    if vdf_is_target_pair(&stack, sections, target_key, &pending) {
+                        return true;
+                    }
+                    pending.clear();
+                    carried = None;
+                    stack.pop();
+                }
+            }
+        }
+        if vdf_is_target_pair(&stack, sections, target_key, &pending) {
+            return true;
+        }
+        vdf_carry_header(&pending, &mut carried);
+    }
+
+    false
+}
+
+/// The lines to write in front of the closing brace the walker is standing on,
+/// or `None` when this brace is not the right place.
+///
+/// Two placements, in the order the old writer used them: the target section is
+/// open and about to close, so the key drops straight in; or the deepest
+/// section that does exist is about to close, so the missing ones are created
+/// inside it with the key at the bottom.
+fn vdf_insert_block(
+    stack: &[String],
+    sections: &[&str],
+    escaped_key: &str,
+    escaped_value: &str,
+    unit: &str,
+) -> Option<Vec<String>> {
+    let matched = vdf_matched_sections(stack, sections);
+
+    if matched == sections.len() && stack.len() == sections.len() + 1 {
+        return Some(vec![format!(
+            "{}\"{escaped_key}\"\t\t\"{escaped_value}\"",
+            unit.repeat(stack.len())
+        )]);
+    }
+
+    if matched < sections.len() && stack.len() == matched + 1 {
+        let base = unit.repeat(stack.len());
+        let mut block = Vec::new();
+        for (j, section) in sections[matched..].iter().enumerate() {
+            let indent = format!("{base}{}", unit.repeat(j));
+            block.push(format!("{indent}\"{}\"", escape_vdf_string(section)));
+            block.push(format!("{indent}{{"));
+        }
+        let key_indent = format!("{base}{}", unit.repeat(sections.len() - matched));
+        block.push(format!(
+            "{key_indent}\"{escaped_key}\"\t\t\"{escaped_value}\""
+        ));
+        for j in (0..sections.len() - matched).rev() {
+            block.push(format!("{base}{}}}", unit.repeat(j)));
+        }
+        return Some(block);
+    }
+
+    None
+}
+
+/// Rewrite the line that already carries the target key.
+///
+/// A line that is nothing but the pair is reformatted the way this writer has
+/// always written one: key, two tabs, value, keeping the original indentation.
+/// Anything else on the line (a second pair, an inline brace) means only the
+/// value token itself is spliced by its byte span, so nothing sharing the
+/// physical line is lost.
+fn vdf_rewrite_pair(
+    line: &str,
+    items: &[(usize, VdfItem)],
+    value_ordinal: usize,
+    escaped_key: &str,
+    escaped_value: &str,
+) -> String {
+    let bare_pair = items.len() == 2
+        && matches!(items[0].1, VdfItem::Token(_))
+        && matches!(items[1].1, VdfItem::Token(_));
+
+    if bare_pair {
+        let leading: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+        return format!("{leading}\"{escaped_key}\"\t\t\"{escaped_value}\"");
+    }
+
+    match nth_quoted_token_span(line, value_ordinal) {
+        Some((open, close)) => {
+            let mut new_line = String::with_capacity(line.len() + escaped_value.len());
+            new_line.push_str(&line[..=open]);
+            new_line.push_str(escaped_value);
+            new_line.push_str(&line[close..]);
+            new_line
+        }
+        None => line.to_string(),
+    }
+}
+
 /// Set a nested value in a VDF file by path.
 ///
 /// `path` is a slice of section/key names relative to the root section.
@@ -171,7 +431,21 @@ pub fn parse_vdf(content: &str) -> HashMap<String, HashMap<String, String>> {
 /// If the key already exists at the target path, its value is replaced.
 /// If the section exists but the key does not, the key is inserted before the section's closing `}`.
 /// If the section does not exist, it is created (with the key) before the file's final `}`.
-pub fn vdf_set_nested_value(content: &str, path: &[&str], value: &str) -> String {
+///
+/// Targeting is structural and shares [`vdf_scan_line`] with the reader, so a
+/// file written with `"key" {` on one line is walked exactly like one with the
+/// brace on its own line. Returning `Err` when neither branch fired is the
+/// point of the signature: the previous version handed the input straight back,
+/// so every caller wrote the same bytes and reported success.
+///
+/// The file's line ending and indentation unit are preserved, so a CRLF
+/// localconfig.vdf comes back CRLF and a space-indented file stays
+/// space-indented.
+pub fn vdf_set_nested_value(
+    content: &str,
+    path: &[&str],
+    value: &str,
+) -> Result<String, crate::error::AppError> {
     assert!(
         path.len() >= 2,
         "path must have at least a section and a key"
@@ -180,163 +454,123 @@ pub fn vdf_set_nested_value(content: &str, path: &[&str], value: &str) -> String
     let sections = &path[..path.len() - 1];
     let target_key = path[path.len() - 1];
 
-    let lines: Vec<&str> = content.lines().collect();
-    let mut result = String::with_capacity(content.len() + 128);
-    let mut depth: usize = 0;
-    let mut matched_depth: usize = 0; // how many sections from `sections` we have entered
-    let mut found = false;
-    let mut inserted = false;
+    let newline = if content.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let unit = vdf_indent_unit(content);
+    let escaped_key = escape_vdf_string(target_key);
+    let escaped_value = escape_vdf_string(value);
 
-    // Two-pass: first scan to check if key exists, then build output.
-    for line in lines.iter() {
-        let trimmed = line.trim();
+    // Whether the key already exists decides which branch may fire, so it is
+    // settled before a single output line is built.
+    let found = vdf_key_exists(content, sections, target_key);
 
-        if trimmed == "{" {
-            depth += 1;
-            continue;
-        }
+    let mut out: Vec<String> = Vec::new();
+    let mut stack: Vec<String> = Vec::new();
+    let mut carried: Option<String> = None;
+    let mut done = false;
 
-        if trimmed == "}" {
-            if depth > 0 {
-                if matched_depth == depth && matched_depth <= sections.len() && matched_depth > 0 {
-                    matched_depth = matched_depth.saturating_sub(1);
-                }
-                depth -= 1;
-            }
-            continue;
-        }
+    for line in content.lines() {
+        let items = vdf_scan_line(line);
+        let mut pending: Vec<String> = Vec::new();
+        let mut pending_first_ordinal = 0usize;
+        let mut ordinal = 0usize;
+        let mut opened_here = 0usize;
 
-        let tokens = vdf_tokenize_line(trimmed);
+        let mut rewritten: Option<String> = None;
+        let mut pre_insert: Vec<String> = Vec::new();
+        let mut split: Option<(usize, String)> = None;
 
-        // Check if this is a section header we're looking for
-        if !tokens.is_empty() && matched_depth < sections.len() && depth == matched_depth + 1 {
-            let key = &tokens[0];
-            if key.eq_ignore_ascii_case(sections[matched_depth]) {
-                matched_depth += 1;
-                continue;
-            }
-        }
-
-        // Check if this is the target key at the right depth
-        if tokens.len() >= 2
-            && matched_depth == sections.len()
-            && depth == sections.len() + 1
-            && tokens[0].eq_ignore_ascii_case(target_key)
-        {
-            found = true;
-            break;
-        }
-    }
-
-    // ── second pass: build output ──
-    depth = 0;
-    matched_depth = 0;
-    let mut key_replaced = false;
-
-    for line in lines.iter() {
-        let trimmed = line.trim();
-
-        if trimmed == "{" {
-            result.push_str(line);
-            result.push('\n');
-            depth += 1;
-            continue;
-        }
-
-        if trimmed == "}" {
-            // If we need to insert the key before the closing brace of the target section
-            if !inserted && !found && matched_depth == sections.len() && depth == sections.len() + 1
-            {
-                let indent = "\t".repeat(depth);
-                let escaped_value = escape_vdf_string(value);
-                let _ = writeln!(result, "{indent}\"{target_key}\"\t\t\"{escaped_value}\"");
-                inserted = true;
-            }
-
-            // If we need to insert a missing section before the parent's closing brace
-            if !inserted && !found {
-                // Check if this brace closes at a depth where we need to insert the remaining sections
-                if matched_depth < sections.len() && depth == matched_depth + 1 {
-                    // Insert all remaining sections + key
-                    let base_indent = "\t".repeat(depth);
-                    for (j, section) in sections[matched_depth..].iter().enumerate() {
-                        let section_indent = format!("{}{}", base_indent, "\t".repeat(j));
-                        let _ = writeln!(result, "{section_indent}\"{section}\"");
-                        let _ = writeln!(result, "{section_indent}{{");
+        for (at, item) in &items {
+            match item {
+                VdfItem::Token(token) => {
+                    if pending.is_empty() {
+                        pending_first_ordinal = ordinal;
                     }
-                    let key_indent = format!(
-                        "{}{}",
-                        base_indent,
-                        "\t".repeat(sections.len() - matched_depth)
-                    );
-                    let escaped_value = escape_vdf_string(value);
-                    let _ = writeln!(
-                        result,
-                        "{key_indent}\"{target_key}\"\t\t\"{escaped_value}\""
-                    );
-                    for j in (0..sections.len() - matched_depth).rev() {
-                        let close_indent = format!("{}{}", base_indent, "\t".repeat(j));
-                        let _ = writeln!(result, "{close_indent}}}");
+                    pending.push(token.clone());
+                    ordinal += 1;
+                }
+                VdfItem::Open => {
+                    let name = vdf_take_section_name(&mut pending, &mut carried);
+                    stack.push(name);
+                    opened_here += 1;
+                }
+                VdfItem::Close => {
+                    if !done && found && vdf_is_target_pair(&stack, sections, target_key, &pending)
+                    {
+                        rewritten = Some(vdf_rewrite_pair(
+                            line,
+                            &items,
+                            pending_first_ordinal + 1,
+                            &escaped_key,
+                            &escaped_value,
+                        ));
+                        done = true;
                     }
-                    inserted = true;
+                    if !done && !found {
+                        if let Some(block) =
+                            vdf_insert_block(&stack, sections, &escaped_key, &escaped_value, &unit)
+                        {
+                            // The section opened on this very line, so the key
+                            // has to land between the braces rather than in
+                            // front of the line.
+                            if opened_here > 0 {
+                                split = Some((*at, unit.repeat(stack.len().saturating_sub(1))));
+                            }
+                            pre_insert = block;
+                            done = true;
+                        }
+                    }
+                    pending.clear();
+                    carried = None;
+                    stack.pop();
                 }
             }
+        }
 
-            if depth > 0 {
-                if matched_depth == depth && matched_depth <= sections.len() && matched_depth > 0 {
-                    matched_depth = matched_depth.saturating_sub(1);
+        if !done && found && vdf_is_target_pair(&stack, sections, target_key, &pending) {
+            rewritten = Some(vdf_rewrite_pair(
+                line,
+                &items,
+                pending_first_ordinal + 1,
+                &escaped_key,
+                &escaped_value,
+            ));
+            done = true;
+        }
+
+        vdf_carry_header(&pending, &mut carried);
+
+        match split {
+            Some((at, tail_indent)) => {
+                let head = line[..at].trim_end();
+                if !head.is_empty() {
+                    out.push(head.to_string());
                 }
-                depth -= 1;
+                out.extend(pre_insert);
+                out.push(format!("{tail_indent}{}", &line[at..]));
             }
-            result.push_str(line);
-            result.push('\n');
-            continue;
-        }
-
-        let tokens = vdf_tokenize_line(trimmed);
-
-        // Track section entry
-        if !tokens.is_empty() && matched_depth < sections.len() && depth == matched_depth + 1 {
-            let key = &tokens[0];
-            if key.eq_ignore_ascii_case(sections[matched_depth]) {
-                matched_depth += 1;
-                result.push_str(line);
-                result.push('\n');
-                continue;
+            None => {
+                out.extend(pre_insert);
+                out.push(rewritten.unwrap_or_else(|| line.to_string()));
             }
         }
-
-        // Replace existing key value
-        if !key_replaced
-            && found
-            && tokens.len() >= 2
-            && matched_depth == sections.len()
-            && depth == sections.len() + 1
-            && tokens[0].eq_ignore_ascii_case(target_key)
-        {
-            // Rebuild line preserving original indentation
-            let leading_whitespace: String =
-                line.chars().take_while(|c| c.is_whitespace()).collect();
-            let escaped_value = escape_vdf_string(value);
-            let _ = writeln!(
-                result,
-                "{leading_whitespace}\"{target_key}\"\t\t\"{escaped_value}\""
-            );
-            key_replaced = true;
-            inserted = true;
-            continue;
-        }
-
-        result.push_str(line);
-        result.push('\n');
     }
 
-    // If the original content didn't end with a newline, remove trailing one
-    if !content.ends_with('\n') && result.ends_with('\n') {
-        result.pop();
+    if !done {
+        return Err(crate::error::AppError::FileRead(format!(
+            "VDF path {} not found and could not be created; nothing was written",
+            path.join(" > ")
+        )));
     }
 
-    result
+    let mut result = out.join(newline);
+    if content.ends_with('\n') {
+        result.push_str(newline);
+    }
+    Ok(result)
 }
 
 fn escape_vdf_string(value: &str) -> String {
@@ -606,7 +840,8 @@ mod tests {
             input,
             &["Software", "Valve", "Steam", "apps", "730", "LaunchOptions"],
             r#"+exec "autoexec.cfg" -path C:\Steam"#,
-        );
+        )
+        .expect("launch options must be written");
 
         assert!(output
             .contains("\"LaunchOptions\"\t\t\"+exec \\\"autoexec.cfg\\\" -path C:\\\\Steam\""));
@@ -676,7 +911,8 @@ mod tests {
             input,
             &["Software", "Valve", "Steam", "apps", "730", "LaunchOptions"],
             injection,
-        );
+        )
+        .expect("launch options must be written");
 
         // The newline is escaped, so no second physical line is produced and
         // no real PersonaState key leaks into the file.
@@ -752,7 +988,8 @@ mod tests {
         // set_login_user_flags hits this replace branch on every switch, so it
         // must swap the value without duplicating the key or touching siblings.
         let input = "\"users\"\n{\n\t\"76561198000000000\"\n\t{\n\t\t\"AccountName\"\t\t\"alice\"\n\t\t\"AllowAutoLogin\"\t\t\"0\"\n\t\t\"MostRecent\"\t\t\"0\"\n\t}\n}\n";
-        let output = vdf_set_nested_value(input, &["76561198000000000", "AllowAutoLogin"], "1");
+        let output = vdf_set_nested_value(input, &["76561198000000000", "AllowAutoLogin"], "1")
+            .expect("existing key must be replaced");
 
         // Value replaced in place.
         assert!(output.contains("\"AllowAutoLogin\"\t\t\"1\""));
@@ -810,5 +1047,179 @@ mod tests {
             !out.contains("\"7\"\n\t}"),
             "line ending collapsed to bare LF"
         );
+    }
+
+    // ── V8: the write path is structural, like the read path ──
+    //
+    // Golden strings captured from the previous (brace-on-its-own-line only)
+    // implementation before it was replaced. A standalone-brace file must come
+    // back byte for byte the same, or this fix has changed files it had no
+    // business changing.
+
+    #[test]
+    fn set_nested_value_standalone_braces_are_byte_identical() {
+        let cases: [(&str, &[&str], &str, &str); 5] = [
+            // Replace an existing key in a loginusers.vdf-shaped file.
+            (
+                "\"users\"\n{\n\t\"76561198000000000\"\n\t{\n\t\t\"AccountName\"\t\t\"alice\"\n\t\t\"AllowAutoLogin\"\t\t\"0\"\n\t\t\"MostRecent\"\t\t\"0\"\n\t}\n}\n",
+                &["76561198000000000", "AllowAutoLogin"],
+                "1",
+                "\"users\"\n{\n\t\"76561198000000000\"\n\t{\n\t\t\"AccountName\"\t\t\"alice\"\n\t\t\"AllowAutoLogin\"\t\t\"1\"\n\t\t\"MostRecent\"\t\t\"0\"\n\t}\n}\n",
+            ),
+            // Insert a key into the empty registry.vdf template.
+            (
+                "\"Registry\"\n{\n\t\"HKCU\"\n\t{\n\t\t\"Software\"\n\t\t{\n\t\t\t\"Valve\"\n\t\t\t{\n\t\t\t\t\"Steam\"\n\t\t\t\t{\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n",
+                &["HKCU", "Software", "Valve", "Steam", "AutoLoginUser"],
+                "alice",
+                "\"Registry\"\n{\n\t\"HKCU\"\n\t{\n\t\t\"Software\"\n\t\t{\n\t\t\t\"Valve\"\n\t\t\t{\n\t\t\t\t\"Steam\"\n\t\t\t\t{\n\t\t\t\t\t\"AutoLoginUser\"\t\t\"alice\"\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n",
+            ),
+            // Create four missing sections plus the key.
+            (
+                "\"UserLocalConfigStore\"\n{\n\t\"Software\"\n\t{\n\t}\n}\n",
+                &["Software", "Valve", "Steam", "apps", "730", "LaunchOptions"],
+                "+exec \"autoexec.cfg\" -path C:\\Steam",
+                "\"UserLocalConfigStore\"\n{\n\t\"Software\"\n\t{\n\t\t\"Valve\"\n\t\t{\n\t\t\t\"Steam\"\n\t\t\t{\n\t\t\t\t\"apps\"\n\t\t\t\t{\n\t\t\t\t\t\"730\"\n\t\t\t\t\t{\n\t\t\t\t\t\t\"LaunchOptions\"\t\t\"+exec \\\"autoexec.cfg\\\" -path C:\\\\Steam\"\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n",
+            ),
+            // Insert a missing key into a section that exists.
+            (
+                "\"users\"\n{\n\t\"76561198000000000\"\n\t{\n\t\t\"AccountName\"\t\t\"alice\"\n\t}\n}\n",
+                &["76561198000000000", "AllowAutoLogin"],
+                "1",
+                "\"users\"\n{\n\t\"76561198000000000\"\n\t{\n\t\t\"AccountName\"\t\t\"alice\"\n\t\t\"AllowAutoLogin\"\t\t\"1\"\n\t}\n}\n",
+            ),
+            // A file with no trailing newline keeps none.
+            (
+                "\"users\"\n{\n\t\"76561198000000000\"\n\t{\n\t\t\"AccountName\"\t\t\"alice\"\n\t}\n}",
+                &["76561198000000000", "AllowAutoLogin"],
+                "1",
+                "\"users\"\n{\n\t\"76561198000000000\"\n\t{\n\t\t\"AccountName\"\t\t\"alice\"\n\t\t\"AllowAutoLogin\"\t\t\"1\"\n\t}\n}",
+            ),
+        ];
+
+        for (index, (input, path, value, expected)) in cases.iter().enumerate() {
+            let out = vdf_set_nested_value(input, path, value).expect("golden case must succeed");
+            assert_eq!(&out, expected, "golden case {index} drifted");
+        }
+    }
+
+    #[test]
+    fn set_nested_value_enters_inline_brace_sections() {
+        // `"key" {` on one line. The old writer walked straight past it, never
+        // entered the block, and returned the input unchanged with Ok.
+        let input = "\"users\" {\n\t\"76561198000000000\" {\n\t\t\"AccountName\"\t\t\"alice\"\n\t\t\"AllowAutoLogin\"\t\t\"0\"\n\t}\n}\n";
+        let out = vdf_set_nested_value(input, &["76561198000000000", "AllowAutoLogin"], "1")
+            .expect("inline braces must be walked");
+
+        assert_eq!(
+            out,
+            "\"users\" {\n\t\"76561198000000000\" {\n\t\t\"AccountName\"\t\t\"alice\"\n\t\t\"AllowAutoLogin\"\t\t\"1\"\n\t}\n}\n"
+        );
+    }
+
+    #[test]
+    fn set_nested_value_inserts_into_an_inline_brace_section() {
+        let input =
+            "\"users\" {\n\t\"76561198000000000\" {\n\t\t\"AccountName\"\t\t\"alice\"\n\t}\n}\n";
+        let out = vdf_set_nested_value(input, &["76561198000000000", "MostRecent"], "1")
+            .expect("inline braces must be walked");
+
+        assert_eq!(
+            out,
+            "\"users\" {\n\t\"76561198000000000\" {\n\t\t\"AccountName\"\t\t\"alice\"\n\t\t\"MostRecent\"\t\t\"1\"\n\t}\n}\n"
+        );
+    }
+
+    #[test]
+    fn set_nested_value_splits_a_section_opened_and_closed_on_one_line() {
+        // Both braces on the header line: the key cannot go in front of the
+        // line, it has to land between them.
+        let input = "\"UserLocalConfigStore\"\n{\n\t\"friends\" { }\n}\n";
+        let out = vdf_set_nested_value(input, &["friends", "DoNotDisturb"], "1")
+            .expect("inline section must accept the key");
+
+        assert_eq!(
+            out,
+            "\"UserLocalConfigStore\"\n{\n\t\"friends\" {\n\t\t\"DoNotDisturb\"\t\t\"1\"\n\t}\n}\n"
+        );
+    }
+
+    #[test]
+    fn set_nested_value_preserves_crlf() {
+        let input = "\"users\"\r\n{\r\n\t\"76561198000000000\"\r\n\t{\r\n\t\t\"AllowAutoLogin\"\t\t\"0\"\r\n\t}\r\n}\r\n";
+        let out = vdf_set_nested_value(input, &["76561198000000000", "AllowAutoLogin"], "1")
+            .expect("CRLF file must be written");
+
+        assert_eq!(
+            out,
+            "\"users\"\r\n{\r\n\t\"76561198000000000\"\r\n\t{\r\n\t\t\"AllowAutoLogin\"\t\t\"1\"\r\n\t}\r\n}\r\n"
+        );
+        assert!(!out.contains("\"1\"\n"), "line ending collapsed to bare LF");
+    }
+
+    #[test]
+    fn set_nested_value_preserves_space_indentation() {
+        let input = "\"users\"\n{\n  \"76561198000000000\"\n  {\n  }\n}\n";
+        let out = vdf_set_nested_value(input, &["76561198000000000", "MostRecent"], "1")
+            .expect("space-indented file must be written");
+
+        assert_eq!(
+            out,
+            "\"users\"\n{\n  \"76561198000000000\"\n  {\n    \"MostRecent\"\t\t\"1\"\n  }\n}\n"
+        );
+    }
+
+    #[test]
+    fn set_nested_value_errors_when_the_path_cannot_be_reached() {
+        // Empty file: nothing to walk, nowhere to put the key. The old writer
+        // answered Ok("") and every caller wrote that back happily.
+        let err = vdf_set_nested_value("", &["friends", "DoNotDisturb"], "1")
+            .expect_err("an empty file has no path to write into");
+        assert!(
+            err.to_string().contains("friends > DoNotDisturb"),
+            "the error must name the path: {err}"
+        );
+
+        // A file whose root section never opens is the same story.
+        assert!(vdf_set_nested_value(
+            "\"UserLocalConfigStore\"\n",
+            &["friends", "DoNotDisturb"],
+            "1"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn set_nested_value_escapes_quotes_and_backslashes_in_the_value() {
+        let input = "\"users\"\n{\n\t\"76561198000000000\"\n\t{\n\t\t\"AccountName\"\t\t\"alice\"\n\t}\n}\n";
+        let out = vdf_set_nested_value(
+            input,
+            &["76561198000000000", "Nickname"],
+            "say \"hi\" from C:\\Steam",
+        )
+        .expect("value must be written");
+
+        assert!(out.contains("\"Nickname\"\t\t\"say \\\"hi\\\" from C:\\\\Steam\""));
+        // Reading it back through the tokenizer round-trips the raw value.
+        let line = out
+            .lines()
+            .find(|l| l.trim_start().starts_with("\"Nickname\""))
+            .expect("the key was written");
+        assert_eq!(
+            vdf_tokenize_line(line)[1],
+            "say \"hi\" from C:\\Steam",
+            "escaping must round-trip"
+        );
+    }
+
+    #[test]
+    fn set_nested_value_keeps_a_second_pair_on_the_same_line() {
+        // Two pairs crammed onto one physical line: rewriting the whole line
+        // would silently drop the second one.
+        let input = "\"users\"\n{\n\t\"76561198000000000\"\n\t{\n\t\t\"AllowAutoLogin\"\t\t\"0\"\t\t\"MostRecent\"\t\t\"0\"\n\t}\n}\n";
+        let out = vdf_set_nested_value(input, &["76561198000000000", "AllowAutoLogin"], "1")
+            .expect("value must be written");
+
+        assert!(out.contains("\"AllowAutoLogin\"\t\t\"1\""));
+        assert!(out.contains("\"MostRecent\"\t\t\"0\""));
     }
 }

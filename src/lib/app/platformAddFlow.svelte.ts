@@ -95,12 +95,16 @@ export function createPlatformAddFlowController({
     return {
       id: setupId,
       displayName: detectedName || t("platform.newAccountPending"),
-      username: detectedName
-        ? t(getSetupKey(flow.platformId, "connected"))
-        : t(getSetupKey(flow.platformId, "waitingForLogin")),
-      lastLoginAt: null,
+      username: detectedName ? t(getSetupKey(flow.platformId, "connected")) : pendingUsername(flow),
+      lastLoginAtSec: null,
     } satisfies PlatformAccount;
   });
+
+  /** The one line the card shows while nothing has been detected yet. */
+  function pendingUsername(entry: PlatformAddFlowEntry): string {
+    if (entry.status.state === "busy") return t("platform.setupBusy");
+    return t(getSetupKey(entry.platformId, "waitingForLogin"));
+  }
 
   function clearTimer() {
     if (!timer) return;
@@ -255,6 +259,22 @@ export function createPlatformAddFlowController({
         void cancel();
       },
     };
+
+    // Handled before the per-platform branches: the cross-process lock is not a
+    // platform concern, and every add flow reports it the same way. Non-terminal
+    // and platform-agnostic, so the spinner stays on and the next poll replaces
+    // this with the real status.
+    if (flow.status.state === "busy") {
+      return {
+        sections: [
+          {
+            text: t("platform.setupBusy"),
+            loading: true,
+          },
+          ...(detectedSection ? [detectedSection] : []),
+        ],
+      };
+    }
 
     if (flow.platformId === "riot") {
       switch (flow.status.state) {

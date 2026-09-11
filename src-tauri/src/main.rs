@@ -104,7 +104,7 @@ fn main() {
                 &setup_ctx, app_start,
             ));
 
-            boot::install_close_handler(app.handle().clone(), &win);
+            boot::install_window_event_handlers(app.handle().clone(), &win);
             boot::wire_deep_links(app, &setup_ctx);
             boot::spawn_snapshot_upgrade(setup_ctx.clone());
             boot::spawn_boot_failsafe(app.handle().clone());
@@ -152,6 +152,7 @@ fn main() {
             commands::minimize_window,
             commands::toggle_maximize_window,
             commands::close_window,
+            commands::set_maximize_button_rect,
             commands::set_keep_backdrop_active,
             commands::get_desktop_wallpaper,
             // Steam-specific

@@ -211,7 +211,10 @@ export const EN_MESSAGES = {
   "onboarding.telemetry.dealHint":
     "Adds a separate UUID for enhanced stats, stored only on your machine. Still no idea who you are, but you help a lot. Thank you!",
   "onboarding.telemetry.optOutNote":
-    "If you REALLY don't want to help accshift, you can opt-out of everything in Settings -> Privacy. :c",
+    "Whatever you pick, you can change it later in Settings -> Privacy. :c",
+  "onboarding.telemetry.refuse": "No thanks, turn it all off",
+  "onboarding.telemetry.refuseHint":
+    "Nothing is measured and nothing is sent, not even the anonymous counters.",
   "onboarding.telemetry.back": "Back",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
@@ -251,7 +254,8 @@ export const EN_MESSAGES = {
   "settings.deepLinksHint":
     "Let other apps switch accounts for you: bookmarks, Stream Deck, scripts.",
   "settings.cliEnabled": "Allow the accshift CLI",
-  "settings.cliEnabledHint": "Let the command line tool list and switch accounts.",
+  "settings.cliEnabledHint":
+    "Let the command line tool list and switch accounts. When off, every accshift command refuses to run, diag included; the app itself is unaffected.",
   "settings.help": "Open the accshift wiki",
   "settings.helpShort": "Help",
   "settings.openHelpFailed": "Could not open the wiki",
@@ -267,6 +271,8 @@ export const EN_MESSAGES = {
   "context.menu.copy": "Copy...",
   "context.menu.deleteFolder": "Delete folder",
   "context.menu.folderColor": "Folder color",
+  "context.menu.moveToFolder": "Move to folder",
+  "context.menu.moveToRoot": "No folder",
   "context.menu.editCardAndColor": "Edit card and color",
   "context.menu.cardColor": "Card color",
   "context.menu.addNote": "Add note",
@@ -276,6 +282,7 @@ export const EN_MESSAGES = {
   "platform.renameTitle": "Rename account",
   "platform.renamePlaceholder": "Account name",
   "platform.newAccountPending": "Waiting...",
+  "platform.setupBusy": "Another accshift operation is running. Waiting for it to finish.",
   "platform.renameNewAccount": "Name this account",
   "platform.copyLabelAccountId": "Account ID",
   "platform.forget": "Forget",
@@ -291,6 +298,7 @@ export const EN_MESSAGES = {
   "dialog.cardNotePlaceholder": "Write a short note",
 
   "card.noteAttached": "Note attached",
+  "card.clickAgainToSwitch": "Click again to switch",
   "card.extensionWarnings": "Warnings",
   "card.extensionNote": "Note",
   "card.cs2Section": "CS2",
@@ -782,9 +790,13 @@ export const EN_MESSAGES = {
   "settings.cs2BridgeClearToken": "Clear token",
   "settings.pathSaveFailed": "Couldn't save the {platform} path",
   "settings.pathInvalidHint": "This path couldn't be saved. Check it and try again.",
+  "settings.pathSteamNeverSignedIn": "Steam found, sign in once so it creates its login history",
+  "settings.pathNotSteamFolder": "This folder does not look like a Steam installation",
+  "settings.pathNotADirectory": "The path must be an existing folder",
   "settings.pinSaved": "PIN saved",
   "settings.pinTakesEffectNextLaunch": "Takes effect the next time the app starts",
   "settings.pinRequiredAfterInactivity": "Required after inactivity and when the app starts",
+  "settings.pinScreenLockOnly": "The PIN locks this window only. It protects nothing on disk.",
   "settings.unitSeconds": "seconds",
   "settings.unitDays": "days",
   "settings.telemetryLoadFailed": "Couldn't load telemetry settings",

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
 
-  let { onBack, isDragOver = false, locale = DEFAULT_LOCALE, accentColor = "#3b82f6" }: {
+  let { onBack, isDragOver = false, locale = DEFAULT_LOCALE, accentColor = "var(--accent)" }: {
     onBack: () => void;
     isDragOver?: boolean;
     locale?: Locale;
@@ -65,9 +65,9 @@
   }
 
   .card.drag-over {
-    box-shadow: inset 0 0 0 1px var(--drag-accent, #3b82f6);
-    outline-color: color-mix(in srgb, var(--drag-accent, #3b82f6) 55%, transparent);
-    background: color-mix(in srgb, var(--drag-accent, #3b82f6) 10%, transparent);
+    box-shadow: inset 0 0 0 1px var(--drag-accent, var(--accent));
+    outline-color: color-mix(in srgb, var(--drag-accent, var(--accent)) 55%, transparent);
+    background: color-mix(in srgb, var(--drag-accent, var(--accent)) 10%, transparent);
   }
 
   .icon-wrap {

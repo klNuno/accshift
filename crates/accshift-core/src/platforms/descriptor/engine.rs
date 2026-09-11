@@ -158,7 +158,10 @@ impl DescriptorService {
                 }
             }
         }
-        let sandbox = Sandbox::new(&profile.roots, &resolver);
+        // A root that does not resolve here stops the operation. Every path the
+        // steps below build is checked against these, so carrying on with a
+        // half-built sandbox would mean carrying on with no sandbox.
+        let sandbox = Sandbox::new(&profile.roots, &resolver).map_err(|e| e.to_string())?;
         Ok(Runtime {
             profile,
             resolver,
@@ -593,6 +596,18 @@ impl DescriptorService {
         for item in &runtime.profile.state.directories {
             let live = runtime.spec_path(&item.live)?;
             let dest = cache_dir.join(&item.snapshot);
+            if !live.is_dir() && !item.clear_snapshot_when_source_missing {
+                // The launcher has not written this directory yet. Copying
+                // nothing over the previous capture would leave the account
+                // with an empty snapshot, which restores as a signed-out
+                // session.
+                continue;
+            }
+            // On Linux and macOS every encrypted file in there owns a keyring
+            // entry, and removing the directory is the only thing that still
+            // knows the entry ids. Free them first or they leak, one full
+            // capture's worth per switch.
+            free_dir_secrets(&dest);
             let _ = fs::remove_dir_all(&dest);
             let ignored: Vec<&str> = item.ignored_names.iter().map(String::as_str).collect();
             snapshot_crypto::encrypted_copy_dir(
@@ -2216,6 +2231,155 @@ mod tests {
 
         let snapshot = service.snapshot_root(&ctx, "aaaa1111").unwrap();
         assert!(!snapshot.join("session.json").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// The variable a root is written against on the OS this build targets.
+    /// Each one is a placeholder the loader accepts there, and none of them is
+    /// in the fabricated environment the test hands the service.
+    const ROOT_VAR: &str = if cfg!(windows) {
+        "LOCALAPPDATA"
+    } else {
+        "HOME"
+    };
+
+    /// A descriptor whose only root is written against a variable the caller
+    /// can leave out of the environment.
+    fn env_rooted_fixture() -> String {
+        fn profile(var: &str) -> String {
+            format!(
+                r#"{{
+              "roots": {{ "files": ["${{{var}}}/Demo"] }},
+              "detect": {{ "pathExists": ["${{{var}}}/Demo"] }},
+              "identity": {{
+                "source": {{ "kind": "synthetic" }},
+                "format": {{ "charset": "alphanumeric", "maxLength": 64 }},
+                "current": "config"
+              }},
+              "state": {{
+                "files": [
+                  {{ "live": "${{{var}}}/Demo/session.json", "snapshot": "session.json", "snapshotMarker": true }}
+                ]
+              }},
+              "close": {{ "processes": ["nothing-here"] }},
+              "setup": {{ "missingSnapshotHint": "Add this account through setup first." }}
+            }}"#
+            )
+        }
+        format!(
+            r#"{{
+              "id": "gog",
+              "schemaVersion": 1,
+              "name": "Test Launcher",
+              "shortName": "Test",
+              "os": {{
+                "windows": {},
+                "linux": {},
+                "macos": {}
+              }}
+            }}"#,
+            profile("LOCALAPPDATA"),
+            profile("HOME"),
+            profile("HOME")
+        )
+    }
+
+    #[test]
+    fn a_root_that_does_not_resolve_refuses_every_path_instead_of_allowing_all() {
+        // The sandbox used to drop a root it could not resolve, and an empty
+        // root list meant "allow everything". One unset variable was enough to
+        // let a switch write anywhere on the disk.
+        let _config = config_guard();
+        let root = scratch("unresolved-root");
+        let ctx = TempCtx { root: root.clone() };
+        let descriptor = Descriptor::parse("test", &env_rooted_fixture()).unwrap();
+        let service = DescriptorService::new(descriptor, DescriptorOrigin::Embedded)
+            .with_environment(Vec::<(String, String)>::new());
+
+        let err = service.save_snapshot(&ctx, "aaaa1111").unwrap_err();
+        assert!(err.contains("Refused to run without a sandbox"), "{err}");
+        assert!(err.contains(&format!("${{{ROOT_VAR}}}/Demo")), "{err}");
+        assert!(service.plan_switch(&ctx, "aaaa1111").is_err());
+        assert!(service.read_accounts(&ctx).is_err());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn recapturing_frees_the_previous_capture_keyring_entries() {
+        // Every encrypted file owns a keyring entry on Linux and macOS, and the
+        // directory that held the ids is what gets removed. Freeing them has to
+        // happen before the removal or a switch leaks one entry per file.
+        let _config = config_guard();
+        let root = scratch("keyring-growth");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = service(&live);
+
+        seed_live_session(&live, b"first");
+        service.save_snapshot(&ctx, "aaaa1111").unwrap();
+        let after_first = crate::secrets::backend::entry_count();
+        assert_eq!(after_first, 2, "one entry per encrypted snapshot file");
+
+        seed_live_session(&live, b"second");
+        service.save_snapshot(&ctx, "aaaa1111").unwrap();
+        assert_eq!(crate::secrets::backend::entry_count(), after_first);
+
+        // The snapshot still reads back, so nothing live was freed either.
+        service.restore_snapshot(&ctx, "aaaa1111").unwrap();
+        assert_eq!(
+            fs::read(live.join("auth").join("nested").join("token.bin")).unwrap(),
+            b"second"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_missing_live_directory_keeps_the_previous_snapshot_when_told_to() {
+        let _config = config_guard();
+        let root = scratch("dir-keep");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let json = fixture(&live).replace(
+            r#""snapshot": "auth", "snapshotMarker": true, "clearOnSetup": true"#,
+            r#""snapshot": "auth", "snapshotMarker": true, "clearOnSetup": true, "clearSnapshotWhenSourceMissing": false"#,
+        );
+        let service = DescriptorService::new(
+            Descriptor::parse("test", &json).unwrap(),
+            DescriptorOrigin::Embedded,
+        );
+
+        seed_live_session(&live, b"first");
+        service.save_snapshot(&ctx, "aaaa1111").unwrap();
+
+        // The launcher has not written its auth folder back yet.
+        fs::remove_dir_all(live.join("auth")).unwrap();
+        service.save_snapshot(&ctx, "aaaa1111").unwrap();
+
+        let snapshot = service.snapshot_root(&ctx, "aaaa1111").unwrap();
+        assert!(snapshot
+            .join("auth")
+            .join("nested")
+            .join("token.bin")
+            .exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_missing_live_directory_drops_the_snapshot_by_default() {
+        let _config = config_guard();
+        let root = scratch("dir-drop");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = service(&live);
+
+        seed_live_session(&live, b"first");
+        service.save_snapshot(&ctx, "aaaa1111").unwrap();
+
+        fs::remove_dir_all(live.join("auth")).unwrap();
+        service.save_snapshot(&ctx, "aaaa1111").unwrap();
+
+        let snapshot = service.snapshot_root(&ctx, "aaaa1111").unwrap();
+        assert!(!snapshot.join("auth").exists());
         let _ = fs::remove_dir_all(&root);
     }
 

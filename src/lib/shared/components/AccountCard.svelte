@@ -5,7 +5,10 @@
   import type { AccountUsernameBadge, CardExtensionContent } from "$lib/shared/cardExtension";
   import { hasCardExtensionContent } from "$lib/shared/cardExtension";
   import CardExtensionPanel from "./CardExtensionPanel.svelte";
-  import { formatRelativeTimeCompact } from "$lib/shared/time";
+  import {
+    formatAbsoluteDateTimeFromUnixSeconds,
+    formatRelativeTimeCompact,
+  } from "$lib/shared/time";
   import { getAvatarGradientStyle, getAvatarInitials, getAvatarSeed } from "$lib/shared/avatarFallback";
   import { fadeInOnLoad } from "$lib/shared/avatarFadeIn";
   import { DEFAULT_LOCALE, translate, type Locale, type MessageKey } from "$lib/i18n";
@@ -32,7 +35,7 @@
     showNoteInline = false,
     showLastLogin = false,
     lastLoginUnknownKey = "time.unknown",
-    lastLoginAt = null,
+    lastLoginAtSec = null,
     note = "",
     usernameBadge = null,
     singleClickSwitch = false,
@@ -63,7 +66,7 @@
     showNoteInline?: boolean;
     showLastLogin?: boolean;
     lastLoginUnknownKey?: MessageKey;
-    lastLoginAt?: number | null;
+    lastLoginAtSec?: number | null;
     note?: string;
     usernameBadge?: AccountUsernameBadge | null;
     isSwitching?: boolean;
@@ -91,6 +94,12 @@
   const EXTENSION_DETAIL_WIDTH_PX = 130;
   const EXTENSION_VIEWPORT_GAP_PX = 12;
   const noteText = $derived(note.trim());
+  const lastLoginLabel = $derived(
+    formatRelativeTimeCompact(lastLoginAtSec, locale, lastLoginUnknownKey)
+  );
+  // Empty when the timestamp is unusable, which drops the attribute rather
+  // than showing an empty tooltip.
+  const lastLoginTitle = $derived(formatAbsoluteDateTimeFromUnixSeconds(lastLoginAtSec, locale));
   const hasUsername = $derived(Boolean(showUsername && account.username.trim()));
   const hasRedWarning = $derived(warningInfo?.cardOutlineTone === "red");
   const hasOrangeWarning = $derived(warningInfo?.cardOutlineTone === "orange");
@@ -257,10 +266,34 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    // The grid's roving focus claims these two first, from a window listener
+    // in the capture phase. What reaches the card is a card that was tabbed
+    // to: real DOM focus, no roving focus, and until now no way to the menu.
+    if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+      e.preventDefault();
+      e.stopPropagation();
+      openContextMenuFromCard();
+      return;
+    }
     if (e.key !== "Enter" && e.key !== " ") return;
     e.preventDefault();
     e.stopPropagation();
     handleClick();
+  }
+
+  /** Opens the context menu at the middle of the card, since a key press
+   *  carries no pointer position. */
+  function openContextMenuFromCard() {
+    if (interactionDisabled || !cardRef) return;
+    const rect = cardRef.getBoundingClientRect();
+    onActivate();
+    showConfirm = false;
+    onContextMenu({
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+      preventDefault: () => {},
+      stopPropagation: () => {},
+    } as MouseEvent);
   }
 
   function handleContextMenu(e: MouseEvent) {
@@ -413,8 +446,17 @@
           <div class="note">{noteText}</div>
         {/if}
         {#if showLastLogin}
-          <div class="last-login">{formatRelativeTimeCompact(lastLoginAt, locale, lastLoginUnknownKey)}</div>
+          <div class="last-login" title={lastLoginTitle || undefined}>{lastLoginLabel}</div>
         {/if}
+      </div>
+    {/if}
+
+    <!-- Armed state: the first click only arms the card, and nothing said so.
+         Absolutely positioned so an armed card keeps the exact size of the
+         others; the scrim keeps it readable over the meta lines it covers. -->
+    {#if showConfirm && !isDragged}
+      <div class="confirm-hint" aria-live="polite">
+        {translate(locale, "card.clickAgainToSwitch")}
       </div>
     {/if}
   </div>
@@ -431,7 +473,7 @@
   }
 
   .card-shell.extension-visible {
-    z-index: 24;
+    z-index: var(--z-card-extension);
   }
 
   .extension-hitbox {
@@ -440,7 +482,7 @@
     bottom: 0;
     width: calc(var(--grid-card-width) + 130px);
     pointer-events: none;
-    z-index: 1;
+    z-index: var(--z-card-base);
   }
 
   .extension-hitbox.right {
@@ -512,15 +554,19 @@
    * offset rings. */
   .extension-surface.active.visible {
     box-shadow:
-      0 0 0 2px rgba(255, 255, 255, 0.62),
-      0 0 0 4px rgba(9, 9, 11, 0.45),
+      0 0 0 2px color-mix(in srgb, var(--fg) 62%, transparent),
+      0 0 0 4px color-mix(in srgb, var(--bg-solid) 45%, transparent),
       0 14px 28px rgba(0, 0, 0, 0.18);
   }
 
   .extension-surface.custom-color.active.visible {
     box-shadow:
-      0 0 0 2px rgba(255, 255, 255, 0.72),
-      0 0 0 5px color-mix(in srgb, var(--card-custom-color) 50%, rgba(9, 9, 11, 0.62)),
+      0 0 0 2px color-mix(in srgb, var(--fg) 72%, transparent),
+      0 0 0 5px color-mix(
+        in srgb,
+        var(--card-custom-color) 50%,
+        color-mix(in srgb, var(--bg-solid) 62%, transparent)
+      ),
       0 14px 28px rgba(0, 0, 0, 0.18);
   }
 
@@ -590,7 +636,7 @@
 
   .card {
     position: relative;
-    z-index: 2;
+    z-index: var(--z-card-face);
     width: var(--grid-card-width);
     min-height: var(--grid-card-min-height);
     padding: var(--grid-card-padding);
@@ -648,12 +694,16 @@
     transform: translateY(0) scale(0.985);
   }
 
+  /* Two rings: a bright halo against the window ground, then a dark band
+     that separates it from whatever is behind. Built from --fg and
+     --bg-solid rather than a white and a near-black, so the pair swaps
+     round on a light theme instead of the halo vanishing into it. */
   .card.active {
     box-shadow:
-      0 0 0 2px rgba(255, 255, 255, 0.62),
-      0 0 0 4px rgba(9, 9, 11, 0.45);
+      0 0 0 2px color-mix(in srgb, var(--fg) 62%, transparent),
+      0 0 0 4px color-mix(in srgb, var(--bg-solid) 45%, transparent);
     cursor: pointer;
-    z-index: 18;
+    z-index: var(--z-card-active);
   }
 
   .card.active:not(.custom-color) {
@@ -663,8 +713,12 @@
   .card.custom-color.active {
     background: color-mix(in srgb, var(--card-custom-color) 24%, var(--bg-card));
     box-shadow:
-      0 0 0 2px rgba(255, 255, 255, 0.72),
-      0 0 0 5px color-mix(in srgb, var(--card-custom-color) 50%, rgba(9, 9, 11, 0.62));
+      0 0 0 2px color-mix(in srgb, var(--fg) 72%, transparent),
+      0 0 0 5px color-mix(
+        in srgb,
+        var(--card-custom-color) 50%,
+        color-mix(in srgb, var(--bg-solid) 62%, transparent)
+      );
   }
 
   .card.ban-red {
@@ -699,7 +753,7 @@
   .card.dragging {
     opacity: 0.4;
     transform: scale(0.95);
-    z-index: 8;
+    z-index: var(--z-card-dragging);
   }
 
   .avatar {
@@ -789,6 +843,27 @@
     to { opacity: 1; transform: scale(1); }
   }
 
+  .confirm-hint {
+    position: absolute;
+    left: var(--grid-card-padding);
+    right: var(--grid-card-padding);
+    bottom: 4px;
+    padding: 2px 3px;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--bg-solid) 82%, transparent);
+    color: var(--fg);
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 1.2;
+    text-align: center;
+    pointer-events: none;
+    animation: fadeIn 150ms ease-out;
+  }
+
+  :global(html[data-motion="reduced"]) :is(.confirm-hint, .play-overlay) {
+    animation: none;
+  }
+
   .loader {
     width: 20px;
     height: 20px;
@@ -827,7 +902,7 @@
   }
 
   .avatar.active {
-    outline: 2px solid rgba(255, 255, 255, 0.2);
+    outline: 2px solid color-mix(in srgb, var(--fg) 20%, transparent);
   }
 
   .name {
@@ -898,8 +973,8 @@
     width: 12px;
     height: 12px;
     border-radius: 999px;
-    border: 1px solid rgba(255, 255, 255, 0.92);
-    color: #fff;
+    border: 1px solid color-mix(in srgb, var(--fg) 92%, transparent);
+    color: var(--fg);
     font-size: 8px;
     font-weight: 700;
     line-height: 1;

@@ -380,15 +380,59 @@ fn known_account_emails(app_handle: &dyn AppContext) -> Result<Vec<String>, Stri
 }
 
 fn read_accounts(app_handle: &dyn AppContext) -> Result<Vec<BattleNetAccount>, String> {
-    let saved_accounts = read_saved_accounts()?;
-    if let Some(current_email) = saved_accounts.first() {
-        let _ = remember_account_usage(app_handle, current_email, true);
+    list_accounts_from_saved(app_handle, read_saved_accounts()?)
+}
+
+/// Build the account list from what the launcher saved plus what our own
+/// config already knows.
+///
+/// Listing is a read. It used to call `remember_account_usage` for the first
+/// saved account, which took the cross-process config lock and stamped
+/// `last_used_at` with "now" on every poll, so "last used" meant "last listed"
+/// and the frontend's sort order was noise. The only write left is registering
+/// an email the launcher knows and our config does not, and it carries no
+/// timestamp: an account we have never seen used has no usage to report.
+fn list_accounts_from_saved(
+    app_handle: &dyn AppContext,
+    saved_accounts: Vec<String>,
+) -> Result<Vec<BattleNetAccount>, String> {
+    let mut cfg = config::load_config(app_handle);
+
+    // The one write listing is allowed, and only when the launcher shows an
+    // account our config has never seen. Everything below is a read.
+    let newcomers = unknown_emails(&cfg, &saved_accounts);
+    if !newcomers.is_empty() {
+        let current_key = saved_accounts
+            .first()
+            .map(|email| normalize_account_key(email));
+        // The tag lives in the client's cache under the id of the account that
+        // is signed in, so it can only be claimed for that one, and only while
+        // it is the account being registered.
+        let current_tag = current_key
+            .as_ref()
+            .filter(|key| {
+                newcomers
+                    .iter()
+                    .any(|email| &normalize_account_key(email) == *key)
+            })
+            .and_then(|_| current_battle_tag_from_cache().ok().flatten());
+
+        add_new_accounts(
+            &mut cfg,
+            &newcomers,
+            current_key.as_deref(),
+            current_tag.as_deref(),
+        );
+        config::update_config(app_handle, |stored| {
+            add_new_accounts(
+                stored,
+                &newcomers,
+                current_key.as_deref(),
+                current_tag.as_deref(),
+            );
+        })?;
     }
 
-    // Load after `remember_account_usage`: it bumps last_used_at and may store
-    // a freshly fetched battle tag, so a config read before it would report
-    // stale metadata for the current account.
-    let cfg = config::load_config(app_handle);
     let account_emails = known_account_emails_from(saved_accounts, &cfg);
     let metadata_by_key = cfg
         .battle_net
@@ -418,6 +462,66 @@ fn read_accounts(app_handle: &dyn AppContext) -> Result<Vec<BattleNetAccount>, S
             }
         })
         .collect())
+}
+
+/// The launcher accounts our own config does not hold yet, deduplicated, in
+/// the order the launcher lists them. An empty result means listing has
+/// nothing to write and takes no lock.
+fn unknown_emails(cfg: &AppConfig, saved_accounts: &[String]) -> Vec<String> {
+    let mut known = cfg
+        .battle_net
+        .accounts
+        .iter()
+        .map(|account| normalize_account_key(&account.email))
+        .collect::<HashSet<_>>();
+
+    saved_accounts
+        .iter()
+        .filter_map(|email| {
+            let email = email.trim().to_string();
+            if email.is_empty() || !known.insert(normalize_account_key(&email)) {
+                return None;
+            }
+            Some(email)
+        })
+        .collect()
+}
+
+/// Record accounts the launcher knows and we do not, with no `last_used_at`:
+/// seeing an account is not using it, and a listing that stamped one would
+/// make "last used" mean "last listed". Only the account that is signed in
+/// gets the battle tag, and only if the caller could read it.
+///
+/// Re-checks what the config holds, because the copy this runs on inside
+/// `update_config` is re-read under the lock and may already have the account.
+fn add_new_accounts(
+    cfg: &mut AppConfig,
+    emails: &[String],
+    current_key: Option<&str>,
+    current_tag: Option<&str>,
+) {
+    let mut known = cfg
+        .battle_net
+        .accounts
+        .iter()
+        .map(|account| normalize_account_key(&account.email))
+        .collect::<HashSet<_>>();
+
+    for email in emails {
+        let key = normalize_account_key(email);
+        if !known.insert(key.clone()) {
+            continue;
+        }
+        let is_current = current_key == Some(key.as_str());
+        cfg.battle_net.accounts.push(BattleNetAccountConfig {
+            email: email.clone(),
+            battle_tag: match current_tag {
+                Some(tag) if is_current => tag.to_string(),
+                _ => String::new(),
+            },
+            last_used_at: None,
+        });
+    }
 }
 
 fn current_account(accounts: &[BattleNetAccount]) -> String {
@@ -1405,5 +1509,223 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+/// Listing the accounts is a poll: the frontend calls it on every refresh, so
+/// what it writes (and what it must not write) is the whole point here.
+#[cfg(test)]
+mod listing_tests {
+    use super::*;
+    use crate::config::AppConfig;
+    use std::path::PathBuf;
+
+    struct TempCtx {
+        root: PathBuf,
+    }
+
+    impl AppContext for TempCtx {
+        fn app_config_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_data_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_local_data_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_cache_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.root.clone())
+        }
+    }
+
+    /// The config cache and the poisoned-local flag are process-global, so
+    /// every test that writes a config takes the same lock as `config`'s own.
+    fn config_guard() -> std::sync::MutexGuard<'static, ()> {
+        crate::config::config_io_test_mutex()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "accshift-battlenet-listing-{}-{}-{:?}",
+            tag,
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    /// Bytes of both config files, which is what a listing must leave alone.
+    fn config_bytes(ctx: &TempCtx) -> Vec<(PathBuf, Vec<u8>)> {
+        [
+            crate::storage::portable_config_path(ctx).unwrap(),
+            crate::storage::local_config_path(ctx).unwrap(),
+        ]
+        .into_iter()
+        .map(|path| {
+            let bytes = fs::read(&path).unwrap_or_default();
+            (path, bytes)
+        })
+        .collect()
+    }
+
+    fn seed_account(ctx: &TempCtx, email: &str, last_used_at: Option<u64>) {
+        config::update_config(ctx, |cfg| {
+            cfg.battle_net.accounts.push(BattleNetAccountConfig {
+                email: email.to_string(),
+                battle_tag: "Seeded#0001".into(),
+                last_used_at,
+            });
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn listing_twice_writes_nothing_and_keeps_the_previous_last_used_at() {
+        // The finding: listing called `remember_account_usage`, which took the
+        // cross-process lock and stamped `last_used_at` with "now" on every
+        // poll, so "last used" was really "last listed".
+        let _config = config_guard();
+        let root = scratch("no-write");
+        let ctx = TempCtx { root: root.clone() };
+        seed_account(&ctx, "one@example.com", Some(1_000));
+        let before = config_bytes(&ctx);
+
+        let saved = vec!["one@example.com".to_string()];
+        let first = list_accounts_from_saved(&ctx, saved.clone()).unwrap();
+        let second = list_accounts_from_saved(&ctx, saved).unwrap();
+
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].last_login_at, Some(1_000));
+        assert_eq!(second[0].last_login_at, Some(1_000));
+        assert_eq!(config_bytes(&ctx), before, "listing rewrote the config");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_newly_discovered_email_is_recorded_without_a_timestamp() {
+        let _config = config_guard();
+        let root = scratch("discovery");
+        let ctx = TempCtx { root: root.clone() };
+        seed_account(&ctx, "known@example.com", Some(1_000));
+
+        // The known account stays first, so it is still the current one and
+        // the newcomer never claims its battle tag.
+        let accounts = list_accounts_from_saved(
+            &ctx,
+            vec![
+                "known@example.com".to_string(),
+                "fresh@example.com".to_string(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(accounts.len(), 2);
+        assert_eq!(accounts[1].email, "fresh@example.com");
+        assert_eq!(accounts[1].last_login_at, None);
+        assert_eq!(accounts[0].last_login_at, Some(1_000));
+
+        // And it is persisted, so the next listing has nothing to write.
+        let stored = config::load_config(&ctx);
+        let fresh = stored
+            .battle_net
+            .accounts
+            .iter()
+            .find(|account| account.email == "fresh@example.com")
+            .expect("the discovered account is in the config");
+        assert_eq!(fresh.last_used_at, None);
+        assert!(fresh.battle_tag.is_empty());
+
+        let before = config_bytes(&ctx);
+        let _ = list_accounts_from_saved(
+            &ctx,
+            vec![
+                "known@example.com".to_string(),
+                "fresh@example.com".to_string(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(config_bytes(&ctx), before);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_use_still_stamps_the_account() {
+        // What `switch_account` and setup completion call. Listing does not.
+        let _config = config_guard();
+        let root = scratch("stamp");
+        let ctx = TempCtx { root: root.clone() };
+        seed_account(&ctx, "one@example.com", Some(1_000));
+
+        remember_account_usage(&ctx, "one@example.com", false).unwrap();
+
+        let stored = config::load_config(&ctx);
+        let stamped = stored.battle_net.accounts[0].last_used_at.unwrap();
+        assert!(stamped > 1_000, "last_used_at was not refreshed: {stamped}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unknown_emails_only_reports_what_the_config_is_missing() {
+        let mut cfg = AppConfig::default();
+        cfg.battle_net.accounts.push(BattleNetAccountConfig {
+            email: "Known@Example.com".into(),
+            battle_tag: String::new(),
+            last_used_at: Some(7),
+        });
+
+        // Case-insensitive, and the same newcomer listed twice counts once.
+        assert_eq!(
+            unknown_emails(
+                &cfg,
+                &[
+                    "known@example.com".to_string(),
+                    "  ".to_string(),
+                    " fresh@example.com ".to_string(),
+                    "FRESH@example.com".to_string(),
+                ]
+            ),
+            vec!["fresh@example.com".to_string()]
+        );
+        assert!(unknown_emails(&cfg, &["KNOWN@EXAMPLE.COM".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn only_the_signed_in_newcomer_takes_the_battle_tag() {
+        let mut cfg = AppConfig::default();
+        let emails = vec![
+            "current@example.com".to_string(),
+            "other@example.com".to_string(),
+        ];
+
+        add_new_accounts(
+            &mut cfg,
+            &emails,
+            Some("current@example.com"),
+            Some("Tag#1234"),
+        );
+
+        assert_eq!(cfg.battle_net.accounts.len(), 2);
+        assert_eq!(cfg.battle_net.accounts[0].battle_tag, "Tag#1234");
+        assert!(cfg.battle_net.accounts[1].battle_tag.is_empty());
+        assert!(cfg
+            .battle_net
+            .accounts
+            .iter()
+            .all(|account| account.last_used_at.is_none()));
+
+        // Running again adds nothing: this is what makes the write under the
+        // lock safe when the stored config already moved on.
+        add_new_accounts(
+            &mut cfg,
+            &emails,
+            Some("current@example.com"),
+            Some("Tag#1234"),
+        );
+        assert_eq!(cfg.battle_net.accounts.len(), 2);
     }
 }

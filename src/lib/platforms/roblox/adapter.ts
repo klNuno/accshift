@@ -17,17 +17,18 @@ import {
 } from "./warnings";
 import type { RobloxAccount } from "./types";
 import { isSafeHttpUrl } from "$lib/shared/url";
+import { unixMsToSeconds } from "$lib/shared/time";
 
 // Stable backend wording from request_auth_ticket (roblox.rs) when the stored
 // .ROBLOSECURITY cookie is rejected server-side.
 const SESSION_EXPIRED_PATTERN = /auth ticket request failed \(http 401/i;
 
-function toAccount(account: RobloxAccount): PlatformAccount {
+export function toRobloxAccount(account: RobloxAccount): PlatformAccount {
   return {
     id: account.userId,
     displayName: account.displayName || account.username,
     username: account.username,
-    lastLoginAt: account.lastLoginAt ? Math.floor(account.lastLoginAt / 1000) : null,
+    lastLoginAtSec: unixMsToSeconds(account.lastLoginAt),
   };
 }
 
@@ -52,7 +53,7 @@ export const robloxAdapter: PlatformAdapter = {
 
   async loadAccounts(): Promise<PlatformAccount[]> {
     const accounts = await service.getAccounts();
-    return accounts.map(toAccount);
+    return accounts.map(toRobloxAccount);
   },
 
   async getCurrentAccount(): Promise<string> {
@@ -62,7 +63,7 @@ export const robloxAdapter: PlatformAdapter = {
   async getStartupSnapshot() {
     const snapshot = await service.getStartupSnapshot();
     return {
-      accounts: snapshot.accounts.map(toAccount),
+      accounts: snapshot.accounts.map(toRobloxAccount),
       currentAccount: snapshot.currentAccount,
     };
   },

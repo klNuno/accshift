@@ -11,6 +11,7 @@ import { rememberRiotProfiles } from "./accountCache";
 import { getRiotContextMenuItems } from "./contextMenu";
 import { getRiotProfile } from "./profile";
 import type { RiotProfile } from "./types";
+import { unixMsToSeconds } from "$lib/shared/time";
 
 function getRiotAlias(profile: RiotProfile): string {
   const name = (profile.account_name ?? "").trim();
@@ -45,13 +46,13 @@ function profileSecondaryLabel(profile: RiotProfile): string {
   return `${label} · ${status}`;
 }
 
-function toAccount(profile: RiotProfile): PlatformAccount {
+export function toRiotAccount(profile: RiotProfile): PlatformAccount {
   const lastLoginUnixMs = profile.last_used_at ?? profile.last_captured_at ?? null;
   return {
     id: profile.id,
     displayName: getRiotAlias(profile) || profile.label,
     username: profileSecondaryLabel(profile),
-    lastLoginAt: lastLoginUnixMs ? Math.floor(lastLoginUnixMs / 1000) : null,
+    lastLoginAtSec: unixMsToSeconds(lastLoginUnixMs),
   };
 }
 
@@ -66,7 +67,7 @@ export const riotAdapter: PlatformAdapter = {
   async loadAccounts(): Promise<PlatformAccount[]> {
     const profiles = await service.getProfiles();
     rememberRiotProfiles(profiles);
-    return profiles.map(toAccount);
+    return profiles.map(toRiotAccount);
   },
 
   async getCurrentAccount(): Promise<string> {
@@ -77,7 +78,7 @@ export const riotAdapter: PlatformAdapter = {
     const snapshot = await service.getStartupSnapshot();
     rememberRiotProfiles(snapshot.profiles);
     return {
-      accounts: snapshot.profiles.map(toAccount),
+      accounts: snapshot.profiles.map(toRiotAccount),
       currentAccount: snapshot.currentProfile,
     };
   },

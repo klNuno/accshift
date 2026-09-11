@@ -5,6 +5,10 @@ import {
   getAccountAppearanceContextActions,
   type AccountAppearanceActionCallbacks,
 } from "./accountAppearanceActions";
+import {
+  getAccountFolderContextActions,
+  type AccountFolderActionCallbacks,
+} from "./accountFolderActions";
 import { ACCOUNT_CONTEXT_GROUP_ORDER, buildContextMenuItems } from "./types";
 
 interface BuildAccountContextMenuOptions {
@@ -12,6 +16,8 @@ interface BuildAccountContextMenuOptions {
   adapter: PlatformAdapter;
   platformCallbacks: PlatformContextMenuCallbacks;
   appearanceCallbacks: AccountAppearanceActionCallbacks;
+  /** Omitted by callers with no folder world (e.g. a bare platform test). */
+  folderCallbacks?: AccountFolderActionCallbacks;
 }
 
 function collapseCopyActions(
@@ -64,11 +70,13 @@ export function buildAccountContextMenuItems({
   adapter,
   platformCallbacks,
   appearanceCallbacks,
+  folderCallbacks,
 }: BuildAccountContextMenuOptions): ContextMenuItem[] {
   const renameAction = getRenameAction(account, adapter, platformCallbacks);
   const actions = collapseCopyActions(
     [
       ...(renameAction ? [renameAction] : []),
+      ...(folderCallbacks ? getAccountFolderContextActions(account, folderCallbacks) : []),
       ...adapter.getContextMenuActions(account, platformCallbacks),
       ...getAccountAppearanceContextActions(account, appearanceCallbacks),
     ],

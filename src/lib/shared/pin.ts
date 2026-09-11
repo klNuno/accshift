@@ -64,20 +64,44 @@ export async function hashPinCode(pinCode: string): Promise<string> {
   return `${bytesToHex(salt)}:${hash}`;
 }
 
-/** Verify a PIN attempt against a stored hash. Handles both PBKDF2 and legacy SHA-256. */
-export async function verifyPinCode(pinCode: string, storedHash: string): Promise<boolean> {
+export type PinVerification = {
+  /** True when the attempt matches the stored hash. */
+  matches: boolean;
+  /**
+   * A PBKDF2 replacement for a legacy hash the attempt just cleared, to be
+   * persisted by the caller. Null on a failed attempt and on a hash that is
+   * already PBKDF2, so nothing is rewritten in those cases.
+   */
+  rehashed: string | null;
+};
+
+/**
+ * Verify a PIN attempt against a stored hash. Handles both PBKDF2 and legacy
+ * unsalted SHA-256.
+ *
+ * A legacy hash that verifies is upgraded on the spot: the returned
+ * `rehashed` is the same PIN under the current PBKDF2 path, and persisting it
+ * is what ends the migration. Without that write the unsalted form would be
+ * accepted for ever, which is the whole point of accepting it at all.
+ */
+export async function verifyPinCode(pinCode: string, storedHash: string): Promise<PinVerification> {
   const normalized = sanitizePinDigits(pinCode);
-  if (normalized.length !== PIN_CODE_LENGTH) return false;
+  if (normalized.length !== PIN_CODE_LENGTH) return { matches: false, rehashed: null };
 
   if (!storedHash.includes(":") && LEGACY_HASH_RE.test(storedHash)) {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalized));
-    return constantTimeEqual(bytesToHex(new Uint8Array(digest)), storedHash.toLowerCase());
+    const matches = constantTimeEqual(bytesToHex(new Uint8Array(digest)), storedHash.toLowerCase());
+    if (!matches) return { matches: false, rehashed: null };
+    return { matches: true, rehashed: await hashPinCode(normalized) };
   }
 
   const colonIdx = storedHash.indexOf(":");
-  if (colonIdx === -1) return false;
+  if (colonIdx === -1) return { matches: false, rehashed: null };
   const salt = hexToBytes(storedHash.slice(0, colonIdx));
   const expectedHash = storedHash.slice(colonIdx + 1);
   const attemptHash = await pbkdf2Derive(normalized, salt);
-  return constantTimeEqual(attemptHash, expectedHash.toLowerCase());
+  return {
+    matches: constantTimeEqual(attemptHash, expectedHash.toLowerCase()),
+    rehashed: null,
+  };
 }

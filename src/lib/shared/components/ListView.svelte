@@ -27,7 +27,7 @@
     getAccountNote = () => "",
     getAccountCardColor = () => "",
     getFolderCardColor = () => "",
-    accentColor = "#3b82f6",
+    accentColor = "var(--accent)",
     locale = DEFAULT_LOCALE,
     pendingSetupId = null,
     isSearching = false,
@@ -145,7 +145,7 @@
       showUsername={showUsernames}
       {showLastLogin}
       {lastLoginUnknownKey}
-      lastLoginAt={account.lastLoginAt}
+      lastLoginAtSec={account.lastLoginAtSec}
       isActive={account.id === currentAccountId}
       isSelected={selectedAccountId === account.id}
       avatarUrl={avatarState?.url}
@@ -258,7 +258,7 @@
         showUsername={showUsernames}
         {showLastLogin}
         {lastLoginUnknownKey}
-        lastLoginAt={selectedAccount.lastLoginAt}
+        lastLoginAtSec={selectedAccount.lastLoginAtSec}
         isActive={selectedAccount.id === currentAccountId}
         avatarUrl={selectedAvatarState?.url}
         isLoadingAvatar={selectedIsPendingSetup || (selectedAvatarState?.loading ?? false)}

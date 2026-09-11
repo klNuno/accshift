@@ -37,12 +37,16 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 # does not expose (autofill popups on plain text inputs).
 webview2-com = "0.38"
 windows-core = "0.61"
-# Same windows crate tauri pulls in; used for the WM_NCACTIVATE subclass that
-# keeps DWM system backdrops alive while the window is unfocused.
+# Same windows crate tauri pulls in. Two window subclasses use it: the
+# WM_NCACTIVATE one that keeps DWM system backdrops alive while the window is
+# unfocused, and the WM_NCHITTEST one that answers HTMAXBUTTON over our own
+# maximize button so Windows 11 offers Snap Layouts on a frameless window.
 windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
   "Win32_Storage_Xps",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }

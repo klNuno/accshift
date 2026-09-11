@@ -13,11 +13,13 @@ of this page existing in a git repository.
 
 Settings, Privacy. Two switches, both off means nothing is ever sent again.
 
-Nothing at all is sent before you finish the first-launch screen. After it, the
-anonymous counters are on: that screen asks about the enhanced tier, not about
-the counters, so turning those off is a separate and deliberate action. Said
-plainly, without dressing it up: **the anonymous tier is opt-out, the enhanced
-tier is opt-in.**
+Nothing at all is sent before you finish the first-launch screen. That screen
+offers three answers: the anonymous counters alone, the counters plus the
+enhanced tier, or nothing at all. Skipping the tour lands on the first one;
+closing the app without answering sends nothing and asks again next launch.
+Said plainly, without dressing it up:
+**the anonymous tier is opt-out, the enhanced tier is opt-in**, and the third
+button on that screen switches both off without a trip to the settings.
 
 The `accshift` command-line binary reads the same two switches. It reports one
 event per command, it never sends a daily ping (a command you run five times is

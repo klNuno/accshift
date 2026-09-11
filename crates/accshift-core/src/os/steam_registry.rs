@@ -30,8 +30,8 @@ pub fn set_auto_login_user(path: &Path, username: &str) -> Result<(), AppError> 
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => empty_registry_vdf(),
         Err(e) => return Err(AppError::FileRead(e.to_string())),
     };
-    let updated = vdf_set_nested_value(&existing, REGISTRY_PATH, username);
-    let updated = vdf_set_nested_value(&updated, REMEMBER_PATH, "1");
+    let updated = vdf_set_nested_value(&existing, REGISTRY_PATH, username)?;
+    let updated = vdf_set_nested_value(&updated, REMEMBER_PATH, "1")?;
     crate::storage::write_bytes_atomic(path, updated.as_bytes())
         .map_err(|e| AppError::RegistryWrite(describe_write_error(path, e)))
 }
@@ -42,7 +42,7 @@ pub fn clear_auto_login_user(path: &Path) -> Result<(), AppError> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(AppError::FileRead(e.to_string())),
     };
-    let updated = vdf_set_nested_value(&existing, REGISTRY_PATH, "");
+    let updated = vdf_set_nested_value(&existing, REGISTRY_PATH, "")?;
     crate::storage::write_bytes_atomic(path, updated.as_bytes())
         .map_err(|e| AppError::RegistryWrite(describe_write_error(path, e)))
 }
