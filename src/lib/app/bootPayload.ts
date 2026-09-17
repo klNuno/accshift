@@ -1,7 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { CustomThemePayload } from "$lib/theme/themes";
 import type { StorageManifest } from "$lib/storage/clientStorage";
-import { registerUserPlatforms } from "$lib/platforms/registry";
+// Imported lazily inside `fetchBootPayload`, not statically: `registry.ts`
+// reads store-id constants from `clientStorage.ts`, which imports this module,
+// so a static edge here closes the cycle
+// clientStorage -> bootPayload -> registry -> clientStorage. Under the mock
+// alias that cycle resolves registry first and the app dies at load with
+// `Cannot access 'CLIENT_STORE_STEAM_PROFILE_CACHE' before initialization`,
+// leaving `#app` empty and the window black. The registry is only needed once
+// the payload has landed, so the dynamic import costs nothing.
 import type { UserPlatformReport } from "$lib/platforms/descriptors";
 
 export type { UserPlatformReport };
@@ -29,6 +36,7 @@ export async function fetchBootPayload(): Promise<BootPayload> {
   payload = await invoke<BootPayload>("get_boot_payload");
   // The platforms the user added themselves only exist once this lands, so
   // the registry is filled here rather than at import time.
+  const { registerUserPlatforms } = await import("$lib/platforms/registry");
   registerUserPlatforms(payload.userPlatforms?.loaded ?? []);
   return payload;
 }
