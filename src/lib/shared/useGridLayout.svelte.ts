@@ -1,6 +1,23 @@
 export const CARD_WIDTH = 100;
 export const GAP = 10;
 
+/**
+ * Card width in px for a density scale. Pure, so the grid math stays
+ * unit-testable. Matches `--grid-card-width: calc(100px * var(--density-scale))`
+ * in app.css (compact 0.88, cozy 1, comfortable 1.12).
+ */
+export function cardWidthForDensity(densityScale: number): number {
+  const scale = Number.isFinite(densityScale) && densityScale > 0 ? densityScale : 1;
+  return CARD_WIDTH * scale;
+}
+
+/** Live card width: reads the --density-scale the theme actually applied. */
+function liveCardWidth(): number {
+  if (typeof document === "undefined") return CARD_WIDTH;
+  const raw = getComputedStyle(document.documentElement).getPropertyValue("--density-scale");
+  return cardWidthForDensity(Number.parseFloat(raw));
+}
+
 export function createGridLayout() {
   let wrapperRef = $state<HTMLDivElement | null>(null);
   let paddingLeft = $state(0);
@@ -10,10 +27,11 @@ export function createGridLayout() {
 
   function calculatePadding() {
     if (!wrapperRef) return;
+    const cardWidth = liveCardWidth();
     const availableWidth = wrapperRef.clientWidth;
-    const cardsPerRow = Math.floor((availableWidth + GAP) / (CARD_WIDTH + GAP));
+    const cardsPerRow = Math.floor((availableWidth + GAP) / (cardWidth + GAP));
     if (cardsPerRow < 1) return;
-    const totalCardsWidth = cardsPerRow * CARD_WIDTH + (cardsPerRow - 1) * GAP;
+    const totalCardsWidth = cardsPerRow * cardWidth + (cardsPerRow - 1) * GAP;
     paddingLeft = Math.floor((availableWidth - totalCardsWidth) / 2);
   }
 

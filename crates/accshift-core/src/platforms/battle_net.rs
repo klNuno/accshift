@@ -379,16 +379,36 @@ fn known_account_emails(app_handle: &dyn AppContext) -> Result<Vec<String>, Stri
     Ok(known_account_emails_from(saved_accounts, &cfg))
 }
 
+/// Recency writes on the read path, throttled: a pure account list must not
+/// rewrite the whole config on every poll/focus. Each write re-locks, rewrites
+/// the file, and trips the frontend's external-change reload, which lists
+/// again. Real events (switch/add) still go through `remember_account_usage`.
+const READ_PATH_USAGE_THROTTLE_MS: u64 = 5 * 60 * 1000;
+
+fn read_path_usage_is_fresh(cfg: &AppConfig, key: &str, now: u64) -> bool {
+    let key = normalize_account_key(key);
+    cfg.battle_net.accounts.iter().any(|account| {
+        normalize_account_key(&account.email) == key
+            && !account.battle_tag.trim().is_empty()
+            && account
+                .last_used_at
+                .is_some_and(|t| now.saturating_sub(t) < READ_PATH_USAGE_THROTTLE_MS)
+    })
+}
+
 fn read_accounts(app_handle: &dyn AppContext) -> Result<Vec<BattleNetAccount>, String> {
     let saved_accounts = read_saved_accounts()?;
+    // Load first: the freshness check below runs on it, and a remember that
+    // fires reloads afterwards, so the metadata below is never stale.
+    let mut cfg = config::load_config(app_handle);
     if let Some(current_email) = saved_accounts.first() {
-        let _ = remember_account_usage(app_handle, current_email, true);
+        let key = normalize_account_key(current_email);
+        if !read_path_usage_is_fresh(&cfg, &key, super::now_unix_ms()) {
+            let _ = remember_account_usage(app_handle, current_email, true);
+            cfg = config::load_config(app_handle);
+        }
     }
 
-    // Load after `remember_account_usage`: it bumps last_used_at and may store
-    // a freshly fetched battle tag, so a config read before it would report
-    // stale metadata for the current account.
-    let cfg = config::load_config(app_handle);
     let account_emails = known_account_emails_from(saved_accounts, &cfg);
     let metadata_by_key = cfg
         .battle_net
@@ -1116,7 +1136,8 @@ impl PlatformService for BattleNetService {
 mod tests {
     use super::{
         collect_unique_accounts, encode_saved_account_name, extract_saved_account_names,
-        normalize_account_key, parse_saved_account_names,
+        normalize_account_key, parse_saved_account_names, read_path_usage_is_fresh,
+        READ_PATH_USAGE_THROTTLE_MS,
     };
     #[cfg(windows)]
     use super::{normalize_registry_path, write_saved_accounts};
@@ -1231,6 +1252,55 @@ mod tests {
     #[test]
     fn normalize_account_key_trims_and_lowercases() {
         assert_eq!(normalize_account_key("  Foo@BAR.com  "), "foo@bar.com");
+    }
+
+    // -----------------------------------------------------------------------
+    // read_path_usage_is_fresh
+    // -----------------------------------------------------------------------
+
+    fn fresh_config(last_used_at: Option<u64>, battle_tag: &str) -> crate::config::AppConfig {
+        let mut cfg = crate::config::AppConfig::default();
+        cfg.battle_net
+            .accounts
+            .push(crate::config::BattleNetAccountConfig {
+                email: "a@x.com".to_string(),
+                battle_tag: battle_tag.to_string(),
+                last_used_at,
+            });
+        cfg
+    }
+
+    #[test]
+    fn read_path_usage_is_fresh_within_throttle() {
+        let cfg = fresh_config(Some(1_000_000), "A#123");
+        assert!(read_path_usage_is_fresh(&cfg, "a@x.com", 1_000_000));
+        assert!(read_path_usage_is_fresh(
+            &cfg,
+            "A@X.COM",
+            1_000_000 + READ_PATH_USAGE_THROTTLE_MS - 1
+        ));
+    }
+
+    #[test]
+    fn read_path_usage_goes_stale_after_throttle() {
+        let cfg = fresh_config(Some(1_000_000), "A#123");
+        assert!(!read_path_usage_is_fresh(
+            &cfg,
+            "a@x.com",
+            1_000_000 + READ_PATH_USAGE_THROTTLE_MS
+        ));
+    }
+
+    #[test]
+    fn read_path_usage_requires_tag_and_known_account() {
+        // Missing tag: the read path still enriches from the SQLite cache.
+        let untagged = fresh_config(Some(1_000_000), "");
+        assert!(!read_path_usage_is_fresh(&untagged, "a@x.com", 1_000_000));
+        // Never recorded: the read path still creates the row.
+        let tagged = fresh_config(Some(1_000_000), "A#123");
+        assert!(!read_path_usage_is_fresh(&tagged, "b@x.com", 1_000_000));
+        let never = fresh_config(None, "A#123");
+        assert!(!read_path_usage_is_fresh(&never, "a@x.com", 1_000_000));
     }
 
     // -----------------------------------------------------------------------

@@ -91,8 +91,12 @@ export function createDisplayPipeline(deps: DisplayPipelineDeps) {
     return () => clearTimeout(timer);
   });
 
+  // Layout follows the debounced query: the raw flag flips on the first
+  // keystroke and would drop expanded sections a beat before the filter lands.
+  let isSearchLayout = $derived(debouncedSearchQuery.trim().length > 0);
+
   let isExpandedMode = $derived(
-    getExpandedFolders() && navigation.currentFolderId === null && !navigation.isSearching,
+    getExpandedFolders() && navigation.currentFolderId === null && !isSearchLayout,
   );
 
   let rawSections = $derived.by<DisplaySection[] | null>(() => {
@@ -105,7 +109,7 @@ export function createDisplayPipeline(deps: DisplayPipelineDeps) {
 
   let displayFolderItems = $derived.by(() => {
     if (rawSections) return [] as ItemRef[];
-    if (navigation.isSearching) {
+    if (isSearchLayout) {
       // Folders whose name matches the query stay reachable during a search.
       // Subscribe to currentItems so folder mutations re-fire this derived.
       void navigation.currentItems;
@@ -136,7 +140,7 @@ export function createDisplayPipeline(deps: DisplayPipelineDeps) {
 
   let displayAccountItems = $derived.by(() => {
     if (rawSections) return [] as ItemRef[];
-    if (navigation.isSearching) return filteredAccountItems;
+    if (isSearchLayout) return filteredAccountItems;
     if (
       !drag.isDragging ||
       !drag.dragItem ||

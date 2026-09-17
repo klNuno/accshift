@@ -220,6 +220,29 @@ pub(crate) fn install_close_handler(app_handle: AppHandle, win: &WebviewWindow) 
     });
 }
 
+/// Schemes our config claims, so boot can check before rewriting them.
+/// Windows-only: it is the only target where the skip below reads them.
+#[cfg(windows)]
+fn configured_schemes(app: &tauri::App) -> Vec<String> {
+    app.config()
+        .plugins
+        .0
+        .get("deep-link")
+        .and_then(|plugin| plugin.get("desktop"))
+        .and_then(|desktop| desktop.get("schemes"))
+        .and_then(|schemes| serde_json::from_value(schemes.clone()).ok())
+        .unwrap_or_default()
+}
+
+/// Whether any claimed scheme still needs registering. Factored pure so the
+/// decision is unit-testable without touching HKCU: `registered` carries one
+/// `is_registered` answer per scheme, in order. A check error must arrive as
+/// `false` (fail open = the old unconditional behavior).
+#[cfg(windows)]
+fn schemes_need_registration(schemes: &[String], registered: &[bool]) -> bool {
+    schemes.len() != registered.len() || registered.iter().any(|r| !r)
+}
+
 /// Claim the `accshift://` scheme and handle the URLs it delivers.
 ///
 /// The installer registers the scheme system-wide; the registration here covers
@@ -229,14 +252,34 @@ pub(crate) fn wire_deep_links(app: &tauri::App, setup_ctx: &AppCtx) {
     use tauri_plugin_deep_link::DeepLinkExt;
 
     #[cfg(any(windows, target_os = "linux"))]
-    if let Err(reason) = app.deep_link().register_all() {
-        let _ = logging::append_app_log(
-            setup_ctx,
-            "warn",
-            "backend.deep-link",
-            "Failed to register accshift:// scheme",
-            Some(&reason.to_string()),
-        );
+    {
+        // Rewriting HKCU on every launch costs a registry flush on the boot
+        // path (~12 ms measured vs ~1 ms to read). Re-register only when the
+        // live entry does not point here (dev runs, portable builds, moved
+        // install dir). Windows-only: on Linux the check itself spawns
+        // xdg-mime, slower than the write it would skip.
+        #[cfg(windows)]
+        let needs_register = {
+            let schemes = configured_schemes(app);
+            let registered: Vec<bool> = schemes
+                .iter()
+                .map(|scheme| app.deep_link().is_registered(scheme).unwrap_or(false))
+                .collect();
+            schemes_need_registration(&schemes, &registered)
+        };
+        #[cfg(not(windows))]
+        let needs_register = true;
+        if needs_register {
+            if let Err(reason) = app.deep_link().register_all() {
+                let _ = logging::append_app_log(
+                    setup_ctx,
+                    "warn",
+                    "backend.deep-link",
+                    "Failed to register accshift:// scheme",
+                    Some(&reason.to_string()),
+                );
+            }
+        }
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     let _ = setup_ctx;
@@ -326,4 +369,41 @@ pub(crate) fn spawn_boot_failsafe(fallback_handle: AppHandle) {
         );
         let _ = app_runtime::show_main_window(&fallback_handle);
     });
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::schemes_need_registration;
+
+    fn schemes(names: &[&str]) -> Vec<String> {
+        names.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn skips_registration_when_every_scheme_points_here() {
+        assert!(!schemes_need_registration(&schemes(&["accshift"]), &[true]));
+    }
+
+    #[test]
+    fn registers_when_any_scheme_is_missing() {
+        assert!(schemes_need_registration(&schemes(&["accshift"]), &[false]));
+    }
+
+    #[test]
+    fn check_error_fails_open_to_registration() {
+        // Callers map is_registered errors to false: a broken read must
+        // behave like the old unconditional register, never skip silently.
+        assert!(schemes_need_registration(
+            &schemes(&["a", "b"]),
+            &[true, false]
+        ));
+    }
+
+    #[test]
+    fn empty_config_registers_nothing_either_way() {
+        // register_all over zero schemes is a no-op, so skipping is identical.
+        assert!(!schemes_need_registration(&[], &[]));
+        // Defensive: answers that do not line up with the claims register.
+        assert!(schemes_need_registration(&schemes(&["accshift"]), &[]));
+    }
 }

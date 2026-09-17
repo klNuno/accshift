@@ -141,10 +141,20 @@ export async function getPlayerBans(steamIds: string[]): Promise<BanInfo[]> {
 
 export async function setApiKey(key: string): Promise<void> {
   await invoke("steam_set_api_key", { key });
+  // The answer below just changed: drop it so the next read decrypts fresh.
+  cachedHasApiKey = null;
 }
 
+// `steam_has_api_key` decrypts (DPAPI) on every call, and this gate runs on
+// every ban prime plus every settings open. The key only changes through
+// `setApiKey` above, so memoize for the session.
+let cachedHasApiKey: boolean | null = null;
+
 export async function hasApiKey(): Promise<boolean> {
-  return invoke<boolean>("steam_has_api_key");
+  if (cachedHasApiKey !== null) return cachedHasApiKey;
+  const value = await invoke<boolean>("steam_has_api_key");
+  cachedHasApiKey = value;
+  return value;
 }
 
 export async function openSteamApiKeyPage(): Promise<void> {

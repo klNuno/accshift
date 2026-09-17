@@ -1110,7 +1110,10 @@
 
     updateCheckTimer = setTimeout(() => { void updates.startBackgroundUpdateFlow(); }, 3500);
     secureScreen.handleAppMounted();
-    streamerMode.start();
+    // The streamer poll walks the whole process table on the same IPC lane as
+    // the account snapshot. Wait for first paint instead of racing boot:
+    // markBootReady (dispatched from initializeAppShell above) fires first.
+    window.addEventListener("accshift:boot-ready", () => streamerMode.start(), { once: true });
 
     void getCurrentWindow()
       .onCloseRequested(async (event) => {

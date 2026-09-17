@@ -185,6 +185,13 @@ export function createAppNavigationController({
 
   async function handleTabChange(tab: string) {
     if (!isPlatformUsable(tab, shell.runtimeOs)) return;
+    // No-op the re-click: without this the grid is wiped and re-fetched
+    // for the platform already on screen. Still exit settings: clicking the
+    // current tab is the way back to the grid.
+    if (tab === shell.activeTab) {
+      if (getShowSettings()) closeSettingsPanel();
+      return;
+    }
 
     await addFlow.cancel();
     closeBulkEdit();
