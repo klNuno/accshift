@@ -145,6 +145,46 @@ event_catalog! {
         aliases: [],
     },
 
+    /// Where the milliseconds went between process start and the main window.
+    /// One line per launch, so a slow start can be diagnosed from a log bundle
+    /// instead of a profiler the user does not have.
+    STARTUP_PROFILE {
+        code: "app.startup.profile",
+        level: Info,
+        required: ["totalUs": Int],
+        optional: [
+            "preMainUs": Int,
+            "mainEntryTsMs": Int,
+            "httpClientUs": Int,
+            "pluginsUs": Int,
+            "logSessionUs": Int,
+            "panicHookUs": Int,
+            "windowSizeUs": Int,
+            "windowBuildUs": Int,
+            "autofillUs": Int,
+            "closeHandlerUs": Int,
+            "telemetryUs": Int,
+            "deepLinkUs": Int,
+            "threadsUs": Int,
+        ],
+        meaning: "Per-phase timings of this launch's startup path, in microseconds.",
+        action: "Compare phases across launches. windowBuildUs is WebView2 and is mostly out of our hands; the rest is ours.",
+        aliases: [],
+    },
+
+    /// The webview half of the same story: `performance.now()` at each boot
+    /// milestone, sent in one payload so the numbers are not skewed by the
+    /// log queue the way individual frontend records are.
+    STARTUP_FRONTEND {
+        code: "app.startup.frontend",
+        level: Info,
+        required: ["marks": Object],
+        optional: ["trigger": Str],
+        meaning: "Frontend boot milestones, milliseconds since the page's time origin.",
+        action: "Read alongside app.startup.profile. Large gaps here are ours to fix; windowBuildUs is not.",
+        aliases: [],
+    },
+
     /// The active file hit its size cap, or a new session rotated the chain.
     LOG_ROTATED {
         code: "log.rotated",

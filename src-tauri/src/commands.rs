@@ -192,8 +192,23 @@ pub fn finish_boot(
     boot_state: tauri::State<'_, crate::app_runtime::BootState>,
     tstate: tauri::State<'_, TelemetryState>,
     source: String,
+    marks: Option<serde_json::Value>,
 ) -> Result<(), String> {
     let was_first_completion = boot_state.mark_completed();
+    // Frontend milestones, once, before anything else in this command can add
+    // to them. Optional so an older webview bundle still completes boot.
+    if was_first_completion {
+        if let Some(marks) = marks {
+            accshift_core::diagnostics::event(
+                &accshift_core::diagnostics::catalog::STARTUP_FRONTEND,
+            )
+            .source("frontend.boot")
+            .msg("Frontend startup profile")
+            .field("marks", marks)
+            .field("trigger", source.clone())
+            .emit(&ctx(&app_handle));
+        }
+    }
     let message = if was_first_completion {
         "Boot completed"
     } else {

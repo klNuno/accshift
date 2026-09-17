@@ -12,6 +12,106 @@ use std::sync::mpsc::Receiver;
 use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Manager, WebviewWindow};
 
+/// Microsecond splits of the startup path, filled as `main` walks it and
+/// emitted once the window exists. Microseconds because several of these steps
+/// land under a millisecond and rounding them to zero hides which ones.
+#[derive(Default)]
+pub(crate) struct StartupPhases {
+    pub pre_main_us: u64,
+    pub main_entry_ts_ms: u64,
+    pub http_client_us: u64,
+    pub plugins_us: u64,
+    pub log_session_us: u64,
+    pub panic_hook_us: u64,
+    pub window_size_us: u64,
+    pub window_build_us: u64,
+    pub autofill_us: u64,
+    pub close_handler_us: u64,
+    pub telemetry_us: u64,
+    pub deep_link_us: u64,
+    pub threads_us: u64,
+}
+
+/// Microseconds the OS spent creating the process and mapping the image before
+/// the first line of Rust ran: image load, relocations, static DLL imports and
+/// CRT init. Nothing in `main` can shrink it, which is exactly why it has to be
+/// visible. Measured in-process so no harness clock is involved.
+#[cfg(windows)]
+pub(crate) fn pre_main_us() -> u64 {
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    let ok = unsafe {
+        GetProcessTimes(
+            GetCurrentProcess(),
+            &mut creation,
+            &mut exit,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    if ok.is_err() {
+        return 0;
+    }
+
+    // FILETIME counts 100 ns ticks from 1601-01-01; the Unix epoch is
+    // 11_644_473_600 seconds later.
+    let ticks = (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime);
+    let created_us = (ticks / 10).saturating_sub(11_644_473_600_000_000);
+    let now_us = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros()
+        .min(u128::from(u64::MAX)) as u64;
+    now_us.saturating_sub(created_us)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn pre_main_us() -> u64 {
+    0
+}
+
+/// Time `job`, adding the microseconds it took to `slot`.
+fn timed<T>(slot: &mut u64, job: impl FnOnce() -> T) -> T {
+    let start = std::time::Instant::now();
+    let out = job();
+    *slot += start.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
+    out
+}
+
+/// Write the startup split to the log, once, after the window exists.
+pub(crate) fn emit_startup_profile(
+    setup_ctx: &AppCtx,
+    phases: &StartupPhases,
+    total: std::time::Duration,
+) {
+    accshift_core::diagnostics::event(&accshift_core::diagnostics::catalog::STARTUP_PROFILE)
+        .source("backend.startup")
+        .msg("Startup profile")
+        .field(
+            "totalUs",
+            total.as_micros().min(u128::from(u64::MAX)) as u64,
+        )
+        .field("preMainUs", phases.pre_main_us)
+        .field("mainEntryTsMs", phases.main_entry_ts_ms)
+        .field("httpClientUs", phases.http_client_us)
+        .field("pluginsUs", phases.plugins_us)
+        .field("logSessionUs", phases.log_session_us)
+        .field("panicHookUs", phases.panic_hook_us)
+        .field("windowSizeUs", phases.window_size_us)
+        .field("windowBuildUs", phases.window_build_us)
+        .field("autofillUs", phases.autofill_us)
+        .field("closeHandlerUs", phases.close_handler_us)
+        .field("telemetryUs", phases.telemetry_us)
+        .field("deepLinkUs", phases.deep_link_us)
+        .field("threadsUs", phases.threads_us)
+        .emit(setup_ctx);
+}
+
 /// Shared HTTP client. A process that cannot build one cannot reach Steam, so
 /// there is nothing useful left to boot into.
 pub(crate) fn build_http_client() -> reqwest::Client {
@@ -46,9 +146,12 @@ fn navigation_allowed(url: &tauri::Url) -> bool {
 pub(crate) fn build_main_window(
     app: &tauri::App,
     setup_ctx: &AppCtx,
+    phases: &mut StartupPhases,
 ) -> Result<WebviewWindow, Box<dyn std::error::Error>> {
-    let (start_width, start_height) = config::load_window_size(setup_ctx)
-        .unwrap_or((config::DEFAULT_WINDOW_WIDTH, config::DEFAULT_WINDOW_HEIGHT));
+    let (start_width, start_height) = timed(&mut phases.window_size_us, || {
+        config::load_window_size(setup_ctx)
+            .unwrap_or((config::DEFAULT_WINDOW_WIDTH, config::DEFAULT_WINDOW_HEIGHT))
+    });
 
     let navigation_log_ctx = setup_ctx.clone();
     let page_load_log_ctx = setup_ctx.clone();
@@ -111,7 +214,7 @@ pub(crate) fn build_main_window(
         window_builder = window_builder.icon(icon.clone())?;
     }
 
-    let win = window_builder.build()?;
+    let win = timed(&mut phases.window_build_us, || window_builder.build())?;
     let _ = logging::append_app_log(
         setup_ctx,
         "info",

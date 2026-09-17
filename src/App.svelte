@@ -4,6 +4,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import type { UnlistenFn } from "@tauri-apps/api/event";
   import { flushPendingSaves } from "$lib/storage/clientStorage";
+import { markBoot } from "$lib/app/bootMarks";
   import TitleBar from "$lib/shared/components/TitleBar.svelte";
   import { getToasts, addToast, removeToast } from "$lib/features/notifications/store.svelte";
   import { getSettings, saveSettings, ALL_PLATFORMS } from "$lib/features/settings/store";
@@ -247,10 +248,19 @@
       appVersion = version;
     },
     markBootReady: () => {
-      requestAnimationFrame(() => {
-        bootReady = true;
-        window.dispatchEvent(new CustomEvent("accshift:boot-ready"));
-      });
+      // This used to wait for a requestAnimationFrame before revealing the
+      // window, which bought nothing: rAF runs BEFORE the repaint, so it never
+      // guaranteed a painted frame, and the window is still hidden here, so
+      // Chromium treats the page as invisible and throttles frames. Measured
+      // cost of that wait: 15 ms median, 30 ms average, up to 80 ms.
+      //
+      // Nothing is shown too early either. `.app-frame` is `opacity: 0` until
+      // the `boot-ready` class starts `appEntrance`, so the first visible frame
+      // is the boot background that index.html already painted, which is
+      // exactly what the entrance animation fades in from.
+      markBoot("shellReady");
+      bootReady = true;
+      window.dispatchEvent(new CustomEvent("accshift:boot-ready"));
     },
     replaceHistoryState: (entry) => {
       history.replaceState(entry, "");

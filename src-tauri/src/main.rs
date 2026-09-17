@@ -31,9 +31,21 @@ fn main() {
     }
 
     let app_start = std::time::Instant::now();
+    let mut phases = boot::StartupPhases {
+        pre_main_us: boot::pre_main_us(),
+        main_entry_ts_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64,
+        ..Default::default()
+    };
 
+    let client_start = std::time::Instant::now();
     let client = boot::build_http_client();
+    phases.http_client_us = client_start.elapsed().as_micros() as u64;
 
+    let plugins_start = std::time::Instant::now();
     let builder = tauri::Builder::default();
 
     // Must stay the first plugin: it short-circuits duplicate processes and,
@@ -77,37 +89,83 @@ fn main() {
             .build(),
     );
 
+    phases.plugins_us = plugins_start.elapsed().as_micros() as u64;
+
     builder
         .manage(app_runtime::BootState::default())
         .manage(client)
         .setup(move |app| {
             let setup_handle = app.handle().clone();
             let setup_ctx = ctx(&setup_handle);
-            let _ = logging::begin_log_session(&setup_ctx);
+            let step = std::time::Instant::now();
+            // Rotating the chain is a dozen filesystem calls in %APPDATA%, and
+            // it used to run before the webview was even asked for. The webview
+            // build that follows takes ~260 ms with nothing else on this
+            // thread, so the rotation goes there instead. It takes the sink
+            // lock as its first act and every other writer is a whole webview
+            // build away, so nothing can slip into the file being rotated. The
+            // session banner and "App setup started" are emitted from the same
+            // thread to keep them in the order a reader expects.
+            let log_ctx = setup_ctx.clone();
+            let open_session = |ctx: &accshift_core::AppCtx| {
+                let _ = logging::begin_log_session(ctx);
+                let _ = logging::append_app_log(
+                    ctx,
+                    "info",
+                    "backend.startup",
+                    "App setup started",
+                    None,
+                );
+            };
+            let log_session = std::thread::Builder::new()
+                .name("log-session".into())
+                .spawn(move || open_session(&log_ctx));
+            if let Err(error) = &log_session {
+                // No thread, no session: rotate here rather than lose the file.
+                eprintln!("log session thread failed to start: {error}");
+                open_session(&setup_ctx);
+            }
+            phases.log_session_us = step.elapsed().as_micros() as u64;
+
+            let step = std::time::Instant::now();
             logging::install_panic_hook(setup_ctx.clone());
+            phases.panic_hook_us = step.elapsed().as_micros() as u64;
 
-            let _ = logging::append_app_log(
-                &setup_ctx,
-                "info",
-                "backend.startup",
-                "App setup started",
-                None,
-            );
+            let win = boot::build_main_window(app, &setup_ctx, &mut phases)?;
+            // Finished long ago behind the webview build. Joining here only
+            // makes it explicit that everything logged below comes after the
+            // rotation, never into the file it was moving aside.
+            if let Ok(handle) = log_session {
+                let _ = handle.join();
+            }
 
-            let win = boot::build_main_window(app, &setup_ctx)?;
+            let step = std::time::Instant::now();
             boot::disable_webview_autofill(&win);
+            phases.autofill_us = step.elapsed().as_micros() as u64;
 
             // Telemetry: build the worker, share the handle with commands.
             // After the window build on purpose: the webview is the slow part
             // of startup, let it begin initializing as early as possible.
+            let step = std::time::Instant::now();
             app.manage(telemetry_runtime::TelemetryState::new(
                 &setup_ctx, app_start,
             ));
+            phases.telemetry_us = step.elapsed().as_micros() as u64;
 
+            let step = std::time::Instant::now();
             boot::install_close_handler(app.handle().clone(), &win);
+            phases.close_handler_us = step.elapsed().as_micros() as u64;
+
+            let step = std::time::Instant::now();
             boot::wire_deep_links(app, &setup_ctx);
+            phases.deep_link_us = step.elapsed().as_micros() as u64;
+
+            let step = std::time::Instant::now();
             boot::spawn_snapshot_upgrade(setup_ctx.clone());
             boot::spawn_boot_failsafe(app.handle().clone());
+            phases.threads_us = step.elapsed().as_micros() as u64;
+
+            boot::emit_startup_profile(&setup_ctx, &phases, app_start.elapsed());
 
             Ok(())
         })

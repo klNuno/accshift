@@ -6,6 +6,7 @@ import { fetchBootPayload } from "$lib/app/bootPayload";
 import { initializeClientStorage } from "$lib/storage/clientStorage";
 import { loadLocaleMessages } from "$lib/i18n";
 import { getSettings } from "$lib/features/settings/store";
+import { bootMarks, markBoot } from "$lib/app/bootMarks";
 
 type LogLevel = "info" | "warn" | "error";
 
@@ -68,8 +69,9 @@ function queueLog(level: LogLevel, source: string, message: string, details?: st
 async function finishBoot(source: string) {
   if (bootFinished) return;
   bootFinished = true;
+  markBoot("finishBoot");
   try {
-    await invoke("finish_boot", { source });
+    await invoke("finish_boot", { source, marks: bootMarks() });
   } catch (reason) {
     bootFinished = false;
     queueLog("error", "frontend.finish_boot", "Failed to finish boot", serializeLogValue(reason));
@@ -125,6 +127,7 @@ console.error = (...args: unknown[]) => {
   );
 };
 
+markBoot("mainTs");
 queueLog("info", "frontend.boot", "main.ts initialized");
 
 let app;
@@ -134,6 +137,7 @@ async function bootstrap() {
     // One round trip for everything boot needs (storage, themes, runtime OS,
     // migration result). On failure the legacy per-command path below covers.
     await fetchBootPayload();
+    markBoot("bootPayload");
     queueLog("info", "frontend.boot", "Boot payload loaded");
   } catch (reason) {
     queueLog("error", "frontend.boot", "Failed to load boot payload", serializeLogValue(reason));
@@ -141,6 +145,7 @@ async function bootstrap() {
 
   try {
     await initializeClientStorage();
+    markBoot("clientStorage");
     queueLog("info", "frontend.storage", "Client storage initialized");
   } catch (reason) {
     queueLog(
@@ -156,6 +161,7 @@ async function bootstrap() {
     // locale BEFORE the first render so a French user never sees an English
     // flash; for "en" this resolves synchronously.
     await loadLocaleMessages(getSettings().language);
+    markBoot("locale");
   } catch (reason) {
     // Non-fatal: translate() falls back to English and retries the load.
     queueLog(
@@ -170,6 +176,7 @@ async function bootstrap() {
     app = mount(App, {
       target: document.getElementById("app")!,
     });
+    markBoot("mounted");
     queueLog("info", "frontend.boot", "App mounted");
   } catch (reason) {
     queueLog("error", "frontend.mount", "Failed to mount App", serializeLogValue(reason));

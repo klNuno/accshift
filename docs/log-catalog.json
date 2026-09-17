@@ -116,6 +116,92 @@
       ]
     },
     {
+      "action": "Read alongside app.startup.profile. Large gaps here are ours to fix; windowBuildUs is not.",
+      "aliases": [],
+      "code": "app.startup.frontend",
+      "level": "info",
+      "meaning": "Frontend boot milestones, milliseconds since the page's time origin.",
+      "optionalFields": [
+        {
+          "name": "trigger",
+          "type": "string"
+        }
+      ],
+      "requiredFields": [
+        {
+          "name": "marks",
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "action": "Compare phases across launches. windowBuildUs is WebView2 and is mostly out of our hands; the rest is ours.",
+      "aliases": [],
+      "code": "app.startup.profile",
+      "level": "info",
+      "meaning": "Per-phase timings of this launch's startup path, in microseconds.",
+      "optionalFields": [
+        {
+          "name": "preMainUs",
+          "type": "integer"
+        },
+        {
+          "name": "mainEntryTsMs",
+          "type": "integer"
+        },
+        {
+          "name": "httpClientUs",
+          "type": "integer"
+        },
+        {
+          "name": "pluginsUs",
+          "type": "integer"
+        },
+        {
+          "name": "logSessionUs",
+          "type": "integer"
+        },
+        {
+          "name": "panicHookUs",
+          "type": "integer"
+        },
+        {
+          "name": "windowSizeUs",
+          "type": "integer"
+        },
+        {
+          "name": "windowBuildUs",
+          "type": "integer"
+        },
+        {
+          "name": "autofillUs",
+          "type": "integer"
+        },
+        {
+          "name": "closeHandlerUs",
+          "type": "integer"
+        },
+        {
+          "name": "telemetryUs",
+          "type": "integer"
+        },
+        {
+          "name": "deepLinkUs",
+          "type": "integer"
+        },
+        {
+          "name": "threadsUs",
+          "type": "integer"
+        }
+      ],
+      "requiredFields": [
+        {
+          "name": "totalUs",
+          "type": "integer"
+        }
+      ]
+    },
+    {
       "action": "None. The user decides whether to paste it.",
       "aliases": [],
       "code": "diagnostics.bundle.written",
