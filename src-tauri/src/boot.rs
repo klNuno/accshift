@@ -166,6 +166,13 @@ pub(crate) fn build_main_window(
             .background_color(tauri::webview::Color(0, 0, 0, 0))
             .center()
             .resizable(true)
+            // Not focused at creation. wry would call MoveFocus on the still
+            // hidden window, a round trip to the browser process (20 to 30 ms
+            // measured) that holds the main thread while the first navigation
+            // waits for it. `show_main_window` activates the window with
+            // `set_focus`, and wry moves focus into the webview on that
+            // WM_SETFOCUS, so the shown window ends up focused as before.
+            .focused(false)
             .on_navigation(move |url| {
                 let allowed = navigation_allowed(url);
                 let _ = logging::append_app_log(

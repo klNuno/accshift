@@ -23,7 +23,7 @@ pub fn show_main_window(app_handle: &tauri::AppHandle) -> Result<(), String> {
     // Measuring startup means launching the app dozens of times, and each one
     // would steal the focus of whoever is at the keyboard. Running the bench on
     // a separate Windows desktop avoided that but changed what was measured:
-    // no interactive compositor there, and the pre-main cost doubled. So the
+    // no interactive compositor there, so frames and timers ran late. So the
     // window stays hidden instead, on the real desktop, everything else
     // identical. Never enabled in a shipped build.
     #[cfg(feature = "startup-bench")]

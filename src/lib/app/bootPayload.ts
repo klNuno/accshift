@@ -24,6 +24,13 @@ export interface BootPayload {
   userPlatforms: UserPlatformReport;
 }
 
+declare global {
+  interface Window {
+    /** Asked by index.html before the bundle loaded (vite.config.js). */
+    __accshiftBootPayload?: Promise<unknown>;
+  }
+}
+
 let payload: BootPayload | null = null;
 
 /**
@@ -33,7 +40,11 @@ let payload: BootPayload | null = null;
  * mount; consumers read the cached result synchronously.
  */
 export async function fetchBootPayload(): Promise<BootPayload> {
-  payload = await invoke<BootPayload>("get_boot_payload");
+  // The document asked already, while the bundle was loading. That answer is
+  // used once; any later call asks again.
+  const early = window.__accshiftBootPayload as Promise<BootPayload> | undefined;
+  window.__accshiftBootPayload = undefined;
+  payload = await (early ?? invoke<BootPayload>("get_boot_payload"));
   // The platforms the user added themselves only exist once this lands, so
   // the registry is filled here rather than at import time.
   const { registerUserPlatforms } = await import("$lib/platforms/registry");

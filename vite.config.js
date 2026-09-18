@@ -17,6 +17,32 @@ const tauriCoreReal = fileURLToPath(
   new URL("./node_modules/@tauri-apps/api/core.js", import.meta.url),
 );
 
+// main.ts waits for the boot payload before anything else, and main.ts only
+// runs once every chunk of the bundle has been fetched and evaluated. This asks
+// for the payload from the document head instead, while those chunks are still
+// on their way; fetchBootPayload() picks up the promise. Left out of mock
+// builds: it calls the backend directly, past the mock alias, and
+// get_boot_payload runs the legacy config migration.
+function bootPayloadPrefetch() {
+  return {
+    name: "accshift-boot-payload-prefetch",
+    transformIndexHtml() {
+      if (mockMode) return [];
+      return [
+        {
+          tag: "script",
+          injectTo: "head-prepend",
+          children:
+            'window.__accshiftBootPayload = window.__TAURI_INTERNALS__?.invoke("get_boot_payload");' +
+            // Handled for real in fetchBootPayload; this only keeps an early
+            // failure from reporting as an unhandled rejection meanwhile.
+            "window.__accshiftBootPayload?.catch(() => {});",
+        },
+      ];
+    },
+  };
+}
+
 // https://vitejs.dev/config/
 export default defineConfig({
   test: {},
@@ -29,7 +55,7 @@ export default defineConfig({
   staged: {
     "*": "vp check --fix",
   },
-  plugins: [tailwindcss(), svelte()],
+  plugins: [tailwindcss(), svelte(), bootPayloadPrefetch()],
   build: {
     target: "esnext",
     modulePreload: { polyfill: false },
