@@ -143,6 +143,11 @@ fn navigation_allowed(url: &tauri::Url) -> bool {
 /// navigation guard and the page-load log wired in.
 ///
 /// It is built hidden. Boot completion (or the failsafe below) shows it.
+///
+/// On Windows, launcher.rs has already started WebView2 for a transparent
+/// webview with default options in the default data directory. Changing any
+/// of those here (browser args, extensions, scrollbar style, incognito, data
+/// directory) must change the launcher too, or the start is thrown away.
 pub(crate) fn build_main_window(
     app: &tauri::App,
     setup_ctx: &AppCtx,

@@ -48,9 +48,10 @@ export default defineConfig({
   test: {},
   // The OFL requires the bundled fonts to ship with their license text
   // unaltered. Oxfmt renumbers its clause list and reflows the paragraphs, so
-  // the file is formatted by SIL, not by us.
+  // the file is formatted by SIL, not by us. vendor/ is upstream code, kept as
+  // published so a later update diffs cleanly.
   fmt: {
-    ignorePatterns: ["public/fonts/LICENSE.md"],
+    ignorePatterns: ["public/fonts/LICENSE.md", "vendor/**"],
   },
   staged: {
     "*": "vp check --fix",

@@ -172,7 +172,10 @@ crates/
   accshift-cli/                   # CLI binary (list, switch, platforms)
 
 src-tauri/                        # Tauri GUI thin wrapper
-  src/main.rs commands.rs app_runtime.rs tauri_context.rs
+  src/lib.rs commands.rs app_runtime.rs tauri_context.rs
+  src/launcher.rs                 # Windows exe: starts WebView2, loads the app DLL
+
+vendor/wry/                       # wry with an early WebView2 start (Windows)
 ```
 
 ## Disclaimer

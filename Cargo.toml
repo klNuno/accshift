@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["src-tauri", "crates/accshift-core", "crates/accshift-cli"]
+exclude = ["vendor"]
 
 [workspace.package]
 version = "1.0.4"
@@ -61,3 +62,7 @@ codegen-units = 1
 lto = "fat"
 opt-level = 2
 strip = true
+
+# Starts WebView2 before the Windows app loads, see vendor/wry/ACCSHIFT.md.
+[patch.crates-io]
+wry = { path = "vendor/wry" }

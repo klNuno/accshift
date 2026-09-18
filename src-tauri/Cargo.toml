@@ -5,8 +5,16 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 
+# The app. On Windows a release build ships it as accshift_gui_lib.dll, loaded
+# by a small accshift-gui.exe (src/launcher.rs); everywhere else the exe links
+# it statically.
+[lib]
+name = "accshift_gui_lib"
+crate-type = ["cdylib", "rlib"]
+
 [build-dependencies]
 tauri-build = { workspace = true, features = [] }
+serde_json = { workspace = true }
 
 [dependencies]
 accshift-core = { path = "../crates/accshift-core" }
@@ -39,6 +47,10 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 # Same versions tauri already pulls in; used to flip WebView2 settings tauri
 # does not expose (autofill popups on plain text inputs).
 webview2-com = "0.38"
+# The launcher starts WebView2 through the patched wry (vendor/wry) and finds
+# the data directory the way tauri does.
+wry = { version = "0.55", default-features = false }
+dirs = "6"
 windows-core = "0.61"
 # Same windows crate tauri pulls in; used for the WM_NCACTIVATE subclass that
 # keeps DWM system backdrops alive while the window is unfocused.
@@ -46,6 +58,7 @@ windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
   "Win32_Storage_Xps",
+  "Win32_System_LibraryLoader",
   "Win32_System_Threading",
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
