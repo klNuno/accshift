@@ -227,11 +227,16 @@ fn spawn_window_size_save(app_handle: &AppHandle, win: &WebviewWindow) -> Option
     if matches!(win.is_maximized(), Ok(true)) {
         return None;
     }
-    let size = win.inner_size().ok()?;
+    // inner_size() is physical, the builder reads the saved size back as logical.
+    // Saving physical pixels grew the window by the scale factor on each launch.
+    let size = win
+        .inner_size()
+        .ok()?
+        .to_logical::<f64>(win.scale_factor().ok()?);
 
     let save_handle = app_handle.clone();
-    let width = f64::from(size.width);
-    let height = f64::from(size.height);
+    let width = size.width;
+    let height = size.height;
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let _ = config::save_window_size(&ctx(&save_handle), width, height);
