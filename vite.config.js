@@ -118,6 +118,48 @@ export default defineConfig({
     target: "esnext",
     modulePreload: { polyfill: false },
     reportCompressedSize: false,
+    // The renderer parses every script on its own pool thread before handing it
+    // to the main thread, so one big chunk parses alone: index.js was 212 kB and
+    // 4.6 ms of that parse, the longest step between the page starting and
+    // main.ts. Split by folder, the boot JS parses in parallel and main.ts
+    // starts 1.1 ms earlier (median of 20 interleaved runs, .claude/perf).
+    // Sizes are picked by hand: `maxSize` on a single group instead blew the
+    // boot into 40 chunks with as many entry tags and 10 stylesheets.
+    // It does split the CSS in three, which only moves whole rules between
+    // files: no two of them collide at equal specificity, so cascade order is
+    // unchanged.
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: "svelte",
+              test: /node_modules[\\/]svelte[\\/]/,
+              tags: ["$initial"],
+              priority: 5,
+            },
+            {
+              name: "base",
+              test: /node_modules[\\/]@tauri-apps[\\/]|src[\\/]lib[\\/](i18n|theme|storage)[\\/]/,
+              tags: ["$initial"],
+              priority: 4,
+            },
+            {
+              name: "shared",
+              test: /src[\\/]lib[\\/]shared[\\/]/,
+              tags: ["$initial"],
+              priority: 3,
+            },
+            {
+              name: "features",
+              test: /src[\\/]lib[\\/](features|platforms)[\\/]/,
+              tags: ["$initial"],
+              priority: 2,
+            },
+          ],
+        },
+      },
+    },
   },
   clearScreen: false,
   server: {
