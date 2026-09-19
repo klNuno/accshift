@@ -7,13 +7,33 @@ import { initializeClientStorage } from "$lib/storage/clientStorage";
 import { loadLocaleMessages } from "$lib/i18n";
 import { getSettings } from "$lib/features/settings/store";
 import { bootMarks, markBoot } from "$lib/app/bootMarks";
+import { getBootPayload } from "$lib/app/bootPayload";
+import { getInitialActiveTab } from "$lib/app/platformShell.svelte";
+import { preloadPlatformModule } from "$lib/platforms/registry";
+import { toRuntimeOs } from "$lib/shared/platform";
+import { recordFontWarmup } from "$lib/app/fontWarmup";
+import { rememberBootLocale } from "$lib/app/bootLocale";
 
 type LogLevel = "info" | "warn" | "error";
+type LogPayload = {
+  level: LogLevel;
+  source: string;
+  message: string;
+  details: string | null;
+};
 
 const originalConsoleError = console.error.bind(console);
 let bootFinished = false;
 let logChain = Promise.resolve();
 let lastLoggingFailureAt = 0;
+/**
+ * Info records written while the app boots wait here until the window is up.
+ * Each one is an IPC round trip whose reply is evaluated on the webview's main
+ * thread, in front of the mount; six of them were landing between the boot
+ * payload and `finish_boot`. Anything above info goes out immediately and
+ * takes the queue with it, so a failure still arrives with its context.
+ */
+let bootLogBuffer: LogPayload[] | null = [];
 
 function serializeLogValue(value: unknown, seen = new WeakSet<object>()): string {
   if (value instanceof Error) {
@@ -44,13 +64,29 @@ function serializeLogValue(value: unknown, seen = new WeakSet<object>()): string
 }
 
 function queueLog(level: LogLevel, source: string, message: string, details?: string | null) {
-  const payload = {
+  const payload: LogPayload = {
     level,
     source,
     message: message.slice(0, 512),
     details: details ? details.slice(0, 16_384) : null,
   };
 
+  if (bootLogBuffer && level === "info") {
+    bootLogBuffer.push(payload);
+    return;
+  }
+  flushBootLogs();
+  sendLog(payload);
+}
+
+function flushBootLogs() {
+  const pending = bootLogBuffer;
+  if (!pending) return;
+  bootLogBuffer = null;
+  for (const payload of pending) sendLog(payload);
+}
+
+function sendLog(payload: LogPayload) {
   logChain = logChain
     .catch(() => {})
     .then(async () => {
@@ -66,12 +102,41 @@ function queueLog(level: LogLevel, source: string, message: string, details?: st
     });
 }
 
+/**
+ * When the webview finished its first frame, which `finish_boot` cannot say:
+ * it lands before the compositor has taken a single one. The animation frame
+ * callback runs at the start of that frame; the task queued from it runs once
+ * style, layout and paint are done. Unlike the Paint Timing API, this also
+ * fires in a window that is not on screen yet.
+ */
+function reportFirstFrame() {
+  requestAnimationFrame(() => {
+    setTimeout(() => {
+      queueLog(
+        "info",
+        "frontend.paint",
+        "First frame",
+        String(Math.round(performance.now() * 10) / 10),
+      );
+    }, 0);
+  });
+}
+
 async function finishBoot(source: string) {
   if (bootFinished) return;
   bootFinished = true;
   markBoot("finishBoot");
+  const completed = invoke("finish_boot", { source, marks: bootMarks() });
+  reportFirstFrame();
+  if (getBootPayload()?.runtimeOs === "windows") {
+    // Once the first frame is out and the page has nothing left to do.
+    requestAnimationFrame(() =>
+      requestIdleCallback(() => recordFontWarmup(document.body), { timeout: 2000 }),
+    );
+  }
   try {
-    await invoke("finish_boot", { source, marks: bootMarks() });
+    await completed;
+    flushBootLogs();
   } catch (reason) {
     bootFinished = false;
     queueLog("error", "frontend.finish_boot", "Failed to finish boot", serializeLogValue(reason));
@@ -129,6 +194,9 @@ console.error = (...args: unknown[]) => {
 
 markBoot("mainTs");
 queueLog("info", "frontend.boot", "main.ts initialized");
+// A boot that never completes, and never errors either, would keep its info
+// records in memory: the log has to show what the last session did.
+window.setTimeout(flushBootLogs, 5000);
 
 let app;
 
@@ -156,11 +224,21 @@ async function bootstrap() {
     );
   }
 
+  // The first thing the window shows is the active platform's accounts, and
+  // their adapter is a chunk of its own that App only asks for once it has
+  // mounted. Asked for here, it downloads while the locale loads and the app
+  // mounts. Same choice as the shell's, which also knows the OS by then.
+  preloadPlatformModule(
+    getInitialActiveTab(getSettings(), toRuntimeOs(getBootPayload()?.runtimeOs)),
+  );
+
   try {
     // Non-EN dictionaries live in their own lazy chunk. Await the persisted
     // locale BEFORE the first render so a French user never sees an English
     // flash; for "en" this resolves synchronously.
-    await loadLocaleMessages(getSettings().language);
+    const language = getSettings().language;
+    rememberBootLocale(language);
+    await loadLocaleMessages(language);
     markBoot("locale");
   } catch (reason) {
     // Non-fatal: translate() falls back to English and retries the load.

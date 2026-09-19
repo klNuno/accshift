@@ -264,6 +264,13 @@ function userAdapterLoader(platformId: string): (() => Promise<PlatformAdapter>)
     });
 }
 
+/** Fetches and evaluates a shipped platform's module ahead of time, without
+ * registering anything: `ensurePlatformLoaded` still does that, and its own
+ * import then resolves from the module map instead of the network. */
+export function preloadPlatformModule(platformId: string): void {
+  PLATFORM_LOADERS[platformId]?.().catch(() => {});
+}
+
 const platformLoadTasks = new Map<string, Promise<PlatformAdapter>>();
 
 export async function ensurePlatformLoaded(

@@ -18,12 +18,25 @@ function liveCardWidth(): number {
   return cardWidthForDensity(Number.parseFloat(raw));
 }
 
+/**
+ * Flips at the webview's first frame. Until then an animation frame is far
+ * away: the compositor waits for the GPU process to bring up its display,
+ * well over 100 ms with some drivers, and the page has nothing to do meanwhile.
+ */
+let firstFrameDone = typeof requestAnimationFrame !== "function";
+if (!firstFrameDone) {
+  requestAnimationFrame(() => {
+    firstFrameDone = true;
+  });
+}
+
 export function createGridLayout() {
   let wrapperRef = $state<HTMLDivElement | null>(null);
   let paddingLeft = $state(0);
   let isResizing = $state(false);
   let resizeTimeout: number;
   let frameId: number | null = null;
+  let taskId: number | null = null;
 
   function calculatePadding() {
     if (!wrapperRef) return;
@@ -36,6 +49,19 @@ export function createGridLayout() {
   }
 
   function queueCalculatePadding() {
+    if (!firstFrameDone) {
+      // Reading the wrapper width lays out every card, and the first layout
+      // is the costly one: it opens the fonts the cards use. Waiting for a
+      // frame put that layout inside the first frame; a task runs it during
+      // the GPU wait above, so the first frame only paints. The task still
+      // comes after Svelte has flushed the new cards.
+      if (taskId !== null) clearTimeout(taskId);
+      taskId = window.setTimeout(() => {
+        taskId = null;
+        calculatePadding();
+      }, 0);
+      return;
+    }
     if (frameId !== null) cancelAnimationFrame(frameId);
     frameId = requestAnimationFrame(() => {
       frameId = null;
@@ -57,6 +83,10 @@ export function createGridLayout() {
 
   function destroy() {
     clearTimeout(resizeTimeout);
+    if (taskId !== null) {
+      clearTimeout(taskId);
+      taskId = null;
+    }
     if (frameId !== null) {
       cancelAnimationFrame(frameId);
       frameId = null;

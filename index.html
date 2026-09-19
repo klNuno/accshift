@@ -7,6 +7,13 @@
       // on Tauri's asset protocol that the parser waited for before anything
       // else could start. One kilobyte is not worth a round trip.
       window.__accshiftBoot = { htmlHead: performance.now() };
+      // The fonts the last start's first frame used (src/lib/app/fontWarmup.ts),
+      // opened on a worker while this page loads so its first layout finds
+      // them ready.
+      try {
+        const fontWarmup = localStorage.getItem("accshift_font_warmup");
+        if (fontWarmup) new Worker("/font-warmup.js").postMessage(fontWarmup);
+      } catch {}
       (() => {
         const DARK = {
           bg: "#09090b",
