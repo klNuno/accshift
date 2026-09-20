@@ -122,7 +122,7 @@ export default defineConfig({
     // to the main thread, so one big chunk parses alone: index.js was 212 kB and
     // 4.6 ms of that parse, the longest step between the page starting and
     // main.ts. Split by folder, the boot JS parses in parallel and main.ts
-    // starts 1.1 ms earlier (median of 20 interleaved runs, .claude/perf).
+    // starts 1.1 ms earlier (median of 20 interleaved runs, .agents/perf).
     // Sizes are picked by hand: `maxSize` on a single group instead blew the
     // boot into 40 chunks with as many entry tags and 10 stylesheets.
     // It does split the CSS in three, which only moves whole rules between
