@@ -37,6 +37,23 @@ describe("hasApiKey memo", () => {
     expect(hasKeyCalls()).toHaveLength(2);
   });
 
+  it("a read in flight during setApiKey does not restore its answer", async () => {
+    let settle: ((value: boolean) => void) | undefined;
+    invokeMock.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const inFlight = hasApiKey();
+    await setApiKey("new-key");
+    settle?.(false);
+    await expect(inFlight).resolves.toBe(false);
+
+    invokeMock.mockImplementationOnce(() => Promise.resolve(true));
+    await expect(hasApiKey()).resolves.toBe(true);
+  });
+
   it("a failed setApiKey keeps the previous memo", async () => {
     invokeMock.mockImplementationOnce(() => Promise.resolve(true));
     await expect(hasApiKey()).resolves.toBe(true);

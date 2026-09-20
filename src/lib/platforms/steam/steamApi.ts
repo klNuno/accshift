@@ -143,17 +143,23 @@ export async function setApiKey(key: string): Promise<void> {
   await invoke("steam_set_api_key", { key });
   // The answer below just changed: drop it so the next read decrypts fresh.
   cachedHasApiKey = null;
+  hasApiKeyGeneration += 1;
 }
 
 // `steam_has_api_key` decrypts (DPAPI) on every call, and this gate runs on
 // every ban prime plus every settings open. The key only changes through
 // `setApiKey` above, so memoize for the session.
 let cachedHasApiKey: boolean | null = null;
+// A read that started before a write must not store its answer after it: the
+// settings screen saves a key while the ban prime is still decrypting, and the
+// stale `false` would then stand for the rest of the session.
+let hasApiKeyGeneration = 0;
 
 export async function hasApiKey(): Promise<boolean> {
   if (cachedHasApiKey !== null) return cachedHasApiKey;
+  const generation = hasApiKeyGeneration;
   const value = await invoke<boolean>("steam_has_api_key");
-  cachedHasApiKey = value;
+  if (generation === hasApiKeyGeneration) cachedHasApiKey = value;
   return value;
 }
 
