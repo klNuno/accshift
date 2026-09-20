@@ -54,16 +54,12 @@
             "clearOnSetup": true
           },
           {
-            "live": "${APPDATA}/discord/Network",
-            "snapshot": "network",
-            "clearOnSetup": true
-          },
-          {
             "live": "${APPDATA}/discord/blob_storage",
             "snapshot": "blob_storage",
             "clearOnSetup": true
           }
         ],
+        "caches": ["${APPDATA}/discord/Network"],
         "captureWhen": [
           {
             "kind": "pathNonEmpty",

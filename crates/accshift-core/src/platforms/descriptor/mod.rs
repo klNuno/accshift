@@ -398,4 +398,88 @@ mod tests {
             assert!(ids.contains(&expected), "{expected} has no service");
         }
     }
+
+    // -----------------------------------------------------------------------
+    // copy scoping: identity is captured, pure render cache is not
+    // -----------------------------------------------------------------------
+
+    fn windows_profile(id: &str) -> super::schema::OsProfile {
+        let (loaded, _) = load_embedded();
+        let descriptor = loaded.iter().find(|d| d.id == id).unwrap();
+        descriptor.os.values().next().unwrap().clone()
+    }
+
+    #[test]
+    fn gog_webcache_skips_render_caches_but_keeps_session_files() {
+        // Proven on a real Galaxy profile: Cache + Code Cache + GPUCache +
+        // DawnCache are ~94% of webcache/common and the client recreates them
+        // on launch, while Cookies / Local Storage / IndexedDB carry the
+        // sessions and must keep being captured.
+        let profile = windows_profile(ids::GOG);
+        let webcache = profile
+            .state
+            .directories
+            .iter()
+            .find(|d| d.snapshot == "webcache-common")
+            .unwrap();
+        for ignored in ["Cache", "Code Cache", "GPUCache", "DawnCache"] {
+            assert!(
+                webcache.ignored_names.iter().any(|n| n == ignored),
+                "webcache-common no longer ignores {ignored}"
+            );
+        }
+        // The integrations database is user data, never a cache.
+        assert!(profile
+            .state
+            .directories
+            .iter()
+            .any(|d| d.snapshot == "storage"));
+    }
+
+    #[test]
+    fn discord_network_cache_is_wiped_not_copied() {
+        // Chromium HTTP cache: no cookies (separate file, not captured
+        // either), no tokens (leveldb). Copied on every switch before,
+        // deleted after the restore now.
+        let profile = windows_profile(ids::DISCORD);
+        assert!(
+            !profile
+                .state
+                .directories
+                .iter()
+                .any(|d| d.snapshot == "network"),
+            "discord Network is captured again"
+        );
+        assert!(
+            profile
+                .state
+                .caches
+                .iter()
+                .any(|c| c.as_str().ends_with("/Network")),
+            "discord Network is not wiped post-switch"
+        );
+        // The session itself still travels.
+        assert!(profile
+            .state
+            .directories
+            .iter()
+            .any(|d| d.snapshot == "local_storage_leveldb"));
+    }
+
+    #[test]
+    fn chromium_launchers_quit_before_capture() {
+        // Galaxy holds its LevelDB LOCK exclusively while running: capturing
+        // first always fails file sharing (os error 33, proven live), so the
+        // abort-guard would only ever produce errors. Quit first, capture
+        // quiesced files, like Discord already does.
+        let (loaded, _) = load_embedded();
+        for id in [ids::GOG, ids::DISCORD] {
+            let descriptor = loaded.iter().find(|d| d.id == id).unwrap();
+            let profile = descriptor.os.values().next().unwrap();
+            assert!(
+                profile.close.before_capture,
+                "{id} must quit before capture"
+            );
+        }
+    }
 }

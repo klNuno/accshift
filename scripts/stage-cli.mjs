@@ -31,7 +31,28 @@ function hostTriple() {
 const triple = process.env.TAURI_ENV_TARGET_TRIPLE || hostTriple();
 const ext = triple.includes("windows") ? ".exe" : "";
 
-const src = join(root, "target", "release", `accshift${ext}`);
+// `<root>/target` is only the default. CARGO_TARGET_DIR, `build.target-dir` in
+// any config.toml, or a shared build cache moves it, and the copy below then
+// fails with ENOENT right after a build that did succeed. Ask cargo where it
+// actually writes; fall back to the default if that call is unavailable.
+function targetDirectory() {
+  if (process.env.CARGO_TARGET_DIR) return process.env.CARGO_TARGET_DIR;
+  try {
+    const out = execFileSync("cargo", ["metadata", "--format-version", "1", "--no-deps"], {
+      encoding: "utf8",
+      cwd: root,
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    const dir = JSON.parse(out).target_directory;
+    if (dir) return dir;
+  } catch {
+    // cargo missing or metadata refused: the default below is still the
+    // overwhelmingly common layout.
+  }
+  return join(root, "target");
+}
+
+const src = join(targetDirectory(), "release", `accshift${ext}`);
 const destDir = join(root, "src-tauri", "binaries");
 const dest = join(destDir, `accshift-${triple}${ext}`);
 

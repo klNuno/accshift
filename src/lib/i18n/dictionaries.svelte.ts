@@ -28,6 +28,24 @@ let dictionaries = $state.raw<Partial<Record<Locale, Dictionary>>>({ en: EN_MESS
 
 const pendingLoads = new Map<Locale, Promise<void>>();
 
+declare global {
+  interface Window {
+    /** The last start's dictionary, imported by the document head (vite.config.js). */
+    __accshiftBootDictionary?: { locale: string; dictionary: unknown };
+  }
+}
+
+// The document head imports the dictionary the last start used and leaves it
+// on the window. Taking it from there spares the boot a dynamic import, which
+// waits a few milliseconds on the module loader's tasks even for a module that
+// has already run. Taken once: a later load goes through the loaders.
+function takeBootDictionary(locale: Locale): Dictionary | undefined {
+  if (typeof window === "undefined") return undefined;
+  const early = window.__accshiftBootDictionary;
+  window.__accshiftBootDictionary = undefined;
+  return early?.locale === locale ? (early.dictionary as Dictionary) : undefined;
+}
+
 export function getDictionary(locale: Locale): Dictionary | undefined {
   return dictionaries[locale];
 }
@@ -40,6 +58,11 @@ export function getDictionary(locale: Locale): Dictionary | undefined {
  */
 export function loadLocaleMessages(locale: Locale): Promise<void> {
   if (dictionaries[locale]) return Promise.resolve();
+  const early = takeBootDictionary(locale);
+  if (early) {
+    dictionaries = { ...dictionaries, [locale]: early };
+    return Promise.resolve();
+  }
   const loader = LOCALE_LOADERS[locale];
   if (!loader) return Promise.resolve();
 

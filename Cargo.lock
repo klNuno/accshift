@@ -43,6 +43,7 @@ version = "1.0.4"
 dependencies = [
  "accshift-core",
  "base64 0.23.1",
+ "dirs",
  "image",
  "mimalloc",
  "reqwest 0.12.28",
@@ -59,6 +60,7 @@ dependencies = [
  "windows 0.62.2",
  "windows-core 0.61.2",
  "winreg 0.56.0",
+ "wry",
 ]
 
 [[package]]
@@ -6686,8 +6688,6 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 [[package]]
 name = "wry"
 version = "0.55.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "186f9871daa55fd9c016578b810d149de58367113db7fb72b462d2323ce19514"
 dependencies = [
  "base64 0.22.1",
  "block2 0.6.2",

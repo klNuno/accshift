@@ -157,7 +157,8 @@
   }
 
   function updatePanelSide() {
-    if (!cardRef) return;
+    // The side only matters when a panel can show: no extension, no measure.
+    if (!cardRef || !hasExtension) return;
     const rect = cardRef.getBoundingClientRect();
     const roomOnRight = window.innerWidth - rect.right;
     const needed = EXTENSION_DETAIL_WIDTH_PX + EXTENSION_VIEWPORT_GAP_PX;
@@ -426,12 +427,14 @@
     width: var(--grid-card-width);
     min-width: var(--grid-card-width);
     overflow: visible;
-    isolation: isolate;
     flex: 0 0 auto;
   }
 
   .card-shell.extension-visible {
     z-index: 24;
+    /* Stacking context only while the extension panel is out. At rest every
+     * card held its own compositor layer for a panel that was not showing. */
+    isolation: isolate;
   }
 
   .extension-hitbox {
@@ -540,8 +543,10 @@
 
   /* Glass themes: an opaque slab next to translucent cards reads as a patch.
    * The panel becomes frosted glass itself (its backdrop = the window veil,
-   * already OS-blurred behind, re-blurred here for readability). */
-  :global(html[data-glass="1"]) .extension-surface {
+   * already OS-blurred behind, re-blurred here for readability). Scoped to
+   * .visible: a hidden panel at opacity 0 must not keep an 18px backdrop
+   * filter sampling the backdrop on every frame, once per card. */
+  :global(html[data-glass="1"]) .extension-surface.visible {
     background: color-mix(in srgb, var(--bg-solid) 58%, transparent);
     backdrop-filter: blur(18px) saturate(1.15);
   }

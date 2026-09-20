@@ -415,11 +415,16 @@ where
     write_bytes_atomic(path, json.as_bytes())
 }
 
+/// Persist one client store, returning the file's post-write fingerprint.
+///
+/// The GUI records it as its own write: without that, the next focus manifest
+/// diff reads the write back as an external change and reloads the whole
+/// snapshot (and can retrigger an account reload) for no reason.
 pub fn save_client_store(
     app_handle: &dyn AppContext,
     store_id: &str,
     value: &Value,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let path = client_store_path(app_handle, store_id)?;
     if value.is_null() {
         if path.exists() {
@@ -429,9 +434,10 @@ pub fn save_client_store(
         // Drop any stale .bak too, or read_json_if_exists would resurrect
         // the store on the next load.
         let _ = fs::remove_file(path.with_extension("bak"));
-        return Ok(());
+    } else {
+        write_json_atomic(&path, value)?;
     }
-    write_json_atomic(&path, value)
+    fingerprint_file(&path)
 }
 
 pub fn load_client_storage_snapshot(

@@ -192,14 +192,33 @@ pub fn finish_boot(
     boot_state: tauri::State<'_, crate::app_runtime::BootState>,
     tstate: tauri::State<'_, TelemetryState>,
     source: String,
+    marks: Option<serde_json::Value>,
 ) -> Result<(), String> {
     let was_first_completion = boot_state.mark_completed();
+    // Frontend milestones, once, before anything else in this command can add
+    // to them. Optional so an older webview bundle still completes boot.
+    if was_first_completion {
+        if let Some(marks) = marks {
+            accshift_core::diagnostics::event(
+                &accshift_core::diagnostics::catalog::STARTUP_FRONTEND,
+            )
+            .source("frontend.boot")
+            .msg("Frontend startup profile")
+            .field("marks", marks)
+            .field("trigger", source.clone())
+            .emit(&ctx(&app_handle));
+        }
+    }
     let message = if was_first_completion {
         "Boot completed"
     } else {
         "Boot completion requested again"
     };
     let _ = crate::logging::append_app_log(&ctx(&app_handle), "info", &source, message, None);
+
+    // Show the window first: telemetry below parses loginusers.vdf, so the
+    // window must not wait on it. Same payload, same order, deferred.
+    let show_result = crate::app_runtime::show_main_window(&app_handle);
 
     // Telemetry: first boot completion triggers first_run, app_launched and
     // accounts_snapshot. `ping` is not emitted here: the queue owns it, so
@@ -217,7 +236,7 @@ pub fn finish_boot(
         emit_accounts_snapshots(&app_handle, &tstate);
     }
 
-    crate::app_runtime::show_main_window(&app_handle)
+    show_result
 }
 
 /// Emits `first_run` on the first launch that has consent, then never again.
@@ -316,7 +335,7 @@ pub fn save_client_storage_store(
     app_handle: tauri::AppHandle,
     store_id: String,
     value: Value,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let c = ctx(&app_handle);
     // Same cross-process lock config writes take: a CLI switch persisting
     // config at the same instant would otherwise collide on the atomic rename
@@ -324,7 +343,7 @@ pub fn save_client_storage_store(
     // responsive; the guard is held across the write and dropped right after.
     let _write_lock =
         accshift_core::lock::acquire_for_write(&c, LOCK_TIMEOUT).map_err(|e| e.to_string())?;
-    crate::storage::save_client_store(&c, &store_id, &value)?;
+    let fingerprint = crate::storage::save_client_store(&c, &store_id, &value)?;
     let details = serde_json::json!({
         "storeId": store_id,
         "isNull": value.is_null(),
@@ -337,7 +356,7 @@ pub fn save_client_storage_store(
         "Saved client storage store",
         Some(&details),
     );
-    Ok(())
+    Ok(fingerprint)
 }
 
 #[tauri::command(async)]
@@ -365,20 +384,30 @@ pub fn get_storage_manifest(
 // Generic platform commands
 // ---------------------------------------------------------------------------
 
-#[tauri::command(async)]
-pub fn platform_get_accounts(
+#[tauri::command]
+pub async fn platform_get_accounts(
     app_handle: tauri::AppHandle,
     platform_id: String,
 ) -> Result<Value, PlatformError> {
-    require_service(&platform_id)?.get_accounts(ctx(&app_handle))
+    let service = require_service(&platform_id)?;
+    let c = ctx(&app_handle);
+    // Sync body: off the async worker onto the blocking pool, same shape as
+    // get_boot_payload, so a VDF parse never stalls sibling commands.
+    run_blocking("platform_get_accounts", move || service.get_accounts(c)).await
 }
 
-#[tauri::command(async)]
-pub fn platform_get_startup_snapshot(
+#[tauri::command]
+pub async fn platform_get_startup_snapshot(
     app_handle: tauri::AppHandle,
     platform_id: String,
 ) -> Result<Value, PlatformError> {
-    require_service(&platform_id)?.get_startup_snapshot(ctx(&app_handle))
+    let service = require_service(&platform_id)?;
+    let c = ctx(&app_handle);
+    // First-paint path: same run_blocking shape as get_boot_payload.
+    run_blocking("platform_get_startup_snapshot", move || {
+        service.get_startup_snapshot(c)
+    })
+    .await
 }
 
 #[tauri::command(async)]
@@ -546,8 +575,13 @@ pub async fn platform_detect_installed(app_handle: tauri::AppHandle) -> Vec<Stri
 }
 
 #[tauri::command]
-pub fn platform_select_path(platform_id: String) -> Result<String, PlatformError> {
-    require_service(&platform_id)?.select_path()
+pub async fn platform_select_path(platform_id: String) -> Result<String, PlatformError> {
+    let service = require_service(&platform_id)?;
+    // Cold PowerShell plus the modal dialog would otherwise sit on the main
+    // thread for the whole user dwell: same dialog, off the UI thread. The
+    // dialog itself runs in its own powershell.exe process, so no COM
+    // apartment moves with it.
+    run_blocking("platform_select_path", move || service.select_path()).await
 }
 
 #[tauri::command]
@@ -605,14 +639,18 @@ pub async fn reload_user_platforms(
 }
 
 /// Opens a file picker on a descriptor to add. Cancelling is an error, which
-/// the caller reads as "leave everything alone".
+/// the caller reads as "leave everything alone". Same off-main-thread shape
+/// as `platform_select_path`: cold PowerShell plus a modal dialog.
 #[tauri::command]
-pub fn descriptor_select_file() -> Result<String, PlatformError> {
-    accshift_core::os::select_file(
-        "Select a platform descriptor",
-        "Platform descriptor (*.json)|*.json|All files (*.*)|*.*",
-    )
-    .map_err(Into::into)
+pub async fn descriptor_select_file() -> Result<String, PlatformError> {
+    run_blocking("descriptor_select_file", || {
+        accshift_core::os::select_file(
+            "Select a platform descriptor",
+            "Platform descriptor (*.json)|*.json|All files (*.*)|*.*",
+        )
+        .map_err(Into::into)
+    })
+    .await
 }
 
 /// What the picked file would add, and what a switch on it would touch.
@@ -987,27 +1025,30 @@ mod wallpaper_capture {
 /// what sits behind a transparent window without the acrylic gray smoke, so
 /// the frontend replicates the wallpaper inside the window and filters it.
 #[tauri::command]
-pub fn get_desktop_wallpaper(window: tauri::WebviewWindow) -> Option<WallpaperSnapshot> {
+pub async fn get_desktop_wallpaper(window: tauri::WebviewWindow) -> Option<WallpaperSnapshot> {
     #[cfg(windows)]
     {
         // PrintWindow(PW_RENDERFULLCONTENT) on Progman drives DWM/WinRT
-        // composition. Tauri runs commands on a worker thread; doing this GDI +
-        // WinRT work off the UI thread (which owns the process's COM apartment)
-        // races the shell's own recomposition (Spotlight rotating the wallpaper)
-        // and corrupted a WinRT object refcount, crashing later in an unrelated
-        // worker. Marshal only the DWM/GDI capture onto the main thread;
-        // JPEG/base64 work resumes on this command worker.
-        let (tx, rx) = std::sync::mpsc::channel();
-        if window
-            .run_on_main_thread(move || {
-                let _ = tx.send(wallpaper_capture::capture());
-            })
-            .is_err()
-        {
-            return None;
-        }
-        let capture = rx.recv().ok().flatten()?;
-        wallpaper_capture::encode(capture)
+        // composition. Plain sync commands run inline on the calling (main)
+        // thread, so this used to do the GDI capture *and* the JPEG encode
+        // there on every mount, 5-minute tick and DPI/resize settle. The
+        // capture still marshals to the main thread (it owns the process's
+        // COM apartment); the JPEG/base64 encode stays on the blocking pool.
+        run_blocking("get_desktop_wallpaper", move || {
+            let snapshot: Option<WallpaperSnapshot> = (|| {
+                let (tx, rx) = std::sync::mpsc::channel();
+                window
+                    .run_on_main_thread(move || {
+                        let _ = tx.send(wallpaper_capture::capture());
+                    })
+                    .ok()?;
+                let capture = rx.recv().ok().flatten()?;
+                wallpaper_capture::encode(capture)
+            })();
+            Ok(snapshot)
+        })
+        .await
+        .unwrap_or(None)
     }
     #[cfg(not(windows))]
     {
@@ -1038,8 +1079,13 @@ pub fn steam_has_api_key(app_handle: tauri::AppHandle) -> bool {
 }
 
 #[tauri::command]
-pub fn steam_open_api_key_page() -> Result<(), PlatformError> {
-    crate::platforms::steam::open_steam_api_key_page()
+pub async fn steam_open_api_key_page() -> Result<(), PlatformError> {
+    // Detached browser spawn: off the main thread so an AV stall on process
+    // creation never wedges the window behind a click.
+    run_blocking("steam_open_api_key_page", || {
+        crate::platforms::steam::open_steam_api_key_page()
+    })
+    .await
 }
 
 #[tauri::command(async)]

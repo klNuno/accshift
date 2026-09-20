@@ -12,6 +12,106 @@ use std::sync::mpsc::Receiver;
 use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Manager, WebviewWindow};
 
+/// Microsecond splits of the startup path, filled as `main` walks it and
+/// emitted once the window exists. Microseconds because several of these steps
+/// land under a millisecond and rounding them to zero hides which ones.
+#[derive(Default)]
+pub(crate) struct StartupPhases {
+    pub pre_main_us: u64,
+    pub main_entry_ts_ms: u64,
+    pub http_client_us: u64,
+    pub plugins_us: u64,
+    pub log_session_us: u64,
+    pub panic_hook_us: u64,
+    pub window_size_us: u64,
+    pub window_build_us: u64,
+    pub autofill_us: u64,
+    pub close_handler_us: u64,
+    pub telemetry_us: u64,
+    pub deep_link_us: u64,
+    pub threads_us: u64,
+}
+
+/// Microseconds the OS spent creating the process and mapping the image before
+/// the first line of Rust ran: image load, relocations, static DLL imports and
+/// CRT init. Nothing in `main` can shrink it, which is exactly why it has to be
+/// visible. Measured in-process so no harness clock is involved.
+#[cfg(windows)]
+pub(crate) fn pre_main_us() -> u64 {
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    let ok = unsafe {
+        GetProcessTimes(
+            GetCurrentProcess(),
+            &mut creation,
+            &mut exit,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    if ok.is_err() {
+        return 0;
+    }
+
+    // FILETIME counts 100 ns ticks from 1601-01-01; the Unix epoch is
+    // 11_644_473_600 seconds later.
+    let ticks = (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime);
+    let created_us = (ticks / 10).saturating_sub(11_644_473_600_000_000);
+    let now_us = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros()
+        .min(u128::from(u64::MAX)) as u64;
+    now_us.saturating_sub(created_us)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn pre_main_us() -> u64 {
+    0
+}
+
+/// Time `job`, adding the microseconds it took to `slot`.
+fn timed<T>(slot: &mut u64, job: impl FnOnce() -> T) -> T {
+    let start = std::time::Instant::now();
+    let out = job();
+    *slot += start.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
+    out
+}
+
+/// Write the startup split to the log, once, after the window exists.
+pub(crate) fn emit_startup_profile(
+    setup_ctx: &AppCtx,
+    phases: &StartupPhases,
+    total: std::time::Duration,
+) {
+    accshift_core::diagnostics::event(&accshift_core::diagnostics::catalog::STARTUP_PROFILE)
+        .source("backend.startup")
+        .msg("Startup profile")
+        .field(
+            "totalUs",
+            total.as_micros().min(u128::from(u64::MAX)) as u64,
+        )
+        .field("preMainUs", phases.pre_main_us)
+        .field("mainEntryTsMs", phases.main_entry_ts_ms)
+        .field("httpClientUs", phases.http_client_us)
+        .field("pluginsUs", phases.plugins_us)
+        .field("logSessionUs", phases.log_session_us)
+        .field("panicHookUs", phases.panic_hook_us)
+        .field("windowSizeUs", phases.window_size_us)
+        .field("windowBuildUs", phases.window_build_us)
+        .field("autofillUs", phases.autofill_us)
+        .field("closeHandlerUs", phases.close_handler_us)
+        .field("telemetryUs", phases.telemetry_us)
+        .field("deepLinkUs", phases.deep_link_us)
+        .field("threadsUs", phases.threads_us)
+        .emit(setup_ctx);
+}
+
 /// Shared HTTP client. A process that cannot build one cannot reach Steam, so
 /// there is nothing useful left to boot into.
 pub(crate) fn build_http_client() -> reqwest::Client {
@@ -90,12 +190,20 @@ const WORK_AREA_MARGIN: f64 = 32.0;
 /// offers, and a saved size can come from a larger screen.
 ///
 /// It is built hidden. Boot completion (or the failsafe below) shows it.
+///
+/// On Windows, launcher.rs has already started WebView2 for a transparent
+/// webview with default options in the default data directory. Changing any
+/// of those here (browser args, extensions, scrollbar style, incognito, data
+/// directory) must change the launcher too, or the start is thrown away.
 pub(crate) fn build_main_window(
     app: &tauri::App,
     setup_ctx: &AppCtx,
+    phases: &mut StartupPhases,
 ) -> Result<WebviewWindow, Box<dyn std::error::Error>> {
-    let (start_width, start_height) = config::load_window_size(setup_ctx)
-        .unwrap_or((config::DEFAULT_WINDOW_WIDTH, config::DEFAULT_WINDOW_HEIGHT));
+    let (start_width, start_height) = timed(&mut phases.window_size_us, || {
+        config::load_window_size(setup_ctx)
+            .unwrap_or((config::DEFAULT_WINDOW_WIDTH, config::DEFAULT_WINDOW_HEIGHT))
+    });
 
     let navigation_log_ctx = setup_ctx.clone();
     let page_load_log_ctx = setup_ctx.clone();
@@ -114,6 +222,13 @@ pub(crate) fn build_main_window(
             .background_color(tauri::webview::Color(0, 0, 0, 0))
             .center()
             .resizable(true)
+            // Not focused at creation. wry would call MoveFocus on the still
+            // hidden window, a round trip to the browser process (20 to 30 ms
+            // measured) that holds the main thread while the first navigation
+            // waits for it. `show_main_window` activates the window with
+            // `set_focus`, and wry moves focus into the webview on that
+            // WM_SETFOCUS, so the shown window ends up focused as before.
+            .focused(false)
             .on_navigation(move |url| {
                 let allowed = navigation_allowed(url);
                 let _ = logging::append_app_log(
@@ -167,7 +282,7 @@ pub(crate) fn build_main_window(
         window_builder = window_builder.icon(icon.clone())?;
     }
 
-    let win = window_builder.build()?;
+    let win = timed(&mut phases.window_build_us, || window_builder.build())?;
     let _ = logging::append_app_log(
         setup_ctx,
         "info",
@@ -281,6 +396,29 @@ pub(crate) fn install_close_handler(app_handle: AppHandle, win: &WebviewWindow) 
     });
 }
 
+/// Schemes our config claims, so boot can check before rewriting them.
+/// Windows-only: it is the only target where the skip below reads them.
+#[cfg(windows)]
+fn configured_schemes(app: &tauri::App) -> Vec<String> {
+    app.config()
+        .plugins
+        .0
+        .get("deep-link")
+        .and_then(|plugin| plugin.get("desktop"))
+        .and_then(|desktop| desktop.get("schemes"))
+        .and_then(|schemes| serde_json::from_value(schemes.clone()).ok())
+        .unwrap_or_default()
+}
+
+/// Whether any claimed scheme still needs registering. Factored pure so the
+/// decision is unit-testable without touching HKCU: `registered` carries one
+/// `is_registered` answer per scheme, in order. A check error must arrive as
+/// `false` (fail open = the old unconditional behavior).
+#[cfg(windows)]
+fn schemes_need_registration(schemes: &[String], registered: &[bool]) -> bool {
+    schemes.len() != registered.len() || registered.iter().any(|r| !r)
+}
+
 /// Claim the `accshift://` scheme and handle the URLs it delivers.
 ///
 /// The installer registers the scheme system-wide; the registration here covers
@@ -290,14 +428,34 @@ pub(crate) fn wire_deep_links(app: &tauri::App, setup_ctx: &AppCtx) {
     use tauri_plugin_deep_link::DeepLinkExt;
 
     #[cfg(any(windows, target_os = "linux"))]
-    if let Err(reason) = app.deep_link().register_all() {
-        let _ = logging::append_app_log(
-            setup_ctx,
-            "warn",
-            "backend.deep-link",
-            "Failed to register accshift:// scheme",
-            Some(&reason.to_string()),
-        );
+    {
+        // Rewriting HKCU on every launch costs a registry flush on the boot
+        // path (~12 ms measured vs ~1 ms to read). Re-register only when the
+        // live entry does not point here (dev runs, portable builds, moved
+        // install dir). Windows-only: on Linux the check itself spawns
+        // xdg-mime, slower than the write it would skip.
+        #[cfg(windows)]
+        let needs_register = {
+            let schemes = configured_schemes(app);
+            let registered: Vec<bool> = schemes
+                .iter()
+                .map(|scheme| app.deep_link().is_registered(scheme).unwrap_or(false))
+                .collect();
+            schemes_need_registration(&schemes, &registered)
+        };
+        #[cfg(not(windows))]
+        let needs_register = true;
+        if needs_register {
+            if let Err(reason) = app.deep_link().register_all() {
+                let _ = logging::append_app_log(
+                    setup_ctx,
+                    "warn",
+                    "backend.deep-link",
+                    "Failed to register accshift:// scheme",
+                    Some(&reason.to_string()),
+                );
+            }
+        }
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     let _ = setup_ctx;
@@ -391,7 +549,39 @@ pub(crate) fn spawn_boot_failsafe(fallback_handle: AppHandle) {
 
 #[cfg(all(test, windows))]
 mod tests {
-    use super::{window_shadow_is_safe, FIRST_WINDOWS_11_BUILD};
+    use super::{schemes_need_registration, window_shadow_is_safe, FIRST_WINDOWS_11_BUILD};
+
+    fn schemes(names: &[&str]) -> Vec<String> {
+        names.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn skips_registration_when_every_scheme_points_here() {
+        assert!(!schemes_need_registration(&schemes(&["accshift"]), &[true]));
+    }
+
+    #[test]
+    fn registers_when_any_scheme_is_missing() {
+        assert!(schemes_need_registration(&schemes(&["accshift"]), &[false]));
+    }
+
+    #[test]
+    fn check_error_fails_open_to_registration() {
+        // Callers map is_registered errors to false: a broken read must
+        // behave like the old unconditional register, never skip silently.
+        assert!(schemes_need_registration(
+            &schemes(&["a", "b"]),
+            &[true, false]
+        ));
+    }
+
+    #[test]
+    fn empty_config_registers_nothing_either_way() {
+        // register_all over zero schemes is a no-op, so skipping is identical.
+        assert!(!schemes_need_registration(&[], &[]));
+        // Defensive: answers that do not line up with the claims register.
+        assert!(schemes_need_registration(&schemes(&["accshift"]), &[]));
+    }
 
     #[test]
     fn windows_10_drops_the_shadow_frame() {

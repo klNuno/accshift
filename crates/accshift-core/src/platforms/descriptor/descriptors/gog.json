@@ -77,7 +77,8 @@
           {
             "live": "${ProgramData}/GOG.com/Galaxy/webcache/common",
             "snapshot": "webcache-common",
-            "clearOnSetup": true
+            "clearOnSetup": true,
+            "ignoredNames": ["Cache", "Code Cache", "GPUCache", "DawnCache"]
           },
           {
             "live": "${ProgramData}/GOG.com/Galaxy/storage",
@@ -94,7 +95,8 @@
           "GOG Galaxy Notifications Renderer.exe"
         ],
         "timeoutMs": 8000,
-        "settleMs": 500
+        "settleMs": 500,
+        "beforeCapture": true
       },
       "launch": {},
       "setup": {
