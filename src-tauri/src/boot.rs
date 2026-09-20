@@ -78,8 +78,16 @@ fn current_windows_build() -> Option<u32> {
         .ok()
 }
 
+/// Room left between the start size and the monitor's work area. Without it a
+/// window that barely fits would open edge to edge and read as maximized.
+const WORK_AREA_MARGIN: f64 = 32.0;
+
 /// Build the main window: last saved size, frameless and transparent, with the
 /// navigation guard and the page-load log wired in.
+///
+/// The start size shrinks to fit the work area of the monitor it opens on. The
+/// default is 680 logical pixels tall, more than a 1366x768 screen at 125%
+/// offers, and a saved size can come from a larger screen.
 ///
 /// It is built hidden. Boot completion (or the failsafe below) shows it.
 pub(crate) fn build_main_window(
@@ -97,6 +105,10 @@ pub(crate) fn build_main_window(
             .title("Accshift")
             .inner_size(start_width, start_height)
             .min_inner_size(config::MIN_WINDOW_WIDTH, config::MIN_WINDOW_HEIGHT)
+            .prevent_overflow_with_margin(tauri::LogicalSize::new(
+                WORK_AREA_MARGIN,
+                WORK_AREA_MARGIN,
+            ))
             .visible(false)
             .transparent(true)
             .background_color(tauri::webview::Color(0, 0, 0, 0))
@@ -215,11 +227,16 @@ fn spawn_window_size_save(app_handle: &AppHandle, win: &WebviewWindow) -> Option
     if matches!(win.is_maximized(), Ok(true)) {
         return None;
     }
-    let size = win.inner_size().ok()?;
+    // inner_size() is physical, the builder reads the saved size back as logical.
+    // Saving physical pixels grew the window by the scale factor on each launch.
+    let size = win
+        .inner_size()
+        .ok()?
+        .to_logical::<f64>(win.scale_factor().ok()?);
 
     let save_handle = app_handle.clone();
-    let width = f64::from(size.width);
-    let height = f64::from(size.height);
+    let width = size.width;
+    let height = size.height;
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let _ = config::save_window_size(&ctx(&save_handle), width, height);

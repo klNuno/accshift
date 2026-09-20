@@ -4,7 +4,11 @@ use std::collections::BTreeMap;
 use std::fs;
 
 pub const DEFAULT_WINDOW_WIDTH: f64 = 1000.0;
-pub const DEFAULT_WINDOW_HEIGHT: f64 = 520.0;
+/// Sized for the first-run onboarding, which opens at this size on every fresh
+/// install. At 520 its short-window breakpoints hid both the telemetry
+/// explanation (below 641) and the clip (at 520 and under). 680 is the first
+/// height that shows the whole deal step and four full rows of cards.
+pub const DEFAULT_WINDOW_HEIGHT: f64 = 680.0;
 pub const MIN_WINDOW_WIDTH: f64 = 400.0;
 pub const MIN_WINDOW_HEIGHT: f64 = 300.0;
 const WINDOW_SIZE_EPSILON: f64 = 1.0;
