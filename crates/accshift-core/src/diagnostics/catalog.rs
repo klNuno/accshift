@@ -167,8 +167,8 @@ event_catalog! {
             "deepLinkUs": Int,
             "threadsUs": Int,
         ],
-        meaning: "Per-phase timings of this launch's startup path, in microseconds.",
-        action: "Compare phases across launches. windowBuildUs is WebView2 and is mostly out of our hands; the rest is ours.",
+        meaning: "Per-phase timings of this launch's startup path, in microseconds. totalUs runs from the first line of Rust to the window and excludes preMainUs, the process creation before it.",
+        action: "Compare phases across launches, and add preMainUs to totalUs for the whole launch. windowBuildUs is WebView2 and is mostly out of our hands; the rest is ours.",
         aliases: [],
     },
 

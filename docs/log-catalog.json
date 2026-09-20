@@ -135,11 +135,11 @@
       ]
     },
     {
-      "action": "Compare phases across launches. windowBuildUs is WebView2 and is mostly out of our hands; the rest is ours.",
+      "action": "Compare phases across launches, and add preMainUs to totalUs for the whole launch. windowBuildUs is WebView2 and is mostly out of our hands; the rest is ours.",
       "aliases": [],
       "code": "app.startup.profile",
       "level": "info",
-      "meaning": "Per-phase timings of this launch's startup path, in microseconds.",
+      "meaning": "Per-phase timings of this launch's startup path, in microseconds. totalUs runs from the first line of Rust to the window and excludes preMainUs, the process creation before it.",
       "optionalFields": [
         {
           "name": "preMainUs",
