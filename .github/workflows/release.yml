@@ -34,7 +34,7 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@313600b80b104eadebb9111787d37a2e83e014ca # v1.17.0
+        uses: voidzero-dev/setup-vp@49c3e4e92c52e7f8392712a9267bbe71c5ab30e5 # v1.19.0
         with:
           node-version: 22
           cache: true
@@ -345,7 +345,7 @@ jobs:
             pkg-config
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@313600b80b104eadebb9111787d37a2e83e014ca # v1.17.0
+        uses: voidzero-dev/setup-vp@49c3e4e92c52e7f8392712a9267bbe71c5ab30e5 # v1.19.0
         with:
           node-version: 22
           cache: true
@@ -406,7 +406,7 @@ jobs:
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@313600b80b104eadebb9111787d37a2e83e014ca # v1.17.0
+        uses: voidzero-dev/setup-vp@49c3e4e92c52e7f8392712a9267bbe71c5ab30e5 # v1.19.0
         with:
           node-version: 22
           cache: true
@@ -494,7 +494,7 @@ jobs:
           cat RELEASE_NOTES.md
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ github.ref_name }}
           draft: true
