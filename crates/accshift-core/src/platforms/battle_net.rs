@@ -1338,8 +1338,6 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // SavedAccountNames quote-aware CSV round-trip
-    // -----------------------------------------------------------------------
 
     #[test]
     fn parses_unquoted_saved_account_list() {

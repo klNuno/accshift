@@ -92,9 +92,8 @@ pub(super) enum StopOutcome {
 }
 
 pub(super) fn stop_steam(steam_path: &Path, force_kill: bool) -> Result<StopOutcome, AppError> {
-    let needs_kill =
-        is_steam_running() || os::is_process_running(os::steam_web_helper_process_name());
-    if !needs_kill {
+    let steam_running = is_steam_running();
+    if !steam_running && !os::is_process_running(os::steam_web_helper_process_name()) {
         return Ok(StopOutcome::NotRunning);
     }
 
@@ -106,7 +105,10 @@ pub(super) fn stop_steam(steam_path: &Path, force_kill: bool) -> Result<StopOutc
         };
     }
 
-    if try_graceful_shutdown(steam_path) {
+    // An orphaned web helper with no client must not go through graceful
+    // shutdown: delivering `-shutdown` spawns a real client just to stop it
+    // again, burning the full graceful budget. Kill the orphan directly.
+    if steam_running && try_graceful_shutdown(steam_path) {
         return Ok(StopOutcome::Stopped);
     }
 

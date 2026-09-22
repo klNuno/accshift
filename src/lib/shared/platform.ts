@@ -144,6 +144,11 @@ export interface PlatformCapabilities {
 
 export type RuntimeOs = "windows" | "linux" | "macos" | "unknown";
 
+/** The backend's OS name (`std::env::consts::OS`), "unknown" for any other. */
+export function toRuntimeOs(value: string | null | undefined): RuntimeOs {
+  return value === "windows" || value === "linux" || value === "macos" ? value : "unknown";
+}
+
 export type PathPlaceholder = string | Partial<Record<RuntimeOs, string>>;
 
 /** Static, eagerly-loaded description of a platform. The (lazy) adapter is

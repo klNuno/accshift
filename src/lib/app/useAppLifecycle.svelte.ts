@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { addToast } from "$lib/features/notifications/store.svelte";
 import { translate } from "$lib/i18n";
 import type { AppSettings } from "$lib/features/settings/types";
-import type { RuntimeOs } from "$lib/shared/platform";
+import { toRuntimeOs, type RuntimeOs } from "$lib/shared/platform";
 import { getBootPayload } from "$lib/app/bootPayload";
 import { setDetectedPlatforms } from "$lib/app/detectedPlatforms.svelte";
 import { getSettings, hasStoredSettings, saveSettings } from "$lib/features/settings/store";
@@ -138,12 +138,7 @@ export function createAppLifecycleController({
         return "unknown";
       }));
 
-    const normalizedOs: RuntimeOs =
-      runtimeOsResult === "windows" || runtimeOsResult === "linux" || runtimeOsResult === "macos"
-        ? runtimeOsResult
-        : "unknown";
-
-    shell.setRuntimeOs(normalizedOs);
+    shell.setRuntimeOs(toRuntimeOs(runtimeOsResult));
     await enableDetectedPlatformsOnFirstRun();
     const nextTab = getInitialActiveTab(shell.settings, shell.runtimeOs);
     if (nextTab !== shell.activeTab) {

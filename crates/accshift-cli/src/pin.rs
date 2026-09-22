@@ -334,7 +334,7 @@ fn upgrade_legacy_pin_hash(ctx: &dyn AppContext, pin: &str) -> Result<(), String
         .as_object_mut()
         .ok_or_else(|| format!("{} is not a JSON object", path.display()))?;
     object.insert("pinHash".to_string(), Value::String(hash));
-    save_client_store(ctx, STORE_SETTINGS, &settings)
+    save_client_store(ctx, STORE_SETTINGS, &settings).map(|_| ())
 }
 
 fn derive_pbkdf2(password: &[u8], salt: &[u8], iterations: u32) -> [u8; HASH_BYTES] {

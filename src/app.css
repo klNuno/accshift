@@ -190,7 +190,7 @@
      translateY). Never animate horizontal position: an element whose layout
      settles after mount (centering transform, computed padding) combined
      with a transform transition or FLIP reads as a ghost sideways slide.
-     Details in .claude/CLAUDE.md, section "Animations". */
+     Details in AGENTS.md, section "Animations". */
   --motion-card-entrance: calc(260ms * var(--motion-scale));
   --motion-page-entrance: calc(200ms * var(--motion-scale));
   /* Avatars: an <img> stays transparent until its bytes are decoded, then

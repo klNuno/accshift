@@ -213,9 +213,9 @@ fn take_sweep_candidates() -> Option<Vec<String>> {
     SWEEP_CANDIDATES_TL.with(|slot| slot.borrow_mut().take())
 }
 
-/// Serialises the appends within this process. Two processes appending one
-/// short line each is the remaining race, and an interleaved line is dropped by
-/// the reader below rather than mistaken for an id.
+/// Serialises appends within this process. Callers hold the shared operation
+/// lock while changing snapshots; the collector takes that lock too. The
+/// reader also rejects malformed lines left by an interrupted append.
 static INDEX_LOCK: Mutex<()> = Mutex::new(());
 
 /// Point the index at the app's state directory, and take the snapshot of ids
@@ -319,6 +319,19 @@ pub fn gc(app: &dyn AppContext, report: &mut dyn FnMut(&str, String)) -> GcStats
     if !backend::KEYRING_BACKED {
         return stats;
     }
+    // Captures publish the keyring entry before the snapshot file. Their
+    // operation lock must cover the entire live-set walk and sweep, including
+    // captures in another process. Leave candidates intact when busy.
+    let _operation = match crate::lock::acquire_for_write(app, std::time::Duration::ZERO) {
+        Ok(guard) => guard,
+        Err(error) => {
+            report(
+                "Could not lock the snapshot store, skipped the keyring sweep",
+                error.to_string(),
+            );
+            return stats;
+        }
+    };
     let Some(path) = index_path::get() else {
         return stats;
     };
@@ -382,9 +395,34 @@ pub fn gc(app: &dyn AppContext, report: &mut dyn FnMut(&str, String)) -> GcStats
 /// Every token the snapshot store still points at, across all platforms.
 fn live_tokens(app: &dyn AppContext) -> Result<HashSet<String>, String> {
     let mut out = HashSet::new();
+    let mut roots = HashSet::new();
     for platform_id in SNAPSHOT_PLATFORM_IDS {
         let dir = storage::platform_snapshots_dir(app, platform_id)
             .map_err(|detail| format!("platform={platform_id} error={detail}"))?;
+        roots.insert(dir);
+    }
+    // Descriptors can create platform IDs that are not in the shipped list.
+    // Include their snapshots even if the descriptor has since been removed.
+    let platforms = storage::app_local_data_root(app)?.join("platforms");
+    match fs::read_dir(&platforms) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let kind = entry.file_type().map_err(|e| e.to_string())?;
+                if kind.is_symlink() || crate::fs_utils::is_reparse_point(&entry) {
+                    return Err(
+                        "Linked platform directory prevents a complete keyring sweep".into(),
+                    );
+                }
+                if kind.is_dir() {
+                    roots.insert(entry.path().join("snapshots"));
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.to_string()),
+    }
+    for dir in roots {
         collect_tokens(&dir, &mut out)?;
     }
     Ok(out)
@@ -399,13 +437,13 @@ fn collect_tokens(dir: &Path, out: &mut HashSet<String>) -> Result<(), String> {
     };
     for entry in entries {
         let entry = entry.map_err(|e| format!("dir={} error={e}", dir.display()))?;
-        if crate::fs_utils::is_reparse_point(&entry) {
-            continue;
-        }
         let path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
+        let file_type = entry
+            .file_type()
+            .map_err(|e| format!("file={} error={e}", path.display()))?;
+        if file_type.is_symlink() || crate::fs_utils::is_reparse_point(&entry) {
+            return Err("Linked snapshot entry prevents a complete keyring sweep".into());
+        }
         if file_type.is_dir() {
             collect_tokens(&path, out)?;
             continue;
@@ -545,6 +583,63 @@ mod tests {
         assert_eq!(stats, GcStats::default());
         assert_eq!(backend::entry_count(), 2);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn gc_preserves_in_flight_entries_while_another_operation_holds_the_lock() {
+        let root = scratch("gc-operation-lock");
+        let ctx = TempCtx { root: root.clone() };
+        init(&ctx);
+        let token = encrypt_bytes(b"capture not yet written to disk").unwrap();
+        // A second process starting here sees the indexed token before its
+        // snapshot file. Only the shared operation lock distinguishes it
+        // from a genuine orphan.
+        init(&ctx);
+        let lock_ctx = TempCtx { root: root.clone() };
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let holder = std::thread::spawn(move || {
+            let _guard =
+                crate::lock::acquire_exclusive(&lock_ctx, std::time::Duration::ZERO).unwrap();
+            ready_tx.send(()).unwrap();
+            let _ = release_rx.recv();
+        });
+        ready_rx.recv().unwrap();
+
+        let stats = gc(&ctx, &mut |_, _| {});
+        let still_readable = decrypt_bytes(&token).is_ok();
+        release_tx.send(()).unwrap();
+        holder.join().unwrap();
+
+        assert_eq!(stats, GcStats::default(), "a busy store must not be swept");
+        assert!(still_readable, "GC deleted a capture still being written");
+        // Skipping a busy store must preserve candidates for a later attempt.
+        assert_eq!(gc(&ctx, &mut |_, _| {}).freed, 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn gc_keeps_snapshots_for_user_defined_platforms() {
+        let root = scratch("gc-user-platform");
+        let ctx = TempCtx { root: root.clone() };
+        init(&ctx);
+        let live = root.join("custom-session.json");
+        fs::write(&live, b"custom platform session").unwrap();
+        let snapshot = storage::platform_snapshots_dir(&ctx, "custom-launcher")
+            .unwrap()
+            .join("account/session.json");
+        encrypted_copy_file(&live, &snapshot).unwrap();
+        init(&ctx);
+
+        let stats = gc(&ctx, &mut |_, _| {});
+
+        assert_eq!(stats, GcStats::default());
+        let data = fs::read(snapshot).unwrap();
+        assert_eq!(
+            decrypt_bytes(data.strip_prefix(ENCRYPTED_HEADER).unwrap()).unwrap(),
+            b"custom platform session"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

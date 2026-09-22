@@ -568,10 +568,11 @@ mod tests {
 
     #[test]
     fn since_is_a_point_in_the_past() {
-        let now = accshift_core::diagnostics::event::now_unix_ms();
+        let before = accshift_core::diagnostics::event::now_unix_ms();
         let since = parse_since("1h").expect("duration");
-        assert!(since <= now);
-        assert!(now - since >= 3_600_000);
+        let after = accshift_core::diagnostics::event::now_unix_ms();
+        assert!(since >= before.saturating_sub(3_600_000));
+        assert!(since <= after.saturating_sub(3_600_000));
     }
 
     #[test]

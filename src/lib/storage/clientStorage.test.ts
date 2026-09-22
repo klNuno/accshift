@@ -40,6 +40,7 @@ import {
   setClientStoreValue,
   flushPendingSaves,
   getClientStoreValue,
+  refreshClientStorageIfChanged,
 } from "./clientStorage";
 
 function saveCalls() {
@@ -116,5 +117,27 @@ describe("clientStorage flushPendingSaves", () => {
     await flushPromise;
     expect(flushed).toBe(true);
     expect(saveCalls()).toHaveLength(1);
+  });
+
+  it("marks its own write as seen so the next focus finds no change", async () => {
+    // Backend answers the post-write fingerprint; the following manifest
+    // reports exactly that fingerprint, so nothing looks external.
+    invokeMock.mockImplementationOnce(() => Promise.resolve("file:42:4242"));
+    invokeMock.mockImplementationOnce(() =>
+      Promise.resolve({
+        schemaVersion: 1,
+        stores: { [CLIENT_STORE_FOLDERS]: "file:42:4242" },
+      }),
+    );
+
+    setClientStoreValue(CLIENT_STORE_FOLDERS, { folders: ["x"] });
+    await flushPendingSaves();
+
+    const changed = await refreshClientStorageIfChanged();
+    expect(changed).toEqual([]);
+    // No full snapshot reload was triggered by our own write.
+    expect(
+      invokeMock.mock.calls.filter((call) => call[0] === "load_client_storage_snapshot"),
+    ).toHaveLength(0);
   });
 });

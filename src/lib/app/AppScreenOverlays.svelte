@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import WaveText from "$lib/shared/components/WaveText.svelte";
@@ -40,6 +40,30 @@
   } = $props();
 
   let pinInputElement = $state<HTMLInputElement | null>(null);
+
+  // The AFK screen takes at least a second of inactivity to show, so the
+  // start does not build it and lay its text out in the first frame. Built
+  // once that frame is out; its fade still runs, from an overlay that has
+  // been in place for a while by then.
+  let afkOverlayBuilt = $state(false);
+  onMount(() => {
+    let idleId: number | null = null;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    const build = () => (afkOverlayBuilt = true);
+    const frameId = requestAnimationFrame(() => {
+      // Not every webview has requestIdleCallback.
+      if (typeof requestIdleCallback === "function") {
+        idleId = requestIdleCallback(build, { timeout: 500 });
+      } else {
+        timerId = setTimeout(build, 300);
+      }
+    });
+    return () => {
+      cancelAnimationFrame(frameId);
+      if (idleId !== null) cancelIdleCallback(idleId);
+      if (timerId !== null) clearTimeout(timerId);
+    };
+  });
 
   $effect(() => {
     onPinInputRefChange(pinInputElement);
@@ -87,19 +111,21 @@
 </div>
 
 {#if !renderSuspended}
-  <div
-    class="inactive-overlay"
-    class:visible={afkOverlayVisible}
-    aria-hidden={!afkOverlayVisible}
-  >
-    <span class="accshift-text">
-      <WaveText
-        text="ACCSHIFT"
-        active={afkWaveActive && !motionPaused}
-        startDelayMs={afkTextRevealDelayMs}
-      />
-    </span>
-  </div>
+  {#if afkOverlayBuilt || afkOverlayVisible}
+    <div
+      class="inactive-overlay"
+      class:visible={afkOverlayVisible}
+      aria-hidden={!afkOverlayVisible}
+    >
+      <span class="accshift-text">
+        <WaveText
+          text="ACCSHIFT"
+          active={afkWaveActive && !motionPaused}
+          startDelayMs={afkTextRevealDelayMs}
+        />
+      </span>
+    </div>
+  {/if}
 
   {#if isPinLocked || isPinUnlocking || isPinRetryLocked}
     <!-- svelte-ignore a11y_no_static_element_interactions -->

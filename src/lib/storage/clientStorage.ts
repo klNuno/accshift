@@ -130,10 +130,20 @@ function applySnapshot(
 
 async function persistStore(storeId: ClientStoreId) {
   const value = memoryStores.get(storeId);
-  await invoke("save_client_storage_store", {
+  const fingerprint = await invoke<unknown>("save_client_storage_store", {
     storeId,
     value: value ?? null,
   });
+  // The backend answers the file's post-write fingerprint. Recording it marks
+  // our own write as seen, so the next focus manifest diff does not read it
+  // back as an external change and reload the whole snapshot. Backends that
+  // answer nothing (mock, older builds) keep the previous behavior.
+  if (typeof fingerprint === "string") {
+    lastManifest = {
+      ...lastManifest,
+      stores: { ...lastManifest.stores, [storeId]: fingerprint },
+    };
+  }
 }
 
 function persistStoreTracked(storeId: ClientStoreId): Promise<void> {

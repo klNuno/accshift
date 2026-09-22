@@ -56,18 +56,13 @@
             "clearSnapshotWhenSourceMissing": false
           },
           {
-            "live": "${APPDATA}/discord/Network",
-            "snapshot": "network",
-            "clearOnSetup": true,
-            "clearSnapshotWhenSourceMissing": false
-          },
-          {
             "live": "${APPDATA}/discord/blob_storage",
             "snapshot": "blob_storage",
             "clearOnSetup": true,
             "clearSnapshotWhenSourceMissing": false
           }
         ],
+        "caches": ["${APPDATA}/discord/Network"],
         "captureWhen": [
           {
             "kind": "pathNonEmpty",
