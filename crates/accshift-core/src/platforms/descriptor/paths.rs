@@ -126,34 +126,61 @@ fn normalise_separators(path: &str) -> String {
 
 /// The set of directories a descriptor is allowed to read and write.
 ///
-/// Built once from the resolved roots. Roots that cannot resolve on this
-/// machine are dropped rather than fatal: a descriptor may declare a root for
-/// a variable that only exists on another edition of the OS, and the paths
-/// under it will fail to resolve on their own.
-#[derive(Debug, Clone, Default)]
-pub struct Sandbox {
-    roots: Vec<PathBuf>,
+/// Two states, and only two. Either the profile declares no file root and the
+/// sandbox is explicitly unrestricted, or it declares roots and every one of
+/// them resolved. An empty vector used to mean both "nothing was declared" and
+/// "nothing resolved", so one missing environment variable turned the sandbox
+/// off instead of stopping the operation, which is the opposite of what a
+/// sandbox is for.
+#[derive(Debug, Clone)]
+pub enum Sandbox {
+    /// Allows every path, for the parts of a dry run that only report what a
+    /// step would touch, and for a profile that declares no file root at all.
+    Unrestricted,
+    /// Allows only paths under one of these roots. Never empty.
+    Restricted(Vec<PathBuf>),
 }
 
 impl Sandbox {
-    pub fn new(roots: &Roots, resolver: &PathResolver) -> Self {
-        let roots = roots
-            .files
-            .iter()
-            .filter_map(|template| resolver.resolve(template).ok())
-            .map(|path| lexically_normalise(&path))
-            .collect();
-        Self { roots }
+    /// Resolves the declared roots, refusing to build a sandbox at all when one
+    /// of them cannot resolve here.
+    ///
+    /// A root naming a variable this machine does not have used to be dropped,
+    /// on the theory that the paths under it would fail on their own. They do
+    /// not: dropping the last root leaves an empty list, and an empty list
+    /// allowed everything.
+    pub fn new(roots: &Roots, resolver: &PathResolver) -> Result<Self, PlatformError> {
+        if roots.files.is_empty() {
+            return Ok(Self::Unrestricted);
+        }
+        let mut resolved = Vec::with_capacity(roots.files.len());
+        for template in &roots.files {
+            let path = resolver.resolve(template).map_err(|error| {
+                PlatformError::new(
+                    PlatformErrorKind::Io,
+                    format!(
+                        "Refused to run without a sandbox: the declared folder `{}` does not resolve on this system ({})",
+                        template.as_str(),
+                        error.message
+                    ),
+                )
+            })?;
+            resolved.push(lexically_normalise(&path));
+        }
+        Ok(Self::Restricted(resolved))
     }
 
     /// Sandbox allowing everything, for the parts of a dry run that only need
     /// to report what a step would touch.
     pub fn unrestricted() -> Self {
-        Self { roots: Vec::new() }
+        Self::Unrestricted
     }
 
     pub fn roots(&self) -> &[PathBuf] {
-        &self.roots
+        match self {
+            Self::Unrestricted => &[],
+            Self::Restricted(roots) => roots,
+        }
     }
 
     /// Refuses a path that is not inside a declared root.
@@ -162,14 +189,11 @@ impl Sandbox {
     /// separator noise are folded first, so a template resolved through an
     /// environment variable holding `C:\Users\x\..\y` cannot climb out.
     pub fn ensure_allowed(&self, path: &Path) -> Result<(), PlatformError> {
-        if self.roots.is_empty() {
+        let Self::Restricted(roots) = self else {
             return Ok(());
-        }
+        };
         let candidate = lexically_normalise(path);
-        let inside = self
-            .roots
-            .iter()
-            .any(|root| path_starts_with(&candidate, root));
+        let inside = roots.iter().any(|root| path_starts_with(&candidate, root));
         if inside {
             Ok(())
         } else {
@@ -298,7 +322,7 @@ mod tests {
             registry: Vec::new(),
         };
         let resolver = resolver();
-        let sandbox = Sandbox::new(&roots, &resolver);
+        let sandbox = Sandbox::new(&roots, &resolver).unwrap();
         let inside = resolver
             .resolve(&template("${LOCALAPPDATA}/Demo/sub/session.json"))
             .unwrap();
@@ -312,7 +336,7 @@ mod tests {
             registry: Vec::new(),
         };
         let resolver = resolver();
-        let sandbox = Sandbox::new(&roots, &resolver);
+        let sandbox = Sandbox::new(&roots, &resolver).unwrap();
         let outside = resolver
             .resolve(&template("${LOCALAPPDATA}/DemoOther/session.json"))
             .unwrap();
@@ -331,13 +355,15 @@ mod tests {
             files: vec![template("C:/Demo")],
             registry: Vec::new(),
         };
-        let sandbox = Sandbox::new(&roots, &resolver);
+        let sandbox = Sandbox::new(&roots, &resolver).unwrap();
         let escaped = resolver.resolve(&template("${SNEAKY}/config.sys")).unwrap();
         assert!(sandbox.ensure_allowed(&escaped).is_err());
     }
 
     #[test]
-    fn a_root_that_cannot_resolve_is_dropped_rather_than_fatal() {
+    fn a_root_that_cannot_resolve_refuses_the_whole_sandbox() {
+        // Dropping it used to leave the other root standing, and dropping the
+        // last one left an empty list that allowed every path on the disk.
         let roots = Roots {
             files: vec![
                 template("${LOCALAPPDATA}/Demo"),
@@ -345,8 +371,23 @@ mod tests {
             ],
             registry: Vec::new(),
         };
-        let sandbox = Sandbox::new(&roots, &resolver());
-        assert_eq!(sandbox.roots().len(), 1);
+        let err = Sandbox::new(&roots, &resolver()).unwrap_err();
+        assert!(
+            err.message.contains("${MISSING_ON_THIS_EDITION}/Demo"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn a_profile_declaring_no_file_root_is_unrestricted_on_purpose() {
+        let roots = Roots {
+            files: Vec::new(),
+            registry: Vec::new(),
+        };
+        let sandbox = Sandbox::new(&roots, &resolver()).unwrap();
+        assert!(matches!(sandbox, Sandbox::Unrestricted));
+        assert!(sandbox.ensure_allowed(Path::new("C:/anywhere")).is_ok());
     }
 
     #[test]

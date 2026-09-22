@@ -221,7 +221,10 @@ export const PT_MESSAGES: Record<MessageKey, string> = {
   "onboarding.telemetry.dealHint":
     "Adiciona um UUID separado para as estatísticas avançadas, guardado apenas na tua máquina. Continuo sem saber quem és, mas ajudas imenso. Obrigado!",
   "onboarding.telemetry.optOutNote":
-    "Se REALMENTE não queres ajudar o accshift, podes desativar tudo em Definições -> Privacidade. :c",
+    "Escolhas o que escolheres, podes mudar depois em Definições -> Privacidade. :c",
+  "onboarding.telemetry.refuse": "Não obrigado, desliga tudo",
+  "onboarding.telemetry.refuseHint":
+    "Nada é medido nem enviado, nem sequer os contadores anónimos.",
   "onboarding.telemetry.back": "Voltar",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
@@ -261,7 +264,8 @@ export const PT_MESSAGES: Record<MessageKey, string> = {
   "settings.deepLinksHint":
     "Deixa outras aplicações mudarem de conta por ti: favoritos, Stream Deck, scripts.",
   "settings.cliEnabled": "Permitir a CLI do accshift",
-  "settings.cliEnabledHint": "Deixa a ferramenta de linha de comandos listar e mudar de conta.",
+  "settings.cliEnabledHint":
+    "Deixa a ferramenta de linha de comandos listar e mudar de conta. Desativado, todos os comandos accshift recusam-se a correr, diag incluído; a aplicação em si não é afetada.",
   "settings.help": "Abrir a wiki do accshift",
   "settings.helpShort": "Ajuda",
   "settings.openHelpFailed": "Não foi possível abrir a wiki",
@@ -277,6 +281,8 @@ export const PT_MESSAGES: Record<MessageKey, string> = {
   "context.menu.copy": "Copiar...",
   "context.menu.deleteFolder": "Eliminar pasta",
   "context.menu.folderColor": "Cor da pasta",
+  "context.menu.moveToFolder": "Mover para uma pasta",
+  "context.menu.moveToRoot": "Sem pasta",
   "context.menu.editCardAndColor": "Editar cartão e cor",
   "context.menu.cardColor": "Cor do cartão",
   "context.menu.addNote": "Adicionar nota",
@@ -286,6 +292,7 @@ export const PT_MESSAGES: Record<MessageKey, string> = {
   "platform.renameTitle": "Renomear conta",
   "platform.renamePlaceholder": "Nome da conta",
   "platform.newAccountPending": "A aguardar...",
+  "platform.setupBusy": "Está a decorrer outra operação do accshift. A aguardar que termine.",
   "platform.renameNewAccount": "Dá um nome a esta conta",
   "platform.copyLabelAccountId": "ID da conta",
   "platform.forget": "Esquecer",
@@ -300,6 +307,7 @@ export const PT_MESSAGES: Record<MessageKey, string> = {
   "dialog.cardNotePlaceholder": "Escreve uma nota curta",
 
   "card.noteAttached": "Nota anexada",
+  "card.clickAgainToSwitch": "Clique novamente para trocar",
   "card.extensionWarnings": "Avisos",
   "card.extensionNote": "Nota",
   "card.cs2Section": "CS2",
@@ -795,9 +803,14 @@ export const PT_MESSAGES: Record<MessageKey, string> = {
   "settings.cs2BridgeClearToken": "Limpar token",
   "settings.pathSaveFailed": "Não foi possível guardar o caminho de {platform}",
   "settings.pathInvalidHint": "Não foi possível guardar este caminho. Verifica-o e tenta de novo.",
+  "settings.pathSteamNeverSignedIn":
+    "Steam encontrado, inicia sessão uma vez para que crie o histórico de sessões",
+  "settings.pathNotSteamFolder": "Esta pasta não parece uma instalação do Steam",
+  "settings.pathNotADirectory": "O caminho tem de ser uma pasta existente",
   "settings.pinSaved": "PIN guardado",
   "settings.pinTakesEffectNextLaunch": "Aplica-se no próximo arranque da aplicação",
   "settings.pinRequiredAfterInactivity": "Pedido após inatividade e no arranque da aplicação",
+  "settings.pinScreenLockOnly": "O PIN bloqueia apenas esta janela. Não protege nada no disco.",
   "settings.unitSeconds": "segundos",
   "settings.unitDays": "dias",
   "settings.telemetryLoadFailed": "Não foi possível carregar as definições de telemetria",

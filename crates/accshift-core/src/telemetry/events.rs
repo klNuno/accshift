@@ -151,6 +151,8 @@ pub const ERROR_CODES: &[&str] = &[
     "crypto",
     // Updater flow.
     "check_failed",
+    "update_target_missing",
+    "update_manifest_invalid",
     "download_failed",
     "install_failed",
     "relaunch_failed",

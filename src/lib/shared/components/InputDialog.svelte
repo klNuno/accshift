@@ -109,8 +109,11 @@
     transition: all 100ms;
   }
 
+  /* The fill is --fg, so the hover has to be --fg stepped toward the window
+     ground. A fixed light grey read as "dimmed white" on a dark theme and
+     as a lighter-than-the-button flash on a light one. */
   .btn-ok:hover:not(:disabled) {
-    background: #d4d4d8;
+    background: color-mix(in srgb, var(--fg) 84%, var(--bg-solid));
   }
 
   .btn-ok:disabled {

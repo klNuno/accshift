@@ -1,10 +1,11 @@
 //! `accshift diag`: read the log, explain a code, check the invariants, pack a
 //! report.
 //!
-//! Deliberately not gated behind the GUI's "allow the CLI" toggle: the user who
-//! needs this is the one whose app is misbehaving, and a support tool that
-//! refuses to run in that case is no tool at all. Nothing here switches an
-//! account or writes anything outside the log directory.
+//! Gated behind the GUI's "allow the CLI" toggle like every other subcommand,
+//! by `run` in main.rs. It used to be exempt on the grounds that a support tool
+//! must stay reachable, but the GUI has its own diagnostics screen, so a user
+//! whose app misbehaves still gets a report with the CLI switched off, while
+//! `diag bundle` here writes one carrying the redacted config summary.
 
 use crate::exit;
 use crate::output::{emit_err, emit_json_ok, Format};
@@ -567,10 +568,11 @@ mod tests {
 
     #[test]
     fn since_is_a_point_in_the_past() {
-        let now = accshift_core::diagnostics::event::now_unix_ms();
+        let before = accshift_core::diagnostics::event::now_unix_ms();
         let since = parse_since("1h").expect("duration");
-        assert!(since <= now);
-        assert!(now - since >= 3_600_000);
+        let after = accshift_core::diagnostics::event::now_unix_ms();
+        assert!(since >= before.saturating_sub(3_600_000));
+        assert!(since <= after.saturating_sub(3_600_000));
     }
 
     #[test]

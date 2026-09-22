@@ -39,7 +39,7 @@ export function createOnboardingTour({ t, getActiveTab, setActiveTab }: Onboardi
       id,
       displayName: t("onboarding.features.mockAccount", { number: index + 1 }),
       username: `account_${index + 1}`,
-      lastLoginAt: null,
+      lastLoginAtSec: null,
     })),
   );
   const mockItems = $derived<ItemRef[]>(

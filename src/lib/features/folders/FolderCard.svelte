@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { FolderInfo } from "./types";
 
-  let { folder, onOpen, onContextMenu, isDragOver = false, isDragged = false, cardColor = "", accentColor = "#3b82f6" }: {
+  let { folder, onOpen, onContextMenu, isDragOver = false, isDragged = false, cardColor = "", accentColor = "var(--accent)" }: {
     folder: FolderInfo;
     onOpen: () => void;
     onContextMenu: (e: MouseEvent) => void;
@@ -95,9 +95,9 @@
   }
 
   .card.drag-over {
-    box-shadow: inset 0 0 0 1px var(--drag-accent, #3b82f6);
-    outline-color: color-mix(in srgb, var(--drag-accent, #3b82f6) 55%, transparent);
-    background: color-mix(in srgb, var(--drag-accent, #3b82f6) 10%, transparent);
+    box-shadow: inset 0 0 0 1px var(--drag-accent, var(--accent));
+    outline-color: color-mix(in srgb, var(--drag-accent, var(--accent)) 55%, transparent);
+    background: color-mix(in srgb, var(--drag-accent, var(--accent)) 10%, transparent);
   }
 
   .card.dragging {

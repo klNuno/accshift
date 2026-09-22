@@ -7,7 +7,10 @@ export interface PlatformAccount {
   id: string;
   displayName: string;
   username: string;
-  lastLoginAt?: number | null;
+  /** Unix SECONDS. Backends disagree on the unit (Steam reads seconds out of
+   * loginusers.vdf, every other platform stamps `now_unix_ms`), so each adapter
+   * converts once on its way here and the unit is carried by the name. */
+  lastLoginAtSec?: number | null;
 }
 
 export interface PlatformContextMenuConfirmConfig {
@@ -62,6 +65,9 @@ export interface CachedPlatformProfile {
 export type PlatformAddFlowState =
   | "waiting_for_client"
   | "waiting_for_login"
+  // Another accshift operation holds the cross-process lock, so the poll could
+  // not read the real status. Non-terminal: the next poll picks it up.
+  | "busy"
   | "capturing"
   | "ready"
   | "failed";

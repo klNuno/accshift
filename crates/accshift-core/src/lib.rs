@@ -8,6 +8,7 @@ pub mod logging;
 pub mod os;
 pub mod platforms;
 pub mod runtime;
+pub mod secrets;
 pub mod snapshot_crypto;
 pub mod storage;
 pub mod telemetry;

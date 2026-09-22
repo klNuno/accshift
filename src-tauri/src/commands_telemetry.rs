@@ -314,11 +314,13 @@ pub fn telemetry_track_streamer_mode(app_handle: tauri::AppHandle) {
 }
 
 /// Marks the onboarding as completed and applies the user's choice from the
-/// two-button consent screen. Nothing is emitted before this choice.
+/// three-button consent screen. Nothing is emitted before this choice.
 /// Enabling Mode B also generates an install_id when missing.
 ///
-/// `(false, false)` stays valid on the command even though the onboarding no
-/// longer produces it: the refusal path now lives in Settings, Privacy.
+/// The consent screen sends all three accepted pairs: `(true, true)` for the
+/// full deal, `(true, false)` for the skip (and for the reject countdown), and
+/// `(false, false)` for the refuse button. Settings, Privacy reaches the same
+/// refusal later.
 #[tauri::command]
 pub async fn telemetry_complete_onboarding(
     app_handle: tauri::AppHandle,

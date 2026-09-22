@@ -18,6 +18,7 @@
     type TranslationParams,
   } from "$lib/i18n";
   import { hashPinCode, sanitizePinDigits } from "$lib/shared/pin";
+  import { platformPathErrorMessage } from "$lib/shared/platformPathError";
   import { trackDependencies } from "$lib/shared/trackDependencies";
   import { createNumericInput, clampInt } from "$lib/shared/useNumericInput.svelte";
   import type { PlatformDef } from "$lib/shared/platform";
@@ -279,7 +280,13 @@
         platformPathErrors[platformId] = true;
         allSaved = false;
         const platformName = getPlatformDefinition(platformId)?.name ?? platformId;
-        addToast(t("settings.pathSaveFailed", { platform: platformName }), { type: "error" });
+        // The backend rejects a folder with a code, not prose: a Steam install
+        // that has never signed in gets its own line instead of the generic
+        // "couldn't save" that used to hide the reason.
+        addToast(
+          platformPathErrorMessage(e, t, t("settings.pathSaveFailed", { platform: platformName })),
+          { type: "error" },
+        );
       }
     }
     return allSaved;

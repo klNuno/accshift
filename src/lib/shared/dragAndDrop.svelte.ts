@@ -227,13 +227,15 @@ export function createDragManager(options: DragManagerOptions) {
         top: `${sourceRect.top}px`,
         width: `${sourceRect.width}px`,
         pointerEvents: "none",
-        zIndex: "9999",
         opacity: "0.85",
         transform: "scale(1.05)",
         boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
         transition: "none",
         margin: "0",
       });
+      // setProperty rather than the style assignment above: a value
+      // carrying var() has to go through the CSSOM property setter.
+      ghostEl.style.setProperty("z-index", "var(--z-drag-ghost)");
       // Inherit CSS custom properties from ancestors (e.g. --card-custom-color on .card-shell)
       const parentEl = pendingDrag.sourceEl.parentElement;
       if (parentEl) {

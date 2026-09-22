@@ -248,55 +248,10 @@ jobs:
           Set-Content -Path RELEASE_NOTES.md -Value $notesText -Encoding utf8
           Get-Content RELEASE_NOTES.md
 
-      - name: Generate updater manifest
-        shell: pwsh
-        run: |
-          $tag = "${{ steps.release_tag.outputs.tag }}"
-          $version = "${{ steps.release_tag.outputs.version }}"
-          $repo = "${{ github.repository }}"
-          $bundleDir = "target/release/bundle"
-
-          $primaryAsset = Get-ChildItem "$bundleDir/nsis/*.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $primaryAsset) {
-            $primaryAsset = Get-ChildItem "$bundleDir/msi/*.msi" -File -ErrorAction SilentlyContinue | Select-Object -First 1
-          }
-          if (-not $primaryAsset) {
-            throw "Could not find a release installer asset (.exe or .msi) to reference in latest.json"
-          }
-
-          $sigPath = "$($primaryAsset.FullName).sig"
-          if (-not (Test-Path $sigPath)) {
-            throw "Missing updater signature file for $($primaryAsset.Name): $sigPath"
-          }
-
-          $signature = (Get-Content $sigPath -Raw).Trim()
-          if ([string]::IsNullOrWhiteSpace($signature)) {
-            throw "Signature file is empty: $sigPath"
-          }
-
-          $notes = (Get-Content RELEASE_NOTES.md -Raw).Trim()
-          if ([string]::IsNullOrWhiteSpace($notes)) {
-            $notes = "No changelog entries found."
-          }
-
-          $assetUrl = "https://github.com/$repo/releases/download/$tag/$($primaryAsset.Name)"
-
-          $manifest = @{
-            version = $version
-            notes = $notes
-            pub_date = (Get-Date).ToUniversalTime().ToString("o")
-            platforms = @{
-              "windows-x86_64" = @{
-                signature = $signature
-                url = $assetUrl
-              }
-            }
-          }
-
-          $manifestPath = Join-Path $bundleDir "latest.json"
-          $manifest | ConvertTo-Json -Depth 8 | Set-Content -Path $manifestPath -Encoding utf8
-          Get-Content $manifestPath
-
+      # The .sig files travel with the bundles: latest.json is assembled in the
+      # release job, which is the only place that sees all three platforms at
+      # once. They are attached to the release too, so a download can be
+      # verified against the updater public key by hand.
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -304,9 +259,10 @@ jobs:
           if-no-files-found: error
           path: |
             target/release/bundle/nsis/*.exe
+            target/release/bundle/nsis/*.exe.sig
             target/release/bundle/msi/*.msi
+            target/release/bundle/msi/*.msi.sig
             target/release/bundle/accshift-cli_*.exe
-            target/release/bundle/latest.json
 
       - name: Upload release notes
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -384,8 +340,13 @@ jobs:
           if-no-files-found: error
           path: |
             target/release/bundle/deb/*.deb
+            target/release/bundle/deb/*.deb.sig
             target/release/bundle/rpm/*.rpm
+            target/release/bundle/rpm/*.rpm.sig
             target/release/bundle/appimage/*.AppImage
+            target/release/bundle/appimage/*.AppImage.sig
+            target/release/bundle/appimage/*.AppImage.tar.gz
+            target/release/bundle/appimage/*.AppImage.tar.gz.sig
             target/release/bundle/accshift-cli_*_linux_*
 
   build-macos:
@@ -445,6 +406,8 @@ jobs:
           if-no-files-found: error
           path: |
             target/release/bundle/dmg/*.dmg
+            target/release/bundle/macos/*.app.tar.gz
+            target/release/bundle/macos/*.app.tar.gz.sig
             target/release/bundle/accshift-cli_*_macos_*
 
   release:
@@ -467,6 +430,95 @@ jobs:
           # flatten them so the release attaches plain files.
           find artifacts -type f ! -name RELEASE_NOTES.md -exec cp {} dist/ \;
           ls -la dist
+
+      # tauri-plugin-updater looks the running target up in a single
+      # `platforms` map and answers Error::TargetNotFound when it is absent, so
+      # a manifest listing Windows alone means no auto-update at all on Linux
+      # and macOS. This is the only job that sees every platform's signature at
+      # once, which is why the manifest is built here and not in a build job.
+      - name: Generate updater manifest
+        env:
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+
+          notes="$(cat artifacts/RELEASE_NOTES.md)"
+          if [ -z "$(printf '%s' "$notes" | tr -d '[:space:]')" ]; then
+            notes="No changelog entries found."
+          fi
+
+          platforms='{}'
+
+          # Adds one `platforms` entry. $1 is the updater target key, the rest
+          # are filename globs tried in order until one matches a file in
+          # dist/. The matched bundle must have its .sig beside it.
+          add_platform() {
+            target="$1"
+            shift
+            asset=""
+            for pattern in "$@"; do
+              for candidate in dist/$pattern; do
+                if [ -f "$candidate" ]; then
+                  asset="$candidate"
+                  break
+                fi
+              done
+              if [ -n "$asset" ]; then
+                break
+              fi
+            done
+            if [ -z "$asset" ]; then
+              echo "No updater bundle found for $target (tried: $*)" >&2
+              return 1
+            fi
+            name="$(basename "$asset")"
+            if [ ! -f "$asset.sig" ]; then
+              echo "Missing updater signature file for $name: $asset.sig" >&2
+              return 1
+            fi
+            signature="$(tr -d '\r\n' < "$asset.sig")"
+            if [ -z "$signature" ]; then
+              echo "Signature file is empty: $asset.sig" >&2
+              return 1
+            fi
+            platforms="$(printf '%s' "$platforms" | jq \
+              --arg target "$target" \
+              --arg signature "$signature" \
+              --arg url "https://github.com/$REPO/releases/download/$TAG/$name" \
+              '.[$target] = { signature: $signature, url: $url }')"
+            echo "latest.json: $target -> $name"
+          }
+
+          # Same, but a target with no signed bundle is skipped instead of
+          # failing the release. Used for the entries that only matter when the
+          # bundler happens to sign the package format in question.
+          add_optional_platform() {
+            add_platform "$@" || echo "latest.json: no updater bundle for $1, skipped"
+          }
+
+          # The bundle a v2 updater expects per OS: the NSIS installer on
+          # Windows, the AppImage on Linux (the .tar.gz wrapper is only
+          # produced in v1-compatible mode), the .app tarball on macOS.
+          add_platform windows-x86_64 '*-setup.exe' '*.msi'
+          add_platform linux-x86_64 '*.AppImage.tar.gz' '*.AppImage'
+          add_platform darwin-aarch64 '*.app.tar.gz'
+
+          # An app installed from the .deb or the .rpm asks for these keys
+          # before falling back to linux-x86_64, and would otherwise be handed
+          # an AppImage that dpkg cannot install.
+          add_optional_platform linux-x86_64-deb '*.deb'
+          add_optional_platform linux-x86_64-rpm '*.rpm'
+
+          jq -n \
+            --arg version "$version" \
+            --arg notes "$notes" \
+            --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" \
+            --argjson platforms "$platforms" \
+            '{ version: $version, notes: $notes, pub_date: $pub_date, platforms: $platforms }' \
+            > dist/latest.json
+          cat dist/latest.json
 
       - name: Generate SHA256 checksums
         run: |

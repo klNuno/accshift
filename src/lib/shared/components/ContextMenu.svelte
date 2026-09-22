@@ -434,7 +434,7 @@
 <style>
   .context-menu {
     position: fixed;
-    z-index: 1200;
+    z-index: var(--z-menu);
     min-width: 220px;
     padding: 4px;
     background: var(--bg-overlay);

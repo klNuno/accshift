@@ -46,17 +46,20 @@
             "live": "${APPDATA}/discord/Local Storage/leveldb",
             "snapshot": "local_storage_leveldb",
             "clearOnSetup": true,
-            "snapshotMarker": true
+            "snapshotMarker": true,
+            "clearSnapshotWhenSourceMissing": false
           },
           {
             "live": "${APPDATA}/discord/Session Storage",
             "snapshot": "session_storage",
-            "clearOnSetup": true
+            "clearOnSetup": true,
+            "clearSnapshotWhenSourceMissing": false
           },
           {
             "live": "${APPDATA}/discord/blob_storage",
             "snapshot": "blob_storage",
-            "clearOnSetup": true
+            "clearOnSetup": true,
+            "clearSnapshotWhenSourceMissing": false
           }
         ],
         "caches": ["${APPDATA}/discord/Network"],

@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, TryLockError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const LOG_FILE_NAME: &str = "app.log";
@@ -172,6 +172,37 @@ fn with_sink<T>(
 ) -> Result<T, String> {
     let path = log_file_path(app_handle)?;
     let mut map = sinks().lock().unwrap_or_else(|error| error.into_inner());
+    run_on_sink(&mut map, path, job)
+}
+
+/// [`with_sink`] that gives up rather than wait for the mutex.
+///
+/// `Ok(None)` means another writer holds it right now. The panic hook is the
+/// only caller: a panic raised inside `with_sink` (a rotation failing to
+/// rename, say) runs the hook on the very thread that owns the mutex, and
+/// `std::sync::Mutex` is not reentrant, so waiting there hangs the process
+/// instead of letting it crash.
+fn try_with_sink<T>(
+    app_handle: &dyn AppContext,
+    job: impl FnOnce(&Path, &mut Sink) -> Result<T, String>,
+) -> Result<Option<T>, String> {
+    let path = log_file_path(app_handle)?;
+    let mut map = match sinks().try_lock() {
+        Ok(map) => map,
+        // A poisoned mutex only means an earlier writer panicked mid-record.
+        // The map itself is still sound, and dropping this record helps nobody.
+        Err(TryLockError::Poisoned(error)) => error.into_inner(),
+        Err(TryLockError::WouldBlock) => return Ok(None),
+    };
+    run_on_sink(&mut map, path, job).map(Some)
+}
+
+/// The body both entry points share, once the mutex is theirs.
+fn run_on_sink<T>(
+    map: &mut HashMap<PathBuf, Sink>,
+    path: PathBuf,
+    job: impl FnOnce(&Path, &mut Sink) -> Result<T, String>,
+) -> Result<T, String> {
     let sink = map.entry(path.clone()).or_default();
 
     sink.ensure_lock_file(&path);
@@ -375,15 +406,24 @@ fn purge(current: &Path) -> Purged {
 /// legacy or structured, goes through here and is therefore subject to the same
 /// lock, the same rotation and the same budget.
 pub(crate) fn write_line(app_handle: &dyn AppContext, line: &str) -> Result<(), String> {
-    with_sink(app_handle, |path, sink| {
-        sink.open_if_needed(path)?;
-        // Rotate before the write that would breach the cap, never after: the
-        // announced budget is a ceiling, not an average.
-        if sink.size > 0 && sink.size + line.len() as u64 + 1 > MAX_LOG_FILE_BYTES {
-            rotate(path, sink, "size")?;
-        }
-        sink.append(path, line)
-    })
+    with_sink(app_handle, |path, sink| append_line(path, sink, line))
+}
+
+/// [`write_line`] that skips the record instead of waiting for the sink mutex.
+/// `Ok(false)` means it was skipped. See [`try_with_sink`] for why the panic
+/// hook cannot afford to wait.
+pub(crate) fn try_write_line(app_handle: &dyn AppContext, line: &str) -> Result<bool, String> {
+    Ok(try_with_sink(app_handle, |path, sink| append_line(path, sink, line))?.is_some())
+}
+
+fn append_line(path: &Path, sink: &mut Sink, line: &str) -> Result<(), String> {
+    sink.open_if_needed(path)?;
+    // Rotate before the write that would breach the cap, never after: the
+    // announced budget is a ceiling, not an average.
+    if sink.size > 0 && sink.size + line.len() as u64 + 1 > MAX_LOG_FILE_BYTES {
+        rotate(path, sink, "size")?;
+    }
+    sink.append(path, line)
 }
 
 /// Start a session: rotate the previous one out of the way, then say so.
@@ -456,15 +496,31 @@ pub fn append_app_log(
     message: &str,
     details: Option<&str>,
 ) -> Result<(), String> {
-    let record = serde_json::json!({
+    write_line(app_handle, &app_log_record(level, source, message, details))
+}
+
+/// [`append_app_log`] for a caller that must never block on the sink mutex.
+/// `Ok(false)` means the record was skipped; the caller is expected to have a
+/// fallback (the panic hook writes to stderr).
+pub fn try_append_app_log(
+    app_handle: &dyn AppContext,
+    level: &str,
+    source: &str,
+    message: &str,
+    details: Option<&str>,
+) -> Result<bool, String> {
+    try_write_line(app_handle, &app_log_record(level, source, message, details))
+}
+
+fn app_log_record(level: &str, source: &str, message: &str, details: Option<&str>) -> String {
+    serde_json::json!({
         "tsMs": now_unix_ms(),
         "level": trim_text(&sanitize_log_text(level), 32),
         "source": trim_text(&sanitize_log_text(source), 128),
         "message": trim_text(&sanitize_log_text(message), MAX_MESSAGE_BYTES),
         "details": details.map(|value| trim_text(&sanitize_log_text(value), MAX_DETAILS_BYTES)),
-    });
-
-    write_line(app_handle, &record.to_string())
+    })
+    .to_string()
 }
 
 pub fn install_panic_hook(app_handle: crate::AppCtx) {
@@ -490,13 +546,21 @@ pub fn install_panic_hook(app_handle: crate::AppCtx) {
             "unknown panic payload".to_string()
         };
 
-        let _ = append_app_log(
+        // Never `append_app_log` here. A panic raised while the sink mutex is
+        // held reaches this hook on the thread that owns it, and waiting on a
+        // non-reentrant mutex the thread already holds deadlocks the process
+        // instead of crashing it. Skip the record and say so on stderr.
+        let logged = try_append_app_log(
             &*app_handle,
             "error",
             "rust.panic",
             &payload,
             Some(&location),
-        );
+        )
+        .unwrap_or(false);
+        if !logged {
+            eprintln!("panic at {location}: {payload} (log sink unavailable)");
+        }
 
         previous_hook(panic_info);
     }));
@@ -515,6 +579,45 @@ mod tests {
             .filter(|line| !line.trim().is_empty())
             .map(|line| serde_json::from_str(line).expect("every line must be JSON"))
             .collect()
+    }
+
+    // The panic hook runs on whatever thread panicked, which may be the thread
+    // already inside `with_sink`. Holding the mutex here reproduces that
+    // without a real panic: the hook path must report "not written" instead of
+    // waiting on a mutex it would never get back.
+    #[test]
+    fn the_panic_hook_path_skips_a_held_sink() {
+        let ctx = TestCtx::ctx("logging-panic-hook-try-lock");
+        let path = log_file_path(&*ctx).expect("path");
+
+        let held = sinks().lock().unwrap_or_else(|error| error.into_inner());
+        let wrote = try_append_app_log(&*ctx, "error", "rust.panic", "held", None);
+        drop(held);
+
+        assert_eq!(wrote, Ok(false), "a held sink must not block the hook");
+        assert!(
+            read_lines(&path).is_empty(),
+            "the skipped record wrote nothing"
+        );
+
+        // The same call with nothing held takes the record. Retried because
+        // every other logging test in this binary locks the same map, so one
+        // attempt can lose the race with a test running beside this one.
+        let mut wrote = Ok(false);
+        for _ in 0..1_000 {
+            wrote = try_append_app_log(&*ctx, "error", "rust.panic", "free", None);
+            if wrote == Ok(true) {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert_eq!(wrote, Ok(true), "an unheld sink still takes the record");
+
+        let messages: Vec<String> = read_lines(&path)
+            .iter()
+            .map(|record| record["message"].as_str().unwrap_or_default().to_string())
+            .collect();
+        assert_eq!(messages, vec!["free".to_string()]);
     }
 
     // The 38 existing call sites still write this shape, and external readers

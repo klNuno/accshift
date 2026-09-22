@@ -15,7 +15,15 @@ import type {
 import { getPlatform } from "$lib/shared/platform";
 import type { ContextMenuItem, InputDialogConfig } from "$lib/shared/types";
 import type { FolderInfo } from "$lib/features/folders/types";
-import { createFolder, deleteFolder, renameFolder } from "$lib/features/folders/store";
+import {
+  createFolder,
+  deleteFolder,
+  findItemFolderId,
+  getFolderPath,
+  listFolders,
+  moveItem,
+  renameFolder,
+} from "$lib/features/folders/store";
 import type { MessageKey, TranslationParams } from "$lib/i18n";
 
 type ContextMenuState = {
@@ -109,6 +117,22 @@ export function createAppDialogsController({
           },
           t,
         },
+        folderCallbacks: {
+          t,
+          getFolders: () =>
+            listFolders(getActiveTab()).map((folder) => ({
+              id: folder.id,
+              label: folderPathLabel(folder.id),
+            })),
+          getCurrentFolderId: () =>
+            findItemFolderId({ type: "account", id: account.id }, getActiveTab()),
+          moveToFolder: (folderId) => {
+            const platform = getActiveTab();
+            const itemRef = { type: "account", id: account.id } as const;
+            moveItem(itemRef, findItemFolderId(itemRef, platform), folderId, platform);
+            refreshCurrentItems();
+          },
+        },
         appearanceCallbacks: {
           t,
           getCurrentColor: () => getAccountCardColor(account.id),
@@ -199,6 +223,13 @@ export function createAppDialogsController({
 
   let confirmDialogConfirmLabel = $derived(confirmDialog?.confirmLabel || t("common.confirm"));
   let confirmDialogConfirmColor = $derived(confirmDialog?.confirmColor || "");
+
+  /** "Parent / Child", so two folders sharing a name stay tellable apart. */
+  function folderPathLabel(folderId: string): string {
+    const path = getFolderPath(folderId);
+    if (path.length === 0) return folderId;
+    return path.map((folder) => folder.name).join(" / ");
+  }
 
   function openInputDialog(config: InputDialogConfig & { maxlength?: number }) {
     inputDialog = {

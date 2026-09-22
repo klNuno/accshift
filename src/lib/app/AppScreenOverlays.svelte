@@ -181,7 +181,7 @@
     pointer-events: none;
     opacity: 0;
     transition: opacity 900ms ease-in-out;
-    z-index: 300;
+    z-index: var(--z-screen);
   }
 
   .inactive-overlay.visible {
@@ -220,7 +220,7 @@
     user-select: none;
     -webkit-user-select: none;
     opacity: 0;
-    z-index: 320;
+    z-index: var(--z-screen-top);
   }
 
   /* The strip is centered with a translateX, so a permanent transform
@@ -249,7 +249,7 @@
   .pin-lock-overlay {
     position: absolute;
     inset: 0;
-    z-index: 500;
+    z-index: var(--z-lock);
     display: flex;
     align-items: center;
     justify-content: center;

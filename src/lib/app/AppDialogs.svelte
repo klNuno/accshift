@@ -154,6 +154,6 @@
     display: flex;
     flex-direction: column;
     align-items: flex-end;
-    z-index: 200;
+    z-index: var(--z-toast);
   }
 </style>

@@ -60,7 +60,7 @@ export function createPlatformShellState() {
     }
     return ids;
   });
-  let accentColor = $derived(getPlatformDefinition(activeTab)?.accent || "#3b82f6");
+  let accentColor = $derived(getPlatformDefinition(activeTab)?.accent || "var(--accent)");
   let activeTheme = $derived(getThemeDefinition(settings.themeId));
   let uiZoomFactor = $derived(Math.min(1.5, Math.max(0.75, settings.uiScalePercent / 100)));
   let appStageStyle = $derived.by(() => {

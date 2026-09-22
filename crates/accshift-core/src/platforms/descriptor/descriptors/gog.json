@@ -78,12 +78,14 @@
             "live": "${ProgramData}/GOG.com/Galaxy/webcache/common",
             "snapshot": "webcache-common",
             "clearOnSetup": true,
+            "clearSnapshotWhenSourceMissing": false,
             "ignoredNames": ["Cache", "Code Cache", "GPUCache", "DawnCache"]
           },
           {
             "live": "${ProgramData}/GOG.com/Galaxy/storage",
             "snapshot": "storage",
-            "clearOnSetup": true
+            "clearOnSetup": true,
+            "clearSnapshotWhenSourceMissing": false
           }
         ]
       },

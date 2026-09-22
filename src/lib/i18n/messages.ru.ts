@@ -220,7 +220,10 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "onboarding.telemetry.dealHint":
     "Добавляет отдельный UUID для расширенной статистики, он хранится только на вашей машине. Кто вы, по-прежнему неизвестно, но помощь огромная. Спасибо!",
   "onboarding.telemetry.optOutNote":
-    "Если вы ДЕЙСТВИТЕЛЬНО не хотите помогать accshift, всё можно отключить в разделе Настройки -> Приватность. :c",
+    "Что бы вы ни выбрали, это можно изменить позже в разделе Настройки -> Приватность. :c",
+  "onboarding.telemetry.refuse": "Нет, спасибо, отключить всё",
+  "onboarding.telemetry.refuseHint":
+    "Ничего не измеряется и не отправляется, даже анонимные счётчики.",
   "onboarding.telemetry.back": "Назад",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
@@ -261,7 +264,7 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
     "Позволяет другим приложениям менять аккаунт за вас: закладки, Stream Deck, скрипты.",
   "settings.cliEnabled": "Разрешить CLI accshift",
   "settings.cliEnabledHint":
-    "Позволяет утилите командной строки показывать список и менять аккаунты.",
+    "Позволяет утилите командной строки показывать список и менять аккаунты. Если выключено, любая команда accshift отказывается выполняться, включая diag; само приложение не затронуто.",
   "settings.help": "Открыть вики accshift",
   "settings.helpShort": "Справка",
   "settings.openHelpFailed": "Не удалось открыть вики",
@@ -277,6 +280,8 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "context.menu.copy": "Копировать...",
   "context.menu.deleteFolder": "Удалить папку",
   "context.menu.folderColor": "Цвет папки",
+  "context.menu.moveToFolder": "Переместить в папку",
+  "context.menu.moveToRoot": "Без папки",
   "context.menu.editCardAndColor": "Изменить карточку и цвет",
   "context.menu.cardColor": "Цвет карточки",
   "context.menu.addNote": "Добавить заметку",
@@ -286,6 +291,7 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "platform.renameTitle": "Переименовать аккаунт",
   "platform.renamePlaceholder": "Имя аккаунта",
   "platform.newAccountPending": "Ожидание...",
+  "platform.setupBusy": "Выполняется другая операция accshift. Ожидание её завершения.",
   "platform.renameNewAccount": "Назовите этот аккаунт",
   "platform.copyLabelAccountId": "ID аккаунта",
   "platform.forget": "Забыть",
@@ -300,6 +306,7 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "dialog.cardNotePlaceholder": "Напишите короткую заметку",
 
   "card.noteAttached": "Есть заметка",
+  "card.clickAgainToSwitch": "Нажмите ещё раз для смены",
   "card.extensionWarnings": "Предупреждения",
   "card.extensionNote": "Заметка",
   "card.cs2Section": "CS2",
@@ -796,9 +803,14 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "settings.cs2BridgeClearToken": "Удалить токен",
   "settings.pathSaveFailed": "Не удалось сохранить путь {platform}",
   "settings.pathInvalidHint": "Этот путь не удалось сохранить. Проверьте его и попробуйте снова.",
+  "settings.pathSteamNeverSignedIn":
+    "Steam найден, войдите один раз, чтобы он создал историю входов",
+  "settings.pathNotSteamFolder": "Эта папка не похожа на установку Steam",
+  "settings.pathNotADirectory": "Путь должен указывать на существующую папку",
   "settings.pinSaved": "PIN сохранён",
   "settings.pinTakesEffectNextLaunch": "Вступит в силу при следующем запуске приложения",
   "settings.pinRequiredAfterInactivity": "Требуется после бездействия и при запуске приложения",
+  "settings.pinScreenLockOnly": "PIN блокирует только это окно. Он ничего не защищает на диске.",
   "settings.unitSeconds": "секунд",
   "settings.unitDays": "дней",
   "settings.telemetryLoadFailed": "Не удалось загрузить настройки телеметрии",

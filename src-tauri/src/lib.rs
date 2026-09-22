@@ -167,7 +167,7 @@ pub fn run() {
             phases.telemetry_us = step.elapsed().as_micros() as u64;
 
             let step = std::time::Instant::now();
-            boot::install_close_handler(app.handle().clone(), &win);
+            boot::install_window_event_handlers(app.handle().clone(), &win);
             phases.close_handler_us = step.elapsed().as_micros() as u64;
 
             let step = std::time::Instant::now();
@@ -224,6 +224,7 @@ pub fn run() {
             commands::minimize_window,
             commands::toggle_maximize_window,
             commands::close_window,
+            commands::set_maximize_button_rect,
             commands::set_keep_backdrop_active,
             commands::get_desktop_wallpaper,
             // Steam-specific

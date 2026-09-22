@@ -18,7 +18,7 @@ use profile::ProfileInfo;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
 
@@ -220,6 +220,62 @@ fn is_force_kill(params: &Value) -> bool {
         .unwrap_or(false)
 }
 
+/// What a candidate folder looks like from Steam's point of view.
+///
+/// One classifier for the folder picker ([`set_steam_path`]) and for every
+/// read path ([`resolve_steam_path`]), so a folder can never be accepted by
+/// one and reported as "not installed" by the other. That split was the bug:
+/// the picker took a folder holding only `steam.exe`, every later read
+/// demanded `config/loginusers.vdf` and failed with a generic message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SteamFolder {
+    /// The path is missing, or is a file rather than a folder.
+    NotADirectory,
+    /// A real folder, but neither the Steam client nor a login history.
+    NotSteam,
+    /// Steam is installed here and has never signed in, so it has not written
+    /// `config/loginusers.vdf` and there is no account to read yet.
+    NeverSignedIn,
+    /// `config/loginusers.vdf` is present: usable.
+    Usable,
+}
+
+/// English text for the "installed but never signed in" case. The webview
+/// shows a translated line keyed on [`STEAM_PATH_NEVER_SIGNED_IN`]; this is
+/// what any other caller (and an untranslated fallback) gets.
+const NEVER_SIGNED_IN_MESSAGE: &str = "Steam found, sign in once so it creates its login history";
+
+/// Machine-readable codes for the folder-picker rejections.
+///
+/// `PlatformError` serializes to the webview as its bare message string, so a
+/// code travels inside that message, ahead of a `|` and an English fallback
+/// (see [`coded_path_error`]). The frontend matches the code and translates
+/// it; it never matches English prose.
+pub const STEAM_PATH_NOT_A_DIRECTORY: &str = "steam_path_not_a_directory";
+pub const STEAM_PATH_NOT_STEAM: &str = "steam_path_not_steam";
+pub const STEAM_PATH_NEVER_SIGNED_IN: &str = "steam_path_never_signed_in";
+
+pub fn classify_steam_folder(path: &Path) -> SteamFolder {
+    if !path.is_dir() {
+        return SteamFolder::NotADirectory;
+    }
+    if path.join("config").join("loginusers.vdf").is_file() {
+        return SteamFolder::Usable;
+    }
+    if path.join(os::steam_executable_name()).is_file() {
+        return SteamFolder::NeverSignedIn;
+    }
+    SteamFolder::NotSteam
+}
+
+/// `code|english fallback`, the format the webview parses.
+fn coded_path_error(code: &str, english: &str) -> PlatformError {
+    PlatformError::new(
+        PlatformErrorKind::ClientNotInstalled,
+        format!("{code}|{english}"),
+    )
+}
+
 fn resolve_steam_path(app_handle: &dyn AppContext) -> Result<PathBuf, PlatformError> {
     let cfg = config::load_config(app_handle);
     let override_path = cfg.steam.path_override.trim();
@@ -230,14 +286,19 @@ fn resolve_steam_path(app_handle: &dyn AppContext) -> Result<PathBuf, PlatformEr
         os::steam_installation_path()?
     };
 
-    if !steam_path.exists() || !steam_path.join("config").join("loginusers.vdf").exists() {
-        return Err(PlatformError::new(
+    match classify_steam_folder(&steam_path) {
+        SteamFolder::Usable => Ok(steam_path),
+        // Plain prose, not a code: this one reaches a dozen commands whose
+        // rejections the webview shows verbatim.
+        SteamFolder::NeverSignedIn => Err(PlatformError::new(
+            PlatformErrorKind::ClientNotInstalled,
+            NEVER_SIGNED_IN_MESSAGE,
+        )),
+        SteamFolder::NotADirectory | SteamFolder::NotSteam => Err(PlatformError::new(
             PlatformErrorKind::ClientNotInstalled,
             "Could not locate Steam installation",
-        ));
+        )),
     }
-
-    Ok(steam_path)
 }
 
 pub struct SteamService;
@@ -656,17 +717,31 @@ pub fn get_steam_path(app_handle: AppCtx) -> Result<String, PlatformError> {
 
 pub fn set_steam_path(app_handle: AppCtx, path: String) -> Result<(), PlatformError> {
     let trimmed = path.trim().to_string();
-    // The override is later joined with steam.exe and launched. Only accept
-    // an existing directory that actually looks like a Steam install.
+    // The override is later joined with steam.exe and launched, and every read
+    // path resolves it through `classify_steam_folder`. Accept exactly what
+    // those reads accept, so nothing can be saved here and then reported as
+    // "not installed" a second later.
     if !trimmed.is_empty() {
-        let candidate = PathBuf::from(&trimmed);
-        if !candidate.is_dir() {
-            return Err("Steam path override must be an existing directory".into());
-        }
-        if !candidate.join(os::steam_executable_name()).exists()
-            && !candidate.join("config").join("loginusers.vdf").exists()
-        {
-            return Err("This folder does not look like a Steam installation".into());
+        match classify_steam_folder(Path::new(&trimmed)) {
+            SteamFolder::Usable => {}
+            SteamFolder::NeverSignedIn => {
+                return Err(coded_path_error(
+                    STEAM_PATH_NEVER_SIGNED_IN,
+                    NEVER_SIGNED_IN_MESSAGE,
+                ));
+            }
+            SteamFolder::NotSteam => {
+                return Err(coded_path_error(
+                    STEAM_PATH_NOT_STEAM,
+                    "This folder does not look like a Steam installation",
+                ));
+            }
+            SteamFolder::NotADirectory => {
+                return Err(coded_path_error(
+                    STEAM_PATH_NOT_A_DIRECTORY,
+                    "Steam path override must be an existing directory",
+                ));
+            }
         }
     }
     config::update_config(&app_handle, |cfg| {
@@ -1008,6 +1083,102 @@ impl PlatformService for SteamService {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Unique temp directory per test, removed on drop.
+    struct TempRoot(PathBuf);
+
+    impl TempRoot {
+        fn new(tag: &str) -> Self {
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!(
+                "accshift-steam-folder-test-{tag}-{}-{n}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&dir).expect("create temp test dir");
+            Self(dir)
+        }
+
+        fn with_steam_exe(self) -> Self {
+            std::fs::write(self.0.join(os::steam_executable_name()), b"stub")
+                .expect("write steam executable stub");
+            self
+        }
+
+        fn with_login_history(self) -> Self {
+            let config_dir = self.0.join("config");
+            std::fs::create_dir_all(&config_dir).expect("create config dir");
+            std::fs::write(config_dir.join("loginusers.vdf"), b"\"users\"{}")
+                .expect("write loginusers.vdf stub");
+            self
+        }
+    }
+
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn classify_steam_folder_reports_never_signed_in_for_executable_only() {
+        // The exact folder the audit found: the picker used to take it and
+        // every read then said "not installed".
+        let tmp = TempRoot::new("exe-only").with_steam_exe();
+        assert_eq!(
+            classify_steam_folder(&tmp.0),
+            SteamFolder::NeverSignedIn,
+            "steam.exe without config/loginusers.vdf means never signed in"
+        );
+    }
+
+    #[test]
+    fn classify_steam_folder_accepts_login_history_alone() {
+        // A Steam whose executable sits elsewhere (or a copied config tree)
+        // still has the account list every read needs.
+        let tmp = TempRoot::new("login-only").with_login_history();
+        assert_eq!(classify_steam_folder(&tmp.0), SteamFolder::Usable);
+    }
+
+    #[test]
+    fn classify_steam_folder_accepts_a_complete_install() {
+        let tmp = TempRoot::new("both").with_steam_exe().with_login_history();
+        assert_eq!(classify_steam_folder(&tmp.0), SteamFolder::Usable);
+    }
+
+    #[test]
+    fn classify_steam_folder_rejects_an_unrelated_folder() {
+        let tmp = TempRoot::new("neither");
+        assert_eq!(classify_steam_folder(&tmp.0), SteamFolder::NotSteam);
+    }
+
+    #[test]
+    fn classify_steam_folder_rejects_a_missing_path_and_a_plain_file() {
+        let tmp = TempRoot::new("not-a-dir");
+        assert_eq!(
+            classify_steam_folder(&tmp.0.join("does-not-exist")),
+            SteamFolder::NotADirectory
+        );
+        let file = tmp.0.join("Steam");
+        std::fs::write(&file, b"not a folder").expect("write file");
+        assert_eq!(classify_steam_folder(&file), SteamFolder::NotADirectory);
+    }
+
+    // The webview splits the message on the first '|' and translates the left
+    // half. Losing that shape would drop it back to matching English prose.
+    #[test]
+    fn coded_path_error_carries_the_code_then_the_english_fallback() {
+        let err = coded_path_error(STEAM_PATH_NEVER_SIGNED_IN, NEVER_SIGNED_IN_MESSAGE);
+        assert_eq!(err.kind, PlatformErrorKind::ClientNotInstalled);
+        assert_eq!(
+            err.message,
+            "steam_path_never_signed_in|Steam found, sign in once so it creates its login history"
+        );
+        let (code, english) = err.message.split_once('|').expect("code and fallback");
+        assert_eq!(code, STEAM_PATH_NEVER_SIGNED_IN);
+        assert_eq!(english, NEVER_SIGNED_IN_MESSAGE);
+    }
 
     #[test]
     fn validate_steam_id_accepts_17_digit_numeric() {

@@ -17,6 +17,8 @@ export interface SteamAccount {
   steam_id: string;
   account_name: string;
   persona_name: string;
+  /** Unix SECONDS: read verbatim out of Steam's loginusers.vdf, the one
+   * platform whose stamp is not `now_unix_ms`. */
   last_login_at?: number | null;
 }
 

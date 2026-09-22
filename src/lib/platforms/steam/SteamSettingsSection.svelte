@@ -24,7 +24,7 @@
     onCommitBanCheckDays = () => {},
     onRefreshAvatarsNow = async () => {},
     onRefreshBansNow = async () => {},
-    accent = "#2563eb",
+    accent = "var(--accent)",
     pathLabelKey = "settings.steamFolder",
     pathPlaceholder = "C:\\Program Files (x86)\\Steam",
     t,
@@ -255,14 +255,14 @@
   .inline-link-btn {
     border: none;
     background: transparent;
-    color: #60a5fa;
+    color: var(--accent-text);
     font-size: 12px;
     cursor: pointer;
     padding: 0;
   }
 
   .inline-link-btn:hover {
-    color: #93c5fd;
+    color: color-mix(in srgb, var(--accent-text) 80%, var(--fg));
     text-decoration: underline;
   }
 

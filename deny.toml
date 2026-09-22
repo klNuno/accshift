@@ -1,0 +1,110 @@
+# cargo-deny configuration for the accshift workspace.
+#
+# Run with `cargo deny check`. It reads the lockfile only, so it never
+# compiles anything and is cheap enough to run on every branch.
+
+[graph]
+# Check every target the workspace can be built for, not just the host. The
+# release workflow builds Windows, Linux and macOS, and each one pulls a
+# different half of the dependency tree (zbus on Linux, objc2 on macOS,
+# windows-sys on Windows). Leaving `targets` empty keeps all of them in scope.
+targets = []
+all-features = false
+
+[licenses]
+# Explicit allow-list, no wildcard: a new dependency arriving under a copyleft
+# or a non-OSI licence has to be looked at by a human before it lands.
+#
+# Every entry below is a licence cargo-deny actually reported for the current
+# lockfile. Crates offering a choice (`MIT OR Apache-2.0` and friends) are
+# satisfied by one of these, so licences that only ever appear as the third
+# arm of such a choice are deliberately absent.
+allow = [
+  "0BSD",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "CC0-1.0",
+  "CDLA-Permissive-2.0",
+  "ISC",
+  "MIT",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Unlicense",
+  "Zlib",
+]
+confidence-threshold = 0.8
+
+# The three workspace members carry no `license` field of their own. They are
+# never published to a registry and the repository ships a single MIT LICENSE
+# at its root, which is what they are covered by.
+[[licenses.clarify]]
+crate = "accshift-gui"
+expression = "MIT"
+license-files = []
+
+[[licenses.clarify]]
+crate = "accshift-core"
+expression = "MIT"
+license-files = []
+
+[[licenses.clarify]]
+crate = "accshift-cli"
+expression = "MIT"
+license-files = []
+
+[bans]
+multiple-versions = "allow"
+# The only wildcard requirements in this graph are the path dependencies
+# between workspace members, which carry no version by design.
+# `allow-wildcard-paths` does not cover them, since it only applies to crates
+# marked `publish = false`.
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+[advisories]
+version = 2
+# Unmaintained advisories stay switched on for the whole graph, so a new one
+# shows up instead of passing silently. Vulnerability, unsound and yanked
+# checks are untouched.
+unmaintained = "all"
+yanked = "deny"
+ignore = [
+  # Every entry below is an `unmaintained` advisory on a crate we never depend
+  # on directly. All of them arrive through Tauri, none has a fixed release to
+  # upgrade to, and none can be dropped without Tauri dropping it first.
+  # Reviewed 2026-09-03; revisit when Tauri moves off GTK3 and off urlpattern.
+
+  # unic-*: accshift-gui -> tauri 2.11.5 -> tauri-utils 2.9.3 -> urlpattern
+  # 0.3.0 -> unic-ucd-ident 0.9.0 -> unic-ucd-version / unic-common /
+  # unic-char-property / unic-char-range. The whole family was archived at
+  # once, so it is five advisories for one dependency.
+  { id = "RUSTSEC-2025-0075", reason = "unic-char-range unmaintained, transitive through tauri -> tauri-utils -> urlpattern -> unic-ucd-ident, reviewed 2026-09-03" },
+  { id = "RUSTSEC-2025-0080", reason = "unic-common unmaintained, transitive through tauri -> tauri-utils -> urlpattern -> unic-ucd-ident, reviewed 2026-09-03" },
+  { id = "RUSTSEC-2025-0081", reason = "unic-char-property unmaintained, transitive through tauri -> tauri-utils -> urlpattern -> unic-ucd-ident, reviewed 2026-09-03" },
+  { id = "RUSTSEC-2025-0098", reason = "unic-ucd-version unmaintained, transitive through tauri -> tauri-utils -> urlpattern -> unic-ucd-ident, reviewed 2026-09-03" },
+  { id = "RUSTSEC-2025-0100", reason = "unic-ucd-ident unmaintained, transitive through tauri -> tauri-utils -> urlpattern, reviewed 2026-09-03" },
+
+  # gtk-rs GTK3 bindings, Linux builds only:
+  # accshift-gui -> tauri -> tauri-runtime-wry -> tao 0.35.3 / wry 0.55.1 ->
+  # gtk 0.18 and its -sys crates. Tauri 2 has no GTK4 backend yet.
+  { id = "RUSTSEC-2024-0411", reason = "gtk-rs GTK3 bindings unmaintained, transitive through tauri -> tauri-runtime-wry -> tao, reviewed 2026-09-03" },
+  { id = "RUSTSEC-2024-0412", reason = "gtk-rs GTK3 bindings unmaintained, transitive through tauri -> tauri-runtime-wry -> tao, reviewed 2026-09-03" },
+  { id = "RUSTSEC-2024-0413", reason = "gtk-rs GTK3 bindings unmaintained, transitive through tauri -> tauri-runtime-wry -> tao, reviewed 2026-09-03" },
+  { id = "RUSTSEC-2024-0414", reason = "gtk-rs GTK3 bindings unmaintained, transitive through tauri -> tauri-runtime-wry -> tao, reviewed 2026-09-03" },
+  { id = "RUSTSEC-2024-0415", reason = "gtk-rs GTK3 bindings unmaintained, transitive through tauri -> tauri-runtime-wry -> tao, reviewed 2026-09-03" },
+  { id = "RUSTSEC-2024-0416", reason = "gtk-rs GTK3 bindings unmaintained, transitive through tauri -> tauri-runtime-wry -> tao, reviewed 2026-09-03" },
+  { id = "RUSTSEC-2024-0417", reason = "gtk-rs GTK3 bindings unmaintained, transitive through tauri -> tauri-runtime-wry -> tao, reviewed 2026-09-03" },
+  { id = "RUSTSEC-2024-0418", reason = "gtk-rs GTK3 bindings unmaintained, transitive through tauri -> tauri-runtime-wry -> tao, reviewed 2026-09-03" },
+  { id = "RUSTSEC-2024-0419", reason = "gtk-rs GTK3 bindings unmaintained, transitive through tauri -> tauri-runtime-wry -> tao, reviewed 2026-09-03" },
+  { id = "RUSTSEC-2024-0420", reason = "gtk-rs GTK3 bindings unmaintained, transitive through tauri -> tauri-runtime-wry -> tao, reviewed 2026-09-03" },
+
+  # Build-time proc macro of those same GTK3 bindings:
+  # tao -> gtk 0.18 -> glib-macros 0.18.5 -> proc-macro-error 1.0.4.
+  { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained, build-time transitive through tao -> gtk -> glib-macros, reviewed 2026-09-03" },
+]

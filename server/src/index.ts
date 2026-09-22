@@ -818,15 +818,17 @@ function allowedOrigins(env: Env): Set<string> {
   );
 }
 
-function cors(res: Response, request: Request, env: Env): Response {
+export function cors(res: Response, request: Request, env: Env): Response {
   const h = new Headers(res.headers);
   const origin = request.headers.get("Origin");
   const allowed = allowedOrigins(env);
+  // A request with no Origin is a native client: the app and the CLI both send
+  // none, and neither one asks a browser for permission. It gets no header at
+  // all. Answering `null` would have granted exactly one origin, and `null` is
+  // the origin every sandboxed iframe and every data: document sends.
   if (origin && allowed.has(origin)) {
     h.set("Access-Control-Allow-Origin", origin);
     h.set("Vary", "Origin");
-  } else if (!origin) {
-    h.set("Access-Control-Allow-Origin", "null");
   }
   h.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   h.set("Access-Control-Allow-Headers", "Content-Type, Authorization");

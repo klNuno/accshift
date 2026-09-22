@@ -20,6 +20,11 @@ type SecureScreenDeps = {
   getIsAccountSelectionView: () => boolean;
   getAppVersion: () => string;
   onCloseContextMenu: () => void;
+  /**
+   * Write a PBKDF2 hash that just replaced a legacy unsalted one. Called at
+   * most once per legacy PIN, right after it unlocked the screen.
+   */
+  persistPinHash: (hash: string) => void;
   t: (key: MessageKey, params?: TranslationParams) => string;
 };
 
@@ -35,6 +40,7 @@ export function createSecureScreenController({
   getIsAccountSelectionView,
   getAppVersion,
   onCloseContextMenu,
+  persistPinHash,
   t,
 }: SecureScreenDeps) {
   const startupPinLocked = Boolean(
@@ -168,7 +174,7 @@ export function createSecureScreenController({
     if (attemptPin.length !== PIN_CODE_LENGTH || isPinRetryLocked) return;
     isPinUnlocking = true;
     pinError = "";
-    const matches = await verifyPinCode(attemptPin, expectedPinHash);
+    const { matches, rehashed } = await verifyPinCode(attemptPin, expectedPinHash);
     if (!matches) {
       isPinUnlocking = false;
       isPinRetryLocked = true;
@@ -184,6 +190,10 @@ export function createSecureScreenController({
       }, PIN_FAILURE_DELAY_MS);
       return;
     }
+    // The unlock succeeded against the old unsalted hash. Store the PBKDF2
+    // one now, while the digits are still in hand, so the next unlock (here
+    // or in the CLI) runs the salted path.
+    if (rehashed) persistPinHash(rehashed);
     pinAttempt = "";
     setTimeout(() => {
       isPinLocked = false;

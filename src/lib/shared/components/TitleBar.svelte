@@ -2,6 +2,8 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { listen } from "@tauri-apps/api/event";
+  import { measureMaximizeButton, sameRect, type MaximizeButtonRect } from "../snapLayouts";
   import type { PlatformDef } from "../platform";
   import { PLATFORM_ICON_PATHS, PERSONAS_ICON_PATH, PERSONAS_ACCENT } from "../platformIcons";
   import { DEFAULT_LOCALE, translate, type Locale } from "$lib/i18n";
@@ -60,6 +62,58 @@
 
   const isMacOs = $derived(runtimeOs === "macos");
   let isMaximized = $state(false);
+
+  // Windows 11 Snap Layouts: the flyout only opens over a rectangle the window
+  // reports as the maximize button, and on a frameless window nothing does
+  // that on its own. We measure our own button and hand it to the backend,
+  // which then answers HTMAXBUTTON there. Windows owns that rectangle from
+  // then on, so pointer events stop reaching the webview and the hover state
+  // comes back as an event instead of CSS :hover.
+  let maximizeButton = $state<HTMLButtonElement | null>(null);
+  let snapHover = $state(false);
+  let reportedRect: MaximizeButtonRect | null = null;
+
+  function reportMaximizeButton(rect: MaximizeButtonRect | null) {
+    if (sameRect(rect, reportedRect)) return;
+    reportedRect = rect;
+    if (!rect) snapHover = false;
+    invoke("set_maximize_button_rect", { rect }).catch(() => {});
+  }
+
+  $effect(() => {
+    // Everything that can move or hide the button: the button itself, the
+    // three things drawn to its left, and the icon swap.
+    const button = maximizeButton;
+    void isMacOs;
+    void hideActions;
+    void updateCtaLabel;
+    void isMaximized;
+
+    if (!button) {
+      reportMaximizeButton(null);
+      return;
+    }
+
+    const measure = () => reportMaximizeButton(measureMaximizeButton(button));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(button);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  });
+
+  onMount(() => {
+    const unlisten = listen<boolean>("titlebar:maximize-hover", (event) => {
+      snapHover = event.payload;
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+      reportMaximizeButton(null);
+    };
+  });
 
   onMount(() => {
     const win = getCurrentWindow();
@@ -230,7 +284,13 @@
           </svg>
         </button>
 
-        <button class="win-btn" onclick={toggleMaximize} title={translate(locale, isMaximized ? "titlebar.restore" : "titlebar.maximize")}>
+        <button
+          class="win-btn"
+          class:snap-hover={snapHover}
+          bind:this={maximizeButton}
+          onclick={toggleMaximize}
+          title={translate(locale, isMaximized ? "titlebar.restore" : "titlebar.maximize")}
+        >
           {#if isMaximized}
             <svg width="12" height="12" viewBox="0 0 12 12">
               <rect x="1.6" y="3.4" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1.2" />
@@ -326,7 +386,7 @@
     pointer-events: none;
     opacity: 0;
     transition: opacity 120ms ease-out;
-    z-index: 100;
+    z-index: var(--z-sticky);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   }
 
@@ -408,8 +468,8 @@
   }
 
   .btn.active-mode {
-    background: color-mix(in srgb, #2563eb 24%, var(--bg-muted));
-    color: #60a5fa;
+    background: color-mix(in srgb, var(--accent) 24%, var(--bg-muted));
+    color: var(--accent-text);
   }
 
   .right {
@@ -476,7 +536,10 @@
     transition: transform 120ms ease-out;
   }
 
-  .win-btn:hover {
+  .win-btn:hover,
+  /* Windows 11 owns the maximize button's rectangle as non-client area, so
+     :hover never fires there. The backend reports the hover instead. */
+  .win-btn.snap-hover {
     background: var(--bg-muted);
     color: var(--fg);
   }

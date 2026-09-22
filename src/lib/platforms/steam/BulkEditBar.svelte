@@ -299,7 +299,7 @@
     bottom: 0;
     left: 0;
     right: 0;
-    z-index: 100;
+    z-index: var(--z-sticky);
     background: var(--bg-overlay);
     border-top: 1px solid var(--border);
     padding: 8px 16px;
@@ -368,7 +368,7 @@
     position: absolute;
     bottom: calc(100% + 6px);
     left: 0;
-    z-index: 101;
+    z-index: var(--z-sticky-popover);
     display: flex;
     gap: 6px;
     padding: 7px 8px;
@@ -427,8 +427,8 @@
     padding: 5px 12px;
     border: 1px solid transparent;
     border-radius: 6px;
-    background: #2563eb;
-    color: #fff;
+    background: var(--accent);
+    color: var(--accent-fg);
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
@@ -436,7 +436,7 @@
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: #1d4ed8;
+    background: color-mix(in srgb, var(--accent) 88%, #000 12%);
   }
 
   .btn-primary:disabled {
@@ -449,7 +449,7 @@
   .overlay {
     position: fixed;
     inset: 0;
-    z-index: 1100;
+    z-index: var(--z-dialog);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -532,7 +532,7 @@
   }
 
   .tri-state-btn.active {
-    border-color: color-mix(in srgb, #2563eb 50%, var(--border));
+    border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
     color: var(--fg);
   }
 

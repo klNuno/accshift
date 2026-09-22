@@ -622,50 +622,6 @@ fn decrypted_copy_dir(source: &Path, target: &Path, ignored_names: &[&str]) -> R
     snapshot_crypto::decrypted_copy_dir(source, target, riot_dir_copy_options(ignored_names))
 }
 
-/// Copy a file verbatim, no encryption. Used only for the transient rollback
-/// backup in `restore_live_snapshot`: the source is already plaintext on disk
-/// at its live location, and the backup is deleted again within the same call.
-fn plain_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-    }
-    fs::copy(source, dest).map(|_| ()).map_err(|e| {
-        format!(
-            "Could not copy {} to {}: {e}",
-            source.display(),
-            dest.display()
-        )
-    })
-}
-
-/// Recursively copy a directory verbatim, no encryption. See `plain_copy_file`.
-fn plain_copy_dir(source: &Path, target: &Path, ignored_names: &[&str]) -> Result<(), String> {
-    if !source.exists() {
-        return Ok(());
-    }
-    fs::create_dir_all(target)
-        .map_err(|e| format!("Could not create directory {}: {e}", target.display()))?;
-    for entry in fs::read_dir(source)
-        .map_err(|e| format!("Could not read directory {}: {e}", source.display()))?
-    {
-        let entry = entry.map_err(|e| format!("Could not read directory entry: {e}"))?;
-        let src_path = entry.path();
-        let file_name = entry.file_name();
-        let name = file_name.to_string_lossy();
-        if ignored_names.iter().any(|i| i.eq_ignore_ascii_case(&name)) {
-            continue;
-        }
-        let dst_path = target.join(name.as_ref());
-        if src_path.is_dir() {
-            plain_copy_dir(&src_path, &dst_path, ignored_names)?;
-        } else {
-            plain_copy_file(&src_path, &dst_path)?;
-        }
-    }
-    Ok(())
-}
-
 /// Free the OS-keyring entries a profile's encrypted snapshot files point at.
 ///
 /// On Linux/macOS `os::encrypt_bytes` stores the real plaintext in the keyring
@@ -978,14 +934,23 @@ fn clear_live_riot_setup_state(install_dir: Option<&Path>) -> Result<(), String>
     Ok(())
 }
 
-/// Copy every live Riot item into a fresh temp directory so a failure partway
-/// through `restore_live_snapshot`'s copy loop can be rolled back instead of
-/// leaving a mix of the old and new profile's data. Returns the rollback
-/// directory on success; the caller must remove it once it is no longer
-/// needed (on both the success and the failure path).
-fn backup_live_state_for_rollback(install_dir: Option<&Path>) -> Result<PathBuf, String> {
+/// Copy every live Riot item into a fresh rollback directory so a failure
+/// partway through `restore_live_snapshot`'s copy loop can be rolled back
+/// instead of leaving a mix of the old and new profile's data. Returns the
+/// rollback directory on success; the caller must discard it once it is no
+/// longer needed (on both the success and the failure path), through
+/// `discard_rollback_dir` so the keyring entries go with it.
+///
+/// The copy is encrypted like any other snapshot and lives under the app's own
+/// state directory. It used to be a plaintext copy in the system temp
+/// directory, where a crash mid-restore left Riot auth tokens in the clear in a
+/// world-readable place with nothing to sweep them.
+fn backup_live_state_for_rollback(
+    app_handle: &dyn AppContext,
+    install_dir: Option<&Path>,
+) -> Result<PathBuf, String> {
     let rollback_dir =
-        std::env::temp_dir().join(format!("accshift-riot-rollback-{}", Uuid::new_v4()));
+        crate::storage::riot_rollback_dir(app_handle)?.join(Uuid::new_v4().to_string());
     fs::create_dir_all(&rollback_dir).map_err(|e| {
         format!(
             "Could not create Riot rollback dir {}: {e}",
@@ -994,22 +959,206 @@ fn backup_live_state_for_rollback(install_dir: Option<&Path>) -> Result<PathBuf,
     })?;
 
     for item in RIOT_SNAPSHOT_ITEMS {
-        let Some(source_path) = live_path_for(item, install_dir)? else {
-            continue;
+        let source_path = match live_path_for(item, install_dir) {
+            Ok(Some(path)) => path,
+            Ok(None) => continue,
+            Err(e) => {
+                discard_rollback_dir(app_handle, &rollback_dir);
+                return Err(e);
+            }
         };
         if !source_path.exists() {
             continue;
         }
         let target_path = rollback_dir.join(item.snapshot_name);
-        match item.kind {
-            RiotSnapshotKind::Directory => {
-                plain_copy_dir(&source_path, &target_path, item.ignored_names)?
-            }
-            RiotSnapshotKind::File => plain_copy_file(&source_path, &target_path)?,
+        // A backup that stopped halfway is useless and would otherwise sit on
+        // disk holding auth material until the next launch sweeps it.
+        if let Err(e) = copy_item_into_rollback(&source_path, &target_path, item) {
+            discard_rollback_dir(app_handle, &rollback_dir);
+            return Err(e);
         }
     }
 
     Ok(rollback_dir)
+}
+
+/// Copy one live item into the rollback directory, encrypted like any other
+/// snapshot file.
+fn copy_item_into_rollback(
+    source: &Path,
+    target: &Path,
+    item: &RiotSnapshotItem,
+) -> Result<(), String> {
+    match item.kind {
+        RiotSnapshotKind::Directory => encrypted_copy_dir(source, target, item.ignored_names),
+        RiotSnapshotKind::File => encrypted_copy_file(source, target),
+    }
+}
+
+/// Put one item from the rollback directory back at its live location,
+/// decrypting it on the way.
+fn restore_item_from_rollback(
+    source: &Path,
+    target: &Path,
+    item: &RiotSnapshotItem,
+) -> Result<(), String> {
+    match item.kind {
+        RiotSnapshotKind::Directory => decrypted_copy_dir(source, target, item.ignored_names),
+        RiotSnapshotKind::File => decrypted_copy_file(source, target),
+    }
+}
+
+/// Free the keyring entries the encrypted rollback copy points at, then remove
+/// it. Called on every exit path of `restore_live_snapshot` that still runs.
+fn discard_rollback_dir(app_handle: &dyn AppContext, rollback_dir: &Path) {
+    free_snapshot_secrets(app_handle, rollback_dir);
+    if let Err(e) = fs::remove_dir_all(rollback_dir) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            log_platform_error(
+                app_handle,
+                "riot.restore_rollback",
+                "Could not remove the Riot rollback copy",
+                format!("dir={} error={e}", rollback_dir.display()),
+            );
+        }
+    }
+}
+
+/// Name prefix of the plaintext rollback copies earlier builds wrote straight
+/// into the system temp directory. Nothing ever swept them, so a
+/// crash mid-restore left Riot auth material there until the user cleaned the
+/// directory by hand.
+const LEGACY_ROLLBACK_PREFIX: &str = "accshift-riot-rollback-";
+
+/// Outcome of one rollback sweep.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RollbackSweepStats {
+    /// Rollback copies removed.
+    pub removed: usize,
+    /// Rollback copies that could not be removed. The next launch tries again.
+    pub failed: usize,
+}
+
+impl RollbackSweepStats {
+    fn merge(&mut self, other: RollbackSweepStats) {
+        self.removed += other.removed;
+        self.failed += other.failed;
+    }
+
+    /// True when the pass had anything to report. Nothing to sweep is the
+    /// normal case on every launch, and says nothing worth logging.
+    pub fn touched_anything(&self) -> bool {
+        self.removed > 0 || self.failed > 0
+    }
+}
+
+/// Remove every rollback copy an earlier run left behind: the encrypted ones
+/// under the app's state directory, and the plaintext ones older builds wrote
+/// into the system temp directory.
+///
+/// A restore removes its own copy on every exit path, so anything found here
+/// belongs to a process that died mid-restore. Call it once per launch, off
+/// the boot path: on Linux and macOS each freed file costs a keyring round
+/// trip.
+pub fn sweep_rollback_dirs(
+    app_handle: &dyn AppContext,
+    report: &mut dyn FnMut(&str, String),
+) -> RollbackSweepStats {
+    let mut stats = RollbackSweepStats::default();
+    match crate::storage::riot_rollback_dir(app_handle) {
+        Ok(root) => stats.merge(sweep_rollback_root(&root, report)),
+        Err(detail) => report("Could not resolve the Riot rollback directory", detail),
+    }
+    stats.merge(sweep_legacy_rollback_dirs(&std::env::temp_dir(), report));
+    stats
+}
+
+/// Free the keyring entries of every leftover rollback copy under `root`, then
+/// remove them and the (now empty) root. A missing root is the normal case.
+fn sweep_rollback_root(root: &Path, report: &mut dyn FnMut(&str, String)) -> RollbackSweepStats {
+    let mut stats = RollbackSweepStats::default();
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(e) => {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                report(
+                    "Could not enumerate the Riot rollback directory",
+                    format!("dir={} error={e}", root.display()),
+                );
+            }
+            return stats;
+        }
+    };
+
+    for entry in entries.flatten() {
+        // A symlink planted here must not steer the removal at its target.
+        if crate::fs_utils::is_reparse_point(&entry) {
+            continue;
+        }
+        let path = entry.path();
+        if path.is_dir() {
+            snapshot_crypto::free_dir_secrets_with_errors(&path, report);
+        } else {
+            snapshot_crypto::delete_encrypted_file_secret(&path);
+        }
+        match remove_path_if_exists(&path) {
+            Ok(()) => stats.removed += 1,
+            Err(detail) => {
+                stats.failed += 1;
+                report("Could not remove a leftover Riot rollback copy", detail);
+            }
+        }
+    }
+
+    // Empty now, unless something failed above. Either way this is best-effort.
+    let _ = fs::remove_dir(root);
+    stats
+}
+
+/// Remove the plaintext rollback directories older builds left in `temp_dir`.
+/// Only entries whose name is the historical prefix followed by a UUID are
+/// touched, so an unrelated directory is never removed. They hold no keyring
+/// token: the copy was written in the clear.
+fn sweep_legacy_rollback_dirs(
+    temp_dir: &Path,
+    report: &mut dyn FnMut(&str, String),
+) -> RollbackSweepStats {
+    let mut stats = RollbackSweepStats::default();
+    let Ok(entries) = fs::read_dir(temp_dir) else {
+        // An unreadable temp directory is not worth a log line: nothing else
+        // in the app would work either.
+        return stats;
+    };
+
+    for entry in entries.flatten() {
+        if crate::fs_utils::is_reparse_point(&entry) {
+            continue;
+        }
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+        let Some(suffix) = name.strip_prefix(LEGACY_ROLLBACK_PREFIX) else {
+            continue;
+        };
+        if Uuid::parse_str(suffix).is_err() {
+            continue;
+        }
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        match fs::remove_dir_all(&path) {
+            Ok(()) => stats.removed += 1,
+            Err(e) => {
+                stats.failed += 1;
+                report(
+                    "Could not remove a legacy plaintext Riot rollback copy",
+                    format!("dir={} error={e}", path.display()),
+                );
+            }
+        }
+    }
+
+    stats
 }
 
 /// Undo a partially-applied restore: wipe whatever the failed copy loop left
@@ -1040,13 +1189,7 @@ fn restore_live_state_from_rollback(
             Ok(Some(path)) => path,
             _ => continue,
         };
-        let result = match item.kind {
-            RiotSnapshotKind::Directory => {
-                plain_copy_dir(&source_path, &target_path, item.ignored_names)
-            }
-            RiotSnapshotKind::File => plain_copy_file(&source_path, &target_path),
-        };
-        if let Err(e) = result {
+        if let Err(e) = restore_item_from_rollback(&source_path, &target_path, item) {
             log_platform_error(
                 app_handle,
                 "riot.restore_rollback",
@@ -1080,18 +1223,26 @@ fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Resul
     // back to this backup instead of leaving a mix of the old and new
     // profile's data. If the backup itself can't be made, fail closed and
     // abort before touching anything live.
-    let rollback_dir = backup_live_state_for_rollback(install_dir.as_deref())?;
+    let rollback_dir = backup_live_state_for_rollback(app_handle, install_dir.as_deref())?;
 
     if let Err(e) = clear_live_riot_state(install_dir.as_deref()) {
         restore_live_state_from_rollback(app_handle, &rollback_dir, install_dir.as_deref());
-        let _ = fs::remove_dir_all(&rollback_dir);
+        discard_rollback_dir(app_handle, &rollback_dir);
         return Err(e);
     }
 
     for item in RIOT_SNAPSHOT_ITEMS {
         let source_path = snapshot_dir.join(item.snapshot_name);
-        let Some(target_path) = live_path_for(item, install_dir.as_deref())? else {
-            continue;
+        // The live state is already cleared here, so a path that cannot be
+        // resolved any more takes the same route as a failed copy.
+        let target_path = match live_path_for(item, install_dir.as_deref()) {
+            Ok(Some(path)) => path,
+            Ok(None) => continue,
+            Err(e) => {
+                restore_live_state_from_rollback(app_handle, &rollback_dir, install_dir.as_deref());
+                discard_rollback_dir(app_handle, &rollback_dir);
+                return Err(e);
+            }
         };
 
         match item.kind {
@@ -1105,7 +1256,7 @@ fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Resul
                             &rollback_dir,
                             install_dir.as_deref(),
                         );
-                        let _ = fs::remove_dir_all(&rollback_dir);
+                        discard_rollback_dir(app_handle, &rollback_dir);
                         return Err(e);
                     }
                 }
@@ -1118,7 +1269,7 @@ fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Resul
                             &rollback_dir,
                             install_dir.as_deref(),
                         );
-                        let _ = fs::remove_dir_all(&rollback_dir);
+                        discard_rollback_dir(app_handle, &rollback_dir);
                         return Err(e);
                     }
                 } else if !item.optional {
@@ -1130,14 +1281,14 @@ fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Resul
                         &rollback_dir,
                         install_dir.as_deref(),
                     );
-                    let _ = fs::remove_dir_all(&rollback_dir);
+                    discard_rollback_dir(app_handle, &rollback_dir);
                     return Ok(false);
                 }
             }
         }
     }
 
-    let _ = fs::remove_dir_all(&rollback_dir);
+    discard_rollback_dir(app_handle, &rollback_dir);
     Ok(has_snapshot)
 }
 
@@ -2025,5 +2176,219 @@ riot-login:
         let yaml = "private: tok\n";
         assert!(yaml.len() < 1000);
         assert!(yaml_has_auth_tokens(yaml));
+    }
+}
+
+/// The rollback copy a restore stages while it replaces the live session: it
+/// holds real auth material, so where it lands, how it is written and when it
+/// is removed are all load-bearing.
+#[cfg(test)]
+mod rollback_tests {
+    use super::*;
+    use crate::secrets::backend;
+    use crate::snapshot_crypto::ENCRYPTED_HEADER;
+
+    struct TempCtx {
+        root: PathBuf,
+    }
+
+    impl AppContext for TempCtx {
+        fn app_config_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_data_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_local_data_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_cache_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.root.clone())
+        }
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "accshift-riot-rollback-test-{}-{}-{:?}",
+            tag,
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    /// The `RiotGamesPrivateSettings.yaml` entry: a required file item.
+    fn file_item() -> &'static RiotSnapshotItem {
+        RIOT_SNAPSHOT_ITEMS
+            .iter()
+            .find(|item| matches!(item.kind, RiotSnapshotKind::File))
+            .unwrap()
+    }
+
+    fn dir_item() -> &'static RiotSnapshotItem {
+        RIOT_SNAPSHOT_ITEMS
+            .iter()
+            .find(|item| matches!(item.kind, RiotSnapshotKind::Directory))
+            .unwrap()
+    }
+
+    #[test]
+    fn the_rollback_dir_lives_in_the_state_dir_not_in_temp() {
+        // Pure path check on a root that is nowhere near the system temp
+        // directory, which is exactly where this copy used to land in the
+        // clear for every process on the machine to read.
+        let ctx = TempCtx {
+            root: PathBuf::from("Z:").join("accshift-local"),
+        };
+        let dir = crate::storage::riot_rollback_dir(&ctx).unwrap();
+
+        assert!(
+            dir.ends_with(Path::new("state").join("riot-rollback")),
+            "{dir:?}"
+        );
+        assert!(dir.starts_with(crate::storage::app_local_data_root(&ctx).unwrap()));
+        assert!(!dir.starts_with(std::env::temp_dir()), "{dir:?}");
+    }
+
+    #[test]
+    fn the_rollback_copy_is_encrypted_and_decrypts_back() {
+        let root = scratch("roundtrip");
+        let live = root.join("live");
+        let rollback = root.join("rollback");
+        let restored = root.join("restored");
+        fs::create_dir_all(&live).unwrap();
+        let secret: &[u8] = b"riot private settings with an access_token in them";
+        fs::write(live.join("settings.yaml"), secret).unwrap();
+
+        let item = file_item();
+        copy_item_into_rollback(
+            &live.join("settings.yaml"),
+            &rollback.join(item.snapshot_name),
+            item,
+        )
+        .unwrap();
+
+        let stored = fs::read(rollback.join(item.snapshot_name)).unwrap();
+        assert_ne!(stored.as_slice(), secret, "the copy is plaintext on disk");
+        assert!(stored.starts_with(ENCRYPTED_HEADER));
+
+        restore_item_from_rollback(
+            &rollback.join(item.snapshot_name),
+            &restored.join("settings.yaml"),
+            item,
+        )
+        .unwrap();
+        assert_eq!(fs::read(restored.join("settings.yaml")).unwrap(), secret);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn discarding_the_rollback_copy_frees_every_entry_it_owns() {
+        // On Linux and macOS each encrypted file points at a keyring entry.
+        // Removing the directory without freeing them leaks one per file, for
+        // good: nothing can list the store to find them again.
+        let root = scratch("discard");
+        let live = root.join("live").join("Sessions");
+        fs::create_dir_all(live.join("nested")).unwrap();
+        fs::write(live.join("session.json"), b"token-a").unwrap();
+        fs::write(live.join("nested").join("more.json"), b"token-b").unwrap();
+        let ctx = TempCtx { root: root.clone() };
+        let before = backend::entry_count();
+
+        let item = dir_item();
+        let rollback = root.join("rollback");
+        copy_item_into_rollback(&live, &rollback.join(item.snapshot_name), item).unwrap();
+        assert_eq!(backend::entry_count(), before + 2);
+
+        discard_rollback_dir(&ctx, &rollback);
+
+        assert!(!rollback.exists());
+        assert_eq!(backend::entry_count(), before);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_sweep_removes_a_stale_rollback_copy_and_its_entries() {
+        let root = scratch("sweep-state");
+        let live = root.join("live");
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("settings.yaml"), b"stranded-token").unwrap();
+        let ctx = TempCtx { root: root.clone() };
+        let before = backend::entry_count();
+
+        // What a process killed mid-restore leaves behind.
+        let rollback_root = crate::storage::riot_rollback_dir(&ctx).unwrap();
+        let stale = rollback_root.join(Uuid::new_v4().to_string());
+        copy_item_into_rollback(
+            &live.join("settings.yaml"),
+            &stale.join("RiotGamesPrivateSettings.yaml"),
+            file_item(),
+        )
+        .unwrap();
+        assert_eq!(backend::entry_count(), before + 1);
+
+        let mut reports = Vec::new();
+        // The count is a lower bound on purpose: this call also sweeps the
+        // real temp directory, which may hold a legacy copy from an actual
+        // run on this machine.
+        let stats = sweep_rollback_dirs(&ctx, &mut |m, d| reports.push(format!("{m}: {d}")));
+
+        assert!(stats.removed >= 1, "{stats:?}");
+        assert_eq!(stats.failed, 0);
+        assert!(reports.is_empty(), "{reports:?}");
+        assert!(!stale.exists());
+        assert!(!rollback_root.exists(), "the empty root goes too");
+        assert_eq!(backend::entry_count(), before);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_clean_store_sweeps_silently() {
+        // A rollback directory that was never created is the normal case on
+        // every launch, and says nothing worth logging.
+        let root = scratch("sweep-clean");
+        let ctx = TempCtx { root: root.clone() };
+
+        let mut reports = Vec::new();
+        let stats = sweep_rollback_root(
+            &crate::storage::riot_rollback_dir(&ctx).unwrap(),
+            &mut |m, d| reports.push(format!("{m}: {d}")),
+        );
+
+        assert_eq!(stats, RollbackSweepStats::default());
+        assert!(!stats.touched_anything());
+        assert!(reports.is_empty(), "{reports:?}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_legacy_sweep_takes_the_old_temp_copies_and_leaves_the_rest_alone() {
+        let temp = scratch("sweep-legacy");
+        let legacy = temp.join(format!("{LEGACY_ROLLBACK_PREFIX}{}", Uuid::new_v4()));
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("RiotGamesPrivateSettings.yaml"), b"plaintext").unwrap();
+
+        // Neighbours in the same temp directory that must survive: another
+        // app's directory, our own snapshot test scratch, and a file whose
+        // name happens to start the same way without a UUID after it.
+        let unrelated = temp.join("some-other-app");
+        fs::create_dir_all(&unrelated).unwrap();
+        let near_miss = temp.join(format!("{LEGACY_ROLLBACK_PREFIX}not-a-uuid"));
+        fs::create_dir_all(&near_miss).unwrap();
+
+        let mut reports = Vec::new();
+        let stats =
+            sweep_legacy_rollback_dirs(&temp, &mut |m, d| reports.push(format!("{m}: {d}")));
+
+        assert_eq!(stats.removed, 1);
+        assert_eq!(stats.failed, 0);
+        assert!(reports.is_empty(), "{reports:?}");
+        assert!(!legacy.exists());
+        assert!(unrelated.exists());
+        assert!(near_miss.exists());
+        let _ = fs::remove_dir_all(&temp);
     }
 }

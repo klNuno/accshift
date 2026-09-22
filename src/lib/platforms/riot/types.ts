@@ -6,7 +6,9 @@ export interface RiotProfile {
   account_name?: string;
   account_tag_line?: string;
   snapshot_state: RiotSnapshotState | string;
+  /** Unix MILLISECONDS (`platforms::now_unix_ms`). */
   last_captured_at?: number | null;
+  /** Unix MILLISECONDS (`platforms::now_unix_ms`). */
   last_used_at?: number | null;
 }
 

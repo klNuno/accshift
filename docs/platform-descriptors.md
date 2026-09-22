@@ -78,6 +78,15 @@ roots. A path that resolves outside them is refused at run time, and a template
 containing a `..` segment is refused at load time. `roots.registry` does the same
 for registry keys, as `{ "root": "HKCU", "key": "Software\\Acme" }`.
 
+A root is written against a short list of placeholders: `${installDir}` plus the
+well-known per-user and machine-wide directories of the OS the profile targets
+(`APPDATA`, `LOCALAPPDATA`, `ProgramData`, `ProgramFiles`, `ProgramFiles(x86)`,
+`PUBLIC`, `SystemDrive`, `USERPROFILE` on Windows; `HOME` and the `XDG_*` ones
+elsewhere). Anything else is refused at load. At run time every declared root
+must resolve on the machine: one that does not stops the operation with the root
+named, rather than being dropped, because a sandbox with no roots left would
+allow every path there is.
+
 This is the field to get right first. It is the only thing standing between a
 descriptor and the rest of the user's disk.
 
@@ -134,9 +143,12 @@ matter:
 - `clearOnSetup`: deleted when a setup flow clears the live session.
 - `removeLiveBeforeRestore`: for hidden or system files, which cannot be
   truncated in place on Windows.
-- `clearSnapshotWhenSourceMissing` (default true): drops a stale snapshot when
-  the live file is gone, so a later restore cannot resurrect another account's
-  file.
+- `clearSnapshotWhenSourceMissing` (default true), on files, directories and
+  registry values alike: drops a stale snapshot when the live source is gone at
+  capture time, so a later restore cannot resurrect another account's session.
+  Set it to false where a missing source means the launcher has not written it
+  back yet rather than the account signing out, or the capture throws away the
+  only copy the user has.
 
 `caches` are wiped after the incoming session is in place and never captured, and
 `captureWhen` guards the capture itself: a session the user signed out of by hand

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   buildBatch,
+  cors,
   eventTimestamp,
   maskIp,
   readJsonCapped,
   redactUuids,
+  type Env,
   type TelemetryEvent,
 } from "./index";
 
@@ -301,5 +303,39 @@ describe("maskIp", () => {
   it("never returns an address for an empty or unparseable input", () => {
     expect(maskIp("")).toBe("unknown");
     expect(maskIp("not-an-ip")).toBe("unknown");
+  });
+});
+
+describe("cors", () => {
+  const env = { ALLOWED_ORIGINS: "https://accshift.app,https://dash.accshift.app" } as Env;
+
+  function corsHeaders(origin?: string): Headers {
+    const headers = new Headers();
+    if (origin !== undefined) headers.set("Origin", origin);
+    const request = new Request("https://telemetry.invalid/track", { method: "POST", headers });
+    return cors(new Response(null, { status: 204 }), request, env).headers;
+  }
+
+  it("omits the allow-origin header entirely when the request carries no Origin", () => {
+    const headers = corsHeaders();
+
+    expect(headers.has("Access-Control-Allow-Origin")).toBe(false);
+    // The rest of the preflight answer still has to be there.
+    expect(headers.get("Access-Control-Allow-Methods")).toBe("GET, POST, OPTIONS");
+  });
+
+  it("refuses the literal null origin a sandboxed iframe sends", () => {
+    expect(corsHeaders("null").has("Access-Control-Allow-Origin")).toBe(false);
+  });
+
+  it("echoes an allow-listed origin and varies on it", () => {
+    const headers = corsHeaders("https://accshift.app");
+
+    expect(headers.get("Access-Control-Allow-Origin")).toBe("https://accshift.app");
+    expect(headers.get("Vary")).toBe("Origin");
+  });
+
+  it("says nothing about an origin that is not on the list", () => {
+    expect(corsHeaders("https://evil.invalid").has("Access-Control-Allow-Origin")).toBe(false);
   });
 });

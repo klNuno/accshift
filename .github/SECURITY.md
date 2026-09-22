@@ -82,6 +82,11 @@ iterations, 16-byte random salt, 32-byte output) and checked in constant time,
 so the hash in the settings file does not reveal the PIN. That is the whole of
 its job.
 
+A PIN set by an older version was stored as a plain SHA-256 of the digits, with
+no salt. That form is still accepted, but only once: the first unlock that
+clears it rewrites the settings file with the PBKDF2 hash described above, in
+the app and in the CLI alike.
+
 It derives no key and encrypts nothing. Session material is protected by the OS
 backends listed above, which are bound to your OS user session and not to the
 PIN. Someone already running code as your OS user therefore decrypts snapshots

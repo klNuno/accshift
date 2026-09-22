@@ -6,6 +6,8 @@ import {
   setClientStoreValue,
 } from "$lib/storage/clientStorage";
 const CURRENT_VERSION = 1;
+/** Every `itemOrder` key is either this prefix plus a platform id, or a folder id. */
+const ROOT_KEY_PREFIX = "root:";
 let cachedStore: FolderStore | null = null;
 let cachedStoreRevision = -1;
 
@@ -54,6 +56,12 @@ function sanitizeStore(value: unknown): FolderStore {
   for (const [key, entry] of Object.entries(itemOrderRaw)) {
     if (typeof key !== "string" || key.trim().length === 0) continue;
     if (!Array.isArray(entry)) continue;
+    // Dropping the dead folder from `folders` is not enough: its own bucket
+    // stays keyed by an id nothing points at any more, and it keeps whatever
+    // accounts were inside it alive forever. Only a platform root bucket or a
+    // live folder id is a key worth keeping.
+    const isRootKey = key.startsWith(ROOT_KEY_PREFIX) && key.length > ROOT_KEY_PREFIX.length;
+    if (!isRootKey && !validFolderIds.has(key)) continue;
     const refs = entry
       .map(sanitizeItemRef)
       .filter((item): item is ItemRef => item !== null)
@@ -110,7 +118,7 @@ function generateId(): string {
 }
 
 export function getRootKey(platform: string): string {
-  return `root:${platform}`;
+  return `${ROOT_KEY_PREFIX}${platform}`;
 }
 
 export function getItemsInFolder(folderId: string | null, platform: string): ItemRef[] {
@@ -166,6 +174,30 @@ export function createFolder(name: string, parentId: string | null, platform: st
 
 export function getFolder(id: string): FolderInfo | undefined {
   return getStore().folders.find((f) => f.id === id);
+}
+
+/** Every folder of one platform, in creation order. */
+export function listFolders(platform: string): FolderInfo[] {
+  return getStore().folders.filter((f) => f.platform === platform);
+}
+
+/**
+ * The folder holding this item, or null when it sits at the platform root.
+ *
+ * The view's current folder is not an answer: sections mode shows accounts
+ * from several folders at once, so a move has to read the item's real bucket
+ * rather than the folder being browsed.
+ */
+export function findItemFolderId(itemRef: ItemRef, platform: string): string | null {
+  const store = getStore();
+  for (const folder of store.folders) {
+    if (folder.platform !== platform) continue;
+    const items = store.itemOrder[folder.id] || [];
+    if (items.some((item) => item.type === itemRef.type && item.id === itemRef.id)) {
+      return folder.id;
+    }
+  }
+  return null;
 }
 
 export function getFolderPath(folderId: string | null): FolderInfo[] {

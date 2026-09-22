@@ -7,7 +7,7 @@
   import type { MessageKey, TranslationParams } from "$lib/i18n";
 
   let {
-    accent = "#2563eb",
+    accent = "var(--accent)",
     t,
   }: {
     accent?: string;
