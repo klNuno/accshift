@@ -325,6 +325,8 @@ fn hash_pin_code(pin: &str) -> Option<String> {
 /// round-trip through it would drop the rest.
 fn upgrade_legacy_pin_hash(ctx: &dyn AppContext, pin: &str) -> Result<(), String> {
     let hash = hash_pin_code(pin).ok_or_else(|| "PIN is not 4 digits".to_string())?;
+    let _lock = accshift_core::lock::acquire_for_write(ctx, std::time::Duration::from_secs(5))
+        .map_err(|e| format!("could not lock settings for PIN upgrade: {e}"))?;
     let path = client_store_path(ctx, STORE_SETTINGS)?;
     let data = std::fs::read_to_string(&path)
         .map_err(|e| format!("could not read {}: {e}", path.display()))?;
@@ -333,6 +335,16 @@ fn upgrade_legacy_pin_hash(ctx: &dyn AppContext, pin: &str) -> Result<(), String
     let object = settings
         .as_object_mut()
         .ok_or_else(|| format!("{} is not a JSON object", path.display()))?;
+    // Settings may have changed while the PIN prompt was open. Migrate only
+    // the legacy PIN we verified, and preserve a newer PIN or removed hash.
+    if object
+        .get("pinHash")
+        .and_then(Value::as_str)
+        .map(|stored| verify_pin_code(pin, stored))
+        != Some(PinVerdict::AcceptedLegacy)
+    {
+        return Ok(());
+    }
     object.insert("pinHash".to_string(), Value::String(hash));
     save_client_store(ctx, STORE_SETTINGS, &settings).map(|_| ())
 }
@@ -623,6 +635,51 @@ mod tests {
         let value: Value = serde_json::from_str(&data).expect("parse settings file");
         assert_eq!(value["pinEnabled"], Value::Bool(true));
         assert_eq!(value["cliEnabled"], Value::Bool(true));
+    }
+
+    #[test]
+    fn upgrade_refuses_to_write_while_another_settings_writer_holds_the_lock() {
+        let tmp = TempRoot::new("upgrade-locked");
+        let ctx = TestCtx {
+            root: tmp.0.clone(),
+        };
+        let legacy = bytes_to_hex(&Sha256::digest(b"1234"));
+        let original = format!(r#"{{"pinHash":"{legacy}","theme":"light"}}"#);
+        let path = write_settings(&ctx, &original);
+        let lock_ctx = TestCtx {
+            root: tmp.0.clone(),
+        };
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let holder = std::thread::spawn(move || {
+            let _guard =
+                accshift_core::lock::acquire_exclusive(&lock_ctx, std::time::Duration::ZERO)
+                    .unwrap();
+            ready_tx.send(()).unwrap();
+            let _ = release_rx.recv();
+        });
+        ready_rx.recv().unwrap();
+        let result = upgrade_legacy_pin_hash(&ctx, "1234");
+        release_tx.send(()).unwrap();
+        holder.join().unwrap();
+        assert!(
+            result.is_err(),
+            "migration wrote through another writer's lock"
+        );
+        assert_eq!(fs::read_to_string(path).unwrap(), original);
+    }
+
+    #[test]
+    fn upgrade_preserves_a_pin_changed_since_the_prompt() {
+        let tmp = TempRoot::new("upgrade-new-pin");
+        let ctx = TestCtx {
+            root: tmp.0.clone(),
+        };
+        let new_hash = hash_pin_code("5678").unwrap();
+        let original = format!(r#"{{"pinHash":"{new_hash}","theme":"light"}}"#);
+        let path = write_settings(&ctx, &original);
+        upgrade_legacy_pin_hash(&ctx, "1234").unwrap();
+        assert_eq!(fs::read_to_string(path).unwrap(), original);
     }
 
     #[test]
