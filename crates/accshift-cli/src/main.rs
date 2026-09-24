@@ -10,6 +10,9 @@ use accshift_core::error::PlatformErrorKind;
 use accshift_core::lock::{acquire_exclusive, LockError};
 use accshift_core::platforms::descriptor::plan::DryRunPlan;
 use accshift_core::platforms::get_service;
+use accshift_core::platforms::steam::switch_params::{
+    steam_switch_params, PersonaMode, ShutdownMode, SteamSwitchDefaults, SteamSwitchOverrides,
+};
 use clap::{Parser, Subcommand};
 use context::CliAppContext;
 use output::{emit_err, emit_json_ok, Format};
@@ -398,6 +401,36 @@ struct SwitchOverrides {
     launch_options: Option<String>,
 }
 
+impl SwitchOverrides {
+    /// Flags left unset fall back to the GUI settings. clap refuses the
+    /// conflicting pairs, so each pair holds at most one flag.
+    fn into_steam(self) -> SteamSwitchOverrides {
+        let pick = |yes: bool, no: bool| match (yes, no) {
+            (true, _) => Some(true),
+            (_, true) => Some(false),
+            _ => None,
+        };
+        SteamSwitchOverrides {
+            run_as_admin: pick(self.admin, self.no_admin),
+            shutdown_mode: pick(self.force, self.graceful).map(|force| {
+                if force {
+                    ShutdownMode::Force
+                } else {
+                    ShutdownMode::Graceful
+                }
+            }),
+            persona: pick(self.invisible, self.online).map(|invisible| {
+                if invisible {
+                    PersonaMode::Invisible
+                } else {
+                    PersonaMode::Online
+                }
+            }),
+            launch_options: self.launch_options,
+        }
+    }
+}
+
 fn cmd_switch(
     format: Format,
     platform_id: &str,
@@ -448,50 +481,13 @@ fn cmd_switch(
         }
     };
 
-    let steam_defaults = app_settings.platform_settings.steam;
-
-    let run_as_admin = if overrides.admin {
-        true
-    } else if overrides.no_admin {
-        false
-    } else {
-        steam_defaults.run_as_admin
-    };
-
-    let shutdown = if overrides.force {
-        "force"
-    } else if overrides.graceful {
-        "graceful"
-    } else {
-        match steam_defaults.shutdown_mode.as_deref() {
-            Some("force") => "force",
-            Some("graceful") => "graceful",
-            _ => "graceful",
-        }
-    };
-
-    // Only force a persona mode when the user asked for one. A plain switch
-    // must not touch the account's existing online/invisible state.
-    let mode = if overrides.invisible {
-        Some("invisible")
-    } else if overrides.online {
-        Some("online")
-    } else {
-        None
-    };
-
-    let launch_options = overrides
-        .launch_options
-        .unwrap_or(steam_defaults.launch_options);
-
-    let mut params = json!({
-        "runAsAdmin": run_as_admin,
-        "launchOptions": launch_options,
-        "shutdownMode": shutdown,
-    });
-    if let Some(mode) = mode {
-        params["mode"] = json!(mode);
-    }
+    let saved = &app_settings.platform_settings.steam;
+    let defaults = SteamSwitchDefaults::from_settings(
+        saved.run_as_admin,
+        &saved.launch_options,
+        saved.shutdown_mode.as_deref(),
+    );
+    let params = steam_switch_params(&defaults, overrides.into_steam());
 
     match service.switch_account(ctx, account_id, params) {
         Ok(()) => {
@@ -657,6 +653,50 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn no_flags() -> SwitchOverrides {
+        SwitchOverrides {
+            online: false,
+            invisible: false,
+            graceful: false,
+            force: false,
+            admin: false,
+            no_admin: false,
+            launch_options: None,
+        }
+    }
+
+    #[test]
+    fn switch_flags_left_unset_keep_the_gui_defaults() {
+        assert_eq!(no_flags().into_steam(), SteamSwitchOverrides::default());
+    }
+
+    #[test]
+    fn each_switch_flag_maps_to_its_override() {
+        let steam = SwitchOverrides {
+            invisible: true,
+            force: true,
+            no_admin: true,
+            launch_options: Some(" -x ".into()),
+            ..no_flags()
+        }
+        .into_steam();
+        assert_eq!(steam.persona, Some(PersonaMode::Invisible));
+        assert_eq!(steam.shutdown_mode, Some(ShutdownMode::Force));
+        assert_eq!(steam.run_as_admin, Some(false));
+        assert_eq!(steam.launch_options.as_deref(), Some(" -x "));
+
+        let steam = SwitchOverrides {
+            online: true,
+            graceful: true,
+            admin: true,
+            ..no_flags()
+        }
+        .into_steam();
+        assert_eq!(steam.persona, Some(PersonaMode::Online));
+        assert_eq!(steam.shutdown_mode, Some(ShutdownMode::Graceful));
+        assert_eq!(steam.run_as_admin, Some(true));
+    }
 
     /// Every subcommand the binary answers, one per `Command`/`Diag` variant.
     /// Adding a subcommand means adding it here, and

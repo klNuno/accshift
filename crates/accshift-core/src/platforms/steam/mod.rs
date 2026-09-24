@@ -10,6 +10,7 @@ pub mod bans;
 pub mod bulk_edit;
 pub mod cs2_bridge;
 pub mod profile;
+pub mod switch_params;
 pub mod vdf;
 
 mod api_key;
