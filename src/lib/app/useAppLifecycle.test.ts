@@ -88,7 +88,10 @@ describe("external storage refresh", () => {
     const calls: string[] = [];
     mocks.changed = [CLIENT_STORE_SETTINGS];
 
-    await createLifecycle(vi.fn(), { enabledPlatforms: ["riot"], calls }).refreshExternalStorageState();
+    await createLifecycle(vi.fn(), {
+      enabledPlatforms: ["riot"],
+      calls,
+    }).refreshExternalStorageState();
 
     expect(calls).toEqual(["clear", "tab:riot", "load:riot"]);
   });

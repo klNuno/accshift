@@ -18,7 +18,11 @@ function cloneJson<T>(value: T): T {
  * Every leaf that differs between `before` and `after`. Objects are walked
  * key by key; lists and scalars are compared and replaced whole.
  */
-export function diffSettings(before: unknown, after: unknown, path: string[] = []): SettingsChange[] {
+export function diffSettings(
+  before: unknown,
+  after: unknown,
+  path: string[] = [],
+): SettingsChange[] {
   if (isPlainObject(before) && isPlainObject(after)) {
     const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
     return [...keys].flatMap((key) => diffSettings(before[key], after[key], [...path, key]));

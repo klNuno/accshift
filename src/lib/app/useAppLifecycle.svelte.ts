@@ -269,10 +269,7 @@ export function createAppLifecycleController({
           navigation.refreshCurrentItems();
           queueGridPadding();
         }
-      } else if (
-        anyOf(APP_CONFIG_TARGETS) ||
-        anyOf(activeCapabilities?.externalDataStores ?? [])
-      ) {
+      } else if (anyOf(APP_CONFIG_TARGETS) || anyOf(activeCapabilities?.externalDataStores ?? [])) {
         // No forced avatar refresh here: this runs on every window focus while the
         // platform client is running (its data stores change constantly), and the
         // profile cache TTL already covers avatar freshness.
