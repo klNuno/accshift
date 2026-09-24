@@ -50,27 +50,25 @@ pub struct SteamSettings {
     pub shutdown_mode: Option<String>,
 }
 
-pub fn load(ctx: &dyn AppContext) -> AppSettings {
-    let Ok(path) = client_store_path(ctx, STORE_SETTINGS) else {
-        eprintln!("Warning: could not resolve GUI settings path; using CLI defaults");
-        return AppSettings::default();
-    };
+/// The stored settings, or why they could not be read. A file that was never
+/// created reads as the defaults (fresh install, or the GUI never ran); an
+/// unreadable or corrupt one with no usable `.bak` is an error, so the CLI
+/// toggle it holds is never assumed open.
+pub fn try_load(ctx: &dyn AppContext) -> Result<AppSettings, String> {
+    let path = client_store_path(ctx, STORE_SETTINGS)?;
     // Same reader as the GUI, so a truncated file with a valid `.bak` next to
     // it resolves to the same settings in both.
-    match read_json_if_exists::<AppSettings>(&path) {
-        Ok(Some(settings)) => settings,
-        // The settings file has genuinely never been created (fresh install,
-        // or the GUI has never been run): safe to default open, there is
-        // nothing to fail closed against.
-        Ok(None) => AppSettings::default(),
-        // The file exists but is unreadable or corrupt, with no usable `.bak`.
-        // Nothing here guards anything: the PIN gate reads the same file
-        // through `accshift_core::pin` and fails closed on its own.
-        Err(e) => {
-            eprintln!("Warning: {e}; using CLI defaults");
-            AppSettings::default()
-        }
-    }
+    Ok(read_json_if_exists::<AppSettings>(&path)?.unwrap_or_default())
+}
+
+/// The stored settings, falling back to the defaults when they cannot be
+/// read. Only for values with a safe default, such as the Steam launch
+/// options; the CLI gate goes through `try_load`.
+pub fn load(ctx: &dyn AppContext) -> AppSettings {
+    try_load(ctx).unwrap_or_else(|e| {
+        eprintln!("Warning: {e}; using CLI defaults");
+        AppSettings::default()
+    })
 }
 
 #[cfg(test)]
@@ -171,5 +169,18 @@ mod tests {
         let settings = load(&ctx);
 
         assert!(!settings.cli_enabled);
+    }
+
+    #[test]
+    fn a_corrupt_settings_file_is_an_error_not_an_open_cli() {
+        let tmp = TempRoot::new("corrupt");
+        let ctx = TestCtx {
+            root: tmp.0.clone(),
+        };
+        write_settings(&ctx, br#"{"cliEnabled":fal"#);
+
+        assert!(try_load(&ctx).is_err());
+        // Callers with a safe default still get one.
+        assert!(!load(&ctx).platform_settings.steam.run_as_admin);
     }
 }

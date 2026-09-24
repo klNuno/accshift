@@ -159,13 +159,11 @@ enum CliGate {
 fn resolve_cli_gate() -> CliGate {
     match CliAppContext::new() {
         Err(reason) => CliGate::Unavailable(reason),
-        Ok(ctx) => {
-            if settings::load(&ctx).cli_enabled {
-                CliGate::Allow
-            } else {
-                CliGate::Disabled
-            }
-        }
+        Ok(ctx) => match settings::try_load(&ctx) {
+            Ok(stored) if stored.cli_enabled => CliGate::Allow,
+            Ok(_) => CliGate::Disabled,
+            Err(reason) => CliGate::Unavailable(reason),
+        },
     }
 }
 

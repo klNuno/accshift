@@ -165,10 +165,9 @@ Code 4 is retryable: the GUI and the CLI share one config, so a mutating
 operation takes an exclusive lock and a second one waits rather than corrupting
 it. Retry once the other instance finishes.
 
-Codes 6 and 7 are deliberate refusals, not failures. `list`, `switch` and
-`dry-run` respect the "Allow the accshift CLI" setting. `platforms`,
-`descriptors` and `diag` remain available when that setting is off. Switching
-also checks the PIN lock configured in the app. An automated pipeline that
+Codes 6 and 7 are deliberate refusals, not failures. Every subcommand respects
+the "Allow the accshift CLI" setting. Switching also checks the PIN lock
+configured in the app. An automated pipeline that
 starts returning 7 has been disabled through that setting. What the PIN
 lock does and does not protect is covered in the
 [security policy](../.github/SECURITY.md).
@@ -181,3 +180,7 @@ purpose. Until 1.0.4 the toggle only covered `list`, `switch` and `dry-run`, so
 `diag bundle` still wrote a report carrying the redacted config summary on a
 machine whose owner had switched the CLI off. Diagnostics stay reachable
 without the CLI: the app has its own diagnostics screen.
+
+A settings file that exists but cannot be read, with no usable `.bak` beside
+it, leaves the toggle unknown. Every subcommand then exits with 5 rather than
+assuming the CLI is allowed.
