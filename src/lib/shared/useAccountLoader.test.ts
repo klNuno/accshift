@@ -76,6 +76,19 @@ describe("load and switch overlap", () => {
     expect(loader.currentAccount).toBe("bob");
   });
 
+  it("keeps the account a load read when the switch is refused", async () => {
+    const { adapter, snapshot } = adapterWithPendingSnapshot();
+    adapter.switchAccount = vi.fn().mockRejectedValue(new Error("pin_locked"));
+    const loader = createAccountLoader(() => adapter);
+
+    const load = loader.load();
+    await loader.switchTo(bob);
+    snapshot.resolve({ accounts: [alice, bob], currentAccount: "alice" });
+    await load;
+
+    expect(loader.currentAccount).toBe("alice");
+  });
+
   it("still lets a newer load supersede an older one", async () => {
     const first = deferred<{ accounts: (typeof alice)[]; currentAccount: string }>();
     const second = deferred<{ accounts: (typeof alice)[]; currentAccount: string }>();

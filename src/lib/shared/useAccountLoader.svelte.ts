@@ -274,10 +274,6 @@ export function createAccountLoader(
   async function switchTo(account: PlatformAccount): Promise<boolean> {
     const adapter = getAdapter();
     if (!adapter || switching) return false;
-    // A load in flight read the current account before this switch: keep it
-    // from clobbering ours. Bumping latestLoadId instead dropped that load
-    // whole, and with it the only code that sets `loading` back to false.
-    currentAccountEpoch += 1;
     // Our own generation token: if a platform/tab change (clearForPlatformChange) or
     // another switchTo() happens while we await below, switchId stops matching and we
     // stop applying currentAccount/switching updates to state that no longer belongs to us.
@@ -294,6 +290,11 @@ export function createAccountLoader(
       await adapter.switchAccount(account);
       if (switchId !== latestSwitchId) return false;
       succeeded = true;
+      // A load in flight read the current account before this switch landed:
+      // keep it from clobbering ours. The epoch moves only here, so a refused
+      // switch leaves that load's value, which is still right, in place.
+      // Bumping latestLoadId instead dropped the load whole, and with it the
+      // only code that sets `loading` back to false.
       currentAccountEpoch += 1;
       currentAccount = account.id;
       // CS2 bridge: re-check the account we just left (Steam only, SteamID64),
