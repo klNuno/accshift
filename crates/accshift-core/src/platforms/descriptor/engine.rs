@@ -891,7 +891,8 @@ impl DescriptorService {
             .any(|path| path.exists())
     }
 
-    /// [`Self::has_snapshot`] under a snapshots folder already resolved.
+    /// Whether this account has anything worth restoring, under the
+    /// platform's snapshots folder resolved once by the caller.
     fn has_snapshot_in(&self, snapshots: Option<&Path>, account_id: &str) -> bool {
         snapshots.is_some_and(|dir| {
             self.markers_under(&dir.join(account_id))
@@ -2216,7 +2217,7 @@ fn dir_has_nonempty_file(dir: &Path) -> bool {
     false
 }
 
-//// One change a restore makes to the live state, decided and staged before
+/// One change a restore makes to the live state, decided and staged before
 /// any of them is applied.
 enum RestoreStep {
     File {
