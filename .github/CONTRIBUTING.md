@@ -45,7 +45,10 @@ pnpm run test:rust              # cargo test --workspace
 ```
 
 `pnpm run check` chains the Vite+ check, `check:frontend` and `check:rust` in one
-command.
+command. `pnpm gates` runs `check`, the frontend and worker tests, the worker
+typecheck, `fmt:check`, `clippy` and `test:rust`, then prints each exit code;
+`pnpm gates clippy rust` runs only the named gates. It needs
+`server/node_modules` installed. The frontend build is not part of it.
 
 Two details that are easy to miss locally:
 
