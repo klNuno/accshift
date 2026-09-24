@@ -4,9 +4,10 @@ use crate::platforms::{log_platform_error, log_platform_info, PlatformService, S
 use crate::{AppContext, AppCtx};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 use uuid::Uuid;
@@ -284,18 +285,236 @@ fn graceful_riot_quit() {
     kill_riot_client_processes();
 }
 
-fn prepare_clean_riot_launch(app_handle: &dyn AppContext) -> Result<(), String> {
+/// Where the detached setup launch of a profile stands. Kept in memory: a
+/// setup does not survive an app restart anyway.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SetupLaunch {
+    /// Waiting for the lock, or quitting the client and clearing the session.
+    Running,
+    /// The client was relaunched on a cleared session.
+    Launched,
+    /// The launch failed. The message is shown to the user.
+    Failed(String),
+}
+
+fn setup_launches() -> &'static Mutex<HashMap<String, SetupLaunch>> {
+    static LAUNCHES: OnceLock<Mutex<HashMap<String, SetupLaunch>>> = OnceLock::new();
+    LAUNCHES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn setup_launch(profile_id: &str) -> Option<SetupLaunch> {
+    setup_launches()
+        .lock()
+        .ok()
+        .and_then(|launches| launches.get(profile_id).cloned())
+}
+
+fn set_setup_launch(profile_id: &str, state: SetupLaunch) {
+    if let Ok(mut launches) = setup_launches().lock() {
+        launches.insert(profile_id.to_string(), state);
+    }
+}
+
+/// Record the end of a launch, unless a cancel already dropped the setup.
+fn finish_setup_launch(profile_id: &str, state: SetupLaunch) {
+    if let Ok(mut launches) = setup_launches().lock() {
+        if let Some(entry) = launches.get_mut(profile_id) {
+            *entry = state;
+        }
+    }
+}
+
+fn forget_setup_launch(profile_id: &str) {
+    if let Ok(mut launches) = setup_launches().lock() {
+        launches.remove(profile_id);
+    }
+}
+
+/// What the setup poll may do with the live client right now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SetupGate {
+    /// The client running now is not the one the setup launched.
+    Wait,
+    /// The setup launch failed.
+    Failed(String),
+    /// Read the client, and capture once the login is complete.
+    Observe,
+}
+
+fn setup_capture_gate(snapshot_state: &str, launch: Option<&SetupLaunch>) -> SetupGate {
+    match launch {
+        Some(SetupLaunch::Running) => SetupGate::Wait,
+        Some(SetupLaunch::Failed(error)) => SetupGate::Failed(error.clone()),
+        Some(SetupLaunch::Launched) => SetupGate::Observe,
+        // A pending setup this process never launched: whatever client runs
+        // now still holds the previous session.
+        None if snapshot_state == "setup_pending" => SetupGate::Wait,
+        None => SetupGate::Observe,
+    }
+}
+
+/// Whether the setup that spawned a launch still wants it once the launch
+/// holds the lock. A cancel may have run in between.
+fn setup_launch_still_wanted(cfg: &config::AppConfig, profile_id: &str) -> bool {
+    setup_launch(profile_id) == Some(SetupLaunch::Running)
+        && cfg.riot.current_profile_id == profile_id
+        && find_profile(cfg, profile_id)
+            .is_some_and(|profile| profile.snapshot_state == "setup_pending")
+}
+
+/// Body of the detached setup launch: take the operation lock, check the
+/// setup still wants its launch, run it, record the outcome.
+///
+/// The command that started the setup released the lock when it returned, so
+/// without taking it here the quit and the session wipe could run in the
+/// middle of a switch. The outcome is recorded before the lock is released,
+/// so the setup poll (which takes the same lock) never sees a stale state.
+fn run_riot_setup_launch(
+    app_handle: &dyn AppContext,
+    profile_id: &str,
+    lock_timeout: Duration,
+    launch: impl FnOnce() -> Result<(), String>,
+) {
+    let outcome = crate::lock::with_exclusive(app_handle, lock_timeout, || {
+        let cfg = config::load_config(app_handle);
+        if !setup_launch_still_wanted(&cfg, profile_id) {
+            forget_setup_launch(profile_id);
+            return Ok(());
+        }
+        let result = launch();
+        match &result {
+            Ok(()) => finish_setup_launch(profile_id, SetupLaunch::Launched),
+            Err(error) => finish_setup_launch(profile_id, SetupLaunch::Failed(error.clone())),
+        }
+        result
+    });
+    let error = match outcome {
+        Ok(Ok(())) => return,
+        Ok(Err(error)) => error,
+        Err(lock_error) => {
+            let error = format!("Could not start the Riot account setup: {lock_error}");
+            finish_setup_launch(profile_id, SetupLaunch::Failed(error.clone()));
+            error
+        }
+    };
+    log_platform_error(
+        app_handle,
+        "riot.setup_launch",
+        "Riot setup launch failed",
+        error,
+    );
+}
+
+/// Finish an operation that quit the client: relaunch it whether or not the
+/// work in between succeeded, so a failure never leaves it closed. The work's
+/// error wins over the launch's.
+fn relaunch_after_quit(
+    work: Result<(), String>,
+    launch: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    let launched = launch();
+    work.and(launched)
+}
+
+/// One setup poll's view of the client. Logged only when it changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SetupPollObservation {
+    profile_id: String,
+    lockfile: bool,
+    logged_in: bool,
+    persist: bool,
+    settings_ready: bool,
+    identity: bool,
+    can_capture: bool,
+}
+
+fn observation_changed(
+    last: &mut Option<SetupPollObservation>,
+    next: &SetupPollObservation,
+) -> bool {
+    if last.as_ref() == Some(next) {
+        return false;
+    }
+    *last = Some(next.clone());
+    true
+}
+
+/// Process-wide memory of the last logged setup poll.
+fn setup_poll_changed(next: &SetupPollObservation) -> bool {
+    static LAST: OnceLock<Mutex<Option<SetupPollObservation>>> = OnceLock::new();
+    LAST.get_or_init(|| Mutex::new(None))
+        .lock()
+        .map(|mut last| observation_changed(&mut last, next))
+        .unwrap_or(true)
+}
+
+/// Point `current_profile_id` away from profiles that are being removed.
+///
+/// It is left empty rather than moved to another profile: the session still
+/// live belongs to the removed profile (or to the new account of a cancelled
+/// setup), and the next switch backs the live session up into whatever
+/// profile is current. With none current, that switch saves nothing.
+fn release_current_profile(cfg: &mut config::AppConfig, removed_ids: &[String]) {
+    if removed_ids
+        .iter()
+        .any(|id| id == &cfg.riot.current_profile_id)
+    {
+        cfg.riot.current_profile_id = String::new();
+    }
+}
+
+/// A switch to a profile with no saved session opens the client's login
+/// screen, instead of relaunching whoever is signed in now under that profile.
+fn clear_live_for_target_without_snapshot(
+    restored: bool,
+    current_id: &str,
+    target_id: &str,
+) -> bool {
+    // Re-selecting the current profile keeps a login that waits for capture.
+    !restored && current_id != target_id
+}
+
+/// Wipe the live session so the client opens on its login screen, with the
+/// same rollback copy a restore uses in case the wipe stops halfway.
+fn clear_live_session_for_login(
+    app_handle: &dyn AppContext,
+    install_dir: Option<&Path>,
+) -> Result<(), String> {
+    let rollback_dir = backup_live_state_for_rollback(app_handle, install_dir)?;
+    let result = clear_live_riot_setup_state(install_dir);
+    if result.is_err() {
+        restore_live_state_from_rollback(app_handle, &rollback_dir, install_dir);
+    }
+    discard_rollback_dir(app_handle, &rollback_dir);
+    result
+}
+
+fn prepare_clean_riot_launch(install_dir: Option<&Path>) -> Result<(), String> {
     graceful_riot_quit();
-    clear_live_riot_setup_state(resolve_riot_install_dir(app_handle).as_deref())?;
+    clear_live_riot_setup_state(install_dir)?;
     kill_riot_client_processes();
     thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
     Ok(())
 }
 
-fn spawn_riot_setup_launch(app_handle: AppCtx, client_path: PathBuf) {
+/// Quit the client, clear its session and relaunch it on the login screen, in
+/// the background. The setup poll refuses to capture until this records that
+/// its own launch finished, so the previous account's session can never be
+/// captured into the new profile.
+fn spawn_riot_setup_launch(app_handle: AppCtx, profile_id: String, client_path: PathBuf) {
+    set_setup_launch(&profile_id, SetupLaunch::Running);
     tokio::task::spawn_blocking(move || {
-        let _ = prepare_clean_riot_launch(&app_handle);
-        let _ = launch_riot_client(&client_path);
+        run_riot_setup_launch(
+            &app_handle,
+            &profile_id,
+            super::SETUP_LAUNCH_LOCK_TIMEOUT,
+            || {
+                let prepared = prepare_clean_riot_launch(client_path.parent());
+                // Relaunch even when the clear stopped halfway, so the client
+                // is not left closed. The failure still fails the setup.
+                relaunch_after_quit(prepared, || launch_riot_client(&client_path))
+            },
+        );
     });
 }
 
@@ -379,28 +598,6 @@ fn profile_snapshot_dir(app_handle: &dyn AppContext, profile_id: &str) -> Result
     Ok(dir)
 }
 
-fn clear_directory(path: &Path) -> Result<(), String> {
-    if !path.exists() {
-        fs::create_dir_all(path)
-            .map_err(|e| format!("Could not create directory {}: {e}", path.display()))?;
-        return Ok(());
-    }
-    for entry in fs::read_dir(path)
-        .map_err(|e| format!("Could not read directory {}: {e}", path.display()))?
-    {
-        let entry = entry.map_err(|e| format!("Could not read directory entry: {e}"))?;
-        let entry_path = entry.path();
-        if entry_path.is_dir() {
-            fs::remove_dir_all(&entry_path)
-                .map_err(|e| format!("Could not remove directory {}: {e}", entry_path.display()))?;
-        } else {
-            fs::remove_file(&entry_path)
-                .map_err(|e| format!("Could not remove file {}: {e}", entry_path.display()))?;
-        }
-    }
-    Ok(())
-}
-
 fn remove_path_if_exists(path: &Path) -> Result<(), String> {
     if !path.exists() {
         return Ok(());
@@ -415,12 +612,8 @@ fn remove_path_if_exists(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn riot_settings_file_ready(app_handle: &dyn AppContext) -> Result<bool, String> {
-    let install_dir = resolve_riot_client_path(app_handle)
-        .ok()
-        .and_then(|path| path.parent().map(Path::to_path_buf));
-
-    let required_settings = live_path_for(&RIOT_SNAPSHOT_ITEMS[0], install_dir.as_deref())?
+fn riot_settings_file_ready(install_dir: Option<&Path>) -> Result<bool, String> {
+    let required_settings = live_path_for(&RIOT_SNAPSHOT_ITEMS[0], install_dir)?
         .ok_or_else(|| "Could not resolve Riot settings path".to_string())?;
     if !required_settings.exists() {
         return Ok(false);
@@ -725,10 +918,19 @@ fn is_generated_profile_label(label: &str) -> bool {
 
 /// Returns whether anything actually changed, so callers polling once a second
 /// can skip the config write when the detected identity already matches.
+///
+/// A profile that already belongs to an account (it has a puuid) is only
+/// updated from an identity carrying that same puuid: another account signed
+/// in, or an alias read without its puuid, must not rename it.
 fn apply_detected_identity(
     profile: &mut RiotProfileConfig,
     identity: &RiotDetectedIdentity,
 ) -> bool {
+    let stored_puuid = profile.account_puuid.trim();
+    if !stored_puuid.is_empty() && !stored_puuid.eq_ignore_ascii_case(identity.account_puuid.trim())
+    {
+        return false;
+    }
     let previous_alias = current_account_alias(profile);
     let next_alias = format_account_alias(&identity.account_name, &identity.account_tag_line);
     let should_sync_label = profile.label.trim().is_empty()
@@ -753,6 +955,100 @@ fn apply_detected_identity(
         || profile.account_tag_line != previous_account_tag_line
         || profile.account_puuid != previous_account_puuid
         || profile.label != previous_label
+}
+
+/// How the signed-in Riot account relates to a profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IdentityCheck {
+    /// The live puuid is the profile's.
+    Match,
+    /// The live puuid belongs to another account.
+    Mismatch,
+    /// The profile has no puuid yet, so the live account can be adopted.
+    Unclaimed,
+    /// The live puuid could not be read (client closed, local API down).
+    Unknown,
+}
+
+fn check_live_identity(
+    profile: &RiotProfileConfig,
+    live: Option<&RiotDetectedIdentity>,
+) -> IdentityCheck {
+    let Some(live_puuid) = live
+        .map(|identity| identity.account_puuid.trim())
+        .filter(|puuid| !puuid.is_empty())
+    else {
+        return IdentityCheck::Unknown;
+    };
+    let stored = profile.account_puuid.trim();
+    if stored.is_empty() {
+        IdentityCheck::Unclaimed
+    } else if stored.eq_ignore_ascii_case(live_puuid) {
+        IdentityCheck::Match
+    } else {
+        IdentityCheck::Mismatch
+    }
+}
+
+/// Profile states whose live session a switch backs up before leaving them.
+const SWITCH_BACKUP_STATES: &[&str] = &["ready", "awaiting_capture", "setup_pending"];
+/// Profile states whose live session a new setup backs up before clearing it.
+/// A setup restarted over its own pending profile has nothing worth keeping.
+const SETUP_BACKUP_STATES: &[&str] = &["ready", "awaiting_capture"];
+
+/// What to do with the live session before it is replaced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutgoingBackup {
+    /// Nothing worth saving, or no profile to save it into.
+    Skip,
+    /// Save it into the profile. `adopt_identity` also records the live
+    /// account's name and puuid on the profile.
+    Backup { adopt_identity: bool },
+    /// The live session is another account's: saving it would overwrite the
+    /// profile's snapshot with the wrong account.
+    IdentityMismatch,
+}
+
+fn plan_outgoing_backup(
+    profile: Option<&RiotProfileConfig>,
+    eligible_states: &[&str],
+    has_live_tokens: bool,
+    live: Option<&RiotDetectedIdentity>,
+) -> OutgoingBackup {
+    let Some(profile) = profile else {
+        return OutgoingBackup::Skip;
+    };
+    if !eligible_states.contains(&profile.snapshot_state.as_str()) || !has_live_tokens {
+        return OutgoingBackup::Skip;
+    }
+    match check_live_identity(profile, live) {
+        IdentityCheck::Mismatch => OutgoingBackup::IdentityMismatch,
+        IdentityCheck::Match | IdentityCheck::Unclaimed => OutgoingBackup::Backup {
+            adopt_identity: true,
+        },
+        // The client is closed or its local API is down. The flushed file is
+        // most likely the profile's own session with rotated tokens, and
+        // skipping it would leave the profile on tokens the server already
+        // revoked. Keep the backup, but trust nothing about the identity.
+        IdentityCheck::Unknown => OutgoingBackup::Backup {
+            adopt_identity: false,
+        },
+    }
+}
+
+/// `apply_detected_identity` for a profile still in setup: whoever signs in to
+/// the client the setup launched is the account being added, even when an
+/// earlier poll saw another one (the user switched accounts before finishing).
+fn adopt_detected_identity(
+    profile: &mut RiotProfileConfig,
+    identity: &RiotDetectedIdentity,
+) -> bool {
+    if check_live_identity(profile, Some(identity)) != IdentityCheck::Mismatch {
+        return apply_detected_identity(profile, identity);
+    }
+    profile.account_puuid.clear();
+    apply_detected_identity(profile, identity);
+    true
 }
 
 fn make_setup_status(
@@ -872,12 +1168,131 @@ fn backup_live_snapshot(
     install_dir: Option<&Path>,
 ) -> Result<(), String> {
     let snapshot_dir = profile_snapshot_dir(app_handle, profile_id)?;
-    clear_directory(&snapshot_dir)?;
+    write_snapshot_atomically(app_handle, &snapshot_dir, &|item| {
+        live_path_for(item, install_dir)
+    })
+}
 
+/// Resolves where one snapshot item lives on this machine.
+type LivePathFn<'a> = dyn Fn(&RiotSnapshotItem) -> Result<Option<PathBuf>, String> + 'a;
+
+/// `<snapshot>.<suffix>` next to a profile snapshot. Profile ids never contain
+/// a dot, so this can never name another profile.
+fn snapshot_sibling(snapshot_dir: &Path, suffix: &str) -> PathBuf {
+    let mut name = snapshot_dir.file_name().unwrap_or_default().to_os_string();
+    name.push(".");
+    name.push(suffix);
+    snapshot_dir.with_file_name(name)
+}
+
+/// Free the keyring entries of a snapshot copy, then remove it. A missing
+/// directory is fine.
+fn discard_snapshot_copy(app_handle: &dyn AppContext, dir: &Path) -> Result<(), String> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    free_snapshot_secrets(app_handle, dir);
+    remove_path_if_exists(dir)
+}
+
+/// A process that died between the two renames of `write_snapshot_atomically`
+/// left the good copy at `<snapshot>.previous`. Put it back when the snapshot
+/// itself holds no session, and drop it otherwise (the swap had finished).
+fn recover_interrupted_snapshot_swap(app_handle: &dyn AppContext, snapshot_dir: &Path) {
+    let previous = snapshot_sibling(snapshot_dir, "previous");
+    if !previous.exists() {
+        return;
+    }
+    let result = if snapshot_has_settings(snapshot_dir) {
+        discard_snapshot_copy(app_handle, &previous)
+    } else {
+        discard_snapshot_copy(app_handle, snapshot_dir).and_then(|()| {
+            fs::rename(&previous, snapshot_dir)
+                .map_err(|e| format!("Could not restore {}: {e}", previous.display()))
+        })
+    };
+    if let Err(detail) = result {
+        log_platform_error(
+            app_handle,
+            "riot.snapshot_swap",
+            "Could not recover an interrupted Riot snapshot write",
+            detail,
+        );
+    }
+}
+
+/// Replace a profile snapshot with the live session without ever leaving the
+/// profile with less than it had: the copy goes to `<snapshot>.staging`, and
+/// the old snapshot is only dropped once the staged one took its place. Any
+/// failure keeps the old snapshot as it was.
+fn write_snapshot_atomically(
+    app_handle: &dyn AppContext,
+    snapshot_dir: &Path,
+    live_path: &LivePathFn,
+) -> Result<(), String> {
+    recover_interrupted_snapshot_swap(app_handle, snapshot_dir);
+    let staging = snapshot_sibling(snapshot_dir, "staging");
+    let previous = snapshot_sibling(snapshot_dir, "previous");
+    // Left over by a process that died mid-copy.
+    discard_snapshot_copy(app_handle, &staging)?;
+
+    if let Err(error) = copy_live_items(&staging, live_path) {
+        if let Err(detail) = discard_snapshot_copy(app_handle, &staging) {
+            log_platform_error(
+                app_handle,
+                "riot.snapshot_swap",
+                "Could not remove a partial Riot snapshot copy",
+                detail,
+            );
+        }
+        return Err(error);
+    }
+
+    let had_snapshot = snapshot_dir.exists();
+    if had_snapshot {
+        if let Err(e) = fs::rename(snapshot_dir, &previous) {
+            let _ = discard_snapshot_copy(app_handle, &staging);
+            return Err(format!(
+                "Could not move the previous Riot snapshot aside {}: {e}",
+                snapshot_dir.display()
+            ));
+        }
+    }
+    if let Err(e) = fs::rename(&staging, snapshot_dir) {
+        if had_snapshot {
+            if let Err(restore) = fs::rename(&previous, snapshot_dir) {
+                log_platform_error(
+                    app_handle,
+                    "riot.snapshot_swap",
+                    "Could not put the previous Riot snapshot back",
+                    format!("dir={} error={restore}", previous.display()),
+                );
+            }
+        }
+        let _ = discard_snapshot_copy(app_handle, &staging);
+        return Err(format!(
+            "Could not install the new Riot snapshot {}: {e}",
+            snapshot_dir.display()
+        ));
+    }
+
+    if let Err(detail) = discard_snapshot_copy(app_handle, &previous) {
+        // The new snapshot is in place; the old copy is swept by the next write.
+        log_platform_error(
+            app_handle,
+            "riot.snapshot_swap",
+            "Could not remove the previous Riot snapshot",
+            detail,
+        );
+    }
+    Ok(())
+}
+
+fn copy_live_items(snapshot_dir: &Path, live_path: &LivePathFn) -> Result<(), String> {
     let mut captured_any = false;
 
     for item in RIOT_SNAPSHOT_ITEMS {
-        let Some(source_path) = live_path_for(item, install_dir)? else {
+        let Some(source_path) = live_path(item)? else {
             continue;
         };
         let target_path = snapshot_dir.join(item.snapshot_name);
@@ -1200,11 +1615,13 @@ fn restore_live_state_from_rollback(
     }
 }
 
-fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Result<bool, String> {
-    let install_dir = resolve_riot_client_path(app_handle)
-        .ok()
-        .and_then(|path| path.parent().map(Path::to_path_buf));
+fn restore_live_snapshot(
+    app_handle: &dyn AppContext,
+    profile_id: &str,
+    install_dir: Option<&Path>,
+) -> Result<bool, String> {
     let snapshot_dir = profile_snapshot_dir(app_handle, profile_id)?;
+    recover_interrupted_snapshot_swap(app_handle, &snapshot_dir);
     let has_snapshot = snapshot_has_settings(&snapshot_dir);
 
     // Validate the snapshot BEFORE wiping the live state. Bailing out after
@@ -1223,10 +1640,10 @@ fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Resul
     // back to this backup instead of leaving a mix of the old and new
     // profile's data. If the backup itself can't be made, fail closed and
     // abort before touching anything live.
-    let rollback_dir = backup_live_state_for_rollback(app_handle, install_dir.as_deref())?;
+    let rollback_dir = backup_live_state_for_rollback(app_handle, install_dir)?;
 
-    if let Err(e) = clear_live_riot_state(install_dir.as_deref()) {
-        restore_live_state_from_rollback(app_handle, &rollback_dir, install_dir.as_deref());
+    if let Err(e) = clear_live_riot_state(install_dir) {
+        restore_live_state_from_rollback(app_handle, &rollback_dir, install_dir);
         discard_rollback_dir(app_handle, &rollback_dir);
         return Err(e);
     }
@@ -1235,11 +1652,11 @@ fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Resul
         let source_path = snapshot_dir.join(item.snapshot_name);
         // The live state is already cleared here, so a path that cannot be
         // resolved any more takes the same route as a failed copy.
-        let target_path = match live_path_for(item, install_dir.as_deref()) {
+        let target_path = match live_path_for(item, install_dir) {
             Ok(Some(path)) => path,
             Ok(None) => continue,
             Err(e) => {
-                restore_live_state_from_rollback(app_handle, &rollback_dir, install_dir.as_deref());
+                restore_live_state_from_rollback(app_handle, &rollback_dir, install_dir);
                 discard_rollback_dir(app_handle, &rollback_dir);
                 return Err(e);
             }
@@ -1251,11 +1668,7 @@ fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Resul
                     if let Err(e) =
                         decrypted_copy_dir(&source_path, &target_path, item.ignored_names)
                     {
-                        restore_live_state_from_rollback(
-                            app_handle,
-                            &rollback_dir,
-                            install_dir.as_deref(),
-                        );
+                        restore_live_state_from_rollback(app_handle, &rollback_dir, install_dir);
                         discard_rollback_dir(app_handle, &rollback_dir);
                         return Err(e);
                     }
@@ -1264,11 +1677,7 @@ fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Resul
             RiotSnapshotKind::File => {
                 if source_path.exists() {
                     if let Err(e) = decrypted_copy_file(&source_path, &target_path) {
-                        restore_live_state_from_rollback(
-                            app_handle,
-                            &rollback_dir,
-                            install_dir.as_deref(),
-                        );
+                        restore_live_state_from_rollback(app_handle, &rollback_dir, install_dir);
                         discard_rollback_dir(app_handle, &rollback_dir);
                         return Err(e);
                     }
@@ -1276,11 +1685,7 @@ fn restore_live_snapshot(app_handle: &dyn AppContext, profile_id: &str) -> Resul
                     // Should not happen (checked above before the clear), but
                     // if it does after the clear, restore rather than leave
                     // the live state wiped with nothing put back.
-                    restore_live_state_from_rollback(
-                        app_handle,
-                        &rollback_dir,
-                        install_dir.as_deref(),
-                    );
+                    restore_live_state_from_rollback(app_handle, &rollback_dir, install_dir);
                     discard_rollback_dir(app_handle, &rollback_dir);
                     return Ok(false);
                 }
@@ -1355,17 +1760,9 @@ fn cleanup_expired_pending_profiles(
         cfg.riot
             .profiles
             .retain(|profile| !expired_ids.iter().any(|id| id == &profile.id));
-
-        if expired_ids
-            .iter()
-            .any(|id| id == &cfg.riot.current_profile_id)
-        {
-            cfg.riot.current_profile_id = cfg
-                .riot
-                .profiles
-                .first()
-                .map(|profile| profile.id.clone())
-                .unwrap_or_default();
+        release_current_profile(cfg, &expired_ids);
+        for profile_id in &expired_ids {
+            forget_setup_launch(profile_id);
         }
         changed = true;
     }
@@ -1504,6 +1901,16 @@ fn get_profile_setup_status_internal(
         return Ok(make_setup_status(&profile, "ready", ""));
     }
 
+    // Until the setup's own launch has quit the client and cleared its
+    // session, the client running is still signed in as the previous account.
+    // Reading it now would name the new profile after that account and
+    // capture its session.
+    match setup_capture_gate(&profile.snapshot_state, setup_launch(profile_id).as_ref()) {
+        SetupGate::Wait => return Ok(make_setup_status(&profile, "waiting_for_client", "")),
+        SetupGate::Failed(error) => return Ok(make_setup_status(&profile, "failed", error)),
+        SetupGate::Observe => {}
+    }
+
     let access = read_riot_local_api_access().ok();
     let has_lockfile = access.is_some();
 
@@ -1515,7 +1922,11 @@ fn get_profile_setup_status_internal(
     let mut identity_changed = false;
     if let Some(ref id) = identity {
         if let Some(target) = find_profile_mut(cfg, profile_id) {
-            identity_changed = apply_detected_identity(target, id);
+            identity_changed = if target.snapshot_state == "setup_pending" {
+                adopt_detected_identity(target, id)
+            } else {
+                apply_detected_identity(target, id)
+            };
         }
     }
 
@@ -1529,18 +1940,32 @@ fn get_profile_setup_status_internal(
             logged_in: false,
             persist: false,
         });
-    let settings_ready = riot_settings_file_ready(app_handle).unwrap_or(false);
+    let settings_ready =
+        riot_settings_file_ready(resolve_riot_install_dir(app_handle).as_deref()).unwrap_or(false);
     let can_capture = login_state.logged_in && login_state.persist && settings_ready;
 
-    log_platform_info(
-        app_handle,
-        "riot.setup_poll",
-        "Riot setup poll",
-        format!(
-            "lockfile={has_lockfile} logged_in={} persist={} settings_ready={settings_ready} identity={} can_capture={can_capture}",
-            login_state.logged_in, login_state.persist, identity.is_some()
-        ),
-    );
+    // The poll runs about once a second for up to ten minutes: log the view
+    // when it changes, not every tick.
+    let observation = SetupPollObservation {
+        profile_id: profile_id.to_string(),
+        lockfile: has_lockfile,
+        logged_in: login_state.logged_in,
+        persist: login_state.persist,
+        settings_ready,
+        identity: identity.is_some(),
+        can_capture,
+    };
+    if setup_poll_changed(&observation) {
+        log_platform_info(
+            app_handle,
+            "riot.setup_poll",
+            "Riot setup poll",
+            format!(
+                "lockfile={has_lockfile} logged_in={} persist={} settings_ready={settings_ready} identity={} can_capture={can_capture}",
+                login_state.logged_in, login_state.persist, identity.is_some()
+            ),
+        );
+    }
 
     if !can_capture {
         // This branch is the steady state of the 1s setup poll, and save_config
@@ -1574,6 +1999,7 @@ fn get_profile_setup_status_internal(
 
     graceful_riot_quit();
     capture_profile_into_snapshot(app_handle, cfg, profile_id, identity.as_ref())?;
+    forget_setup_launch(profile_id);
     let updated = find_profile(cfg, profile_id).cloned().unwrap_or(profile);
     Ok(make_setup_status(&updated, "ready", ""))
 }
@@ -1607,42 +2033,108 @@ pub fn get_current_profile(app_handle: AppCtx) -> Result<String, String> {
 pub fn begin_profile_setup(app_handle: AppCtx) -> Result<RiotProfileSetupStatus, String> {
     ensure_no_riot_game_running("starting Riot account setup")?;
     let client_path = resolve_riot_client_path(&app_handle)?;
+    let install_dir = client_path.parent();
     let mut cfg = config::load_config(&app_handle);
     cleanup_expired_pending_profiles(&app_handle, &mut cfg)?;
 
-    // Graceful quit flushes in-memory tokens to disk, then we backup.
-    // Without this, the file contains pre-rotation tokens that are invalid.
+    // The setup launch clears the live session. Save it first into the
+    // profile it belongs to. Graceful quit flushes in-memory tokens to disk,
+    // then we backup. Without this, the file contains pre-rotation tokens that
+    // are invalid.
     let prev_id = cfg.riot.current_profile_id.clone();
-    if !prev_id.is_empty() {
-        let prev_ready = find_profile(&cfg, &prev_id)
-            .map(|p| p.snapshot_state == "ready")
-            .unwrap_or(false);
-        if prev_ready {
-            let identity = detect_live_identity().ok();
-            graceful_riot_quit();
-            if riot_settings_file_ready(&app_handle).unwrap_or(false) {
-                if let Err(e) = backup_live_snapshot(
+    let prev_needs_backup = !prev_id.is_empty()
+        && find_profile(&cfg, &prev_id)
+            .is_some_and(|p| SETUP_BACKUP_STATES.contains(&p.snapshot_state.as_str()));
+    if prev_needs_backup {
+        let identity = detect_live_identity().ok();
+        graceful_riot_quit();
+        // From here the client is closed: every failure relaunches it.
+        let saved = backup_before_setup(&app_handle, &mut cfg, &prev_id, install_dir, identity);
+        let started = saved.and_then(|()| start_setup_profile(&app_handle, &mut cfg, &client_path));
+        if started.is_err() {
+            if let Err(error) = launch_riot_client(&client_path) {
+                log_platform_error(
                     &app_handle,
-                    &prev_id,
-                    resolve_riot_install_dir(&app_handle).as_deref(),
-                ) {
-                    log_platform_error(
-                        &app_handle,
-                        "riot.begin_setup",
-                        "Failed to backup current profile before setup",
-                        format!("profile={prev_id} error={e}"),
-                    );
-                } else if let Some(ref id) = identity {
-                    let _ = update_profile_state(&mut cfg, &prev_id, None, None, None, Some(id));
-                }
+                    "riot.begin_setup",
+                    "Could not relaunch Riot Client after a failed setup start",
+                    error,
+                );
             }
         }
+        return started;
     }
 
-    if let Some(existing) = find_pending_setup_profile(&cfg).cloned() {
+    start_setup_profile(&app_handle, &mut cfg, &client_path)
+}
+
+/// Save the current profile's live session before a setup clears it. A
+/// failure stops the setup: the session would otherwise exist nowhere.
+fn backup_before_setup(
+    app_handle: &dyn AppContext,
+    cfg: &mut config::AppConfig,
+    prev_id: &str,
+    install_dir: Option<&Path>,
+    identity: Option<RiotDetectedIdentity>,
+) -> Result<(), String> {
+    let has_live_tokens = riot_settings_file_ready(install_dir).unwrap_or(false);
+    let plan = plan_outgoing_backup(
+        find_profile(cfg, prev_id),
+        SETUP_BACKUP_STATES,
+        has_live_tokens,
+        identity.as_ref(),
+    );
+    match plan {
+        OutgoingBackup::Skip => Ok(()),
+        OutgoingBackup::IdentityMismatch => {
+            log_platform_info(
+                app_handle,
+                "riot.begin_setup",
+                "Skipped the backup before setup: the signed-in Riot account is not the current profile's",
+                format!("profile={}", super::redact_id(prev_id)),
+            );
+            Ok(())
+        }
+        OutgoingBackup::Backup { adopt_identity } => {
+            if let Err(e) = backup_live_snapshot(app_handle, prev_id, install_dir) {
+                log_platform_error(
+                    app_handle,
+                    "riot.begin_setup",
+                    "Failed to backup current profile before setup",
+                    format!("profile={} error={e}", super::redact_id(prev_id)),
+                );
+                return Err(format!(
+                    "Could not save the current Riot session before adding an account, so the setup did not start: {e}"
+                ));
+            }
+            let identity = identity.as_ref().filter(|_| adopt_identity);
+            let _ = update_profile_state(
+                cfg,
+                prev_id,
+                Some("ready"),
+                Some(Some(super::now_unix_ms())),
+                None,
+                identity,
+            );
+            Ok(())
+        }
+    }
+}
+
+/// Create (or reuse) the pending setup profile, make it current and start the
+/// clean launch.
+fn start_setup_profile(
+    app_handle: &AppCtx,
+    cfg: &mut config::AppConfig,
+    client_path: &Path,
+) -> Result<RiotProfileSetupStatus, String> {
+    if let Some(existing) = find_pending_setup_profile(cfg).cloned() {
         cfg.riot.current_profile_id = existing.id.clone();
-        config::save_config(&app_handle, &cfg)?;
-        spawn_riot_setup_launch(app_handle.clone(), client_path);
+        config::save_config(app_handle, cfg)?;
+        spawn_riot_setup_launch(
+            app_handle.clone(),
+            existing.id.clone(),
+            client_path.to_path_buf(),
+        );
         return Ok(make_setup_status(&existing, "waiting_for_client", ""));
     }
 
@@ -1661,11 +2153,15 @@ pub fn begin_profile_setup(app_handle: AppCtx) -> Result<RiotProfileSetupStatus,
         last_used_at: Some(super::now_unix_ms()),
     });
     cfg.riot.current_profile_id = profile_id.clone();
-    config::save_config(&app_handle, &cfg)?;
+    config::save_config(app_handle, cfg)?;
 
-    profile_snapshot_dir(&app_handle, &profile_id)?;
-    spawn_riot_setup_launch(app_handle.clone(), client_path);
-    let created = find_profile(&cfg, &profile_id)
+    profile_snapshot_dir(app_handle, &profile_id)?;
+    spawn_riot_setup_launch(
+        app_handle.clone(),
+        profile_id.clone(),
+        client_path.to_path_buf(),
+    );
+    let created = find_profile(cfg, &profile_id)
         .cloned()
         .ok_or_else(|| "Riot profile not found".to_string())?;
     Ok(make_setup_status(&created, "waiting_for_client", ""))
@@ -1711,19 +2207,16 @@ pub fn cancel_profile_setup(app_handle: AppCtx, profile_id: String) -> Result<()
         .any(|profile| profile.id == profile_id && profile.snapshot_state == "setup_pending");
 
     if !should_remove {
+        forget_setup_launch(&profile_id);
         return Ok(());
     }
 
     cfg.riot.profiles.retain(|profile| profile.id != profile_id);
-    if cfg.riot.current_profile_id == profile_id {
-        cfg.riot.current_profile_id = cfg
-            .riot
-            .profiles
-            .first()
-            .map(|profile| profile.id.clone())
-            .unwrap_or_default();
-    }
+    // The live session may be the new account signed in during the setup:
+    // with no profile current, the next switch does not save it anywhere.
+    release_current_profile(&mut cfg, std::slice::from_ref(&profile_id));
     config::save_config(&app_handle, &cfg)?;
+    forget_setup_launch(&profile_id);
 
     let snapshot_dir = profile_snapshot_path(&app_handle, &profile_id)?;
     if snapshot_dir.exists() {
@@ -1743,8 +2236,17 @@ pub fn capture_profile(app_handle: AppCtx, profile_id: String) -> Result<(), Str
     let profile_id = normalize_profile_id(&profile_id)?;
     let live_identity = detect_live_identity().ok();
     let mut cfg = config::load_config(&app_handle);
-    if find_profile(&cfg, &profile_id).is_none() {
+    let Some(profile) = find_profile(&cfg, &profile_id) else {
         return Err("Riot profile not found".into());
+    };
+    if check_live_identity(profile, live_identity.as_ref()) == IdentityCheck::Mismatch {
+        log_platform_info(
+            &app_handle,
+            "riot.capture_profile",
+            "Refused a capture: the signed-in Riot account is not this profile's",
+            format!("profile={}", super::redact_id(&profile_id)),
+        );
+        return Err("The Riot Client is signed in to a different account than this profile. Sign in to this profile's account, then capture again.".into());
     }
 
     capture_profile_into_snapshot(&app_handle, &mut cfg, &profile_id, live_identity.as_ref())
@@ -1775,76 +2277,18 @@ pub fn switch_profile(app_handle: AppCtx, profile_id: String) -> Result<(), Stri
     // quit for the whole switch; the target snapshot is restored afterwards.
     graceful_riot_quit();
 
-    if !cfg.riot.current_profile_id.trim().is_empty() && cfg.riot.current_profile_id != target_id {
-        let current_id = cfg.riot.current_profile_id.clone();
-        if !is_valid_profile_id(&current_id) {
-            return Err("Invalid Riot profile id in config".into());
-        }
-        let current_state =
-            find_profile(&cfg, &current_id).map(|profile| profile.snapshot_state.as_str());
-        // Only re-backup if the live settings file actually has tokens (>1000 bytes).
-        // begin_profile_setup clears live files to add a new account. Without this
-        // check, switching after an add overwrites the good snapshot with a default
-        // 484-byte file that has no auth tokens. Checked after the quit so the
-        // freshly flushed file size is what gates the backup.
-        let has_live_tokens = riot_settings_file_ready(&app_handle).unwrap_or(false);
-        let should_backup = match current_state {
-            Some("ready" | "awaiting_capture" | "setup_pending") => has_live_tokens,
-            _ => false,
-        };
-        if should_backup {
-            backup_live_snapshot(
-                &app_handle,
-                &current_id,
-                resolve_riot_install_dir(&app_handle).as_deref(),
-            )?;
-            update_profile_state(
-                &mut cfg,
-                &current_id,
-                Some("ready"),
-                Some(Some(super::now_unix_ms())),
-                None,
-                current_live_identity.as_ref(),
-            )?;
-        }
-    }
-
-    let restored = restore_live_snapshot(&app_handle, &target_id)?;
-
-    // Log the restored settings file size to diagnose overwrite issues
-    {
-        let install_dir = resolve_riot_client_path(&app_handle)
-            .ok()
-            .and_then(|path| path.parent().map(Path::to_path_buf));
-        if let Ok(Some(settings_path)) =
-            live_path_for(&RIOT_SNAPSHOT_ITEMS[0], install_dir.as_deref())
-        {
-            let size = fs::metadata(&settings_path).map(|m| m.len()).unwrap_or(0);
-            log_platform_info(
-                &app_handle,
-                "riot.switch_profile",
-                "Settings file after restore",
-                format!("size={size} restored={restored}"),
-            );
-        }
-    }
-
-    cfg.riot.current_profile_id = target_id.clone();
-    let next_state = if restored {
-        "ready"
-    } else {
-        "awaiting_capture"
-    };
-    update_profile_state(
+    // The client path is resolved once for the whole switch.
+    let install_dir = client_path.parent();
+    let work = switch_after_quit(
+        &app_handle,
         &mut cfg,
         &target_id,
-        Some(next_state),
-        None,
-        Some(Some(super::now_unix_ms())),
-        None,
-    )?;
-    config::save_config(&app_handle, &cfg)?;
-    let result = launch_riot_client(&client_path);
+        install_dir,
+        current_live_identity.as_ref(),
+    );
+    // Relaunch even when the work failed, so a failed switch never leaves the
+    // client closed.
+    let result = relaunch_after_quit(work, || launch_riot_client(&client_path));
 
     match &result {
         Ok(()) => log_platform_info(
@@ -1867,21 +2311,104 @@ pub fn switch_profile(app_handle: AppCtx, profile_id: String) -> Result<(), Stri
     result
 }
 
+/// Everything a switch does while the client is closed: back the outgoing
+/// session up into its own profile, restore the target and save the config.
+fn switch_after_quit(
+    app_handle: &dyn AppContext,
+    cfg: &mut config::AppConfig,
+    target_id: &str,
+    install_dir: Option<&Path>,
+    live_identity: Option<&RiotDetectedIdentity>,
+) -> Result<(), String> {
+    let current_id = cfg.riot.current_profile_id.clone();
+    if !current_id.trim().is_empty() && current_id != target_id {
+        if !is_valid_profile_id(&current_id) {
+            return Err("Invalid Riot profile id in config".into());
+        }
+        // Only re-backup if the live settings file actually has tokens.
+        // begin_profile_setup clears live files to add a new account. Without this
+        // check, switching after an add overwrites the good snapshot with a default
+        // 484-byte file that has no auth tokens. Checked after the quit so the
+        // freshly flushed file is what gates the backup.
+        let has_live_tokens = riot_settings_file_ready(install_dir).unwrap_or(false);
+        let plan = plan_outgoing_backup(
+            find_profile(cfg, &current_id),
+            SWITCH_BACKUP_STATES,
+            has_live_tokens,
+            live_identity,
+        );
+        match plan {
+            OutgoingBackup::Skip => {}
+            OutgoingBackup::IdentityMismatch => log_platform_info(
+                app_handle,
+                "riot.switch_profile",
+                "Skipped the outgoing backup: the signed-in Riot account is not this profile's",
+                format!("profile={}", super::redact_id(&current_id)),
+            ),
+            OutgoingBackup::Backup { adopt_identity } => {
+                backup_live_snapshot(app_handle, &current_id, install_dir)?;
+                update_profile_state(
+                    cfg,
+                    &current_id,
+                    Some("ready"),
+                    Some(Some(super::now_unix_ms())),
+                    None,
+                    live_identity.filter(|_| adopt_identity),
+                )?;
+            }
+        }
+    }
+
+    let restored = restore_live_snapshot(app_handle, target_id, install_dir)?;
+    if clear_live_for_target_without_snapshot(restored, &current_id, target_id) {
+        // Without this, the client would reopen on the previous account and
+        // the next capture would save that account into the target profile.
+        clear_live_session_for_login(app_handle, install_dir)?;
+        log_platform_info(
+            app_handle,
+            "riot.switch_profile",
+            "Cleared the live session: the target profile has no saved session",
+            format!("profile={}", super::redact_id(target_id)),
+        );
+    }
+
+    // Log the restored settings file size to diagnose overwrite issues
+    if let Ok(Some(settings_path)) = live_path_for(&RIOT_SNAPSHOT_ITEMS[0], install_dir) {
+        let size = fs::metadata(&settings_path).map(|m| m.len()).unwrap_or(0);
+        log_platform_info(
+            app_handle,
+            "riot.switch_profile",
+            "Settings file after restore",
+            format!("size={size} restored={restored}"),
+        );
+    }
+
+    cfg.riot.current_profile_id = target_id.to_string();
+    let next_state = if restored {
+        "ready"
+    } else {
+        "awaiting_capture"
+    };
+    update_profile_state(
+        cfg,
+        target_id,
+        Some(next_state),
+        None,
+        Some(Some(super::now_unix_ms())),
+        None,
+    )?;
+    config::save_config(app_handle, cfg)
+}
+
 pub fn forget_profile(app_handle: AppCtx, profile_id: String) -> Result<(), String> {
     let profile_id = normalize_profile_id(&profile_id)?;
     config::update_config(&app_handle, |cfg| {
         cfg.riot
             .profiles
             .retain(|profile| profile.id != profile_id.as_str());
-        if cfg.riot.current_profile_id == profile_id {
-            cfg.riot.current_profile_id = cfg
-                .riot
-                .profiles
-                .first()
-                .map(|profile| profile.id.clone())
-                .unwrap_or_default();
-        }
+        release_current_profile(cfg, std::slice::from_ref(&profile_id));
     })?;
+    forget_setup_launch(&profile_id);
 
     let snapshot_dir = profile_snapshot_path(&app_handle, &profile_id)?;
     if snapshot_dir.exists() {
@@ -2390,5 +2917,603 @@ mod rollback_tests {
         assert!(unrelated.exists());
         assert!(near_miss.exists());
         let _ = fs::remove_dir_all(&temp);
+    }
+}
+
+/// Session integrity: which account's session goes into which profile, and
+/// what a failure leaves behind. Everything here runs on temp dirs and pure
+/// decisions; nothing starts, stops or reads the real Riot Client.
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+    use crate::secrets::backend;
+
+    struct TempCtx {
+        root: PathBuf,
+    }
+
+    impl AppContext for TempCtx {
+        fn app_config_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_data_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_local_data_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.root.clone())
+        }
+        fn app_cache_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.root.clone())
+        }
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "accshift-riot-session-test-{}-{}-{:?}",
+            tag,
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn profile(id: &str, state: &str, puuid: &str) -> RiotProfileConfig {
+        RiotProfileConfig {
+            id: id.into(),
+            label: format!("label-{id}"),
+            account_name: format!("name-{id}"),
+            account_tag_line: "EUW".into(),
+            account_puuid: puuid.into(),
+            snapshot_state: state.into(),
+            notes: String::new(),
+            last_captured_at: None,
+            last_used_at: None,
+        }
+    }
+
+    fn live(puuid: &str) -> RiotDetectedIdentity {
+        RiotDetectedIdentity {
+            account_name: format!("live-{puuid}"),
+            account_tag_line: "NA1".into(),
+            account_puuid: puuid.into(),
+        }
+    }
+
+    // -- B1: identity check before the outgoing backup --------------------
+
+    #[test]
+    fn the_live_identity_is_compared_by_puuid() {
+        let owned = profile("p", "ready", "puuid-a");
+        assert_eq!(
+            check_live_identity(&owned, Some(&live("puuid-a"))),
+            IdentityCheck::Match
+        );
+        assert_eq!(
+            check_live_identity(&owned, Some(&live("PUUID-A"))),
+            IdentityCheck::Match
+        );
+        assert_eq!(
+            check_live_identity(&owned, Some(&live("puuid-b"))),
+            IdentityCheck::Mismatch
+        );
+        assert_eq!(check_live_identity(&owned, None), IdentityCheck::Unknown);
+        // An alias read without the userinfo puuid proves nothing.
+        assert_eq!(
+            check_live_identity(&owned, Some(&live(""))),
+            IdentityCheck::Unknown
+        );
+        let unclaimed = profile("p", "awaiting_capture", "");
+        assert_eq!(
+            check_live_identity(&unclaimed, Some(&live("puuid-b"))),
+            IdentityCheck::Unclaimed
+        );
+    }
+
+    #[test]
+    fn another_account_signed_in_is_never_backed_up_into_the_profile() {
+        // Trigger A: the user signed into Y inside the client while accshift
+        // still has X as current.
+        let x = profile("x", "ready", "puuid-x");
+        assert_eq!(
+            plan_outgoing_backup(Some(&x), SWITCH_BACKUP_STATES, true, Some(&live("puuid-y"))),
+            OutgoingBackup::IdentityMismatch
+        );
+    }
+
+    #[test]
+    fn the_profile_own_session_is_backed_up_and_its_identity_refreshed() {
+        let x = profile("x", "ready", "puuid-x");
+        assert_eq!(
+            plan_outgoing_backup(Some(&x), SWITCH_BACKUP_STATES, true, Some(&live("puuid-x"))),
+            OutgoingBackup::Backup {
+                adopt_identity: true
+            }
+        );
+    }
+
+    #[test]
+    fn an_unverifiable_session_is_backed_up_without_renaming_the_profile() {
+        // The client is closed, so the local API cannot say who is signed in.
+        // Skipping the backup here would drop the tokens the client rotated
+        // since the last switch; renaming would trust an unknown account.
+        let x = profile("x", "ready", "puuid-x");
+        assert_eq!(
+            plan_outgoing_backup(Some(&x), SWITCH_BACKUP_STATES, true, None),
+            OutgoingBackup::Backup {
+                adopt_identity: false
+            }
+        );
+    }
+
+    #[test]
+    fn a_profile_without_a_puuid_adopts_the_live_account() {
+        let t = profile("t", "awaiting_capture", "");
+        assert_eq!(
+            plan_outgoing_backup(Some(&t), SWITCH_BACKUP_STATES, true, Some(&live("puuid-t"))),
+            OutgoingBackup::Backup {
+                adopt_identity: true
+            }
+        );
+    }
+
+    #[test]
+    fn nothing_is_backed_up_without_tokens_or_from_other_states() {
+        let x = profile("x", "ready", "puuid-x");
+        assert_eq!(
+            plan_outgoing_backup(
+                Some(&x),
+                SWITCH_BACKUP_STATES,
+                false,
+                Some(&live("puuid-x"))
+            ),
+            OutgoingBackup::Skip
+        );
+        let capturing = profile("c", "capturing", "puuid-x");
+        assert_eq!(
+            plan_outgoing_backup(
+                Some(&capturing),
+                SWITCH_BACKUP_STATES,
+                true,
+                Some(&live("puuid-x"))
+            ),
+            OutgoingBackup::Skip
+        );
+        assert_eq!(
+            plan_outgoing_backup(None, SWITCH_BACKUP_STATES, true, Some(&live("puuid-x"))),
+            OutgoingBackup::Skip
+        );
+    }
+
+    #[test]
+    fn a_detected_identity_never_renames_a_profile_of_another_account() {
+        let mut x = profile("x", "ready", "puuid-x");
+        x.label = "name-x#EUW".into();
+        let before = x.clone();
+
+        let changed = apply_detected_identity(&mut x, &live("puuid-y"));
+
+        assert!(!changed);
+        assert_eq!(x.account_puuid, before.account_puuid);
+        assert_eq!(x.account_name, before.account_name);
+        assert_eq!(x.label, before.label);
+    }
+
+    #[test]
+    fn a_detected_identity_still_follows_a_riot_id_rename_of_the_same_account() {
+        let mut x = profile("x", "ready", "puuid-x");
+        x.label = "name-x#EUW".into();
+        let renamed = RiotDetectedIdentity {
+            account_name: "new-name".into(),
+            account_tag_line: "EUW".into(),
+            account_puuid: "puuid-x".into(),
+        };
+
+        assert!(apply_detected_identity(&mut x, &renamed));
+        assert_eq!(x.account_name, "new-name");
+        assert_eq!(x.label, "new-name#EUW");
+    }
+
+    #[test]
+    fn a_setup_adopts_the_account_signed_in_during_the_setup() {
+        // The user signed into A in the setup window, then switched to B
+        // before the capture: the new profile is B's.
+        let mut pending = profile("s", "setup_pending", "puuid-a");
+        assert!(adopt_detected_identity(&mut pending, &live("puuid-b")));
+        assert_eq!(pending.account_puuid, "puuid-b");
+    }
+
+    // -- B1 trigger B: target without a snapshot ---------------------------
+
+    #[test]
+    fn switching_to_a_profile_without_a_snapshot_opens_the_login_screen() {
+        assert!(clear_live_for_target_without_snapshot(false, "p", "t"));
+        // No current profile (a cancelled setup, a forgotten profile): the
+        // live session belongs to no profile, it must not become the target's.
+        assert!(clear_live_for_target_without_snapshot(false, "", "t"));
+        // A restored snapshot already replaced the live session.
+        assert!(!clear_live_for_target_without_snapshot(true, "p", "t"));
+        // Re-selecting the current profile keeps a login waiting for capture.
+        assert!(!clear_live_for_target_without_snapshot(false, "t", "t"));
+    }
+
+    // -- B1 trigger C: removing the current profile ------------------------
+
+    fn config_with(profiles: Vec<RiotProfileConfig>, current: &str) -> config::AppConfig {
+        let mut cfg = config::AppConfig::default();
+        cfg.riot.profiles = profiles;
+        cfg.riot.current_profile_id = current.into();
+        cfg
+    }
+
+    #[test]
+    fn removing_the_current_profile_leaves_no_profile_current() {
+        // The session still live is the removed profile's (or a cancelled
+        // setup's new account). Pointing current at another profile made the
+        // next switch back it up into that profile.
+        let mut cfg = config_with(vec![profile("first", "ready", "puuid-f")], "pending");
+        release_current_profile(&mut cfg, &["pending".to_string()]);
+        assert_eq!(cfg.riot.current_profile_id, "");
+    }
+
+    #[test]
+    fn removing_another_profile_keeps_the_current_one() {
+        let mut cfg = config_with(
+            vec![
+                profile("first", "ready", "puuid-f"),
+                profile("second", "ready", "puuid-s"),
+            ],
+            "second",
+        );
+        release_current_profile(&mut cfg, &["gone".to_string()]);
+        assert_eq!(cfg.riot.current_profile_id, "second");
+    }
+
+    // -- B4: setup backs up what it is about to clear ----------------------
+
+    #[test]
+    fn setup_backs_up_an_awaiting_capture_session_before_clearing_it() {
+        let t = profile("t", "awaiting_capture", "");
+        assert_eq!(
+            plan_outgoing_backup(Some(&t), SETUP_BACKUP_STATES, true, Some(&live("puuid-t"))),
+            OutgoingBackup::Backup {
+                adopt_identity: true
+            }
+        );
+        let ready = profile("r", "ready", "puuid-r");
+        assert_eq!(
+            plan_outgoing_backup(Some(&ready), SETUP_BACKUP_STATES, true, None),
+            OutgoingBackup::Backup {
+                adopt_identity: false
+            }
+        );
+        // A setup restarted over its own pending profile has nothing saved.
+        let pending = profile("s", "setup_pending", "");
+        assert_eq!(
+            plan_outgoing_backup(Some(&pending), SETUP_BACKUP_STATES, true, None),
+            OutgoingBackup::Skip
+        );
+    }
+
+    // -- B4: staged snapshot write -----------------------------------------
+
+    struct SnapshotFixture {
+        root: PathBuf,
+        live: PathBuf,
+        snapshot: PathBuf,
+    }
+
+    impl SnapshotFixture {
+        fn new(tag: &str) -> Self {
+            let root = scratch(tag);
+            let live = root.join("live");
+            let snapshot = root.join("snapshots").join("riot-profile-a");
+            fs::create_dir_all(&live).unwrap();
+            fs::create_dir_all(&snapshot).unwrap();
+            Self {
+                root,
+                live,
+                snapshot,
+            }
+        }
+
+        fn ctx(&self) -> TempCtx {
+            TempCtx {
+                root: self.root.clone(),
+            }
+        }
+
+        /// Every item lives under `live/<snapshot name>`.
+        fn live_path(&self) -> impl Fn(&RiotSnapshotItem) -> Result<Option<PathBuf>, String> + '_ {
+            move |item| Ok(Some(self.live.join(item.snapshot_name)))
+        }
+
+        fn write_old_snapshot(&self) {
+            fs::write(
+                self.snapshot.join("RiotGamesPrivateSettings.yaml"),
+                b"old-good-session",
+            )
+            .unwrap();
+            fs::create_dir_all(self.snapshot.join("Sessions")).unwrap();
+            fs::write(self.snapshot.join("Sessions").join("s.json"), b"old").unwrap();
+        }
+
+        fn siblings(&self) -> Vec<String> {
+            fs::read_dir(self.snapshot.parent().unwrap())
+                .unwrap()
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect()
+        }
+    }
+
+    impl Drop for SnapshotFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn a_failed_backup_keeps_the_previous_snapshot() {
+        let fx = SnapshotFixture::new("backup-fails");
+        fx.write_old_snapshot();
+        // The settings file copies, then Sessions (a file where a directory
+        // is expected) fails: the old snapshot used to be gone by then.
+        fs::write(
+            fx.live.join("RiotGamesPrivateSettings.yaml"),
+            b"new-session",
+        )
+        .unwrap();
+        fs::write(fx.live.join("Sessions"), b"not a directory").unwrap();
+        let before = backend::entry_count();
+
+        let result = write_snapshot_atomically(&fx.ctx(), &fx.snapshot, &fx.live_path());
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read(fx.snapshot.join("RiotGamesPrivateSettings.yaml")).unwrap(),
+            b"old-good-session"
+        );
+        assert_eq!(
+            fs::read(fx.snapshot.join("Sessions").join("s.json")).unwrap(),
+            b"old"
+        );
+        assert_eq!(fx.siblings(), vec!["riot-profile-a".to_string()]);
+        assert_eq!(backend::entry_count(), before, "the staged copy leaked");
+    }
+
+    #[test]
+    fn a_backup_missing_the_required_file_keeps_the_previous_snapshot() {
+        let fx = SnapshotFixture::new("backup-missing");
+        fx.write_old_snapshot();
+        fs::create_dir_all(fx.live.join("Sessions")).unwrap();
+        fs::write(fx.live.join("Sessions").join("s.json"), b"new").unwrap();
+
+        let result = write_snapshot_atomically(&fx.ctx(), &fx.snapshot, &fx.live_path());
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read(fx.snapshot.join("RiotGamesPrivateSettings.yaml")).unwrap(),
+            b"old-good-session"
+        );
+        assert_eq!(fx.siblings(), vec!["riot-profile-a".to_string()]);
+    }
+
+    #[test]
+    fn a_successful_backup_replaces_the_snapshot_and_frees_the_old_one() {
+        let fx = SnapshotFixture::new("backup-ok");
+        // An encrypted old snapshot, so freeing its entries is observable.
+        fs::write(
+            fx.live.join("RiotGamesPrivateSettings.yaml"),
+            b"old-session",
+        )
+        .unwrap();
+        write_snapshot_atomically(&fx.ctx(), &fx.snapshot, &fx.live_path()).unwrap();
+        let after_first = backend::entry_count();
+
+        fs::write(
+            fx.live.join("RiotGamesPrivateSettings.yaml"),
+            b"new-session",
+        )
+        .unwrap();
+        fs::create_dir_all(fx.live.join("Sessions")).unwrap();
+        fs::write(fx.live.join("Sessions").join("s.json"), b"new").unwrap();
+        write_snapshot_atomically(&fx.ctx(), &fx.snapshot, &fx.live_path()).unwrap();
+
+        let restored = fx.root.join("restored.yaml");
+        decrypted_copy_file(
+            &fx.snapshot.join("RiotGamesPrivateSettings.yaml"),
+            &restored,
+        )
+        .unwrap();
+        assert_eq!(fs::read(&restored).unwrap(), b"new-session");
+        assert!(fx.snapshot.join("Sessions").join("s.json").exists());
+        assert_eq!(fx.siblings(), vec!["riot-profile-a".to_string()]);
+        // Old file freed, two new files stored.
+        assert_eq!(backend::entry_count(), after_first - 1 + 2);
+    }
+
+    #[test]
+    fn an_interrupted_swap_is_recovered_before_the_next_backup() {
+        // A crash between the two renames left the good copy aside and the
+        // snapshot dir empty (profile_snapshot_dir recreates it).
+        let fx = SnapshotFixture::new("backup-recover");
+        let previous = snapshot_sibling(&fx.snapshot, "previous");
+        fs::create_dir_all(&previous).unwrap();
+        fs::write(previous.join("RiotGamesPrivateSettings.yaml"), b"good").unwrap();
+
+        recover_interrupted_snapshot_swap(&fx.ctx(), &fx.snapshot);
+
+        assert_eq!(
+            fs::read(fx.snapshot.join("RiotGamesPrivateSettings.yaml")).unwrap(),
+            b"good"
+        );
+        assert!(!previous.exists());
+    }
+
+    // -- B5: setup launch under the lock, gated poll ------------------------
+
+    #[test]
+    fn the_setup_poll_waits_for_its_own_clean_launch() {
+        assert_eq!(
+            setup_capture_gate("setup_pending", Some(&SetupLaunch::Running)),
+            SetupGate::Wait
+        );
+        assert_eq!(
+            setup_capture_gate("setup_pending", Some(&SetupLaunch::Launched)),
+            SetupGate::Observe
+        );
+        assert_eq!(
+            setup_capture_gate("setup_pending", Some(&SetupLaunch::Failed("boom".into()))),
+            SetupGate::Failed("boom".into())
+        );
+        // No launch recorded by this process: the client running is not one
+        // the setup cleared, so its session is someone else's.
+        assert_eq!(setup_capture_gate("setup_pending", None), SetupGate::Wait);
+        // A profile outside setup keeps its manual capture flow.
+        assert_eq!(
+            setup_capture_gate("awaiting_capture", None),
+            SetupGate::Observe
+        );
+    }
+
+    fn save_pending_setup(ctx: &TempCtx, profile_id: &str) {
+        let cfg = config_with(vec![profile(profile_id, "setup_pending", "")], profile_id);
+        config::save_config(ctx, &cfg).unwrap();
+    }
+
+    #[test]
+    fn the_setup_launch_does_not_touch_the_client_without_the_lock() {
+        let root = scratch("launch-contended");
+        let ctx = TempCtx { root: root.clone() };
+        let profile_id = format!("riot-profile-{}", Uuid::new_v4());
+        save_pending_setup(&ctx, &profile_id);
+        set_setup_launch(&profile_id, SetupLaunch::Running);
+
+        let held = crate::lock::acquire_exclusive(&ctx, Duration::from_millis(500)).unwrap();
+        let ran = std::thread::scope(|s| {
+            s.spawn(|| {
+                let mut ran = false;
+                run_riot_setup_launch(&ctx, &profile_id, Duration::from_millis(150), || {
+                    ran = true;
+                    Ok(())
+                });
+                ran
+            })
+            .join()
+            .unwrap()
+        });
+        drop(held);
+
+        assert!(!ran, "the client was quit and cleared without the lock");
+        assert!(
+            matches!(setup_launch(&profile_id), Some(SetupLaunch::Failed(_))),
+            "the lock failure was dropped"
+        );
+        forget_setup_launch(&profile_id);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_setup_launch_records_success_and_failure() {
+        let root = scratch("launch-outcome");
+        let ctx = TempCtx { root: root.clone() };
+        let ok_id = format!("riot-profile-{}", Uuid::new_v4());
+        save_pending_setup(&ctx, &ok_id);
+        set_setup_launch(&ok_id, SetupLaunch::Running);
+        run_riot_setup_launch(&ctx, &ok_id, Duration::from_millis(500), || Ok(()));
+        assert_eq!(setup_launch(&ok_id), Some(SetupLaunch::Launched));
+        forget_setup_launch(&ok_id);
+
+        let failed_id = format!("riot-profile-{}", Uuid::new_v4());
+        save_pending_setup(&ctx, &failed_id);
+        set_setup_launch(&failed_id, SetupLaunch::Running);
+        run_riot_setup_launch(&ctx, &failed_id, Duration::from_millis(500), || {
+            Err("Could not remove file".into())
+        });
+        assert_eq!(
+            setup_launch(&failed_id),
+            Some(SetupLaunch::Failed("Could not remove file".into()))
+        );
+        forget_setup_launch(&failed_id);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_setup_cancelled_before_its_launch_ran_is_left_alone() {
+        let root = scratch("launch-cancelled");
+        let ctx = TempCtx { root: root.clone() };
+        let profile_id = format!("riot-profile-{}", Uuid::new_v4());
+        // Cancel already removed the profile and the launch entry.
+        config::save_config(&ctx, &config_with(Vec::new(), "")).unwrap();
+
+        let mut ran = false;
+        run_riot_setup_launch(&ctx, &profile_id, Duration::from_millis(500), || {
+            ran = true;
+            Ok(())
+        });
+
+        assert!(!ran);
+        assert_eq!(setup_launch(&profile_id), None);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // -- B11: failures after the quit relaunch the client -------------------
+
+    #[test]
+    fn a_failure_after_the_quit_still_relaunches_the_client() {
+        let mut launched = 0;
+        let result = relaunch_after_quit(Err("backup failed".into()), || {
+            launched += 1;
+            Ok(())
+        });
+        assert_eq!(result, Err("backup failed".to_string()));
+        assert_eq!(launched, 1);
+
+        let mut launched = 0;
+        let result = relaunch_after_quit(Err("backup failed".into()), || {
+            launched += 1;
+            Err("launch failed".into())
+        });
+        assert_eq!(result, Err("backup failed".to_string()));
+        assert_eq!(launched, 1);
+
+        assert_eq!(
+            relaunch_after_quit(Ok(()), || Err("launch failed".into())),
+            Err("launch failed".to_string())
+        );
+        assert_eq!(relaunch_after_quit(Ok(()), || Ok(())), Ok(()));
+    }
+
+    // -- Performance: the setup poll logs on change only -------------------
+
+    #[test]
+    fn the_setup_poll_logs_only_when_its_view_changes() {
+        let waiting = SetupPollObservation {
+            profile_id: "p".into(),
+            lockfile: true,
+            logged_in: false,
+            persist: false,
+            settings_ready: false,
+            identity: false,
+            can_capture: false,
+        };
+        let mut last = None;
+        assert!(observation_changed(&mut last, &waiting));
+        assert!(!observation_changed(&mut last, &waiting));
+        assert!(!observation_changed(&mut last, &waiting));
+
+        let logged_in = SetupPollObservation {
+            logged_in: true,
+            ..waiting.clone()
+        };
+        assert!(observation_changed(&mut last, &logged_in));
+        // A new setup logs its first poll even when the view is the same.
+        let other_setup = SetupPollObservation {
+            profile_id: "q".into(),
+            ..logged_in.clone()
+        };
+        assert!(observation_changed(&mut last, &other_setup));
     }
 }
