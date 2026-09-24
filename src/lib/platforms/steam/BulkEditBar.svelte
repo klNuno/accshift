@@ -120,6 +120,7 @@
   }
 
   async function applyEdits() {
+    if (selectedIds.size === 0) return;
     applying = true;
     try {
       const result = await bulkEdit({
@@ -283,7 +284,7 @@
 
         <div class="dialog-actions">
           <button class="btn-secondary" onclick={() => (step = "select")}>{t("common.back")}</button>
-          <button class="btn-primary" disabled={applying} onclick={applyEdits}>
+          <button class="btn-primary" disabled={applying || selectedIds.size === 0} onclick={applyEdits}>
             {applying ? "..." : t("bulkEdit.apply")}
           </button>
         </div>
