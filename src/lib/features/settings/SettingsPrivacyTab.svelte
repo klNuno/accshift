@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { sanitizePinDigits } from "$lib/shared/pin";
+  import { pinFailureWait, unlockPinSession } from "$lib/shared/pinSession";
   import { addToast } from "../notifications/store.svelte";
   import ToggleSetting from "./ToggleSetting.svelte";
   import type { MessageKey, TranslationParams } from "$lib/i18n";
@@ -14,6 +15,7 @@
     settings = $bindable(),
     pinCodeInput = $bindable(),
     pinSetupPending = $bindable(),
+    pinChangeAuthorized = $bindable(),
     t,
     inactivityBlur,
     neutralAccent,
@@ -22,6 +24,8 @@
     settings: AppSettings;
     pinCodeInput: string;
     pinSetupPending: boolean;
+    /** The current PIN was typed here, or set here: changing it asks no more. */
+    pinChangeAuthorized: boolean;
     t: (key: MessageKey, params?: TranslationParams) => string;
     inactivityBlur: { input: string; commit: () => void };
     neutralAccent: string;
@@ -35,6 +39,66 @@
     forget_pending: boolean;
     onboarding_completed: boolean;
   };
+
+  // A PIN in force is changed or turned off only after its code is typed
+  // again: an unattended, unlocked window must not be one click from no lock.
+  let pinGuarded = $derived(settings.pinEnabled && !pinChangeAuthorized);
+  let currentPinInput = $state("");
+  let currentPinError = $state("");
+  let currentPinBusy = $state(false);
+  let pinDisablePending = $state(false);
+  let currentPinRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  onDestroy(() => {
+    if (currentPinRetryTimer) clearTimeout(currentPinRetryTimer);
+  });
+
+  function disablePin() {
+    settings.pinEnabled = false;
+    pinSetupPending = false;
+    settings.pinHash = "";
+    pinCodeInput = "";
+    pinDisablePending = false;
+  }
+
+  function togglePin() {
+    if (pinGuarded) {
+      // Asks for the code first; a second click cancels.
+      pinDisablePending = !pinDisablePending;
+      return;
+    }
+    if (settings.pinEnabled || pinSetupPending) {
+      disablePin();
+    } else {
+      pinSetupPending = true;
+    }
+  }
+
+  async function confirmCurrentPin(code: string) {
+    if (currentPinBusy) return;
+    currentPinBusy = true;
+    currentPinError = "";
+    const check = await unlockPinSession(code, settings.pinHash || "");
+    currentPinInput = "";
+    if (check.status === "match") {
+      currentPinBusy = false;
+      pinChangeAuthorized = true;
+      if (pinDisablePending) {
+        disablePin();
+      } else if (check.rehashed) {
+        settings.pinHash = check.rehashed;
+      }
+      return;
+    }
+    const { waitMs, tooManyAttempts } = pinFailureWait(check);
+    currentPinError = tooManyAttempts
+      ? t("pin.tooManyAttempts", { seconds: Math.ceil(waitMs / 1000) })
+      : t("pin.invalid");
+    currentPinRetryTimer = setTimeout(() => {
+      currentPinRetryTimer = null;
+      currentPinBusy = false;
+    }, waitMs);
+  }
 
   let telemetry = $state<TelemetryState | null>(null);
   let telemetryError = $state(false);
@@ -169,24 +233,40 @@
     <h3>{t("settings.security")}</h3>
     <ToggleSetting
       label={t("settings.pinLockOnAfk")}
-      enabled={settings.pinEnabled || pinSetupPending}
+      enabled={(settings.pinEnabled || pinSetupPending) && !pinDisablePending}
       accent={neutralAccent}
       onLabel={t("common.enabled")}
       offLabel={t("common.disabled")}
-      onToggle={() => {
-        if (settings.pinEnabled || pinSetupPending) {
-          settings.pinEnabled = false;
-          pinSetupPending = false;
-          settings.pinHash = "";
-          pinCodeInput = "";
-        } else {
-          pinSetupPending = true;
-        }
-      }}
+      onToggle={togglePin}
     />
     <p class="hint">{t("settings.pinScreenLockOnly")}</p>
 
-    {#if settings.pinEnabled || pinSetupPending}
+    {#if pinGuarded}
+      <div class="field">
+        <label class="field-label" for="pin-current">{t("settings.pinCurrentCode")}</label>
+        <input
+          id="pin-current"
+          type="password"
+          value={currentPinInput}
+          class="text-input"
+          placeholder={t("settings.pinPlaceholder")}
+          maxlength={PIN_CODE_LENGTH}
+          inputmode="numeric"
+          pattern="[0-9]*"
+          autocomplete="off"
+          disabled={currentPinBusy}
+          oninput={(e) => {
+            currentPinInput = sanitizePinDigits((e.currentTarget as HTMLInputElement).value);
+            if (currentPinInput.length === PIN_CODE_LENGTH) void confirmCurrentPin(currentPinInput);
+          }}
+        />
+        {#if currentPinError}
+          <p class="hint pin-error" role="alert">{currentPinError}</p>
+        {:else}
+          <p class="hint">{t("settings.pinCurrentHint")}</p>
+        {/if}
+      </div>
+    {:else if settings.pinEnabled || pinSetupPending}
       <div class="field">
         <span class="field-label">{t("settings.pinCode")}</span>
         <input
@@ -274,6 +354,10 @@
     font-size: 11px;
     color: var(--fg-subtle);
     line-height: 1.4;
+  }
+
+  .pin-error {
+    color: var(--danger, #f87171);
   }
 
   .inline-link-btn {

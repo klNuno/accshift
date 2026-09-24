@@ -3,6 +3,7 @@ import { addToast } from "../features/notifications/store.svelte";
 import type { AccountWarningChip, AccountWarningPresentation } from "./accountWarnings";
 import { DEFAULT_LOCALE, translate, type MessageKey, type TranslationParams } from "$lib/i18n";
 import { createAvatarLoader } from "./useAvatarLoader.svelte";
+import { isPinLockedError } from "./pinSession";
 
 const LOAD_TOAST_COOLDOWN_MS = 30000;
 
@@ -326,16 +327,20 @@ export function createAccountLoader(
       }
     } catch (e) {
       if (switchId !== latestSwitchId) return false;
-      error = String(e);
-      console.error("[accounts] switch failed:", e);
-      const adapter = getAdapter();
-      const mapped = adapter?.getSwitchErrorToastMessage?.(error, { t });
-      addToast(mapped ?? t("toast.switchFailed"), { type: "error" });
-      // A failed switch can mark new warning state (e.g. Roblox session
-      // expired); re-render from the platform cache so the card outline
-      // appears immediately instead of on the next full load.
-      const cachedWarnings = adapter?.getCachedWarningStates?.({ t });
-      if (cachedWarnings) replaceWarningStates(cachedWarnings);
+      // Refused for want of the PIN: the lock screen is up and the switch is
+      // simply not done. Nothing failed that a toast could explain.
+      if (!isPinLockedError(e)) {
+        error = String(e);
+        console.error("[accounts] switch failed:", e);
+        const adapter = getAdapter();
+        const mapped = adapter?.getSwitchErrorToastMessage?.(error, { t });
+        addToast(mapped ?? t("toast.switchFailed"), { type: "error" });
+        // A failed switch can mark new warning state (e.g. Roblox session
+        // expired); re-render from the platform cache so the card outline
+        // appears immediately instead of on the next full load.
+        const cachedWarnings = adapter?.getCachedWarningStates?.({ t });
+        if (cachedWarnings) replaceWarningStates(cachedWarnings);
+      }
     }
     if (switchId !== latestSwitchId) return succeeded;
     switching = false;

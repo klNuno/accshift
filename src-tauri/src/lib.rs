@@ -7,6 +7,7 @@ mod app_runtime;
 mod boot;
 mod commands;
 mod commands_diagnostics;
+mod commands_pin;
 mod commands_telemetry;
 mod tauri_context;
 mod telemetry_runtime;
@@ -107,6 +108,9 @@ pub fn run() {
 
     builder
         .manage(app_runtime::BootState::default())
+        // Decides itself from the settings store on first use: no disk read
+        // on the boot path.
+        .manage(accshift_core::pin::PinSession::new())
         .manage(client)
         .setup(move |app| {
             let setup_handle = app.handle().clone();
@@ -194,6 +198,9 @@ pub fn run() {
             commands::load_client_storage_snapshot,
             commands::save_client_storage_store,
             commands::get_storage_manifest,
+            // PIN lock
+            commands_pin::pin_unlock,
+            commands_pin::pin_lock,
             // Generic platform commands
             commands::platform_get_accounts,
             commands::platform_get_startup_snapshot,

@@ -97,6 +97,30 @@ describe("persona switch guard", () => {
     expect(controller.switching).toBe(false);
   });
 
+  it("stops quietly when the backend is locked by the PIN", async () => {
+    const adapter = {
+      loadAccounts: vi.fn().mockResolvedValue([{ id: "steam-id", username: "u" }]),
+      switchAccount: vi
+        .fn()
+        .mockRejectedValue("pin_locked: Accshift is locked. Enter the PIN to switch accounts."),
+    } as unknown as PlatformAdapter;
+    mocks.ensurePlatformLoaded.mockResolvedValue(adapter);
+    const controller = createPersonaController();
+
+    const result = await controller.switchToPersona({
+      ...persona,
+      assignments: [
+        { platformId: "steam", accountId: "steam-id" },
+        { platformId: "riot", accountId: "riot-id" },
+      ],
+    });
+
+    // No partial-failure report: the lock screen is what the user sees.
+    expect(result).toBeNull();
+    expect(adapter.switchAccount).toHaveBeenCalledOnce();
+    expect(controller.switching).toBe(false);
+  });
+
   it("refuses to start while an account switch is running", async () => {
     const controller = createPersonaController({ isBlocked: () => true });
 

@@ -427,10 +427,8 @@ fn cmd_switch(
     // PIN gate: the GUI can lock account switching behind a 4-digit PIN. Honour
     // the same lock here so the CLI cannot bypass it. Prompt before taking the
     // lock so we never hold it while waiting on stdin.
-    if app_settings.pin_enabled {
-        if let Err(code) = pin::enforce(format, &app_settings.pin_hash) {
-            return code;
-        }
+    if let Err(code) = pin::enforce(format, accshift_core::pin::read_pin_lock(&*ctx)) {
+        return code;
     }
 
     let _lock = match acquire_exclusive(&ctx, LOCK_TIMEOUT) {

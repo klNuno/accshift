@@ -255,6 +255,8 @@ pub fn error_code_for_kind(kind: PlatformErrorKind) -> &'static str {
         PlatformErrorKind::LockContended => "lock_contended",
         PlatformErrorKind::Io => "io",
         PlatformErrorKind::Crypto => "crypto",
+        // Same outcome as the CLI's refused PIN, one code for both surfaces.
+        PlatformErrorKind::PinLocked => "pin_denied",
         PlatformErrorKind::Other => UNKNOWN_CODE,
     }
 }
@@ -326,6 +328,7 @@ mod tests {
             PlatformErrorKind::LockContended,
             PlatformErrorKind::Io,
             PlatformErrorKind::Crypto,
+            PlatformErrorKind::PinLocked,
             PlatformErrorKind::Other,
         ] {
             let code = error_code_for_kind(kind);

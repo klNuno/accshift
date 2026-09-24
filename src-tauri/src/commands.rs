@@ -3,6 +3,7 @@ use crate::platforms::{ids, require_service, SetupStatus};
 use crate::telemetry;
 use crate::telemetry_runtime::TelemetryState;
 use accshift_core::error::PlatformError;
+use accshift_core::pin::PinSession;
 use serde_json::Value;
 use std::time::Duration;
 use tauri::Manager;
@@ -370,6 +371,13 @@ pub fn save_client_storage_store(
     // responsive; the guard is held across the write and dropped right after.
     let _write_lock =
         accshift_core::lock::acquire_for_write(&c, LOCK_TIMEOUT).map_err(|e| e.to_string())?;
+    // The PIN lives in this store. While the session is locked, a write may
+    // not turn it off or replace it, or the lock would clear without the PIN.
+    if store_id == crate::storage::STORE_SETTINGS {
+        app_handle
+            .state::<PinSession>()
+            .check_settings_write(&c, &value)?;
+    }
     let fingerprint = crate::storage::save_client_store(&c, &store_id, &value)?;
     let details = serde_json::json!({
         "storeId": store_id,
@@ -454,9 +462,14 @@ pub async fn platform_switch_account(
 ) -> Result<(), PlatformError> {
     let service = require_service(&platform_id)?;
     let c = ctx(&app_handle);
+    let pin = app_handle.state::<PinSession>().inner().clone();
     let t0 = std::time::Instant::now();
     let platform_for_event = platform_id.clone();
+    // Every platform, descriptor platforms and persona switches included,
+    // switches through here. The PIN check runs under the operation lock, on
+    // the thread that switches.
     let result = run_locked_blocking("platform_switch_account", c, move |c| {
+        pin.ensure_unlocked(&c)?;
         service.switch_account(c, &account_id, params)
     })
     .await;
@@ -1637,7 +1650,9 @@ pub async fn steam_switch_account_and_launch_game(
     shutdown_mode: String,
 ) -> Result<(), PlatformError> {
     let c = ctx(&app_handle);
+    let pin = app_handle.state::<PinSession>().inner().clone();
     run_locked_blocking("steam_switch_account_and_launch_game", c, move |c| {
+        pin.ensure_unlocked(&c)?;
         crate::platforms::steam::switch_account_and_launch_game(
             c,
             username,
