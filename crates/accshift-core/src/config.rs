@@ -784,8 +784,13 @@ fn save_config_unlocked(app_handle: &dyn AppContext, config: &AppConfig) -> Resu
         }
     }
 
-    crate::storage::write_json_atomic(&portable_path, &portable)?;
-    crate::storage::write_json_atomic(&local_path, &local)?;
+    // Window moves and polls save often with nothing new for one side or
+    // both: skip the unchanged file and its log line.
+    let wrote_portable = crate::storage::write_json_if_changed(&portable_path, &portable)?;
+    let wrote_local = crate::storage::write_json_if_changed(&local_path, &local)?;
+    if !wrote_portable && !wrote_local {
+        return Ok(());
+    }
     // Paths stay out: they embed the OS account name and are the same on
     // every save.
     let details = serde_json::json!({

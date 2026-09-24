@@ -454,6 +454,21 @@ where
     write_bytes_atomic(path, json.as_bytes())
 }
 
+/// Like [`write_json_atomic`], but leaves the file alone when it already holds
+/// exactly these bytes. Returns whether it wrote.
+pub fn write_json_if_changed<T>(path: &Path, value: &T) -> Result<bool, String>
+where
+    T: Serialize,
+{
+    let json = serde_json::to_string_pretty(value)
+        .map_err(|e| format!("Could not serialize JSON {}: {e}", path.display()))?;
+    if fs::read(path).is_ok_and(|current| current == json.as_bytes()) {
+        return Ok(false);
+    }
+    write_bytes_atomic(path, json.as_bytes())?;
+    Ok(true)
+}
+
 /// Persist one client store, returning the file's post-write fingerprint.
 ///
 /// The GUI records it as its own write: without that, the next focus manifest
