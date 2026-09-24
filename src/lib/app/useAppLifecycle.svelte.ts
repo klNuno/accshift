@@ -16,6 +16,7 @@ import {
   CLIENT_STORE_ACCOUNT_CARD_NOTES,
   CLIENT_STORE_FOLDER_CARD_COLORS,
   CLIENT_STORE_FOLDERS,
+  CLIENT_STORE_PERSONAS,
   CLIENT_STORE_SETTINGS,
   CLIENT_STORE_VIEW_MODE,
   STORAGE_TARGET_APP_CONFIG_LOCAL,
@@ -47,6 +48,8 @@ type AppLifecycleDeps = {
   syncViewModeFromStorage: () => void;
   bumpCardColorVersion: () => void;
   bumpCardNoteVersion: () => void;
+  /** Re-reads the personas list; its store has no other external refresh. */
+  refreshPersonas: () => void;
   setAppVersion: (version: string) => void;
   markBootReady: () => void;
   replaceHistoryState: (entry: {
@@ -70,6 +73,7 @@ export function createAppLifecycleController({
   syncViewModeFromStorage,
   bumpCardColorVersion,
   bumpCardNoteVersion,
+  refreshPersonas,
   setAppVersion,
   markBootReady,
   replaceHistoryState,
@@ -233,6 +237,9 @@ export function createAppLifecycleController({
       }
       if (touched.has(CLIENT_STORE_ACCOUNT_CARD_NOTES)) {
         bumpCardNoteVersion();
+      }
+      if (touched.has(CLIENT_STORE_PERSONAS)) {
+        refreshPersonas();
       }
       if (anyOf(GRID_TARGETS)) {
         navigation.refreshCurrentItems();

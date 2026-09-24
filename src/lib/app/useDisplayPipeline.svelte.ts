@@ -1,3 +1,4 @@
+import { SvelteSet } from "svelte/reactivity";
 import type { PlatformAccount } from "$lib/shared/platform";
 import type { ItemRef } from "$lib/features/folders/types";
 import { getFolder, getItemsInFolder, getRootSections } from "$lib/features/folders/store";
@@ -72,6 +73,41 @@ function findMatchingFolderItems(platform: string, foldedQuery: string): ItemRef
 }
 
 const SEARCH_DEBOUNCE_MS = 80;
+
+const ROOT_SECTION_KEY = "__root__";
+
+/** Key a section is collapsed under: its folder id, or a fixed key for the
+ *  root section of loose accounts. */
+export function sectionCollapseKey(section: DisplaySection): string {
+  return section.folder?.id ?? ROOT_SECTION_KEY;
+}
+
+/** Account ids on screen, in display order. A collapsed section renders only
+ *  its header, so its accounts are not on screen and must stay out of select
+ *  all, card focus and visible-account work. */
+export function collectVisibleAccountIds(
+  sections: readonly DisplaySection[] | null,
+  flatItems: readonly ItemRef[],
+  collapsed: { has(key: string): boolean },
+): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  const push = (items: readonly ItemRef[]) => {
+    for (const item of items) {
+      if (item.type !== "account" || seen.has(item.id)) continue;
+      seen.add(item.id);
+      ids.push(item.id);
+    }
+  };
+  if (sections) {
+    for (const section of sections) {
+      if (!collapsed.has(sectionCollapseKey(section))) push(section.accountItems);
+    }
+  } else {
+    push(flatItems);
+  }
+  return ids;
+}
 
 export function createDisplayPipeline(deps: DisplayPipelineDeps) {
   const { navigation, drag, loader, addFlow, getExpandedFolders, getActiveTab } = deps;
@@ -192,26 +228,28 @@ export function createDisplayPipeline(deps: DisplayPipelineDeps) {
   // A drag only churns the preview order, never the set of visible accounts.
   // Early-out on drag and keep the previous array identity when the contents
   // did not change, so O(N) consumers (avatar priming, etc.) stay idle.
+  // Sections the user folded in sections mode. Owned here rather than by the
+  // view so what counts as visible matches what is on screen; App clears it
+  // whenever the workspace remounts, which was its lifetime as view state.
+  const collapsedSections = new SvelteSet<string>();
+
+  function toggleSectionCollapsed(key: string) {
+    if (collapsedSections.has(key)) collapsedSections.delete(key);
+    else collapsedSections.add(key);
+  }
+
+  function clearCollapsedSections() {
+    if (collapsedSections.size > 0) collapsedSections.clear();
+  }
+
   let lastVisibleIds: string[] = [];
   let visibleRenderedAccountIds = $derived.by(() => {
     if (drag.isDragging && lastVisibleIds.length > 0) return lastVisibleIds;
-    const ids: string[] = [];
-    const seen = new Set<string>();
-    if (displaySections) {
-      for (const section of displaySections) {
-        for (const item of section.accountItems) {
-          if (seen.has(item.id)) continue;
-          seen.add(item.id);
-          ids.push(item.id);
-        }
-      }
-    } else {
-      for (const item of displayAccountItemsWithPending) {
-        if (item.type !== "account" || seen.has(item.id)) continue;
-        seen.add(item.id);
-        ids.push(item.id);
-      }
-    }
+    const ids = collectVisibleAccountIds(
+      displaySections,
+      displayAccountItemsWithPending,
+      collapsedSections,
+    );
     if (
       ids.length !== lastVisibleIds.length ||
       ids.some((id, index) => id !== lastVisibleIds[index])
@@ -245,6 +283,13 @@ export function createDisplayPipeline(deps: DisplayPipelineDeps) {
     get displaySections() {
       return displaySections;
     },
+    get collapsedSections(): ReadonlySet<string> {
+      return collapsedSections;
+    },
+    isSectionCollapsed: (section: DisplaySection) =>
+      collapsedSections.has(sectionCollapseKey(section)),
+    toggleSectionCollapsed,
+    clearCollapsedSections,
     get visibleRenderedAccountIds() {
       return visibleRenderedAccountIds;
     },

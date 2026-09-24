@@ -55,6 +55,9 @@ type DeepLinkDeps = {
   loadAccounts: () => Promise<unknown> | void;
   getAccounts: () => PlatformAccount[];
   isLoaderLoading: () => boolean;
+  /** Accounts of a platform that is not on screen, read without changing
+   *  the visible tab, so a link is confirmed before the app moves. */
+  loadPlatformAccounts: (platformId: string) => Promise<PlatformAccount[]>;
   switchToAccount: (account: PlatformAccount) => Promise<boolean>;
   // Optional gate asked right before a deep-link-triggered switch runs, so a
   // link can be required to go through an explicit user confirmation instead
@@ -100,30 +103,51 @@ export function createDeepLinkController(deps: DeepLinkDeps) {
       return;
     }
 
-    if (deps.getActiveTab() !== platformId) {
-      await deps.changeTab(platformId);
-    }
-    await waitUntil(() => !deps.isLoaderLoading(), LOAD_TIMEOUT_MS);
-
-    let account = findAccount(deps.getAccounts(), accountRef);
-    if (!account) {
-      // The account may have been added since the last load (e.g. via CLI).
-      await deps.loadAccounts();
-      account = findAccount(deps.getAccounts(), accountRef);
-    }
-    if (!account) {
+    const showNotFound = () =>
       deps.showToast(
         deps.t("toast.deepLinkAccountNotFound", {
           platform: platformDef.name,
           account: accountRef,
         }),
       );
+
+    let account: PlatformAccount | undefined;
+    const onOtherTab = deps.getActiveTab() !== platformId;
+    if (onOtherTab) {
+      // Resolve from the platform itself: the loader only holds the visible
+      // tab, and moving the app before the user said yes is its own surprise.
+      account = findAccount(await deps.loadPlatformAccounts(platformId), accountRef);
+    } else {
+      await waitUntil(() => !deps.isLoaderLoading(), LOAD_TIMEOUT_MS);
+      account = findAccount(deps.getAccounts(), accountRef);
+      if (!account) {
+        // The account may have been added since the last load (e.g. via CLI).
+        await deps.loadAccounts();
+        account = findAccount(deps.getAccounts(), accountRef);
+      }
+    }
+    if (!account) {
+      showNotFound();
       return;
     }
 
     if (deps.confirmSwitch) {
       const allowed = await deps.confirmSwitch(account, platformDef.name);
       if (!allowed) return;
+    }
+
+    if (onOtherTab || deps.getActiveTab() !== platformId) {
+      // The switch runs through the visible tab's loader: move there now,
+      // then take the loader's copy of the same account by id.
+      await deps.changeTab(platformId);
+      if (deps.getActiveTab() !== platformId) return;
+      await waitUntil(() => !deps.isLoaderLoading(), LOAD_TIMEOUT_MS);
+      const accountId = account.id;
+      account = deps.getAccounts().find((candidate) => candidate.id === accountId);
+      if (!account) {
+        showNotFound();
+        return;
+      }
     }
 
     const switched = await deps.switchToAccount(account);

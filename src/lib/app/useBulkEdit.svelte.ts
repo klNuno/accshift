@@ -21,7 +21,11 @@ export function createBulkEditController({
   // Which platform capability the loaded bar belongs to; a different active
   // platform must load its own bar component.
   let loadedBarCapability: PlatformBulkEditCapability | null = null;
-  let bulkEditBarLoadPromise: Promise<void> | null = null;
+  // Non-zero while an open waits for its bar chunk. A toggle during the wait
+  // cancels it, and closeBulkEdit (tab change) drops it, so a late chunk
+  // never opens bulk edit on another tab or after the user said no.
+  let pendingOpenToken = 0;
+  let openTokenSeq = 0;
 
   // Paint selection: press on a card, drag over others to select/deselect them.
   // The direction is locked for the whole gesture by the start card's state
@@ -62,25 +66,31 @@ export function createBulkEditController({
       bulkEditSelectedIds = new Set();
       return;
     }
+    if (pendingOpenToken !== 0) {
+      pendingOpenToken = 0;
+      return;
+    }
     const capability = getBulkEditCapability();
     if (!capability) return;
     if (BulkEditBar && loadedBarCapability === capability) {
       bulkEditMode = true;
       return;
     }
-    if (!bulkEditBarLoadPromise) {
-      bulkEditBarLoadPromise = capability
-        .loadBar()
-        .then((mod) => {
-          BulkEditBar = mod.default;
-          loadedBarCapability = capability;
-          bulkEditMode = true;
-        })
-        .catch(() => {})
-        .finally(() => {
-          bulkEditBarLoadPromise = null;
-        });
-    }
+    const token = ++openTokenSeq;
+    pendingOpenToken = token;
+    capability
+      .loadBar()
+      .then((mod) => {
+        if (pendingOpenToken !== token) return;
+        pendingOpenToken = 0;
+        if (getBulkEditCapability() !== capability) return;
+        BulkEditBar = mod.default;
+        loadedBarCapability = capability;
+        bulkEditMode = true;
+      })
+      .catch(() => {
+        if (pendingOpenToken === token) pendingOpenToken = 0;
+      });
   }
 
   function toggleBulkEditAccount(accountId: string) {
@@ -104,6 +114,7 @@ export function createBulkEditController({
   }
 
   function closeBulkEdit() {
+    pendingOpenToken = 0;
     bulkEditMode = false;
     bulkEditSelectedIds = new Set();
   }

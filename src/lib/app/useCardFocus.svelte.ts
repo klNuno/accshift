@@ -13,6 +13,42 @@ function cardSelector(item: ItemRef): string {
     : `[data-account-id="${CSS.escape(item.id)}"]`;
 }
 
+const CARD_SELECTOR = "[data-account-id], [data-folder-id]";
+const INTERACTIVE_SELECTOR = [
+  "button",
+  "a[href]",
+  "input",
+  "select",
+  "textarea",
+  "summary",
+  '[contenteditable]:not([contenteditable="false"])',
+  '[role="button"]',
+  '[role="link"]',
+  '[role="menuitem"]',
+  '[role="checkbox"]',
+  '[role="switch"]',
+  '[role="tab"]',
+  '[role="option"]',
+].join(", ");
+
+function isPageRoot(target: Element): boolean {
+  const doc = target.ownerDocument;
+  return target === doc?.body || target === doc?.documentElement;
+}
+
+/** Whether Enter or Space aimed at `target` belongs to the grid's virtual
+ *  focus. Real focus on a control (titlebar, bulk edit bar, search, a button
+ *  inside a card) keeps its native activation; so does anything outside the
+ *  grid. A card that holds real focus defers to the virtual one, which is
+ *  what the arrow keys moved last. */
+export function isCardKeyTarget(target: EventTarget | null, wrapper: Element | null): boolean {
+  if (!(target instanceof Element)) return true;
+  if (isPageRoot(target)) return true;
+  if (!wrapper || !wrapper.contains(target)) return false;
+  if (target.matches(CARD_SELECTOR)) return true;
+  return !target.matches(INTERACTIVE_SELECTOR);
+}
+
 /** Virtual roving focus for the card grid. The cards are managed by the drag
  *  manager and stay plain divs, so instead of DOM focus we track a focused
  *  item id and paint it via a data attribute (styled globally in app.css).
@@ -102,6 +138,15 @@ export function createCardFocus({ getItems, getWrapperRef, getViewMode }: CardFo
     if (focusedId !== null) setFocused(null);
   }
 
+  /** Drops the virtual focus when real focus lands outside the grid, so a
+   *  highlighted card does not linger behind the control now in use. */
+  function releaseIfOutside(target: EventTarget | null) {
+    if (focusedId === null || !(target instanceof Element) || isPageRoot(target)) return;
+    const wrapper = getWrapperRef();
+    if (wrapper?.contains(target)) return;
+    clear();
+  }
+
   return {
     get focusedId() {
       return focusedId;
@@ -113,6 +158,8 @@ export function createCardFocus({ getItems, getWrapperRef, getViewMode }: CardFo
     setFocused,
     move,
     clear,
+    releaseIfOutside,
+    ownsActivationKey: (target: EventTarget | null) => isCardKeyTarget(target, getWrapperRef()),
     syncDom,
   };
 }
