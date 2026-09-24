@@ -1124,8 +1124,8 @@ import { markBoot } from "$lib/app/bootMarks";
     if (!isPlatformUsable(shell.activeTab, shell.runtimeOs)) return;
     const adapterReady = await ensureAdapterReady(shell.activeTab);
     if (!adapterReady) return;
-    return loader.load(() => {
-      syncAccounts(loader.accounts.map(a => a.id), shell.activeTab);
+    return loader.load((platformId) => {
+      syncAccounts(loader.accounts.map(a => a.id), platformId);
       navigation.refreshCurrentItems();
       grid.queueCalculatePadding();
     }, silent, showRefreshedToast, forceRefresh, checkBans, deferBackground);

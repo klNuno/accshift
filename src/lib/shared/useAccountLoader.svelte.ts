@@ -184,8 +184,14 @@ export function createAccountLoader(
     return () => runId === latestPrimeRunId && adapter === getAdapter();
   }
 
+  /**
+   * `onAfterLoad` gets the id of the platform the accounts came from. The
+   * active tab can move while the load runs (a tab picked from outside, the
+   * onboarding tour), so it is the only safe target for per-platform writes
+   * such as the folder sync.
+   */
   async function load(
-    onAfterLoad?: () => void,
+    onAfterLoad?: (platformId: string) => void,
     silent = false,
     showRefreshedToast = false,
     forceRefresh = false,
@@ -233,7 +239,7 @@ export function createAccountLoader(
           { type: "success" },
         );
       }
-      onAfterLoad?.();
+      onAfterLoad?.(adapter.id);
       const runBackgroundTasks = () => {
         if (loadId !== latestLoadId) return;
         void refreshVisibleAccounts(checkBans, forceRefresh, silent, false);

@@ -100,3 +100,30 @@ describe("load and switch overlap", () => {
     expect(loader.loading).toBe(false);
   });
 });
+
+describe("load and platform change overlap", () => {
+  const alice = { id: "alice", username: "alice", displayName: "Alice" };
+
+  it("names the platform the accounts came from, not the one active at the end", async () => {
+    // The tab moved to another platform while Steam's load ran. The folder
+    // sync in onAfterLoad must target Steam: syncing Steam ids into the new
+    // tab's platform wipes its folder layout.
+    const snapshot = deferred<{ accounts: (typeof alice)[]; currentAccount: string }>();
+    const steam = {
+      id: "steam",
+      getStartupSnapshot: vi.fn().mockReturnValue(snapshot.promise),
+    } as unknown as PlatformAdapter;
+    const riot = { id: "riot" } as unknown as PlatformAdapter;
+    let active = steam;
+    const loader = createAccountLoader(() => active);
+    const onAfterLoad = vi.fn();
+
+    const load = loader.load(onAfterLoad);
+    active = riot;
+    snapshot.resolve({ accounts: [alice], currentAccount: "alice" });
+    await load;
+
+    expect(onAfterLoad).toHaveBeenCalledOnce();
+    expect(onAfterLoad).toHaveBeenCalledWith("steam");
+  });
+});
