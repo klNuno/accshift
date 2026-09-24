@@ -242,7 +242,7 @@ pub(super) fn launch_battle_net(app_handle: &dyn AppContext) -> Result<(), Strin
     if let Some(install_dir) = executable.parent() {
         command.current_dir(install_dir);
     }
-    command
+    crate::os::detach_stdio(&mut command)
         .spawn()
         .map_err(|e| format!("Could not launch Battle.net {}: {e}", executable.display()))?;
     Ok(())

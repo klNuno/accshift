@@ -78,7 +78,7 @@ impl DescriptorService {
             }
         }
         command.args(launch.args_for(&executable));
-        command.spawn().map_err(|e| {
+        crate::os::detach_stdio(&mut command).spawn().map_err(|e| {
             format!(
                 "Could not launch {} {}: {e}",
                 self.descriptor.name,

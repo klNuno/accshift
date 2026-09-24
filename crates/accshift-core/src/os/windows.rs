@@ -25,6 +25,29 @@ pub(crate) fn hidden_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     cmd
 }
 
+/// Clear the inherit flag on stdin, stdout and stderr. `Command` spawns with
+/// handle inheritance on, and `Stdio::inherit` duplicates what it passes, so
+/// only handles a child would pick up without asking are affected.
+pub(crate) fn stop_std_handle_inheritance() {
+    use windows_sys::Win32::Foundation::{
+        SetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+    };
+    use windows_sys::Win32::System::Console::{
+        GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+    };
+    for id in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        // SAFETY: GetStdHandle takes no pointer; SetHandleInformation only
+        // flips a flag on a handle this process owns, and fails harmlessly
+        // on anything else.
+        unsafe {
+            let handle = GetStdHandle(id);
+            if !handle.is_null() && handle != INVALID_HANDLE_VALUE {
+                SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+            }
+        }
+    }
+}
+
 fn to_wide_null(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
@@ -435,7 +458,9 @@ pub fn request_steam_shutdown(steam_path: &Path) -> bool {
     if !steam_exe.exists() {
         return false;
     }
-    hidden_command(&steam_exe).arg("-shutdown").spawn().is_ok()
+    super::detach_stdio(hidden_command(&steam_exe).arg("-shutdown"))
+        .spawn()
+        .is_ok()
 }
 
 pub fn launch_steam(
@@ -448,8 +473,7 @@ pub fn launch_steam(
         let args = quote_windows_args(launch_options);
         shell_execute("runas", &steam_exe.to_string_lossy(), &args)
     } else {
-        hidden_command(&steam_exe)
-            .args(launch_options)
+        super::detach_stdio(hidden_command(&steam_exe).args(launch_options))
             .spawn()
             .map_err(|e| AppError::ProcessStart(e.to_string()))?;
         Ok(())

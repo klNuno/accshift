@@ -126,9 +126,11 @@ pub(super) fn graceful_riot_quit() {
 }
 
 pub(super) fn launch_riot_client(client_path: &Path) -> Result<(), String> {
-    os::hidden_command(client_path)
-        .args(["--launch-product=riot-client", "--launch-patchline=live"])
-        .spawn()
-        .map_err(|e| format!("Could not launch Riot Client: {e}"))?;
+    os::detach_stdio(
+        os::hidden_command(client_path)
+            .args(["--launch-product=riot-client", "--launch-patchline=live"]),
+    )
+    .spawn()
+    .map_err(|e| format!("Could not launch Riot Client: {e}"))?;
     Ok(())
 }

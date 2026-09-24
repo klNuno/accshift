@@ -195,6 +195,10 @@ fn run(format: Format, command: Command, gate: CliGate) -> u8 {
 }
 
 fn main() -> ExitCode {
+    // A launcher started by `switch` outlives this process. Were it to inherit
+    // our stdout, a caller reading it through a pipe would wait for Steam to
+    // exit instead of for us.
+    accshift_core::os::stop_std_handle_inheritance();
     let cli = Cli::parse();
     let format = Format::resolve(cli.json);
 
