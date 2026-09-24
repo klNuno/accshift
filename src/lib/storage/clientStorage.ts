@@ -19,6 +19,7 @@ import {
 } from "./storeIds";
 import { invoke } from "@tauri-apps/api/core";
 import { getBootPayload } from "$lib/app/bootPayload";
+import { isMockBackend } from "./mockBackend";
 
 export * from "./storeIds";
 
@@ -242,6 +243,11 @@ export async function initializeClientStorage(): Promise<void> {
     } catch (reason) {
       console.error("Failed to load client storage snapshot:", reason);
     }
+
+    // The legacy keys are the real user's data in this webview profile. The
+    // mock backend never saves anything, so migrating there would only put
+    // that data on screen.
+    if (isMockBackend()) return;
 
     const missingStores = CLIENT_STORE_IDS.filter((storeId) => memoryStores.get(storeId) == null);
     if (missingStores.length === 0) return;
