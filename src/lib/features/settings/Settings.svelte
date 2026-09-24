@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { getSettings, saveSettings, ALL_PLATFORMS } from "./store";
+  import { getSettings, onSettingsChanged, saveSettings, ALL_PLATFORMS } from "./store";
   import { addToast } from "../notifications/store.svelte";
   import {
     hasApiKey,
@@ -89,6 +89,10 @@
   // the user changed since then, merged over the store: other writers (zoom
   // shortcuts, streamer banner, PIN rehash) keep their values.
   let persistedSettings: AppSettings = getSettings();
+  // Set while this panel writes the store, so its own save is not taken for
+  // another writer's.
+  let writingSettings = false;
+  let stopSettingsListener: (() => void) | null = null;
   let lastPlatformSnapshot = "";
   let ActivePlatformComponent = $state<any>(null);
   const SAVE_TOAST_COOLDOWN_MS = 1500;
@@ -325,7 +329,12 @@
     const prevPaths = lastSavedPlatformPaths();
 
     const draft = JSON.parse(JSON.stringify(settings)) as AppSettings;
-    saveSettings(mergeSettingsDraft(getSettings(), persistedSettings, draft));
+    writingSettings = true;
+    try {
+      saveSettings(mergeSettingsDraft(getSettings(), persistedSettings, draft));
+    } finally {
+      writingSettings = false;
+    }
     persistedSettings = draft;
     onSettingsUpdated?.();
     if (pinCommitted) {
@@ -376,6 +385,29 @@
       console.error("Failed to clear Steam API key:", e);
       addToast(t("settings.apiKeyClearFailed"), { type: "error" });
     }
+  }
+
+  /**
+   * Another writer changed the stored settings (zoom shortcut, streamer
+   * banner, PIN rehash, a reload after another process wrote them). Show its
+   * values in every field the user has not edited here, and keep those edits.
+   */
+  function adoptExternalSettings() {
+    if (writingSettings || !hydrated) return;
+    const stored = getSettings();
+    const draft = JSON.parse(JSON.stringify(settings)) as AppSettings;
+    const wasSaved = buildPersistSnapshot() === lastPersistedSnapshot;
+    const next = mergeSettingsDraft(stored, persistedSettings, draft);
+    persistedSettings = stored;
+    settings = next;
+    // Only the inputs whose value moved: a field being typed in keeps its text.
+    if (next.uiScalePercent !== draft.uiScalePercent) uiScale.refresh();
+    if (next.backgroundOpacity !== draft.backgroundOpacity) bgOpacity.refresh();
+    if (next.dataRefresh.avatarCacheDays !== draft.dataRefresh.avatarCacheDays) avatarCacheDays.refresh();
+    if (next.dataRefresh.banCheckDays !== draft.dataRefresh.banCheckDays) banCheckDays.refresh();
+    if (next.inactivityBlurSeconds !== draft.inactivityBlurSeconds) inactivityBlur.refresh();
+    // Values already in the store are not an edit to save again.
+    if (wasSaved) lastPersistedSnapshot = buildPersistSnapshot();
   }
 
   function queueSave() {
@@ -490,6 +522,7 @@
   }
 
   onMount(async () => {
+    stopSettingsListener = onSettingsChanged(adoptExternalSettings);
     registerFlush(async () => {
       await hydrationReady;
       await flushSettingsNow();
@@ -545,6 +578,7 @@
     const finalPersist = hydrationReady.then(flushSettingsNow);
     registerFlush(() => finalPersist);
     registerSearchFocus(null);
+    stopSettingsListener?.();
     tabBar.destroy();
   });
 

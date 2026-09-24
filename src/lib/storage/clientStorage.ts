@@ -67,6 +67,7 @@ const memoryStores = new Map<ClientStoreId, unknown>();
 const saveTimers = new Map<ClientStoreId, ReturnType<typeof setTimeout>>();
 const inFlightSaves = new Map<ClientStoreId, Promise<void>>();
 const storeRevisions = new Map<ClientStoreId, number>();
+const storeListeners = new Map<ClientStoreId, Set<() => void>>();
 
 let lastManifest: StorageManifest = {
   schemaVersion: 1,
@@ -116,6 +117,13 @@ function readLegacyLocalStorageValue(storeId: ClientStoreId): unknown {
 
 function bumpStoreRevision(storeId: ClientStoreId) {
   storeRevisions.set(storeId, (storeRevisions.get(storeId) ?? 0) + 1);
+  for (const listener of [...(storeListeners.get(storeId) ?? [])]) {
+    try {
+      listener();
+    } catch (error) {
+      console.error(`Client store listener failed for ${storeId}:`, error);
+    }
+  }
 }
 
 function applySnapshot(snapshot: ClientStorageSnapshot) {
@@ -305,6 +313,23 @@ export function getClientStoreValue<T>(storeId: ClientStoreId): T | undefined {
 
 export function getClientStoreRevision(storeId: ClientStoreId): number {
   return storeRevisions.get(storeId) ?? 0;
+}
+
+/**
+ * Run `listener` after each change to one store's in-memory value: a local
+ * write, the boot snapshot or a reload of a store another process rewrote.
+ * Returns the function that removes it.
+ */
+export function onClientStoreChange(storeId: ClientStoreId, listener: () => void): () => void {
+  let listeners = storeListeners.get(storeId);
+  if (!listeners) {
+    listeners = new Set();
+    storeListeners.set(storeId, listeners);
+  }
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
 }
 
 export function setClientStoreValue(

@@ -41,6 +41,7 @@ import {
   setClientStoreValue,
   flushPendingSaves,
   getClientStoreValue,
+  onClientStoreChange,
   refreshClientStorageIfChanged,
 } from "./clientStorage";
 
@@ -261,5 +262,52 @@ describe("clientStorage external refresh", () => {
     manifest = snapshotManifest;
     expect(await refreshClientStorageIfChanged()).toEqual([CLIENT_STORE_SETTINGS]);
     expect(getClientStoreValue(CLIENT_STORE_SETTINGS)).toEqual({ language: "de" });
+  });
+});
+
+describe("clientStorage onClientStoreChange", () => {
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    await initializeClientStorage();
+  });
+
+  afterEach(async () => {
+    await flushPendingSaves();
+    vi.useRealTimers();
+  });
+
+  it("tells a listener about writes to its store only, until it unsubscribes", () => {
+    const seen: unknown[] = [];
+    const stop = onClientStoreChange(CLIENT_STORE_SETTINGS, () => {
+      seen.push(getClientStoreValue(CLIENT_STORE_SETTINGS));
+    });
+
+    setClientStoreValue(CLIENT_STORE_FOLDERS, { a: 1 });
+    setClientStoreValue(CLIENT_STORE_SETTINGS, { uiScalePercent: 110 });
+    expect(seen).toEqual([{ uiScalePercent: 110 }]);
+
+    stop();
+    setClientStoreValue(CLIENT_STORE_SETTINGS, { uiScalePercent: 90 });
+    expect(seen).toHaveLength(1);
+  });
+
+  it("keeps the write and the other listeners when one listener throws", () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    let calls = 0;
+    const stopBroken = onClientStoreChange(CLIENT_STORE_SETTINGS, () => {
+      throw new Error("boom");
+    });
+    const stop = onClientStoreChange(CLIENT_STORE_SETTINGS, () => {
+      calls += 1;
+    });
+
+    setClientStoreValue(CLIENT_STORE_SETTINGS, { language: "fr" });
+    expect(getClientStoreValue(CLIENT_STORE_SETTINGS)).toEqual({ language: "fr" });
+    expect(calls).toBe(1);
+    expect(errors).toHaveBeenCalledTimes(1);
+
+    stopBroken();
+    stop();
+    errors.mockRestore();
   });
 });

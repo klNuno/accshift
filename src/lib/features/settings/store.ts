@@ -9,6 +9,7 @@ import {
   CLIENT_STORE_SETTINGS,
   getClientStoreRevision,
   getClientStoreValue,
+  onClientStoreChange,
   setClientStoreValue,
 } from "$lib/storage/clientStorage";
 
@@ -275,6 +276,11 @@ export function saveSettings(settings: AppSettings) {
   } catch {
     // non-critical
   }
+}
+
+/** Run `listener` after every write or reload of the settings. Returns the unsubscribe. */
+export function onSettingsChanged(listener: () => void): () => void {
+  return onClientStoreChange(CLIENT_STORE_SETTINGS, listener);
 }
 
 export function getCacheDuration(): number {

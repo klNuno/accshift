@@ -102,6 +102,24 @@ describe("mergeSettingsDraft", () => {
     mergeSettingsDraft(current, settings(), settings({ language: "fr" }));
     expect(current.language).toBe("en");
   });
+
+  it("rebases an open panel on another writer's values and keeps its own edits", () => {
+    // The panel opened on `baseline`, the user picked French, then a zoom
+    // shortcut stored 110 while the panel was open.
+    const baseline = settings();
+    const draft = settings({ language: "fr" });
+    const stored = settings({ uiScalePercent: 110 });
+
+    const shown = mergeSettingsDraft(stored, baseline, draft);
+    expect(shown.uiScalePercent).toBe(110);
+    expect(shown.language).toBe("fr");
+
+    // With the stored settings as the new baseline, the next save writes
+    // only the language and keeps the zoom.
+    const saved = mergeSettingsDraft(stored, stored, shown);
+    expect(saved).toEqual(settings({ language: "fr", uiScalePercent: 110 }));
+    expect(diffSettings(stored, shown)).toEqual([{ path: ["language"], value: "fr" }]);
+  });
 });
 
 describe("diffSettings", () => {
