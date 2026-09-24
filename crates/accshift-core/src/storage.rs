@@ -688,6 +688,63 @@ fn legacy_backup_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     Ok(root)
 }
 
+/// Delete the pre-migration copies of snapshot directories once each platform's
+/// live snapshot directory exists. Those copies predate snapshot encryption:
+/// they hold session cookies and tokens in plaintext, and nothing reads them.
+/// Backups of config files stay. Returns how many entries were removed.
+pub fn purge_migrated_snapshot_backups(
+    app_handle: &dyn AppContext,
+    report: &mut dyn FnMut(&str, String),
+) -> usize {
+    let Ok(root) = app_local_data_root(app_handle) else {
+        return 0;
+    };
+    let backup_root = root.join("backups").join("pre-migration");
+    let Ok(entries) = fs::read_dir(&backup_root) else {
+        return 0;
+    };
+
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(platform_id) = snapshot_backup_platform(&name) else {
+            continue;
+        };
+        let live = root.join("platforms").join(platform_id).join("snapshots");
+        if !live.is_dir() {
+            continue;
+        }
+        let path = entry.path();
+        let result = if crate::fs_utils::is_reparse_point(&entry) || path.is_file() {
+            fs::remove_file(&path)
+        } else {
+            fs::remove_dir_all(&path)
+        };
+        match result {
+            Ok(()) => removed += 1,
+            Err(e) => report(
+                "Could not delete plaintext snapshot backup",
+                format!("platform={platform_id} error={e}"),
+            ),
+        }
+    }
+    removed
+}
+
+/// The platform whose snapshots a pre-migration backup entry holds. Entry names
+/// are the last three components of the legacy path joined by `_`, so a
+/// snapshot dir ends in `platforms_<id>_snapshots` or in its pre-layout name.
+fn snapshot_backup_platform(name: &str) -> Option<&'static str> {
+    crate::snapshot_crypto::SNAPSHOT_PLATFORM_IDS
+        .iter()
+        .copied()
+        .find(|id| {
+            name.ends_with(&format!("platforms_{id}_snapshots"))
+                || old_legacy_snapshots_name(id)
+                    .is_some_and(|old| name.ends_with(&format!("_{old}")))
+        })
+}
+
 fn backup_legacy_path(source: &Path, backup_root: &Path) -> Result<(), String> {
     if !source.exists() {
         return Ok(());
@@ -1034,6 +1091,43 @@ mod tests {
             second.is_err(),
             "a failed migration must not be cached as done: retrying must still surface the error, not silently succeed"
         );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn purge_migrated_snapshot_backups_removes_only_migrated_session_copies() {
+        let root = unique_test_root("purge-snapshot-backups");
+        let ctx = TestCtx { root: root.clone() };
+        let local = app_local_data_root(&ctx).unwrap();
+        let backups = local.join("backups").join("pre-migration");
+        for name in [
+            "Roaming_com.accshift.desktop_riot-profiles",
+            "local_platforms_epic_snapshots",
+            "local_platforms_gog_snapshots",
+        ] {
+            fs::create_dir_all(backups.join(name)).unwrap();
+            fs::write(backups.join(name).join("cookie"), b"plaintext").unwrap();
+        }
+        fs::write(backups.join("x_state_config.json"), b"{}").unwrap();
+        for platform in ["riot", "epic"] {
+            fs::create_dir_all(local.join("platforms").join(platform).join("snapshots")).unwrap();
+        }
+
+        let mut failures = Vec::new();
+        let removed =
+            purge_migrated_snapshot_backups(&ctx, &mut |m, d| failures.push(format!("{m} {d}")));
+
+        assert_eq!((removed, failures.len()), (2, 0));
+        assert!(!backups
+            .join("Roaming_com.accshift.desktop_riot-profiles")
+            .exists());
+        assert!(!backups.join("local_platforms_epic_snapshots").exists());
+        assert!(
+            backups.join("local_platforms_gog_snapshots").exists(),
+            "a platform whose live snapshots do not exist yet keeps its backup"
+        );
+        assert!(backups.join("x_state_config.json").exists());
 
         let _ = fs::remove_dir_all(&root);
     }

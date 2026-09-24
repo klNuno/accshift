@@ -772,9 +772,9 @@ fn save_config_unlocked(app_handle: &dyn AppContext, config: &AppConfig) -> Resu
     }
 
     crate::storage::write_json_atomic(&local_path, &local)?;
+    // Paths stay out: they embed the OS account name and are the same on
+    // every save.
     let details = serde_json::json!({
-        "portablePath": portable_path,
-        "localPath": local_path,
         "riotProfiles": config.riot.profiles.len(),
         "battleNetAccounts": config.battle_net.accounts.len(),
         "ubisoftAccounts": config.ubisoft.accounts.len(),

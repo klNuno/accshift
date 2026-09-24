@@ -150,9 +150,12 @@ pub async fn get_boot_payload(app_handle: tauri::AppHandle) -> Result<BootPayloa
 }
 
 /// Per-session ceiling on webview-originated log records. The webview is the
-/// least trusted writer; without a cap it can flood the disk (records are up
-/// to 16KB each).
-const WEBVIEW_LOG_CAP: u32 = 20_000;
+/// least trusted writer, and each record costs several redaction passes. A
+/// normal session sends a few hundred.
+const WEBVIEW_LOG_CAP: u32 = 2_000;
+
+/// Webview details are cut to this many bytes before redaction runs.
+const WEBVIEW_DETAILS_MAX_BYTES: usize = 4_096;
 
 #[tauri::command(async)]
 pub fn log_app_event(
@@ -177,6 +180,9 @@ pub fn log_app_event(
         }
         return Ok(());
     }
+    let details = details.map(|text| {
+        accshift_core::diagnostics::redact::trim_text(&text, WEBVIEW_DETAILS_MAX_BYTES)
+    });
     crate::logging::append_app_log(
         &ctx(&app_handle),
         &level,

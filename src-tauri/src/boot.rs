@@ -141,6 +141,25 @@ fn navigation_allowed(url: &tauri::Url) -> bool {
         || (cfg!(debug_assertions) && is_http && matches!(host, Some("localhost" | "127.0.0.1")))
 }
 
+/// What the log keeps of a deep link: scheme, action and platform. The account
+/// segment and any query are replaced, since they carry login names and
+/// percent-encoded emails that the log redaction cannot recognise.
+fn deep_link_log_shape(url: &tauri::Url) -> String {
+    let mut segments = url.path().split('/').filter(|s| !s.is_empty());
+    let mut shape = format!("{}://{}", url.scheme(), url.host_str().unwrap_or(""));
+    if let Some(platform) = segments.next() {
+        shape.push('/');
+        shape.push_str(&platform.chars().take(32).collect::<String>());
+    }
+    if segments.next().is_some() {
+        shape.push_str("/<account>");
+    }
+    if segments.next().is_some() || url.query().is_some() || url.fragment().is_some() {
+        shape.push_str("<+extra>");
+    }
+    shape
+}
+
 /// The Windows build that starts Windows 11. `ProductName` still reads
 /// "Windows 10" there, so the build number is the only usable discriminator
 /// (same reasoning as the telemetry OS string in `accshift-core`).
@@ -659,7 +678,7 @@ pub(crate) fn wire_deep_links(app: &tauri::App, setup_ctx: &AppCtx) {
         let urls = event
             .urls()
             .iter()
-            .map(|url| url.as_str().to_owned())
+            .map(deep_link_log_shape)
             .collect::<Vec<_>>()
             .join(" ");
         let _ = logging::append_app_log(
@@ -740,6 +759,27 @@ pub(crate) fn spawn_snapshot_upgrade(upgrade_ctx: AppCtx) {
                 ),
                 (!failures.is_empty())
                     .then(|| failures.join("; "))
+                    .as_deref(),
+            );
+        }
+
+        let mut purge_failures: Vec<String> = Vec::new();
+        let purged = accshift_core::storage::purge_migrated_snapshot_backups(
+            &upgrade_ctx,
+            &mut |message, detail| purge_failures.push(format!("{message} ({detail})")),
+        );
+        if purged > 0 || !purge_failures.is_empty() {
+            let _ = logging::append_app_log(
+                &upgrade_ctx,
+                if purge_failures.is_empty() {
+                    "info"
+                } else {
+                    "warn"
+                },
+                "backend.snapshot-upgrade",
+                &format!("Deleted {purged} plaintext pre-migration snapshot backup(s)"),
+                (!purge_failures.is_empty())
+                    .then(|| purge_failures.join("; "))
                     .as_deref(),
             );
         }
@@ -828,6 +868,21 @@ pub(crate) fn spawn_boot_failsafe(fallback_handle: AppHandle) {
 mod tests {
     use super::*;
     use tauri::{PhysicalPosition, PhysicalSize};
+
+    #[test]
+    fn deep_link_log_shape_drops_the_account() {
+        let shape = |raw: &str| deep_link_log_shape(&tauri::Url::parse(raw).unwrap());
+
+        assert_eq!(
+            shape("accshift://switch/battle-net/user%40example.com"),
+            "accshift://switch/battle-net/<account>"
+        );
+        assert_eq!(
+            shape("accshift://switch/steam/login?x=1"),
+            "accshift://switch/steam/<account><+extra>"
+        );
+        assert_eq!(shape("accshift://switch"), "accshift://switch");
+    }
 
     // The unit bug in one assertion: a 1000x520 logical window on a 125%
     // display reports 1250x650 physical. Storing that raw is what made the

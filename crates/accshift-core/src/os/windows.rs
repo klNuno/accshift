@@ -6,7 +6,7 @@ use winreg::enums::*;
 use winreg::RegKey;
 
 use windows_sys::Win32::Security::Cryptography::{
-    CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB,
+    CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
 };
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -50,7 +50,7 @@ pub fn encrypt_secret(secret: &str) -> Result<String, AppError> {
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             std::ptr::null(),
-            0,
+            CRYPTPROTECT_UI_FORBIDDEN,
             &mut output_blob,
         )
     };
@@ -85,7 +85,7 @@ pub fn decrypt_secret(secret: &str) -> Result<String, AppError> {
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             std::ptr::null(),
-            0,
+            CRYPTPROTECT_UI_FORBIDDEN,
             &mut output_blob,
         )
     };
@@ -119,7 +119,7 @@ pub fn encrypt_bytes(data: &[u8]) -> Result<Vec<u8>, AppError> {
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             std::ptr::null(),
-            0,
+            CRYPTPROTECT_UI_FORBIDDEN,
             &mut output_blob,
         )
     };
@@ -153,7 +153,7 @@ pub fn decrypt_bytes(data: &[u8]) -> Result<Vec<u8>, AppError> {
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             std::ptr::null(),
-            0,
+            CRYPTPROTECT_UI_FORBIDDEN,
             &mut output_blob,
         )
     };

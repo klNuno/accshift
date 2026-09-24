@@ -212,7 +212,9 @@ fn log_section(app_handle: &dyn AppContext, options: &Options) -> (Vec<String>, 
     let lines = result
         .entries
         .iter()
-        .map(|entry| entry.raw.to_string())
+        // Scrub again: a line written before a redaction fix still holds
+        // what that fix now removes.
+        .map(|entry| redact::sanitize_value(&entry.raw).to_string())
         .collect();
     (lines, codes)
 }
