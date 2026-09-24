@@ -1140,13 +1140,13 @@ fn a_native_hook_reports_the_id_and_the_name_that_came_with_it() {
     let root = scratch("hook-identity");
     let live = root.join("live");
     let ctx = TempCtx { root: root.clone() };
-    seed_store(&live, SNOWFLAKE, Some("bebou"));
+    seed_store(&live, SNOWFLAKE, Some("sample-user"));
 
     let service = hook_service(&live);
     let runtime = service.runtime(&ctx).unwrap();
     let found = service.read_identity_detail(&runtime).unwrap();
     assert_eq!(found.id, SNOWFLAKE);
-    assert_eq!(found.display_name.as_deref(), Some("bebou"));
+    assert_eq!(found.display_name.as_deref(), Some("sample-user"));
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -1252,7 +1252,7 @@ fn a_platform_we_track_ourselves_does_not_list_the_live_id_as_an_account() {
     let root = scratch("hook-listing");
     let live = root.join("live");
     let ctx = TempCtx { root: root.clone() };
-    seed_store(&live, SNOWFLAKE, Some("bebou"));
+    seed_store(&live, SNOWFLAKE, Some("sample-user"));
 
     let accounts = hook_service(&live).read_accounts(&ctx).unwrap();
     assert!(accounts.is_empty(), "{accounts:?}");
@@ -1268,13 +1268,13 @@ fn adding_an_account_adopts_the_session_already_signed_in() {
     let root = scratch("hook-adopt");
     let live = root.join("live");
     let ctx: AppCtx = Arc::new(TempCtx { root: root.clone() });
-    seed_store(&live, SNOWFLAKE, Some("bebou"));
+    seed_store(&live, SNOWFLAKE, Some("sample-user"));
 
     let service = hook_service(&live);
     let status = service.begin_setup(ctx.clone(), Value::Null).unwrap();
     assert_eq!(status.state, "ready");
     assert_eq!(status.account_id, SNOWFLAKE);
-    assert_eq!(status.account_display_name, "bebou");
+    assert_eq!(status.account_display_name, "sample-user");
 
     // The session it adopted is still there, and it is now the account the
     // config points at, labelled with the name the hook read.
@@ -1289,7 +1289,7 @@ fn adding_an_account_adopts_the_session_already_signed_in() {
     );
     let accounts = service.read_accounts(&*ctx).unwrap();
     assert_eq!(accounts.len(), 1);
-    assert_eq!(accounts[0].label, "bebou");
+    assert_eq!(accounts[0].label, "sample-user");
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -1300,7 +1300,7 @@ fn a_session_that_already_belongs_to_an_account_is_not_adopted_twice() {
     let root = scratch("hook-adopt-once");
     let live = root.join("live");
     let ctx: AppCtx = Arc::new(TempCtx { root: root.clone() });
-    seed_store(&live, SNOWFLAKE, Some("bebou"));
+    seed_store(&live, SNOWFLAKE, Some("sample-user"));
 
     let service = hook_service(&live);
     service.begin_setup(ctx.clone(), Value::Null).unwrap();
