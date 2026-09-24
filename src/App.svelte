@@ -234,6 +234,8 @@ import { markBoot } from "$lib/app/bootMarks";
     shell,
     navigation,
     loader,
+    addFlow,
+    resetVisiblePrimeState: visiblePriming.reset,
     loadAccounts,
     queueGridPadding: grid.queueCalculatePadding,
     syncViewModeFromStorage: () => {
