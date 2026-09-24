@@ -559,6 +559,38 @@ fn a_failure_after_the_quit_still_relaunches_the_client() {
     assert_eq!(relaunch_after_quit(Ok(()), || Ok(())), Ok(()));
 }
 
+#[test]
+fn a_failed_setup_capture_reopens_the_client_and_leaves_the_setup_cancellable() {
+    let root = scratch("capture-failed");
+    let ctx = TempCtx { root: root.clone() };
+    let profile_id = format!("riot-profile-{}", Uuid::new_v4());
+    let mut cfg = config_with(vec![profile(&profile_id, "capturing", "")], &profile_id);
+    config::save_config(&ctx, &cfg).unwrap();
+
+    let mut launched = 0;
+    let error = undo_failed_setup_capture(
+        &ctx,
+        &mut cfg,
+        &profile_id,
+        "setup_pending",
+        "backup failed".into(),
+        || {
+            launched += 1;
+            Err("launch failed".into())
+        },
+    );
+
+    assert_eq!(error, "backup failed");
+    assert_eq!(launched, 1);
+    // Saved, so the cancel that follows the failed poll removes the profile.
+    let saved = config::load_config(&ctx);
+    assert_eq!(
+        find_profile(&saved, &profile_id).map(|p| p.snapshot_state.as_str()),
+        Some("setup_pending")
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
 // -- Performance: the setup poll logs on change only -------------------
 
 #[test]

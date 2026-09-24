@@ -412,16 +412,72 @@ pub(super) fn get_profile_setup_status_internal(
     // Graceful quit flushes the Riot Client's in-memory tokens to disk.
     // Without this, the YAML file contains pre-rotation tokens that the server
     // has already invalidated, making the captured snapshot useless.
+    let state_before_capture = profile.snapshot_state.clone();
     if let Some(target) = find_profile_mut(cfg, profile_id) {
         target.snapshot_state = "capturing".into();
     }
     config::save_config(app_handle, cfg)?;
 
     graceful_riot_quit();
-    capture_profile_into_snapshot(app_handle, cfg, profile_id, identity.as_ref())?;
+    if let Err(error) =
+        capture_profile_into_snapshot(app_handle, cfg, profile_id, identity.as_ref())
+    {
+        return Err(undo_failed_setup_capture(
+            app_handle,
+            cfg,
+            profile_id,
+            &state_before_capture,
+            error,
+            || resolve_riot_client_path(app_handle).and_then(|path| launch_riot_client(&path)),
+        ));
+    }
     forget_setup_launch(profile_id);
     let updated = find_profile(cfg, profile_id).cloned().unwrap_or(profile);
     Ok(make_setup_status(&updated, "ready", ""))
+}
+
+/// A setup capture failed after the poll quit the client. Put the profile back
+/// in its state from before the capture, or it stays `capturing`, which a
+/// cancel does not remove, and reopen the client. Returns the capture error.
+pub(super) fn undo_failed_setup_capture(
+    app_handle: &dyn AppContext,
+    cfg: &mut config::AppConfig,
+    profile_id: &str,
+    state_before_capture: &str,
+    error: String,
+    launch: impl FnOnce() -> Result<(), String>,
+) -> String {
+    log_platform_error(
+        app_handle,
+        "riot.setup_poll",
+        "Riot setup capture failed",
+        format!(
+            "profile={} error={error}",
+            crate::platforms::redact_id(profile_id)
+        ),
+    );
+    if let Some(target) = find_profile_mut(cfg, profile_id) {
+        if target.snapshot_state == "capturing" {
+            target.snapshot_state = state_before_capture.to_string();
+        }
+    }
+    if let Err(save_error) = config::save_config(app_handle, cfg) {
+        log_platform_error(
+            app_handle,
+            "riot.setup_poll",
+            "Could not restore the profile state after a failed capture",
+            save_error,
+        );
+    }
+    if let Err(launch_error) = launch() {
+        log_platform_error(
+            app_handle,
+            "riot.setup_poll",
+            "Could not relaunch Riot Client after a failed capture",
+            launch_error,
+        );
+    }
+    error
 }
 
 pub fn begin_profile_setup(app_handle: AppCtx) -> Result<RiotProfileSetupStatus, String> {
