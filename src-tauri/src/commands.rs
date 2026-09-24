@@ -11,6 +11,13 @@ use tauri::Manager;
 /// Short so the UI stays responsive when the CLI holds the lock.
 const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Lock budget for cancelling a setup. A Riot or Steam setup launch runs
+/// detached with the lock held while it stops the launcher and clears the
+/// live session (up to about 20 s for Steam). A cancel pressed in that window
+/// waits for it to finish, then undoes it, instead of failing on the short
+/// budget and leaving the half-started setup behind.
+const CANCEL_SETUP_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Runs `f` on the blocking pool and flattens the join error. The
 /// "Task failed" message only surfaces when the closure panicked or the
 /// runtime is shutting down; `label` identifies the culprit command.
@@ -41,8 +48,22 @@ where
     T: Send + 'static,
     F: FnOnce(accshift_core::AppCtx) -> Result<T, PlatformError> + Send + 'static,
 {
+    run_locked_blocking_within(label, c, LOCK_TIMEOUT, f).await
+}
+
+/// [`run_locked_blocking`] with its own lock acquisition budget.
+async fn run_locked_blocking_within<T, F>(
+    label: &str,
+    c: accshift_core::AppCtx,
+    timeout: Duration,
+    f: F,
+) -> Result<T, PlatformError>
+where
+    T: Send + 'static,
+    F: FnOnce(accshift_core::AppCtx) -> Result<T, PlatformError> + Send + 'static,
+{
     run_blocking(label, move || {
-        let _lock = accshift_core::lock::acquire_exclusive(&c, LOCK_TIMEOUT)?;
+        let _lock = accshift_core::lock::acquire_exclusive(&c, timeout)?;
         f(c)
     })
     .await
@@ -542,9 +563,12 @@ pub async fn platform_cancel_setup(
 ) -> Result<(), PlatformError> {
     let service = require_service(&platform_id)?;
     let c = ctx(&app_handle);
-    run_locked_blocking("platform_cancel_setup", c, move |c| {
-        service.cancel_setup(c, &setup_id)
-    })
+    run_locked_blocking_within(
+        "platform_cancel_setup",
+        c,
+        CANCEL_SETUP_LOCK_TIMEOUT,
+        move |c| service.cancel_setup(c, &setup_id),
+    )
     .await
 }
 

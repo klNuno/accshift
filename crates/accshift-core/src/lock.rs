@@ -126,6 +126,22 @@ pub fn acquire_exclusive(ctx: &dyn AppContext, timeout: Duration) -> Result<Lock
     }
 }
 
+/// Run `f` with the cross-process lock held on this thread, and release it
+/// when `f` returns.
+///
+/// For work a command hands to a detached task: the command's own guard is
+/// dropped when the command returns, so the task has to take the lock itself
+/// before it stops a launcher or deletes live files. `f` never runs when the
+/// lock cannot be taken within `timeout`.
+pub fn with_exclusive<T>(
+    ctx: &dyn AppContext,
+    timeout: Duration,
+    f: impl FnOnce() -> T,
+) -> Result<T, LockError> {
+    let _guard = acquire_exclusive(ctx, timeout)?;
+    Ok(f())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,6 +239,53 @@ mod tests {
         let result = handle.join().unwrap();
         assert!(result);
 
+        cleanup(&ctx.root);
+    }
+
+    #[test]
+    fn with_exclusive_does_not_run_the_work_while_another_holder_has_the_lock() {
+        let ctx = tmp_ctx("with-contended");
+        let _outer = acquire_exclusive(&*ctx, Duration::from_millis(500)).unwrap();
+
+        let ctx2 = Arc::clone(&ctx);
+        let (ran, result) = thread::spawn(move || {
+            let mut ran = false;
+            let result = with_exclusive(&*ctx2, Duration::from_millis(150), || ran = true);
+            (ran, matches!(result, Err(LockError::Contended)))
+        })
+        .join()
+        .unwrap();
+
+        assert!(!ran, "the work ran without the lock");
+        assert!(result);
+        cleanup(&ctx.root);
+    }
+
+    #[test]
+    fn with_exclusive_holds_the_lock_for_the_whole_work() {
+        let ctx = tmp_ctx("with-held");
+        let ctx2 = Arc::clone(&ctx);
+        let contended_inside = thread::spawn(move || {
+            with_exclusive(&*ctx2, Duration::from_millis(500), || {
+                // A holder on another thread must be refused while the work runs.
+                let ctx3 = Arc::clone(&ctx2);
+                thread::spawn(move || {
+                    matches!(
+                        acquire_exclusive(&*ctx3, Duration::from_millis(100)),
+                        Err(LockError::Contended)
+                    )
+                })
+                .join()
+                .unwrap()
+            })
+            .unwrap()
+        })
+        .join()
+        .unwrap();
+
+        assert!(contended_inside);
+        // Released once the work returned.
+        assert!(acquire_exclusive(&*ctx, Duration::from_millis(500)).is_ok());
         cleanup(&ctx.root);
     }
 
