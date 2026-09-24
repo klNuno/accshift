@@ -6,6 +6,7 @@ pub mod fs_utils;
 pub mod lock;
 pub mod logging;
 pub mod os;
+pub mod pin;
 pub mod platforms;
 pub mod runtime;
 pub mod secrets;

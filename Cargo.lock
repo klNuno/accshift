@@ -10,12 +10,9 @@ dependencies = [
  "clap",
  "directories",
  "is-terminal",
- "pbkdf2",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "unicode-width",
- "uuid",
 ]
 
 [[package]]
@@ -25,10 +22,12 @@ dependencies = [
  "fs4",
  "keyring",
  "open",
+ "pbkdf2",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "sysinfo",
  "thiserror 2.0.20",
  "tokio",

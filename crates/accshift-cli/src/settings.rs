@@ -2,7 +2,8 @@
 //! defaults the user already configured (Steam runAsAdmin, shutdown mode,
 //! launch options).
 //!
-//! Schema mirrors `src/lib/features/settings/store.ts`.
+//! Schema mirrors `src/lib/features/settings/store.ts`. The PIN fields are not
+//! read here: `accshift_core::pin` owns them, for the CLI and the GUI backend.
 
 use accshift_core::storage::{client_store_path, read_json_if_exists, STORE_SETTINGS};
 use accshift_core::AppContext;
@@ -12,17 +13,10 @@ use serde::Deserialize;
 pub struct AppSettings {
     #[serde(default, rename = "platformSettings")]
     pub platform_settings: PlatformSettings,
-    /// GUI PIN lock toggle. When true, the CLI must verify the PIN before
-    /// switching, mirroring the GUI lock (see `src/lib/shared/pin.ts`).
-    #[serde(default, rename = "pinEnabled")]
-    pub pin_enabled: bool,
-    /// PBKDF2 hash produced by the GUI, in `salt:hash` hex form (legacy plain
-    /// SHA-256 hex is also accepted). Empty when no PIN is set.
-    #[serde(default, rename = "pinHash")]
-    pub pin_hash: String,
     /// GUI "Allow the accshift CLI" integration toggle. Defaults open (a
     /// fresh install or a missing key keeps the CLI usable); the PIN gate
-    /// above is the security boundary, this one is a convenience opt-out.
+    /// (`accshift_core::pin`) is the security boundary, this one is a
+    /// convenience opt-out.
     #[serde(default = "default_true", rename = "cliEnabled")]
     pub cli_enabled: bool,
 }
@@ -35,8 +29,6 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             platform_settings: PlatformSettings::default(),
-            pin_enabled: false,
-            pin_hash: String::new(),
             cli_enabled: true,
         }
     }
@@ -72,26 +64,12 @@ pub fn load(ctx: &dyn AppContext) -> AppSettings {
         // nothing to fail closed against.
         Ok(None) => AppSettings::default(),
         // The file exists but is unreadable or corrupt, with no usable `.bak`.
-        // We cannot tell whether it used to have pinEnabled:true, so do not
-        // silently disable the PIN gate: fail closed instead.
+        // Nothing here guards anything: the PIN gate reads the same file
+        // through `accshift_core::pin` and fails closed on its own.
         Err(e) => {
-            eprintln!("Warning: {e}; failing closed (PIN lock stays enforced if it was ever set)");
-            fail_closed()
+            eprintln!("Warning: {e}; using CLI defaults");
+            AppSettings::default()
         }
-    }
-}
-
-/// Fallback used when the settings file exists but could not be read or
-/// parsed. Reports the PIN lock as enabled with an empty (unusable) hash, so
-/// `pin::enforce`'s existing "stored_hash.is_empty()" guard fails closed and
-/// denies the switch, rather than defaulting `pin_enabled` to false and
-/// letting a corrupted/unreadable settings file silently bypass a PIN the
-/// user had turned on.
-fn fail_closed() -> AppSettings {
-    AppSettings {
-        pin_enabled: true,
-        pin_hash: String::new(),
-        ..AppSettings::default()
     }
 }
 
@@ -144,6 +122,13 @@ mod tests {
         }
     }
 
+    fn write_settings(ctx: &TestCtx, json: &[u8]) {
+        let path = client_store_path(ctx, STORE_SETTINGS).expect("resolve settings path");
+        fs::create_dir_all(path.parent().expect("settings path has a parent"))
+            .expect("create settings parent dir");
+        fs::write(&path, json).expect("write settings file");
+    }
+
     #[test]
     fn load_defaults_open_when_settings_file_never_existed() {
         let tmp = TempRoot::new("missing");
@@ -153,49 +138,8 @@ mod tests {
 
         let settings = load(&ctx);
 
-        assert!(!settings.pin_enabled);
-        assert!(settings.pin_hash.is_empty());
-    }
-
-    #[test]
-    fn load_fails_closed_when_settings_file_is_corrupt_json() {
-        let tmp = TempRoot::new("corrupt");
-        let ctx = TestCtx {
-            root: tmp.0.clone(),
-        };
-        let path = client_store_path(&ctx, STORE_SETTINGS).expect("resolve settings path");
-        fs::create_dir_all(path.parent().expect("settings path has a parent"))
-            .expect("create settings parent dir");
-        fs::write(&path, b"{ not valid json").expect("write corrupt settings file");
-
-        let settings = load(&ctx);
-
-        // Regression guard for the fail-open bug: a corrupted settings file
-        // must never resolve to pin_enabled=false, and the hash must be
-        // empty so pin::enforce's own guard denies the switch.
-        assert!(settings.pin_enabled, "must fail closed, not open");
-        assert!(settings.pin_hash.is_empty());
-    }
-
-    #[test]
-    fn load_recovers_from_the_bak_the_gui_would_use() {
-        let tmp = TempRoot::new("bak");
-        let ctx = TestCtx {
-            root: tmp.0.clone(),
-        };
-        let path = client_store_path(&ctx, STORE_SETTINGS).expect("resolve settings path");
-        fs::create_dir_all(path.parent().expect("settings path has a parent"))
-            .expect("create settings parent dir");
-        fs::write(&path, b"{ truncated").expect("write corrupt settings file");
-        fs::write(path.with_extension("bak"), br#"{"pinEnabled":false}"#)
-            .expect("write settings backup");
-
-        let settings = load(&ctx);
-
-        assert!(
-            !settings.pin_enabled,
-            "a valid .bak must win over fail-closed"
-        );
+        assert!(settings.cli_enabled);
+        assert!(!settings.platform_settings.steam.run_as_admin);
     }
 
     #[test]
@@ -204,19 +148,15 @@ mod tests {
         let ctx = TestCtx {
             root: tmp.0.clone(),
         };
-        let path = client_store_path(&ctx, STORE_SETTINGS).expect("resolve settings path");
-        fs::create_dir_all(path.parent().expect("settings path has a parent"))
-            .expect("create settings parent dir");
-        fs::write(
-            &path,
-            br#"{"pinEnabled":true,"pinHash":"deadbeef:cafef00d"}"#,
-        )
-        .expect("write settings file");
+        write_settings(
+            &ctx,
+            br#"{"platformSettings":{"steam":{"runAsAdmin":true,"launchOptions":"-x"}}}"#,
+        );
 
         let settings = load(&ctx);
 
-        assert!(settings.pin_enabled);
-        assert_eq!(settings.pin_hash, "deadbeef:cafef00d");
+        assert!(settings.platform_settings.steam.run_as_admin);
+        assert_eq!(settings.platform_settings.steam.launch_options, "-x");
         assert!(settings.cli_enabled, "missing cliEnabled key defaults open");
     }
 
@@ -226,10 +166,7 @@ mod tests {
         let ctx = TestCtx {
             root: tmp.0.clone(),
         };
-        let path = client_store_path(&ctx, STORE_SETTINGS).expect("resolve settings path");
-        fs::create_dir_all(path.parent().expect("settings path has a parent"))
-            .expect("create settings parent dir");
-        fs::write(&path, br#"{"cliEnabled":false}"#).expect("write settings file");
+        write_settings(&ctx, br#"{"cliEnabled":false}"#);
 
         let settings = load(&ctx);
 
