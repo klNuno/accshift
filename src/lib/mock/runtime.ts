@@ -85,8 +85,16 @@ const failures: Record<string, string> = { ...overrides.failures };
 
 // Commands that reach a real platform. Anything here without a handler is
 // refused rather than forwarded: a stray click must not touch Steam, the
-// keyring or the registry.
-const GUARDED_PREFIXES = ["platform_", "steam_", "riot_", "roblox_", "cs2_bridge_", "telemetry_"];
+// keyring or the registry. `pin_` too: the real session is not this window's.
+const GUARDED_PREFIXES = [
+  "platform_",
+  "steam_",
+  "riot_",
+  "roblox_",
+  "cs2_bridge_",
+  "telemetry_",
+  "pin_",
+];
 
 interface TauriInternals {
   invoke: (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>;

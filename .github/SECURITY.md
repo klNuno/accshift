@@ -87,6 +87,15 @@ no salt. That form is still accepted, but only once: the first unlock that
 clears it rewrites the settings file with the PBKDF2 hash described above, in
 the app and in the CLI alike.
 
+In the app, the check runs in the backend process, not only on the lock
+screen. Each app process starts locked when a PIN is set, and relocks after
+the inactivity timeout when one is set. While it is locked, every command
+that switches an account is refused, and so is a settings write that would
+change or remove the PIN. Wrong codes are rate limited: after four of them,
+each further wrong code doubles the wait before the next attempt, up to five
+minutes. The count resets when the app restarts. Changing or turning off a PIN
+in Settings asks for the current one first.
+
 It derives no key and encrypts nothing. Session material is protected by the OS
 backends listed above, which are bound to your OS user session and not to the
 PIN. Someone already running code as your OS user therefore decrypts snapshots

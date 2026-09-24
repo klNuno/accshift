@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { createPlatformApi } from "$lib/platforms/platformApi";
 import { logAppEvent, serializeLogValue } from "$lib/shared/appLogger";
+import { reportPinLockedError } from "$lib/shared/pinSession";
 import type {
   SteamAccount,
   ProfileInfo,
@@ -69,6 +70,8 @@ export async function switchAccountAndLaunchGame(
       ...details,
       error: serializeLogValue(reason),
     });
+    // Refused for want of the PIN: bring the lock screen up.
+    reportPinLockedError(reason);
     throw reason;
   }
 }

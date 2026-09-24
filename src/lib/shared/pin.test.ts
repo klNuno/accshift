@@ -126,9 +126,10 @@ describe("legacy hash migration", () => {
   });
 });
 
-// Locked against the same literals in `crates/accshift-cli/src/pin.rs`
+// Locked against the same literals in `crates/accshift-core/src/pin.rs`
 // (`gui_cross_check_vector_verifies`). A hash written on either side must
-// verify on the other: the CLI reads the very file the GUI writes.
+// verify on the other: the CLI and the app backend check the very file the
+// webview writes.
 describe("CLI interoperability", () => {
   const CROSS_CHECK_SALT_HEX = "000102030405060708090a0b0c0d0e0f";
   const CROSS_CHECK_HASH_HEX = "e19d9507e40b77fbb7503faedce7cb4ebf8c6820a8b746d9dfa9fcab899ec65d";

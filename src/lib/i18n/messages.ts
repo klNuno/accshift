@@ -25,6 +25,7 @@ export const EN_MESSAGES = {
   "pin.placeholder": "4-digit PIN",
   "pin.unlock": "Unlock",
   "pin.invalid": "Invalid PIN",
+  "pin.tooManyAttempts": "Too many attempts. Try again in {seconds} s.",
 
   "common.ok": "OK",
   "common.cancel": "Cancel",
@@ -151,6 +152,8 @@ export const EN_MESSAGES = {
   "settings.pinLockOnAfk": "PIN lock on AFK",
   "settings.pinCode": "PIN code",
   "settings.pinPlaceholder": "4 digits",
+  "settings.pinCurrentCode": "Current PIN",
+  "settings.pinCurrentHint": "Enter the current PIN to change or turn off the lock.",
   "settings.telemetry": "Usage statistics (anonymous)",
   "settings.telemetryModeA": "Anonymous basic stats",
   "settings.telemetryModeAHint":
@@ -796,7 +799,8 @@ export const EN_MESSAGES = {
   "settings.pinSaved": "PIN saved",
   "settings.pinTakesEffectNextLaunch": "Takes effect the next time the app starts",
   "settings.pinRequiredAfterInactivity": "Required after inactivity and when the app starts",
-  "settings.pinScreenLockOnly": "The PIN locks this window only. It protects nothing on disk.",
+  "settings.pinScreenLockOnly":
+    "The PIN locks this window and account switches. It protects nothing on disk.",
   "settings.unitSeconds": "seconds",
   "settings.unitDays": "days",
   "settings.telemetryLoadFailed": "Couldn't load telemetry settings",

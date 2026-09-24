@@ -1,4 +1,5 @@
 import { ensurePlatformLoaded } from "$lib/platforms/registry";
+import { isPinLockedError } from "$lib/shared/pinSession";
 import type { Persona } from "$lib/features/personas/types";
 import {
   getPersonas,
@@ -68,6 +69,14 @@ export function createPersonaController({ isBlocked = () => false }: PersonaCont
           await adapter.switchAccount(account);
           result.succeeded.push(platformId);
         } catch (e) {
+          if (isPinLockedError(e)) {
+            // The backend refuses every platform alike until the PIN is
+            // entered, and the lock screen is up: stop here. Nothing done
+            // yet means nothing to report.
+            if (result.succeeded.length === 0) return null;
+            result.failed.push({ platformId, error: String(e) });
+            break;
+          }
           result.failed.push({ platformId, error: String(e) });
         }
       }
