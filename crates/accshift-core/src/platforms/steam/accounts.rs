@@ -176,6 +176,18 @@ fn restore_auto_login_user(previous_username: &str) -> Result<(), AppError> {
     }
 }
 
+/// Put back the autologin an account setup cleared (`add_account` writes an
+/// empty value so Steam opens on its login screen), with the matching
+/// loginusers.vdf flags on Linux and macOS.
+pub(super) fn restore_auto_login_after_setup(
+    steam_path: &Path,
+    previous_username: &str,
+) -> Result<(), AppError> {
+    restore_auto_login_user(previous_username)?;
+    let target = (!previous_username.trim().is_empty()).then_some(previous_username);
+    set_login_user_flags(steam_path, target)
+}
+
 // Switch the Steam autologin and relaunch Steam.
 //
 // Steam on Linux/macOS owns `registry.vdf` in memory and rewrites it at

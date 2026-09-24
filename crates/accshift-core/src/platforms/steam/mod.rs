@@ -30,6 +30,9 @@ struct SteamAccountSetupJob {
     known_account_ids: HashSet<String>,
     launch_started: bool,
     error_message: Option<String>,
+    /// Steam's autologin value before the setup launch cleared it, so a
+    /// cancel can put it back. Recorded by the launch task.
+    previous_auto_login: Option<String>,
     last_touched_at: u64,
 }
 
@@ -547,6 +550,7 @@ pub fn begin_account_setup(
                 known_account_ids,
                 launch_started: false,
                 error_message: None,
+                previous_auto_login: None,
                 last_touched_at: created_at,
             },
         );
@@ -555,23 +559,18 @@ pub fn begin_account_setup(
     let setup_id_for_job = setup_id.clone();
     let app_handle_for_job = app_handle.clone();
     tokio::task::spawn_blocking(move || {
-        let launch_result =
-            accounts::add_account(&steam_path, run_as_admin, &launch_options, force_kill)
-                .map_err(|e| e.to_string());
-        if let Ok(mut jobs) = steam_setup_jobs().lock() {
-            if let Some(job) = jobs.get_mut(&setup_id_for_job) {
-                job.launch_started = true;
-                if let Err(error) = launch_result {
-                    log_platform_error(
-                        &app_handle_for_job,
-                        "steam.begin_account_setup.launch",
-                        "Steam account setup launch failed",
-                        &error,
-                    );
-                    job.error_message = Some(error);
-                }
-            }
-        }
+        run_steam_setup_launch(
+            &app_handle_for_job,
+            &setup_id_for_job,
+            super::SETUP_LAUNCH_LOCK_TIMEOUT,
+            || {
+                let previous = os::get_auto_login_user().ok();
+                let result =
+                    accounts::add_account(&steam_path, run_as_admin, &launch_options, force_kill)
+                        .map_err(|e| e.to_string());
+                (previous, result)
+            },
+        );
     });
 
     Ok(super::make_setup_status(
@@ -581,6 +580,70 @@ pub fn begin_account_setup(
         "",
         "",
     ))
+}
+
+/// Body of the detached setup launch. The command that started the setup has
+/// already released the operation lock by the time this runs, so it takes the
+/// lock itself: stopping Steam and rewriting the autologin while a switch does
+/// the same would leave Steam on whichever account wrote last.
+///
+/// `launch` returns the autologin value it found before clearing it, and the
+/// launch result. Every outcome, the lock timeout included, lands in the job so
+/// the status poll reports it instead of waiting until the TTL.
+fn run_steam_setup_launch(
+    app_handle: &dyn AppContext,
+    setup_id: &str,
+    lock_timeout: std::time::Duration,
+    launch: impl FnOnce() -> (Option<String>, Result<(), String>),
+) {
+    let job_exists = || {
+        steam_setup_jobs()
+            .lock()
+            .map(|jobs| jobs.contains_key(setup_id))
+            .unwrap_or(false)
+    };
+    let outcome = crate::lock::with_exclusive(app_handle, lock_timeout, || {
+        // A cancel that ran while this task waited for the lock removed the
+        // job. Launching now would clear the autologin for nobody.
+        job_exists().then(launch)
+    });
+    let (previous_auto_login, result) = match outcome {
+        Ok(Some(done)) => done,
+        Ok(None) => return,
+        Err(error) => (
+            None,
+            Err(format!("Could not start the Steam account setup: {error}")),
+        ),
+    };
+
+    if let Err(error) = &result {
+        log_platform_error(
+            app_handle,
+            "steam.begin_account_setup.launch",
+            "Steam account setup launch failed",
+            error,
+        );
+    }
+    if let Ok(mut jobs) = steam_setup_jobs().lock() {
+        if let Some(job) = jobs.get_mut(setup_id) {
+            job.launch_started = true;
+            job.previous_auto_login = previous_auto_login;
+            job.error_message = result.err();
+        }
+    }
+}
+
+/// The autologin value a cancel should put back, if any. Only a launch that
+/// went through cleared it (a failed one restores it on its own path), and a
+/// value Steam or the user set since the launch wins over the old one.
+fn autologin_to_restore_on_cancel(job: &SteamAccountSetupJob, current: &str) -> Option<String> {
+    if !job.launch_started || job.error_message.is_some() || !current.trim().is_empty() {
+        return None;
+    }
+    job.previous_auto_login
+        .as_deref()
+        .filter(|previous| !previous.trim().is_empty())
+        .map(str::to_string)
 }
 
 pub fn get_account_setup_status(
@@ -652,16 +715,35 @@ pub fn get_account_setup_status(
     ))
 }
 
-pub fn cancel_account_setup(_app_handle: AppCtx, setup_id: String) -> Result<(), PlatformError> {
+pub fn cancel_account_setup(app_handle: AppCtx, setup_id: String) -> Result<(), PlatformError> {
     let setup_id = setup_id.trim();
     if setup_id.is_empty() {
         return Ok(());
     }
-    let mut jobs = steam_setup_jobs()
-        .lock()
-        .map_err(|_| PlatformError::other("Steam setup storage is unavailable"))?;
-    jobs.retain(|_, job| !super::setup_expired(job.last_touched_at, STEAM_SETUP_TTL_MS));
-    jobs.remove(setup_id);
+    let job = {
+        let mut jobs = steam_setup_jobs()
+            .lock()
+            .map_err(|_| PlatformError::other("Steam setup storage is unavailable"))?;
+        jobs.retain(|_, job| !super::setup_expired(job.last_touched_at, STEAM_SETUP_TTL_MS));
+        jobs.remove(setup_id)
+    };
+
+    // The setup launch cleared the autologin so Steam would open on its login
+    // screen. Put the previous account back, or Steam keeps opening there.
+    let Some(job) = job else {
+        return Ok(());
+    };
+    let current = os::get_auto_login_user().unwrap_or_default();
+    if let Some(previous) = autologin_to_restore_on_cancel(&job, &current) {
+        if let Err(error) = accounts::restore_auto_login_after_setup(&job.steam_path, &previous) {
+            log_platform_error(
+                &app_handle,
+                "steam.cancel_account_setup",
+                "Could not restore the Steam autologin after a cancelled setup",
+                error.to_string(),
+            );
+        }
+    }
     Ok(())
 }
 
@@ -1119,6 +1201,151 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    struct LockCtx(PathBuf);
+
+    impl AppContext for LockCtx {
+        fn app_config_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.0.clone())
+        }
+        fn app_data_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.0.clone())
+        }
+        fn app_local_data_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.0.clone())
+        }
+        fn app_cache_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.0.clone())
+        }
+    }
+
+    fn insert_test_job(setup_id: &str) {
+        steam_setup_jobs().lock().unwrap().insert(
+            setup_id.to_string(),
+            SteamAccountSetupJob {
+                steam_path: PathBuf::new(),
+                known_account_ids: HashSet::new(),
+                launch_started: false,
+                error_message: None,
+                previous_auto_login: None,
+                last_touched_at: crate::platforms::now_unix_ms(),
+            },
+        );
+    }
+
+    fn take_test_job(setup_id: &str) -> Option<SteamAccountSetupJob> {
+        steam_setup_jobs().lock().unwrap().remove(setup_id)
+    }
+
+    #[test]
+    fn setup_launch_waits_for_the_lock_and_reports_a_failure_when_it_cannot_take_it() {
+        let tmp = TempRoot::new("setup-lock-contended");
+        let ctx = LockCtx(tmp.0.clone());
+        let setup_id = format!("steam-setup-test-{}", Uuid::new_v4());
+        insert_test_job(&setup_id);
+
+        let _held = crate::lock::acquire_exclusive(&ctx, std::time::Duration::from_millis(500))
+            .expect("take the lock");
+        let ran = std::thread::scope(|s| {
+            s.spawn(|| {
+                let mut ran = false;
+                run_steam_setup_launch(
+                    &ctx,
+                    &setup_id,
+                    std::time::Duration::from_millis(150),
+                    || {
+                        ran = true;
+                        (Some("previous".into()), Ok(()))
+                    },
+                );
+                ran
+            })
+            .join()
+            .unwrap()
+        });
+
+        let job = take_test_job(&setup_id).expect("job kept");
+        assert!(!ran, "Steam was stopped without the operation lock");
+        assert!(job.launch_started);
+        assert!(job.error_message.is_some(), "the lock failure was dropped");
+    }
+
+    #[test]
+    fn setup_launch_records_the_previous_autologin_and_its_error() {
+        let tmp = TempRoot::new("setup-lock-free");
+        let ctx = LockCtx(tmp.0.clone());
+        let setup_id = format!("steam-setup-test-{}", Uuid::new_v4());
+        insert_test_job(&setup_id);
+
+        run_steam_setup_launch(
+            &ctx,
+            &setup_id,
+            std::time::Duration::from_millis(500),
+            || (Some("previous".into()), Err("Steam did not start".into())),
+        );
+
+        let job = take_test_job(&setup_id).expect("job kept");
+        assert!(job.launch_started);
+        assert_eq!(job.previous_auto_login.as_deref(), Some("previous"));
+        assert_eq!(job.error_message.as_deref(), Some("Steam did not start"));
+    }
+
+    #[test]
+    fn setup_launch_skips_a_setup_cancelled_while_it_waited() {
+        let tmp = TempRoot::new("setup-cancelled");
+        let ctx = LockCtx(tmp.0.clone());
+        let setup_id = format!("steam-setup-test-{}", Uuid::new_v4());
+
+        let mut ran = false;
+        run_steam_setup_launch(
+            &ctx,
+            &setup_id,
+            std::time::Duration::from_millis(500),
+            || {
+                ran = true;
+                (None, Ok(()))
+            },
+        );
+
+        assert!(!ran);
+        assert!(take_test_job(&setup_id).is_none());
+    }
+
+    #[test]
+    fn cancel_restores_the_autologin_the_setup_cleared() {
+        let launched = |previous: Option<&str>| SteamAccountSetupJob {
+            steam_path: PathBuf::new(),
+            known_account_ids: HashSet::new(),
+            launch_started: true,
+            error_message: None,
+            previous_auto_login: previous.map(str::to_string),
+            last_touched_at: 0,
+        };
+
+        assert_eq!(
+            autologin_to_restore_on_cancel(&launched(Some("main")), ""),
+            Some("main".to_string())
+        );
+        // Steam or the user already picked an account since: keep it.
+        assert_eq!(
+            autologin_to_restore_on_cancel(&launched(Some("main")), "newone"),
+            None
+        );
+        // Nothing to restore.
+        assert_eq!(
+            autologin_to_restore_on_cancel(&launched(Some("")), ""),
+            None
+        );
+        assert_eq!(autologin_to_restore_on_cancel(&launched(None), ""), None);
+
+        // The launch has not run yet, or failed and restored the value itself.
+        let mut pending = launched(Some("main"));
+        pending.launch_started = false;
+        assert_eq!(autologin_to_restore_on_cancel(&pending, ""), None);
+        let mut failed = launched(Some("main"));
+        failed.error_message = Some("boom".into());
+        assert_eq!(autologin_to_restore_on_cancel(&failed, ""), None);
     }
 
     #[test]

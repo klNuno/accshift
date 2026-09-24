@@ -129,6 +129,12 @@ pub(crate) fn now_unix_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// How long a detached setup launch waits for the cross-process operation lock.
+/// The command that spawned it still holds the lock when the task starts, and
+/// a switch or a capture can hold it for several seconds after that.
+pub(crate) const SETUP_LAUNCH_LOCK_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(30);
+
 pub(crate) fn setup_expired(last_touched_at: u64, ttl_ms: u64) -> bool {
     now_unix_ms().saturating_sub(last_touched_at) > ttl_ms
 }
