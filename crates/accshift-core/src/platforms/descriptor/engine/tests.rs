@@ -511,6 +511,72 @@ fn the_setup_plan_lists_what_adding_an_account_deletes_and_deletes_nothing() {
     let _ = fs::remove_dir_all(&root);
 }
 
+/// The fixture with a launcher binary and launch arguments on this OS's
+/// profile. The binary is found through the user's path override.
+fn launching_service(live_root: &Path, launch: serde_json::Value) -> DescriptorService {
+    let os_key = if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    };
+    let anchor = if cfg!(windows) {
+        "LOCALAPPDATA"
+    } else {
+        "HOME"
+    };
+    let mut json: serde_json::Value = serde_json::from_str(&fixture(live_root)).unwrap();
+    let profile = &mut json["os"][os_key];
+    profile["executable"] = serde_json::json!({
+        "fileName": "Demo.exe",
+        "candidates": [{ "kind": "path", "template": format!("${{{anchor}}}/Demo/Demo.exe") }],
+    });
+    profile["launch"] = launch;
+    let descriptor = Descriptor::parse("test", &json.to_string()).unwrap();
+    DescriptorService::new(descriptor, DescriptorOrigin::Embedded)
+}
+
+fn planned_launch_note(service: &DescriptorService, ctx: &TempCtx) -> String {
+    let plan = service.plan_switch(ctx, "aaaa1111").unwrap();
+    let launch = plan
+        .steps
+        .iter()
+        .find(|step| step.action == PlanAction::Launch)
+        .unwrap_or_else(|| panic!("no launch step: {:?}", plan.steps));
+    assert!(launch.target.ends_with("Demo.exe"), "{}", launch.target);
+    launch.note.clone()
+}
+
+#[test]
+fn the_switch_plan_shows_the_arguments_the_launcher_gets() {
+    let _config = config_guard();
+    let root = scratch("launch-args-plan");
+    let live = root.join("live");
+    let install = root.join("install");
+    fs::create_dir_all(&install).unwrap();
+    fs::write(install.join("Demo.exe"), b"").unwrap();
+    let ctx = TempCtx { root: root.clone() };
+    config_bridge::set_path_override(&ctx, "gog", &install.display().to_string()).unwrap();
+
+    let always = launching_service(
+        &live,
+        serde_json::json!({ "args": ["--silent", "--from-accshift"] }),
+    );
+    assert_eq!(
+        planned_launch_note(&always, &ctx),
+        "with arguments: --silent --from-accshift"
+    );
+
+    // Arguments meant for an updater stub are not shown for the real binary.
+    let stub_only = launching_service(
+        &live,
+        serde_json::json!({ "args": ["--silent"], "argsOnlyFor": "Updater.exe" }),
+    );
+    assert_eq!(planned_launch_note(&stub_only, &ctx), "");
+    let _ = fs::remove_dir_all(&root);
+}
+
 #[test]
 fn a_candidate_file_with_another_name_than_the_binary_is_not_launched() {
     let root = scratch("binary-name");
