@@ -308,6 +308,12 @@ pub struct AppConfig {
     pub window_x: Option<f64>,
     #[serde(default)]
     pub window_y: Option<f64>,
+    /// Scale factor of the monitor the origin was measured on. The origin
+    /// times this scale is the exact physical position; without it the
+    /// builder converts with the primary monitor's scale, which puts a window
+    /// saved on a 150% screen beside a 100% primary a third of the way back.
+    #[serde(default)]
+    pub window_scale: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -347,6 +353,8 @@ struct RawAppConfig {
     window_x: Option<f64>,
     #[serde(default)]
     window_y: Option<f64>,
+    #[serde(default)]
+    window_scale: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -558,6 +566,7 @@ fn normalize_config(raw: RawAppConfig) -> AppConfig {
         window_height: raw.window_height,
         window_x: raw.window_x,
         window_y: raw.window_y,
+        window_scale: raw.window_scale,
     }
 }
 
@@ -971,12 +980,26 @@ pub fn load_window_position(app_handle: &dyn AppContext) -> Option<(f64, f64)> {
     clamp_window_position(cfg.window_x?, cfg.window_y?)
 }
 
+/// The saved origin in physical pixels, when the scale it was measured with
+/// was saved too. Configs written before that field existed return `None`,
+/// and the caller keeps the logical origin.
+pub fn load_window_physical_position(app_handle: &dyn AppContext) -> Option<(i32, i32)> {
+    let cfg = load_config(app_handle);
+    let (x, y) = clamp_window_position(cfg.window_x?, cfg.window_y?)?;
+    let scale = cfg.window_scale.filter(|s| valid_scale(*s))?;
+    Some(((x * scale).round() as i32, (y * scale).round() as i32))
+}
+
+fn valid_scale(scale: f64) -> bool {
+    scale.is_finite() && (0.5..=8.0).contains(&scale)
+}
+
 pub fn save_window_size(
     app_handle: &dyn AppContext,
     width: f64,
     height: f64,
 ) -> Result<(), String> {
-    save_window_geometry(app_handle, width, height, None)
+    save_window_geometry(app_handle, width, height, None, None)
 }
 
 /// Persist the window geometry, in logical pixels.
@@ -990,9 +1013,11 @@ pub fn save_window_geometry(
     width: f64,
     height: f64,
     position: Option<(f64, f64)>,
+    scale: Option<f64>,
 ) -> Result<(), String> {
     let size = clamp_window_size(width, height);
     let position = position.and_then(|(x, y)| clamp_window_position(x, y));
+    let scale = scale.filter(|s| valid_scale(*s));
     if size.is_none() && position.is_none() {
         return Ok(());
     }
@@ -1005,6 +1030,9 @@ pub fn save_window_geometry(
         if let Some((x, y)) = position {
             cfg.window_x = Some(x);
             cfg.window_y = Some(y);
+            // Always replaced with the origin, so a stale scale never pairs
+            // with a newer origin.
+            cfg.window_scale = scale;
         }
     })
 }
@@ -1065,6 +1093,7 @@ fn portable_config(config: &AppConfig) -> AppConfig {
     portable.window_height = None;
     portable.window_x = None;
     portable.window_y = None;
+    portable.window_scale = None;
     for account in &mut portable.roblox.accounts {
         account.cookie_encrypted.clear();
     }
@@ -1180,6 +1209,7 @@ fn local_config(config: &AppConfig) -> AppConfig {
     local.window_height = config.window_height;
     local.window_x = config.window_x;
     local.window_y = config.window_y;
+    local.window_scale = config.window_scale;
     local.roblox.accounts = config
         .roblox
         .accounts
@@ -1233,6 +1263,7 @@ fn merge_split_configs(portable: AppConfig, mut local: AppConfig) -> AppConfig {
     overwrite_if_set(&mut merged.window_height, local.window_height);
     overwrite_if_set(&mut merged.window_x, local.window_x);
     overwrite_if_set(&mut merged.window_y, local.window_y);
+    overwrite_if_set(&mut merged.window_scale, local.window_scale);
 
     for local_account in local.roblox.accounts {
         if local_account.user_id.trim().is_empty() {
@@ -1500,6 +1531,7 @@ mod tests {
             logical_from_physical(physical_width, scale),
             logical_from_physical(physical_height, scale),
             None,
+            None,
         )
         .unwrap();
 
@@ -1516,6 +1548,7 @@ mod tests {
             &*ctx,
             logical_from_physical(restored_width * scale, scale),
             logical_from_physical(restored_height * scale, scale),
+            None,
             None,
         )
         .unwrap();
@@ -1556,8 +1589,9 @@ mod tests {
         assert_eq!(load_window_position(&*ctx), None);
 
         // A second monitor to the left gives a negative origin, which is valid.
-        save_window_geometry(&*ctx, 1280.0, 720.0, Some((-1920.0, 240.0))).unwrap();
+        save_window_geometry(&*ctx, 1280.0, 720.0, Some((-1920.0, 240.0)), Some(1.5)).unwrap();
         assert_eq!(load_window_position(&*ctx), Some((-1920.0, 240.0)));
+        assert_eq!(load_window_physical_position(&*ctx), Some((-2880, 360)));
 
         // A size-only save must not erase the placement.
         save_window_size(&*ctx, 1000.0, 600.0).unwrap();
@@ -1700,6 +1734,7 @@ mod tests {
             window_height: Some(800.0),
             window_x: Some(120.0),
             window_y: Some(64.0),
+            window_scale: Some(1.25),
         };
 
         let p = portable_config(&config);
@@ -1721,6 +1756,7 @@ mod tests {
         assert!(p.window_height.is_none());
         assert!(p.window_x.is_none());
         assert!(p.window_y.is_none());
+        assert!(p.window_scale.is_none());
 
         // Roblox cookies stripped
         assert!(p.roblox.accounts[0].cookie_encrypted.is_empty());
@@ -1791,6 +1827,7 @@ mod tests {
             window_height: Some(768.0),
             window_x: Some(-1920.0),
             window_y: Some(40.0),
+            window_scale: Some(1.5),
         };
 
         let l = local_config(&config);
@@ -1809,6 +1846,7 @@ mod tests {
         assert_eq!(l.window_height, Some(768.0));
         assert_eq!(l.window_x, Some(-1920.0));
         assert_eq!(l.window_y, Some(40.0));
+        assert_eq!(l.window_scale, Some(1.5));
 
         // Roblox local keeps user_id + cookie, but not username/display_name
         assert_eq!(l.roblox.accounts.len(), 1);

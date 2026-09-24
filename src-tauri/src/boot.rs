@@ -226,6 +226,7 @@ pub(crate) fn build_main_window(
             .unwrap_or((config::DEFAULT_WINDOW_WIDTH, config::DEFAULT_WINDOW_HEIGHT))
     });
     let saved_position = config::load_window_position(setup_ctx);
+    let saved_physical_position = config::load_window_physical_position(setup_ctx);
 
     let navigation_log_ctx = setup_ctx.clone();
     let page_load_log_ctx = setup_ctx.clone();
@@ -310,6 +311,14 @@ pub(crate) fn build_main_window(
     }
 
     let win = timed(&mut phases.window_build_us, || window_builder.build())?;
+
+    // The builder converts the logical origin with the scale Tauri picks at
+    // creation, the primary monitor's. The saved scale gives the exact
+    // physical origin back; the window is still hidden, so the move is not
+    // visible.
+    if let Some((x, y)) = saved_physical_position {
+        let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+    }
 
     // The monitor the window was saved on may be unplugged, or the desktop
     // rearranged. The window is still hidden here, so recentering it costs no
@@ -436,6 +445,7 @@ struct WindowGeometry {
     height: f64,
     x: f64,
     y: f64,
+    scale: f64,
 }
 
 /// Last geometry a move event reported, waiting to be written.
@@ -471,6 +481,7 @@ fn current_geometry(win: &WebviewWindow) -> Option<WindowGeometry> {
         height: size.height,
         x: position.x,
         y: position.y,
+        scale,
     })
 }
 
@@ -518,6 +529,7 @@ fn save_geometry(app_handle: &AppHandle, geometry: WindowGeometry) {
         geometry.width,
         geometry.height,
         Some((geometry.x, geometry.y)),
+        Some(geometry.scale),
     );
 }
 
@@ -726,27 +738,40 @@ pub(crate) fn spawn_snapshot_upgrade(upgrade_ctx: AppCtx) {
     std::thread::spawn(move || {
         // Startup maintenance modifies the same snapshots and rollback copies
         // as account switching. A second GUI or CLI may already be using them.
-        let _operation = match accshift_core::lock::acquire_for_write(
+        // The lock is taken per step rather than around the whole pass, so a
+        // switch in the first seconds waits for one step, not for all of them,
+        // and does not time out on "another instance".
+        let locked = |step: &str| match accshift_core::lock::acquire_for_write(
             &upgrade_ctx,
             std::time::Duration::from_secs(2),
         ) {
-            Ok(guard) => guard,
+            Ok(guard) => Some(guard),
             Err(error) => {
                 let _ = logging::append_app_log(
                     &upgrade_ctx,
                     "warn",
                     "backend.snapshot-upgrade",
-                    "Skipped snapshot maintenance because the store could not be locked",
+                    &format!("Skipped {step} because the store could not be locked"),
                     Some(&error.to_string()),
                 );
-                return;
+                None
             }
         };
+
         let mut failures: Vec<String> = Vec::new();
-        let stats = accshift_core::snapshot_crypto::upgrade_legacy_plaintext_snapshots(
-            &upgrade_ctx,
-            &mut |message, detail| failures.push(format!("{message} ({detail})")),
-        );
+        let mut stats = accshift_core::snapshot_crypto::LegacyUpgradeStats::default();
+        for platform_id in accshift_core::snapshot_crypto::SNAPSHOT_PLATFORM_IDS {
+            let Some(_operation) = locked("snapshot upgrade") else {
+                return;
+            };
+            stats.merge(
+                accshift_core::snapshot_crypto::upgrade_legacy_plaintext_platform(
+                    &upgrade_ctx,
+                    platform_id,
+                    &mut |message, detail| failures.push(format!("{message} ({detail})")),
+                ),
+            );
+        }
         if stats.touched_anything() {
             let level = if stats.failed > 0 { "warn" } else { "info" };
             let _ = logging::append_app_log(
@@ -763,29 +788,36 @@ pub(crate) fn spawn_snapshot_upgrade(upgrade_ctx: AppCtx) {
             );
         }
 
-        let mut purge_failures: Vec<String> = Vec::new();
-        let purged = accshift_core::storage::purge_migrated_snapshot_backups(
-            &upgrade_ctx,
-            &mut |message, detail| purge_failures.push(format!("{message} ({detail})")),
-        );
-        if purged > 0 || !purge_failures.is_empty() {
-            let _ = logging::append_app_log(
+        if let Some(_operation) = locked("snapshot backup purge") {
+            let mut purge_failures: Vec<String> = Vec::new();
+            let purged = accshift_core::storage::purge_migrated_snapshot_backups(
                 &upgrade_ctx,
-                if purge_failures.is_empty() {
-                    "info"
-                } else {
-                    "warn"
-                },
-                "backend.snapshot-upgrade",
-                &format!("Deleted {purged} plaintext pre-migration snapshot backup(s)"),
-                (!purge_failures.is_empty())
-                    .then(|| purge_failures.join("; "))
-                    .as_deref(),
+                &mut |message, detail| purge_failures.push(format!("{message} ({detail})")),
             );
+            if purged > 0 || !purge_failures.is_empty() {
+                let _ = logging::append_app_log(
+                    &upgrade_ctx,
+                    if purge_failures.is_empty() {
+                        "info"
+                    } else {
+                        "warn"
+                    },
+                    "backend.snapshot-upgrade",
+                    &format!("Deleted {purged} plaintext pre-migration snapshot backup(s)"),
+                    (!purge_failures.is_empty())
+                        .then(|| purge_failures.join("; "))
+                        .as_deref(),
+                );
+            }
         }
 
-        sweep_riot_rollback_copies(&upgrade_ctx);
+        if let Some(_operation) = locked("rollback sweep") {
+            sweep_riot_rollback_copies(&upgrade_ctx);
+        }
 
+        let Some(_operation) = locked("keyring sweep") else {
+            return;
+        };
         let mut sweep_failures: Vec<String> = Vec::new();
         let swept = accshift_core::secrets::gc(&upgrade_ctx, &mut |message, detail| {
             sweep_failures.push(format!("{message} ({detail})"))
