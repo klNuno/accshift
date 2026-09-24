@@ -1367,16 +1367,86 @@ impl DescriptorService {
         self.plan_restore(&runtime, &mut plan, &cache_dir);
 
         match self.resolve_executable(app) {
-            Ok(exe) => plan.simple_step(
-                PlanAction::Launch,
-                PlanTargetKind::Executable,
-                exe.display().to_string(),
-                "",
-            ),
+            Ok(exe) => {
+                let args = runtime
+                    .profile
+                    .launch
+                    .as_ref()
+                    .map_or(&[][..], |launch| launch.args_for(&exe));
+                let note = if args.is_empty() {
+                    String::new()
+                } else {
+                    format!("with arguments: {}", args.join(" "))
+                };
+                plan.simple_step(
+                    PlanAction::Launch,
+                    PlanTargetKind::Executable,
+                    exe.display().to_string(),
+                    note,
+                )
+            }
             Err(e) => plan.warn(e),
         }
 
         Ok(plan)
+    }
+
+    /// Appends what adding an account would delete before the sign-in: the
+    /// state marked `clear_on_setup` and every cache. Mirrors
+    /// [`Self::clear_live_state`], writing nothing.
+    pub fn plan_setup_clear(&self, app: &dyn AppContext, plan: &mut DryRunPlan) {
+        const NOTE: &str = "when adding an account";
+        let runtime = match self.runtime(app) {
+            Ok(runtime) => runtime,
+            Err(e) => return plan.warn(e),
+        };
+        for item in &runtime.profile.state.files {
+            if item.clear_on_setup {
+                match runtime.spec_path(&item.live) {
+                    Ok(live) => plan.simple_step(
+                        PlanAction::Delete,
+                        PlanTargetKind::File,
+                        live.display().to_string(),
+                        NOTE,
+                    ),
+                    Err(e) => plan.warn(e.to_string()),
+                }
+            }
+        }
+        for item in &runtime.profile.state.registry_values {
+            if item.clear_on_setup {
+                plan.simple_step(
+                    PlanAction::Delete,
+                    PlanTargetKind::RegistryValue,
+                    reg::display(item.root, &item.key, &item.value),
+                    NOTE,
+                );
+            }
+        }
+        for item in &runtime.profile.state.directories {
+            if item.clear_on_setup {
+                match runtime.spec_path(&item.live) {
+                    Ok(live) => plan.simple_step(
+                        PlanAction::Delete,
+                        PlanTargetKind::Directory,
+                        live.display().to_string(),
+                        NOTE,
+                    ),
+                    Err(e) => plan.warn(e.to_string()),
+                }
+            }
+        }
+        for template in &runtime.profile.state.caches {
+            match runtime.path(template) {
+                Ok(path) => plan.simple_step(
+                    PlanAction::Delete,
+                    PlanTargetKind::Directory,
+                    path.display().to_string(),
+                    NOTE,
+                ),
+                Err(e) => plan.warn(e.to_string()),
+            }
+        }
     }
 
     fn plan_capture(&self, runtime: &Runtime<'_>, plan: &mut DryRunPlan, cache_dir: &Path) {
@@ -1605,9 +1675,16 @@ fn collect_condition_placeholders(condition: &Condition, out: &mut Vec<String>) 
 /// A candidate may name the binary itself, the directory holding it, or a
 /// directory one of the declared probes hangs off. Launchers shipping
 /// per-architecture binaries need the last form and nothing else.
+///
+/// A candidate naming a file must name `fileName`: the preview and the
+/// process checks go by that name, so any other binary would run unseen.
 fn locate_binary(base: &Path, executable: &Executable) -> Option<PathBuf> {
     if base.is_file() {
-        return Some(base.to_path_buf());
+        let named = base
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case(&executable.file_name));
+        return named.then(|| base.to_path_buf());
     }
     for probe in &executable.relative_probes {
         let candidate = base.join(probe).join(&executable.file_name);
@@ -2399,6 +2476,50 @@ mod tests {
         assert!(!live.join("session.json").exists());
         assert!(!live.join("auth").exists());
         assert!(live.join("keep-me.txt").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_setup_plan_lists_what_adding_an_account_deletes_and_deletes_nothing() {
+        let _config = config_guard();
+        let root = scratch("setup-plan");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = service(&live);
+        seed_live_session(&live, b"session");
+
+        let mut plan = DryRunPlan::new("gog", "setup", "sample");
+        service.plan_setup_clear(&ctx, &mut plan);
+
+        let deleted: Vec<&str> = plan
+            .steps
+            .iter()
+            .filter(|s| s.action == PlanAction::Delete)
+            .map(|s| s.target.as_str())
+            .collect();
+        assert_eq!(deleted.len(), 2, "{deleted:?}");
+        assert!(deleted.iter().any(|t| t.ends_with("session.json")));
+        assert!(deleted.iter().any(|t| t.ends_with("auth")));
+        assert!(live.join("session.json").exists());
+        assert!(live.join("auth").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_candidate_file_with_another_name_than_the_binary_is_not_launched() {
+        let root = scratch("binary-name");
+        let other = root.join("cmd.exe");
+        let named = root.join("Demo.exe");
+        fs::write(&other, b"").unwrap();
+        fs::write(&named, b"").unwrap();
+        let executable: Executable = serde_json::from_value(serde_json::json!({
+            "fileName": "demo.exe",
+            "candidates": [],
+        }))
+        .unwrap();
+
+        assert_eq!(locate_binary(&other, &executable), None);
+        assert_eq!(locate_binary(&named, &executable), Some(named.clone()));
         let _ = fs::remove_dir_all(&root);
     }
 

@@ -218,7 +218,9 @@ pub fn remove_account(
         with_accounts!(cfg, platform_id, |accounts| {
             accounts.retain(|account| !same_account(account.account_id(), &key));
         });
-        if current_account_field(cfg, platform_id).is_some_and(|current| current.trim() == key) {
+        if current_account_field(cfg, platform_id)
+            .is_some_and(|current| same_account(current, &key))
+        {
             set_current_account_field(cfg, platform_id, String::new());
         }
     })

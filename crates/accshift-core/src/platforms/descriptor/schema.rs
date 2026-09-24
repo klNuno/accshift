@@ -908,6 +908,7 @@ impl OsProfile {
             let at = format!("{field}.roots.files[{index}]");
             root.validate(source, &at)?;
             validate_root_placeholders(source, &at, root, os)?;
+            validate_root_depth(source, &at, root)?;
         }
         for (index, root) in self.roots.registry.iter().enumerate() {
             validate_registry_key(
@@ -929,7 +930,7 @@ impl OsProfile {
         }
 
         match &self.executable {
-            Some(executable) => executable.validate(source, &format!("{field}.executable"))?,
+            Some(executable) => executable.validate(source, &format!("{field}.executable"), os)?,
             None => {
                 if self.detect.executable_resolves {
                     return Err(DescriptorError::new(
@@ -1006,20 +1007,32 @@ impl OsProfile {
 
         for (index, item) in self.state.files.iter().enumerate() {
             let at = format!("{field}.state.files[{index}]");
-            validate_spec_in_file_roots(source, &format!("{at}.live"), &item.live, &self.roots)?;
+            validate_spec_in_file_roots(
+                source,
+                &format!("{at}.live"),
+                &item.live,
+                &self.roots,
+                false,
+            )?;
             validate_snapshot_name(source, &format!("{at}.snapshot"), &item.snapshot)?;
             snapshot_names.push(&item.snapshot);
         }
         for (index, item) in self.state.directories.iter().enumerate() {
             let at = format!("{field}.state.directories[{index}]");
-            validate_spec_in_file_roots(source, &format!("{at}.live"), &item.live, &self.roots)?;
+            validate_spec_in_file_roots(
+                source,
+                &format!("{at}.live"),
+                &item.live,
+                &self.roots,
+                false,
+            )?;
             validate_snapshot_name(source, &format!("{at}.snapshot"), &item.snapshot)?;
             snapshot_names.push(&item.snapshot);
         }
         for (index, path) in self.state.caches.iter().enumerate() {
             let at = format!("{field}.state.caches[{index}]");
             path.validate(source, &at)?;
-            validate_in_file_roots(source, &at, path, &self.roots)?;
+            validate_inside_file_roots(source, &at, path, &self.roots)?;
         }
         for (index, condition) in self.state.capture_when.iter().enumerate() {
             condition.validate(
@@ -1069,7 +1082,7 @@ impl OsProfile {
 }
 
 impl Executable {
-    fn validate(&self, source: &str, field: &str) -> Result<(), DescriptorError> {
+    fn validate(&self, source: &str, field: &str, os: Os) -> Result<(), DescriptorError> {
         if self.file_name.trim().is_empty() || self.file_name.contains(['/', '\\']) {
             return Err(DescriptorError::new(
                 source,
@@ -1110,6 +1123,26 @@ impl Executable {
                             source,
                             format!("{at}.template"),
                             "expected a template that does not use `${installDir}`: the install directory is what this candidate resolves",
+                        ));
+                    }
+                    // Same anchors as a root: a candidate built on `${ComSpec}`
+                    // or a literal system path would let a shared descriptor
+                    // launch any program on every switch.
+                    validate_root_placeholders(source, &format!("{at}.template"), template, os)?;
+                    if !template.as_str().trim_start().starts_with("${") {
+                        return Err(DescriptorError::new(
+                            source,
+                            format!("{at}.template"),
+                            format!(
+                                "expected a template starting with one of {}, found `{}`",
+                                known_root_placeholders(os)
+                                    .iter()
+                                    .filter(|name| **name != INSTALL_DIR)
+                                    .map(|name| format!("${{{name}}}"))
+                                    .collect::<Vec<_>>()
+                                    .join(", "),
+                                template.as_str()
+                            ),
                         ));
                     }
                 }
@@ -1299,10 +1332,10 @@ impl Condition {
                 Ok(())
             }
             Condition::PathNonEmpty { path, .. } => {
-                validate_spec_in_file_roots(source, &format!("{field}.path"), path, roots)
+                validate_spec_in_file_roots(source, &format!("{field}.path"), path, roots, true)
             }
             Condition::PathFresh { path, window_ms } => {
-                validate_spec_in_file_roots(source, &format!("{field}.path"), path, roots)?;
+                validate_spec_in_file_roots(source, &format!("{field}.path"), path, roots, true)?;
                 if *window_ms == 0 {
                     return Err(DescriptorError::new(
                         source,
@@ -1461,6 +1494,46 @@ fn validate_root_placeholders(
     Ok(())
 }
 
+/// Refuses a root so shallow that clearing inside it could reach system or
+/// user-wide folders: `C:/`, `/`, a bare `${USERPROFILE}` or `${SystemDrive}`.
+/// A placeholder root needs a folder of its own below it, except
+/// `${installDir}`, which already names the launcher; a literal root needs two.
+fn validate_root_depth(
+    source: &str,
+    field: &str,
+    root: &PathTemplate,
+) -> Result<(), DescriptorError> {
+    let mut segments = root
+        .as_str()
+        .split(['/', '\\'])
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty());
+    let first = segments.next().unwrap_or("");
+    let below = segments.count();
+    let needed = if first == format!("${{{INSTALL_DIR}}}") {
+        0
+    } else if first.starts_with("${") {
+        1
+    } else if first.ends_with(':') {
+        // `C:` is the drive, not a folder.
+        2
+    } else {
+        // `/home/...`: the first segment is already a folder under `/`.
+        1
+    };
+    if below < needed {
+        return Err(DescriptorError::new(
+            source,
+            field,
+            format!(
+                "expected a root naming the launcher's own folder, found `{}`",
+                root.as_str()
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// The sandbox check the loader can make ahead of time: a template whose
 /// literal text does not start with a declared root can never resolve inside
 /// one, whatever the environment holds.
@@ -1469,6 +1542,27 @@ fn validate_in_file_roots(
     field: &str,
     path: &PathTemplate,
     roots: &Roots,
+) -> Result<(), DescriptorError> {
+    validate_under_file_roots(source, field, path, roots, true)
+}
+
+/// Like [`validate_in_file_roots`], for a path the engine writes over or
+/// deletes: it must sit strictly below a root, never be the root itself.
+fn validate_inside_file_roots(
+    source: &str,
+    field: &str,
+    path: &PathTemplate,
+    roots: &Roots,
+) -> Result<(), DescriptorError> {
+    validate_under_file_roots(source, field, path, roots, false)
+}
+
+fn validate_under_file_roots(
+    source: &str,
+    field: &str,
+    path: &PathTemplate,
+    roots: &Roots,
+    allow_root_itself: bool,
 ) -> Result<(), DescriptorError> {
     if roots.files.is_empty() {
         return Err(DescriptorError::new(
@@ -1480,7 +1574,7 @@ fn validate_in_file_roots(
     let candidate = normalise_template_text(path.as_str());
     let covered = roots.files.iter().any(|root| {
         let root_text = normalise_template_text(root.as_str());
-        candidate == root_text
+        (allow_root_itself && candidate == root_text)
             || candidate.starts_with(&format!("{}/", root_text.trim_end_matches('/')))
     });
     if covered {
@@ -1510,6 +1604,7 @@ fn validate_spec_in_file_roots(
     field: &str,
     spec: &PathSpec,
     roots: &Roots,
+    allow_root_itself: bool,
 ) -> Result<(), DescriptorError> {
     spec.validate(source, field)?;
     let many = matches!(spec, PathSpec::FirstExisting(_));
@@ -1519,7 +1614,7 @@ fn validate_spec_in_file_roots(
         } else {
             field.to_string()
         };
-        validate_in_file_roots(source, &at, template, roots)?;
+        validate_under_file_roots(source, &at, template, roots, allow_root_itself)?;
     }
     Ok(())
 }
@@ -1651,9 +1746,8 @@ mod tests {
     #[test]
     fn parent_segments_are_refused_in_templates() {
         let err = with_windows(|v| {
-            v["os"]["windows"]["roots"]["files"] = serde_json::json!(["${LOCALAPPDATA}"]);
             v["os"]["windows"]["state"]["files"][0]["live"] =
-                serde_json::json!("${LOCALAPPDATA}/../Roaming/session.json");
+                serde_json::json!("${LOCALAPPDATA}/Demo/../../Roaming/session.json");
         })
         .unwrap_err();
         assert!(err.problem.contains("`..`"), "{}", err.problem);
@@ -1991,5 +2085,58 @@ mod tests {
         let descriptor = Descriptor::parse("test", MINIMAL).unwrap();
         assert!(!descriptor.os.contains_key(&Os::Linux));
         assert_eq!(descriptor.os.len(), 1);
+    }
+
+    #[test]
+    fn a_root_too_shallow_to_name_the_launcher_is_refused() {
+        for root in ["C:/", "C:/Demo", "${USERPROFILE}", "${SystemDrive}/"] {
+            let err = with_windows(|v| {
+                v["os"]["windows"]["roots"]["files"] = serde_json::json!([root]);
+            })
+            .unwrap_err();
+            assert_eq!(err.field, "os.windows.roots.files[0]", "{root}");
+            assert!(
+                err.problem.contains("own folder"),
+                "{root}: {}",
+                err.problem
+            );
+        }
+    }
+
+    #[test]
+    fn an_executable_candidate_off_the_known_anchors_is_refused() {
+        for template in ["${ComSpec}", "C:/Windows/System32/cmd.exe"] {
+            let err = with_windows(|v| {
+                v["os"]["windows"]["executable"]["candidates"][0]["template"] =
+                    serde_json::json!(template);
+            })
+            .unwrap_err();
+            assert_eq!(
+                err.field, "os.windows.executable.candidates[0].template",
+                "{template}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_live_path_or_cache_equal_to_a_root_is_refused() {
+        let err = with_windows(|v| {
+            v["os"]["windows"]["state"]["directories"] =
+                serde_json::json!([{ "live": "${LOCALAPPDATA}/Demo", "snapshot": "all" }]);
+        })
+        .unwrap_err();
+        assert_eq!(err.field, "os.windows.state.directories[0].live");
+
+        let err = with_windows(|v| {
+            v["os"]["windows"]["state"]["caches"] = serde_json::json!(["${LOCALAPPDATA}/Demo"]);
+        })
+        .unwrap_err();
+        assert_eq!(err.field, "os.windows.state.caches[0]");
+
+        with_windows(|v| {
+            v["os"]["windows"]["state"]["caches"] =
+                serde_json::json!(["${LOCALAPPDATA}/Demo/Cache"]);
+        })
+        .unwrap();
     }
 }
