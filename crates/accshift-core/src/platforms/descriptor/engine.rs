@@ -20,6 +20,7 @@ use serde::Serialize;
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::config::{self, AppConfig};
 use crate::error::PlatformError;
 use crate::platforms::setup_jobs::{SetupJobs, DEFAULT_SETUP_TTL_MS};
 use crate::platforms::{
@@ -542,15 +543,70 @@ impl DescriptorService {
     /// Which account is signed in, from whichever source the descriptor names.
     fn current_account_id(&self, app: &dyn AppContext) -> Option<String> {
         let runtime = self.runtime(app).ok()?;
-        self.current_account_id_in(app, &runtime)
+        self.current_from(&runtime, &config::load_config(app))
     }
 
-    fn current_account_id_in(&self, app: &dyn AppContext, runtime: &Runtime<'_>) -> Option<String> {
+    fn current_from(&self, runtime: &Runtime<'_>, cfg: &AppConfig) -> Option<String> {
         match runtime.profile.identity.current {
-            CurrentSource::Identity => self.read_identity_in(runtime),
-            CurrentSource::Config => config_bridge::current_account(app, &self.descriptor.id)
+            CurrentSource::Identity => self.live_identity(runtime, cfg),
+            CurrentSource::Config => config_bridge::current_account_in(cfg, &self.descriptor.id)
                 .map(|id| self.normalise_id(&id))
                 .filter(|id| self.id_is_valid(id)),
+        }
+    }
+
+    /// The id the launcher reports, unless it comes from a log that has not
+    /// caught up with the last switch.
+    ///
+    /// A launcher logs its sign-in some time after it starts, and never when
+    /// the restored session fails to sign in. Until the log is written again
+    /// after a switch, its last line names the account from before, so the
+    /// account the switch put in place is the better answer.
+    fn live_identity(&self, runtime: &Runtime<'_>, cfg: &AppConfig) -> Option<String> {
+        let read = self.read_identity_in(runtime);
+        let IdentitySource::LogTail { path, .. } = &runtime.profile.identity.source else {
+            return read;
+        };
+        let Some(record) = config_bridge::last_switch_in(cfg, &self.descriptor.id) else {
+            return read;
+        };
+        let recorded = self.normalise_id(&record.account_id);
+        if !self.id_is_valid(&recorded) {
+            return read;
+        }
+        let written = runtime
+            .path(path)
+            .ok()
+            .and_then(|log| fs::metadata(log).ok())
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|modified| modified.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map(|since| since.as_millis() as u64);
+        match written {
+            Some(written) if written > record.at => read,
+            _ => Some(recorded),
+        }
+    }
+
+    /// Remembers the account a switch put in place, for [`Self::live_identity`].
+    /// Only a log lags behind a switch, so no other platform records one.
+    fn record_switch(&self, app: &dyn AppContext, account_id: &str) {
+        let logged = self
+            .profile()
+            .map(|profile| matches!(profile.identity.source, IdentitySource::LogTail { .. }))
+            .unwrap_or(false);
+        if !logged {
+            return;
+        }
+        // Not fatal: without the record the log is trusted, as it always was.
+        if let Err(error) =
+            config_bridge::set_last_switch(app, &self.descriptor.id, account_id, now_unix_ms())
+        {
+            log_platform_error(
+                app,
+                &format!("{}.switch_account", self.descriptor.id),
+                "Could not record the switch",
+                error,
+            );
         }
     }
 
@@ -951,13 +1007,14 @@ impl DescriptorService {
         let Ok(runtime) = self.runtime(app) else {
             return Some(marker);
         };
+        let cfg = config::load_config(app);
         let identity = &runtime.profile.identity;
         if identity.current != CurrentSource::Config
             || matches!(identity.source, IdentitySource::Synthetic)
         {
             return Some(marker);
         }
-        let Some(live) = self.read_identity_in(&runtime) else {
+        let Some(live) = self.live_identity(&runtime, &cfg) else {
             return Some(marker);
         };
         if live == marker {
@@ -965,7 +1022,7 @@ impl DescriptorService {
         }
         let source = format!("{}.capture", self.descriptor.id);
         let details = format!("marker={}; live={}", redact_id(&marker), redact_id(&live));
-        let tracked = config_bridge::accounts(app, &self.descriptor.id)
+        let tracked = config_bridge::accounts_in(&cfg, &self.descriptor.id)
             .iter()
             .any(|account| self.normalise_id(&account.account_id) == live);
         if tracked {
@@ -1165,6 +1222,7 @@ impl DescriptorService {
         if uses_config_marker {
             config_bridge::set_current_account(app, &self.descriptor.id, account_id)?;
         }
+        self.record_switch(app, account_id);
         Ok(())
     }
 
@@ -3159,6 +3217,65 @@ mod tests {
         // and `lowercase` folds it to the one spelling the engine stores.
         let service = log_service(&live);
         assert_eq!(service.read_identity(&ctx).as_deref(), Some(UUID_ONE));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    fn write_log(live: &Path, id: &str, age: Duration) {
+        let log = live.join("logs").join("launcher_log.txt");
+        fs::create_dir_all(log.parent().unwrap()).unwrap();
+        fs::write(
+            &log,
+            format!("[00:00] AccountStartupUser.cpp - User: {id} logged in\n"),
+        )
+        .unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&log)
+            .unwrap()
+            .set_modified(SystemTime::now() - age)
+            .unwrap();
+    }
+
+    #[test]
+    fn a_log_older_than_the_last_switch_does_not_name_the_current_account() {
+        // The launcher logs a sign-in some time after it starts, so right
+        // after a switch the last line still names the previous account.
+        let _config = config_guard();
+        let root = scratch("log-lag");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = log_service(&live);
+        let minute_ago = now_unix_ms() - 60_000;
+        config_bridge::set_last_switch(&ctx, "ubisoft", UUID_TWO, minute_ago).unwrap();
+
+        write_log(&live, UUID_ONE, Duration::from_secs(600));
+        assert_eq!(service.current_account_id(&ctx).as_deref(), Some(UUID_TWO));
+
+        // The launcher wrote since: the log is the better witness again.
+        write_log(&live, UUID_ONE, Duration::ZERO);
+        assert_eq!(service.current_account_id(&ctx).as_deref(), Some(UUID_ONE));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_switch_records_the_account_it_put_in_place() {
+        let _config = config_guard();
+        let root = scratch("log-switch-record");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = log_service(&live);
+
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("user.dat"), b"account-two").unwrap();
+        service.save_snapshot(&ctx, UUID_TWO).unwrap();
+        fs::write(live.join("user.dat"), b"account-one").unwrap();
+        write_log(&live, UUID_ONE, Duration::from_secs(600));
+
+        service.switch(&ctx, UUID_TWO).unwrap();
+        // Nothing new in the log yet: the account is the one just put there,
+        // so the next capture cannot file its session under the previous one.
+        assert_eq!(service.current_account_id(&ctx).as_deref(), Some(UUID_TWO));
         let _ = fs::remove_dir_all(&root);
     }
 
