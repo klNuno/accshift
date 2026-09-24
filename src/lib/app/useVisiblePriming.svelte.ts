@@ -1,4 +1,10 @@
 const VISIBLE_PRIME_DEBOUNCE_MS = 120;
+/**
+ * How long an account primed while on screen stays primed. Losing focus, or
+ * opening Settings, no longer forgets it: an alt-tab back within this window
+ * sends no profile or ban request for the accounts already shown.
+ */
+export const VISIBLE_PRIME_TTL_MS = 5 * 60 * 1000;
 
 type VisiblePrimingDeps = {
   prepareAccountIds: (accountIds: readonly string[], forceRefresh?: boolean) => number;
@@ -9,12 +15,14 @@ type VisiblePrimingDeps = {
     silent?: boolean,
     deferBackground?: boolean,
   ) => Promise<unknown>;
+  now?: () => number;
 };
 
 export function createVisiblePriming(loader: VisiblePrimingDeps) {
+  const now = loader.now ?? Date.now;
   let visiblePrimeTimer: ReturnType<typeof setTimeout> | null = null;
   let lastPreparedVisibleKey = "";
-  let lastPrimedVisibleIds = new Set<string>();
+  let primedAt = new Map<string, number>();
 
   function clearTimer() {
     if (visiblePrimeTimer) {
@@ -23,24 +31,32 @@ export function createVisiblePriming(loader: VisiblePrimingDeps) {
     }
   }
 
+  /** Forget everything: the accounts on screen now belong to another load or tab. */
   function reset() {
     clearTimer();
     lastPreparedVisibleKey = "";
-    lastPrimedVisibleIds = new Set();
+    primedAt = new Map();
   }
 
-  function scheduleVisiblePrime(visibleIds: string[], newlyVisibleIds: string[]) {
+  /**
+   * Stop priming while the grid is out of sight (window in background,
+   * Settings open) without forgetting what was primed. Coming back prepares
+   * the visible ids again and primes only those past the TTL.
+   */
+  function pause() {
+    clearTimer();
+    lastPreparedVisibleKey = "";
+  }
+
+  function scheduleVisiblePrime(visibleIds: string[], dueIds: string[]) {
     clearTimer();
     visiblePrimeTimer = setTimeout(() => {
       visiblePrimeTimer = null;
       loader.prepareAccountIds(visibleIds);
-      void loader.primeAccountIds(
-        newlyVisibleIds.length > 0 ? newlyVisibleIds : visibleIds,
-        true,
-        false,
-        true,
-        true,
-      );
+      if (dueIds.length === 0) return;
+      const primedNow = now();
+      for (const accountId of dueIds) primedAt.set(accountId, primedNow);
+      void loader.primeAccountIds(dueIds, true, false, true, true);
     }, VISIBLE_PRIME_DEBOUNCE_MS);
   }
 
@@ -54,18 +70,18 @@ export function createVisiblePriming(loader: VisiblePrimingDeps) {
   function processVisible(visibleIds: string[], activeTab: string, isSearching: boolean) {
     const visibleKey = `${activeTab}:${isSearching ? "search" : "folder"}:${[...visibleIds].sort().join(",")}`;
     if (visibleKey === lastPreparedVisibleKey) return;
-    const previouslyPrimedIds = lastPrimedVisibleIds;
     lastPreparedVisibleKey = visibleKey;
-    lastPrimedVisibleIds = new Set(visibleIds);
+    const cutoff = now() - VISIBLE_PRIME_TTL_MS;
     scheduleVisiblePrime(
       visibleIds,
-      visibleIds.filter((accountId) => !previouslyPrimedIds.has(accountId)),
+      visibleIds.filter((accountId) => (primedAt.get(accountId) ?? -Infinity) < cutoff),
     );
   }
 
   return {
     processVisible,
     reset,
+    pause,
     destroy: clearTimer,
   };
 }

@@ -26,7 +26,7 @@ import { markBoot } from "$lib/app/bootMarks";
   import { createAccountLoader } from "$lib/shared/useAccountLoader.svelte";
   import {
     getAccountCardColor as getStoredAccountCardColor,
-    setAccountCardColor,
+    setAccountCardColors,
   } from "$lib/shared/accountCardColors";
   import { getAccountCardNote as getStoredAccountCardNote } from "$lib/shared/accountCardNotes";
   import {
@@ -64,7 +64,7 @@ import { markBoot } from "$lib/app/bootMarks";
   import { createVisiblePriming } from "$lib/app/useVisiblePriming.svelte";
   import { createDeepLinkController } from "$lib/app/useDeepLink.svelte";
   import { COLOR_LABEL_KEYS } from "$lib/shared/contextMenu/accountAppearanceActions";
-  import { createDisplayPipeline, matchesSearch } from "$lib/app/useDisplayPipeline.svelte";
+  import { createDisplayPipeline } from "$lib/app/useDisplayPipeline.svelte";
   import { createKeyboardController, PASS } from "$lib/shared/keyboard/controller";
   import type { KeyScope, ShortcutBinding } from "$lib/shared/keyboard/types";
   import { createCommandRegistry } from "$lib/features/commandPalette/registry";
@@ -91,17 +91,10 @@ import { markBoot } from "$lib/app/bootMarks";
   const navigation = createFolderNavigation(() => shell.activeTab);
   const loader = createAccountLoader(
     () => shell.adapter,
-    () => {
-      const q = navigation.searchQuery.trim().toLowerCase();
-      if (q) {
-        return loader.accounts
-          .filter((a) => matchesSearch(a, q))
-          .map((a) => a.id);
-      }
-      return navigation.currentItems
-        .filter((item): item is ItemRef => item.type === "account")
-        .map((item) => item.id);
-    },
+    // The ids the grid renders, sections and folder contents included, so the
+    // background profile work starts with what is on screen. Read lazily: the
+    // display pipeline is built from this loader further down.
+    () => display.visibleRenderedAccountIds,
     (key, params) => translate(shell.settings.language ?? DEFAULT_LOCALE, key, params)
   );
 
@@ -290,6 +283,7 @@ import { markBoot } from "$lib/app/bootMarks";
   });
   const streamerMode = createStreamerModeController({
     getSettings: () => shell.settings,
+    isHidden: () => windowActivity.isMinimized || !windowActivity.isPageVisible,
     setStreamerMode: (mode) => {
       const latest = getSettings();
       latest.streamerMode = mode;
@@ -609,13 +603,24 @@ import { markBoot } from "$lib/app/bootMarks";
   });
 
   $effect(() => {
-    if (settingsPanel.showSettings || !shell.adapter || loader.loading || !secureScreen.windowForeground || secureScreen.renderSuspended) {
+    if (!shell.adapter) {
       visiblePriming.reset();
+      return;
+    }
+    // A load refreshes the accounts it shows itself, and a tab switch resets
+    // explicitly, so these only pause: the primed accounts stay primed.
+    if (
+      loader.loading ||
+      settingsPanel.showSettings ||
+      !secureScreen.windowForeground ||
+      secureScreen.renderSuspended
+    ) {
+      visiblePriming.pause();
       return;
     }
     const visibleIds = display.visibleRenderedAccountIds;
     if (visibleIds.length === 0) {
-      visiblePriming.reset();
+      visiblePriming.pause();
       return;
     }
     visiblePriming.processVisible(visibleIds, shell.activeTab, navigation.isSearching);
@@ -1106,7 +1111,7 @@ import { markBoot } from "$lib/app/bootMarks";
   function applyBulkEditCardColor(color: string) {
     const ids = [...bulkEdit.bulkEditSelectedIds];
     if (ids.length === 0) return;
-    for (const id of ids) setAccountCardColor(id, color);
+    setAccountCardColors(ids, color);
     cardColorVersion += 1;
     addToast(
       color

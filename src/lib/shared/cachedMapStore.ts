@@ -59,6 +59,20 @@ export function createCachedMapStore(
       }
       writeMap(data);
     },
+    /** The same value for every id, in one store write. */
+    setMany(ids: readonly string[], value: string) {
+      if (ids.length === 0) return;
+      const data = readMap();
+      for (const id of ids) {
+        const safe = sanitizeEntry(id, value);
+        if (safe === null) {
+          delete data[id];
+        } else {
+          data[id] = safe;
+        }
+      }
+      writeMap(data);
+    },
     remove(id: string) {
       const data = readMap();
       delete data[id];

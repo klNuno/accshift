@@ -57,6 +57,21 @@ describe("createCachedMapStore", () => {
     expect(store.get("acc1")).toBe("");
   });
 
+  it("setMany writes every id in one store write", async () => {
+    const storage = await import("$lib/storage/clientStorage");
+    const store = makeStore((_k, v) => (v === "bad" ? null : v));
+    store.set("keep", "x");
+    const before = storage.getClientStoreRevision(TEST_STORE_ID);
+
+    store.setMany(["a", "b", "c"], "red");
+
+    expect(storage.getClientStoreRevision(TEST_STORE_ID)).toBe(before + 1);
+    expect(["a", "b", "c", "keep"].map((id) => store.get(id))).toEqual(["red", "red", "red", "x"]);
+
+    store.setMany(["a", "b"], "bad");
+    expect(["a", "b", "c"].map((id) => store.get(id))).toEqual(["", "", "red"]);
+  });
+
   it("remove deletes entries", () => {
     const store = makeStore();
     store.set("acc1", "value");
