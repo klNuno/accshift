@@ -102,4 +102,115 @@ mod imp {
     }
 }
 
-pub use imp::{delete, read, uninstall_entry, write};
+pub use imp::uninstall_entry;
+
+pub fn read(root: RegistryHive, key: &str, value: &str) -> Option<String> {
+    #[cfg(test)]
+    if let Some(found) = fake::read(root, key, value) {
+        return found;
+    }
+    imp::read(root, key, value)
+}
+
+pub fn write(root: RegistryHive, key: &str, value: &str, data: &str) -> Result<(), String> {
+    #[cfg(test)]
+    if let Some(result) = fake::write(root, key, value, data) {
+        return result;
+    }
+    imp::write(root, key, value, data)
+}
+
+pub fn delete(root: RegistryHive, key: &str, value: &str) {
+    #[cfg(test)]
+    if fake::delete(root, key, value) {
+        return;
+    }
+    imp::delete(root, key, value)
+}
+
+/// An in-memory registry for the current test thread, so engine tests can
+/// exercise registry steps without writing the real hive.
+#[cfg(test)]
+pub(crate) mod fake {
+    use super::RegistryHive;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    #[derive(Default)]
+    struct Hive {
+        values: HashMap<String, String>,
+        fail_writes: bool,
+    }
+
+    thread_local! {
+        static HIVE: RefCell<Option<Hive>> = const { RefCell::new(None) };
+    }
+
+    /// Routes this thread's registry calls to memory until dropped.
+    pub struct Installed;
+
+    impl Drop for Installed {
+        fn drop(&mut self) {
+            HIVE.with(|hive| *hive.borrow_mut() = None);
+        }
+    }
+
+    pub fn install() -> Installed {
+        HIVE.with(|hive| *hive.borrow_mut() = Some(Hive::default()));
+        Installed
+    }
+
+    pub fn fail_writes(fail: bool) {
+        HIVE.with(|hive| {
+            if let Some(hive) = hive.borrow_mut().as_mut() {
+                hive.fail_writes = fail;
+            }
+        });
+    }
+
+    fn name(root: RegistryHive, key: &str, value: &str) -> String {
+        super::display(root, key, value)
+    }
+
+    pub fn set(root: RegistryHive, key: &str, value: &str, data: &str) {
+        HIVE.with(|hive| {
+            if let Some(hive) = hive.borrow_mut().as_mut() {
+                hive.values.insert(name(root, key, value), data.to_string());
+            }
+        });
+    }
+
+    pub(super) fn read(root: RegistryHive, key: &str, value: &str) -> Option<Option<String>> {
+        HIVE.with(|hive| {
+            hive.borrow()
+                .as_ref()
+                .map(|hive| hive.values.get(&name(root, key, value)).cloned())
+        })
+    }
+
+    pub(super) fn write(
+        root: RegistryHive,
+        key: &str,
+        value: &str,
+        data: &str,
+    ) -> Option<Result<(), String>> {
+        HIVE.with(|hive| {
+            hive.borrow_mut().as_mut().map(|hive| {
+                if hive.fail_writes {
+                    return Err(format!("Could not write registry value {key}\\{value}"));
+                }
+                hive.values.insert(name(root, key, value), data.to_string());
+                Ok(())
+            })
+        })
+    }
+
+    pub(super) fn delete(root: RegistryHive, key: &str, value: &str) -> bool {
+        HIVE.with(|hive| {
+            hive.borrow_mut()
+                .as_mut()
+                .map(|hive| hive.values.remove(&name(root, key, value)))
+                .is_some()
+        })
+    }
+}

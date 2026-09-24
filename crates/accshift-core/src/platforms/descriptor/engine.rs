@@ -38,8 +38,8 @@ use super::paths::{PathResolver, Sandbox};
 use super::plan::{DryRunPlan, PlanAction, PlanStep, PlanTargetKind};
 use super::reg;
 use super::schema::{
-    Condition, CurrentSource, Descriptor, DirItem, Discovery, EntryKind, Executable,
-    ExecutableCandidate, IdentitySource, OsProfile, PathSpec, PathTemplate, INSTALL_DIR,
+    Condition, CurrentSource, Descriptor, Discovery, EntryKind, Executable, ExecutableCandidate,
+    IdentitySource, OsProfile, PathSpec, PathTemplate, RegistryItem, INSTALL_DIR,
 };
 
 /// Where a descriptor came from. Shipped descriptors are read-only; a user
@@ -623,78 +623,144 @@ impl DescriptorService {
         Ok(())
     }
 
+    /// The account's snapshot directory, or the error naming the way out when
+    /// there is none. Checked before anything is closed or cleared.
+    fn require_snapshot(
+        &self,
+        app: &dyn AppContext,
+        runtime: &Runtime<'_>,
+        account_id: &str,
+    ) -> Result<PathBuf, String> {
+        let cache_dir = self.snapshot_root(app, account_id)?;
+        if cache_dir.exists() {
+            return Ok(cache_dir);
+        }
+        let hint = runtime.profile.setup.missing_snapshot_hint.trim();
+        let mut message = format!("No auth snapshot found for account {account_id}.");
+        if !hint.is_empty() {
+            message.push(' ');
+            message.push_str(hint);
+        }
+        Err(message)
+    }
+
+    /// Puts the account's snapshot in place of the live session, or leaves
+    /// the live session as it was.
+    ///
+    /// Several files, folders and registry values are one credential set, so
+    /// the restore runs in two phases. Everything is decrypted first, files
+    /// and folders next to their live location and registry values into
+    /// memory. Only then is the live state swapped, each step journaled, and
+    /// a failed step undoes the ones before it.
+    ///
+    /// An item the snapshot does not hold is one the capture dropped because
+    /// the account had none. When the descriptor clears it at capture, the
+    /// live one belongs to the outgoing account and is removed.
     fn restore_snapshot(&self, app: &dyn AppContext, account_id: &str) -> Result<(), String> {
         let runtime = self.runtime(app)?;
-        let cache_dir = self.snapshot_root(app, account_id)?;
+        let cache_dir = self.require_snapshot(app, &runtime, account_id)?;
 
-        if !cache_dir.exists() {
-            let hint = runtime.profile.setup.missing_snapshot_hint.trim();
-            let mut message = format!("No auth snapshot found for account {account_id}.");
-            if !hint.is_empty() {
-                message.push(' ');
-                message.push_str(hint);
-            }
-            return Err(message);
+        let mut steps = Vec::new();
+        if let Err(error) = self.stage_restore(&runtime, &cache_dir, &mut steps) {
+            discard_staging(&steps);
+            return Err(error);
         }
 
-        // Every file is decrypted next to its destination first and only moved
-        // into place once they have all landed. Several session files are one
-        // credential set: a failure halfway through would otherwise leave the
-        // incoming account's half next to the outgoing account's.
-        let mut staged: Vec<(PathBuf, PathBuf, bool)> = Vec::new();
-        for item in &runtime.profile.state.files {
+        let mut journal = Vec::new();
+        for step in &steps {
+            if let Err(error) = apply_restore_step(step, &mut journal) {
+                let mut message = error;
+                for failure in roll_back(journal) {
+                    message.push_str("; could not undo: ");
+                    message.push_str(&failure);
+                }
+                discard_staging(&steps);
+                return Err(message);
+            }
+        }
+        for undo in journal {
+            undo.forget_backup();
+        }
+        Ok(())
+    }
+
+    /// The first phase of a restore: decrypts everything, touches nothing
+    /// live. Each staged item is pushed as soon as it exists, so a failure
+    /// halfway can still clean up what came before it.
+    fn stage_restore(
+        &self,
+        runtime: &Runtime<'_>,
+        cache_dir: &Path,
+        steps: &mut Vec<RestoreStep>,
+    ) -> Result<(), String> {
+        let state = &runtime.profile.state;
+        for item in &state.files {
             let source = cache_dir.join(&item.snapshot);
+            let live = runtime.spec_path(&item.live)?;
             if !source.exists() {
+                if item.clear_snapshot_when_source_missing && live.exists() {
+                    steps.push(RestoreStep::RemoveFile { live });
+                }
                 continue;
             }
-            let live = runtime.spec_path(&item.live)?;
             if let Some(parent) = live.parent() {
                 fs::create_dir_all(parent)
                     .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
             }
             let staging = staging_path(&live);
-            if let Err(error) = decrypted_copy_file(&source, &staging) {
-                for (path, _, _) in &staged {
-                    let _ = fs::remove_file(path);
-                }
-                let _ = fs::remove_file(&staging);
-                return Err(error);
-            }
-            staged.push((staging, live, item.remove_live_before_restore));
-        }
-        for (staging, live, remove_live_first) in &staged {
-            if *remove_live_first {
-                // Files the OS marks hidden or system cannot be replaced in
-                // place on Windows, so the live copy goes first.
-                let _ = fs::remove_file(live);
-            }
-            if fs::rename(staging, live).is_err() {
-                // Cross-volume rename or a lingering lock: copy the already
-                // decrypted staging file instead.
-                fs::copy(staging, live)
-                    .map_err(|e| format!("Could not finalize {}: {e}", live.display()))?;
-                let _ = fs::remove_file(staging);
-            }
+            let result = decrypted_copy_file(&source, &staging);
+            steps.push(RestoreStep::File {
+                staging,
+                live,
+                remove_live_first: item.remove_live_before_restore,
+            });
+            result?;
         }
 
-        for item in &runtime.profile.state.registry_values {
+        for item in &state.registry_values {
             let source = cache_dir.join(&item.snapshot);
             if !source.exists() {
+                if item.clear_snapshot_when_source_missing {
+                    steps.push(RestoreStep::RemoveValue { item: item.clone() });
+                }
                 continue;
             }
-            if let Ok(bytes) = read_decrypted_bytes(&source) {
-                if let Ok(text) = String::from_utf8(bytes) {
-                    let _ = reg::write(item.root, &item.key, &item.value, text.trim());
-                }
-            }
+            let bytes = read_decrypted_bytes(&source)?;
+            let data = String::from_utf8(bytes).map_err(|_| {
+                format!(
+                    "Snapshot of {} is not text",
+                    reg::display(item.root, &item.key, &item.value)
+                )
+            })?;
+            steps.push(RestoreStep::Value {
+                item: item.clone(),
+                data: data.trim().to_string(),
+            });
         }
 
-        for item in &runtime.profile.state.directories {
+        for item in &state.directories {
             let source = cache_dir.join(&item.snapshot);
             let live = runtime.spec_path(&item.live)?;
-            restore_dir_snapshot(&source, &live, item)?;
+            if !source.exists() {
+                if item.clear_snapshot_when_source_missing && live.exists() {
+                    steps.push(RestoreStep::RemoveDir { live });
+                }
+                continue;
+            }
+            let staging = staging_path(&live);
+            let _ = fs::remove_dir_all(&staging);
+            let ignored: Vec<&str> = item.ignored_names.iter().map(String::as_str).collect();
+            let result = snapshot_crypto::decrypted_copy_dir(
+                &source,
+                &staging,
+                DirCopyOptions {
+                    ignored_names: &ignored,
+                    follow_symlinks: item.follow_symlinks,
+                },
+            );
+            steps.push(RestoreStep::Dir { staging, live });
+            result?;
         }
-
         Ok(())
     }
 
@@ -1491,29 +1557,53 @@ impl DescriptorService {
     }
 
     fn plan_restore(&self, runtime: &Runtime<'_>, plan: &mut DryRunPlan, cache_dir: &Path) {
+        // Mirrors [`Self::stage_restore`]: an item missing from the snapshot
+        // is removed live when the capture would have dropped it. With no
+        // snapshot at all the switch stops before this point.
+        const ABSENT: &str = "not in this account's snapshot";
+        let held = cache_dir.exists();
         for item in &runtime.profile.state.files {
             let snapshot = cache_dir.join(&item.snapshot);
             match runtime.spec_path(&item.live) {
+                Ok(live) if snapshot.exists() => plan.path_step(
+                    PlanAction::Restore,
+                    PlanTargetKind::File,
+                    &live,
+                    &snapshot,
+                    "",
+                ),
+                Ok(live) if held && item.clear_snapshot_when_source_missing => plan.simple_step(
+                    PlanAction::Delete,
+                    PlanTargetKind::File,
+                    live.display().to_string(),
+                    ABSENT,
+                ),
                 Ok(live) => plan.path_step(
                     PlanAction::Restore,
                     PlanTargetKind::File,
                     &live,
                     &snapshot,
-                    if snapshot.exists() {
-                        ""
-                    } else {
-                        "no snapshot, skipped"
-                    },
+                    "no snapshot, skipped",
                 ),
                 Err(e) => plan.warn(e.to_string()),
             }
         }
         for item in &runtime.profile.state.registry_values {
             let snapshot = cache_dir.join(&item.snapshot);
+            let target = reg::display(item.root, &item.key, &item.value);
+            if held && !snapshot.exists() && item.clear_snapshot_when_source_missing {
+                plan.simple_step(
+                    PlanAction::Delete,
+                    PlanTargetKind::RegistryValue,
+                    target,
+                    ABSENT,
+                );
+                continue;
+            }
             plan.push(PlanStep {
                 action: PlanAction::Restore,
                 kind: PlanTargetKind::RegistryValue,
-                target: reg::display(item.root, &item.key, &item.value),
+                target,
                 snapshot: snapshot.display().to_string(),
                 note: if snapshot.exists() {
                     String::new()
@@ -1525,16 +1615,25 @@ impl DescriptorService {
         for item in &runtime.profile.state.directories {
             let snapshot = cache_dir.join(&item.snapshot);
             match runtime.spec_path(&item.live) {
+                Ok(live) if snapshot.exists() => plan.path_step(
+                    PlanAction::Restore,
+                    PlanTargetKind::Directory,
+                    &live,
+                    &snapshot,
+                    "",
+                ),
+                Ok(live) if held && item.clear_snapshot_when_source_missing => plan.simple_step(
+                    PlanAction::Delete,
+                    PlanTargetKind::Directory,
+                    live.display().to_string(),
+                    ABSENT,
+                ),
                 Ok(live) => plan.path_step(
                     PlanAction::Restore,
                     PlanTargetKind::Directory,
                     &live,
                     &snapshot,
-                    if snapshot.exists() {
-                        ""
-                    } else {
-                        "no snapshot, skipped"
-                    },
+                    "no snapshot, skipped",
                 ),
                 Err(e) => plan.warn(e.to_string()),
             }
@@ -1831,50 +1930,235 @@ fn dir_has_nonempty_file(dir: &Path) -> bool {
     false
 }
 
-/// Restores a session directory from its encrypted snapshot.
-///
-/// The decrypted copy is staged next to the live directory and swapped in, so
-/// a failure partway through never leaves the live directory holding a mix of
-/// the outgoing and incoming account's files. A missing snapshot is a no-op.
-fn restore_dir_snapshot(
-    snapshot_dir: &Path,
-    live_dir: &Path,
-    item: &DirItem,
-) -> Result<(), String> {
-    if !snapshot_dir.exists() {
-        return Ok(());
-    }
-    let staging = staging_path(live_dir);
-    let _ = fs::remove_dir_all(&staging);
+//// One change a restore makes to the live state, decided and staged before
+/// any of them is applied.
+enum RestoreStep {
+    File {
+        staging: PathBuf,
+        live: PathBuf,
+        remove_live_first: bool,
+    },
+    RemoveFile {
+        live: PathBuf,
+    },
+    Dir {
+        staging: PathBuf,
+        live: PathBuf,
+    },
+    RemoveDir {
+        live: PathBuf,
+    },
+    Value {
+        item: RegistryItem,
+        data: String,
+    },
+    RemoveValue {
+        item: RegistryItem,
+    },
+}
 
-    let ignored: Vec<&str> = item.ignored_names.iter().map(String::as_str).collect();
-    snapshot_crypto::decrypted_copy_dir(
-        snapshot_dir,
-        &staging,
-        DirCopyOptions {
-            ignored_names: &ignored,
-            follow_symlinks: item.follow_symlinks,
-        },
-    )?;
+/// How to take back one applied step.
+enum Undo {
+    /// Put `backup` back at `live`, or remove `live` when nothing was there.
+    File {
+        live: PathBuf,
+        backup: Option<PathBuf>,
+    },
+    Dir {
+        live: PathBuf,
+        backup: Option<PathBuf>,
+    },
+    Value {
+        item: RegistryItem,
+        previous: Option<String>,
+    },
+}
 
-    if live_dir.exists() {
-        fs::remove_dir_all(live_dir)
-            .map_err(|e| format!("Could not clear {}: {e}", live_dir.display()))?;
+impl Undo {
+    fn undo(self) -> Result<(), String> {
+        match self {
+            Undo::File { live, backup } => {
+                let _ = fs::remove_file(&live);
+                match backup {
+                    Some(backup) => put_file(&backup, &live, true),
+                    None => Ok(()),
+                }
+            }
+            Undo::Dir { live, backup } => {
+                let _ = fs::remove_dir_all(&live);
+                match backup {
+                    Some(backup) => fs::rename(&backup, &live)
+                        .map_err(|e| format!("Could not put back {}: {e}", live.display())),
+                    None => Ok(()),
+                }
+            }
+            Undo::Value { item, previous } => match previous {
+                Some(value) => reg::write(item.root, &item.key, &item.value, &value),
+                None => {
+                    reg::delete(item.root, &item.key, &item.value);
+                    Ok(())
+                }
+            },
+        }
     }
-    if let Some(parent) = live_dir.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
+
+    /// The restore went through: the outgoing session's copy goes.
+    fn forget_backup(self) {
+        match self {
+            Undo::File {
+                backup: Some(backup),
+                ..
+            } => {
+                let _ = fs::remove_file(backup);
+            }
+            Undo::Dir {
+                backup: Some(backup),
+                ..
+            } => {
+                let _ = fs::remove_dir_all(backup);
+            }
+            _ => {}
+        }
     }
-    match fs::rename(&staging, live_dir) {
-        Ok(()) => Ok(()),
-        Err(_) => {
-            // Cross-volume rename or a lingering lock: copy the already
-            // decrypted staging tree instead, then drop the staging dir.
-            crate::fs_utils::copy_dir_recursive(&staging, live_dir, &[])?;
-            let _ = fs::remove_dir_all(&staging);
+}
+
+fn apply_restore_step(step: &RestoreStep, journal: &mut Vec<Undo>) -> Result<(), String> {
+    match step {
+        RestoreStep::File {
+            staging,
+            live,
+            remove_live_first,
+        } => {
+            let backup = move_aside(live)?;
+            journal.push(Undo::File {
+                live: live.clone(),
+                backup,
+            });
+            put_file(staging, live, *remove_live_first)
+        }
+        RestoreStep::RemoveFile { live } => {
+            let backup = move_aside(live)?;
+            journal.push(Undo::File {
+                live: live.clone(),
+                backup,
+            });
+            Ok(())
+        }
+        RestoreStep::Dir { staging, live } => {
+            let backup = move_aside(live)?;
+            journal.push(Undo::Dir {
+                live: live.clone(),
+                backup,
+            });
+            if let Some(parent) = live.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
+            }
+            if fs::rename(staging, live).is_err() {
+                // Cross-volume rename or a lingering lock: copy the already
+                // decrypted staging tree instead, then drop the staging dir.
+                crate::fs_utils::copy_dir_recursive(staging, live, &[])?;
+                let _ = fs::remove_dir_all(staging);
+            }
+            Ok(())
+        }
+        RestoreStep::RemoveDir { live } => {
+            let backup = move_aside(live)?;
+            journal.push(Undo::Dir {
+                live: live.clone(),
+                backup,
+            });
+            Ok(())
+        }
+        RestoreStep::Value { item, data } => {
+            journal.push(Undo::Value {
+                item: item.clone(),
+                previous: reg::read(item.root, &item.key, &item.value),
+            });
+            reg::write(item.root, &item.key, &item.value, data)
+        }
+        RestoreStep::RemoveValue { item } => {
+            journal.push(Undo::Value {
+                item: item.clone(),
+                previous: reg::read(item.root, &item.key, &item.value),
+            });
+            reg::delete(item.root, &item.key, &item.value);
             Ok(())
         }
     }
+}
+
+/// Undoes the applied steps, last first. Returns what could not be undone.
+fn roll_back(journal: Vec<Undo>) -> Vec<String> {
+    journal
+        .into_iter()
+        .rev()
+        .filter_map(|undo| undo.undo().err())
+        .collect()
+}
+
+/// Removes whatever staging copies a restore left behind.
+fn discard_staging(steps: &[RestoreStep]) {
+    for step in steps {
+        match step {
+            RestoreStep::File { staging, .. } => {
+                let _ = fs::remove_file(staging);
+            }
+            RestoreStep::Dir { staging, .. } => {
+                let _ = fs::remove_dir_all(staging);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Where the outgoing session's copy of a live path waits until the restore
+/// either goes through or is undone.
+fn backup_path(live: &Path) -> PathBuf {
+    let mut name = live.file_name().unwrap_or_default().to_os_string();
+    name.push(".accshift-restore-old");
+    live.with_file_name(name)
+}
+
+/// Moves a live file or directory out of the way, keeping it for an undo.
+/// `None` when there was nothing there.
+fn move_aside(live: &Path) -> Result<Option<PathBuf>, String> {
+    if !live.exists() {
+        return Ok(None);
+    }
+    let backup = backup_path(live);
+    // A backup left by a restore that never finished is stale by now.
+    let _ = fs::remove_file(&backup);
+    let _ = fs::remove_dir_all(&backup);
+    if fs::rename(live, &backup).is_ok() {
+        return Ok(Some(backup));
+    }
+    if live.is_dir() {
+        return Err(format!("Could not move {} aside", live.display()));
+    }
+    // A file that refuses a rename may still be copied and removed.
+    fs::copy(live, &backup).map_err(|e| format!("Could not back up {}: {e}", live.display()))?;
+    if let Err(e) = fs::remove_file(live) {
+        let _ = fs::remove_file(&backup);
+        return Err(format!("Could not remove {}: {e}", live.display()));
+    }
+    Ok(Some(backup))
+}
+
+/// Moves `source` to `dest`, falling back to a copy.
+fn put_file(source: &Path, dest: &Path, remove_dest_first: bool) -> Result<(), String> {
+    if remove_dest_first {
+        // Files the OS marks hidden or system cannot be replaced in place on
+        // Windows, so the live copy goes first.
+        let _ = fs::remove_file(dest);
+    }
+    if fs::rename(source, dest).is_err() {
+        // Cross-volume rename or a lingering lock: copy instead.
+        fs::copy(source, dest)
+            .map_err(|e| format!("Could not finalize {}: {e}", dest.display()))?;
+        let _ = fs::remove_file(source);
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1993,6 +2277,7 @@ impl PlatformService for DescriptorService {
 
 #[cfg(test)]
 mod tests {
+    use super::super::schema::RegistryHive;
     use super::*;
     use std::sync::Arc;
 
@@ -3127,6 +3412,144 @@ mod tests {
         assert_eq!(status.state, "waiting_for_client");
         assert_eq!(service.read_accounts(&*ctx).unwrap().len(), 1);
         assert!(!live.join("Local Storage").join("leveldb").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // -----------------------------------------------------------------------
+    // Restore symmetry
+    // -----------------------------------------------------------------------
+
+    /// The plain fixture plus one registry value, served by the in-memory
+    /// registry so nothing reaches the real hive.
+    fn registry_service(live_root: &Path) -> DescriptorService {
+        let json = fixture(live_root)
+            .replace(
+                r#""roots": { "files": ["#,
+                r#""roots": { "registry": [{ "root": "HKCU", "key": "Software\\AccshiftTest" }], "files": ["#,
+            )
+            .replace(
+                r#""state": {"#,
+                r#""state": {
+                    "registryValues": [
+                      { "root": "HKCU", "key": "Software\\AccshiftTest", "value": "token", "snapshot": "registry_token.txt" }
+                    ],"#,
+            );
+        DescriptorService::new(
+            Descriptor::parse("test", &json).unwrap(),
+            DescriptorOrigin::Embedded,
+        )
+    }
+
+    const TEST_KEY: &str = "Software\\AccshiftTest";
+
+    fn test_value() -> Option<String> {
+        reg::read(RegistryHive::CurrentUser, TEST_KEY, "token")
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_file_the_account_never_had_is_removed_on_restore() {
+        // The capture dropped it because the account had none, so the one
+        // left live belongs to the outgoing account.
+        let _config = config_guard();
+        let root = scratch("restore-absent-file");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = service(&live);
+
+        seed_live_session(&live, b"account-one");
+        fs::remove_file(live.join("session.json")).unwrap();
+        service.save_snapshot(&ctx, "aaaa1111").unwrap();
+
+        seed_live_session(&live, b"account-two");
+        service.restore_snapshot(&ctx, "aaaa1111").unwrap();
+
+        assert!(!live.join("session.json").exists());
+        assert_eq!(
+            fs::read(live.join("auth").join("nested").join("token.bin")).unwrap(),
+            b"account-one"
+        );
+        // The outgoing copies kept for an undo are gone once it went through.
+        assert!(!live.join("session.json.accshift-restore-old").exists());
+        assert!(!live.join("auth.accshift-restore-old").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_registry_value_the_account_never_had_is_removed_on_restore() {
+        let _config = config_guard();
+        let _registry = reg::fake::install();
+        let root = scratch("restore-absent-value");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = registry_service(&live);
+
+        seed_live_session(&live, b"account-one");
+        service.save_snapshot(&ctx, "aaaa1111").unwrap();
+
+        reg::fake::set(RegistryHive::CurrentUser, TEST_KEY, "token", "outgoing");
+        service.restore_snapshot(&ctx, "aaaa1111").unwrap();
+        assert_eq!(test_value(), None);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_registry_write_that_fails_fails_the_restore_and_undoes_the_files() {
+        let _config = config_guard();
+        let _registry = reg::fake::install();
+        let root = scratch("restore-write-fails");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = registry_service(&live);
+
+        seed_live_session(&live, b"account-one");
+        reg::fake::set(RegistryHive::CurrentUser, TEST_KEY, "token", "incoming");
+        service.save_snapshot(&ctx, "aaaa1111").unwrap();
+
+        seed_live_session(&live, b"account-two");
+        reg::fake::set(RegistryHive::CurrentUser, TEST_KEY, "token", "outgoing");
+        reg::fake::fail_writes(true);
+        assert!(service.restore_snapshot(&ctx, "aaaa1111").is_err());
+
+        assert_eq!(fs::read(live.join("session.json")).unwrap(), b"account-two");
+        assert_eq!(test_value().as_deref(), Some("outgoing"));
+        assert!(!live.join("session.json.accshift-restore-old").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_directory_that_cannot_be_restored_leaves_every_file_as_it_was() {
+        // Directories used to be restored last, after the files had already
+        // been swapped, so a failure there left half of each account live.
+        let _config = config_guard();
+        let root = scratch("restore-dir-fails");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = service(&live);
+
+        seed_live_session(&live, b"account-one");
+        service.save_snapshot(&ctx, "aaaa1111").unwrap();
+        // A header with nothing decryptable behind it.
+        let snapshot = service.snapshot_root(&ctx, "aaaa1111").unwrap();
+        fs::write(
+            snapshot.join("auth").join("nested").join("token.bin"),
+            [crate::snapshot_crypto::ENCRYPTED_HEADER, b"garbage"].concat(),
+        )
+        .unwrap();
+
+        seed_live_session(&live, b"account-two");
+        assert!(service.restore_snapshot(&ctx, "aaaa1111").is_err());
+
+        assert_eq!(fs::read(live.join("session.json")).unwrap(), b"account-two");
+        assert_eq!(
+            fs::read(live.join("auth").join("nested").join("token.bin")).unwrap(),
+            b"account-two"
+        );
+        assert!(!live.join("auth.accshift-restore-tmp").exists());
+        assert!(!live.join("session.json.accshift-restore-tmp").exists());
         let _ = fs::remove_dir_all(&root);
     }
 
