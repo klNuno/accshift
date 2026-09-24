@@ -3,6 +3,27 @@
 //! Both the Tauri GUI and the CLI take this lock before writing config, so
 //! two instances can't clobber each other mid-switch. The lock is released
 //! when the returned `LockGuard` is dropped.
+//!
+//! There is one lock file and two ways in. [`acquire_exclusive`] owns it for
+//! a whole operation. [`acquire_for_write`] owns it for one write, or nests
+//! inside an operation already holding it on the same thread. Who takes what:
+//!
+//! | Caller | Entry | Budget | When it cannot get the lock |
+//! | --- | --- | --- | --- |
+//! | GUI switch, forget, begin setup, Steam game launch, copy settings, browser cache, bulk edit, Riot capture, Roblox cookie add (`run_locked_blocking`) | exclusive | 2 s | "Another instance" error |
+//! | GUI setup status poll | exclusive | 2 s | reports `busy`, the next poll retries |
+//! | GUI cancel setup | exclusive | 30 s | waits out a detached setup launch |
+//! | Riot and Steam detached setup launch ([`with_exclusive`]) | exclusive | 30 s | the setup reports the failure |
+//! | CLI switch | exclusive | 2 s | exits with "Another instance" |
+//! | `config::save_config` and every `update_config` | write | 5 s | the write fails, nothing is half-written |
+//! | GUI client store save (settings, folders, caches) | write | 2 s | the save fails and the debounce retries |
+//! | CLI PIN writes | write | 5 s | the command fails |
+//! | Boot maintenance, per step | write | 2 s | that step is skipped and logged |
+//! | Keyring GC sweep | write | 0 | the sweep is skipped until the next run |
+//!
+//! Writes that take no operation lock of their own (label, path, descriptor
+//! install and remove) still go through `update_config`, so the config file
+//! itself is never written by two processes at once.
 
 use crate::AppContext;
 use fs4::{FileExt, TryLockError};

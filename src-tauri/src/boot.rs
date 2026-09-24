@@ -221,12 +221,14 @@ pub(crate) fn build_main_window(
     setup_ctx: &AppCtx,
     phases: &mut StartupPhases,
 ) -> Result<WebviewWindow, Box<dyn std::error::Error>> {
-    let (start_width, start_height) = timed(&mut phases.window_size_us, || {
-        config::load_window_size(setup_ctx)
-            .unwrap_or((config::DEFAULT_WINDOW_WIDTH, config::DEFAULT_WINDOW_HEIGHT))
+    let saved = timed(&mut phases.window_size_us, || {
+        config::load_window(setup_ctx)
     });
-    let saved_position = config::load_window_position(setup_ctx);
-    let saved_physical_position = config::load_window_physical_position(setup_ctx);
+    let (start_width, start_height) = saved
+        .size
+        .unwrap_or((config::DEFAULT_WINDOW_WIDTH, config::DEFAULT_WINDOW_HEIGHT));
+    let saved_position = saved.position;
+    let saved_physical_position = saved.physical_position;
 
     let navigation_log_ctx = setup_ctx.clone();
     let page_load_log_ctx = setup_ctx.clone();

@@ -970,24 +970,47 @@ pub fn clamp_window_position(x: f64, y: f64) -> Option<(f64, f64)> {
     sane.then_some((x, y))
 }
 
-pub fn load_window_size(app_handle: &dyn AppContext) -> Option<(f64, f64)> {
+/// The saved window geometry, read with one config load for the boot path.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SavedWindow {
+    pub size: Option<(f64, f64)>,
+    pub position: Option<(f64, f64)>,
+    /// The saved origin in physical pixels, when the scale it was measured
+    /// with was saved too. Configs written before that field existed have
+    /// `None`, and the caller keeps the logical origin.
+    pub physical_position: Option<(i32, i32)>,
+}
+
+pub fn load_window(app_handle: &dyn AppContext) -> SavedWindow {
     let cfg = load_config(app_handle);
-    clamp_window_size(cfg.window_width?, cfg.window_height?)
+    let size = cfg
+        .window_width
+        .zip(cfg.window_height)
+        .and_then(|(w, h)| clamp_window_size(w, h));
+    let position = cfg
+        .window_x
+        .zip(cfg.window_y)
+        .and_then(|(x, y)| clamp_window_position(x, y));
+    let physical_position = position
+        .zip(cfg.window_scale.filter(|s| valid_scale(*s)))
+        .map(|((x, y), scale)| ((x * scale).round() as i32, (y * scale).round() as i32));
+    SavedWindow {
+        size,
+        position,
+        physical_position,
+    }
+}
+
+pub fn load_window_size(app_handle: &dyn AppContext) -> Option<(f64, f64)> {
+    load_window(app_handle).size
 }
 
 pub fn load_window_position(app_handle: &dyn AppContext) -> Option<(f64, f64)> {
-    let cfg = load_config(app_handle);
-    clamp_window_position(cfg.window_x?, cfg.window_y?)
+    load_window(app_handle).position
 }
 
-/// The saved origin in physical pixels, when the scale it was measured with
-/// was saved too. Configs written before that field existed return `None`,
-/// and the caller keeps the logical origin.
 pub fn load_window_physical_position(app_handle: &dyn AppContext) -> Option<(i32, i32)> {
-    let cfg = load_config(app_handle);
-    let (x, y) = clamp_window_position(cfg.window_x?, cfg.window_y?)?;
-    let scale = cfg.window_scale.filter(|s| valid_scale(*s))?;
-    Some(((x * scale).round() as i32, (y * scale).round() as i32))
+    load_window(app_handle).physical_position
 }
 
 fn valid_scale(scale: f64) -> bool {

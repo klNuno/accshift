@@ -72,8 +72,8 @@ struct Sink {
     /// Rotation generation this process last saw. Compared against the sidecar
     /// on every acquire.
     generation: u64,
-    /// Bytes in the open file, tracked incrementally so a write does not need
-    /// a stat.
+    /// Bytes in the open file. Re-read from the handle before each append,
+    /// since another process may have written to the same file.
     size: u64,
 }
 
@@ -418,6 +418,17 @@ pub(crate) fn try_write_line(app_handle: &dyn AppContext, line: &str) -> Result<
 
 fn append_line(path: &Path, sink: &mut Sink, line: &str) -> Result<(), String> {
     sink.open_if_needed(path)?;
+    // The GUI and the CLI append to the same file, so the count this process
+    // kept misses the other's lines. One stat on the open handle, under the
+    // cross-process log lock, gives the real size.
+    if let Some(len) = sink
+        .file
+        .as_ref()
+        .and_then(|file| file.metadata().ok())
+        .map(|meta| meta.len())
+    {
+        sink.size = len;
+    }
     // Rotate before the write that would breach the cap, never after: the
     // announced budget is a ceiling, not an average.
     if sink.size > 0 && sink.size + line.len() as u64 + 1 > MAX_LOG_FILE_BYTES {
@@ -641,6 +652,28 @@ mod tests {
             5,
             "the facade must not grow columns"
         );
+    }
+
+    #[test]
+    fn lines_another_process_appended_count_toward_the_cap() {
+        let ctx = TestCtx::ctx("logging-shared-writer");
+        let path = log_file_path(&*ctx).expect("path");
+        append_app_log(&*ctx, "info", "test", "first", None).expect("append");
+
+        // Another process (the CLI) fills the same file behind this sink's back.
+        {
+            let mut other = OpenOptions::new().append(true).open(&path).unwrap();
+            other
+                .write_all(&vec![b'y'; MAX_LOG_FILE_BYTES as usize])
+                .unwrap();
+        }
+        append_app_log(&*ctx, "info", "test", "after", None).expect("append");
+
+        assert!(
+            rotated_path(&path, 1).exists(),
+            "the shared file crossed the cap and must have rotated"
+        );
+        assert!(fs::metadata(&path).unwrap().len() <= MAX_LOG_FILE_BYTES);
     }
 
     #[test]
