@@ -1,16 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createAppNavigationController } from "./useAppNavigation.svelte";
 
-function makeDeps(overrides: { activeTab?: string; showSettings?: boolean } = {}) {
+function makeDeps(
+  overrides: { activeTab?: string; showSettings?: boolean; enabledPlatforms?: string[] } = {},
+) {
   let activeTab = overrides.activeTab ?? "steam";
+  const enabledPlatforms = overrides.enabledPlatforms ?? ["steam"];
+  const calls: string[] = [];
   let showSettings = overrides.showSettings ?? false;
   const spies = {
     pushState: vi.fn(),
     back: vi.fn(),
     replaceState: vi.fn(),
-    clearForPlatformChange: vi.fn(),
-    loadAccounts: vi.fn(),
+    clearForPlatformChange: vi.fn(() => {
+      calls.push("clear");
+    }),
+    loadAccounts: vi.fn(() => {
+      calls.push("load");
+    }),
+    resetVisiblePrimeState: vi.fn(),
     setActiveTab: vi.fn((tab: string) => {
+      calls.push(`tab:${tab}`);
       activeTab = tab;
     }),
     setShowSettings: vi.fn((value: boolean) => {
@@ -34,7 +44,7 @@ function makeDeps(overrides: { activeTab?: string; showSettings?: boolean } = {}
         return "windows" as const;
       },
       get settings() {
-        return { enabledPlatforms: ["steam"] } as never;
+        return { enabledPlatforms, defaultPlatformId: enabledPlatforms[0] } as never;
       },
       setActiveTab: spies.setActiveTab,
       refreshSettings: () => {},
@@ -63,9 +73,9 @@ function makeDeps(overrides: { activeTab?: string; showSettings?: boolean } = {}
     queueGridPadding: () => {},
     onSettingsClosed: () => {},
     getParentFolderId: () => null,
-    resetVisiblePrimeState: () => {},
+    resetVisiblePrimeState: spies.resetVisiblePrimeState,
   });
-  return { controller, spies, getShowSettings: () => showSettings };
+  return { controller, spies, calls, getShowSettings: () => showSettings };
 }
 
 beforeEach(() => {
@@ -99,6 +109,31 @@ describe("handleTabChange same-tab guard", () => {
     await controller.handleTabChange("riot");
     expect(spies.setActiveTab).toHaveBeenCalledWith("riot");
     expect(spies.clearForPlatformChange).toHaveBeenCalled();
+    expect(spies.loadAccounts).toHaveBeenCalled();
+  });
+});
+
+describe("handlePlatformsChanged", () => {
+  it("clears the old platform's load before moving off a disabled tab", () => {
+    // A Steam load still in flight must not land under the new tab and
+    // rewrite its folders with Steam ids.
+    const { controller, spies, calls } = makeDeps({
+      activeTab: "steam",
+      enabledPlatforms: ["riot"],
+    });
+    controller.handlePlatformsChanged();
+    expect(calls).toEqual(["clear", "tab:riot", "load"]);
+    expect(spies.resetVisiblePrimeState).toHaveBeenCalled();
+  });
+
+  it("keeps the grid when the active tab stays enabled", () => {
+    const { controller, spies } = makeDeps({
+      activeTab: "steam",
+      enabledPlatforms: ["steam", "riot"],
+    });
+    controller.handlePlatformsChanged();
+    expect(spies.clearForPlatformChange).not.toHaveBeenCalled();
+    expect(spies.setActiveTab).not.toHaveBeenCalled();
     expect(spies.loadAccounts).toHaveBeenCalled();
   });
 });

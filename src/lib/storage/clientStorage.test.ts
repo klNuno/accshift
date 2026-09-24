@@ -36,6 +36,7 @@ vi.mock("$lib/app/bootPayload", () => ({
 
 import {
   CLIENT_STORE_FOLDERS,
+  CLIENT_STORE_SETTINGS,
   initializeClientStorage,
   setClientStoreValue,
   flushPendingSaves,
@@ -139,5 +140,126 @@ describe("clientStorage flushPendingSaves", () => {
     expect(
       invokeMock.mock.calls.filter((call) => call[0] === "load_client_storage_snapshot"),
     ).toHaveLength(0);
+  });
+});
+
+describe("clientStorage external refresh", () => {
+  // What the next manifest and snapshot calls answer. Each test sets its own.
+  let manifest: Record<string, string> = {};
+  let snapshotManifest: Record<string, string> = {};
+  let snapshotStores: Record<string, unknown> = {};
+  let fingerprint = 0;
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    await initializeClientStorage();
+    // Settle anything a previous test left pending, then record every store as
+    // seen so each test starts from a clean manifest.
+    await flushPendingSaves();
+    invokeMock.mockImplementation((command: unknown): Promise<unknown> => {
+      if (command === "get_storage_manifest") {
+        return Promise.resolve({ schemaVersion: 1, stores: manifest });
+      }
+      if (command === "load_client_storage_snapshot") {
+        return Promise.resolve({
+          manifest: { schemaVersion: 1, stores: snapshotManifest },
+          stores: snapshotStores,
+        });
+      }
+      if (command === "save_client_storage_store") {
+        fingerprint += 1;
+        return Promise.resolve(`local:${fingerprint}`);
+      }
+      return Promise.resolve(undefined);
+    });
+    manifest = { [CLIENT_STORE_FOLDERS]: "seen", [CLIENT_STORE_SETTINGS]: "seen" };
+    snapshotManifest = manifest;
+    snapshotStores = {};
+    await refreshClientStorageIfChanged();
+    invokeMock.mockClear();
+  });
+
+  afterEach(() => {
+    invokeMock.mockImplementation(() => Promise.resolve(undefined));
+    vi.useRealTimers();
+  });
+
+  it("keeps an edit still in the save debounce and saves it afterwards", async () => {
+    setClientStoreValue(CLIENT_STORE_FOLDERS, { folders: ["local"] });
+
+    manifest = { [CLIENT_STORE_FOLDERS]: "external", [CLIENT_STORE_SETTINGS]: "seen" };
+    snapshotManifest = manifest;
+    snapshotStores = { [CLIENT_STORE_FOLDERS]: { folders: ["external"] } };
+    await refreshClientStorageIfChanged();
+
+    expect(getClientStoreValue(CLIENT_STORE_FOLDERS)).toEqual({ folders: ["local"] });
+
+    await vi.advanceTimersByTimeAsync(120);
+    const calls = saveCalls();
+    expect(calls).toHaveLength(1);
+    expect(calls[0][1]).toMatchObject({
+      storeId: CLIENT_STORE_FOLDERS,
+      value: { folders: ["local"] },
+    });
+  });
+
+  it("keeps an edit whose save is still in flight", async () => {
+    let releaseSave: (() => void) | undefined;
+    const defaultImpl = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation((command: unknown, ...rest: unknown[]) => {
+      if (command !== "save_client_storage_store") return defaultImpl(command, ...rest);
+      return new Promise((release) => {
+        releaseSave = () => release("local:slow");
+      });
+    });
+
+    setClientStoreValue(CLIENT_STORE_FOLDERS, { folders: ["local"] });
+    await vi.advanceTimersByTimeAsync(120);
+    expect(releaseSave).toBeDefined();
+
+    manifest = { [CLIENT_STORE_FOLDERS]: "external", [CLIENT_STORE_SETTINGS]: "seen" };
+    snapshotManifest = manifest;
+    snapshotStores = { [CLIENT_STORE_FOLDERS]: { folders: ["external"] } };
+    try {
+      await refreshClientStorageIfChanged();
+      expect(getClientStoreValue(CLIENT_STORE_FOLDERS)).toEqual({ folders: ["local"] });
+    } finally {
+      releaseSave?.();
+      await flushPendingSaves();
+    }
+  });
+
+  it("still applies external changes to stores with no pending save", async () => {
+    setClientStoreValue(CLIENT_STORE_FOLDERS, { folders: ["local"] });
+
+    manifest = { [CLIENT_STORE_FOLDERS]: "external", [CLIENT_STORE_SETTINGS]: "external" };
+    snapshotManifest = manifest;
+    snapshotStores = {
+      [CLIENT_STORE_FOLDERS]: { folders: ["external"] },
+      [CLIENT_STORE_SETTINGS]: { language: "fr" },
+    };
+    const changed = await refreshClientStorageIfChanged();
+
+    expect(changed).toEqual([CLIENT_STORE_SETTINGS]);
+    expect(getClientStoreValue(CLIENT_STORE_SETTINGS)).toEqual({ language: "fr" });
+    expect(getClientStoreValue(CLIENT_STORE_FOLDERS)).toEqual({ folders: ["local"] });
+    await flushPendingSaves();
+  });
+
+  it("does not mark a store as seen when it changed after the manifest read", async () => {
+    // The first manifest only reports folders; settings is rewritten between
+    // the manifest read and the snapshot read, so the snapshot manifest
+    // already carries it. It must still be picked up by the next refresh.
+    manifest = { [CLIENT_STORE_FOLDERS]: "external", [CLIENT_STORE_SETTINGS]: "seen" };
+    snapshotManifest = { [CLIENT_STORE_FOLDERS]: "external", [CLIENT_STORE_SETTINGS]: "later" };
+    snapshotStores = {
+      [CLIENT_STORE_FOLDERS]: { folders: ["external"] },
+      [CLIENT_STORE_SETTINGS]: { language: "de" },
+    };
+    expect(await refreshClientStorageIfChanged()).toEqual([CLIENT_STORE_FOLDERS]);
+
+    manifest = snapshotManifest;
+    expect(await refreshClientStorageIfChanged()).toEqual([CLIENT_STORE_SETTINGS]);
+    expect(getClientStoreValue(CLIENT_STORE_SETTINGS)).toEqual({ language: "de" });
   });
 });

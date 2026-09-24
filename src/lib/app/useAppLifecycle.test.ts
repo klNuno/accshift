@@ -12,22 +12,42 @@ vi.mock("$lib/storage/clientStorage", async (importOriginal) => ({
   refreshClientStorageIfChanged: async () => mocks.changed,
 }));
 
-import { CLIENT_STORE_PERSONAS } from "$lib/storage/clientStorage";
+import { CLIENT_STORE_PERSONAS, CLIENT_STORE_SETTINGS } from "$lib/storage/clientStorage";
 import { createAppLifecycleController } from "./useAppLifecycle.svelte";
 
-function createLifecycle(refreshPersonas: () => void) {
+function createLifecycle(
+  refreshPersonas: () => void,
+  options: { enabledPlatforms?: string[]; calls?: string[] } = {},
+) {
+  const calls = options.calls ?? [];
+  const enabledPlatforms = options.enabledPlatforms ?? ["steam"];
+  let activeTab = "steam";
   return createAppLifecycleController({
     shell: {
-      settings: { enabledPlatforms: ["steam"] } as AppSettings,
-      activeTab: "steam",
+      settings: { enabledPlatforms, defaultPlatformId: enabledPlatforms[0] } as AppSettings,
+      get activeTab() {
+        return activeTab;
+      },
       runtimeOs: "windows",
       refreshSettings: vi.fn(),
       setRuntimeOs: vi.fn(),
-      setActiveTab: vi.fn(),
+      setActiveTab: vi.fn((tab: string) => {
+        calls.push(`tab:${tab}`);
+        activeTab = tab;
+      }),
     },
     navigation: { currentFolderId: null, refreshCurrentItems: vi.fn() },
-    loader: { prepareVisibleAccounts: vi.fn() },
-    loadAccounts: vi.fn(),
+    loader: {
+      prepareVisibleAccounts: vi.fn(),
+      clearForPlatformChange: vi.fn(() => {
+        calls.push("clear");
+      }),
+    },
+    addFlow: { flow: null, cancel: vi.fn(async () => {}) },
+    resetVisiblePrimeState: vi.fn(),
+    loadAccounts: vi.fn(() => {
+      calls.push(`load:${activeTab}`);
+    }),
     queueGridPadding: vi.fn(),
     syncViewModeFromStorage: vi.fn(),
     bumpCardColorVersion: vi.fn(),
@@ -60,5 +80,31 @@ describe("external storage refresh", () => {
     await createLifecycle(refreshPersonas).refreshExternalStorageState();
 
     expect(refreshPersonas).not.toHaveBeenCalled();
+  });
+
+  it("moves off a tab an external settings change disabled and reloads", async () => {
+    // Another instance or the CLI turned Steam off while the app was in the
+    // background: the grid must follow the tab, not keep Steam's accounts.
+    const calls: string[] = [];
+    mocks.changed = [CLIENT_STORE_SETTINGS];
+
+    await createLifecycle(vi.fn(), {
+      enabledPlatforms: ["riot"],
+      calls,
+    }).refreshExternalStorageState();
+
+    expect(calls).toEqual(["clear", "tab:riot", "load:riot"]);
+  });
+
+  it("leaves the grid alone when the active tab is still enabled", async () => {
+    const calls: string[] = [];
+    mocks.changed = [CLIENT_STORE_SETTINGS];
+
+    await createLifecycle(vi.fn(), {
+      enabledPlatforms: ["steam", "riot"],
+      calls,
+    }).refreshExternalStorageState();
+
+    expect(calls).toEqual([]);
   });
 });

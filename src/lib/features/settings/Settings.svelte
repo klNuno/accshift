@@ -27,6 +27,7 @@
   import SettingsGeneralTab from "./SettingsGeneralTab.svelte";
   import SettingsPlatformsTab from "./SettingsPlatformsTab.svelte";
   import SettingsPrivacyTab from "./SettingsPrivacyTab.svelte";
+  import { mergeSettingsDraft } from "./settingsPatch";
   import type { AppSettings } from "./types";
 
   let {
@@ -81,6 +82,10 @@
   });
   let lastSavedToastAt = 0;
   let lastPersistedSnapshot = "";
+  // The settings as of the last save (or the open). A save writes only what
+  // the user changed since then, merged over the store: other writers (zoom
+  // shortcuts, streamer banner, PIN rehash) keep their values.
+  let persistedSettings: AppSettings = getSettings();
   let lastPlatformSnapshot = "";
   let ActivePlatformComponent = $state<any>(null);
   const SAVE_TOAST_COOLDOWN_MS = 1500;
@@ -314,7 +319,9 @@
     const platformsChanged = nextPlatformSnapshot !== lastPlatformSnapshot;
     const prevPaths = lastSavedPlatformPaths();
 
-    saveSettings(settings);
+    const draft = JSON.parse(JSON.stringify(settings)) as AppSettings;
+    saveSettings(mergeSettingsDraft(getSettings(), persistedSettings, draft));
+    persistedSettings = draft;
     onSettingsUpdated?.();
     if (pinCommitted) {
       addToast(t("settings.pinSaved"), { type: "success" });
@@ -514,6 +521,7 @@
       // Baseline the settings that were actually loaded, not edits made while
       // async API/path hydration was in flight. Those edits remain dirty.
       lastPersistedSnapshot = buildPersistSnapshot(settingsAtHydrationStart);
+      persistedSettings = settingsAtHydrationStart;
       lastPlatformSnapshot = JSON.stringify({
         enabledPlatforms: [...settingsAtHydrationStart.enabledPlatforms].sort(),
         defaultPlatformId: settingsAtHydrationStart.defaultPlatformId,
