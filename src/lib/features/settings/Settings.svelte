@@ -66,6 +66,9 @@
   let healthCheckKey = $derived(JSON.stringify(settings.healthCheckPerPlatform));
   let pinCodeInput = $state("");
   let pinSetupPending = $state(false);
+  // A PIN already in force is replaced only once its code was typed again in
+  // the privacy tab, or once this panel set it.
+  let pinChangeAuthorized = $state(false);
   const uiScale = createNumericInput(() => settings.uiScalePercent, (v) => { settings.uiScalePercent = v; }, 75, 150);
   const bgOpacity = createNumericInput(() => settings.backgroundOpacity, (v) => { settings.backgroundOpacity = v; }, 0, 100);
   const avatarCacheDays = createNumericInput(() => settings.dataRefresh.avatarCacheDays, (v) => { settings.dataRefresh.avatarCacheDays = v; }, 0, 90);
@@ -224,6 +227,7 @@
   async function commitPinCode(): Promise<boolean> {
     const sanitized = sanitizePinDigits(pinCodeInput);
     if (!settings.pinEnabled && !pinSetupPending) return false;
+    if (settings.pinEnabled && !pinChangeAuthorized) return false;
     if (sanitized.length !== PIN_CODE_LENGTH) return false;
 
     const nextPinHash = await hashPinCode(sanitized);
@@ -232,6 +236,7 @@
     settings.pinHash = nextPinHash;
     settings.pinEnabled = true;
     pinSetupPending = false;
+    pinChangeAuthorized = true;
     if (sanitizePinDigits(pinCodeInput) === sanitized) {
       pinCodeInput = "";
     }
@@ -706,6 +711,7 @@
         bind:settings
         bind:pinCodeInput
         bind:pinSetupPending
+        bind:pinChangeAuthorized
         {t}
         {inactivityBlur}
         neutralAccent={NEUTRAL_CONTROL_ACCENT}
