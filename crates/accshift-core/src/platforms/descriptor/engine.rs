@@ -94,10 +94,24 @@ pub struct DescriptorService {
     /// Overrides the environment templates resolve against. Used by tests and
     /// by a dry run asked to reason about a machine other than this one.
     env_override: Option<Vec<(String, String)>>,
-    /// How many times the engine asked for the launcher to start. Tests
-    /// declare no launch step, so this is the only trace a start leaves.
     #[cfg(test)]
+    probes: TestProbes,
+}
+
+/// Counts of the things a test cannot see from outside.
+#[cfg(test)]
+#[derive(Default)]
+struct TestProbes {
+    /// Starts the engine asked for. Tests declare no launch step, so this is
+    /// the only trace a start leaves.
     launches: std::sync::atomic::AtomicUsize,
+    runtimes: std::sync::atomic::AtomicUsize,
+    log_reads: std::sync::atomic::AtomicUsize,
+}
+
+#[cfg(test)]
+fn probe(counter: &std::sync::atomic::AtomicUsize) {
+    counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 impl DescriptorService {
@@ -113,7 +127,7 @@ impl DescriptorService {
             jobs: SetupJobs::new(label, DEFAULT_SETUP_TTL_MS),
             env_override: None,
             #[cfg(test)]
-            launches: Default::default(),
+            probes: TestProbes::default(),
         }
     }
 
@@ -164,10 +178,18 @@ impl DescriptorService {
     /// for it: resolving the executable reads the config and hits the disk,
     /// and most operations never need it.
     fn runtime(&self, app: &dyn AppContext) -> Result<Runtime<'_>, String> {
+        self.build_runtime(|| config_bridge::path_override(app, &self.descriptor.id))
+    }
+
+    /// [`Self::runtime`] for a caller that already holds the config: the
+    /// user's path override is asked for only when a template needs it.
+    fn build_runtime(&self, path_override: impl FnOnce() -> String) -> Result<Runtime<'_>, String> {
+        #[cfg(test)]
+        probe(&self.probes.runtimes);
         let profile = self.profile()?;
         let mut resolver = self.base_resolver();
         if profile_uses_install_dir(profile) {
-            if let Ok(exe) = self.resolve_executable(app) {
+            if let Ok(exe) = self.locate_executable(&path_override()) {
                 if let Some(dir) = exe.parent() {
                     resolver = resolver.with_install_dir(dir);
                 }
@@ -195,15 +217,18 @@ impl DescriptorService {
     /// where per-account session data is read and written; the launcher lives
     /// in Program Files and the user may point at it by hand.
     fn resolve_executable(&self, app: &dyn AppContext) -> Result<PathBuf, String> {
+        self.locate_executable(&config_bridge::path_override(app, &self.descriptor.id))
+    }
+
+    fn locate_executable(&self, override_path: &str) -> Result<PathBuf, String> {
         let profile = self.profile()?;
         let executable = profile
             .executable
             .as_ref()
             .ok_or_else(|| "Path management not supported".to_string())?;
 
-        let override_path = config_bridge::path_override(app, &self.descriptor.id);
         if !override_path.is_empty() {
-            if let Some(found) = locate_binary(Path::new(&override_path), executable) {
+            if let Some(found) = locate_binary(Path::new(override_path), executable) {
                 return Ok(found);
             }
         }
@@ -246,8 +271,7 @@ impl DescriptorService {
 
     fn launch(&self, app: &dyn AppContext) -> Result<(), String> {
         #[cfg(test)]
-        self.launches
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        probe(&self.probes.launches);
         let profile = self.profile()?;
         let Some(launch) = profile.launch.as_ref() else {
             return Ok(());
@@ -420,6 +444,8 @@ impl DescriptorService {
             return None;
         };
         let resolved = runtime.path(path).ok()?;
+        #[cfg(test)]
+        probe(&self.probes.log_reads);
         let content = read_log_tail(&resolved, *tail_bytes)?;
         // The id has one fixed width here: the schema refuses a log source
         // whose format allows a range, because a scan has nothing to match on.
@@ -475,7 +501,7 @@ impl DescriptorService {
     ///
     /// Forgotten ids are filtered out here: a blocklist that discovery ignored
     /// would put the account straight back on the next poll.
-    fn discovered_ids(&self, app: &dyn AppContext, runtime: &Runtime<'_>) -> BTreeSet<String> {
+    fn discovered_ids(&self, runtime: &Runtime<'_>, cfg: &AppConfig) -> BTreeSet<String> {
         let identity = &runtime.profile.identity;
         let mut ids = BTreeSet::new();
         for entry in &identity.discovery {
@@ -520,13 +546,13 @@ impl DescriptorService {
             }
         }
         if identity.blocklist_on_forget {
-            let blocked = self.blocked_ids(app);
+            let blocked = self.blocked_ids(cfg);
             ids.retain(|id| !blocked.contains(id));
         }
         ids
     }
 
-    fn blocked_ids(&self, app: &dyn AppContext) -> HashSet<String> {
+    fn blocked_ids(&self, cfg: &AppConfig) -> HashSet<String> {
         if !self
             .profile()
             .map(|profile| profile.identity.blocklist_on_forget)
@@ -534,7 +560,7 @@ impl DescriptorService {
         {
             return HashSet::new();
         }
-        config_bridge::blocklist(app, &self.descriptor.id)
+        config_bridge::blocklist_in(cfg, &self.descriptor.id)
             .iter()
             .map(|id| self.normalise_id(id))
             .collect()
@@ -858,10 +884,20 @@ impl DescriptorService {
     }
 
     /// Whether this account has anything worth restoring.
+    #[cfg(test)]
     fn has_snapshot(&self, app: &dyn AppContext, account_id: &str) -> bool {
         self.snapshot_markers(app, account_id)
             .iter()
             .any(|path| path.exists())
+    }
+
+    /// [`Self::has_snapshot`] under a snapshots folder already resolved.
+    fn has_snapshot_in(&self, snapshots: Option<&Path>, account_id: &str) -> bool {
+        snapshots.is_some_and(|dir| {
+            self.markers_under(&dir.join(account_id))
+                .iter()
+                .any(|path| path.exists())
+        })
     }
 
     /// Stricter check, for the moment right after a capture: a marker that
@@ -890,10 +926,14 @@ impl DescriptorService {
     }
 
     fn snapshot_markers(&self, app: &dyn AppContext, account_id: &str) -> Vec<PathBuf> {
+        match self.snapshot_root(app, account_id) {
+            Ok(cache_dir) => self.markers_under(&cache_dir),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    fn markers_under(&self, cache_dir: &Path) -> Vec<PathBuf> {
         let Ok(profile) = self.profile() else {
-            return Vec::new();
-        };
-        let Ok(cache_dir) = self.snapshot_root(app, account_id) else {
             return Vec::new();
         };
         let files = profile
@@ -1061,11 +1101,35 @@ impl DescriptorService {
     // Reads
     // -----------------------------------------------------------------------
 
+    /// Everything a read of the account list needs, gathered once: one
+    /// runtime (so the launcher is resolved once), one config snapshot and
+    /// one read of who is signed in.
+    fn read_view(&self, app: &dyn AppContext) -> Result<ReadView<'_>, String> {
+        let cfg = config::load_config(app);
+        let runtime =
+            self.build_runtime(|| config_bridge::path_override_in(&cfg, &self.descriptor.id))?;
+        let current = self.current_from(&runtime, &cfg);
+        // Unresolvable, it lists every account as having no snapshot, the
+        // same answer a per-account lookup gives.
+        let snapshots = crate::storage::platform_snapshots_dir(app, &self.descriptor.id).ok();
+        Ok(ReadView {
+            runtime,
+            cfg,
+            current,
+            snapshots,
+        })
+    }
+
+    #[cfg(test)]
     fn read_accounts(&self, app: &dyn AppContext) -> Result<Vec<DescriptorAccount>, String> {
-        let runtime = self.runtime(app)?;
-        let blocked = self.blocked_ids(app);
+        Ok(self.accounts_in(&self.read_view(app)?))
+    }
+
+    fn accounts_in(&self, view: &ReadView<'_>) -> Vec<DescriptorAccount> {
+        let runtime = &view.runtime;
+        let blocked = self.blocked_ids(&view.cfg);
         let mut discovered: HashSet<String> = self
-            .discovered_ids(app, &runtime)
+            .discovered_ids(runtime, &view.cfg)
             .into_iter()
             .collect::<HashSet<_>>();
         // The account signed in right now counts as discovered, unless it is
@@ -1076,14 +1140,11 @@ impl DescriptorService {
         // engine could read an id keeps its opaque one. Listing the live id
         // there would show that same account a second time under its real name.
         if runtime.profile.identity.current == CurrentSource::Identity {
-            if let Some(id) = self
-                .read_identity_in(&runtime)
-                .filter(|id| !blocked.contains(id))
-            {
+            if let Some(id) = view.current.clone().filter(|id| !blocked.contains(id)) {
                 discovered.insert(id);
             }
         }
-        let stored = config_bridge::accounts(app, &self.descriptor.id);
+        let stored = config_bridge::accounts_in(&view.cfg, &self.descriptor.id);
 
         let mut seen = HashSet::new();
         let mut accounts = Vec::new();
@@ -1097,7 +1158,7 @@ impl DescriptorService {
                 continue;
             }
             accounts.push(DescriptorAccount {
-                snapshot_saved: self.has_snapshot(app, &id),
+                snapshot_saved: self.has_snapshot_in(view.snapshots.as_deref(), &id),
                 account_id: id,
                 label: account.label.clone(),
                 last_used_at: account.last_used_at,
@@ -1114,7 +1175,7 @@ impl DescriptorService {
                 account_id: id.clone(),
                 label: String::new(),
                 last_used_at: None,
-                snapshot_saved: self.has_snapshot(app, id),
+                snapshot_saved: self.has_snapshot_in(view.snapshots.as_deref(), id),
             });
         }
 
@@ -1128,7 +1189,7 @@ impl DescriptorService {
                 || a.snapshot_saved
         });
 
-        Ok(accounts)
+        accounts
     }
 
     // -----------------------------------------------------------------------
@@ -1301,7 +1362,10 @@ impl DescriptorService {
             .filter(|id| !id.is_empty())
             .collect();
         let live = self.read_identity_detail(&runtime);
-        let mut known: HashSet<String> = self.discovered_ids(app, &runtime).into_iter().collect();
+        let mut known: HashSet<String> = self
+            .discovered_ids(&runtime, &config::load_config(app))
+            .into_iter()
+            .collect();
         known.extend(live.as_ref().map(|found| found.id.clone()));
         known.extend(stored.iter().cloned());
 
@@ -1453,7 +1517,7 @@ impl DescriptorService {
             .read_identity_detail(&runtime)
             .filter(|found| !job.known_account_ids.contains(&found.id));
         let new_identity = found.as_ref().map(|found| found.id.clone()).or_else(|| {
-            self.discovered_ids(app, &runtime)
+            self.discovered_ids(&runtime, &config::load_config(app))
                 .into_iter()
                 .find(|id| !job.known_account_ids.contains(id))
         });
@@ -1867,6 +1931,16 @@ impl DescriptorService {
 // ---------------------------------------------------------------------------
 // Runtime
 // ---------------------------------------------------------------------------
+
+/// What one read of the account list works from. See
+/// [`DescriptorService::read_view`].
+struct ReadView<'a> {
+    runtime: Runtime<'a>,
+    cfg: AppConfig,
+    /// The account signed in now, from whichever source the descriptor names.
+    current: Option<String>,
+    snapshots: Option<PathBuf>,
+}
 
 /// One operation's resolved view of a descriptor.
 struct Runtime<'a> {
@@ -2379,14 +2453,15 @@ fn put_file(source: &Path, dest: &Path, remove_dest_first: bool) -> Result<(), S
 
 impl PlatformService for DescriptorService {
     fn get_accounts(&self, app: AppCtx) -> Result<Value, PlatformError> {
-        let accounts = self.read_accounts(&app)?;
+        let accounts = self.accounts_in(&self.read_view(&app)?);
         serde_json::to_value(accounts).map_err(|e| PlatformError::other(e.to_string()))
     }
 
     fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, PlatformError> {
+        let view = self.read_view(&app)?;
         let snapshot = DescriptorStartupSnapshot {
-            accounts: self.read_accounts(&app)?,
-            current_account: self.current_account_id(&app).unwrap_or_default(),
+            accounts: self.accounts_in(&view),
+            current_account: view.current.clone().unwrap_or_default(),
         };
         serde_json::to_value(snapshot).map_err(|e| PlatformError::other(e.to_string()))
     }
@@ -3280,6 +3355,22 @@ mod tests {
     }
 
     #[test]
+    fn the_startup_read_resolves_the_launcher_and_reads_the_log_once() {
+        let _config = config_guard();
+        let root = scratch("log-read-once");
+        let live = root.join("live");
+        let ctx: AppCtx = Arc::new(TempCtx { root: root.clone() });
+        let service = log_service(&live);
+        write_log(&live, UUID_ONE, Duration::ZERO);
+
+        let snapshot = service.get_startup_snapshot(ctx).unwrap();
+        assert_eq!(snapshot["currentAccount"], UUID_ONE);
+        assert_eq!(count(&service.probes.runtimes), 1);
+        assert_eq!(count(&service.probes.log_reads), 1);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn a_platform_keeps_its_own_wording_for_a_bad_account_id() {
         let root = scratch("id-wording");
         let service = log_service(&root.join("live"));
@@ -3865,8 +3956,12 @@ mod tests {
     // Leaving the launcher running
     // -----------------------------------------------------------------------
 
+    fn count(counter: &std::sync::atomic::AtomicUsize) -> usize {
+        counter.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     fn launches(service: &DescriptorService) -> usize {
-        service.launches.load(std::sync::atomic::Ordering::SeqCst)
+        count(&service.probes.launches)
     }
 
     /// The plain fixture with a sign-in flow: `flag` says the user got past
