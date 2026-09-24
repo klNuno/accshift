@@ -199,11 +199,12 @@ fn read_file_tail(path: &Path, cap: u64) -> Option<Vec<u8>> {
 /// Leveldb files worth scanning, best first: `.log` before `.ldb` (fresh writes
 /// live in the uncompressed .log; .ldb blocks may be snappy-compressed, so a
 /// raw scan of them is strictly best-effort), then most-recently-modified first.
-fn scan_candidates(leveldb: &Path) -> Vec<PathBuf> {
+fn scan_candidates(leveldb: &Path) -> (Vec<PathBuf>, ScanFingerprint) {
     let Ok(entries) = fs::read_dir(leveldb) else {
-        return Vec::new();
+        return (Vec::new(), ScanFingerprint::default());
     };
     let mut files: Vec<(bool, u64, PathBuf)> = Vec::new();
+    let mut total_bytes = 0u64;
     for entry in entries.flatten() {
         let path = entry.path();
         let is_log = match path.extension().and_then(|e| e.to_str()) {
@@ -211,8 +212,9 @@ fn scan_candidates(leveldb: &Path) -> Vec<PathBuf> {
             Some(ext) if ext.eq_ignore_ascii_case("ldb") => false,
             _ => continue,
         };
-        let modified = fs::metadata(&path)
-            .ok()
+        let metadata = fs::metadata(&path).ok();
+        total_bytes += metadata.as_ref().map_or(0, |m| m.len());
+        let modified = metadata
             .and_then(|m| m.modified().ok())
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_millis() as u64)
@@ -220,14 +222,57 @@ fn scan_candidates(leveldb: &Path) -> Vec<PathBuf> {
         files.push((is_log, modified, path));
     }
     files.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
-    files.into_iter().map(|(_, _, path)| path).collect()
+    let fingerprint = ScanFingerprint {
+        files: files.len(),
+        total_bytes,
+        newest_ms: files
+            .iter()
+            .map(|(_, modified, _)| *modified)
+            .max()
+            .unwrap_or(0),
+    };
+    (
+        files.into_iter().map(|(_, _, path)| path).collect(),
+        fingerprint,
+    )
+}
+
+/// What a directory looked like when a scan found no id in it. Leveldb only
+/// ever appends to its log or writes new files, so an unchanged count,
+/// newest mtime and total size mean a rescan would read the same bytes and find nothing again.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct ScanFingerprint {
+    files: usize,
+    total_bytes: u64,
+    newest_ms: u64,
+}
+
+/// Directories whose last full scan found no id, so the polls that follow do
+/// not re-read up to 8 MB per file while nothing changed.
+fn fruitless_scans(
+) -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, ScanFingerprint>> {
+    static SCANS: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, ScanFingerprint>>,
+    > = std::sync::OnceLock::new();
+    SCANS.get_or_init(Default::default)
 }
 
 /// Best-effort identity scan over the raw bytes of a leveldb directory. Any IO
 /// or parse issue yields None. Callers must treat None as "unknown", never as
 /// "logged out".
 fn scan_identity_in_dir(leveldb: &Path) -> Option<HookIdentity> {
-    let files = scan_candidates(leveldb);
+    let (files, fingerprint) = scan_candidates(leveldb);
+    if files.is_empty() {
+        return None;
+    }
+    let known_fruitless = fruitless_scans()
+        .lock()
+        .ok()
+        .and_then(|scans| scans.get(leveldb).copied())
+        == Some(fingerprint);
+    if known_fruitless {
+        return None;
+    }
     // The user id pass keeps the tails it read (up to a byte budget) so the
     // username pass reuses them instead of re-reading the same files.
     let mut cache: Vec<(usize, Vec<u8>)> = Vec::new();
@@ -246,6 +291,12 @@ fn scan_identity_in_dir(leveldb: &Path) -> Option<HookIdentity> {
             scanned_id = hit;
             break;
         }
+    }
+    if let Ok(mut scans) = fruitless_scans().lock() {
+        match scanned_id {
+            Some(_) => scans.remove(leveldb),
+            None => scans.insert(leveldb.to_path_buf(), fingerprint),
+        };
     }
     let user_id = scanned_id?;
     let username = files.iter().enumerate().find_map(|(index, path)| {
@@ -401,6 +452,21 @@ mod tests {
         assert_eq!(scan_identity_in_dir(&dir), None);
         fs::write(dir.join("MANIFEST-000001"), b"not scanned").unwrap();
         assert_eq!(scan_identity_in_dir(&dir), None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_fruitless_scan_is_not_repeated_until_the_directory_changes() {
+        let dir = scratch_dir("scan-fruitless");
+        let log = dir.join("000003.log");
+        fs::write(&log, b"no identity here").unwrap();
+        assert_eq!(scan_identity_in_dir(&dir), None);
+        assert!(fruitless_scans().lock().unwrap().contains_key(&dir));
+
+        fs::write(&log, fake_log_bytes(UID, Some("later"))).unwrap();
+        let identity = scan_identity_in_dir(&dir).unwrap();
+        assert_eq!(identity.id, UID);
+        assert!(!fruitless_scans().lock().unwrap().contains_key(&dir));
         let _ = fs::remove_dir_all(&dir);
     }
 

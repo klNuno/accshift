@@ -1811,13 +1811,22 @@ pub async fn roblox_add_account_by_cookie(
     // Quick Login, and it never went through the add-flow controller that
     // reports the other platforms. Its failures land here; its start and its
     // success are reported by the settings tab that owns the form.
-    let result = crate::platforms::roblox::add_account_by_cookie(
-        ctx(&app_handle),
+    // The network check runs unlocked; only the store write takes the lock,
+    // so a switch cannot drop the new account or revert a rotated cookie.
+    let result = match crate::platforms::roblox::validate_pasted_cookie(
         cookie,
         client.inner().clone(),
     )
     .await
-    .map_err(Into::into);
+    {
+        Ok(pasted) => {
+            run_locked_blocking("roblox_add_account_by_cookie", ctx(&app_handle), move |c| {
+                crate::platforms::roblox::store_pasted_account(&c, pasted).map_err(Into::into)
+            })
+            .await
+        }
+        Err(e) => Err(e.into()),
+    };
     track_operation(&app_handle, "account_add", Some(ids::ROBLOX), result)
 }
 

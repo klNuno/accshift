@@ -51,6 +51,9 @@ pub struct BattleNetStartupSnapshot {
 #[derive(Clone)]
 struct BattleNetAccountSetupJob {
     known_account_keys: HashSet<String>,
+    /// `SavedAccountNames` as the launcher left it before setup emptied it,
+    /// put back when the setup is cancelled.
+    previous_saved: Vec<String>,
     last_touched_at: u64,
 }
 
@@ -544,23 +547,26 @@ fn remember_account_usage(
     // Only query battle tag from cache if we don't already have one stored.
     // After a switch, the log-based account_id_lo still points to the PREVIOUS
     // account, so current_battle_tag_from_cache() would return the wrong tag.
-    // The check runs inside `update_config`, on the config it already loaded:
-    // a standalone `load_config` here would clone the whole config a second
-    // time on every account-list poll.
+    // The cache read (up to eight logs and a sqlite query) runs before the
+    // config lock, and only for the signed-in account that has no tag yet.
+    let has_tag = |cfg: &AppConfig| {
+        cfg.battle_net.accounts.iter().any(|account| {
+            normalize_account_key(&account.email) == key && !account.battle_tag.trim().is_empty()
+        })
+    };
+    let battle_tag = if is_current_account && !has_tag(&config::load_config(app_handle)) {
+        current_battle_tag_from_cache().ok().flatten()
+    } else {
+        None
+    };
     config::update_config(app_handle, |cfg| {
         let index = cfg
             .battle_net
             .accounts
             .iter()
             .position(|account| normalize_account_key(&account.email) == key);
-        let has_tag = index
-            .map(|i| !cfg.battle_net.accounts[i].battle_tag.trim().is_empty())
-            .unwrap_or(false);
-        let battle_tag = if is_current_account && !has_tag {
-            current_battle_tag_from_cache().ok().flatten()
-        } else {
-            None
-        };
+        // Another writer may have stored a tag since the read above.
+        let battle_tag = battle_tag.filter(|_| !has_tag(cfg));
 
         if let Some(i) = index {
             let existing = &mut cfg.battle_net.accounts[i];
@@ -1030,6 +1036,11 @@ pub fn begin_account_setup(app_handle: AppCtx) -> Result<SetupStatus, String> {
         .map(|account| normalize_account_key(account))
         .collect::<HashSet<_>>();
 
+    kill_battle_net()?;
+    // Read once the launcher is down: it rewrites the list on exit.
+    let previous_saved = read_saved_accounts().unwrap_or_default();
+    write_saved_accounts(&app_handle, &[])?;
+
     let mut jobs = battle_net_setup_jobs()
         .lock()
         .map_err(|_| "Battle.net setup storage is unavailable".to_string())?;
@@ -1038,21 +1049,33 @@ pub fn begin_account_setup(app_handle: AppCtx) -> Result<SetupStatus, String> {
         setup_id.clone(),
         BattleNetAccountSetupJob {
             known_account_keys,
+            previous_saved: previous_saved.clone(),
             last_touched_at: created_at,
         },
     );
     drop(jobs);
 
-    kill_battle_net()?;
-    write_saved_accounts(&app_handle, &[])?;
-    launch_battle_net(&app_handle).inspect_err(|e| {
+    if let Err(e) = launch_battle_net(&app_handle) {
         log_platform_error(
             &app_handle,
             "battle_net.begin_account_setup",
             "Battle.net account setup launch failed",
-            e,
+            &e,
         );
-    })?;
+        // No setup id reaches the UI, so nothing would cancel this one.
+        if let Ok(mut jobs) = battle_net_setup_jobs().lock() {
+            jobs.remove(&setup_id);
+        }
+        if let Err(restore) = write_saved_accounts(&app_handle, &previous_saved) {
+            log_platform_error(
+                &app_handle,
+                "battle_net.begin_account_setup",
+                "Could not restore SavedAccountNames after a failed setup launch",
+                restore,
+            );
+        }
+        return Err(e);
+    }
     Ok(super::make_setup_status(
         &setup_id,
         "waiting_for_client",
@@ -1115,13 +1138,59 @@ pub fn get_account_setup_status(
     ))
 }
 
-pub fn cancel_account_setup(setup_id: String) -> Result<(), String> {
-    let mut jobs = battle_net_setup_jobs()
-        .lock()
-        .map_err(|_| "Battle.net setup storage is unavailable".to_string())?;
-    purge_expired_battle_net_setup_jobs(&mut jobs);
-    jobs.remove(&setup_id);
+pub fn cancel_account_setup(app_handle: AppCtx, setup_id: String) -> Result<(), String> {
+    let job = {
+        let mut jobs = battle_net_setup_jobs()
+            .lock()
+            .map_err(|_| "Battle.net setup storage is unavailable".to_string())?;
+        purge_expired_battle_net_setup_jobs(&mut jobs);
+        jobs.remove(&setup_id)
+    };
+    let Some(job) = job else {
+        return Ok(());
+    };
+    if job.previous_saved.is_empty() {
+        return Ok(());
+    }
+    // The cancel itself succeeds either way: the job is gone, and a list left
+    // empty only costs the launcher its remembered accounts until the next switch.
+    if let Err(e) = restore_saved_accounts_after_setup(&app_handle, &job.previous_saved) {
+        log_platform_error(
+            &app_handle,
+            "battle_net.cancel_account_setup",
+            "Could not restore SavedAccountNames after a cancelled setup",
+            e,
+        );
+    }
     Ok(())
+}
+
+/// Puts back the list setup emptied, keeping in front any account the launcher
+/// saved during the setup. The launcher is restarted when it was running,
+/// since it rewrites the file on exit.
+fn restore_saved_accounts_after_setup(
+    app_handle: &dyn AppContext,
+    previous: &[String],
+) -> Result<(), String> {
+    let was_running = is_battle_net_running();
+    if was_running {
+        kill_battle_net()?;
+    }
+    let current = read_saved_accounts().unwrap_or_default();
+    write_saved_accounts(app_handle, &merge_saved_after_setup(current, previous))?;
+    if was_running {
+        launch_battle_net(app_handle)?;
+    }
+    Ok(())
+}
+
+/// The accounts saved during a setup first, then the ones saved before it,
+/// each once.
+fn merge_saved_after_setup(current: Vec<String>, previous: &[String]) -> Vec<String> {
+    collect_unique_accounts(
+        current.into_iter().chain(previous.iter().cloned()),
+        &mut HashSet::new(),
+    )
 }
 
 pub fn forget_account(app_handle: AppCtx, email: String) -> Result<(), String> {
@@ -1199,8 +1268,8 @@ impl PlatformService for BattleNetService {
         get_account_setup_status(app.clone(), setup_id.to_string()).map_err(Into::into)
     }
 
-    fn cancel_setup(&self, _app: AppCtx, setup_id: &str) -> Result<(), PlatformError> {
-        cancel_account_setup(setup_id.to_string()).map_err(Into::into)
+    fn cancel_setup(&self, app: AppCtx, setup_id: &str) -> Result<(), PlatformError> {
+        cancel_account_setup(app.clone(), setup_id.to_string()).map_err(Into::into)
     }
 
     fn get_path(&self, app: AppCtx) -> Result<String, PlatformError> {
@@ -1220,7 +1289,7 @@ impl PlatformService for BattleNetService {
 mod tests {
     use super::{
         collect_unique_accounts, encode_saved_account_name, extract_saved_account_names,
-        normalize_account_key, parse_saved_account_names,
+        merge_saved_after_setup, normalize_account_key, parse_saved_account_names,
     };
     #[cfg(windows)]
     use super::{normalize_registry_path, write_saved_accounts};
@@ -1256,6 +1325,19 @@ mod tests {
     // -----------------------------------------------------------------------
     // collect_unique_accounts
     // -----------------------------------------------------------------------
+
+    #[test]
+    fn a_cancelled_setup_puts_the_saved_list_back_behind_any_new_account() {
+        let previous = vec!["a@example.com".to_string(), "b@example.com".to_string()];
+        assert_eq!(merge_saved_after_setup(Vec::new(), &previous), previous);
+        assert_eq!(
+            merge_saved_after_setup(
+                vec!["new@example.com".to_string(), "B@example.com".to_string()],
+                &previous
+            ),
+            vec!["new@example.com", "B@example.com", "a@example.com"]
+        );
+    }
 
     #[test]
     fn collect_unique_accounts_deduplicates_case_insensitive() {

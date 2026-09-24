@@ -653,8 +653,16 @@ pub fn switch_account(app_handle: &dyn AppContext, user_id: &str) -> Result<(), 
     let ticket = request_auth_ticket(&cookie)?;
 
     kill_roblox();
-    // Still write to registry for Studio compatibility
-    let _ = write_cookie_to_registry(&cookie);
+    // Studio reads the session from the registry. The game launch below does
+    // not need it, so a failure is reported and the switch goes on.
+    if let Err(e) = write_cookie_to_registry(&cookie) {
+        log_platform_error(
+            app_handle,
+            "roblox.switch_account",
+            "Could not write the Roblox Studio cookie; Studio keeps the previous account",
+            e,
+        );
+    }
 
     // Update last_used_at
     let mut accounts = load_account_configs(app_handle);
@@ -908,11 +916,19 @@ pub fn forget_account(app_handle: &dyn AppContext, user_id: &str) -> Result<(), 
 // Roblox-specific commands (async, called from commands.rs)
 // ---------------------------------------------------------------------------
 
-pub async fn add_account_by_cookie(
-    app_handle: AppCtx,
+/// A pasted cookie Roblox accepted, encrypted and ready to store.
+pub struct PastedRobloxAccount {
+    user: AuthenticatedUserResponse,
+    encrypted_cookie: String,
+}
+
+/// Checks a pasted cookie against Roblox and encrypts it. Network only: the
+/// store write is [`store_pasted_account`], which the caller runs under the
+/// operation lock so a switch cannot interleave with it.
+pub async fn validate_pasted_cookie(
     cookie: String,
     client: reqwest::Client,
-) -> Result<RobloxAccount, String> {
+) -> Result<PastedRobloxAccount, String> {
     // Accept various paste formats:
     // - raw cookie value
     // - .ROBLOSECURITY:"<cookie>"  or  .ROBLOSECURITY=<cookie>
@@ -954,12 +970,27 @@ pub async fn add_account_by_cookie(
         .await
         .map_err(|e| format!("Could not parse user response: {e}"))?;
 
-    let encrypted =
+    let encrypted_cookie =
         crate::os::encrypt_secret(&cookie).map_err(|e| format!("Could not encrypt cookie: {e}"))?;
-    store_account(&app_handle, &user, &encrypted)?;
+    Ok(PastedRobloxAccount {
+        user,
+        encrypted_cookie,
+    })
+}
+
+/// Adds or refreshes the account behind a validated cookie paste.
+pub fn store_pasted_account(
+    app_handle: &dyn AppContext,
+    pasted: PastedRobloxAccount,
+) -> Result<RobloxAccount, String> {
+    let PastedRobloxAccount {
+        user,
+        encrypted_cookie,
+    } = pasted;
+    store_account(app_handle, &user, &encrypted_cookie)?;
 
     log_platform_info(
-        &app_handle,
+        app_handle,
         "roblox.add_by_cookie",
         "Roblox account added via cookie paste",
         format!("userId={}", super::redact_id(&user.id.to_string())),
