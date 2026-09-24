@@ -109,6 +109,19 @@ pub struct UbisoftConfig {
     pub accounts: Vec<UbisoftAccountConfig>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub forgotten_uuids: Vec<String>,
+    /// The account the engine last switched to, and when. The launcher logs
+    /// its sign-in some time after it starts, so until the log is newer than
+    /// this the log still names the previous account.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_switch: Option<LastSwitch>,
+}
+
+/// One switch the engine made, for identity sources that lag behind it.
+#[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq, Eq)]
+pub struct LastSwitch {
+    pub account_id: String,
+    /// Unix milliseconds at the moment the session files were in place.
+    pub at: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -221,6 +234,9 @@ pub struct CustomPlatformConfig {
     /// Ids forgotten while still on disk, mirroring `ubisoft.forgotten_uuids`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub forgotten_ids: Vec<String>,
+    /// Mirrors `ubisoft.last_switch`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_switch: Option<LastSwitch>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -428,7 +444,10 @@ fn is_default_ubisoft_config(value: &UbisoftConfig) -> bool {
     // The blocklist counts: forgetting the last Ubisoft account leaves a
     // section that holds nothing else, and skipping it here would drop the
     // forget on the next save and rediscover the account from disk.
-    value.path_override.is_empty() && value.accounts.is_empty() && value.forgotten_uuids.is_empty()
+    value.path_override.is_empty()
+        && value.accounts.is_empty()
+        && value.forgotten_uuids.is_empty()
+        && value.last_switch.is_none()
 }
 
 fn is_default_roblox_config(value: &RobloxConfig) -> bool {
@@ -1727,6 +1746,7 @@ mod tests {
                 path_override: "C:\\Ubi".into(),
                 accounts: vec![],
                 forgotten_uuids: vec![],
+                last_switch: None,
             },
             epic: EpicConfig {
                 path_override: "C:\\Epic".into(),
@@ -1820,6 +1840,7 @@ mod tests {
                 path_override: "C:\\Ubi".into(),
                 accounts: vec![],
                 forgotten_uuids: vec![],
+                last_switch: None,
             },
             epic: EpicConfig {
                 path_override: "C:\\Epic".into(),

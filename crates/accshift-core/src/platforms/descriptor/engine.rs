@@ -20,6 +20,7 @@ use serde::Serialize;
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::config::{self, AppConfig};
 use crate::error::PlatformError;
 use crate::platforms::setup_jobs::{SetupJobs, DEFAULT_SETUP_TTL_MS};
 use crate::platforms::{
@@ -38,8 +39,8 @@ use super::paths::{PathResolver, Sandbox};
 use super::plan::{DryRunPlan, PlanAction, PlanStep, PlanTargetKind};
 use super::reg;
 use super::schema::{
-    Condition, CurrentSource, Descriptor, DirItem, Discovery, EntryKind, Executable,
-    ExecutableCandidate, IdentitySource, OsProfile, PathSpec, PathTemplate, INSTALL_DIR,
+    Condition, CurrentSource, Descriptor, Discovery, EntryKind, Executable, ExecutableCandidate,
+    IdentitySource, OsProfile, PathSpec, PathTemplate, RegistryItem, INSTALL_DIR,
 };
 
 /// Where a descriptor came from. Shipped descriptors are read-only; a user
@@ -69,6 +70,14 @@ struct DescriptorStartupSnapshot {
     current_account: String,
 }
 
+/// Where the first half of a setup flow left off.
+enum BeginOutcome {
+    /// The signed-in session was adopted: nothing left to do.
+    Adopted(SetupStatus),
+    /// The live session is cleared and a job registered under this id.
+    AwaitSignIn(String),
+}
+
 /// Setup jobs remember which accounts existed when the flow started, so a
 /// "new" account can be told from the one already signed in.
 #[derive(Clone, Default)]
@@ -85,6 +94,24 @@ pub struct DescriptorService {
     /// Overrides the environment templates resolve against. Used by tests and
     /// by a dry run asked to reason about a machine other than this one.
     env_override: Option<Vec<(String, String)>>,
+    #[cfg(test)]
+    probes: TestProbes,
+}
+
+/// Counts of the things a test cannot see from outside.
+#[cfg(test)]
+#[derive(Default)]
+struct TestProbes {
+    /// Starts the engine asked for. Tests declare no launch step, so this is
+    /// the only trace a start leaves.
+    launches: std::sync::atomic::AtomicUsize,
+    runtimes: std::sync::atomic::AtomicUsize,
+    log_reads: std::sync::atomic::AtomicUsize,
+}
+
+#[cfg(test)]
+fn probe(counter: &std::sync::atomic::AtomicUsize) {
+    counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 impl DescriptorService {
@@ -99,6 +126,8 @@ impl DescriptorService {
             origin,
             jobs: SetupJobs::new(label, DEFAULT_SETUP_TTL_MS),
             env_override: None,
+            #[cfg(test)]
+            probes: TestProbes::default(),
         }
     }
 
@@ -149,10 +178,18 @@ impl DescriptorService {
     /// for it: resolving the executable reads the config and hits the disk,
     /// and most operations never need it.
     fn runtime(&self, app: &dyn AppContext) -> Result<Runtime<'_>, String> {
+        self.build_runtime(|| config_bridge::path_override(app, &self.descriptor.id))
+    }
+
+    /// [`Self::runtime`] for a caller that already holds the config: the
+    /// user's path override is asked for only when a template needs it.
+    fn build_runtime(&self, path_override: impl FnOnce() -> String) -> Result<Runtime<'_>, String> {
+        #[cfg(test)]
+        probe(&self.probes.runtimes);
         let profile = self.profile()?;
         let mut resolver = self.base_resolver();
         if profile_uses_install_dir(profile) {
-            if let Ok(exe) = self.resolve_executable(app) {
+            if let Ok(exe) = self.locate_executable(&path_override()) {
                 if let Some(dir) = exe.parent() {
                     resolver = resolver.with_install_dir(dir);
                 }
@@ -180,15 +217,18 @@ impl DescriptorService {
     /// where per-account session data is read and written; the launcher lives
     /// in Program Files and the user may point at it by hand.
     fn resolve_executable(&self, app: &dyn AppContext) -> Result<PathBuf, String> {
+        self.locate_executable(&config_bridge::path_override(app, &self.descriptor.id))
+    }
+
+    fn locate_executable(&self, override_path: &str) -> Result<PathBuf, String> {
         let profile = self.profile()?;
         let executable = profile
             .executable
             .as_ref()
             .ok_or_else(|| "Path management not supported".to_string())?;
 
-        let override_path = config_bridge::path_override(app, &self.descriptor.id);
         if !override_path.is_empty() {
-            if let Some(found) = locate_binary(Path::new(&override_path), executable) {
+            if let Some(found) = locate_binary(Path::new(override_path), executable) {
                 return Ok(found);
             }
         }
@@ -230,6 +270,8 @@ impl DescriptorService {
     }
 
     fn launch(&self, app: &dyn AppContext) -> Result<(), String> {
+        #[cfg(test)]
+        probe(&self.probes.launches);
         let profile = self.profile()?;
         let Some(launch) = profile.launch.as_ref() else {
             return Ok(());
@@ -402,6 +444,8 @@ impl DescriptorService {
             return None;
         };
         let resolved = runtime.path(path).ok()?;
+        #[cfg(test)]
+        probe(&self.probes.log_reads);
         let content = read_log_tail(&resolved, *tail_bytes)?;
         // The id has one fixed width here: the schema refuses a log source
         // whose format allows a range, because a scan has nothing to match on.
@@ -457,7 +501,7 @@ impl DescriptorService {
     ///
     /// Forgotten ids are filtered out here: a blocklist that discovery ignored
     /// would put the account straight back on the next poll.
-    fn discovered_ids(&self, app: &dyn AppContext, runtime: &Runtime<'_>) -> BTreeSet<String> {
+    fn discovered_ids(&self, runtime: &Runtime<'_>, cfg: &AppConfig) -> BTreeSet<String> {
         let identity = &runtime.profile.identity;
         let mut ids = BTreeSet::new();
         for entry in &identity.discovery {
@@ -502,13 +546,13 @@ impl DescriptorService {
             }
         }
         if identity.blocklist_on_forget {
-            let blocked = self.blocked_ids(app);
+            let blocked = self.blocked_ids(cfg);
             ids.retain(|id| !blocked.contains(id));
         }
         ids
     }
 
-    fn blocked_ids(&self, app: &dyn AppContext) -> HashSet<String> {
+    fn blocked_ids(&self, cfg: &AppConfig) -> HashSet<String> {
         if !self
             .profile()
             .map(|profile| profile.identity.blocklist_on_forget)
@@ -516,7 +560,7 @@ impl DescriptorService {
         {
             return HashSet::new();
         }
-        config_bridge::blocklist(app, &self.descriptor.id)
+        config_bridge::blocklist_in(cfg, &self.descriptor.id)
             .iter()
             .map(|id| self.normalise_id(id))
             .collect()
@@ -525,15 +569,70 @@ impl DescriptorService {
     /// Which account is signed in, from whichever source the descriptor names.
     fn current_account_id(&self, app: &dyn AppContext) -> Option<String> {
         let runtime = self.runtime(app).ok()?;
-        self.current_account_id_in(app, &runtime)
+        self.current_from(&runtime, &config::load_config(app))
     }
 
-    fn current_account_id_in(&self, app: &dyn AppContext, runtime: &Runtime<'_>) -> Option<String> {
+    fn current_from(&self, runtime: &Runtime<'_>, cfg: &AppConfig) -> Option<String> {
         match runtime.profile.identity.current {
-            CurrentSource::Identity => self.read_identity_in(runtime),
-            CurrentSource::Config => config_bridge::current_account(app, &self.descriptor.id)
+            CurrentSource::Identity => self.live_identity(runtime, cfg),
+            CurrentSource::Config => config_bridge::current_account_in(cfg, &self.descriptor.id)
                 .map(|id| self.normalise_id(&id))
                 .filter(|id| self.id_is_valid(id)),
+        }
+    }
+
+    /// The id the launcher reports, unless it comes from a log that has not
+    /// caught up with the last switch.
+    ///
+    /// A launcher logs its sign-in some time after it starts, and never when
+    /// the restored session fails to sign in. Until the log is written again
+    /// after a switch, its last line names the account from before, so the
+    /// account the switch put in place is the better answer.
+    fn live_identity(&self, runtime: &Runtime<'_>, cfg: &AppConfig) -> Option<String> {
+        let read = self.read_identity_in(runtime);
+        let IdentitySource::LogTail { path, .. } = &runtime.profile.identity.source else {
+            return read;
+        };
+        let Some(record) = config_bridge::last_switch_in(cfg, &self.descriptor.id) else {
+            return read;
+        };
+        let recorded = self.normalise_id(&record.account_id);
+        if !self.id_is_valid(&recorded) {
+            return read;
+        }
+        let written = runtime
+            .path(path)
+            .ok()
+            .and_then(|log| fs::metadata(log).ok())
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|modified| modified.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map(|since| since.as_millis() as u64);
+        match written {
+            Some(written) if written > record.at => read,
+            _ => Some(recorded),
+        }
+    }
+
+    /// Remembers the account a switch put in place, for [`Self::live_identity`].
+    /// Only a log lags behind a switch, so no other platform records one.
+    fn record_switch(&self, app: &dyn AppContext, account_id: &str) {
+        let logged = self
+            .profile()
+            .map(|profile| matches!(profile.identity.source, IdentitySource::LogTail { .. }))
+            .unwrap_or(false);
+        if !logged {
+            return;
+        }
+        // Not fatal: without the record the log is trusted, as it always was.
+        if let Err(error) =
+            config_bridge::set_last_switch(app, &self.descriptor.id, account_id, now_unix_ms())
+        {
+            log_platform_error(
+                app,
+                &format!("{}.switch_account", self.descriptor.id),
+                "Could not record the switch",
+                error,
+            );
         }
     }
 
@@ -623,78 +722,144 @@ impl DescriptorService {
         Ok(())
     }
 
+    /// The account's snapshot directory, or the error naming the way out when
+    /// there is none. Checked before anything is closed or cleared.
+    fn require_snapshot(
+        &self,
+        app: &dyn AppContext,
+        runtime: &Runtime<'_>,
+        account_id: &str,
+    ) -> Result<PathBuf, String> {
+        let cache_dir = self.snapshot_root(app, account_id)?;
+        if cache_dir.exists() {
+            return Ok(cache_dir);
+        }
+        let hint = runtime.profile.setup.missing_snapshot_hint.trim();
+        let mut message = format!("No auth snapshot found for account {account_id}.");
+        if !hint.is_empty() {
+            message.push(' ');
+            message.push_str(hint);
+        }
+        Err(message)
+    }
+
+    /// Puts the account's snapshot in place of the live session, or leaves
+    /// the live session as it was.
+    ///
+    /// Several files, folders and registry values are one credential set, so
+    /// the restore runs in two phases. Everything is decrypted first, files
+    /// and folders next to their live location and registry values into
+    /// memory. Only then is the live state swapped, each step journaled, and
+    /// a failed step undoes the ones before it.
+    ///
+    /// An item the snapshot does not hold is one the capture dropped because
+    /// the account had none. When the descriptor clears it at capture, the
+    /// live one belongs to the outgoing account and is removed.
     fn restore_snapshot(&self, app: &dyn AppContext, account_id: &str) -> Result<(), String> {
         let runtime = self.runtime(app)?;
-        let cache_dir = self.snapshot_root(app, account_id)?;
+        let cache_dir = self.require_snapshot(app, &runtime, account_id)?;
 
-        if !cache_dir.exists() {
-            let hint = runtime.profile.setup.missing_snapshot_hint.trim();
-            let mut message = format!("No auth snapshot found for account {account_id}.");
-            if !hint.is_empty() {
-                message.push(' ');
-                message.push_str(hint);
-            }
-            return Err(message);
+        let mut steps = Vec::new();
+        if let Err(error) = self.stage_restore(&runtime, &cache_dir, &mut steps) {
+            discard_staging(&steps);
+            return Err(error);
         }
 
-        // Every file is decrypted next to its destination first and only moved
-        // into place once they have all landed. Several session files are one
-        // credential set: a failure halfway through would otherwise leave the
-        // incoming account's half next to the outgoing account's.
-        let mut staged: Vec<(PathBuf, PathBuf, bool)> = Vec::new();
-        for item in &runtime.profile.state.files {
+        let mut journal = Vec::new();
+        for step in &steps {
+            if let Err(error) = apply_restore_step(step, &mut journal) {
+                let mut message = error;
+                for failure in roll_back(journal) {
+                    message.push_str("; could not undo: ");
+                    message.push_str(&failure);
+                }
+                discard_staging(&steps);
+                return Err(message);
+            }
+        }
+        for undo in journal {
+            undo.forget_backup();
+        }
+        Ok(())
+    }
+
+    /// The first phase of a restore: decrypts everything, touches nothing
+    /// live. Each staged item is pushed as soon as it exists, so a failure
+    /// halfway can still clean up what came before it.
+    fn stage_restore(
+        &self,
+        runtime: &Runtime<'_>,
+        cache_dir: &Path,
+        steps: &mut Vec<RestoreStep>,
+    ) -> Result<(), String> {
+        let state = &runtime.profile.state;
+        for item in &state.files {
             let source = cache_dir.join(&item.snapshot);
+            let live = runtime.spec_path(&item.live)?;
             if !source.exists() {
+                if item.clear_snapshot_when_source_missing && live.exists() {
+                    steps.push(RestoreStep::RemoveFile { live });
+                }
                 continue;
             }
-            let live = runtime.spec_path(&item.live)?;
             if let Some(parent) = live.parent() {
                 fs::create_dir_all(parent)
                     .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
             }
             let staging = staging_path(&live);
-            if let Err(error) = decrypted_copy_file(&source, &staging) {
-                for (path, _, _) in &staged {
-                    let _ = fs::remove_file(path);
-                }
-                let _ = fs::remove_file(&staging);
-                return Err(error);
-            }
-            staged.push((staging, live, item.remove_live_before_restore));
-        }
-        for (staging, live, remove_live_first) in &staged {
-            if *remove_live_first {
-                // Files the OS marks hidden or system cannot be replaced in
-                // place on Windows, so the live copy goes first.
-                let _ = fs::remove_file(live);
-            }
-            if fs::rename(staging, live).is_err() {
-                // Cross-volume rename or a lingering lock: copy the already
-                // decrypted staging file instead.
-                fs::copy(staging, live)
-                    .map_err(|e| format!("Could not finalize {}: {e}", live.display()))?;
-                let _ = fs::remove_file(staging);
-            }
+            let result = decrypted_copy_file(&source, &staging);
+            steps.push(RestoreStep::File {
+                staging,
+                live,
+                remove_live_first: item.remove_live_before_restore,
+            });
+            result?;
         }
 
-        for item in &runtime.profile.state.registry_values {
+        for item in &state.registry_values {
             let source = cache_dir.join(&item.snapshot);
             if !source.exists() {
+                if item.clear_snapshot_when_source_missing {
+                    steps.push(RestoreStep::RemoveValue { item: item.clone() });
+                }
                 continue;
             }
-            if let Ok(bytes) = read_decrypted_bytes(&source) {
-                if let Ok(text) = String::from_utf8(bytes) {
-                    let _ = reg::write(item.root, &item.key, &item.value, text.trim());
-                }
-            }
+            let bytes = read_decrypted_bytes(&source)?;
+            let data = String::from_utf8(bytes).map_err(|_| {
+                format!(
+                    "Snapshot of {} is not text",
+                    reg::display(item.root, &item.key, &item.value)
+                )
+            })?;
+            steps.push(RestoreStep::Value {
+                item: item.clone(),
+                data: data.trim().to_string(),
+            });
         }
 
-        for item in &runtime.profile.state.directories {
+        for item in &state.directories {
             let source = cache_dir.join(&item.snapshot);
             let live = runtime.spec_path(&item.live)?;
-            restore_dir_snapshot(&source, &live, item)?;
+            if !source.exists() {
+                if item.clear_snapshot_when_source_missing && live.exists() {
+                    steps.push(RestoreStep::RemoveDir { live });
+                }
+                continue;
+            }
+            let staging = staging_path(&live);
+            let _ = fs::remove_dir_all(&staging);
+            let ignored: Vec<&str> = item.ignored_names.iter().map(String::as_str).collect();
+            let result = snapshot_crypto::decrypted_copy_dir(
+                &source,
+                &staging,
+                DirCopyOptions {
+                    ignored_names: &ignored,
+                    follow_symlinks: item.follow_symlinks,
+                },
+            );
+            steps.push(RestoreStep::Dir { staging, live });
+            result?;
         }
-
         Ok(())
     }
 
@@ -719,10 +884,21 @@ impl DescriptorService {
     }
 
     /// Whether this account has anything worth restoring.
+    #[cfg(test)]
     fn has_snapshot(&self, app: &dyn AppContext, account_id: &str) -> bool {
         self.snapshot_markers(app, account_id)
             .iter()
             .any(|path| path.exists())
+    }
+
+    /// Whether this account has anything worth restoring, under the
+    /// platform's snapshots folder resolved once by the caller.
+    fn has_snapshot_in(&self, snapshots: Option<&Path>, account_id: &str) -> bool {
+        snapshots.is_some_and(|dir| {
+            self.markers_under(&dir.join(account_id))
+                .iter()
+                .any(|path| path.exists())
+        })
     }
 
     /// Stricter check, for the moment right after a capture: a marker that
@@ -751,10 +927,14 @@ impl DescriptorService {
     }
 
     fn snapshot_markers(&self, app: &dyn AppContext, account_id: &str) -> Vec<PathBuf> {
+        match self.snapshot_root(app, account_id) {
+            Ok(cache_dir) => self.markers_under(&cache_dir),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    fn markers_under(&self, cache_dir: &Path) -> Vec<PathBuf> {
         let Ok(profile) = self.profile() else {
-            return Vec::new();
-        };
-        let Ok(cache_dir) = self.snapshot_root(app, account_id) else {
             return Vec::new();
         };
         let files = profile
@@ -848,8 +1028,61 @@ impl DescriptorService {
             // account was signed in beats replacing it with an empty one.
             return Ok(());
         }
-        let _ = config_bridge::touch_account(app, &self.descriptor.id, &current_id, now_unix_ms());
-        self.save_snapshot(app, &current_id)
+        let Some(target) = self.capture_target(app, current_id) else {
+            return Ok(());
+        };
+        let _ = config_bridge::touch_account(app, &self.descriptor.id, &target, now_unix_ms());
+        self.save_snapshot(app, &target)
+    }
+
+    /// Which account's snapshot the live session goes into, `None` to skip
+    /// the capture.
+    ///
+    /// A platform tracked through the config only knows which account we
+    /// last put in place. When the launcher can also say who is signed in and
+    /// names someone else, the user switched inside the launcher: capturing
+    /// under the marker would overwrite that account's snapshot with another
+    /// account's session. The session goes to the account it belongs to when
+    /// that one is tracked, and nowhere otherwise.
+    fn capture_target(&self, app: &dyn AppContext, marker: String) -> Option<String> {
+        let Ok(runtime) = self.runtime(app) else {
+            return Some(marker);
+        };
+        let cfg = config::load_config(app);
+        let identity = &runtime.profile.identity;
+        if identity.current != CurrentSource::Config
+            || matches!(identity.source, IdentitySource::Synthetic)
+        {
+            return Some(marker);
+        }
+        let Some(live) = self.live_identity(&runtime, &cfg) else {
+            return Some(marker);
+        };
+        if live == marker {
+            return Some(marker);
+        }
+        let source = format!("{}.capture", self.descriptor.id);
+        let details = format!("marker={}; live={}", redact_id(&marker), redact_id(&live));
+        let tracked = config_bridge::accounts_in(&cfg, &self.descriptor.id)
+            .iter()
+            .any(|account| self.normalise_id(&account.account_id) == live);
+        if tracked {
+            log_platform_info(
+                app,
+                &source,
+                "Live session belongs to another tracked account, captured there",
+                details,
+            );
+            Some(live)
+        } else {
+            log_platform_info(
+                app,
+                &source,
+                "Live session belongs to an untracked account, capture skipped",
+                details,
+            );
+            None
+        }
     }
 
     /// Whether the descriptor's own gate on capturing is satisfied.
@@ -869,11 +1102,35 @@ impl DescriptorService {
     // Reads
     // -----------------------------------------------------------------------
 
+    /// Everything a read of the account list needs, gathered once: one
+    /// runtime (so the launcher is resolved once), one config snapshot and
+    /// one read of who is signed in.
+    fn read_view(&self, app: &dyn AppContext) -> Result<ReadView<'_>, String> {
+        let cfg = config::load_config(app);
+        let runtime =
+            self.build_runtime(|| config_bridge::path_override_in(&cfg, &self.descriptor.id))?;
+        let current = self.current_from(&runtime, &cfg);
+        // Unresolvable, it lists every account as having no snapshot, the
+        // same answer a per-account lookup gives.
+        let snapshots = crate::storage::platform_snapshots_dir(app, &self.descriptor.id).ok();
+        Ok(ReadView {
+            runtime,
+            cfg,
+            current,
+            snapshots,
+        })
+    }
+
+    #[cfg(test)]
     fn read_accounts(&self, app: &dyn AppContext) -> Result<Vec<DescriptorAccount>, String> {
-        let runtime = self.runtime(app)?;
-        let blocked = self.blocked_ids(app);
+        Ok(self.accounts_in(&self.read_view(app)?))
+    }
+
+    fn accounts_in(&self, view: &ReadView<'_>) -> Vec<DescriptorAccount> {
+        let runtime = &view.runtime;
+        let blocked = self.blocked_ids(&view.cfg);
         let mut discovered: HashSet<String> = self
-            .discovered_ids(app, &runtime)
+            .discovered_ids(runtime, &view.cfg)
             .into_iter()
             .collect::<HashSet<_>>();
         // The account signed in right now counts as discovered, unless it is
@@ -884,14 +1141,11 @@ impl DescriptorService {
         // engine could read an id keeps its opaque one. Listing the live id
         // there would show that same account a second time under its real name.
         if runtime.profile.identity.current == CurrentSource::Identity {
-            if let Some(id) = self
-                .read_identity_in(&runtime)
-                .filter(|id| !blocked.contains(id))
-            {
+            if let Some(id) = view.current.clone().filter(|id| !blocked.contains(id)) {
                 discovered.insert(id);
             }
         }
-        let stored = config_bridge::accounts(app, &self.descriptor.id);
+        let stored = config_bridge::accounts_in(&view.cfg, &self.descriptor.id);
 
         let mut seen = HashSet::new();
         let mut accounts = Vec::new();
@@ -905,7 +1159,7 @@ impl DescriptorService {
                 continue;
             }
             accounts.push(DescriptorAccount {
-                snapshot_saved: self.has_snapshot(app, &id),
+                snapshot_saved: self.has_snapshot_in(view.snapshots.as_deref(), &id),
                 account_id: id,
                 label: account.label.clone(),
                 last_used_at: account.last_used_at,
@@ -922,7 +1176,7 @@ impl DescriptorService {
                 account_id: id.clone(),
                 label: String::new(),
                 last_used_at: None,
-                snapshot_saved: self.has_snapshot(app, id),
+                snapshot_saved: self.has_snapshot_in(view.snapshots.as_deref(), id),
             });
         }
 
@@ -936,7 +1190,7 @@ impl DescriptorService {
                 || a.snapshot_saved
         });
 
-        Ok(accounts)
+        accounts
     }
 
     // -----------------------------------------------------------------------
@@ -953,11 +1207,56 @@ impl DescriptorService {
             format!("target={}", redact_id(&account_id)),
         );
 
+        // Nothing is closed and no marker touched until the target is known
+        // to be restorable: failing later leaves the launcher closed and, on
+        // a platform we track ourselves, nobody recorded as signed in.
+        {
+            let runtime = self.runtime(app)?;
+            self.require_snapshot(app, &runtime, &account_id)?;
+        }
+
+        let mut closed = false;
+        let result = match self.switch_steps(app, &account_id, &mut closed) {
+            Ok(()) => self.launch(app),
+            Err(error) => {
+                if closed {
+                    self.relaunch_after_failure(app, &source);
+                }
+                Err(error)
+            }
+        };
+        match &result {
+            Ok(()) => log_platform_info(
+                app,
+                &source,
+                &format!("{} switch completed", self.descriptor.short_name),
+                format!("target={}", redact_id(&account_id)),
+            ),
+            Err(error) => log_platform_error(
+                app,
+                &source,
+                &format!("{} switch failed", self.descriptor.short_name),
+                format!("target={}; error={error}", redact_id(&account_id)),
+            ),
+        }
+        result
+    }
+
+    /// Everything a switch does between closing the launcher and starting
+    /// it again. `closed` records whether the launcher was closed, so the
+    /// caller knows to start it again when a later step fails.
+    fn switch_steps(
+        &self,
+        app: &dyn AppContext,
+        account_id: &str,
+        closed: &mut bool,
+    ) -> Result<(), String> {
         let close_first = self.closes_before_capture();
         if close_first {
             // This client holds its session in memory and writes it out as it
             // exits, so capturing it while it runs would store nothing.
             self.quit_and_wait();
+            *closed = true;
         }
 
         // Snapshot the outgoing account first. Aborting here is the point:
@@ -977,30 +1276,33 @@ impl DescriptorService {
 
         if !close_first {
             self.quit_and_wait();
+            *closed = true;
         }
-        self.restore_snapshot(app, &account_id)?;
+        self.restore_snapshot(app, account_id)?;
         self.clear_caches(app);
-        config_bridge::touch_account(app, &self.descriptor.id, &account_id, now_unix_ms())?;
+        config_bridge::touch_account(app, &self.descriptor.id, account_id, now_unix_ms())?;
         if uses_config_marker {
-            config_bridge::set_current_account(app, &self.descriptor.id, &account_id)?;
+            config_bridge::set_current_account(app, &self.descriptor.id, account_id)?;
         }
+        self.record_switch(app, account_id);
+        Ok(())
+    }
 
-        let result = self.launch(app);
-        match &result {
-            Ok(()) => log_platform_info(
+    /// Starts the launcher again after an operation closed it and then
+    /// failed, so the user is not left without it. The operation's own error
+    /// is the one reported; a failed start is only logged.
+    fn relaunch_after_failure(&self, app: &dyn AppContext, source: &str) {
+        if let Err(error) = self.launch(app) {
+            log_platform_error(
                 app,
-                &source,
-                &format!("{} switch completed", self.descriptor.short_name),
-                format!("target={}", redact_id(&account_id)),
-            ),
-            Err(error) => log_platform_error(
-                app,
-                &source,
-                &format!("{} switch failed", self.descriptor.short_name),
-                format!("target={}; error={error}", redact_id(&account_id)),
-            ),
+                source,
+                &format!(
+                    "{} relaunch after a failure failed",
+                    self.descriptor.short_name
+                ),
+                error,
+            );
         }
-        result
     }
 
     fn begin(&self, app: &dyn AppContext) -> Result<SetupStatus, String> {
@@ -1012,54 +1314,17 @@ impl DescriptorService {
             "",
         );
 
-        let was_running = self.is_running();
-        let close_first = self.closes_before_capture();
-        if close_first {
-            self.quit_and_wait();
-        }
-
-        // Everything that already exists, so the flow can tell the account the
-        // user is about to add from the ones that were there before.
-        let runtime = self.runtime(app)?;
-        let stored: HashSet<String> = config_bridge::accounts(app, &self.descriptor.id)
-            .iter()
-            .map(|account| self.normalise_id(&account.account_id))
-            .filter(|id| !id.is_empty())
-            .collect();
-        let live = self.read_identity_detail(&runtime);
-        let mut known: HashSet<String> = self.discovered_ids(app, &runtime).into_iter().collect();
-        known.extend(live.as_ref().map(|found| found.id.clone()));
-        known.extend(stored.iter().cloned());
-
-        if runtime.profile.setup.adopt_signed_in {
-            if let Some(status) = self.try_adopt(app, live, &stored, was_running)? {
-                return Ok(status);
+        let mut closed = false;
+        let setup_id = match self.begin_steps(app, &mut closed) {
+            Ok(BeginOutcome::Adopted(status)) => return Ok(status),
+            Ok(BeginOutcome::AwaitSignIn(setup_id)) => setup_id,
+            Err(error) => {
+                if closed {
+                    self.relaunch_after_failure(app, &source);
+                }
+                return Err(error);
             }
-        }
-
-        self.capture_current_account(app)?;
-
-        let setup_id = format!("{}-setup-{}", self.descriptor.id, Uuid::new_v4());
-        self.jobs.insert(
-            setup_id.clone(),
-            SetupJob {
-                known_account_ids: known,
-                started_at: now_unix_ms(),
-            },
-        )?;
-
-        if !close_first {
-            self.quit_and_wait();
-        }
-        self.clear_live_state(app)?;
-        if self
-            .profile()
-            .map(|p| p.identity.current == CurrentSource::Config)
-            .unwrap_or(false)
-        {
-            // Nobody is signed in until the flow completes.
-            config_bridge::set_current_account(app, &self.descriptor.id, "")?;
-        }
+        };
 
         self.launch(app).inspect_err(|e| {
             log_platform_error(
@@ -1077,6 +1342,65 @@ impl DescriptorService {
             "",
             "",
         ))
+    }
+
+    /// Everything a setup does before the launcher is started on the login
+    /// screen. `closed` works as in [`Self::switch_steps`].
+    fn begin_steps(&self, app: &dyn AppContext, closed: &mut bool) -> Result<BeginOutcome, String> {
+        let was_running = self.is_running();
+        let close_first = self.closes_before_capture();
+        if close_first {
+            self.quit_and_wait();
+            *closed = true;
+        }
+
+        // Everything that already exists, so the flow can tell the account the
+        // user is about to add from the ones that were there before.
+        let runtime = self.runtime(app)?;
+        let stored: HashSet<String> = config_bridge::accounts(app, &self.descriptor.id)
+            .iter()
+            .map(|account| self.normalise_id(&account.account_id))
+            .filter(|id| !id.is_empty())
+            .collect();
+        let live = self.read_identity_detail(&runtime);
+        let mut known: HashSet<String> = self
+            .discovered_ids(&runtime, &config::load_config(app))
+            .into_iter()
+            .collect();
+        known.extend(live.as_ref().map(|found| found.id.clone()));
+        known.extend(stored.iter().cloned());
+
+        if runtime.profile.setup.adopt_signed_in {
+            if let Some(status) = self.try_adopt(app, live, &stored, was_running)? {
+                return Ok(BeginOutcome::Adopted(status));
+            }
+        }
+
+        self.capture_current_account(app)?;
+
+        let setup_id = format!("{}-setup-{}", self.descriptor.id, Uuid::new_v4());
+        self.jobs.insert(
+            setup_id.clone(),
+            SetupJob {
+                known_account_ids: known,
+                started_at: now_unix_ms(),
+            },
+        )?;
+
+        if !close_first {
+            self.quit_and_wait();
+            *closed = true;
+        }
+        self.clear_live_state(app)?;
+        if self
+            .profile()
+            .map(|p| p.identity.current == CurrentSource::Config)
+            .unwrap_or(false)
+        {
+            // Nobody is signed in until the flow completes.
+            config_bridge::set_current_account(app, &self.descriptor.id, "")?;
+        }
+        Ok(BeginOutcome::AwaitSignIn(setup_id))
     }
 
     /// Takes the session that is already signed in as the account being added,
@@ -1194,7 +1518,7 @@ impl DescriptorService {
             .read_identity_detail(&runtime)
             .filter(|found| !job.known_account_ids.contains(&found.id));
         let new_identity = found.as_ref().map(|found| found.id.clone()).or_else(|| {
-            self.discovered_ids(app, &runtime)
+            self.discovered_ids(&runtime, &config::load_config(app))
                 .into_iter()
                 .find(|id| !job.known_account_ids.contains(id))
         });
@@ -1214,33 +1538,52 @@ impl DescriptorService {
             // launcher may still hold the session in memory, so it is closed
             // and the conditions re-checked before anything is captured.
             self.quit_and_wait();
+            let source = format!("{}.get_setup_status", self.descriptor.id);
+            // Every way back to waiting starts the launcher again: the user
+            // cannot finish signing in with it closed.
+            let keep_waiting = || {
+                self.relaunch_after_failure(app, &source);
+                make_setup_status(setup_id, "waiting_for_login", "", "", "")
+            };
 
             let still_holds = setup
                 .confirm
                 .iter()
                 .all(|condition| self.condition_holds(&runtime, condition, input));
             if !still_holds {
-                return Ok(make_setup_status(setup_id, "waiting_for_login", "", "", ""));
+                return Ok(keep_waiting());
             }
 
-            let key = match &runtime.profile.identity.source {
-                IdentitySource::Synthetic => generate_account_id(),
-                _ => match new_identity {
+            let synthetic = matches!(runtime.profile.identity.source, IdentitySource::Synthetic);
+            let key = if synthetic {
+                generate_account_id()
+            } else {
+                match new_identity {
                     Some(id) => id,
                     // The confirm pass says a session exists but no id came
                     // with it: keep waiting rather than store an unnamed one.
-                    None => {
-                        return Ok(make_setup_status(setup_id, "waiting_for_login", "", "", ""))
-                    }
-                },
+                    None => return Ok(keep_waiting()),
+                }
             };
 
-            self.save_snapshot(app, &key)?;
+            // An id we minted names nothing once its capture is rejected, and
+            // each poll mints a new one: its folder goes with the rejection.
+            let reject = |key: &str| {
+                if synthetic {
+                    self.delete_snapshot(app, key);
+                }
+            };
+            if let Err(error) = self.save_snapshot(app, &key) {
+                reject(&key);
+                self.relaunch_after_failure(app, &source);
+                return Err(error);
+            }
             if self.declares_snapshot_marker() && !self.snapshot_has_content(app, &key) {
                 // The capture produced nothing worth restoring: the launcher
                 // was closed before it wrote the session. Keep waiting rather
                 // than hand back an account that restores to a login screen.
-                return Ok(make_setup_status(setup_id, "waiting_for_login", "", "", ""));
+                reject(&key);
+                return Ok(keep_waiting());
             }
             config_bridge::touch_account(app, &self.descriptor.id, &key, now_unix_ms())?;
             if runtime.profile.identity.current == CurrentSource::Config {
@@ -1491,29 +1834,53 @@ impl DescriptorService {
     }
 
     fn plan_restore(&self, runtime: &Runtime<'_>, plan: &mut DryRunPlan, cache_dir: &Path) {
+        // Mirrors [`Self::stage_restore`]: an item missing from the snapshot
+        // is removed live when the capture would have dropped it. With no
+        // snapshot at all the switch stops before this point.
+        const ABSENT: &str = "not in this account's snapshot";
+        let held = cache_dir.exists();
         for item in &runtime.profile.state.files {
             let snapshot = cache_dir.join(&item.snapshot);
             match runtime.spec_path(&item.live) {
+                Ok(live) if snapshot.exists() => plan.path_step(
+                    PlanAction::Restore,
+                    PlanTargetKind::File,
+                    &live,
+                    &snapshot,
+                    "",
+                ),
+                Ok(live) if held && item.clear_snapshot_when_source_missing => plan.simple_step(
+                    PlanAction::Delete,
+                    PlanTargetKind::File,
+                    live.display().to_string(),
+                    ABSENT,
+                ),
                 Ok(live) => plan.path_step(
                     PlanAction::Restore,
                     PlanTargetKind::File,
                     &live,
                     &snapshot,
-                    if snapshot.exists() {
-                        ""
-                    } else {
-                        "no snapshot, skipped"
-                    },
+                    "no snapshot, skipped",
                 ),
                 Err(e) => plan.warn(e.to_string()),
             }
         }
         for item in &runtime.profile.state.registry_values {
             let snapshot = cache_dir.join(&item.snapshot);
+            let target = reg::display(item.root, &item.key, &item.value);
+            if held && !snapshot.exists() && item.clear_snapshot_when_source_missing {
+                plan.simple_step(
+                    PlanAction::Delete,
+                    PlanTargetKind::RegistryValue,
+                    target,
+                    ABSENT,
+                );
+                continue;
+            }
             plan.push(PlanStep {
                 action: PlanAction::Restore,
                 kind: PlanTargetKind::RegistryValue,
-                target: reg::display(item.root, &item.key, &item.value),
+                target,
                 snapshot: snapshot.display().to_string(),
                 note: if snapshot.exists() {
                     String::new()
@@ -1525,16 +1892,25 @@ impl DescriptorService {
         for item in &runtime.profile.state.directories {
             let snapshot = cache_dir.join(&item.snapshot);
             match runtime.spec_path(&item.live) {
+                Ok(live) if snapshot.exists() => plan.path_step(
+                    PlanAction::Restore,
+                    PlanTargetKind::Directory,
+                    &live,
+                    &snapshot,
+                    "",
+                ),
+                Ok(live) if held && item.clear_snapshot_when_source_missing => plan.simple_step(
+                    PlanAction::Delete,
+                    PlanTargetKind::Directory,
+                    live.display().to_string(),
+                    ABSENT,
+                ),
                 Ok(live) => plan.path_step(
                     PlanAction::Restore,
                     PlanTargetKind::Directory,
                     &live,
                     &snapshot,
-                    if snapshot.exists() {
-                        ""
-                    } else {
-                        "no snapshot, skipped"
-                    },
+                    "no snapshot, skipped",
                 ),
                 Err(e) => plan.warn(e.to_string()),
             }
@@ -1556,6 +1932,16 @@ impl DescriptorService {
 // ---------------------------------------------------------------------------
 // Runtime
 // ---------------------------------------------------------------------------
+
+/// What one read of the account list works from. See
+/// [`DescriptorService::read_view`].
+struct ReadView<'a> {
+    runtime: Runtime<'a>,
+    cfg: AppConfig,
+    /// The account signed in now, from whichever source the descriptor names.
+    current: Option<String>,
+    snapshots: Option<PathBuf>,
+}
 
 /// One operation's resolved view of a descriptor.
 struct Runtime<'a> {
@@ -1831,50 +2217,235 @@ fn dir_has_nonempty_file(dir: &Path) -> bool {
     false
 }
 
-/// Restores a session directory from its encrypted snapshot.
-///
-/// The decrypted copy is staged next to the live directory and swapped in, so
-/// a failure partway through never leaves the live directory holding a mix of
-/// the outgoing and incoming account's files. A missing snapshot is a no-op.
-fn restore_dir_snapshot(
-    snapshot_dir: &Path,
-    live_dir: &Path,
-    item: &DirItem,
-) -> Result<(), String> {
-    if !snapshot_dir.exists() {
-        return Ok(());
-    }
-    let staging = staging_path(live_dir);
-    let _ = fs::remove_dir_all(&staging);
+/// One change a restore makes to the live state, decided and staged before
+/// any of them is applied.
+enum RestoreStep {
+    File {
+        staging: PathBuf,
+        live: PathBuf,
+        remove_live_first: bool,
+    },
+    RemoveFile {
+        live: PathBuf,
+    },
+    Dir {
+        staging: PathBuf,
+        live: PathBuf,
+    },
+    RemoveDir {
+        live: PathBuf,
+    },
+    Value {
+        item: RegistryItem,
+        data: String,
+    },
+    RemoveValue {
+        item: RegistryItem,
+    },
+}
 
-    let ignored: Vec<&str> = item.ignored_names.iter().map(String::as_str).collect();
-    snapshot_crypto::decrypted_copy_dir(
-        snapshot_dir,
-        &staging,
-        DirCopyOptions {
-            ignored_names: &ignored,
-            follow_symlinks: item.follow_symlinks,
-        },
-    )?;
+/// How to take back one applied step.
+enum Undo {
+    /// Put `backup` back at `live`, or remove `live` when nothing was there.
+    File {
+        live: PathBuf,
+        backup: Option<PathBuf>,
+    },
+    Dir {
+        live: PathBuf,
+        backup: Option<PathBuf>,
+    },
+    Value {
+        item: RegistryItem,
+        previous: Option<String>,
+    },
+}
 
-    if live_dir.exists() {
-        fs::remove_dir_all(live_dir)
-            .map_err(|e| format!("Could not clear {}: {e}", live_dir.display()))?;
+impl Undo {
+    fn undo(self) -> Result<(), String> {
+        match self {
+            Undo::File { live, backup } => {
+                let _ = fs::remove_file(&live);
+                match backup {
+                    Some(backup) => put_file(&backup, &live, true),
+                    None => Ok(()),
+                }
+            }
+            Undo::Dir { live, backup } => {
+                let _ = fs::remove_dir_all(&live);
+                match backup {
+                    Some(backup) => fs::rename(&backup, &live)
+                        .map_err(|e| format!("Could not put back {}: {e}", live.display())),
+                    None => Ok(()),
+                }
+            }
+            Undo::Value { item, previous } => match previous {
+                Some(value) => reg::write(item.root, &item.key, &item.value, &value),
+                None => {
+                    reg::delete(item.root, &item.key, &item.value);
+                    Ok(())
+                }
+            },
+        }
     }
-    if let Some(parent) = live_dir.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
+
+    /// The restore went through: the outgoing session's copy goes.
+    fn forget_backup(self) {
+        match self {
+            Undo::File {
+                backup: Some(backup),
+                ..
+            } => {
+                let _ = fs::remove_file(backup);
+            }
+            Undo::Dir {
+                backup: Some(backup),
+                ..
+            } => {
+                let _ = fs::remove_dir_all(backup);
+            }
+            _ => {}
+        }
     }
-    match fs::rename(&staging, live_dir) {
-        Ok(()) => Ok(()),
-        Err(_) => {
-            // Cross-volume rename or a lingering lock: copy the already
-            // decrypted staging tree instead, then drop the staging dir.
-            crate::fs_utils::copy_dir_recursive(&staging, live_dir, &[])?;
-            let _ = fs::remove_dir_all(&staging);
+}
+
+fn apply_restore_step(step: &RestoreStep, journal: &mut Vec<Undo>) -> Result<(), String> {
+    match step {
+        RestoreStep::File {
+            staging,
+            live,
+            remove_live_first,
+        } => {
+            let backup = move_aside(live)?;
+            journal.push(Undo::File {
+                live: live.clone(),
+                backup,
+            });
+            put_file(staging, live, *remove_live_first)
+        }
+        RestoreStep::RemoveFile { live } => {
+            let backup = move_aside(live)?;
+            journal.push(Undo::File {
+                live: live.clone(),
+                backup,
+            });
+            Ok(())
+        }
+        RestoreStep::Dir { staging, live } => {
+            let backup = move_aside(live)?;
+            journal.push(Undo::Dir {
+                live: live.clone(),
+                backup,
+            });
+            if let Some(parent) = live.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
+            }
+            if fs::rename(staging, live).is_err() {
+                // Cross-volume rename or a lingering lock: copy the already
+                // decrypted staging tree instead, then drop the staging dir.
+                crate::fs_utils::copy_dir_recursive(staging, live, &[])?;
+                let _ = fs::remove_dir_all(staging);
+            }
+            Ok(())
+        }
+        RestoreStep::RemoveDir { live } => {
+            let backup = move_aside(live)?;
+            journal.push(Undo::Dir {
+                live: live.clone(),
+                backup,
+            });
+            Ok(())
+        }
+        RestoreStep::Value { item, data } => {
+            journal.push(Undo::Value {
+                item: item.clone(),
+                previous: reg::read(item.root, &item.key, &item.value),
+            });
+            reg::write(item.root, &item.key, &item.value, data)
+        }
+        RestoreStep::RemoveValue { item } => {
+            journal.push(Undo::Value {
+                item: item.clone(),
+                previous: reg::read(item.root, &item.key, &item.value),
+            });
+            reg::delete(item.root, &item.key, &item.value);
             Ok(())
         }
     }
+}
+
+/// Undoes the applied steps, last first. Returns what could not be undone.
+fn roll_back(journal: Vec<Undo>) -> Vec<String> {
+    journal
+        .into_iter()
+        .rev()
+        .filter_map(|undo| undo.undo().err())
+        .collect()
+}
+
+/// Removes whatever staging copies a restore left behind.
+fn discard_staging(steps: &[RestoreStep]) {
+    for step in steps {
+        match step {
+            RestoreStep::File { staging, .. } => {
+                let _ = fs::remove_file(staging);
+            }
+            RestoreStep::Dir { staging, .. } => {
+                let _ = fs::remove_dir_all(staging);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Where the outgoing session's copy of a live path waits until the restore
+/// either goes through or is undone.
+fn backup_path(live: &Path) -> PathBuf {
+    let mut name = live.file_name().unwrap_or_default().to_os_string();
+    name.push(".accshift-restore-old");
+    live.with_file_name(name)
+}
+
+/// Moves a live file or directory out of the way, keeping it for an undo.
+/// `None` when there was nothing there.
+fn move_aside(live: &Path) -> Result<Option<PathBuf>, String> {
+    if !live.exists() {
+        return Ok(None);
+    }
+    let backup = backup_path(live);
+    // A backup left by a restore that never finished is stale by now.
+    let _ = fs::remove_file(&backup);
+    let _ = fs::remove_dir_all(&backup);
+    if fs::rename(live, &backup).is_ok() {
+        return Ok(Some(backup));
+    }
+    if live.is_dir() {
+        return Err(format!("Could not move {} aside", live.display()));
+    }
+    // A file that refuses a rename may still be copied and removed.
+    fs::copy(live, &backup).map_err(|e| format!("Could not back up {}: {e}", live.display()))?;
+    if let Err(e) = fs::remove_file(live) {
+        let _ = fs::remove_file(&backup);
+        return Err(format!("Could not remove {}: {e}", live.display()));
+    }
+    Ok(Some(backup))
+}
+
+/// Moves `source` to `dest`, falling back to a copy.
+fn put_file(source: &Path, dest: &Path, remove_dest_first: bool) -> Result<(), String> {
+    if remove_dest_first {
+        // Files the OS marks hidden or system cannot be replaced in place on
+        // Windows, so the live copy goes first.
+        let _ = fs::remove_file(dest);
+    }
+    if fs::rename(source, dest).is_err() {
+        // Cross-volume rename or a lingering lock: copy instead.
+        fs::copy(source, dest)
+            .map_err(|e| format!("Could not finalize {}: {e}", dest.display()))?;
+        let _ = fs::remove_file(source);
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1883,14 +2454,15 @@ fn restore_dir_snapshot(
 
 impl PlatformService for DescriptorService {
     fn get_accounts(&self, app: AppCtx) -> Result<Value, PlatformError> {
-        let accounts = self.read_accounts(&app)?;
+        let accounts = self.accounts_in(&self.read_view(&app)?);
         serde_json::to_value(accounts).map_err(|e| PlatformError::other(e.to_string()))
     }
 
     fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, PlatformError> {
+        let view = self.read_view(&app)?;
         let snapshot = DescriptorStartupSnapshot {
-            accounts: self.read_accounts(&app)?,
-            current_account: self.current_account_id(&app).unwrap_or_default(),
+            accounts: self.accounts_in(&view),
+            current_account: view.current.clone().unwrap_or_default(),
         };
         serde_json::to_value(snapshot).map_err(|e| PlatformError::other(e.to_string()))
     }
@@ -1993,6 +2565,7 @@ impl PlatformService for DescriptorService {
 
 #[cfg(test)]
 mod tests {
+    use super::super::schema::RegistryHive;
     use super::*;
     use std::sync::Arc;
 
@@ -2723,6 +3296,81 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    fn write_log(live: &Path, id: &str, age: Duration) {
+        let log = live.join("logs").join("launcher_log.txt");
+        fs::create_dir_all(log.parent().unwrap()).unwrap();
+        fs::write(
+            &log,
+            format!("[00:00] AccountStartupUser.cpp - User: {id} logged in\n"),
+        )
+        .unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&log)
+            .unwrap()
+            .set_modified(SystemTime::now() - age)
+            .unwrap();
+    }
+
+    #[test]
+    fn a_log_older_than_the_last_switch_does_not_name_the_current_account() {
+        // The launcher logs a sign-in some time after it starts, so right
+        // after a switch the last line still names the previous account.
+        let _config = config_guard();
+        let root = scratch("log-lag");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = log_service(&live);
+        let minute_ago = now_unix_ms() - 60_000;
+        config_bridge::set_last_switch(&ctx, "ubisoft", UUID_TWO, minute_ago).unwrap();
+
+        write_log(&live, UUID_ONE, Duration::from_secs(600));
+        assert_eq!(service.current_account_id(&ctx).as_deref(), Some(UUID_TWO));
+
+        // The launcher wrote since: the log is the better witness again.
+        write_log(&live, UUID_ONE, Duration::ZERO);
+        assert_eq!(service.current_account_id(&ctx).as_deref(), Some(UUID_ONE));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_switch_records_the_account_it_put_in_place() {
+        let _config = config_guard();
+        let root = scratch("log-switch-record");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = log_service(&live);
+
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("user.dat"), b"account-two").unwrap();
+        service.save_snapshot(&ctx, UUID_TWO).unwrap();
+        fs::write(live.join("user.dat"), b"account-one").unwrap();
+        write_log(&live, UUID_ONE, Duration::from_secs(600));
+
+        service.switch(&ctx, UUID_TWO).unwrap();
+        // Nothing new in the log yet: the account is the one just put there,
+        // so the next capture cannot file its session under the previous one.
+        assert_eq!(service.current_account_id(&ctx).as_deref(), Some(UUID_TWO));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_startup_read_resolves_the_launcher_and_reads_the_log_once() {
+        let _config = config_guard();
+        let root = scratch("log-read-once");
+        let live = root.join("live");
+        let ctx: AppCtx = Arc::new(TempCtx { root: root.clone() });
+        let service = log_service(&live);
+        write_log(&live, UUID_ONE, Duration::ZERO);
+
+        let snapshot = service.get_startup_snapshot(ctx).unwrap();
+        assert_eq!(snapshot["currentAccount"], UUID_ONE);
+        assert_eq!(count(&service.probes.runtimes), 1);
+        assert_eq!(count(&service.probes.log_reads), 1);
+        let _ = fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn a_platform_keeps_its_own_wording_for_a_bad_account_id() {
         let root = scratch("id-wording");
@@ -3060,6 +3708,43 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn a_session_switched_inside_the_launcher_never_overwrites_the_marker_snapshot() {
+        // The launcher's own switcher moves the live session without telling
+        // us, so the marker can name an account that is no longer signed in.
+        const OTHER: &str = "876543210987654321";
+        let _config = config_guard();
+        let root = scratch("hook-marker-drift");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = hook_service(&live);
+
+        seed_store(&live, SNOWFLAKE, None);
+        service.save_snapshot(&ctx, SNOWFLAKE).unwrap();
+        config_bridge::touch_account(&ctx, "discord", SNOWFLAKE, 1).unwrap();
+        config_bridge::set_current_account(&ctx, "discord", SNOWFLAKE).unwrap();
+        let kept = service
+            .snapshot_root(&ctx, SNOWFLAKE)
+            .unwrap()
+            .join("local_storage_leveldb")
+            .join("000003.log");
+        let before = fs::read(&kept).unwrap();
+
+        // An account accshift does not track: nothing is captured at all.
+        seed_store(&live, OTHER, None);
+        service.capture_current_account(&ctx).unwrap();
+        assert_eq!(fs::read(&kept).unwrap(), before);
+        assert!(!service.snapshot_root(&ctx, OTHER).unwrap().exists());
+
+        // A tracked one: the session is captured where it belongs.
+        config_bridge::touch_account(&ctx, "discord", OTHER, 2).unwrap();
+        service.capture_current_account(&ctx).unwrap();
+        assert_eq!(fs::read(&kept).unwrap(), before);
+        assert!(service.has_snapshot(&ctx, OTHER));
+        let _ = fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn a_platform_we_track_ourselves_does_not_list_the_live_id_as_an_account() {
         // The config holds ids we minted, so listing the id the launcher
@@ -3127,6 +3812,276 @@ mod tests {
         assert_eq!(status.state, "waiting_for_client");
         assert_eq!(service.read_accounts(&*ctx).unwrap().len(), 1);
         assert!(!live.join("Local Storage").join("leveldb").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // -----------------------------------------------------------------------
+    // Restore symmetry
+    // -----------------------------------------------------------------------
+
+    /// The plain fixture plus one registry value, served by the in-memory
+    /// registry so nothing reaches the real hive.
+    fn registry_service(live_root: &Path) -> DescriptorService {
+        let json = fixture(live_root)
+            .replace(
+                r#""roots": { "files": ["#,
+                r#""roots": { "registry": [{ "root": "HKCU", "key": "Software\\AccshiftTest" }], "files": ["#,
+            )
+            .replace(
+                r#""state": {"#,
+                r#""state": {
+                    "registryValues": [
+                      { "root": "HKCU", "key": "Software\\AccshiftTest", "value": "token", "snapshot": "registry_token.txt" }
+                    ],"#,
+            );
+        DescriptorService::new(
+            Descriptor::parse("test", &json).unwrap(),
+            DescriptorOrigin::Embedded,
+        )
+    }
+
+    const TEST_KEY: &str = "Software\\AccshiftTest";
+
+    fn test_value() -> Option<String> {
+        reg::read(RegistryHive::CurrentUser, TEST_KEY, "token")
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_file_the_account_never_had_is_removed_on_restore() {
+        // The capture dropped it because the account had none, so the one
+        // left live belongs to the outgoing account.
+        let _config = config_guard();
+        let root = scratch("restore-absent-file");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = service(&live);
+
+        seed_live_session(&live, b"account-one");
+        fs::remove_file(live.join("session.json")).unwrap();
+        service.save_snapshot(&ctx, "aaaa1111").unwrap();
+
+        seed_live_session(&live, b"account-two");
+        service.restore_snapshot(&ctx, "aaaa1111").unwrap();
+
+        assert!(!live.join("session.json").exists());
+        assert_eq!(
+            fs::read(live.join("auth").join("nested").join("token.bin")).unwrap(),
+            b"account-one"
+        );
+        // The outgoing copies kept for an undo are gone once it went through.
+        assert!(!live.join("session.json.accshift-restore-old").exists());
+        assert!(!live.join("auth.accshift-restore-old").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_registry_value_the_account_never_had_is_removed_on_restore() {
+        let _config = config_guard();
+        let _registry = reg::fake::install();
+        let root = scratch("restore-absent-value");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = registry_service(&live);
+
+        seed_live_session(&live, b"account-one");
+        service.save_snapshot(&ctx, "aaaa1111").unwrap();
+
+        reg::fake::set(RegistryHive::CurrentUser, TEST_KEY, "token", "outgoing");
+        service.restore_snapshot(&ctx, "aaaa1111").unwrap();
+        assert_eq!(test_value(), None);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_registry_write_that_fails_fails_the_restore_and_undoes_the_files() {
+        let _config = config_guard();
+        let _registry = reg::fake::install();
+        let root = scratch("restore-write-fails");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = registry_service(&live);
+
+        seed_live_session(&live, b"account-one");
+        reg::fake::set(RegistryHive::CurrentUser, TEST_KEY, "token", "incoming");
+        service.save_snapshot(&ctx, "aaaa1111").unwrap();
+
+        seed_live_session(&live, b"account-two");
+        reg::fake::set(RegistryHive::CurrentUser, TEST_KEY, "token", "outgoing");
+        reg::fake::fail_writes(true);
+        assert!(service.restore_snapshot(&ctx, "aaaa1111").is_err());
+
+        assert_eq!(fs::read(live.join("session.json")).unwrap(), b"account-two");
+        assert_eq!(test_value().as_deref(), Some("outgoing"));
+        assert!(!live.join("session.json.accshift-restore-old").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_directory_that_cannot_be_restored_leaves_every_file_as_it_was() {
+        // Directories used to be restored last, after the files had already
+        // been swapped, so a failure there left half of each account live.
+        let _config = config_guard();
+        let root = scratch("restore-dir-fails");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = service(&live);
+
+        seed_live_session(&live, b"account-one");
+        service.save_snapshot(&ctx, "aaaa1111").unwrap();
+        // A header with nothing decryptable behind it.
+        let snapshot = service.snapshot_root(&ctx, "aaaa1111").unwrap();
+        fs::write(
+            snapshot.join("auth").join("nested").join("token.bin"),
+            [crate::snapshot_crypto::ENCRYPTED_HEADER, b"garbage"].concat(),
+        )
+        .unwrap();
+
+        seed_live_session(&live, b"account-two");
+        assert!(service.restore_snapshot(&ctx, "aaaa1111").is_err());
+
+        assert_eq!(fs::read(live.join("session.json")).unwrap(), b"account-two");
+        assert_eq!(
+            fs::read(live.join("auth").join("nested").join("token.bin")).unwrap(),
+            b"account-two"
+        );
+        assert!(!live.join("auth.accshift-restore-tmp").exists());
+        assert!(!live.join("session.json.accshift-restore-tmp").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // -----------------------------------------------------------------------
+    // Leaving the launcher running
+    // -----------------------------------------------------------------------
+
+    fn count(counter: &std::sync::atomic::AtomicUsize) -> usize {
+        counter.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn launches(service: &DescriptorService) -> usize {
+        count(&service.probes.launches)
+    }
+
+    /// The plain fixture with a sign-in flow: `flag` says the user got past
+    /// the login screen, and `confirm` is whatever the test needs.
+    fn setup_service(live_root: &Path, confirm: &str) -> DescriptorService {
+        let live = live_root.display().to_string().replace('\\', "/");
+        let json = fixture(live_root).replace(
+            r#""setup": { "missingSnapshotHint""#,
+            &format!(
+                r#""setup": {{
+                    "trigger": [{{ "kind": "pathNonEmpty", "path": "{live}/flag" }}],
+                    "confirm": [{confirm}],
+                    "missingSnapshotHint""#
+            ),
+        );
+        DescriptorService::new(
+            Descriptor::parse("test", &json).unwrap(),
+            DescriptorOrigin::Embedded,
+        )
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn switching_to_an_account_with_no_snapshot_changes_nothing() {
+        // The launcher used to be closed and the marker cleared before the
+        // missing snapshot was noticed, so the next switch captured nobody.
+        let _config = config_guard();
+        let root = scratch("switch-no-snapshot");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = service(&live);
+
+        seed_live_session(&live, b"account-one");
+        service.save_snapshot(&ctx, "aaaa1111").unwrap();
+        config_bridge::set_current_account(&ctx, "gog", "aaaa1111").unwrap();
+
+        let err = service.switch(&ctx, "bbbb2222").unwrap_err();
+        assert!(err.starts_with("No auth snapshot found"), "{err}");
+        assert_eq!(
+            config_bridge::current_account(&ctx, "gog").as_deref(),
+            Some("aaaa1111")
+        );
+        assert_eq!(launches(&service), 0);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_switch_that_fails_after_closing_the_launcher_starts_it_again() {
+        let _config = config_guard();
+        let root = scratch("switch-relaunch");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = service(&live);
+
+        seed_live_session(&live, b"account-two");
+        service.save_snapshot(&ctx, "bbbb2222").unwrap();
+        let snapshot = service.snapshot_root(&ctx, "bbbb2222").unwrap();
+        fs::write(
+            snapshot.join("session.json"),
+            [crate::snapshot_crypto::ENCRYPTED_HEADER, b"garbage"].concat(),
+        )
+        .unwrap();
+        seed_live_session(&live, b"account-one");
+        service.save_snapshot(&ctx, "aaaa1111").unwrap();
+        config_bridge::set_current_account(&ctx, "gog", "aaaa1111").unwrap();
+
+        assert!(service.switch(&ctx, "bbbb2222").is_err());
+        assert_eq!(launches(&service), 1);
+        assert_eq!(fs::read(live.join("session.json")).unwrap(), b"account-one");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_sign_in_that_does_not_confirm_starts_the_launcher_again() {
+        let _config = config_guard();
+        let root = scratch("setup-confirm-fails");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let never = live.display().to_string().replace('\\', "/") + "/never";
+        let service = setup_service(
+            &live,
+            &format!(r#"{{ "kind": "pathNonEmpty", "path": "{never}" }}"#),
+        );
+
+        let status = service.begin(&ctx).unwrap();
+        let launched = launches(&service);
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("flag"), b"x").unwrap();
+
+        let polled = service.setup_status(&ctx, &status.setup_id).unwrap();
+        assert_eq!(polled.state, "waiting_for_login");
+        assert_eq!(launches(&service), launched + 1);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_empty_capture_leaves_no_snapshot_for_the_id_it_minted() {
+        // Every rejected poll minted a fresh id and left its folder behind.
+        let _config = config_guard();
+        let root = scratch("setup-empty-capture");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = setup_service(&live, "");
+
+        let status = service.begin(&ctx).unwrap();
+        let launched = launches(&service);
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("flag"), b"x").unwrap();
+
+        let polled = service.setup_status(&ctx, &status.setup_id).unwrap();
+        assert_eq!(polled.state, "waiting_for_login");
+        assert_eq!(launches(&service), launched + 1);
+        let snapshots = crate::storage::platform_snapshots_dir(&ctx, "gog").unwrap();
+        let left: Vec<_> = fs::read_dir(&snapshots)
+            .map(|entries| entries.flatten().map(|e| e.file_name()).collect())
+            .unwrap_or_default();
+        assert!(left.is_empty(), "{left:?}");
         let _ = fs::remove_dir_all(&root);
     }
 
