@@ -931,8 +931,60 @@ impl DescriptorService {
             // account was signed in beats replacing it with an empty one.
             return Ok(());
         }
-        let _ = config_bridge::touch_account(app, &self.descriptor.id, &current_id, now_unix_ms());
-        self.save_snapshot(app, &current_id)
+        let Some(target) = self.capture_target(app, current_id) else {
+            return Ok(());
+        };
+        let _ = config_bridge::touch_account(app, &self.descriptor.id, &target, now_unix_ms());
+        self.save_snapshot(app, &target)
+    }
+
+    /// Which account's snapshot the live session goes into, `None` to skip
+    /// the capture.
+    ///
+    /// A platform tracked through the config only knows which account we
+    /// last put in place. When the launcher can also say who is signed in and
+    /// names someone else, the user switched inside the launcher: capturing
+    /// under the marker would overwrite that account's snapshot with another
+    /// account's session. The session goes to the account it belongs to when
+    /// that one is tracked, and nowhere otherwise.
+    fn capture_target(&self, app: &dyn AppContext, marker: String) -> Option<String> {
+        let Ok(runtime) = self.runtime(app) else {
+            return Some(marker);
+        };
+        let identity = &runtime.profile.identity;
+        if identity.current != CurrentSource::Config
+            || matches!(identity.source, IdentitySource::Synthetic)
+        {
+            return Some(marker);
+        }
+        let Some(live) = self.read_identity_in(&runtime) else {
+            return Some(marker);
+        };
+        if live == marker {
+            return Some(marker);
+        }
+        let source = format!("{}.capture", self.descriptor.id);
+        let details = format!("marker={}; live={}", redact_id(&marker), redact_id(&live));
+        let tracked = config_bridge::accounts(app, &self.descriptor.id)
+            .iter()
+            .any(|account| self.normalise_id(&account.account_id) == live);
+        if tracked {
+            log_platform_info(
+                app,
+                &source,
+                "Live session belongs to another tracked account, captured there",
+                details,
+            );
+            Some(live)
+        } else {
+            log_platform_info(
+                app,
+                &source,
+                "Live session belongs to an untracked account, capture skipped",
+                details,
+            );
+            None
+        }
     }
 
     /// Whether the descriptor's own gate on capturing is satisfied.
@@ -3444,6 +3496,43 @@ mod tests {
         fs::create_dir_all(live.join("Local Storage").join("leveldb")).unwrap();
         service.capture_current_account(&ctx).unwrap();
         assert!(snapshot.join("local_storage_leveldb").join("kept").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_session_switched_inside_the_launcher_never_overwrites_the_marker_snapshot() {
+        // The launcher's own switcher moves the live session without telling
+        // us, so the marker can name an account that is no longer signed in.
+        const OTHER: &str = "876543210987654321";
+        let _config = config_guard();
+        let root = scratch("hook-marker-drift");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = hook_service(&live);
+
+        seed_store(&live, SNOWFLAKE, None);
+        service.save_snapshot(&ctx, SNOWFLAKE).unwrap();
+        config_bridge::touch_account(&ctx, "discord", SNOWFLAKE, 1).unwrap();
+        config_bridge::set_current_account(&ctx, "discord", SNOWFLAKE).unwrap();
+        let kept = service
+            .snapshot_root(&ctx, SNOWFLAKE)
+            .unwrap()
+            .join("local_storage_leveldb")
+            .join("000003.log");
+        let before = fs::read(&kept).unwrap();
+
+        // An account accshift does not track: nothing is captured at all.
+        seed_store(&live, OTHER, None);
+        service.capture_current_account(&ctx).unwrap();
+        assert_eq!(fs::read(&kept).unwrap(), before);
+        assert!(!service.snapshot_root(&ctx, OTHER).unwrap().exists());
+
+        // A tracked one: the session is captured where it belongs.
+        config_bridge::touch_account(&ctx, "discord", OTHER, 2).unwrap();
+        service.capture_current_account(&ctx).unwrap();
+        assert_eq!(fs::read(&kept).unwrap(), before);
+        assert!(service.has_snapshot(&ctx, OTHER));
         let _ = fs::remove_dir_all(&root);
     }
 
