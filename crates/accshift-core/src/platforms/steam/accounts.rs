@@ -732,23 +732,42 @@ pub fn add_account(
 }
 
 pub fn forget_account(steam_path: &Path, steam_id: &str) -> Result<(), AppError> {
+    forget_account_with(steam_path, steam_id, || stop_steam(steam_path, false))
+}
+
+/// `forget_account` with the Steam stop injected, so the read/stop/write order
+/// can be tested without a real client.
+fn forget_account_with(
+    steam_path: &Path,
+    steam_id: &str,
+    stop: impl FnOnce() -> Result<StopOutcome, AppError>,
+) -> Result<(), AppError> {
     // Remove account entry from loginusers.vdf.
     let loginusers_path = steam_path.join("config").join("loginusers.vdf");
-    if loginusers_path.exists() {
-        let content =
-            fs::read_to_string(&loginusers_path).map_err(|e| AppError::FileRead(e.to_string()))?;
-        let (updated, removed) = remove_loginuser_entry(&content, steam_id);
-        if removed {
-            // Steam keeps loginusers.vdf in memory and rewrites it on exit.
-            // Editing it while Steam runs silently resurrects the entry. Stop
-            // Steam first (graceful, then kill); it stays closed afterwards.
-            match stop_steam(steam_path, false)? {
-                StopOutcome::NeedsElevation => return Err(AppError::SteamElevated),
-                StopOutcome::NotRunning | StopOutcome::Stopped => {}
-            }
-            crate::storage::write_bytes_atomic(&loginusers_path, updated.as_bytes())
-                .map_err(AppError::FileRead)?;
-        }
+    if !loginusers_path.exists() {
+        return Ok(());
+    }
+    let read =
+        || fs::read_to_string(&loginusers_path).map_err(|e| AppError::FileRead(e.to_string()));
+    // This first read only decides whether Steam has to be stopped at all.
+    if !remove_loginuser_entry(&read()?, steam_id).1 {
+        return Ok(());
+    }
+
+    // Steam keeps loginusers.vdf in memory and rewrites it on exit. Editing it
+    // while Steam runs silently resurrects the entry. Stop Steam first
+    // (graceful, then kill); it stays closed afterwards.
+    match stop()? {
+        StopOutcome::NeedsElevation => return Err(AppError::SteamElevated),
+        StopOutcome::NotRunning | StopOutcome::Stopped => {}
+    }
+
+    // Read again: what Steam flushed while it shut down (MostRecent,
+    // timestamps, an account added this session) must survive the edit.
+    let (updated, removed) = remove_loginuser_entry(&read()?, steam_id);
+    if removed {
+        crate::storage::write_bytes_atomic(&loginusers_path, updated.as_bytes())
+            .map_err(AppError::FileRead)?;
     }
 
     Ok(())
@@ -914,7 +933,8 @@ pub fn clear_integrated_browser_cache() -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        copy_game_settings, parse_launch_options, remove_loginuser_entry, steam_id_to_account_id,
+        copy_game_settings, forget_account_with, parse_launch_options, remove_loginuser_entry,
+        steam_id_to_account_id,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -1221,6 +1241,105 @@ mod tests {
             .join("2")
             .join(".730.copy-backup")
             .exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // -----------------------------------------------------------------------
+    // forget_account (stop Steam before reading loginusers.vdf)
+    // -----------------------------------------------------------------------
+
+    const FORGET_BEFORE_EXIT: &str = "\"users\"\n\
+{\n\
+\t\"111\"\n\
+\t{\n\
+\t\t\"AccountName\"\t\"first\"\n\
+\t\t\"MostRecent\"\t\"1\"\n\
+\t}\n\
+\t\"222\"\n\
+\t{\n\
+\t\t\"AccountName\"\t\"second\"\n\
+\t\t\"MostRecent\"\t\"0\"\n\
+\t}\n\
+}\n";
+
+    // What Steam writes while it shuts down: the user signed in a third
+    // account during the session and "222" became the most recent one.
+    const FORGET_AFTER_EXIT: &str = "\"users\"\n\
+{\n\
+\t\"111\"\n\
+\t{\n\
+\t\t\"AccountName\"\t\"first\"\n\
+\t\t\"MostRecent\"\t\"0\"\n\
+\t}\n\
+\t\"222\"\n\
+\t{\n\
+\t\t\"AccountName\"\t\"second\"\n\
+\t\t\"MostRecent\"\t\"1\"\n\
+\t}\n\
+\t\"333\"\n\
+\t{\n\
+\t\t\"AccountName\"\t\"third\"\n\
+\t\t\"MostRecent\"\t\"0\"\n\
+\t}\n\
+}\n";
+
+    #[test]
+    fn forget_account_keeps_what_steam_flushed_on_exit() {
+        let root = copy_test_root("forget-flush");
+        let path = root.join("config").join("loginusers.vdf");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, FORGET_BEFORE_EXIT).unwrap();
+
+        let flush_path = path.clone();
+        forget_account_with(&root, "111", move || {
+            fs::write(&flush_path, FORGET_AFTER_EXIT).unwrap();
+            Ok(super::StopOutcome::Stopped)
+        })
+        .unwrap();
+
+        let out = fs::read_to_string(&path).unwrap();
+        assert!(!out.contains("\"111\""), "{out}");
+        assert!(
+            out.contains("\"333\""),
+            "the flushed account was lost: {out}"
+        );
+        assert!(
+            out.contains("\"second\"\n\t\t\"MostRecent\"\t\"1\""),
+            "the flushed MostRecent was reverted: {out}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn forget_account_does_not_stop_steam_for_an_unknown_account() {
+        let root = copy_test_root("forget-unknown");
+        let path = root.join("config").join("loginusers.vdf");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, FORGET_BEFORE_EXIT).unwrap();
+
+        let mut stopped = false;
+        forget_account_with(&root, "999", || {
+            stopped = true;
+            Ok(super::StopOutcome::Stopped)
+        })
+        .unwrap();
+
+        assert!(!stopped);
+        assert_eq!(fs::read_to_string(&path).unwrap(), FORGET_BEFORE_EXIT);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn forget_account_refuses_an_elevated_steam_without_writing() {
+        let root = copy_test_root("forget-elevated");
+        let path = root.join("config").join("loginusers.vdf");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, FORGET_BEFORE_EXIT).unwrap();
+
+        let result = forget_account_with(&root, "111", || Ok(super::StopOutcome::NeedsElevation));
+
+        assert!(matches!(result, Err(crate::error::AppError::SteamElevated)));
+        assert_eq!(fs::read_to_string(&path).unwrap(), FORGET_BEFORE_EXIT);
         let _ = fs::remove_dir_all(&root);
     }
 
