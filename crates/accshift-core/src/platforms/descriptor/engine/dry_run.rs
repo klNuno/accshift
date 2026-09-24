@@ -1,5 +1,6 @@
 //! Dry-run plans: what a switch or a setup would touch.
 
+#[allow(unused_imports)]
 use super::*;
 
 impl DescriptorService {

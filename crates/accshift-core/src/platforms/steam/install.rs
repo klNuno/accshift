@@ -1,5 +1,6 @@
 //! Where Steam is installed: detection, the user's override and folder checks.
 
+#[allow(unused_imports)]
 use super::*;
 
 /// What a candidate folder looks like from Steam's point of view.

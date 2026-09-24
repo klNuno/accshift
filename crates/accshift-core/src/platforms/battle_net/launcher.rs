@@ -1,5 +1,6 @@
 //! Finding, launching and stopping the Battle.net launcher.
 
+#[allow(unused_imports)]
 use super::*;
 
 pub(super) fn is_battle_net_running() -> bool {

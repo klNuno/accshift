@@ -1,5 +1,6 @@
 //! Profile list helpers: visibility, labels, current profile and state updates.
 
+#[allow(unused_imports)]
 use super::*;
 
 pub(super) fn next_profile_label(profiles: &[RiotProfileConfig]) -> String {

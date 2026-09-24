@@ -1,5 +1,6 @@
 //! File system probes: log tails, freshness and content checks.
 
+#[allow(unused_imports)]
 use super::*;
 
 /// Reads the last `tail_bytes` of a file the launcher keeps open.

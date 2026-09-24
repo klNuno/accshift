@@ -52,7 +52,9 @@ mod reads;
 mod restore;
 mod snapshot;
 
+#[allow(unused_imports)]
 use self::fs_probe::*;
+#[allow(unused_imports)]
 use self::restore::*;
 
 /// Where a descriptor came from. Shipped descriptors are read-only; a user

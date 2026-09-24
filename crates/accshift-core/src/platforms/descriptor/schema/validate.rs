@@ -1,5 +1,6 @@
 //! Load-time validation: every rule a descriptor must pass before the engine runs it.
 
+#[allow(unused_imports)]
 use super::*;
 
 impl Descriptor {

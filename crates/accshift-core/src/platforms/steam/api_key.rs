@@ -1,5 +1,6 @@
 //! The Steam Web API key: encrypted at rest, rotated without leaving stale secrets.
 
+#[allow(unused_imports)]
 use super::*;
 
 pub(super) fn encrypt_api_key(api_key: &str) -> Result<String, String> {

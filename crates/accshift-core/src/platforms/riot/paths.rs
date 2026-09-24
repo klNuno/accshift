@@ -1,5 +1,6 @@
 //! Where the Riot client and accshift's profile snapshots live on disk.
 
+#[allow(unused_imports)]
 use super::*;
 
 pub(super) fn detect_installation_path_from_installs() -> Option<String> {

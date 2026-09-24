@@ -1,5 +1,6 @@
 //! Saved window size and position, in logical pixels.
 
+#[allow(unused_imports)]
 use super::*;
 
 /// Turn a physical-pixel measurement into the logical pixels this config

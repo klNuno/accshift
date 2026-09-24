@@ -1,5 +1,6 @@
 //! The portable and local halves of the config: what each file holds and how they merge.
 
+#[allow(unused_imports)]
 use super::*;
 
 pub(super) fn portable_config(config: &AppConfig) -> AppConfig {

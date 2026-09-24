@@ -1,5 +1,6 @@
 //! The on-disk shape: raw serde types, default checks and normalisation into `AppConfig`.
 
+#[allow(unused_imports)]
 use super::*;
 
 #[derive(Debug, Serialize, Deserialize, Default)]

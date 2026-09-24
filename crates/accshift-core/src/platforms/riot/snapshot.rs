@@ -1,5 +1,6 @@
 //! Encrypted profile snapshots: capture, atomic swap and restore of the live session.
 
+#[allow(unused_imports)]
 use super::*;
 
 /// Riot's directory snapshots keep their historical behavior: symlinks are

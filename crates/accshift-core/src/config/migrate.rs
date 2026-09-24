@@ -1,5 +1,6 @@
 //! The legacy single-file config and its one-time migration.
 
+#[allow(unused_imports)]
 use super::*;
 
 /// Check for a legacy config.json, migrate it to portable+local, and delete it.

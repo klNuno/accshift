@@ -1,5 +1,6 @@
 //! The signed-in BattleTag, read from the launcher's logs and cache.
 
+#[allow(unused_imports)]
 use super::*;
 
 #[cfg(windows)]

@@ -1,5 +1,6 @@
 //! Loading and saving the config: the read cache, the unreadable-file guard and write locks.
 
+#[allow(unused_imports)]
 use super::*;
 
 pub(super) type FileSig = Option<(std::time::SystemTime, u64)>;

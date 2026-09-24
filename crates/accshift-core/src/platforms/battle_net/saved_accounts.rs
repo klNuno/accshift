@@ -1,5 +1,6 @@
 //! The launcher's saved account list in Battle.net.config: read, parse and write.
 
+#[allow(unused_imports)]
 use super::*;
 
 #[cfg(windows)]

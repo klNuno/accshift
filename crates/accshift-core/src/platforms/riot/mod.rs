@@ -26,14 +26,23 @@ mod snapshot;
 mod switch;
 mod yaml;
 
+#[allow(unused_imports)]
 use self::identity::*;
+#[allow(unused_imports)]
 use self::local_api::*;
+#[allow(unused_imports)]
 use self::paths::*;
+#[allow(unused_imports)]
 use self::process::*;
+#[allow(unused_imports)]
 use self::profiles::*;
+#[allow(unused_imports)]
 use self::rollback::*;
+#[allow(unused_imports)]
 use self::setup::*;
+#[allow(unused_imports)]
 use self::snapshot::*;
+#[allow(unused_imports)]
 use self::yaml::*;
 
 pub use self::rollback::{sweep_rollback_dirs, RollbackSweepStats};

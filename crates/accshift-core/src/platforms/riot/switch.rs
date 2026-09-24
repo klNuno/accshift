@@ -1,5 +1,6 @@
 //! Switching the live Riot session to a saved profile.
 
+#[allow(unused_imports)]
 use super::*;
 
 pub fn switch_profile(app_handle: AppCtx, profile_id: String) -> Result<(), String> {

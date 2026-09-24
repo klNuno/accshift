@@ -1,5 +1,6 @@
 //! Adding a Steam account: setup jobs, the login launch and cancel.
 
+#[allow(unused_imports)]
 use super::*;
 
 pub(super) const STEAM_SETUP_TTL_MS: u64 = 5 * 60 * 1000;

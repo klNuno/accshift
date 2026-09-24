@@ -1,5 +1,6 @@
 //! The apply phase of a restore: steps, the undo journal and rollback.
 
+#[allow(unused_imports)]
 use super::*;
 
 /// One change a restore makes to the live state, decided and staged before

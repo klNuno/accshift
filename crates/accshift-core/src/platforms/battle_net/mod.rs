@@ -24,9 +24,13 @@ mod saved_accounts;
 mod setup;
 mod tag_cache;
 
+#[allow(unused_imports)]
 use self::accounts::*;
+#[allow(unused_imports)]
 use self::launcher::*;
+#[allow(unused_imports)]
 use self::saved_accounts::*;
+#[allow(unused_imports)]
 use self::tag_cache::*;
 
 pub use self::setup::{begin_account_setup, cancel_account_setup, get_account_setup_status};

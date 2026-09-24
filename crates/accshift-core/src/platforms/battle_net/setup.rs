@@ -1,5 +1,6 @@
 //! Adding a Battle.net account: setup jobs, their status polls and cancel.
 
+#[allow(unused_imports)]
 use super::*;
 
 #[derive(Clone)]

@@ -1,5 +1,6 @@
 //! Finding the launcher's executable on disk.
 
+#[allow(unused_imports)]
 use super::*;
 
 impl DescriptorService {

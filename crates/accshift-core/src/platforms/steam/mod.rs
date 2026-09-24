@@ -17,7 +17,9 @@ mod api_key;
 mod install;
 mod setup;
 
+#[allow(unused_imports)]
 use self::api_key::*;
+#[allow(unused_imports)]
 use self::install::*;
 #[cfg(test)]
 use self::setup::*;

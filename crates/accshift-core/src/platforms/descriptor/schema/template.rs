@@ -1,5 +1,6 @@
 //! Path templates: `${placeholder}` text resolved against roots at runtime.
 
+#[allow(unused_imports)]
 use super::*;
 
 /// A location written with `${...}` placeholders, resolved at run time.

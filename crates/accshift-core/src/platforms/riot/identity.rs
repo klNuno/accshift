@@ -1,5 +1,6 @@
 //! Account identity: aliases, labels and the live identity cross-check.
 
+#[allow(unused_imports)]
 use super::*;
 
 pub(super) fn trim_or_empty(value: &str) -> String {

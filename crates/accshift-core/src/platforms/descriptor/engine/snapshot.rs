@@ -1,5 +1,6 @@
 //! Per-account snapshots: capture, restore staging and markers.
 
+#[allow(unused_imports)]
 use super::*;
 
 impl DescriptorService {

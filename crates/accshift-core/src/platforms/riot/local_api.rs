@@ -1,5 +1,6 @@
 //! The Riot client's local API: lockfile access, login state and live identity.
 
+#[allow(unused_imports)]
 use super::*;
 
 pub(super) fn riot_lockfile_path() -> Result<PathBuf, String> {

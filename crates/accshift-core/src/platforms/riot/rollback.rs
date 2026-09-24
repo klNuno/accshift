@@ -1,5 +1,6 @@
 //! Rollback copies of the live session taken before a restore, and their sweep.
 
+#[allow(unused_imports)]
 use super::*;
 
 /// Copy every live Riot item into a fresh rollback directory so a failure

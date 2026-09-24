@@ -1,5 +1,6 @@
 //! Read paths: the account list and the startup snapshot.
 
+#[allow(unused_imports)]
 use super::*;
 
 impl DescriptorService {

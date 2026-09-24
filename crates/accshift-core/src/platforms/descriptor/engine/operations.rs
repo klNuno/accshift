@@ -1,5 +1,6 @@
 //! Operations that change state: switch, setup, forget.
 
+#[allow(unused_imports)]
 use super::*;
 
 impl DescriptorService {

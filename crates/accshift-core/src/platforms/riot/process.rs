@@ -1,5 +1,6 @@
 //! Riot client and game processes: detection, graceful quit, kill, launch.
 
+#[allow(unused_imports)]
 use super::*;
 
 pub(super) fn env_path(name: &str) -> Result<PathBuf, String> {

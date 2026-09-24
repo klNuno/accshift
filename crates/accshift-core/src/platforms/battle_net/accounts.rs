@@ -1,5 +1,6 @@
 //! Account listing and metadata: known emails, display names and usage.
 
+#[allow(unused_imports)]
 use super::*;
 
 pub(super) fn battle_net_display_name(email: &str) -> String {

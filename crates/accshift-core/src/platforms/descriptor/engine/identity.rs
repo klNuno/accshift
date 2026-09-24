@@ -1,5 +1,6 @@
 //! Account ids: discovery, the live identity and its sources.
 
+#[allow(unused_imports)]
 use super::*;
 
 impl DescriptorService {

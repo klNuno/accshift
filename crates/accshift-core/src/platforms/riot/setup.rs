@@ -1,5 +1,6 @@
 //! Adding a Riot profile: the setup launch state machine, polling and expiry.
 
+#[allow(unused_imports)]
 use super::*;
 
 /// Where the detached setup launch of a profile stands. Kept in memory: a

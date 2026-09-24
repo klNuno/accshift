@@ -9,8 +9,11 @@ mod split;
 mod store;
 mod window;
 
+#[allow(unused_imports)]
 use self::migrate::*;
+#[allow(unused_imports)]
 use self::raw::*;
+#[allow(unused_imports)]
 use self::split::*;
 #[cfg(test)]
 use self::store::*;

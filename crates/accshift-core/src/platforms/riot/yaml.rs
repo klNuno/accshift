@@ -1,5 +1,6 @@
 //! Reading the client's settings file for a persisted login.
 
+#[allow(unused_imports)]
 use super::*;
 
 pub(super) fn riot_settings_file_ready(install_dir: Option<&Path>) -> Result<bool, String> {
