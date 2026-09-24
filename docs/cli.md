@@ -23,7 +23,9 @@ for example into `/usr/local/bin`. A standalone
 `accshift-cli_<version>_macos_aarch64` binary is also on Releases.
 
 Building from source (`pnpm tauri build`) produces the binary at
-`target/release/accshift`, or `accshift.exe` on Windows.
+`<target-directory>/release/accshift`, or `accshift.exe` on Windows. The target
+directory defaults to `target/`; Cargo configuration or `CARGO_TARGET_DIR` can
+override it.
 
 ## Commands
 
@@ -38,12 +40,20 @@ accshift switch <platform> <account-id>
     [--launch-options "..."]
 accshift dry-run <platform> <account-id>
 accshift descriptors             # what the user descriptor folder holds
-accshift diag <action>           # logs, explain, check, level, bundle, schema
+accshift diag check              # check local health invariants
+accshift diag logs --since 30m    # inspect recent log records
+accshift diag bundle             # write a local diagnostic report
 ```
 
 Every one of these needs the "Allow the accshift CLI" toggle in the app
 (Settings > General > Integrations). With it off they all exit 7 and do
 nothing, `diag` included.
+
+`--folder` matches a name within the selected platform, without case
+sensitivity, and includes accounts in nested folders. Duplicate names are
+ambiguous and cause an error. Folder IDs and paths are not accepted.
+
+The full `diag` command reference is in [logging.md](./logging.md).
 
 `--graceful` asks the launcher to close itself and waits for it, which is what
 you want by default because a launcher killed mid-write can corrupt its own
@@ -155,10 +165,11 @@ Code 4 is retryable: the GUI and the CLI share one config, so a mutating
 operation takes an exclusive lock and a second one waits rather than corrupting
 it. Retry once the other instance finishes.
 
-Codes 6 and 7 are deliberate refusals, not failures. The CLI can switch
-accounts and reach session material, so it honours the PIN lock set in the app
-and can be turned off entirely from Settings. An automated pipeline that starts
-returning 7 has not broken, it has been switched off on purpose. What the PIN
+Codes 6 and 7 are deliberate refusals, not failures. `list`, `switch` and
+`dry-run` respect the "Allow the accshift CLI" setting. `platforms`,
+`descriptors` and `diag` remain available when that setting is off. Switching
+also checks the PIN lock configured in the app. An automated pipeline that
+starts returning 7 has been disabled through that setting. What the PIN
 lock does and does not protect is covered in the
 [security policy](../.github/SECURITY.md).
 

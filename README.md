@@ -90,7 +90,8 @@ Grab the build for your OS from [Releases](https://github.com/klNuno/accshift/re
 
 ## Privacy
 
-**Accshift stores no passwords nor sensitive cookies.**
+Accshift never asks for or stores your passwords. It saves the session state
+needed to restore your accounts, including session cookies where required.
 
 Tokens and session snapshots are encrypted at rest on your machine with
 OS-backed protections: DPAPI on Windows, Secret Service on Linux, Keychain on
