@@ -69,6 +69,14 @@ struct DescriptorStartupSnapshot {
     current_account: String,
 }
 
+/// Where the first half of a setup flow left off.
+enum BeginOutcome {
+    /// The signed-in session was adopted: nothing left to do.
+    Adopted(SetupStatus),
+    /// The live session is cleared and a job registered under this id.
+    AwaitSignIn(String),
+}
+
 /// Setup jobs remember which accounts existed when the flow started, so a
 /// "new" account can be told from the one already signed in.
 #[derive(Clone, Default)]
@@ -85,6 +93,10 @@ pub struct DescriptorService {
     /// Overrides the environment templates resolve against. Used by tests and
     /// by a dry run asked to reason about a machine other than this one.
     env_override: Option<Vec<(String, String)>>,
+    /// How many times the engine asked for the launcher to start. Tests
+    /// declare no launch step, so this is the only trace a start leaves.
+    #[cfg(test)]
+    launches: std::sync::atomic::AtomicUsize,
 }
 
 impl DescriptorService {
@@ -99,6 +111,8 @@ impl DescriptorService {
             origin,
             jobs: SetupJobs::new(label, DEFAULT_SETUP_TTL_MS),
             env_override: None,
+            #[cfg(test)]
+            launches: Default::default(),
         }
     }
 
@@ -230,6 +244,9 @@ impl DescriptorService {
     }
 
     fn launch(&self, app: &dyn AppContext) -> Result<(), String> {
+        #[cfg(test)]
+        self.launches
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let profile = self.profile()?;
         let Some(launch) = profile.launch.as_ref() else {
             return Ok(());
@@ -1019,11 +1036,56 @@ impl DescriptorService {
             format!("target={}", redact_id(&account_id)),
         );
 
+        // Nothing is closed and no marker touched until the target is known
+        // to be restorable: failing later leaves the launcher closed and, on
+        // a platform we track ourselves, nobody recorded as signed in.
+        {
+            let runtime = self.runtime(app)?;
+            self.require_snapshot(app, &runtime, &account_id)?;
+        }
+
+        let mut closed = false;
+        let result = match self.switch_steps(app, &account_id, &mut closed) {
+            Ok(()) => self.launch(app),
+            Err(error) => {
+                if closed {
+                    self.relaunch_after_failure(app, &source);
+                }
+                Err(error)
+            }
+        };
+        match &result {
+            Ok(()) => log_platform_info(
+                app,
+                &source,
+                &format!("{} switch completed", self.descriptor.short_name),
+                format!("target={}", redact_id(&account_id)),
+            ),
+            Err(error) => log_platform_error(
+                app,
+                &source,
+                &format!("{} switch failed", self.descriptor.short_name),
+                format!("target={}; error={error}", redact_id(&account_id)),
+            ),
+        }
+        result
+    }
+
+    /// Everything a switch does between closing the launcher and starting
+    /// it again. `closed` records whether the launcher was closed, so the
+    /// caller knows to start it again when a later step fails.
+    fn switch_steps(
+        &self,
+        app: &dyn AppContext,
+        account_id: &str,
+        closed: &mut bool,
+    ) -> Result<(), String> {
         let close_first = self.closes_before_capture();
         if close_first {
             // This client holds its session in memory and writes it out as it
             // exits, so capturing it while it runs would store nothing.
             self.quit_and_wait();
+            *closed = true;
         }
 
         // Snapshot the outgoing account first. Aborting here is the point:
@@ -1043,30 +1105,32 @@ impl DescriptorService {
 
         if !close_first {
             self.quit_and_wait();
+            *closed = true;
         }
-        self.restore_snapshot(app, &account_id)?;
+        self.restore_snapshot(app, account_id)?;
         self.clear_caches(app);
-        config_bridge::touch_account(app, &self.descriptor.id, &account_id, now_unix_ms())?;
+        config_bridge::touch_account(app, &self.descriptor.id, account_id, now_unix_ms())?;
         if uses_config_marker {
-            config_bridge::set_current_account(app, &self.descriptor.id, &account_id)?;
+            config_bridge::set_current_account(app, &self.descriptor.id, account_id)?;
         }
+        Ok(())
+    }
 
-        let result = self.launch(app);
-        match &result {
-            Ok(()) => log_platform_info(
+    /// Starts the launcher again after an operation closed it and then
+    /// failed, so the user is not left without it. The operation's own error
+    /// is the one reported; a failed start is only logged.
+    fn relaunch_after_failure(&self, app: &dyn AppContext, source: &str) {
+        if let Err(error) = self.launch(app) {
+            log_platform_error(
                 app,
-                &source,
-                &format!("{} switch completed", self.descriptor.short_name),
-                format!("target={}", redact_id(&account_id)),
-            ),
-            Err(error) => log_platform_error(
-                app,
-                &source,
-                &format!("{} switch failed", self.descriptor.short_name),
-                format!("target={}; error={error}", redact_id(&account_id)),
-            ),
+                source,
+                &format!(
+                    "{} relaunch after a failure failed",
+                    self.descriptor.short_name
+                ),
+                error,
+            );
         }
-        result
     }
 
     fn begin(&self, app: &dyn AppContext) -> Result<SetupStatus, String> {
@@ -1078,54 +1142,17 @@ impl DescriptorService {
             "",
         );
 
-        let was_running = self.is_running();
-        let close_first = self.closes_before_capture();
-        if close_first {
-            self.quit_and_wait();
-        }
-
-        // Everything that already exists, so the flow can tell the account the
-        // user is about to add from the ones that were there before.
-        let runtime = self.runtime(app)?;
-        let stored: HashSet<String> = config_bridge::accounts(app, &self.descriptor.id)
-            .iter()
-            .map(|account| self.normalise_id(&account.account_id))
-            .filter(|id| !id.is_empty())
-            .collect();
-        let live = self.read_identity_detail(&runtime);
-        let mut known: HashSet<String> = self.discovered_ids(app, &runtime).into_iter().collect();
-        known.extend(live.as_ref().map(|found| found.id.clone()));
-        known.extend(stored.iter().cloned());
-
-        if runtime.profile.setup.adopt_signed_in {
-            if let Some(status) = self.try_adopt(app, live, &stored, was_running)? {
-                return Ok(status);
+        let mut closed = false;
+        let setup_id = match self.begin_steps(app, &mut closed) {
+            Ok(BeginOutcome::Adopted(status)) => return Ok(status),
+            Ok(BeginOutcome::AwaitSignIn(setup_id)) => setup_id,
+            Err(error) => {
+                if closed {
+                    self.relaunch_after_failure(app, &source);
+                }
+                return Err(error);
             }
-        }
-
-        self.capture_current_account(app)?;
-
-        let setup_id = format!("{}-setup-{}", self.descriptor.id, Uuid::new_v4());
-        self.jobs.insert(
-            setup_id.clone(),
-            SetupJob {
-                known_account_ids: known,
-                started_at: now_unix_ms(),
-            },
-        )?;
-
-        if !close_first {
-            self.quit_and_wait();
-        }
-        self.clear_live_state(app)?;
-        if self
-            .profile()
-            .map(|p| p.identity.current == CurrentSource::Config)
-            .unwrap_or(false)
-        {
-            // Nobody is signed in until the flow completes.
-            config_bridge::set_current_account(app, &self.descriptor.id, "")?;
-        }
+        };
 
         self.launch(app).inspect_err(|e| {
             log_platform_error(
@@ -1143,6 +1170,62 @@ impl DescriptorService {
             "",
             "",
         ))
+    }
+
+    /// Everything a setup does before the launcher is started on the login
+    /// screen. `closed` works as in [`Self::switch_steps`].
+    fn begin_steps(&self, app: &dyn AppContext, closed: &mut bool) -> Result<BeginOutcome, String> {
+        let was_running = self.is_running();
+        let close_first = self.closes_before_capture();
+        if close_first {
+            self.quit_and_wait();
+            *closed = true;
+        }
+
+        // Everything that already exists, so the flow can tell the account the
+        // user is about to add from the ones that were there before.
+        let runtime = self.runtime(app)?;
+        let stored: HashSet<String> = config_bridge::accounts(app, &self.descriptor.id)
+            .iter()
+            .map(|account| self.normalise_id(&account.account_id))
+            .filter(|id| !id.is_empty())
+            .collect();
+        let live = self.read_identity_detail(&runtime);
+        let mut known: HashSet<String> = self.discovered_ids(app, &runtime).into_iter().collect();
+        known.extend(live.as_ref().map(|found| found.id.clone()));
+        known.extend(stored.iter().cloned());
+
+        if runtime.profile.setup.adopt_signed_in {
+            if let Some(status) = self.try_adopt(app, live, &stored, was_running)? {
+                return Ok(BeginOutcome::Adopted(status));
+            }
+        }
+
+        self.capture_current_account(app)?;
+
+        let setup_id = format!("{}-setup-{}", self.descriptor.id, Uuid::new_v4());
+        self.jobs.insert(
+            setup_id.clone(),
+            SetupJob {
+                known_account_ids: known,
+                started_at: now_unix_ms(),
+            },
+        )?;
+
+        if !close_first {
+            self.quit_and_wait();
+            *closed = true;
+        }
+        self.clear_live_state(app)?;
+        if self
+            .profile()
+            .map(|p| p.identity.current == CurrentSource::Config)
+            .unwrap_or(false)
+        {
+            // Nobody is signed in until the flow completes.
+            config_bridge::set_current_account(app, &self.descriptor.id, "")?;
+        }
+        Ok(BeginOutcome::AwaitSignIn(setup_id))
     }
 
     /// Takes the session that is already signed in as the account being added,
@@ -1280,33 +1363,52 @@ impl DescriptorService {
             // launcher may still hold the session in memory, so it is closed
             // and the conditions re-checked before anything is captured.
             self.quit_and_wait();
+            let source = format!("{}.get_setup_status", self.descriptor.id);
+            // Every way back to waiting starts the launcher again: the user
+            // cannot finish signing in with it closed.
+            let keep_waiting = || {
+                self.relaunch_after_failure(app, &source);
+                make_setup_status(setup_id, "waiting_for_login", "", "", "")
+            };
 
             let still_holds = setup
                 .confirm
                 .iter()
                 .all(|condition| self.condition_holds(&runtime, condition, input));
             if !still_holds {
-                return Ok(make_setup_status(setup_id, "waiting_for_login", "", "", ""));
+                return Ok(keep_waiting());
             }
 
-            let key = match &runtime.profile.identity.source {
-                IdentitySource::Synthetic => generate_account_id(),
-                _ => match new_identity {
+            let synthetic = matches!(runtime.profile.identity.source, IdentitySource::Synthetic);
+            let key = if synthetic {
+                generate_account_id()
+            } else {
+                match new_identity {
                     Some(id) => id,
                     // The confirm pass says a session exists but no id came
                     // with it: keep waiting rather than store an unnamed one.
-                    None => {
-                        return Ok(make_setup_status(setup_id, "waiting_for_login", "", "", ""))
-                    }
-                },
+                    None => return Ok(keep_waiting()),
+                }
             };
 
-            self.save_snapshot(app, &key)?;
+            // An id we minted names nothing once its capture is rejected, and
+            // each poll mints a new one: its folder goes with the rejection.
+            let reject = |key: &str| {
+                if synthetic {
+                    self.delete_snapshot(app, key);
+                }
+            };
+            if let Err(error) = self.save_snapshot(app, &key) {
+                reject(&key);
+                self.relaunch_after_failure(app, &source);
+                return Err(error);
+            }
             if self.declares_snapshot_marker() && !self.snapshot_has_content(app, &key) {
                 // The capture produced nothing worth restoring: the launcher
                 // was closed before it wrote the session. Keep waiting rather
                 // than hand back an account that restores to a login screen.
-                return Ok(make_setup_status(setup_id, "waiting_for_login", "", "", ""));
+                reject(&key);
+                return Ok(keep_waiting());
             }
             config_bridge::touch_account(app, &self.descriptor.id, &key, now_unix_ms())?;
             if runtime.profile.identity.current == CurrentSource::Config {
@@ -3550,6 +3652,134 @@ mod tests {
         );
         assert!(!live.join("auth.accshift-restore-tmp").exists());
         assert!(!live.join("session.json.accshift-restore-tmp").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // -----------------------------------------------------------------------
+    // Leaving the launcher running
+    // -----------------------------------------------------------------------
+
+    fn launches(service: &DescriptorService) -> usize {
+        service.launches.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The plain fixture with a sign-in flow: `flag` says the user got past
+    /// the login screen, and `confirm` is whatever the test needs.
+    fn setup_service(live_root: &Path, confirm: &str) -> DescriptorService {
+        let live = live_root.display().to_string().replace('\\', "/");
+        let json = fixture(live_root).replace(
+            r#""setup": { "missingSnapshotHint""#,
+            &format!(
+                r#""setup": {{
+                    "trigger": [{{ "kind": "pathNonEmpty", "path": "{live}/flag" }}],
+                    "confirm": [{confirm}],
+                    "missingSnapshotHint""#
+            ),
+        );
+        DescriptorService::new(
+            Descriptor::parse("test", &json).unwrap(),
+            DescriptorOrigin::Embedded,
+        )
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn switching_to_an_account_with_no_snapshot_changes_nothing() {
+        // The launcher used to be closed and the marker cleared before the
+        // missing snapshot was noticed, so the next switch captured nobody.
+        let _config = config_guard();
+        let root = scratch("switch-no-snapshot");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = service(&live);
+
+        seed_live_session(&live, b"account-one");
+        service.save_snapshot(&ctx, "aaaa1111").unwrap();
+        config_bridge::set_current_account(&ctx, "gog", "aaaa1111").unwrap();
+
+        let err = service.switch(&ctx, "bbbb2222").unwrap_err();
+        assert!(err.starts_with("No auth snapshot found"), "{err}");
+        assert_eq!(
+            config_bridge::current_account(&ctx, "gog").as_deref(),
+            Some("aaaa1111")
+        );
+        assert_eq!(launches(&service), 0);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_switch_that_fails_after_closing_the_launcher_starts_it_again() {
+        let _config = config_guard();
+        let root = scratch("switch-relaunch");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = service(&live);
+
+        seed_live_session(&live, b"account-two");
+        service.save_snapshot(&ctx, "bbbb2222").unwrap();
+        let snapshot = service.snapshot_root(&ctx, "bbbb2222").unwrap();
+        fs::write(
+            snapshot.join("session.json"),
+            [crate::snapshot_crypto::ENCRYPTED_HEADER, b"garbage"].concat(),
+        )
+        .unwrap();
+        seed_live_session(&live, b"account-one");
+        service.save_snapshot(&ctx, "aaaa1111").unwrap();
+        config_bridge::set_current_account(&ctx, "gog", "aaaa1111").unwrap();
+
+        assert!(service.switch(&ctx, "bbbb2222").is_err());
+        assert_eq!(launches(&service), 1);
+        assert_eq!(fs::read(live.join("session.json")).unwrap(), b"account-one");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_sign_in_that_does_not_confirm_starts_the_launcher_again() {
+        let _config = config_guard();
+        let root = scratch("setup-confirm-fails");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let never = live.display().to_string().replace('\\', "/") + "/never";
+        let service = setup_service(
+            &live,
+            &format!(r#"{{ "kind": "pathNonEmpty", "path": "{never}" }}"#),
+        );
+
+        let status = service.begin(&ctx).unwrap();
+        let launched = launches(&service);
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("flag"), b"x").unwrap();
+
+        let polled = service.setup_status(&ctx, &status.setup_id).unwrap();
+        assert_eq!(polled.state, "waiting_for_login");
+        assert_eq!(launches(&service), launched + 1);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_empty_capture_leaves_no_snapshot_for_the_id_it_minted() {
+        // Every rejected poll minted a fresh id and left its folder behind.
+        let _config = config_guard();
+        let root = scratch("setup-empty-capture");
+        let live = root.join("live");
+        let ctx = TempCtx { root: root.clone() };
+        let service = setup_service(&live, "");
+
+        let status = service.begin(&ctx).unwrap();
+        let launched = launches(&service);
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("flag"), b"x").unwrap();
+
+        let polled = service.setup_status(&ctx, &status.setup_id).unwrap();
+        assert_eq!(polled.state, "waiting_for_login");
+        assert_eq!(launches(&service), launched + 1);
+        let snapshots = crate::storage::platform_snapshots_dir(&ctx, "gog").unwrap();
+        let left: Vec<_> = fs::read_dir(&snapshots)
+            .map(|entries| entries.flatten().map(|e| e.file_name()).collect())
+            .unwrap_or_default();
+        assert!(left.is_empty(), "{left:?}");
         let _ = fs::remove_dir_all(&root);
     }
 
