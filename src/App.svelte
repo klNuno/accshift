@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onMount, onDestroy, untrack } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -65,11 +65,12 @@ import { markBoot } from "$lib/app/bootMarks";
   import { createDeepLinkController } from "$lib/app/useDeepLink.svelte";
   import { COLOR_LABEL_KEYS } from "$lib/shared/contextMenu/accountAppearanceActions";
   import { createDisplayPipeline, matchesSearch } from "$lib/app/useDisplayPipeline.svelte";
-  import { createKeyboardController } from "$lib/shared/keyboard/controller";
+  import { createKeyboardController, PASS } from "$lib/shared/keyboard/controller";
   import type { KeyScope, ShortcutBinding } from "$lib/shared/keyboard/types";
   import { createCommandRegistry } from "$lib/features/commandPalette/registry";
   import CommandPalette from "$lib/features/commandPalette/CommandPalette.svelte";
   import { createCardFocus } from "$lib/app/useCardFocus.svelte";
+  import { pickCycledTab } from "$lib/app/tabCycle";
   import {
     getCs2BridgeVersion,
     loadCs2BridgeData,
@@ -244,6 +245,7 @@ import { markBoot } from "$lib/app/bootMarks";
     bumpCardNoteVersion: () => {
       cardNoteVersion += 1;
     },
+    refreshPersonas: () => personas.refresh(),
     setAppVersion: (version) => {
       appVersion = version;
     },
@@ -293,7 +295,11 @@ import { markBoot } from "$lib/app/bootMarks";
       shell.refreshSettings();
     },
   });
-  const personas = createPersonaController();
+  const personas = createPersonaController({
+    // A regular switch holds the platform clients; a persona must wait.
+    isBlocked: () => !!loader.switchingAccountId,
+  });
+  let personasPanel = $state<ReturnType<typeof PersonasPanel> | undefined>();
   // Enabled, implemented platforms usable on this OS, offered as persona slots.
   // Detection returns ids; the onboarding shows names. Empty until the first
   // launch detects something, which is exactly when it has nothing to show.
@@ -332,7 +338,7 @@ import { markBoot } from "$lib/app/bootMarks";
   });
 
   async function handleSwitchPersona(persona: import("$lib/features/personas/types").Persona) {
-    if (personas.switchingPersonaId) return;
+    if (personas.switching || loader.switchingAccountId) return;
     // Same safeguard as remote-triggered account switches: activating a
     // persona closes and relaunches several game clients, never do that on a
     // stray click.
@@ -408,6 +414,7 @@ import { markBoot } from "$lib/app/bootMarks";
     loadAccounts: () => loadAccounts(true),
     getAccounts: () => loader.accounts,
     isLoaderLoading: () => loader.loading,
+    loadPlatformAccounts,
     switchToAccount: handleAccountSwitch,
     // A deep link is a remote-originated trigger: require an explicit click
     // before swapping the live account, so a page opening accshift://switch/...
@@ -635,6 +642,7 @@ import { markBoot } from "$lib/app/bootMarks";
       if (display.displaySections) {
         const items: ItemRef[] = [];
         for (const section of display.displaySections) {
+          if (display.isSectionCollapsed(section)) continue;
           items.push(...section.folderItems, ...section.accountItems);
         }
         return items;
@@ -656,6 +664,26 @@ import { markBoot } from "$lib/app/bootMarks";
     );
     cardFocus.clear();
   });
+
+  // Collapsed sections were view state of the workspace that {#key panelKey}
+  // remounts; the pipeline now owns them, so keep that lifetime.
+  $effect(() => {
+    trackDependencies(panelKey);
+    untrack(() => display.clearCollapsedSections());
+  });
+
+  // Real focus or a pointer press elsewhere ends keyboard roving on the grid,
+  // so Enter and Space go to the control the user is on. Overlays (menus,
+  // dialogs, palette) are left alone: closing them returns to the same card.
+  function releaseCardFocusOnFocusIn(event: FocusEvent) {
+    if (!CARD_NAV_SCOPES.includes(currentKeyScope())) return;
+    cardFocus.releaseIfOutside(event.target);
+  }
+
+  function releaseCardFocusOnPointerDown() {
+    if (!CARD_NAV_SCOPES.includes(currentKeyScope())) return;
+    cardFocus.clear();
+  }
 
   // Cards remount under {#key}/each blocks, which drops the focus attribute.
   $effect(() => {
@@ -717,12 +745,13 @@ import { markBoot } from "$lib/app/bootMarks";
   }
 
   function cycleTab(direction: 1 | -1) {
-    const usable = shell.enabledPlatforms.filter((p) => !shell.unavailablePlatformIds.has(p.id));
-    if (usable.length < 2) return;
-    const index = usable.findIndex((p) => p.id === shell.activeTab);
-    const next = usable[(index + direction + usable.length) % usable.length];
+    const usable = shell.enabledPlatforms
+      .filter((p) => !shell.unavailablePlatformIds.has(p.id))
+      .map((p) => p.id);
+    const next = pickCycledTab(usable, shell.activeTab, direction);
+    if (!next) return;
     showPersonas = false;
-    void appNavigation.handleTabChange(next.id);
+    void appNavigation.handleTabChange(next);
   }
 
   const commandRegistry = createCommandRegistry({
@@ -808,7 +837,7 @@ import { markBoot } from "$lib/app/bootMarks";
     // Alt+Right would trigger WebView forward-history through our pushState
     // entries; Alt+Left is repurposed below and swallowed everywhere else.
     { combo: "alt+arrowright", scopes: ["*"], allowInInput: true, run: () => {} },
-    { combo: "alt+arrowleft", scopes: ["*"], allowInInput: true, run: () => false },
+    { combo: "alt+arrowleft", scopes: ["*"], allowInInput: true, run: () => PASS },
 
     // Command palette.
     {
@@ -819,12 +848,33 @@ import { markBoot } from "$lib/app/bootMarks";
         paletteOpen = true;
       },
     },
-    { combo: "mod+k", scopes: ["palette"], allowInInput: true, run: () => (paletteOpen = false) },
+    {
+      combo: "mod+k",
+      scopes: ["palette"],
+      allowInInput: true,
+      run: () => {
+        paletteOpen = false;
+      },
+    },
 
     // Escape cascade: exactly one layer closes per press. Scopes whose owner
     // component already handles Escape correctly (bulk edit steps, settings)
-    // return false so the legacy handler still runs, but only for them.
-    { combo: "escape", scopes: ["palette"], allowInInput: true, run: () => (paletteOpen = false) },
+    // return PASS so the legacy handler still runs, but only for them.
+    // A card drag in flight is cancelled first, whatever the scope.
+    {
+      combo: "escape",
+      scopes: ["*"],
+      allowInInput: true,
+      run: () => (drag.cancelFromEscape() ? undefined : PASS),
+    },
+    {
+      combo: "escape",
+      scopes: ["palette"],
+      allowInInput: true,
+      run: () => {
+        paletteOpen = false;
+      },
+    },
     {
       combo: "escape",
       scopes: ["dialog"],
@@ -834,11 +884,20 @@ import { markBoot } from "$lib/app/bootMarks";
         else dialogs.closeConfirmDialog();
       },
     },
-    { combo: "escape", scopes: ["context-menu"], allowInInput: true, run: () => false },
-    { combo: "escape", scopes: ["bulk-edit"], allowInInput: true, run: () => false },
-    { combo: "escape", scopes: ["settings"], allowInInput: true, run: () => false },
-    { combo: "escape", scopes: ["onboarding", "locked"], allowInInput: true, run: () => false },
-    { combo: "escape", scopes: ["personas"], allowInInput: true, run: () => (showPersonas = false) },
+    { combo: "escape", scopes: ["context-menu"], allowInInput: true, run: () => PASS },
+    { combo: "escape", scopes: ["bulk-edit"], allowInInput: true, run: () => PASS },
+    { combo: "escape", scopes: ["settings"], allowInInput: true, run: () => PASS },
+    { combo: "escape", scopes: ["onboarding", "locked"], allowInInput: true, run: () => PASS },
+    {
+      combo: "escape",
+      scopes: ["personas"],
+      allowInInput: true,
+      run: () => {
+        // The persona wizard steps back (or asks) instead of losing its input.
+        if (personasPanel?.handleEscape()) return;
+        showPersonas = false;
+      },
+    },
     {
       combo: "escape",
       scopes: ["app"],
@@ -854,7 +913,7 @@ import { markBoot } from "$lib/app/bootMarks";
           cardFocus.clear();
           return;
         }
-        return false;
+        return PASS;
       },
     },
 
@@ -919,34 +978,42 @@ import { markBoot } from "$lib/app/bootMarks";
       combo: "backspace",
       scopes: ["app"],
       run: () => {
-        if (!navigation.currentFolderId) return false;
+        if (!navigation.currentFolderId) return PASS;
         handleNavigateBack();
       },
     },
 
     // Card focus navigation (virtual roving focus, also live in bulk edit).
-    { combo: "arrowleft", scopes: CARD_NAV_SCOPES, run: () => (cardFocus.move("left") ? undefined : false) },
-    { combo: "arrowright", scopes: CARD_NAV_SCOPES, run: () => (cardFocus.move("right") ? undefined : false) },
-    { combo: "arrowup", scopes: CARD_NAV_SCOPES, run: () => (cardFocus.move("up") ? undefined : false) },
-    { combo: "arrowdown", scopes: CARD_NAV_SCOPES, run: () => (cardFocus.move("down") ? undefined : false) },
-    { combo: "enter", scopes: CARD_NAV_SCOPES, run: () => (activateFocusedCard() ? undefined : false) },
-    { combo: "f2", scopes: ["app"], run: () => (renameFocusedCard() ? undefined : false) },
-    { combo: "delete", scopes: ["app"], run: () => (openFocusedCardContextMenu() ? undefined : false) },
-    { combo: "shift+f10", scopes: ["app"], run: () => (openFocusedCardContextMenu() ? undefined : false) },
-    { combo: "contextmenu", scopes: ["app"], run: () => (openFocusedCardContextMenu() ? undefined : false) },
+    { combo: "arrowleft", scopes: CARD_NAV_SCOPES, run: () => (cardFocus.move("left") ? undefined : PASS) },
+    { combo: "arrowright", scopes: CARD_NAV_SCOPES, run: () => (cardFocus.move("right") ? undefined : PASS) },
+    { combo: "arrowup", scopes: CARD_NAV_SCOPES, run: () => (cardFocus.move("up") ? undefined : PASS) },
+    { combo: "arrowdown", scopes: CARD_NAV_SCOPES, run: () => (cardFocus.move("down") ? undefined : PASS) },
+    // Enter and Space act on the virtual focus only when no other control
+    // holds real focus: a focused button keeps its own activation.
+    {
+      combo: "enter",
+      scopes: CARD_NAV_SCOPES,
+      run: (e) => (cardFocus.ownsActivationKey(e.target) && activateFocusedCard() ? undefined : PASS),
+    },
+    { combo: "f2", scopes: ["app"], run: () => (renameFocusedCard() ? undefined : PASS) },
+    { combo: "delete", scopes: ["app"], run: () => (openFocusedCardContextMenu() ? undefined : PASS) },
+    { combo: "shift+f10", scopes: ["app"], run: () => (openFocusedCardContextMenu() ? undefined : PASS) },
+    { combo: "contextmenu", scopes: ["app"], run: () => (openFocusedCardContextMenu() ? undefined : PASS) },
     {
       combo: "space",
       scopes: ["bulk-edit"],
-      run: () => {
+      run: (e) => {
+        if (!cardFocus.ownsActivationKey(e.target)) return PASS;
         const item = cardFocus.focusedItem;
-        if (!item || item.type !== "account") return false;
+        if (!item || item.type !== "account") return PASS;
         bulkEdit.toggleBulkEditAccount(item.id);
       },
     },
 
-    // Bulk edit selection.
-    { combo: "mod+a", scopes: ["bulk-edit"], run: bulkEdit.bulkEditSelectAll },
-    { combo: "mod+d", scopes: ["bulk-edit"], run: bulkEdit.bulkEditDeselectAll },
+    // Bulk edit selection. Skipped inside a text field (the bulk edit
+    // settings form, the search box) so Ctrl+A selects text there.
+    { combo: "mod+a", scopes: ["bulk-edit"], skipInInput: true, run: bulkEdit.bulkEditSelectAll },
+    { combo: "mod+d", scopes: ["bulk-edit"], skipInInput: true, run: bulkEdit.bulkEditDeselectAll },
   ];
 
   const keyboard = createKeyboardController({
@@ -957,6 +1024,9 @@ import { markBoot } from "$lib/app/bootMarks";
   let detachKeyboard: (() => void) | null = null;
 
   async function handleAccountSwitch(account: PlatformAccount) {
+    // A persona switch is relaunching clients one platform at a time; a
+    // second switch would race it for the same client.
+    if (personas.switching) return false;
     // Minimize only after a successful switch: minimizing first hid the error
     // toast (and with suspendGraphicsWhenMinimized, unmounted it entirely).
     const switched = await loader.switchTo(account);
@@ -975,7 +1045,7 @@ import { markBoot } from "$lib/app/bootMarks";
   // under the cross-process config lock), or the switch gets aborted
   // mid-step with no record it was interrupted.
   function handleApplyUpdate() {
-    if (loader.switchingAccountId) return;
+    if (loader.switchingAccountId || personas.switching) return;
     void updates.applyReadyUpdate();
   }
 
@@ -1169,6 +1239,8 @@ import { markBoot } from "$lib/app/bootMarks";
     document.addEventListener("click", bulkEdit.handlePaintCaptureClick, true);
     window.addEventListener("wheel", uiScale.handleCtrlWheelZoom, { passive: false });
     detachKeyboard = keyboard.attach();
+    document.addEventListener("focusin", releaseCardFocusOnFocusIn);
+    document.addEventListener("pointerdown", releaseCardFocusOnPointerDown, true);
     window.addEventListener("popstate", appNavigation.handlePopState);
     window.addEventListener("focus", lifecycle.handleWindowFocus);
     document.addEventListener("visibilitychange", lifecycle.handleVisibilityChange);
@@ -1197,6 +1269,8 @@ import { markBoot } from "$lib/app/bootMarks";
     window.removeEventListener("wheel", uiScale.handleCtrlWheelZoom);
     detachKeyboard?.();
     detachKeyboard = null;
+    document.removeEventListener("focusin", releaseCardFocusOnFocusIn);
+    document.removeEventListener("pointerdown", releaseCardFocusOnPointerDown, true);
     window.removeEventListener("popstate", appNavigation.handlePopState);
     window.removeEventListener("focus", lifecycle.handleWindowFocus);
     document.removeEventListener("visibilitychange", lifecycle.handleVisibilityChange);
@@ -1219,7 +1293,7 @@ import { markBoot } from "$lib/app/bootMarks";
     onApplyUpdate={handleApplyUpdate}
     updateCtaLabel={updates.ctaLabel}
     updateCtaTitle={updates.ctaTitle}
-    updateCtaDisabled={updates.ctaDisabled || !!loader.switchingAccountId}
+    updateCtaDisabled={updates.ctaDisabled || !!loader.switchingAccountId || personas.switching}
     {activeTab}
     onTabChange={(tab) => { showPersonas = false; appNavigation.handleTabChange(tab); }}
     enabledPlatforms={shell.enabledPlatforms}
@@ -1317,6 +1391,7 @@ import { markBoot } from "$lib/app/bootMarks";
     </main>
   {:else if showPersonas}
     <PersonasPanel
+      bind:this={personasPanel}
       personas={personas.personas}
       switchingPersonaId={personas.switchingPersonaId}
       platforms={personaPlatforms}
@@ -1390,6 +1465,8 @@ import { markBoot } from "$lib/app/bootMarks";
     isPendingSetupAccount={addFlow.isPendingSetupAccount}
     {activePlatformAddSetupId}
     switchingAccountId={loader.switchingAccountId}
+    collapsedFolders={display.collapsedSections}
+    onToggleCollapse={display.toggleSectionCollapsed}
   />
   {/if}
   {/key}

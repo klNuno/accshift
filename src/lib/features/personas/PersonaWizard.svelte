@@ -111,6 +111,17 @@
     cancelResetTimer = setTimeout(() => (confirmingCancel = false), 3000);
   }
 
+  /** Escape, forwarded by the app keyboard layer: the same step back as the
+   *  back button. Closes the account picker, else leaves the wizard, asking
+   *  for a second press first when there are unsaved edits. */
+  export function handleEscape() {
+    if (picking) {
+      picking = null;
+      return;
+    }
+    requestCancel();
+  }
+
   function pickAccount(platformId: string, accountId: string) {
     selection[platformId] = accountId;
     picking = null;

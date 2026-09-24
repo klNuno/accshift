@@ -284,13 +284,20 @@ export function createDragManager(options: DragManagerOptions) {
     document.removeEventListener("keydown", handleDragKeyDown, true);
   }
 
-  function handleDragKeyDown(e: KeyboardEvent) {
-    if (e.key !== "Escape") return;
-    if (!pendingDrag && !isDragging) return;
-    // Keep the Escape from also closing overlays while a drag is in flight.
-    e.stopPropagation();
+  /** Cancels a pressed or moving card. Returns false when none is in flight.
+   *  The app keyboard controller calls this first on Escape: its window
+   *  capture listener runs before the document listener below. */
+  function cancelFromEscape(): boolean {
+    if (!pendingDrag && !isDragging) return false;
     if (isDragging) dragCancelled = true;
     cancelDrag();
+    return true;
+  }
+
+  function handleDragKeyDown(e: KeyboardEvent) {
+    if (e.key !== "Escape") return;
+    // Keep the Escape from also closing overlays while a drag is in flight.
+    if (cancelFromEscape()) e.stopPropagation();
   }
 
   /**
@@ -392,5 +399,6 @@ export function createDragManager(options: DragManagerOptions) {
     handleDocScroll,
     handleDocMouseUp,
     handleCaptureClick,
+    cancelFromEscape,
   };
 }
