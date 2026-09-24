@@ -343,16 +343,19 @@ where
             Err(e) => Err(format!("Could not parse JSON {}: {e}", path.display())),
         },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("Could not read file {}: {e}", path.display())),
+        // A locked or unreadable primary may be perfectly good: an older .bak
+        // served here would be written back by the next save as a rollback.
+        Err(e) => return Err(format!("Could not read file {}: {e}", path.display())),
     };
 
     // Primary file missing or corrupt: a write_bytes_atomic fallback that
-    // crashed mid-replace leaves a valid .bak behind. Recover from it.
+    // crashed mid-replace leaves a valid .bak behind. Serve it, but leave the
+    // primary alone: the next write replaces it, and a read path that copies
+    // files around races every other reader.
     let bak_path = path.with_extension("bak");
     if bak_path != path {
         if let Ok(data) = fs::read_to_string(&bak_path) {
             if let Ok(value) = serde_json::from_str::<T>(&data) {
-                let _ = fs::copy(&bak_path, path);
                 return Ok(Some(value));
             }
         }
@@ -384,26 +387,41 @@ pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     }
 
     let tmp_path = unique_tmp_path(path);
-    fs::write(&tmp_path, bytes)
+    write_synced(&tmp_path, bytes)
         .map_err(|e| format!("Could not write temp file {}: {e}", tmp_path.display()))?;
 
+    let bak_path = path.with_extension("bak");
     let mut rename_result = fs::rename(&tmp_path, path);
     for delay_ms in [50, 100, 200] {
         if rename_result.is_ok() {
-            return Ok(());
+            break;
         }
         std::thread::sleep(std::time::Duration::from_millis(delay_ms));
         rename_result = fs::rename(&tmp_path, path);
     }
     if rename_result.is_ok() {
+        // A .bak left by an earlier failed copy-over now holds an older
+        // version than the primary. Drop it so a later read cannot serve it.
+        if bak_path != path {
+            let _ = fs::remove_file(&bak_path);
+        }
         return Ok(());
     }
 
-    let bak_path = path.with_extension("bak");
     if path.exists() {
         let _ = fs::copy(path, &bak_path);
     }
     finalize_copy_over(&tmp_path, path, &bak_path)
+}
+
+/// Write and flush to disk before the caller renames the file into place.
+/// Without the flush, a power cut after the rename can leave the new name
+/// pointing at empty or zeroed data on NTFS and ext4.
+fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut file = fs::File::create(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
 }
 
 /// Copies `tmp_path` over `path` to finish the write when the rename
@@ -1007,6 +1025,53 @@ mod tests {
             "a failed .bak cleanup must not fail an already-durable write: {result:?}"
         );
         assert_eq!(fs::read(&path).unwrap(), b"new content");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_successful_write_drops_a_stale_bak() {
+        let root = unique_test_root("stale-bak");
+        let path = root.join("store.json");
+        fs::write(root.join("store.bak"), b"\"old\"").unwrap();
+
+        write_json_atomic(&path, &"new").unwrap();
+        fs::write(&path, b"{ truncated").unwrap();
+
+        assert!(!root.join("store.bak").exists());
+        assert!(
+            read_json_if_exists::<String>(&path).is_err(),
+            "with the stale .bak gone, a corrupt primary must surface, not roll back"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_corrupt_primary_is_served_from_bak_without_touching_it() {
+        let root = unique_test_root("bak-recovery");
+        let path = root.join("store.json");
+        fs::write(&path, b"{ truncated").unwrap();
+        fs::write(root.join("store.bak"), b"\"saved\"").unwrap();
+
+        let value = read_json_if_exists::<String>(&path).unwrap();
+
+        assert_eq!(value.as_deref(), Some("saved"));
+        assert_eq!(fs::read(&path).unwrap(), b"{ truncated");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_unreadable_primary_does_not_fall_back_to_bak() {
+        let root = unique_test_root("bak-io-error");
+        let path = root.join("store.json");
+        // A directory in place of the file: reading it fails with an IO error
+        // that is not NotFound, like a sharing violation would.
+        fs::create_dir_all(&path).unwrap();
+        fs::write(root.join("store.bak"), b"\"older\"").unwrap();
+
+        assert!(read_json_if_exists::<String>(&path).is_err());
 
         let _ = fs::remove_dir_all(&root);
     }

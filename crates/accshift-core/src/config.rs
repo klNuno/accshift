@@ -581,30 +581,28 @@ fn config_cache() -> &'static std::sync::Mutex<Option<CachedConfig>> {
     CACHE.get_or_init(|| std::sync::Mutex::new(None))
 }
 
-/// Poisoned local config files: a path lands here when `load_config` finds it
+/// Poisoned config files: a path lands here when `load_config` finds it
 /// present on disk but unreadable/unparseable (and no valid `.bak` to recover
 /// from). The local file holds the only copy of the Steam API key, Roblox
-/// cookies and path overrides; treating a transient read failure as "empty
-/// defaults" and then saving would silently wipe those secrets. While poisoned,
-/// every write to that file is refused, so a corrupt-but-present file is left
-/// untouched until the next successful read clears it.
+/// cookies and path overrides; the portable file holds every non-Steam account
+/// list and label. Treating a transient read failure as "empty defaults" and
+/// then saving would silently wipe them. While either file is poisoned, every
+/// config save is refused, so a corrupt-but-present file is left untouched
+/// until the next successful read clears it.
 ///
 /// Keyed by path rather than a single process-global flag. A running app only
 /// ever has one local config, so this changes nothing there; the test binary
 /// has one per test, and a global flag let any test's successful read clear the
 /// poison another test had just set.
-fn poisoned_local_configs(
-) -> &'static std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>> {
+fn poisoned_configs() -> &'static std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>> {
     static POISONED: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>,
     > = std::sync::OnceLock::new();
     POISONED.get_or_init(Default::default)
 }
 
-fn set_local_config_unreadable(path: &std::path::Path, unreadable: bool) {
-    let mut poisoned = poisoned_local_configs()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+fn set_config_unreadable(path: &std::path::Path, unreadable: bool) {
+    let mut poisoned = poisoned_configs().lock().unwrap_or_else(|e| e.into_inner());
     if unreadable {
         poisoned.insert(path.to_path_buf());
     } else {
@@ -612,8 +610,8 @@ fn set_local_config_unreadable(path: &std::path::Path, unreadable: bool) {
     }
 }
 
-fn local_config_unreadable(path: &std::path::Path) -> bool {
-    poisoned_local_configs()
+fn config_unreadable(path: &std::path::Path) -> bool {
+    poisoned_configs()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .contains(path)
@@ -660,37 +658,22 @@ pub fn load_config(app_handle: &dyn AppContext) -> AppConfig {
         }
     }
 
-    let portable =
-        crate::storage::read_json_if_exists::<AppConfig>(&portable_path).unwrap_or_else(|e| {
-            let _ = crate::logging::append_app_log(
-                app_handle,
-                "error",
-                "config.load",
-                "Portable config corrupted, using defaults",
-                Some(&e),
-            );
-            None
-        });
     // Distinguish "file absent" (Ok(None), defaults are fine) from "file
-    // present but unreadable" (Err). The latter poisons local writes so a
-    // later save can't clobber the only copy of the secrets with defaults.
-    let local = match crate::storage::read_json_if_exists::<AppConfig>(&local_path) {
-        Ok(local) => {
-            set_local_config_unreadable(&local_path, false);
-            local
-        }
-        Err(e) => {
-            set_local_config_unreadable(&local_path, true);
-            let _ = crate::logging::append_app_log(
-                app_handle,
-                "error",
-                "config.load",
-                "Local config unreadable, refusing to overwrite it to avoid wiping secrets",
-                Some(&e),
-            );
-            None
-        }
-    };
+    // present but unreadable" (Err). The latter poisons config writes so a
+    // later save can't clobber the only copy with defaults.
+    let portable = read_config_file(
+        app_handle,
+        &portable_path,
+        "Portable config unreadable, refusing to overwrite it to avoid wiping accounts",
+    );
+    let local = read_config_file(
+        app_handle,
+        &local_path,
+        "Local config unreadable, refusing to overwrite it to avoid wiping secrets",
+    );
+    // A merge built from a failed read must not outlive this call: the next
+    // load retries the read instead of serving the defaults.
+    let cacheable = !config_unreadable(&portable_path) && !config_unreadable(&local_path);
 
     let merged = match (portable, local) {
         (Some(portable), local) => merge_split_configs(portable, local.unwrap_or_default()),
@@ -699,6 +682,9 @@ pub fn load_config(app_handle: &dyn AppContext) -> AppConfig {
         // cached: the next save creates the split files.
         (None, None) => return load_legacy_config(app_handle),
     };
+    if !cacheable {
+        return merged;
+    }
 
     let mut cache = config_cache().lock().unwrap_or_else(|e| e.into_inner());
     *cache = Some(CachedConfig {
@@ -709,6 +695,31 @@ pub fn load_config(app_handle: &dyn AppContext) -> AppConfig {
         value: merged.clone(),
     });
     merged
+}
+
+/// Read one split config file, poisoning it on an error other than absence.
+fn read_config_file(
+    app_handle: &dyn AppContext,
+    path: &std::path::Path,
+    poisoned_message: &str,
+) -> Option<AppConfig> {
+    match crate::storage::read_json_if_exists::<AppConfig>(path) {
+        Ok(config) => {
+            set_config_unreadable(path, false);
+            config
+        }
+        Err(e) => {
+            set_config_unreadable(path, true);
+            let _ = crate::logging::append_app_log(
+                app_handle,
+                "error",
+                "config.load",
+                poisoned_message,
+                Some(&e),
+            );
+            None
+        }
+    }
 }
 
 /// Serializes config read-modify-write cycles within this process. The
@@ -747,30 +758,33 @@ fn save_config_unlocked(app_handle: &dyn AppContext, config: &AppConfig) -> Resu
     let portable_path = crate::storage::portable_config_path(app_handle)?;
     let local_path = crate::storage::local_config_path(app_handle)?;
 
-    // Portable holds no secrets, always safe to persist.
-    crate::storage::write_json_atomic(&portable_path, &portable)?;
-
-    // The last local read failed on an existing file: writing now would
-    // overwrite the user's Steam API key / Roblox cookies / path overrides
-    // with the empty defaults that the failed read produced. Refuse until a
+    // The last read of one of the files failed on an existing file: writing
+    // now would overwrite accounts (portable) or the Steam API key, Roblox
+    // cookies and path overrides (local) with the empty defaults that the
+    // failed read produced. Both files are checked before either is written,
+    // so a refused save never leaves half a config on disk. Refuse until a
     // successful read clears the poison flag.
-    if local_config_unreadable(&local_path) {
-        let message = format!(
-            "Refusing to write local config: the existing file at {} could not be read on the \
-             last load (it may be corrupt or locked). Writing now would wipe stored secrets. \
-             Fix or remove the file and restart.",
-            local_path.display()
-        );
-        let _ = crate::logging::append_app_log(
-            app_handle,
-            "error",
-            "config.save",
-            "Refused to overwrite unreadable local config to avoid wiping secrets",
-            Some(&message),
-        );
-        return Err(message);
+    for (path, what) in [
+        (&portable_path, "accounts"),
+        (&local_path, "stored secrets"),
+    ] {
+        if config_unreadable(path) {
+            let message = format!(
+                "Refusing to write config: the existing file at {} could not be read on the                  last load (it may be corrupt or locked). Writing now would wipe {what}.                  Fix or remove the file and restart.",
+                path.display()
+            );
+            let _ = crate::logging::append_app_log(
+                app_handle,
+                "error",
+                "config.save",
+                "Refused to overwrite an unreadable config file",
+                Some(&message),
+            );
+            return Err(message);
+        }
     }
 
+    crate::storage::write_json_atomic(&portable_path, &portable)?;
     crate::storage::write_json_atomic(&local_path, &local)?;
     // Paths stay out: they embed the OS account name and are the same on
     // every save.
@@ -807,6 +821,10 @@ pub fn update_config(
     mutate: impl FnOnce(&mut AppConfig),
 ) -> Result<(), String> {
     with_config_write_locks(app_handle, || {
+        // Read from disk under the lock: another process may have rewritten a
+        // file without changing its size inside the mtime granularity, which
+        // the cache cannot see, and saving a stale copy would drop its change.
+        *config_cache().lock().unwrap_or_else(|e| e.into_inner()) = None;
         let mut cfg = load_config(app_handle);
         mutate(&mut cfg);
         save_config_unlocked(app_handle, &cfg)
@@ -826,9 +844,9 @@ pub fn migrate_legacy_config(app_handle: &dyn AppContext) -> Option<Result<(), S
         Err(e) => return Some(Err(e)),
     };
 
-    // If portable already exists, legacy is stale. Just delete it.
+    // If portable already exists, legacy is stale. Set it aside.
     if portable_path.exists() {
-        let _ = fs::remove_file(&legacy_path);
+        retire_legacy_config(app_handle, &legacy_path);
         return None;
     }
 
@@ -869,17 +887,33 @@ pub fn migrate_legacy_config(app_handle: &dyn AppContext) -> Option<Result<(), S
         return Some(Err(format!("Failed to write migrated config: {e}")));
     }
 
-    if let Err(e) = fs::remove_file(&legacy_path) {
+    retire_legacy_config(app_handle, &legacy_path);
+
+    Some(Ok(()))
+}
+
+/// Rename the legacy `config.json` to `config.json.migrated` instead of
+/// deleting it, so a split pair that later turns out incomplete still has a
+/// third copy to recover from. Nothing reads the renamed file.
+fn retire_legacy_config(app_handle: &dyn AppContext, legacy_path: &std::path::Path) {
+    let mut retired = legacy_path.as_os_str().to_owned();
+    retired.push(".migrated");
+    let retired = std::path::PathBuf::from(retired);
+    let result = if retired.exists() {
+        // An older copy is already set aside; this one is the staler twin.
+        fs::remove_file(legacy_path)
+    } else {
+        fs::rename(legacy_path, &retired)
+    };
+    if let Err(e) = result {
         let _ = crate::logging::append_app_log(
             app_handle,
             "warn",
             "config.migrate_legacy",
-            &format!("Migrated config but could not delete legacy file: {e}"),
+            &format!("Migrated config but could not retire legacy file: {e}"),
             None,
         );
     }
-
-    Some(Ok(()))
 }
 
 /// Turn a physical-pixel measurement into the logical pixels this config
@@ -1308,7 +1342,7 @@ mod tests {
         // A read of the existing-but-corrupt file must poison local writes.
         let _ = load_config(&*ctx);
         assert!(
-            local_config_unreadable(&local_path),
+            config_unreadable(&local_path),
             "corrupt existing local config should poison local writes"
         );
 
@@ -1324,11 +1358,12 @@ mod tests {
             "corrupt local config must be left byte-for-byte intact"
         );
 
-        // Portable writes keep working even while local is poisoned.
+        // Nothing is written while one half is poisoned, so the pair on disk
+        // never mixes a new portable file with an old local one.
         let portable_path = crate::storage::portable_config_path(&*ctx).unwrap();
         assert!(
-            portable_path.exists(),
-            "portable config should still be written"
+            !portable_path.exists(),
+            "portable config must not be written when local is refused"
         );
 
         // A subsequent successful local read clears the poison flag, and the
@@ -1343,7 +1378,7 @@ mod tests {
         crate::storage::write_json_atomic(&local_path, &valid).unwrap();
         let loaded = load_config(&*ctx);
         assert!(
-            !local_config_unreadable(&local_path),
+            !config_unreadable(&local_path),
             "successful local read should clear the poison flag"
         );
         assert_eq!(loaded.steam.api_key, "kept-secret");
@@ -1351,6 +1386,62 @@ mod tests {
             save_config(&*ctx, &loaded).is_ok(),
             "save should succeed once the local read recovers"
         );
+
+        let _ = std::fs::remove_dir_all(&ctx.root);
+    }
+
+    #[test]
+    fn an_unreadable_portable_config_is_neither_cached_nor_overwritten() {
+        let _test_guard = config_io_test_mutex()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = tmp_ctx("unreadable-portable");
+        let mut saved = AppConfig::default();
+        saved.riot.profiles.push(RiotProfileConfig {
+            id: "p1".into(),
+            label: "Main".into(),
+            ..Default::default()
+        });
+        save_config(&*ctx, &saved).unwrap();
+
+        let portable_path = crate::storage::portable_config_path(&*ctx).unwrap();
+        let corrupt = b"{ half a file";
+        std::fs::write(&portable_path, corrupt).unwrap();
+
+        let loaded = load_config(&*ctx);
+        assert!(loaded.riot.profiles.is_empty());
+        assert!(config_unreadable(&portable_path));
+        assert!(
+            update_config(&*ctx, |cfg| cfg.window_width = Some(900.0)).is_err(),
+            "a save must be refused while portable is poisoned"
+        );
+        assert_eq!(std::fs::read(&portable_path).unwrap(), corrupt);
+
+        // Once the file is readable again, the next load sees it: the
+        // defaults built from the failed read were never cached.
+        crate::storage::write_json_atomic(&portable_path, &portable_config(&saved)).unwrap();
+        assert_eq!(load_config(&*ctx).riot.profiles.len(), 1);
+        assert!(!config_unreadable(&portable_path));
+
+        let _ = std::fs::remove_dir_all(&ctx.root);
+    }
+
+    #[test]
+    fn migrating_legacy_config_keeps_it_aside() {
+        let _test_guard = config_io_test_mutex()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = tmp_ctx("legacy-retire");
+        let legacy_path = crate::storage::legacy_config_path(&*ctx).unwrap();
+        std::fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
+        std::fs::write(&legacy_path, b"{}").unwrap();
+
+        assert!(matches!(migrate_legacy_config(&*ctx), Some(Ok(()))));
+
+        let mut retired = legacy_path.clone().into_os_string();
+        retired.push(".migrated");
+        assert!(!legacy_path.exists());
+        assert_eq!(std::fs::read(retired).unwrap(), b"{}");
 
         let _ = std::fs::remove_dir_all(&ctx.root);
     }

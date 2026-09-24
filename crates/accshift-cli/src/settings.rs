@@ -4,10 +4,9 @@
 //!
 //! Schema mirrors `src/lib/features/settings/store.ts`.
 
-use accshift_core::storage::{client_store_path, STORE_SETTINGS};
+use accshift_core::storage::{client_store_path, read_json_if_exists, STORE_SETTINGS};
 use accshift_core::AppContext;
 use serde::Deserialize;
-use std::fs;
 
 #[derive(Debug, Deserialize)]
 pub struct AppSettings {
@@ -64,30 +63,19 @@ pub fn load(ctx: &dyn AppContext) -> AppSettings {
         eprintln!("Warning: could not resolve GUI settings path; using CLI defaults");
         return AppSettings::default();
     };
-    match fs::read_to_string(&path) {
-        Ok(data) => match serde_json::from_str::<AppSettings>(&data) {
-            Ok(settings) => settings,
-            Err(e) => {
-                eprintln!(
-                    "Warning: could not parse GUI settings at {}: {e}; failing closed (PIN lock stays enforced if it was ever set)",
-                    path.display()
-                );
-                fail_closed()
-            }
-        },
+    // Same reader as the GUI, so a truncated file with a valid `.bak` next to
+    // it resolves to the same settings in both.
+    match read_json_if_exists::<AppSettings>(&path) {
+        Ok(Some(settings)) => settings,
         // The settings file has genuinely never been created (fresh install,
         // or the GUI has never been run): safe to default open, there is
         // nothing to fail closed against.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => AppSettings::default(),
-        // The file existed at some point but is now unreadable (permissions,
-        // AV lock, disk error, truncation mid-write). We cannot tell whether
-        // it used to have pinEnabled:true, so do not silently disable the PIN
-        // gate: fail closed instead.
+        Ok(None) => AppSettings::default(),
+        // The file exists but is unreadable or corrupt, with no usable `.bak`.
+        // We cannot tell whether it used to have pinEnabled:true, so do not
+        // silently disable the PIN gate: fail closed instead.
         Err(e) => {
-            eprintln!(
-                "Warning: could not read GUI settings at {}: {e}; failing closed (PIN lock stays enforced if it was ever set)",
-                path.display()
-            );
+            eprintln!("Warning: {e}; failing closed (PIN lock stays enforced if it was ever set)");
             fail_closed()
         }
     }
@@ -110,6 +98,7 @@ fn fail_closed() -> AppSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -186,6 +175,27 @@ mod tests {
         // empty so pin::enforce's own guard denies the switch.
         assert!(settings.pin_enabled, "must fail closed, not open");
         assert!(settings.pin_hash.is_empty());
+    }
+
+    #[test]
+    fn load_recovers_from_the_bak_the_gui_would_use() {
+        let tmp = TempRoot::new("bak");
+        let ctx = TestCtx {
+            root: tmp.0.clone(),
+        };
+        let path = client_store_path(&ctx, STORE_SETTINGS).expect("resolve settings path");
+        fs::create_dir_all(path.parent().expect("settings path has a parent"))
+            .expect("create settings parent dir");
+        fs::write(&path, b"{ truncated").expect("write corrupt settings file");
+        fs::write(path.with_extension("bak"), br#"{"pinEnabled":false}"#)
+            .expect("write settings backup");
+
+        let settings = load(&ctx);
+
+        assert!(
+            !settings.pin_enabled,
+            "a valid .bak must win over fail-closed"
+        );
     }
 
     #[test]
