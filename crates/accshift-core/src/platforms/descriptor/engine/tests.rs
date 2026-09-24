@@ -1320,6 +1320,7 @@ fn a_session_that_already_belongs_to_an_account_is_not_adopted_twice() {
 
 /// The plain fixture plus one registry value, served by the in-memory
 /// registry so nothing reaches the real hive.
+#[cfg(windows)]
 fn registry_service(live_root: &Path) -> DescriptorService {
     let json = fixture(live_root)
         .replace(
@@ -1339,8 +1340,10 @@ fn registry_service(live_root: &Path) -> DescriptorService {
     )
 }
 
+#[cfg(windows)]
 const TEST_KEY: &str = "Software\\AccshiftTest";
 
+#[cfg(windows)]
 fn test_value() -> Option<String> {
     reg::read(RegistryHive::CurrentUser, TEST_KEY, "token")
 }

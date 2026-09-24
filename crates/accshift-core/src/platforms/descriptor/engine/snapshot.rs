@@ -252,7 +252,7 @@ impl DescriptorService {
     }
 
     /// Whether this account has anything worth restoring.
-    #[cfg(test)]
+    #[cfg(all(test, windows))]
     pub(super) fn has_snapshot(&self, app: &dyn AppContext, account_id: &str) -> bool {
         self.snapshot_markers(app, account_id)
             .iter()

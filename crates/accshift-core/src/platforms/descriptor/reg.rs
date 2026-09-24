@@ -146,20 +146,26 @@ pub(crate) mod fake {
         static HIVE: RefCell<Option<Hive>> = const { RefCell::new(None) };
     }
 
+    // The tests that drive it run on Windows only, where registry roots apply.
+
     /// Routes this thread's registry calls to memory until dropped.
+    #[cfg(windows)]
     pub struct Installed;
 
+    #[cfg(windows)]
     impl Drop for Installed {
         fn drop(&mut self) {
             HIVE.with(|hive| *hive.borrow_mut() = None);
         }
     }
 
+    #[cfg(windows)]
     pub fn install() -> Installed {
         HIVE.with(|hive| *hive.borrow_mut() = Some(Hive::default()));
         Installed
     }
 
+    #[cfg(windows)]
     pub fn fail_writes(fail: bool) {
         HIVE.with(|hive| {
             if let Some(hive) = hive.borrow_mut().as_mut() {
@@ -172,6 +178,7 @@ pub(crate) mod fake {
         super::display(root, key, value)
     }
 
+    #[cfg(windows)]
     pub fn set(root: RegistryHive, key: &str, value: &str, data: &str) {
         HIVE.with(|hive| {
             if let Some(hive) = hive.borrow_mut().as_mut() {
