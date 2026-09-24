@@ -216,7 +216,9 @@ pub(super) fn save_config_unlocked(
     ] {
         if config_unreadable(path) {
             let message = format!(
-                "Refusing to write config: the existing file at {} could not be read on the                  last load (it may be corrupt or locked). Writing now would wipe {what}.                  Fix or remove the file and restart.",
+                "Refusing to write config: the existing file at {} could not be read on the \
+                 last load (it may be corrupt or locked). Writing now would wipe {what}. \
+                 Fix or remove the file and restart.",
                 path.display()
             );
             let _ = crate::logging::append_app_log(
