@@ -156,8 +156,16 @@ fn set_login_user_flags(steam_path: &Path, target: Option<&str>) -> Result<(), A
             .map(|t| account_name == t && !account_name.is_empty())
             .unwrap_or(false);
         let flag = if is_target { "1" } else { "0" };
-        updated = vdf_set_nested_value(&updated, &[steam_id.as_str(), "AllowAutoLogin"], flag)?;
-        updated = vdf_set_nested_value(&updated, &[steam_id.as_str(), "MostRecent"], flag)?;
+        let flagged = vdf_set_nested_value(&updated, &[steam_id.as_str(), "AllowAutoLogin"], flag)
+            .and_then(|next| vdf_set_nested_value(&next, &[steam_id.as_str(), "MostRecent"], flag));
+        match flagged {
+            Ok(next) => updated = next,
+            // Only the target's flags decide who Steam signs in. A block the
+            // writer cannot reach for another user is left as it was, like
+            // every release before the structural writer did.
+            Err(e) if is_target => return Err(e),
+            Err(_) => {}
+        }
     }
 
     crate::storage::write_bytes_atomic(&path, updated.as_bytes()).map_err(AppError::FileRead)
