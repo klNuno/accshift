@@ -266,6 +266,10 @@ export async function initializeClientStorage(): Promise<void> {
       });
     } catch (reason) {
       console.error("Failed to load client storage snapshot:", reason);
+      // Every store then looks missing, including the ones whose file is
+      // fine. Migrating now would write the stale localStorage copies over
+      // those files, so the migration waits for a launch that can read them.
+      return;
     }
 
     // The legacy keys are the real user's data in this webview profile. The
