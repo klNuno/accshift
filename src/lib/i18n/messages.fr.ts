@@ -33,6 +33,7 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "pin.placeholder": "PIN 4 chiffres",
   "pin.unlock": "Déverrouiller",
   "pin.invalid": "PIN invalide",
+  "pin.tooManyAttempts": "Trop de tentatives. Réessayez dans {seconds} s.",
 
   "common.ok": "OK",
   "common.cancel": "Annuler",
@@ -161,6 +162,8 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.pinLockOnAfk": "Verrou PIN en AFK",
   "settings.pinCode": "Code PIN",
   "settings.pinPlaceholder": "4 chiffres",
+  "settings.pinCurrentCode": "PIN actuel",
+  "settings.pinCurrentHint": "Saisissez le PIN actuel pour le modifier ou désactiver le verrou.",
   "settings.telemetry": "Statistiques d'utilisation (anonymes)",
   "settings.telemetryModeA": "Stats anonymes de base",
   "settings.telemetryModeAHint":
@@ -809,7 +812,7 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "settings.pinTakesEffectNextLaunch": "Prend effet au prochain lancement de l'app",
   "settings.pinRequiredAfterInactivity": "Demandé après inactivité et au lancement de l'app",
   "settings.pinScreenLockOnly":
-    "Le PIN verrouille seulement cette fenêtre. Il ne protège rien sur le disque.",
+    "Le PIN verrouille cette fenêtre et les changements de compte. Il ne protège rien sur le disque.",
   "settings.unitSeconds": "secondes",
   "settings.unitDays": "jours",
   "settings.telemetryLoadFailed": "Impossible de charger les paramètres de télémétrie",

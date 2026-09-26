@@ -312,17 +312,27 @@ function invalidateResolved() {
   resetAppliedThemeMemo();
 }
 
+/**
+ * CSS a theme file carries but the safety filter refused, by theme id. The
+ * filter has grown since older releases, so a file written by one of them can
+ * hold CSS this build will not apply. An editor save of that theme writes it
+ * back untouched rather than erasing it from the user's file.
+ */
+const refusedCss = new Map<string, string>();
+
 export function applyCustomThemePayloads(payloads: CustomThemePayload[]): void {
   invalidateResolved();
   customDocuments.clear();
+  refusedCss.clear();
   for (const payload of payloads) {
     // A file that fails to parse is skipped rather than surfaced: it was
     // already on disk when the app started, and a modal at boot helps nobody.
     // The editor and the import path report the same failures out loud.
-    const { document } = parseThemeDocument(payload);
+    const { document, rejectedCss } = parseThemeDocument(payload);
     if (!document) continue;
     if (builtInDocuments.has(document.id)) continue;
     customDocuments.set(document.id, document);
+    if (rejectedCss && typeof payload.css === "string") refusedCss.set(document.id, payload.css);
   }
 }
 
@@ -335,10 +345,19 @@ export async function loadCustomThemes(): Promise<void> {
   }
 }
 
-export async function saveThemeDocument(document: ThemeDocument): Promise<void> {
+/**
+ * `keepRefusedCss`: an edit of a theme already on disk, whose refused CSS
+ * stays in the file unless the edit brings CSS of its own. An import replaces
+ * the file with what it brings.
+ */
+export async function saveThemeDocument(
+  document: ThemeDocument,
+  { keepRefusedCss = false }: { keepRefusedCss?: boolean } = {},
+): Promise<void> {
   if (builtInDocuments.has(document.id)) {
     throw new Error(`Cannot overwrite built-in theme: ${document.id}`);
   }
+  const keptCss = keepRefusedCss && !document.css ? refusedCss.get(document.id) : undefined;
   const payload: CustomThemePayload = {
     schemaVersion: document.schemaVersion,
     id: document.id,
@@ -349,11 +368,12 @@ export async function saveThemeDocument(document: ThemeDocument): Promise<void> 
     extends: document.extends ?? null,
     glass: document.glass ?? null,
     tokens: document.tokens as Record<string, string>,
-    css: document.css ?? null,
+    css: document.css ?? keptCss ?? null,
   };
   await invoke("save_custom_theme", { theme: payload });
   invalidateResolved();
   customDocuments.set(document.id, document);
+  if (!keptCss) refusedCss.delete(document.id);
 }
 
 export async function deleteCustomTheme(themeId: string): Promise<void> {

@@ -19,6 +19,7 @@ import {
 } from "./storeIds";
 import { invoke } from "@tauri-apps/api/core";
 import { getBootPayload } from "$lib/app/bootPayload";
+import { isMockBackend } from "./mockBackend";
 
 export * from "./storeIds";
 
@@ -66,6 +67,7 @@ const memoryStores = new Map<ClientStoreId, unknown>();
 const saveTimers = new Map<ClientStoreId, ReturnType<typeof setTimeout>>();
 const inFlightSaves = new Map<ClientStoreId, Promise<void>>();
 const storeRevisions = new Map<ClientStoreId, number>();
+const storeListeners = new Map<ClientStoreId, Set<() => void>>();
 
 let lastManifest: StorageManifest = {
   schemaVersion: 1,
@@ -115,17 +117,40 @@ function readLegacyLocalStorageValue(storeId: ClientStoreId): unknown {
 
 function bumpStoreRevision(storeId: ClientStoreId) {
   storeRevisions.set(storeId, (storeRevisions.get(storeId) ?? 0) + 1);
+  for (const listener of [...(storeListeners.get(storeId) ?? [])]) {
+    try {
+      listener();
+    } catch (error) {
+      console.error(`Client store listener failed for ${storeId}:`, error);
+    }
+  }
 }
 
-function applySnapshot(
-  snapshot: ClientStorageSnapshot,
-  storeIds: readonly ClientStoreId[] = CLIENT_STORE_IDS,
-) {
+function applySnapshot(snapshot: ClientStorageSnapshot) {
   lastManifest = snapshot.manifest ?? { schemaVersion: 1, stores: {} };
-  for (const storeId of storeIds) {
+  for (const storeId of CLIENT_STORE_IDS) {
     memoryStores.set(storeId, cloneValue(snapshot.stores?.[storeId]));
     bumpStoreRevision(storeId);
   }
+}
+
+/** A local edit not yet on disk: still in the debounce or being written. */
+function hasPendingSave(storeId: ClientStoreId): boolean {
+  return saveTimers.has(storeId) || inFlightSaves.has(storeId);
+}
+
+/** Mark only these entries of `manifest` as seen, leaving every other one as it was. */
+function recordManifestEntries(manifest: StorageManifest, keys: readonly string[]) {
+  const stores = { ...lastManifest.stores };
+  for (const key of keys) {
+    const fingerprint = manifest.stores?.[key];
+    if (fingerprint === undefined) {
+      delete stores[key];
+    } else {
+      stores[key] = fingerprint;
+    }
+  }
+  lastManifest = { schemaVersion: manifest.schemaVersion ?? lastManifest.schemaVersion, stores };
 }
 
 async function persistStore(storeId: ClientStoreId) {
@@ -241,7 +266,16 @@ export async function initializeClientStorage(): Promise<void> {
       });
     } catch (reason) {
       console.error("Failed to load client storage snapshot:", reason);
+      // Every store then looks missing, including the ones whose file is
+      // fine. Migrating now would write the stale localStorage copies over
+      // those files, so the migration waits for a launch that can read them.
+      return;
     }
+
+    // The legacy keys are the real user's data in this webview profile. The
+    // mock backend never saves anything, so migrating there would only put
+    // that data on screen.
+    if (isMockBackend()) return;
 
     const missingStores = CLIENT_STORE_IDS.filter((storeId) => memoryStores.get(storeId) == null);
     if (missingStores.length === 0) return;
@@ -285,6 +319,23 @@ export function getClientStoreRevision(storeId: ClientStoreId): number {
   return storeRevisions.get(storeId) ?? 0;
 }
 
+/**
+ * Run `listener` after each change to one store's in-memory value: a local
+ * write, the boot snapshot or a reload of a store another process rewrote.
+ * Returns the function that removes it.
+ */
+export function onClientStoreChange(storeId: ClientStoreId, listener: () => void): () => void {
+  let listeners = storeListeners.get(storeId);
+  if (!listeners) {
+    listeners = new Set();
+    storeListeners.set(storeId, listeners);
+  }
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
 export function setClientStoreValue(
   storeId: ClientStoreId,
   value: unknown,
@@ -297,18 +348,39 @@ export function setClientStoreValue(
   scheduleSave(storeId, options?.immediate ? 0 : 120);
 }
 
+/**
+ * Reload the stores another process rewrote since we last looked, and return
+ * the ids that changed.
+ *
+ * A store with a local edit not yet on disk is left alone: the pending save
+ * lands after the refresh and would otherwise write the disk copy back, losing
+ * the edit. Its manifest entry stays as it was, so the save's own fingerprint
+ * (or the next refresh) settles it. Only the entries actually applied are
+ * marked as seen: a store rewritten between the two reads below must still
+ * show up as changed next time.
+ */
 export async function refreshClientStorageIfChanged(): Promise<string[]> {
   const nextManifest = await loadManifestFromBackend();
-  const changed = diffManifests(lastManifest, nextManifest);
+  const changed = diffManifests(lastManifest, nextManifest).filter(
+    (key) => !isClientStoreId(key) || !hasPendingSave(key),
+  );
   if (changed.length === 0) return [];
 
-  lastManifest = nextManifest;
   emitStorageLog("Detected external storage changes", { changed });
-  if (!changed.some(isClientStoreId)) {
+  const otherTargets = changed.filter((key) => !isClientStoreId(key));
+  recordManifestEntries(nextManifest, otherTargets);
+  const changedStores = changed.filter(isClientStoreId);
+  if (changedStores.length === 0) {
     return changed;
   }
 
   const snapshot = await loadSnapshotFromBackend();
-  applySnapshot(snapshot, changed.filter(isClientStoreId));
-  return changed;
+  // An edit made while the snapshot was loading is newer than it.
+  const applied = changedStores.filter((storeId) => !hasPendingSave(storeId));
+  for (const storeId of applied) {
+    memoryStores.set(storeId, cloneValue(snapshot.stores?.[storeId]));
+    bumpStoreRevision(storeId);
+  }
+  recordManifestEntries(snapshot.manifest ?? nextManifest, applied);
+  return [...otherTargets, ...applied];
 }

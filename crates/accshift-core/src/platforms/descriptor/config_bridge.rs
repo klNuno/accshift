@@ -11,7 +11,9 @@
 //! that arrives as a user descriptor has no such history and needs no line: it
 //! falls through to `config.custom_platforms`, a generic section keyed by id.
 
-use crate::config::{self, CustomPlatformConfig, SimpleAccountConfig, UbisoftAccountConfig};
+use crate::config::{
+    self, AppConfig, CustomPlatformConfig, LastSwitch, SimpleAccountConfig, UbisoftAccountConfig,
+};
 use crate::platforms::ids;
 use crate::AppContext;
 
@@ -159,7 +161,11 @@ fn label_row<T: AccountRow>(accounts: &mut Vec<T>, key: &str, label: &str) {
 
 /// Every account the config holds for this platform, in stored order.
 pub fn accounts(app: &dyn AppContext, platform_id: &str) -> Vec<AccountRecord> {
-    let cfg = config::load_config(app);
+    accounts_in(&config::load_config(app), platform_id)
+}
+
+/// [`accounts`] against a config the caller already loaded.
+pub fn accounts_in(cfg: &AppConfig, platform_id: &str) -> Vec<AccountRecord> {
     match platform_id {
         ids::GOG => rows(&cfg.gog.accounts),
         ids::JAGEX => rows(&cfg.jagex.accounts),
@@ -218,7 +224,9 @@ pub fn remove_account(
         with_accounts!(cfg, platform_id, |accounts| {
             accounts.retain(|account| !same_account(account.account_id(), &key));
         });
-        if current_account_field(cfg, platform_id).is_some_and(|current| current.trim() == key) {
+        if current_account_field(cfg, platform_id)
+            .is_some_and(|current| same_account(current, &key))
+        {
             set_current_account_field(cfg, platform_id, String::new());
         }
     })
@@ -228,8 +236,11 @@ pub fn remove_account(
 /// launcher writes no readable marker. `None` when the section has no such
 /// field, which is the normal case for a platform with a live identity source.
 pub fn current_account(app: &dyn AppContext, platform_id: &str) -> Option<String> {
-    let cfg = config::load_config(app);
-    current_account_field(&cfg, platform_id).map(|value| value.trim().to_string())
+    current_account_in(&config::load_config(app), platform_id)
+}
+
+pub fn current_account_in(cfg: &AppConfig, platform_id: &str) -> Option<String> {
+    current_account_field(cfg, platform_id).map(|value| value.trim().to_string())
 }
 
 pub fn set_current_account(
@@ -271,7 +282,10 @@ fn set_current_account_field(cfg: &mut config::AppConfig, platform_id: &str, val
 /// Ids the user forgot while they were still on disk. Only a platform whose
 /// accounts can be rediscovered from the filesystem carries one.
 pub fn blocklist(app: &dyn AppContext, platform_id: &str) -> Vec<String> {
-    let cfg = config::load_config(app);
+    blocklist_in(&config::load_config(app), platform_id)
+}
+
+pub fn blocklist_in(cfg: &AppConfig, platform_id: &str) -> Vec<String> {
     match platform_id {
         ids::UBISOFT => cfg.ubisoft.forgotten_uuids.clone(),
         other => match cfg.custom_platforms.get(other) {
@@ -311,9 +325,48 @@ fn unblock_in(cfg: &mut config::AppConfig, platform_id: &str, key: &str) {
     blocked.retain(|stored| !same_account(stored, key));
 }
 
+// ---------------------------------------------------------------------------
+// Last switch
+// ---------------------------------------------------------------------------
+
+/// The account the engine last switched to, and when. Only a platform whose
+/// identity comes from a log records one, and only Ubisoft among the shipped
+/// ones does, so it lives where the forget blocklist lives.
+pub fn last_switch_in(cfg: &AppConfig, platform_id: &str) -> Option<LastSwitch> {
+    match platform_id {
+        ids::UBISOFT => cfg.ubisoft.last_switch.clone(),
+        other => cfg
+            .custom_platforms
+            .get(other)
+            .and_then(|section| section.last_switch.clone()),
+    }
+}
+
+pub fn set_last_switch(
+    app: &dyn AppContext,
+    platform_id: &str,
+    account_id: &str,
+    at: u64,
+) -> Result<(), String> {
+    let record = LastSwitch {
+        account_id: account_id.trim().to_string(),
+        at,
+    };
+    config::update_config(app, |cfg| {
+        let slot = match platform_id {
+            ids::UBISOFT => &mut cfg.ubisoft.last_switch,
+            other => &mut custom_section(cfg, other).last_switch,
+        };
+        *slot = Some(record.clone());
+    })
+}
+
 /// The user's manual path to the launcher, empty when they never set one.
 pub fn path_override(app: &dyn AppContext, platform_id: &str) -> String {
-    let cfg = config::load_config(app);
+    path_override_in(&config::load_config(app), platform_id)
+}
+
+pub fn path_override_in(cfg: &AppConfig, platform_id: &str) -> String {
     match platform_id {
         ids::GOG => cfg.gog.path_override.trim().to_string(),
         ids::JAGEX => cfg.jagex.path_override.trim().to_string(),

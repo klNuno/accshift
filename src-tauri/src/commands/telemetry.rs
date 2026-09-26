@@ -92,7 +92,11 @@ async fn retry_pending_forgets(app_handle: &tauri::AppHandle) -> Result<(), Stri
     }
 
     let app_version = env!("CARGO_PKG_VERSION").to_string();
+    let queue = app_handle.state::<TelemetryState>().handle.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        // Consent was already refreshed; a batch sent under the old consent
+        // must land before the deletion, not after it.
+        queue.wait_for_pending_send();
         let ua = telemetry::user_agent(&app_version);
         let client = reqwest::blocking::Client::builder()
             .user_agent(ua.clone())
@@ -357,7 +361,11 @@ pub async fn telemetry_complete_onboarding(
     // have an unbiased denominator. It runs best-effort in the background and
     // never delays or changes the user's selected privacy mode.
     let app_version = env!("CARGO_PKG_VERSION").to_string();
+    let queue = app_handle.state::<TelemetryState>().handle.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        // Consent was already refreshed; a batch sent under the old consent
+        // must land before the deletion, not after it.
+        queue.wait_for_pending_send();
         let ua = telemetry::user_agent(&app_version);
         let client = match reqwest::blocking::Client::builder()
             .user_agent(ua.clone())
@@ -386,7 +394,11 @@ pub async fn telemetry_export(app_handle: tauri::AppHandle) -> Result<Value, Str
         return Err("mode_b_disabled".into());
     }
     let app_version = env!("CARGO_PKG_VERSION").to_string();
+    let queue = app_handle.state::<TelemetryState>().handle.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        // Consent was already refreshed; a batch sent under the old consent
+        // must land before the deletion, not after it.
+        queue.wait_for_pending_send();
         let ua = telemetry::user_agent(&app_version);
         let client = reqwest::blocking::Client::builder()
             .user_agent(ua.clone())

@@ -23,3 +23,4 @@ const store = createCachedMapStore(CLIENT_STORE_ACCOUNT_CARD_COLORS, (_key, colo
 
 export const getAccountCardColor = store.get;
 export const setAccountCardColor = store.set;
+export const setAccountCardColors = store.setMany;

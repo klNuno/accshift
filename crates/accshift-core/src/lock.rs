@@ -3,6 +3,27 @@
 //! Both the Tauri GUI and the CLI take this lock before writing config, so
 //! two instances can't clobber each other mid-switch. The lock is released
 //! when the returned `LockGuard` is dropped.
+//!
+//! There is one lock file and two ways in. [`acquire_exclusive`] owns it for
+//! a whole operation. [`acquire_for_write`] owns it for one write, or nests
+//! inside an operation already holding it on the same thread. Who takes what:
+//!
+//! | Caller | Entry | Budget | When it cannot get the lock |
+//! | --- | --- | --- | --- |
+//! | GUI switch, forget, begin setup, Steam game launch, copy settings, browser cache, bulk edit, Riot capture, Roblox cookie add (`run_locked_blocking`) | exclusive | 2 s | "Another instance" error |
+//! | GUI setup status poll | exclusive | 2 s | reports `busy`, the next poll retries |
+//! | GUI cancel setup | exclusive | 30 s | waits out a detached setup launch |
+//! | Riot and Steam detached setup launch ([`with_exclusive`]) | exclusive | 30 s | the setup reports the failure |
+//! | CLI switch | exclusive | 2 s | exits with "Another instance" |
+//! | `config::save_config` and every `update_config` | write | 5 s | the write fails, nothing is half-written |
+//! | GUI client store save (settings, folders, caches) | write | 2 s | the save fails and the debounce retries |
+//! | CLI PIN writes | write | 5 s | the command fails |
+//! | Boot maintenance, per step | write | 2 s | that step is skipped and logged |
+//! | Keyring GC sweep | write | 0 | the sweep is skipped until the next run |
+//!
+//! Writes that take no operation lock of their own (label, path, descriptor
+//! install and remove) still go through `update_config`, so the config file
+//! itself is never written by two processes at once.
 
 use crate::AppContext;
 use fs4::{FileExt, TryLockError};
@@ -126,6 +147,22 @@ pub fn acquire_exclusive(ctx: &dyn AppContext, timeout: Duration) -> Result<Lock
     }
 }
 
+/// Run `f` with the cross-process lock held on this thread, and release it
+/// when `f` returns.
+///
+/// For work a command hands to a detached task: the command's own guard is
+/// dropped when the command returns, so the task has to take the lock itself
+/// before it stops a launcher or deletes live files. `f` never runs when the
+/// lock cannot be taken within `timeout`.
+pub fn with_exclusive<T>(
+    ctx: &dyn AppContext,
+    timeout: Duration,
+    f: impl FnOnce() -> T,
+) -> Result<T, LockError> {
+    let _guard = acquire_exclusive(ctx, timeout)?;
+    Ok(f())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,6 +260,53 @@ mod tests {
         let result = handle.join().unwrap();
         assert!(result);
 
+        cleanup(&ctx.root);
+    }
+
+    #[test]
+    fn with_exclusive_does_not_run_the_work_while_another_holder_has_the_lock() {
+        let ctx = tmp_ctx("with-contended");
+        let _outer = acquire_exclusive(&*ctx, Duration::from_millis(500)).unwrap();
+
+        let ctx2 = Arc::clone(&ctx);
+        let (ran, result) = thread::spawn(move || {
+            let mut ran = false;
+            let result = with_exclusive(&*ctx2, Duration::from_millis(150), || ran = true);
+            (ran, matches!(result, Err(LockError::Contended)))
+        })
+        .join()
+        .unwrap();
+
+        assert!(!ran, "the work ran without the lock");
+        assert!(result);
+        cleanup(&ctx.root);
+    }
+
+    #[test]
+    fn with_exclusive_holds_the_lock_for_the_whole_work() {
+        let ctx = tmp_ctx("with-held");
+        let ctx2 = Arc::clone(&ctx);
+        let contended_inside = thread::spawn(move || {
+            with_exclusive(&*ctx2, Duration::from_millis(500), || {
+                // A holder on another thread must be refused while the work runs.
+                let ctx3 = Arc::clone(&ctx2);
+                thread::spawn(move || {
+                    matches!(
+                        acquire_exclusive(&*ctx3, Duration::from_millis(100)),
+                        Err(LockError::Contended)
+                    )
+                })
+                .join()
+                .unwrap()
+            })
+            .unwrap()
+        })
+        .join()
+        .unwrap();
+
+        assert!(contended_inside);
+        // Released once the work returned.
+        assert!(acquire_exclusive(&*ctx, Duration::from_millis(500)).is_ok());
         cleanup(&ctx.root);
     }
 

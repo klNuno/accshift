@@ -26,6 +26,9 @@ pub fn set_auto_login_user(path: &Path, username: &str) -> Result<(), AppError> 
     // exist. Any other read error (permissions, transient lock) must not
     // silently replace the user's registry.vdf with an empty template.
     let existing = match fs::read_to_string(path) {
+        // Steam can leave a zero-byte file after a crash. There is nothing in
+        // it to keep, and the structural writer needs a root to walk.
+        Ok(s) if s.trim().is_empty() => empty_registry_vdf(),
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => empty_registry_vdf(),
         Err(e) => return Err(AppError::FileRead(e.to_string())),
@@ -38,6 +41,7 @@ pub fn set_auto_login_user(path: &Path, username: &str) -> Result<(), AppError> 
 
 pub fn clear_auto_login_user(path: &Path) -> Result<(), AppError> {
     let existing = match fs::read_to_string(path) {
+        Ok(s) if s.trim().is_empty() => return Ok(()),
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(AppError::FileRead(e.to_string())),
@@ -122,6 +126,16 @@ mod tests {
         // The key must not be duplicated by the second write.
         let content = std::fs::read_to_string(&path).unwrap();
         assert_eq!(content.matches("\"AutoLoginUser\"").count(), 1);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn an_empty_file_is_rebuilt_from_the_template() {
+        let path = tmp_path("empty");
+        std::fs::write(&path, "\n").unwrap();
+        clear_auto_login_user(&path).unwrap();
+        set_auto_login_user(&path, "alice").unwrap();
+        assert_eq!(get_auto_login_user(&path).unwrap(), "alice");
         let _ = std::fs::remove_file(&path);
     }
 

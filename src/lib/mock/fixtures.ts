@@ -8,6 +8,8 @@
  */
 import type { RiotProfile } from "$lib/platforms/riot/types";
 import type { BanInfo, ProfileInfo, SteamAccount } from "$lib/platforms/steam/types";
+import { isValidPinHash, verifyPinCode } from "$lib/shared/pin";
+import { PIN_LOCKED_PREFIX } from "$lib/shared/pinSession";
 
 // Fixed clock. No Date.now() anywhere in the mock, so two runs — and two
 // recordings — produce identical "3 days ago" labels.
@@ -178,6 +180,25 @@ export function createHandlers(spec: MockSpec): Record<string, Handler> {
     rejected: [],
   });
 
+  // The backend PIN session (`PinSession` in accshift-core). Saves are no-ops
+  // here, so the PIN is the one the window holds in memory; the session starts
+  // locked when the scenario's store carries one, as the real one does.
+  const pinHashOf = (settings: unknown): string => {
+    const s = (settings ?? {}) as { pinEnabled?: unknown; pinHash?: unknown };
+    const hash = typeof s.pinHash === "string" ? s.pinHash.trim() : "";
+    return s.pinEnabled && isValidPinHash(hash) ? hash : "";
+  };
+  const currentPinHash = async (): Promise<string> => {
+    const { peekSettings } = await import("$lib/features/settings/store");
+    return pinHashOf(peekSettings());
+  };
+  let pinUnlocked = !pinHashOf(spec.stores["client.settings"]);
+  const ensurePinUnlocked = async () => {
+    if (!pinUnlocked && (await currentPinHash())) {
+      throw `${PIN_LOCKED_PREFIX} Accshift is locked. Enter the PIN to switch accounts.`;
+    }
+  };
+
   const handlers: Record<string, Handler> = {
     get_boot_payload: () => ({
       migration: "skipped",
@@ -236,7 +257,20 @@ export function createHandlers(spec: MockSpec): Record<string, Handler> {
       }
       return { accounts: [], currentAccount: "" };
     },
+    pin_unlock: async (args) => {
+      const hash = await currentPinHash();
+      if (!hash) return { status: "not_configured", legacy: false, retryAfterMs: 0 };
+      const { matches } = await verifyPinCode(String(args.code ?? ""), hash);
+      if (!matches) return { status: "invalid", legacy: false, retryAfterMs: 1000 };
+      pinUnlocked = true;
+      return { status: "unlocked", legacy: !hash.includes(":"), retryAfterMs: 0 };
+    },
+    pin_lock: () => {
+      pinUnlocked = false;
+      return null;
+    },
     platform_switch_account: async (args) => {
+      await ensurePinUnlocked();
       // Roughly what a real switch feels like, so the spinner stays on screen
       // long enough to read (and to record).
       await delay(spec.switchDelayMs);

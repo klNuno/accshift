@@ -98,6 +98,55 @@ fn decrypt_token(encrypted: &str) -> Result<String, String> {
     os::decrypt_secret(encrypted).map_err(|e| e.to_string())
 }
 
+/// Un token enregistre reste attache a son serveur : il ne suit la nouvelle
+/// URL que si elle est la meme, a la normalisation pres.
+fn token_follows(previous_url: &str, next_url: &str) -> bool {
+    normalize_url(previous_url).is_ok_and(|previous| previous == next_url)
+}
+
+/// Le token dechiffre, refuse s'il devait partir en clair sur Internet : http
+/// n'est admis avec un token que vers cette machine ou le reseau local, ou
+/// tournaient deja les bridges configures avant cette regle.
+fn usable_token(raw_url: &str, encrypted: &str) -> Result<String, String> {
+    let token = decrypt_token(encrypted)?;
+    if !token.is_empty() && !url_protects_token(raw_url) {
+        return Err(
+            "The bridge token is only sent over https, to this machine or to a local network address"
+                .to_string(),
+        );
+    }
+    Ok(token)
+}
+
+fn url_protects_token(raw_url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(raw_url.trim()) else {
+        return false;
+    };
+    if url.scheme() == "https" {
+        return true;
+    }
+    url.host_str().is_some_and(|host| {
+        let lower = host.to_ascii_lowercase();
+        lower == "localhost"
+            || lower.ends_with(".local")
+            || host
+                .trim_matches(['[', ']'])
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip_is_local(&ip))
+    })
+}
+
+/// Cette machine, un reseau prive (RFC 1918, IPv6 ULA) ou le lien local.
+fn ip_is_local(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+        std::net::IpAddr::V6(v6) => {
+            let first = v6.segments()[0];
+            v6.is_loopback() || (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfe80
+        }
+    }
+}
+
 pub fn get_settings(app_handle: &dyn AppContext) -> Cs2BridgeSettings {
     let cfg = config::load_config(app_handle);
     Cs2BridgeSettings {
@@ -107,7 +156,9 @@ pub fn get_settings(app_handle: &dyn AppContext) -> Cs2BridgeSettings {
     }
 }
 
-/// `token`: `None` conserve le token existant, `Some("")` l'efface.
+/// `token`: `None` conserve le token existant, `Some("")` l'efface. Un token
+/// conserve ne suit pas un changement d'URL : il a ete donne pour l'ancien
+/// serveur, le nouveau ne le recoit jamais sans que l'utilisateur le redonne.
 pub fn set_settings(
     app_handle: &dyn AppContext,
     enabled: bool,
@@ -115,6 +166,11 @@ pub fn set_settings(
     token: Option<String>,
 ) -> Result<(), String> {
     let url = normalize_url(&url)?;
+    let token = token.or_else(|| {
+        let stored = config::load_config(app_handle).steam.cs2_bridge;
+        let configured = !stored.token_encrypted.trim().is_empty();
+        (configured && !token_follows(&stored.url, &url)).then(String::new)
+    });
     match token {
         Some(value) => super::replace_config_secret(
             app_handle,
@@ -215,7 +271,7 @@ async fn fetch_from(
     if url.is_empty() {
         return Err("Bridge URL is not configured".to_string());
     }
-    let token = decrypt_token(token_encrypted)?;
+    let token = usable_token(&url, token_encrypted)?;
 
     let wanted: std::collections::HashSet<&str> = steam_ids.iter().map(String::as_str).collect();
     let mut accounts = Vec::new();
@@ -412,7 +468,7 @@ async fn check_from(
     steam_id: &str,
 ) -> Result<Cs2BridgeAccount, String> {
     let endpoint = sub_endpoint(raw_url, "check")?;
-    let token = decrypt_token(token_encrypted)?;
+    let token = usable_token(raw_url, token_encrypted)?;
 
     let mut request = client
         .post(endpoint)
@@ -449,12 +505,53 @@ async fn check_from(
 
 #[cfg(test)]
 mod tests {
-    use super::{check_from, fetch_from, ids_endpoint, sub_endpoint, MAX_RESPONSE_BYTES};
+    use super::{
+        check_from, fetch_from, ids_endpoint, sub_endpoint, token_follows, url_protects_token,
+        MAX_RESPONSE_BYTES,
+    };
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::sync::mpsc;
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn a_token_goes_out_only_over_https_or_to_this_machine() {
+        assert!(url_protects_token("https://bridge.example.com/k/abc"));
+        assert!(url_protects_token("http://127.0.0.1:8080"));
+        assert!(url_protects_token("http://localhost/api"));
+        assert!(url_protects_token("http://[::1]:9000"));
+        assert!(!url_protects_token("http://bridge.example.com"));
+        assert!(!url_protects_token("http://8.8.8.8"));
+        assert!(!url_protects_token("http://[2001:db8::1]"));
+    }
+
+    #[test]
+    fn a_bridge_on_the_local_network_keeps_its_token() {
+        // Bridges set up before the https rule ran on the LAN over plain
+        // http. They keep working after an update.
+        assert!(url_protects_token("http://192.168.1.20:8080"));
+        assert!(url_protects_token("http://10.0.0.5"));
+        assert!(url_protects_token("http://172.16.4.2"));
+        assert!(url_protects_token("http://169.254.10.1"));
+        assert!(url_protects_token("http://[fd12:3456::1]"));
+        assert!(url_protects_token("http://[fe80::1]"));
+        assert!(url_protects_token("http://gaming-pc.local:8080"));
+        assert!(!url_protects_token("http://172.32.0.1"));
+    }
+
+    #[test]
+    fn a_stored_token_does_not_follow_a_new_url() {
+        assert!(token_follows(
+            "https://bridge.example.com/",
+            "https://bridge.example.com"
+        ));
+        assert!(!token_follows(
+            "https://bridge.example.com",
+            "https://other.example.com"
+        ));
+        assert!(!token_follows("", "https://bridge.example.com"));
+    }
 
     fn read_request(stream: &mut TcpStream) -> String {
         stream

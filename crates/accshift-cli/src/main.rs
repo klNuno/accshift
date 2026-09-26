@@ -10,6 +10,9 @@ use accshift_core::error::PlatformErrorKind;
 use accshift_core::lock::{acquire_exclusive, LockError};
 use accshift_core::platforms::descriptor::plan::DryRunPlan;
 use accshift_core::platforms::get_service;
+use accshift_core::platforms::steam::switch_params::{
+    steam_switch_params, PersonaMode, ShutdownMode, SteamSwitchDefaults, SteamSwitchOverrides,
+};
 use clap::{Parser, Subcommand};
 use context::CliAppContext;
 use output::{emit_err, emit_json_ok, Format};
@@ -156,13 +159,11 @@ enum CliGate {
 fn resolve_cli_gate() -> CliGate {
     match CliAppContext::new() {
         Err(reason) => CliGate::Unavailable(reason),
-        Ok(ctx) => {
-            if settings::load(&ctx).cli_enabled {
-                CliGate::Allow
-            } else {
-                CliGate::Disabled
-            }
-        }
+        Ok(ctx) => match settings::try_load(&ctx) {
+            Ok(stored) if stored.cli_enabled => CliGate::Allow,
+            Ok(_) => CliGate::Disabled,
+            Err(reason) => CliGate::Unavailable(reason),
+        },
     }
 }
 
@@ -192,6 +193,10 @@ fn run(format: Format, command: Command, gate: CliGate) -> u8 {
 }
 
 fn main() -> ExitCode {
+    // A launcher started by `switch` outlives this process. Were it to inherit
+    // our stdout, a caller reading it through a pipe would wait for Steam to
+    // exit instead of for us.
+    accshift_core::os::stop_std_handle_inheritance();
     let cli = Cli::parse();
     let format = Format::resolve(cli.json);
 
@@ -398,6 +403,36 @@ struct SwitchOverrides {
     launch_options: Option<String>,
 }
 
+impl SwitchOverrides {
+    /// Flags left unset fall back to the GUI settings. clap refuses the
+    /// conflicting pairs, so each pair holds at most one flag.
+    fn into_steam(self) -> SteamSwitchOverrides {
+        let pick = |yes: bool, no: bool| match (yes, no) {
+            (true, _) => Some(true),
+            (_, true) => Some(false),
+            _ => None,
+        };
+        SteamSwitchOverrides {
+            run_as_admin: pick(self.admin, self.no_admin),
+            shutdown_mode: pick(self.force, self.graceful).map(|force| {
+                if force {
+                    ShutdownMode::Force
+                } else {
+                    ShutdownMode::Graceful
+                }
+            }),
+            persona: pick(self.invisible, self.online).map(|invisible| {
+                if invisible {
+                    PersonaMode::Invisible
+                } else {
+                    PersonaMode::Online
+                }
+            }),
+            launch_options: self.launch_options,
+        }
+    }
+}
+
 fn cmd_switch(
     format: Format,
     platform_id: &str,
@@ -427,10 +462,8 @@ fn cmd_switch(
     // PIN gate: the GUI can lock account switching behind a 4-digit PIN. Honour
     // the same lock here so the CLI cannot bypass it. Prompt before taking the
     // lock so we never hold it while waiting on stdin.
-    if app_settings.pin_enabled {
-        if let Err(code) = pin::enforce(format, &app_settings.pin_hash) {
-            return code;
-        }
+    if let Err(code) = pin::enforce(format, accshift_core::pin::read_pin_lock(&*ctx)) {
+        return code;
     }
 
     let _lock = match acquire_exclusive(&ctx, LOCK_TIMEOUT) {
@@ -450,50 +483,13 @@ fn cmd_switch(
         }
     };
 
-    let steam_defaults = app_settings.platform_settings.steam;
-
-    let run_as_admin = if overrides.admin {
-        true
-    } else if overrides.no_admin {
-        false
-    } else {
-        steam_defaults.run_as_admin
-    };
-
-    let shutdown = if overrides.force {
-        "force"
-    } else if overrides.graceful {
-        "graceful"
-    } else {
-        match steam_defaults.shutdown_mode.as_deref() {
-            Some("force") => "force",
-            Some("graceful") => "graceful",
-            _ => "graceful",
-        }
-    };
-
-    // Only force a persona mode when the user asked for one. A plain switch
-    // must not touch the account's existing online/invisible state.
-    let mode = if overrides.invisible {
-        Some("invisible")
-    } else if overrides.online {
-        Some("online")
-    } else {
-        None
-    };
-
-    let launch_options = overrides
-        .launch_options
-        .unwrap_or(steam_defaults.launch_options);
-
-    let mut params = json!({
-        "runAsAdmin": run_as_admin,
-        "launchOptions": launch_options,
-        "shutdownMode": shutdown,
-    });
-    if let Some(mode) = mode {
-        params["mode"] = json!(mode);
-    }
+    let saved = &app_settings.platform_settings.steam;
+    let defaults = SteamSwitchDefaults::from_settings(
+        saved.run_as_admin,
+        &saved.launch_options,
+        saved.shutdown_mode.as_deref(),
+    );
+    let params = steam_switch_params(&defaults, overrides.into_steam());
 
     match service.switch_account(ctx, account_id, params) {
         Ok(()) => {
@@ -653,214 +649,4 @@ fn cmd_descriptors(format: Format) -> u8 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::diagnostics::Diag;
-    use std::fs;
-    use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    /// Every subcommand the binary answers, one per `Command`/`Diag` variant.
-    /// Adding a subcommand means adding it here, and
-    /// `every_subcommand_is_listed` says so out loud when the count drifts.
-    fn every_command() -> Vec<Command> {
-        vec![
-            Command::List {
-                platform: "steam".into(),
-                folder: None,
-            },
-            Command::Platforms,
-            Command::Switch {
-                platform: "steam".into(),
-                account_id: "alice".into(),
-                online: false,
-                invisible: false,
-                graceful: false,
-                force: false,
-                admin: false,
-                no_admin: false,
-                launch_options: None,
-            },
-            Command::Descriptors,
-            Command::DryRun {
-                platform: "steam".into(),
-                account_id: "alice".into(),
-            },
-            Command::Diag {
-                action: Diag::Logs {
-                    codes: Vec::new(),
-                    level: None,
-                    op_id: None,
-                    run_id: None,
-                    platform: None,
-                    source: None,
-                    since: None,
-                    contains: None,
-                    limit: 1,
-                    all: false,
-                },
-            },
-            Command::Diag {
-                action: Diag::Explain {
-                    code: "no-such-code".into(),
-                },
-            },
-            Command::Diag {
-                action: Diag::Check,
-            },
-            Command::Diag {
-                action: Diag::Level {
-                    module: None,
-                    set: None,
-                    reset: false,
-                    debug_for: None,
-                    stop_debug: false,
-                },
-            },
-            Command::Diag {
-                action: Diag::Bundle {
-                    records: 1,
-                    level: "info".into(),
-                    op_id: None,
-                    no_config: false,
-                    print: false,
-                },
-            },
-            Command::Diag {
-                action: Diag::Schema { write: None },
-            },
-        ]
-    }
-
-    /// Unique temp directory per test, removed on drop.
-    struct TempRoot(PathBuf);
-
-    impl TempRoot {
-        fn new(tag: &str) -> Self {
-            static COUNTER: AtomicU64 = AtomicU64::new(0);
-            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!(
-                "accshift-cli-gate-test-{tag}-{}-{n}",
-                std::process::id()
-            ));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(&dir).expect("create temp test dir");
-            Self(dir)
-        }
-
-        fn entries(&self) -> usize {
-            fs::read_dir(&self.0)
-                .expect("read temp test dir")
-                .filter_map(Result::ok)
-                .count()
-        }
-    }
-
-    impl Drop for TempRoot {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-
-    #[test]
-    fn every_subcommand_is_listed() {
-        let mut names: Vec<&str> = every_command().iter().map(Command::name).collect();
-        names.sort_unstable();
-        assert_eq!(
-            names,
-            vec![
-                "descriptors",
-                "diag-bundle",
-                "diag-check",
-                "diag-explain",
-                "diag-level",
-                "diag-logs",
-                "diag-schema",
-                "dry-run",
-                "list",
-                "platforms",
-                "switch",
-            ],
-            "a subcommand was added or renamed without updating every_command()"
-        );
-    }
-
-    #[test]
-    fn the_exemption_list_is_empty() {
-        assert!(
-            CLI_GATE_EXEMPT.is_empty(),
-            "an exemption was added: document it in docs/cli.md and say why the \
-             command is safe for someone who deliberately switched the CLI off"
-        );
-    }
-
-    #[test]
-    fn the_toggle_off_refuses_every_subcommand_the_same_way() {
-        for command in every_command() {
-            let name = command.name();
-            assert_eq!(
-                run(Format::Json, command, CliGate::Disabled),
-                exit::CLI_DISABLED,
-                "{name} ran with the CLI toggle off"
-            );
-        }
-    }
-
-    #[test]
-    fn unreadable_settings_refuse_every_subcommand_too() {
-        for command in every_command() {
-            let name = command.name();
-            assert_eq!(
-                run(
-                    Format::Json,
-                    command,
-                    CliGate::Unavailable("no home directory".into())
-                ),
-                exit::IO,
-                "{name} ran without a settings file to check"
-            );
-        }
-    }
-
-    #[test]
-    fn a_refused_subcommand_writes_nothing() {
-        // `diag schema --write <dir>` is the one subcommand whose writes land
-        // somewhere a test can own, so it is the one that can prove a refusal
-        // stops before the command body.
-        let tmp = TempRoot::new("refused");
-
-        let code = run(
-            Format::Json,
-            Command::Diag {
-                action: Diag::Schema {
-                    write: Some(tmp.0.clone()),
-                },
-            },
-            CliGate::Disabled,
-        );
-
-        assert_eq!(code, exit::CLI_DISABLED);
-        assert_eq!(tmp.entries(), 0, "a refused run still wrote to disk");
-    }
-
-    #[test]
-    fn the_toggle_on_reaches_the_command() {
-        let tmp = TempRoot::new("allowed");
-
-        let code = run(
-            Format::Json,
-            Command::Diag {
-                action: Diag::Schema {
-                    write: Some(tmp.0.clone()),
-                },
-            },
-            CliGate::Allow,
-        );
-
-        assert_eq!(code, exit::OK);
-        assert!(
-            tmp.entries() > 0,
-            "dispatch never reached the command with the toggle on"
-        );
-    }
-}
+mod tests;

@@ -16,6 +16,7 @@ import {
   CLIENT_STORE_ACCOUNT_CARD_NOTES,
   CLIENT_STORE_FOLDER_CARD_COLORS,
   CLIENT_STORE_FOLDERS,
+  CLIENT_STORE_PERSONAS,
   CLIENT_STORE_SETTINGS,
   CLIENT_STORE_VIEW_MODE,
   STORAGE_TARGET_APP_CONFIG_LOCAL,
@@ -39,7 +40,13 @@ type AppLifecycleDeps = {
   };
   loader: {
     prepareVisibleAccounts: () => void;
+    clearForPlatformChange: () => void;
   };
+  addFlow: {
+    get flow(): { platformId: string } | null;
+    cancel: () => Promise<void>;
+  };
+  resetVisiblePrimeState: () => void;
   loadAccounts: (
     ...args: [boolean?, boolean?, boolean?, boolean?, boolean?]
   ) => void | Promise<unknown>;
@@ -47,6 +54,8 @@ type AppLifecycleDeps = {
   syncViewModeFromStorage: () => void;
   bumpCardColorVersion: () => void;
   bumpCardNoteVersion: () => void;
+  /** Re-reads the personas list; its store has no other external refresh. */
+  refreshPersonas: () => void;
   setAppVersion: (version: string) => void;
   markBootReady: () => void;
   replaceHistoryState: (entry: {
@@ -65,11 +74,14 @@ export function createAppLifecycleController({
   shell,
   navigation,
   loader,
+  addFlow,
+  resetVisiblePrimeState,
   loadAccounts,
   queueGridPadding,
   syncViewModeFromStorage,
   bumpCardColorVersion,
   bumpCardNoteVersion,
+  refreshPersonas,
   setAppVersion,
   markBootReady,
   replaceHistoryState,
@@ -203,7 +215,7 @@ export function createAppLifecycleController({
 
       const touched = new Set(changed);
       const anyOf = (targets: readonly string[]) => targets.some((target) => touched.has(target));
-      const activeCapabilities = getPlatformDefinition(shell.activeTab)?.capabilities;
+      let tabChanged = false;
 
       if (touched.has(STORAGE_TARGET_CUSTOM_THEMES)) {
         await loadCustomThemes();
@@ -215,7 +227,13 @@ export function createAppLifecycleController({
           !shell.settings.enabledPlatforms.includes(shell.activeTab) ||
           !isPlatformUsable(shell.activeTab, shell.runtimeOs)
         ) {
+          // Same reset as a tab click: the grid, current account and any load
+          // in flight belong to the platform that was just turned off.
+          if (addFlow.flow) void addFlow.cancel();
+          resetVisiblePrimeState();
+          loader.clearForPlatformChange();
           shell.setActiveTab(getInitialActiveTab(shell.settings, shell.runtimeOs));
+          tabChanged = true;
           navigation.currentFolderId = null;
           replaceHistoryState({
             tab: shell.activeTab,
@@ -234,13 +252,24 @@ export function createAppLifecycleController({
       if (touched.has(CLIENT_STORE_ACCOUNT_CARD_NOTES)) {
         bumpCardNoteVersion();
       }
+      if (touched.has(CLIENT_STORE_PERSONAS)) {
+        refreshPersonas();
+      }
       if (anyOf(GRID_TARGETS)) {
         navigation.refreshCurrentItems();
         loader.prepareVisibleAccounts();
         queueGridPadding();
       }
 
-      if (anyOf(APP_CONFIG_TARGETS) || anyOf(activeCapabilities?.externalDataStores ?? [])) {
+      const activeCapabilities = getPlatformDefinition(shell.activeTab)?.capabilities;
+      if (tabChanged) {
+        if (isPlatformUsable(shell.activeTab, shell.runtimeOs)) {
+          await loadAccounts(true);
+        } else {
+          navigation.refreshCurrentItems();
+          queueGridPadding();
+        }
+      } else if (anyOf(APP_CONFIG_TARGETS) || anyOf(activeCapabilities?.externalDataStores ?? [])) {
         // No forced avatar refresh here: this runs on every window focus while the
         // platform client is running (its data stores change constantly), and the
         // profile cache TTL already covers avatar freshness.
