@@ -97,6 +97,32 @@ fn a_successful_write_drops_a_stale_bak() {
 }
 
 #[test]
+fn a_launcher_file_write_leaves_the_users_own_bak_alone() {
+    let root = unique_test_root("foreign-bak");
+    for name in ["loginusers.vdf", "registry.vdf", "Battle.net.config"] {
+        let path = root.join(name);
+        let theirs = path.with_extension("bak");
+        fs::write(&path, b"old").unwrap();
+        fs::write(&theirs, b"hand copy").unwrap();
+
+        write_bytes_atomic(&path, b"new").unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        assert_eq!(fs::read(&theirs).unwrap(), b"hand copy", "{name}");
+    }
+    assert_eq!(
+        backup_path(&root.join("loginusers.vdf")),
+        root.join("loginusers.vdf.accshift-bak")
+    );
+    assert_eq!(
+        backup_path(&root.join("store.json")),
+        root.join("store.bak")
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn a_corrupt_primary_is_served_from_bak_without_touching_it() {
     let root = unique_test_root("bak-recovery");
     let path = root.join("store.json");

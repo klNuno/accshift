@@ -36,7 +36,7 @@ where
     // crashed mid-replace leaves a valid .bak behind. Serve it, but leave the
     // primary alone: the next write replaces it, and a read path that copies
     // files around races every other reader.
-    let bak_path = path.with_extension("bak");
+    let bak_path = backup_path(path);
     if bak_path != path {
         if let Ok(data) = fs::read_to_string(&bak_path) {
             if let Ok(value) = serde_json::from_str::<T>(&data) {
@@ -46,6 +46,24 @@ where
     }
 
     primary
+}
+
+/// Where the copy-over fallback keeps the original. accshift's JSON stores
+/// use `<stem>.bak`, the name every release has read back. Any other file
+/// belongs to a launcher (`loginusers.vdf`, `registry.vdf`,
+/// `Battle.net.config`), where `<stem>.bak` may be the user's own copy: those
+/// get a name nobody else writes, so neither the fallback nor the cleanup
+/// after a clean rename can touch it.
+pub(super) fn backup_path(path: &Path) -> std::path::PathBuf {
+    if path.extension().is_some_and(|ext| ext == "json") {
+        return path.with_extension("bak");
+    }
+    let mut name = path
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_else(|| std::ffi::OsString::from("file"));
+    name.push(".accshift-bak");
+    path.with_file_name(name)
 }
 
 /// Temp-file sibling unique to this process, so a concurrent GUI and CLI
@@ -74,7 +92,7 @@ pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     write_synced(&tmp_path, bytes)
         .map_err(|e| format!("Could not write temp file {}: {e}", tmp_path.display()))?;
 
-    let bak_path = path.with_extension("bak");
+    let bak_path = backup_path(path);
     let mut rename_result = fs::rename(&tmp_path, path);
     for delay_ms in [50, 100, 200] {
         if rename_result.is_ok() {
