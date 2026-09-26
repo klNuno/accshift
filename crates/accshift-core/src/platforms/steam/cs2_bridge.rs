@@ -104,12 +104,16 @@ fn token_follows(previous_url: &str, next_url: &str) -> bool {
     normalize_url(previous_url).is_ok_and(|previous| previous == next_url)
 }
 
-/// Le token dechiffre, refuse s'il devait partir en clair : http n'est admis
-/// avec un token que vers cette machine.
+/// Le token dechiffre, refuse s'il devait partir en clair sur Internet : http
+/// n'est admis avec un token que vers cette machine ou le reseau local, ou
+/// tournaient deja les bridges configures avant cette regle.
 fn usable_token(raw_url: &str, encrypted: &str) -> Result<String, String> {
     let token = decrypt_token(encrypted)?;
     if !token.is_empty() && !url_protects_token(raw_url) {
-        return Err("The bridge token is only sent over https or to this machine".to_string());
+        return Err(
+            "The bridge token is only sent over https, to this machine or to a local network address"
+                .to_string(),
+        );
     }
     Ok(token)
 }
@@ -122,12 +126,25 @@ fn url_protects_token(raw_url: &str) -> bool {
         return true;
     }
     url.host_str().is_some_and(|host| {
-        host.eq_ignore_ascii_case("localhost")
+        let lower = host.to_ascii_lowercase();
+        lower == "localhost"
+            || lower.ends_with(".local")
             || host
                 .trim_matches(['[', ']'])
                 .parse::<std::net::IpAddr>()
-                .is_ok_and(|ip| ip.is_loopback())
+                .is_ok_and(|ip| ip_is_local(&ip))
     })
+}
+
+/// Cette machine, un reseau prive (RFC 1918, IPv6 ULA) ou le lien local.
+fn ip_is_local(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+        std::net::IpAddr::V6(v6) => {
+            let first = v6.segments()[0];
+            v6.is_loopback() || (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfe80
+        }
+    }
 }
 
 pub fn get_settings(app_handle: &dyn AppContext) -> Cs2BridgeSettings {
@@ -505,7 +522,22 @@ mod tests {
         assert!(url_protects_token("http://localhost/api"));
         assert!(url_protects_token("http://[::1]:9000"));
         assert!(!url_protects_token("http://bridge.example.com"));
-        assert!(!url_protects_token("http://192.168.1.20"));
+        assert!(!url_protects_token("http://8.8.8.8"));
+        assert!(!url_protects_token("http://[2001:db8::1]"));
+    }
+
+    #[test]
+    fn a_bridge_on_the_local_network_keeps_its_token() {
+        // Bridges set up before the https rule ran on the LAN over plain
+        // http. They keep working after an update.
+        assert!(url_protects_token("http://192.168.1.20:8080"));
+        assert!(url_protects_token("http://10.0.0.5"));
+        assert!(url_protects_token("http://172.16.4.2"));
+        assert!(url_protects_token("http://169.254.10.1"));
+        assert!(url_protects_token("http://[fd12:3456::1]"));
+        assert!(url_protects_token("http://[fe80::1]"));
+        assert!(url_protects_token("http://gaming-pc.local:8080"));
+        assert!(!url_protects_token("http://172.32.0.1"));
     }
 
     #[test]
