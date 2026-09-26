@@ -125,10 +125,10 @@ fn url_protects_token(raw_url: &str) -> bool {
     if url.scheme() == "https" {
         return true;
     }
+    // Only IP literals count as local: a name, `.local` included, resolves
+    // wherever DNS points it.
     url.host_str().is_some_and(|host| {
-        let lower = host.to_ascii_lowercase();
-        lower == "localhost"
-            || lower.ends_with(".local")
+        host.eq_ignore_ascii_case("localhost")
             || host
                 .trim_matches(['[', ']'])
                 .parse::<std::net::IpAddr>()
@@ -536,8 +536,9 @@ mod tests {
         assert!(url_protects_token("http://169.254.10.1"));
         assert!(url_protects_token("http://[fd12:3456::1]"));
         assert!(url_protects_token("http://[fe80::1]"));
-        assert!(url_protects_token("http://gaming-pc.local:8080"));
         assert!(!url_protects_token("http://172.32.0.1"));
+        // A name resolves wherever DNS points it, `.local` included.
+        assert!(!url_protects_token("http://gaming-pc.local:8080"));
     }
 
     #[test]
