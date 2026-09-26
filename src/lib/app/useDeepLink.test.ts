@@ -128,6 +128,44 @@ describe("deep-link switch to another tab", () => {
     expect(events).toEqual(["confirm", "tab:steam"]);
   });
 
+  it("loads the new tab itself when the tab change has not read it yet", async () => {
+    // changeTab fires its load without awaiting it, so the list can still be
+    // empty with the loading flag down.
+    const account = { id: "account-1", username: "alice", displayName: "Alice" };
+    let activeTab = "riot";
+    let loaded: (typeof account)[] = [];
+    const switchToAccount = vi.fn().mockResolvedValue(true);
+    const showToast = vi.fn();
+    const loadAccounts = vi.fn(async () => {
+      loaded = [account];
+    });
+    const controller = createDeepLinkController({
+      t: (key) => key,
+      showToast,
+      getSettings: () => settings,
+      getRuntimeOs: () => "windows",
+      getActiveTab: () => activeTab,
+      isPinLocked: () => false,
+      isBootReady: () => true,
+      changeTab: vi.fn(async (tab: string) => {
+        activeTab = tab;
+      }),
+      loadAccounts,
+      getAccounts: () => loaded,
+      isLoaderLoading: () => false,
+      loadPlatformAccounts: vi.fn(async () => [account]),
+      switchToAccount,
+      confirmSwitch: async () => true,
+    });
+    await controller.start();
+
+    mocks.callback?.(["accshift://switch/steam/account-1"]);
+    await vi.waitFor(() => expect(switchToAccount).toHaveBeenCalledOnce());
+
+    expect(loadAccounts).toHaveBeenCalledOnce();
+    expect(showToast).not.toHaveBeenCalledWith("toast.deepLinkAccountNotFound");
+  });
+
   it("leaves the tab alone when the switch is declined", async () => {
     const { controller, changeTab, switchToAccount, events } = createCrossTab(false);
     await controller.start();

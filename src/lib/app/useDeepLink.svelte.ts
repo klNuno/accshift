@@ -143,7 +143,15 @@ export function createDeepLinkController(deps: DeepLinkDeps) {
       if (deps.getActiveTab() !== platformId) return;
       await waitUntil(() => !deps.isLoaderLoading(), LOAD_TIMEOUT_MS);
       const accountId = account.id;
-      account = deps.getAccounts().find((candidate) => candidate.id === accountId);
+      const byId = (candidate: PlatformAccount) => candidate.id === accountId;
+      account = deps.getAccounts().find(byId);
+      if (!account) {
+        // changeTab starts its load without awaiting it, and that load waits
+        // for the adapter before it raises the loading flag: the wait above
+        // can pass on a list that has not been read yet. Load it explicitly.
+        await deps.loadAccounts();
+        account = deps.getAccounts().find(byId);
+      }
       if (!account) {
         showNotFound();
         return;
