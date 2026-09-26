@@ -61,29 +61,9 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable branch, pinned 2026-06-09
 
-      - name: Validate telemetry endpoint
-        shell: pwsh
-        env:
-          ACCSHIFT_TELEMETRY_URL: ${{ vars.ACCSHIFT_TELEMETRY_URL }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:ACCSHIFT_TELEMETRY_URL)) {
-            throw "Missing GitHub variable ACCSHIFT_TELEMETRY_URL."
-          }
-          $uri = $null
-          if (-not [Uri]::TryCreate($env:ACCSHIFT_TELEMETRY_URL, [UriKind]::Absolute, [ref]$uri) -or
-              $uri.Scheme -ne "https" -or
-              [string]::IsNullOrWhiteSpace($uri.Host) -or
-              -not [string]::IsNullOrEmpty($uri.UserInfo) -or
-              -not [string]::IsNullOrEmpty($uri.Query) -or
-              -not [string]::IsNullOrEmpty($uri.Fragment) -or
-              $env:ACCSHIFT_TELEMETRY_URL -ne $env:ACCSHIFT_TELEMETRY_URL.Trim() -or
-              $env:ACCSHIFT_TELEMETRY_URL.EndsWith('/')) {
-            throw "ACCSHIFT_TELEMETRY_URL must be an HTTPS base URL without credentials, query, fragment, or trailing slash."
-          }
-
+      # No ACCSHIFT_TELEMETRY_URL: a dev build compiles in the inert fallback, so
+      # test installs never reach the analytics dashboard. Only release.yml sets it.
       - name: Build Tauri bundles (unsigned, no updater artifacts)
-        env:
-          ACCSHIFT_TELEMETRY_URL: ${{ vars.ACCSHIFT_TELEMETRY_URL }}
         run: vp exec tauri build -c '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Compress macOS .app bundle
