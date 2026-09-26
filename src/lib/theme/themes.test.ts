@@ -1,4 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const invokeMock = vi.fn((..._args: unknown[]): Promise<unknown> => Promise.resolve(undefined));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (...args: unknown[]) => invokeMock(...args),
+}));
+
 import {
   BUILT_IN_THEMES,
   ROOT_TOKENS,
@@ -6,6 +12,7 @@ import {
   applyThemeToDocument,
   getThemeDefinition,
   resolveThemeSurfaceOpacities,
+  saveThemeDocument,
   themeFromDocument,
   themeUsesLiquidGlass,
 } from "./themes";
@@ -199,6 +206,53 @@ describe("custom themes", () => {
     applyCustomThemePayloads([]);
 
     expect(getThemeDefinition("legacy").id).toBe("dark");
+  });
+
+  it("writes CSS the filter refused back to the file when the editor saves", async () => {
+    // An older release accepted CSS this build refuses. Editing the theme
+    // must not erase it from the user's file.
+    const refused = '.card { background: image-set("a.png" 1x); }';
+    applyCustomThemePayloads([
+      {
+        schemaVersion: 3,
+        id: "older",
+        name: "Older",
+        colorScheme: "dark",
+        tokens: {},
+        css: refused,
+      },
+    ]);
+    const theme = getThemeDefinition("older");
+    expect(theme.document.css).toBeUndefined();
+
+    const savedCss = async (options?: { keepRefusedCss?: boolean }, css?: string) => {
+      invokeMock.mockClear();
+      await saveThemeDocument({ ...theme.document, name: "Renamed", css }, options);
+      const [command, args] = invokeMock.mock.calls[0] as [string, { theme: { css: unknown } }];
+      expect(command).toBe("save_custom_theme");
+      return args.theme.css;
+    };
+
+    expect(await savedCss({ keepRefusedCss: true })).toBe(refused);
+    // CSS typed in the editor replaces it.
+    expect(await savedCss({ keepRefusedCss: true }, ".card { opacity: 1; }")).toBe(
+      ".card { opacity: 1; }",
+    );
+    // Once replaced, the refused CSS is gone for good.
+    expect(await savedCss({ keepRefusedCss: true })).toBeNull();
+
+    // An import replaces the file with what it brings.
+    applyCustomThemePayloads([
+      {
+        schemaVersion: 3,
+        id: "older",
+        name: "Older",
+        colorScheme: "dark",
+        tokens: {},
+        css: refused,
+      },
+    ]);
+    expect(await savedCss()).toBeNull();
   });
 });
 

@@ -1,5 +1,11 @@
 import type { KeyScope, ParsedCombo, ShortcutBinding } from "./types";
 
+/** Returned by a binding's `run` to say "not handled here": the controller
+ *  tries the next matching binding and, if none takes the key, leaves the
+ *  event untouched for component-level listeners. Anything else, including
+ *  `false` or the value of an assignment, counts as handled. */
+export const PASS: unique symbol = Symbol("keyboard.pass");
+
 type KeyboardControllerDeps = {
   getScope: () => KeyScope;
   isMac: () => boolean;
@@ -61,8 +67,8 @@ export function createKeyboardController({ getScope, isMac, bindings }: Keyboard
       if (!comboMatches(e, combo, isMac())) continue;
       const hasModifier = combo.mod || combo.alt;
       if (editable && !hasModifier && !binding.allowInInput) continue;
-      const handled = binding.run(e);
-      if (handled === false) continue;
+      if (editable && binding.skipInInput) continue;
+      if (binding.run(e) === PASS) continue;
       if (binding.preventDefault !== false) {
         e.preventDefault();
         e.stopPropagation();

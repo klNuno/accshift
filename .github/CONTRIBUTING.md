@@ -45,16 +45,17 @@ pnpm run test:rust              # cargo test --workspace
 ```
 
 `pnpm run check` chains the Vite+ check, `check:frontend` and `check:rust` in one
-command.
+command. `pnpm gates` runs `check`, the frontend and worker tests, the worker
+typecheck, `fmt:check`, `clippy` and `test:rust`, then prints each exit code;
+`pnpm gates clippy rust` runs only the named gates. It needs
+`server/node_modules` installed. The frontend build is not part of it.
 
-Two extra steps CI performs that are easy to miss locally:
+Two details that are easy to miss locally:
 
-- The Rust checks need the staged CLI sidecar, which is gitignored. A fresh
-  checkout must produce it first:
-  ```bash
-  cargo build --release -p accshift-cli
-  node scripts/stage-cli.mjs
-  ```
+- The Rust check, test and clippy scripts run `scripts/stage-cli.mjs` first.
+  It stages the gitignored CLI sidecar and builds it if missing. Direct
+  `cargo check`, `cargo test` or `cargo clippy` commands do not run this step;
+  run `node scripts/stage-cli.mjs` first on a fresh checkout.
 - The telemetry worker in `server/` is a separate pnpm package and is
   typechecked on its own:
   ```bash
@@ -92,8 +93,8 @@ how the launcher stores its session, and whether you can help test. Platform
 work is hard to review without someone who owns an account on that service, so
 the testing answer matters.
 
-The README's "Current Status" table lists which platforms are already done,
-implemented but untested, feasible, or not realistic for a given OS.
+The README's [Supported platforms](../README.md#supported-platforms) table
+lists OS support and marks integrations with limited user feedback.
 
 ## Commits and pull requests
 

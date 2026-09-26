@@ -166,8 +166,8 @@ async function handleTrack(request: Request, env: Env, ctx: ExecutionContext): P
     return json({ error: "batch_too_large", max: maxEvents }, 413);
   }
 
-  // A valid event carries a non-empty string name; reject a batch with none.
-  const usable = payload.events.filter((e) => typeof e?.name === "string" && e.name !== "");
+  // Only names the app can emit are forwarded; reject a batch with none.
+  const usable = usableEvents(payload.events);
   if (usable.length === 0) {
     return json({ error: "bad_payload" }, 400);
   }
@@ -437,10 +437,50 @@ export interface BatchIdentifiers {
 // maps these fields onto closed vocabularies; this is the half of that
 // guarantee that does not depend on the client being the one we shipped.
 
+// Every event name the app emits (`Event::name` in
+// crates/accshift-core/src/telemetry/events.rs; a test keeps the two equal).
+// Anything else is dropped here: a modified client could otherwise mint
+// arbitrary event definitions, PostHog's reserved `$` names included.
+export const EVENT_NAMES: ReadonlySet<string> = new Set([
+  "ping",
+  "first_run",
+  "app_launched",
+  "platform_switch",
+  "persona_switch",
+  "account_add_started",
+  "account_add_cancelled",
+  "account_added",
+  "operation_failed",
+  "update_available",
+  "update_downloaded",
+  "update_applied",
+  "update_failed",
+  "cli_command",
+  "streamer_mode_activated",
+  "deep_link_used",
+  "session_ended",
+  "accounts_snapshot",
+  "settings_snapshot",
+]);
+
+export function usableEvents(events: unknown[]): TelemetryEvent[] {
+  return events.filter(
+    (e): e is TelemetryEvent =>
+      typeof e === "object" &&
+      e !== null &&
+      typeof (e as { name?: unknown }).name === "string" &&
+      EVENT_NAMES.has((e as { name: string }).name),
+  );
+}
+
 const CODE_RE = /^[a-z0-9_]{1,40}$/;
 const PLATFORM_RE = /^[a-z0-9_-]{1,32}$/;
 const VERSION_RE = /^[A-Za-z0-9.+-]{1,32}$/;
 const CLIENT_TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+const LOCALE_RE = /^[A-Za-z]{2,3}(?:[_-][A-Za-z0-9]{2,8}){0,3}$/;
+// Free text from the OS ("Windows 11 Pro 10.0.26200"), so only its shape is
+// bounded: printable ASCII, no control characters, short.
+const OS_VERSION_RE = /^[\x20-\x7e]{1,64}$/;
 
 const MAX_ENABLED_PLATFORMS = 16;
 
@@ -466,6 +506,14 @@ function version(value: unknown): string | undefined {
 
 function count(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function locale(value: unknown): string | undefined {
+  return typeof value === "string" && LOCALE_RE.test(value) ? value : undefined;
+}
+
+function osVersion(value: unknown): string | undefined {
+  return typeof value === "string" && OS_VERSION_RE.test(value) ? value : undefined;
 }
 
 function flag(value: unknown): boolean | undefined {
@@ -502,6 +550,9 @@ export function buildBatch(
 ): PostHogBatchItem[] {
   const isModeB = mode === "B";
   return events.map((ev) => {
+    const appVersion = version(ev.app_version) ?? "";
+    const os_version = osVersion(ev.os_version) ?? "";
+    const evLocale = locale(ev.locale);
     const distinctId = ev.name === "ping" ? ids.pingIdentifier : ids.eventIdentifier;
     const properties: Record<string, unknown> = {
       distinct_id: distinctId,
@@ -511,8 +562,8 @@ export function buildBatch(
       ...privacyProperties(),
       telemetry_mode: mode,
       country,
-      app_version: ev.app_version ?? "",
-      os_version: ev.os_version ?? "",
+      app_version: appVersion,
+      os_version,
     };
     // Optional fields are omitted rather than sent empty, so an absent value
     // stays distinguishable from an empty one on the dashboard side. Each one
@@ -522,7 +573,7 @@ export function buildBatch(
       ["os", code(ev.os)],
       ["arch", code(ev.arch)],
       ["surface", code(ev.surface)],
-      ["locale", typeof ev.locale === "string" && ev.locale.length <= 35 ? ev.locale : undefined],
+      ["locale", evLocale],
       ["platform", platformId(ev.platform)],
       ["duration_ms", count(ev.duration_ms)],
       ["count", count(ev.count)],
@@ -550,10 +601,10 @@ export function buildBatch(
     // to attach them to.
     if (isModeB) {
       properties.$set = {
-        app_version: ev.app_version ?? "",
-        os_version: ev.os_version ?? "",
+        app_version: appVersion,
+        os_version,
         country,
-        ...(ev.locale ? { locale: ev.locale } : {}),
+        ...(evLocale ? { locale: evLocale } : {}),
       };
     }
     return {

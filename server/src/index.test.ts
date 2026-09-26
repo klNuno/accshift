@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
+import eventsSource from "../../crates/accshift-core/src/telemetry/events.rs?raw";
 import {
   buildBatch,
   cors,
+  EVENT_NAMES,
   eventTimestamp,
   maskIp,
   readJsonCapped,
   redactUuids,
   type Env,
   type TelemetryEvent,
+  usableEvents,
 } from "./index";
 
 function streamingRequest(chunks: Uint8Array[], contentLength?: number): Request {
@@ -337,5 +340,81 @@ describe("cors", () => {
 
   it("says nothing about an origin that is not on the list", () => {
     expect(corsHeaders("https://evil.invalid").has("Access-Control-Allow-Origin")).toBe(false);
+  });
+});
+
+describe("usableEvents", () => {
+  it("keeps only the event names the app can emit", () => {
+    const kept = usableEvents([
+      { name: "ping" },
+      { name: "platform_switch" },
+      { name: "$identify" },
+      { name: "made_up_event" },
+      { name: "" },
+      { name: 42 },
+      null,
+      "ping",
+    ]);
+
+    expect(kept.map((e) => e.name)).toEqual(["ping", "platform_switch"]);
+  });
+
+  it("matches every name Event::name can return in the Rust client", () => {
+    const body = eventsSource.slice(
+      eventsSource.indexOf("pub fn name(&self)"),
+      eventsSource.indexOf("pub fn is_mode_b_only"),
+    );
+    const rustNames = [...body.matchAll(/=> "([a-z0-9_]+)"/g)].map((m) => m[1]!);
+
+    expect(rustNames.length).toBeGreaterThan(10);
+    expect(new Set(rustNames)).toEqual(new Set(EVENT_NAMES));
+  });
+});
+
+describe("buildBatch field validation", () => {
+  const IDS = { eventIdentifier: "e", pingIdentifier: "p" };
+  const TS = "2026-01-15T10:00:00.000Z";
+
+  it("drops free-text versions and locales that do not fit their shape", () => {
+    const [item] = buildBatch(
+      "B",
+      [
+        {
+          name: "app_launched",
+          app_version: "1.2.3<script>",
+          os_version: "x".repeat(65),
+          locale: "fr_FR; DROP",
+        },
+      ],
+      IDS,
+      "FR",
+      TS,
+    );
+
+    expect(item!.properties.app_version).toBe("");
+    expect(item!.properties.os_version).toBe("");
+    expect(item!.properties.locale).toBeUndefined();
+    expect(item!.properties.$set).toEqual({ app_version: "", os_version: "", country: "FR" });
+  });
+
+  it("keeps well-formed versions and locales", () => {
+    const [item] = buildBatch(
+      "A",
+      [
+        {
+          name: "ping",
+          app_version: "1.0.4",
+          os_version: "Windows 11 Pro 10.0.26200",
+          locale: "pt-BR",
+        },
+      ],
+      IDS,
+      "FR",
+      TS,
+    );
+
+    expect(item!.properties.app_version).toBe("1.0.4");
+    expect(item!.properties.os_version).toBe("Windows 11 Pro 10.0.26200");
+    expect(item!.properties.locale).toBe("pt-BR");
   });
 });

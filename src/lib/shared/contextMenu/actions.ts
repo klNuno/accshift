@@ -1,4 +1,5 @@
 import type { PlatformContextMenuCallbacks } from "$lib/shared/platform";
+import { isPinLockedError } from "$lib/shared/pinSession";
 
 type ContextMenuErrorFormatter = (
   error: unknown,
@@ -18,6 +19,8 @@ export function createSafeContextAction(
     try {
       await task();
     } catch (error) {
+      // A PIN refusal already brought the lock screen up: no toast on top.
+      if (isPinLockedError(error)) return;
       callbacks.showToast(formatError(error, callbacks));
     }
   };

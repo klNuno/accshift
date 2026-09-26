@@ -3,7 +3,7 @@
 //! Everything here answers one question before the app changes anything: what
 //! would this file add, and what would it touch. A descriptor is a program the
 //! engine runs against the user's real launcher folders, so it is read,
-//! validated and planned first, and only copied into [`super::user_dir`] once
+//! validated and planned first, and only written into [`super::user_dir`] once
 //! the user has seen the plan.
 //!
 //! Nothing here executes a descriptor. The plan is built by the same code the
@@ -46,6 +46,15 @@ pub fn preview_file(
     app: &dyn AppContext,
     path: &Path,
 ) -> Result<DescriptorPreview, DescriptorError> {
+    read_and_preview(app, path).map(|(preview, _)| preview)
+}
+
+/// [`preview_file`], also handing back the exact text that was validated so
+/// the install writes that text and not whatever the file holds a moment later.
+fn read_and_preview(
+    app: &dyn AppContext,
+    path: &Path,
+) -> Result<(DescriptorPreview, String), DescriptorError> {
     let source = display_name(path);
     let body = std::fs::read_to_string(path)
         .map_err(|e| DescriptorError::new(&source, "", format!("could not be read: {e}")))?;
@@ -62,15 +71,18 @@ pub fn preview_file(
         Err(problem) => (None, problem),
     };
 
-    Ok(DescriptorPreview {
-        source,
-        descriptor,
-        file_name,
-        replaces,
-        blocked,
-        plan,
-        plan_problem,
-    })
+    Ok((
+        DescriptorPreview {
+            source,
+            descriptor,
+            file_name,
+            replaces,
+            blocked,
+            plan,
+            plan_problem,
+        },
+        body,
+    ))
 }
 
 /// Copies a descriptor file into [`super::user_dir`] under `<id>.json`.
@@ -79,7 +91,7 @@ pub fn preview_file(
 /// changed between the two calls, and this is the step that makes the app run
 /// it. Returns the name it was written under.
 pub fn install_file(app: &dyn AppContext, path: &Path) -> Result<String, String> {
-    let preview = preview_file(app, path).map_err(|e| e.to_string())?;
+    let (preview, body) = read_and_preview(app, path).map_err(|e| e.to_string())?;
     if !preview.blocked.is_empty() {
         return Err(preview.blocked);
     }
@@ -89,9 +101,10 @@ pub fn install_file(app: &dyn AppContext, path: &Path) -> Result<String, String>
         .map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
     let target = dir.join(&preview.file_name);
 
-    // Copied rather than moved: the file the user picked is theirs, and a
-    // failed install must not have eaten it.
-    std::fs::copy(path, &target)
+    // The validated text is written rather than the file copied: the file the
+    // user picked stays theirs, and a change to it after validation never
+    // reaches the descriptor folder.
+    std::fs::write(&target, body.as_bytes())
         .map_err(|e| format!("Could not write {}: {e}", target.display()))?;
     Ok(preview.file_name)
 }
@@ -148,7 +161,9 @@ fn plan_for(app: &dyn AppContext, descriptor: &Descriptor) -> Result<DryRunPlan,
     let sample = format.charset.sample(format.min_length.max(1));
 
     let service = DescriptorService::new(descriptor.clone(), DescriptorOrigin::Embedded);
-    service.plan_switch(app, &sample)
+    let mut plan = service.plan_switch(app, &sample)?;
+    service.plan_setup_clear(app, &mut plan);
+    Ok(plan)
 }
 
 /// The file name a preview reports, falling back to the whole path when the

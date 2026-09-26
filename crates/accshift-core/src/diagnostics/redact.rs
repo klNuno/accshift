@@ -48,7 +48,68 @@ pub fn sanitize_log_text(value: &str) -> String {
         sanitized = replace_case_insensitive(&sanitized, &path, placeholder);
     }
 
-    sanitized
+    redact_windows_user_dirs(&sanitized)
+}
+
+/// Replace the account name in any `X:\Users\<name>` path the env scrub did
+/// not catch: a JSON-escaped path (`C:\\Users\\bob`), a forward-slash one, or
+/// a profile that is not the current `USERPROFILE`. `Public` and `Default`
+/// are shared folders and stay readable.
+fn redact_windows_user_dirs(value: &str) -> String {
+    const PLACEHOLDER: &str = "<user>";
+    let bytes = value.as_bytes();
+    let is_sep = |b: u8| b == b'\\' || b == b'/';
+    // Separators, quotes and line breaks end the name. Spaces do not: account
+    // names can contain them, and stopping there would leak the surname.
+    let ends_name = |b: u8| is_sep(b) || matches!(b, b'"' | b'\'' | b'\n' | b'\r' | b'\t');
+
+    let mut out = String::with_capacity(value.len());
+    let mut copied = 0;
+    let mut i = 0;
+    while i + 2 < bytes.len() {
+        let drive_start = bytes[i].is_ascii_alphabetic()
+            && bytes[i + 1] == b':'
+            && (i == 0 || !bytes[i - 1].is_ascii_alphanumeric());
+        if !drive_start {
+            i += 1;
+            continue;
+        }
+        let first_sep = i + 2;
+        let mut j = first_sep;
+        while j < bytes.len() && is_sep(bytes[j]) {
+            j += 1;
+        }
+        let users_end = j + "users".len();
+        let has_users = j > first_sep
+            && users_end < bytes.len()
+            && bytes[j..users_end].eq_ignore_ascii_case(b"users")
+            && is_sep(bytes[users_end]);
+        if !has_users {
+            i += 2;
+            continue;
+        }
+        let mut name_start = users_end;
+        while name_start < bytes.len() && is_sep(bytes[name_start]) {
+            name_start += 1;
+        }
+        let mut name_end = name_start;
+        while name_end < bytes.len() && !ends_name(bytes[name_end]) {
+            name_end += 1;
+        }
+        // Stop bytes are ASCII, so both offsets sit on char boundaries.
+        let name = &value[name_start..name_end];
+        let shared = ["public", "default", "all users", "default user"]
+            .iter()
+            .any(|shared| name.eq_ignore_ascii_case(shared));
+        if !name.is_empty() && !shared {
+            out.push_str(&value[copied..name_start]);
+            out.push_str(PLACEHOLDER);
+            copied = name_end;
+        }
+        i = name_end.max(i + 2);
+    }
+    out.push_str(&value[copied..]);
+    out
 }
 
 /// Truncate `value` to `max_bytes`, never splitting a UTF-8 char.
@@ -397,13 +458,22 @@ const ENV_SCRUB_KEYS: [(&str, &str); 10] = [
     ("XDG_CONFIG_HOME", "%XDG_CONFIG_HOME%"),
 ];
 
+// A Windows path is also matched in its JSON-escaped form (`\\` per
+// separator, what `serde_json::to_string` writes) and its forward-slash form.
+// The raw form is a substring of neither, so each needs its own entry.
 fn resolve_env_scrub_pairs() -> Vec<(String, &'static str)> {
-    ENV_SCRUB_KEYS
-        .iter()
-        .filter_map(|(env_key, placeholder)| {
-            std::env::var(env_key).ok().map(|path| (path, *placeholder))
-        })
-        .collect()
+    let mut pairs = Vec::new();
+    for (env_key, placeholder) in ENV_SCRUB_KEYS {
+        let Ok(path) = std::env::var(env_key) else {
+            continue;
+        };
+        if path.contains('\\') {
+            pairs.push((path.replace('\\', "\\\\"), placeholder));
+            pairs.push((path.replace('\\', "/"), placeholder));
+        }
+        pairs.push((path, placeholder));
+    }
+    pairs
 }
 
 // These values are fixed for the process lifetime, so resolve them once
@@ -617,6 +687,54 @@ mod tests {
             redact_uuid_like_tokens("abc123def4567890abc123def4567890ab"),
             "abc123def4567890abc123def4567890ab"
         );
+    }
+
+    #[test]
+    fn sanitize_log_text_scrubs_json_escaped_windows_profile() {
+        let _env = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = std::env::var("USERPROFILE").ok();
+        std::env::set_var("USERPROFILE", r"C:\Users\alice");
+
+        let escaped = json!({ "path": r"C:\Users\alice\AppData\x.json" }).to_string();
+        let escaped_result = sanitize_log_text(&escaped);
+        let slash_result = sanitize_log_text("C:/Users/alice/AppData/x.json");
+
+        match previous {
+            Some(value) => std::env::set_var("USERPROFILE", value),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+
+        assert_eq!(
+            escaped_result,
+            r#"{"path":"%USERPROFILE%\\AppData\\x.json"}"#
+        );
+        assert_eq!(slash_result, "%USERPROFILE%/AppData/x.json");
+    }
+
+    #[test]
+    fn redact_windows_user_dirs_hides_any_profile_name() {
+        assert_eq!(
+            redact_windows_user_dirs(r"open D:\Users\Jean Dupont\Games failed"),
+            r"open D:\Users\<user>\Games failed"
+        );
+        assert_eq!(
+            redact_windows_user_dirs(r#"{"p":"c:\\users\\Jérôme\\a"}"#),
+            r#"{"p":"c:\\users\\<user>\\a"}"#
+        );
+        assert_eq!(redact_windows_user_dirs("C:/Users/bob"), "C:/Users/<user>");
+    }
+
+    #[test]
+    fn redact_windows_user_dirs_keeps_shared_and_unrelated_paths() {
+        for text in [
+            r"C:\Users\Public\Desktop",
+            r"C:\Program Files\Steam",
+            "ratio 3:1 users/day",
+            r"abc:\users\x",
+            r"C:\Users\",
+        ] {
+            assert_eq!(redact_windows_user_dirs(text), text);
+        }
     }
 
     #[test]

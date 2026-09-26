@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { createPlatformApi } from "$lib/platforms/platformApi";
 import { logAppEvent, serializeLogValue } from "$lib/shared/appLogger";
+import { reportPinLockedError } from "$lib/shared/pinSession";
 import type {
   SteamAccount,
   ProfileInfo,
@@ -17,7 +18,8 @@ function getSteamLaunchConfig() {
   return {
     runAsAdmin: !!settings.platformSettings.steam.runAsAdmin,
     launchOptions: (settings.platformSettings.steam.launchOptions || "").trim(),
-    shutdownMode: settings.platformSettings.steam.shutdownMode || "force",
+    // Same fallback as the settings schema and the CLI (core `switch_params`).
+    shutdownMode: settings.platformSettings.steam.shutdownMode === "force" ? "force" : "graceful",
   };
 }
 
@@ -69,6 +71,8 @@ export async function switchAccountAndLaunchGame(
       ...details,
       error: serializeLogValue(reason),
     });
+    // Refused for want of the PIN: bring the lock screen up.
+    reportPinLockedError(reason);
     throw reason;
   }
 }

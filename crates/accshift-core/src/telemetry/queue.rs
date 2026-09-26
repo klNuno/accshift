@@ -39,9 +39,19 @@ fn resolve_mode(state: &ConsentState) -> Option<(Mode, Option<String>)> {
     None
 }
 
+/// An event waiting for the next flush.
+struct Queued {
+    event: Event,
+    at: SystemTime,
+    /// Whether Mode B (install id) was the consent in force when the event
+    /// was recorded. A Mode B flush drops events recorded before that
+    /// consent, so opting in never attaches the id to earlier activity.
+    under_b: bool,
+}
+
 /// Internal messages consumed by the worker thread.
 enum Message {
-    Event(Event, SystemTime),
+    Event(Queued),
     Shutdown,
 }
 
@@ -103,23 +113,26 @@ pub struct Handle {
     tx: SyncSender<Message>,
     consent: Arc<Mutex<ConsentState>>,
     dropped: Arc<AtomicU64>,
+    sending: Arc<Mutex<()>>,
 }
 
 impl Handle {
     /// Enqueues an event. No-op when telemetry is fully disabled.
     /// Never blocks.
     pub fn track(&self, event: Event) {
-        {
+        let under_b = {
             let state = self.consent.lock().unwrap_or_else(|e| e.into_inner());
             if !state.mode_a && !state.mode_b {
                 return;
             }
-        }
-        if self
-            .tx
-            .try_send(Message::Event(event, SystemTime::now()))
-            .is_err()
-        {
+            matches!(resolve_mode(&state), Some((Mode::B, _)))
+        };
+        let queued = Queued {
+            event,
+            at: SystemTime::now(),
+            under_b,
+        };
+        if self.tx.try_send(Message::Event(queued)).is_err() {
             // A full channel means the worker is stuck on a slow flush. The
             // event is lost, which is by design, but the loss is counted so
             // the next ping can report it instead of silently skewing totals.
@@ -132,6 +145,15 @@ impl Handle {
     pub fn update_consent(&self, new_state: ConsentState) {
         let mut guard = self.consent.lock().unwrap_or_else(|e| e.into_inner());
         *guard = new_state;
+    }
+
+    /// Block until no flush is in flight. A flush reads consent and sends
+    /// under one lock, so once this returns after [`Handle::update_consent`],
+    /// every later send uses the new consent. Opt-out calls it before
+    /// `/forget`, so a batch still carrying the install id cannot land on the
+    /// server after the deletion. Bounded by the HTTP timeout.
+    pub fn wait_for_pending_send(&self) {
+        drop(self.sending.lock().unwrap_or_else(|e| e.into_inner()));
     }
 }
 
@@ -149,10 +171,12 @@ impl Worker {
         let consent_clone = consent.clone();
         let dropped = Arc::new(AtomicU64::new(0));
         let dropped_clone = dropped.clone();
+        let sending = Arc::new(Mutex::new(()));
+        let sending_clone = sending.clone();
 
         let join = thread::Builder::new()
             .name("accshift-telemetry".into())
-            .spawn(move || run(rx, ctx, consent_clone, params, dropped_clone))
+            .spawn(move || run(rx, ctx, consent_clone, params, dropped_clone, sending_clone))
             .expect("telemetry thread spawn failed");
 
         Self {
@@ -160,6 +184,7 @@ impl Worker {
                 tx,
                 consent,
                 dropped,
+                sending,
             },
             join: Some(join),
         }
@@ -192,11 +217,13 @@ impl Worker {
 
 /// Everything the worker loop carries between iterations.
 struct WorkerState {
-    buffer: Vec<(Event, SystemTime)>,
+    buffer: Vec<Queued>,
     /// Consecutive failed flushes, used to space out retries.
     consecutive_failures: u32,
     /// None until the first ping of the process has been queued.
     last_ping: Option<Instant>,
+    /// Held from the consent read to the end of the send.
+    sending: Arc<Mutex<()>>,
 }
 
 fn run(
@@ -205,6 +232,7 @@ fn run(
     consent: Arc<Mutex<ConsentState>>,
     params: QueueParams,
     dropped: Arc<AtomicU64>,
+    sending: Arc<Mutex<()>>,
 ) {
     let http = match reqwest::blocking::Client::builder()
         .user_agent(client::user_agent(&ctx.app_version))
@@ -229,6 +257,7 @@ fn run(
         buffer: Vec::new(),
         consecutive_failures: 0,
         last_ping: None,
+        sending,
     };
     let mut last_flush = Instant::now();
     let mut next_interval = params.first_flush_interval;
@@ -239,8 +268,8 @@ fn run(
             .unwrap_or(Duration::ZERO);
 
         match rx.recv_timeout(remaining) {
-            Ok(Message::Event(ev, at)) => {
-                push_bounded(&mut state.buffer, (ev, at), &dropped);
+            Ok(Message::Event(queued)) => {
+                push_bounded(&mut state.buffer, queued, &dropped);
                 if state.buffer.len() >= params.max_batch_size {
                     flush(&http, &params, &ua, &ctx, &consent, &mut state, &dropped);
                     last_flush = Instant::now();
@@ -266,11 +295,7 @@ fn run(
 }
 
 /// Appends an event, dropping the oldest one when the buffer is full.
-fn push_bounded(
-    buffer: &mut Vec<(Event, SystemTime)>,
-    entry: (Event, SystemTime),
-    dropped: &Arc<AtomicU64>,
-) {
+fn push_bounded(buffer: &mut Vec<Queued>, entry: Queued, dropped: &Arc<AtomicU64>) {
     if buffer.len() >= MAX_BUFFERED_EVENTS {
         buffer.remove(0);
         dropped.fetch_add(1, Ordering::Relaxed);
@@ -312,6 +337,8 @@ fn flush(
     state: &mut WorkerState,
     dropped: &Arc<AtomicU64>,
 ) {
+    let sending = state.sending.clone();
+    let _sending = sending.lock().unwrap_or_else(|e| e.into_inner());
     let snapshot = {
         let guard = consent.lock().unwrap_or_else(|e| e.into_inner());
         guard.clone()
@@ -331,7 +358,11 @@ fn flush(
         let dropped_events = dropped.swap(0, Ordering::Relaxed);
         push_bounded(
             &mut state.buffer,
-            (Event::Ping { dropped_events }, SystemTime::now()),
+            Queued {
+                event: Event::Ping { dropped_events },
+                at: SystemTime::now(),
+                under_b: mode == Mode::B,
+            },
             dropped,
         );
         state.last_ping = Some(Instant::now());
@@ -346,16 +377,18 @@ fn flush(
     // enabled. Drop just those events here rather than gating at track()
     // time, since the applicable mode is only known for certain at flush.
     if mode == Mode::A {
-        state.buffer.retain(|(ev, _)| !ev.is_mode_b_only());
-        if state.buffer.is_empty() {
-            return;
-        }
+        state.buffer.retain(|q| !q.event.is_mode_b_only());
+    } else {
+        state.buffer.retain(|q| q.under_b);
+    }
+    if state.buffer.is_empty() {
+        return;
     }
 
     let events_json: Vec<Value> = state
         .buffer
         .iter()
-        .map(|(ev, at)| client::event_to_json(ev, ctx, *at))
+        .map(|q| client::event_to_json(&q.event, ctx, q.at))
         .collect();
 
     match client::send_batch(
@@ -383,7 +416,7 @@ fn flush(
 }
 
 /// Enforces the retry ceiling after a failure, oldest events first.
-fn trim_to_capacity(buffer: &mut Vec<(Event, SystemTime)>, dropped: &Arc<AtomicU64>) {
+fn trim_to_capacity(buffer: &mut Vec<Queued>, dropped: &Arc<AtomicU64>) {
     if buffer.len() <= MAX_BUFFERED_EVENTS {
         return;
     }
@@ -415,11 +448,20 @@ mod tests {
         }
     }
 
-    fn new_state(buffer: Vec<(Event, SystemTime)>) -> WorkerState {
+    fn queued(event: Event) -> Queued {
+        Queued {
+            event,
+            at: SystemTime::now(),
+            under_b: false,
+        }
+    }
+
+    fn new_state(buffer: Vec<Queued>) -> WorkerState {
         WorkerState {
             buffer,
             consecutive_failures: 0,
             last_ping: Some(Instant::now()),
+            sending: Arc::new(Mutex::new(())),
         }
     }
 
@@ -504,26 +546,20 @@ mod tests {
         }));
         let dropped = Arc::new(AtomicU64::new(0));
         let mut state = new_state(vec![
-            (
-                Event::AccountsSnapshot {
-                    platform: "steam".into(),
-                    count: 3,
-                },
-                SystemTime::now(),
-            ),
-            (
-                Event::SettingsSnapshot {
-                    ui_language: "fr".into(),
-                    enabled_platforms: vec!["steam".into()],
-                    personas_enabled: true,
-                    pin_enabled: false,
-                    cli_enabled: true,
-                    deep_links_enabled: true,
-                    streamer_mode: "auto".into(),
-                    animations: "system".into(),
-                },
-                SystemTime::now(),
-            ),
+            queued(Event::AccountsSnapshot {
+                platform: "steam".into(),
+                count: 3,
+            }),
+            queued(Event::SettingsSnapshot {
+                ui_language: "fr".into(),
+                enabled_platforms: vec!["steam".into()],
+                personas_enabled: true,
+                pin_enabled: false,
+                cli_enabled: true,
+                deep_links_enabled: true,
+                streamer_mode: "auto".into(),
+                animations: "system".into(),
+            }),
         ]);
 
         flush(
@@ -542,14 +578,43 @@ mod tests {
     }
 
     #[test]
+    fn a_mode_b_flush_drops_events_recorded_before_that_consent() {
+        let http = reqwest::blocking::Client::new();
+        let consent = Arc::new(Mutex::new(ConsentState {
+            mode_a: true,
+            mode_b: true,
+            install_id: Some("550e8400-e29b-41d4-a716-446655440000".into()),
+            anonymous_id: None,
+        }));
+        let dropped = Arc::new(AtomicU64::new(0));
+        let mut state = new_state(vec![queued(Event::DeepLinkUsed)]);
+
+        flush(
+            &http,
+            &unreachable_params(),
+            "test-ua",
+            &test_ctx(),
+            &consent,
+            &mut state,
+            &dropped,
+        );
+
+        assert!(
+            state.buffer.is_empty(),
+            "a Mode A event must not be sent with the install id"
+        );
+    }
+
+    #[test]
     fn flush_without_consent_drops_and_never_pings() {
         let http = reqwest::blocking::Client::new();
         let consent = Arc::new(Mutex::new(ConsentState::default()));
         let dropped = Arc::new(AtomicU64::new(0));
         let mut state = WorkerState {
-            buffer: vec![(Event::DeepLinkUsed, SystemTime::now())],
+            buffer: vec![queued(Event::DeepLinkUsed)],
             consecutive_failures: 0,
             last_ping: None,
+            sending: Arc::new(Mutex::new(())),
         };
 
         flush(
@@ -582,10 +647,7 @@ mod tests {
             anonymous_id: Some("797f20fe-94de-4e89-98a2-ae3a3273ad1e".into()),
         }));
         let dropped = Arc::new(AtomicU64::new(0));
-        let mut state = new_state(vec![(
-            Event::AppLaunched { duration_ms: 10 },
-            SystemTime::now(),
-        )]);
+        let mut state = new_state(vec![queued(Event::AppLaunched { duration_ms: 10 })]);
 
         flush(
             &http,
@@ -626,12 +688,9 @@ mod tests {
         for i in 0..(MAX_BUFFERED_EVENTS + 5) {
             push_bounded(
                 &mut buffer,
-                (
-                    Event::AppLaunched {
-                        duration_ms: i as u64,
-                    },
-                    SystemTime::now(),
-                ),
+                queued(Event::AppLaunched {
+                    duration_ms: i as u64,
+                }),
                 &dropped,
             );
         }
@@ -639,7 +698,7 @@ mod tests {
         assert_eq!(buffer.len(), MAX_BUFFERED_EVENTS);
         assert_eq!(dropped.load(Ordering::Relaxed), 5);
         // Oldest first: the five discarded events are the five oldest.
-        let first = &buffer[0].0;
+        let first = &buffer[0].event;
         assert!(matches!(first, Event::AppLaunched { duration_ms: 5 }));
     }
 }

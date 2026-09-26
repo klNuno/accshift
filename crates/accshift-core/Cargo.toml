@@ -17,6 +17,8 @@ sysinfo = { workspace = true }
 open = { workspace = true }
 fs4 = { workspace = true }
 zeroize = { workspace = true }
+pbkdf2 = { workspace = true }
+sha2 = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 winreg = { workspace = true }

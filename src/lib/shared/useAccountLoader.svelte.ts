@@ -3,6 +3,7 @@ import { addToast } from "../features/notifications/store.svelte";
 import type { AccountWarningChip, AccountWarningPresentation } from "./accountWarnings";
 import { DEFAULT_LOCALE, translate, type MessageKey, type TranslationParams } from "$lib/i18n";
 import { createAvatarLoader } from "./useAvatarLoader.svelte";
+import { isPinLockedError } from "./pinSession";
 
 const LOAD_TOAST_COOLDOWN_MS = 30000;
 
@@ -124,6 +125,10 @@ export function createAccountLoader(
   let latestLoadId = 0;
   let latestPrimeRunId = 0;
   let latestSwitchId = 0;
+  // Bumped when a switch starts and when it lands. A load only applies the
+  // current account it read if no switch touched it meanwhile; the account
+  // list itself is still applied, and the load still settles `loading`.
+  let currentAccountEpoch = 0;
   const t = (key: MessageKey, params?: TranslationParams) =>
     translateMessage?.(key, params) ?? translate(DEFAULT_LOCALE, key, params);
 
@@ -180,8 +185,14 @@ export function createAccountLoader(
     return () => runId === latestPrimeRunId && adapter === getAdapter();
   }
 
+  /**
+   * `onAfterLoad` gets the id of the platform the accounts came from. The
+   * active tab can move while the load runs (a tab picked from outside, the
+   * onboarding tour), so it is the only safe target for per-platform writes
+   * such as the folder sync.
+   */
   async function load(
-    onAfterLoad?: () => void,
+    onAfterLoad?: (platformId: string) => void,
     silent = false,
     showRefreshedToast = false,
     forceRefresh = false,
@@ -191,6 +202,7 @@ export function createAccountLoader(
     const adapter = getAdapter();
     if (!adapter) return;
     const loadId = ++latestLoadId;
+    const accountEpoch = currentAccountEpoch;
     latestPrimeRunId += 1;
     loading = true;
     error = null;
@@ -210,7 +222,7 @@ export function createAccountLoader(
         if (loadId !== latestLoadId) return;
       }
       accounts = nextAccounts;
-      currentAccount = nextCurrentAccount;
+      if (accountEpoch === currentAccountEpoch) currentAccount = nextCurrentAccount;
       avatars.seedForAccounts(resolveVisibleAccounts(accounts), forceRefresh);
       if (accounts.length === 0) {
         const now = Date.now();
@@ -228,7 +240,7 @@ export function createAccountLoader(
           { type: "success" },
         );
       }
-      onAfterLoad?.();
+      onAfterLoad?.(adapter.id);
       const runBackgroundTasks = () => {
         if (loadId !== latestLoadId) return;
         void refreshVisibleAccounts(checkBans, forceRefresh, silent, false);
@@ -262,8 +274,6 @@ export function createAccountLoader(
   async function switchTo(account: PlatformAccount): Promise<boolean> {
     const adapter = getAdapter();
     if (!adapter || switching) return false;
-    // Invalidate in-flight loads so a pre-switch result cannot clobber currentAccount.
-    latestLoadId += 1;
     // Our own generation token: if a platform/tab change (clearForPlatformChange) or
     // another switchTo() happens while we await below, switchId stops matching and we
     // stop applying currentAccount/switching updates to state that no longer belongs to us.
@@ -280,6 +290,12 @@ export function createAccountLoader(
       await adapter.switchAccount(account);
       if (switchId !== latestSwitchId) return false;
       succeeded = true;
+      // A load in flight read the current account before this switch landed:
+      // keep it from clobbering ours. The epoch moves only here, so a refused
+      // switch leaves that load's value, which is still right, in place.
+      // Bumping latestLoadId instead dropped the load whole, and with it the
+      // only code that sets `loading` back to false.
+      currentAccountEpoch += 1;
       currentAccount = account.id;
       // CS2 bridge: re-check the account we just left (Steam only, SteamID64),
       // then refresh its hover card. Fire-and-forget, never impacts the switch.
@@ -312,16 +328,20 @@ export function createAccountLoader(
       }
     } catch (e) {
       if (switchId !== latestSwitchId) return false;
-      error = String(e);
-      console.error("[accounts] switch failed:", e);
-      const adapter = getAdapter();
-      const mapped = adapter?.getSwitchErrorToastMessage?.(error, { t });
-      addToast(mapped ?? t("toast.switchFailed"), { type: "error" });
-      // A failed switch can mark new warning state (e.g. Roblox session
-      // expired); re-render from the platform cache so the card outline
-      // appears immediately instead of on the next full load.
-      const cachedWarnings = adapter?.getCachedWarningStates?.({ t });
-      if (cachedWarnings) replaceWarningStates(cachedWarnings);
+      // Refused for want of the PIN: the lock screen is up and the switch is
+      // simply not done. Nothing failed that a toast could explain.
+      if (!isPinLockedError(e)) {
+        error = String(e);
+        console.error("[accounts] switch failed:", e);
+        const adapter = getAdapter();
+        const mapped = adapter?.getSwitchErrorToastMessage?.(error, { t });
+        addToast(mapped ?? t("toast.switchFailed"), { type: "error" });
+        // A failed switch can mark new warning state (e.g. Roblox session
+        // expired); re-render from the platform cache so the card outline
+        // appears immediately instead of on the next full load.
+        const cachedWarnings = adapter?.getCachedWarningStates?.({ t });
+        if (cachedWarnings) replaceWarningStates(cachedWarnings);
+      }
     }
     if (switchId !== latestSwitchId) return succeeded;
     switching = false;

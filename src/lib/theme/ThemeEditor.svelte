@@ -243,7 +243,7 @@
   async function save() {
     if (blocked) return;
     const document = draft;
-    await saveThemeDocument(document);
+    await saveThemeDocument(document, { keepRefusedCss: true });
     saved = true;
     commitThemePreview(document);
     onSaved(document);

@@ -230,6 +230,10 @@ export function createAppNavigationController({
       !shell.settings.enabledPlatforms.includes(shell.activeTab) ||
       !isPlatformUsable(shell.activeTab, shell.runtimeOs)
     ) {
+      // Same reset as a tab click: a load still running for the old platform
+      // must not land in the new tab's grid or folders.
+      resetVisiblePrimeState();
+      loader.clearForPlatformChange();
       shell.setActiveTab(getInitialActiveTab(shell.settings, shell.runtimeOs));
     }
 

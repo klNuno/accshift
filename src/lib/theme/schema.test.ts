@@ -167,6 +167,22 @@ describe("parseThemeDocument", () => {
       ".card { background: \\75\\72\\6c(https://example.com/x.png); }",
       ".card { background: u/**/rl(https://example.com/x.png); }",
       "@\\69mport url(https://example.com/x.css);",
+      // Non-hex escapes resolve to the escaped character in the tokenizer.
+      ".card { background: u\\rl(https://example.com/x.png); }",
+      ".card { background: \\u\\r\\l(https://example.com/x.png); }",
+      "@imp\\ort 'https://example.com/x.css';",
+      "@\\IMP\\ORT 'https://example.com/x.css';",
+      ".card { background: U\\RL(https://example.com/x.png); }",
+      ".card { background: u/**/\\rl(https://example.com/x.png); }",
+      ".card { background: \\75 \\r\\6C(https://example.com/x.png); }",
+      // image-set() and friends fetch a string URL without any url( token.
+      '.card { background: image-set("https://example.com/x.png" 1x); }',
+      '.card { background: -webkit-image-set("https://example.com/x.png" 1x); }',
+      '.card { background: IMAGE-SET("https://example.com/x.png" 1x); }',
+      '.card { background: image-\\73 et("https://example.com/x.png" 1x); }',
+      '.card { background: ima\\ge-s/**/et("https://example.com/x.png" 1x); }',
+      '.card { background: image("https://example.com/x.png"); }',
+      '.card { background: src("https://example.com/x.png"); }',
     ]) {
       const result = parseThemeDocument({
         schemaVersion: 2,
@@ -183,6 +199,17 @@ describe("parseThemeDocument", () => {
       expect(result.document?.tokens.accent, css).toBe("#123456");
       expect(result.rejectedCss, css).not.toBeNull();
     }
+
+    // Escapes are ordinary CSS; only the constructs above make CSS unsafe.
+    const escaped = parseThemeDocument({
+      schemaVersion: 2,
+      id: "escaped",
+      name: "Escaped",
+      colorScheme: "dark",
+      tokens: {},
+      css: '.w-1\\/2::before { content: "\\201C"; background-image: linear-gradient(red, blue); }',
+    });
+    expect(escaped.rejectedCss).toBeNull();
   });
 
   it("round trips through the exported file, byte for byte", () => {

@@ -141,6 +141,25 @@ fn navigation_allowed(url: &tauri::Url) -> bool {
         || (cfg!(debug_assertions) && is_http && matches!(host, Some("localhost" | "127.0.0.1")))
 }
 
+/// What the log keeps of a deep link: scheme, action and platform. The account
+/// segment and any query are replaced, since they carry login names and
+/// percent-encoded emails that the log redaction cannot recognise.
+fn deep_link_log_shape(url: &tauri::Url) -> String {
+    let mut segments = url.path().split('/').filter(|s| !s.is_empty());
+    let mut shape = format!("{}://{}", url.scheme(), url.host_str().unwrap_or(""));
+    if let Some(platform) = segments.next() {
+        shape.push('/');
+        shape.push_str(&platform.chars().take(32).collect::<String>());
+    }
+    if segments.next().is_some() {
+        shape.push_str("/<account>");
+    }
+    if segments.next().is_some() || url.query().is_some() || url.fragment().is_some() {
+        shape.push_str("<+extra>");
+    }
+    shape
+}
+
 /// The Windows build that starts Windows 11. `ProductName` still reads
 /// "Windows 10" there, so the build number is the only usable discriminator
 /// (same reasoning as the telemetry OS string in `accshift-core`).
@@ -202,11 +221,14 @@ pub(crate) fn build_main_window(
     setup_ctx: &AppCtx,
     phases: &mut StartupPhases,
 ) -> Result<WebviewWindow, Box<dyn std::error::Error>> {
-    let (start_width, start_height) = timed(&mut phases.window_size_us, || {
-        config::load_window_size(setup_ctx)
-            .unwrap_or((config::DEFAULT_WINDOW_WIDTH, config::DEFAULT_WINDOW_HEIGHT))
+    let saved = timed(&mut phases.window_size_us, || {
+        config::load_window(setup_ctx)
     });
-    let saved_position = config::load_window_position(setup_ctx);
+    let (start_width, start_height) = saved
+        .size
+        .unwrap_or((config::DEFAULT_WINDOW_WIDTH, config::DEFAULT_WINDOW_HEIGHT));
+    let saved_position = saved.position;
+    let saved_physical_position = saved.physical_position;
 
     let navigation_log_ctx = setup_ctx.clone();
     let page_load_log_ctx = setup_ctx.clone();
@@ -291,6 +313,14 @@ pub(crate) fn build_main_window(
     }
 
     let win = timed(&mut phases.window_build_us, || window_builder.build())?;
+
+    // The builder converts the logical origin with the scale Tauri picks at
+    // creation, the primary monitor's. The saved scale gives the exact
+    // physical origin back; the window is still hidden, so the move is not
+    // visible.
+    if let Some((x, y)) = saved_physical_position {
+        let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+    }
 
     // The monitor the window was saved on may be unplugged, or the desktop
     // rearranged. The window is still hidden here, so recentering it costs no
@@ -417,6 +447,7 @@ struct WindowGeometry {
     height: f64,
     x: f64,
     y: f64,
+    scale: f64,
 }
 
 /// Last geometry a move event reported, waiting to be written.
@@ -452,6 +483,7 @@ fn current_geometry(win: &WebviewWindow) -> Option<WindowGeometry> {
         height: size.height,
         x: position.x,
         y: position.y,
+        scale,
     })
 }
 
@@ -499,6 +531,7 @@ fn save_geometry(app_handle: &AppHandle, geometry: WindowGeometry) {
         geometry.width,
         geometry.height,
         Some((geometry.x, geometry.y)),
+        Some(geometry.scale),
     );
 }
 
@@ -659,7 +692,7 @@ pub(crate) fn wire_deep_links(app: &tauri::App, setup_ctx: &AppCtx) {
         let urls = event
             .urls()
             .iter()
-            .map(|url| url.as_str().to_owned())
+            .map(deep_link_log_shape)
             .collect::<Vec<_>>()
             .join(" ");
         let _ = logging::append_app_log(
@@ -707,27 +740,40 @@ pub(crate) fn spawn_snapshot_upgrade(upgrade_ctx: AppCtx) {
     std::thread::spawn(move || {
         // Startup maintenance modifies the same snapshots and rollback copies
         // as account switching. A second GUI or CLI may already be using them.
-        let _operation = match accshift_core::lock::acquire_for_write(
+        // The lock is taken per step rather than around the whole pass, so a
+        // switch in the first seconds waits for one step, not for all of them,
+        // and does not time out on "another instance".
+        let locked = |step: &str| match accshift_core::lock::acquire_for_write(
             &upgrade_ctx,
             std::time::Duration::from_secs(2),
         ) {
-            Ok(guard) => guard,
+            Ok(guard) => Some(guard),
             Err(error) => {
                 let _ = logging::append_app_log(
                     &upgrade_ctx,
                     "warn",
                     "backend.snapshot-upgrade",
-                    "Skipped snapshot maintenance because the store could not be locked",
+                    &format!("Skipped {step} because the store could not be locked"),
                     Some(&error.to_string()),
                 );
-                return;
+                None
             }
         };
+
         let mut failures: Vec<String> = Vec::new();
-        let stats = accshift_core::snapshot_crypto::upgrade_legacy_plaintext_snapshots(
-            &upgrade_ctx,
-            &mut |message, detail| failures.push(format!("{message} ({detail})")),
-        );
+        let mut stats = accshift_core::snapshot_crypto::LegacyUpgradeStats::default();
+        for platform_id in accshift_core::snapshot_crypto::SNAPSHOT_PLATFORM_IDS {
+            let Some(_operation) = locked("snapshot upgrade") else {
+                return;
+            };
+            stats.merge(
+                accshift_core::snapshot_crypto::upgrade_legacy_plaintext_platform(
+                    &upgrade_ctx,
+                    platform_id,
+                    &mut |message, detail| failures.push(format!("{message} ({detail})")),
+                ),
+            );
+        }
         if stats.touched_anything() {
             let level = if stats.failed > 0 { "warn" } else { "info" };
             let _ = logging::append_app_log(
@@ -744,8 +790,36 @@ pub(crate) fn spawn_snapshot_upgrade(upgrade_ctx: AppCtx) {
             );
         }
 
-        sweep_riot_rollback_copies(&upgrade_ctx);
+        if let Some(_operation) = locked("snapshot backup purge") {
+            let mut purge_failures: Vec<String> = Vec::new();
+            let purged = accshift_core::storage::purge_migrated_snapshot_backups(
+                &upgrade_ctx,
+                &mut |message, detail| purge_failures.push(format!("{message} ({detail})")),
+            );
+            if purged > 0 || !purge_failures.is_empty() {
+                let _ = logging::append_app_log(
+                    &upgrade_ctx,
+                    if purge_failures.is_empty() {
+                        "info"
+                    } else {
+                        "warn"
+                    },
+                    "backend.snapshot-upgrade",
+                    &format!("Deleted {purged} plaintext pre-migration snapshot backup(s)"),
+                    (!purge_failures.is_empty())
+                        .then(|| purge_failures.join("; "))
+                        .as_deref(),
+                );
+            }
+        }
 
+        if let Some(_operation) = locked("rollback sweep") {
+            sweep_riot_rollback_copies(&upgrade_ctx);
+        }
+
+        let Some(_operation) = locked("keyring sweep") else {
+            return;
+        };
         let mut sweep_failures: Vec<String> = Vec::new();
         let swept = accshift_core::secrets::gc(&upgrade_ctx, &mut |message, detail| {
             sweep_failures.push(format!("{message} ({detail})"))
@@ -825,115 +899,7 @@ pub(crate) fn spawn_boot_failsafe(fallback_handle: AppHandle) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tauri::{PhysicalPosition, PhysicalSize};
-
-    // The unit bug in one assertion: a 1000x520 logical window on a 125%
-    // display reports 1250x650 physical. Storing that raw is what made the
-    // window grow by 25% at every launch, because the builder reads the stored
-    // number as logical.
-    #[test]
-    fn a_physical_window_size_converts_back_to_the_logical_one() {
-        let scale = 1.25;
-        let physical = PhysicalSize::new(1250_u32, 650_u32);
-        let logical = physical.to_logical::<f64>(scale);
-
-        assert_eq!((logical.width, logical.height), (1000.0, 520.0));
-        assert_eq!(
-            (
-                accshift_core::config::logical_from_physical(1250.0, scale),
-                accshift_core::config::logical_from_physical(650.0, scale),
-            ),
-            (logical.width, logical.height),
-            "the config helper and the tauri conversion must agree"
-        );
-    }
-
-    #[test]
-    fn a_physical_window_position_converts_back_to_the_logical_one() {
-        let physical = PhysicalPosition::new(-2400_i32, 150_i32);
-        let logical = physical.to_logical::<f64>(1.5);
-        assert_eq!((logical.x, logical.y), (-1600.0, 100.0));
-    }
-
-    #[test]
-    fn a_window_overlapping_a_monitor_is_kept() {
-        let monitor = Rect::at(0.0, 0.0, 1920.0, 1040.0);
-        // Fully inside.
-        assert!(Rect::at(100.0, 100.0, 1000.0, 520.0).overlaps(&monitor));
-        // Half off the right edge, still reachable.
-        assert!(Rect::at(1900.0, 100.0, 1000.0, 520.0).overlaps(&monitor));
-        // A second monitor to the left of the primary one.
-        assert!(Rect::at(-1800.0, 40.0, 1000.0, 520.0)
-            .overlaps(&Rect::at(-1920.0, 0.0, 1920.0, 1040.0)));
-    }
-
-    #[test]
-    fn a_window_off_every_monitor_is_rejected() {
-        let monitor = Rect::at(0.0, 0.0, 1920.0, 1040.0);
-        // The unplugged second monitor case.
-        assert!(!Rect::at(-1800.0, 40.0, 1000.0, 520.0).overlaps(&monitor));
-        // Below the taskbar, off the work area.
-        assert!(!Rect::at(100.0, 1040.0, 1000.0, 520.0).overlaps(&monitor));
-        // Touching edges share no pixel.
-        assert!(!Rect::at(1920.0, 0.0, 1000.0, 520.0).overlaps(&monitor));
-    }
-}
+mod tests;
 
 #[cfg(all(test, windows))]
-mod windows_tests {
-    use super::{schemes_need_registration, window_shadow_is_safe, FIRST_WINDOWS_11_BUILD};
-
-    fn schemes(names: &[&str]) -> Vec<String> {
-        names.iter().map(ToString::to_string).collect()
-    }
-
-    #[test]
-    fn skips_registration_when_every_scheme_points_here() {
-        assert!(!schemes_need_registration(&schemes(&["accshift"]), &[true]));
-    }
-
-    #[test]
-    fn registers_when_any_scheme_is_missing() {
-        assert!(schemes_need_registration(&schemes(&["accshift"]), &[false]));
-    }
-
-    #[test]
-    fn check_error_fails_open_to_registration() {
-        // Callers map is_registered errors to false: a broken read must
-        // behave like the old unconditional register, never skip silently.
-        assert!(schemes_need_registration(
-            &schemes(&["a", "b"]),
-            &[true, false]
-        ));
-    }
-
-    #[test]
-    fn empty_config_registers_nothing_either_way() {
-        // register_all over zero schemes is a no-op, so skipping is identical.
-        assert!(!schemes_need_registration(&[], &[]));
-        // Defensive: answers that do not line up with the claims register.
-        assert!(schemes_need_registration(&schemes(&["accshift"]), &[]));
-    }
-
-    #[test]
-    fn windows_10_drops_the_shadow_frame() {
-        // 19045 is 22H2, the last Windows 10 release.
-        assert!(!window_shadow_is_safe(Some(19045)));
-        assert!(!window_shadow_is_safe(Some(FIRST_WINDOWS_11_BUILD - 1)));
-    }
-
-    #[test]
-    fn windows_11_keeps_it() {
-        assert!(window_shadow_is_safe(Some(FIRST_WINDOWS_11_BUILD)));
-        assert!(window_shadow_is_safe(Some(26100)));
-    }
-
-    #[test]
-    fn unreadable_build_keeps_the_old_behavior() {
-        // A registry read that fails must not silently change how the window
-        // is built on a machine we failed to identify.
-        assert!(window_shadow_is_safe(None));
-    }
-}
+mod windows_tests;

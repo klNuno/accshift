@@ -91,6 +91,14 @@ export function createAppDialogsController({
     resolve?.(allowed);
   }
 
+  // Every confirm goes through here: a dialog that replaces a pending
+  // requestConfirm cancels it, so confirming the new one can never resolve
+  // the old request as accepted.
+  function openConfirmDialog(config: PlatformContextMenuConfirmConfig) {
+    settlePendingConfirm(false);
+    confirmDialog = config;
+  }
+
   let contextMenuItems = $derived.by(() => {
     if (!contextMenu) return [];
     if (contextMenu.customItems) return contextMenu.customItems;
@@ -110,7 +118,7 @@ export function createAppDialogsController({
           },
           removeAccount,
           confirmAction: (config) => {
-            confirmDialog = config;
+            openConfirmDialog(config);
           },
           openInputDialog: (config) => {
             openInputDialog(config);
@@ -187,7 +195,7 @@ export function createAppDialogsController({
         {
           label: t("context.menu.deleteFolder"),
           action: () => {
-            confirmDialog = {
+            openConfirmDialog({
               title: t("dialog.deleteFolderTitle", { name: folder.name }),
               message: t("dialog.deleteFolderMessage"),
               confirmLabel: t("context.menu.deleteFolder"),
@@ -195,7 +203,7 @@ export function createAppDialogsController({
                 deleteFolder(folder.id);
                 refreshCurrentItems();
               },
-            };
+            });
           },
         },
       ];
@@ -345,16 +353,15 @@ export function createAppDialogsController({
     confirmColor?: string;
   }): Promise<boolean> {
     // A second request while one is open cancels the first.
-    settlePendingConfirm(false);
     return new Promise<boolean>((resolve) => {
-      pendingConfirmResolve = resolve;
-      confirmDialog = {
+      openConfirmDialog({
         title: config.title,
         message: config.message,
         confirmLabel: config.confirmLabel,
         confirmColor: config.confirmColor,
         onConfirm: () => {},
-      };
+      });
+      pendingConfirmResolve = resolve;
     });
   }
 

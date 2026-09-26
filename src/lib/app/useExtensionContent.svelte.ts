@@ -62,8 +62,35 @@ export function createExtensionContentController({
     return { title: t("card.extensionNote"), lines: [note] };
   }
 
-  let extensionCacheKey = "";
+  // One entry per account, rebuilt only when that account's own inputs change,
+  // so one card's update leaves every other card's prop identity untouched.
+  let sharedKey = "";
+  let entries = new Map<string, { key: string; content: CardExtensionContent | null }>();
   let extensionCache: Record<string, CardExtensionContent | null> = {};
+
+  function accountKey(id: string): string {
+    const w = getWarningStates()[id];
+    const setup = getSetupExtensionContent(id);
+    return JSON.stringify([
+      w?.tooltipText ?? "",
+      w?.chips ?? [],
+      getAccountNote(id),
+      // The full setup content, so flow state changes invalidate the entry.
+      setup ? setup.sections : null,
+    ]);
+  }
+
+  function buildContent(accountId: string): CardExtensionContent | null {
+    const setupContent = getSetupExtensionContent(accountId);
+    if (setupContent) return setupContent;
+    const sections: CardExtensionContent["sections"] = [];
+    const warn = createWarningExtensionSection(accountId);
+    const note = createNoteExtensionSection(accountId);
+    if (warn) sections.push(warn);
+    if (note) sections.push(note);
+    sections.push(...(getExtraSections?.(accountId) ?? []));
+    return sections.length > 0 ? { sections } : null;
+  }
 
   let accountExtensionContentById = $derived.by(() => {
     const locale = getLocale();
@@ -72,35 +99,28 @@ export function createExtensionContentController({
     const extraSectionsVersion = getExtraSectionsVersion?.() ?? 0;
     trackDependencies(locale, cardNoteVersion, showCardNotesInline, extraSectionsVersion);
     const ids = getVisibleRenderedAccountIds();
-    // Build a key that captures all inputs per account
-    const keyParts: string[] = [];
-    for (const id of ids) {
-      const w = getWarningStates()[id];
-      const n = getAccountNote(id);
-      // Serialize the full setup content so flow state changes invalidate the memo.
-      const setup = getSetupExtensionContent(id);
-      const s = setup ? JSON.stringify(setup.sections) : "";
-      keyParts.push(`${id}:${w?.tooltipText ?? ""}:${w?.chips?.length ?? 0}:${n}:${s}`);
-    }
-    const newKey = `${locale}:${cardNoteVersion}:${showCardNotesInline}:${extraSectionsVersion}:${keyParts.join("|")}`;
-    if (newKey === extensionCacheKey) return extensionCache;
 
-    const map: Record<string, CardExtensionContent | null> = {};
-    for (const accountId of ids) {
-      const setupContent = getSetupExtensionContent(accountId);
-      if (setupContent) {
-        map[accountId] = setupContent;
+    const nextSharedKey = `${locale}:${cardNoteVersion}:${showCardNotesInline}:${extraSectionsVersion}`;
+    const previous = nextSharedKey === sharedKey ? entries : new Map();
+    const next = new Map<string, { key: string; content: CardExtensionContent | null }>();
+    let changed = previous !== entries || ids.length !== Object.keys(extensionCache).length;
+    for (const id of ids) {
+      const key = accountKey(id);
+      const cached = previous.get(id);
+      if (cached && cached.key === key) {
+        next.set(id, cached);
+        if (!(id in extensionCache)) changed = true;
         continue;
       }
-      const sections: CardExtensionContent["sections"] = [];
-      const warn = createWarningExtensionSection(accountId);
-      const note = createNoteExtensionSection(accountId);
-      if (warn) sections.push(warn);
-      if (note) sections.push(note);
-      sections.push(...(getExtraSections?.(accountId) ?? []));
-      map[accountId] = sections.length > 0 ? { sections } : null;
+      next.set(id, { key, content: buildContent(id) });
+      changed = true;
     }
-    extensionCacheKey = newKey;
+    sharedKey = nextSharedKey;
+    entries = next;
+    if (!changed) return extensionCache;
+
+    const map: Record<string, CardExtensionContent | null> = {};
+    for (const [id, entry] of next) map[id] = entry.content;
     extensionCache = map;
     return map;
   });

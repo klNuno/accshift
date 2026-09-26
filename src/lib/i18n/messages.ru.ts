@@ -32,6 +32,7 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "pin.placeholder": "PIN из 4 цифр",
   "pin.unlock": "Разблокировать",
   "pin.invalid": "Неверный PIN",
+  "pin.tooManyAttempts": "Слишком много попыток. Повторите через {seconds} с.",
 
   "common.ok": "OK",
   "common.cancel": "Отмена",
@@ -160,6 +161,8 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "settings.pinLockOnAfk": "Блокировка PIN при бездействии",
   "settings.pinCode": "PIN-код",
   "settings.pinPlaceholder": "4 цифры",
+  "settings.pinCurrentCode": "Текущий PIN",
+  "settings.pinCurrentHint": "Введите текущий PIN, чтобы изменить или отключить блокировку.",
   "settings.telemetry": "Статистика использования (анонимно)",
   "settings.telemetryModeA": "Базовая анонимная статистика",
   "settings.telemetryModeAHint":
@@ -810,7 +813,8 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "settings.pinSaved": "PIN сохранён",
   "settings.pinTakesEffectNextLaunch": "Вступит в силу при следующем запуске приложения",
   "settings.pinRequiredAfterInactivity": "Требуется после бездействия и при запуске приложения",
-  "settings.pinScreenLockOnly": "PIN блокирует только это окно. Он ничего не защищает на диске.",
+  "settings.pinScreenLockOnly":
+    "PIN блокирует это окно и переключение аккаунтов. Он ничего не защищает на диске.",
   "settings.unitSeconds": "секунд",
   "settings.unitDays": "дней",
   "settings.telemetryLoadFailed": "Не удалось загрузить настройки телеметрии",

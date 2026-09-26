@@ -48,6 +48,7 @@
 
   // null = grid, "new" = create wizard, otherwise the persona being edited
   let editing = $state<Persona | "new" | null>(null);
+  let wizard = $state<ReturnType<typeof PersonaWizard> | undefined>();
   let accountsByPlatform = $state<Record<string, PlatformAccount[]>>({});
   let accountsLoading = $state(true);
   // "platformId:accountId" -> resolved avatar url (null = known to have none)
@@ -111,6 +112,16 @@
       accent: accent(a.platformId),
       platformId: a.platformId,
     }));
+  }
+
+  /** Escape, forwarded by the app keyboard layer. Returns false on the grid,
+   *  where Escape closes the panel; inside the wizard it steps back instead,
+   *  so a half-filled persona is never dropped by one key press. */
+  export function handleEscape(): boolean {
+    if (!editing) return false;
+    if (wizard) wizard.handleEscape();
+    else editing = null;
+    return true;
   }
 
   function handleSave(input: { name: string; image: string | null; assignments: Persona["assignments"] }) {
@@ -177,6 +188,7 @@
 <div class="personas-panel">
   {#if editing}
     <PersonaWizard
+      bind:this={wizard}
       persona={editing === "new" ? null : editing}
       {platforms}
       {accountsByPlatform}

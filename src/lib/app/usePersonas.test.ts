@@ -61,3 +61,73 @@ describe("persona adapter resolution", () => {
     expect(result?.failed[0]?.platformId).toBe("steam");
   });
 });
+
+describe("persona switch guard", () => {
+  beforeEach(() => {
+    mocks.ensurePlatformLoaded.mockReset();
+  });
+
+  const persona = {
+    id: "persona-1",
+    name: "Main",
+    color: "",
+    assignments: [{ platformId: "steam", accountId: "steam-id" }],
+  };
+
+  it("reports the switch as in flight until every platform is done", async () => {
+    let finishSwitch!: () => void;
+    const adapter = {
+      loadAccounts: vi.fn().mockResolvedValue([{ id: "steam-id", username: "u" }]),
+      switchAccount: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finishSwitch = resolve;
+          }),
+      ),
+    } as unknown as PlatformAdapter;
+    mocks.ensurePlatformLoaded.mockResolvedValue(adapter);
+    const controller = createPersonaController();
+
+    const pending = controller.switchToPersona(persona);
+    expect(controller.switching).toBe(true);
+    await vi.waitFor(() => expect(adapter.switchAccount).toHaveBeenCalledOnce());
+    finishSwitch();
+    await pending;
+
+    expect(controller.switching).toBe(false);
+  });
+
+  it("stops quietly when the backend is locked by the PIN", async () => {
+    const adapter = {
+      loadAccounts: vi.fn().mockResolvedValue([{ id: "steam-id", username: "u" }]),
+      switchAccount: vi
+        .fn()
+        .mockRejectedValue("pin_locked: Accshift is locked. Enter the PIN to switch accounts."),
+    } as unknown as PlatformAdapter;
+    mocks.ensurePlatformLoaded.mockResolvedValue(adapter);
+    const controller = createPersonaController();
+
+    const result = await controller.switchToPersona({
+      ...persona,
+      assignments: [
+        { platformId: "steam", accountId: "steam-id" },
+        { platformId: "riot", accountId: "riot-id" },
+      ],
+    });
+
+    // No partial-failure report: the lock screen is what the user sees.
+    expect(result).toBeNull();
+    expect(adapter.switchAccount).toHaveBeenCalledOnce();
+    expect(controller.switching).toBe(false);
+  });
+
+  it("refuses to start while an account switch is running", async () => {
+    const controller = createPersonaController({ isBlocked: () => true });
+
+    const result = await controller.switchToPersona(persona);
+
+    expect(result).toBeNull();
+    expect(mocks.ensurePlatformLoaded).not.toHaveBeenCalled();
+    expect(controller.switching).toBe(false);
+  });
+});

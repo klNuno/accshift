@@ -1,4 +1,5 @@
 import { ensurePlatformLoaded } from "$lib/platforms/registry";
+import { isPinLockedError } from "$lib/shared/pinSession";
 import type { Persona } from "$lib/features/personas/types";
 import {
   getPersonas,
@@ -12,7 +13,13 @@ export interface PersonaSwitchResult {
   failed: { platformId: string; error: string }[];
 }
 
-export function createPersonaController() {
+type PersonaControllerDeps = {
+  /** True while something else owns the platform clients (a regular account
+   *  switch): a persona switch must not race it. */
+  isBlocked?: () => boolean;
+};
+
+export function createPersonaController({ isBlocked = () => false }: PersonaControllerDeps = {}) {
   let personas = $state<Persona[]>(getPersonas());
   // Which persona is mid-switch, so the UI can lock and show progress.
   let switchingPersonaId = $state<string | null>(null);
@@ -45,7 +52,7 @@ export function createPersonaController() {
    * platforms landed and which didn't.
    */
   async function switchToPersona(persona: Persona): Promise<PersonaSwitchResult | null> {
-    if (switchingPersonaId) return null;
+    if (switchingPersonaId || isBlocked()) return null;
     switchingPersonaId = persona.id;
     const result: PersonaSwitchResult = { succeeded: [], failed: [] };
     try {
@@ -62,6 +69,14 @@ export function createPersonaController() {
           await adapter.switchAccount(account);
           result.succeeded.push(platformId);
         } catch (e) {
+          if (isPinLockedError(e)) {
+            // The backend refuses every platform alike until the PIN is
+            // entered, and the lock screen is up: stop here. Nothing done
+            // yet means nothing to report.
+            if (result.succeeded.length === 0) return null;
+            result.failed.push({ platformId, error: String(e) });
+            break;
+          }
           result.failed.push({ platformId, error: String(e) });
         }
       }
@@ -77,6 +92,11 @@ export function createPersonaController() {
     },
     get switchingPersonaId() {
       return switchingPersonaId;
+    },
+    /** A persona switch is relaunching game clients: updates and regular
+     *  switches must wait for it. */
+    get switching() {
+      return switchingPersonaId !== null;
     },
     refresh,
     create,

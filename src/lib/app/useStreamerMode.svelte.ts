@@ -5,19 +5,32 @@ type StreamerModeDeps = {
   getSettings: () => AppSettings;
   /** Persist a new streamer-mode setting (used by "disable permanently"). */
   setStreamerMode: (mode: StreamerMode) => void;
+  /** True while the window is minimized or its page hidden: nothing to blur on screen. */
+  isHidden?: () => boolean;
+  now?: () => number;
 };
 
 // Streaming software rarely starts and stops, so a few seconds of latency
 // before the blur kicks in is fine and keeps the process scan cheap.
 const POLL_INTERVAL_MS = 4000;
+// Each poll walks the whole process table on the backend. A hidden window
+// shows nothing a stream could capture, so it checks far less often; the
+// first tick after it comes back polls again.
+const HIDDEN_POLL_INTERVAL_MS = 30_000;
 
-export function createStreamerModeController({ getSettings, setStreamerMode }: StreamerModeDeps) {
+export function createStreamerModeController({
+  getSettings,
+  setStreamerMode,
+  isHidden = () => false,
+  now = Date.now,
+}: StreamerModeDeps) {
   let streamingDetected = $state(false);
   // "Disable for now" hides the overlay until the current stream session ends.
   // Reset once no streaming software is running, so reopening OBS re-triggers.
   let dismissedThisSession = $state(false);
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false;
+  let lastPollAt = Number.NEGATIVE_INFINITY;
 
   let enabled = $derived(getSettings().streamerMode === "auto");
   let active = $derived(enabled && streamingDetected && !dismissedThisSession);
@@ -29,6 +42,7 @@ export function createStreamerModeController({ getSettings, setStreamerMode }: S
     }
     if (polling) return;
     polling = true;
+    lastPollAt = now();
     try {
       const detected = await invoke<boolean>("detect_streaming_software");
       if (detected && !streamingDetected) {
@@ -46,7 +60,10 @@ export function createStreamerModeController({ getSettings, setStreamerMode }: S
   function start() {
     if (pollTimer) return;
     void poll();
-    pollTimer = setInterval(() => void poll(), POLL_INTERVAL_MS);
+    pollTimer = setInterval(() => {
+      if (isHidden() && now() - lastPollAt < HIDDEN_POLL_INTERVAL_MS) return;
+      void poll();
+    }, POLL_INTERVAL_MS);
   }
 
   function stop() {

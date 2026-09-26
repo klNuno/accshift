@@ -83,6 +83,31 @@ pub fn hidden_command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Com
     std::process::Command::new(program)
 }
 
+/// Give a launcher (Steam, Riot Client, Battle.net, a descriptor's binary) no
+/// stdio of ours. It outlives the accshift process that starts it, and a
+/// script reading `accshift switch` through a pipe would otherwise wait for
+/// the launcher to exit before its read ends.
+pub fn detach_stdio(command: &mut std::process::Command) -> &mut std::process::Command {
+    use std::process::Stdio;
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+}
+
+/// Keep this process's standard handles out of every child it starts. Call
+/// once at CLI start. Windows creates children with handle inheritance on, so
+/// a stdout pipe the CLI got from a script reaches a launcher even through
+/// `detach_stdio`. Elsewhere `detach_stdio` alone is enough.
+#[cfg(target_os = "windows")]
+pub fn stop_std_handle_inheritance() {
+    windows::stop_std_handle_inheritance();
+}
+
+/// See the Windows variant above.
+#[cfg(not(target_os = "windows"))]
+pub fn stop_std_handle_inheritance() {}
+
 pub fn open_url(url: &str) -> Result<(), AppError> {
     common::open_url(url)
 }

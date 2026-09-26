@@ -143,8 +143,7 @@ pub fn request_steam_shutdown(steam_path: &Path) -> bool {
     // `steam -shutdown` forwards the request to the running instance through
     // the launcher script / Snap wrapper / Flatpak app, same resolution as
     // launch_steam.
-    steam_launch_command(steam_path)
-        .arg("-shutdown")
+    super::detach_stdio(steam_launch_command(steam_path).arg("-shutdown"))
         .spawn()
         .is_ok()
 }
@@ -154,8 +153,7 @@ pub fn launch_steam(
     _run_as_admin: bool,
     launch_options: &[String],
 ) -> Result<(), AppError> {
-    steam_launch_command(steam_path)
-        .args(launch_options)
+    super::detach_stdio(steam_launch_command(steam_path).args(launch_options))
         .spawn()
         .map_err(|e| AppError::ProcessStart(e.to_string()))?;
     Ok(())

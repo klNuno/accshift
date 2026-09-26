@@ -4,11 +4,10 @@
 //! The CLI reads the file read-only to let `list --folder <name>` filter
 //! accounts. Schema mirrors `src/lib/features/folders/store.ts`.
 
-use accshift_core::storage::{client_store_path, STORE_FOLDERS};
+use accshift_core::storage::{client_store_path, read_json_if_exists, STORE_FOLDERS};
 use accshift_core::AppContext;
 use serde::Deserialize;
 use std::collections::HashSet;
-use std::fs;
 
 #[derive(Debug, Deserialize, Default)]
 pub struct FolderStore {
@@ -34,13 +33,7 @@ pub struct ItemRef {
 
 pub fn load(ctx: &dyn AppContext) -> Result<Option<FolderStore>, String> {
     let path = client_store_path(ctx, STORE_FOLDERS)?;
-    match fs::read_to_string(&path) {
-        Ok(data) => serde_json::from_str::<FolderStore>(&data)
-            .map(Some)
-            .map_err(|e| format!("Could not parse folders.json: {e}")),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("Could not read folders.json: {e}")),
-    }
+    read_json_if_exists::<FolderStore>(&path)
 }
 
 /// Resolve folder name to the set of account IDs it contains (recursive into

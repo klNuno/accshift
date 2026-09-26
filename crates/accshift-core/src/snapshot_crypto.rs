@@ -260,7 +260,7 @@ pub struct LegacyUpgradeStats {
 }
 
 impl LegacyUpgradeStats {
-    fn merge(&mut self, other: LegacyUpgradeStats) {
+    pub fn merge(&mut self, other: LegacyUpgradeStats) {
         self.upgraded += other.upgraded;
         self.failed += other.failed;
     }
@@ -400,15 +400,32 @@ pub fn upgrade_legacy_plaintext_snapshots(
 ) -> LegacyUpgradeStats {
     let mut stats = LegacyUpgradeStats::default();
     for platform_id in SNAPSHOT_PLATFORM_IDS {
-        match crate::storage::platform_snapshots_dir(app_handle, platform_id) {
-            Ok(dir) => stats.merge(upgrade_legacy_plaintext_dir(&dir, report)),
-            Err(detail) => report(
-                "Could not resolve snapshot directory",
-                format!("platform={platform_id} error={detail}"),
-            ),
-        }
+        stats.merge(upgrade_legacy_plaintext_platform(
+            app_handle,
+            platform_id,
+            report,
+        ));
     }
     stats
+}
+
+/// [`upgrade_legacy_plaintext_snapshots`] for one platform, so a caller can
+/// take the operation lock per platform instead of around the whole pass.
+pub fn upgrade_legacy_plaintext_platform(
+    app_handle: &dyn AppContext,
+    platform_id: &str,
+    report: &mut dyn FnMut(&str, String),
+) -> LegacyUpgradeStats {
+    match crate::storage::platform_snapshots_dir(app_handle, platform_id) {
+        Ok(dir) => upgrade_legacy_plaintext_dir(&dir, report),
+        Err(detail) => {
+            report(
+                "Could not resolve snapshot directory",
+                format!("platform={platform_id} error={detail}"),
+            );
+            LegacyUpgradeStats::default()
+        }
+    }
 }
 
 #[cfg(test)]

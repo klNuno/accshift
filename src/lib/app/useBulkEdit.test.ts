@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { PlatformBulkEditCapability } from "$lib/shared/platform";
 
 import { createBulkEditController } from "./useBulkEdit.svelte";
 
@@ -44,5 +45,84 @@ describe("bulk edit selection", () => {
     bulk.bulkEditDeselectAll();
 
     expect(bulk.bulkEditSelectedIds.size).toBe(0);
+  });
+});
+
+describe("bulk edit bar loading", () => {
+  function deferredBar() {
+    let resolve!: () => void;
+    const loaded = new Promise<void>((done) => {
+      resolve = done;
+    });
+    const Bar = (() => {}) as never;
+    const capability: PlatformBulkEditCapability = {
+      loadBar: vi.fn(async () => {
+        await loaded;
+        return { default: Bar };
+      }),
+    };
+    return { capability, resolve, Bar };
+  }
+
+  function controllerWith(getCapability: () => PlatformBulkEditCapability | null) {
+    return createBulkEditController({
+      getCurrentAccountId: () => null,
+      getVisibleAccountIds: () => [],
+      getBulkEditCapability: getCapability,
+    });
+  }
+
+  const settle = () => new Promise((done) => setTimeout(done, 0));
+
+  it("opens once the bar has loaded", async () => {
+    const steam = deferredBar();
+    const bulk = controllerWith(() => steam.capability);
+
+    bulk.toggleBulkEdit();
+    steam.resolve();
+    await settle();
+
+    expect(bulk.bulkEditMode).toBe(true);
+    expect(bulk.BulkEditBar).toBe(steam.Bar);
+  });
+
+  it("stays closed when the tab changed while the bar loaded", async () => {
+    const steam = deferredBar();
+    let capability: PlatformBulkEditCapability | null = steam.capability;
+    const bulk = controllerWith(() => capability);
+
+    bulk.toggleBulkEdit();
+    capability = null;
+    bulk.closeBulkEdit();
+    steam.resolve();
+    await settle();
+
+    expect(bulk.bulkEditMode).toBe(false);
+    expect(bulk.BulkEditBar).toBeNull();
+  });
+
+  it("treats a second toggle during the load as a cancel", async () => {
+    const steam = deferredBar();
+    const bulk = controllerWith(() => steam.capability);
+
+    bulk.toggleBulkEdit();
+    bulk.toggleBulkEdit();
+    steam.resolve();
+    await settle();
+
+    expect(bulk.bulkEditMode).toBe(false);
+  });
+
+  it("opens on a third toggle that asks again before the load ends", async () => {
+    const steam = deferredBar();
+    const bulk = controllerWith(() => steam.capability);
+
+    bulk.toggleBulkEdit();
+    bulk.toggleBulkEdit();
+    bulk.toggleBulkEdit();
+    steam.resolve();
+    await settle();
+
+    expect(bulk.bulkEditMode).toBe(true);
   });
 });

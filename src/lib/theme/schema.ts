@@ -9,6 +9,9 @@ import {
   type ThemeTokens,
 } from "./tokens";
 import { blend, contrastRatio, parseColor, roundRatio } from "./contrast";
+import { unsafeCssConstruct } from "./cssSafety";
+
+export { unsafeCssConstruct };
 
 /**
  * A theme file, exactly as it is written on disk and exchanged between users.
@@ -62,41 +65,6 @@ const MAX_META_LENGTH = 64;
 const MAX_EXTENDS_DEPTH = 8;
 export const MAX_THEME_CSS_LENGTH = 20000;
 
-/**
- * Constructs a theme's custom CSS may not contain.
- *
- * CSS cannot run code here, but it can still reach out: a `url()` or an
- * `@import` turns applying a shared theme into a request that tells its author
- * the app started, and `</style` ends the tag and hands the rest to the HTML
- * parser. A theme is a file people pass around, so what it can do stops at
- * painting the window it is applied to.
- */
-const FORBIDDEN_CSS: ReadonlyArray<{ label: string; pattern: RegExp }> = [
-  { label: "@import", pattern: /@import\b/i },
-  { label: "url()", pattern: /\burl\s*\(/i },
-  { label: "expression()", pattern: /\bexpression\s*\(/i },
-  { label: "javascript:", pattern: /javascript\s*:/i },
-  { label: "-moz-binding", pattern: /-moz-binding/i },
-  { label: "</style", pattern: /<\/\s*style/i },
-];
-
-// Strip comments and decode hex escapes so a CSS comment in the middle of
-// `url` and a hex-escaped `url(` match the same constructs a style tag would.
-function normalizeCssForSafety(css: string): string {
-  const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
-  return withoutComments.replace(/\\([0-9a-fA-F]{1,6})(?:\r\n|[ \t\f\n\r])?/g, (_, hex: string) => {
-    const code = Number.parseInt(hex, 16);
-    if (code === 0 || code > 0x10ffff) return "";
-    return String.fromCodePoint(code);
-  });
-}
-
-/** The construct that makes this CSS unusable, or null when it is clean. */
-export function unsafeCssConstruct(css: string): string | null {
-  const normalized = normalizeCssForSafety(css);
-  return FORBIDDEN_CSS.find((entry) => entry.pattern.test(normalized))?.label ?? null;
-}
-
 /** True when this document is Liquid Glass or walks to it through extends. */
 export function documentIsLiquidGlass(
   document: ThemeDocument,
@@ -117,6 +85,26 @@ export function documentIsLiquidGlass(
 
 function readString(value: unknown, maxLength: number): string {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+/** The known, well-formed tokens of a file, and the keys refused. */
+function readTokens(rawTokens: unknown): {
+  tokens: Partial<Record<ThemeTokenKey, string>>;
+  rejectedTokens: string[];
+} {
+  const tokens: Partial<Record<ThemeTokenKey, string>> = {};
+  const rejectedTokens: string[] = [];
+  if (!rawTokens || typeof rawTokens !== "object" || Array.isArray(rawTokens)) {
+    return { tokens, rejectedTokens };
+  }
+  for (const [key, value] of Object.entries(rawTokens as Record<string, unknown>)) {
+    if (!isThemeTokenKey(key) || !isValidTokenValue(key, value)) {
+      rejectedTokens.push(key);
+      continue;
+    }
+    tokens[key] = (value as string).trim();
+  }
+  return { tokens, rejectedTokens };
 }
 
 /**
@@ -175,22 +163,7 @@ export function parseThemeDocument(input: unknown): ThemeParseResult {
   const rawExtends = readString(record.extends, 64);
   const extendsId = THEME_ID_RE.test(rawExtends) ? rawExtends : undefined;
 
-  const tokens: Partial<Record<ThemeTokenKey, string>> = {};
-  const rejectedTokens: string[] = [];
-  const rawTokens = record.tokens;
-  if (rawTokens && typeof rawTokens === "object" && !Array.isArray(rawTokens)) {
-    for (const [key, value] of Object.entries(rawTokens as Record<string, unknown>)) {
-      if (!isThemeTokenKey(key)) {
-        rejectedTokens.push(key);
-        continue;
-      }
-      if (!isValidTokenValue(key, value)) {
-        rejectedTokens.push(key);
-        continue;
-      }
-      tokens[key] = (value as string).trim();
-    }
-  }
+  const { tokens, rejectedTokens } = readTokens(record.tokens);
 
   const author = readString(record.author, MAX_META_LENGTH);
   const version = readString(record.version, MAX_META_LENGTH);

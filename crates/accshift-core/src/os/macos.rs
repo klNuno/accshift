@@ -160,8 +160,7 @@ pub fn launch_steam(
     let binary = steam_path
         .join("Steam.AppBundle/Steam/Contents/MacOS")
         .join(steam_executable_name());
-    Command::new(binary)
-        .args(launch_options)
+    super::detach_stdio(Command::new(binary).args(launch_options))
         .spawn()
         .map_err(|e| AppError::ProcessStart(e.to_string()))?;
     Ok(())

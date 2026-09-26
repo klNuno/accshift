@@ -156,8 +156,16 @@ fn set_login_user_flags(steam_path: &Path, target: Option<&str>) -> Result<(), A
             .map(|t| account_name == t && !account_name.is_empty())
             .unwrap_or(false);
         let flag = if is_target { "1" } else { "0" };
-        updated = vdf_set_nested_value(&updated, &[steam_id.as_str(), "AllowAutoLogin"], flag)?;
-        updated = vdf_set_nested_value(&updated, &[steam_id.as_str(), "MostRecent"], flag)?;
+        let flagged = vdf_set_nested_value(&updated, &[steam_id.as_str(), "AllowAutoLogin"], flag)
+            .and_then(|next| vdf_set_nested_value(&next, &[steam_id.as_str(), "MostRecent"], flag));
+        match flagged {
+            Ok(next) => updated = next,
+            // Only the target's flags decide who Steam signs in. A block the
+            // writer cannot reach for another user is left as it was, like
+            // every release before the structural writer did.
+            Err(e) if is_target => return Err(e),
+            Err(_) => {}
+        }
     }
 
     crate::storage::write_bytes_atomic(&path, updated.as_bytes()).map_err(AppError::FileRead)
@@ -174,6 +182,18 @@ fn restore_auto_login_user(previous_username: &str) -> Result<(), AppError> {
     } else {
         os::set_auto_login_user(previous_username)
     }
+}
+
+/// Put back the autologin an account setup cleared (`add_account` writes an
+/// empty value so Steam opens on its login screen), with the matching
+/// loginusers.vdf flags on Linux and macOS.
+pub(super) fn restore_auto_login_after_setup(
+    steam_path: &Path,
+    previous_username: &str,
+) -> Result<(), AppError> {
+    restore_auto_login_user(previous_username)?;
+    let target = (!previous_username.trim().is_empty()).then_some(previous_username);
+    set_login_user_flags(steam_path, target)
 }
 
 // Switch the Steam autologin and relaunch Steam.
@@ -732,23 +752,42 @@ pub fn add_account(
 }
 
 pub fn forget_account(steam_path: &Path, steam_id: &str) -> Result<(), AppError> {
+    forget_account_with(steam_path, steam_id, || stop_steam(steam_path, false))
+}
+
+/// `forget_account` with the Steam stop injected, so the read/stop/write order
+/// can be tested without a real client.
+fn forget_account_with(
+    steam_path: &Path,
+    steam_id: &str,
+    stop: impl FnOnce() -> Result<StopOutcome, AppError>,
+) -> Result<(), AppError> {
     // Remove account entry from loginusers.vdf.
     let loginusers_path = steam_path.join("config").join("loginusers.vdf");
-    if loginusers_path.exists() {
-        let content =
-            fs::read_to_string(&loginusers_path).map_err(|e| AppError::FileRead(e.to_string()))?;
-        let (updated, removed) = remove_loginuser_entry(&content, steam_id);
-        if removed {
-            // Steam keeps loginusers.vdf in memory and rewrites it on exit.
-            // Editing it while Steam runs silently resurrects the entry. Stop
-            // Steam first (graceful, then kill); it stays closed afterwards.
-            match stop_steam(steam_path, false)? {
-                StopOutcome::NeedsElevation => return Err(AppError::SteamElevated),
-                StopOutcome::NotRunning | StopOutcome::Stopped => {}
-            }
-            crate::storage::write_bytes_atomic(&loginusers_path, updated.as_bytes())
-                .map_err(AppError::FileRead)?;
-        }
+    if !loginusers_path.exists() {
+        return Ok(());
+    }
+    let read =
+        || fs::read_to_string(&loginusers_path).map_err(|e| AppError::FileRead(e.to_string()));
+    // This first read only decides whether Steam has to be stopped at all.
+    if !remove_loginuser_entry(&read()?, steam_id).1 {
+        return Ok(());
+    }
+
+    // Steam keeps loginusers.vdf in memory and rewrites it on exit. Editing it
+    // while Steam runs silently resurrects the entry. Stop Steam first
+    // (graceful, then kill); it stays closed afterwards.
+    match stop()? {
+        StopOutcome::NeedsElevation => return Err(AppError::SteamElevated),
+        StopOutcome::NotRunning | StopOutcome::Stopped => {}
+    }
+
+    // Read again: what Steam flushed while it shut down (MostRecent,
+    // timestamps, an account added this session) must survive the edit.
+    let (updated, removed) = remove_loginuser_entry(&read()?, steam_id);
+    if removed {
+        crate::storage::write_bytes_atomic(&loginusers_path, updated.as_bytes())
+            .map_err(AppError::FileRead)?;
     }
 
     Ok(())
@@ -912,322 +951,4 @@ pub fn clear_integrated_browser_cache() -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        copy_game_settings, parse_launch_options, remove_loginuser_entry, steam_id_to_account_id,
-    };
-    use std::fs;
-    use std::path::PathBuf;
-
-    // SteamID64 whose account ids are 1 and 2, used to build userdata paths.
-    const FROM_ID: &str = "76561197960265729";
-    const TO_ID: &str = "76561197960265730";
-
-    fn copy_test_root(tag: &str) -> PathBuf {
-        let root =
-            std::env::temp_dir().join(format!("accshift-copygames-{}-{}", tag, std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        root
-    }
-
-    #[test]
-    fn parse_launch_options_keeps_quoted_groups() {
-        let args = parse_launch_options("-silent -applaunch 730 \"-novid -fullscreen\"");
-        assert_eq!(
-            args,
-            vec!["-silent", "-applaunch", "730", "-novid -fullscreen"]
-        );
-    }
-
-    #[test]
-    fn parse_launch_options_handles_single_quotes() {
-        let args = parse_launch_options("-foo 'bar baz' -qux");
-        assert_eq!(args, vec!["-foo", "bar baz", "-qux"]);
-    }
-
-    #[test]
-    fn parse_launch_options_handles_escaped_spaces() {
-        let args = parse_launch_options("-foo bar\\ baz");
-        assert_eq!(args, vec!["-foo", "bar baz"]);
-    }
-
-    // -----------------------------------------------------------------------
-    // steam_id_to_account_id
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn steam_id_to_account_id_known_value() {
-        // SteamID64 76561197960265729 -> low 32 bits = 1 (Gabe Newell's account)
-        assert_eq!(steam_id_to_account_id("76561197960265729"), Some(1));
-    }
-
-    #[test]
-    fn steam_id_to_account_id_another_known_value() {
-        // 76561197960265728 is the base (0x0110000100000000), low 32 bits = 0
-        assert_eq!(steam_id_to_account_id("76561197960265728"), Some(0));
-    }
-
-    #[test]
-    fn steam_id_to_account_id_large_account_id() {
-        // 76561198000000000 -> low 32 bits: 0x0110000100000000 subtracted from base
-        // 76561198000000000 = 0x01100001_025317C0, low 32 = 0x025317C0 = 39_734_272
-        assert_eq!(
-            steam_id_to_account_id("76561198000000000"),
-            Some(39_734_272)
-        );
-    }
-
-    #[test]
-    fn steam_id_to_account_id_empty_string() {
-        assert_eq!(steam_id_to_account_id(""), None);
-    }
-
-    #[test]
-    fn steam_id_to_account_id_non_numeric() {
-        assert_eq!(steam_id_to_account_id("not_a_number"), None);
-    }
-
-    #[test]
-    fn steam_id_to_account_id_alphabetic_mixed() {
-        assert_eq!(steam_id_to_account_id("7656abc"), None);
-    }
-
-    #[test]
-    fn steam_id_to_account_id_zero() {
-        assert_eq!(steam_id_to_account_id("0"), Some(0));
-    }
-
-    #[test]
-    fn steam_id_to_account_id_max_u32_low_bits() {
-        // 4294967295 = 0xFFFFFFFF, low 32 bits = u32::MAX
-        assert_eq!(steam_id_to_account_id("4294967295"), Some(u32::MAX));
-    }
-
-    // -----------------------------------------------------------------------
-    // remove_loginuser_entry
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn remove_loginuser_entry_normal_format_removes_only_target() {
-        // Standard Steam layout: every brace sits on its own line.
-        let content = "\"users\"\n\
-{\n\
-\t\"111\"\n\
-\t{\n\
-\t\t\"AccountName\"\t\"first\"\n\
-\t\t\"PersonaName\"\t\"First\"\n\
-\t}\n\
-\t\"222\"\n\
-\t{\n\
-\t\t\"AccountName\"\t\"second\"\n\
-\t\t\"PersonaName\"\t\"Second\"\n\
-\t}\n\
-}\n";
-
-        let (out, removed) = remove_loginuser_entry(content, "111");
-        assert!(removed);
-        assert!(!out.contains("\"111\""));
-        assert!(!out.contains("first"));
-        // The other account survives intact.
-        assert!(out.contains("\"222\""));
-        assert!(out.contains("second"));
-        assert!(out.contains("Second"));
-        // Root structure is preserved.
-        assert!(out.starts_with("\"users\"\n{\n"));
-        assert!(out.ends_with("}\n"));
-    }
-
-    #[test]
-    fn remove_loginuser_entry_inline_brace_keeps_following_accounts() {
-        // Regression test for the silent-wipe bug (finding K4): a third-party
-        // tool condensed the VDF so the opening brace shares the key line.
-        // The old brace accounting drifted by one and deleted every account
-        // after the target. Here removing "111" must keep "222" and "333".
-        let content = "\"users\"\n\
-{\n\
-\t\"111\" {\n\
-\t\t\"AccountName\"\t\"first\"\n\
-\t\t\"PersonaName\"\t\"First\"\n\
-\t}\n\
-\t\"222\" {\n\
-\t\t\"AccountName\"\t\"second\"\n\
-\t\t\"PersonaName\"\t\"Second\"\n\
-\t}\n\
-\t\"333\" {\n\
-\t\t\"AccountName\"\t\"third\"\n\
-\t\t\"PersonaName\"\t\"Third\"\n\
-\t}\n\
-}\n";
-
-        let (out, removed) = remove_loginuser_entry(content, "111");
-        assert!(removed);
-        assert!(!out.contains("\"111\""));
-        assert!(!out.contains("first"));
-        // Both following accounts MUST survive (this is the wipe regression).
-        assert!(out.contains("\"222\""));
-        assert!(out.contains("second"));
-        assert!(out.contains("\"333\""));
-        assert!(out.contains("third"));
-        assert!(out.ends_with("}\n"));
-    }
-
-    #[test]
-    fn remove_loginuser_entry_inline_brace_removes_middle_account() {
-        // Inline-brace layout, target in the middle: the accounts on both
-        // sides must remain.
-        let content = "\"users\"\n\
-{\n\
-\t\"111\" {\n\
-\t\t\"AccountName\"\t\"first\"\n\
-\t}\n\
-\t\"222\" {\n\
-\t\t\"AccountName\"\t\"second\"\n\
-\t}\n\
-\t\"333\" {\n\
-\t\t\"AccountName\"\t\"third\"\n\
-\t}\n\
-}\n";
-
-        let (out, removed) = remove_loginuser_entry(content, "222");
-        assert!(removed);
-        assert!(out.contains("\"111\""));
-        assert!(out.contains("first"));
-        assert!(!out.contains("\"222\""));
-        assert!(!out.contains("second"));
-        assert!(out.contains("\"333\""));
-        assert!(out.contains("third"));
-    }
-
-    #[test]
-    fn remove_loginuser_entry_last_account() {
-        // Removing the final account leaves the earlier ones and a valid
-        // root block.
-        let content = "\"users\"\n\
-{\n\
-\t\"111\"\n\
-\t{\n\
-\t\t\"AccountName\"\t\"first\"\n\
-\t}\n\
-\t\"222\"\n\
-\t{\n\
-\t\t\"AccountName\"\t\"second\"\n\
-\t}\n\
-}\n";
-
-        let (out, removed) = remove_loginuser_entry(content, "222");
-        assert!(removed);
-        assert!(out.contains("\"111\""));
-        assert!(out.contains("first"));
-        assert!(!out.contains("\"222\""));
-        assert!(!out.contains("second"));
-        // Root open/close braces are intact.
-        assert!(out.starts_with("\"users\"\n{\n"));
-        assert!(out.ends_with("}\n"));
-    }
-
-    #[test]
-    fn remove_loginuser_entry_missing_target_is_noop() {
-        let content = "\"users\"\n\
-{\n\
-\t\"111\"\n\
-\t{\n\
-\t\t\"AccountName\"\t\"first\"\n\
-\t}\n\
-}\n";
-
-        let (out, removed) = remove_loginuser_entry(content, "999");
-        assert!(!removed);
-        assert_eq!(out, content);
-    }
-
-    #[test]
-    fn remove_loginuser_entry_ignores_braces_inside_strings() {
-        // A brace inside a quoted value must not move the depth, otherwise the
-        // wrong block boundary is found.
-        let content = "\"users\"\n\
-{\n\
-\t\"111\"\n\
-\t{\n\
-\t\t\"PersonaName\"\t\"weird { name }\"\n\
-\t}\n\
-\t\"222\"\n\
-\t{\n\
-\t\t\"AccountName\"\t\"second\"\n\
-\t}\n\
-}\n";
-
-        let (out, removed) = remove_loginuser_entry(content, "111");
-        assert!(removed);
-        assert!(!out.contains("weird { name }"));
-        assert!(out.contains("\"222\""));
-        assert!(out.contains("second"));
-        assert!(out.ends_with("}\n"));
-    }
-
-    // -----------------------------------------------------------------------
-    // copy_game_settings (stage / backup / swap)
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn copy_game_settings_creates_target_when_absent() {
-        let root = copy_test_root("absent");
-        let src = root.join("userdata").join("1").join("730");
-        fs::create_dir_all(&src).unwrap();
-        fs::write(src.join("localconfig.vdf"), b"from-data").unwrap();
-        // Destination account dir exists but has no copy of app 730 yet.
-        fs::create_dir_all(root.join("userdata").join("2")).unwrap();
-
-        copy_game_settings(&root, FROM_ID, TO_ID, "730").unwrap();
-
-        let target = root.join("userdata").join("2").join("730");
-        assert_eq!(
-            fs::read_to_string(target.join("localconfig.vdf")).unwrap(),
-            "from-data"
-        );
-        // Staging and backup scratch dirs are cleaned up.
-        assert!(!root
-            .join("userdata")
-            .join("2")
-            .join(".730.copy-staging")
-            .exists());
-        assert!(!root
-            .join("userdata")
-            .join("2")
-            .join(".730.copy-backup")
-            .exists());
-        let _ = fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn copy_game_settings_overwrites_existing_target() {
-        let root = copy_test_root("overwrite");
-        let src = root.join("userdata").join("1").join("730");
-        fs::create_dir_all(&src).unwrap();
-        fs::write(src.join("new.cfg"), b"new").unwrap();
-        // Pre-existing target with different content.
-        let target = root.join("userdata").join("2").join("730");
-        fs::create_dir_all(&target).unwrap();
-        fs::write(target.join("old.cfg"), b"old").unwrap();
-
-        copy_game_settings(&root, FROM_ID, TO_ID, "730").unwrap();
-
-        // The new payload replaced the old one; the stale file is gone.
-        assert_eq!(fs::read_to_string(target.join("new.cfg")).unwrap(), "new");
-        assert!(!target.join("old.cfg").exists());
-        // Backup is removed after a successful swap.
-        assert!(!root
-            .join("userdata")
-            .join("2")
-            .join(".730.copy-backup")
-            .exists());
-        let _ = fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn copy_game_settings_rejects_non_numeric_app_id() {
-        let root = copy_test_root("badid");
-        assert!(copy_game_settings(&root, FROM_ID, TO_ID, "../evil").is_err());
-        let _ = fs::remove_dir_all(&root);
-    }
-}
+mod tests;

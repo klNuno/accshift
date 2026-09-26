@@ -31,6 +31,7 @@ export const ZH_MESSAGES: Record<MessageKey, string> = {
   "pin.placeholder": "4 位 PIN",
   "pin.unlock": "解锁",
   "pin.invalid": "PIN 错误",
+  "pin.tooManyAttempts": "尝试次数过多，请在 {seconds} 秒后重试。",
 
   "common.ok": "确定",
   "common.cancel": "取消",
@@ -155,6 +156,8 @@ export const ZH_MESSAGES: Record<MessageKey, string> = {
   "settings.pinLockOnAfk": "挂机时 PIN 锁定",
   "settings.pinCode": "PIN 码",
   "settings.pinPlaceholder": "4 位数字",
+  "settings.pinCurrentCode": "当前 PIN",
+  "settings.pinCurrentHint": "输入当前 PIN 以更改或关闭锁定。",
   "settings.telemetry": "使用统计（匿名）",
   "settings.telemetryModeA": "匿名基础统计",
   "settings.telemetryModeAHint":
@@ -772,7 +775,7 @@ export const ZH_MESSAGES: Record<MessageKey, string> = {
   "settings.pinSaved": "PIN 已保存",
   "settings.pinTakesEffectNextLaunch": "下次启动应用时生效",
   "settings.pinRequiredAfterInactivity": "无操作后以及应用启动时需要输入",
-  "settings.pinScreenLockOnly": "PIN 仅锁定此窗口，不会保护磁盘上的任何数据。",
+  "settings.pinScreenLockOnly": "PIN 会锁定此窗口和账户切换，不会保护磁盘上的任何数据。",
   "settings.unitSeconds": "秒",
   "settings.unitDays": "天",
   "settings.telemetryLoadFailed": "无法加载遥测设置",

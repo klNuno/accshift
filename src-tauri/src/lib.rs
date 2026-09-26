@@ -6,8 +6,6 @@ use tauri::Manager;
 mod app_runtime;
 mod boot;
 mod commands;
-mod commands_diagnostics;
-mod commands_telemetry;
 mod tauri_context;
 mod telemetry_runtime;
 
@@ -107,6 +105,9 @@ pub fn run() {
 
     builder
         .manage(app_runtime::BootState::default())
+        // Decides itself from the settings store on first use: no disk read
+        // on the boot path.
+        .manage(accshift_core::pin::PinSession::new())
         .manage(client)
         .setup(move |app| {
             let setup_handle = app.handle().clone();
@@ -194,6 +195,9 @@ pub fn run() {
             commands::load_client_storage_snapshot,
             commands::save_client_storage_store,
             commands::get_storage_manifest,
+            // PIN lock
+            commands::pin::pin_unlock,
+            commands::pin::pin_lock,
             // Generic platform commands
             commands::platform_get_accounts,
             commands::platform_get_startup_snapshot,
@@ -219,7 +223,7 @@ pub fn run() {
             // Utility
             commands::open_url,
             commands::open_logs_folder,
-            commands_diagnostics::diagnostics,
+            commands::diagnostics::diagnostics,
             // Window
             commands::minimize_window,
             commands::toggle_maximize_window,
@@ -261,20 +265,20 @@ pub fn run() {
             commands::save_custom_theme,
             commands::delete_custom_theme,
             // Telemetry
-            commands_telemetry::telemetry_get_state,
-            commands_telemetry::telemetry_set_mode_a,
-            commands_telemetry::telemetry_set_mode_b,
-            commands_telemetry::telemetry_retry_forget,
-            commands_telemetry::telemetry_complete_onboarding,
-            commands_telemetry::telemetry_track_persona_switch,
-            commands_telemetry::telemetry_track_account_added,
-            commands_telemetry::telemetry_track_account_add_started,
-            commands_telemetry::telemetry_track_account_add_cancelled,
-            commands_telemetry::telemetry_track_operation_failed,
-            commands_telemetry::telemetry_track_update,
-            commands_telemetry::telemetry_track_settings_snapshot,
-            commands_telemetry::telemetry_track_streamer_mode,
-            commands_telemetry::telemetry_export,
+            commands::telemetry::telemetry_get_state,
+            commands::telemetry::telemetry_set_mode_a,
+            commands::telemetry::telemetry_set_mode_b,
+            commands::telemetry::telemetry_retry_forget,
+            commands::telemetry::telemetry_complete_onboarding,
+            commands::telemetry::telemetry_track_persona_switch,
+            commands::telemetry::telemetry_track_account_added,
+            commands::telemetry::telemetry_track_account_add_started,
+            commands::telemetry::telemetry_track_account_add_cancelled,
+            commands::telemetry::telemetry_track_operation_failed,
+            commands::telemetry::telemetry_track_update,
+            commands::telemetry::telemetry_track_settings_snapshot,
+            commands::telemetry::telemetry_track_streamer_mode,
+            commands::telemetry::telemetry_export,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

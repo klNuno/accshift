@@ -513,7 +513,7 @@ mod tests {
         let record = parse(&line);
         assert_eq!(
             record["fields"]["path"],
-            json!("C:/Users/x/mail <email>"),
+            json!("C:/Users/<user>/mail <email>"),
             "field strings must be scrubbed like the message"
         );
     }

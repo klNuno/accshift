@@ -79,6 +79,8 @@ pub enum PlatformErrorKind {
     Io,
     /// Cryptography failure (secret encryption/decryption, snapshot crypto).
     Crypto,
+    /// A PIN is set and this session has not been unlocked with it.
+    PinLocked,
     /// Unclassified: the default for errors migrated from plain strings.
     Other,
 }

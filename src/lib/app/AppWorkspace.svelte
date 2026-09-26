@@ -2,7 +2,6 @@
   import { onDestroy } from "svelte";
   import { flip } from "svelte/animate";
   import { slide } from "svelte/transition";
-  import { SvelteSet } from "svelte/reactivity";
   import Breadcrumb from "$lib/features/folders/Breadcrumb.svelte";
   import type { FolderInfo, ItemRef } from "$lib/features/folders/types";
   import ViewToggle from "$lib/shared/components/ViewToggle.svelte";
@@ -11,7 +10,7 @@
   import BackCard from "$lib/features/folders/BackCard.svelte";
   import SectionHeader from "$lib/features/folders/SectionHeader.svelte";
   import AccountCard from "$lib/shared/components/AccountCard.svelte";
-  import type { DisplaySection } from "./useDisplayPipeline.svelte";
+  import { sectionCollapseKey, type DisplaySection } from "./useDisplayPipeline.svelte";
   import type {
     PlatformAccount,
     PlatformAdapter,
@@ -86,6 +85,8 @@
     isPendingSetupAccount,
     activePlatformAddSetupId,
     switchingAccountId,
+    collapsedFolders,
+    onToggleCollapse,
   }: {
     compatiblePlatformCount: number;
     activeTabUsable: boolean;
@@ -145,10 +146,13 @@
     isPendingSetupAccount: (accountId: string) => boolean;
     activePlatformAddSetupId: string | null;
     switchingAccountId: string | null;
+    /** Collapsed section keys, owned by the display pipeline so select all
+     *  and card focus skip what a collapsed section hides. */
+    collapsedFolders: { has(key: string): boolean };
+    onToggleCollapse: (key: string) => void;
   } = $props();
 
   let contentWrapperRef = $state<HTMLDivElement | null>(null);
-  let collapsedFolders = new SvelteSet<string>();
 
   let renderedItemCount = $derived(
     displaySections
@@ -175,14 +179,6 @@
   $effect(() => {
     if (loaderError) console.error("Account load failed:", loaderError);
   });
-
-  function toggleCollapsed(folderId: string) {
-    if (collapsedFolders.has(folderId)) {
-      collapsedFolders.delete(folderId);
-    } else {
-      collapsedFolders.add(folderId);
-    }
-  }
 
   $effect(() => {
     setGridWrapperRef(contentWrapperRef);
@@ -348,7 +344,7 @@
           accountItems={displayAccountItemsWithPending}
           sections={displaySections}
           collapsedFolders={collapsedFolders}
-          onToggleCollapse={toggleCollapsed}
+          {onToggleCollapse}
           accounts={renderedAccountMap}
           showUsernames={showUsernames}
           showLastLogin={showLastLogin}
@@ -391,7 +387,7 @@
             {@const isRoot = section.folder === null}
             {@const totalCount = section.folderItems.length + section.accountItems.length}
             {@const sectionFolderId = section.folder?.id}
-            {@const collapseKey = sectionFolderId ?? "__root__"}
+            {@const collapseKey = sectionCollapseKey(section)}
             {@const isSectionDragged = !isRoot && dragItem?.type === "folder" && dragItem.id === sectionFolderId}
             {@const isCollapsed = collapsedFolders.has(collapseKey)}
             <div
@@ -410,7 +406,7 @@
                 cardColor={section.folder ? getFolderCardColor(section.folder.id) : ""}
                 {accentColor}
                 collapsed={isCollapsed}
-                onToggle={() => toggleCollapsed(collapseKey)}
+                onToggle={() => onToggleCollapse(collapseKey)}
                 onNavigate={onNavigateToFolder}
                 onContextMenu={onFolderContextMenu}
               />
@@ -421,7 +417,7 @@
                 count={totalCount}
                 {accentColor}
                 collapsed={isCollapsed}
-                onToggle={() => toggleCollapsed(collapseKey)}
+                onToggle={() => onToggleCollapse(collapseKey)}
               />
             {/if}
             {#if totalCount > 0 && !isCollapsed}

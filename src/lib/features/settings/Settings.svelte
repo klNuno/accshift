@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { getSettings, saveSettings, ALL_PLATFORMS } from "./store";
+  import { getSettings, onSettingsChanged, saveSettings, ALL_PLATFORMS } from "./store";
   import { addToast } from "../notifications/store.svelte";
   import {
     hasApiKey,
@@ -27,6 +27,7 @@
   import SettingsGeneralTab from "./SettingsGeneralTab.svelte";
   import SettingsPlatformsTab from "./SettingsPlatformsTab.svelte";
   import SettingsPrivacyTab from "./SettingsPrivacyTab.svelte";
+  import { mergeSettingsDraft } from "./settingsPatch";
   import type { AppSettings } from "./types";
 
   let {
@@ -65,6 +66,9 @@
   let healthCheckKey = $derived(JSON.stringify(settings.healthCheckPerPlatform));
   let pinCodeInput = $state("");
   let pinSetupPending = $state(false);
+  // A PIN already in force is replaced only once its code was typed again in
+  // the privacy tab, or once this panel set it.
+  let pinChangeAuthorized = $state(false);
   const uiScale = createNumericInput(() => settings.uiScalePercent, (v) => { settings.uiScalePercent = v; }, 75, 150);
   const bgOpacity = createNumericInput(() => settings.backgroundOpacity, (v) => { settings.backgroundOpacity = v; }, 0, 100);
   const avatarCacheDays = createNumericInput(() => settings.dataRefresh.avatarCacheDays, (v) => { settings.dataRefresh.avatarCacheDays = v; }, 0, 90);
@@ -81,6 +85,14 @@
   });
   let lastSavedToastAt = 0;
   let lastPersistedSnapshot = "";
+  // The settings as of the last save (or the open). A save writes only what
+  // the user changed since then, merged over the store: other writers (zoom
+  // shortcuts, streamer banner, PIN rehash) keep their values.
+  let persistedSettings: AppSettings = getSettings();
+  // Set while this panel writes the store, so its own save is not taken for
+  // another writer's.
+  let writingSettings = false;
+  let stopSettingsListener: (() => void) | null = null;
   let lastPlatformSnapshot = "";
   let ActivePlatformComponent = $state<any>(null);
   const SAVE_TOAST_COOLDOWN_MS = 1500;
@@ -219,6 +231,7 @@
   async function commitPinCode(): Promise<boolean> {
     const sanitized = sanitizePinDigits(pinCodeInput);
     if (!settings.pinEnabled && !pinSetupPending) return false;
+    if (settings.pinEnabled && !pinChangeAuthorized) return false;
     if (sanitized.length !== PIN_CODE_LENGTH) return false;
 
     const nextPinHash = await hashPinCode(sanitized);
@@ -227,6 +240,7 @@
     settings.pinHash = nextPinHash;
     settings.pinEnabled = true;
     pinSetupPending = false;
+    pinChangeAuthorized = true;
     if (sanitizePinDigits(pinCodeInput) === sanitized) {
       pinCodeInput = "";
     }
@@ -314,7 +328,14 @@
     const platformsChanged = nextPlatformSnapshot !== lastPlatformSnapshot;
     const prevPaths = lastSavedPlatformPaths();
 
-    saveSettings(settings);
+    const draft = JSON.parse(JSON.stringify(settings)) as AppSettings;
+    writingSettings = true;
+    try {
+      saveSettings(mergeSettingsDraft(getSettings(), persistedSettings, draft));
+    } finally {
+      writingSettings = false;
+    }
+    persistedSettings = draft;
     onSettingsUpdated?.();
     if (pinCommitted) {
       addToast(t("settings.pinSaved"), { type: "success" });
@@ -364,6 +385,29 @@
       console.error("Failed to clear Steam API key:", e);
       addToast(t("settings.apiKeyClearFailed"), { type: "error" });
     }
+  }
+
+  /**
+   * Another writer changed the stored settings (zoom shortcut, streamer
+   * banner, PIN rehash, a reload after another process wrote them). Show its
+   * values in every field the user has not edited here, and keep those edits.
+   */
+  function adoptExternalSettings() {
+    if (writingSettings || !hydrated) return;
+    const stored = getSettings();
+    const draft = JSON.parse(JSON.stringify(settings)) as AppSettings;
+    const wasSaved = buildPersistSnapshot() === lastPersistedSnapshot;
+    const next = mergeSettingsDraft(stored, persistedSettings, draft);
+    persistedSettings = stored;
+    settings = next;
+    // Only the inputs whose value moved: a field being typed in keeps its text.
+    if (next.uiScalePercent !== draft.uiScalePercent) uiScale.refresh();
+    if (next.backgroundOpacity !== draft.backgroundOpacity) bgOpacity.refresh();
+    if (next.dataRefresh.avatarCacheDays !== draft.dataRefresh.avatarCacheDays) avatarCacheDays.refresh();
+    if (next.dataRefresh.banCheckDays !== draft.dataRefresh.banCheckDays) banCheckDays.refresh();
+    if (next.inactivityBlurSeconds !== draft.inactivityBlurSeconds) inactivityBlur.refresh();
+    // Values already in the store are not an edit to save again.
+    if (wasSaved) lastPersistedSnapshot = buildPersistSnapshot();
   }
 
   function queueSave() {
@@ -478,6 +522,7 @@
   }
 
   onMount(async () => {
+    stopSettingsListener = onSettingsChanged(adoptExternalSettings);
     registerFlush(async () => {
       await hydrationReady;
       await flushSettingsNow();
@@ -514,6 +559,7 @@
       // Baseline the settings that were actually loaded, not edits made while
       // async API/path hydration was in flight. Those edits remain dirty.
       lastPersistedSnapshot = buildPersistSnapshot(settingsAtHydrationStart);
+      persistedSettings = settingsAtHydrationStart;
       lastPlatformSnapshot = JSON.stringify({
         enabledPlatforms: [...settingsAtHydrationStart.enabledPlatforms].sort(),
         defaultPlatformId: settingsAtHydrationStart.defaultPlatformId,
@@ -532,6 +578,7 @@
     const finalPersist = hydrationReady.then(flushSettingsNow);
     registerFlush(() => finalPersist);
     registerSearchFocus(null);
+    stopSettingsListener?.();
     tabBar.destroy();
   });
 
@@ -698,6 +745,7 @@
         bind:settings
         bind:pinCodeInput
         bind:pinSetupPending
+        bind:pinChangeAuthorized
         {t}
         {inactivityBlur}
         neutralAccent={NEUTRAL_CONTROL_ACCENT}

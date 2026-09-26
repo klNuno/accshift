@@ -33,6 +33,7 @@ export const PT_BR_MESSAGES: Record<MessageKey, string> = {
   "pin.placeholder": "PIN de 4 dígitos",
   "pin.unlock": "Desbloquear",
   "pin.invalid": "PIN inválido",
+  "pin.tooManyAttempts": "Muitas tentativas. Tente novamente em {seconds} s.",
 
   "common.ok": "OK",
   "common.cancel": "Cancelar",
@@ -161,6 +162,8 @@ export const PT_BR_MESSAGES: Record<MessageKey, string> = {
   "settings.pinLockOnAfk": "Bloqueio por PIN ao ficar ausente",
   "settings.pinCode": "Código PIN",
   "settings.pinPlaceholder": "4 dígitos",
+  "settings.pinCurrentCode": "PIN atual",
+  "settings.pinCurrentHint": "Digite o PIN atual para alterar ou desativar o bloqueio.",
   "settings.telemetry": "Estatísticas de uso (anônimas)",
   "settings.telemetryModeA": "Estatísticas básicas anônimas",
   "settings.telemetryModeAHint":
@@ -808,7 +811,8 @@ export const PT_BR_MESSAGES: Record<MessageKey, string> = {
   "settings.pinSaved": "PIN salvo",
   "settings.pinTakesEffectNextLaunch": "Tem efeito na próxima vez que o app iniciar",
   "settings.pinRequiredAfterInactivity": "Exigido após inatividade e quando o app inicia",
-  "settings.pinScreenLockOnly": "O PIN bloqueia apenas esta janela. Ele não protege nada no disco.",
+  "settings.pinScreenLockOnly":
+    "O PIN bloqueia esta janela e as trocas de conta. Ele não protege nada no disco.",
   "settings.unitSeconds": "segundos",
   "settings.unitDays": "dias",
   "settings.telemetryLoadFailed": "Não foi possível carregar as configurações de telemetria",

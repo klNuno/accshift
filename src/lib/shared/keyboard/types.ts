@@ -1,3 +1,5 @@
+import type { PASS } from "./controller";
+
 export type KeyScope =
   | "locked"
   | "onboarding"
@@ -17,13 +19,19 @@ export type ShortcutBinding = {
   /** Scopes where the binding fires. "*" matches every scope. */
   scopes: (KeyScope | "*")[];
   /** Single keys (no modifier) are skipped while an editable element has
-   *  focus unless this is set. Modifier combos always pass. */
+   *  focus unless this is set. Modifier combos run there too, unless
+   *  skipInInput is set. */
   allowInInput?: boolean;
+  /** Skip the binding, modifier combo included, while an editable element has
+   *  focus, so the field keeps its native behavior (Ctrl+A selects text). */
+  skipInInput?: boolean;
   /** Defaults to true. Set false for observe-only bindings. */
   preventDefault?: boolean;
-  /** Return false to signal "not handled here": the event is left untouched
-   *  so legacy component-level listeners still see it. */
-  run: (e: KeyboardEvent) => void | boolean;
+  /** Return PASS to signal "not handled here": the next matching binding is
+   *  tried and the event is left untouched so legacy component-level
+   *  listeners still see it. Any other result counts as handled. The return
+   *  type rejects `() => (flag = false)`: write a block body instead. */
+  run: (e: KeyboardEvent) => void | typeof PASS;
 };
 
 export type ParsedCombo = {

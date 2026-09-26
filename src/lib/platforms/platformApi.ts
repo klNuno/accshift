@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { PlatformAddFlowStatus } from "$lib/shared/platform";
 import { logAppEvent, serializeLogValue } from "$lib/shared/appLogger";
 import { toPlatformAddFlowStatus } from "$lib/platforms/addFlow";
+import { reportPinLockedError } from "$lib/shared/pinSession";
 
 interface SetupStatusPayload {
   setupId: string;
@@ -41,6 +42,8 @@ export function createPlatformApi(platformId: string) {
         ...details,
         error: serializeLogValue(reason),
       });
+      // Refused for want of the PIN: bring the lock screen up.
+      reportPinLockedError(reason);
       throw reason;
     }
   }
