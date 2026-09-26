@@ -102,6 +102,7 @@ pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
         rename_result = fs::rename(&tmp_path, path);
     }
     if rename_result.is_ok() {
+        sync_parent_dir(path);
         // A .bak left by an earlier failed copy-over now holds an older
         // version than the primary. Drop it so a later read cannot serve it.
         if bak_path != path {
@@ -124,6 +125,22 @@ pub(super) fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let mut file = fs::File::create(path)?;
     file.write_all(bytes)?;
     file.sync_all()
+}
+
+/// Flushes the directory entry the rename just changed. Without it, ext4 and
+/// APFS can lose the rename on a power cut and bring back the old file, or
+/// no file at all on a first write. Best effort: the content is already
+/// durable, and Windows has no directory handle to flush (NTFS journals the
+/// rename itself).
+fn sync_parent_dir(path: &Path) {
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        if let Ok(dir) = fs::File::open(parent) {
+            let _ = dir.sync_all();
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 /// Copies `tmp_path` over `path` to finish the write when the rename
