@@ -403,15 +403,15 @@ fn staging_path(live: &Path) -> PathBuf {
 
 impl PlatformService for DescriptorService {
     fn get_accounts(&self, app: AppCtx) -> Result<Value, PlatformError> {
-        let accounts = self.accounts_in(&self.read_view(&app)?);
+        let (accounts, _) = self.list_accounts(&app)?;
         serde_json::to_value(accounts).map_err(|e| PlatformError::other(e.to_string()))
     }
 
     fn get_startup_snapshot(&self, app: AppCtx) -> Result<Value, PlatformError> {
-        let view = self.read_view(&app)?;
+        let (accounts, current) = self.list_accounts(&app)?;
         let snapshot = DescriptorStartupSnapshot {
-            accounts: self.accounts_in(&view),
-            current_account: view.current.clone().unwrap_or_default(),
+            accounts,
+            current_account: current.unwrap_or_default(),
         };
         serde_json::to_value(snapshot).map_err(|e| PlatformError::other(e.to_string()))
     }

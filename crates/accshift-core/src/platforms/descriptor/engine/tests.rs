@@ -388,6 +388,31 @@ fn a_root_that_does_not_resolve_refuses_every_path_instead_of_allowing_all() {
 }
 
 #[test]
+fn saved_accounts_stay_listed_when_the_roots_do_not_resolve() {
+    // An update that stops a root from resolving (a variable this session
+    // lacks) must not make the saved accounts vanish. Switching still refuses.
+    let _config = config_guard();
+    let root = scratch("unresolved-root-listing");
+    let ctx = TempCtx { root: root.clone() };
+    let descriptor = Descriptor::parse("test", &env_rooted_fixture()).unwrap();
+    let service = DescriptorService::new(descriptor, DescriptorOrigin::Embedded)
+        .with_environment(Vec::<(String, String)>::new());
+
+    // Nothing saved yet: the refusal is the only useful answer.
+    assert!(service.list_accounts(&ctx).is_err());
+
+    let id = service.descriptor.id.clone();
+    config_bridge::touch_account(&ctx, &id, "aaaa1111", 1234).unwrap();
+    let (accounts, current) = service.list_accounts(&ctx).unwrap();
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].account_id, "aaaa1111");
+    assert_eq!(accounts[0].last_used_at, Some(1234));
+    assert_eq!(current, None);
+    assert!(service.plan_switch(&ctx, "aaaa1111").is_err());
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn recapturing_frees_the_previous_capture_keyring_entries() {
     // Every encrypted file owns a keyring entry on Linux and macOS, and the
     // directory that held the ids is what gets removed. Freeing them has to

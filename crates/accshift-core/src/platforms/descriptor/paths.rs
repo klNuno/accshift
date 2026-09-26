@@ -71,12 +71,32 @@ impl PathResolver {
         // (`LOCALAPPDATA`, `ProgramFiles(x86)`). Falling back to a folded
         // lookup keeps a descriptor working on a machine whose variables are
         // spelled differently.
-        self.env.get(name).cloned().or_else(|| {
-            self.env
-                .iter()
-                .find(|(key, _)| key.eq_ignore_ascii_case(name))
-                .map(|(_, value)| value.clone())
-        })
+        self.env
+            .get(name)
+            .cloned()
+            .or_else(|| {
+                self.env
+                    .iter()
+                    .find(|(key, _)| key.eq_ignore_ascii_case(name))
+                    .map(|(_, value)| value.clone())
+            })
+            .or_else(|| self.xdg_default(name))
+    }
+
+    /// Many Linux sessions never export the XDG base directories, and every
+    /// program then uses the defaults the spec names under `$HOME`. A
+    /// descriptor rooted at `${XDG_CONFIG_HOME}` must land in the same place
+    /// the launcher does, not fail.
+    fn xdg_default(&self, name: &str) -> Option<String> {
+        let under_home = match name {
+            "XDG_CONFIG_HOME" => ".config",
+            "XDG_CACHE_HOME" => ".cache",
+            "XDG_DATA_HOME" => ".local/share",
+            "XDG_STATE_HOME" => ".local/state",
+            _ => return None,
+        };
+        let home = self.env.get("HOME").filter(|home| !home.is_empty())?;
+        Some(format!("{}/{under_home}", home.trim_end_matches('/')))
     }
 
     /// Expands the placeholders and normalises the separators.
@@ -294,6 +314,30 @@ mod tests {
             err.message,
             "NOT_SET_ANYWHERE is not available on this system"
         );
+    }
+
+    #[test]
+    fn an_unset_xdg_directory_falls_back_to_its_default_under_home() {
+        let resolver = PathResolver::from_env([("HOME", "/home/demo/")]);
+        let path = resolver
+            .resolve(&template("${XDG_CONFIG_HOME}/Demo"))
+            .unwrap();
+        assert_eq!(
+            path,
+            PathBuf::from(normalise_separators("/home/demo/.config/Demo"))
+        );
+
+        let exported =
+            PathResolver::from_env([("HOME", "/home/demo"), ("XDG_CONFIG_HOME", "/cfg")]);
+        let path = exported
+            .resolve(&template("${XDG_CONFIG_HOME}/Demo"))
+            .unwrap();
+        assert_eq!(path, PathBuf::from(normalise_separators("/cfg/Demo")));
+
+        let homeless = PathResolver::from_env(std::iter::empty::<(String, String)>());
+        assert!(homeless
+            .resolve(&template("${XDG_CONFIG_HOME}/Demo"))
+            .is_err());
     }
 
     #[test]

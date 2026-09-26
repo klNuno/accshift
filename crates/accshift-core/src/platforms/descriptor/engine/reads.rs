@@ -23,6 +23,48 @@ impl DescriptorService {
         })
     }
 
+    /// The account list, even when the runtime cannot be built here.
+    ///
+    /// A root that does not resolve (a variable this session lacks, a launcher
+    /// that is not found) refuses every file operation, and switching stays
+    /// refused. The saved accounts still exist, so the list shows them from
+    /// the config instead of coming back empty after an update. With nothing
+    /// saved, the error is the only useful answer and goes back as is.
+    pub(super) fn list_accounts(
+        &self,
+        app: &dyn AppContext,
+    ) -> Result<(Vec<DescriptorAccount>, Option<String>), String> {
+        match self.read_view(app) {
+            Ok(view) => Ok((self.accounts_in(&view), view.current.clone())),
+            Err(error) => {
+                let stored = self.stored_accounts(app);
+                if stored.is_empty() {
+                    Err(error)
+                } else {
+                    Ok((stored, None))
+                }
+            }
+        }
+    }
+
+    fn stored_accounts(&self, app: &dyn AppContext) -> Vec<DescriptorAccount> {
+        let cfg = config::load_config(app);
+        let snapshots = crate::storage::platform_snapshots_dir(app, &self.descriptor.id).ok();
+        let mut seen = HashSet::new();
+        config_bridge::accounts_in(&cfg, &self.descriptor.id)
+            .iter()
+            .filter_map(|account| {
+                let id = self.normalise_id(&account.account_id);
+                (!id.is_empty() && seen.insert(id.clone())).then(|| DescriptorAccount {
+                    snapshot_saved: self.has_snapshot_in(snapshots.as_deref(), &id),
+                    account_id: id,
+                    label: account.label.clone(),
+                    last_used_at: account.last_used_at,
+                })
+            })
+            .collect()
+    }
+
     #[cfg(test)]
     pub(super) fn read_accounts(
         &self,
