@@ -250,7 +250,7 @@ pub fn lexically_normalise(path: &Path) -> PathBuf {
 
 /// Prefix test on whole components, so `C:\Data` never covers `C:\Database`.
 /// Case-insensitive on Windows, where it matches how the filesystem compares.
-fn path_starts_with(candidate: &Path, root: &Path) -> bool {
+pub(super) fn path_starts_with(candidate: &Path, root: &Path) -> bool {
     let mut candidate_parts = candidate.components();
     for root_part in root.components() {
         let Some(candidate_part) = candidate_parts.next() else {

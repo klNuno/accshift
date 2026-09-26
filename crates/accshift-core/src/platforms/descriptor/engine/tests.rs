@@ -602,6 +602,47 @@ fn the_switch_plan_shows_the_arguments_the_launcher_gets() {
     let _ = fs::remove_dir_all(&root);
 }
 
+#[cfg(windows)]
+#[test]
+fn a_candidate_inside_the_windows_directory_is_never_the_launcher() {
+    // `${SystemDrive}` is an allowed anchor, and it reaches System32.
+    let root = scratch("system-dir-candidate");
+    let drive = root.join("C");
+    let system32 = drive.join("Windows").join("System32");
+    let local = root.join("local").join("Demo");
+    fs::create_dir_all(&system32).unwrap();
+    fs::create_dir_all(&local).unwrap();
+    fs::write(system32.join("cmd.exe"), b"").unwrap();
+
+    let mut json: serde_json::Value = serde_json::from_str(&fixture(&root.join("live"))).unwrap();
+    json["os"]["windows"]["executable"] = serde_json::json!({
+        "fileName": "cmd.exe",
+        "candidates": [
+            { "kind": "path", "template": "${SystemDrive}/Windows/System32" },
+            { "kind": "path", "template": "${LOCALAPPDATA}/Demo" },
+        ],
+    });
+    let descriptor = Descriptor::parse("test", &json.to_string()).unwrap();
+    let service =
+        DescriptorService::new(descriptor, DescriptorOrigin::Embedded).with_environment([
+            ("SystemDrive".to_string(), drive.display().to_string()),
+            (
+                "SystemRoot".to_string(),
+                drive.join("Windows").display().to_string(),
+            ),
+            (
+                "LOCALAPPDATA".to_string(),
+                root.join("local").display().to_string(),
+            ),
+        ]);
+
+    assert!(service.locate_for_test().is_err());
+
+    fs::write(local.join("cmd.exe"), b"").unwrap();
+    assert_eq!(service.locate_for_test().unwrap(), local.join("cmd.exe"));
+    let _ = fs::remove_dir_all(&root);
+}
+
 #[test]
 fn a_candidate_file_with_another_name_than_the_binary_is_not_launched() {
     let root = scratch("binary-name");

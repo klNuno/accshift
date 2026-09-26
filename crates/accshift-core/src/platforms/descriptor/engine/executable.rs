@@ -53,6 +53,13 @@ impl DescriptorService {
                 }
             };
             if let Some(found) = locate_binary(&base, executable) {
+                // `${SystemDrive}` is a legitimate anchor, which also reaches
+                // `Windows\System32`: a shared descriptor must not turn a
+                // switch into a run of `cmd.exe`. The user's own override
+                // above is their choice and is not filtered.
+                if in_windows_directory(&resolver, &found) {
+                    continue;
+                }
                 return Ok(found);
             }
         }
@@ -61,6 +68,11 @@ impl DescriptorService {
             "Could not locate {} executable",
             self.descriptor.name
         ))
+    }
+
+    #[cfg(all(test, windows))]
+    pub(super) fn locate_for_test(&self) -> Result<PathBuf, String> {
+        self.locate_executable("")
     }
 
     pub(super) fn launch(&self, app: &dyn AppContext) -> Result<(), String> {
@@ -119,4 +131,15 @@ impl DescriptorService {
             Duration::from_millis(profile.close.settle_ms),
         );
     }
+}
+
+/// True when `path` sits under the Windows directory (`System32`, `SysWOW64`
+/// and the rest), wherever this machine keeps it. No launcher installs there.
+fn in_windows_directory(resolver: &PathResolver, path: &Path) -> bool {
+    let candidate = lexically_normalise(path);
+    ["SystemRoot", "windir"].iter().any(|name| {
+        resolver
+            .resolve(&PathTemplate::new(format!("${{{name}}}")))
+            .is_ok_and(|root| path_starts_with(&candidate, &lexically_normalise(&root)))
+    })
 }

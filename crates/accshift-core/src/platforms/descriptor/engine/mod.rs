@@ -35,7 +35,7 @@ use crate::{AppContext, AppCtx};
 
 use super::config_bridge;
 use super::hooks::{self, HookContext, HookIdentity};
-use super::paths::{PathResolver, Sandbox};
+use super::paths::{lexically_normalise, path_starts_with, PathResolver, Sandbox};
 use super::plan::{DryRunPlan, PlanAction, PlanStep, PlanTargetKind};
 use super::reg;
 use super::schema::{
