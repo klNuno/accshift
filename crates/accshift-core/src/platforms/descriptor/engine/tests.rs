@@ -990,11 +990,12 @@ fn capturing_a_forgotten_account_does_not_put_it_back() {
         config_bridge::accounts(&ctx, "ubisoft").is_empty(),
         "an untracked signed-in account is not adopted by capture"
     );
-    assert!(!service.has_snapshot(&ctx, UUID_ONE));
+    let snapshots = crate::storage::platform_snapshots_dir(&ctx, "ubisoft").ok();
+    assert!(!service.has_snapshot_in(snapshots.as_deref(), UUID_ONE));
 
     config_bridge::touch_account(&ctx, "ubisoft", UUID_ONE, 1).unwrap();
     service.capture_current_account(&ctx).unwrap();
-    assert!(service.has_snapshot(&ctx, UUID_ONE));
+    assert!(service.has_snapshot_in(snapshots.as_deref(), UUID_ONE));
 
     service.forget(&ctx, UUID_ONE).unwrap();
     service.capture_current_account(&ctx).unwrap();
@@ -1003,7 +1004,7 @@ fn capturing_a_forgotten_account_does_not_put_it_back() {
         config_bridge::blocklist(&ctx, "ubisoft"),
         vec![UUID_ONE.to_string()]
     );
-    assert!(!service.has_snapshot(&ctx, UUID_ONE));
+    assert!(!service.has_snapshot_in(snapshots.as_deref(), UUID_ONE));
     let _ = fs::remove_dir_all(&root);
 }
 
