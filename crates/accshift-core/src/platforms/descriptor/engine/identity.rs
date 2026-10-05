@@ -108,11 +108,7 @@ impl DescriptorService {
     /// Reads the id out of the launcher's own log, most recent line first.
     pub(super) fn read_identity_from_log(&self, runtime: &Runtime<'_>) -> Option<String> {
         let IdentitySource::LogTail {
-            path,
-            tail_bytes,
-            line_contains,
-            prefix,
-            near_word,
+            path, tail_bytes, ..
         } = &runtime.profile.identity.source
         else {
             return None;
@@ -121,6 +117,20 @@ impl DescriptorService {
         #[cfg(test)]
         probe(&self.probes.log_reads);
         let content = read_log_tail(&resolved, *tail_bytes)?;
+        self.identity_in(runtime, &content)
+    }
+
+    /// The id in `content`, most recent matching line first.
+    fn identity_in(&self, runtime: &Runtime<'_>, content: &str) -> Option<String> {
+        let IdentitySource::LogTail {
+            line_contains,
+            prefix,
+            near_word,
+            ..
+        } = &runtime.profile.identity.source
+        else {
+            return None;
+        };
         // The id has one fixed width here: the schema refuses a log source
         // whose format allows a range, because a scan has nothing to match on.
         let width = runtime.profile.identity.format.max_length;
@@ -129,6 +139,36 @@ impl DescriptorService {
             .rev()
             .filter(|line| line.contains(line_contains.as_str()))
             .find_map(|line| self.extract_id(line, prefix, near_word, width))
+    }
+
+    /// Identity lines that begin at or after `offset`.
+    ///
+    /// An offset that lands mid-line drops that partial line: it was already
+    /// on disk at the switch, so its id is the previous account. A file that
+    /// ended on a newline keeps every complete line of the suffix. A tail
+    /// window that starts past the offset is already entirely new.
+    fn read_identity_past(
+        &self,
+        runtime: &Runtime<'_>,
+        path: &Path,
+        offset: u64,
+        tail_bytes: u64,
+    ) -> Option<String> {
+        #[cfg(test)]
+        probe(&self.probes.log_reads);
+        let (window_start, content) = read_log_window(path, offset, tail_bytes)?;
+        let content = if window_start == offset && offset > 0 {
+            match read_log_byte(path, offset - 1) {
+                Some(b'\n' | b'\r') => content,
+                _ => {
+                    let end = content.find('\n')?;
+                    content[end + 1..].to_string()
+                }
+            }
+        } else {
+            content
+        };
+        self.identity_in(runtime, &content)
     }
 
     /// Pulls an id out of one log line: the text right after `prefix`, else any
@@ -259,36 +299,65 @@ impl DescriptorService {
         }
     }
 
-    /// The id the launcher reports, unless it comes from a log that has not
-    /// caught up with the last switch.
+    /// The id the launcher reports, unless a switch is still ahead of the log.
     ///
     /// A launcher logs its sign-in some time after it starts, and never when
-    /// the restored session fails to sign in. Until the log is written again
-    /// after a switch, its last line names the account from before, so the
-    /// account the switch put in place is the better answer.
+    /// the restored session fails to sign in. A switch stores the log's
+    /// length. Until an identity line appears past that offset, the account
+    /// the switch put in place is the better answer. A startup line that only
+    /// moves the modification time does not count. A shorter file, or one
+    /// whose bytes before the offset changed, is a rewrite, so it is scanned
+    /// whole. Rows with no stored length still
+    /// compare the modification time with the switch.
     pub(super) fn live_identity(&self, runtime: &Runtime<'_>, cfg: &AppConfig) -> Option<String> {
-        let read = self.read_identity_in(runtime);
-        let IdentitySource::LogTail { path, .. } = &runtime.profile.identity.source else {
-            return read;
+        let IdentitySource::LogTail {
+            path, tail_bytes, ..
+        } = &runtime.profile.identity.source
+        else {
+            return self.read_identity_in(runtime);
         };
         let Some(record) = config_bridge::last_switch_in(cfg, &self.descriptor.id) else {
-            return read;
+            return self.read_identity_in(runtime);
         };
         let recorded = self.normalise_id(&record.account_id);
         if !self.id_is_valid(&recorded) {
-            return read;
+            return self.read_identity_in(runtime);
         }
-        let written = runtime
-            .path(path)
-            .ok()
-            .and_then(|log| fs::metadata(log).ok())
-            .and_then(|meta| meta.modified().ok())
-            .and_then(|modified| modified.duration_since(SystemTime::UNIX_EPOCH).ok())
-            .map(|since| since.as_millis() as u64);
-        match written {
-            Some(written) if written > record.at => read,
-            _ => Some(recorded),
+        let Some(log_len) = record.log_len else {
+            let read = self.read_identity_in(runtime);
+            let written = runtime
+                .path(path)
+                .ok()
+                .and_then(|log| fs::metadata(log).ok())
+                .and_then(|meta| meta.modified().ok())
+                .and_then(|modified| modified.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .map(|since| since.as_millis() as u64);
+            return match written {
+                Some(written) if written > record.at => read,
+                _ => Some(recorded),
+            };
+        };
+        let Some(resolved) = runtime.path(path).ok() else {
+            return Some(recorded);
+        };
+        let Some(len) = fs::metadata(&resolved).ok().map(|meta| meta.len()) else {
+            return Some(recorded);
+        };
+        if len == log_len {
+            return Some(recorded);
         }
+        // A shorter file, or one that no longer carries the bytes the switch
+        // saw before its offset, is a rewrite: the new sign-in line may sit
+        // before the old offset, so the whole tail is scanned.
+        let rewritten = len < log_len
+            || record
+                .log_mark
+                .is_some_and(|mark| log_mark(&resolved, log_len) != Some(mark));
+        if rewritten {
+            return self.read_identity_from_log(runtime).or(Some(recorded));
+        }
+        self.read_identity_past(runtime, &resolved, log_len, *tail_bytes)
+            .or(Some(recorded))
     }
 
     /// Remembers the account a switch put in place, for [`Self::live_identity`].
@@ -302,15 +371,45 @@ impl DescriptorService {
             return;
         }
         // Not fatal: without the record the log is trusted, as it always was.
-        if let Err(error) =
-            config_bridge::set_last_switch(app, &self.descriptor.id, account_id, now_unix_ms())
-        {
+        let (log_len, log_mark) = match self.log_position_now(app) {
+            Some((len, mark)) => (Some(len), mark),
+            None => (None, None),
+        };
+        if let Err(error) = config_bridge::set_last_switch(
+            app,
+            &self.descriptor.id,
+            account_id,
+            now_unix_ms(),
+            log_len,
+            log_mark,
+        ) {
             log_platform_error(
                 app,
                 &format!("{}.switch_account", self.descriptor.id),
                 "Could not record the switch",
                 error,
             );
+        }
+    }
+
+    /// Length of the identity log right now, with the fingerprint of the
+    /// bytes before that offset. Zero when the log is missing: the first line
+    /// written afterwards is new. `None` when the log could not be examined,
+    /// so the lookup falls back to the modification time instead of scanning
+    /// the pre-switch log from offset zero.
+    fn log_position_now(&self, app: &dyn AppContext) -> Option<(u64, Option<u64>)> {
+        let runtime = self.runtime(app).ok()?;
+        let IdentitySource::LogTail { path, .. } = &runtime.profile.identity.source else {
+            return None;
+        };
+        let log = runtime.path(path).ok()?;
+        match fs::metadata(&log) {
+            Ok(meta) => {
+                let len = meta.len();
+                Some((len, log_mark(&log, len)))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some((0, None)),
+            Err(_) => None,
         }
     }
 

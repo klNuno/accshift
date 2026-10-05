@@ -44,9 +44,22 @@ export interface PlatformUiCallbacks {
   t: (key: MessageKey, params?: TranslationParams) => string;
 }
 
+/** How a forced warning refresh ended, for the caller's own toast. */
+export type WarningRefreshOutcome =
+  /** Every requested account came back. */
+  | { kind: "complete"; checked: number }
+  /** The fetch ran but some accounts are missing from the answer. */
+  | { kind: "partial"; checked: number; requested: number }
+  | { kind: "failed" }
+  /** Nothing was fetched because the platform lacks its API key. */
+  | { kind: "noApiKey" };
+
 export interface PlatformWarningLoadOptions extends PlatformUiCallbacks {
   forceRefresh?: boolean;
   silent?: boolean;
+  /** Called once per load with how it ended. An adapter that never calls it
+   *  is treated as a completed refresh. */
+  onSettled?: (outcome: WarningRefreshOutcome) => void;
 }
 
 export interface PlatformProfileInfo {

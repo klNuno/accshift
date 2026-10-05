@@ -399,8 +399,26 @@ impl DescriptorService {
         let Some(target) = self.capture_target(app, current_id) else {
             return Ok(());
         };
+        // Identity sources still name a forgotten account. Touching it would
+        // put the row back and lift the block, then the snapshot write would
+        // store the session the user just asked to drop.
+        if self.capture_blocked(app, &target) {
+            return Ok(());
+        }
         let _ = config_bridge::touch_account(app, &self.descriptor.id, &target, now_unix_ms());
         self.save_snapshot(app, &target)
+    }
+
+    /// True when `account_id` is on the forget blocklist. A capture is a
+    /// refresh, not a way back in for an account the user removed. An
+    /// account that was never added is still adopted: skipping it would let
+    /// the switch replace its live session with no copy kept anywhere.
+    fn capture_blocked(&self, app: &dyn AppContext, account_id: &str) -> bool {
+        let cfg = config::load_config(app);
+        let id = self.normalise_id(account_id);
+        config_bridge::blocklist_in(&cfg, &self.descriptor.id)
+            .iter()
+            .any(|stored| self.normalise_id(stored) == id)
     }
 
     /// Which account's snapshot the live session goes into, `None` to skip

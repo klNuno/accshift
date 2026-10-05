@@ -698,6 +698,28 @@ pub fn capture_profile(app_handle: AppCtx, profile_id: String) -> Result<(), Str
         );
         return Err("The Riot Client is signed in to a different account than this profile. Sign in to this profile's account, then capture again.".into());
     }
+    if let Some(refusal) = refuse_manual_capture(
+        &cfg.riot.profiles,
+        &cfg.riot.current_profile_id,
+        profile,
+        live_identity.as_ref(),
+    ) {
+        let message = match refusal {
+            CaptureRefusal::UnknownIdentity => {
+                "The Riot Client is closed, or its signed-in account could not be read. Capture is only allowed into the profile that is already current, so another profile is not overwritten with the live session."
+            }
+            CaptureRefusal::LiveAccountAlreadyOwned => {
+                "This Riot account is already saved on another profile. Switch to that profile instead of capturing it here."
+            }
+        };
+        log_platform_info(
+            &app_handle,
+            "riot.capture_profile",
+            "Refused a capture that would copy the live session onto the wrong profile",
+            format!("profile={}", crate::platforms::redact_id(&profile_id)),
+        );
+        return Err(message.into());
+    }
 
     capture_profile_into_snapshot(&app_handle, &mut cfg, &profile_id, live_identity.as_ref())
 }

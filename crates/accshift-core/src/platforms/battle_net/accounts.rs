@@ -82,6 +82,33 @@ pub(super) fn known_account_emails(app_handle: &dyn AppContext) -> Result<Vec<St
     Ok(known_account_emails_from(saved_accounts, &cfg))
 }
 
+/// Saved names to write after the launcher has quit. `fresh` is the list it
+/// flushed on exit. `target` is an account we already knew, placed first in
+/// the spelling we stored. Emails the flush added stay; emails it dropped
+/// are not copied back from the list we saw while the launcher was running.
+pub(super) fn order_saved_accounts_for_switch(fresh: &[String], target: &str) -> Vec<String> {
+    let target_key = normalize_account_key(target);
+    let mut ordered = Vec::with_capacity(fresh.len() + 1);
+    ordered.push(target.to_string());
+    for email in fresh {
+        if normalize_account_key(email) != target_key {
+            ordered.push(email.clone());
+        }
+    }
+    ordered
+}
+
+/// Saved names to write after a forget, taken from the exit flush with the
+/// forgotten account removed. Comparison ignores case and surrounding space.
+pub(super) fn saved_accounts_without(fresh: &[String], target: &str) -> Vec<String> {
+    let target_key = normalize_account_key(target);
+    fresh
+        .iter()
+        .filter(|email| normalize_account_key(email) != target_key)
+        .cloned()
+        .collect()
+}
+
 pub(super) fn read_accounts(app_handle: &dyn AppContext) -> Result<Vec<BattleNetAccount>, String> {
     list_accounts_from_saved(app_handle, read_saved_accounts()?)
 }

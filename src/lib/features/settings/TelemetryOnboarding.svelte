@@ -2,6 +2,7 @@
   import { onMount, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import type { MessageKey, TranslationParams } from "$lib/i18n";
+  import { completeOnboardingConsent } from "./onboardingConsent";
   import tradeOfferVideo from "../../../assets/trade-offer.webm";
   import noThanksVideo from "../../../assets/no-thanks.webm";
   import logoUrl from "/logo.svg";
@@ -46,6 +47,8 @@
   let submitting = $state(false);
   let rejecting = $state(false);
   let fadingOut = $state(false);
+  let persistError = $state(false);
+  let pendingConsent = $state<{ modeA: boolean; modeB: boolean } | null>(null);
   let titlebarH = $state(0);
   let dealTitleEl = $state<HTMLHeadingElement | null>(null);
   let gifEl = $state<HTMLVideoElement | null>(null);
@@ -85,17 +88,30 @@
   async function finish(modeA: boolean, modeB: boolean) {
     if (submitting) return;
     submitting = true;
-    try {
-      await invoke("telemetry_complete_onboarding", {
+    persistError = false;
+    pendingConsent = { modeA, modeB };
+    // The backdrop covers the toast host, so a failed save stays in this
+    // dialog. The "enough" row fades the modal before the save; undo that
+    // or the error would sit on an invisible dialog.
+    const outcome = await completeOnboardingConsent(() =>
+      invoke("telemetry_complete_onboarding", {
         modeAEnabled: modeA,
         modeBEnabled: modeB,
-      });
-    } catch (e) {
-      console.error("telemetry_complete_onboarding failed", e);
-    } finally {
-      submitting = false;
+      }),
+    );
+    submitting = false;
+    if (outcome === "saved") {
       onComplete();
+      return;
     }
+    persistError = true;
+    fadingOut = false;
+    rejecting = false;
+  }
+
+  function retryPersist() {
+    if (!pendingConsent) return;
+    void finish(pendingConsent.modeA, pendingConsent.modeB);
   }
 
   // Declines the enhanced tier, keeping the anonymous counters on. It carries
@@ -122,8 +138,6 @@
   // minus the animation: anonymous counters on, enhanced off.
   function handleSkip() { void finish(true, false); }
 
-  // No toast on failure: the onboarding backdrop sits above the toast host, so
-  // the user would never see it. The console line is the only useful signal.
   async function openDoc() {
     try {
       await invoke("open_url", { url: TELEMETRY_DOC_URL });
@@ -318,6 +332,22 @@
       <span class:on={step === "deal"}></span>
     </div>
 
+    {#if persistError}
+      <p class="persist-error" role="alert">
+        <span>{t("onboarding.persistFailed")}</span>
+        <span class="persist-actions">
+          <button type="button" class="retry" onclick={retryPersist} disabled={submitting}>
+            {t("common.retry")}
+          </button>
+          <!-- A save refused for good (an unreadable config) would otherwise
+               keep this modal over the whole app on every launch. -->
+          <button type="button" class="later" onclick={onComplete} disabled={submitting}>
+            {t("onboarding.persistLater")}
+          </button>
+        </span>
+      </p>
+    {/if}
+
     {#if step === "welcome"}
       <div class="step">
         <div class="hero">
@@ -361,7 +391,7 @@
             {activeFeatureIdx === 0 ? t("onboarding.features.back") : "←"}
           </button>
           <div class="legend-dots" aria-hidden="true">
-            {#each FEATURES as _, idx}
+            {#each FEATURES as feature, idx (feature.id)}
               <button
                 type="button"
                 class="legend-dot"
@@ -868,6 +898,52 @@
     line-height: 1.5;
     color: var(--fg-subtle);
     text-align: center;
+  }
+
+  .persist-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 0 0 8px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #ef4444;
+  }
+  .persist-actions {
+    display: flex;
+    flex: none;
+    gap: 6px;
+  }
+  .persist-error .later {
+    border: none;
+    padding: 4px 6px;
+    font-size: 11px;
+    background: transparent;
+    color: var(--fg-muted);
+    cursor: pointer;
+  }
+  .persist-error .later:hover:not(:disabled) {
+    color: var(--fg);
+  }
+  .persist-error .later:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .persist-error .retry {
+    flex: none;
+    border: 1px solid color-mix(in srgb, #ef4444 55%, var(--border));
+    border-radius: 8px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    background: transparent;
+    color: #ef4444;
+    cursor: pointer;
+  }
+  .persist-error .retry:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .no-btn:hover:not(:disabled) {

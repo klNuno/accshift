@@ -229,6 +229,8 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "onboarding.telemetry.refuseHint":
     "Rien n'est mesuré, rien n'est envoyé, pas même les compteurs anonymes.",
   "onboarding.telemetry.back": "Retour",
+  "onboarding.persistFailed": "Impossible d'enregistrer ce choix. Réessaie.",
+  "onboarding.persistLater": "Me redemander au prochain lancement",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
   "settings.battleNet": "Battle.net",
@@ -351,6 +353,9 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "toast.banCheckFailed": "Échec de la vérification des bans: {error}",
   "toast.avatarRefreshComplete": "Rafraîchissement avatar terminé pour {count} comptes",
   "toast.banRefreshComplete": "Rafraîchissement des bans terminé pour {count} comptes",
+  "toast.banRefreshNoApiKey":
+    "Rafraîchissement des bans ignoré : ajoute une clé Steam Web API dans les paramètres",
+  "toast.refreshPartial": "Rafraîchissement terminé pour {ok} comptes sur {count}",
   "toast.noSteamAccountsFound":
     "Aucun compte Steam trouvé. Connecte-toi à Steam au moins une fois puis rafraîchis.",
   "toast.accountsRefreshed.single": "{count} compte rafraîchi",
@@ -707,6 +712,7 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "themeEditor.noIssues": "Rien à signaler",
   "themeEditor.fixErrorsFirst": "Corrigez les valeurs refusées avant d'enregistrer",
   "themeEditor.save": "Enregistrer",
+  "themeEditor.saveFailed": "Impossible d'enregistrer le thème. Réessaie.",
   "themeEditor.export": "Copier",
   "themeEditor.issueInvalidValue": "{token} : {kind} invalide, par exemple {example}",
   "themeEditor.issueUnknownToken": "{token} n'est pas une valeur de thème, elle est ignorée",

@@ -13,11 +13,12 @@ use is_terminal::IsTerminal;
 use std::io::Write;
 
 /// Apply the GUI's PIN lock to a switch: prompt for the PIN when one is set
-/// and verify it. Returns `Ok(())` when the switch may go on; otherwise an exit
-/// code the caller should return without switching.
-pub fn enforce(format: Format, lock: PinLock) -> Result<(), u8> {
+/// and verify it. Returns the lock that was admitted, so the caller can
+/// compare it again under the operation lock. A changed PIN is not this
+/// result. Otherwise an exit code the caller should return without switching.
+pub fn enforce(format: Format, lock: PinLock) -> Result<PinLock, u8> {
     let stored_hash = match lock {
-        PinLock::Off => return Ok(()),
+        PinLock::Off => return Ok(PinLock::Off),
         PinLock::On(hash) => hash,
         PinLock::Misconfigured => {
             // PIN enabled but no usable hash recorded. Fail closed rather than
@@ -50,21 +51,38 @@ pub fn enforce(format: Format, lock: PinLock) -> Result<(), u8> {
     };
 
     match verify_pin_code(&attempt, &stored_hash) {
-        PinVerdict::Accepted => Ok(()),
+        PinVerdict::Accepted => Ok(PinLock::On(stored_hash)),
         PinVerdict::AcceptedLegacy => {
             // The PIN was correct, so the switch goes through whatever happens
             // next: a failed rewrite must never turn a valid PIN into a denial.
             // It is reported on stderr so a settings file that can never be
             // written is visible instead of retried silently on every run.
-            match CliAppContext::new() {
-                Ok(ctx) => {
-                    if let Err(e) = upgrade_legacy_pin_hash(&ctx, &attempt) {
+            // A rewrite that lands replaces the hash. Admit that new hash when
+            // it still verifies the PIN just entered, so the compare under the
+            // operation lock does not treat the upgrade as a PIN change. A
+            // hash that no longer verifies this PIN is left as the one we
+            // checked, and that compare then refuses the switch.
+            let admitted = match CliAppContext::new() {
+                Ok(ctx) => match upgrade_legacy_pin_hash(&ctx, &attempt) {
+                    Ok(()) => match accshift_core::pin::read_pin_lock(&ctx) {
+                        PinLock::On(hash)
+                            if verify_pin_code(&attempt, &hash) != PinVerdict::Rejected =>
+                        {
+                            PinLock::On(hash)
+                        }
+                        _ => PinLock::On(stored_hash),
+                    },
+                    Err(e) => {
                         eprintln!("Warning: could not upgrade the stored PIN hash: {e}");
+                        PinLock::On(stored_hash)
                     }
+                },
+                Err(e) => {
+                    eprintln!("Warning: could not upgrade the stored PIN hash: {e}");
+                    PinLock::On(stored_hash)
                 }
-                Err(e) => eprintln!("Warning: could not upgrade the stored PIN hash: {e}"),
-            }
-            Ok(())
+            };
+            Ok(admitted)
         }
         PinVerdict::Rejected => {
             emit_err(
@@ -241,7 +259,7 @@ mod tests {
 
     #[test]
     fn no_pin_lets_the_switch_through_without_a_prompt() {
-        assert_eq!(enforce(Format::Json, PinLock::Off), Ok(()));
+        assert_eq!(enforce(Format::Json, PinLock::Off), Ok(PinLock::Off));
     }
 
     #[test]

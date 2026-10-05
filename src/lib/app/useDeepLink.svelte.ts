@@ -70,6 +70,7 @@ type DeepLinkDeps = {
 export function createDeepLinkController(deps: DeepLinkDeps) {
   let unlisten: (() => void) | null = null;
   let started = false;
+  let generation = 0;
   let busy = false;
   // A link that arrives while another one is still being handled is queued
   // instead of dropped, keeping only the most recent one (an automation
@@ -199,20 +200,30 @@ export function createDeepLinkController(deps: DeepLinkDeps) {
   async function start() {
     if (started) return;
     started = true;
+    const gen = generation;
     try {
       // onOpenUrl replays the launch URL (cold start) then listens for
       // runtime ones (second instance argv, macOS open-url events).
-      unlisten = await onOpenUrl((urls) => {
+      const remove = await onOpenUrl((urls) => {
         for (const url of urls) {
           void handleUrl(url);
         }
       });
+      // stop() can run while this await is pending. The registration that
+      // arrives late must be dropped, or it keeps receiving links after
+      // the controller was stopped and then restarted.
+      if (!started || gen !== generation) {
+        remove();
+        return;
+      }
+      unlisten = remove;
     } catch (error) {
       console.error("Failed to start deep link listener:", error);
     }
   }
 
   function stop() {
+    generation += 1;
     unlisten?.();
     unlisten = null;
     started = false;

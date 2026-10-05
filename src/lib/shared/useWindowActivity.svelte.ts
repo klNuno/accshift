@@ -1,11 +1,31 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
+type Unlisten = () => void | Promise<void>;
+
+/** Keeps native unlistens only while start() is still the active pass.
+ *  A listener that resolves after stop() is called immediately, and a
+ *  rejected sibling is skipped so the one that did register is not lost. */
+export function takeNativeUnlisteners(
+  stillStarted: boolean,
+  unlistens: ReadonlyArray<Unlisten | undefined>,
+): Unlisten[] {
+  const present = unlistens.filter((fn): fn is Unlisten => typeof fn === "function");
+  if (!stillStarted) {
+    for (const fn of present) fn();
+    return [];
+  }
+  return present;
+}
+
 export function createWindowActivity() {
   const appWindow = typeof window !== "undefined" ? getCurrentWindow() : null;
   let isFocused = $state(true);
   let isMinimized = $state(false);
   let isPageVisible = $state(true);
   let started = false;
+  /** Bumped by stop(): a registration that settles after a stop belongs to
+   *  an earlier pass even when start() has run again since. */
+  let generation = 0;
   let syncing = false;
   let pendingSync = false;
   let cleanupFns: Array<() => void | Promise<void>> = [];
@@ -49,6 +69,7 @@ export function createWindowActivity() {
   async function start() {
     if (started) return;
     started = true;
+    const gen = generation;
     updatePageVisibility();
 
     if (typeof window !== "undefined") {
@@ -85,7 +106,7 @@ export function createWindowActivity() {
 
     if (!appWindow) return;
 
-    const [unlistenFocus, unlistenResize] = await Promise.all([
+    const registered = await Promise.allSettled([
       appWindow.onFocusChanged(({ payload }) => {
         isFocused = payload;
         if (payload) {
@@ -97,16 +118,25 @@ export function createWindowActivity() {
         void sync();
       }),
     ]);
+    for (const result of registered) {
+      if (result.status === "rejected") {
+        console.error("[window] native listener failed:", result.reason);
+      }
+    }
+    cleanupFns.push(
+      ...takeNativeUnlisteners(
+        started && gen === generation,
+        registered.map((result) => (result.status === "fulfilled" ? result.value : undefined)),
+      ),
+    );
 
-    cleanupFns.push(unlistenFocus);
-    cleanupFns.push(unlistenResize);
-
-    void sync();
+    if (gen === generation) void sync();
   }
 
   function stop() {
     if (!started) return;
     started = false;
+    generation += 1;
     for (const cleanup of cleanupFns.splice(0)) {
       cleanup();
     }

@@ -32,6 +32,7 @@
     saveThemeDocument,
     themeFromDocument,
   } from "./themes";
+  import { persistThemeDraft } from "./themeSave";
 
   let {
     source,
@@ -108,6 +109,7 @@
   let tokens = $state<Partial<Record<ThemeTokenKey, string>>>({ ...initial.tokens });
   let css = $state(initial.css ?? "");
   let saved = false;
+  let saveError = $state(false);
 
   // Snapshot the running theme now, at component init: the preview effect below
   // fires on mount and would otherwise snapshot itself, leaving cancel with
@@ -243,7 +245,14 @@
   async function save() {
     if (blocked) return;
     const document = draft;
-    await saveThemeDocument(document, { keepRefusedCss: true });
+    saveError = false;
+    const outcome = await persistThemeDraft(() =>
+      saveThemeDocument(document, { keepRefusedCss: true }),
+    );
+    if (outcome === "failed") {
+      saveError = true;
+      return;
+    }
     saved = true;
     commitThemePreview(document);
     onSaved(document);
@@ -391,6 +400,9 @@
         {#each issues as issue, index (index)}
           <p class="issue-line" class:error={issue.level === "error"}>{issueText(issue)}</p>
         {/each}
+      {/if}
+      {#if saveError}
+        <p class="issue-line error" role="alert">{t("themeEditor.saveFailed")}</p>
       {/if}
     </section>
   </div>

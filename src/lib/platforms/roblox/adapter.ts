@@ -89,8 +89,11 @@ export const robloxAdapter: PlatformAdapter = {
 
   async getProfileInfo(userId: string): Promise<PlatformProfileInfo | null> {
     const info = await fetchRobloxProfile(userId);
-    if (!info?.avatarUrl) return null;
-    return { avatarUrl: isSafeHttpUrl(info.avatarUrl) ? info.avatarUrl : null };
+    // Null is a failed fetch. A profile without a picture still resolved.
+    if (!info) return null;
+    return {
+      avatarUrl: info.avatarUrl && isSafeHttpUrl(info.avatarUrl) ? info.avatarUrl : null,
+    };
   },
 
   getCachedProfile(userId: string) {

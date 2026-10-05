@@ -67,6 +67,31 @@ describe("deep-link switch result", () => {
     expect(showToast).not.toHaveBeenCalledWith("toast.deepLinkSwitched");
   });
 
+  it("drops a listener that resolves after stop, including a restart", async () => {
+    const pending: Array<(unlisten: () => void) => void> = [];
+    mocks.onOpenUrl.mockReset().mockImplementation(
+      () =>
+        new Promise<() => void>((resolve) => {
+          pending.push(resolve);
+        }),
+    );
+    const { controller } = createController(false);
+    const first = controller.start();
+    controller.stop();
+    const second = controller.start();
+    const firstUnlisten = vi.fn();
+    const secondUnlisten = vi.fn();
+    pending[0](firstUnlisten);
+    pending[1](secondUnlisten);
+    await first;
+    await second;
+
+    expect(firstUnlisten).toHaveBeenCalledOnce();
+    expect(secondUnlisten).not.toHaveBeenCalled();
+    controller.stop();
+    expect(secondUnlisten).toHaveBeenCalledOnce();
+  });
+
   it("announces success only after a confirmed successful switch", async () => {
     const { controller, showToast, switchToAccount } = createController(true);
     await controller.start();

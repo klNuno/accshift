@@ -134,9 +134,9 @@ pub struct UbisoftConfig {
     pub accounts: Vec<UbisoftAccountConfig>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub forgotten_uuids: Vec<String>,
-    /// The account the engine last switched to, and when. The launcher logs
-    /// its sign-in some time after it starts, so until the log is newer than
-    /// this the log still names the previous account.
+    /// The account the engine last switched to. When `log_len` is set, only
+    /// identity lines past that offset replace it. Older rows compare the
+    /// log's modification time with `at`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_switch: Option<LastSwitch>,
 }
@@ -147,6 +147,17 @@ pub struct LastSwitch {
     pub account_id: String,
     /// Unix milliseconds at the moment the session files were in place.
     pub at: u64,
+    /// Length of the identity log at the switch. Lines past this offset are
+    /// the only ones that can name a newer sign-in. Absent on rows written
+    /// before the offset was recorded; those still compare `at` with the
+    /// log's modification time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_len: Option<u64>,
+    /// Fingerprint of the bytes just before `log_len`. A log that grew past
+    /// the offset but no longer carries them was rewritten and is scanned
+    /// whole. Absent on older rows and when the log could not be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_mark: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]

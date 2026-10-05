@@ -204,6 +204,42 @@ describe("clientStorage external refresh", () => {
     });
   });
 
+  it("does not let a snapshot that was already loading replace a save that finished", async () => {
+    let releaseSnapshot: ((value: unknown) => void) | undefined;
+    const defaultImpl = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation((command: unknown, ...rest: unknown[]) => {
+      if (command !== "load_client_storage_snapshot") return defaultImpl(command, ...rest);
+      return new Promise((release) => {
+        releaseSnapshot = release;
+      });
+    });
+
+    manifest = { [CLIENT_STORE_FOLDERS]: "external", [CLIENT_STORE_SETTINGS]: "seen" };
+    snapshotManifest = manifest;
+    snapshotStores = { [CLIENT_STORE_FOLDERS]: { folders: ["stale"] } };
+
+    const refresh = refreshClientStorageIfChanged();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(releaseSnapshot).toBeDefined();
+
+    setClientStoreValue(CLIENT_STORE_FOLDERS, { folders: ["local"] });
+    await vi.advanceTimersByTimeAsync(120);
+    expect(saveCalls().map((call) => call[1])).toContainEqual(
+      expect.objectContaining({
+        storeId: CLIENT_STORE_FOLDERS,
+        value: { folders: ["local"] },
+      }),
+    );
+
+    releaseSnapshot?.({
+      manifest: { schemaVersion: 1, stores: snapshotManifest },
+      stores: snapshotStores,
+    });
+    await refresh;
+
+    expect(getClientStoreValue(CLIENT_STORE_FOLDERS)).toEqual({ folders: ["local"] });
+  });
+
   it("keeps an edit whose save is still in flight", async () => {
     let releaseSave: (() => void) | undefined;
     const defaultImpl = invokeMock.getMockImplementation()!;

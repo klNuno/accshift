@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { AppSettings } from "$lib/features/settings/types";
+import type { PlatformAccount, PlatformWarningLoadOptions } from "$lib/shared/platform";
+import type { BanInfo } from "./types";
 
 vi.mock("$lib/features/notifications/store.svelte", () => ({
   addToast: vi.fn(() => "toast-id"),
@@ -7,7 +9,7 @@ vi.mock("$lib/features/notifications/store.svelte", () => ({
 }));
 
 vi.mock("$lib/features/settings/store", () => ({
-  peekSettings: () => ({ dataRefresh: { banCheckDays: 0 } }),
+  peekSettings: vi.fn(() => ({ dataRefresh: { banCheckDays: 0 } })),
 }));
 
 vi.mock("./steamApi", () => ({
@@ -22,7 +24,11 @@ vi.mock("$lib/storage/clientStorage", () => ({
   setClientStoreValue: vi.fn(),
 }));
 
-const { alreadyCheckedBanIds } = await import("./warnings");
+const { peekSettings } = await import("$lib/features/settings/store");
+const { getPlayerBans, hasApiKey } = await import("./steamApi");
+const { setClientStoreValue, CLIENT_STORE_STEAM_BAN_CHECK_STATE } =
+  await import("$lib/storage/clientStorage");
+const { alreadyCheckedBanIds, loadSteamWarningStates } = await import("./warnings");
 
 const session = new Set(["session-only"]);
 const cached = new Set(["cached-only"]);
@@ -55,5 +61,113 @@ describe("alreadyCheckedBanIds", () => {
 
   it("checks everything again once the delay window has lapsed", () => {
     expect(plan({ withinDelayWindow: false }).size).toBe(0);
+  });
+});
+
+function account(id: string): PlatformAccount {
+  return { id, displayName: id, username: id };
+}
+
+function banRow(steamId: string): BanInfo {
+  return {
+    steam_id: steamId,
+    community_banned: false,
+    vac_banned: false,
+    number_of_vac_bans: 0,
+    days_since_last_ban: 0,
+    number_of_game_bans: 0,
+    economy_ban: "none",
+  };
+}
+
+const quiet: PlatformWarningLoadOptions = {
+  silent: true,
+  t: ((key: string) => key) as PlatformWarningLoadOptions["t"],
+};
+
+describe("loadSteamWarningStates", () => {
+  it("asks again for a SteamID the last response left out", async () => {
+    vi.mocked(hasApiKey).mockResolvedValue(true);
+    vi.mocked(getPlayerBans).mockResolvedValue([banRow("sess-kept")]);
+    const accounts = [account("sess-kept"), account("sess-miss")];
+
+    await loadSteamWarningStates(accounts, { ...quiet, forceRefresh: true });
+    vi.mocked(getPlayerBans).mockClear();
+    vi.mocked(getPlayerBans).mockResolvedValue([banRow("sess-miss")]);
+
+    await loadSteamWarningStates(accounts, quiet);
+
+    expect(vi.mocked(getPlayerBans)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(getPlayerBans).mock.calls[0]?.[0]).toEqual(["sess-miss"]);
+  });
+
+  it("does not persist a SteamID the response omitted", async () => {
+    vi.mocked(peekSettings).mockReturnValue({
+      dataRefresh: { avatarCacheDays: 7, banCheckDays: 7 },
+    } as AppSettings);
+    vi.mocked(hasApiKey).mockResolvedValue(true);
+    vi.mocked(getPlayerBans).mockResolvedValue([banRow("disk-kept")]);
+    vi.mocked(setClientStoreValue).mockClear();
+
+    await loadSteamWarningStates([account("disk-kept"), account("disk-miss")], {
+      ...quiet,
+      forceRefresh: true,
+    });
+
+    const persisted = vi
+      .mocked(setClientStoreValue)
+      .mock.calls.find((call) => call[0] === CLIENT_STORE_STEAM_BAN_CHECK_STATE);
+    expect(persisted?.[1]).toMatchObject({ checkedSteamIds: ["disk-kept"] });
+  });
+
+  it("reports how a load ended to its caller", async () => {
+    vi.mocked(peekSettings).mockReturnValue({
+      dataRefresh: { avatarCacheDays: 7, banCheckDays: 0 },
+    } as AppSettings);
+    const onSettled = vi.fn();
+
+    vi.mocked(hasApiKey).mockResolvedValue(false);
+    await loadSteamWarningStates([account("out-a")], { ...quiet, forceRefresh: true, onSettled });
+    expect(onSettled).toHaveBeenLastCalledWith({ kind: "noApiKey" });
+
+    // A key lookup that failed says nothing about the key: a failure, not a skip.
+    const lookup = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(hasApiKey).mockRejectedValueOnce(new Error("ipc down"));
+    await loadSteamWarningStates([account("out-a")], { ...quiet, forceRefresh: true, onSettled });
+    expect(onSettled).toHaveBeenLastCalledWith({ kind: "failed" });
+    lookup.mockRestore();
+
+    vi.mocked(hasApiKey).mockResolvedValue(true);
+    vi.mocked(getPlayerBans).mockResolvedValue([banRow("out-a")]);
+    await loadSteamWarningStates([account("out-a"), account("out-b")], {
+      ...quiet,
+      forceRefresh: true,
+      onSettled,
+    });
+    expect(onSettled).toHaveBeenLastCalledWith({ kind: "partial", checked: 1, requested: 2 });
+
+    vi.mocked(getPlayerBans).mockRejectedValue(new Error("down"));
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    await loadSteamWarningStates([account("out-a")], { ...quiet, forceRefresh: true, onSettled });
+    expect(onSettled).toHaveBeenLastCalledWith({ kind: "failed" });
+    error.mockRestore();
+  });
+
+  it("stops asking for a SteamID Steam left out twice, until a forced refresh", async () => {
+    vi.mocked(peekSettings).mockReturnValue({
+      dataRefresh: { avatarCacheDays: 7, banCheckDays: 0 },
+    } as AppSettings);
+    vi.mocked(hasApiKey).mockResolvedValue(true);
+    vi.mocked(getPlayerBans).mockResolvedValue([]);
+    const accounts = [account("gone-id")];
+
+    await loadSteamWarningStates(accounts, quiet);
+    await loadSteamWarningStates(accounts, quiet);
+    vi.mocked(getPlayerBans).mockClear();
+    await loadSteamWarningStates(accounts, quiet);
+    expect(vi.mocked(getPlayerBans)).not.toHaveBeenCalled();
+
+    await loadSteamWarningStates(accounts, { ...quiet, forceRefresh: true });
+    expect(vi.mocked(getPlayerBans)).toHaveBeenCalledWith(["gone-id"]);
   });
 });

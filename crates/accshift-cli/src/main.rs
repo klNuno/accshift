@@ -461,10 +461,12 @@ fn cmd_switch(
 
     // PIN gate: the GUI can lock account switching behind a 4-digit PIN. Honour
     // the same lock here so the CLI cannot bypass it. Prompt before taking the
-    // lock so we never hold it while waiting on stdin.
-    if let Err(code) = pin::enforce(format, accshift_core::pin::read_pin_lock(&*ctx)) {
-        return code;
-    }
+    // lock so we never hold it while waiting on stdin, then compare the
+    // admitted lock with the file once the lock is held.
+    let admitted = match pin::enforce(format, accshift_core::pin::read_pin_lock(&*ctx)) {
+        Ok(lock) => lock,
+        Err(code) => return code,
+    };
 
     let _lock = match acquire_exclusive(&ctx, LOCK_TIMEOUT) {
         Ok(g) => g,
@@ -482,6 +484,18 @@ fn cmd_switch(
             return exit::IO;
         }
     };
+
+    // Read under the operation lock, after the prompt: a PIN the GUI enabled
+    // or replaced in between is not the lock `enforce` admitted.
+    if accshift_core::pin::read_pin_lock(&*ctx) != admitted {
+        emit_err(
+            format,
+            "switch",
+            "pin_required",
+            "The PIN changed while it was being checked. Run the switch again.",
+        );
+        return exit::PIN_DENIED;
+    }
 
     let saved = &app_settings.platform_settings.steam;
     let defaults = SteamSwitchDefaults::from_settings(

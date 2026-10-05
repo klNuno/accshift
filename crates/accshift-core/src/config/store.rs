@@ -204,6 +204,29 @@ pub(super) fn save_config_unlocked(
     let portable_path = crate::storage::portable_config_path(app_handle)?;
     let local_path = crate::storage::local_config_path(app_handle)?;
 
+    // A present legacy file that could not be read is the only complete copy.
+    // Writing split files from the defaults that read produced lets the next
+    // boot see the portable file and retire the legacy one.
+    if let Ok(legacy_path) = crate::storage::legacy_config_path(app_handle) {
+        if config_unreadable(&legacy_path) {
+            let message = format!(
+                "Refusing to write config: the legacy file at {} could not be read on the \
+                 last load (it may be corrupt or locked). Writing split files now would \
+                 replace it with empty defaults, and the next boot would retire the only \
+                 copy. Fix or remove the file and restart.",
+                legacy_path.display()
+            );
+            let _ = crate::logging::append_app_log(
+                app_handle,
+                "error",
+                "config.save",
+                "Refused to overwrite an unreadable legacy config file",
+                Some(&message),
+            );
+            return Err(message);
+        }
+    }
+
     // The last read of one of the files failed on an existing file: writing
     // now would overwrite accounts (portable) or the Steam API key, Roblox
     // cookies and path overrides (local) with the empty defaults that the

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { PlatformAdapter, PlatformDef } from "$lib/shared/platform";
+import type { PlatformAdapter, PlatformDef, WarningRefreshOutcome } from "$lib/shared/platform";
 import { createProfileRefresh } from "./useProfileRefresh";
 
 function def(id: string, profileRefresh?: { avatars?: boolean; bans?: boolean }) {
@@ -31,7 +31,9 @@ const accounts = [{ id: "a1" }, { id: "a2" }];
 
 describe("profile refresh", () => {
   it("refreshes avatars only on platforms that declare it, reloading the active tab", async () => {
-    const getProfileInfo = vi.fn(async (_accountId: string) => null);
+    const getProfileInfo = vi.fn(async (_accountId: string) => ({
+      avatarUrl: "https://cdn.example/a.png",
+    }));
     const { refresh, toasts, loadAccounts, ensureAdapterReady } = setup({
       steam: { loadAccounts: async () => accounts as never, getProfileInfo },
       epic: { loadAccounts: async () => [] },
@@ -55,13 +57,105 @@ describe("profile refresh", () => {
 
     await refresh.refreshBansNow();
 
-    expect(loadWarningStates).toHaveBeenCalledWith(accounts, {
-      forceRefresh: true,
-      silent: false,
-      t: expect.any(Function),
-    });
+    expect(loadWarningStates).toHaveBeenCalledWith(
+      accounts,
+      expect.objectContaining({
+        forceRefresh: true,
+        silent: false,
+        t: expect.any(Function),
+        onSettled: expect.any(Function),
+      }),
+    );
     expect(loadAccounts).not.toHaveBeenCalled();
     expect(toasts).toEqual([['toast.banRefreshComplete:{"count":2}', { type: "success" }]]);
+  });
+
+  it("reports a failed avatar refresh when every profile is missing or rejected", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const missing = setup({
+      steam: {
+        loadAccounts: async () => accounts as never,
+        getProfileInfo: async () => null,
+      },
+    });
+    await missing.refresh.refreshAvatarsNow();
+    expect(missing.toasts).toEqual([["toast.refreshFailed", { type: "error" }]]);
+
+    const rejected = setup({
+      steam: {
+        loadAccounts: async () => accounts as never,
+        getProfileInfo: async () => {
+          throw new Error("down");
+        },
+      },
+    });
+    await rejected.refresh.refreshAvatarsNow();
+    expect(rejected.toasts).toEqual([["toast.refreshFailed", { type: "error" }]]);
+    error.mockRestore();
+  });
+
+  it("reports a partial avatar refresh when only some profiles return", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const getProfileInfo = vi.fn(async (id: string) =>
+      id === "a1" ? { avatarUrl: "https://cdn.example/a.png" } : null,
+    );
+    const { refresh, toasts, loadAccounts } = setup({
+      steam: { loadAccounts: async () => accounts as never, getProfileInfo },
+    });
+
+    await refresh.refreshAvatarsNow();
+
+    expect(loadAccounts).toHaveBeenCalledWith(true, false, true, false, false);
+    expect(toasts).toEqual([['toast.refreshPartial:{"ok":1,"count":2}', { type: "info" }]]);
+    error.mockRestore();
+  });
+
+  function bansSettling(outcome: WarningRefreshOutcome) {
+    return vi.fn(
+      async (
+        _accounts: unknown,
+        options: { onSettled?: (outcome: WarningRefreshOutcome) => void },
+      ) => {
+        options.onSettled?.(outcome);
+        return {};
+      },
+    );
+  }
+
+  it("does not announce a finished ban refresh when the check failed", async () => {
+    const loadWarningStates = bansSettling({ kind: "failed" });
+    const { refresh, toasts } = setup(
+      { steam: { loadAccounts: async () => accounts as never, loadWarningStates } },
+      "riot",
+    );
+
+    await refresh.refreshBansNow();
+
+    expect(toasts).toEqual([]);
+  });
+
+  it("says the ban refresh was skipped when no API key is set", async () => {
+    const loadWarningStates = bansSettling({ kind: "noApiKey" });
+    const { refresh, toasts, loadAccounts } = setup({
+      steam: { loadAccounts: async () => accounts as never, loadWarningStates },
+    });
+
+    await refresh.refreshBansNow();
+
+    expect(loadAccounts).not.toHaveBeenCalled();
+    expect(toasts).toEqual([["toast.banRefreshNoApiKey", { type: "error" }]]);
+  });
+
+  it("reports a partial ban refresh when Steam left accounts out", async () => {
+    const loadWarningStates = bansSettling({ kind: "partial", checked: 1, requested: 2 });
+    const { refresh, toasts } = setup(
+      { steam: { loadAccounts: async () => accounts as never, loadWarningStates } },
+      "riot",
+    );
+
+    await refresh.refreshBansNow();
+
+    expect(toasts).toEqual([['toast.refreshPartial:{"ok":1,"count":2}', { type: "info" }]]);
   });
 
   it("shows the platform's empty message, and an error toast when a step throws", async () => {

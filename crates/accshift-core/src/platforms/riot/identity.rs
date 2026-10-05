@@ -102,6 +102,48 @@ pub(super) fn check_live_identity(
     }
 }
 
+/// Why a manual capture must stop before it copies the live session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CaptureRefusal {
+    /// The client is closed or its account could not be read, and the target
+    /// is not the profile already marked current.
+    UnknownIdentity,
+    /// The live puuid is already stored on a different profile.
+    LiveAccountAlreadyOwned,
+}
+
+/// A right-click capture copies whatever session is on disk into the chosen
+/// profile and makes that profile current. That is safe for the current
+/// profile, and for an unclaimed profile whose live account is new. It is not
+/// safe when the client cannot name the account, or when another profile
+/// already owns that puuid: the copy would then be the wrong account's files.
+pub(super) fn refuse_manual_capture(
+    profiles: &[RiotProfileConfig],
+    current_profile_id: &str,
+    target: &RiotProfileConfig,
+    live: Option<&RiotDetectedIdentity>,
+) -> Option<CaptureRefusal> {
+    match check_live_identity(target, live) {
+        IdentityCheck::Unknown => {
+            (target.id != current_profile_id).then_some(CaptureRefusal::UnknownIdentity)
+        }
+        IdentityCheck::Unclaimed => {
+            let live_puuid = live
+                .map(|identity| identity.account_puuid.trim())
+                .filter(|puuid| !puuid.is_empty())?;
+            let owned_elsewhere = profiles.iter().any(|profile| {
+                profile.id != target.id
+                    && profile
+                        .account_puuid
+                        .trim()
+                        .eq_ignore_ascii_case(live_puuid)
+            });
+            owned_elsewhere.then_some(CaptureRefusal::LiveAccountAlreadyOwned)
+        }
+        IdentityCheck::Match | IdentityCheck::Mismatch => None,
+    }
+}
+
 /// Profile states whose live session a switch backs up before leaving them.
 pub(super) const SWITCH_BACKUP_STATES: &[&str] = &["ready", "awaiting_capture", "setup_pending"];
 /// Profile states whose live session a new setup backs up before clearing it.

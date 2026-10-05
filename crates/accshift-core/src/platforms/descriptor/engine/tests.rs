@@ -887,7 +887,7 @@ fn a_log_older_than_the_last_switch_does_not_name_the_current_account() {
     let ctx = TempCtx { root: root.clone() };
     let service = log_service(&live);
     let minute_ago = now_unix_ms() - 60_000;
-    config_bridge::set_last_switch(&ctx, "ubisoft", UUID_TWO, minute_ago).unwrap();
+    config_bridge::set_last_switch(&ctx, "ubisoft", UUID_TWO, minute_ago, None, None).unwrap();
 
     write_log(&live, UUID_ONE, Duration::from_secs(600));
     assert_eq!(service.current_account_id(&ctx).as_deref(), Some(UUID_TWO));
@@ -895,6 +895,153 @@ fn a_log_older_than_the_last_switch_does_not_name_the_current_account() {
     // The launcher wrote since: the log is the better witness again.
     write_log(&live, UUID_ONE, Duration::ZERO);
     assert_eq!(service.current_account_id(&ctx).as_deref(), Some(UUID_ONE));
+    let _ = fs::remove_dir_all(&root);
+}
+
+fn append_log(live: &Path, line: &str) {
+    let log = live.join("logs").join("launcher_log.txt");
+    let mut content = fs::read_to_string(&log).unwrap();
+    content.push_str(line);
+    if !line.ends_with('\n') {
+        content.push('\n');
+    }
+    fs::write(&log, content).unwrap();
+}
+
+#[test]
+fn a_startup_line_after_a_switch_does_not_revive_the_previous_account() {
+    // Connect bumps the log mtime when it starts, before it writes a new
+    // sign-in. That bump must not make the previous account current again.
+    let _config = config_guard();
+    let root = scratch("log-offset");
+    let live = root.join("live");
+    let ctx = TempCtx { root: root.clone() };
+    let service = log_service(&live);
+    write_log(&live, UUID_ONE, Duration::ZERO);
+    let log = live.join("logs").join("launcher_log.txt");
+    let length = fs::metadata(&log).unwrap().len();
+    config_bridge::set_last_switch(
+        &ctx,
+        "ubisoft",
+        UUID_TWO,
+        now_unix_ms() - 60_000,
+        Some(length),
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(service.current_account_id(&ctx).as_deref(), Some(UUID_TWO));
+
+    append_log(&live, "UbisoftConnect.cpp - launcher starting");
+    assert_eq!(service.current_account_id(&ctx).as_deref(), Some(UUID_TWO));
+
+    append_log(
+        &live,
+        &format!("AccountStartupUser.cpp - User: {UUID_ONE} logged in"),
+    );
+    assert_eq!(service.current_account_id(&ctx).as_deref(), Some(UUID_ONE));
+
+    // A shorter rewrite is a new file. Scan it, rather than sticking on the
+    // account recorded against the old length.
+    let grown = fs::metadata(&log).unwrap().len();
+    config_bridge::set_last_switch(
+        &ctx,
+        "ubisoft",
+        UUID_TWO,
+        now_unix_ms() - 60_000,
+        Some(grown),
+        None,
+    )
+    .unwrap();
+    let third = "cafebabe-1234-5678-9abc-def012345678";
+    write_log(&live, third, Duration::ZERO);
+    assert!(fs::metadata(&log).unwrap().len() < grown);
+    assert_eq!(service.current_account_id(&ctx).as_deref(), Some(third));
+
+    // An offset that lands mid-line drops that partial line, so the uuid
+    // still sitting on it is not a sign-in that happened after the switch.
+    write_log(&live, UUID_ONE, Duration::ZERO);
+    let full = fs::read_to_string(&log).unwrap();
+    let cut = full.find("User: ").unwrap() as u64;
+    config_bridge::set_last_switch(
+        &ctx,
+        "ubisoft",
+        UUID_TWO,
+        now_unix_ms() - 60_000,
+        Some(cut),
+        None,
+    )
+    .unwrap();
+    append_log(&live, "UbisoftConnect.cpp - launcher starting");
+    assert_eq!(service.current_account_id(&ctx).as_deref(), Some(UUID_TWO));
+
+    fs::remove_file(&log).unwrap();
+    assert_eq!(service.current_account_id(&ctx).as_deref(), Some(UUID_TWO));
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_rewritten_log_that_grew_past_the_offset_is_scanned_whole() {
+    // The launcher restarted on a fresh log and the user signed in by hand.
+    // Once that log outgrows the recorded offset, the sign-in line sits
+    // before it; only the fingerprint tells the file was rewritten.
+    let _config = config_guard();
+    let root = scratch("log-rewrite-grown");
+    let live = root.join("live");
+    let ctx = TempCtx { root: root.clone() };
+    let service = log_service(&live);
+    write_log(&live, UUID_ONE, Duration::ZERO);
+    let log = live.join("logs").join("launcher_log.txt");
+
+    service.record_switch(&ctx, UUID_TWO);
+    let record =
+        config_bridge::last_switch_in(&crate::config::load_config(&ctx), "ubisoft").unwrap();
+    let offset = record.log_len.unwrap();
+    assert_eq!(offset, fs::metadata(&log).unwrap().len());
+    assert!(record.log_mark.is_some());
+
+    // Appending keeps the bytes before the offset: still the switched account.
+    append_log(&live, "UbisoftConnect.cpp - launcher starting");
+    assert_eq!(service.current_account_id(&ctx).as_deref(), Some(UUID_TWO));
+
+    let third = "cafebabe-1234-5678-9abc-def012345678";
+    write_log(&live, third, Duration::ZERO);
+    while fs::metadata(&log).unwrap().len() <= offset + 16 {
+        append_log(&live, "UbisoftConnect.cpp - heartbeat");
+    }
+    assert_eq!(service.current_account_id(&ctx).as_deref(), Some(third));
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn capturing_a_forgotten_account_does_not_put_it_back() {
+    // The launcher still has the account signed in after a forget. The next
+    // switch must not treat that live session as a reason to recreate the
+    // account and write its credentials back.
+    let _config = config_guard();
+    let root = scratch("capture-forgotten");
+    let live = root.join("live");
+    let ctx = TempCtx { root: root.clone() };
+    let service = log_service(&live);
+    fs::create_dir_all(&live).unwrap();
+    fs::write(live.join("user.dat"), b"secret-session").unwrap();
+    write_log(&live, UUID_ONE, Duration::ZERO);
+
+    // An account that was never added is adopted: the switch about to run
+    // would otherwise replace its session with no copy kept.
+    service.capture_current_account(&ctx).unwrap();
+    assert_eq!(config_bridge::accounts(&ctx, "ubisoft").len(), 1);
+    let snapshots = crate::storage::platform_snapshots_dir(&ctx, "ubisoft").ok();
+    assert!(service.has_snapshot_in(snapshots.as_deref(), UUID_ONE));
+
+    service.forget(&ctx, UUID_ONE).unwrap();
+    service.capture_current_account(&ctx).unwrap();
+    assert!(config_bridge::accounts(&ctx, "ubisoft").is_empty());
+    assert_eq!(
+        config_bridge::blocklist(&ctx, "ubisoft"),
+        vec![UUID_ONE.to_string()]
+    );
+    assert!(!service.has_snapshot_in(snapshots.as_deref(), UUID_ONE));
     let _ = fs::remove_dir_all(&root);
 }
 

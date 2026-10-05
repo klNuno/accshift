@@ -229,6 +229,8 @@ export const PT_MESSAGES: Record<MessageKey, string> = {
   "onboarding.telemetry.refuseHint":
     "Nada é medido nem enviado, nem sequer os contadores anónimos.",
   "onboarding.telemetry.back": "Voltar",
+  "onboarding.persistFailed": "Não foi possível guardar essa escolha. Tenta de novo.",
+  "onboarding.persistLater": "Perguntar no próximo arranque",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
   "settings.battleNet": "Battle.net",
@@ -351,6 +353,9 @@ export const PT_MESSAGES: Record<MessageKey, string> = {
   "toast.banCheckFailed": "A verificação de bans falhou: {error}",
   "toast.avatarRefreshComplete": "Atualização de avatares concluída para {count} contas",
   "toast.banRefreshComplete": "Atualização de bans concluída para {count} contas",
+  "toast.banRefreshNoApiKey":
+    "Atualização de bans ignorada: adiciona uma chave da Steam Web API nas definições",
+  "toast.refreshPartial": "Atualização concluída para {ok} de {count} contas",
   "toast.noSteamAccountsFound":
     "Nenhuma conta Steam encontrada. Inicia sessão no Steam pelo menos uma vez e atualiza.",
   "toast.accountsRefreshed.single": "{count} conta atualizada",
@@ -709,6 +714,7 @@ export const PT_MESSAGES: Record<MessageKey, string> = {
   "themeEditor.noIssues": "Nada a assinalar",
   "themeEditor.fixErrorsFirst": "Corrija os valores recusados antes de guardar",
   "themeEditor.save": "Guardar",
+  "themeEditor.saveFailed": "Não foi possível guardar o tema. Tenta de novo.",
   "themeEditor.export": "Copiar",
   "themeEditor.issueInvalidValue": "{token}: {kind} inválido, por exemplo {example}",
   "themeEditor.issueUnknownToken": "{token} não é um valor de tema, é ignorado",

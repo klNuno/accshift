@@ -228,6 +228,8 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "onboarding.telemetry.refuseHint":
     "Ничего не измеряется и не отправляется, даже анонимные счётчики.",
   "onboarding.telemetry.back": "Назад",
+  "onboarding.persistFailed": "Не удалось сохранить этот выбор. Попробуй ещё раз.",
+  "onboarding.persistLater": "Спросить при следующем запуске",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
   "settings.battleNet": "Battle.net",
@@ -354,6 +356,9 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "toast.banCheckFailed": "Проверка банов не удалась: {error}",
   "toast.avatarRefreshComplete": "Аватары обновлены для {count} аккаунтов",
   "toast.banRefreshComplete": "Баны обновлены для {count} аккаунтов",
+  "toast.banRefreshNoApiKey":
+    "Обновление банов пропущено: добавьте ключ Steam Web API в настройках",
+  "toast.refreshPartial": "Обновление завершено для {ok} из {count} аккаунтов",
   "toast.noSteamAccountsFound":
     "Аккаунты Steam не найдены. Войдите в Steam хотя бы один раз, затем обновите.",
   "toast.accountsRefreshed.single": "Обновлён {count} аккаунт",
@@ -712,6 +717,7 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "themeEditor.noIssues": "Замечаний нет",
   "themeEditor.fixErrorsFirst": "Исправьте отклонённые значения перед сохранением",
   "themeEditor.save": "Сохранить",
+  "themeEditor.saveFailed": "Не удалось сохранить тему. Попробуй ещё раз.",
   "themeEditor.export": "Копировать",
   "themeEditor.issueInvalidValue": "{token}: недопустимое значение ({kind}), например {example}",
   "themeEditor.issueUnknownToken": "{token} не является значением темы и игнорируется",

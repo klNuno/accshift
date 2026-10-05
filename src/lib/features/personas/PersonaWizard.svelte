@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { personaAssignmentsForSave } from "./assignments";
   import type { Persona } from "./types";
   import PersonaCover from "./PersonaCover.svelte";
   import type { CoverTile } from "./PersonaCover.svelte";
@@ -12,6 +13,7 @@
     platforms,
     accountsByPlatform,
     loading,
+    accountLoadFailed = [],
     avatarFor,
     onSave,
     onCancel,
@@ -22,6 +24,8 @@
     platforms: { id: string; name: string; accent: string }[];
     accountsByPlatform: Record<string, PlatformAccount[]>;
     loading: boolean;
+    /** Platforms whose account read failed. Their stored assignments stay. */
+    accountLoadFailed?: readonly string[];
     avatarFor: (platformId: string, accountId: string) => string | null;
     onSave: (input: { name: string; image: string | null; assignments: Persona["assignments"] }) => void;
     onCancel: () => void;
@@ -64,12 +68,13 @@
     if (!persona) nameInputRef?.focus();
   });
 
-  // A stale accountId (account removed since the persona was saved) must never
-  // survive a save; while accounts are still loading, trust the stored value.
+  // Drop a stored account id only after a successful read that does not contain
+  // it. A read still in flight, or one that failed, keeps the stored value, and
+  // so does a platform this wizard is not offering.
   function isValidAssignment(platformId: string): boolean {
     const id = selection[platformId];
     if (!id) return false;
-    if (loading) return true;
+    if (loading || accountLoadFailed.includes(platformId)) return true;
     return (accountsByPlatform[platformId] ?? []).some((a) => a.id === id);
   }
 
@@ -80,9 +85,14 @@
   }
 
   let assignments = $derived(
-    platforms
-      .filter((p) => isValidAssignment(p.id))
-      .map((p) => ({ platformId: p.id, accountId: selection[p.id] })),
+    personaAssignmentsForSave({
+      original: persona?.assignments ?? [],
+      offeredPlatformIds: platforms.map((platform) => platform.id),
+      selection,
+      accountsByPlatform,
+      loading,
+      failedPlatformIds: accountLoadFailed,
+    }),
   );
   let dirty = $derived(JSON.stringify([name, image, assignments]) !== baseline);
   let canSave = $derived(name.trim().length > 0 && assignments.length > 0 && !loading);

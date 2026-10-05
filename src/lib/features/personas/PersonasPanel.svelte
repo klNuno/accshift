@@ -51,6 +51,7 @@
   let wizard = $state<ReturnType<typeof PersonaWizard> | undefined>();
   let accountsByPlatform = $state<Record<string, PlatformAccount[]>>({});
   let accountsLoading = $state(true);
+  let accountLoadFailed = $state<string[]>([]);
   // "platformId:accountId" -> resolved avatar url (null = known to have none)
   let avatarByKey = $state<Record<string, string | null>>({});
 
@@ -84,15 +85,18 @@
 
   onMount(async () => {
     const loaded: Record<string, PlatformAccount[]> = {};
+    const failed: string[] = [];
     await Promise.all(
       platforms.map(async (p) => {
         try {
           loaded[p.id] = await loadAccounts(p.id);
         } catch {
           loaded[p.id] = [];
+          failed.push(p.id);
         }
       }),
     );
+    accountLoadFailed = failed;
     accountsByPlatform = loaded;
     accountsLoading = false;
     // Resolve avatars for every known account: the mosaics need the assigned
@@ -192,6 +196,7 @@
       persona={editing === "new" ? null : editing}
       {platforms}
       {accountsByPlatform}
+      {accountLoadFailed}
       loading={accountsLoading}
       {avatarFor}
       onSave={handleSave}
