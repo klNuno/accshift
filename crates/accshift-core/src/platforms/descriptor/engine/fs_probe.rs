@@ -50,6 +50,29 @@ pub(super) fn read_log_byte(path: &Path, at: u64) -> Option<u8> {
     Some(byte[0])
 }
 
+/// Bytes hashed by [`log_mark`], ending at the recorded offset.
+const LOG_MARK_BYTES: u64 = 256;
+
+/// Fingerprint of the bytes just before `end`. An append-only log keeps them,
+/// so a different value at the same offset means the file was rewritten.
+/// FNV-1a, written out because the value is stored in the config and must
+/// not change with the toolchain.
+pub(super) fn log_mark(path: &Path, end: u64) -> Option<u64> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = open_log(path)?;
+    if file.metadata().ok()?.len() < end {
+        return None;
+    }
+    let start = end.saturating_sub(LOG_MARK_BYTES);
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut buffer = vec![0_u8; (end - start) as usize];
+    file.read_exact(&mut buffer).ok()?;
+    Some(buffer.iter().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    }))
+}
+
 fn open_log(path: &Path) -> Option<fs::File> {
     #[cfg(windows)]
     {

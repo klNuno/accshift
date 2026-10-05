@@ -23,6 +23,9 @@ export function createWindowActivity() {
   let isMinimized = $state(false);
   let isPageVisible = $state(true);
   let started = false;
+  /** Bumped by stop(): a registration that settles after a stop belongs to
+   *  an earlier pass even when start() has run again since. */
+  let generation = 0;
   let syncing = false;
   let pendingSync = false;
   let cleanupFns: Array<() => void | Promise<void>> = [];
@@ -66,6 +69,7 @@ export function createWindowActivity() {
   async function start() {
     if (started) return;
     started = true;
+    const gen = generation;
     updatePageVisibility();
 
     if (typeof window !== "undefined") {
@@ -121,17 +125,18 @@ export function createWindowActivity() {
     }
     cleanupFns.push(
       ...takeNativeUnlisteners(
-        started,
+        started && gen === generation,
         registered.map((result) => (result.status === "fulfilled" ? result.value : undefined)),
       ),
     );
 
-    void sync();
+    if (gen === generation) void sync();
   }
 
   function stop() {
     if (!started) return;
     started = false;
+    generation += 1;
     for (const cleanup of cleanupFns.splice(0)) {
       cleanup();
     }

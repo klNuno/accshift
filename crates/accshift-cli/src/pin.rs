@@ -96,13 +96,6 @@ pub fn enforce(format: Format, lock: PinLock) -> Result<PinLock, u8> {
     }
 }
 
-/// True when `current` is the lock `enforce` admitted. The caller reads
-/// `current` under the operation lock, after the prompt, so a PIN the GUI
-/// enabled or replaced in between is refused.
-pub fn admitted_lock_still_holds(admitted: &PinLock, current: &PinLock) -> bool {
-    admitted == current
-}
-
 /// Read a PIN from the terminal. Local echo is suppressed with a best-effort,
 /// dependency-free platform call (no `rpassword` crate is available to
 /// `accshift-cli`); if suppression fails for any reason we fall back to a
@@ -267,25 +260,6 @@ mod tests {
     #[test]
     fn no_pin_lets_the_switch_through_without_a_prompt() {
         assert_eq!(enforce(Format::Json, PinLock::Off), Ok(PinLock::Off));
-    }
-
-    #[test]
-    fn a_pin_changed_after_the_prompt_is_not_the_lock_we_admitted() {
-        let admitted = PinLock::On("hash-a".into());
-        assert!(admitted_lock_still_holds(
-            &admitted,
-            &PinLock::On("hash-a".into())
-        ));
-        assert!(admitted_lock_still_holds(&PinLock::Off, &PinLock::Off));
-        assert!(!admitted_lock_still_holds(
-            &admitted,
-            &PinLock::On("hash-b".into())
-        ));
-        assert!(!admitted_lock_still_holds(
-            &PinLock::Off,
-            &PinLock::On("hash-a".into())
-        ));
-        assert!(!admitted_lock_still_holds(&admitted, &PinLock::Off));
     }
 
     #[test]

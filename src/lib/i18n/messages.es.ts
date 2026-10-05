@@ -230,6 +230,7 @@ export const ES_MESSAGES: Record<MessageKey, string> = {
     "No se mide ni se envía nada, ni siquiera los contadores anónimos.",
   "onboarding.telemetry.back": "Atrás",
   "onboarding.persistFailed": "No se pudo guardar esa elección. Inténtalo de nuevo.",
+  "onboarding.persistLater": "Preguntarme en el próximo inicio",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
   "settings.battleNet": "Battle.net",
@@ -353,6 +354,8 @@ export const ES_MESSAGES: Record<MessageKey, string> = {
   "toast.banCheckFailed": "Falló la revisión de baneos: {error}",
   "toast.avatarRefreshComplete": "Actualización de avatares terminada para {count} cuentas",
   "toast.banRefreshComplete": "Actualización de baneos terminada para {count} cuentas",
+  "toast.banRefreshNoApiKey":
+    "Actualización de baneos omitida: añade una clave de Steam Web API en los ajustes",
   "toast.refreshPartial": "Actualización terminada para {ok} de {count} cuentas",
   "toast.noSteamAccountsFound":
     "No se encontraron cuentas de Steam. Inicia sesión en Steam al menos una vez y actualiza.",

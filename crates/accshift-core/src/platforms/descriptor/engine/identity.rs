@@ -305,8 +305,9 @@ impl DescriptorService {
     /// the restored session fails to sign in. A switch stores the log's
     /// length. Until an identity line appears past that offset, the account
     /// the switch put in place is the better answer. A startup line that only
-    /// moves the modification time does not count. A shorter file is a
-    /// rewrite, so it is scanned whole. Rows with no stored length still
+    /// moves the modification time does not count. A shorter file, or one
+    /// whose bytes before the offset changed, is a rewrite, so it is scanned
+    /// whole. Rows with no stored length still
     /// compare the modification time with the switch.
     pub(super) fn live_identity(&self, runtime: &Runtime<'_>, cfg: &AppConfig) -> Option<String> {
         let IdentitySource::LogTail {
@@ -345,7 +346,14 @@ impl DescriptorService {
         if len == log_len {
             return Some(recorded);
         }
-        if len < log_len {
+        // A shorter file, or one that no longer carries the bytes the switch
+        // saw before its offset, is a rewrite: the new sign-in line may sit
+        // before the old offset, so the whole tail is scanned.
+        let rewritten = len < log_len
+            || record
+                .log_mark
+                .is_some_and(|mark| log_mark(&resolved, log_len) != Some(mark));
+        if rewritten {
             return self.read_identity_from_log(runtime).or(Some(recorded));
         }
         self.read_identity_past(runtime, &resolved, log_len, *tail_bytes)
@@ -363,13 +371,17 @@ impl DescriptorService {
             return;
         }
         // Not fatal: without the record the log is trusted, as it always was.
-        // Zero when the log is missing: the first line written afterwards is new.
+        let (log_len, log_mark) = match self.log_position_now(app) {
+            Some((len, mark)) => (Some(len), mark),
+            None => (None, None),
+        };
         if let Err(error) = config_bridge::set_last_switch(
             app,
             &self.descriptor.id,
             account_id,
             now_unix_ms(),
-            Some(self.log_len_now(app)),
+            log_len,
+            log_mark,
         ) {
             log_platform_error(
                 app,
@@ -380,21 +392,25 @@ impl DescriptorService {
         }
     }
 
-    /// Length of the identity log right now. Zero when it cannot be read, so
-    /// a later rewrite is scanned instead of sticking on the recorded id.
-    fn log_len_now(&self, app: &dyn AppContext) -> u64 {
-        let Ok(runtime) = self.runtime(app) else {
-            return 0;
-        };
+    /// Length of the identity log right now, with the fingerprint of the
+    /// bytes before that offset. Zero when the log is missing: the first line
+    /// written afterwards is new. `None` when the log could not be examined,
+    /// so the lookup falls back to the modification time instead of scanning
+    /// the pre-switch log from offset zero.
+    fn log_position_now(&self, app: &dyn AppContext) -> Option<(u64, Option<u64>)> {
+        let runtime = self.runtime(app).ok()?;
         let IdentitySource::LogTail { path, .. } = &runtime.profile.identity.source else {
-            return 0;
+            return None;
         };
-        runtime
-            .path(path)
-            .ok()
-            .and_then(|log| fs::metadata(log).ok())
-            .map(|meta| meta.len())
-            .unwrap_or(0)
+        let log = runtime.path(path).ok()?;
+        match fs::metadata(&log) {
+            Ok(meta) => {
+                let len = meta.len();
+                Some((len, log_mark(&log, len)))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some((0, None)),
+            Err(_) => None,
+        }
     }
 
     pub(super) fn snapshot_root(

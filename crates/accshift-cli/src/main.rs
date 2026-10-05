@@ -485,7 +485,9 @@ fn cmd_switch(
         }
     };
 
-    if !pin::admitted_lock_still_holds(&admitted, &accshift_core::pin::read_pin_lock(&*ctx)) {
+    // Read under the operation lock, after the prompt: a PIN the GUI enabled
+    // or replaced in between is not the lock `enforce` admitted.
+    if accshift_core::pin::read_pin_lock(&*ctx) != admitted {
         emit_err(
             format,
             "switch",

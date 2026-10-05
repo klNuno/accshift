@@ -220,6 +220,7 @@ export const EN_MESSAGES = {
     "Nothing is measured and nothing is sent, not even the anonymous counters.",
   "onboarding.telemetry.back": "Back",
   "onboarding.persistFailed": "Could not save that choice. Try again.",
+  "onboarding.persistLater": "Ask me next launch",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
   "settings.battleNet": "Battle.net",
@@ -342,6 +343,7 @@ export const EN_MESSAGES = {
   "toast.banCheckFailed": "Ban check failed: {error}",
   "toast.avatarRefreshComplete": "Avatar refresh finished for {count} accounts",
   "toast.banRefreshComplete": "Ban refresh finished for {count} accounts",
+  "toast.banRefreshNoApiKey": "Ban refresh skipped: add a Steam Web API key in settings",
   "toast.refreshPartial": "Refresh finished for {ok} of {count} accounts",
   "toast.noSteamAccountsFound":
     "No Steam accounts found. Sign in to Steam at least once, then refresh.",

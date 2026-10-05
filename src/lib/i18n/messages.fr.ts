@@ -230,6 +230,7 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
     "Rien n'est mesuré, rien n'est envoyé, pas même les compteurs anonymes.",
   "onboarding.telemetry.back": "Retour",
   "onboarding.persistFailed": "Impossible d'enregistrer ce choix. Réessaie.",
+  "onboarding.persistLater": "Me redemander au prochain lancement",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
   "settings.battleNet": "Battle.net",
@@ -352,6 +353,8 @@ export const FR_MESSAGES: Record<MessageKey, string> = {
   "toast.banCheckFailed": "Échec de la vérification des bans: {error}",
   "toast.avatarRefreshComplete": "Rafraîchissement avatar terminé pour {count} comptes",
   "toast.banRefreshComplete": "Rafraîchissement des bans terminé pour {count} comptes",
+  "toast.banRefreshNoApiKey":
+    "Rafraîchissement des bans ignoré : ajoute une clé Steam Web API dans les paramètres",
   "toast.refreshPartial": "Rafraîchissement terminé pour {ok} comptes sur {count}",
   "toast.noSteamAccountsFound":
     "Aucun compte Steam trouvé. Connecte-toi à Steam au moins une fois puis rafraîchis.",

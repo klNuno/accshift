@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { PlatformAdapter, PlatformDef } from "$lib/shared/platform";
+import type { PlatformAdapter, PlatformDef, WarningRefreshOutcome } from "$lib/shared/platform";
 import { createProfileRefresh } from "./useProfileRefresh";
 
 function def(id: string, profileRefresh?: { avatars?: boolean; bans?: boolean }) {
@@ -110,13 +110,20 @@ describe("profile refresh", () => {
     error.mockRestore();
   });
 
-  it("does not announce a finished ban refresh when the check failed", async () => {
-    const loadWarningStates = vi.fn(
-      async (_accounts: unknown, options: { onSettled?: (outcome: { ok: boolean }) => void }) => {
-        options.onSettled?.({ ok: false });
+  function bansSettling(outcome: WarningRefreshOutcome) {
+    return vi.fn(
+      async (
+        _accounts: unknown,
+        options: { onSettled?: (outcome: WarningRefreshOutcome) => void },
+      ) => {
+        options.onSettled?.(outcome);
         return {};
       },
     );
+  }
+
+  it("does not announce a finished ban refresh when the check failed", async () => {
+    const loadWarningStates = bansSettling({ kind: "failed" });
     const { refresh, toasts } = setup(
       { steam: { loadAccounts: async () => accounts as never, loadWarningStates } },
       "riot",
@@ -125,6 +132,30 @@ describe("profile refresh", () => {
     await refresh.refreshBansNow();
 
     expect(toasts).toEqual([]);
+  });
+
+  it("says the ban refresh was skipped when no API key is set", async () => {
+    const loadWarningStates = bansSettling({ kind: "noApiKey" });
+    const { refresh, toasts, loadAccounts } = setup({
+      steam: { loadAccounts: async () => accounts as never, loadWarningStates },
+    });
+
+    await refresh.refreshBansNow();
+
+    expect(loadAccounts).not.toHaveBeenCalled();
+    expect(toasts).toEqual([["toast.banRefreshNoApiKey", { type: "error" }]]);
+  });
+
+  it("reports a partial ban refresh when Steam left accounts out", async () => {
+    const loadWarningStates = bansSettling({ kind: "partial", checked: 1, requested: 2 });
+    const { refresh, toasts } = setup(
+      { steam: { loadAccounts: async () => accounts as never, loadWarningStates } },
+      "riot",
+    );
+
+    await refresh.refreshBansNow();
+
+    expect(toasts).toEqual([['toast.refreshPartial:{"ok":1,"count":2}', { type: "info" }]]);
   });
 
   it("shows the platform's empty message, and an error toast when a step throws", async () => {

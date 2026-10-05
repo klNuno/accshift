@@ -335,9 +335,16 @@
     {#if persistError}
       <p class="persist-error" role="alert">
         <span>{t("onboarding.persistFailed")}</span>
-        <button type="button" class="retry" onclick={retryPersist} disabled={submitting}>
-          {t("common.retry")}
-        </button>
+        <span class="persist-actions">
+          <button type="button" class="retry" onclick={retryPersist} disabled={submitting}>
+            {t("common.retry")}
+          </button>
+          <!-- A save refused for good (an unreadable config) would otherwise
+               keep this modal over the whole app on every launch. -->
+          <button type="button" class="later" onclick={onComplete} disabled={submitting}>
+            {t("onboarding.persistLater")}
+          </button>
+        </span>
       </p>
     {/if}
 
@@ -902,6 +909,26 @@
     font-size: 12px;
     line-height: 1.4;
     color: #ef4444;
+  }
+  .persist-actions {
+    display: flex;
+    flex: none;
+    gap: 6px;
+  }
+  .persist-error .later {
+    border: none;
+    padding: 4px 6px;
+    font-size: 11px;
+    background: transparent;
+    color: var(--fg-muted);
+    cursor: pointer;
+  }
+  .persist-error .later:hover:not(:disabled) {
+    color: var(--fg);
+  }
+  .persist-error .later:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
   .persist-error .retry {
     flex: none;

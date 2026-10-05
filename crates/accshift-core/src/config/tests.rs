@@ -247,18 +247,25 @@ fn a_portable_file_without_its_local_twin_does_not_retire_legacy() {
     let ctx = tmp_ctx("partial-split");
     let legacy_path = crate::storage::legacy_config_path(&*ctx).unwrap();
     std::fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
-    let legacy = br#"{"steam_api_key":"kept-secret","riot":{"profiles":[{"id":"p1","label":"Kept"}],"current_profile_id":"p1"}}"#;
+    let legacy = br#"{"steam_api_key":"kept-secret","riot":{"profiles":[{"id":"p1","label":"Stale"}],"current_profile_id":"p1"}}"#;
     std::fs::write(&legacy_path, legacy).unwrap();
 
+    // The portable half on disk is newer than legacy: a retire that failed
+    // earlier left legacy behind, then the local file went missing.
+    let mut current = AppConfig::default();
+    current.riot.profiles.push(RiotProfileConfig {
+        id: "p1".into(),
+        label: "Current".into(),
+        ..Default::default()
+    });
     let portable_path = crate::storage::portable_config_path(&*ctx).unwrap();
-    std::fs::create_dir_all(portable_path.parent().unwrap()).unwrap();
-    std::fs::write(&portable_path, b"{}").unwrap();
+    crate::storage::write_json_atomic(&portable_path, &portable_config(&current)).unwrap();
     let local_path = crate::storage::local_config_path(&*ctx).unwrap();
     assert!(!local_path.exists());
 
     assert!(
         matches!(migrate_legacy_config(&*ctx), Some(Ok(()))),
-        "a half-written split pair must resume from the legacy file"
+        "a half split pair must take the missing half from the legacy file"
     );
 
     assert!(
@@ -268,7 +275,10 @@ fn a_portable_file_without_its_local_twin_does_not_retire_legacy() {
     let loaded = load_config(&*ctx);
     assert_eq!(loaded.steam.api_key, "kept-secret");
     assert_eq!(loaded.riot.profiles.len(), 1);
-    assert_eq!(loaded.riot.profiles[0].label, "Kept");
+    assert_eq!(
+        loaded.riot.profiles[0].label, "Current",
+        "the portable file on disk must not be rolled back to legacy"
+    );
     assert!(
         !legacy_path.exists(),
         "legacy is retired only after both split files exist"
@@ -276,6 +286,32 @@ fn a_portable_file_without_its_local_twin_does_not_retire_legacy() {
     let mut retired = legacy_path.clone().into_os_string();
     retired.push(".migrated");
     assert!(std::path::PathBuf::from(retired).exists());
+
+    let _ = std::fs::remove_dir_all(&ctx.root);
+}
+
+#[test]
+fn a_corrupt_legacy_beside_one_split_file_poisons_saves() {
+    let _test_guard = config_io_test_mutex()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let ctx = tmp_ctx("partial-split-corrupt");
+    let legacy_path = crate::storage::legacy_config_path(&*ctx).unwrap();
+    std::fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
+    let corrupt = b"{ only copy of the secrets";
+    std::fs::write(&legacy_path, corrupt).unwrap();
+    let portable_path = crate::storage::portable_config_path(&*ctx).unwrap();
+    crate::storage::write_json_atomic(&portable_path, &portable_config(&AppConfig::default()))
+        .unwrap();
+    let local_path = crate::storage::local_config_path(&*ctx).unwrap();
+
+    assert!(matches!(migrate_legacy_config(&*ctx), Some(Err(_))));
+    // The load reads the portable file and never looks at legacy, so only
+    // the poison set by the failed migration stops this save.
+    let _ = load_config(&*ctx);
+    assert!(update_config(&*ctx, |cfg| cfg.window_width = Some(900.0)).is_err());
+    assert!(!local_path.exists());
+    assert_eq!(std::fs::read(&legacy_path).unwrap(), corrupt);
 
     let _ = std::fs::remove_dir_all(&ctx.root);
 }

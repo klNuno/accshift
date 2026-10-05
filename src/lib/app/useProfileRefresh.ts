@@ -1,14 +1,20 @@
 import type { AddToastOptions } from "$lib/features/notifications/store.svelte";
 import type { MessageKey, TranslationParams } from "$lib/i18n";
-import type { PlatformAdapter, PlatformDef, PlatformProfileInfo } from "$lib/shared/platform";
+import type {
+  PlatformAdapter,
+  PlatformDef,
+  PlatformProfileInfo,
+  WarningRefreshOutcome,
+} from "$lib/shared/platform";
 
 export type AvatarRefreshOutcome =
   | { kind: "complete"; count: number }
   | { kind: "failed" }
   | { kind: "partial"; ok: number; count: number };
 
-/** A rejection or a resolved null is a miss. Steam reports a failed fetch as
- *  null, and a real profile with no picture as `{ avatarUrl: null }`. */
+/** A rejection or a resolved null is a miss: an adapter resolves null only
+ *  for a failed fetch, and a real profile with no picture as
+ *  `{ avatarUrl: null }`. */
 export function avatarRefreshOutcome(
   settled: readonly PromiseSettledResult<PlatformProfileInfo | null>[],
 ): AvatarRefreshOutcome {
@@ -99,19 +105,30 @@ export function createProfileRefresh({
           if (noAccountsMsg) showToast(noAccountsMsg);
           continue;
         }
-        let fetchOk = true;
+        // Widened with `as`: the callback assigns it, which narrowing cannot see.
+        let outcome = { kind: "complete", checked: accounts.length } as WarningRefreshOutcome;
         await adapter.loadWarningStates(accounts, {
           forceRefresh: true,
           silent: false,
           t,
-          onSettled: (outcome) => {
-            fetchOk = outcome.ok;
+          onSettled: (settled) => {
+            outcome = settled;
           },
         });
         // The adapter already showed its own error toast. A second one, or a
         // success toast over the cached rows, would hide the failure.
-        if (!fetchOk) continue;
+        if (outcome.kind === "failed") continue;
+        if (outcome.kind === "noApiKey") {
+          showToast(t("toast.banRefreshNoApiKey"), { type: "error" });
+          continue;
+        }
         if (getActiveTab() === def.id) void loadAccounts(true, false, false, true, false);
+        if (outcome.kind === "partial") {
+          showToast(t("toast.refreshPartial", { ok: outcome.checked, count: outcome.requested }), {
+            type: "info",
+          });
+          continue;
+        }
         showToast(t("toast.banRefreshComplete", { count: accounts.length }), { type: "success" });
       } catch (error) {
         console.error("[bans] refresh failed:", error);

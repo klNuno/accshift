@@ -348,11 +348,13 @@ pub fn set_last_switch(
     account_id: &str,
     at: u64,
     log_len: Option<u64>,
+    log_mark: Option<u64>,
 ) -> Result<(), String> {
     let record = LastSwitch {
         account_id: account_id.trim().to_string(),
         at,
         log_len,
+        log_mark,
     };
     config::update_config(app, |cfg| {
         let slot = match platform_id {

@@ -153,6 +153,11 @@ pub struct LastSwitch {
     /// log's modification time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_len: Option<u64>,
+    /// Fingerprint of the bytes just before `log_len`. A log that grew past
+    /// the offset but no longer carries them was rewritten and is scanned
+    /// whole. Absent on older rows and when the log could not be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_mark: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]

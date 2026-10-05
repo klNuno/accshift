@@ -119,4 +119,48 @@ describe("loadSteamWarningStates", () => {
       .mock.calls.find((call) => call[0] === CLIENT_STORE_STEAM_BAN_CHECK_STATE);
     expect(persisted?.[1]).toMatchObject({ checkedSteamIds: ["disk-kept"] });
   });
+
+  it("reports how a load ended to its caller", async () => {
+    vi.mocked(peekSettings).mockReturnValue({
+      dataRefresh: { avatarCacheDays: 7, banCheckDays: 0 },
+    } as AppSettings);
+    const onSettled = vi.fn();
+
+    vi.mocked(hasApiKey).mockResolvedValue(false);
+    await loadSteamWarningStates([account("out-a")], { ...quiet, forceRefresh: true, onSettled });
+    expect(onSettled).toHaveBeenLastCalledWith({ kind: "noApiKey" });
+
+    vi.mocked(hasApiKey).mockResolvedValue(true);
+    vi.mocked(getPlayerBans).mockResolvedValue([banRow("out-a")]);
+    await loadSteamWarningStates([account("out-a"), account("out-b")], {
+      ...quiet,
+      forceRefresh: true,
+      onSettled,
+    });
+    expect(onSettled).toHaveBeenLastCalledWith({ kind: "partial", checked: 1, requested: 2 });
+
+    vi.mocked(getPlayerBans).mockRejectedValue(new Error("down"));
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    await loadSteamWarningStates([account("out-a")], { ...quiet, forceRefresh: true, onSettled });
+    expect(onSettled).toHaveBeenLastCalledWith({ kind: "failed" });
+    error.mockRestore();
+  });
+
+  it("stops asking for a SteamID Steam left out twice, until a forced refresh", async () => {
+    vi.mocked(peekSettings).mockReturnValue({
+      dataRefresh: { avatarCacheDays: 7, banCheckDays: 0 },
+    } as AppSettings);
+    vi.mocked(hasApiKey).mockResolvedValue(true);
+    vi.mocked(getPlayerBans).mockResolvedValue([]);
+    const accounts = [account("gone-id")];
+
+    await loadSteamWarningStates(accounts, quiet);
+    await loadSteamWarningStates(accounts, quiet);
+    vi.mocked(getPlayerBans).mockClear();
+    await loadSteamWarningStates(accounts, quiet);
+    expect(vi.mocked(getPlayerBans)).not.toHaveBeenCalled();
+
+    await loadSteamWarningStates(accounts, { ...quiet, forceRefresh: true });
+    expect(vi.mocked(getPlayerBans)).toHaveBeenCalledWith(["gone-id"]);
+  });
 });

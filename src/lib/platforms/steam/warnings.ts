@@ -23,6 +23,11 @@ interface BanCheckState {
 }
 
 let sessionBanCheckedIds = new Set<string>();
+/** Steam IDs left out of consecutive answers this session. A deleted or
+ *  invalid account is never returned, so after a retry it stops costing a
+ *  request on every load; a forced refresh still asks for it. */
+const sessionBanOmissions = new Map<string, number>();
+const BAN_OMISSIONS_BEFORE_SKIP = 2;
 let lastBanErrorToastAt = 0;
 let activeBanCheckToastId: string | null = null;
 
@@ -245,6 +250,7 @@ export async function loadSteamWarningStates(
   });
   if (!hasApiKeyConfigured) {
     console.info("[ban-check] skipped: missing Steam API key");
+    onSettled?.({ kind: "noApiKey" });
     return toWarningMap(cachedBans, t);
   }
 
@@ -261,7 +267,11 @@ export async function loadSteamWarningStates(
     sessionCheckedIds: sessionBanCheckedIds,
     cachedCheckedIds: new Set(cachedState?.checkedSteamIds ?? []),
   });
-  const idsToFetch = steamIds.filter((id) => !alreadyChecked.has(id));
+  const idsToFetch = steamIds.filter(
+    (id) =>
+      !alreadyChecked.has(id) &&
+      (forceRefresh || (sessionBanOmissions.get(id) ?? 0) < BAN_OMISSIONS_BEFORE_SKIP),
+  );
 
   if (idsToFetch.length === 0) {
     console.info("[ban-check] skipped: no accounts to check", {
@@ -269,6 +279,7 @@ export async function loadSteamWarningStates(
       delayDays,
       forceRefresh,
     });
+    onSettled?.({ kind: "complete", checked: 0 });
     return toWarningMap(cachedBans, t);
   }
 
@@ -288,8 +299,13 @@ export async function loadSteamWarningStates(
     // An omitted id is not a checked id. Marking it would skip the retry for
     // the rest of the session, or for the whole delay window once persisted.
     const confirmedIds = idsToFetch.filter((id) => returnedIds.has(id));
-    for (const steamId of confirmedIds) {
-      sessionBanCheckedIds.add(steamId);
+    for (const steamId of idsToFetch) {
+      if (returnedIds.has(steamId)) {
+        sessionBanCheckedIds.add(steamId);
+        sessionBanOmissions.delete(steamId);
+      } else {
+        sessionBanOmissions.set(steamId, (sessionBanOmissions.get(steamId) ?? 0) + 1);
+      }
     }
 
     if (returnedIds.size !== idsToFetch.length) {
@@ -318,14 +334,18 @@ export async function loadSteamWarningStates(
         }),
       );
     }
-    onSettled?.({ ok: true });
+    onSettled?.(
+      confirmedIds.length === idsToFetch.length
+        ? { kind: "complete", checked: confirmedIds.length }
+        : { kind: "partial", checked: confirmedIds.length, requested: idsToFetch.length },
+    );
   } catch (e) {
     if (!silent && now - lastBanErrorToastAt >= BAN_ERROR_TOAST_COOLDOWN_MS) {
       addToast(t("toast.banCheckFailedGeneric" as string as MessageKey), { type: "error" });
       lastBanErrorToastAt = now;
     }
     console.error("[ban-check] failed to fetch ban states:", e);
-    onSettled?.({ ok: false });
+    onSettled?.({ kind: "failed" });
   } finally {
     if (checkingToastId && activeBanCheckToastId === checkingToastId) {
       removeToast(checkingToastId);

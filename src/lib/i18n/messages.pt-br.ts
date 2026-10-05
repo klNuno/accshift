@@ -229,6 +229,7 @@ export const PT_BR_MESSAGES: Record<MessageKey, string> = {
   "onboarding.telemetry.refuseHint": "Nada é medido nem enviado, nem os contadores anônimos.",
   "onboarding.telemetry.back": "Voltar",
   "onboarding.persistFailed": "Não foi possível salvar essa escolha. Tente de novo.",
+  "onboarding.persistLater": "Perguntar na próxima abertura",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
   "settings.battleNet": "Battle.net",
@@ -350,6 +351,8 @@ export const PT_BR_MESSAGES: Record<MessageKey, string> = {
   "toast.banCheckFailed": "Falha na checagem de banimentos: {error}",
   "toast.avatarRefreshComplete": "Atualização de avatares concluída para {count} contas",
   "toast.banRefreshComplete": "Atualização de banimentos concluída para {count} contas",
+  "toast.banRefreshNoApiKey":
+    "Atualização de banimentos ignorada: adicione uma chave da Steam Web API nas configurações",
   "toast.refreshPartial": "Atualização concluída para {ok} de {count} contas",
   "toast.noSteamAccountsFound":
     "Nenhuma conta Steam encontrada. Entre no Steam pelo menos uma vez e atualize.",
