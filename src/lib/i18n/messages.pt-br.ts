@@ -228,6 +228,7 @@ export const PT_BR_MESSAGES: Record<MessageKey, string> = {
   "onboarding.telemetry.refuse": "Não, obrigado, desligue tudo",
   "onboarding.telemetry.refuseHint": "Nada é medido nem enviado, nem os contadores anônimos.",
   "onboarding.telemetry.back": "Voltar",
+  "onboarding.persistFailed": "Não foi possível salvar essa escolha. Tente de novo.",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
   "settings.battleNet": "Battle.net",
@@ -349,6 +350,7 @@ export const PT_BR_MESSAGES: Record<MessageKey, string> = {
   "toast.banCheckFailed": "Falha na checagem de banimentos: {error}",
   "toast.avatarRefreshComplete": "Atualização de avatares concluída para {count} contas",
   "toast.banRefreshComplete": "Atualização de banimentos concluída para {count} contas",
+  "toast.refreshPartial": "Atualização concluída para {ok} de {count} contas",
   "toast.noSteamAccountsFound":
     "Nenhuma conta Steam encontrada. Entre no Steam pelo menos uma vez e atualize.",
   "toast.accountsRefreshed.single": "{count} conta atualizada",
@@ -708,6 +710,7 @@ export const PT_BR_MESSAGES: Record<MessageKey, string> = {
   "themeEditor.noIssues": "Nada a relatar",
   "themeEditor.fixErrorsFirst": "Corrija os valores recusados antes de salvar",
   "themeEditor.save": "Salvar",
+  "themeEditor.saveFailed": "Não foi possível salvar o tema. Tente de novo.",
   "themeEditor.export": "Copiar",
   "themeEditor.issueInvalidValue": "{token}: {kind} inválido, por exemplo {example}",
   "themeEditor.issueUnknownToken": "{token} não é um valor de tema, ele é ignorado",

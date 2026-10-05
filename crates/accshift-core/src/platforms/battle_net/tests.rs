@@ -1,7 +1,8 @@
 use super::setup::merge_saved_after_setup;
 use super::{
     collect_unique_accounts, encode_saved_account_name, extract_saved_account_names,
-    normalize_account_key, parse_saved_account_names,
+    normalize_account_key, order_saved_accounts_for_switch, parse_saved_account_names,
+    saved_accounts_without,
 };
 #[cfg(windows)]
 use super::{normalize_registry_path, write_saved_accounts};
@@ -37,6 +38,54 @@ fn extracts_unique_accounts_from_array_field() {
 // -----------------------------------------------------------------------
 // collect_unique_accounts
 // -----------------------------------------------------------------------
+
+#[test]
+fn a_switch_writes_the_list_flushed_on_exit_with_the_target_first() {
+    // The launcher rewrites SavedAccountNames as it quits. The list we write
+    // afterwards is that flush, with the account we already knew placed first
+    // in the spelling we stored. An email the flush dropped cannot come back.
+    let fresh = vec![
+        "other@example.com".to_string(),
+        "target@example.com".to_string(),
+        "flushed@example.com".to_string(),
+    ];
+    assert_eq!(
+        order_saved_accounts_for_switch(&fresh, "Target@example.com"),
+        vec![
+            "Target@example.com".to_string(),
+            "other@example.com".to_string(),
+            "flushed@example.com".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn a_switch_keeps_a_known_target_when_the_exit_flush_omits_it() {
+    let fresh = vec!["flushed@example.com".to_string()];
+    assert_eq!(
+        order_saved_accounts_for_switch(&fresh, "known@example.com"),
+        vec![
+            "known@example.com".to_string(),
+            "flushed@example.com".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn a_forget_removes_the_account_from_the_exit_flush() {
+    let fresh = vec![
+        "keep@example.com".to_string(),
+        "Gone@example.com".to_string(),
+        "flushed@example.com".to_string(),
+    ];
+    assert_eq!(
+        saved_accounts_without(&fresh, "gone@example.com"),
+        vec![
+            "keep@example.com".to_string(),
+            "flushed@example.com".to_string(),
+        ]
+    );
+}
 
 #[test]
 fn a_cancelled_setup_puts_the_saved_list_back_behind_any_new_account() {

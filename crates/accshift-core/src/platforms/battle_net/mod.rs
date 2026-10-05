@@ -102,17 +102,17 @@ pub fn switch_account(app_handle: AppCtx, email: String) -> Result<(), String> {
         return Err("Battle.net account not found".into());
     };
 
-    let mut reordered = Vec::with_capacity(accounts.len());
-    reordered.push(target.clone());
-    for account in accounts {
-        if normalize_account_key(&account) != normalize_account_key(&target) {
-            reordered.push(account);
-        }
-    }
-
+    // Refuse an unknown target before quitting. Once the launcher is down it
+    // rewrites SavedAccountNames, so the list we write is that flush, not the
+    // one read above. A failed step after the quit still brings it back.
     kill_battle_net()?;
-    write_saved_accounts(&app_handle, &reordered)?;
-    remember_account_usage(&app_handle, &target, false)?;
+    let fresh = relaunch_if_err(&app_handle, read_saved_accounts())?;
+    let reordered = order_saved_accounts_for_switch(&fresh, &target);
+    relaunch_if_err(&app_handle, write_saved_accounts(&app_handle, &reordered))?;
+    relaunch_if_err(
+        &app_handle,
+        remember_account_usage(&app_handle, &target, false),
+    )?;
     let result = launch_battle_net(&app_handle);
 
     let post_switch_details = build_battle_net_switch_details(Some(&target));
@@ -136,15 +136,30 @@ pub fn switch_account(app_handle: AppCtx, email: String) -> Result<(), String> {
 
 pub fn forget_account(app_handle: AppCtx, email: String) -> Result<(), String> {
     let target_email = validate_account_email(&email)?;
-    let accounts = read_saved_accounts()?;
-    let filtered = accounts
-        .into_iter()
-        .filter(|account| normalize_account_key(account) != normalize_account_key(&target_email))
-        .collect::<Vec<_>>();
 
+    // Same exit flush as a switch: filter the list the launcher wrote on the
+    // way down. A failed write or metadata update relaunches it. Success
+    // leaves it closed, which is what a forget did before.
     kill_battle_net()?;
-    write_saved_accounts(&app_handle, &filtered)?;
-    forget_account_metadata(&app_handle, &target_email)
+    let fresh = relaunch_if_err(&app_handle, read_saved_accounts())?;
+    let filtered = saved_accounts_without(&fresh, &target_email);
+    relaunch_if_err(&app_handle, write_saved_accounts(&app_handle, &filtered))?;
+    relaunch_if_err(
+        &app_handle,
+        forget_account_metadata(&app_handle, &target_email),
+    )
+}
+
+/// After `kill_battle_net` succeeded, a later error must not leave the client
+/// closed. The error itself is returned unchanged.
+fn relaunch_if_err<T>(app_handle: &dyn AppContext, result: Result<T, String>) -> Result<T, String> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            let _ = launch_battle_net(app_handle);
+            Err(error)
+        }
+    }
 }
 
 pub fn get_battle_net_path(app_handle: AppCtx) -> Result<String, String> {

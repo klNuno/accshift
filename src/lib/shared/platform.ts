@@ -47,6 +47,9 @@ export interface PlatformUiCallbacks {
 export interface PlatformWarningLoadOptions extends PlatformUiCallbacks {
   forceRefresh?: boolean;
   silent?: boolean;
+  /** Set when a fetch was attempted. Omitted on the paths that never ask
+   *  the network, which the caller treats as a completed refresh. */
+  onSettled?: (outcome: { ok: boolean }) => void;
 }
 
 export interface PlatformProfileInfo {

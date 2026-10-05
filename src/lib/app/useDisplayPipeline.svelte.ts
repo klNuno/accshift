@@ -28,6 +28,8 @@ type DisplayPipelineDeps = {
   };
   getExpandedFolders: () => boolean;
   getActiveTab: () => string;
+  /** Card notes are a cached map keyed by a plain revision, not a signal. */
+  getCardNoteVersion: () => number;
 };
 
 // Moved to the shared layer so shared components can use it without
@@ -110,7 +112,15 @@ export function collectVisibleAccountIds(
 }
 
 export function createDisplayPipeline(deps: DisplayPipelineDeps) {
-  const { navigation, drag, loader, addFlow, getExpandedFolders, getActiveTab } = deps;
+  const {
+    navigation,
+    drag,
+    loader,
+    addFlow,
+    getExpandedFolders,
+    getActiveTab,
+    getCardNoteVersion,
+  } = deps;
 
   // Each keystroke re-filters every account and re-renders the grid; debounce
   // so a fast typist pays once, not per character. Clearing stays instant.
@@ -167,6 +177,9 @@ export function createDisplayPipeline(deps: DisplayPipelineDeps) {
   });
 
   let filteredAccountItems = $derived.by(() => {
+    // Reading the revision is what subscribes this filter to a note edit.
+    // matchesSearch reads the note map, which does not notify Svelte itself.
+    void getCardNoteVersion();
     const q = debouncedSearchQuery.trim().toLowerCase();
     if (!q) return navigation.accountItems;
     return loader.accounts

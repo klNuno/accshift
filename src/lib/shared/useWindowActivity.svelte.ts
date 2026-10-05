@@ -1,5 +1,22 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
+type Unlisten = () => void | Promise<void>;
+
+/** Keeps native unlistens only while start() is still the active pass.
+ *  A listener that resolves after stop() is called immediately, and a
+ *  rejected sibling is skipped so the one that did register is not lost. */
+export function takeNativeUnlisteners(
+  stillStarted: boolean,
+  unlistens: ReadonlyArray<Unlisten | undefined>,
+): Unlisten[] {
+  const present = unlistens.filter((fn): fn is Unlisten => typeof fn === "function");
+  if (!stillStarted) {
+    for (const fn of present) fn();
+    return [];
+  }
+  return present;
+}
+
 export function createWindowActivity() {
   const appWindow = typeof window !== "undefined" ? getCurrentWindow() : null;
   let isFocused = $state(true);
@@ -85,7 +102,7 @@ export function createWindowActivity() {
 
     if (!appWindow) return;
 
-    const [unlistenFocus, unlistenResize] = await Promise.all([
+    const registered = await Promise.allSettled([
       appWindow.onFocusChanged(({ payload }) => {
         isFocused = payload;
         if (payload) {
@@ -97,9 +114,17 @@ export function createWindowActivity() {
         void sync();
       }),
     ]);
-
-    cleanupFns.push(unlistenFocus);
-    cleanupFns.push(unlistenResize);
+    for (const result of registered) {
+      if (result.status === "rejected") {
+        console.error("[window] native listener failed:", result.reason);
+      }
+    }
+    cleanupFns.push(
+      ...takeNativeUnlisteners(
+        started,
+        registered.map((result) => (result.status === "fulfilled" ? result.value : undefined)),
+      ),
+    );
 
     void sync();
   }

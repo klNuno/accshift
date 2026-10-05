@@ -10,29 +10,61 @@ use super::*;
 /// through a multi-byte character cannot fail the read, and only the end is
 /// read because the log runs to megabytes and the sign-in sits at the bottom.
 pub(super) fn read_log_tail(path: &Path, tail_bytes: u64) -> Option<String> {
+    read_log_window(path, 0, tail_bytes).map(|(_start, text)| text)
+}
+
+/// The last `tail_bytes` of `path`, never starting before `not_before`.
+///
+/// The returned offset is where the string begins. A switch records the log's
+/// length and only lines past it are new; a tail that would begin earlier is
+/// pulled forward to that offset so an old identity line cannot sneak in.
+pub(super) fn read_log_window(
+    path: &Path,
+    not_before: u64,
+    tail_bytes: u64,
+) -> Option<(u64, String)> {
     use std::io::{Read, Seek, SeekFrom};
 
+    let mut file = open_log(path)?;
+    let len = file.metadata().ok()?.len();
+    if not_before > len {
+        return Some((len, String::new()));
+    }
+    let start = len.saturating_sub(tail_bytes).max(not_before);
+    if start > 0 {
+        file.seek(SeekFrom::Start(start)).ok()?;
+    }
+    let mut buffer = Vec::with_capacity((len - start) as usize);
+    file.read_to_end(&mut buffer).ok()?;
+    Some((start, String::from_utf8_lossy(&buffer).into_owned()))
+}
+
+/// One byte, used to see whether an offset landed on a line boundary.
+pub(super) fn read_log_byte(path: &Path, at: u64) -> Option<u8> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = open_log(path)?;
+    file.seek(SeekFrom::Start(at)).ok()?;
+    let mut byte = [0_u8; 1];
+    file.read_exact(&mut byte).ok()?;
+    Some(byte[0])
+}
+
+fn open_log(path: &Path) -> Option<fs::File> {
     #[cfg(windows)]
-    let mut file = {
+    {
         use std::os::windows::fs::OpenOptionsExt;
         // FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
         fs::OpenOptions::new()
             .read(true)
             .share_mode(0x0000_0001 | 0x0000_0002 | 0x0000_0004)
             .open(path)
-            .ok()?
-    };
-    #[cfg(not(windows))]
-    let mut file = fs::File::open(path).ok()?;
-
-    let len = file.metadata().ok()?.len();
-    let start = len.saturating_sub(tail_bytes);
-    if start > 0 {
-        file.seek(SeekFrom::Start(start)).ok()?;
+            .ok()
     }
-    let mut buffer = Vec::with_capacity(tail_bytes.min(len) as usize);
-    file.read_to_end(&mut buffer).ok()?;
-    Some(String::from_utf8_lossy(&buffer).into_owned())
+    #[cfg(not(windows))]
+    {
+        fs::File::open(path).ok()
+    }
 }
 
 /// True when a path holds material written within `window_ms`. A stale

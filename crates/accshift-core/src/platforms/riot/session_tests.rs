@@ -174,6 +174,54 @@ fn a_detected_identity_never_renames_a_profile_of_another_account() {
 }
 
 #[test]
+fn a_manual_capture_does_not_copy_an_unknown_session_into_another_profile() {
+    let current = profile("current", "ready", "puuid-current");
+    let other = profile("other", "ready", "puuid-other");
+    let profiles = [current.clone(), other.clone()];
+
+    assert_eq!(
+        refuse_manual_capture(&profiles, "current", &other, None),
+        Some(CaptureRefusal::UnknownIdentity),
+        "a closed client must not stamp the live files onto a profile that is not current"
+    );
+    assert_eq!(
+        refuse_manual_capture(&profiles, "current", &current, None),
+        None,
+        "the current profile may still capture when the client is closed"
+    );
+    assert_eq!(
+        refuse_manual_capture(&profiles, "", &current, None),
+        Some(CaptureRefusal::UnknownIdentity),
+        "with no current profile there is no session a closed client can safely refresh"
+    );
+}
+
+#[test]
+fn a_manual_capture_does_not_adopt_an_account_another_profile_already_owns() {
+    let owner = profile("owner", "ready", "puuid-live");
+    let blank = profile("blank", "awaiting_capture", "");
+    let profiles = [owner, blank.clone()];
+    let live_account = live("puuid-live");
+
+    assert_eq!(
+        refuse_manual_capture(&profiles, "owner", &blank, Some(&live_account)),
+        Some(CaptureRefusal::LiveAccountAlreadyOwned)
+    );
+
+    let fresh = live("puuid-new");
+    assert_eq!(
+        refuse_manual_capture(&profiles, "owner", &blank, Some(&fresh)),
+        None,
+        "an unclaimed profile may adopt a live account nobody else stores"
+    );
+    assert_eq!(
+        refuse_manual_capture(&profiles, "owner", &blank, Some(&live("PUUID-LIVE"))),
+        Some(CaptureRefusal::LiveAccountAlreadyOwned),
+        "puuid ownership is case-insensitive, like the identity check"
+    );
+}
+
+#[test]
 fn a_detected_identity_still_follows_a_riot_id_rename_of_the_same_account() {
     let mut x = profile("x", "ready", "puuid-x");
     x.label = "name-x#EUW".into();

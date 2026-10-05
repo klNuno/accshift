@@ -227,7 +227,7 @@ async function handleTrack(request: Request, env: Env, ctx: ExecutionContext): P
 
   const sent = await posthogCapture(env, batch);
   if (!sent.ok) {
-    console.error("posthog capture failed", sent.status, sent.body);
+    console.error("posthog capture failed", sent.status, redactUuids(sent.body));
     return json({ error: "upstream_unavailable" }, 502);
   }
 
@@ -261,22 +261,27 @@ async function handleConsent(request: Request, env: Env, ctx: ExecutionContext):
   if (overGlobal) return overGlobal;
 
   // No country here, unlike /track. A refusal must stay a pure counter.
+  // app_version is the only free string on this aggregate event, so it goes
+  // through the same version shape as /track. Anything else (an email, an
+  // install id) is omitted rather than stored against the shared counter.
+  const properties: Record<string, unknown> = {
+    distinct_id: CONSENT_DISTINCT_ID,
+    $process_person_profile: false,
+    ...privacyProperties(),
+    choice: parsed.choice,
+  };
+  const appVersion = version(parsed.app_version);
+  if (appVersion !== undefined) properties.app_version = appVersion;
   const sent = await posthogCapture(env, [
     {
       event: "consent_choice",
       distinct_id: CONSENT_DISTINCT_ID,
       timestamp: new Date().toISOString(),
-      properties: {
-        distinct_id: CONSENT_DISTINCT_ID,
-        $process_person_profile: false,
-        ...privacyProperties(),
-        choice: parsed.choice,
-        app_version: parsed.app_version ?? "",
-      },
+      properties,
     },
   ]);
   if (!sent.ok) {
-    console.error("posthog consent failed", sent.status, sent.body);
+    console.error("posthog consent failed", sent.status, redactUuids(sent.body));
     return json({ error: "upstream_unavailable" }, 502);
   }
 
@@ -366,6 +371,10 @@ async function handleExport(request: Request, env: Env, ctx: ExecutionContext): 
     console.error("posthog export query failed", redactUuids(events.error));
     return json({ error: "upstream_unavailable" }, 502);
   }
+  if (person.error) {
+    console.error("posthog export person lookup failed", redactUuids(person.error));
+    return json({ error: "upstream_unavailable" }, 502);
+  }
 
   const rows = (events.results ?? []).map((row) => ({
     timestamp: row[0] ?? null,
@@ -432,10 +441,13 @@ export interface BatchIdentifiers {
 
 // ─── Property validation ─────────────────────────────────────────
 //
-// Everything below runs on a payload a modified client could have written, so
-// each value is checked for shape before it is forwarded. The app already
-// maps these fields onto closed vocabularies; this is the half of that
-// guarantee that does not depend on the client being the one we shipped.
+// Everything below runs on a payload a modified client could have written.
+// Shape checks drop a value the app would never send. A value that has the
+// right shape but is not in the Rust vocabulary becomes `other`, the same
+// collapse `code_from` and `platform_code` apply before the client uploads.
+// Mode B-only events and settings fields are dropped in Mode A: the queue
+// already refuses to enqueue them, and this is the half that does not depend
+// on the client being the one we shipped.
 
 // Every event name the app emits (`Event::name` in
 // crates/accshift-core/src/telemetry/events.rs; a test keeps the two equal).
@@ -473,6 +485,89 @@ export function usableEvents(events: unknown[]): TelemetryEvent[] {
   );
 }
 
+// Kept equal to events.rs, client.rs and platforms::ids by a test. `other` is
+// the unknown bucket (`UNKNOWN_CODE`), included wherever the Rust list
+// contains it or `code_from` adds it.
+export const ERROR_CODES: ReadonlySet<string> = new Set([
+  "client_not_installed",
+  "client_running",
+  "account_not_found",
+  "setup_expired",
+  "lock_contended",
+  "io",
+  "crypto",
+  "check_failed",
+  "update_target_missing",
+  "update_manifest_invalid",
+  "download_failed",
+  "install_failed",
+  "relaunch_failed",
+  "cli_disabled",
+  "platform_unavailable",
+  "pin_denied",
+  "unknown_folder",
+  "folder_store_error",
+  "other",
+]);
+
+export const OPERATIONS: ReadonlySet<string> = new Set([
+  "platform_switch",
+  "account_add",
+  "account_forget",
+  "profile_capture",
+  "session_check",
+  "bulk_edit",
+  "game_settings_copy",
+  "cs2_bridge_fetch",
+  "avatar_refresh",
+  "ban_check",
+  "other",
+]);
+
+export const CLI_COMMANDS: ReadonlySet<string> = new Set(["list", "switch", "platforms", "other"]);
+
+export const UI_LANGUAGES: ReadonlySet<string> = new Set([
+  "en",
+  "fr",
+  "es",
+  "pt",
+  "pt_br",
+  "ru",
+  "zh",
+  "other",
+]);
+
+export const PLATFORM_IDS: ReadonlySet<string> = new Set([
+  "steam",
+  "riot",
+  "battle-net",
+  "ubisoft",
+  "roblox",
+  "epic",
+  "gog",
+  "jagex",
+  "discord",
+]);
+
+export const STREAMER_MODES: ReadonlySet<string> = new Set(["auto", "off", "other"]);
+
+export const ANIMATION_MODES: ReadonlySet<string> = new Set(["system", "on", "off", "other"]);
+
+const MODE_B_EVENTS: ReadonlySet<string> = new Set(["accounts_snapshot", "settings_snapshot"]);
+
+const MODE_B_SETTINGS: ReadonlySet<string> = new Set([
+  "ui_language",
+  "enabled_platforms",
+  "personas_enabled",
+  "pin_enabled",
+  "cli_enabled",
+  "deep_links_enabled",
+  "streamer_mode",
+  "animations",
+]);
+
+const OTHER = "other";
+
 const CODE_RE = /^[a-z0-9_]{1,40}$/;
 const PLATFORM_RE = /^[a-z0-9_-]{1,32}$/;
 const VERSION_RE = /^[A-Za-z0-9.+-]{1,32}$/;
@@ -500,6 +595,11 @@ function platformId(value: unknown): string | undefined {
   return typeof value === "string" && PLATFORM_RE.test(value) ? value : undefined;
 }
 
+function inVocab(shaped: string | undefined, allowed: ReadonlySet<string>): string | undefined {
+  if (shaped === undefined) return undefined;
+  return allowed.has(shaped) ? shaped : OTHER;
+}
+
 function version(value: unknown): string | undefined {
   return typeof value === "string" && VERSION_RE.test(value) ? value : undefined;
 }
@@ -522,7 +622,9 @@ function flag(value: unknown): boolean | undefined {
 
 function platformList(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
-  const ids = value.map(platformId).filter((id): id is string => id !== undefined);
+  const ids = value
+    .map((item) => inVocab(platformId(item), PLATFORM_IDS))
+    .filter((id): id is string => id !== undefined);
   return ids.length === 0 ? undefined : ids.slice(0, MAX_ENABLED_PLATFORMS);
 }
 
@@ -549,7 +651,8 @@ export function buildBatch(
   timestamp: string,
 ): PostHogBatchItem[] {
   const isModeB = mode === "B";
-  return events.map((ev) => {
+  const forwarded = isModeB ? events : events.filter((ev) => !MODE_B_EVENTS.has(ev.name));
+  return forwarded.map((ev) => {
     const appVersion = version(ev.app_version) ?? "";
     const os_version = osVersion(ev.os_version) ?? "";
     const evLocale = locale(ev.locale);
@@ -574,27 +677,28 @@ export function buildBatch(
       ["arch", code(ev.arch)],
       ["surface", code(ev.surface)],
       ["locale", evLocale],
-      ["platform", platformId(ev.platform)],
+      ["platform", inVocab(platformId(ev.platform), PLATFORM_IDS)],
       ["duration_ms", count(ev.duration_ms)],
       ["count", count(ev.count)],
       ["success", flag(ev.success)],
       ["succeeded", count(ev.succeeded)],
       ["platforms", count(ev.platforms)],
       ["dropped_events", count(ev.dropped_events)],
-      ["error_code", code(ev.error_code)],
-      ["operation", code(ev.operation)],
+      ["error_code", inVocab(code(ev.error_code), ERROR_CODES)],
+      ["operation", inVocab(code(ev.operation), OPERATIONS)],
       ["target_version", version(ev.target_version)],
-      ["command", code(ev.command)],
-      ["ui_language", code(ev.ui_language)],
+      ["command", inVocab(code(ev.command), CLI_COMMANDS)],
+      ["ui_language", inVocab(code(ev.ui_language), UI_LANGUAGES)],
       ["enabled_platforms", platformList(ev.enabled_platforms)],
       ["personas_enabled", flag(ev.personas_enabled)],
       ["pin_enabled", flag(ev.pin_enabled)],
       ["cli_enabled", flag(ev.cli_enabled)],
       ["deep_links_enabled", flag(ev.deep_links_enabled)],
-      ["streamer_mode", code(ev.streamer_mode)],
-      ["animations", code(ev.animations)],
+      ["streamer_mode", inVocab(code(ev.streamer_mode), STREAMER_MODES)],
+      ["animations", inVocab(code(ev.animations), ANIMATION_MODES)],
     ];
     for (const [key, value] of optional) {
+      if (!isModeB && MODE_B_SETTINGS.has(key)) continue;
       if (value !== undefined) properties[key] = value;
     }
     // Person properties are Mode B only, by construction: Mode A has no person

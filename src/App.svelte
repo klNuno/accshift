@@ -418,6 +418,7 @@
     addFlow,
     getExpandedFolders: () => settings.accountDisplay.expandedFolders,
     getActiveTab: () => shell.activeTab,
+    getCardNoteVersion: () => cardNoteVersion,
   });
 
   accountLoading.trackVisiblePriming({

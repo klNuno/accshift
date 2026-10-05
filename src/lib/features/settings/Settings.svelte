@@ -27,6 +27,7 @@
   import SettingsGeneralTab from "./SettingsGeneralTab.svelte";
   import SettingsPlatformsTab from "./SettingsPlatformsTab.svelte";
   import SettingsPrivacyTab from "./SettingsPrivacyTab.svelte";
+  import { apiKeyDraftAfterSuccessfulSave } from "./apiKeyDraft";
   import { mergeSettingsDraft } from "./settingsPatch";
   import type { AppSettings } from "./types";
 
@@ -264,9 +265,10 @@
 
     try {
       await setApiKey(trimmedApiKey);
+      const draft = apiKeyDraftAfterSuccessfulSave(apiKey, trimmedApiKey);
       apiKeyConfigured = true;
-      apiKeyTouched = false;
-      apiKey = "";
+      apiKey = draft.apiKey;
+      apiKeyTouched = draft.touched;
       apiKeyError = false;
       return true;
     } catch (e) {

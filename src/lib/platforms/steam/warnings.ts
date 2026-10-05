@@ -234,7 +234,7 @@ export async function loadSteamWarningStates(
   accounts: PlatformAccount[],
   options: PlatformWarningLoadOptions,
 ): Promise<Record<string, AccountWarningPresentation>> {
-  const { forceRefresh = false, silent = true, t } = options;
+  const { forceRefresh = false, silent = true, t, onSettled } = options;
   if (accounts.length === 0) return getCachedSteamWarningStates({ t });
 
   const steamIds = Array.from(new Set(accounts.map((account) => account.id)));
@@ -285,7 +285,10 @@ export async function loadSteamWarningStates(
       });
     }
 
-    for (const steamId of idsToFetch) {
+    // An omitted id is not a checked id. Marking it would skip the retry for
+    // the rest of the session, or for the whole delay window once persisted.
+    const confirmedIds = idsToFetch.filter((id) => returnedIds.has(id));
+    for (const steamId of confirmedIds) {
       sessionBanCheckedIds.add(steamId);
     }
 
@@ -301,8 +304,8 @@ export async function loadSteamWarningStates(
       delayDays,
       now,
       coversEveryAccount: forceRefresh || !withinDelayWindow,
-      steamIds,
-      idsToFetch,
+      steamIds: confirmedIds,
+      idsToFetch: confirmedIds,
       previouslyCheckedIds: cachedState?.checkedSteamIds ?? [],
     });
 
@@ -315,12 +318,14 @@ export async function loadSteamWarningStates(
         }),
       );
     }
+    onSettled?.({ ok: true });
   } catch (e) {
     if (!silent && now - lastBanErrorToastAt >= BAN_ERROR_TOAST_COOLDOWN_MS) {
       addToast(t("toast.banCheckFailedGeneric" as string as MessageKey), { type: "error" });
       lastBanErrorToastAt = now;
     }
     console.error("[ban-check] failed to fetch ban states:", e);
+    onSettled?.({ ok: false });
   } finally {
     if (checkingToastId && activeBanCheckToastId === checkingToastId) {
       removeToast(checkingToastId);

@@ -354,8 +354,10 @@ export function setClientStoreValue(
  *
  * A store with a local edit not yet on disk is left alone: the pending save
  * lands after the refresh and would otherwise write the disk copy back, losing
- * the edit. Its manifest entry stays as it was, so the save's own fingerprint
- * (or the next refresh) settles it. Only the entries actually applied are
+ * the edit. A save that finishes while the snapshot is in flight has the same
+ * effect, so the revision from before that read has to still match. Its
+ * manifest entry stays as it was, so the save's own fingerprint (or the next
+ * refresh) settles it. Only the entries actually applied are
  * marked as seen: a store rewritten between the two reads below must still
  * show up as changed next time.
  */
@@ -374,9 +376,17 @@ export async function refreshClientStorageIfChanged(): Promise<string[]> {
     return changed;
   }
 
+  // A save that finishes during this read leaves the pending set, so the
+  // revision taken now is what says the in-memory value is newer than the
+  // snapshot we are about to receive.
+  const revisionsAtFetch = new Map(
+    changedStores.map((storeId) => [storeId, getClientStoreRevision(storeId)] as const),
+  );
   const snapshot = await loadSnapshotFromBackend();
-  // An edit made while the snapshot was loading is newer than it.
-  const applied = changedStores.filter((storeId) => !hasPendingSave(storeId));
+  const applied = changedStores.filter(
+    (storeId) =>
+      !hasPendingSave(storeId) && getClientStoreRevision(storeId) === revisionsAtFetch.get(storeId),
+  );
   for (const storeId of applied) {
     memoryStores.set(storeId, cloneValue(snapshot.stores?.[storeId]));
     bumpStoreRevision(storeId);

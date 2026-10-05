@@ -1,5 +1,6 @@
 //! The legacy single-file config and its one-time migration.
 
+use super::store::set_config_unreadable;
 #[allow(unused_imports)]
 use super::*;
 
@@ -16,20 +17,28 @@ pub fn migrate_legacy_config(app_handle: &dyn AppContext) -> Option<Result<(), S
         Err(e) => return Some(Err(e)),
     };
 
-    // If portable already exists, legacy is stale. Set it aside.
-    if portable_path.exists() {
+    let local_path = match crate::storage::local_config_path(app_handle) {
+        Ok(p) => p,
+        Err(e) => return Some(Err(e)),
+    };
+
+    // Legacy is stale only once both split files are on disk. A portable file
+    // without its local twin is a migration that stopped after the first
+    // write. Retiring here would throw away the only complete copy, and the
+    // next load would keep the half-written portable file.
+    if portable_path.exists() && local_path.exists() {
         retire_legacy_config(app_handle, &legacy_path);
         return None;
     }
 
-    // Migrate: load legacy, save as portable+local, delete legacy.
+    // Migrate: load legacy, save as portable+local, retire legacy.
     //
     // Parse the legacy file explicitly here instead of via load_legacy_config:
-    // that helper returns AppConfig::default() on a parse error (fine for a
-    // read-only load fallback), but migrating a default would save empty
-    // portable/local files and then delete the only real copy. If the legacy
-    // file is corrupt we must NOT destroy it: keep a backup next to it and
-    // surface an error so the user can recover their accounts and API key.
+    // a parse error there returns defaults and poisons later saves, which is
+    // right for a read, but migrating those defaults would save empty split
+    // files over the only real copy. If the legacy file is corrupt we must
+    // NOT destroy it: keep a backup next to it and surface an error so the
+    // user can recover their accounts and API key.
     let data = match fs::read_to_string(&legacy_path) {
         Ok(d) => d,
         Err(e) => return Some(Err(format!("Could not read legacy config: {e}"))),
@@ -94,22 +103,48 @@ pub(super) fn load_legacy_config(app_handle: &dyn AppContext) -> AppConfig {
         Err(_) => return AppConfig::default(),
     };
 
+    // Absence is a first run. A present file that cannot be read or parsed is
+    // the only copy of every account and secret: the in-memory value stays
+    // the defaults the caller needs, but saves stay refused until a later
+    // read succeeds. Otherwise a window-geometry save writes empty split
+    // files and the next boot retires this one.
+    if !path.exists() {
+        set_config_unreadable(&path, false);
+        return AppConfig::default();
+    }
+
     match fs::read_to_string(&path) {
         Ok(data) => match serde_json::from_str::<RawAppConfig>(&data) {
-            Ok(raw) => normalize_config(raw),
+            Ok(raw) => {
+                set_config_unreadable(&path, false);
+                normalize_config(raw)
+            }
             Err(e) => {
-                // Falling back to defaults silently would hide that the whole
-                // legacy config was dropped.
+                set_config_unreadable(&path, true);
                 let _ = crate::logging::append_app_log(
                     app_handle,
                     "error",
                     "config.load_legacy",
-                    "Legacy config corrupted, using defaults",
+                    "Legacy config corrupted; refusing saves so it is not replaced by defaults",
                     Some(&e.to_string()),
                 );
                 AppConfig::default()
             }
         },
-        Err(_) => AppConfig::default(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            set_config_unreadable(&path, false);
+            AppConfig::default()
+        }
+        Err(e) => {
+            set_config_unreadable(&path, true);
+            let _ = crate::logging::append_app_log(
+                app_handle,
+                "error",
+                "config.load_legacy",
+                "Legacy config unreadable; refusing saves so it is not replaced by defaults",
+                Some(&e.to_string()),
+            );
+            AppConfig::default()
+        }
     }
 }

@@ -1,6 +1,26 @@
 import type { AddToastOptions } from "$lib/features/notifications/store.svelte";
 import type { MessageKey, TranslationParams } from "$lib/i18n";
-import type { PlatformAdapter, PlatformDef } from "$lib/shared/platform";
+import type { PlatformAdapter, PlatformDef, PlatformProfileInfo } from "$lib/shared/platform";
+
+export type AvatarRefreshOutcome =
+  | { kind: "complete"; count: number }
+  | { kind: "failed" }
+  | { kind: "partial"; ok: number; count: number };
+
+/** A rejection or a resolved null is a miss. Steam reports a failed fetch as
+ *  null, and a real profile with no picture as `{ avatarUrl: null }`. */
+export function avatarRefreshOutcome(
+  settled: readonly PromiseSettledResult<PlatformProfileInfo | null>[],
+): AvatarRefreshOutcome {
+  const count = settled.length;
+  let ok = 0;
+  for (const result of settled) {
+    if (result.status === "fulfilled" && result.value != null) ok += 1;
+  }
+  if (ok === count) return { kind: "complete", count };
+  if (ok === 0) return { kind: "failed" };
+  return { kind: "partial", ok, count };
+}
 
 type ProfileRefreshDeps = {
   t: (key: MessageKey, params?: TranslationParams) => string;
@@ -40,9 +60,24 @@ export function createProfileRefresh({
           if (noAccountsMsg) showToast(noAccountsMsg);
           continue;
         }
-        await Promise.all(accounts.map((a) => adapter.getProfileInfo!(a.id).catch(() => null)));
+        const settled = await Promise.allSettled(
+          accounts.map((a) => adapter.getProfileInfo!(a.id)),
+        );
+        const outcome = avatarRefreshOutcome(settled);
+        if (outcome.kind === "failed") {
+          console.error("[avatars] refresh failed:", settled);
+          showToast(t("toast.refreshFailed"), { type: "error" });
+          continue;
+        }
         if (getActiveTab() === def.id) void loadAccounts(true, false, true, false, false);
-        showToast(t("toast.avatarRefreshComplete", { count: accounts.length }), {
+        if (outcome.kind === "partial") {
+          console.error("[avatars] refresh incomplete:", settled);
+          showToast(t("toast.refreshPartial", { ok: outcome.ok, count: outcome.count }), {
+            type: "info",
+          });
+          continue;
+        }
+        showToast(t("toast.avatarRefreshComplete", { count: outcome.count }), {
           type: "success",
         });
       } catch (error) {
@@ -64,7 +99,18 @@ export function createProfileRefresh({
           if (noAccountsMsg) showToast(noAccountsMsg);
           continue;
         }
-        await adapter.loadWarningStates(accounts, { forceRefresh: true, silent: false, t });
+        let fetchOk = true;
+        await adapter.loadWarningStates(accounts, {
+          forceRefresh: true,
+          silent: false,
+          t,
+          onSettled: (outcome) => {
+            fetchOk = outcome.ok;
+          },
+        });
+        // The adapter already showed its own error toast. A second one, or a
+        // success toast over the cached rows, would hide the failure.
+        if (!fetchOk) continue;
         if (getActiveTab() === def.id) void loadAccounts(true, false, false, true, false);
         showToast(t("toast.banRefreshComplete", { count: accounts.length }), { type: "success" });
       } catch (error) {

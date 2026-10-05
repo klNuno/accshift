@@ -219,6 +219,7 @@ export const EN_MESSAGES = {
   "onboarding.telemetry.refuseHint":
     "Nothing is measured and nothing is sent, not even the anonymous counters.",
   "onboarding.telemetry.back": "Back",
+  "onboarding.persistFailed": "Could not save that choice. Try again.",
   "settings.steam": "Steam",
   "settings.riot": "Riot",
   "settings.battleNet": "Battle.net",
@@ -341,6 +342,7 @@ export const EN_MESSAGES = {
   "toast.banCheckFailed": "Ban check failed: {error}",
   "toast.avatarRefreshComplete": "Avatar refresh finished for {count} accounts",
   "toast.banRefreshComplete": "Ban refresh finished for {count} accounts",
+  "toast.refreshPartial": "Refresh finished for {ok} of {count} accounts",
   "toast.noSteamAccountsFound":
     "No Steam accounts found. Sign in to Steam at least once, then refresh.",
   "toast.accountsRefreshed.single": "{count} account refreshed",
@@ -700,6 +702,7 @@ export const EN_MESSAGES = {
   "themeEditor.noIssues": "Nothing to report",
   "themeEditor.fixErrorsFirst": "Fix the refused values before saving",
   "themeEditor.save": "Save",
+  "themeEditor.saveFailed": "Could not save the theme. Try again.",
   "themeEditor.export": "Copy",
   "themeEditor.issueInvalidValue": "{token}: not a valid {kind}, for example {example}",
   "themeEditor.issueUnknownToken": "{token} is not a theme value, it is ignored",
