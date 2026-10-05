@@ -130,6 +130,13 @@ describe("loadSteamWarningStates", () => {
     await loadSteamWarningStates([account("out-a")], { ...quiet, forceRefresh: true, onSettled });
     expect(onSettled).toHaveBeenLastCalledWith({ kind: "noApiKey" });
 
+    // A key lookup that failed says nothing about the key: a failure, not a skip.
+    const lookup = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(hasApiKey).mockRejectedValueOnce(new Error("ipc down"));
+    await loadSteamWarningStates([account("out-a")], { ...quiet, forceRefresh: true, onSettled });
+    expect(onSettled).toHaveBeenLastCalledWith({ kind: "failed" });
+    lookup.mockRestore();
+
     vi.mocked(hasApiKey).mockResolvedValue(true);
     vi.mocked(getPlayerBans).mockResolvedValue([banRow("out-a")]);
     await loadSteamWarningStates([account("out-a"), account("out-b")], {

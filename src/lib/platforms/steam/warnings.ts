@@ -226,6 +226,14 @@ function recordBanCheckState(args: {
   });
 }
 
+/** The failure toast, at most once per cooldown and never on a silent load. */
+function showBanErrorToast(silent: boolean, t: PlatformWarningLoadOptions["t"]) {
+  const now = Date.now();
+  if (silent || now - lastBanErrorToastAt < BAN_ERROR_TOAST_COOLDOWN_MS) return;
+  addToast(t("toast.banCheckFailedGeneric" as string as MessageKey), { type: "error" });
+  lastBanErrorToastAt = now;
+}
+
 /** Replaces any pending check toast with a fresh one. Returns its id. */
 function showCheckingToast(t: PlatformWarningLoadOptions["t"]): string {
   if (activeBanCheckToastId) {
@@ -244,10 +252,17 @@ export async function loadSteamWarningStates(
 
   const steamIds = Array.from(new Set(accounts.map((account) => account.id)));
   const cachedBans = readBanInfoCache();
-  const hasApiKeyConfigured = await hasApiKey().catch((e) => {
+  let hasApiKeyConfigured: boolean;
+  try {
+    hasApiKeyConfigured = await hasApiKey();
+  } catch (e) {
+    // Unknown is not absent: telling the user to add a key they may already
+    // have would send them the wrong way.
     console.error("[ban-check] failed to detect API key availability:", e);
-    return false;
-  });
+    showBanErrorToast(silent, t);
+    onSettled?.({ kind: "failed" });
+    return toWarningMap(cachedBans, t);
+  }
   if (!hasApiKeyConfigured) {
     console.info("[ban-check] skipped: missing Steam API key");
     onSettled?.({ kind: "noApiKey" });
@@ -340,10 +355,7 @@ export async function loadSteamWarningStates(
         : { kind: "partial", checked: confirmedIds.length, requested: idsToFetch.length },
     );
   } catch (e) {
-    if (!silent && now - lastBanErrorToastAt >= BAN_ERROR_TOAST_COOLDOWN_MS) {
-      addToast(t("toast.banCheckFailedGeneric" as string as MessageKey), { type: "error" });
-      lastBanErrorToastAt = now;
-    }
+    showBanErrorToast(silent, t);
     console.error("[ban-check] failed to fetch ban states:", e);
     onSettled?.({ kind: "failed" });
   } finally {
