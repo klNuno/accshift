@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "accshift-cli"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "accshift-core",
  "clap",
@@ -17,7 +17,7 @@ dependencies = [
 
 [[package]]
 name = "accshift-core"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "fs4",
  "keyring",
@@ -39,7 +39,7 @@ dependencies = [
 
 [[package]]
 name = "accshift-gui"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "accshift-core",
  "base64 0.23.1",
