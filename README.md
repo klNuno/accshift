@@ -28,7 +28,7 @@
 </p>
 
 <p align="center">
-  <img src="./.github/assets/demo-switch.webp" alt="Switching Steam accounts from the grid, then from the Ctrl+K command palette" width="100%" />
+  <img src="./.github/assets/demo-switch.webp" alt="accshift in the Glass Dark theme: switching Steam accounts from the grid, searching, opening a folder, the Riot Games tab, the list view, then switching back from the Ctrl+K command palette" width="100%" />
 </p>
 
 Pick an account and the launcher restarts already signed in. accshift never
@@ -101,7 +101,7 @@ dark acrylic variants and an experimental Liquid Glass theme. Themes are files
 you can edit, import and export ([docs/theming.md](./docs/theming.md)).
 
 <p align="center">
-  <img src="./.github/assets/demo-themes.webp" alt="Switching to the Riot Games tab, then changing the app theme from the settings panel" width="100%" />
+  <img src="./.github/assets/demo-themes.webp" alt="Changing the app theme from the settings panel: Light, Midnight, Dark, then back to Glass Dark" width="100%" />
 </p>
 
 ### Steam goes further

@@ -215,7 +215,14 @@ function demoScenario(): MockSpec {
     ],
     currentRiotProfile: "riot-1",
     stores: {
-      "client.settings": { ...BASE_SETTINGS, enabledPlatforms: ["steam", "riot"] },
+      // Glass Dark: the README clips sell the app in it. A Tauri window
+      // blurs the real desktop behind; the headless recorder paints a
+      // stand-in desktop under the page instead.
+      "client.settings": {
+        ...BASE_SETTINGS,
+        themeId: "glass-dark",
+        enabledPlatforms: ["steam", "riot"],
+      },
       "client.folders": foldersStore(
         [{ id: DEMO_FOLDER, name: "Smurfs", parentId: null, platform: "steam" }],
         {
@@ -232,7 +239,7 @@ function demoScenario(): MockSpec {
           })),
         },
       ),
-      // A few recolored cards, so the grid shows the color outlines.
+      // A few recolored cards, so the grid shows card colors.
       "client.account-card-colors": {
         [DEMO_ACCOUNTS[0].steam_id]: "#8b5cf6",
         [DEMO_ACCOUNTS[4].steam_id]: "#f97316",
