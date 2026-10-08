@@ -190,7 +190,13 @@ const DEMO_ACCOUNTS: MockAccount[] = [
 
 const DEMO_FOLDER = "demo-folder-smurfs";
 /** The smurfs live in their folder, every other account on the grid. */
-const isSmurf = (account: MockAccount) => account.persona_name.startsWith("smurf");
+const DEMO_SMURF_IDS = new Set([
+  "76561198000000014",
+  "76561198000000015",
+  "76561198000000016",
+  "76561198000000017",
+]);
+const isSmurf = (account: MockAccount) => DEMO_SMURF_IDS.has(account.steam_id);
 
 function demoScenario(): MockSpec {
   return {

@@ -579,7 +579,8 @@
 
   /* Same story for the ban outlines: while the panel is
    * open they live on the surface only, never on the card on top of it. */
-  .card-shell.extension-visible .card {
+  .card-shell.extension-visible .card.ban-red,
+  .card-shell.extension-visible .card.ban-yellow {
     outline: none;
   }
 

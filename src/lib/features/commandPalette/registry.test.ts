@@ -43,9 +43,8 @@ describe("account commands", () => {
   ];
 
   it("marks the current account active once, through the badge alone", () => {
-    const commands = registry(accounts, "a")
-      .getCommands()
-      .filter((command) => command.section === "accounts");
+    const all = registry(accounts, "a").getCommands();
+    const commands = all.filter((command) => command.section === "accounts");
 
     const byId = (id: string) => {
       const command = commands.find((entry) => entry.id === id);
@@ -58,5 +57,7 @@ describe("account commands", () => {
     expect(byId("account:a").active).toBe(true);
     expect(byId("account:b").active).toBeFalsy();
     for (const command of commands) expect(command.hint).toBeUndefined();
+    // Only the account rows lose their hint: the shortcuts stay on the actions.
+    expect(all.find((command) => command.id === "action:add-account")?.hint).toMatch(/\+N$/);
   });
 });

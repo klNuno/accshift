@@ -256,13 +256,11 @@
 
   /* Same reason as the grid card: a translucent ban border would read as part
      of a custom row color, so colored rows get it opaque. */
-  .row.custom-color.ban-red,
-  .row.selected.custom-color.ban-red {
+  .row.custom-color.ban-red {
     border-color: rgb(239, 68, 68);
   }
 
-  .row.custom-color.ban-orange:not(.ban-red),
-  .row.selected.custom-color.ban-orange:not(.ban-red) {
+  .row.custom-color.ban-orange:not(.ban-red) {
     border-color: rgb(234, 179, 8);
   }
 

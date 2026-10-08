@@ -101,8 +101,8 @@ function banInfo(account: MockAccount): BanInfo {
   };
 }
 
-function profileCacheEntries(accounts: { id: string; name: string; avatar: string | null }[]) {
-  const entries: Record<string, { url: string; displayName: string; timestamp: number }> = {};
+function profileCacheEntries(accounts: { id: string; name?: string; avatar: string | null }[]) {
+  const entries: Record<string, { url: string; displayName?: string; timestamp: number }> = {};
   // The real clock on purpose: the app checks expiry against the real clock, so
   // a NOW timestamp would read as expired and every return to the grid would
   // blur all avatars under a refresh spinner.
@@ -189,8 +189,9 @@ export function createHandlers(spec: MockSpec): Record<string, Handler> {
     "cache.steam.profiles": profileCacheEntries(
       spec.steamAccounts.map((a) => ({ id: a.steam_id, name: a.persona_name, avatar: a.avatar })),
     ),
+    // The real Roblox cache stores no display name, so neither does this one.
     "cache.roblox.profiles": profileCacheEntries(
-      spec.robloxAccounts.map((a) => ({ id: a.userId, name: a.displayName, avatar: a.avatar })),
+      spec.robloxAccounts.map((a) => ({ id: a.userId, avatar: a.avatar })),
     ),
     ...spec.stores,
   });
@@ -295,7 +296,8 @@ export function createHandlers(spec: MockSpec): Record<string, Handler> {
       return { accounts: [], currentAccount: "" };
     },
     roblox_get_profile_info: (args) => {
-      const account = spec.robloxAccounts.find((a) => a.userId === args.userId);
+      const userId = String(args.userId ?? args.accountId ?? "");
+      const account = spec.robloxAccounts.find((a) => a.userId === userId);
       return { avatarUrl: account?.avatar ? assetUrl(account.avatar) : null };
     },
     // Every mock session is alive: the probe never flags an account.
@@ -322,7 +324,7 @@ export function createHandlers(spec: MockSpec): Record<string, Handler> {
           currentRiotProfile = args.accountId;
         } else if (args.platformId === "roblox") {
           currentRobloxAccount = args.accountId;
-        } else {
+        } else if (args.platformId === "steam") {
           currentAccount = args.accountId;
         }
       }
