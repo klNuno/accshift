@@ -55,6 +55,8 @@ function baseSpec(): MockSpec {
     currentSteamAccount: "",
     riotProfiles: [],
     currentRiotProfile: "",
+    robloxAccounts: [],
+    currentRobloxAccount: "",
     stores: { "client.settings": { ...BASE_SETTINGS, enabledPlatforms: ["steam"] } },
     steamPath: STEAM_PATH_WINDOWS,
     hasSteamApiKey: true,
@@ -214,6 +216,39 @@ function demoScenario(): MockSpec {
       },
     ],
     currentRiotProfile: "riot-1",
+    // Riot cards never carry a picture in the app, Roblox ones do: the hero
+    // visits this tab to show a second launcher with faces on it.
+    robloxAccounts: [
+      {
+        userId: "1000000001",
+        username: "Builderman_42",
+        displayName: "builder",
+        lastLoginAt: (NOW - 2 * HOUR) * 1000,
+        avatar: AVATARS[17],
+      },
+      {
+        userId: "1000000002",
+        username: "obby_speedrun",
+        displayName: "obby runs",
+        lastLoginAt: (NOW - 3 * DAY) * 1000,
+        avatar: AVATARS[18],
+      },
+      {
+        userId: "1000000003",
+        username: "tycoon_alt",
+        displayName: "tycoon alt",
+        lastLoginAt: (NOW - 11 * DAY) * 1000,
+        avatar: AVATARS[19],
+      },
+      {
+        userId: "1000000004",
+        username: "blox_trader",
+        displayName: "trading",
+        lastLoginAt: (NOW - 25 * DAY) * 1000,
+        avatar: AVATARS[20],
+      },
+    ],
+    currentRobloxAccount: "1000000001",
     stores: {
       // Glass Dark: the README clips sell the app in it. A Tauri window
       // blurs the real desktop behind; the headless recorder paints a
@@ -221,7 +256,7 @@ function demoScenario(): MockSpec {
       "client.settings": {
         ...BASE_SETTINGS,
         themeId: "glass-dark",
-        enabledPlatforms: ["steam", "riot"],
+        enabledPlatforms: ["steam", "riot", "roblox"],
       },
       "client.folders": foldersStore(
         [{ id: DEMO_FOLDER, name: "Smurfs", parentId: null, platform: "steam" }],

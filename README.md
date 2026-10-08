@@ -28,7 +28,7 @@
 </p>
 
 <p align="center">
-  <img src="./.github/assets/demo-switch.webp" alt="accshift in the Glass Dark theme: switching Steam accounts from the grid, searching, opening a folder, the Riot Games tab, the list view, then switching back from the Ctrl+K command palette" width="100%" />
+  <img src="./.github/assets/demo-switch.webp" alt="accshift in the Glass Dark theme: switching Steam accounts from the grid, searching, opening a folder, the Roblox tab, the list view, then switching back from the Ctrl+K command palette" width="100%" />
 </p>
 
 Pick an account and the launcher restarts already signed in. accshift never

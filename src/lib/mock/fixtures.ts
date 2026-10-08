@@ -7,6 +7,7 @@
  * command surface.
  */
 import type { RiotProfile } from "$lib/platforms/riot/types";
+import type { RobloxAccount } from "$lib/platforms/roblox/types";
 import type { BanInfo, ProfileInfo, SteamAccount } from "$lib/platforms/steam/types";
 import { isValidPinHash, verifyPinCode } from "$lib/shared/pin";
 import { PIN_LOCKED_PREFIX } from "$lib/shared/pinSession";
@@ -28,6 +29,10 @@ export interface MockAccount extends SteamAccount {
   gameBans?: number;
 }
 
+export interface MockRobloxAccount extends RobloxAccount {
+  avatar: string | null;
+}
+
 export interface MockSpec {
   /** Shown in the boot console line. */
   label: string;
@@ -37,6 +42,8 @@ export interface MockSpec {
   currentSteamAccount: string;
   riotProfiles: RiotProfile[];
   currentRiotProfile: string;
+  robloxAccounts: MockRobloxAccount[];
+  currentRobloxAccount: string;
   /** `client.*` / `cache.*` stores, merged over the generated avatar cache. */
   stores: Record<string, unknown>;
   steamPath: string;
@@ -94,7 +101,7 @@ function banInfo(account: MockAccount): BanInfo {
   };
 }
 
-function profileCacheEntries(accounts: MockAccount[]) {
+function profileCacheEntries(accounts: { id: string; name: string; avatar: string | null }[]) {
   const entries: Record<string, { url: string; displayName: string; timestamp: number }> = {};
   // The real clock on purpose: the app checks expiry against the real clock, so
   // a NOW timestamp would read as expired and every return to the grid would
@@ -102,13 +109,22 @@ function profileCacheEntries(accounts: MockAccount[]) {
   const fetchedAt = Date.now();
   for (const account of accounts) {
     if (!account.avatar) continue;
-    entries[account.steam_id] = {
+    entries[account.id] = {
       url: assetUrl(account.avatar),
-      displayName: account.persona_name,
+      displayName: account.name,
       timestamp: fetchedAt,
     };
   }
   return entries;
+}
+
+function robloxAccountsPayload(accounts: MockRobloxAccount[]): RobloxAccount[] {
+  return accounts.map(({ userId, username, displayName, lastLoginAt }) => ({
+    userId,
+    username,
+    displayName,
+    lastLoginAt,
+  }));
 }
 
 /**
@@ -164,12 +180,18 @@ export function generateAccounts(count: number, avatars: string[]): MockAccount[
 export function createHandlers(spec: MockSpec): Record<string, Handler> {
   let currentAccount = spec.currentSteamAccount;
   let currentRiotProfile = spec.currentRiotProfile;
+  let currentRobloxAccount = spec.currentRobloxAccount;
 
   const findAccount = (id: string) => spec.steamAccounts.find((a) => a.steam_id === id);
 
   const stores = (): Record<string, unknown> => ({
     ...EMPTY_STORES,
-    "cache.steam.profiles": profileCacheEntries(spec.steamAccounts),
+    "cache.steam.profiles": profileCacheEntries(
+      spec.steamAccounts.map((a) => ({ id: a.steam_id, name: a.persona_name, avatar: a.avatar })),
+    ),
+    "cache.roblox.profiles": profileCacheEntries(
+      spec.robloxAccounts.map((a) => ({ id: a.userId, name: a.displayName, avatar: a.avatar })),
+    ),
     ...spec.stores,
   });
 
@@ -246,13 +268,17 @@ export function createHandlers(spec: MockSpec): Record<string, Handler> {
         ? spec.riotProfiles
         : args.platformId === "steam"
           ? steamAccountsPayload(spec.steamAccounts)
-          : [],
+          : args.platformId === "roblox"
+            ? robloxAccountsPayload(spec.robloxAccounts)
+            : [],
     platform_get_current_account: (args) =>
       args.platformId === "riot"
         ? currentRiotProfile
         : args.platformId === "steam"
           ? currentAccount
-          : "",
+          : args.platformId === "roblox"
+            ? currentRobloxAccount
+            : "",
     platform_get_startup_snapshot: (args) => {
       if (args.platformId === "riot") {
         return { profiles: spec.riotProfiles, currentProfile: currentRiotProfile };
@@ -260,8 +286,20 @@ export function createHandlers(spec: MockSpec): Record<string, Handler> {
       if (args.platformId === "steam") {
         return { accounts: steamAccountsPayload(spec.steamAccounts), currentAccount };
       }
+      if (args.platformId === "roblox") {
+        return {
+          accounts: robloxAccountsPayload(spec.robloxAccounts),
+          currentAccount: currentRobloxAccount,
+        };
+      }
       return { accounts: [], currentAccount: "" };
     },
+    roblox_get_profile_info: (args) => {
+      const account = spec.robloxAccounts.find((a) => a.userId === args.userId);
+      return { avatarUrl: account?.avatar ? assetUrl(account.avatar) : null };
+    },
+    // Every mock session is alive: the probe never flags an account.
+    roblox_check_sessions: () => [],
     pin_unlock: async (args) => {
       const hash = await currentPinHash();
       if (!hash) return { status: "not_configured", legacy: false, retryAfterMs: 0 };
@@ -282,6 +320,8 @@ export function createHandlers(spec: MockSpec): Record<string, Handler> {
       if (typeof args.accountId === "string") {
         if (args.platformId === "riot") {
           currentRiotProfile = args.accountId;
+        } else if (args.platformId === "roblox") {
+          currentRobloxAccount = args.accountId;
         } else {
           currentAccount = args.accountId;
         }
