@@ -29,7 +29,7 @@ const AVATAR_MODULES = import.meta.glob<string>("./avatars/*.svg", {
 
 /** 1.svg, 2.svg, ... in numeric order, so an index always names the same face. */
 export const AVATARS = Object.keys(AVATAR_MODULES)
-  .sort((a, b) => parseInt(a.replace(/\D/g, ""), 10) - parseInt(b.replace(/\D/g, ""), 10))
+  .sort((a, b) => a.localeCompare(b, "en", { numeric: true }))
   .map((key) => AVATAR_MODULES[key]);
 
 const STEAM_PATH_WINDOWS = "C:\\Program Files (x86)\\Steam";

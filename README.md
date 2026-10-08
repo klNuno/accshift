@@ -40,7 +40,7 @@ encrypts it on your machine.
 Grab the build for your OS from the
 [latest release](https://github.com/klNuno/accshift/releases/latest):
 
-- **Windows**: `-setup.exe` installer
+- **Windows**: `*-setup.exe` installer
 - **macOS** (Apple Silicon): `.dmg`, unsigned for now. Run
   `xattr -cr /Applications/Accshift.app` once if Gatekeeper complains.
 - **Linux**: `.deb`, `.rpm` or AppImage
@@ -73,7 +73,7 @@ dry run are in [docs/platform-descriptors.md](./docs/platform-descriptors.md).
 
 ## Features
 
-- **One-click switching** from the grid, or from the `Ctrl+K` command palette
+- **One-click switching** from the grid, or from the `Ctrl+K` (`Cmd+K` on macOS) command palette
   without touching the mouse.
 - **Personas** group one account per platform under a single identity and
   switch them all at once.
@@ -141,9 +141,10 @@ envelope and the exit codes are in [docs/cli.md](./docs/cli.md).
 - **Encrypted at rest** with what the OS provides: DPAPI on Windows, Secret
   Service on Linux, Keychain on macOS. The threat model and what the PIN lock
   covers are in the [security policy](./.github/SECURITY.md).
-- **Telemetry is a handful of anonymous counters**, and one switch in Settings, Privacy
-  turns it off for good. Nothing is sent before you finish the first-launch
-  screen, and no feature depends on it.
+- **Telemetry is anonymous counters, opt-out, plus an enhanced tier you opt
+  into.** Two switches in Settings, Privacy; both off and nothing is ever sent
+  again. Nothing is sent before you answer the first-launch screen, and no
+  feature depends on it.
 
 <details>
 <summary>What is sent, and what never is</summary>
@@ -151,10 +152,10 @@ envelope and the exit codes are in [docs/cli.md](./docs/cli.md).
 <br />
 
 Never sent, in any mode: account names, platform identifiers such as SteamID,
-passwords, tokens, cookies, persona or folder names, file paths, and your IP
-address. An event can say "an account was added on Steam"; it cannot say which
-account. What is sent is nine counters, the app and OS version, the locale, and
-a country code.
+passwords, tokens, cookies, persona or folder names, file paths and log files.
+An event can say "an account was added on Steam"; it cannot say which account.
+Your IP address reaches the server like any request does; it derives a country
+code from it and never stores the address.
 
 [docs/analytics.md](./docs/analytics.md) lists every event and field, shows a
 real payload, says where the data is stored and how to export or delete it. The

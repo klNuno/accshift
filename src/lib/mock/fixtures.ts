@@ -96,14 +96,15 @@ function banInfo(account: MockAccount): BanInfo {
 
 function profileCacheEntries(accounts: MockAccount[]) {
   const entries: Record<string, { url: string; displayName: string; timestamp: number }> = {};
+  // The real clock on purpose: against NOW the entry reads as expired, and
+  // every return to the grid blurs all avatars under a refresh spinner.
+  const fetchedAt = Date.now();
   for (const account of accounts) {
     if (!account.avatar) continue;
     entries[account.steam_id] = {
       url: assetUrl(account.avatar),
       displayName: account.persona_name,
-      // The real clock on purpose: against NOW the entry reads as expired, and
-      // every return to the grid blurs all avatars under a refresh spinner.
-      timestamp: Date.now(),
+      timestamp: fetchedAt,
     };
   }
   return entries;
