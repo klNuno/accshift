@@ -28,7 +28,7 @@
 </p>
 
 <p align="center">
-  <img src="./.github/assets/demo-switch.webp" alt="Switching Steam accounts from the grid with two clicks, then from the Ctrl+K command palette" width="100%" />
+  <img src="./.github/assets/demo-switch.webp" alt="Switching Steam accounts from the grid, then from the Ctrl+K command palette" width="100%" />
 </p>
 
 Pick an account and the launcher restarts already signed in. accshift never
@@ -40,11 +40,11 @@ encrypts it on your machine.
 Grab the build for your OS from the
 [latest release](https://github.com/klNuno/accshift/releases/latest):
 
-- **Windows**: `*-setup.exe` installer
+- **Windows**: the `-setup.exe` installer
 - **macOS** (Apple Silicon): `.dmg`, unsigned for now. Run
   `xattr -cr /Applications/Accshift.app` once if Gatekeeper complains.
 - **Linux**: `.deb`, `.rpm` or AppImage
-- **CLI only**: a standalone `accshift-cli` binary for each OS
+- **CLI only**: a standalone binary for each OS, see [docs/cli.md](./docs/cli.md)
 
 Updates install from inside the app.
 
@@ -154,8 +154,8 @@ envelope and the exit codes are in [docs/cli.md](./docs/cli.md).
 Never sent, in any mode: account names, platform identifiers such as SteamID,
 passwords, tokens, cookies, persona or folder names, file paths and log files.
 An event can say "an account was added on Steam"; it cannot say which account.
-Your IP address reaches the server like any request does; it derives a country
-code from it and never stores the address.
+Your IP address reaches the server like any request does; the server derives a
+country code from it and never stores the address.
 
 [docs/analytics.md](./docs/analytics.md) lists every event and field, shows a
 real payload, says where the data is stored and how to export or delete it. The

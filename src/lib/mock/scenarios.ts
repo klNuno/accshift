@@ -187,6 +187,8 @@ const DEMO_ACCOUNTS: MockAccount[] = [
 ];
 
 const DEMO_FOLDER = "demo-folder-smurfs";
+/** The smurfs live in their folder, every other account on the grid. */
+const isSmurf = (account: MockAccount) => account.persona_name.startsWith("smurf");
 
 function demoScenario(): MockSpec {
   return {
@@ -218,13 +220,13 @@ function demoScenario(): MockSpec {
         [{ id: DEMO_FOLDER, name: "Smurfs", parentId: null, platform: "steam" }],
         {
           "root:steam": [
-            ...DEMO_ACCOUNTS.slice(0, 13).map((account) => ({
+            ...DEMO_ACCOUNTS.filter((account) => !isSmurf(account)).map((account) => ({
               type: "account" as const,
               id: account.steam_id,
             })),
             { type: "folder", id: DEMO_FOLDER },
           ],
-          [DEMO_FOLDER]: DEMO_ACCOUNTS.slice(13).map((account) => ({
+          [DEMO_FOLDER]: DEMO_ACCOUNTS.filter(isSmurf).map((account) => ({
             type: "account" as const,
             id: account.steam_id,
           })),

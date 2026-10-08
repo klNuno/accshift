@@ -47,13 +47,16 @@ describe("account commands", () => {
       .getCommands()
       .filter((command) => command.section === "accounts");
 
-    const current = commands.find((command) => command.id === "account:a");
-    const other = commands.find((command) => command.id === "account:b");
+    const byId = (id: string) => {
+      const command = commands.find((entry) => entry.id === id);
+      if (!command) throw new Error(`missing command ${id}`);
+      return command;
+    };
 
     // The palette renders both `active` (as a badge) and `hint`, so a hint
     // saying "Active" too would print the word twice on the same row.
-    expect(current?.active).toBe(true);
-    expect(current?.hint).toBeUndefined();
-    expect(other?.active).toBe(false);
+    expect(byId("account:a").active).toBe(true);
+    expect(byId("account:b").active).toBeFalsy();
+    for (const command of commands) expect(command.hint).toBeUndefined();
   });
 });
