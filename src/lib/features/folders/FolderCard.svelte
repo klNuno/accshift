@@ -75,7 +75,7 @@
 
   .card:hover {
     background: var(--bg-card-hover);
-    outline-color: color-mix(in srgb, var(--folder-custom-color, var(--fg-subtle)) 45%, transparent);
+    outline-color: color-mix(in srgb, var(--fg-subtle) 45%, transparent);
     transform: translateY(-2px);
     box-shadow: 0 12px 24px rgba(0, 0, 0, 0.18);
   }
@@ -83,7 +83,6 @@
   .card.custom-color {
     color: color-mix(in srgb, var(--folder-custom-color) 55%, var(--fg));
     background: color-mix(in srgb, var(--folder-custom-color) 24%, transparent);
-    outline-color: color-mix(in srgb, var(--folder-custom-color) 55%, transparent);
   }
 
   .card.custom-color:hover {

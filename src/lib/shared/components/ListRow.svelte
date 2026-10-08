@@ -214,7 +214,6 @@
 
   .row.custom-color {
     background: color-mix(in srgb, var(--row-custom-color) 18%, var(--bg-card));
-    border-color: color-mix(in srgb, var(--row-custom-color) 36%, transparent);
   }
 
   .row.custom-color:hover {
@@ -228,7 +227,6 @@
 
   .row.selected.custom-color {
     background: color-mix(in srgb, var(--row-custom-color) 22%, var(--bg-card));
-    border-color: color-mix(in srgb, var(--row-custom-color) 40%, rgba(255, 255, 255, 0.14));
   }
 
   .row.active {
@@ -256,8 +254,8 @@
     border-color: rgba(234, 179, 8, 0.45);
   }
 
-  /* Same reason as the grid card: a custom row color would otherwise swallow
-     the ban border, and .row.selected.custom-color even outranks it. */
+  /* Same reason as the grid card: a translucent ban border would read as part
+     of a custom row color, so colored rows get it opaque. */
   .row.custom-color.ban-red,
   .row.selected.custom-color.ban-red {
     border-color: rgb(239, 68, 68);

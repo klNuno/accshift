@@ -28,7 +28,6 @@ function settings(overrides: Partial<AppSettings> = {}): AppSettings {
       showLastLoginPerPlatform: {},
       showCardNotesInline: false,
       expandedFolders: false,
-      cardColorOutlines: true,
     },
     pinEnabled: true,
     pinHash: "legacy-hash",

@@ -231,8 +231,6 @@ export const ZH_MESSAGES: Record<MessageKey, string> = {
   "settings.showUbisoftLastLogin": "显示 Ubisoft 上次登录",
   "settings.showNotesUnderCards": "在卡片下方显示备注",
   "settings.expandedFolders": "展开所有文件夹",
-  "settings.cardColorOutlines": "彩色卡片边框",
-  "settings.cardColorOutlinesHint": "为设置了自定义颜色的账号卡片加上边框。",
   "list.rootSection": "根目录",
   "settings.steamLaunch": "切换",
   "settings.steamInstallation": "安装",

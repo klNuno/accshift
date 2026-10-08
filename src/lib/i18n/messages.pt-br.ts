@@ -242,8 +242,6 @@ export const PT_BR_MESSAGES: Record<MessageKey, string> = {
   "settings.showUbisoftLastLogin": "Mostrar último login da Ubisoft",
   "settings.showNotesUnderCards": "Mostrar notas sob os cards",
   "settings.expandedFolders": "Expandir todas as pastas",
-  "settings.cardColorOutlines": "Contornos coloridos nos cards",
-  "settings.cardColorOutlinesHint": "Contorna os cards de contas que têm uma cor personalizada.",
   "list.rootSection": "Raiz",
   "settings.steamLaunch": "Troca",
   "settings.steamInstallation": "Instalação",

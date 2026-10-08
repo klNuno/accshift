@@ -242,8 +242,6 @@ export const RU_MESSAGES: Record<MessageKey, string> = {
   "settings.showUbisoftLastLogin": "Показывать последний вход в Ubisoft",
   "settings.showNotesUnderCards": "Показывать заметки под карточками",
   "settings.expandedFolders": "Разворачивать все папки",
-  "settings.cardColorOutlines": "Цветные контуры карточек",
-  "settings.cardColorOutlinesHint": "Обводить карточки аккаунтов, у которых задан свой цвет.",
   "list.rootSection": "Корень",
   "settings.steamLaunch": "Смена",
   "settings.steamInstallation": "Установка",
