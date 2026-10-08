@@ -21,15 +21,16 @@ import {
 // `?no-inline` because under 4 kB vite would inline them as `data:` URIs, which
 // `isSafeHttpUrl` rejects (http/https only) — the app would fall back to
 // initials and the avatars would silently vanish.
-import avatar1 from "./avatars/1.svg?no-inline";
-import avatar2 from "./avatars/2.svg?no-inline";
-import avatar3 from "./avatars/3.svg?no-inline";
-import avatar4 from "./avatars/4.svg?no-inline";
-import avatar5 from "./avatars/5.svg?no-inline";
-import avatar6 from "./avatars/6.svg?no-inline";
-import avatar7 from "./avatars/7.svg?no-inline";
+const AVATAR_MODULES = import.meta.glob<string>("./avatars/*.svg", {
+  query: "?no-inline",
+  import: "default",
+  eager: true,
+});
 
-export const AVATARS = [avatar1, avatar2, avatar3, avatar4, avatar5, avatar6, avatar7];
+/** 1.svg, 2.svg, ... in numeric order, so an index always names the same face. */
+export const AVATARS = Object.keys(AVATAR_MODULES)
+  .sort((a, b) => parseInt(a.replace(/\D/g, ""), 10) - parseInt(b.replace(/\D/g, ""), 10))
+  .map((key) => AVATAR_MODULES[key]);
 
 const STEAM_PATH_WINDOWS = "C:\\Program Files (x86)\\Steam";
 
@@ -95,23 +96,93 @@ const DEMO_ACCOUNTS: MockAccount[] = [
   {
     steam_id: "76561198000000005",
     account_name: "",
-    persona_name: "smurf 1",
-    last_login_at: NOW - 12 * DAY,
+    persona_name: "faceit",
+    last_login_at: NOW - HOUR,
     avatar: AVATARS[4],
   },
   {
     steam_id: "76561198000000006",
     account_name: "",
-    persona_name: "smurf 2",
-    last_login_at: NOW - 27 * DAY,
+    persona_name: "ranked grind",
+    last_login_at: NOW - 5 * DAY,
     avatar: AVATARS[5],
   },
   {
     steam_id: "76561198000000007",
     account_name: "",
-    persona_name: "smurf 3",
-    last_login_at: null,
+    persona_name: "chill",
+    last_login_at: NOW - 14 * DAY,
     avatar: AVATARS[6],
+  },
+  {
+    steam_id: "76561198000000008",
+    account_name: "",
+    persona_name: "lan party",
+    last_login_at: NOW - 40 * DAY,
+    avatar: AVATARS[7],
+  },
+  {
+    steam_id: "76561198000000009",
+    account_name: "",
+    persona_name: "streams",
+    last_login_at: NOW - 4 * HOUR,
+    avatar: AVATARS[8],
+  },
+  {
+    steam_id: "76561198000000010",
+    account_name: "",
+    persona_name: "esea",
+    last_login_at: NOW - 8 * DAY,
+    avatar: AVATARS[9],
+  },
+  {
+    steam_id: "76561198000000011",
+    account_name: "",
+    persona_name: "tournaments",
+    last_login_at: NOW - 60 * DAY,
+    avatar: AVATARS[10],
+  },
+  {
+    steam_id: "76561198000000012",
+    account_name: "",
+    persona_name: "family",
+    last_login_at: NOW - 2 * DAY,
+    avatar: AVATARS[11],
+  },
+  {
+    steam_id: "76561198000000013",
+    account_name: "",
+    persona_name: "practice",
+    last_login_at: NOW - 6 * HOUR,
+    avatar: AVATARS[12],
+  },
+  {
+    steam_id: "76561198000000014",
+    account_name: "",
+    persona_name: "smurf 1",
+    last_login_at: NOW - 12 * DAY,
+    avatar: AVATARS[13],
+  },
+  {
+    steam_id: "76561198000000015",
+    account_name: "",
+    persona_name: "smurf 2",
+    last_login_at: NOW - 27 * DAY,
+    avatar: AVATARS[14],
+  },
+  {
+    steam_id: "76561198000000016",
+    account_name: "",
+    persona_name: "smurf 3",
+    last_login_at: NOW - 33 * DAY,
+    avatar: AVATARS[15],
+  },
+  {
+    steam_id: "76561198000000017",
+    account_name: "",
+    persona_name: "smurf 4",
+    last_login_at: null,
+    avatar: AVATARS[16],
   },
 ];
 
@@ -147,19 +218,24 @@ function demoScenario(): MockSpec {
         [{ id: DEMO_FOLDER, name: "Smurfs", parentId: null, platform: "steam" }],
         {
           "root:steam": [
-            { type: "account", id: DEMO_ACCOUNTS[0].steam_id },
-            { type: "account", id: DEMO_ACCOUNTS[1].steam_id },
-            { type: "account", id: DEMO_ACCOUNTS[2].steam_id },
-            { type: "account", id: DEMO_ACCOUNTS[3].steam_id },
+            ...DEMO_ACCOUNTS.slice(0, 13).map((account) => ({
+              type: "account" as const,
+              id: account.steam_id,
+            })),
             { type: "folder", id: DEMO_FOLDER },
           ],
-          [DEMO_FOLDER]: [
-            { type: "account", id: DEMO_ACCOUNTS[4].steam_id },
-            { type: "account", id: DEMO_ACCOUNTS[5].steam_id },
-            { type: "account", id: DEMO_ACCOUNTS[6].steam_id },
-          ],
+          [DEMO_FOLDER]: DEMO_ACCOUNTS.slice(13).map((account) => ({
+            type: "account" as const,
+            id: account.steam_id,
+          })),
         },
       ),
+      // A few recolored cards, so the grid shows the color outlines.
+      "client.account-card-colors": {
+        [DEMO_ACCOUNTS[0].steam_id]: "#8b5cf6",
+        [DEMO_ACCOUNTS[4].steam_id]: "#f97316",
+        [DEMO_ACCOUNTS[8].steam_id]: "#ec4899",
+      },
     },
   };
 }

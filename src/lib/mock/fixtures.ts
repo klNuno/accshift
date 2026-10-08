@@ -11,9 +11,10 @@ import type { BanInfo, ProfileInfo, SteamAccount } from "$lib/platforms/steam/ty
 import { isValidPinHash, verifyPinCode } from "$lib/shared/pin";
 import { PIN_LOCKED_PREFIX } from "$lib/shared/pinSession";
 
-// Fixed clock. No Date.now() anywhere in the mock, so two runs — and two
-// recordings — produce identical "3 days ago" labels.
-export const NOW = 1_760_000_000;
+// Fixed clock, so two runs, and two recordings, produce identical "3 days ago"
+// labels. The app measures those against the real clock: bump this before a
+// README recapture or every account reads as last used a year ago.
+export const NOW = 1_791_000_000;
 export const DAY = 86_400;
 export const HOUR = 3_600;
 
@@ -100,7 +101,9 @@ function profileCacheEntries(accounts: MockAccount[]) {
     entries[account.steam_id] = {
       url: assetUrl(account.avatar),
       displayName: account.persona_name,
-      timestamp: NOW * 1000,
+      // The real clock on purpose: against NOW the entry reads as expired, and
+      // every return to the grid blurs all avatars under a refresh spinner.
+      timestamp: Date.now(),
     };
   }
   return entries;
