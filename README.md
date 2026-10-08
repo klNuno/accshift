@@ -40,10 +40,11 @@ encrypts it on your machine.
 Grab the build for your OS from the
 [latest release](https://github.com/klNuno/accshift/releases/latest):
 
-- **Windows**: NSIS or MSI installer
-- **macOS**: `.dmg`, unsigned for now. Run
+- **Windows**: `-setup.exe` installer
+- **macOS** (Apple Silicon): `.dmg`, unsigned for now. Run
   `xattr -cr /Applications/Accshift.app` once if Gatekeeper complains.
 - **Linux**: `.deb`, `.rpm` or AppImage
+- **CLI only**: a standalone `accshift-cli` binary for each OS
 
 Updates install from inside the app.
 
