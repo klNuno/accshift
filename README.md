@@ -40,11 +40,10 @@ encrypts it on your machine.
 Grab the build for your OS from the
 [latest release](https://github.com/klNuno/accshift/releases/latest):
 
-| OS      | Package                    | Note                                                                                      |
-| ------- | -------------------------- | ----------------------------------------------------------------------------------------- |
-| Windows | NSIS or MSI installer      |                                                                                           |
-| macOS   | `.dmg`                     | Unsigned for now: run `xattr -cr /Applications/Accshift.app` once if Gatekeeper complains |
-| Linux   | `.deb`, `.rpm` or AppImage |                                                                                           |
+- **Windows**: NSIS or MSI installer
+- **macOS**: `.dmg`, unsigned for now. Run
+  `xattr -cr /Applications/Accshift.app` once if Gatekeeper complains.
+- **Linux**: `.deb`, `.rpm` or AppImage
 
 Updates install from inside the app.
 
@@ -58,11 +57,11 @@ Updates install from inside the app.
 | Epic Games      |   ✅    |       |       |
 | Ubisoft Connect |   ✅    |       |       |
 | Roblox          |   ✅    |       |       |
-| GOG Galaxy      |   🧪    |       |       |
-| Jagex Launcher  |   🧪    |       |       |
-| Discord         |   🧪    |       |       |
+| GOG Galaxy      |  Beta   |       |       |
+| Jagex Launcher  |  Beta   |       |       |
+| Discord         |  Beta   |       |       |
 
-🧪 means the integration is built and working on my machine, but too few users
+Beta means the integration is built and working on my machine, but too few users
 have reported back for me to call it stable. Expect bugs, and
 [open an issue](https://github.com/klNuno/accshift/issues/new/choose) if you hit
 one, or to ask for a platform that is not listed.
