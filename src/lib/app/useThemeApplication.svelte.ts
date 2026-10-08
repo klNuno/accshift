@@ -33,9 +33,6 @@ export function createThemeApplication({ shell, getAnimations }: ThemeApplicatio
       backdropAvailable,
     });
     document.documentElement.lang = shell.locale;
-    document.documentElement.dataset.cardOutlines = shell.settings.accountDisplay.cardColorOutlines
-      ? "1"
-      : "0";
     // Glass themes need the OS backdrop blur to read as glass.
     void applyWindowBackdrop(
       Boolean(shell.activeTheme.glass),

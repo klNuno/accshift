@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="184" height="184" role="img" aria-label="demo avatar">
+<rect width="36" height="36" fill="#0b3b2e"/>
+<circle cx="29.52" cy="5.76" r="11.52" fill="#fef9c3" opacity=".18"/>
+<g transform="translate(2.7 2.7) rotate(8 18 18)">
+<rect x="3" y="3" width="30" height="30" rx="8" fill="#34d399" transform="scale(1.2)" transform-origin="18 18"/>
+<g transform="translate(0 -1)">
+<path d="M14 19.5a4 3.2 0 0 0 8 0z" fill="#0b0b0f"/>
+<rect x="12" y="14" width="1.6" height="2.2" rx="1" fill="#0b0b0f"/>
+<rect x="22.4" y="14" width="1.6" height="2.2" rx="1" fill="#0b0b0f"/>
+</g>
+</g>
+</svg>

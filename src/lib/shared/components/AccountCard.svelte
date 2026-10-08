@@ -577,14 +577,11 @@
     box-shadow: none;
   }
 
-  /* Same story for the outlines (custom color, bans): while the panel is
+  /* Same story for the ban outlines: while the panel is
    * open they live on the surface only, never on the card on top of it. */
-  .card-shell.extension-visible .card {
+  .card-shell.extension-visible .card.ban-red,
+  .card-shell.extension-visible .card.ban-yellow {
     outline: none;
-  }
-
-  .extension-surface.custom-color.visible {
-    outline: 1px solid color-mix(in srgb, var(--card-custom-color) 55%, transparent);
   }
 
   /* Glass themes: an opaque slab next to translucent cards reads as a patch.
@@ -604,15 +601,6 @@
         color-mix(in srgb, var(--card-custom-color) 16%, transparent)
       ),
       color-mix(in srgb, var(--bg-solid) 58%, transparent);
-  }
-
-  /* User setting: colored card outlines off. The ban rings are not decoration,
-     they survive it: without the :not() guards this selector outranks them
-     (one more element in the compound) and a banned colored card loses its
-     marker entirely. */
-  :global(html[data-card-outlines="0"]) .card.custom-color:not(.ban-red):not(.ban-yellow),
-  :global(html[data-card-outlines="0"]) .extension-surface.custom-color.visible:not(.ban-red):not(.ban-yellow) {
-    outline: none;
   }
 
   .extension-surface.ban-red.visible {
@@ -684,7 +672,6 @@
 
   .card.custom-color {
     background: color-mix(in srgb, var(--card-custom-color) 24%, var(--bg-card));
-    outline: 1px solid color-mix(in srgb, var(--card-custom-color) 55%, transparent);
   }
 
   .card.custom-color:not(.active):hover {

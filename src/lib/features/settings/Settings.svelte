@@ -601,7 +601,6 @@
       settings.accountDisplay.showUsernames,
       settings.accountDisplay.showCardNotesInline,
       settings.accountDisplay.expandedFolders,
-      settings.accountDisplay.cardColorOutlines,
       showLastLoginKey,
       healthCheckKey,
       settings.uiScalePercent,

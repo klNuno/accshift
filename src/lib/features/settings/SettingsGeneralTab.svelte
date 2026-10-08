@@ -257,15 +257,6 @@
       offLabel={t("common.disabled")}
       onToggle={() => settings.accountDisplay.expandedFolders = !settings.accountDisplay.expandedFolders}
     />
-    <ToggleSetting
-      label={t("settings.cardColorOutlines")}
-      description={t("settings.cardColorOutlinesHint")}
-      enabled={settings.accountDisplay.cardColorOutlines}
-      accent={neutralAccent}
-      onLabel={t("common.enabled")}
-      offLabel={t("common.disabled")}
-      onToggle={() => settings.accountDisplay.cardColorOutlines = !settings.accountDisplay.cardColorOutlines}
-    />
   </section>
 
   <section class="card">

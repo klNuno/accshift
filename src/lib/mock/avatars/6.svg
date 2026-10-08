@@ -1,10 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 184 184" width="184" height="184" role="img" aria-label="demo avatar 6">
-  <defs>
-    <linearGradient id="g6" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#7c3aed"/>
-      <stop offset="1" stop-color="#c084fc"/>
-    </linearGradient>
-  </defs>
-  <rect width="184" height="184" fill="url(#g6)"/>
-  <text x="92" y="92" fill="#ffffff" fill-opacity="0.92" font-family="Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="86" font-weight="600" text-anchor="middle" dominant-baseline="central">S</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="184" height="184" role="img" aria-label="demo avatar">
+<rect width="36" height="36" fill="#0c4a6e"/>
+<circle cx="29.52" cy="5.76" r="11.52" fill="#e0f2fe" opacity=".18"/>
+<g transform="translate(0 2.7) rotate(19 18 18)">
+<rect x="3" y="3" width="30" height="30" rx="8" fill="#fbbf24" transform="scale(1)" transform-origin="18 18"/>
+<g transform="translate(-1 -1)">
+<path d="M14 19.5a4 3.2 0 0 0 8 0z" fill="#0b0b0f"/>
+<rect x="12" y="14" width="1.6" height="2.2" rx="1" fill="#0b0b0f"/>
+<rect x="22.4" y="14" width="1.6" height="2.2" rx="1" fill="#0b0b0f"/>
+</g>
+</g>
 </svg>

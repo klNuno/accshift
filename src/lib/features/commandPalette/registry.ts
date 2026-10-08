@@ -64,7 +64,6 @@ export function createCommandRegistry(deps: RegistryDeps) {
       title: account.displayName || account.username || account.id,
       keywords: [account.username, account.id].filter(Boolean),
       active: account.id === currentId,
-      hint: account.id === currentId ? deps.t("common.active") : undefined,
       run: () => deps.switchToAccount(account),
     }));
   }

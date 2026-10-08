@@ -20,6 +20,8 @@ function spec(stored: Record<string, unknown>): MockSpec {
     currentSteamAccount: "",
     riotProfiles: [],
     currentRiotProfile: "",
+    robloxAccounts: [],
+    currentRobloxAccount: "",
     stores: { "client.settings": stored },
     steamPath: "",
     hasSteamApiKey: false,
