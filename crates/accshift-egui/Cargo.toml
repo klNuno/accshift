@@ -1,0 +1,55 @@
+[package]
+name = "accshift-egui"
+description = "Spike: the accshift main screen in egui, to compare with the Tauri shell"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone on purpose: the root workspace runs `cargo clippy --workspace` and
+# `cargo test --workspace` in CI on three OSes, and a spike has no business
+# adding eframe, glow and wgpu to that build. The root `Cargo.toml` excludes
+# this folder.
+[workspace]
+
+[features]
+# Bench build: the window is never shown, boot marks go to
+# %TEMP%\accshift-egui-bench\<pid>.jsonl. The harness refuses any exe that
+# lacks the marker string, so a bench run can never pop a window.
+startup-bench = []
+
+[dependencies]
+accshift-core = { path = "../accshift-core" }
+# Same backend choice as spotifast: glow keeps the binary and the tree small,
+# wgpu buys nothing for a 2D grid.
+eframe = { version = "0.36", default-features = false, features = [
+  "accesskit",
+  "glow",
+  "default_fonts",
+] }
+egui = "0.36"
+egui_extras = { version = "0.36", default-features = false, features = ["svg"] }
+# The same resvg egui_extras rasterizes with, for its options type.
+resvg = { version = "0.45", default-features = false }
+raw-window-handle = "0.6"
+
+[target.'cfg(windows)'.dependencies]
+# The OS acrylic behind a transparent window: what Glass Dark uses in Tauri.
+window-vibrancy = "0.8"
+# DWM cloak for the bench build: the window exists and renders, but is never
+# composited on screen.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
+
+# Mirrors the root workspace profile so binary sizes compare.
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = "fat"
+opt-level = 2
+strip = true
+
+# The `windows` bindings crate alone needs about 2 GB of RAM at opt-level 2
+# with one codegen unit. Fat LTO optimizes its bitcode again at the final link,
+# so building it unoptimized changes the compile peak, not the binary.
+[profile.release.package.windows]
+opt-level = 0
+codegen-units = 16
