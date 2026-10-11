@@ -24,7 +24,7 @@ const MAX_IDS_PER_REQUEST: usize = 300;
 /// Cette limite par requete remplace le timeout global de 10 s du client.
 const CHECK_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Cs2BridgeSettings {
     pub enabled: bool,
@@ -52,7 +52,7 @@ pub struct Cs2BridgeAccount {
 
 /// Resultat du bouton "tester" des settings : jamais d'erreur Tauri, l'echec
 /// est une donnee (dot rouge + message), pas une exception.
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Cs2BridgeTestResult {
     pub ok: bool,

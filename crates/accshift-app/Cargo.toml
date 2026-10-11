@@ -1,0 +1,17 @@
+[package]
+name = "accshift-app"
+description = "UI-free logic of the accshift egui port: the backend trait, its mock and the job runner"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone during the port, like crates/accshift-egui: the root workspace
+# excludes this folder, so its CI build stays what it is today. The crate
+# joins the root workspace when the egui shell replaces the Tauri one.
+[workspace]
+
+[dependencies]
+accshift-core = { path = "../accshift-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+directories = "6"

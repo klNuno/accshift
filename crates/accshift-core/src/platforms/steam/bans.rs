@@ -6,7 +6,7 @@ const STEAM_BAN_IDS_PER_REQUEST: usize = 100;
 /// final, inutile (et risque d'OOM sur flux malveillant) de tout aspirer.
 const MAX_ERROR_PREVIEW_BODY: usize = 16 * 1024;
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BanInfo {
     pub steam_id: String,
     pub community_banned: bool,

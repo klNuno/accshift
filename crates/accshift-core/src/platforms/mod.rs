@@ -1,7 +1,7 @@
 use crate::context::{AppContext, AppCtx};
 use crate::error::PlatformError;
 use descriptor::{Descriptor, DescriptorOrigin, DescriptorService};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
@@ -156,7 +156,7 @@ pub(crate) fn make_setup_status(
 }
 
 /// Common setup status returned by all platforms.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetupStatus {
     pub setup_id: String,
@@ -298,7 +298,7 @@ fn user_registry() -> &'static RwLock<HashMap<String, &'static DescriptorService
 }
 
 /// A descriptor read fine but was not registered.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkippedPlatform {
     pub id: String,
@@ -306,7 +306,7 @@ pub struct SkippedPlatform {
 }
 
 /// A file in the user's folder that is not a usable descriptor.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RejectedDescriptor {
     /// The file name, as the user sees it in the folder.
@@ -317,7 +317,7 @@ pub struct RejectedDescriptor {
 }
 
 /// What the last read of the user's descriptor folder produced.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserPlatformReport {
     /// The folder that was read, so a caller can say where to drop a file.
