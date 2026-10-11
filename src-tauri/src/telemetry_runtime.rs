@@ -34,7 +34,13 @@ impl TelemetryState {
                 cfg.telemetry.anonymous_id = anonymous_id;
             }
         }
-        let consent = telemetry::consent_from_config(&cfg.telemetry);
+        // The parity capture build of the egui bench sends nothing: default
+        // consent drops every event before it reaches the network.
+        let consent = if cfg!(feature = "parity-capture") {
+            telemetry::ConsentState::default()
+        } else {
+            telemetry::consent_from_config(&cfg.telemetry)
+        };
         let tctx = telemetry::context_for(env!("CARGO_PKG_VERSION"), "gui");
         let worker = Worker::spawn(tctx, consent, QueueParams::default());
         Self {

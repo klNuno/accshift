@@ -32,6 +32,11 @@ pub unsafe extern "C" fn accshift_run_v1(handoff: *const wry::PrestartHandoff) -
 }
 
 pub fn run() {
+    // Before anything resolves a path: without its scratch root, a parity
+    // capture build would fall back on the real data directories.
+    #[cfg(feature = "parity-capture")]
+    app_runtime::parity::require_root();
+
     // WebKitGTK's DMABUF renderer is broken on the NVIDIA proprietary driver
     // (white window, severe rendering lag). Opt out only on those machines;
     // an explicit user-set value always wins.
@@ -68,8 +73,12 @@ pub fn run() {
     // production identifier, so the guard would refuse to start whenever an
     // installed Accshift is already running. Both instances still write the
     // same loginusers.vdf and the same Steam registry keys, so never run a
-    // switch in both at once.
-    #[cfg(not(all(debug_assertions, feature = "mcp-bridge")))]
+    // switch in both at once. A parity capture build skips it for the same
+    // reason: it runs next to the installed app, on a mock backend.
+    #[cfg(not(any(
+        all(debug_assertions, feature = "mcp-bridge"),
+        feature = "parity-capture"
+    )))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
         let _ = logging::append_app_log(
             &ctx(app),
@@ -176,7 +185,12 @@ pub fn run() {
             phases.deep_link_us = step.elapsed().as_micros() as u64;
 
             let step = std::time::Instant::now();
-            boot::spawn_snapshot_upgrade(setup_ctx.clone());
+            // Not in a parity capture build: its app dirs are an empty
+            // scratch folder, and the keyring sweep would read every real
+            // entry as an orphan of it.
+            if !cfg!(feature = "parity-capture") {
+                boot::spawn_snapshot_upgrade(setup_ctx.clone());
+            }
             boot::spawn_boot_failsafe(app.handle().clone());
             phases.threads_us = step.elapsed().as_micros() as u64;
 

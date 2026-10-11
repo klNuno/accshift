@@ -312,6 +312,13 @@ pub(crate) fn build_main_window(
         window_builder = window_builder.icon(icon.clone())?;
     }
 
+    // The parity bench's WebView2 profile lives in the run's scratch folder,
+    // never in the real one under %LOCALAPPDATA%\com.accshift.desktop.
+    #[cfg(feature = "parity-capture")]
+    if let Some(dir) = app_runtime::parity::webview_dir() {
+        window_builder = window_builder.data_directory(dir);
+    }
+
     let win = timed(&mut phases.window_build_us, || window_builder.build())?;
 
     // The builder converts the logical origin with the scale Tauri picks at
@@ -672,7 +679,9 @@ pub(crate) fn wire_deep_links(app: &tauri::App, setup_ctx: &AppCtx) {
         };
         #[cfg(not(windows))]
         let needs_register = true;
-        if needs_register {
+        // A parity capture build is a throwaway debug exe: pointing
+        // accshift:// at it would break the installed app's links.
+        if needs_register && !cfg!(feature = "parity-capture") {
             if let Err(reason) = app.deep_link().register_all() {
                 let _ = logging::append_app_log(
                     setup_ctx,

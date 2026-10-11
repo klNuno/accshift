@@ -38,6 +38,9 @@ mcp-bridge = ["dep:tauri-plugin-mcp-bridge"]
 # Keeps the main window hidden after boot so the startup bench can launch the
 # app in a loop without stealing the focus. Measurement only, never shipped.
 startup-bench = []
+# Reference renderer of the egui parity bench (crates/accshift-egui/parity):
+# window never seen, app dirs redirected, no single instance, no telemetry.
+parity-capture = []
 
 [target.'cfg(windows)'.dependencies]
 winreg = { workspace = true }

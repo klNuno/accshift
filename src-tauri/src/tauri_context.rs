@@ -1,7 +1,10 @@
 use accshift_core::{AppContext, AppCtx};
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
-use tauri::{AppHandle, Manager};
+use tauri::path::PathResolver;
+#[cfg_attr(feature = "parity-capture", allow(unused_imports))]
+use tauri::Manager;
+use tauri::{AppHandle, Wry};
 
 /// `AppContext` implementation backed by a Tauri `AppHandle`.
 pub struct TauriAppContext {
@@ -11,6 +14,31 @@ pub struct TauriAppContext {
 impl TauriAppContext {
     pub fn new(handle: AppHandle) -> Self {
         Self { handle }
+    }
+
+    /// One app directory. `what` names it in the error ("config", "local
+    /// data").
+    ///
+    /// A parity capture build moves every directory under the run's scratch
+    /// root, so the reference renderer of the egui bench never reads or writes
+    /// the real `%APPDATA%\com.accshift.desktop` or
+    /// `%LOCALAPPDATA%\com.accshift.desktop`.
+    fn resolve(
+        &self,
+        what: &str,
+        real: fn(&PathResolver<Wry>) -> tauri::Result<PathBuf>,
+    ) -> Result<PathBuf, String> {
+        #[cfg(feature = "parity-capture")]
+        {
+            let _ = (&self.handle, real);
+            crate::app_runtime::parity::root()
+                .map(|root| root.join(what.replace(' ', "-")))
+                .ok_or_else(|| "ACCSHIFT_PARITY_DIR is not set".to_string())
+        }
+        #[cfg(not(feature = "parity-capture"))]
+        {
+            real(self.handle.path()).map_err(|e| format!("Could not resolve app {what} dir: {e}"))
+        }
     }
 }
 
@@ -25,30 +53,18 @@ pub fn ctx(handle: &AppHandle) -> AppCtx {
 
 impl AppContext for TauriAppContext {
     fn app_config_dir(&self) -> Result<PathBuf, String> {
-        self.handle
-            .path()
-            .app_config_dir()
-            .map_err(|e| format!("Could not resolve app config dir: {e}"))
+        self.resolve("config", PathResolver::app_config_dir)
     }
 
     fn app_data_dir(&self) -> Result<PathBuf, String> {
-        self.handle
-            .path()
-            .app_data_dir()
-            .map_err(|e| format!("Could not resolve app data dir: {e}"))
+        self.resolve("data", PathResolver::app_data_dir)
     }
 
     fn app_local_data_dir(&self) -> Result<PathBuf, String> {
-        self.handle
-            .path()
-            .app_local_data_dir()
-            .map_err(|e| format!("Could not resolve app local data dir: {e}"))
+        self.resolve("local data", PathResolver::app_local_data_dir)
     }
 
     fn app_cache_dir(&self) -> Result<PathBuf, String> {
-        self.handle
-            .path()
-            .app_cache_dir()
-            .map_err(|e| format!("Could not resolve app cache dir: {e}"))
+        self.resolve("cache", PathResolver::app_cache_dir)
     }
 }

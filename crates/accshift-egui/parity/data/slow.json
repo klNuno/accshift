@@ -1,0 +1,984 @@
+{
+  "format": 1,
+  "scenario": "slow",
+  "now": 1791000000,
+  "spec": {
+    "label": "dev dataset with a 4s switch — spinners and pending states",
+    "runtimeOs": "windows",
+    "switchDelayMs": 4000,
+    "steamPath": "C:\\Program Files (x86)\\Steam",
+    "hasSteamApiKey": true,
+    "currentSteamAccount": "76561198100000001",
+    "currentRiotProfile": "riot-1",
+    "currentRobloxAccount": ""
+  },
+  "commands": {
+    "cs2_bridge_get_settings": [
+      {
+        "args": {},
+        "result": {
+          "enabled": false,
+          "url": "",
+          "apiKey": ""
+        }
+      }
+    ],
+    "descriptor_install_file": [
+      {
+        "args": {},
+        "result": {
+          "dir": "C:\\Users\\player\\AppData\\Roaming\\accshift\\platforms",
+          "loaded": [],
+          "skipped": [],
+          "rejected": []
+        }
+      }
+    ],
+    "descriptor_preview_file": [
+      {
+        "args": {},
+        "error": "a mock session adds no platform"
+      }
+    ],
+    "descriptor_remove": [
+      {
+        "args": {},
+        "result": {
+          "dir": "C:\\Users\\player\\AppData\\Roaming\\accshift\\platforms",
+          "loaded": [],
+          "skipped": [],
+          "rejected": []
+        }
+      }
+    ],
+    "descriptor_select_file": [
+      {
+        "args": {},
+        "error": "cancelled"
+      }
+    ],
+    "detect_streaming_software": [
+      {
+        "args": {},
+        "result": false
+      }
+    ],
+    "get_boot_payload": [
+      {
+        "args": {},
+        "result": {
+          "migration": "skipped",
+          "runtimeOs": "windows",
+          "storageSnapshot": {
+            "manifest": {
+              "schemaVersion": 1,
+              "stores": {}
+            },
+            "stores": {
+              "client.settings": {
+                "language": "en",
+                "animations": "on",
+                "streamerMode": "off",
+                "inactivityBlurSeconds": 0,
+                "pinEnabled": false,
+                "enabledPlatforms": ["steam", "riot"],
+                "accountDisplay": {
+                  "showUsernames": true,
+                  "showCardNotesInline": true
+                }
+              },
+              "client.folders": {
+                "version": 1,
+                "folders": [
+                  {
+                    "id": "dev-folder-outer",
+                    "name": "Outer folder",
+                    "parentId": null,
+                    "platform": "steam"
+                  },
+                  {
+                    "id": "dev-folder-inner",
+                    "name": "Inner folder",
+                    "parentId": "dev-folder-outer",
+                    "platform": "steam"
+                  }
+                ],
+                "itemOrder": {
+                  "root:steam": [
+                    {
+                      "type": "account",
+                      "id": "76561198100000001"
+                    },
+                    {
+                      "type": "account",
+                      "id": "76561198100000002"
+                    },
+                    {
+                      "type": "account",
+                      "id": "76561198100000003"
+                    },
+                    {
+                      "type": "account",
+                      "id": "76561198100000004"
+                    },
+                    {
+                      "type": "account",
+                      "id": "76561198100000005"
+                    },
+                    {
+                      "type": "account",
+                      "id": "76561198100000006"
+                    },
+                    {
+                      "type": "folder",
+                      "id": "dev-folder-outer"
+                    }
+                  ],
+                  "dev-folder-outer": [
+                    {
+                      "type": "account",
+                      "id": "76561198100000007"
+                    },
+                    {
+                      "type": "folder",
+                      "id": "dev-folder-inner"
+                    }
+                  ],
+                  "dev-folder-inner": [
+                    {
+                      "type": "account",
+                      "id": "76561198100000008"
+                    }
+                  ]
+                }
+              },
+              "client.personas": [],
+              "client.account-card-notes": {
+                "76561198100000001": "short note",
+                "76561198100000005": "a note that runs long enough to test wrapping and truncation on an inline card note"
+              },
+              "client.account-card-colors": {
+                "76561198100000001": "#3b82f6",
+                "76561198100000003": "#f43f5e",
+                "76561198100000005": "#10b981"
+              },
+              "client.account-default-game": {},
+              "client.folder-card-colors": {},
+              "client.view-mode": "grid",
+              "cache.steam.profiles": {
+                "76561198100000001": {
+                  "url": "src/lib/mock/avatars/1.svg",
+                  "displayName": "main",
+                  "timestamp": 1791000000000
+                },
+                "76561198100000003": {
+                  "url": "src/lib/mock/avatars/3.svg",
+                  "displayName": "vac banned",
+                  "timestamp": 1791000000000
+                },
+                "76561198100000004": {
+                  "url": "src/lib/mock/avatars/4.svg",
+                  "displayName": "trade banned",
+                  "timestamp": 1791000000000
+                },
+                "76561198100000005": {
+                  "url": "src/lib/mock/avatars/5.svg",
+                  "displayName": "a persona name long enough to overflow every card layout",
+                  "timestamp": 1791000000000
+                },
+                "76561198100000006": {
+                  "url": "src/lib/mock/avatars/6.svg",
+                  "displayName": "never logged in",
+                  "timestamp": 1791000000000
+                },
+                "76561198100000007": {
+                  "url": "src/lib/mock/avatars/7.svg",
+                  "displayName": "nested account",
+                  "timestamp": 1791000000000
+                },
+                "76561198100000008": {
+                  "url": "src/lib/mock/avatars/2.svg",
+                  "displayName": "deeply nested",
+                  "timestamp": 1791000000000
+                }
+              },
+              "cache.roblox.profiles": {},
+              "cache.steam.ban-check-state": {},
+              "cache.steam.ban-info-cache": {}
+            }
+          },
+          "customThemes": [],
+          "userPlatforms": {
+            "dir": "C:\\Users\\player\\AppData\\Roaming\\accshift\\platforms",
+            "loaded": [],
+            "skipped": [],
+            "rejected": []
+          }
+        }
+      }
+    ],
+    "get_desktop_wallpaper": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "get_runtime_os": [
+      {
+        "args": {},
+        "result": "windows"
+      }
+    ],
+    "get_storage_manifest": [
+      {
+        "args": {},
+        "result": {
+          "schemaVersion": 1,
+          "stores": {}
+        }
+      }
+    ],
+    "list_custom_themes": [
+      {
+        "args": {},
+        "result": []
+      }
+    ],
+    "load_client_storage_snapshot": [
+      {
+        "args": {},
+        "result": {
+          "manifest": {
+            "schemaVersion": 1,
+            "stores": {}
+          },
+          "stores": {
+            "client.settings": {
+              "language": "en",
+              "animations": "on",
+              "streamerMode": "off",
+              "inactivityBlurSeconds": 0,
+              "pinEnabled": false,
+              "enabledPlatforms": ["steam", "riot"],
+              "accountDisplay": {
+                "showUsernames": true,
+                "showCardNotesInline": true
+              }
+            },
+            "client.folders": {
+              "version": 1,
+              "folders": [
+                {
+                  "id": "dev-folder-outer",
+                  "name": "Outer folder",
+                  "parentId": null,
+                  "platform": "steam"
+                },
+                {
+                  "id": "dev-folder-inner",
+                  "name": "Inner folder",
+                  "parentId": "dev-folder-outer",
+                  "platform": "steam"
+                }
+              ],
+              "itemOrder": {
+                "root:steam": [
+                  {
+                    "type": "account",
+                    "id": "76561198100000001"
+                  },
+                  {
+                    "type": "account",
+                    "id": "76561198100000002"
+                  },
+                  {
+                    "type": "account",
+                    "id": "76561198100000003"
+                  },
+                  {
+                    "type": "account",
+                    "id": "76561198100000004"
+                  },
+                  {
+                    "type": "account",
+                    "id": "76561198100000005"
+                  },
+                  {
+                    "type": "account",
+                    "id": "76561198100000006"
+                  },
+                  {
+                    "type": "folder",
+                    "id": "dev-folder-outer"
+                  }
+                ],
+                "dev-folder-outer": [
+                  {
+                    "type": "account",
+                    "id": "76561198100000007"
+                  },
+                  {
+                    "type": "folder",
+                    "id": "dev-folder-inner"
+                  }
+                ],
+                "dev-folder-inner": [
+                  {
+                    "type": "account",
+                    "id": "76561198100000008"
+                  }
+                ]
+              }
+            },
+            "client.personas": [],
+            "client.account-card-notes": {
+              "76561198100000001": "short note",
+              "76561198100000005": "a note that runs long enough to test wrapping and truncation on an inline card note"
+            },
+            "client.account-card-colors": {
+              "76561198100000001": "#3b82f6",
+              "76561198100000003": "#f43f5e",
+              "76561198100000005": "#10b981"
+            },
+            "client.account-default-game": {},
+            "client.folder-card-colors": {},
+            "client.view-mode": "grid",
+            "cache.steam.profiles": {
+              "76561198100000001": {
+                "url": "src/lib/mock/avatars/1.svg",
+                "displayName": "main",
+                "timestamp": 1791000000000
+              },
+              "76561198100000003": {
+                "url": "src/lib/mock/avatars/3.svg",
+                "displayName": "vac banned",
+                "timestamp": 1791000000000
+              },
+              "76561198100000004": {
+                "url": "src/lib/mock/avatars/4.svg",
+                "displayName": "trade banned",
+                "timestamp": 1791000000000
+              },
+              "76561198100000005": {
+                "url": "src/lib/mock/avatars/5.svg",
+                "displayName": "a persona name long enough to overflow every card layout",
+                "timestamp": 1791000000000
+              },
+              "76561198100000006": {
+                "url": "src/lib/mock/avatars/6.svg",
+                "displayName": "never logged in",
+                "timestamp": 1791000000000
+              },
+              "76561198100000007": {
+                "url": "src/lib/mock/avatars/7.svg",
+                "displayName": "nested account",
+                "timestamp": 1791000000000
+              },
+              "76561198100000008": {
+                "url": "src/lib/mock/avatars/2.svg",
+                "displayName": "deeply nested",
+                "timestamp": 1791000000000
+              }
+            },
+            "cache.roblox.profiles": {},
+            "cache.steam.ban-check-state": {},
+            "cache.steam.ban-info-cache": {}
+          }
+        }
+      }
+    ],
+    "migrate_legacy_config": [
+      {
+        "args": {},
+        "result": "skipped"
+      }
+    ],
+    "open_descriptors_folder": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "open_logs_folder": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "open_url": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "platform_detect_installed": [
+      {
+        "args": {},
+        "result": ["steam", "riot"]
+      }
+    ],
+    "platform_dry_run": [
+      {
+        "args": {
+          "platformId": "steam",
+          "accountId": "76561198100000001"
+        },
+        "result": {
+          "platformId": "steam",
+          "operation": "switch",
+          "accountId": "76561198100000001",
+          "applied": false,
+          "roots": [],
+          "steps": [],
+          "warnings": []
+        }
+      }
+    ],
+    "platform_get_accounts": [
+      {
+        "args": {
+          "platformId": "steam"
+        },
+        "result": [
+          {
+            "steam_id": "76561198100000001",
+            "account_name": "mainacct",
+            "persona_name": "main",
+            "last_login_at": 1790996400
+          },
+          {
+            "steam_id": "76561198100000002",
+            "account_name": "no_avatar_here",
+            "persona_name": "no avatar",
+            "last_login_at": 1790827200
+          },
+          {
+            "steam_id": "76561198100000003",
+            "account_name": "banned_one",
+            "persona_name": "vac banned",
+            "last_login_at": 1790568000
+          },
+          {
+            "steam_id": "76561198100000004",
+            "account_name": "trade_locked",
+            "persona_name": "trade banned",
+            "last_login_at": 1790308800
+          },
+          {
+            "steam_id": "76561198100000005",
+            "account_name": "overflow_test_account_name",
+            "persona_name": "a persona name long enough to overflow every card layout",
+            "last_login_at": 1789790400
+          },
+          {
+            "steam_id": "76561198100000006",
+            "account_name": "never_used",
+            "persona_name": "never logged in",
+            "last_login_at": null
+          },
+          {
+            "steam_id": "76561198100000007",
+            "account_name": "nested_one",
+            "persona_name": "nested account",
+            "last_login_at": 1788408000
+          },
+          {
+            "steam_id": "76561198100000008",
+            "account_name": "nested_two",
+            "persona_name": "deeply nested",
+            "last_login_at": 1787198400
+          }
+        ]
+      },
+      {
+        "args": {
+          "platformId": "riot"
+        },
+        "result": [
+          {
+            "id": "riot-1",
+            "label": "ready",
+            "snapshot_state": "ready",
+            "last_used_at": 1790996400000
+          },
+          {
+            "id": "riot-2",
+            "label": "capturing",
+            "snapshot_state": "capturing",
+            "last_used_at": null
+          },
+          {
+            "id": "riot-3",
+            "label": "awaiting",
+            "snapshot_state": "awaiting_capture",
+            "last_used_at": null
+          },
+          {
+            "id": "riot-4",
+            "label": "setup pending",
+            "snapshot_state": "setup_pending",
+            "last_used_at": null
+          }
+        ]
+      },
+      {
+        "args": {
+          "platformId": "roblox"
+        },
+        "result": []
+      }
+    ],
+    "platform_get_current_account": [
+      {
+        "args": {
+          "platformId": "steam"
+        },
+        "result": "76561198100000001"
+      },
+      {
+        "args": {
+          "platformId": "riot"
+        },
+        "result": "riot-1"
+      },
+      {
+        "args": {
+          "platformId": "roblox"
+        },
+        "result": ""
+      }
+    ],
+    "platform_get_path": [
+      {
+        "args": {},
+        "result": "C:\\Program Files (x86)\\Steam"
+      }
+    ],
+    "platform_get_startup_snapshot": [
+      {
+        "args": {
+          "platformId": "steam"
+        },
+        "result": {
+          "accounts": [
+            {
+              "steam_id": "76561198100000001",
+              "account_name": "mainacct",
+              "persona_name": "main",
+              "last_login_at": 1790996400
+            },
+            {
+              "steam_id": "76561198100000002",
+              "account_name": "no_avatar_here",
+              "persona_name": "no avatar",
+              "last_login_at": 1790827200
+            },
+            {
+              "steam_id": "76561198100000003",
+              "account_name": "banned_one",
+              "persona_name": "vac banned",
+              "last_login_at": 1790568000
+            },
+            {
+              "steam_id": "76561198100000004",
+              "account_name": "trade_locked",
+              "persona_name": "trade banned",
+              "last_login_at": 1790308800
+            },
+            {
+              "steam_id": "76561198100000005",
+              "account_name": "overflow_test_account_name",
+              "persona_name": "a persona name long enough to overflow every card layout",
+              "last_login_at": 1789790400
+            },
+            {
+              "steam_id": "76561198100000006",
+              "account_name": "never_used",
+              "persona_name": "never logged in",
+              "last_login_at": null
+            },
+            {
+              "steam_id": "76561198100000007",
+              "account_name": "nested_one",
+              "persona_name": "nested account",
+              "last_login_at": 1788408000
+            },
+            {
+              "steam_id": "76561198100000008",
+              "account_name": "nested_two",
+              "persona_name": "deeply nested",
+              "last_login_at": 1787198400
+            }
+          ],
+          "currentAccount": "76561198100000001"
+        }
+      },
+      {
+        "args": {
+          "platformId": "riot"
+        },
+        "result": {
+          "profiles": [
+            {
+              "id": "riot-1",
+              "label": "ready",
+              "snapshot_state": "ready",
+              "last_used_at": 1790996400000
+            },
+            {
+              "id": "riot-2",
+              "label": "capturing",
+              "snapshot_state": "capturing",
+              "last_used_at": null
+            },
+            {
+              "id": "riot-3",
+              "label": "awaiting",
+              "snapshot_state": "awaiting_capture",
+              "last_used_at": null
+            },
+            {
+              "id": "riot-4",
+              "label": "setup pending",
+              "snapshot_state": "setup_pending",
+              "last_used_at": null
+            }
+          ],
+          "currentProfile": "riot-1"
+        }
+      },
+      {
+        "args": {
+          "platformId": "roblox"
+        },
+        "result": {
+          "accounts": [],
+          "currentAccount": ""
+        }
+      }
+    ],
+    "platform_set_account_label": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "reload_user_platforms": [
+      {
+        "args": {},
+        "result": {
+          "dir": "C:\\Users\\player\\AppData\\Roaming\\accshift\\platforms",
+          "loaded": [],
+          "skipped": [],
+          "rejected": []
+        }
+      }
+    ],
+    "roblox_check_sessions": [
+      {
+        "args": {},
+        "result": []
+      }
+    ],
+    "roblox_get_profile_info": [],
+    "save_client_storage_store": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "steam_get_account_games": [
+      {
+        "args": {},
+        "result": []
+      }
+    ],
+    "steam_get_copyable_games": [
+      {
+        "args": {},
+        "result": []
+      }
+    ],
+    "steam_get_player_bans": [
+      {
+        "args": {
+          "steamIds": [
+            "76561198100000001",
+            "76561198100000002",
+            "76561198100000003",
+            "76561198100000004",
+            "76561198100000005",
+            "76561198100000006",
+            "76561198100000007",
+            "76561198100000008"
+          ]
+        },
+        "result": [
+          {
+            "steam_id": "76561198100000001",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198100000002",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198100000003",
+            "community_banned": false,
+            "vac_banned": true,
+            "number_of_vac_bans": 1,
+            "days_since_last_ban": 412,
+            "number_of_game_bans": 1,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198100000004",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "banned"
+          },
+          {
+            "steam_id": "76561198100000005",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198100000006",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198100000007",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198100000008",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          }
+        ]
+      }
+    ],
+    "steam_get_profile_info": [
+      {
+        "args": {
+          "accountId": "76561198100000001"
+        },
+        "result": {
+          "avatar_url": "src/lib/mock/avatars/1.svg",
+          "display_name": "main",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198100000002"
+        },
+        "result": {
+          "avatar_url": null,
+          "display_name": "no avatar",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198100000003"
+        },
+        "result": {
+          "avatar_url": "src/lib/mock/avatars/3.svg",
+          "display_name": "vac banned",
+          "vac_banned": true,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198100000004"
+        },
+        "result": {
+          "avatar_url": "src/lib/mock/avatars/4.svg",
+          "display_name": "trade banned",
+          "vac_banned": false,
+          "trade_ban_state": "banned"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198100000005"
+        },
+        "result": {
+          "avatar_url": "src/lib/mock/avatars/5.svg",
+          "display_name": "a persona name long enough to overflow every card layout",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198100000006"
+        },
+        "result": {
+          "avatar_url": "src/lib/mock/avatars/6.svg",
+          "display_name": "never logged in",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198100000007"
+        },
+        "result": {
+          "avatar_url": "src/lib/mock/avatars/7.svg",
+          "display_name": "nested account",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198100000008"
+        },
+        "result": {
+          "avatar_url": "src/lib/mock/avatars/2.svg",
+          "display_name": "deeply nested",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      }
+    ],
+    "steam_get_profile_infos": [
+      {
+        "args": {
+          "accountIds": [
+            "76561198100000001",
+            "76561198100000002",
+            "76561198100000003",
+            "76561198100000004",
+            "76561198100000005",
+            "76561198100000006",
+            "76561198100000007",
+            "76561198100000008"
+          ]
+        },
+        "result": {
+          "76561198100000001": {
+            "avatar_url": "src/lib/mock/avatars/1.svg",
+            "display_name": "main",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198100000002": {
+            "avatar_url": null,
+            "display_name": "no avatar",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198100000003": {
+            "avatar_url": "src/lib/mock/avatars/3.svg",
+            "display_name": "vac banned",
+            "vac_banned": true,
+            "trade_ban_state": "none"
+          },
+          "76561198100000004": {
+            "avatar_url": "src/lib/mock/avatars/4.svg",
+            "display_name": "trade banned",
+            "vac_banned": false,
+            "trade_ban_state": "banned"
+          },
+          "76561198100000005": {
+            "avatar_url": "src/lib/mock/avatars/5.svg",
+            "display_name": "a persona name long enough to overflow every card layout",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198100000006": {
+            "avatar_url": "src/lib/mock/avatars/6.svg",
+            "display_name": "never logged in",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198100000007": {
+            "avatar_url": "src/lib/mock/avatars/7.svg",
+            "display_name": "nested account",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198100000008": {
+            "avatar_url": "src/lib/mock/avatars/2.svg",
+            "display_name": "deeply nested",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          }
+        }
+      }
+    ],
+    "steam_has_api_key": [
+      {
+        "args": {},
+        "result": true
+      }
+    ],
+    "steam_open_api_key_page": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "steam_open_userdata": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "telemetry_get_state": [
+      {
+        "args": {},
+        "result": {
+          "mode_a_enabled": false,
+          "mode_b_enabled": false,
+          "install_id_set": false,
+          "forget_pending": false,
+          "onboarding_completed": true
+        }
+      }
+    ]
+  },
+  "skipped": {
+    "pin_lock": "PIN session state",
+    "pin_unlock": "PIN session state, reads the live settings store",
+    "platform_switch_account": "changes the current account after switchDelayMs; modelled from spec"
+  }
+}
