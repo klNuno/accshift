@@ -1024,16 +1024,18 @@ fn install_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
     let dir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
     let read = |name: &str| std::fs::read(format!(r"{dir}\Fonts\{name}")).ok();
-    let base: Vec<String> = fonts.families[&FontFamily::Proportional].clone();
     if let Some(bytes) = read("segoeui.ttf") {
         fonts
             .font_data
             .insert("segoe".into(), Arc::new(FontData::from_owned(bytes)));
-        fonts
-            .families
-            .get_mut(&FontFamily::Proportional)
-            .expect("proportional family")
-            .insert(0, "segoe".into());
+        // On Windows egui ships no fonts of its own (see Cargo.toml): Segoe
+        // UI is then the whole proportional family and the monospace one.
+        for family in [FontFamily::Proportional, FontFamily::Monospace] {
+            let list = fonts.families.entry(family.clone()).or_default();
+            if family == FontFamily::Proportional || list.is_empty() {
+                list.insert(0, "segoe".into());
+            }
+        }
     }
     let mut semibold_family = Vec::new();
     if let Some(bytes) = read("seguisb.ttf") {
@@ -1043,7 +1045,7 @@ fn install_fonts(ctx: &egui::Context) {
         );
         semibold_family.push("segoe-semibold".to_string());
     }
-    semibold_family.extend(base);
+    semibold_family.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
     fonts.families.insert(semibold(), semibold_family);
     ctx.set_fonts(fonts);
 }

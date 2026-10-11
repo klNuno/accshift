@@ -1,0 +1,32 @@
+[package]
+name = "egui_software_backend"
+description = "Vendored rasterizer of egui_software_backend 0.0.3, ported to egui 0.36"
+version = "0.0.3"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# Copied from https://github.com/DGriffin91/egui_software_backend at 0.0.3
+# (crates.io), which targets egui 0.34. Only the rasterizer is kept: the winit
+# runner and the test renderer are dropped, the spike has its own runner.
+# egui 0.36 no longer re-exports ahash: it is a direct dependency, as on
+# upstream main.
+
+[features]
+default = ["std"]
+std = ["ahash/std"]
+raster_stats = ["std"]
+# Rasterizes primitives and composites tile rows on the rayon pool.
+rayon = ["std", "dep:rayon"]
+
+[dependencies]
+ahash = { version = "0.8", default-features = false, features = ["no-rng"] }
+constify = "0.0.1"
+egui = { version = "0.36", default-features = false }
+rayon = { version = "1.11", optional = true }
+strength_reduce = "0.2.4"
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+# Upstream features whose dependencies are not vendored.
+check-cfg = ['cfg(feature, values("log"))']

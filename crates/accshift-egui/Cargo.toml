@@ -7,7 +7,7 @@ publish = false
 
 # Standalone on purpose: the root workspace runs `cargo clippy --workspace` and
 # `cargo test --workspace` in CI on three OSes, and a spike has no business
-# adding eframe, glow and wgpu to that build. The root `Cargo.toml` excludes
+# adding eframe, glow, winit and a vendored rasterizer to that build. The root `Cargo.toml` excludes
 # this folder.
 [workspace]
 
@@ -16,36 +16,84 @@ publish = false
 # %TEMP%\accshift-egui-bench\<pid>.jsonl. The harness refuses any exe that
 # lacks the marker string, so a bench run can never pop a window.
 startup-bench = []
+# Renderer, pick one. `software`: egui meshes rasterized on the CPU and blitted
+# with softbuffer (GDI on Windows), no GPU driver loaded. `glow`: eframe on
+# OpenGL, the first version of the spike.
+software = ["dep:egui-winit", "dep:softbuffer", "dep:egui_software_backend"]
+glow = ["dep:eframe"]
+default = ["software"]
 
 [dependencies]
 accshift-core = { path = "../accshift-core" }
-# Same backend choice as spotifast: glow keeps the binary and the tree small,
-# wgpu buys nothing for a 2D grid.
-eframe = { version = "0.36", default-features = false, features = [
+# Same backend choice as spotifast for the `glow` path: glow keeps the binary
+# and the tree small, wgpu buys nothing for a 2D grid.
+eframe = { version = "0.36", optional = true, default-features = false, features = [
   "accesskit",
   "glow",
   "default_fonts",
 ] }
-egui = "0.36"
+# The software path: the window and input layer eframe uses (egui-winit
+# re-exports winit and accesskit_winit), a CPU rasterizer, a GDI blit.
+egui-winit = { version = "0.36", optional = true, default-features = false, features = [
+  "accesskit",
+  "clipboard",
+  "links",
+] }
+softbuffer = { version = "0.4", optional = true, default-features = false }
+egui_software_backend = { path = "vendor/egui_software_backend", optional = true, features = [
+  "rayon",
+] }
+# No bundled fonts on Windows: the app draws with Segoe UI read from the
+# system, and the 1.2 MB of egui's defaults cost startup time (a bigger exe
+# reaches `main` later, see build.rs). Other OSes keep them as the only fonts.
+egui = { version = "0.36", default-features = false }
 egui_extras = { version = "0.36", default-features = false, features = ["svg"] }
 # The same resvg egui_extras rasterizes with, for its options type.
 resvg = { version = "0.45", default-features = false }
 raw-window-handle = "0.6"
 
+[target.'cfg(not(windows))'.dependencies]
+egui = { version = "0.36", features = ["default_fonts"] }
+
 [target.'cfg(windows)'.dependencies]
 # The OS acrylic behind a transparent window: what Glass Dark uses in Tauri.
 window-vibrancy = "0.8"
 # DWM cloak for the bench build: the window exists and renders, but is never
-# composited on screen.
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
+# composited on screen. UI Automation: warmed up off the UI thread at start.
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_UI_Accessibility",
+] }
 
-# Mirrors the root workspace profile so binary sizes compare.
+# The root workspace profile, except the size: a smaller exe reaches `main`
+# sooner (build.rs), so everything is built for size but the per-frame hot
+# path below.
 [profile.release]
 panic = "abort"
 codegen-units = 1
 lto = "fat"
-opt-level = 2
+opt-level = "s"
 strip = true
+
+[profile.release.package.egui_software_backend]
+opt-level = 3
+
+[profile.release.package.epaint]
+opt-level = 3
+
+# Avatar SVG raster and blur, off the UI thread but on the way to `ready`.
+[profile.release.package.accshift-egui]
+opt-level = 3
+
+[profile.release.package.resvg]
+opt-level = 3
+
+[profile.release.package.tiny-skia]
+opt-level = 3
+
+[profile.release.package.tiny-skia-path]
+opt-level = 3
 
 # The `windows` bindings crate alone needs about 2 GB of RAM at opt-level 2
 # with one codegen unit. Fat LTO optimizes its bitcode again at the final link,
