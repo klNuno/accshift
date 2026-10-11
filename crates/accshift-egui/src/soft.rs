@@ -136,7 +136,9 @@ impl Runner {
             // A buffer that still holds the last frame only needs the tiles
             // that changed; a new one (first frame, resize) or a repaint the
             // OS asked for gets everything.
-            let full = std::mem::take(&mut live.full_present) || buffer.age() == 0;
+            let full = std::mem::take(&mut live.full_present)
+                || buffer.age() == 0
+                || os_wants_full_paint(&live.window);
             // SAFETY: [u8; 4] has the size of u32 and a weaker alignment.
             let pixels = unsafe {
                 std::slice::from_raw_parts_mut(buffer.as_mut_ptr().cast::<[u8; 4]>(), buffer.len())
@@ -185,6 +187,15 @@ impl Runner {
                 .iter()
                 .map(|r| r.width.get() as usize * r.height.get() as usize)
                 .sum();
+            if !live.shown {
+                // Like eframe, the window waits for its first frame, but it
+                // shows right before that frame's present: a blit into a
+                // hidden window is lost, and the repaint the OS asks for when
+                // it shows would be swallowed by the next damaged-tiles
+                // present, since softbuffer validates the whole window.
+                live.shown = true;
+                live.window.set_visible(true);
+            }
             buffer
                 .present_with_damage(&damage)
                 .expect("softbuffer present");
@@ -241,7 +252,7 @@ impl Runner {
         }
 
         if !live.shown {
-            // Like eframe: created hidden, shown once the first frame is in.
+            // A zero-sized first frame presented nothing; show anyway.
             live.shown = true;
             live.window.set_visible(true);
         }
@@ -254,6 +265,33 @@ impl Runner {
             event_loop.exit();
         }
     }
+}
+
+/// Whether Windows has part of the client area marked for repaint: it does
+/// when it shows, restores or otherwise invalidates the window, and then it
+/// expects all of it back. softbuffer validates the whole window on every
+/// present, so a damaged-tiles present would swallow that request and leave
+/// stale or blank areas until the next full present.
+#[cfg(windows)]
+fn os_wants_full_paint(window: &Window) -> bool {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let Ok(handle) = window.window_handle() else {
+        return false;
+    };
+    let RawWindowHandle::Win32(h) = handle.as_raw() else {
+        return false;
+    };
+    // SAFETY: live HWND owned by this runner; a null rect only asks whether
+    // the update region is empty.
+    unsafe {
+        windows_sys::Win32::Graphics::Gdi::GetUpdateRect(h.hwnd.get() as _, std::ptr::null_mut(), 0)
+            != 0
+    }
+}
+
+#[cfg(not(windows))]
+fn os_wants_full_paint(_window: &Window) -> bool {
+    false
 }
 
 /// The frame as egui's glow painter returns it: premultiplied RGBA.
