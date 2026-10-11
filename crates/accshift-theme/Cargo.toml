@@ -1,0 +1,16 @@
+[package]
+name = "accshift-theme"
+description = "The accshift theme engine (tokens, schema, surface opacities, CSS variables) as plain Rust"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone like accshift-egui: the root workspace excludes this folder, so the
+# egui port can depend on it without touching the Tauri build.
+[workspace]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# preserve_order: object keys keep file order, which is what JSON.stringify
+# does and what a byte-for-byte theme export needs.
+serde_json = { version = "1", features = ["preserve_order"] }
