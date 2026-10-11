@@ -17,7 +17,7 @@ The accshift main screen redrawn in [egui](https://github.com/emilk/egui) 0.36, 
 
 What the software path does to stay cheap:
 
-- Only the 64 px tiles that changed are rasterized, copied and presented (`present_with_damage`); a full copy happens on the first frame, a resize or an OS repaint.
+- Only the 64 px tiles that changed are rasterized, copied and presented (`present_with_damage`); a full copy happens on the first frame, a resize or whenever Windows has part of the window marked for repaint (softbuffer validates the whole window on each present, so that request would otherwise be lost).
 - Frames are paced to the monitor's refresh rate instead of vsync, and rayon spreads the raster over the tiles.
 - Startup: no bundled fonts on Windows (Segoe UI comes from the system), the exe is built for size except the per-frame hot path, the UI Automation, shell and COM DLLs are delay-loaded (`build.rs`), UI Automation warms up on another thread, and window drag and drop stays off so winit skips `OleInitialize`.
 
@@ -53,8 +53,9 @@ Interleaved A/B against the Tauri `startup-bench` build of the same commit, 15 l
 - Software frame cost during the capture script, measured on every paint: at 1290x660 pixels, median 0.40 ms, p95 1.6 ms, 8 % of one core; at 2580x1320, median 0.53 ms, p95 5.2 ms, 18 % of one core. The worst frame (73 ms at the bigger size) is the one where every avatar texture arrives.
 - The software captures match the glow ones within rounding (PSNR about 51 dB), and every shot is byte-identical between a full redraw and the damaged-tiles path. Both match the Tauri frames of `demo-switch` closely: metrics, colours, rings, the blurred armed avatar and the hint line up. Text is the visible difference, because egui has no variable-font weights (the 500 weight of card names is drawn with the semibold face) and no subpixel positioning like Chromium.
 - The spike covers one screen in about 2,700 lines of Rust plus the vendored rasterizer. The Svelte front-end it would replace is about 15,600 lines of Svelte and 23,300 of TypeScript (settings, personas, dialogs, bulk edit, theming, i18n, the theme editor).
+- In a visible window on Windows 10 22H2, driven with real mouse and keyboard input: the acrylic shows through the GDI blit, and hover, arm and switch, search, the tabs, the folder, the list view, maximize and restore, the title-bar drag, an OS-side resize and the close button all work. The window holds 31 MB of working set there.
 
-Not verified: the software path in a visible window (acrylic through the GDI blit, drag, maximize, live resize), other GPUs and Windows versions, Linux and macOS, accessibility with a screen reader, a wgpu backend.
+Not verified: resizing by dragging a window edge, a visible window on Windows 11, other GPUs, Linux and macOS, accessibility with a screen reader, a wgpu backend.
 
 ## Layout
 
