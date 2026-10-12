@@ -21,7 +21,7 @@ use crate::theme::Rgba;
 use crate::ui::anim;
 use crate::ui::paint::{Border, BoxStyle, Corners};
 use crate::ui::snap;
-use crate::ui::text::{self, LineHeight, TextStyle};
+use crate::ui::text::{self, LineHeight, TextAlign, TextStyle};
 
 /// One look of the field.
 #[derive(Clone, Debug, PartialEq)]
@@ -43,6 +43,8 @@ pub struct FieldStyle {
     /// The caret is 1 CSS px wide, rounded to device pixels; otherwise one
     /// device pixel at every scale.
     pub caret_scaled: bool,
+    /// The border colour eases over 120 ms (`transition: border-color`).
+    pub border_transition: bool,
 }
 
 impl FieldStyle {
@@ -80,6 +82,7 @@ pub fn settings_style(v: &Vars) -> FieldStyle {
         border_focus: v.fg_muted.mix(0.55, v.border),
         caret_height: 14.0,
         caret_scaled: false,
+        border_transition: true,
     }
 }
 
@@ -97,6 +100,7 @@ pub fn dialog_style(v: &Vars) -> FieldStyle {
         border_focus: v.bg_elevated,
         caret_height: 17.0,
         caret_scaled: true,
+        border_transition: true,
     }
 }
 
@@ -299,7 +303,11 @@ pub fn text_input(
     } else {
         st.border_color
     };
-    let border = anim::transition(&ctx, id.with("border"), border, &T120);
+    let border = if st.border_transition {
+        anim::transition(&ctx, id.with("border"), border, &T120)
+    } else {
+        border
+    };
     let boxed = snap::rect(rect, ppp);
     BoxStyle {
         background: st.background,
@@ -333,7 +341,7 @@ pub fn text_input(
         let phase = (since / BLINK).floor() as i64;
         if phase % 2 == 0 {
             ui.painter().rect_filled(
-                caret_rect(st, text_rect, text_w, ppp),
+                caret_rect(st, text_rect, text_w, !shown.is_empty(), ppp),
                 0.0,
                 v.fg.to_color32(),
             );
@@ -345,19 +353,32 @@ pub fn text_input(
 }
 
 /// The caret after `text_w` (points) of text in the line box `line`:
-/// `caret_height` rounded to device pixels and centred; its left edge is
-/// the text's end in `LayoutUnit`s (the width truncated to 1/64 device px)
-/// floored to the device grid (measured after typed text at 1x and 1.5x).
-fn caret_rect(st: &FieldStyle, line: Rect, text_w: f32, ppp: f32) -> Rect {
+/// `caret_height` rounded to device pixels and centred. Its left edge is
+/// the text's end in `LayoutUnit`s (the width truncated to 1/64 device px,
+/// after half the free space under `text-align: center`);
+/// after text Blink moves it back half its width and rounds, on an empty
+/// line it stays on the floored end (measured at 1x and 1.5x: 645 empty,
+/// 659 after "12" ending at 660, 2 device px wide).
+fn caret_rect(st: &FieldStyle, line: Rect, text_w: f32, after_text: bool, ppp: f32) -> Rect {
     let h = snap::round_device(st.caret_height * ppp);
     let top = (snap::layout_unit(line.top() * ppp) + (snap::layout_unit(st.line * ppp) - h) / 2.0)
         .floor();
-    let w = if st.caret_scaled {
-        snap::round_device(ppp).max(1.0)
+    // `LocalFrameView::CaretWidth`: 1 CSS px in layout units.
+    let caret = if st.caret_scaled { ppp.max(1.0) } else { 1.0 };
+    let start = snap::layout_unit(line.left() * ppp);
+    let text = (text_w * ppp * 64.0).floor() / 64.0;
+    let lead = if st.font.align == TextAlign::Center {
+        let free = snap::layout_unit(line.right() * ppp) - start - text;
+        ((free * 32.0).floor() / 64.0).max(0.0)
     } else {
-        1.0
+        0.0
     };
-    let end = snap::layout_unit(line.left() * ppp) + (text_w * ppp * 64.0).floor() / 64.0;
-    let left = end.floor();
+    let end = start + lead + text;
+    let left = if after_text {
+        (end - caret / 2.0 + 0.5).floor()
+    } else {
+        end.floor()
+    };
+    let w = ((left + caret + 0.5).floor() - left).max(1.0);
     Rect::from_min_size(pos2(left, top) / ppp, vec2(w, h) / ppp)
 }

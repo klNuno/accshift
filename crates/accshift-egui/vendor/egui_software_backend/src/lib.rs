@@ -116,7 +116,13 @@ struct Backdrop {
     blurred: Vec<[u8; 4]>,
     /// Size, sigma bits and root of `blurred`.
     key: Option<(usize, usize, u32, Option<usize>)>,
+    /// The filtered element landed on what lies under it.
+    filtered: Vec<[u8; 4]>,
+    /// Size, filter bits and root of `filtered`.
+    filter_key: Option<FilterKey>,
 }
+
+type FilterKey = (usize, usize, [u32; 3], Option<usize>);
 
 impl EguiSoftwareRender {
     /// # Arguments
@@ -299,10 +305,14 @@ impl EguiSoftwareRender {
                 .collect(),
             None => Vec::new(),
         };
+        let filter = ops
+            .iter()
+            .find_map(|&(i, op)| matches!(op, BackdropOp::Filter { .. }).then_some((i, op)));
         let begin = ops
             .iter()
-            .find_map(|&(i, op)| matches!(op, BackdropOp::Begin { .. }).then_some((i, op)));
-        let base_end = begin.map_or(paint_jobs.len(), |(i, _)| i);
+            .find_map(|&(i, op)| matches!(op, BackdropOp::Begin { .. }).then_some((i, op)))
+            .filter(|_| filter.is_none());
+        let base_end = filter.or(begin).map_or(paint_jobs.len(), |(i, _)| i);
         let paint_jobs_all = paint_jobs;
         let paint_jobs = &paint_jobs_all[..base_end];
 
@@ -329,7 +339,30 @@ impl EguiSoftwareRender {
 
         let was_shown = self.backdrop.shown;
         self.backdrop.active = false;
-        if let Some((k, BackdropOp::Begin { sigma, opacity })) = begin {
+        if let Some((
+            f,
+            BackdropOp::Filter {
+                sigma,
+                saturate,
+                scale,
+            },
+        )) = filter
+        {
+            let root = ops
+                .iter()
+                .filter(|&&(i, op)| i < f && op == BackdropOp::Root)
+                .map(|&(i, _)| i)
+                .next_back();
+            self.compose_filter(
+                paint_jobs_all,
+                f,
+                root,
+                [sigma, saturate, scale],
+                pixels_per_point,
+                reinit_canvas,
+            );
+            self.backdrop.active = true;
+        } else if let Some((k, BackdropOp::Begin { sigma, opacity })) = begin {
             let end = ops
                 .iter()
                 .find_map(|&(i, op)| (i > k && op == BackdropOp::End).then_some(i))
@@ -403,12 +436,57 @@ impl EguiSoftwareRender {
         self.backdrop.out = out;
     }
 
+    /// The filter of `paint_jobs[f]` on the element from `root` on, landed
+    /// on what came before `root`, then the jobs after `f` drawn on top.
+    fn compose_filter(
+        &mut self,
+        paint_jobs: &[egui::ClippedPrimitive],
+        f: usize,
+        root: Option<usize>,
+        [sigma, saturate, scale]: [f32; 3],
+        pixels_per_point: f32,
+        canvas_changed: bool,
+    ) {
+        let (width, height) = (self.canvas.width, self.canvas.height);
+        let bits = [sigma.to_bits(), saturate.to_bits(), scale.to_bits()];
+        let key = (width, height, bits, root);
+        if canvas_changed || self.backdrop.filter_key != Some(key) {
+            let (mut under, element) = match root {
+                Some(r) => (
+                    self.composite_where(|z| z < r),
+                    self.composite_where(|z| z > r),
+                ),
+                None => (vec![[0u8; 4]; width * height], self.canvas.data.clone()),
+            };
+            let filtered = backdrop::filter(&element, width, height, sigma, saturate, scale);
+            backdrop::land(&mut under, &filtered, 1.0);
+            self.backdrop.filtered = under;
+            self.backdrop.filter_key = Some(key);
+        }
+        let mut out = core::mem::take(&mut self.backdrop.out);
+        out.clear();
+        out.extend_from_slice(&self.backdrop.filtered);
+        let after = paint_jobs.get(f + 1..).unwrap_or(&[]);
+        self.draw_jobs_direct(
+            &mut BufferMutRef::new(&mut out, width, height),
+            after,
+            pixels_per_point,
+        );
+        self.backdrop.out = out;
+    }
+
     /// The cached primitives painted after `after`, over transparent.
     fn composite_after(&self, after: usize) -> Vec<[u8; 4]> {
+        self.composite_where(|z| z > after)
+    }
+
+    /// The cached primitives whose paint order passes `keep`, over
+    /// transparent.
+    fn composite_where(&self, keep: impl Fn(usize) -> bool) -> Vec<[u8; 4]> {
         let mut sorted: Vec<&CachedPrimitive> = self
             .cached_primitives
             .values()
-            .filter(|p| p.z_order > after)
+            .filter(|p| keep(p.z_order))
             .collect();
         sorted.sort_unstable_by_key(|p| p.z_order);
         let (width, height) = (self.canvas.width, self.canvas.height);

@@ -1,0 +1,39 @@
+{
+  "id": "secure-afk-still-light-100",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "light",
+  "locale": "en",
+  "seed": {
+    "SETTINGS": {
+      "inactivityBlurSeconds": 1,
+      "animations": "off"
+    }
+  },
+  "steps": [
+    {
+      "wait": 2500
+    },
+    {
+      "shot": "afk"
+    },
+    {
+      "dom": "afk",
+      "select": ".inactive-overlay, .inactive-overlay *, .afk-version-strip, .afk-version-strip *"
+    },
+    {
+      "move": [430, 300]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "back"
+    }
+  ]
+}

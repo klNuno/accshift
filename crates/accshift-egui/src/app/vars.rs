@@ -49,6 +49,8 @@ pub struct Vars {
     pub border_style_none: bool,
     /// `--danger`.
     pub danger: Rgba,
+    /// `--afk-text`: the AFK screen's wordmark and version.
+    pub afk_text: Rgba,
     /// `--success`.
     pub success: Rgba,
     /// `--elevation-medium`, first on top.
@@ -131,6 +133,7 @@ impl Vars {
                 .substitute("--border-style")
                 .is_some_and(|style| style.trim() == "none"),
             danger: color("--danger"),
+            afk_text: color("--afk-text"),
             success: color("--success"),
             elevation_medium: theme
                 .substitute("--elevation-medium")

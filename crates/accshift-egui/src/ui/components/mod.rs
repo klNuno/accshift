@@ -22,6 +22,7 @@ pub mod focus;
 pub mod folder_card;
 pub mod icon;
 pub mod list_view;
+pub mod secure_overlays;
 pub mod platform_icons;
 pub mod search_cancel;
 pub mod section_header;

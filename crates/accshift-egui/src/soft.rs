@@ -305,6 +305,15 @@ fn backdrop_op(
         Mark::Root => BackdropOp::Root,
         Mark::Begin { sigma, opacity } => BackdropOp::Begin { sigma, opacity },
         Mark::End => BackdropOp::End,
+        Mark::Filter {
+            sigma,
+            saturate,
+            scale,
+        } => BackdropOp::Filter {
+            sigma,
+            saturate,
+            scale,
+        },
     })
 }
 

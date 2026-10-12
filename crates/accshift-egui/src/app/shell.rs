@@ -7,9 +7,16 @@
 //!     .app-shell        var(--bg) and var(--bg-image)
 //!       TitleBar        Windows and Linux, page-entrance
 //!       {#key panelKey} the panel, page-entrance on every switch
-//!     AppDialogs        the toast stack, the input and confirm dialogs,
+//!       .inactivity-frost  over the panel while the screen is obscured
+//!       AppDialogs      the toast stack, the input and confirm dialogs,
 //!                       then the context menu
+//!     AppScreenOverlays the AFK cover and its version strip, then the PIN
+//!                       lock
 //! ```
+//!
+//! `.app-shell.obscured` (`filter: blur(10px) saturate(82%)`,
+//! `transform: scale(1.01)`, 320 ms ease-out) is a [`Mark::Filter`] after
+//! the shell's shapes: the software renderer filters them as one layer.
 //!
 //! Before the boot payload lands the frame is `opacity: 0`: nothing but the
 //! stand-in desktop of a scene run is drawn.
@@ -23,10 +30,11 @@ use super::platforms::{PlatformDef, RuntimeOs};
 use super::{Action, AppModel, Booted};
 use crate::screens::settings;
 use crate::screens::workspace::{self, WorkspaceInput};
-use crate::ui::anim::{Animation, Fill, Motion, Timing};
+use crate::ui::anim::{self, Animation, Fill, Motion, Timing, Transition};
 use crate::ui::backdrop_filter::Mark;
 use crate::ui::components::context_menu::{self, ContextMenuProps};
 use crate::ui::components::dialog::{self, DialogProps};
+use crate::ui::components::secure_overlays::{self, AfkProps, PinProps};
 use crate::ui::components::title_bar::{self, TitleBarProps};
 use crate::ui::components::toast::{self, ToastProps};
 use crate::ui::paint::BoxStyle;
@@ -44,6 +52,25 @@ const STAGE_ENTRANCE: Animation = Animation::new(0.22, Timing::EASE_OUT)
     .with_fill(Fill::Backwards);
 /// The last step of the boot cascade ends here, seconds after `boot-ready`.
 pub const BOOT_CASCADE: f64 = 0.27;
+/// `.app-shell { transition: filter 320ms ease-out, transform 320ms ease-out }`.
+const OBSCURE: Transition = Transition::new(0.32, Timing::EASE_OUT);
+
+/// What the AFK cover draws this frame.
+struct AfkView {
+    visible: bool,
+    wave: bool,
+    reveal_delay: f64,
+    version: Option<String>,
+}
+
+/// What the PIN lock draws this frame.
+struct PinView {
+    attempt: String,
+    error: Option<String>,
+    input_enabled: bool,
+    unlocking: bool,
+    code_len: usize,
+}
 
 /// Copies of the frame drawn to approximate `filter: blur()`.
 const BLUR_TAPS: usize = 12;
@@ -210,6 +237,27 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         // Nothing open: the next menu mounts fresh.
         context_menu::reset(&ctx);
     }
+    let pin_focus = std::mem::take(&mut app.pin_focus);
+    let (obscured, afk, pin) = match app.booted.as_ref() {
+        Some(b) => {
+            let s = &b.secure;
+            let afk = (!s.render_suspended()).then(|| AfkView {
+                visible: s.afk_overlay_visible(),
+                wave: s.afk_wave_active() && !s.motion_paused(),
+                reveal_delay: s.afk_text_reveal_delay_ms() as f64 / 1000.0,
+                version: s.afk_version_label().map(str::to_string),
+            });
+            let pin = s.pin_overlay_visible().then(|| PinView {
+                attempt: s.pin_attempt().to_string(),
+                error: s.pin_error().map(|t| t.resolve(b.locale)),
+                input_enabled: s.pin_input_enabled(),
+                unlocking: s.is_pin_unlocking(),
+                code_len: s.pin_code_length(),
+            });
+            (s.is_obscured(), afk, pin)
+        }
+        None => (false, None, None),
+    };
     let Some(Booted {
         accounts,
         workspace: ws,
@@ -223,6 +271,10 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         return actions;
     };
     let platform = platforms.iter().find(|p| p.id == nav.active_tab);
+    // `inert` on `.app-shell` under the lock: the shell gets no input.
+    let held = pin
+        .as_ref()
+        .map(|_| ctx.input_mut(|i| std::mem::take(&mut i.events)));
     ui.with_visual_transform(frame_transform, |ui| {
         let mut frame_ui = ui.new_child(UiBuilder::new().max_rect(window));
         frame_ui.multiply_opacity(frame.opacity);
@@ -285,6 +337,9 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                     settings::draw(ui, panel, sp, view, focus_visible)
                 }));
             }
+            // `.inactivity-frost` (`--z-frost`), above the panel and the
+            // title bar.
+            secure_overlays::frost(ui, stage, obscured, &vars);
             // `.toast-container`, fixed to the frame (its transform makes it
             // the containing block), above the panel.
             let props = ToastProps {
@@ -352,9 +407,62 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
             }
         });
     });
+    if let Some(events) = held {
+        ctx.input_mut(|i| i.events = events);
+    }
     let end = next_idx(&ctx, layer_id);
     if motion == Motion::Full && frame.blur > 0.25 {
         blur_range(&ctx, layer_id, start, end, frame.blur);
+    }
+    // `.app-shell.obscured`.
+    let k = anim::transition_bool(
+        &ctx,
+        egui::Id::new("app-shell/obscured"),
+        obscured,
+        &OBSCURE,
+    );
+    if k > 0.0 {
+        if cfg!(feature = "glow") {
+            blur_range(&ctx, layer_id, start, end, 10.0 * k);
+        } else {
+            Mark::Filter {
+                sigma: 10.0 * k * ctx.pixels_per_point(),
+                saturate: 1.0 - 0.18 * k,
+                scale: 1.0 + 0.01 * k,
+            }
+            .paint(ui.painter(), window);
+        }
+    }
+    if let Some(afk) = afk {
+        secure_overlays::afk_overlay(
+            ui,
+            stage,
+            &AfkProps {
+                vars: &vars,
+                visible: afk.visible,
+                wave: afk.wave,
+                reveal_delay: afk.reveal_delay,
+                version: afk.version.as_deref(),
+            },
+        );
+    }
+    if let Some(pin) = pin {
+        let props = PinProps {
+            vars: &vars,
+            locale: *locale,
+            attempt: &pin.attempt,
+            error: pin.error.as_deref(),
+            input_enabled: pin.input_enabled,
+            unlocking: pin.unlocking,
+            focus: pin_focus,
+            code_len: pin.code_len,
+            dark: theme.theme.color_scheme == ColorScheme::Dark,
+        };
+        actions.extend(
+            secure_overlays::pin_overlay(ui, stage, &props)
+                .into_iter()
+                .map(Action::Pin),
+        );
     }
     actions
 }

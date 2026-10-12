@@ -20,6 +20,14 @@ pub enum Mark {
         opacity: f32,
     },
     End,
+    /// `filter: blur(sigma) saturate(saturate)` and `transform:
+    /// scale(scale)` on everything since [`Mark::Root`] (`.app-shell`
+    /// obscured), `sigma` in device pixels. What comes after draws on top.
+    Filter {
+        sigma: f32,
+        saturate: f32,
+        scale: f32,
+    },
 }
 
 impl Mark {

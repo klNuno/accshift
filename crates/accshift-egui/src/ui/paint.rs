@@ -262,12 +262,12 @@ impl Default for BoxStyle {
 
 // ---------------------------------------------------------------- colour
 
-fn premul(c: Rgba, opacity: f32) -> [f32; 4] {
+pub(crate) fn premul(c: Rgba, opacity: f32) -> [f32; 4] {
     let a = (c.a * opacity).clamp(0.0, 1.0);
     [c.r / 255.0 * a, c.g / 255.0 * a, c.b / 255.0 * a, a]
 }
 
-fn to_color32(p: [f32; 4]) -> Color32 {
+pub(crate) fn to_color32(p: [f32; 4]) -> Color32 {
     let q = |v: f32| (v * 255.0).round().clamp(0.0, 255.0) as u8;
     Color32::from_rgba_premultiplied(q(p[0]), q(p[1]), q(p[2]), q(p[3]))
 }
@@ -734,7 +734,11 @@ struct Cache {
 
 type SharedCache = Arc<Mutex<Cache>>;
 
-fn cached_texture(ctx: &Context, key: u64, make: impl FnOnce() -> ColorImage) -> TextureId {
+pub(crate) fn cached_texture(
+    ctx: &Context,
+    key: u64,
+    make: impl FnOnce() -> ColorImage,
+) -> TextureId {
     let cache = ctx.data_mut(|d| {
         d.get_temp_mut_or_default::<SharedCache>(Id::new("accshift::paint::textures"))
             .clone()
@@ -1037,6 +1041,49 @@ fn paint_gradient(painter: &Painter, geo: &BoxGeometry, g: &Gradient, opacity: f
 
 // ---------------------------------------------------------------- shadows
 
+/// A gaussian blur of `grid` (`w` by `h`, row by row) in place, kernel
+/// radius 3 sigma, nothing outside the grid.
+pub(crate) fn blur_grid(grid: &mut [f32], w: usize, h: usize, sigma: f32) {
+    if sigma <= 0.0 {
+        return;
+    }
+    let k = (3.0 * sigma).ceil() as usize;
+    let weights: Vec<f32> = (0..=2 * k)
+        .map(|i| {
+            let d = i as f32 - k as f32;
+            (-d * d / (2.0 * sigma * sigma)).exp()
+        })
+        .collect();
+    let sum: f32 = weights.iter().sum();
+    let weights: Vec<f32> = weights.iter().map(|w| w / sum).collect();
+    let mut tmp = vec![0f32; w * h];
+    for y in 0..h {
+        let row = &grid[y * w..(y + 1) * w];
+        for x in 0..w {
+            let mut acc = 0.0;
+            for (i, wt) in weights.iter().enumerate() {
+                let sx = x as isize + i as isize - k as isize;
+                if sx >= 0 && (sx as usize) < w {
+                    acc += row[sx as usize] * wt;
+                }
+            }
+            tmp[y * w + x] = acc;
+        }
+    }
+    for y in 0..h {
+        for x in 0..w {
+            let mut acc = 0.0;
+            for (i, wt) in weights.iter().enumerate() {
+                let sy = y as isize + i as isize - k as isize;
+                if sy >= 0 && (sy as usize) < h {
+                    acc += tmp[sy as usize * w + x] * wt;
+                }
+            }
+            grid[y * w + x] = acc;
+        }
+    }
+}
+
 /// A shadow mask: an outer one is `blur(shape) * (1 - clip)`, an inset one
 /// `(1 - blur(shape)) * clip`, both in mask pixels.
 fn render_shadow_mask(
@@ -1059,42 +1106,7 @@ fn render_shadow_mask(
             grid[y * gw + x] = shape.coverage(p);
         }
     }
-    if k > 0 {
-        let weights: Vec<f32> = (0..=2 * k)
-            .map(|i| {
-                let d = i as f32 - k as f32;
-                (-d * d / (2.0 * sigma * sigma)).exp()
-            })
-            .collect();
-        let sum: f32 = weights.iter().sum();
-        let weights: Vec<f32> = weights.iter().map(|w| w / sum).collect();
-        let mut tmp = vec![0f32; gw * gh];
-        for y in 0..gh {
-            let row = &grid[y * gw..(y + 1) * gw];
-            for x in 0..gw {
-                let mut acc = 0.0;
-                for (i, w) in weights.iter().enumerate() {
-                    let sx = x as isize + i as isize - k as isize;
-                    if sx >= 0 && (sx as usize) < gw {
-                        acc += row[sx as usize] * w;
-                    }
-                }
-                tmp[y * gw + x] = acc;
-            }
-        }
-        for y in 0..gh {
-            for x in 0..gw {
-                let mut acc = 0.0;
-                for (i, w) in weights.iter().enumerate() {
-                    let sy = y as isize + i as isize - k as isize;
-                    if sy >= 0 && (sy as usize) < gh {
-                        acc += tmp[sy as usize * gw + x] * w;
-                    }
-                }
-                grid[y * gw + x] = acc;
-            }
-        }
-    }
+    blur_grid(&mut grid, gw, gh, sigma);
     let mut pixels = Vec::with_capacity(size[0] * size[1]);
     for y in 0..size[1] {
         for x in 0..size[0] {

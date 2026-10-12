@@ -837,6 +837,12 @@ impl FontsView<'_> {
         self.fonts.options()
     }
 
+    /// The font atlas pixels, without the copy [`Self::image`] makes.
+    #[inline]
+    pub fn atlas_image(&self) -> &crate::ColorImage {
+        self.fonts.atlas.image()
+    }
+
     #[inline]
     pub fn definitions(&self) -> &FontDefinitions {
         &self.fonts.definitions

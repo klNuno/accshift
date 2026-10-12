@@ -24,6 +24,7 @@ pub mod accounts;
 pub mod avatars;
 pub mod clock;
 pub mod platforms;
+mod secure;
 pub mod settings_panel;
 mod shell;
 pub mod vars;
@@ -49,6 +50,7 @@ use accshift_app::menu::{
 use accshift_app::mock::MockBackend;
 use accshift_app::platforms::PlatformAccount;
 use accshift_app::real::RealBackend;
+use accshift_app::secure::screen::SecureScreen;
 use accshift_app::settings::AnimationsMode;
 use accshift_app::storage::{self, StoreId};
 use accshift_app::stores::{ClientStores, StoreContext, ViewMode};
@@ -64,6 +66,7 @@ use crate::screens::workspace::Workspace;
 use crate::ui::anim::{self, Motion};
 use crate::ui::components::context_menu::{self, MenuEvent, SubmenuLoad};
 use crate::ui::components::dialog::DialogEvent;
+use crate::ui::components::secure_overlays::PinEvent;
 use crate::ui::components::toast::ToastEvent;
 use accounts::Accounts;
 use clock::Clock;
@@ -113,6 +116,8 @@ pub enum Action {
     AccountSwitch(String),
     /// A toast was hovered, dismissed or its action clicked.
     Toast(ToastEvent),
+    /// The PIN lock: a new attempt, its window buttons, a drag.
+    Pin(PinEvent),
     /// A right click on a card, a folder or the workspace background, at
     /// this window point (`openAccountContextMenu` and its siblings).
     ContextMenu(MenuTarget, Pos2),
@@ -260,6 +265,12 @@ pub struct Booted {
     pub accounts: Accounts,
     /// The workspace's own state (scroll, mounts, slides).
     pub workspace: Workspace,
+    /// The AFK cover and the PIN lock.
+    pub secure: SecureScreen,
+    /// `handleAppMounted` ran.
+    secure_mounted: bool,
+    /// The settings panel was open last frame (`handleSettingsClosed`).
+    secure_in_settings: bool,
 }
 
 type BootResult = BackendResult<BootPayload>;
@@ -303,6 +314,8 @@ pub struct AppModel {
     focus_visible: bool,
     last_time: f64,
     os_reduced_motion: bool,
+    /// The secure screen asked for keyboard focus in the PIN field.
+    pin_focus: bool,
     /// Frames drawn, for the boot marks.
     frames: u64,
     ready_marked: bool,
@@ -385,6 +398,7 @@ impl AppModel {
             focus_visible: false,
             last_time: 0.0,
             os_reduced_motion: false,
+            pin_focus: false,
             frames: 0,
             ready_marked: false,
         }
@@ -520,6 +534,7 @@ impl AppModel {
             ..Navigation::default()
         };
         let locale = stores.language();
+        let secure = SecureScreen::new(stores.settings(), Instant::now());
         let theme = compute_theme(&registry, &stores, runtime_os, self.os_reduced_motion);
         anim::set_motion(ctx, theme.motion);
         let panel = (nav.panel_key(), now);
@@ -549,6 +564,9 @@ impl AppModel {
             init_error: report.load_error,
             accounts,
             workspace: Workspace::new(),
+            secure,
+            secure_mounted: false,
+            secure_in_settings: false,
         });
         // `finish_boot` (marks, the startup event); the real shell shows the
         // window here. Fire and forget.
@@ -612,6 +630,7 @@ impl AppModel {
             }
         }
         self.sync_settings(&ctx);
+        self.tick_secure(&ctx);
         self.tick_settings_panel(&ctx, Instant::now());
         self.pump_saves();
         // `had_keyboard_event`: a key without Ctrl, Alt or Meta sets it; a
@@ -743,6 +762,16 @@ impl AppModel {
                     b.accounts.pipeline.toggle_section_collapsed(&key);
                 }
             }
+            Action::Pin(event) => match event {
+                PinEvent::Attempt(value) => {
+                    if let Some(b) = self.booted.as_mut() {
+                        b.secure.set_pin_attempt(&value);
+                    }
+                }
+                PinEvent::Minimize => self.apply_one(ctx, Action::Minimize),
+                PinEvent::Close => self.apply_one(ctx, Action::Close),
+                PinEvent::StartDrag => self.apply_one(ctx, Action::StartDrag),
+            },
             Action::Toast(event) => match event {
                 ToastEvent::Hover(id, hovered) => {
                     self.toasts.set_hovered(id, hovered, Instant::now());
@@ -1055,9 +1084,12 @@ impl AppModel {
                     b.stores.clear_default_game(&steam_id);
                 }
             }
-            // `reportPinLockedError` raises the lock screen, which the
-            // secure screen port owns.
-            TaskEffect::PinLocked => {}
+            // `reportPinLockedError` raises the lock screen.
+            TaskEffect::PinLocked => {
+                if let Some(b) = self.booted.as_mut() {
+                    b.secure.handle_backend_locked();
+                }
+            }
         }
     }
 

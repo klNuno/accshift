@@ -9,3 +9,4 @@ pub mod css;
 pub mod paint;
 pub mod snap;
 pub mod text;
+pub mod text_shadow;

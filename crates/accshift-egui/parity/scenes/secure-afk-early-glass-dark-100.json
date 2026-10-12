@@ -1,0 +1,25 @@
+{
+  "id": "secure-afk-early-glass-dark-100",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "seed": {
+    "SETTINGS": {
+      "inactivityBlurSeconds": 1
+    }
+  },
+  "steps": [
+    {
+      "wait": 2400
+    },
+    {
+      "shot": "covered"
+    }
+  ]
+}

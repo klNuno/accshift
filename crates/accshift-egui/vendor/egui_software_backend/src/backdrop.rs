@@ -21,6 +21,16 @@ pub enum BackdropOp {
     Begin { sigma: f32, opacity: f32 },
     /// Closes the layer.
     End,
+    /// `filter: blur(sigma) saturate(saturate)` then `transform:
+    /// scale(scale)` about the canvas centre on everything painted since
+    /// the last [`BackdropOp::Root`] (the `.app-shell`), landed on what came
+    /// before it. `sigma` is in device pixels. What follows draws on top,
+    /// unfiltered. A frame with a filter ignores [`BackdropOp::Begin`].
+    Filter {
+        sigma: f32,
+        saturate: f32,
+        scale: f32,
+    },
 }
 
 /// Skia's largest Gaussian sigma before the image is scaled down first.
@@ -53,6 +63,97 @@ pub fn blur(src: &[[u8; 4]], width: usize, height: usize, sigma: f32) -> Vec<[u8
         img = upscale(&img, w, h, width, height);
     }
     img
+}
+
+/// A CSS `filter: blur() saturate()` then a `scale()` about the centre, on
+/// premultiplied pixels. Unlike a backdrop, the element is transparent
+/// beyond its edges, so the blur fades out there.
+pub fn filter(
+    src: &[[u8; 4]],
+    width: usize,
+    height: usize,
+    sigma: f32,
+    saturate: f32,
+    scale: f32,
+) -> Vec<[u8; 4]> {
+    assert_eq!(src.len(), width * height);
+    let mut img = if sigma > 0.0 && width > 0 && height > 0 {
+        // Transparent margins wider than the kernel at every scale.
+        let pad = (3.0 * sigma) as usize + 4;
+        let (pw, ph) = (width + 2 * pad, height + 2 * pad);
+        let mut padded = vec![[0u8; 4]; pw * ph];
+        for y in 0..height {
+            let at = (y + pad) * pw + pad;
+            padded[at..at + width].copy_from_slice(&src[y * width..(y + 1) * width]);
+        }
+        let blurred = blur(&padded, pw, ph, sigma);
+        let mut out = Vec::with_capacity(width * height);
+        for y in 0..height {
+            let at = (y + pad) * pw + pad;
+            out.extend_from_slice(&blurred[at..at + width]);
+        }
+        out
+    } else {
+        src.to_vec()
+    };
+    if saturate != 1.0 {
+        saturate_pixels(&mut img, saturate);
+    }
+    if scale != 1.0 && width > 0 && height > 0 {
+        img = scale_about_centre(&img, width, height, scale);
+    }
+    img
+}
+
+/// The `saturate()` matrix of Filter Effects 1, in sRGB. Its rows sum to
+/// one, so it applies to premultiplied pixels as is.
+fn saturate_pixels(img: &mut [[u8; 4]], s: f32) {
+    let m = [
+        [0.213 + 0.787 * s, 0.715 - 0.715 * s, 0.072 - 0.072 * s],
+        [0.213 - 0.213 * s, 0.715 + 0.285 * s, 0.072 - 0.072 * s],
+        [0.213 - 0.213 * s, 0.715 - 0.715 * s, 0.072 + 0.928 * s],
+    ];
+    for p in img.iter_mut() {
+        let c = [p[0] as f32, p[1] as f32, p[2] as f32];
+        let a = p[3] as f32;
+        for (i, row) in m.iter().enumerate() {
+            let v = row[0] * c[0] + row[1] * c[1] + row[2] * c[2];
+            p[i] = round(v.clamp(0.0, a));
+        }
+    }
+}
+
+/// Bilinear resampling of `img` scaled by `k` about its centre, transparent
+/// outside it, as the compositor draws a transformed layer.
+fn scale_about_centre(img: &[[u8; 4]], w: usize, h: usize, k: f32) -> Vec<[u8; 4]> {
+    let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+    let at = |x: isize, y: isize| -> [f32; 4] {
+        if x < 0 || y < 0 || x >= w as isize || y >= h as isize {
+            [0.0; 4]
+        } else {
+            img[y as usize * w + x as usize].map(|v| v as f32)
+        }
+    };
+    let mut out = vec![[0u8; 4]; w * h];
+    for y in 0..h {
+        let fy = (y as f32 + 0.5 - cy) / k + cy - 0.5;
+        let y0 = fy.floor();
+        let ty = fy - y0;
+        for x in 0..w {
+            let fx = (x as f32 + 0.5 - cx) / k + cx - 0.5;
+            let x0 = fx.floor();
+            let tx = fx - x0;
+            let (x0, y0) = (x0 as isize, y0 as isize);
+            let (a, b) = (at(x0, y0), at(x0 + 1, y0));
+            let (c, d) = (at(x0, y0 + 1), at(x0 + 1, y0 + 1));
+            out[y * w + x] = core::array::from_fn(|i| {
+                let top = a[i] * (1.0 - tx) + b[i] * tx;
+                let bottom = c[i] * (1.0 - tx) + d[i] * tx;
+                round(top * (1.0 - ty) + bottom * ty)
+            });
+        }
+    }
+    out
 }
 
 /// `e^x` without `std`: `(1 + x / 2^20)^(2^20)` in f64, within 1e-5 for
@@ -261,6 +362,22 @@ mod tests {
                     .all(|p| *p == [40, 80, 120, 200])
             );
         }
+    }
+
+    #[test]
+    fn a_filter_fades_out_at_the_edges_and_keeps_the_middle() {
+        let src = vec![[200, 100, 50, 255]; 64 * 64];
+        let out = filter(&src, 64, 64, 3.0, 1.0, 1.0);
+        assert_eq!(out[32 * 64 + 32], [200, 100, 50, 255]);
+        // Half the kernel lies outside the element at its edge.
+        let edge = out[32 * 64][3];
+        assert!((110..=150).contains(&edge), "{edge}");
+        // Grey stays grey under saturate().
+        let grey = filter(&[[90, 90, 90, 255]], 1, 1, 0.0, 0.5, 1.0);
+        assert_eq!(grey[0], [90, 90, 90, 255]);
+        // A scale above one pushes the edge out of the canvas.
+        let scaled = filter(&src, 64, 64, 0.0, 1.0, 1.1);
+        assert_eq!(scaled[0], [200, 100, 50, 255]);
     }
 
     #[test]
