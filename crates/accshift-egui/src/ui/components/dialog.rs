@@ -250,7 +250,7 @@ fn button(
 /// ring (white, #101010 under `color-scheme: dark`) pushed out by a third of
 /// the stroke rounded up. The stroke is 3 device px at 1x and 4 at 1.5x
 /// (measured on WebView2).
-fn auto_ring(painter: &Painter, rect: Rect, radius: f32, dark: bool, ppp: f32) {
+pub(crate) fn auto_ring(painter: &Painter, rect: Rect, radius: f32, dark: bool, ppp: f32) {
     let stroke = (3.0 * ppp).floor();
     let width = stroke * 2.0 / 3.0 / ppp;
     let outset = (stroke / 3.0).ceil() / ppp;

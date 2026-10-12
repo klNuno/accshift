@@ -679,7 +679,7 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> Vec<Ca
             &Animation::new(LOADER_SPIN, Timing::LINEAR).infinite(),
             0.0,
         );
-        paint_loader(&painter, mapped.center(), turn, fade, v, ppp);
+        paint_loader(&painter, mapped.center(), turn, fade, v);
         ctx.request_repaint();
     }
 
@@ -905,15 +905,32 @@ fn paint_picture(
 
 /// `.loader`: a 20 px ring, `2px solid --bg-elevated` with an `--fg` top
 /// border, turned by `turn` (0 to 1).
-fn paint_loader(painter: &egui::Painter, centre: Pos2, turn: f32, fade: f32, v: &Vars, ppp: f32) {
+fn paint_loader(painter: &egui::Painter, centre: Pos2, turn: f32, fade: f32, v: &Vars) {
     if fade <= 0.0 {
         return;
     }
-    let bw = snap::border_width(2.0, ppp);
-    let inner = LOADER / 2.0;
+    let rest = v.bg_elevated.alpha(v.bg_elevated.a * fade);
+    let top = v.fg.alpha(v.fg.a * fade);
+    paint_ring_loader(painter, centre, LOADER, 2.0, turn, rest, top);
+}
+
+/// A spinner ring: `size` px across its content box, a `border` px border
+/// in `rest` with a `top` coloured top border, turned by `turn` (0 to 1).
+pub(crate) fn paint_ring_loader(
+    painter: &egui::Painter,
+    centre: Pos2,
+    size: f32,
+    border: f32,
+    turn: f32,
+    rest: Rgba,
+    top: Rgba,
+) {
+    let ppp = painter.ctx().pixels_per_point();
+    let bw = snap::border_width(border, ppp);
+    let inner = size / 2.0;
     let outer = inner + bw;
-    let rest = v.bg_elevated.alpha(v.bg_elevated.a * fade).to_color32();
-    let top = v.fg.alpha(v.fg.a * fade).to_color32();
+    let rest = rest.to_color32();
+    let top = top.to_color32();
     let aa = 0.5 / ppp;
     let mut mesh = Mesh::default();
     let segments = 96;
@@ -1113,7 +1130,7 @@ fn ring(spread: f32, color: Rgba) -> BoxShadow {
 
 /// `object-fit: cover` of a `size` picture in a square box, then `scale()`
 /// about the centre (the box clips it).
-fn cover_uv(size: [usize; 2], zoom: f32) -> Rect {
+pub(crate) fn cover_uv(size: [usize; 2], zoom: f32) -> Rect {
     let (w, h) = (size[0].max(1) as f32, size[1].max(1) as f32);
     let (uw, uh) = if w > h { (h / w, 1.0) } else { (1.0, w / h) };
     let (uw, uh) = (uw / zoom, uh / zoom);

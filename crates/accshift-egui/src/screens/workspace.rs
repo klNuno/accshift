@@ -53,6 +53,7 @@ use crate::ui::components::back_card::{self, BackCardEvent, BackCardProps};
 use crate::ui::components::breadcrumb::{self, BreadcrumbProps, Crumb};
 use crate::ui::components::context_menu;
 use crate::ui::components::folder_card::{self, entrance, FolderCardEvent, FolderCardProps};
+use crate::ui::components::list_view::{self, ListEvent, ListHost, ListProps, ListState};
 use crate::ui::components::search_cancel;
 use crate::ui::components::section_header::{self, SectionHeaderEvent, SectionHeaderProps};
 use crate::ui::components::use_grid_layout::{grid_layout, GAP};
@@ -151,6 +152,8 @@ pub struct Workspace {
     pub content_height: f32,
     /// The system time zone, read once (relative and absolute dates).
     zone: Option<accshift_app::time::TimeZone>,
+    /// The list view's selection and scroll.
+    list: ListState,
 }
 
 impl Workspace {
@@ -394,6 +397,14 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
     } = &mut *input.accounts;
     let tab = input.platform.map_or("", |p| p.id.as_str());
     let adapter_ready = registry.adapter(tab).is_some();
+    let time = accshift_app::time::TimeContext {
+        now_ms: clock.now_ms(),
+        locale: input.locale,
+        zone: ws
+            .zone
+            .get_or_insert_with(accshift_app::time::system_zone)
+            .clone(),
+    };
     let scroll = ws.scroll;
     let to_screen = move |r: Rect| r.translate(origin.to_vec2() - vec2(0.0, scroll));
 
@@ -522,10 +533,61 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                     let lines = vec![(text.resolve(input.locale), false)];
                     y += center_message(ui, v, accent, to_screen, y, inner_w, false, &lines, now);
                 }
-                DisplayBody::Items { .. } if view_mode == ViewMode::List => {
-                    // The list view is a later port.
-                    let lines = vec![(translate(input.locale, "view.list"), true)];
-                    y += center_message(ui, v, accent, to_screen, y, inner_w, false, &lines, now);
+                DisplayBody::Items { items, .. } if view_mode == ViewMode::List => {
+                    // `.list-wrapper { flex: 1; min-height: 0 }`: the rest
+                    // of the box, so `.content` never scrolls.
+                    let h = (viewport.height() - PAD_TOP - PAD_BOTTOM - y).max(0.0);
+                    let r = to_screen(Rect::from_min_size(pos2(0.0, y), vec2(inner_w, h)));
+                    let mut list = std::mem::take(&mut ws.list);
+                    let mut host = Host {
+                        ws: &mut *ws,
+                        avatars: &mut *avatars,
+                        jobs: input.jobs,
+                        resolved: input.resolved,
+                        vars: v,
+                        ctx: ctx.clone(),
+                        prefix: format!("{}/", input.panel_key),
+                        frame,
+                        now,
+                    };
+                    // `.list-layout { animation: page-entrance }` from its
+                    // mount.
+                    let mount = host.mount("list");
+                    let (opacity, rise) = page_entrance(&ctx, mount, v);
+                    let props = ListProps {
+                        vars: v,
+                        locale: input.locale,
+                        accent,
+                        focus_visible: input.focus_visible,
+                        dark: input.dark,
+                        time: &time,
+                    };
+                    let transform = egui::emath::TSTransform::from_translation(vec2(0.0, rise));
+                    let events = ui
+                        .with_visual_transform(transform, |ui| {
+                            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
+                            child.set_clip_rect(clip);
+                            child.multiply_opacity(opacity);
+                            list_view::list_view(&mut child, r, &mut list, items, &props, &mut host)
+                        })
+                        .inner;
+                    ws.list = list;
+                    for event in events {
+                        actions.push(match event {
+                            ListEvent::Back => Action::NavigateBack,
+                            ListEvent::Navigate(id) => Action::NavigateToFolder(Some(id)),
+                            ListEvent::FolderMenu(f, at) => {
+                                Action::ContextMenu(MenuTarget::Folder(f), at)
+                            }
+                            ListEvent::Activate(id) => Action::AccountActivate(id),
+                            ListEvent::Switch(id) => Action::AccountSwitch(id),
+                            ListEvent::AccountMenu(a, at) => {
+                                Action::ContextMenu(MenuTarget::Account(*a), at)
+                            }
+                            ListEvent::ToggleSection(key) => Action::ToggleSection(key),
+                        });
+                    }
+                    y += h;
                 }
                 DisplayBody::Items {
                     items,
@@ -604,14 +666,6 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
     ws.layout.clear();
     let mut focused_rect = None;
     let focused_now = ctx.memory(|m| m.focused());
-    let time = accshift_app::time::TimeContext {
-        now_ms: clock.now_ms(),
-        locale: input.locale,
-        zone: ws
-            .zone
-            .get_or_insert_with(accshift_app::time::system_zone)
-            .clone(),
-    };
     for p in &placed {
         ws.layout.push((p.node.label(), p.rect));
         let id = ws.mount(&p.key, frame, now);
@@ -881,6 +935,71 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
         }
     }
     actions
+}
+
+/// The list view's way into the workspace: mounts, avatars, colours.
+struct Host<'a> {
+    ws: &'a mut Workspace,
+    avatars: &'a mut crate::app::avatars::AvatarTextures,
+    jobs: &'a Jobs,
+    resolved: &'a ResolvedTheme,
+    vars: &'a Vars,
+    ctx: egui::Context,
+    /// The panel key and a slash.
+    prefix: String,
+    frame: u64,
+    now: f64,
+}
+
+impl ListHost for Host<'_> {
+    fn mount(&mut self, key: &str) -> Id {
+        let key = format!("{}{key}", self.prefix);
+        self.ws.mount(&key, self.frame, self.now)
+    }
+
+    fn avatar(
+        &mut self,
+        key: &str,
+        item: &AccountCardItem,
+        px: u32,
+        visible: bool,
+    ) -> AvatarContent {
+        let key = format!("{}{key}", self.prefix);
+        account_avatar(
+            self.ws,
+            self.avatars,
+            self.jobs,
+            self.resolved,
+            &key,
+            item,
+            px,
+            visible,
+            self.now,
+        )
+    }
+
+    fn blurred(&mut self, item: &AccountCardItem, px: u32, sigma: f32) -> Option<egui::TextureId> {
+        let url = item.avatar.url.as_deref()?;
+        self.avatars.blurred(&self.ctx, url, px, sigma)
+    }
+
+    fn card_color(&self, value: &str) -> Option<Rgba> {
+        card_color(self.resolved, self.vars, value)
+    }
+}
+
+/// `animation: page-entrance var(--motion-page-entrance) ease-out` (opacity
+/// 0 to 1, `translateY` 4 px to 0) from the first call for `id`: `(opacity,
+/// rise)`.
+fn page_entrance(ctx: &egui::Context, id: Id, v: &Vars) -> (f32, f32) {
+    let p = crate::ui::anim::animate(
+        ctx,
+        id.with("page-entrance"),
+        &crate::ui::anim::Keyframes::from_to(0.0f32, 1.0),
+        &crate::ui::anim::Animation::new(v.motion_page_entrance, crate::ui::anim::Timing::EASE_OUT),
+        1.0,
+    );
+    (p, 4.0 * (1.0 - p))
 }
 
 /// The avatar box content of an account card, starting its decode.
@@ -2083,5 +2202,63 @@ mod scene_tests {
                 times[times.len() - 1]
             );
         }
+    }
+
+    /// The `list-*` scenes: the toggle shows the rows where the reference
+    /// put them, a click previews, a right click opens the account menu, a
+    /// folder row goes in (dropping the preview) and the back row comes out.
+    #[test]
+    fn list_view_previews_opens_menus_and_navigates() {
+        let open = |run: &Run| match &run.screen {
+            Screen::App(app) => app.dialogs().context_menu().is_some(),
+            _ => panic!("not the app"),
+        };
+        let labels = |run: &Run| -> Vec<String> {
+            run.workspace()
+                .list
+                .layout
+                .iter()
+                .map(|(l, _)| l.clone())
+                .collect()
+        };
+        let mut run = Run::new("list-glass-dark-100", 1.0);
+        run.settle();
+        run.click(pos2(816.0, 60.0));
+        assert_eq!(
+            labels(&run)[..4],
+            ["Smurfs", "main", "bro\u{27}s account", "alt"]
+        );
+        // `.list-wrapper` at (16, 84), 818 by 340: rows of 599 by 46 from
+        // (20, 88), 48 apart.
+        let rows: Vec<egui::Rect> = run
+            .workspace()
+            .list
+            .layout
+            .iter()
+            .map(|(_, r)| *r)
+            .collect();
+        assert_eq!(
+            rows[1],
+            egui::Rect::from_min_size(pos2(20.0, 136.0), vec2(599.0, 46.0))
+        );
+        assert_eq!(rows[2].top(), 184.0);
+
+        run.click(pos2(300.0, 159.0));
+        assert_eq!(
+            run.workspace().list.selected.as_deref(),
+            Some("76561198000000001")
+        );
+        run.rclick(pos2(300.0, 207.0));
+        assert!(open(&run));
+        run.key(Key::Escape);
+        assert!(!open(&run));
+
+        run.click(pos2(300.0, 111.0));
+        let inside = labels(&run);
+        assert_eq!(inside[0], "Back");
+        assert!(inside.iter().any(|l| l == "smurf 1"));
+        assert_eq!(run.workspace().list.selected, None);
+        run.click(pos2(300.0, 111.0));
+        assert_eq!(labels(&run)[0], "Smurfs");
     }
 }

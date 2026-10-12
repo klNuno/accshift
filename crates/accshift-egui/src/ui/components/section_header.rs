@@ -262,17 +262,33 @@ fn dashes(ui: &Ui, rule: Rect, color: Rgba) {
     if color.a <= 0.0 || rule.width() <= 0.0 {
         return;
     }
+    // The background box snaps to device pixels, then each pixel takes the
+    // gradient's colour at its centre: the hard stops come out crisp, their
+    // phase measured from the snapped left edge.
+    let ppp = ui.ctx().pixels_per_point();
+    let snapped = snap::rect(rule, ppp);
+    let left = (snapped.left() * ppp).round() as i32;
+    let right = (snapped.right() * ppp).round() as i32;
+    let on = |i: i32| ((i as f32 + 0.5) / ppp - snapped.left()).rem_euclid(12.0) < 6.0;
     let painter = ui.painter();
     let c = color.to_color32();
-    let mut x = rule.left();
-    while x < rule.right() {
-        let end = (x + 6.0).min(rule.right());
-        painter.rect_filled(
-            Rect::from_min_max(pos2(x, rule.top()), pos2(end, rule.bottom())),
-            0.0,
-            c,
-        );
-        x += 12.0;
+    let mut i = left;
+    while i < right {
+        let start = i;
+        let dash = on(i);
+        while i < right && on(i) == dash {
+            i += 1;
+        }
+        if dash {
+            painter.rect_filled(
+                Rect::from_min_max(
+                    pos2(start as f32 / ppp, snapped.top()),
+                    pos2(i as f32 / ppp, snapped.bottom()),
+                ),
+                0.0,
+                c,
+            );
+        }
     }
 }
 
