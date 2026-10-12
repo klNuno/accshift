@@ -3,7 +3,7 @@
 use accshift_app::dispatch::dispatch;
 use accshift_app::jobs::{Jobs, Poll};
 use accshift_app::mock::{cs2_settings_from_fixture, MockBackend, AVATAR_DIR, NOW};
-use accshift_app::real::RealBackend;
+use accshift_app::real::{RealBackend, PORTED};
 use accshift_app::{Backend, BackendError, COMMANDS};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -362,7 +362,7 @@ fn jobs_deliver_off_thread_and_wake() {
 }
 
 #[test]
-fn the_real_skeleton_dispatches_every_command_and_ports_none() {
+fn the_real_backend_dispatches_every_command_and_refuses_the_unported() {
     // A context on a scratch folder: nothing reads the user's real dirs.
     struct Scratch(PathBuf);
     impl accshift_core::AppContext for Scratch {
@@ -381,7 +381,12 @@ fn the_real_skeleton_dispatches_every_command_and_ports_none() {
     }
     let real = RealBackend::with_context(Arc::new(Scratch(std::env::temp_dir())));
     assert_eq!(COMMANDS.len(), 73);
-    for command in COMMANDS {
+    // The ported commands are not called here: some open a dialog, a URL or
+    // a folder. tests/real_*.rs covers them on a scratch context.
+    for command in PORTED {
+        assert!(COMMANDS.contains(command), "{command} is not a command");
+    }
+    for command in COMMANDS.iter().filter(|command| !PORTED.contains(command)) {
         let answer = dispatch(&real, command, &sample_args(command))
             .unwrap_or_else(|| panic!("{command} is not dispatched"));
         assert_eq!(answer, Err(BackendError::not_ported(command)), "{command}");

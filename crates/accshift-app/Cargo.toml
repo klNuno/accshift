@@ -14,4 +14,28 @@ publish = false
 accshift-core = { path = "../accshift-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-directories = "6"
+# The crate Tauri's path resolver calls (tauri 2.11 depends on dirs 6), so
+# `EguiAppContext` lands on the very same folders as the Tauri app.
+dirs = "6"
+# The shared HTTP client the Tauri app keeps in its state. Same spec as the
+# root workspace so features unify with accshift-core's.
+reqwest = { version = "0.12", default-features = false, features = [
+  "rustls-tls",
+  "json",
+  "blocking",
+] }
+# `descriptor_select_file`.
+rfd = "0.17"
+
+[target.'cfg(windows)'.dependencies]
+# `get_desktop_wallpaper`: the Progman capture of
+# src-tauri/src/commands/backdrop.rs, on windows-sys rather than the windows
+# crate (accshift-core already builds windows-sys 0.61).
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Storage_Xps",
+  "Win32_UI_WindowsAndMessaging",
+] }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+base64 = "0.23"

@@ -1,126 +1,171 @@
-//! The real backend, a skeleton for now.
+//! The real backend: every command runs on `accshift-core` the way
+//! `src-tauri/src/commands` does, on the same app directories.
 //!
-//! [`RealBackend`] will run every command on `accshift-core` the way
-//! `src-tauri/src/commands` does. Until a later job ports each body, every
-//! method answers a "not ported" error, so nothing here can touch Steam, the
-//! keyring or the registry yet.
+//! Part 1 of the port (boot, storage, themes, PIN, descriptors, utilities)
+//! is filled; the methods listed outside [`PORTED`] still answer "not
+//! ported". No trait method touches Steam, the keyring or the registry yet;
+//! [`RealBackend::spawn_maintenance`] reaches the keyring, and only when the
+//! shell calls it.
+//! The state the Tauri app keeps with `.manage(..)` (`BootState`,
+//! `PinSession`, the HTTP client) lives in [`RealBackend`]. Window work
+//! (show, backdrop subclass, geometry, the boot failsafe) is the shell's.
+
+mod app;
+mod boot;
+mod context;
+mod descriptors;
+mod pin;
+mod utility;
+mod wallpaper;
+
+pub use app::{UI_DETAILS_MAX_BYTES, UI_LOG_CAP};
+pub use boot::BootState;
+pub use context::{EguiAppContext, BUNDLE_IDENTIFIER};
+pub use descriptors::{SELECT_FILTERS, SELECT_TITLE};
 
 use crate::backend::Backend;
 use crate::error::{BackendError, BackendResult};
 use crate::types::*;
-use accshift_core::AppContext;
-use directories::BaseDirs;
+use accshift_core::pin::PinSession;
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::AtomicU32;
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
-/// Must match `identifier` in `src-tauri/tauri.conf.json`, like the CLI's.
-const BUNDLE_IDENTIFIER: &str = "com.accshift.desktop";
+/// Cross-process lock budget of every mutating command (`LOCK_TIMEOUT` in
+/// `src-tauri/src/commands/mod.rs`).
+pub const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// The app directories, laid out like the Tauri GUI's `AppHandle::path()`
-/// (`<dirs::xxx_dir()>/<bundle identifier>`) so config, state and cache stay
-/// shared with the Tauri app and the CLI. Same as
-/// `crates/accshift-cli/src/context.rs`.
-pub struct EguiAppContext {
-    base: BaseDirs,
-    identifier: String,
-}
+/// The commands [`RealBackend`] runs for real. The others still answer
+/// [`BackendError::not_ported`].
+pub const PORTED: &[&str] = &[
+    "get_boot_payload",
+    "get_runtime_os",
+    "detect_streaming_software",
+    "migrate_legacy_config",
+    "load_client_storage_snapshot",
+    "save_client_storage_store",
+    "get_storage_manifest",
+    "log_app_event",
+    "finish_boot",
+    "pin_unlock",
+    "pin_lock",
+    "reload_user_platforms",
+    "descriptor_select_file",
+    "descriptor_preview_file",
+    "descriptor_install_file",
+    "descriptor_remove",
+    "open_descriptors_folder",
+    "open_url",
+    "open_logs_folder",
+    "get_desktop_wallpaper",
+    "list_custom_themes",
+    "save_custom_theme",
+    "delete_custom_theme",
+];
 
-impl EguiAppContext {
-    pub fn new() -> Result<Self, String> {
-        let base = BaseDirs::new().ok_or_else(|| {
-            "Could not resolve base directories (no HOME or %APPDATA%?)".to_string()
-        })?;
-        Ok(Self {
-            base,
-            identifier: BUNDLE_IDENTIFIER.to_string(),
-        })
-    }
-}
-
-impl AppContext for EguiAppContext {
-    fn app_config_dir(&self) -> Result<PathBuf, String> {
-        Ok(self.base.config_dir().join(&self.identifier))
-    }
-
-    fn app_data_dir(&self) -> Result<PathBuf, String> {
-        Ok(self.base.data_dir().join(&self.identifier))
-    }
-
-    fn app_local_data_dir(&self) -> Result<PathBuf, String> {
-        Ok(self.base.data_local_dir().join(&self.identifier))
-    }
-
-    fn app_cache_dir(&self) -> Result<PathBuf, String> {
-        Ok(self.base.cache_dir().join(&self.identifier))
-    }
-}
-
-/// See the module documentation.
+/// See the module documentation. One per process: the PIN session, the boot
+/// state and the UI log cap are per instance.
 pub struct RealBackend {
     ctx: accshift_core::AppCtx,
+    boot: BootState,
+    pin: PinSession,
+    http: OnceLock<reqwest::Client>,
+    ui_logs_written: AtomicU32,
 }
 
 impl RealBackend {
-    /// On the user's real app directories.
+    /// On the user's real app directories, with the HTTP client built up
+    /// front like the Tauri app does before its first plugin.
     pub fn new() -> Result<Self, String> {
-        Ok(Self::with_context(Arc::new(EguiAppContext::new()?)))
+        let backend = Self::with_context(Arc::new(EguiAppContext::new()?));
+        backend.http_client()?;
+        Ok(backend)
     }
 
-    /// On any directory layout (tests, a parity scratch folder).
+    /// On any directory layout (tests, a parity scratch folder). The HTTP
+    /// client is built on first use.
     pub fn with_context(ctx: accshift_core::AppCtx) -> Self {
-        Self { ctx }
+        Self {
+            ctx,
+            boot: BootState::default(),
+            pin: PinSession::new(),
+            http: OnceLock::new(),
+            ui_logs_written: AtomicU32::new(0),
+        }
     }
 
     pub fn context(&self) -> &accshift_core::AppCtx {
         &self.ctx
     }
+
+    /// The boot state `finish_boot` marks; the shell reads it for its
+    /// failsafe.
+    pub fn boot_state(&self) -> &BootState {
+        &self.boot
+    }
+
+    /// The PIN session every switch command checks
+    /// (`PinSession::ensure_unlocked`).
+    pub fn pin_session(&self) -> &PinSession {
+        &self.pin
+    }
+
+    /// The shared HTTP client (`boot::build_http_client`).
+    pub fn http_client(&self) -> Result<&reqwest::Client, String> {
+        if let Some(client) = self.http.get() {
+            return Ok(client);
+        }
+        let client = boot::build_http_client()?;
+        Ok(self.http.get_or_init(|| client))
+    }
 }
 
 impl Backend for RealBackend {
     fn get_boot_payload(&self) -> BackendResult<BootPayload> {
-        Err(BackendError::not_ported("get_boot_payload"))
+        app::boot_payload(&self.ctx)
     }
     fn get_runtime_os(&self) -> BackendResult<String> {
-        Err(BackendError::not_ported("get_runtime_os"))
+        Ok(app::runtime_os())
     }
     fn detect_streaming_software(&self) -> BackendResult<bool> {
-        Err(BackendError::not_ported("detect_streaming_software"))
+        Ok(utility::streaming_software_running())
     }
     fn migrate_legacy_config(&self) -> BackendResult<String> {
-        Err(BackendError::not_ported("migrate_legacy_config"))
+        Ok(app::migrate_legacy_config(&self.ctx))
     }
     fn load_client_storage_snapshot(&self) -> BackendResult<ClientStorageSnapshot> {
-        Err(BackendError::not_ported("load_client_storage_snapshot"))
+        app::load_snapshot(&self.ctx)
     }
     fn save_client_storage_store(
         &self,
-        _store_id: &str,
-        _value: &Value,
+        store_id: &str,
+        value: &Value,
     ) -> BackendResult<Option<String>> {
-        Err(BackendError::not_ported("save_client_storage_store"))
+        app::save_store(self, store_id, value)
     }
     fn get_storage_manifest(&self) -> BackendResult<StorageManifest> {
-        Err(BackendError::not_ported("get_storage_manifest"))
+        app::manifest(&self.ctx)
     }
     fn log_app_event(
         &self,
-        _level: &str,
-        _source: &str,
-        _message: &str,
-        _details: Option<&str>,
+        level: &str,
+        source: &str,
+        message: &str,
+        details: Option<&str>,
     ) -> BackendResult<()> {
-        Err(BackendError::not_ported("log_app_event"))
+        app::log_app_event(self, level, source, message, details)
     }
-    fn finish_boot(&self, _source: &str, _marks: Option<&Value>) -> BackendResult<()> {
-        Err(BackendError::not_ported("finish_boot"))
+    fn finish_boot(&self, source: &str, marks: Option<&Value>) -> BackendResult<()> {
+        app::finish_boot(self, source, marks)
     }
-    fn pin_unlock(&self, _code: &str) -> BackendResult<PinUnlockResult> {
-        Err(BackendError::not_ported("pin_unlock"))
+    fn pin_unlock(&self, code: &str) -> BackendResult<PinUnlockResult> {
+        pin::unlock(self, code)
     }
     fn pin_lock(&self) -> BackendResult<()> {
-        Err(BackendError::not_ported("pin_lock"))
+        pin::lock(self);
+        Ok(())
     }
     fn platform_get_accounts(&self, _platform_id: &str) -> BackendResult<Value> {
         Err(BackendError::not_ported("platform_get_accounts"))
@@ -183,31 +228,40 @@ impl Backend for RealBackend {
         Err(BackendError::not_ported("platform_dry_run"))
     }
     fn reload_user_platforms(&self) -> BackendResult<UserPlatformReport> {
-        Err(BackendError::not_ported("reload_user_platforms"))
+        Ok(descriptors::reload(&self.ctx))
     }
+    /// Thread constraint: the `rfd` dialog runs on the thread that calls this
+    /// and blocks it until the user picks or cancels, so the egui shell
+    /// chooses that thread. On Windows and Linux (xdg portal) any thread
+    /// works: give it a job thread, never the UI thread, or the window
+    /// freezes behind the dialog. On macOS `rfd` hops to the main thread
+    /// itself, so the UI thread must keep running its event loop while the
+    /// job waits. The dialog has no parent window: it is not modal to ours.
     fn descriptor_select_file(&self) -> BackendResult<String> {
-        Err(BackendError::not_ported("descriptor_select_file"))
+        descriptors::select_file()
     }
-    fn descriptor_preview_file(&self, _path: &str) -> BackendResult<DescriptorPreview> {
-        Err(BackendError::not_ported("descriptor_preview_file"))
+    fn descriptor_preview_file(&self, path: &str) -> BackendResult<DescriptorPreview> {
+        descriptors::preview(&self.ctx, path)
     }
-    fn descriptor_install_file(&self, _path: &str) -> BackendResult<UserPlatformReport> {
-        Err(BackendError::not_ported("descriptor_install_file"))
+    fn descriptor_install_file(&self, path: &str) -> BackendResult<UserPlatformReport> {
+        descriptors::install(&self.ctx, path)
     }
-    fn descriptor_remove(&self, _platform_id: &str) -> BackendResult<UserPlatformReport> {
-        Err(BackendError::not_ported("descriptor_remove"))
+    fn descriptor_remove(&self, platform_id: &str) -> BackendResult<UserPlatformReport> {
+        descriptors::remove(&self.ctx, platform_id)
     }
     fn open_descriptors_folder(&self) -> BackendResult<()> {
-        Err(BackendError::not_ported("open_descriptors_folder"))
+        descriptors::open_folder(&self.ctx)
     }
-    fn open_url(&self, _url: &str) -> BackendResult<()> {
-        Err(BackendError::not_ported("open_url"))
+    fn open_url(&self, url: &str) -> BackendResult<()> {
+        utility::open_url(url)
     }
     fn open_logs_folder(&self) -> BackendResult<()> {
-        Err(BackendError::not_ported("open_logs_folder"))
+        utility::open_logs_folder(&self.ctx)
     }
+    /// Captures on the calling thread (a job thread): see
+    /// `real/wallpaper.rs` for how that differs from the Tauri command.
     fn get_desktop_wallpaper(&self) -> BackendResult<Option<WallpaperSnapshot>> {
-        Err(BackendError::not_ported("get_desktop_wallpaper"))
+        Ok(wallpaper::desktop_wallpaper())
     }
     fn steam_set_api_key(&self, _key: &str) -> BackendResult<()> {
         Err(BackendError::not_ported("steam_set_api_key"))
@@ -302,13 +356,13 @@ impl Backend for RealBackend {
         Err(BackendError::not_ported("roblox_check_sessions"))
     }
     fn list_custom_themes(&self) -> BackendResult<Vec<CustomTheme>> {
-        Err(BackendError::not_ported("list_custom_themes"))
+        utility::list_themes(&self.ctx)
     }
-    fn save_custom_theme(&self, _theme: &CustomTheme) -> BackendResult<()> {
-        Err(BackendError::not_ported("save_custom_theme"))
+    fn save_custom_theme(&self, theme: &CustomTheme) -> BackendResult<()> {
+        utility::save_theme(&self.ctx, theme)
     }
-    fn delete_custom_theme(&self, _theme_id: &str) -> BackendResult<()> {
-        Err(BackendError::not_ported("delete_custom_theme"))
+    fn delete_custom_theme(&self, theme_id: &str) -> BackendResult<()> {
+        utility::delete_theme(&self.ctx, theme_id)
     }
     fn telemetry_get_state(&self) -> BackendResult<TelemetryUiState> {
         Err(BackendError::not_ported("telemetry_get_state"))

@@ -3,7 +3,8 @@
 //! - [`backend::Backend`]: one blocking method per Tauri command the frontend
 //!   calls, with the same payloads ([`types`]) and error strings ([`error`]).
 //! - [`mock::MockBackend`]: the TS mock's data, for parity work.
-//! - [`real::RealBackend`]: the real backend, a skeleton until it is ported.
+//! - [`real::RealBackend`]: the real backend on `accshift-core`, the commands
+//!   in [`real::PORTED`] filled, the others still "not ported".
 //! - [`jobs`]: runs calls off the UI thread and wakes the UI on each result.
 //! - [`dispatch`]: the same commands by name, with JSON arguments.
 //! - [`storage`]: the raw client stores, their saves and refreshes.
