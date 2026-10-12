@@ -20,6 +20,7 @@ use egui::{pos2, vec2, Color32, Rect, Ui, UiBuilder};
 
 use super::platforms::{PlatformDef, RuntimeOs};
 use super::{Action, AppModel, Booted};
+use crate::screens::settings;
 use crate::screens::workspace::{self, WorkspaceInput};
 use crate::ui::anim::{Animation, Fill, Motion, Timing};
 use crate::ui::components::title_bar::{self, TitleBarProps};
@@ -150,7 +151,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         focus_visible: app.focus_visible,
     };
     let panel_since = booted.panel.1;
-    // Settings and personas are not ported: their slot stays empty.
+    // Personas are not ported: their slot stays empty.
     let show_workspace = !nav.show_settings && !nav.show_personas;
     let compatible_platforms = enabled.iter().filter(|p| p.supports(os)).count();
     let panel_key = nav.panel_key();
@@ -181,6 +182,15 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         frame.scale,
     );
     let jobs = &app.jobs;
+    let settings_view = nav
+        .show_settings
+        .then(|| {
+            app.booted
+                .as_ref()
+                .map(|b| settings::View::new(b, window.width()))
+        })
+        .flatten();
+    let settings_panel = &mut app.settings_panel;
     let focus_visible = app.focus_visible;
     let Some(Booted {
         accounts,
@@ -249,6 +259,11 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                 };
                 actions.extend(layer(ui, panel, o, rise, |ui| {
                     workspace::draw(ui, panel, ws, input)
+                }));
+            }
+            if let (Some(view), Some(sp)) = (settings_view.as_ref(), settings_panel.as_mut()) {
+                actions.extend(layer(ui, panel, o, rise, |ui| {
+                    settings::draw(ui, panel, sp, view, focus_visible)
                 }));
             }
         });

@@ -9,12 +9,19 @@ use crate::ui::paint::{Border, BoxStyle, Corners, Sides};
 use crate::ui::snap;
 use crate::ui::text::{self, LineHeight, TextStyle, TextTransform};
 
-/// `padding: 16px` plus the 1 px border: where the content starts.
-pub const INSET: f32 = 17.0;
+/// `padding: 16px` plus the 1 px border, laid out floored to device pixels
+/// like Chromium does: where the content starts.
+pub fn inset(ppp: f32) -> f32 {
+    16.0 + snap::border_width(1.0, ppp)
+}
+
 /// `gap: 12px` between the card's children.
 pub const GAP: f32 = 12.0;
-/// `h3`: one 18 px line, `padding-bottom: 8px`, a 1 px bottom border.
-pub const TITLE_HEIGHT: f32 = 27.0;
+/// `h3`: one 18 px line, `padding-bottom: 8px`, a 1 px bottom border laid
+/// out floored to device pixels.
+pub fn title_height(ppp: f32) -> f32 {
+    26.0 + snap::border_width(1.0, ppp)
+}
 
 /// Which card: the panel's own `.card`, or `SettingsCard.svelte` (padding
 /// 14, a 13 px title in `--fg`, an optional accent).
@@ -90,7 +97,8 @@ pub fn paint_divider(ui: &Ui, rect: Rect, vars: &Vars) {
 /// `<h3>` at the top of the content box `rect` (its width): text, then the
 /// divider 27 px down. Returns the header's rect.
 pub fn paint_title(ui: &Ui, content: Rect, title: &str, vars: &Vars) -> Rect {
-    let rect = Rect::from_min_size(content.min, egui::vec2(content.width(), TITLE_HEIGHT));
+    let ppp = ui.ctx().pixels_per_point();
+    let rect = Rect::from_min_size(content.min, egui::vec2(content.width(), title_height(ppp)));
     text::paint(ui.painter(), rect, title, &title_style(vars));
     paint_divider(ui, rect, vars);
     rect
@@ -102,9 +110,9 @@ pub fn shared_title_style(vars: &Vars) -> TextStyle {
 }
 
 /// The content box of a card at `rect`.
-pub fn content(rect: Rect, kind: CardKind) -> Rect {
+pub fn content(rect: Rect, kind: CardKind, ppp: f32) -> Rect {
     let inset = match kind {
-        CardKind::Panel => INSET,
+        CardKind::Panel => inset(ppp),
         CardKind::Shared { .. } => 15.0,
     };
     rect.shrink(inset)

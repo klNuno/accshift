@@ -202,9 +202,10 @@ pub fn select(ui: &mut Ui, rect: Rect, id: Id, props: &SelectProps) -> SelectEve
     }
     .paint(ui.painter(), boxed);
     // `padding-right: 34px` leaves the arrow its room.
+    let edge = snap::border_width(1.0, ppp);
     let text_rect = Rect::from_min_max(
-        pos2(rect.left() + 11.0, rect.top() + 10.0),
-        pos2(rect.right() - 35.0, rect.top() + 28.0),
+        pos2(rect.left() + 10.0 + edge, rect.top() + 9.0 + edge),
+        pos2(rect.right() - 34.0 - edge, rect.top() + 27.0 + edge),
     );
     text::paint(ui.painter(), text_rect, &current, &style(v));
     paint_arrow(ui, rect, v.fg_muted.to_color32());

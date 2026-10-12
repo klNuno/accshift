@@ -16,10 +16,15 @@ use crate::ui::text::{self, LineHeight, TextStyle};
 /// `#71717a`, the default `accent` prop and `NEUTRAL_CONTROL_ACCENT`.
 pub const NEUTRAL_ACCENT: Rgba = Rgba::hex(0x71717a, 1.0);
 
-/// Border plus `padding: 9px 10px`, horizontally.
-const PAD_X: f32 = 11.0;
+/// Border plus `padding: 9px 10px`, horizontally. The 1 px border is laid
+/// out floored to device pixels, like Chromium does.
+fn pad_x(ppp: f32) -> f32 {
+    10.0 + snap::border_width(1.0, ppp)
+}
 /// Border plus `padding: 9px 10px`, vertically.
-const PAD_Y: f32 = 10.0;
+fn pad_y(ppp: f32) -> f32 {
+    9.0 + snap::border_width(1.0, ppp)
+}
 /// `.right { gap: 10px }`.
 const RIGHT_GAP: f32 = 10.0;
 /// `.toggle`: 36x20.
@@ -76,7 +81,8 @@ fn layout(ctx: &Context, width: f32, props: &ToggleProps) -> Layout {
     };
     let state_w = text::measure(ctx, state, &state_style(v)).unwrap_or(0.0);
     let right_w = state_w + RIGHT_GAP + SWITCH.x;
-    let avail = (width - 2.0 * PAD_X - right_w).max(0.0);
+    let ppp = ctx.pixels_per_point();
+    let avail = (width - 2.0 * pad_x(ppp) - right_w).max(0.0);
     // `.main` shrinks: its max-content width, or what the right part leaves.
     let label_max = text::measure(ctx, props.label, &label_style(v)).unwrap_or(0.0);
     let desc_max = if props.description.is_empty() {
@@ -100,7 +106,7 @@ fn layout(ctx: &Context, width: f32, props: &ToggleProps) -> Layout {
         main_h += MAIN_GAP + wrap(props.description, &description_style(v));
     }
     Layout {
-        height: main_h.max(SWITCH.y) + 2.0 * PAD_Y,
+        height: main_h.max(SWITCH.y) + 2.0 * pad_y(ppp),
         main_w,
         right_w,
         state_w,
@@ -166,11 +172,11 @@ pub fn toggle(ui: &mut Ui, rect: Rect, id: Id, props: &ToggleProps) -> bool {
     .paint(&painter, boxed);
 
     // `align-items: center` for both columns inside the content box.
-    let inner_h = rect.height() - 2.0 * PAD_Y;
-    let top = rect.top() + PAD_Y;
+    let inner_h = rect.height() - 2.0 * pad_y(ppp);
+    let top = rect.top() + pad_y(ppp);
     let main_top = top + snap::centre(inner_h, l.main_h, ppp);
     let main = Rect::from_min_size(
-        pos2(rect.left() + PAD_X, main_top),
+        pos2(rect.left() + pad_x(ppp), main_top),
         vec2(l.main_w, l.main_h),
     );
     text::paint(&painter, main, props.label, &label_style(v));
@@ -181,7 +187,7 @@ pub fn toggle(ui: &mut Ui, rect: Rect, id: Id, props: &ToggleProps) -> bool {
         );
         text::paint(&painter, desc, props.description, &description_style(v));
     }
-    let right_left = rect.right() - PAD_X - l.right_w;
+    let right_left = rect.right() - pad_x(ppp) - l.right_w;
     let right_top = top + snap::centre(inner_h, SWITCH.y, ppp);
     let state = if props.enabled {
         props.on_label

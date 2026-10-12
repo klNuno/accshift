@@ -115,7 +115,8 @@ pub fn size(ctx: &Context, label: &str, style: &ButtonStyle) -> Vec2 {
         .font
         .line_box(ctx)
         .map_or(style.font.size * 1.5, |b| b.height);
-    vec2(w, line) + 2.0 * style.padding + Vec2::splat(2.0 * style.border)
+    let border = snap::border_width(style.border, ctx.pixels_per_point());
+    vec2(w, line) + 2.0 * style.padding + Vec2::splat(2.0 * border)
 }
 
 /// Props of one button.

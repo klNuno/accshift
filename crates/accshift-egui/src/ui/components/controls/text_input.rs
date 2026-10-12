@@ -18,12 +18,56 @@ use crate::ui::paint::{Border, BoxStyle, Corners};
 use crate::ui::snap;
 use crate::ui::text::{self, LineHeight, TextStyle};
 
-/// The field's border-box height: an 18 px line, 9 px padding, 1 px border.
-pub const HEIGHT: f32 = 38.0;
-/// Border plus left padding.
-const PAD_X: f32 = 11.0;
+/// The field's border-box height: an 18 px line, 9 px padding, a 1 px
+/// border laid out floored to device pixels.
+pub fn height(ppp: f32) -> f32 {
+    36.0 + 2.0 * snap::border_width(1.0, ppp)
+}
+/// Border plus left padding, the border laid out floored to device pixels.
+fn pad_x(ppp: f32) -> f32 {
+    10.0 + snap::border_width(1.0, ppp)
+}
 /// Border plus top padding.
-const PAD_Y: f32 = 10.0;
+fn pad_y(ppp: f32) -> f32 {
+    9.0 + snap::border_width(1.0, ppp)
+}
+
+/// Chromium's spin button of a focused or hovered `type="number"` field:
+/// 15 px wide at the right of the content box, its full height, flat, with
+/// an up and a down arrow (measured on WebView2 at 1x and 1.5x).
+fn paint_spin_button(painter: &egui::Painter, content: Rect, dark: bool) {
+    let (bg, fg) = if dark {
+        (egui::Color32::from_gray(44), egui::Color32::from_gray(159))
+    } else {
+        (egui::Color32::from_gray(252), egui::Color32::from_gray(139))
+    };
+    let r = Rect::from_min_max(pos2(content.right() - 15.0, content.top()), content.max);
+    painter.rect_filled(r, 0.0, bg);
+    let arrow = |pts: [(f32, f32); 6]| {
+        let points = pts
+            .iter()
+            .map(|&(x, y)| pos2(r.left() + x, r.top() + y))
+            .collect();
+        painter.add(egui::Shape::convex_polygon(points, fg, egui::Stroke::NONE));
+    };
+    arrow([
+        (6.9, 1.0),
+        (8.1, 1.0),
+        (11.4, 5.0),
+        (11.4, 7.0),
+        (3.6, 7.0),
+        (3.6, 5.0),
+    ]);
+    let h = r.height();
+    arrow([
+        (3.6, h - 5.0),
+        (3.6, h - 7.0),
+        (11.4, h - 7.0),
+        (11.4, h - 5.0),
+        (8.1, h - 1.0),
+        (6.9, h - 1.0),
+    ]);
+}
 /// Chromium's caret blink half-period.
 const BLINK: f64 = 0.5;
 
@@ -46,6 +90,8 @@ pub struct TextInputProps<'a> {
     pub max_len: Option<usize>,
     pub enabled: bool,
     pub vars: &'a Vars,
+    /// `color-scheme: dark` on the applied theme (native parts follow it).
+    pub dark: bool,
 }
 
 /// What happened this frame.
@@ -193,9 +239,12 @@ pub fn text_input(
     }
     .paint(ui.painter(), boxed);
     let text_rect = Rect::from_min_max(
-        pos2(rect.left() + PAD_X, rect.top() + PAD_Y),
-        pos2(rect.right() - PAD_X, rect.top() + PAD_Y + 18.0),
+        pos2(rect.left() + pad_x(ppp), rect.top() + pad_y(ppp)),
+        pos2(rect.right() - pad_x(ppp), rect.top() + pad_y(ppp) + 18.0),
     );
+    if props.kind == InputKind::Number && props.enabled && (focused || response.hovered()) {
+        paint_spin_button(ui.painter(), text_rect, props.dark);
+    }
     let painter = ui
         .painter()
         .with_clip_rect(text_rect.intersect(ui.clip_rect()));

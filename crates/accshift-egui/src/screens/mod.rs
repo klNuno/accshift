@@ -2,6 +2,7 @@
 
 pub mod main_spike;
 pub mod primitives;
+pub mod settings;
 pub mod workspace;
 
 use std::path::Path;
