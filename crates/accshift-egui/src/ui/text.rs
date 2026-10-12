@@ -8,10 +8,10 @@
 //! - [`TextStyle`], a CSS text description (family stack, size, weight,
 //!   `line-height`, `letter-spacing`, `text-transform`, `white-space: nowrap`,
 //!   `text-overflow: ellipsis`, `text-align`, colour);
-//! - the line box: Chromium computes it in CSS px with the face's ascent and
-//!   descent rounded separately and the half-leading floored, then scales it
-//!   by the device pixel ratio ([`LineBox`]); every glyph is moved onto that
-//!   baseline, whatever face drew it;
+//! - the line box: Chromium lays out in device px (zoom for DSF), with the
+//!   face's ascent and descent rounded separately at the device font size and
+//!   the half-leading floored to whole device px ([`LineBox`]); every glyph
+//!   is moved onto that baseline, whatever face drew it;
 //! - the coverage curve of Skia's grayscale glyphs ([`gamma`]), applied by the
 //!   software backend.
 //!
@@ -242,7 +242,12 @@ impl TextStyle {
     pub fn line_box(&self, ctx: &Context) -> Option<LineBox> {
         let ppem = self.size * ctx.pixels_per_point();
         let resolved = resolve(ctx, &self.family, self.weight, ppem)?;
-        Some(LineBox::new(&resolved.metrics, self.size, self.line_height))
+        Some(LineBox::new(
+            &resolved.metrics,
+            self.size,
+            self.line_height,
+            ctx.pixels_per_point(),
+        ))
     }
 
     fn transformed(&self, text: &str) -> String {
@@ -270,7 +275,7 @@ impl TextStyle {
     }
 }
 
-/// One line box, in CSS px.
+/// One line box, in CSS px (device px divided by the scale).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LineBox {
     pub height: f32,
@@ -279,24 +284,27 @@ pub struct LineBox {
 }
 
 impl LineBox {
-    /// Chromium's line box: ascent and descent rounded separately at the CSS
-    /// font size, the line height kept to LayoutUnit precision (1/64 px), the
-    /// half-leading floored to whole px. Matches the 252 baselines of the
-    /// typography fragments at scales 1, 1.25 and 1.5.
-    pub fn new(m: &FaceMetrics, size: f32, line_height: LineHeight) -> Self {
-        let scale = size / m.units_per_em;
-        let ascent = (m.ascent * scale).round();
-        let descent = (m.descent * scale).round();
+    /// Chromium's line box at device scale `scale`: Blink lays out in device
+    /// px (zoom for DSF), so ascent and descent are rounded separately at the
+    /// device font size, the line height kept to LayoutUnit precision (1/64
+    /// device px), the half-leading floored to whole device px. Matches the
+    /// 252 baselines of the typography fragments at scales 1, 1.25 and 1.5
+    /// (WebView2 run with `--force-device-scale-factor`).
+    pub fn new(m: &FaceMetrics, size: f32, line_height: LineHeight, scale: f32) -> Self {
+        let device = size * scale;
+        let em = device / m.units_per_em;
+        let ascent = (m.ascent * em).round();
+        let descent = (m.descent * em).round();
         let height = match line_height {
-            LineHeight::Normal => ascent + descent + (m.line_gap * scale).round(),
-            LineHeight::Number(n) => n * size,
-            LineHeight::Px(px) => px,
+            LineHeight::Normal => ascent + descent + (m.line_gap * em).round(),
+            LineHeight::Number(n) => n * device,
+            LineHeight::Px(px) => px * scale,
         };
         let height = (height * 64.0).floor() / 64.0;
         let half_leading = ((height - (ascent + descent)) / 2.0).floor();
         Self {
-            height,
-            baseline: ascent + half_leading,
+            height: height / scale,
+            baseline: (ascent + half_leading) / scale,
         }
     }
 }
@@ -347,7 +355,7 @@ pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Optio
         need_cjk(ctx);
     }
     let ppp = ctx.pixels_per_point();
-    let line_box = LineBox::new(&resolved.metrics, style.size, style.line_height);
+    let line_box = LineBox::new(&resolved.metrics, style.size, style.line_height, ppp);
     let avail = if rect.width().is_finite() && rect.width() > 0.0 {
         rect.width()
     } else {
@@ -412,7 +420,10 @@ pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Optio
             let x = rect.left() + offset(widths[i]);
             placed.pos.x = (x * ppp).round() / ppp - origin_x;
         }
-        let baseline = (rect.top() + line_box.baseline + i as f32 * line_box.height) * ppp;
+        // In LayoutUnits (1/64 device px), so that a line box scaled back
+        // from CSS px lands exactly where Blink put it.
+        let baseline = layout_unit(rect.top() * ppp)
+            + layout_unit((line_box.baseline + i as f32 * line_box.height) * ppp);
         let target = snap(baseline) / ppp - origin_y - placed.pos.y;
         let row = Arc::make_mut(&mut placed.row);
         // The pen in device px: egui puts every CJK glyph on a whole pixel
@@ -839,6 +850,11 @@ fn snap(v: f32) -> f32 {
     (v + 0.5).floor()
 }
 
+/// Blink's LayoutUnit precision, 1/64 device px.
+fn layout_unit(v: f32) -> f32 {
+    (v * 64.0).round() / 64.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -856,25 +872,38 @@ mod tests {
 
     #[test]
     fn line_boxes_match_the_probe() {
-        // From typography-100/probe.json: (size, line-height, baseline).
-        for (size, lh, baseline) in [
-            (8.0, LineHeight::Number(1.0), 7.0),
-            (9.0, LineHeight::Number(1.5), 10.0),
-            (9.0, LineHeight::Number(1.2), 9.0),
-            (9.0, LineHeight::Number(1.0), 8.0),
-            (10.0, LineHeight::Px(13.0), 10.0),
-            (11.0, LineHeight::Number(1.45), 12.0),
-            (12.0, LineHeight::Number(1.5), 14.0),
-            (12.0, LineHeight::Number(1.55), 14.0),
-            (12.5, LineHeight::Number(1.6), 15.0),
-            (14.0, LineHeight::Number(1.0), 12.0),
-            (16.0, LineHeight::Number(1.5), 18.0),
+        // From typography-{100,125,150}/probe.json, WebView2 at a real device
+        // scale factor: (scale, size, line-height, baseline in device px).
+        for (scale, size, lh, baseline) in [
+            (1.0, 8.0, LineHeight::Number(1.0), 7.0),
+            (1.0, 9.0, LineHeight::Number(1.5), 10.0),
+            (1.0, 9.0, LineHeight::Number(1.2), 9.0),
+            (1.0, 9.0, LineHeight::Number(1.0), 8.0),
+            (1.0, 10.0, LineHeight::Px(13.0), 10.0),
+            (1.0, 11.0, LineHeight::Number(1.45), 12.0),
+            (1.0, 12.0, LineHeight::Number(1.5), 14.0),
+            (1.0, 12.0, LineHeight::Number(1.55), 14.0),
+            (1.0, 12.5, LineHeight::Number(1.6), 15.0),
+            (1.0, 14.0, LineHeight::Number(1.0), 12.0),
+            (1.0, 16.0, LineHeight::Number(1.5), 18.0),
+            (1.25, 8.0, LineHeight::Number(1.0), 9.0),
+            (1.25, 9.0, LineHeight::Number(1.2), 11.0),
+            (1.25, 10.0, LineHeight::Px(13.0), 13.0),
+            (1.25, 11.0, LineHeight::Number(1.45), 15.0),
+            (1.25, 12.0, LineHeight::Number(1.0), 13.0),
+            (1.25, 16.0, LineHeight::Number(1.5), 23.0),
+            (1.5, 8.0, LineHeight::Number(1.0), 11.0),
+            (1.5, 9.0, LineHeight::Number(1.5), 16.0),
+            (1.5, 9.0, LineHeight::Number(1.2), 14.0),
+            (1.5, 10.0, LineHeight::Px(13.0), 15.0),
+            (1.5, 11.0, LineHeight::Number(1.45), 18.0),
+            (1.5, 12.0, LineHeight::Number(1.5), 20.0),
         ] {
-            let lb = LineBox::new(&segoe(), size, lh);
-            assert_eq!(lb.baseline, baseline, "{size}px {lh:?}");
+            let lb = LineBox::new(&segoe(), size, lh, scale);
+            assert_eq!(lb.baseline * scale, baseline, "{size}px {lh:?} at {scale}");
         }
         assert_eq!(
-            LineBox::new(&segoe(), 12.0, LineHeight::Normal).height,
+            LineBox::new(&segoe(), 12.0, LineHeight::Normal, 1.0).height,
             16.0
         );
     }
