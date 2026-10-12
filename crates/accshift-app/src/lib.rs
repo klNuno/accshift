@@ -15,6 +15,8 @@
 //!   and the settings refresh actions, driven through [`jobs`].
 //! - [`display`]: folder navigation, search and the flat list of cards a grid
 //!   draws.
+//! - [`actions`]: dialogs, card actions, navigation, personas, the command
+//!   palette, the keyboard model and toasts, as state plus effects.
 //! - [`secure`]: the PIN, the inactivity blur, the window activity and the
 //!   secure screen; [`streamer`]: streamer mode.
 //! - [`bulk_edit`], [`platform_add_flow`], [`platform_shell`] and
@@ -22,6 +24,7 @@
 //!   shell state and the CS2 bridge queue.
 
 pub mod accounts;
+pub mod actions;
 pub mod backend;
 pub mod bulk_edit;
 pub mod cs2_bridge;
