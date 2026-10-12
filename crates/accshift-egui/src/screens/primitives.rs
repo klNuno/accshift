@@ -47,18 +47,29 @@ impl Primitives {
         }
         let mut texts = Vec::new();
         let mut rest = html;
-        while let Some(start) = rest.find("<p style=\"") {
-            rest = &rest[start + 10..];
-            let end = rest.find("\">").ok_or("unclosed <p style")?;
-            let style = &rest[..end];
-            rest = &rest[end + 2..];
+        // Tags and attributes may span lines (the fragments go through
+        // prettier).
+        while let Some(start) = rest.find("<p") {
+            rest = &rest[start + 2..];
+            if !rest.starts_with(|c: char| c.is_whitespace() || c == '>') {
+                continue;
+            }
+            let tag_end = rest.find('>').ok_or("unclosed <p")?;
+            let tag = &rest[..tag_end];
+            rest = &rest[tag_end + 1..];
+            let Some(at) = tag.find("style=\"") else {
+                continue;
+            };
+            let style = &tag[at + 7..];
+            let style = &style[..style.find('"').ok_or("unclosed style attribute")?];
             let close = rest.find("</p>").ok_or("unclosed <p>")?;
             // White space collapses (`nowrap` keeps that).
-            let content = rest[..close]
+            let content = unescape(&rest[..close])
                 .split_whitespace()
                 .collect::<Vec<_>>()
                 .join(" ");
             rest = &rest[close..];
+            let style = &unescape(style);
             let (pos, _) =
                 css::position(style).ok_or_else(|| format!("bad position in {style}"))?;
             let text_style =
@@ -91,6 +102,15 @@ impl Primitives {
     }
 }
 
+/// The character references the fragments use.
+fn unescape(s: &str) -> String {
+    s.replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,6 +124,23 @@ mod tests {
             let html = std::fs::read_to_string(&path).unwrap();
             let p = Primitives::parse(&html).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
             assert!(p.boxes.len() > 1);
+            if path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("typography")
+            {
+                assert!(
+                    p.texts.len() > 20,
+                    "{}: {} text lines",
+                    path.display(),
+                    p.texts.len()
+                );
+                assert!(p
+                    .texts
+                    .iter()
+                    .all(|(_, text, _)| !text.is_empty() && !text.contains('\n')));
+            }
             count += 1;
         }
         assert!(count >= 4);
