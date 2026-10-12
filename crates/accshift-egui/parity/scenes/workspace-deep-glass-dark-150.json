@@ -1,0 +1,162 @@
+{
+  "id": "workspace-deep-glass-dark-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "seed": {
+    "FOLDERS": {
+      "version": 1,
+      "folders": [
+        {
+          "id": "demo-folder-smurfs",
+          "name": "Smurfs",
+          "parentId": null,
+          "platform": "steam"
+        },
+        {
+          "id": "w1a-ranked",
+          "name": "Ranked",
+          "parentId": "demo-folder-smurfs",
+          "platform": "steam"
+        },
+        {
+          "id": "w1a-season",
+          "name": "Season 2026",
+          "parentId": "w1a-ranked",
+          "platform": "steam"
+        }
+      ],
+      "itemOrder": {
+        "root:steam": [
+          {
+            "type": "account",
+            "id": "76561198000000001"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000002"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000003"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000004"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000005"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000006"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000007"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000008"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000009"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000010"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000011"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000012"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000013"
+          },
+          {
+            "type": "folder",
+            "id": "demo-folder-smurfs"
+          }
+        ],
+        "demo-folder-smurfs": [
+          {
+            "type": "account",
+            "id": "76561198000000014"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000015"
+          },
+          {
+            "type": "folder",
+            "id": "w1a-ranked"
+          }
+        ],
+        "w1a-ranked": [
+          {
+            "type": "account",
+            "id": "76561198000000016"
+          },
+          {
+            "type": "folder",
+            "id": "w1a-season"
+          }
+        ],
+        "w1a-season": [
+          {
+            "type": "account",
+            "id": "76561198000000017"
+          }
+        ]
+      }
+    }
+  },
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [95, 152]
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "click": [205, 152]
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "click": [205, 152]
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "shot": "deep"
+    }
+  ]
+}

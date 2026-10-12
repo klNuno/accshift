@@ -20,8 +20,11 @@
 //! actions. Before the boot payload lands nothing is drawn, like
 //! `.app-frame { opacity: 0 }` before `boot-ready`.
 
+pub mod accounts;
+pub mod avatars;
 pub mod clock;
 pub mod platforms;
+pub mod settings_panel;
 mod shell;
 pub mod vars;
 
@@ -37,7 +40,7 @@ use accshift_app::mock::MockBackend;
 use accshift_app::real::RealBackend;
 use accshift_app::settings::AnimationsMode;
 use accshift_app::storage::{self, StoreId};
-use accshift_app::stores::{ClientStores, StoreContext};
+use accshift_app::stores::{ClientStores, StoreContext, ViewMode};
 use accshift_app::types::BootPayload;
 use accshift_theme::{
     theme_application, window_backdrop, AppTheme, CustomThemePayload, ResolvedTheme,
@@ -46,8 +49,9 @@ use accshift_theme::{
 use egui::{Context, Rect, TextureHandle, Ui, ViewportCommand};
 use serde_json::Value;
 
-use crate::screens::main_spike;
+use crate::screens::workspace::Workspace;
 use crate::ui::anim::{self, Motion};
+use accounts::Accounts;
 use clock::Clock;
 use platforms::{PlatformDef, RuntimeOs};
 use vars::Vars;
@@ -77,6 +81,22 @@ pub enum Action {
     /// Where the maximize button is, for Windows 11 Snap Layouts
     /// (`set_maximize_button_rect`), `None` when there is none (macOS).
     SetMaximizeButtonRect(Option<Rect>),
+    /// The settings panel (`settings_panel`).
+    Settings(settings_panel::SettingsAction),
+    /// Breadcrumb, folder card or section header: `navigateTo(folderId)`,
+    /// `None` being the root.
+    NavigateToFolder(Option<String>),
+    /// The back card: `navigateToParentFolder`.
+    NavigateBack,
+    /// The search input's new value.
+    SearchChanged(String),
+    SetViewMode(ViewMode),
+    /// A section header's chevron: its collapse key.
+    ToggleSection(String),
+    /// A card click (`onAccountActivate`): selection and focus, a later port.
+    AccountActivate(String),
+    /// `onAccountSwitch`: the switch flow is a later port.
+    AccountSwitch(String),
 }
 
 /// How a scene sets up the mock, the same fields `parity/ref.mjs` writes into
@@ -201,6 +221,10 @@ pub struct Booted {
     /// `panelKey` and when it last changed (`{#key panelKey}` remount).
     pub panel: (String, f64),
     pub init_error: Option<String>,
+    /// Accounts, display pipeline, folder navigation, avatar textures.
+    pub accounts: Accounts,
+    /// The workspace's own state (scroll, mounts, slides).
+    pub workspace: Workspace,
 }
 
 type BootResult = BackendResult<BootPayload>;
@@ -216,14 +240,19 @@ pub struct AppModel {
     boot_error: Option<String>,
     booted: Option<Booted>,
     saves: Vec<(StoreId, Pending<BackendResult<Option<String>>>)>,
-    /// The panel slot's placeholder until the workspace port replaces it.
-    spike: main_spike::AccshiftApp,
     /// The recorder's stand-in desktop under glass themes, scene runs only.
     desktop: Option<TextureHandle>,
     maximize_button: Option<Rect>,
+    /// The open settings panel.
+    settings_panel: Option<settings_panel::SettingsPanel>,
+    /// `addToast`'s queue (drawn by the toast port).
+    toasts: accshift_app::actions::toasts::ToastQueue,
     focus_visible: bool,
     last_time: f64,
     os_reduced_motion: bool,
+    /// Frames drawn, for the boot marks.
+    frames: u64,
+    ready_marked: bool,
 }
 
 impl AppModel {
@@ -274,13 +303,7 @@ impl AppModel {
         let wake = ctx.clone();
         let jobs = Jobs::new(Arc::clone(&backend), 2, move || wake.request_repaint());
         let boot_job = Some(jobs.run(|backend| backend.get_boot_payload()));
-        let spike = main_spike::AccshiftApp::new(
-            ctx,
-            main_spike::Options {
-                desktop_backdrop: false,
-                embedded: true,
-            },
-        );
+        crate::ui::text::install(ctx, false);
         AppModel {
             backend,
             mock,
@@ -291,12 +314,15 @@ impl AppModel {
             boot_error: None,
             booted: None,
             saves: Vec::new(),
-            spike,
             desktop: None,
             maximize_button: None,
+            settings_panel: None,
+            toasts: accshift_app::actions::toasts::ToastQueue::new(),
             focus_visible: false,
             last_time: 0.0,
             os_reduced_motion: false,
+            frames: 0,
+            ready_marked: false,
         }
     }
 
@@ -315,6 +341,16 @@ impl AppModel {
     /// `Date.now()` of the app (pinned in scene runs).
     pub fn now_ms(&self) -> f64 {
         self.clock.now_ms()
+    }
+
+    /// The open settings panel.
+    pub fn settings_panel(&self) -> Option<&settings_panel::SettingsPanel> {
+        self.settings_panel.as_ref()
+    }
+
+    /// The toasts `addToast` queued.
+    pub fn toasts(&self) -> &accshift_app::actions::toasts::ToastQueue {
+        &self.toasts
     }
 
     /// Where the maximize button was last drawn (Snap Layouts hook).
@@ -338,13 +374,17 @@ impl AppModel {
         }
     }
 
-    /// Ready to be photographed: booted, the boot cascade over, the panel's
-    /// assets uploaded.
+    /// Ready to be photographed: booted, the boot cascade over, the
+    /// accounts loaded, the panel's cards and avatars settled.
     pub fn ready(&self) -> bool {
-        self.booted
-            .as_ref()
-            .is_some_and(|b| self.last_time - b.boot_at >= shell::BOOT_CASCADE)
-            && self.spike.avatars_ready()
+        self.booted.as_ref().is_some_and(|b| {
+            self.last_time - b.boot_at >= shell::BOOT_CASCADE
+                && self.last_time - b.panel.1 >= b.theme.vars.motion_page_entrance
+                && b.accounts.settled()
+                && !b.accounts.avatars.busy()
+                && b.workspace
+                    .settled(&b.theme.vars, b.theme.motion, self.last_time)
+        })
     }
 
     fn finish_boot(&mut self, ctx: &Context, result: BootResult, now: f64) {
@@ -385,7 +425,7 @@ impl AppModel {
         store_ctx.platform_ids = platforms.iter().map(|p| p.id.clone()).collect();
         store_ctx.theme_ids = registry.all_themes().into_iter().map(|t| t.id).collect();
         store_ctx.preferred_languages = preferred_languages();
-        let stores = ClientStores::new(storage, store_ctx);
+        let mut stores = ClientStores::new(storage, store_ctx);
         if let Some(mock) = &self.mock {
             // The TS mock reads the live settings for its PIN gate.
             mock.set_pin_settings(&stores.settings().to_value());
@@ -404,6 +444,19 @@ impl AppModel {
         let theme = compute_theme(&registry, &stores, runtime_os, self.os_reduced_motion);
         anim::set_motion(ctx, theme.motion);
         let panel = (nav.panel_key(), now);
+        let app_clock = match &self.mock {
+            Some(mock) => accshift_app::time::Clock::mock(mock.now()),
+            None => accshift_app::time::Clock::system(),
+        };
+        let accounts = Accounts::boot(
+            &self.jobs,
+            &mut stores,
+            &loaded,
+            &nav.active_tab,
+            runtime_os,
+            app_clock,
+            self.mock.is_some(),
+        );
         self.booted = Some(Booted {
             runtime_os,
             stores,
@@ -415,6 +468,8 @@ impl AppModel {
             boot_at: now,
             panel,
             init_error: report.load_error,
+            accounts,
+            workspace: Workspace::new(),
         });
         // `finish_boot` (marks, the startup event); the real shell shows the
         // window here. Fire and forget.
@@ -478,14 +533,43 @@ impl AppModel {
             }
         }
         self.sync_settings(&ctx);
+        self.tick_settings_panel(&ctx, Instant::now());
         self.pump_saves();
         if ctx.input(|i| i.key_pressed(egui::Key::Tab)) {
             self.focus_visible = true;
         } else if ctx.input(|i| i.pointer.any_pressed()) {
             self.focus_visible = false;
         }
+        if let Some(b) = self.booted.as_mut() {
+            let grid_hidden = b.nav.show_settings || b.nav.show_personas;
+            let expanded = b.stores.settings().account_display.expanded_folders;
+            b.accounts.update(
+                &ctx,
+                &self.jobs,
+                &mut b.stores,
+                &b.nav.active_tab,
+                expanded,
+                grid_hidden,
+                Instant::now(),
+            );
+        }
         let actions = shell::draw(self, ui, now);
         self.apply(&ctx, actions, now);
+        // Boot marks for the startup bench.
+        match self.frames {
+            0 => {
+                crate::bench::mark("ui_done");
+                ctx.request_repaint();
+            }
+            // Frame 0 has been painted and swapped by now.
+            1 => crate::bench::mark("first_frame"),
+            _ => {}
+        }
+        self.frames += 1;
+        if !self.ready_marked && self.ready() {
+            crate::bench::mark("ready");
+            self.ready_marked = true;
+        }
     }
 
     /// Applies what the frame's components asked for.
@@ -497,6 +581,8 @@ impl AppModel {
             let key = b.nav.panel_key();
             if key != b.panel.0 {
                 b.panel = (key, now);
+                // `{#key panelKey}` remounts the workspace and its sections.
+                b.accounts.pipeline.clear_collapsed_sections();
             }
         }
     }
@@ -513,22 +599,50 @@ impl AppModel {
                 // this rect so Windows 11 opens the Snap Layouts flyout.
                 self.maximize_button = rect;
             }
-            // The workspace and add-flow ports own these.
-            Action::Refresh | Action::AddAccount | Action::ApplyUpdate => {}
-            Action::OpenSettings => {
+            Action::Refresh => {
                 if let Some(b) = self.booted.as_mut() {
-                    b.nav.show_personas = false;
-                    b.nav.show_settings = !b.nav.show_settings;
-                    b.nav.bulk_edit = false;
+                    let tab = b.nav.active_tab.clone();
+                    b.accounts.refresh(&self.jobs, &mut b.stores, &tab);
                 }
             }
+            // The add-flow, updater, selection and switch ports own these.
+            Action::AddAccount
+            | Action::ApplyUpdate
+            | Action::AccountActivate(_)
+            | Action::AccountSwitch(_) => {}
+            Action::NavigateToFolder(folder) => {
+                if let Some(b) = self.booted.as_mut() {
+                    b.accounts.navigate_to(&b.stores, &b.nav.active_tab, folder);
+                }
+            }
+            Action::NavigateBack => {
+                if let Some(b) = self.booted.as_mut() {
+                    b.accounts.navigate_back(&b.stores, &b.nav.active_tab);
+                }
+            }
+            Action::SearchChanged(query) => {
+                if let Some(b) = self.booted.as_mut() {
+                    b.accounts.set_search(&query, Instant::now());
+                }
+            }
+            Action::SetViewMode(mode) => {
+                if let Some(b) = self.booted.as_mut() {
+                    b.stores.set_view_mode(mode);
+                }
+            }
+            Action::ToggleSection(key) => {
+                if let Some(b) = self.booted.as_mut() {
+                    b.accounts.pipeline.toggle_section_collapsed(&key);
+                }
+            }
+            Action::OpenSettings => self.toggle_settings_panel(),
+            Action::Settings(action) => self.apply_settings(ctx, action),
             Action::OpenPersonas => {
                 if let Some(b) = self.booted.as_mut() {
                     if b.stores.settings().personas_enabled {
                         b.nav.show_settings = false;
                         b.nav.bulk_edit = false;
                         b.nav.show_personas = true;
-                        self.spike.show_tab("personas");
                     }
                 }
             }
@@ -547,13 +661,12 @@ impl AppModel {
                 }
                 if tab == b.nav.active_tab {
                     b.nav.show_settings = false;
-                    self.spike.show_tab(&tab);
                     return;
                 }
                 b.nav.bulk_edit = false;
                 b.nav.show_settings = false;
                 b.nav.active_tab = tab.clone();
-                self.spike.show_tab(&tab);
+                b.accounts.change_tab(&self.jobs, &mut b.stores, &tab);
             }
         }
     }

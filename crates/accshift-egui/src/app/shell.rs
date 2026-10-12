@@ -16,10 +16,11 @@
 
 use egui::epaint::{self, ClippedShape};
 use egui::layers::ShapeIdx;
-use egui::{vec2, Color32, Rect, Ui, UiBuilder};
+use egui::{pos2, vec2, Color32, Rect, Ui, UiBuilder};
 
 use super::platforms::{PlatformDef, RuntimeOs};
-use super::{Action, AppModel};
+use super::{Action, AppModel, Booted};
+use crate::screens::workspace::{self, WorkspaceInput};
 use crate::ui::anim::{Animation, Fill, Motion, Timing};
 use crate::ui::components::title_bar::{self, TitleBarProps};
 use crate::ui::paint::BoxStyle;
@@ -149,7 +150,10 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         focus_visible: app.focus_visible,
     };
     let panel_since = booted.panel.1;
-    let show_spike = !nav.show_settings;
+    // Settings and personas are not ported: their slot stays empty.
+    let show_workspace = !nav.show_settings && !nav.show_personas;
+    let compatible_platforms = enabled.iter().filter(|p| p.supports(os)).count();
+    let panel_key = nav.panel_key();
 
     let titlebar_style = page_entrance(&TITLEBAR_ENTRANCE, local, motion);
     let stage_style = page_entrance(&STAGE_ENTRANCE, local, motion);
@@ -176,7 +180,21 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         center * (1.0 - frame.scale) + vec2(0.0, frame.rise),
         frame.scale,
     );
-    let spike = &mut app.spike;
+    let jobs = &app.jobs;
+    let focus_visible = app.focus_visible;
+    let Some(Booted {
+        accounts,
+        workspace: ws,
+        theme,
+        stores,
+        platforms,
+        locale,
+        ..
+    }) = app.booted.as_mut()
+    else {
+        return actions;
+    };
+    let platform = platforms.iter().find(|p| p.id == nav.active_tab);
     ui.with_visual_transform(frame_transform, |ui| {
         let mut frame_ui = ui.new_child(UiBuilder::new().max_rect(window));
         frame_ui.multiply_opacity(frame.opacity);
@@ -206,12 +224,32 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                     title_bar::title_bar(ui, bar, &props)
                 }));
             }
-            // The panel slot. The spike lays its page out below its own
-            // title bar height, so it gets the whole stage. Settings are not
-            // ported: their slot stays empty.
+            // The panel slot, under the title bar.
             let (o, rise) = panel_style;
-            if show_spike {
-                layer(ui, stage, o, rise, |ui| spike.ui(ui));
+            let panel = if mac_bar.is_none() {
+                Rect::from_min_max(pos2(stage.left(), stage.top() + bar_h), stage.max)
+            } else {
+                stage
+            };
+            if show_workspace {
+                let input = WorkspaceInput {
+                    vars: &vars,
+                    resolved: &theme.resolved,
+                    motion,
+                    locale: *locale,
+                    stores,
+                    accounts,
+                    jobs,
+                    platform,
+                    usable: active_usable,
+                    compatible_platforms,
+                    panel_key: &panel_key,
+                    focus_visible,
+                    now,
+                };
+                actions.extend(layer(ui, panel, o, rise, |ui| {
+                    workspace::draw(ui, panel, ws, input)
+                }));
             }
         });
     });

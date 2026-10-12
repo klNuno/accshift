@@ -11,6 +11,16 @@
 //! [`Action`]: crate::app::Action
 //! [`AppModel`]: crate::app::AppModel
 
+pub mod account_card;
+pub mod avatar_fade_in;
+pub mod back_card;
+pub mod breadcrumb;
+pub mod controls;
+pub mod focus;
+pub mod folder_card;
 pub mod icon;
 pub mod platform_icons;
+pub mod section_header;
 pub mod title_bar;
+pub mod use_grid_layout;
+pub mod view_toggle;
