@@ -47,6 +47,8 @@ use crate::ui::paint::{Border, BoxShadow, BoxStyle, Corners, Gradient, Sides};
 use crate::ui::snap;
 use crate::ui::text::{self, LineHeight, TextAlign, TextStyle, TextTransform};
 
+/// `.field { gap: 8px }`.
+const FIELD_GAP: f32 = 8.0;
 /// `.settings-grid { gap: 12px }`.
 const GRID_GAP: f32 = 12.0;
 /// `minmax(300px, 1fr)`.
@@ -168,6 +170,17 @@ enum Item {
     Link(String, SettingsAction),
     /// `p.hint`, in `--danger` for an error.
     Hint(String, bool),
+    /// A `p.hint` closing the `.field` before it: the field's 8 px gap
+    /// after the control instead of the card's 12.
+    FieldHint(String, bool),
+}
+
+/// The space above `item` when it follows another one in a card.
+fn gap_before(item: &Item) -> f32 {
+    match item {
+        Item::FieldHint(..) => FIELD_GAP,
+        _ => card::GAP,
+    }
 }
 
 enum Control {
@@ -397,9 +410,9 @@ fn privacy_cards(panel: &SettingsPanel, l: Locale) -> Vec<CardSpec> {
             },
         });
         if panel.current_pin_error.is_empty() {
-            security.push(Item::Hint(t("settings.pinCurrentHint"), false));
+            security.push(Item::FieldHint(t("settings.pinCurrentHint"), false));
         } else {
-            security.push(Item::Hint(panel.current_pin_error.clone(), true));
+            security.push(Item::FieldHint(panel.current_pin_error.clone(), true));
         }
     } else if d.pin_enabled || panel.pin_setup_pending {
         security.push(Item::Field {
@@ -412,7 +425,10 @@ fn privacy_cards(panel: &SettingsPanel, l: Locale) -> Vec<CardSpec> {
                 enabled: true,
             },
         });
-        security.push(Item::Hint(t("settings.pinRequiredAfterInactivity"), false));
+        security.push(Item::FieldHint(
+            t("settings.pinRequiredAfterInactivity"),
+            false,
+        ));
     }
     let mut cards = vec![
         CardSpec {
@@ -617,7 +633,9 @@ fn item_height(ctx: &Context, c: &Ctx, item: &Item, width: f32) -> f32 {
         }
         Item::Button { label, .. } => button::size(ctx, label, &button::export_style(v)).y,
         Item::Link(..) => 18.0,
-        Item::Hint(text, _) => wrapped_height(ctx, text, &hint_style(v), width),
+        Item::Hint(text, _) | Item::FieldHint(text, _) => {
+            wrapped_height(ctx, text, &hint_style(v), width)
+        }
     }
 }
 
@@ -629,7 +647,8 @@ fn card_height(ctx: &Context, c: &Ctx, spec: &CardSpec, width: f32) -> f32 {
         .iter()
         .map(|i| item_height(ctx, c, i, inner))
         .sum();
-    items + card::GAP * spec.items.len().saturating_sub(1) as f32 + 2.0 * inset
+    let gaps: f32 = spec.items.iter().skip(1).map(gap_before).sum();
+    items + gaps + 2.0 * inset
 }
 
 /// Grid placement: `(column, row)` of each card, columns spanned, row count.
@@ -955,11 +974,14 @@ pub fn draw(
         let inner = card::content(*rect, CardKind::Panel, ppp);
         let mut y = inner.top();
         for (i, item) in spec.items.iter().enumerate() {
+            if i > 0 {
+                y += gap_before(item);
+            }
             let h = item_height(&ctx, &c, item, inner.width());
             let r = Rect::from_min_size(pos2(inner.left(), y), vec2(inner.width(), h));
             let id = c.scope.with((active.as_str(), rect.left() as i32, i));
             out.extend(paint_item(&mut content_ui, r, id, &c, item));
-            y += h + card::GAP;
+            y += h;
         }
     }
     let mut offset = c.panel.scroll;
@@ -1370,7 +1392,7 @@ fn paint_item(ui: &mut Ui, r: Rect, id: Id, c: &Ctx, item: &Item) -> Vec<Setting
                 out.push(action.clone());
             }
         }
-        Item::Hint(text, danger) => {
+        Item::Hint(text, danger) | Item::FieldHint(text, danger) => {
             let mut style = hint_style(v);
             if *danger {
                 style = style.color(v.danger.to_color32());

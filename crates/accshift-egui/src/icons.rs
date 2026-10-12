@@ -1,6 +1,6 @@
 //! The SVG icons the Svelte shell draws inline, copied from `TitleBar.svelte`,
-//! `ViewToggle.svelte`, `FolderCard.svelte`, `BackCard.svelte` and
-//! `platformIcons.ts`. `currentColor` is spelled white so a tint gives the
+//! `ViewToggle.svelte`, `FolderCard.svelte`, `BackCard.svelte`, `Toast.svelte`
+//! and `platformIcons.ts`. `currentColor` is spelled white so a tint gives the
 //! final colour.
 
 macro_rules! svg {
@@ -98,4 +98,26 @@ pub const ROBLOX: &[u8] = svg!(
     "0 0 24 24",
     "fill=\"white\"",
     "<path d=\"M18.926 23.998 0 18.892 5.075.002 24 5.108ZM15.348 10.09l-5.282-1.453-1.414 5.273 5.282 1.453z\"/>"
+);
+
+/// `Toast.svelte`'s status icons and its dismiss cross.
+pub const TOAST_INFO: &[u8] = svg!(
+    "0 0 24 24",
+    "fill=\"none\" stroke=\"white\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"",
+    "<circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"12\" y1=\"16\" x2=\"12\" y2=\"12\"/><line x1=\"12\" y1=\"8\" x2=\"12.01\" y2=\"8\"/>"
+);
+pub const TOAST_SUCCESS: &[u8] = svg!(
+    "0 0 24 24",
+    "fill=\"none\" stroke=\"white\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"",
+    "<path d=\"M20 6L9 17l-5-5\"/>"
+);
+pub const TOAST_ERROR: &[u8] = svg!(
+    "0 0 24 24",
+    "fill=\"none\" stroke=\"white\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"",
+    "<circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"15\" y1=\"9\" x2=\"9\" y2=\"15\"/><line x1=\"9\" y1=\"9\" x2=\"15\" y2=\"15\"/>"
+);
+pub const TOAST_CLOSE: &[u8] = svg!(
+    "0 0 24 24",
+    "fill=\"none\" stroke=\"white\" stroke-width=\"2.5\" stroke-linecap=\"round\"",
+    "<line x1=\"18\" y1=\"6\" x2=\"6\" y2=\"18\"/><line x1=\"6\" y1=\"6\" x2=\"18\" y2=\"18\"/>"
 );

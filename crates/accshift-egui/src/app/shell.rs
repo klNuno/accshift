@@ -7,8 +7,7 @@
 //!     .app-shell        var(--bg) and var(--bg-image)
 //!       TitleBar        Windows and Linux, page-entrance
 //!       {#key panelKey} the panel, page-entrance on every switch
-//!   overlays            (none ported yet)
-//! dialogs               (none ported yet)
+//!     AppDialogs        the toast stack (menus and dialogs not ported yet)
 //! ```
 //!
 //! Before the boot payload lands the frame is `opacity: 0`: nothing but the
@@ -25,6 +24,7 @@ use crate::screens::settings;
 use crate::screens::workspace::{self, WorkspaceInput};
 use crate::ui::anim::{Animation, Fill, Motion, Timing};
 use crate::ui::components::title_bar::{self, TitleBarProps};
+use crate::ui::components::toast::{self, ToastProps};
 use crate::ui::paint::BoxStyle;
 
 /// `appEntrance 240ms cubic-bezier(0.22, 1, 0.36, 1) forwards`.
@@ -193,6 +193,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         .flatten();
     let settings_panel = &mut app.settings_panel;
     let focus_visible = app.focus_visible;
+    let toasts = app.toasts.toasts();
     let Some(Booted {
         accounts,
         workspace: ws,
@@ -268,6 +269,20 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                     settings::draw(ui, panel, sp, view, focus_visible)
                 }));
             }
+            // `.toast-container`, fixed to the frame (its transform makes it
+            // the containing block), above the panel.
+            let props = ToastProps {
+                vars: &vars,
+                locale: *locale,
+                toasts,
+                motion,
+                now,
+            };
+            actions.extend(
+                toast::toast_stack(ui, window, &props)
+                    .into_iter()
+                    .map(Action::Toast),
+            );
         });
     });
     let end = next_idx(&ctx, layer_id);

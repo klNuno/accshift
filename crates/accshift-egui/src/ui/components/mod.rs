@@ -23,5 +23,6 @@ pub mod platform_icons;
 pub mod search_cancel;
 pub mod section_header;
 pub mod title_bar;
+pub mod toast;
 pub mod use_grid_layout;
 pub mod view_toggle;

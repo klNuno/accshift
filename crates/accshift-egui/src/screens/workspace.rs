@@ -1645,6 +1645,54 @@ mod scene_tests {
         assert_eq!(boxes[7].2, -1712.0);
     }
 
+    /// The "Settings saved" toast of an inactivity timeout edit, as in the
+    /// `pin-setup` shot: hovering it pauses its countdown, leaving resumes
+    /// it, its cross removes it.
+    #[test]
+    fn toast_pauses_on_hover_and_closes_on_its_cross() {
+        // Frames on the wall clock, like a scene's `wait`.
+        fn wait(run: &mut Run, ms: u64) {
+            let until = Instant::now() + Duration::from_millis(ms);
+            while Instant::now() < until {
+                run.frame();
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        let mut run = Run::new("settings-glass-dark-100", 1.0);
+        run.settle();
+        wait(&mut run, 600);
+        // The steps and waits of `settings-glass-dark-100`.
+        run.click(pos2(87.0, 18.0));
+        wait(&mut run, 700);
+        run.click(pos2(93.0, 176.0));
+        run.click(pos2(350.0, 192.0));
+        run.send(Event::Text("45".into()));
+        run.frame();
+        // The PIN toggle blurs the field: `change` commits it, and the save
+        // toast follows `queueSave`'s 220 ms debounce.
+        run.click(pos2(766.0, 167.0));
+        wait(&mut run, 400);
+        let toasts = |run: &Run| match &run.screen {
+            Screen::App(app) => app.toasts().toasts().to_vec(),
+            _ => panic!("not the app"),
+        };
+        let shown = toasts(&run);
+        assert_eq!(shown.len(), 1);
+        assert!(shown[0].deadline().is_some());
+        // The reference draws the toast at 694..850 x 386..424.
+        run.send(Event::PointerMoved(pos2(760.0, 405.0)));
+        run.frame();
+        run.frame();
+        assert!(toasts(&run)[0].hovered());
+        assert_eq!(toasts(&run)[0].deadline(), None);
+        run.send(Event::PointerMoved(pos2(430.0, 5.0)));
+        run.frame();
+        run.frame();
+        assert!(toasts(&run)[0].deadline().is_some());
+        run.click(pos2(821.0, 405.0));
+        assert!(toasts(&run).is_empty());
+    }
+
     /// The huge scenario scrolled down and back with the CPU renderer:
     /// median and p99 of the whole frame (ui, tessellation, raster) over 300
     /// frames. `cargo test --release --lib huge_scroll -- --ignored

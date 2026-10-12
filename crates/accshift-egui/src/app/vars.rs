@@ -9,7 +9,7 @@ use accshift_theme::ResolvedTheme;
 
 use crate::theme::Rgba;
 use crate::ui::css;
-use crate::ui::paint::Gradient;
+use crate::ui::paint::{BoxShadow, Gradient};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Vars {
@@ -49,6 +49,10 @@ pub struct Vars {
     pub border_style_none: bool,
     /// `--danger`.
     pub danger: Rgba,
+    /// `--success`.
+    pub success: Rgba,
+    /// `--elevation-medium`, first on top.
+    pub elevation_medium: Vec<BoxShadow>,
     /// `--accent`.
     pub accent: Rgba,
     /// `--accent-text`.
@@ -125,6 +129,11 @@ impl Vars {
                 .substitute("--border-style")
                 .is_some_and(|style| style.trim() == "none"),
             danger: color("--danger"),
+            success: color("--success"),
+            elevation_medium: theme
+                .substitute("--elevation-medium")
+                .and_then(|value| css::shadows(&value))
+                .unwrap_or_default(),
             accent: color("--accent"),
             accent_text: color("--accent-text"),
             motion_page_entrance: seconds("--motion-page-entrance", 200.0),

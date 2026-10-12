@@ -51,6 +51,7 @@ use serde_json::Value;
 
 use crate::screens::workspace::Workspace;
 use crate::ui::anim::{self, Motion};
+use crate::ui::components::toast::ToastEvent;
 use accounts::Accounts;
 use clock::Clock;
 use platforms::{PlatformDef, RuntimeOs};
@@ -97,6 +98,8 @@ pub enum Action {
     AccountActivate(String),
     /// `onAccountSwitch`: the switch flow is a later port.
     AccountSwitch(String),
+    /// A toast was hovered, dismissed or its action clicked.
+    Toast(ToastEvent),
 }
 
 /// How a scene sets up the mock, the same fields `parity/ref.mjs` writes into
@@ -245,7 +248,7 @@ pub struct AppModel {
     maximize_button: Option<Rect>,
     /// The open settings panel.
     settings_panel: Option<settings_panel::SettingsPanel>,
-    /// `addToast`'s queue (drawn by the toast port).
+    /// `addToast`'s queue, drawn by `toast::toast_stack`.
     toasts: accshift_app::actions::toasts::ToastQueue,
     focus_visible: bool,
     last_time: f64,
@@ -553,6 +556,13 @@ impl AppModel {
                 Instant::now(),
             );
         }
+        // `Toast.svelte`'s `setTimeout`: expired toasts go before drawing,
+        // and the next expiry wakes the UI.
+        let instant = Instant::now();
+        self.toasts.tick(instant);
+        if let Some(deadline) = self.toasts.next_deadline() {
+            ctx.request_repaint_after(deadline.saturating_duration_since(instant));
+        }
         let actions = shell::draw(self, ui, now);
         self.apply(&ctx, actions, now);
         // Boot marks for the startup bench.
@@ -635,6 +645,17 @@ impl AppModel {
                     b.accounts.pipeline.toggle_section_collapsed(&key);
                 }
             }
+            Action::Toast(event) => match event {
+                ToastEvent::Hover(id, hovered) => {
+                    self.toasts.set_hovered(id, hovered, Instant::now());
+                }
+                ToastEvent::Close(id) => self.toasts.remove(id),
+                // No toast carries an action yet: the flows that add one
+                // (undo, update) map the id when they are ported.
+                ToastEvent::Action(id) => {
+                    self.toasts.activate_action(id);
+                }
+            },
             Action::OpenSettings => self.toggle_settings_panel(),
             Action::Settings(action) => self.apply_settings(ctx, action),
             Action::OpenPersonas => {
