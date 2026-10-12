@@ -4,8 +4,11 @@
 //! close request of `src/lib/app/useDocumentListeners.ts`.
 
 use crate::backend::Backend;
+use crate::error::BackendResult;
 use crate::js;
-use crate::types::SettingsSnapshot;
+use crate::platforms::descriptors::PlatformDescriptor;
+use crate::platforms::PlatformRegistry;
+use crate::types::{BootPayload, SettingsSnapshot};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -170,6 +173,64 @@ pub fn log_app_event(
         .filter(|value| !value.is_null())
         .map(serialize_log_value);
     let _ = backend.log_app_event(level, source, message, details.as_deref());
+}
+
+/// `bootPayload.ts`: `fetchBootPayload` asks once (`get_boot_payload`) and
+/// fills the registry with the user platforms; `getBootPayload` reads the
+/// cached answer. The document-side prefetch has no egui equivalent.
+#[derive(Debug, Default)]
+pub struct BootPayloadCache {
+    payload: Option<BootPayload>,
+}
+
+impl BootPayloadCache {
+    /// `fetchBootPayload`. A later call asks again, as TS.
+    pub fn fetch(
+        &mut self,
+        backend: &dyn Backend,
+        registry: &mut PlatformRegistry,
+    ) -> BackendResult<&BootPayload> {
+        let payload = backend.get_boot_payload()?;
+        let descriptors: Vec<PlatformDescriptor> = payload
+            .user_platforms
+            .loaded
+            .iter()
+            .filter_map(PlatformDescriptor::from_core)
+            .collect();
+        registry.register_user_platforms(&descriptors);
+        Ok(self.payload.insert(payload))
+    }
+
+    /// `getBootPayload`.
+    pub fn get(&self) -> Option<&BootPayload> {
+        self.payload.as_ref()
+    }
+}
+
+/// telemetryClient.ts `trackAccountAddStarted`, fire and forget (the mock
+/// rejects every `telemetry_` call; the error is dropped, as TS).
+pub fn track_account_add_started(backend: &dyn Backend, platform_id: &str) {
+    let _ = backend.telemetry_track_account_add_started(platform_id);
+}
+
+/// telemetryClient.ts `trackAccountAddCancelled`.
+pub fn track_account_add_cancelled(backend: &dyn Backend, platform_id: &str) {
+    let _ = backend.telemetry_track_account_add_cancelled(platform_id);
+}
+
+/// telemetryClient.ts `trackAccountAdded`.
+pub fn track_account_added(backend: &dyn Backend, platform_id: &str) {
+    let _ = backend.telemetry_track_account_added(platform_id);
+}
+
+/// telemetryClient.ts `trackOperationFailed`.
+pub fn track_operation_failed(
+    backend: &dyn Backend,
+    operation: &str,
+    error_code: &str,
+    platform_id: Option<&str>,
+) {
+    let _ = backend.telemetry_track_operation_failed(operation, error_code, platform_id);
 }
 
 /// telemetryClient.ts `trackUpdate`, fire and forget.

@@ -880,3 +880,55 @@ fn relaunch_releases_spawns_with_the_same_arguments_then_exits() {
     assert!(binary.is_file());
     assert_eq!(process::relaunch_program(&binary), binary);
 }
+
+#[test]
+fn the_boot_payload_is_fetched_cached_and_fills_the_registry() {
+    use accshift_app::lifecycle::boot::BootPayloadCache;
+    let backend = support::scripted("demo");
+    let mut registry = PlatformRegistry::shipped();
+    let mut cache = BootPayloadCache::default();
+    assert!(cache.get().is_none());
+    let runtime_os = cache
+        .fetch(&backend, &mut registry)
+        .unwrap()
+        .runtime_os
+        .clone();
+    assert!(!runtime_os.is_empty());
+    assert_eq!(cache.get().unwrap().runtime_os, runtime_os);
+    assert_eq!(backend.calls("get_boot_payload").len(), 1);
+    // Every loaded user platform is in the registry afterwards.
+    for descriptor in &cache.get().unwrap().user_platforms.loaded {
+        let id = serde_json::to_value(descriptor).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(registry.definition(&id).is_some(), "{id}");
+    }
+    // A failing call keeps the earlier answer.
+    backend.push("get_boot_payload", Err("boom"));
+    assert!(cache.fetch(&backend, &mut registry).is_err());
+    assert!(cache.get().is_some());
+}
+
+#[test]
+fn the_other_telemetry_calls_are_fire_and_forget() {
+    use accshift_app::lifecycle::boot::{
+        track_account_add_cancelled, track_account_add_started, track_account_added,
+        track_operation_failed,
+    };
+    let backend = support::scripted("demo");
+    track_account_add_started(&backend, "steam");
+    track_account_add_cancelled(&backend, "steam");
+    track_account_added(&backend, "riot");
+    track_operation_failed(&backend, "switch", "timeout", Some("steam"));
+    assert_eq!(
+        backend.calls("telemetry_track_account_add_started").len(),
+        1
+    );
+    assert_eq!(
+        backend.calls("telemetry_track_account_add_cancelled").len(),
+        1
+    );
+    assert_eq!(backend.calls("telemetry_track_account_added").len(), 1);
+    assert_eq!(backend.calls("telemetry_track_operation_failed").len(), 1);
+}
