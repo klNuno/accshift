@@ -38,6 +38,19 @@ sha2 = "0.11"
 # installed database) and reads /usr/share/zoneinfo elsewhere. Same version
 # as the root workspace lock.
 jiff = "0.2.35"
+# `lifecycle::updater`: the port of tauri-plugin-updater 2.11. Same crates and
+# majors the plugin builds with: minisign-verify for the `.sig`, semver for
+# the version compare, base64 for the key and signature strings, time for the
+# RFC 3339 `pub_date`, url and percent-encoding for the endpoint templating,
+# infer and tempfile for the downloaded installer.
+minisign-verify = "0.2"
+semver = "1"
+base64 = "0.23"
+time = { version = "0.3", features = ["parsing", "formatting"] }
+url = { version = "2", features = ["serde"] }
+percent-encoding = "2"
+infer = "0.19"
+tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
 # `get_desktop_wallpaper`: the Progman capture of
@@ -46,11 +59,24 @@ jiff = "0.2.35"
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
+  "Win32_Security",
   "Win32_Storage_Xps",
+  "Win32_System_DataExchange",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Threading",
+  "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
-base64 = "0.23"
+# `lifecycle::deep_link`: the HKCU scheme registration, on the crate
+# tauri-plugin-deep-link 2.4 writes it with.
+windows-registry = "0.5"
+# `lifecycle::deep_link`: `dunce::simplified` of the canonical exe path, as
+# the plugin writes `"<exe>" "%1"`.
+dunce = "1"
+# `lifecycle::updater`: the updater zip of an NSIS or MSI bundle, as the
+# plugin's default `zip` feature reads it.
+zip = { version = "4", default-features = false }
 # `legacy_web_storage`: reads the WebView2 localStorage LevelDB of v0.x
 # installs. Pure Rust, Snappy blocks and the `.log` replay included. No `fs`
 # feature: the files are copied into its in-memory env, never opened on disk.
@@ -60,8 +86,28 @@ rusty-leveldb = { version = "4", default-features = false }
 # `legacy_web_storage`: the WebKit localStorage sqlite of WebKitGTK and
 # WKWebView. Same spec as the root workspace.
 rusqlite = { version = "0.40", features = ["bundled"] }
+# `lifecycle::updater`: the `.tar.gz` bundles of AppImage and macOS.
+flate2 = "1"
+tar = "0.4"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# `lifecycle::single_instance`: the D-Bus name tauri-plugin-single-instance
+# 2.4 owns on Linux, same major.
+zbus = "5.9"
+# `lifecycle::deep_link`: the `.desktop` handler file the plugin merges.
+rust-ini = "0.21"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# `lifecycle::updater`: the admin prompt of the macOS install fallback.
+osakit = { version = "0.3", features = ["full"] }
+# `lifecycle::process`: the `CFBundleExecutable` a relaunch starts, as
+# Tauri's `restart_macos_app` reads it.
+plist = "1"
 
 [dev-dependencies]
+# Signs the updater fixtures with a key generated in the test, as the
+# `tauri signer` command does (tauri-cli signs with this crate).
+minisign = "0.10"
 # The WebKit fixtures are built and read on every OS, Windows included
 # (tests/legacy_web_storage.rs compiles src/legacy_web_storage/webkit_sqlite.rs
 # by path), without growing the Windows app.

@@ -22,6 +22,8 @@
 //! - [`bulk_edit`], [`platform_add_flow`], [`platform_shell`] and
 //!   [`cs2_bridge`]: the Steam bulk edit, the add-account flow, the platform
 //!   shell state and the CS2 bridge queue.
+//! - [`lifecycle`]: boot and shutdown order, the updater, single instance,
+//!   deep links and process control of the Tauri plugins.
 
 pub mod accounts;
 pub mod actions;
@@ -36,6 +38,7 @@ pub mod i18n;
 pub mod jobs;
 pub mod js;
 pub mod legacy_web_storage;
+pub mod lifecycle;
 pub mod menu;
 pub mod mock;
 pub mod personas;
