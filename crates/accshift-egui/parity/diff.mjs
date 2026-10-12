@@ -3,6 +3,7 @@
 //
 //   node diff.mjs <ref.png> <other.png|pam> --out <dir>
 //   node diff.mjs --batch <refDir> <otherDir> --out <dir>
+//   ... --region x,y,w,h [--scale <s>]
 //
 // Both images are decoded to raw RGBA by ffmpeg (PNG or PAM in), then each is
 // composited over black so a transparent pixel compares as what an opaque
@@ -17,6 +18,12 @@
 // black to red to yellow to white ramp) and <shot>-side.png (reference on
 // top, other below). When the sizes differ, the overlapping top-left area is
 // compared and the shot is flagged.
+//
+// `--region x,y,w,h` limits every number and both PNGs to that rectangle, in
+// CSS px of the viewport. It is scaled by each shot's scale: the scene's
+// `viewport.scale` (scenes/<scene>.json next to this file) in batch mode,
+// `--scale` (default 1) for a single pair. The worst tile stays in image
+// pixels of the whole shot.
 //
 // Batch mode pairs shots through <refDir>/manifest.json (written by ref.mjs):
 // <otherDir>/<scene>/<shot>.png|pam first, then <otherDir>/<alias>.png|pam for
@@ -37,6 +44,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 
 const FFMPEG = process.env.FFMPEG ?? "ffmpeg";
@@ -130,8 +138,40 @@ function ramp(v) {
   return [r * 255, g * 255, b * 255];
 }
 
-export function compare(refFile, otherFile, heatFile, sideFile) {
-  const [a, b] = decode(refFile, otherFile);
+/** `img` cut to `rect` (image pixels), clipped to the image. */
+function crop(img, rect) {
+  const x0 = Math.max(0, Math.min(img.width, rect.x));
+  const y0 = Math.max(0, Math.min(img.height, rect.y));
+  const width = Math.max(0, Math.min(img.width, rect.x + rect.w) - x0);
+  const height = Math.max(0, Math.min(img.height, rect.y + rect.h) - y0);
+  const data = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    const from = ((y0 + y) * img.width + x0) * 4;
+    img.data.copy(data, y * width * 4, from, from + width * 4);
+  }
+  return { width, height, data };
+}
+
+/** `--region` in CSS px to image pixels at `scale`. */
+export function scaleRegion(region, scale) {
+  if (!region) return null;
+  const [x, y, w, h] = region;
+  const x0 = Math.round(x * scale);
+  const y0 = Math.round(y * scale);
+  return {
+    x: x0,
+    y: y0,
+    w: Math.round((x + w) * scale) - x0,
+    h: Math.round((y + h) * scale) - y0,
+  };
+}
+
+export function compare(refFile, otherFile, heatFile, sideFile, region = null) {
+  let [a, b] = decode(refFile, otherFile);
+  if (region) {
+    a = crop(a, region);
+    b = crop(b, region);
+  }
   a.rgb = overBlack(a);
   b.rgb = overBlack(b);
   const width = Math.min(a.width, b.width);
@@ -212,9 +252,10 @@ export function compare(refFile, otherFile, heatFile, sideFile) {
     psnr: mse === 0 ? 99 : round(10 * Math.log10((255 * 255) / mse)),
     over8: round((over8 / n) * 100),
     over24: round((over24 / n) * 100),
+    ...(region ? { region } : {}),
     worst: {
-      x: (worst % tilesX) * 16,
-      y: Math.floor(worst / tilesX) * 16,
+      x: (worst % tilesX) * 16 + (region?.x ?? 0),
+      y: Math.floor(worst / tilesX) * 16 + (region?.y ?? 0),
       mae: round(tileSum[worst] / tileCount[worst]),
     },
   };
@@ -245,9 +286,28 @@ function refShots(refDir) {
   return shots;
 }
 
-function batch(refDir, otherDir, out) {
+/** `viewport.scale` of a scene file next to this script, or null. */
+function sceneScale(scene) {
+  const file = join(dirname(fileURLToPath(import.meta.url)), "scenes", `${scene}.json`);
+  if (!existsSync(file)) return null;
+  return JSON.parse(readFileSync(file, "utf8")).viewport?.scale ?? 1.5;
+}
+
+function batch(refDir, otherDir, out, region) {
   const rows = [];
   for (const s of refShots(refDir)) {
+    let rect = null;
+    if (region) {
+      const scale = sceneScale(s.scene);
+      if (scale === null) {
+        console.log(
+          `${s.scene}/${s.shot}: no scenes/${s.scene}.json for the region scale, skipped`,
+        );
+        rows.push({ scene: s.scene, shot: s.shot, missing: true });
+        continue;
+      }
+      rect = scaleRegion(region, scale);
+    }
     const other = findOther(otherDir, [`${s.scene}/${s.shot}`, ...(s.alias ? [s.alias] : [])]);
     const row = { scene: s.scene, shot: s.shot, ref: join(refDir, s.file), other };
     if (!other) {
@@ -261,6 +321,7 @@ function batch(refDir, otherDir, out) {
           other,
           join(out, s.scene, `${s.shot}-heat.png`),
           join(out, s.scene, `${s.shot}-side.png`),
+          rect,
         ),
       );
       console.log(
@@ -280,14 +341,14 @@ function batch(refDir, otherDir, out) {
   };
   writeFileSync(
     join(out, "report.json"),
-    JSON.stringify({ refDir, otherDir, summary, rows }, null, 2) + "\n",
+    JSON.stringify({ refDir, otherDir, region, summary, rows }, null, 2) + "\n",
   );
 
   const rel = (p) => relative(out, p).split("\\").join("/");
   const md = [
     `# Parity diff`,
     "",
-    `Reference \`${refDir}\` against \`${otherDir}\`: ${done.length} of ${rows.length} shots compared, mean PSNR ${summary.meanPsnr} dB, mean MAE ${summary.meanMae}.`,
+    `Reference \`${refDir}\` against \`${otherDir}\`: ${done.length} of ${rows.length} shots compared, mean PSNR ${summary.meanPsnr} dB, mean MAE ${summary.meanMae}.${region ? ` Region ${region.join(",")} (CSS px).` : ""}`,
     "",
     "| Shot | Other | PSNR (dB) | MAE | > 8 (%) | > 24 (%) | Worst 16x16 tile | Images |",
     "| --- | --- | ---: | ---: | ---: | ---: | --- | --- |",
@@ -309,15 +370,20 @@ function main() {
   const argv = process.argv.slice(2);
   let out = null;
   let isBatch = false;
+  let region = null;
+  let scale = 1;
   const pos = [];
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--out") out = argv[++i];
     else if (argv[i] === "--batch") isBatch = true;
+    else if (argv[i] === "--region") region = String(argv[++i]).split(",").map(Number);
+    else if (argv[i] === "--scale") scale = Number(argv[++i]);
     else pos.push(argv[i]);
   }
-  if (!out || pos.length !== 2) {
+  const badRegion = region && (region.length !== 4 || region.some((v) => !Number.isFinite(v)));
+  if (!out || pos.length !== 2 || badRegion || !(scale > 0)) {
     console.error(
-      "usage: diff.mjs <ref> <other> --out <dir> | diff.mjs --batch <refDir> <otherDir> --out <dir>",
+      "usage: diff.mjs <ref> <other> --out <dir> [--region x,y,w,h --scale s] | diff.mjs --batch <refDir> <otherDir> --out <dir> [--region x,y,w,h]",
     );
     process.exit(2);
   }
@@ -325,12 +391,18 @@ function main() {
   mkdirSync(out, { recursive: true });
   const [ref, other] = pos.map((p) => resolve(p));
   if (isBatch) {
-    const summary = batch(ref, other, out);
+    const summary = batch(ref, other, out, region);
     if (summary.compared === 0) process.exitCode = 1;
     return;
   }
   const stem = basename(ref, extname(ref));
-  const result = compare(ref, other, join(out, `${stem}-heat.png`), join(out, `${stem}-side.png`));
+  const result = compare(
+    ref,
+    other,
+    join(out, `${stem}-heat.png`),
+    join(out, `${stem}-side.png`),
+    scaleRegion(region, scale),
+  );
   console.log(JSON.stringify(result));
 }
 

@@ -1,5 +1,6 @@
 //! The accshift UI in egui. See `README.md` next to this crate.
 
+pub mod app;
 pub mod avatars;
 pub mod backdrop;
 pub mod bench;
@@ -12,15 +13,15 @@ pub mod soft;
 pub mod theme;
 pub mod ui;
 
-pub use screens::main_spike::{AccshiftApp, Options};
+pub use app::{Action, AppModel};
 pub use screens::Screen;
 
 #[cfg(all(feature = "software", feature = "glow"))]
 compile_error!("pick one renderer: `software` (default) or `glow` with --no-default-features");
 
 /// What both runners drive: the current screen plus the optional scene run.
-/// The window is cleared to transparent so the OS acrylic shows through the
-/// 55 % window fill, exactly like the Tauri window.
+/// The window is cleared to transparent so the OS backdrop shows through the
+/// theme's window fill, like the Tauri window.
 pub struct Shell {
     pub screen: Screen,
     pub scenes: Option<harness::SceneRun>,

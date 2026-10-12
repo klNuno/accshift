@@ -49,6 +49,9 @@ pub struct Options {
     /// Paint the recorder's stand-in desktop under the window, for offscreen
     /// captures where no OS backdrop exists.
     pub desktop_backdrop: bool,
+    /// Drawn in the app shell's panel slot: the shell paints the window fill
+    /// and the title bar, the spike only its page.
+    pub embedded: bool,
 }
 
 struct AvatarTex {
@@ -73,6 +76,7 @@ pub struct AccshiftApp {
     avatar_rx: Option<Receiver<Decoded>>,
     gradients: HashMap<String, TextureHandle>,
     backdrop: Option<TextureHandle>,
+    embedded: bool,
     frame_index: u64,
     ready_marked: bool,
     all_avatars_drawn_at: Option<u64>,
@@ -105,9 +109,28 @@ impl AccshiftApp {
             avatar_rx,
             gradients: HashMap::new(),
             backdrop,
+            embedded: options.embedded,
             frame_index: 0,
             ready_marked: false,
             all_avatars_drawn_at: None,
+        }
+    }
+
+    /// Shows `id` (`personas` or a platform id) like a tab click, for the app
+    /// shell's navigation. Unknown ids are ignored.
+    pub fn show_tab(&mut self, id: &str) {
+        let tab = match id {
+            "personas" => Tab::Personas,
+            "steam" => Tab::Platform(Platform::Steam),
+            "riot" => Tab::Platform(Platform::Riot),
+            "roblox" => Tab::Platform(Platform::Roblox),
+            _ => return,
+        };
+        if self.tab != tab {
+            self.tab = tab;
+            self.folder = None;
+            self.search.clear();
+            self.armed = None;
         }
     }
 
@@ -150,13 +173,14 @@ impl AccshiftApp {
                 Color32::WHITE,
             );
         }
-        painter.rect_filled(
-            full,
-            CornerRadius::ZERO,
-            self.theme.window_fill.to_color32(),
-        );
-
-        self.title_bar(ui, full, now);
+        if !self.embedded {
+            painter.rect_filled(
+                full,
+                CornerRadius::ZERO,
+                self.theme.window_fill.to_color32(),
+            );
+            self.title_bar(ui, full, now);
+        }
         match self.tab {
             Tab::Personas => self.personas_page(ui, full),
             Tab::Platform(platform) => self.platform_page(ui, full, platform, now),

@@ -65,6 +65,8 @@ pub enum Step {
 
 #[derive(Clone, Debug)]
 pub struct Scene {
+    /// The scene file.
+    pub path: PathBuf,
     pub id: String,
     pub scenario: String,
     pub os: Option<String>,
@@ -78,6 +80,12 @@ pub struct Scene {
 }
 
 impl Scene {
+    /// `parity/data`, next to the `parity/scenes` folder the scene sits in.
+    pub fn data_dir(&self) -> PathBuf {
+        let scenes = self.path.parent().unwrap_or(Path::new("."));
+        scenes.parent().unwrap_or(Path::new(".")).join("data")
+    }
+
     /// The fragment's file stem: which test screen draws it.
     pub fn fragment_name(&self) -> Option<String> {
         let (path, _) = self.html.as_ref()?;
@@ -166,6 +174,7 @@ pub fn load(path: &Path) -> Result<Scene, String> {
         .map_err(|e| format!("{}: {e}", path.display()))?
         .unwrap_or_default();
     Ok(Scene {
+        path: path.to_path_buf(),
         id,
         scenario: s("scenario").unwrap_or_else(|| "demo".into()),
         os: s("os"),

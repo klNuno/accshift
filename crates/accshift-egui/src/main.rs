@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use accshift_egui::{bench, harness, AccshiftApp, Options, Screen, Shell};
+use accshift_egui::{bench, harness, AppModel, Screen, Shell};
 use raw_window_handle::HasWindowHandle;
 
 fn main() {
@@ -100,7 +100,7 @@ fn main() {
     });
 
     let mut viewport = egui::ViewportBuilder::default()
-        .with_title("Accshift (egui spike)")
+        .with_title("Accshift")
         .with_app_id("accshift-egui")
         .with_inner_size([860.0, 440.0])
         .with_decorations(false)
@@ -139,12 +139,14 @@ fn main() {
             accshift_egui::screens::main_spike::install_fonts(ctx);
             Screen::Blank
         } else {
-            Screen::Main(Box::new(AccshiftApp::new(
-                ctx,
-                Options {
-                    desktop_backdrop: false,
-                },
-            )))
+            // The real app folders, through accshift-core.
+            match AppModel::real(ctx) {
+                Ok(app) => Screen::App(Box::new(app)),
+                Err(err) => {
+                    eprintln!("accshift: {err}");
+                    std::process::exit(1);
+                }
+            }
         };
         Shell { screen, scenes }
     };

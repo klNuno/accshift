@@ -1,0 +1,655 @@
+//! The egui application: `AppModel` owns everything `App.svelte` and its
+//! controllers hold, and draws one frame in the DOM order of `App.svelte`.
+//!
+//! - backend: [`MockBackend`] on `parity/data/<scenario>.json` in a scene
+//!   run, [`RealBackend`] on the user's app folders otherwise, both behind
+//!   `Arc<dyn Backend>`;
+//! - [`Jobs`]: every backend call runs off the UI thread, and a result wakes
+//!   the UI through `Context::request_repaint`;
+//! - [`ClientStores`] loaded from the boot payload's storage snapshot;
+//! - the theme: [`ThemeRegistry`] with the custom themes, the
+//!   [`ThemeApplication`] of the current settings and OS, its
+//!   [`ResolvedTheme`] and the typed [`Vars`], recomputed when the theme id,
+//!   the background opacity, the motion setting or the OS change;
+//! - the locale ([`Locale`]) for `accshift_app::i18n`;
+//! - navigation: the active platform tab, the enabled platforms, settings
+//!   and personas panels;
+//! - [`Action`]s returned by components, applied after the frame is drawn.
+//!
+//! A frame: take finished jobs, then draw (`shell::draw`), then apply the
+//! actions. Before the boot payload lands nothing is drawn, like
+//! `.app-frame { opacity: 0 }` before `boot-ready`.
+
+pub mod clock;
+pub mod platforms;
+mod shell;
+pub mod vars;
+
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Instant;
+
+use accshift_app::backend::Backend;
+use accshift_app::error::BackendResult;
+use accshift_app::i18n::Locale;
+use accshift_app::jobs::{Jobs, Pending, Poll};
+use accshift_app::mock::MockBackend;
+use accshift_app::real::RealBackend;
+use accshift_app::settings::AnimationsMode;
+use accshift_app::storage::{self, StoreId};
+use accshift_app::stores::{ClientStores, StoreContext};
+use accshift_app::types::BootPayload;
+use accshift_theme::{
+    theme_application, window_backdrop, AppTheme, CustomThemePayload, ResolvedTheme,
+    ThemeApplication, ThemeRegistry, WindowBackdrop,
+};
+use egui::{Context, Rect, TextureHandle, Ui, ViewportCommand};
+use serde_json::Value;
+
+use crate::screens::main_spike;
+use crate::ui::anim::{self, Motion};
+use clock::Clock;
+use platforms::{PlatformDef, RuntimeOs};
+use vars::Vars;
+
+/// What a component asks for. Applied by [`AppModel::apply`] after drawing.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Action {
+    /// Title bar refresh: reload the active platform's accounts.
+    Refresh,
+    /// Title bar plus: start the add-account flow.
+    AddAccount,
+    /// Title bar gear: toggle the settings panel.
+    OpenSettings,
+    /// Personas tab.
+    OpenPersonas,
+    /// Bulk edit toggle.
+    BulkEdit,
+    /// Update call to action.
+    ApplyUpdate,
+    /// A platform tab.
+    TabChange(String),
+    Minimize,
+    ToggleMaximize,
+    Close,
+    /// Mousedown on the bar outside a button.
+    StartDrag,
+    /// Where the maximize button is, for Windows 11 Snap Layouts
+    /// (`set_maximize_button_rect`), `None` when there is none (macOS).
+    SetMaximizeButtonRect(Option<Rect>),
+}
+
+/// How a scene sets up the mock, the same fields `parity/ref.mjs` writes into
+/// `accshift.mock.overrides`.
+#[derive(Clone, Debug, Default)]
+pub struct MockSetup {
+    pub scenario: String,
+    pub os: Option<String>,
+    pub theme: Option<String>,
+    pub locale: Option<String>,
+    pub seed: Option<Value>,
+    /// `parity/data`.
+    pub data_dir: PathBuf,
+    /// The repo root, to resolve the mock avatar paths.
+    pub repo_root: Option<PathBuf>,
+}
+
+impl MockSetup {
+    /// `theme` and `locale` patch `client.settings`; a `seed` key is a store
+    /// id or the suffix of its `CLIENT_STORE_` constant, an object merges over
+    /// the scenario's store and anything else replaces it.
+    pub fn patch_stores(&self, stores: &mut std::collections::BTreeMap<String, Value>) {
+        let settings_id = storage::CLIENT_STORE_SETTINGS;
+        let mut settings = stores
+            .get(settings_id)
+            .cloned()
+            .filter(Value::is_object)
+            .unwrap_or_else(|| Value::Object(Default::default()));
+        if let Some(theme) = &self.theme {
+            settings["themeId"] = Value::String(theme.clone());
+        }
+        if let Some(locale) = &self.locale {
+            settings["language"] = Value::String(locale.clone());
+        }
+        stores.insert(settings_id.to_string(), settings);
+        let Some(Value::Object(seed)) = &self.seed else {
+            return;
+        };
+        for (key, value) in seed {
+            let id = store_id_for_seed(key).unwrap_or(key.as_str()).to_string();
+            let merged = match (value, stores.get(&id)) {
+                (Value::Object(over), Some(Value::Object(base))) => {
+                    let mut out = base.clone();
+                    for (k, v) in over {
+                        out.insert(k.clone(), v.clone());
+                    }
+                    Value::Object(out)
+                }
+                _ => value.clone(),
+            };
+            stores.insert(id, merged);
+        }
+    }
+}
+
+/// `CLIENT_STORE_<SUFFIX>` of `src/lib/storage/storeIds.ts` for a seed key.
+/// The suffixes follow the ids (`client.view-mode` is `VIEW_MODE`), except
+/// the caches, which nothing seeds.
+fn store_id_for_seed(key: &str) -> Option<StoreId> {
+    storage::CLIENT_STORE_IDS.into_iter().find(|id| {
+        id.strip_prefix("client.")
+            .is_some_and(|rest| rest.replace('-', "_").eq_ignore_ascii_case(key))
+    })
+}
+
+/// The inputs a theme application depends on.
+#[derive(Clone, Debug, PartialEq)]
+struct ThemeKey {
+    theme_id: String,
+    opacity: i64,
+    os: RuntimeOs,
+    animations: AnimationsMode,
+    custom_themes: usize,
+}
+
+/// The theme in effect.
+pub struct ThemeState {
+    key: ThemeKey,
+    pub theme: AppTheme,
+    pub application: ThemeApplication,
+    pub resolved: ResolvedTheme,
+    pub vars: Vars,
+    /// What the window shell must put behind a transparent window.
+    pub backdrop: WindowBackdrop,
+    pub motion: Motion,
+}
+
+/// Navigation sub-state (`createPlatformShellState`, `useAppNavigation`,
+/// `usePersonaSwitch`).
+#[derive(Clone, Debug, Default)]
+pub struct Navigation {
+    pub active_tab: String,
+    pub show_settings: bool,
+    pub show_personas: bool,
+    pub bulk_edit: bool,
+}
+
+impl Navigation {
+    /// `panelKey` of `App.svelte`.
+    pub fn panel_key(&self) -> String {
+        if self.show_settings {
+            "__settings__".into()
+        } else if self.show_personas {
+            "__personas__".into()
+        } else {
+            self.active_tab.clone()
+        }
+    }
+}
+
+/// Everything that exists once the boot payload is in.
+pub struct Booted {
+    pub runtime_os: RuntimeOs,
+    pub stores: ClientStores,
+    pub platforms: Vec<PlatformDef>,
+    pub registry: ThemeRegistry,
+    pub theme: ThemeState,
+    pub locale: Locale,
+    pub nav: Navigation,
+    /// `ctx.input().time` when `boot-ready` was set.
+    pub boot_at: f64,
+    /// `panelKey` and when it last changed (`{#key panelKey}` remount).
+    pub panel: (String, f64),
+    pub init_error: Option<String>,
+}
+
+type BootResult = BackendResult<BootPayload>;
+
+/// The application model. See the module documentation.
+pub struct AppModel {
+    backend: Arc<dyn Backend>,
+    mock: Option<Arc<MockBackend>>,
+    setup: Option<MockSetup>,
+    jobs: Jobs,
+    clock: Clock,
+    boot_job: Option<Pending<BootResult>>,
+    boot_error: Option<String>,
+    booted: Option<Booted>,
+    saves: Vec<(StoreId, Pending<BackendResult<Option<String>>>)>,
+    /// The panel slot's placeholder until the workspace port replaces it.
+    spike: main_spike::AccshiftApp,
+    /// The recorder's stand-in desktop under glass themes, scene runs only.
+    desktop: Option<TextureHandle>,
+    maximize_button: Option<Rect>,
+    focus_visible: bool,
+    last_time: f64,
+    os_reduced_motion: bool,
+}
+
+impl AppModel {
+    /// A scene run: the mock on `parity/data/<scenario>.json`, the clock
+    /// pinned to the scenario's `NOW`, the stand-in desktop behind.
+    pub fn mock(ctx: &Context, setup: MockSetup) -> Result<AppModel, String> {
+        // `accshift.mock.overrides.runtimeOs` patches the scenario's spec
+        // before the handlers exist, frozen `demo` included, unlike
+        // `__mock.os` (`set_runtime_os`), which the frozen scenario refuses.
+        let file = setup.data_dir.join(format!("{}.json", setup.scenario));
+        let text =
+            std::fs::read_to_string(&file).map_err(|e| format!("read {}: {e}", file.display()))?;
+        let mut scenario: Value =
+            serde_json::from_str(&text).map_err(|e| format!("{}: {e}", file.display()))?;
+        if let Some(os) = &setup.os {
+            scenario["spec"]["runtimeOs"] = Value::String(os.clone());
+        }
+        let mock = MockBackend::from_json(&scenario.to_string(), setup.repo_root.as_deref())
+            .map_err(|e| format!("{}: {e}", file.display()))?;
+        let mock = Arc::new(mock);
+        let clock = Clock::pinned(mock.now());
+        let backend: Arc<dyn Backend> = mock.clone();
+        let mut model = AppModel::with_backend(ctx, backend, Some(mock), clock);
+        model.setup = Some(setup);
+        model.desktop = Some(ctx.load_texture(
+            "desktop",
+            crate::backdrop::render(860, 440, 2.0),
+            egui::TextureOptions::LINEAR,
+        ));
+        Ok(model)
+    }
+
+    /// A normal run on the user's real app folders.
+    pub fn real(ctx: &Context) -> Result<AppModel, String> {
+        let backend: Arc<dyn Backend> = Arc::new(RealBackend::new()?);
+        let mut model = AppModel::with_backend(ctx, backend, None, Clock::wall());
+        model.os_reduced_motion = os_prefers_reduced_motion();
+        Ok(model)
+    }
+
+    /// Any backend; the boot payload is requested at once.
+    pub fn with_backend(
+        ctx: &Context,
+        backend: Arc<dyn Backend>,
+        mock: Option<Arc<MockBackend>>,
+        clock: Clock,
+    ) -> AppModel {
+        let wake = ctx.clone();
+        let jobs = Jobs::new(Arc::clone(&backend), 2, move || wake.request_repaint());
+        let boot_job = Some(jobs.run(|backend| backend.get_boot_payload()));
+        let spike = main_spike::AccshiftApp::new(
+            ctx,
+            main_spike::Options {
+                desktop_backdrop: false,
+                embedded: true,
+            },
+        );
+        AppModel {
+            backend,
+            mock,
+            setup: None,
+            jobs,
+            clock,
+            boot_job,
+            boot_error: None,
+            booted: None,
+            saves: Vec::new(),
+            spike,
+            desktop: None,
+            maximize_button: None,
+            focus_visible: false,
+            last_time: 0.0,
+            os_reduced_motion: false,
+        }
+    }
+
+    pub fn backend(&self) -> &Arc<dyn Backend> {
+        &self.backend
+    }
+
+    pub fn booted(&self) -> Option<&Booted> {
+        self.booted.as_ref()
+    }
+
+    pub fn boot_error(&self) -> Option<&str> {
+        self.boot_error.as_deref()
+    }
+
+    /// `Date.now()` of the app (pinned in scene runs).
+    pub fn now_ms(&self) -> f64 {
+        self.clock.now_ms()
+    }
+
+    /// Where the maximize button was last drawn (Snap Layouts hook).
+    pub fn maximize_button_rect(&self) -> Option<Rect> {
+        self.maximize_button
+    }
+
+    /// Blocks until the boot payload is in and applied. For tests and tools;
+    /// a frame never waits.
+    pub fn wait_boot(&mut self, ctx: &Context) -> Result<(), String> {
+        if let Some(job) = self.boot_job.take() {
+            let result = job.wait().unwrap_or_else(|| {
+                Err(accshift_app::error::BackendError::new("boot job panicked"))
+            });
+            self.finish_boot(ctx, result, 0.0);
+        }
+        match (&self.booted, &self.boot_error) {
+            (Some(_), _) => Ok(()),
+            (None, Some(e)) => Err(e.clone()),
+            (None, None) => Err("boot never ran".into()),
+        }
+    }
+
+    /// Ready to be photographed: booted, the boot cascade over, the panel's
+    /// assets uploaded.
+    pub fn ready(&self) -> bool {
+        self.booted
+            .as_ref()
+            .is_some_and(|b| self.last_time - b.boot_at >= shell::BOOT_CASCADE)
+            && self.spike.avatars_ready()
+    }
+
+    fn finish_boot(&mut self, ctx: &Context, result: BootResult, now: f64) {
+        let mut payload = match result {
+            Ok(payload) => payload,
+            Err(error) => {
+                self.boot_error = Some(error.message);
+                return;
+            }
+        };
+        if let Some(setup) = &self.setup {
+            setup.patch_stores(&mut payload.storage_snapshot.stores);
+        }
+        let runtime_os = RuntimeOs::parse(&payload.runtime_os);
+        let (storage, report) = storage::initialize(
+            self.backend.as_ref(),
+            Some(payload.storage_snapshot),
+            // The WebView2 localStorage of a v0.x install: a later job.
+            None,
+            self.mock.is_some(),
+        );
+        let loaded: Vec<Value> = payload
+            .user_platforms
+            .loaded
+            .iter()
+            .filter_map(|d| serde_json::to_value(d).ok())
+            .collect();
+        let platforms = platforms::with_user(&loaded);
+        let custom: Vec<CustomThemePayload> = payload
+            .custom_themes
+            .iter()
+            .filter_map(|t| serde_json::to_value(t).ok())
+            .filter_map(|v| serde_json::from_value(v).ok())
+            .collect();
+        let mut registry = ThemeRegistry::new();
+        registry.apply_custom_theme_payloads(&custom);
+        let mut store_ctx = StoreContext::shipped();
+        store_ctx.platform_ids = platforms.iter().map(|p| p.id.clone()).collect();
+        store_ctx.theme_ids = registry.all_themes().into_iter().map(|t| t.id).collect();
+        store_ctx.preferred_languages = preferred_languages();
+        let stores = ClientStores::new(storage, store_ctx);
+        if let Some(mock) = &self.mock {
+            // The TS mock reads the live settings for its PIN gate.
+            mock.set_pin_settings(&stores.settings().to_value());
+        }
+        let settings = stores.settings();
+        let nav = Navigation {
+            active_tab: platforms::initial_tab(
+                &platforms,
+                &settings.enabled_platforms,
+                &settings.default_platform_id,
+                runtime_os,
+            ),
+            ..Navigation::default()
+        };
+        let locale = stores.language();
+        let theme = compute_theme(&registry, &stores, runtime_os, self.os_reduced_motion);
+        anim::set_motion(ctx, theme.motion);
+        let panel = (nav.panel_key(), now);
+        self.booted = Some(Booted {
+            runtime_os,
+            stores,
+            platforms,
+            registry,
+            theme,
+            locale,
+            nav,
+            boot_at: now,
+            panel,
+            init_error: report.load_error,
+        });
+        // `finish_boot` (marks, the startup event); the real shell shows the
+        // window here. Fire and forget.
+        drop(self.jobs.run(|backend| backend.finish_boot("egui", None)));
+    }
+
+    /// Settings changed under us (a store write or an external refresh):
+    /// recompute what derives from them.
+    fn sync_settings(&mut self, ctx: &Context) {
+        let Some(b) = self.booted.as_mut() else {
+            return;
+        };
+        b.stores.sync();
+        let key = theme_key(&b.stores, &b.registry, b.runtime_os);
+        if key != b.theme.key {
+            b.theme = compute_theme(&b.registry, &b.stores, b.runtime_os, self.os_reduced_motion);
+        }
+        b.locale = b.stores.language();
+        // Harness scenes clear egui memory: keep the motion flag in it.
+        anim::set_motion(ctx, b.theme.motion);
+    }
+
+    /// Saves the stores asked for, through the job pool.
+    fn pump_saves(&mut self) {
+        let Some(b) = self.booted.as_mut() else {
+            return;
+        };
+        for save in b.stores.take_due_saves(Instant::now()) {
+            let store_id = save.store_id;
+            let pending = self
+                .jobs
+                .run(move |backend| backend.save_client_storage_store(store_id, &save.value));
+            self.saves.push((store_id, pending));
+        }
+        self.saves.retain_mut(|(id, pending)| match pending.poll() {
+            Poll::Waiting => true,
+            Poll::Ready(result) => {
+                b.stores.finish_save(id, &result);
+                false
+            }
+            Poll::Gone => false,
+        });
+    }
+
+    /// One frame.
+    pub fn frame(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
+        let now = ctx.input(|i| i.time);
+        self.last_time = now;
+        if let Some(job) = &mut self.boot_job {
+            match job.poll() {
+                Poll::Waiting => {}
+                Poll::Ready(result) => {
+                    self.boot_job = None;
+                    self.finish_boot(&ctx, result, now);
+                }
+                Poll::Gone => {
+                    self.boot_job = None;
+                    self.boot_error = Some("boot job panicked".into());
+                }
+            }
+        }
+        self.sync_settings(&ctx);
+        self.pump_saves();
+        if ctx.input(|i| i.key_pressed(egui::Key::Tab)) {
+            self.focus_visible = true;
+        } else if ctx.input(|i| i.pointer.any_pressed()) {
+            self.focus_visible = false;
+        }
+        let actions = shell::draw(self, ui, now);
+        self.apply(&ctx, actions, now);
+    }
+
+    /// Applies what the frame's components asked for.
+    pub fn apply(&mut self, ctx: &Context, actions: Vec<Action>, now: f64) {
+        for action in actions {
+            self.apply_one(ctx, action);
+        }
+        if let Some(b) = self.booted.as_mut() {
+            let key = b.nav.panel_key();
+            if key != b.panel.0 {
+                b.panel = (key, now);
+            }
+        }
+    }
+
+    fn apply_one(&mut self, ctx: &Context, action: Action) {
+        let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+        match action {
+            Action::Minimize => ctx.send_viewport_cmd(ViewportCommand::Minimized(true)),
+            Action::ToggleMaximize => ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized)),
+            Action::Close => ctx.send_viewport_cmd(ViewportCommand::Close),
+            Action::StartDrag => ctx.send_viewport_cmd(ViewportCommand::StartDrag),
+            Action::SetMaximizeButtonRect(rect) => {
+                // Hook for the window-shell job: answer HTMAXBUTTON over
+                // this rect so Windows 11 opens the Snap Layouts flyout.
+                self.maximize_button = rect;
+            }
+            // The workspace and add-flow ports own these.
+            Action::Refresh | Action::AddAccount | Action::ApplyUpdate => {}
+            Action::OpenSettings => {
+                if let Some(b) = self.booted.as_mut() {
+                    b.nav.show_personas = false;
+                    b.nav.show_settings = !b.nav.show_settings;
+                    b.nav.bulk_edit = false;
+                }
+            }
+            Action::OpenPersonas => {
+                if let Some(b) = self.booted.as_mut() {
+                    if b.stores.settings().personas_enabled {
+                        b.nav.show_settings = false;
+                        b.nav.bulk_edit = false;
+                        b.nav.show_personas = true;
+                        self.spike.show_tab("personas");
+                    }
+                }
+            }
+            Action::BulkEdit => {
+                if let Some(b) = self.booted.as_mut() {
+                    b.nav.bulk_edit = !b.nav.bulk_edit;
+                }
+            }
+            Action::TabChange(tab) => {
+                let Some(b) = self.booted.as_mut() else {
+                    return;
+                };
+                b.nav.show_personas = false;
+                if !platforms::usable(&b.platforms, &tab, b.runtime_os) {
+                    return;
+                }
+                if tab == b.nav.active_tab {
+                    b.nav.show_settings = false;
+                    self.spike.show_tab(&tab);
+                    return;
+                }
+                b.nav.bulk_edit = false;
+                b.nav.show_settings = false;
+                b.nav.active_tab = tab.clone();
+                self.spike.show_tab(&tab);
+            }
+        }
+    }
+}
+
+fn animations_mode(mode: AnimationsMode) -> accshift_theme::AnimationsMode {
+    match mode {
+        AnimationsMode::System => accshift_theme::AnimationsMode::System,
+        AnimationsMode::On => accshift_theme::AnimationsMode::On,
+        AnimationsMode::Off => accshift_theme::AnimationsMode::Off,
+    }
+}
+
+fn theme_key(stores: &ClientStores, registry: &ThemeRegistry, os: RuntimeOs) -> ThemeKey {
+    let settings = stores.settings();
+    ThemeKey {
+        theme_id: settings.theme_id.clone(),
+        opacity: settings.background_opacity,
+        os,
+        animations: settings.animations,
+        custom_themes: registry.all_themes().len(),
+    }
+}
+
+/// `useThemeApplication`: the theme of the settings, applied with the
+/// backdrop the OS can give, and the motion preference.
+fn compute_theme(
+    registry: &ThemeRegistry,
+    stores: &ClientStores,
+    os: RuntimeOs,
+    os_reduced_motion: bool,
+) -> ThemeState {
+    let key = theme_key(stores, registry, os);
+    let theme = registry.theme(Some(&key.theme_id));
+    let liquid_backdrop_active = theme.liquid && os == RuntimeOs::Windows;
+    // Linux compositors have no blur-behind; Liquid Glass waits for a
+    // wallpaper snapshot, which the window-shell job captures.
+    let wallpaper_ready = false;
+    let backdrop_available = os != RuntimeOs::Linux && (!liquid_backdrop_active || wallpaper_ready);
+    let application = theme_application(&theme, key.opacity as f64, backdrop_available);
+    let resolved = ResolvedTheme::new(&application);
+    let vars = Vars::new(&resolved);
+    let backdrop = window_backdrop(theme.glass, &theme.id, theme.liquid);
+    let motion = match accshift_theme::motion_attribute(
+        animations_mode(key.animations),
+        os_reduced_motion,
+    ) {
+        accshift_theme::MotionAttribute::Full => Motion::Full,
+        accshift_theme::MotionAttribute::Reduced => Motion::Reduced,
+    };
+    ThemeState {
+        key,
+        theme,
+        application,
+        resolved,
+        vars,
+        backdrop,
+        motion,
+    }
+}
+
+/// `navigator.languages`, most preferred first: the OS UI language.
+fn preferred_languages() -> Vec<String> {
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .iter()
+        .find_map(|var| std::env::var(var).ok().filter(|v| !v.is_empty()))
+        .map(|v| {
+            // `fr_FR.UTF-8` reads as `fr-FR`.
+            vec![v.split('.').next().unwrap_or("").replace('_', "-")]
+        })
+        .unwrap_or_default()
+}
+
+/// Chromium's `prefers-reduced-motion` on Windows: client-area animations off.
+#[cfg(windows)]
+fn os_prefers_reduced_motion() -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SystemParametersInfoW, SPI_GETCLIENTAREAANIMATION,
+    };
+    let mut on: i32 = 1;
+    // SAFETY: SPI_GETCLIENTAREAANIMATION writes one BOOL into `on`.
+    let ok = unsafe {
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            &mut on as *mut i32 as *mut _,
+            0,
+        )
+    };
+    ok != 0 && on == 0
+}
+
+#[cfg(not(windows))]
+fn os_prefers_reduced_motion() -> bool {
+    false
+}
+
+#[cfg(test)]
+mod tests;

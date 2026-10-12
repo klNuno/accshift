@@ -3,6 +3,7 @@
 //! animation timing ([`anim`]).
 
 pub mod anim;
+pub mod components;
 pub mod css;
 pub mod paint;
 pub mod text;
