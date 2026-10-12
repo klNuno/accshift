@@ -115,6 +115,8 @@ The rules below come from `measure.mjs` at 1, 1.25, 1.5 and 1.75. Boxes, borders
 | Contents of a scroll container with real overflow (the title bar `.tabs`, whose tooltips overflow)  | Composited: the whole offset, translation included, rounded (`snap::composited`). Measured on the title bar at 1.25, 1.5 and 1.75.                  |
 | Flex centring                                                                                       | Free space halved in 1/64 px units, then the child snapped as a box (`snap::centre`).                                                               |
 
+Ban warnings only reach the first scene of each scale: in the same app run, later scenes show no ban outline and no warning section, though each scene reloads the page on a fresh mock. The cause is still open. Capture a scene that shows bans alone (`ref.mjs <scene> --out <fresh folder>`); the `cardext-*` scenes need it.
+
 ## Mock data
 
 `data/<scenario>.json`, format 1: `spec` (label, runtime OS, switch delay, Steam path, API key flag, current account per platform), `commands` (per command, a list of `{ args, result }` or `{ args, error }`), `skipped` (commands with state that are modelled from `spec` instead: the switch and the PIN session). Platform commands are called once per platform id, per-account commands once per account. Avatar URLs are repo-relative paths under `src/lib/mock/avatars/`, cache timestamps are exactly `NOW * 1000`. The full description sits at the top of `dump-data.mjs`.

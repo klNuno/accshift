@@ -14,10 +14,16 @@ pub enum Mark {
     /// (the stand-in desktop of a scene run) is no part of any backdrop.
     Root,
     /// Opens a layer that starts as the backdrop blurred by `sigma` device
-    /// pixels, and lands at `opacity` on [`Mark::End`].
+    /// pixels then `saturate`d, and lands at `opacity` on [`Mark::End`].
+    /// With a `radius` (points) the backdrop is the element's own: cut to
+    /// the mark's rect with that corner radius, blurred with mirrored edges
+    /// there; `ppp` maps the rect to device pixels.
     Begin {
         sigma: f32,
         opacity: f32,
+        saturate: f32,
+        radius: Option<f32>,
+        ppp: f32,
     },
     End,
     /// `filter: blur(sigma) saturate(saturate)` and `transform:

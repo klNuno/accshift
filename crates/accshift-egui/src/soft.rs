@@ -303,7 +303,23 @@ fn backdrop_op(
     use egui_software_backend::backdrop::BackdropOp;
     Mark::of(callback).map(|mark| match mark {
         Mark::Root => BackdropOp::Root,
-        Mark::Begin { sigma, opacity } => BackdropOp::Begin { sigma, opacity },
+        Mark::Begin {
+            sigma,
+            opacity,
+            saturate,
+            radius,
+            ppp,
+        } => BackdropOp::Begin {
+            sigma,
+            opacity,
+            saturate,
+            // The callback's rect, moved by any visual transform since.
+            clip: radius.map(|r| egui_software_backend::backdrop::BackdropClip {
+                min: [callback.rect.min.x * ppp, callback.rect.min.y * ppp],
+                max: [callback.rect.max.x * ppp, callback.rect.max.y * ppp],
+                radius: r * ppp,
+            }),
+        },
         Mark::End => BackdropOp::End,
         Mark::Filter {
             sigma,

@@ -340,6 +340,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                     panel_key: &panel_key,
                     focus_visible,
                     dark: theme.theme.color_scheme == ColorScheme::Dark,
+                    glass: theme.theme.glass,
                     now,
                 };
                 actions.extend(layer(ui, panel, o, rise, |ui| {

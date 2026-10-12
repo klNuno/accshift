@@ -29,6 +29,7 @@
 use std::collections::{HashMap, HashSet};
 
 use accshift_app::actions::avatar_fallback::{avatar_gradient, avatar_seed};
+use accshift_app::actions::extension::{note_section, warning_section};
 use accshift_app::display::{
     AccountCardItem, DisplayBody, DisplayItem, FolderCardItem, SectionHeaderItem, SectionLabel,
 };
@@ -36,7 +37,8 @@ use accshift_app::i18n::{translate, Locale};
 use accshift_app::jobs::Jobs;
 use accshift_app::stores::{ClientStores, ViewMode};
 use accshift_theme::ResolvedTheme;
-use egui::{pos2, vec2, Event, Id, Key, Rect, Sense, Ui, WidgetInfo, WidgetType};
+use egui::layers::ShapeIdx;
+use egui::{pos2, vec2, Context, Event, Id, Key, LayerId, Rect, Sense, Ui, WidgetInfo, WidgetType};
 
 use crate::app::accounts::Accounts;
 use crate::app::avatars::AvatarTexture;
@@ -102,7 +104,64 @@ pub struct WorkspaceInput<'a> {
     pub focus_visible: bool,
     /// `color-scheme: dark`: picks Chromium's dark form-control bitmaps.
     pub dark: bool,
+    /// `html[data-glass="1"]`.
+    pub glass: bool,
     pub now: f64,
+}
+
+/// One account card's shapes in the workspace's layer.
+struct Stack {
+    range: std::ops::Range<usize>,
+    surface: Option<std::ops::Range<usize>>,
+    raised: bool,
+}
+
+fn shape_count(ctx: &Context, layer: LayerId) -> usize {
+    ctx.graphics(|g| g.get(layer).map_or(0, |l| l.next_idx().0))
+}
+
+/// Reorders the cards' shapes in `span` by z-index, as the grid stacks
+/// them: the surfaces of hidden extensions (`--z-card-base`) under every
+/// face, the card whose extension shows (`--z-card-extension`) over all.
+/// The order within each group stays the paint order.
+fn restack(ctx: &Context, layer: LayerId, span: std::ops::Range<usize>, cards: &[Stack]) {
+    if !cards.iter().any(|c| c.surface.is_some()) {
+        return;
+    }
+    let lo = span.start;
+    let mut group = vec![1u8; span.len()];
+    for c in cards {
+        if c.raised {
+            for i in c.range.clone() {
+                group[i - lo] = 2;
+            }
+        } else if let Some(s) = &c.surface {
+            for i in s.clone() {
+                group[i - lo] = 0;
+            }
+        }
+    }
+    ctx.graphics_mut(|g| {
+        let list = g.entry(layer);
+        let mut shapes: Vec<Option<egui::epaint::ClippedShape>> = list
+            .all_entries()
+            .skip(lo)
+            .take(span.len())
+            .cloned()
+            .map(Some)
+            .collect();
+        let mut at = lo;
+        for z in 0..3u8 {
+            for (i, shape) in shapes.iter_mut().enumerate() {
+                if group[i] == z {
+                    if let Some(s) = shape.take() {
+                        list.set(ShapeIdx(at), s.clip_rect, s.shape);
+                    }
+                    at += 1;
+                }
+            }
+        }
+    });
 }
 
 /// A section grid entering or leaving.
@@ -666,6 +725,9 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
     ws.layout.clear();
     let mut focused_rect = None;
     let focused_now = ctx.memory(|m| m.focused());
+    let layer = ui.layer_id();
+    let cards_from = shape_count(&ctx, layer);
+    let mut stacks = Vec::new();
     for p in &placed {
         ws.layout.push((p.node.label(), p.rect));
         let id = ws.mount(&p.key, frame, now);
@@ -829,7 +891,13 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                 }
             }
             Node::Account(a) => {
-                for event in account_card::account_card(
+                // `createWarningExtensionSection`, `createNoteExtensionSection`.
+                let sections: Vec<_> = warning_section(a.warning.as_ref(), input.locale)
+                    .into_iter()
+                    .chain(note_section(&a.note, a.show_note_inline))
+                    .collect();
+                let start = shape_count(&ctx, layer);
+                let out = account_card::account_card(
                     &mut child,
                     screen,
                     &AccountCardProps {
@@ -842,8 +910,17 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                         locale: input.locale,
                         time: &time,
                         badge: None,
+                        extension: &sections,
+                        extension_disabled: a.single_click_switch,
+                        glass: input.glass,
                     },
-                ) {
+                );
+                stacks.push(Stack {
+                    range: start..shape_count(&ctx, layer),
+                    surface: out.surface,
+                    raised: out.raised,
+                });
+                for event in out.events {
                     match event {
                         CardEvent::Activate => {
                             actions.push(Action::AccountActivate(a.account.id.clone()))
@@ -860,6 +937,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
             }
         }
     }
+    restack(&ctx, layer, cards_from..shape_count(&ctx, layer), &stacks);
     drop(placed);
     let sliding = !slides.is_empty();
     ws.slides = slides;
@@ -1531,6 +1609,76 @@ fn scrollbar(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restack_lifts_the_open_extension_and_sinks_fading_surfaces() {
+        let ctx = Context::default();
+        let mut order = Vec::new();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let ctx = ui.ctx().clone();
+            let layer = ui.layer_id();
+            let count = || shape_count(&ctx, layer);
+            let mark = |n: u8| {
+                ui.painter().rect_filled(
+                    Rect::from_min_size(pos2(f32::from(n), 0.0), vec2(1.0, 1.0)),
+                    0.0,
+                    egui::Color32::from_gray(n),
+                );
+            };
+            let from = count();
+            let mut stacks = Vec::new();
+            // A face; a fading surface and its face; an open extension's
+            // surface and its face; a face.
+            let a = count();
+            mark(1);
+            stacks.push(Stack {
+                range: a..count(),
+                surface: None,
+                raised: false,
+            });
+            let b = count();
+            mark(2);
+            let fading = b..count();
+            mark(3);
+            stacks.push(Stack {
+                range: b..count(),
+                surface: Some(fading),
+                raised: false,
+            });
+            let c = count();
+            mark(4);
+            let open = c..count();
+            mark(5);
+            stacks.push(Stack {
+                range: c..count(),
+                surface: Some(open),
+                raised: true,
+            });
+            let d = count();
+            mark(6);
+            stacks.push(Stack {
+                range: d..count(),
+                surface: None,
+                raised: false,
+            });
+            restack(&ctx, layer, from..count(), &stacks);
+            order = ctx.graphics(|g| {
+                g.get(layer)
+                    .map(|l| {
+                        l.all_entries()
+                            .skip(from)
+                            .map(|c| match &c.shape {
+                                egui::Shape::Rect(r) => r.fill.r(),
+                                _ => 0,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            });
+        });
+        output.textures_delta.clear();
+        assert_eq!(order, vec![2, 1, 3, 6, 4, 5]);
+    }
 
     #[test]
     fn slide_easing_ends_where_it_should() {

@@ -114,8 +114,8 @@ struct Backdrop {
     force_full: bool,
     out: Vec<[u8; 4]>,
     blurred: Vec<[u8; 4]>,
-    /// Size, sigma bits and root of `blurred`.
-    key: Option<(usize, usize, u32, Option<usize>)>,
+    /// Size, filter and root of `blurred`.
+    key: Option<(usize, usize, backdrop::BeginKey, Option<usize>)>,
     /// The filtered element landed on what lies under it.
     filtered: Vec<[u8; 4]>,
     /// Size, filter bits and root of `filtered`.
@@ -362,7 +362,16 @@ impl EguiSoftwareRender {
                 reinit_canvas,
             );
             self.backdrop.active = true;
-        } else if let Some((k, BackdropOp::Begin { sigma, opacity })) = begin {
+        } else if let Some((
+            k,
+            BackdropOp::Begin {
+                sigma,
+                opacity,
+                saturate,
+                clip,
+            },
+        )) = begin
+        {
             let end = ops
                 .iter()
                 .find_map(|&(i, op)| (i > k && op == BackdropOp::End).then_some(i))
@@ -376,8 +385,8 @@ impl EguiSoftwareRender {
                 paint_jobs_all,
                 [root.map_or(0, |r| r + 1), k, end],
                 root,
-                sigma,
-                opacity,
+                [sigma, opacity, saturate],
+                clip,
                 pixels_per_point,
                 reinit_canvas,
             );
@@ -399,20 +408,28 @@ impl EguiSoftwareRender {
         paint_jobs: &[egui::ClippedPrimitive],
         [_, k, end]: [usize; 3],
         root: Option<usize>,
-        sigma: f32,
-        opacity: f32,
+        [sigma, opacity, saturate]: [f32; 3],
+        clip: Option<backdrop::BackdropClip>,
         pixels_per_point: f32,
         canvas_changed: bool,
     ) {
         let (width, height) = (self.canvas.width, self.canvas.height);
-        let key = (width, height, sigma.to_bits(), root);
+        let key = (
+            width,
+            height,
+            backdrop::begin_key(sigma, saturate, clip),
+            root,
+        );
         if canvas_changed || self.backdrop.key != Some(key) {
-            self.backdrop.blurred = match root {
-                Some(r) => {
-                    let source = self.composite_after(r);
-                    backdrop::blur(&source, width, height, sigma)
+            let source = match root {
+                Some(r) => self.composite_after(r),
+                None => self.canvas.data.clone(),
+            };
+            self.backdrop.blurred = match clip {
+                Some(clip) => {
+                    backdrop::element_backdrop(&source, width, height, clip, sigma, saturate)
                 }
-                None => backdrop::blur(&self.canvas.data, width, height, sigma),
+                None => backdrop::blur(&source, width, height, sigma),
             };
             self.backdrop.key = Some(key);
         }

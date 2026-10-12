@@ -415,20 +415,48 @@ pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Optio
         .iter()
         .map(|r| row_width(&r.row, style.letter_spacing))
         .collect();
-    // One line: the fractional part of its device x goes into the layout
-    // (leading space), so glyphs land on the same quarter pixels as Skia's.
+    // The fractional part of each line's device x goes into its layout
+    // (leading space), so glyphs land on the same quarter pixels as Skia's:
+    // Blink keeps a line's sub-pixel start, wrapped or not.
     let mut lead = 0.0;
+    let mut leads = vec![0.0; galley.rows.len()];
     let origin_x = if galley.rows.len() == 1 {
-        let x = (rect.left() + offset(widths[0])) * ppp;
+        // A line too long for its box is start-aligned (CSS Text 3,
+        // `text-align`), the ellipsis cut included.
+        let shift = if galley.elided {
+            0.0
+        } else {
+            offset(widths[0])
+        };
+        let x = (rect.left() + shift) * ppp;
         let xi = (x + 1e-3).floor();
         let frac = x - xi;
         if frac > 1e-3 {
             lead = frac;
             galley = ctx.fonts_mut(|f| f.layout_job(job(frac / ppp)));
         }
+        leads[0] = lead;
         xi / ppp
     } else {
-        (rect.left() * ppp).round() / ppp
+        let origin = (rect.left() * ppp).floor() / ppp;
+        let g = Arc::make_mut(&mut galley);
+        for (i, placed) in g.rows.iter_mut().enumerate() {
+            let x = (rect.left() + offset(widths[i])) * ppp;
+            let xi = (x + 1e-3).floor();
+            let frac = x - xi;
+            if frac > 1e-3 {
+                let line: String = placed.row.glyphs.iter().map(|glyph| glyph.chr).collect();
+                let mut single = job_for(&line, frac / ppp);
+                single.wrap = TextWrapping::no_max_width();
+                let alone = ctx.fonts_mut(|f| f.layout_job(single));
+                if let Some(first) = alone.rows.first() {
+                    placed.row = first.row.clone();
+                    leads[i] = frac;
+                }
+            }
+            placed.pos.x = xi / ppp - origin;
+        }
+        origin
     };
     let origin_y = (rect.top() * ppp).floor() / ppp;
     let lines = galley.rows.len();
@@ -436,10 +464,6 @@ pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Optio
     let g = Arc::make_mut(&mut galley);
     let mut bounds = Rect::NOTHING;
     for (i, placed) in g.rows.iter_mut().enumerate() {
-        if lines > 1 {
-            let x = rect.left() + offset(widths[i]);
-            placed.pos.x = (x * ppp).round() / ppp - origin_x;
-        }
         // In LayoutUnits (1/64 device px), so that a line box scaled back
         // from CSS px lands exactly where Blink put it.
         let baseline = layout_unit(rect.top() * ppp)
@@ -450,7 +474,7 @@ pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Optio
         // (no sub-pixel bins for them), Skia on a quarter pixel like the rest.
         // With a glyph rasterizer the vendored epaint bins them already.
         let bin_han = !glyph_rasterizer();
-        let mut pen = if i == 0 { lead } else { 0.0 };
+        let mut pen = leads[i];
         for (k, glyph) in row.glyphs.iter_mut().enumerate() {
             if k > 0 {
                 pen += style.letter_spacing * ppp;

@@ -360,6 +360,9 @@ fn base<R>(
     Mark::Begin {
         sigma: v.overlay_blur * ppp,
         opacity: fade,
+        saturate: 1.0,
+        radius: None,
+        ppp,
     }
     .paint(&painter, props.viewport);
     painter.rect_filled(

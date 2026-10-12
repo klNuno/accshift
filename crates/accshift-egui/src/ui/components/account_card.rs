@@ -31,8 +31,9 @@
 //! - Armed (first click): the play triangle over the avatar and the
 //!   `.confirm-hint` scrim at the bottom, both `fadeIn` 150 ms.
 //!
-//! Not ported yet: the extension panel (`CardExtensionPanel`), the blur of
-//! the initials (they only dim).
+//! - The extension panel: [`super::card_extension`], under the face.
+//!
+//! Not ported yet: the blur of the initials (they only dim).
 
 use egui::accesskit::Role;
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
@@ -44,11 +45,14 @@ use egui::{
 use accshift_app::actions::avatar_fallback::avatar_initials;
 use accshift_app::display::AccountCardItem;
 use accshift_app::i18n::{translate, Locale};
-use accshift_app::platforms::card::{ChipTone, UsernameBadge};
+use accshift_app::platforms::card::{
+    has_card_extension_content, CardSection, ChipTone, UsernameBadge,
+};
 use accshift_app::platforms::warnings::WarningTone;
 use accshift_app::time::{format_relative_time_compact, TimeContext};
 
 use super::avatar_fade_in;
+use super::card_extension::{self, Surface};
 use super::folder_card::{entrance, map_rect};
 use super::icon;
 use crate::app::vars::Vars;
@@ -76,7 +80,7 @@ const META_TOP: f32 = 4.0;
 const META_GAP: f32 = 2.0;
 /// `.username { gap: 4px }`.
 const ROW_GAP: f32 = 4.0;
-/// `.note-info-icon` content box.
+/// `.note-info-icon`: 12x12 with its border (`box-sizing: border-box`).
 const NOTE_ICON: f32 = 12.0;
 /// The badge `<svg width="11" height="11">`.
 const BADGE: f32 = 11.0;
@@ -144,6 +148,22 @@ pub struct AccountCardProps<'a> {
     pub time: &'a TimeContext,
     /// `usernameBadge`.
     pub badge: Option<&'a UsernameBadge>,
+    /// `extensionContent`'s sections.
+    pub extension: &'a [CardSection],
+    /// `disableExtension`: bulk edit or a drag in progress.
+    pub extension_disabled: bool,
+    /// `html[data-glass="1"]`.
+    pub glass: bool,
+}
+
+/// What the card painted and what the user did.
+#[derive(Clone, Debug, Default)]
+pub struct CardOutput {
+    pub events: Vec<CardEvent>,
+    /// The extension surface's shapes in the ui's layer, when it showed.
+    pub surface: Option<std::ops::Range<usize>>,
+    /// `.card-shell.extension-visible`: the card paints over every other.
+    pub raised: bool,
 }
 
 /// What the card reports.
@@ -177,6 +197,8 @@ struct State {
     deferred_fallback: bool,
     /// The blur is on or still fading out.
     blurring: bool,
+    /// `panelSide === "left"`, picked on hover.
+    opens_left: bool,
 }
 
 fn state(ctx: &Context, id: Id) -> State {
@@ -288,14 +310,10 @@ impl Meta {
         self.row() || self.note || self.last_login
     }
 
-    fn icon_size(ppp: f32) -> f32 {
-        NOTE_ICON + 2.0 * snap::border_width(1.0, ppp)
-    }
-
-    fn row_height(&self, lines: &Lines, ppp: f32) -> f32 {
+    fn row_height(&self, lines: &Lines) -> f32 {
         let mut h: f32 = 0.0;
         if self.icon {
-            h = h.max(Self::icon_size(ppp));
+            h = h.max(NOTE_ICON);
         }
         if self.username.is_some() {
             h = h.max(lines.meta.height);
@@ -306,9 +324,9 @@ impl Meta {
         h
     }
 
-    fn height(&self, lines: &Lines, ppp: f32) -> f32 {
+    fn height(&self, lines: &Lines) -> f32 {
         let rows = [
-            self.row().then(|| self.row_height(lines, ppp)),
+            self.row().then(|| self.row_height(lines)),
             self.note.then_some(lines.note.height),
             self.last_login.then_some(lines.meta.height),
         ];
@@ -326,17 +344,16 @@ fn ceil_unit(w: f32, ppp: f32) -> f32 {
 /// The card's height for `item`: the min height, or its content when the
 /// meta lines need more.
 pub fn height(ctx: &Context, v: &Vars, item: &AccountCardItem, badge: bool) -> f32 {
-    let ppp = ctx.pixels_per_point();
     let lines = Lines::new(ctx, v);
     let meta = Meta::new(ctx, v, item, badge);
-    content_height(v, &lines, &meta, ppp).max(v.grid_card_min_height())
+    content_height(v, &lines, &meta).max(v.grid_card_min_height())
 }
 
-fn content_height(v: &Vars, lines: &Lines, meta: &Meta, ppp: f32) -> f32 {
+fn content_height(v: &Vars, lines: &Lines, meta: &Meta) -> f32 {
     let pad = v.grid_card_padding();
     let mut h = pad + v.grid_card_avatar_size() + AVATAR_GAP + lines.strut.height;
     if meta.any() {
-        h += META_TOP + meta.height(lines, ppp);
+        h += META_TOP + meta.height(lines);
     }
     h + pad
 }
@@ -362,7 +379,7 @@ fn marquee_offset(elapsed: f64, shift: f32) -> f32 {
 
 /// Draws the card over `rect` (its layout box, top left and width; the
 /// height follows [`height`]) and returns what the user did.
-pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> Vec<CardEvent> {
+pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOutput {
     let v = props.vars;
     let item = props.item;
     let ctx = ui.ctx().clone();
@@ -371,7 +388,7 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> Vec<Ca
     let id = props.id;
     let lines = Lines::new(&ctx, v);
     let meta = Meta::new(&ctx, v, item, props.badge.is_some());
-    let card_h = content_height(v, &lines, &meta, ppp).max(v.grid_card_min_height());
+    let card_h = content_height(v, &lines, &meta).max(v.grid_card_min_height());
     // `layout` places the content (layout units); the box paints and senses
     // on its pixel-snapped edges.
     let layout = Rect::from_min_size(rect.min, vec2(rect.width(), card_h));
@@ -452,6 +469,11 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> Vec<Ca
         st.measured = None;
         st.overflowing = false;
     }
+    let has_extension = has_card_extension_content(props.extension);
+    if hovered && !st.hovered && has_extension {
+        st.opens_left = !card_extension::opens_right(ctx.content_rect().width(), rect.right());
+    }
+    let extension_visible = has_extension && !dragged && !props.extension_disabled && hovered;
     if hovered && !st.hovered {
         let overflow = match &st.measured {
             Some((_, px)) => *px,
@@ -525,9 +547,40 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> Vec<Ca
     };
     let opacity = enter_opacity * if dragged { 0.4 } else { 1.0 };
 
+    // The extension surface, under the face.
+    let mut surface = None;
+    if has_extension {
+        let layer = ui.layer_id();
+        let next = || ctx.graphics(|g| g.get(layer).map_or(0, |l| l.next_idx().0));
+        let start = next();
+        let shown = card_extension::paint(
+            ui,
+            layout,
+            &Surface {
+                vars: v,
+                id,
+                sections: props.extension,
+                locale: props.locale,
+                card_color: props.card_color,
+                active,
+                visible: extension_visible,
+                lift: hovered && !active,
+                right: !st.opens_left,
+                ban: item.warning.as_ref().and_then(|w| w.card_outline_tone),
+                glass: props.glass,
+            },
+        );
+        if shown {
+            surface = Some(start..next());
+        }
+    }
+
     // Shadows: the active rings, else the hover shadow. Ring lists and the
     // drop shadow interpolate as lists, padded with transparent shadows.
-    let shadows = if active {
+    // While the extension shows, the rings are the surface's.
+    let shadows = if active && extension_visible {
+        Vec::new()
+    } else if active {
         let (halo, band, band_w) = match props.card_color {
             Some(c) => (
                 v.fg.mix(0.72, transparent),
@@ -772,7 +825,7 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> Vec<Ca
     if meta.any() {
         let mut y = name_top + lines.strut.height + META_TOP;
         if meta.row() {
-            let row_h = meta.row_height(&lines, ppp);
+            let row_h = meta.row_height(&lines);
             paint_username_row(
                 &painter,
                 &|r| shift_by(r),
@@ -810,8 +863,13 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> Vec<Ca
         paint_confirm_hint(&painter, layout, transform, shown, props);
     }
 
-    // Ban outlines, after the content like any outline.
-    let tone = item.warning.as_ref().and_then(|w| w.card_outline_tone);
+    // Ban outlines, after the content like any outline; the surface's
+    // while the extension shows.
+    let tone = item
+        .warning
+        .as_ref()
+        .and_then(|w| w.card_outline_tone)
+        .filter(|_| !extension_visible);
     if let Some(tone) = tone {
         let base = match tone {
             WarningTone::Red => BAN_RED,
@@ -835,7 +893,11 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> Vec<Ca
         super::focus::card_ring(ui, rect, v.radius_md, v);
     }
     set_state(&ctx, id, st);
-    events
+    CardOutput {
+        events,
+        surface,
+        raised: extension_visible,
+    }
 }
 
 /// `avatar-placeholder-in var(--motion-avatar-fade) ease-out
@@ -984,7 +1046,7 @@ fn paint_username_row(
     let v = props.vars;
     let ctx = painter.ctx();
     let ppp = ctx.pixels_per_point();
-    let icon_w = Meta::icon_size(ppp);
+    let icon_w = NOTE_ICON;
     let fixed: f32 = [meta.icon.then_some(icon_w), meta.badge.then_some(BADGE)]
         .into_iter()
         .flatten()
@@ -1016,12 +1078,13 @@ fn paint_username_row(
             .align(TextAlign::Center)
             .color(v.fg.to_color32());
         let lb = line_box(ctx, &style).height;
+        let content = NOTE_ICON - 2.0 * bw;
         let inner = Rect::from_min_size(
             pos2(
                 placed.left() + bw,
-                placed.top() + bw + snap::centre(NOTE_ICON, lb, ppp),
+                placed.top() + bw + snap::centre(content, lb, ppp),
             ),
-            vec2(NOTE_ICON, lb),
+            vec2(content, lb),
         );
         text::paint(painter, inner, "i", &style);
         x += icon_w + ROW_GAP;

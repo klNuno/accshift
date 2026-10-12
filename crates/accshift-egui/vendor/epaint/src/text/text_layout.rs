@@ -144,9 +144,15 @@ pub fn layout(fonts: &mut FontsImpl, pixels_per_point: f32, job: Arc<LayoutJob>)
 
     let mut elided = false;
     let mut rows = rows_from_paragraphs(paragraphs, &job, pixels_per_point, &mut elided);
+    // accshift: the first row starts after the paragraph's leading space.
+    let lead = if rows.len() == 1 {
+        job.sections.first().map_or(0.0, |s| s.leading_space)
+    } else {
+        0.0
+    };
     if elided && let Some(last_placed) = rows.last_mut() {
         let last_row = Arc::make_mut(&mut last_placed.row);
-        replace_last_glyph_with_overflow_character(fonts, pixels_per_point, &job, last_row);
+        replace_last_glyph_with_overflow_character(fonts, pixels_per_point, &job, last_row, lead);
         if let Some(last) = last_row.glyphs.last() {
             last_row.size.x = last.max_x();
         }
@@ -763,6 +769,7 @@ fn replace_last_glyph_with_overflow_character(
     pixels_per_point: f32,
     job: &LayoutJob,
     row: &mut Row,
+    lead: f32,
 ) {
     let Some(overflow_character) = job.wrap.overflow_character else {
         return;
@@ -798,10 +805,17 @@ fn replace_last_glyph_with_overflow_character(
             glyph_info.advance_width_unscaled.0 * font_face_metrics.px_scale_factor;
         let replacement_glyph_width = advance_width_px / pixels_per_point;
 
-        // Check if we're within width budget:
-        if overflow_glyph_x + replacement_glyph_width <= job.effective_wrap_width()
-            || row.glyphs.is_empty()
-        {
+        // accshift: Blink fits the ellipsis on exact advances against the box
+        // width (`OffsetToFit`), not on pixel-snapped glyph positions with
+        // half a pixel of slack: "never logged " and the ellipsis overflow
+        // 84 px by 0.9 px there, and the space goes too.
+        let kept: f32 = lead
+            + row
+                .glyphs
+                .iter()
+                .map(|g| g.advance_width + extra_letter_spacing)
+                .sum::<f32>();
+        if kept + replacement_glyph_width <= job.wrap.max_width || row.glyphs.is_empty() {
             // we are done
 
             let (replacement_glyph_alloc, physical_x) = font_face

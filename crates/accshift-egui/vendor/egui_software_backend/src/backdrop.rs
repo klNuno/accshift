@@ -17,8 +17,15 @@ pub enum BackdropOp {
     /// backdrop.
     Root,
     /// Opens a layer that starts as the blurred backdrop. `sigma` is in device
-    /// pixels; `opacity` applies when the layer lands.
-    Begin { sigma: f32, opacity: f32 },
+    /// pixels; `opacity` applies when the layer lands. With a `clip`, the
+    /// backdrop is the element's own: what lies under its box, blurred with
+    /// mirrored edges there, then `saturate`d and cut to its rounded box.
+    Begin {
+        sigma: f32,
+        opacity: f32,
+        saturate: f32,
+        clip: Option<BackdropClip>,
+    },
     /// Closes the layer.
     End,
     /// `filter: blur(sigma) saturate(saturate)` then `transform:
@@ -31,6 +38,97 @@ pub enum BackdropOp {
         saturate: f32,
         scale: f32,
     },
+}
+
+/// An element's rounded border box, in device pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BackdropClip {
+    pub min: [f32; 2],
+    pub max: [f32; 2],
+    pub radius: f32,
+}
+
+impl BackdropClip {
+    fn bits(&self) -> [u32; 5] {
+        [
+            self.min[0].to_bits(),
+            self.min[1].to_bits(),
+            self.max[0].to_bits(),
+            self.max[1].to_bits(),
+            self.radius.to_bits(),
+        ]
+    }
+
+    /// How much of the pixel centred on `(x, y)` the rounded box covers:
+    /// half a pixel of ramp either side of the edge, as an anti-aliased clip.
+    fn coverage(&self, x: f32, y: f32) -> f32 {
+        let half = [
+            (self.max[0] - self.min[0]) / 2.0,
+            (self.max[1] - self.min[1]) / 2.0,
+        ];
+        let r = self.radius.clamp(0.0, half[0].min(half[1]));
+        let q = [
+            (x - (self.min[0] + half[0])).abs() - (half[0] - r),
+            (y - (self.min[1] + half[1])).abs() - (half[1] - r),
+        ];
+        let outside = egui::vec2(q[0].max(0.0), q[1].max(0.0)).length();
+        let d = outside + q[0].max(q[1]).min(0.0) - r;
+        (0.5 - d).clamp(0.0, 1.0)
+    }
+}
+
+/// The cache key of a [`BackdropOp::Begin`]'s backdrop.
+pub(crate) type BeginKey = (u32, u32, Option<[u32; 5]>);
+
+pub(crate) fn begin_key(sigma: f32, saturate: f32, clip: Option<BackdropClip>) -> BeginKey {
+    (sigma.to_bits(), saturate.to_bits(), clip.map(|c| c.bits()))
+}
+
+/// The backdrop of an element with `backdrop-filter: blur(sigma)
+/// saturate(saturate)` over `src`: the enclosing pixel rect of its box,
+/// blurred with mirrored edges (Chromium's backdrop edge mode), saturated,
+/// then cut to the rounded box on an otherwise transparent canvas.
+pub fn element_backdrop(
+    src: &[[u8; 4]],
+    width: usize,
+    height: usize,
+    clip: BackdropClip,
+    sigma: f32,
+    saturate: f32,
+) -> Vec<[u8; 4]> {
+    assert_eq!(src.len(), width * height);
+    let mut out = vec![[0u8; 4]; width * height];
+    let x0 = clip.min[0].floor().max(0.0) as usize;
+    let y0 = clip.min[1].floor().max(0.0) as usize;
+    let x1 = (clip.max[0].ceil().max(0.0) as usize).min(width);
+    let y1 = (clip.max[1].ceil().max(0.0) as usize).min(height);
+    if x1 <= x0 || y1 <= y0 {
+        return out;
+    }
+    let (cw, ch) = (x1 - x0, y1 - y0);
+    let mut crop = Vec::with_capacity(cw * ch);
+    for y in y0..y1 {
+        crop.extend_from_slice(&src[y * width + x0..y * width + x1]);
+    }
+    let mut img = blur(&crop, cw, ch, sigma);
+    if saturate != 1.0 {
+        saturate_pixels(&mut img, saturate);
+    }
+    for y in 0..ch {
+        for x in 0..cw {
+            let k = clip.coverage((x0 + x) as f32 + 0.5, (y0 + y) as f32 + 0.5);
+            if k <= 0.0 {
+                continue;
+            }
+            let p = img[y * cw + x];
+            out[(y0 + y) * width + x0 + x] = if k >= 1.0 {
+                p
+            } else {
+                p.map(|v| round(v as f32 * k))
+            };
+        }
+    }
+    out
 }
 
 /// Skia's largest Gaussian sigma before the image is scaled down first.
@@ -386,6 +484,38 @@ mod tests {
             [-2, -1, 0, 4, 5, 6].map(|i| mirror(i, 5)),
             [1, 0, 0, 4, 4, 3]
         );
+    }
+
+    #[test]
+    fn an_element_backdrop_stays_in_its_rounded_box() {
+        let src = vec![[40, 80, 120, 255]; 12 * 10];
+        let clip = BackdropClip {
+            min: [2.0, 2.0],
+            max: [10.0, 10.0],
+            radius: 3.0,
+        };
+        let out = element_backdrop(&src, 12, 10, clip, 4.0, 1.0);
+        // Nothing outside the box.
+        assert_eq!(out[0], [0, 0, 0, 0]);
+        assert_eq!(out[5 * 12 + 11], [0, 0, 0, 0]);
+        // Mirrored edges keep a flat backdrop flat up to the box's edge.
+        assert_eq!(out[5 * 12 + 6], [40, 80, 120, 255]);
+        assert_eq!(out[5 * 12 + 2], [40, 80, 120, 255]);
+        // The rounded corner cuts the corner pixel out.
+        assert_eq!(out[2 * 12 + 2], [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn a_box_edge_on_half_a_pixel_half_covers_it() {
+        let src = vec![[200, 200, 200, 255]; 8 * 8];
+        let clip = BackdropClip {
+            min: [1.5, 0.0],
+            max: [8.0, 8.0],
+            radius: 0.0,
+        };
+        let out = element_backdrop(&src, 8, 8, clip, 0.0, 1.0);
+        assert_eq!(out[4 * 8 + 1][3], 128);
+        assert_eq!(out[4 * 8][3], 0);
     }
 
     #[test]
