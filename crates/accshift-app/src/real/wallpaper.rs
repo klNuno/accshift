@@ -1,6 +1,6 @@
 //! `get_desktop_wallpaper`: the desktop picture behind the window, for the
 //! glass themes. Port of the capture in `src-tauri/src/commands/backdrop.rs`
-//! (lines 60-321) on `windows-sys`. `None` outside Windows, as there.
+//! (lines 60-400) on `windows-sys`. `None` outside Windows, as there.
 
 use crate::types::WallpaperSnapshot;
 
@@ -80,7 +80,7 @@ mod capture {
     }
 
     /// Snapshot of the shell's wallpaper as rendered (Progman +
-    /// PW_RENDERFULLCONTENT), backdrop.rs lines 119-252.
+    /// PW_RENDERFULLCONTENT), backdrop.rs lines 120-252.
     pub(super) fn capture() -> Option<CapturedWallpaper> {
         unsafe {
             let mut progman: HWND = std::ptr::null_mut();

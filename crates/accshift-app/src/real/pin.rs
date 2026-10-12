@@ -5,7 +5,7 @@ use crate::error::BackendResult;
 use crate::types::PinUnlockResult;
 use accshift_core::pin::UnlockOutcome;
 
-/// `impl From<UnlockOutcome> for PinUnlockResult`, pin.rs lines 24-50.
+/// `impl From<UnlockOutcome> for PinUnlockResult`, pin.rs lines 25-51.
 pub(super) fn unlock_result(outcome: UnlockOutcome) -> PinUnlockResult {
     let ms = |d: std::time::Duration| d.as_millis().min(u128::from(u64::MAX)) as u64;
     let (status, legacy, retry_after_ms) = match outcome {
@@ -21,13 +21,13 @@ pub(super) fn unlock_result(outcome: UnlockOutcome) -> PinUnlockResult {
     }
 }
 
-/// `pin_unlock`, pin.rs lines 52-67. PBKDF2 at 100k rounds: run it on the
+/// `pin_unlock`, pin.rs lines 53-68. PBKDF2 at 100k rounds: run it on the
 /// job pool, never on the UI thread.
 pub(super) fn unlock(backend: &RealBackend, code: &str) -> BackendResult<PinUnlockResult> {
     Ok(unlock_result(backend.pin.unlock(&backend.ctx, code)?))
 }
 
-/// `pin_lock`, pin.rs lines 69-74.
+/// `pin_lock`, pin.rs lines 70-75.
 pub(super) fn lock(backend: &RealBackend) {
     backend.pin.lock();
 }
