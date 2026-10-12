@@ -18,24 +18,29 @@
 pub const CLASSES: usize = 8;
 
 /// Contrast and gamma of the pre-blend. [`CHROMIUM`] holds the values
-/// measured against WebView2.
+/// WebView2 draws with. A gamma of 0 is the sRGB transfer curve, as in Skia's
+/// `SkColorSpaceLuminance::Fetch`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MaskGamma {
     pub contrast: f32,
     pub gamma: f32,
 }
 
-/// What WebView2 on Windows draws with. Chromium hands Skia the gamma and
-/// enhanced contrast of the DirectWrite rendering parameters, 2.2 and 1.0 on
-/// a stock Windows (no ClearType tuning). Fitted on the typography shots
-/// (`parity/fragments/typography*.html`): matching each line's coverage
-/// histogram to egui's raw coverage gives c^(1/2.2) for white text, and the
-/// grey classes need the full contrast; Skia's own defaults (0.2, 1.2) lose
-/// 1.5 dB.
+/// What WebView2 on Windows draws with: Chromium builds Skia with
+/// `SK_GAMMA_SRGB` and `SK_GAMMA_CONTRAST=1.0` on Windows (`skia/BUILD.gn`
+/// 139-143 at Chromium 154.0.8037.99) and hands those to Skia as the surface's
+/// text gamma and contrast (`skia/ext/legacy_display_globals.cc`). With the
+/// DirectWrite coverage (`dwrite`), every glyph pixel of the typography
+/// shots then lands within 2 levels of WebView2's value; the power curve 2.2
+/// that matched the old outline coverage is 1 to 9 levels off on faint pixels.
 pub const CHROMIUM: MaskGamma = MaskGamma {
     contrast: 1.0,
-    gamma: 2.2,
+    gamma: 0.0,
 };
+
+/// The single power curve closest to [`CHROMIUM`] for white text, for
+/// renderers that take one gamma (glow).
+pub const POWER_APPROX: f32 = 2.2;
 
 /// Skia's `sk_t_scale255<3>`: a 3-bit class back to a 0..255 luminance.
 fn class_luminance(class: usize) -> u8 {
@@ -48,16 +53,30 @@ fn apply_contrast(srca: f32, contrast: f32) -> f32 {
 }
 
 impl MaskGamma {
+    /// `toLuma` of `SkMaskGamma.cpp`.
     fn linear(self, v: f32) -> f32 {
-        if self.gamma == 1.0 {
+        if self.gamma == 0.0 {
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        } else if self.gamma == 1.0 {
             v
         } else {
             v.powf(self.gamma)
         }
     }
 
+    /// `fromLuma` of `SkMaskGamma.cpp`.
     fn encoded(self, v: f32) -> f32 {
-        if self.gamma == 1.0 {
+        if self.gamma == 0.0 {
+            if v <= 0.0031308 {
+                v * 12.92
+            } else {
+                1.055 * v.powf(1.0 / 2.4) - 0.055
+            }
+        } else if self.gamma == 1.0 {
             v
         } else {
             v.powf(1.0 / self.gamma)

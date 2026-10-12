@@ -79,6 +79,20 @@ windows-sys = { version = "0.61", features = [
   "Win32_UI_Accessibility",
   "Win32_UI_WindowsAndMessaging",
 ] }
+# DirectWrite glyph coverage (ui::text::dwrite): COM interfaces, which
+# windows-sys does not bind. Same version accesskit_windows and sysinfo
+# already pull in, so no second binding version.
+windows = { version = "0.62", default-features = false, features = [
+  "Win32_Foundation",
+  "Win32_Graphics_DirectWrite",
+] }
+
+# epaint with one patch: a font can supply its glyph coverage
+# (FontData::rasterizer), so ui::text rasterizes with DirectWrite like
+# WebView2. See the header of vendor/epaint/Cargo.toml and
+# vendor/epaint/src/text/font.rs.
+[patch.crates-io]
+epaint = { path = "vendor/epaint" }
 
 # The root workspace profile, except the size: a smaller exe reaches `main`
 # sooner (build.rs), so everything is built for size but the per-frame hot

@@ -19,8 +19,12 @@
 //! `typography-*` scenes (the probe in `parity/ref.mjs` records the face, line
 //! box and baseline of every line).
 
+#[cfg(windows)]
+pub mod dwrite;
 pub mod faces;
 pub mod gamma;
+#[cfg(all(test, windows))]
+mod glyph_check;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -428,6 +432,8 @@ pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Optio
         let row = Arc::make_mut(&mut placed.row);
         // The pen in device px: egui puts every CJK glyph on a whole pixel
         // (no sub-pixel bins for them), Skia on a quarter pixel like the rest.
+        // With a glyph rasterizer the vendored epaint bins them already.
+        let bin_han = !glyph_rasterizer();
         let mut pen = if i == 0 { lead } else { 0.0 };
         for (k, glyph) in row.glyphs.iter_mut().enumerate() {
             if k > 0 {
@@ -435,7 +441,7 @@ pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Optio
             }
             let exact = pen;
             pen += glyph.advance_width * ppp;
-            let dx = if is_han(glyph.chr) {
+            let dx = if bin_han && is_han(glyph.chr) {
                 ((exact * 4.0).round() / 4.0 - glyph.pos.x * ppp) / ppp
             } else {
                 0.0
@@ -500,6 +506,14 @@ pub fn ready(ctx: &Context, style: &TextStyle) -> bool {
         style.size * ctx.pixels_per_point(),
     )
     .is_some_and(|r| ctx.fonts(|f| f.definitions().families.contains_key(&r.family)))
+}
+
+/// Whether faces carry a glyph rasterizer (DirectWrite on Windows).
+fn glyph_rasterizer() -> bool {
+    #[cfg(windows)]
+    return dwrite::enabled();
+    #[cfg(not(windows))]
+    false
 }
 
 /// Advances of a row plus the letter spacing after each character.
@@ -615,6 +629,12 @@ impl Book {
         let mut font = FontData::from_static(data);
         font.index = choice.entry.index;
         font.tweak = tweak;
+        // WebView2's glyph bitmaps come from DirectWrite (`dwrite`); epaint
+        // draws the outline itself when DirectWrite cannot.
+        #[cfg(windows)]
+        if let Some(rasterizer) = dwrite::rasterizer(choice, data) {
+            font = font.rasterizer(rasterizer);
+        }
         self.faces.insert(key.clone(), Arc::new(font));
         self.dirty = true;
         Some((key, metrics))
@@ -817,14 +837,16 @@ pub fn ui_family(ctx: &Context, weight: u16) -> FontFamily {
 
 /// Text options as measured against WebView2 (typography scenes, PSNR):
 ///
-/// - hinting on: skrifa runs the faces' TrueType instructions like
-///   DirectWrite does (off: -3.5 dB, the monochrome target: -4.5 dB), light,
-///   with the vertical smoothing of each face's `gasp` table at the drawn
-///   size (+0.6 dB over one fixed choice);
+/// - on Windows every face carries the DirectWrite rasterizer of
+///   `dwrite`, so glyphs never reach skrifa (55 to 68 dB against WebView2,
+///   from 29 to 35 dB); the hinting below is only for Linux, macOS and the
+///   fallback: skrifa runs the faces' TrueType instructions, light, with the
+///   vertical smoothing of each face's `gasp` table at the drawn size;
 /// - sub-pixel binning on: Skia positions glyphs on quarter pixels too (off:
-///   -2.3 dB);
+///   -2.3 dB), CJK included when DirectWrite rasterizes;
 /// - with the software renderer the atlas keeps raw coverage and the backend
-///   applies [`coverage_tables`]; glow gets the curve of white text.
+///   applies [`coverage_tables`] (the sRGB curve of Chromium on Windows); glow gets
+///   a power curve close to it for white text.
 pub fn text_options() -> TextOptions {
     TextOptions {
         font_hinting: true,
@@ -832,7 +854,7 @@ pub fn text_options() -> TextOptions {
         color_transfer_function: if cfg!(feature = "software") {
             egui::epaint::FontColorTransferFunction::Off
         } else {
-            egui::epaint::FontColorTransferFunction::Gamma(1.0 / gamma::CHROMIUM.gamma)
+            egui::epaint::FontColorTransferFunction::Gamma(1.0 / gamma::POWER_APPROX)
         },
         ..TextOptions::default()
     }
