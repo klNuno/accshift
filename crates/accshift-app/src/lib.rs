@@ -19,6 +19,7 @@ pub mod folders;
 pub mod i18n;
 pub mod jobs;
 pub mod js;
+pub mod legacy_web_storage;
 pub mod mock;
 pub mod personas;
 pub mod real;

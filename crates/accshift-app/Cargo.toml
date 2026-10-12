@@ -29,6 +29,9 @@ rfd = "0.17"
 # The async half of the Steam, CS2 bridge and Roblox commands (Tauri runs them
 # on its tokio runtime). Same minor as the root workspace pin.
 tokio = { version = "1.47", features = ["rt-multi-thread"] }
+# `legacy_web_storage`: the WebKit origin folder name (SHA-256). Same major
+# as accshift-core, so nothing new is built.
+sha2 = "0.11"
 
 [target.'cfg(windows)'.dependencies]
 # `get_desktop_wallpaper`: the Progman capture of
@@ -42,3 +45,18 @@ windows-sys = { version = "0.61", features = [
 ] }
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 base64 = "0.23"
+# `legacy_web_storage`: reads the WebView2 localStorage LevelDB of v0.x
+# installs. Pure Rust, Snappy blocks and the `.log` replay included. No `fs`
+# feature: the files are copied into its in-memory env, never opened on disk.
+rusty-leveldb = { version = "4", default-features = false }
+
+[target.'cfg(not(windows))'.dependencies]
+# `legacy_web_storage`: the WebKit localStorage sqlite of WebKitGTK and
+# WKWebView. Same spec as the root workspace.
+rusqlite = { version = "0.40", features = ["bundled"] }
+
+[dev-dependencies]
+# The WebKit fixtures are built and read on every OS, Windows included
+# (tests/legacy_web_storage.rs compiles src/legacy_web_storage/webkit_sqlite.rs
+# by path), without growing the Windows app.
+rusqlite = { version = "0.40", features = ["bundled"] }
