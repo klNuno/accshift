@@ -87,6 +87,32 @@ Before each scene, the page is reloaded into its mock state, and runs once every
 
 Both images are decoded to RGBA by ffmpeg (PNG or PAM) and composited over black. Per shot: mean absolute error over RGB (0 to 255), PSNR over RGB in dB (99 when identical), percent of pixels whose largest channel delta exceeds 8 and 24, the worst 16x16 tile with its mean error, a heat map (`<shot>-heat.png`, largest channel delta times 4 on a black, red, yellow, white ramp) and a side-by-side (`<shot>-side.png`, reference on top). Batch mode writes `report.json` and `report.md`, one row per shot.
 
+`--region x,y,w,h` limits every number and both images to one rectangle, in CSS px of the viewport. Batch mode scales it by each scene's `viewport.scale` (read from `scenes/<scene>.json`, a scene without a file is skipped), a single pair by `--scale <s>` (default 1); edges are rounded, so `0,0,860,36` is 54 device rows at 1.5. The worst tile is reported in image pixels of the full frame. The title bar alone: `node parity/diff.mjs --batch <ref> <egui> --out <dir> --region 0,0,860,36`.
+
+`ref.mjs` rewrites `<out>/manifest.json` with the scenes of the current run only: capturing more scenes into an existing reference folder drops the earlier ones from the manifest. Use a fresh folder per run, or delete the manifest so `diff.mjs` pairs every PNG it finds.
+
+## Device-pixel snapping
+
+Where WebView2 puts a box at a real device scale factor is measured, not assumed: `snap/measure.mjs` renders a fragment of 25 cases (backgrounds, borders, radii, shadows, translations, `will-change`, flex centring, SVG roots, `img`, `opacity`) at six fractional CSS offsets, in the real app at each scale, and reads the painted edges from the frame.
+
+```sh
+node crates/accshift-egui/parity/snap/measure.mjs --out <dir> --exe <parity-capture accshift-gui> --scales 1,1.25,1.5,1.75
+```
+
+It writes `cases.json` (layout rect and painted edges per case, offset and scale), `report.md`, one `frame.png` per scale and `titlebar.json` (the title bar's boxes on the `demo` scenario). `--dsf emulate` measures the CDP emulation instead, which is what the references were before 2026-10-12. Same safety as `ref.mjs`.
+
+The rules below hold on every case at 1, 1.25, 1.5 and 1.75, within 0.1 device px; `src/ui/snap.rs` implements them and `ui::paint` and the components use it. Layout runs in device px with 1/64 px units, so a position is `css * scale` quantized to 1/64 before any rounding.
+
+| Case                                                                                                | Rule                                                                                                                                                |
+| --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Background, rounded box, `box-shadow` base, `img`, inline `svg` root, `opacity`, flex-centred child | Each edge rounded half up on its own: `round(x)` to `round(x + w)` (`snap::rect`).                                                                  |
+| `border-width`                                                                                      | Floored to whole device px, 1 minimum when non-zero: 1 CSS px is 1 device px at 1.25, 1.5 and 1.75, 2 CSS px is 2, 3 and 3 (`snap::border_device`). |
+| `box-shadow`                                                                                        | The snapped border box plus `offset * scale`, blurred; a 4 px offset is whole at every scale tested.                                                |
+| `transform: translate()`, `will-change: transform`, running animation                               | The untransformed box snapped, then the translation added exactly: a fractional translation paints anti-aliased edges (`snap::translated`).         |
+| `will-change: transform` without translation                                                        | Origin rounded, size rounded from the origin.                                                                                                       |
+| Contents of a scroll container with real overflow (the title bar `.tabs`, whose tooltips overflow)  | Composited: the whole offset, translation included, rounded (`snap::composited`). Measured on the title bar at 1.25, 1.5 and 1.75.                  |
+| Flex centring                                                                                       | Free space halved in 1/64 px units, then the child snapped as a box (`snap::centre`).                                                               |
+
 ## Mock data
 
 `data/<scenario>.json`, format 1: `spec` (label, runtime OS, switch delay, Steam path, API key flag, current account per platform), `commands` (per command, a list of `{ args, result }` or `{ args, error }`), `skipped` (commands with state that are modelled from `spec` instead: the switch and the PIN session). Platform commands are called once per platform id, per-account commands once per account. Avatar URLs are repo-relative paths under `src/lib/mock/avatars/`, cache timestamps are exactly `NOW * 1000`. The full description sits at the top of `dump-data.mjs`.

@@ -17,6 +17,7 @@ use egui::{
 use resvg::{tiny_skia, usvg};
 
 use crate::theme::Rgba;
+use crate::ui::snap;
 
 type Key = (usize, u32);
 
@@ -31,9 +32,10 @@ fn cache(ctx: &Context) -> Cache {
 }
 
 /// Where Chromium paints an SVG root whose layout box starts at `min`
-/// (points): the nearest device pixel, back in points.
+/// (points): the nearest device pixel, rounded half up in layout units like
+/// any box ([`snap::point`]), back in points.
 pub fn snapped_origin(min: Pos2, ppp: f32) -> Pos2 {
-    pos2((min.x * ppp).round() / ppp, (min.y * ppp).round() / ppp)
+    snap::point(min, ppp)
 }
 
 /// The SVG `svg` (white `currentColor`) drawn into `rect` (points) in

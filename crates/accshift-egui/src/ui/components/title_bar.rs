@@ -10,6 +10,12 @@
 //! full content height. macOS: 72 px of padding for the traffic lights, the
 //! actions on the right with 8 px of padding, an opaque `--bg-solid` fill,
 //! no caption strip.
+//!
+//! Placement follows [`crate::ui::snap`] at a real device scale factor:
+//! boxes snap edge by edge, the flex-centred buttons and icons centre in
+//! layout units first. `.tabs` is a scroll container with real overflow (its
+//! tooltips hang below it), which Chromium composites: the whole strip
+//! offset, `translate(-50%, -50%)` included, lands on a whole device pixel.
 
 use egui::accesskit::Role;
 use egui::{
@@ -27,7 +33,8 @@ use crate::app::Action;
 use crate::icons;
 use crate::theme::Rgba;
 use crate::ui::anim::{self, Timing, Transition};
-use crate::ui::paint::{Border, BoxShadow, BoxStyle, Corners};
+use crate::ui::paint::{Border, BoxShadow, BoxStyle, Corners, Transform};
+use crate::ui::snap;
 
 /// `.titlebar { height: 36px }`, its `border-bottom: 1px` included.
 pub const HEIGHT: f32 = 36.0;
@@ -98,18 +105,20 @@ pub fn title_bar(ui: &mut Ui, rect: Rect, props: &TitleBarProps) -> Vec<Action> 
     // whole ones (1 CSS px is 1 device px at 150 %), so the content box
     // keeps the rest.
     let ppp = ui.ctx().pixels_per_point();
-    let border = (ppp.floor().max(1.0)) / ppp;
+    let rect = snap::rect(rect, ppp);
+    let border = snap::border_width(1.0, ppp);
     let content_h = rect.height() - border;
     let painter = ui.painter().clone();
 
     if macos {
         // Opaque fill under the whole border box, then the border on top.
-        painter.rect_filled(rect, CornerRadius::ZERO, v.bg_solid.to_color32());
+        fill(&painter, rect, 0.0, v.bg_solid);
     }
-    painter.rect_filled(
+    fill(
+        &painter,
         Rect::from_min_max(pos2(rect.left(), rect.bottom() - border), rect.max),
-        CornerRadius::ZERO,
-        v.bg_card.to_color32(),
+        0.0,
+        v.bg_card,
     );
 
     // The bar itself: mousedown outside a button drags the window, a double
@@ -138,7 +147,7 @@ pub fn title_bar(ui: &mut Ui, rect: Rect, props: &TitleBarProps) -> Vec<Action> 
         } else {
             rect.left() + 10.0
         };
-        let y = rect.top() + (content_h - 26.0) / 2.0;
+        let y = rect.top() + snap::centre(content_h, 26.0, ppp);
         let buttons: [(&'static [u8], &str, bool, Action); 4] = [
             (
                 icons::REFRESH,
@@ -183,7 +192,7 @@ pub fn title_bar(ui: &mut Ui, rect: Rect, props: &TitleBarProps) -> Vec<Action> 
             let r = Rect::from_min_size(
                 pos2(
                     strip_left - 4.0 - 6.0 - w,
-                    rect.top() + (content_h - 24.0) / 2.0,
+                    rect.top() + snap::centre(content_h, 24.0, ppp),
                 ),
                 vec2(w, 24.0),
             );
@@ -231,7 +240,7 @@ pub fn title_bar(ui: &mut Ui, rect: Rect, props: &TitleBarProps) -> Vec<Action> 
             let r = Rect::from_min_size(
                 pos2(
                     rect.right() - 8.0 - w,
-                    rect.top() + (content_h - 24.0) / 2.0,
+                    rect.top() + snap::centre(content_h, 24.0, ppp),
                 ),
                 vec2(w, 24.0),
             );
@@ -329,19 +338,15 @@ fn action_button(
     let opacity = anim::transition(&ctx, id.with("op"), if enabled { 1.0 } else { 0.45 }, &T120);
     let mut painter = ui.painter().clone();
     painter.multiply_opacity(opacity);
-    let shown = Rect::from_center_size(rect.center(), rect.size() * scale);
-    painter.rect_filled(
-        shown,
-        CornerRadius::same((4.0 * scale).round() as u8),
-        bg.to_color32(),
-    );
-    icon::paint(
-        &painter,
-        svg,
-        Rect::from_center_size(shown.center(), vec2(14.0, 14.0) * scale),
-        fg,
-        1.0,
-    );
+    // `transform: scale()` on the snapped box; the 14 px svg is flex-centred
+    // in it.
+    BoxStyle {
+        background: bg,
+        radius: Corners::all(4.0),
+        ..BoxStyle::default()
+    }
+    .paint_transformed(&painter, rect, Transform::scale(scale));
+    icon::paint(&painter, svg, centred(rect, 14.0, ui), fg, scale);
     focus_ring(ui, rect, 4.0, props, has_focus);
     enabled && response.clicked()
 }
@@ -381,14 +386,8 @@ fn caption_button(
         &T120,
     );
     let painter = ui.painter();
-    painter.rect_filled(rect, CornerRadius::ZERO, bg.to_color32());
-    icon::paint(
-        painter,
-        svg,
-        Rect::from_center_size(rect.center(), vec2(12.0, 12.0)),
-        fg,
-        scale,
-    );
+    fill(painter, rect, 0.0, bg);
+    icon::paint(painter, svg, centred(rect, 12.0, ui), fg, scale);
     focus_ring(ui, rect, 0.0, props, has_focus);
     (response.clicked(), response)
 }
@@ -428,11 +427,22 @@ fn tabs(ui: &mut Ui, bar: Rect, content_h: f32, props: &TitleBarProps, actions: 
     }
     let n = list.len() as f32;
     let total = n * 32.0 + (n - 1.0).max(0.0) * 2.0;
-    let x0 = bar.center().x - total / 2.0;
-    let y = bar.top() + content_h / 2.0 - 14.0;
-    let strip = Rect::from_min_size(pos2(x0, y), vec2(total, 28.0));
-    let v = props.vars;
     let ctx = ui.ctx().clone();
+    let ppp = ctx.pixels_per_point();
+    // `left: 50%; top: 50%; transform: translate(-50%, -50%)` in the bar's
+    // padding box, then the composited layer's offset rounded.
+    let strip = snap::composited(
+        Rect::from_min_size(
+            pos2(
+                bar.left() + bar.width() / 2.0 - total / 2.0,
+                bar.top() + content_h / 2.0 - 14.0,
+            ),
+            vec2(total, 28.0),
+        ),
+        ppp,
+    );
+    let (x0, y) = (strip.left(), strip.top());
+    let v = props.vars;
     for (index, tab) in list.iter().enumerate() {
         let rect = Rect::from_min_size(pos2(x0 + index as f32 * 34.0, y), vec2(32.0, 28.0));
         let id = Id::new(("titlebar::tab", tab.key));
@@ -476,15 +486,14 @@ fn tabs(ui: &mut Ui, bar: Rect, content_h: f32, props: &TitleBarProps, actions: 
             anim::transition(&ctx, id.with("op"), if enabled { 1.0 } else { 0.45 }, &T120);
         let mut painter = ui.painter().clone();
         painter.multiply_opacity(opacity);
-        painter.rect_filled(rect, CornerRadius::same(4), bg.to_color32());
+        BoxStyle {
+            background: bg,
+            radius: Corners::all(4.0),
+            ..BoxStyle::default()
+        }
+        .paint(&painter, rect);
         match tab.svg {
-            Some(svg) => icon::paint(
-                &painter,
-                svg,
-                Rect::from_center_size(rect.center(), vec2(16.0, 16.0)),
-                fg,
-                1.0,
-            ),
+            Some(svg) => icon::paint(&painter, svg, centred(rect, 16.0, ui), fg, 1.0),
             None => {
                 // `.tab-text`: the first two characters, 11px 600.
                 let short: String = tab.name.chars().take(2).collect();
@@ -575,6 +584,29 @@ fn tooltip(ui: &Ui, tab: Rect, strip: Rect, label: &str, shown: bool, props: &Ti
         galley,
         Color32::WHITE,
     );
+}
+
+/// A plain rectangle (`background` with `border-radius`) on the device grid.
+fn fill(painter: &egui::Painter, rect: Rect, radius: f32, color: Rgba) {
+    BoxStyle {
+        background: color,
+        radius: Corners::all(radius),
+        ..BoxStyle::default()
+    }
+    .paint(painter, rect);
+}
+
+/// A `size` square flex-centred in `rect` (`align-items` and
+/// `justify-content: center`), offsets in layout units; the box snaps where
+/// it paints.
+fn centred(rect: Rect, size: f32, ui: &Ui) -> Rect {
+    let ppp = ui.ctx().pixels_per_point();
+    let min = rect.min
+        + vec2(
+            snap::centre(rect.width(), size, ppp),
+            snap::centre(rect.height(), size, ppp),
+        );
+    Rect::from_min_size(min, vec2(size, size))
 }
 
 /// `.update-btn` width: text plus `padding: 0 10px` and the 1 px border.

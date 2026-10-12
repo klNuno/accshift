@@ -8,11 +8,14 @@
 //! `CornerRadius` and `Shadow` are integer and approximate.
 //!
 //! What follows Chromium:
-//! - Geometry is in device pixels and stays fractional, as the WebView2
-//!   reference paints rounded boxes: a 1px border at 1.25x is 1.25 device px
-//!   wide and an edge at 172.5 covers half a pixel. Only a border thinner than
-//!   one device pixel is widened to one. Radii are scaled down together when
-//!   adjacent ones overlap.
+//! - Geometry is in device pixels on the grid of [`super::snap`], as
+//!   Chromium lays out at a real device scale factor: the border box has
+//!   each edge rounded half up (`ToPixelSnappedRect`), border widths are
+//!   floored to whole device pixels with a one-pixel minimum, so a 1px border
+//!   is one device pixel at 1.25x and 1.5x and 2px is 3 at 1.5x. A box under
+//!   `transform: translate()` is snapped untransformed, then moved by the
+//!   exact translation ([`BoxStyle::paint_transformed`]). Radii stay
+//!   fractional and are scaled down together when adjacent ones overlap.
 //! - Anti-aliasing is one device-pixel ramp centred on every edge, at any
 //!   scale: the analytic coverage of Skia's rrect and DRRect paths.
 //! - `box-shadow` is a true gaussian with sigma = blur / 2 (kernel radius
@@ -41,6 +44,7 @@ use egui::{
     TextureOptions, Vec2,
 };
 
+use super::snap;
 use crate::theme::Rgba;
 
 // ---------------------------------------------------------------- values
@@ -516,6 +520,35 @@ fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
     )
 }
 
+/// A 2D `transform` on a box: `translate(translate) scale(scale)` around
+/// the box centre (`transform-origin: center`), in points.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Transform {
+    pub translate: Vec2,
+    pub scale: f32,
+}
+
+impl Transform {
+    pub const NONE: Transform = Transform {
+        translate: Vec2::ZERO,
+        scale: 1.0,
+    };
+
+    pub const fn translate(translate: Vec2) -> Self {
+        Self {
+            translate,
+            scale: 1.0,
+        }
+    }
+
+    pub const fn scale(scale: f32) -> Self {
+        Self {
+            translate: Vec2::ZERO,
+            scale,
+        }
+    }
+}
+
 /// Device-pixel geometry of one box.
 struct BoxGeometry {
     border_box: RRect,
@@ -523,25 +556,25 @@ struct BoxGeometry {
     padding_box: RRect,
 }
 
-fn snap_border(w: f32, ppp: f32) -> f32 {
-    let d = w * ppp;
-    if d <= 0.0 {
-        0.0
-    } else {
-        d.max(1.0)
-    }
-}
-
 impl BoxGeometry {
-    fn new(rect: Rect, radius: Corners, border: &Border, ppp: f32) -> Self {
+    /// The pixel-snapped border box of `rect` (points), then `transform`
+    /// applied exactly, as Chromium bakes the rounded paint offset into a
+    /// transform node and keeps the transform itself fractional.
+    fn new(rect: Rect, transform: Transform, radius: Corners, border: &Border, ppp: f32) -> Self {
+        let Transform { translate, scale } = transform;
+        let mut d = snap::device_rect(rect, ppp);
+        if scale != 1.0 {
+            d = Rect::from_center_size(d.center(), d.size() * scale);
+        }
+        let d = d.translate(translate * ppp);
         let border_box = RRect::new(
-            rect.min.x * ppp,
-            rect.min.y * ppp,
-            rect.max.x * ppp,
-            rect.max.y * ppp,
-            radius.to_array().map(|r| r * ppp),
+            d.min.x,
+            d.min.y,
+            d.max.x,
+            d.max.y,
+            radius.to_array().map(|r| r * ppp * scale),
         );
-        let widths = border.width.map(|w| snap_border(w, ppp));
+        let widths = border.width.map(|w| snap::border_device(w, ppp) * scale);
         Self {
             border_box,
             widths,
@@ -587,19 +620,31 @@ impl Builder {
         base
     }
 
+    /// A triangle, unless two of its corners coincide. A square corner
+    /// repeats its contour point, and the software renderer pairs a
+    /// degenerate triangle with the one before it into a full rectangle,
+    /// which paints half the box twice.
+    fn triangle(&mut self, a: u32, b: u32, c: u32) {
+        let v = &self.mesh.vertices;
+        let (pa, pb, pc) = (v[a as usize].pos, v[b as usize].pos, v[c as usize].pos);
+        if pa != pb && pb != pc && pa != pc {
+            self.mesh.add_triangle(a, b, c);
+        }
+    }
+
     /// Quads between two rings of `n` points each.
     fn stitch(&mut self, a: u32, b: u32, n: usize) {
         let n = n as u32;
         for i in 0..n {
             let j = (i + 1) % n;
-            self.mesh.add_triangle(a + i, a + j, b + j);
-            self.mesh.add_triangle(a + i, b + j, b + i);
+            self.triangle(a + i, a + j, b + j);
+            self.triangle(a + i, b + j, b + i);
         }
     }
 
     fn fan(&mut self, ring: u32, n: usize) {
         for i in 1..n as u32 - 1 {
-            self.mesh.add_triangle(ring, ring + i, ring + i + 1);
+            self.triangle(ring, ring + i, ring + i + 1);
         }
     }
 
@@ -1210,14 +1255,23 @@ fn paint_shadow(painter: &Painter, geo: &BoxGeometry, s: &BoxShadow, opacity: f3
 // ---------------------------------------------------------------- entry points
 
 impl BoxStyle {
-    /// Paint the box over `rect` (its border box, in points).
+    /// Paint the box over `rect` (its layout border box, in points),
+    /// pixel-snapped.
     pub fn paint(&self, painter: &Painter, rect: Rect) {
+        self.paint_transformed(painter, rect, Transform::NONE);
+    }
+
+    /// Paint the box over `rect` (its layout border box) under `transform`:
+    /// `rect` is snapped, then the transform applies exactly, so a
+    /// fractional translation or a scale paints anti-aliased edges like
+    /// Chromium. Shadow blur and offsets keep their untransformed size.
+    pub fn paint_transformed(&self, painter: &Painter, rect: Rect, transform: Transform) {
         let opacity = self.opacity.clamp(0.0, 1.0);
         if opacity <= 0.0 {
             return;
         }
         let ppp = painter.ctx().pixels_per_point();
-        let geo = BoxGeometry::new(rect, self.radius, &self.border, ppp);
+        let geo = BoxGeometry::new(rect, transform, self.radius, &self.border, ppp);
         for s in self.shadows.iter().rev().filter(|s| !s.inset) {
             paint_shadow(painter, &geo, s, opacity, ppp);
         }
@@ -1251,7 +1305,7 @@ pub fn paint_image(
     tint: Color32,
 ) {
     let ppp = painter.ctx().pixels_per_point();
-    let geo = BoxGeometry::new(rect, radius, &Border::NONE, ppp);
+    let geo = BoxGeometry::new(rect, Transform::NONE, radius, &Border::NONE, ppp);
     let bb = geo.border_box;
     let origin = vec2(bb.x0, bb.y0);
     let extent = vec2(bb.width(), bb.height()).max(Vec2::splat(1e-3));
@@ -1411,7 +1465,7 @@ impl RRectClipper {
 pub fn paint_clipped(painter: &Painter, rect: Rect, radius: Corners, shapes: Vec<Shape>) {
     let ctx = painter.ctx();
     let ppp = ctx.pixels_per_point();
-    let rr = BoxGeometry::new(rect, radius, &Border::NONE, ppp).border_box;
+    let rr = BoxGeometry::new(rect, Transform::NONE, radius, &Border::NONE, ppp).border_box;
     let clip_rect = painter.clip_rect();
     let clipped: Vec<ClippedShape> = shapes
         .into_iter()
@@ -1464,12 +1518,21 @@ mod tests {
     }
 
     #[test]
-    fn border_widths_stay_fractional() {
-        assert_eq!(snap_border(1.0, 1.25), 1.25);
-        assert_eq!(snap_border(1.0, 1.5), 1.5);
-        assert_eq!(snap_border(2.0, 1.5), 3.0);
-        assert_eq!(snap_border(0.5, 1.0), 1.0);
-        assert_eq!(snap_border(0.0, 1.5), 0.0);
+    fn boxes_sit_on_the_device_grid() {
+        let border = Border::all(1.0, Rgba::TRANSPARENT);
+        let r = Rect::from_min_size(pos2(200.5, 14.5), vec2(30.0, 16.0));
+        let geo = BoxGeometry::new(r, Transform::NONE, Corners::all(4.0), &border, 1.5);
+        let bb = geo.border_box;
+        assert_eq!([bb.x0, bb.y0, bb.x1, bb.y1], [301.0, 22.0, 346.0, 46.0]);
+        assert_eq!(geo.widths.top, 1.0);
+        let geo = BoxGeometry::new(
+            r,
+            Transform::translate(vec2(0.5, 0.0)),
+            Corners::all(4.0),
+            &border,
+            1.5,
+        );
+        assert_eq!(geo.border_box.x0, 301.75);
     }
 
     #[test]
