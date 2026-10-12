@@ -101,7 +101,7 @@ node crates/accshift-egui/parity/snap/measure.mjs --out <dir> --exe <parity-capt
 
 It writes `cases.json` (layout rect and painted edges per case, offset and scale), `report.md`, one `frame.png` per scale and `titlebar.json` (the title bar's boxes on the `demo` scenario). `--dsf emulate` measures the CDP emulation instead, which is what the references were before 2026-10-12. Same safety as `ref.mjs`.
 
-The rules below hold on every case at 1, 1.25, 1.5 and 1.75, within 0.1 device px; `src/ui/snap.rs` implements them and `ui::paint` and the components use it. Layout runs in device px with 1/64 px units, so a position is `css * scale` quantized to 1/64 before any rounding.
+The rules below come from `measure.mjs` at 1, 1.25, 1.5 and 1.75. Boxes, borders, shadows, `img`, SVG roots, `opacity` and flex centring match on all 24 samples per case; the translated cases match up to the 2-decimal rounding of `cases.json`, and `shadow-rounded` is read across the corner arc, so its scan is not an edge. `src/ui/snap.rs` implements the rules, and `ui::paint` and the components use them. Layout runs in device px with 1/64 px units, so a position is `css * scale` quantized to 1/64 before any rounding.
 
 | Case                                                                                                | Rule                                                                                                                                                |
 | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
