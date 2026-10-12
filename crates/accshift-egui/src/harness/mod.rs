@@ -133,6 +133,10 @@ fn parse_step(v: &serde_json::Value) -> Result<Step, String> {
     if let Some(s) = o.get("shot") {
         return Ok(Step::Shot(s.as_str().ok_or_else(bad)?.to_owned()));
     }
+    // `ref.mjs` dumps the reference DOM there; nothing to do on this side.
+    if o.contains_key("dom") {
+        return Ok(Step::Wait(0.0));
+    }
     Err(bad())
 }
 

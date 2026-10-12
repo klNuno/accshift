@@ -327,10 +327,62 @@ async function runScene(page, scene, outDir, manifest) {
         height: size.height,
         sizeOk: ok,
       });
-    } else console.error(`${scene.id}: unknown step ${JSON.stringify(step)}`);
+    } else if ("dom" in step) await dumpDom(page, scene, outDir, step);
+    else console.error(`${scene.id}: unknown step ${JSON.stringify(step)}`);
   }
   if (scene.probe) await probeText(page, scene, outDir);
   await send("Page.removeScriptToEvaluateOnNewDocument", { identifier: desk.identifier });
+}
+
+// `dom` step: every element matching `select` (a selector list, default
+// `body *`) with its border box in CSS px of the viewport, focus state and the
+// computed values the egui side reproduces. Writes <out>/<id>/<dom>.dom.json;
+// the egui runner skips the step.
+const DOM_PROPS = [
+  "display",
+  "boxSizing",
+  "width",
+  "minWidth",
+  "height",
+  "padding",
+  "margin",
+  "borderTopWidth",
+  "borderTopColor",
+  "borderRadius",
+  "backgroundColor",
+  "boxShadow",
+  "color",
+  "fontFamily",
+  "fontSize",
+  "fontWeight",
+  "lineHeight",
+  "letterSpacing",
+  "textTransform",
+  "opacity",
+  "transform",
+];
+
+async function dumpDom(page, scene, outDir, step) {
+  const select = step.select ?? "body *";
+  const rows =
+    await page.js(`(() => Array.from(document.querySelectorAll(${JSON.stringify(select)}), (el) => {
+    const r = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    return {
+      tag: el.tagName.toLowerCase(),
+      class: el.getAttribute("class") ?? "",
+      text: el.childElementCount === 0 ? el.textContent.trim().slice(0, 60) : "",
+      focused: document.activeElement === el,
+      focusVisible: el.matches(":focus-visible"),
+      hover: el.matches(":hover"),
+      rect: [r.x, r.y, r.width, r.height],
+      css: Object.fromEntries(${JSON.stringify(DOM_PROPS)}.map((p) => [p, cs[p]])),
+    };
+  }))()`);
+  const dir = join(outDir, scene.id);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${step.dom}.dom.json`), JSON.stringify(rows, null, 1));
+  console.log(`${scene.id}/${step.dom}.dom.json ${rows.length} elements`);
 }
 
 // `probe` (optional, with `html`): after the shots, every `body p` of the

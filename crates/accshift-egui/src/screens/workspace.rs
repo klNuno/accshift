@@ -42,7 +42,7 @@ use crate::app::accounts::Accounts;
 use crate::app::avatars::AvatarTexture;
 use crate::app::platforms::PlatformDef;
 use crate::app::vars::{rgba, Vars};
-use crate::app::Action;
+use crate::app::{Action, MenuTarget};
 use crate::theme::Rgba;
 use crate::ui::anim::Motion;
 use crate::ui::components::account_card::{
@@ -51,6 +51,7 @@ use crate::ui::components::account_card::{
 use crate::ui::components::avatar_fade_in;
 use crate::ui::components::back_card::{self, BackCardEvent, BackCardProps};
 use crate::ui::components::breadcrumb::{self, BreadcrumbProps, Crumb};
+use crate::ui::components::context_menu;
 use crate::ui::components::folder_card::{self, entrance, FolderCardEvent, FolderCardProps};
 use crate::ui::components::search_cancel;
 use crate::ui::components::section_header::{self, SectionHeaderEvent, SectionHeaderProps};
@@ -440,6 +441,10 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
         }
     };
 
+    // `<main class="content" oncontextmenu>`: the toolbar and the
+    // unsupported-platform branches.
+    let background_menu =
+        matches!(body, Body::Toolbar) || (!input.usable && input.compatible_platforms > 0);
     match body {
         Body::Message { spinner, lines } => {
             y += center_message(ui, v, accent, to_screen, y, inner_w, spinner, &lines, now);
@@ -734,7 +739,12 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                         SectionHeaderEvent::Navigate(id) => {
                             actions.push(Action::NavigateToFolder(Some(id)))
                         }
-                        SectionHeaderEvent::ContextMenu(_) => {}
+                        SectionHeaderEvent::ContextMenu(at) => {
+                            if let SectionLabel::Folder(f) = &h.label {
+                                actions
+                                    .push(Action::ContextMenu(MenuTarget::Folder(f.clone()), at));
+                            }
+                        }
                     }
                 }
             }
@@ -757,7 +767,10 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                         FolderCardEvent::Open => {
                             actions.push(Action::NavigateToFolder(Some(f.folder.id.clone())))
                         }
-                        FolderCardEvent::ContextMenu(_) => {}
+                        FolderCardEvent::ContextMenu(at) => actions.push(Action::ContextMenu(
+                            MenuTarget::Folder(f.folder.clone()),
+                            at,
+                        )),
                     }
                 }
             }
@@ -784,7 +797,10 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                         CardEvent::Switch => {
                             actions.push(Action::AccountSwitch(a.account.id.clone()))
                         }
-                        CardEvent::ContextMenu(_) => {}
+                        CardEvent::ContextMenu(at) => actions.push(Action::ContextMenu(
+                            MenuTarget::Account(a.account.clone()),
+                            at,
+                        )),
                     }
                 }
             }
@@ -809,6 +825,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
     // Windows' 100 px notch (3 lines of 100/3 px).
     let page = viewport.height();
     let target = rect.intersect(ui.clip_rect());
+    let on_menu = context_menu::hit_test(&ctx);
     let dy: f32 = ctx.input(|i| {
         let mut at = ws.pointer;
         let mut dy = 0.0;
@@ -816,7 +833,11 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
             match event {
                 Event::PointerMoved(p) => at = Some(*p),
                 Event::PointerGone => at = None,
-                Event::MouseWheel { unit, delta, .. } if at.is_some_and(|p| target.contains(p)) => {
+                // The menu is no descendant of `.content`: a wheel over it
+                // scrolls nothing here.
+                Event::MouseWheel { unit, delta, .. }
+                    if at.is_some_and(|p| target.contains(p) && !on_menu(p)) =>
+                {
                     dy += match unit {
                         egui::MouseWheelUnit::Point => delta.y,
                         egui::MouseWheelUnit::Line => delta.y * 100.0,
@@ -848,6 +869,16 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
     ws.scroll = ws.scroll.clamp(0.0, max_scroll).round();
     if ws.scroll != scroll {
         ctx.request_repaint();
+        // `scroll` (capture) on the document: an open menu closes.
+        actions.push(Action::ContentScrolled);
+    }
+    // A right click no card or folder header took bubbles up to `.content`.
+    let opened = actions.iter().any(|a| matches!(a, Action::ContextMenu(..)));
+    if background_menu && !opened {
+        let at = crate::ui::components::context_click_pos(ui);
+        if let Some(at) = at.filter(|p| rect.intersect(ui.clip_rect()).contains(*p)) {
+            actions.push(Action::ContextMenu(MenuTarget::Background, at));
+        }
     }
     actions
 }
@@ -1420,7 +1451,7 @@ mod scene_tests {
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
 
-    use egui::{pos2, vec2, Context, Event, Modifiers, PointerButton, Pos2, RawInput};
+    use egui::{pos2, vec2, Context, Event, Key, Modifiers, PointerButton, Pos2, RawInput};
 
     use crate::harness;
     use crate::screens::Screen;
@@ -1509,6 +1540,35 @@ mod scene_tests {
             self.send(Event::PointerMoved(pos2(250.0, 18.0)));
             self.frame();
             self.settle();
+        }
+
+        /// A right click: `contextmenu` fires on the release.
+        pub fn rclick(&mut self, at: Pos2) {
+            self.send(Event::PointerMoved(at));
+            self.frame();
+            for pressed in [true, false] {
+                self.send(Event::PointerButton {
+                    pos: at,
+                    button: PointerButton::Secondary,
+                    pressed,
+                    modifiers: Modifiers::NONE,
+                });
+                self.frame();
+            }
+            self.frame();
+        }
+
+        pub fn key(&mut self, key: Key) {
+            for pressed in [true, false] {
+                self.send(Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                });
+                self.frame();
+            }
         }
 
         pub fn workspace(&self) -> &super::Workspace {
@@ -1691,6 +1751,96 @@ mod scene_tests {
         assert!(toasts(&run)[0].deadline().is_some());
         run.click(pos2(821.0, 405.0));
         assert!(toasts(&run).is_empty());
+    }
+
+    /// The account menu of the `menu-*` scenes: Escape and a press outside
+    /// close it, hovering "Copy..." opens its submenu at once, and an entry
+    /// there copies with a toast (the demo usernames are empty, so SteamID64).
+    #[test]
+    fn context_menu_opens_closes_and_copies() {
+        use crate::ui::components::context_menu;
+        let open = |run: &Run| match &run.screen {
+            Screen::App(app) => app.dialogs().context_menu().is_some(),
+            _ => panic!("not the app"),
+        };
+        let mut run = Run::new("menu-glass-dark-100", 1.0);
+        run.settle();
+        run.rclick(pos2(205.0, 152.0));
+        assert!(open(&run));
+        run.key(Key::Escape);
+        assert!(!open(&run));
+        run.rclick(pos2(205.0, 152.0));
+        assert!(open(&run));
+        // The reference draws the menu at 205..425 x 111..436.
+        assert!(context_menu::contains(&run.ctx, pos2(300.0, 300.0)));
+        run.click(pos2(845.0, 425.0));
+        assert!(!open(&run));
+        // "Copy..." at 210..420 x 254..284, its submenu right of the menu.
+        run.rclick(pos2(205.0, 152.0));
+        run.send(Event::PointerMoved(pos2(260.0, 269.0)));
+        run.frame();
+        run.frame();
+        assert!(context_menu::contains(&run.ctx, pos2(500.0, 270.0)));
+        run.send(Event::PointerMoved(pos2(500.0, 305.0)));
+        run.frame();
+        let mut copied = Vec::new();
+        for pressed in [true, false] {
+            run.send(Event::PointerButton {
+                pos: pos2(500.0, 305.0),
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+            for _ in 0..2 {
+                let out = run.frame();
+                copied.extend(
+                    out.platform_output
+                        .commands
+                        .into_iter()
+                        .filter_map(|c| match c {
+                            egui::OutputCommand::CopyText(text) => Some(text),
+                            _ => None,
+                        }),
+                );
+            }
+        }
+        assert_eq!(copied, ["76561198000000001"]);
+        assert!(!open(&run));
+        let Screen::App(app) = &run.screen else {
+            panic!("not the app")
+        };
+        assert_eq!(app.toasts().toasts().len(), 1);
+        // The same entry by keyboard: ArrowRight opens "Copy..." and focuses
+        // its first entry.
+        run.rclick(pos2(205.0, 152.0));
+        let mut copied = Vec::new();
+        for key in
+            [Key::ArrowDown; 4]
+                .into_iter()
+                .chain([Key::ArrowRight, Key::ArrowDown, Key::Enter])
+        {
+            for pressed in [true, false] {
+                run.send(Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                });
+                let out = run.frame();
+                copied.extend(
+                    out.platform_output
+                        .commands
+                        .into_iter()
+                        .filter_map(|c| match c {
+                            egui::OutputCommand::CopyText(text) => Some(text),
+                            _ => None,
+                        }),
+                );
+            }
+        }
+        assert_eq!(copied, ["76561198000000001"]);
+        assert!(!open(&run));
     }
 
     /// The streamer mode row of the privacy tab answers the pointer: the

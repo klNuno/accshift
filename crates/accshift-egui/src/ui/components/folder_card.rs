@@ -371,7 +371,7 @@ pub fn folder_card(ui: &mut Ui, rect: Rect, props: &FolderCardProps) -> Vec<Fold
         events.push(FolderCardEvent::Open);
     }
     if f.response.secondary_clicked() {
-        let at = f.response.interact_pointer_pos().unwrap_or(f.rect.center());
+        let at = super::context_click_pos(ui).unwrap_or(f.rect.center());
         events.push(FolderCardEvent::ContextMenu(at));
     }
     events

@@ -7,7 +7,8 @@
 //!     .app-shell        var(--bg) and var(--bg-image)
 //!       TitleBar        Windows and Linux, page-entrance
 //!       {#key panelKey} the panel, page-entrance on every switch
-//!     AppDialogs        the toast stack (menus and dialogs not ported yet)
+//!     AppDialogs        the toast stack, then the context menu (dialogs
+//!                       not ported yet)
 //! ```
 //!
 //! Before the boot payload lands the frame is `opacity: 0`: nothing but the
@@ -23,9 +24,11 @@ use super::{Action, AppModel, Booted};
 use crate::screens::settings;
 use crate::screens::workspace::{self, WorkspaceInput};
 use crate::ui::anim::{Animation, Fill, Motion, Timing};
+use crate::ui::components::context_menu::{self, ContextMenuProps};
 use crate::ui::components::title_bar::{self, TitleBarProps};
 use crate::ui::components::toast::{self, ToastProps};
 use crate::ui::paint::BoxStyle;
+use accshift_app::actions::dialogs::MenuInput;
 
 /// `appEntrance 240ms cubic-bezier(0.22, 1, 0.36, 1) forwards`.
 const APP_ENTRANCE: Animation =
@@ -194,6 +197,13 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
     let settings_panel = &mut app.settings_panel;
     let focus_visible = app.focus_visible;
     let toasts = app.toasts.toasts();
+    let dialogs = &app.dialogs;
+    let submenus = &app.submenus;
+    let open_id = app.menu_open_id;
+    if dialogs.context_menu().is_none() {
+        // Nothing open: the next menu mounts fresh.
+        context_menu::reset(&ctx);
+    }
     let Some(Booted {
         accounts,
         workspace: ws,
@@ -283,6 +293,33 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                     .into_iter()
                     .map(Action::Toast),
             );
+            // `<ContextMenu>`, above the toasts (`--z-menu`).
+            if let Some(menu) = dialogs.context_menu() {
+                let adapter = accounts.registry.adapter(&nav.active_tab);
+                let items = dialogs.context_menu_items(&MenuInput {
+                    stores,
+                    adapter: adapter.as_deref(),
+                    active_tab: &nav.active_tab,
+                    active_tab_usable: active_usable,
+                    current_account_id: accounts.loading.loader.current_account_id(),
+                });
+                let props = ContextMenuProps {
+                    vars: &vars,
+                    locale: *locale,
+                    open_id,
+                    items: &items,
+                    at: pos2(menu.x, menu.y),
+                    viewport: window,
+                    keyboard: focus_visible,
+                    loads: submenus,
+                    now,
+                };
+                actions.extend(
+                    context_menu::context_menu(ui, &props)
+                        .into_iter()
+                        .map(|event| Action::Menu(open_id, event)),
+                );
+            }
         });
     });
     let end = next_idx(&ctx, layer_id);

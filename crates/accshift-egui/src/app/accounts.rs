@@ -123,7 +123,14 @@ impl Accounts {
         accounts
     }
 
-    fn load(&mut self, jobs: &Jobs, stores: &mut ClientStores, tab: &str, options: LoadOptions) {
+    /// `loadAccounts(options)` on `tab`.
+    pub fn load(
+        &mut self,
+        jobs: &Jobs,
+        stores: &mut ClientStores,
+        tab: &str,
+        options: LoadOptions,
+    ) {
         let visible = self.lists.visible_account_ids.clone();
         let mut ctx = LoadingContext {
             jobs,

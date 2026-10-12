@@ -15,6 +15,7 @@ pub mod account_card;
 pub mod avatar_fade_in;
 pub mod back_card;
 pub mod breadcrumb;
+pub mod context_menu;
 pub mod controls;
 pub mod focus;
 pub mod folder_card;
@@ -26,3 +27,19 @@ pub mod title_bar;
 pub mod toast;
 pub mod use_grid_layout;
 pub mod view_toggle;
+
+/// Where the right button went up this frame: Chromium fires `contextmenu`
+/// there on Windows, even if the pointer moved again in the same frame.
+pub fn context_click_pos(ui: &egui::Ui) -> Option<egui::Pos2> {
+    ui.input(|i| {
+        i.events.iter().rev().find_map(|e| match e {
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed: false,
+                ..
+            } => Some(*pos),
+            _ => None,
+        })
+    })
+}

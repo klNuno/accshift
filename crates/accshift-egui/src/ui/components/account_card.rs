@@ -430,7 +430,7 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> Vec<Ca
         let at = if key_menu {
             rect.center()
         } else {
-            response.interact_pointer_pos().unwrap_or(rect.center())
+            super::context_click_pos(ui).unwrap_or(rect.center())
         };
         events.push(CardEvent::Activate);
         st.confirm = false;

@@ -244,7 +244,7 @@ pub fn section_header(
             events.push(SectionHeaderEvent::Navigate(folder.to_string()));
         }
         if response.secondary_clicked() {
-            let at = response.interact_pointer_pos().unwrap_or(rect.center());
+            let at = super::context_click_pos(ui).unwrap_or(rect.center());
             events.push(SectionHeaderEvent::ContextMenu(at));
         }
     }

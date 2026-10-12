@@ -32,11 +32,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
+use accshift_app::actions::dialogs::{AppDialogs, AppMenuEntry, DialogContext};
+use accshift_app::actions::{shell as app_shell, AppEffect};
 use accshift_app::backend::Backend;
 use accshift_app::error::BackendResult;
+use accshift_app::folders::FolderInfo;
 use accshift_app::i18n::Locale;
 use accshift_app::jobs::{Jobs, Pending, Poll};
+use accshift_app::menu::{build_context_menu_items, SubmenuLoader, ACCOUNT_CONTEXT_GROUP_ORDER};
 use accshift_app::mock::MockBackend;
+use accshift_app::platforms::PlatformAccount;
 use accshift_app::real::RealBackend;
 use accshift_app::settings::AnimationsMode;
 use accshift_app::storage::{self, StoreId};
@@ -46,11 +51,12 @@ use accshift_theme::{
     theme_application, window_backdrop, AppTheme, CustomThemePayload, ResolvedTheme,
     ThemeApplication, ThemeRegistry, WindowBackdrop,
 };
-use egui::{Context, Rect, TextureHandle, Ui, ViewportCommand};
+use egui::{Context, Event, Pos2, Rect, TextureHandle, Ui, ViewportCommand};
 use serde_json::Value;
 
 use crate::screens::workspace::Workspace;
 use crate::ui::anim::{self, Motion};
+use crate::ui::components::context_menu::{self, MenuEvent, SubmenuLoad};
 use crate::ui::components::toast::ToastEvent;
 use accounts::Accounts;
 use clock::Clock;
@@ -100,6 +106,21 @@ pub enum Action {
     AccountSwitch(String),
     /// A toast was hovered, dismissed or its action clicked.
     Toast(ToastEvent),
+    /// A right click on a card, a folder or the workspace background, at
+    /// this window point (`openAccountContextMenu` and its siblings).
+    ContextMenu(MenuTarget, Pos2),
+    /// The menu opened as `open_id` reported something.
+    Menu(u64, MenuEvent),
+    /// `.content` scrolled.
+    ContentScrolled,
+}
+
+/// What a right click opened the menu on.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MenuTarget {
+    Account(PlatformAccount),
+    Folder(FolderInfo),
+    Background,
 }
 
 /// How a scene sets up the mock, the same fields `parity/ref.mjs` writes into
@@ -231,6 +252,7 @@ pub struct Booted {
 }
 
 type BootResult = BackendResult<BootPayload>;
+type SubmenuJob = Pending<BackendResult<Vec<AppMenuEntry>>>;
 
 /// The application model. See the module documentation.
 pub struct AppModel {
@@ -250,6 +272,15 @@ pub struct AppModel {
     settings_panel: Option<settings_panel::SettingsPanel>,
     /// `addToast`'s queue, drawn by `toast::toast_stack`.
     toasts: accshift_app::actions::toasts::ToastQueue,
+    /// `createAppDialogsController`: the context menu and the dialogs.
+    dialogs: AppDialogs,
+    /// Bumped on every menu open: a fresh menu mounts.
+    menu_open_id: u64,
+    /// The open menu's submenu loaders and their results.
+    submenus: Vec<(SubmenuLoader, SubmenuLoad)>,
+    submenu_jobs: Vec<(SubmenuLoader, SubmenuJob)>,
+    /// Chromium's keyboard modality: a key press sets it, a press that
+    /// focuses an element clears it. Focus rings follow it (`:focus-visible`).
     focus_visible: bool,
     last_time: f64,
     os_reduced_motion: bool,
@@ -307,6 +338,8 @@ impl AppModel {
         let jobs = Jobs::new(Arc::clone(&backend), 2, move || wake.request_repaint());
         let boot_job = Some(jobs.run(|backend| backend.get_boot_payload()));
         crate::ui::text::install(ctx, false);
+        // Chromium hits exactly what is under the pointer: no 5 px slop.
+        ctx.all_styles_mut(|style| style.interaction.interact_radius = 0.0);
         AppModel {
             backend,
             mock,
@@ -321,6 +354,10 @@ impl AppModel {
             maximize_button: None,
             settings_panel: None,
             toasts: accshift_app::actions::toasts::ToastQueue::new(),
+            dialogs: AppDialogs::new(),
+            menu_open_id: 0,
+            submenus: Vec::new(),
+            submenu_jobs: Vec::new(),
             focus_visible: false,
             last_time: 0.0,
             os_reduced_motion: false,
@@ -354,6 +391,11 @@ impl AppModel {
     /// The toasts `addToast` queued.
     pub fn toasts(&self) -> &accshift_app::actions::toasts::ToastQueue {
         &self.toasts
+    }
+
+    /// The context menu and dialogs.
+    pub fn dialogs(&self) -> &AppDialogs {
+        &self.dialogs
     }
 
     /// Where the maximize button was last drawn (Snap Layouts hook).
@@ -538,11 +580,30 @@ impl AppModel {
         self.sync_settings(&ctx);
         self.tick_settings_panel(&ctx, Instant::now());
         self.pump_saves();
-        if ctx.input(|i| i.key_pressed(egui::Key::Tab)) {
-            self.focus_visible = true;
-        } else if ctx.input(|i| i.pointer.any_pressed()) {
-            self.focus_visible = false;
+        // `had_keyboard_event`: a key without Ctrl, Alt or Meta sets it; a
+        // press of any button that focuses an element clears it (mouse
+        // focus), a press on nothing focusable (the background) leaves it.
+        let on_focusable = ctx.viewport(|vp| {
+            vp.hits
+                .contains_pointer
+                .iter()
+                .any(|w| w.sense.senses_click() || w.sense.is_focusable())
+        });
+        let modality = ctx.input(|i| {
+            i.events.iter().fold(None, |m, e| match e {
+                Event::Key {
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if !(modifiers.ctrl || modifiers.alt || modifiers.mac_cmd) => Some(true),
+                Event::PointerButton { pressed: true, .. } if on_focusable => Some(false),
+                _ => m,
+            })
+        });
+        if let Some(keyboard) = modality {
+            self.focus_visible = keyboard;
         }
+        self.pump_submenus();
         if let Some(b) = self.booted.as_mut() {
             let grid_hidden = b.nav.show_settings || b.nav.show_personas;
             let expanded = b.stores.settings().account_display.expanded_folders;
@@ -656,6 +717,18 @@ impl AppModel {
                     self.toasts.activate_action(id);
                 }
             },
+            Action::ContextMenu(target, at) => self.open_context_menu(ctx, target, at),
+            Action::Menu(open_id, event) => {
+                // Events of a menu replaced in the same frame are stale.
+                if open_id == self.menu_open_id && self.dialogs.context_menu().is_some() {
+                    self.apply_menu(ctx, event);
+                }
+            }
+            Action::ContentScrolled => {
+                if self.dialogs.context_menu().is_some() {
+                    self.close_context_menu(ctx);
+                }
+            }
             Action::OpenSettings => self.toggle_settings_panel(),
             Action::Settings(action) => self.apply_settings(ctx, action),
             Action::OpenPersonas => {
@@ -688,6 +761,148 @@ impl AppModel {
                 b.nav.show_settings = false;
                 b.nav.active_tab = tab.clone();
                 b.accounts.change_tab(&self.jobs, &mut b.stores, &tab);
+            }
+        }
+    }
+}
+
+impl AppModel {
+    /// `handleWorkspaceAccountContextMenu` and its siblings.
+    fn open_context_menu(&mut self, ctx: &Context, target: MenuTarget, at: Pos2) {
+        // A right click on the open menu targets the menu, not `.content`.
+        if self.dialogs.context_menu().is_some() && context_menu::contains(ctx, at) {
+            return;
+        }
+        let Some(b) = self.booted.as_ref() else {
+            return;
+        };
+        if b.nav.bulk_edit && matches!(target, MenuTarget::Account(_)) {
+            // Bulk edit toggles the account instead: the bulk edit port.
+            return;
+        }
+        match target {
+            MenuTarget::Account(account) => {
+                self.dialogs.open_account_context_menu(at.x, at.y, account)
+            }
+            MenuTarget::Folder(folder) => self.dialogs.open_folder_context_menu(at.x, at.y, folder),
+            MenuTarget::Background => self.dialogs.open_background_context_menu(at.x, at.y),
+        }
+        self.menu_open_id += 1;
+        self.forget_menu(ctx);
+    }
+
+    /// `closeContextMenu`.
+    fn close_context_menu(&mut self, ctx: &Context) {
+        self.dialogs.close_context_menu();
+        self.forget_menu(ctx);
+    }
+
+    /// Drops what the last menu left: its loaders and its drawn state.
+    fn forget_menu(&mut self, ctx: &Context) {
+        self.submenus.clear();
+        self.submenu_jobs.clear();
+        context_menu::reset(ctx);
+    }
+
+    fn apply_menu(&mut self, ctx: &Context, event: MenuEvent) {
+        match event {
+            MenuEvent::Close => self.close_context_menu(ctx),
+            MenuEvent::Load(loader) => self.load_submenu(loader),
+            MenuEvent::Activate(command) => {
+                let Some(b) = self.booted.as_mut() else {
+                    return;
+                };
+                let folder = b
+                    .accounts
+                    .navigation
+                    .current_folder_id()
+                    .map(str::to_string);
+                let effects = self.dialogs.activate(
+                    &command,
+                    &mut DialogContext {
+                        stores: &mut b.stores,
+                        active_tab: &b.nav.active_tab,
+                        current_folder_id: folder.as_deref(),
+                    },
+                );
+                self.forget_menu(ctx);
+                self.apply_effects(ctx, effects);
+            }
+        }
+    }
+
+    /// `item.submenuLoader()` on the job pool, grouped like the menu.
+    fn load_submenu(&mut self, loader: SubmenuLoader) {
+        let Some(b) = self.booted.as_ref() else {
+            return;
+        };
+        let Some(adapter) = b.accounts.registry.adapter(&b.nav.active_tab) else {
+            return;
+        };
+        self.submenus.retain(|(l, _)| *l != loader);
+        self.submenus.push((loader.clone(), SubmenuLoad::Loading));
+        self.submenu_jobs.retain(|(l, _)| *l != loader);
+        let job_loader = loader.clone();
+        let job = self.jobs.run(move |backend| {
+            adapter.load_submenu(&job_loader, backend).map(|actions| {
+                build_context_menu_items(actions, &ACCOUNT_CONTEXT_GROUP_ORDER)
+                    .into_iter()
+                    .map(Into::into)
+                    .collect()
+            })
+        });
+        self.submenu_jobs.push((loader, job));
+    }
+
+    /// Lands finished submenu loads.
+    fn pump_submenus(&mut self) {
+        let submenus = &mut self.submenus;
+        self.submenu_jobs.retain_mut(|(loader, job)| {
+            let state = match job.poll() {
+                Poll::Waiting => return true,
+                Poll::Ready(Ok(items)) => SubmenuLoad::Ready(items),
+                Poll::Ready(Err(_)) | Poll::Gone => SubmenuLoad::Failed,
+            };
+            if let Some(slot) = submenus.iter_mut().find(|(l, _)| l == loader) {
+                slot.1 = state;
+            }
+            false
+        });
+    }
+
+    /// The effects a menu command asked for. The switch, platform task,
+    /// dialog and add-flow ports own the ones left out.
+    fn apply_effects(&mut self, ctx: &Context, effects: Vec<AppEffect>) {
+        for effect in effects {
+            match effect {
+                AppEffect::Toast(toast) => {
+                    self.toasts.push(toast, Instant::now());
+                }
+                AppEffect::LoadAccounts(options) => {
+                    if let Some(b) = self.booted.as_mut() {
+                        let tab = b.nav.active_tab.clone();
+                        b.accounts.load(&self.jobs, &mut b.stores, &tab, options);
+                    }
+                }
+                AppEffect::RefreshCurrentItems => {
+                    if let Some(b) = self.booted.as_mut() {
+                        b.accounts
+                            .navigation
+                            .refresh_current_items(&b.stores, &b.nav.active_tab);
+                    }
+                }
+                AppEffect::CopyToClipboard { text, label } => {
+                    let Some(locale) = self.booted.as_ref().map(|b| b.locale) else {
+                        continue;
+                    };
+                    ctx.copy_text(text);
+                    let toast = app_shell::copy_result_toast(&label.resolve(locale), true);
+                    self.toasts.push(toast, Instant::now());
+                }
+                // The stores hold the new colours and notes; the view reads
+                // them every frame.
+                AppEffect::CardColorsChanged | AppEffect::CardNotesChanged => {}
+                _ => {}
             }
         }
     }
