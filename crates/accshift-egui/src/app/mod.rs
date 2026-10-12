@@ -32,14 +32,20 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use accshift_app::actions::dialogs::{AppDialogs, AppMenuEntry, DialogContext};
-use accshift_app::actions::{shell as app_shell, AppEffect};
+use accshift_app::actions::dialogs::{
+    finish_rename_account, rename_account_blocking, AppDialogs, AppMenuEntry, DialogContext,
+};
+use accshift_app::actions::toasts::AddToastOptions;
+use accshift_app::actions::{load_options, shell as app_shell, AppEffect};
 use accshift_app::backend::Backend;
 use accshift_app::error::BackendResult;
 use accshift_app::folders::FolderInfo;
 use accshift_app::i18n::Locale;
 use accshift_app::jobs::{Jobs, Pending, Poll};
-use accshift_app::menu::{build_context_menu_items, SubmenuLoader, ACCOUNT_CONTEXT_GROUP_ORDER};
+use accshift_app::menu::{
+    build_context_menu_items, PlatformTask, SubmenuLoader, TaskEffect, TaskOutcome,
+    ACCOUNT_CONTEXT_GROUP_ORDER,
+};
 use accshift_app::mock::MockBackend;
 use accshift_app::platforms::PlatformAccount;
 use accshift_app::real::RealBackend;
@@ -284,6 +290,9 @@ pub struct AppModel {
     /// The open menu's submenu loaders and their results.
     submenus: Vec<(SubmenuLoader, SubmenuLoad)>,
     submenu_jobs: Vec<(SubmenuLoader, SubmenuJob)>,
+    /// Menu tasks and account renames on the job pool.
+    task_jobs: Vec<Pending<TaskOutcome>>,
+    rename_jobs: Vec<Pending<BackendResult<()>>>,
     /// The mount number of the open input and confirm dialogs: a dialog
     /// that opens mounts fresh (animations, focus).
     input_mount: Option<u64>,
@@ -368,6 +377,8 @@ impl AppModel {
             menu_open_id: 0,
             submenus: Vec::new(),
             submenu_jobs: Vec::new(),
+            task_jobs: Vec::new(),
+            rename_jobs: Vec::new(),
             input_mount: None,
             confirm_mount: None,
             mounts: 0,
@@ -385,6 +396,11 @@ impl AppModel {
 
     pub fn booted(&self) -> Option<&Booted> {
         self.booted.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn booted_mut(&mut self) -> Option<&mut Booted> {
+        self.booted.as_mut()
     }
 
     pub fn boot_error(&self) -> Option<&str> {
@@ -622,6 +638,7 @@ impl AppModel {
             self.focus_visible = keyboard;
         }
         self.pump_submenus();
+        self.pump_tasks(&ctx);
         if let Some(b) = self.booted.as_mut() {
             let grid_hidden = b.nav.show_settings || b.nav.show_personas;
             let expanded = b.stores.settings().account_display.expanded_folders;
@@ -952,6 +969,98 @@ impl AppModel {
         self.submenu_jobs.push((loader, job));
     }
 
+    /// `createSafeContextAction(task)` on the job pool, with the active
+    /// tab's adapter (`shell.adapter`).
+    fn run_platform_task(&mut self, task: PlatformTask) {
+        let Some(b) = self.booted.as_ref() else {
+            return;
+        };
+        let Some(adapter) = b.accounts.registry.adapter(&b.nav.active_tab) else {
+            return;
+        };
+        let settings = b.stores.settings().clone();
+        let job = self
+            .jobs
+            .run(move |backend| adapter.run_task(&task, backend, &settings));
+        self.task_jobs.push(job);
+    }
+
+    /// `adapter.setAccountLabel` on the job pool.
+    fn rename_account(&mut self, platform_id: &str, account_id: String, label: String) {
+        let Some(adapter) = self
+            .booted
+            .as_ref()
+            .and_then(|b| b.accounts.registry.adapter(platform_id))
+        else {
+            return;
+        };
+        let job = self
+            .jobs
+            .run(move |backend| rename_account_blocking(backend, &adapter, &account_id, &label));
+        self.rename_jobs.push(job);
+    }
+
+    /// Lands finished menu tasks and renames, each task's effects in the
+    /// order TS runs its callbacks.
+    fn pump_tasks(&mut self, ctx: &Context) {
+        let mut outcomes = Vec::new();
+        self.task_jobs.retain_mut(|job| match job.poll() {
+            Poll::Waiting => true,
+            Poll::Ready(outcome) => {
+                outcomes.push(outcome);
+                false
+            }
+            Poll::Gone => false,
+        });
+        let mut renames = Vec::new();
+        self.rename_jobs.retain_mut(|job| match job.poll() {
+            Poll::Waiting => true,
+            Poll::Ready(result) => {
+                renames.push(result);
+                false
+            }
+            Poll::Gone => false,
+        });
+        for effect in outcomes.into_iter().flat_map(|o| o.effects) {
+            self.apply_task_effect(ctx, effect);
+        }
+        for result in renames {
+            self.apply_effects(ctx, finish_rename_account(result));
+        }
+    }
+
+    /// The `platformCallbacks` of `buildAccountContextMenuItems`.
+    fn apply_task_effect(&mut self, ctx: &Context, effect: TaskEffect) {
+        match effect {
+            TaskEffect::Toast(text) => {
+                self.toasts
+                    .add(text, AddToastOptions::default(), Instant::now());
+            }
+            TaskEffect::RefreshAccounts => self.apply_effects(
+                ctx,
+                vec![AppEffect::LoadAccounts(load_options(
+                    true, false, false, false,
+                ))],
+            ),
+            TaskEffect::RemoveAccount(id) => {
+                self.apply_effects(ctx, vec![AppEffect::RemoveAccount(id)])
+            }
+            TaskEffect::SetDefaultGame { steam_id, game } => {
+                if let Some(b) = self.booted.as_mut() {
+                    b.stores.set_default_game(&steam_id, &game);
+                }
+            }
+            TaskEffect::ClearDefaultGame { steam_id } => {
+                if let Some(b) = self.booted.as_mut() {
+                    b.stores.clear_default_game(&steam_id);
+                }
+            }
+            // `reportPinLockedError` raises the lock screen, which the
+            // secure screen port owns.
+            TaskEffect::PinLocked => {}
+        }
+    }
+
     /// Lands finished submenu loads.
     fn pump_submenus(&mut self) {
         let submenus = &mut self.submenus;
@@ -997,6 +1106,18 @@ impl AppModel {
                     let toast = app_shell::copy_result_toast(&label.resolve(locale), true);
                     self.toasts.push(toast, Instant::now());
                 }
+                AppEffect::RemoveAccount(account_id) => {
+                    if let Some(b) = self.booted.as_mut() {
+                        b.accounts
+                            .remove_account(&mut b.stores, &b.nav.active_tab, &account_id);
+                    }
+                }
+                AppEffect::RunPlatformTask(task) => self.run_platform_task(task),
+                AppEffect::RenameAccount {
+                    platform_id,
+                    account_id,
+                    label,
+                } => self.rename_account(&platform_id, account_id, label),
                 // The stores hold the new colours and notes; the view reads
                 // them every frame.
                 AppEffect::CardColorsChanged | AppEffect::CardNotesChanged => {}

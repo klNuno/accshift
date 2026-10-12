@@ -1953,6 +1953,64 @@ mod scene_tests {
         assert!(!smurfs(&run));
     }
 
+    /// "Forget" on the `main` card, confirmed with its button: the task runs
+    /// on the pool and its failure becomes a toast. The mock refuses
+    /// `platform_forget_account` like `mockInvoke` does, so the card stays
+    /// (TS prints `Error: ` before it, `String()` of a thrown `Error`; the
+    /// real backend rejects with the bare message).
+    #[test]
+    fn forget_confirm_runs_the_task() {
+        use accshift_app::text::Text;
+        let labels = |run: &Run| -> Vec<String> { run.boxes().into_iter().map(|b| b.0).collect() };
+        let state = |run: &Run| match &run.screen {
+            Screen::App(app) => (
+                app.dialogs().confirm_dialog().is_some(),
+                app.toasts()
+                    .toasts()
+                    .iter()
+                    .map(|t| t.text.clone())
+                    .collect::<Vec<_>>(),
+            ),
+            _ => panic!("not the app"),
+        };
+        let mut run = Run::new("dialog-light-100", 1.0);
+        run.settle();
+        // The scene's "Forget" entry, then the dialog's red button at the
+        // right end of its actions row (250..610 x 242..274).
+        run.rclick(pos2(205.0, 152.0));
+        run.click(pos2(240.0, 377.0));
+        assert!(state(&run).0);
+        run.click(pos2(575.0, 258.0));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while state(&run).1.is_empty() {
+            assert!(Instant::now() < deadline, "the task never landed");
+            run.frame();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let (open, toasts) = state(&run);
+        assert!(!open);
+        assert_eq!(
+            toasts,
+            [Text::raw(
+                "mock mode: platform_forget_account is not available"
+            )]
+        );
+        assert!(labels(&run).iter().any(|l| l == "main"));
+
+        // What a successful forget lands: `removeAccount` takes the card out.
+        let Screen::App(app) = &mut run.screen else {
+            panic!("not the app")
+        };
+        let b = app.booted_mut().unwrap();
+        b.accounts
+            .remove_account(&mut b.stores, &b.nav.active_tab, "76561198000000001");
+        run.frame();
+        run.settle();
+        let left = labels(&run);
+        assert!(!left.iter().any(|l| l == "main"));
+        assert!(left.iter().any(|l| l == "alt"));
+    }
+
     /// The streamer mode row of the privacy tab answers the pointer: the
     /// telemetry card under it once took its id, and its hit box with it.
     #[test]

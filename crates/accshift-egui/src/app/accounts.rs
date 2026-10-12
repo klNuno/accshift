@@ -71,6 +71,26 @@ pub struct Accounts {
 }
 
 impl Accounts {
+    /// The `removeAccount` glue of `App.svelte`: drop it from the loader,
+    /// sync the folders with the accounts left, refresh the items.
+    pub fn remove_account(
+        &mut self,
+        stores: &mut ClientStores,
+        active_tab: &str,
+        account_id: &str,
+    ) {
+        self.loading.loader.remove_account(account_id);
+        let ids: Vec<String> = self
+            .loading
+            .loader
+            .accounts()
+            .iter()
+            .map(|account| account.id.clone())
+            .collect();
+        stores.sync_accounts(&ids, active_tab);
+        self.navigation.refresh_current_items(stores, active_tab);
+    }
+
     /// The boot wiring: registry with the user platforms, the loader on the
     /// active tab, and the first `loadAccounts(false, false, false, false,
     /// true)` of `App.svelte`'s mount.
