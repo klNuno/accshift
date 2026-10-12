@@ -11,9 +11,15 @@
 //! - [`stores::ClientStores`]: every client store, typed ([`settings`],
 //!   [`folders`], [`personas`] and the small ones), over the storage.
 //! - [`i18n`]: the seven dictionaries and `translate`.
+//! - [`accounts`]: account loading per tab, profile caches, avatars, priming
+//!   and the settings refresh actions, driven through [`jobs`].
+//! - [`display`]: folder navigation, search and the flat list of cards a grid
+//!   draws.
 
+pub mod accounts;
 pub mod backend;
 pub mod dispatch;
+pub mod display;
 pub mod error;
 pub mod folders;
 pub mod i18n;
