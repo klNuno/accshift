@@ -1,7 +1,9 @@
 //! `legacy_web_storage`: the Chromium LevelDB and both WebKit sqlite layouts
 //! built in temp folders and read back, the migration into the stores end to
-//! end, and a read-only pass over this machine's real WebView2 profile that
-//! prints key names and value lengths only.
+//! end, two LevelDB folders written by real WebView2
+//! (`tests/fixtures/legacy_web_storage/chromium-proof.mjs`), and a read-only
+//! pass over this machine's real WebView2 profile that prints key names and
+//! value lengths only.
 
 #[path = "../src/legacy_web_storage/webkit_sqlite.rs"]
 #[allow(dead_code)]
@@ -348,7 +350,7 @@ fn webkit_read_migrates_into_the_mock_backend() {
 mod chromium {
     use super::*;
     use accshift_app::legacy_web_storage::chromium::{
-        decode_string, encode_string, item_key, read_leveldb, split_item_key,
+        decode_string, encode_string, item_key, read_leveldb, read_leveldb_origins, split_item_key,
     };
     use accshift_app::real::{RealBackend, BUNDLE_IDENTIFIER};
     use rusty_leveldb::compressor::{CompressorId, SnappyCompressor};
@@ -717,5 +719,149 @@ mod chromium {
         let after = listing(&dir);
         let names = |l: &[(String, u64)]| l.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
         assert_eq!(names(&after), names(&before), "file set unchanged");
+    }
+
+    // ----------------------------------------- written by real Chromium
+
+    /// The page origin of the parity build that wrote the fixtures: its
+    /// devUrl, not `http://tauri.localhost`.
+    const PROOF_ORIGIN: &str = "http://localhost:1420";
+
+    fn proof_dir() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/legacy_web_storage")
+    }
+
+    /// `expected.json` from `chromium-proof.mjs`: the values set in phase 1
+    /// and the final state after phase 2 (one overwrite, one removal).
+    fn proof_expected() -> (LegacyLocalStorage, LegacyLocalStorage) {
+        let raw = std::fs::read_to_string(proof_dir().join("expected.json")).unwrap();
+        let value: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(value["origin"], PROOF_ORIGIN);
+        let grab = |name: &str| -> LegacyLocalStorage {
+            value[name]
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_string()))
+                .collect()
+        };
+        (grab("phase1"), grab("final"))
+    }
+
+    /// Format byte of each script key's value for `origin`, read straight
+    /// from a copy of the folder.
+    fn value_formats(dir: &Path, origin: &str) -> BTreeMap<String, u8> {
+        let env: Rc<Box<dyn Env>> = Rc::new(Box::new(MemEnv::new()));
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let bytes = std::fs::read(entry.path()).unwrap();
+            use std::io::Write;
+            env.open_writable_file(&Path::new("db").join(entry.file_name()))
+                .unwrap()
+                .write_all(&bytes)
+                .unwrap();
+        }
+        let mut db = DB::open(
+            "db",
+            Options {
+                env,
+                create_if_missing: false,
+                ..Options::default()
+            },
+        )
+        .unwrap();
+        let mut out = BTreeMap::new();
+        let mut iter = db.new_iter().unwrap();
+        while let Some((key, value)) = iter.next() {
+            if let Some((o, script)) = split_item_key(&key) {
+                if o == origin.as_bytes() {
+                    out.insert(decode_string(script).unwrap().0, value[0]);
+                }
+            }
+        }
+        out
+    }
+
+    /// Reads one case and counts the legacy keys whose state matches the
+    /// final one (value equal, or absent when removed). Prints names and
+    /// lengths only.
+    fn proof_case(case: &str) -> (usize, LegacyRead) {
+        let (phase1, last) = proof_expected();
+        let dir = proof_dir().join(case);
+        let start = Instant::now();
+        let read = read_leveldb_origins(&dir, &[PROOF_ORIGIN]);
+        println!(
+            "{case}: read in {:?}, notes {:?}",
+            start.elapsed(),
+            read.notes
+        );
+        let mut equal = 0;
+        for (_, key) in LEGACY_LOCAL_STORAGE_KEYS {
+            let got = read.storage.get(key);
+            let state = if got == last.get(key) {
+                equal += 1;
+                "final"
+            } else if got == phase1.get(key) {
+                "phase 1"
+            } else {
+                "other"
+            };
+            println!(
+                "  {key}: {state}, {} chars",
+                got.map_or(0, |v| v.chars().count())
+            );
+        }
+        println!("chromium-proof {case}: {equal}/12 keys equal");
+        (equal, read)
+    }
+
+    #[test]
+    fn real_chromium_clean_close() {
+        let (phase1, last) = proof_expected();
+        // The fixture covers the cases the brief names.
+        assert!(last["accshift_avatars"].len() > 64 * 1024);
+        assert!(last["accshift_account_card_notes"]
+            .chars()
+            .any(|c| c as u32 > 0xFF));
+        assert!(last["accshift_viewMode"].is_ascii());
+        assert!(!last.contains_key("accshift_ban_check_state_v2"));
+        assert_ne!(
+            phase1["accshift_ban_info_cache_v1"],
+            last["accshift_ban_info_cache_v1"]
+        );
+
+        let (equal, read) = proof_case("clean");
+        assert_eq!(equal, 12);
+        assert_eq!(read.storage, last);
+        // Compacted on close: a table file, so the table path ran.
+        assert!(std::fs::read_dir(proof_dir().join("clean"))
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().ends_with(".ldb")));
+        // Chromium picked Latin-1 for the Latin-1 values and UTF-16 for the
+        // others, so both decoders ran on its bytes.
+        let formats = value_formats(&proof_dir().join("clean"), PROOF_ORIGIN);
+        assert_eq!(formats["accshift_viewMode"], 1);
+        assert_eq!(formats["accshift_folders"], 1);
+        assert_eq!(formats["accshift_account_card_notes"], 0);
+        assert_eq!(formats["accshift_ban_info_cache_v1"], 0);
+        // And the read migrates.
+        assert_migrates(&read.storage);
+    }
+
+    /// Killed 1 s after phase 2: Chromium commits localStorage to LevelDB on a
+    /// delay, so phase 2 never reached the disk. The reader still returns a
+    /// consistent state, the one committed after phase 1, from a folder that
+    /// holds only the write-ahead log (no table file).
+    #[test]
+    fn real_chromium_kill() {
+        let (phase1, _) = proof_expected();
+        let dir = proof_dir().join("kill");
+        assert!(!std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().ends_with(".ldb")));
+        let (equal, read) = proof_case("kill");
+        assert_eq!(equal, 10);
+        assert_eq!(read.storage, phase1);
     }
 }

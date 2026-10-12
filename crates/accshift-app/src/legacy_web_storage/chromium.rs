@@ -97,6 +97,12 @@ pub fn item_key(origin: &str, script_key: &str, force_utf16: bool) -> Vec<u8> {
 
 /// Reads the legacy keys from a copy of the LevelDB folder `dir`.
 pub fn read_leveldb(dir: &Path) -> LegacyRead {
+    read_leveldb_origins(dir, &ORIGINS)
+}
+
+/// [`read_leveldb`] for other origins, preferred first: the parity bench
+/// serves the page from `http://localhost:1420`.
+pub fn read_leveldb_origins(dir: &Path, origins: &[&str]) -> LegacyRead {
     let mut result = LegacyRead::default();
     if !dir.is_dir() {
         result.notes.push(format!(
@@ -105,7 +111,7 @@ pub fn read_leveldb(dir: &Path) -> LegacyRead {
         ));
         return result;
     }
-    match catch_unwind(AssertUnwindSafe(|| read_copy(dir, &mut result))) {
+    match catch_unwind(AssertUnwindSafe(|| read_copy(dir, origins, &mut result))) {
         Ok(Ok(())) => {}
         Ok(Err(reason)) => result.notes.push(format!("{}: {reason}", dir.display())),
         Err(_) => result
@@ -115,7 +121,7 @@ pub fn read_leveldb(dir: &Path) -> LegacyRead {
     result
 }
 
-fn read_copy(dir: &Path, result: &mut LegacyRead) -> Result<(), String> {
+fn read_copy(dir: &Path, origins: &[&str], result: &mut LegacyRead) -> Result<(), String> {
     let env: Rc<Box<dyn Env>> = Rc::new(Box::new(MemEnv::new()));
     let db_path = Path::new("db");
     let entries = std::fs::read_dir(dir).map_err(|e| format!("cannot list: {e}"))?;
@@ -153,12 +159,12 @@ fn read_copy(dir: &Path, result: &mut LegacyRead) -> Result<(), String> {
     };
     let mut db = DB::open(db_path, options).map_err(|e| format!("cannot open: {e}"))?;
     let mut iter = db.new_iter().map_err(|e| format!("cannot iterate: {e}"))?;
-    let mut by_origin: [Vec<(String, String)>; 2] = [Vec::new(), Vec::new()];
+    let mut by_origin: Vec<Vec<(String, String)>> = vec![Vec::new(); origins.len()];
     while let Some((key, value)) = iter.next() {
         let Some((origin, script_key)) = split_item_key(&key) else {
             continue;
         };
-        let Some(slot) = ORIGINS.iter().position(|o| o.as_bytes() == origin) else {
+        let Some(slot) = origins.iter().position(|o| o.as_bytes() == origin) else {
             continue;
         };
         let Ok((script_key, _)) = decode_string(script_key) else {
@@ -172,14 +178,14 @@ fn read_copy(dir: &Path, result: &mut LegacyRead) -> Result<(), String> {
                 if lossy {
                     result.notes.push(format!(
                         "{}: unpaired surrogates in {script_key} replaced",
-                        ORIGINS[slot]
+                        origins[slot]
                     ));
                 }
                 by_origin[slot].push((script_key, text));
             }
             Err(reason) => result
                 .notes
-                .push(format!("{}: skipped {script_key}: {reason}", ORIGINS[slot])),
+                .push(format!("{}: skipped {script_key}: {reason}", origins[slot])),
         }
     }
     for (slot, items) in by_origin.into_iter().enumerate() {
@@ -188,7 +194,7 @@ fn read_copy(dir: &Path, result: &mut LegacyRead) -> Result<(), String> {
         }
         result
             .notes
-            .push(format!("{}: {} legacy keys", ORIGINS[slot], items.len()));
+            .push(format!("{}: {} legacy keys", origins[slot], items.len()));
         for (key, value) in items {
             result.storage.entry(key).or_insert(value);
         }
