@@ -37,7 +37,8 @@ pub enum AvatarTexture {
 
 enum Entry {
     Decoding(Pending<Result<ColorImage, String>>),
-    Ready(TextureHandle),
+    /// The texture, and its pixels for the blurred copy.
+    Ready(TextureHandle, Arc<ColorImage>),
     Failed,
 }
 
@@ -47,6 +48,8 @@ pub struct AvatarTextures {
     http: Option<Arc<HttpAvatarClient>>,
     downloads: Vec<(String, Pending<Result<AvatarImage, String>>)>,
     textures: HashMap<(String, u32), Entry>,
+    /// `blur(6px) brightness(.5)` copies, by image, box size and sigma.
+    blurred: HashMap<(String, u32, u32), TextureHandle>,
 }
 
 impl AvatarTextures {
@@ -56,6 +59,7 @@ impl AvatarTextures {
             http: None,
             downloads: Vec::new(),
             textures: HashMap::new(),
+            blurred: HashMap::new(),
         }
     }
 
@@ -81,11 +85,15 @@ impl AvatarTextures {
             match pending.poll() {
                 Poll::Waiting => {}
                 Poll::Ready(Ok(image)) => {
-                    *entry = Entry::Ready(ctx.load_texture(
-                        format!("avatar-{key}-{px}"),
+                    let image = Arc::new(image);
+                    *entry = Entry::Ready(
+                        ctx.load_texture(
+                            format!("avatar-{key}-{px}"),
+                            (*image).clone(),
+                            TextureOptions::LINEAR,
+                        ),
                         image,
-                        TextureOptions::LINEAR,
-                    ));
+                    );
                 }
                 Poll::Ready(Err(_)) | Poll::Gone => *entry = Entry::Failed,
             }
@@ -127,12 +135,39 @@ impl AvatarTextures {
             .or_insert_with(|| Entry::Decoding(jobs.run(move |_| decode(&image, px))));
         match entry {
             Entry::Decoding(_) => AvatarTexture::Pending,
-            Entry::Ready(texture) => AvatarTexture::Ready {
+            Entry::Ready(texture, _) => AvatarTexture::Ready {
                 texture: texture.id(),
                 size: texture.size(),
             },
             Entry::Failed => AvatarTexture::Failed,
         }
+    }
+
+    /// The picture of `url` decoded for a `px` box, covered into that box
+    /// and filtered with `blur(sigma) brightness(.5)` (`sigma` in device
+    /// px), once it is decoded. Made on the UI thread on first use: the box
+    /// is small and the card wants it the frame it arms.
+    pub fn blurred(&mut self, ctx: &Context, url: &str, px: u32, sigma: f32) -> Option<TextureId> {
+        let AvatarFetch::Ready(image) = self.images.request(url) else {
+            return None;
+        };
+        let key = image.key().to_string();
+        let Some(Entry::Ready(_, pixels)) = self.textures.get(&(key.clone(), px)) else {
+            return None;
+        };
+        let slot = (key, px, (sigma * 64.0).round() as u32);
+        if let Some(texture) = self.blurred.get(&slot) {
+            return Some(texture.id());
+        }
+        let filtered = blur_cover(pixels, px.max(1) as usize, sigma, 0.5);
+        let texture = ctx.load_texture(
+            format!("avatar-blur-{}-{px}", slot.0),
+            filtered,
+            TextureOptions::LINEAR,
+        );
+        let id = texture.id();
+        self.blurred.insert(slot, texture);
+        Some(id)
     }
 
     /// Downloads or decodes still running.
@@ -143,6 +178,74 @@ impl AvatarTextures {
                 .values()
                 .any(|entry| matches!(entry, Entry::Decoding(_)))
     }
+}
+
+/// `object-fit: cover` of `image` into a `px` square (bilinear), then CSS
+/// `blur(sigma)` (a gaussian with that standard deviation, transparent
+/// outside the box, in premultiplied sRGB like Skia) and
+/// `brightness(factor)`.
+pub fn blur_cover(image: &ColorImage, px: usize, sigma: f32, factor: f32) -> ColorImage {
+    let [w, h] = image.size;
+    let side = w.min(h).max(1) as f32;
+    let (x0, y0) = ((w as f32 - side) / 2.0, (h as f32 - side) / 2.0);
+    let sample = |x: f32, y: f32| -> [f32; 4] {
+        let x = (x - 0.5).clamp(0.0, (w - 1) as f32);
+        let y = (y - 0.5).clamp(0.0, (h - 1) as f32);
+        let (xi, yi) = (x.floor() as usize, y.floor() as usize);
+        let (xj, yj) = ((xi + 1).min(w - 1), (yi + 1).min(h - 1));
+        let (fx, fy) = (x - xi as f32, y - yi as f32);
+        let px = |x: usize, y: usize| image.pixels[y * w + x].to_array().map(f32::from);
+        let (a, b, c, d) = (px(xi, yi), px(xj, yi), px(xi, yj), px(xj, yj));
+        std::array::from_fn(|k| {
+            let top = a[k] + (b[k] - a[k]) * fx;
+            let bottom = c[k] + (d[k] - c[k]) * fx;
+            top + (bottom - top) * fy
+        })
+    };
+    let scale = side / px as f32;
+    let mut buf: Vec<[f32; 4]> = (0..px * px)
+        .map(|i| {
+            let (x, y) = ((i % px) as f32 + 0.5, (i / px) as f32 + 0.5);
+            sample(x0 + x * scale, y0 + y * scale)
+        })
+        .collect();
+    let radius = (3.0 * sigma).ceil().max(0.0) as isize;
+    let kernel: Vec<f32> = {
+        let raw: Vec<f32> = (-radius..=radius)
+            .map(|i| (-(i * i) as f32 / (2.0 * sigma * sigma).max(1e-6)).exp())
+            .collect();
+        let sum: f32 = raw.iter().sum();
+        raw.into_iter().map(|k| k / sum).collect()
+    };
+    let n = px as isize;
+    for horizontal in [true, false] {
+        let src = buf.clone();
+        for y in 0..n {
+            for x in 0..n {
+                let mut acc = [0.0f32; 4];
+                for (k, weight) in kernel.iter().enumerate() {
+                    let d = k as isize - radius;
+                    let (sx, sy) = if horizontal { (x + d, y) } else { (x, y + d) };
+                    if sx < 0 || sy < 0 || sx >= n || sy >= n {
+                        continue;
+                    }
+                    let p = src[(sy * n + sx) as usize];
+                    for c in 0..4 {
+                        acc[c] += p[c] * weight;
+                    }
+                }
+                buf[(y * n + x) as usize] = acc;
+            }
+        }
+    }
+    let pixels = buf
+        .into_iter()
+        .map(|[r, g, b, a]| {
+            let q = |v: f32| v.round().clamp(0.0, 255.0) as u8;
+            Color32::from_rgba_premultiplied(q(r * factor), q(g * factor), q(b * factor), q(a))
+        })
+        .collect();
+    ColorImage::new([px, px], pixels)
 }
 
 /// Decodes an avatar for a `px` device pixel box. SVGs rasterize at that
@@ -170,7 +273,7 @@ fn is_svg(bytes: &[u8]) -> bool {
     text.starts_with("<svg") || (text.starts_with("<?xml") && text.contains("<svg"))
 }
 
-fn decode_png(bytes: &[u8]) -> Result<ColorImage, String> {
+pub(crate) fn decode_png(bytes: &[u8]) -> Result<ColorImage, String> {
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
     decoder.set_transformations(png::Transformations::normalize_to_color8());
     let mut reader = decoder.read_info().map_err(|e| e.to_string())?;

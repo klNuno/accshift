@@ -83,6 +83,8 @@ pub(crate) struct Frame {
     pub response: Response,
     /// The untransformed border box, snapped.
     pub rect: Rect,
+    /// The same box in layout units: the content lays out from it.
+    pub layout: Rect,
     pub transform: Transform,
     /// `.icon-wrap` hover progress (its own transitions applied).
     pub icon_bg: Rgba,
@@ -129,6 +131,7 @@ pub(crate) fn frame(
     } = state;
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
+    let layout = rect;
     let rect = snap::rect(rect, ppp);
     let response = ui.interact(rect, id, Sense::click());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -243,6 +246,7 @@ pub(crate) fn frame(
     Frame {
         response,
         rect,
+        layout,
         transform,
         icon_bg,
         icon_fg,
@@ -257,11 +261,11 @@ pub(crate) fn icon_wrap(ui: &Ui, f: &Frame, vars: &Vars, svg: &'static [u8], svg
     let ppp = ui.ctx().pixels_per_point();
     let pad = vars.grid_card_padding();
     let size = vars.grid_card_avatar_size();
-    let content_w = f.rect.width() - 2.0 * pad;
+    let content_w = f.layout.width() - 2.0 * pad;
     let wrap = Rect::from_min_size(
         pos2(
-            f.rect.left() + pad + snap::centre(content_w, size, ppp),
-            f.rect.top() + pad,
+            f.layout.left() + pad + snap::centre(content_w, size, ppp),
+            f.layout.top() + pad,
         ),
         vec2(size, size),
     );
@@ -277,7 +281,7 @@ pub(crate) fn icon_wrap(ui: &Ui, f: &Frame, vars: &Vars, svg: &'static [u8], svg
         &painter,
         wrap,
         Transform {
-            translate: (map_rect(f.rect, f.transform, lifted).center() - wrap.center()),
+            translate: (map_rect(f.layout, f.transform, lifted).center() - wrap.center()),
             scale: f.transform.scale,
         },
     );
@@ -289,17 +293,21 @@ pub(crate) fn icon_wrap(ui: &Ui, f: &Frame, vars: &Vars, svg: &'static [u8], svg
             ),
         vec2(svg_size, svg_size),
     );
+    // The SVG root snaps in the untransformed box; the card's and the
+    // wrap's transforms then move it off the grid, as Skia draws it.
+    let local = Rect::from_min_size(icon::snapped_origin(svg_rect.min, ppp), svg_rect.size());
     let mapped = map_rect(
-        f.rect,
+        f.layout,
         f.transform,
-        svg_rect.translate(vec2(0.0, f.icon_lift)),
+        local.translate(vec2(0.0, f.icon_lift)),
     );
-    icon::paint(
+    icon::paint_shifted(
         &painter,
         svg,
-        Rect::from_center_size(mapped.center(), svg_rect.size()),
+        local,
         f.icon_fg,
         f.transform.scale,
+        mapped.center() - local.center(),
     );
 }
 
@@ -308,7 +316,7 @@ pub(crate) fn icon_wrap(ui: &Ui, f: &Frame, vars: &Vars, svg: &'static [u8], svg
 pub(crate) fn name(ui: &Ui, f: &Frame, rect: Rect, label: &str, style: &TextStyle) {
     let mut painter = ui.painter().clone();
     painter.multiply_opacity(f.opacity);
-    let mapped = map_rect(f.rect, f.transform, rect);
+    let mapped = map_rect(f.layout, f.transform, rect);
     let moved = Rect::from_center_size(mapped.center(), rect.size());
     painter.set_clip_rect(painter.clip_rect().intersect(mapped.expand(1.0)));
     text::paint(&painter, moved, label, style);
@@ -354,7 +362,7 @@ pub fn folder_card(ui: &mut Ui, rect: Rect, props: &FolderCardProps) -> Vec<Fold
     );
     icon_wrap(ui, &f, v, icons::FOLDER, 30.0);
     let style = name_style(v);
-    name(ui, &f, name_rect(f.rect, v, 18.0), props.name, &style);
+    name(ui, &f, name_rect(f.layout, v, 18.0), props.name, &style);
     if props.focus_visible && f.response.has_focus() {
         super::focus::card_ring(ui, f.rect, v.radius_md, v);
     }

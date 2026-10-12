@@ -20,6 +20,7 @@ pub mod focus;
 pub mod folder_card;
 pub mod icon;
 pub mod platform_icons;
+pub mod search_cancel;
 pub mod section_header;
 pub mod title_bar;
 pub mod use_grid_layout;

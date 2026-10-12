@@ -14,6 +14,7 @@
 //! Before the boot payload lands the frame is `opacity: 0`: nothing but the
 //! stand-in desktop of a scene run is drawn.
 
+use accshift_theme::ColorScheme;
 use egui::epaint::{self, ClippedShape};
 use egui::layers::ShapeIdx;
 use egui::{pos2, vec2, Color32, Rect, Ui, UiBuilder};
@@ -255,6 +256,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                     compatible_platforms,
                     panel_key: &panel_key,
                     focus_visible,
+                    dark: theme.theme.color_scheme == ColorScheme::Dark,
                     now,
                 };
                 actions.extend(layer(ui, panel, o, rise, |ui| {

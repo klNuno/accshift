@@ -68,6 +68,10 @@ pub struct Vars {
     pub avatar_radius: f32,
     /// `--density-scale`.
     pub density_scale: f32,
+    /// `--motion-avatar-defer`, seconds.
+    pub motion_avatar_defer: f64,
+    /// `--line-height` (unitless), the body's `line-height`.
+    pub line_height: f32,
 }
 
 /// `accshift_theme::Rgba` (channels 0 to 1) in the painter's colour type
@@ -130,6 +134,11 @@ impl Vars {
             radius_md: theme.length_px("--radius-md").unwrap_or(8.0),
             avatar_radius: theme.length_px("--avatar-radius").unwrap_or(6.0),
             density_scale,
+            motion_avatar_defer: seconds("--motion-avatar-defer", 380.0),
+            line_height: theme
+                .number("--line-height")
+                .filter(|n| n.is_finite() && *n > 0.0)
+                .unwrap_or(1.5),
         }
     }
 

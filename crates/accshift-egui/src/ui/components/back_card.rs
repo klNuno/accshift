@@ -3,9 +3,9 @@
 //!
 //! Same `.card` box as the folder card ([`super::folder_card::frame`]), a
 //! 26 px arrow (stroke 2) in the icon wrap and `common.back` under it in
-//! `.name { font-size: 12px; color: var(--fg-muted) }`: a `<button>` keeps
-//! weight 400 and the 1.5 line height, and the name is an inline-size box
-//! centred by the card's `align-items: center`.
+//! `.name { font-size: 12px; font-weight: 500; color: var(--fg-muted) }` on
+//! the 1.5 line height, an inline-size box centred by the card's
+//! `align-items: center`.
 
 use egui::{Id, Rect, Ui};
 
@@ -54,7 +54,7 @@ pub fn back_card(ui: &mut Ui, rect: Rect, props: &BackCardProps) -> Vec<BackCard
         v,
     );
     folder_card::icon_wrap(ui, &f, v, icons::BACK, 26.0);
-    let style = TextStyle::new(12.0, 400)
+    let style = TextStyle::new(12.0, 500)
         .line_height(LineHeight::Number(1.5))
         .nowrap(false)
         .align(TextAlign::Center)
@@ -62,7 +62,7 @@ pub fn back_card(ui: &mut Ui, rect: Rect, props: &BackCardProps) -> Vec<BackCard
     folder_card::name(
         ui,
         &f,
-        folder_card::name_rect(f.rect, v, 18.0),
+        folder_card::name_rect(f.layout, v, 18.0),
         &label,
         &style,
     );

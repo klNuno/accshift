@@ -52,6 +52,7 @@ use crate::ui::components::avatar_fade_in;
 use crate::ui::components::back_card::{self, BackCardEvent, BackCardProps};
 use crate::ui::components::breadcrumb::{self, BreadcrumbProps, Crumb};
 use crate::ui::components::folder_card::{self, entrance, FolderCardEvent, FolderCardProps};
+use crate::ui::components::search_cancel;
 use crate::ui::components::section_header::{self, SectionHeaderEvent, SectionHeaderProps};
 use crate::ui::components::use_grid_layout::{grid_layout, GAP};
 use crate::ui::components::view_toggle::{self, ViewToggleProps};
@@ -97,6 +98,8 @@ pub struct WorkspaceInput<'a> {
     /// `panelKey`: a new key remounts everything.
     pub panel_key: &'a str,
     pub focus_visible: bool,
+    /// `color-scheme: dark`: picks Chromium's dark form-control bitmaps.
+    pub dark: bool,
     pub now: f64,
 }
 
@@ -145,6 +148,8 @@ pub struct Workspace {
     pub layout: Vec<(String, Rect)>,
     /// The scroll offset in layout px (`scrollTop`).
     pub content_height: f32,
+    /// The system time zone, read once (relative and absolute dates).
+    zone: Option<accshift_app::time::TimeZone>,
 }
 
 impl Workspace {
@@ -275,7 +280,9 @@ fn card_color(resolved: &ResolvedTheme, vars: &Vars, value: &str) -> Option<Rgba
 }
 
 /// Lays out `items` as a wrapping row grid from `(left, top)`, appending
-/// to `out`. Returns the grid height.
+/// to `out`; `size` gives each card's box. Returns the grid height. Like
+/// `.grid-container { display: flex; flex-wrap: wrap }`, a line is as tall
+/// as its tallest card and each card keeps its own height.
 #[allow(clippy::too_many_arguments)]
 fn flow<'a>(
     out: &mut Vec<Placed<'a>>,
@@ -284,47 +291,46 @@ fn flow<'a>(
     left: f32,
     top: f32,
     width: f32,
-    card: egui::Vec2,
+    size: &dyn Fn(&DisplayItem) -> egui::Vec2,
     clip: Option<Rect>,
     opacity: f32,
 ) -> f32 {
-    let per_row = (((width + GAP) / (card.x + GAP)).floor() as usize).max(1);
-    let mut n = 0;
-    for item in items {
-        let node = match item {
-            DisplayItem::Back => Node::Back,
-            DisplayItem::Folder(f) => Node::Folder(f),
-            DisplayItem::Account(a) => Node::Account(a),
-            DisplayItem::SectionHeader(_) => continue,
-        };
-        let key = match &node {
-            Node::Back => format!("{prefix}/back"),
-            Node::Folder(f) => format!("{prefix}/f/{}", f.folder.id),
-            Node::Account(a) => format!("{prefix}/a/{}", a.account.id),
-            _ => unreachable!(),
-        };
-        let (col, row) = (n % per_row, n / per_row);
-        let rect = Rect::from_min_size(
-            pos2(
-                left + col as f32 * (card.x + GAP),
-                top + row as f32 * (card.y + GAP),
-            ),
-            card,
-        );
-        out.push(Placed {
-            key,
-            rect,
-            clip,
-            opacity,
-            node,
-        });
-        n += 1;
-    }
-    if n == 0 {
+    let cards: Vec<(&'a DisplayItem, egui::Vec2)> = items
+        .iter()
+        .filter(|item| !matches!(item, DisplayItem::SectionHeader(_)))
+        .map(|item| (*item, size(item)))
+        .collect();
+    let Some(card_w) = cards.first().map(|(_, s)| s.x) else {
         return 0.0;
+    };
+    let per_row = (((width + GAP) / (card_w + GAP)).floor() as usize).max(1);
+    let mut y = top;
+    for row in cards.chunks(per_row) {
+        let line = row.iter().map(|(_, s)| s.y).fold(0.0, f32::max);
+        for (col, (item, card)) in row.iter().enumerate() {
+            let node = match item {
+                DisplayItem::Back => Node::Back,
+                DisplayItem::Folder(f) => Node::Folder(f),
+                DisplayItem::Account(a) => Node::Account(a),
+                DisplayItem::SectionHeader(_) => unreachable!(),
+            };
+            let key = match &node {
+                Node::Back => format!("{prefix}/back"),
+                Node::Folder(f) => format!("{prefix}/f/{}", f.folder.id),
+                Node::Account(a) => format!("{prefix}/a/{}", a.account.id),
+                _ => unreachable!(),
+            };
+            out.push(Placed {
+                key,
+                rect: Rect::from_min_size(pos2(left + col as f32 * (card.x + GAP), y), *card),
+                clip,
+                opacity,
+                node,
+            });
+        }
+        y += line + GAP;
     }
-    let rows = n.div_ceil(per_row);
-    rows as f32 * (card.y + GAP) - GAP
+    y - GAP - top
 }
 
 /// Draws the workspace into `rect` (the panel slot below the title bar).
@@ -382,6 +388,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
         avatars,
         navigation,
         registry,
+        clock,
         ..
     } = &mut *input.accounts;
     let tab = input.platform.map_or("", |p| p.id.as_str());
@@ -459,9 +466,12 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                 search_rect,
                 &mut ws.search,
                 v,
-                navigation.search_query(),
-                &translate(input.locale, "app.searchPlaceholder"),
-                now,
+                SearchProps {
+                    value: navigation.search_query(),
+                    placeholder: &translate(input.locale, "app.searchPlaceholder"),
+                    dark: input.dark,
+                    now,
+                },
             ) {
                 actions.push(Action::SearchChanged(query));
             }
@@ -519,6 +529,12 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                     let layout = grid_layout(inner_w, v.density_scale);
                     let pad = layout.map_or(0.0, |l| l.padding_left);
                     let card = vec2(v.grid_card_width(), v.grid_card_min_height());
+                    let size = |item: &DisplayItem| match item {
+                        DisplayItem::Account(a) => {
+                            vec2(card.x, account_card::height(&ctx, v, a, false))
+                        }
+                        _ => card,
+                    };
                     let prefix = format!("{}/", input.panel_key);
                     if let Some(sections) = &lists.sections {
                         y += lay_sections(
@@ -532,7 +548,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                             pad,
                             y,
                             inner_w - pad,
-                            card,
+                            &size,
                             input.motion,
                             now,
                         );
@@ -546,7 +562,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                             pad,
                             y,
                             inner_w - pad,
-                            card,
+                            &size,
                             None,
                             1.0,
                         );
@@ -583,6 +599,14 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
     ws.layout.clear();
     let mut focused_rect = None;
     let focused_now = ctx.memory(|m| m.focused());
+    let time = accshift_app::time::TimeContext {
+        now_ms: clock.now_ms(),
+        locale: input.locale,
+        zone: ws
+            .zone
+            .get_or_insert_with(accshift_app::time::system_zone)
+            .clone(),
+    };
     for p in &placed {
         ws.layout.push((p.node.label(), p.rect));
         let id = ws.mount(&p.key, frame, now);
@@ -597,17 +621,28 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
             focused_rect = Some(p.rect);
         }
         let avatar = match &p.node {
-            Node::Account(a) => Some(account_avatar(
-                ws,
-                avatars,
-                input.jobs,
-                input.resolved,
-                &p.key,
-                a,
-                avatar_px,
-                visible,
-                now,
-            )),
+            Node::Account(a) => {
+                let mut content = account_avatar(
+                    ws,
+                    avatars,
+                    input.jobs,
+                    input.resolved,
+                    &p.key,
+                    a,
+                    avatar_px,
+                    visible,
+                    now,
+                );
+                if let (AvatarContent::Picture(picture), Some(url)) =
+                    (&mut content, a.avatar.url.as_deref())
+                {
+                    if visible && account_card::wants_blur(&ctx, id, a) {
+                        // `blur(6px)` in device pixels.
+                        picture.blurred = avatars.blurred(&ctx, url, avatar_px, 6.0 * ppp);
+                    }
+                }
+                Some(content)
+            }
             _ => None,
         };
         if !visible {
@@ -737,6 +772,9 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                         card_color: card_color(input.resolved, v, &a.card_color),
                         avatar: avatar.clone().unwrap_or(AvatarContent::Loading),
                         focus_visible: input.focus_visible,
+                        locale: input.locale,
+                        time: &time,
+                        badge: None,
                     },
                 ) {
                     match event {
@@ -837,7 +875,11 @@ fn account_avatar(
             if ws.decoding.remove(key) {
                 ws.last_reveal = now;
             }
-            AvatarContent::Picture(AvatarPicture { texture, size })
+            AvatarContent::Picture(AvatarPicture {
+                texture,
+                size,
+                blurred: None,
+            })
         }
         Some(AvatarTexture::Pending) => {
             ws.decoding.insert(key.to_string());
@@ -879,7 +921,7 @@ fn lay_sections<'a>(
     left: f32,
     top: f32,
     width: f32,
-    card: egui::Vec2,
+    card: &dyn Fn(&DisplayItem) -> egui::Vec2,
     motion: Motion,
     now: f64,
 ) -> f32 {
@@ -1125,18 +1167,32 @@ fn error_banner(
     text_h + 24.0 + 16.0
 }
 
+/// What the search field shows this frame.
+struct SearchProps<'a> {
+    value: &'a str,
+    placeholder: &'a str,
+    /// `color-scheme: dark`, for the clear button's bitmap.
+    dark: bool,
+    now: f64,
+}
+
 /// The `<input type="search">`: returns the new value when it changed.
 fn search_field(
     ui: &mut Ui,
     rect: Rect,
     state: &mut Search,
     v: &Vars,
-    value: &str,
-    placeholder: &str,
-    now: f64,
+    props: SearchProps,
 ) -> Option<String> {
+    let SearchProps {
+        value,
+        placeholder,
+        dark,
+        now,
+    } = props;
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
+    let layout = rect;
     let rect = snap::rect(rect, ppp);
     let id = Id::new("workspace-search");
     let response = ui.interact(rect, id, Sense::click());
@@ -1149,13 +1205,29 @@ fn search_field(
     if response.clicked() {
         response.request_focus();
     }
+    let bw = snap::border_width(1.0, ppp);
+    // `:hover` holds over the clear button too, which takes the pointer.
+    let hovered = ui.rect_contains_pointer(rect);
+    let cancel_rect = search_cancel::rect(rect, bw, 10.0, 12.0, ppp);
+    let mut cleared = false;
+    if !value.is_empty() && (response.has_focus() || hovered) {
+        let cancel = ui.interact(cancel_rect, id.with("cancel"), Sense::click());
+        if cancel.clicked() {
+            cleared = true;
+            response.request_focus();
+        }
+    }
     let focused = response.has_focus();
     if focused && !state.focused {
         state.blink_from = now;
     }
     state.focused = focused;
 
-    let mut next = value.to_string();
+    let mut next = if cleared {
+        String::new()
+    } else {
+        value.to_string()
+    };
     if focused {
         ctx.input(|i| {
             for event in &i.events {
@@ -1195,21 +1267,28 @@ fn search_field(
         ..BoxStyle::default()
     }
     .paint(ui.painter(), rect);
-    // The inner editor: 12 px over a 1.5 line, centred in the content box.
-    let line = 18.0;
+    // The inner editor: 12 px on a `normal` line (the UA `font:` shorthand
+    // resets the inherited 1.5), centred in the content box in LayoutUnits,
+    // unsnapped (`padding: 0 10px` inside a 1 px border floored to device
+    // pixels).
+    let style = TextStyle::new(12.0, 400)
+        .line_height(LineHeight::Normal)
+        .nowrap(false);
+    let line = style.line_box(&ctx).map_or(16.0, |l| l.height);
+    let inset = bw + 10.0;
+    let top = layout.top() + bw + snap::centre(SEARCH_H - 2.0 * bw, line, ppp);
     let text_rect = Rect::from_min_max(
-        pos2(rect.left() + 11.0, rect.top() + (SEARCH_H - line) / 2.0),
-        pos2(rect.right() - 11.0, rect.top() + (SEARCH_H + line) / 2.0),
+        pos2(layout.left() + inset, top),
+        pos2(layout.right() - inset, top + line),
     );
+    // The editor ends at the clear button and its 1 px start margin, which
+    // keep their room while hidden.
     let mut painter = ui.painter().clone();
     painter.set_clip_rect(ui.clip_rect().intersect(Rect::from_min_max(
         pos2(text_rect.left(), rect.top()),
-        pos2(text_rect.right(), rect.bottom()),
+        pos2(cancel_rect.left() - 1.0, rect.bottom()),
     )));
     let shown = next.as_str();
-    let style = TextStyle::new(12.0, 400)
-        .line_height(LineHeight::Number(1.5))
-        .nowrap(false);
     if shown.is_empty() {
         let color = v.fg_subtle.mix(0.55, Rgba::TRANSPARENT);
         text::paint(
@@ -1226,12 +1305,18 @@ fn search_field(
             &style.clone().color(v.fg.to_color32()),
         );
     }
+    if !next.is_empty() && (focused || hovered) {
+        search_cancel::paint(&ctx, ui.painter(), cancel_rect, dark);
+    }
     if focused {
         let phase = ((now - state.blink_from) / CARET_BLINK).floor() as i64;
         if phase % 2 == 0 {
             let x = text_rect.left() + text::measure(&ctx, shown, &style).unwrap_or(0.0);
             let x = snap::coord(x, ppp);
-            let caret = Rect::from_min_size(pos2(x, text_rect.top()), vec2(1.0, line));
+            let caret = Rect::from_min_max(
+                pos2(x, snap::coord(text_rect.top(), ppp)),
+                pos2(x + 1.0, snap::coord(text_rect.bottom(), ppp)),
+            );
             painter.rect_filled(caret, 0.0, v.fg.to_color32());
         }
         let next_flip = state.blink_from + (phase + 1) as f64 * CARET_BLINK;
