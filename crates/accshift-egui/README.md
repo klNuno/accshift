@@ -25,14 +25,14 @@ What the software path does to stay cheap:
 
 ```powershell
 cargo run --release                      # normal window, software renderer
-cargo run --release -- --capture <dir>   # scripted shots, hidden window
+cargo run --release -- --scene parity/scenes/spike-main.json --out <dir>   # scripted shots, hidden window
 cargo build --release --features startup-bench
 cargo build --release --no-default-features --features glow
 ```
 
-- `--capture <dir>` runs a fixed script (hover, arm, search, switch, tabs, folder, list) and writes one PAM file per shot, read back from the frame the renderer presented at 860x440 points and 1.5 pixels per point, over the recorder's stand-in desktop (`src/backdrop.rs`). `ACCSHIFT_EGUI_CAPTURE_SCALE` changes the scale. `ffmpeg -i shot.pam shot.png` converts them.
+- `--scene <scene.json>... --out <dir>` plays parity scenes (format in `parity/README.md`): each one sets the viewport and scale from its file, feeds its steps as egui raw input, and writes `<dir>/<id>/<shot>.png` from the frame the renderer presented. `spike-main.json` is the old capture script (hover, arm, search, switch, tabs, folder, list over the recorder's stand-in desktop, `src/backdrop.rs`). A scene with an `html` fragment is drawn by the primitives screen with `ui::paint`, the calibration of the CSS box painter; any other scene the spike cannot draw (another scenario, theme, locale or os, a seed) fails with a message and a non-zero exit. A scene that never gets its size fails after 5 s, the whole run after 60 s plus 30 s per scene.
 - `startup-bench` never shows the window: it is created inactive, outside the taskbar, at -32000,-32000, and DWM-cloaked before the runner makes it visible. Boot marks go to `%TEMP%\accshift-egui-bench\<pid>.jsonl` (`main`, `window`, `app_created`, `ui_done`, `first_frame`, `ready` once every avatar is on screen, `core_accounts`, and one `frame` line per paint with its timings in the software build). The binary carries the string `accshift-egui-startup-bench-build`, and a harness refuses to launch any build without it.
-- `--capture` uses the same hidden-window recipe in any build.
+- `--scene` uses the same hidden-window recipe in any build.
 - `ACCSHIFT_EGUI_OPAQUE` (no transparency, no acrylic) and, for glow, `ACCSHIFT_EGUI_NO_VSYNC` exist only for the boot breakdown.
 
 ## Results (Windows 11, NVIDIA desktop GPU)
@@ -59,16 +59,21 @@ Not verified: resizing by dragging a window edge, a visible window on Windows 11
 
 ## Layout
 
-| File              | Role                                                             |
-| ----------------- | ---------------------------------------------------------------- |
-| `src/app.rs`      | The screen: title bar, header, grid, list, cards, animations     |
-| `src/theme.rs`    | Glass Dark tokens, CSS `color-mix`, the avatar fallback gradient |
-| `src/data.rs`     | The demo dataset, with the mock SVG avatars embedded             |
-| `src/avatars.rs`  | SVG rasterizing and the pre-blurred textures, on a worker thread |
-| `src/icons.rs`    | The Lucide and platform icons of the Svelte components           |
-| `src/capture.rs`  | The scripted capture run                                         |
-| `src/bench.rs`    | Boot marks                                                       |
-| `src/backdrop.rs` | The recorder's stand-in desktop, for captures only               |
-| `src/soft.rs`     | The software runner: winit loop, damaged-tiles present, pacing   |
-| `vendor/`         | egui_software_backend 0.0.3, ported to egui 0.36                 |
-| `build.rs`        | Delay-loaded DLLs on Windows                                     |
+| File                        | Role                                                                            |
+| --------------------------- | ------------------------------------------------------------------------------- |
+| `src/screens/main_spike.rs` | The spike screen: title bar, header, grid, list, cards, animations              |
+| `src/screens/primitives.rs` | Draws a parity HTML fragment with `ui::paint` (calibration)                     |
+| `src/screens/mod.rs`        | The screen a scene asks for                                                     |
+| `src/ui/paint.rs`           | CSS boxes as Chromium paints them: radii, borders, shadows, gradients, clipping |
+| `src/ui/anim.rs`            | CSS timing functions, transitions, keyframes, reduced motion                    |
+| `src/ui/css.rs`             | Parser for the inline CSS of the parity fragments                               |
+| `src/harness/`              | The scene runner: scene files to raw input, PNG shots                           |
+| `src/theme.rs`              | Glass Dark tokens, CSS `color-mix`, the avatar fallback gradient                |
+| `src/data.rs`               | The demo dataset, with the mock SVG avatars embedded                            |
+| `src/avatars.rs`            | SVG rasterizing and the pre-blurred textures, on a worker thread                |
+| `src/icons.rs`              | The Lucide and platform icons of the Svelte components                          |
+| `src/bench.rs`              | Boot marks                                                                      |
+| `src/backdrop.rs`           | The recorder's stand-in desktop, for captures only                              |
+| `src/soft.rs`               | The software runner: winit loop, damaged-tiles present, pacing                  |
+| `vendor/`                   | egui_software_backend 0.0.3, ported to egui 0.36                                |
+| `build.rs`                  | Delay-loaded DLLs on Windows                                                    |

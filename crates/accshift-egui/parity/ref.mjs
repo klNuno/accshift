@@ -36,9 +36,12 @@
 //     linear-gradient(160deg, #10121f, #0a0c16)
 // - input: CDP Input.dispatchMouseEvent / dispatchKeyEvent, so :hover, focus
 //   and keyboard handlers behave as under a real hand.
+// - `html` (optional): a fragment file, relative to the scene file, that
+//   replaces the body once the scene has settled. The primitives scenes use it
+//   to photograph plain CSS boxes; the egui side draws the same file.
 
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import {
   DEV_URL,
   PIN_CLOCK,
@@ -170,6 +173,9 @@ function loadScene(file) {
   scene.scenario ??= "demo";
   scene.viewport ??= { width: 860, height: 440, scale: 1.5 };
   scene.steps ??= [];
+  // `html`: a fragment file next to the scene, injected in place of the body
+  // once the app has settled (calibration of the egui painter).
+  if (scene.html) scene.htmlSource = readFileSync(resolve(dirname(file), scene.html), "utf8");
   return scene;
 }
 
@@ -188,7 +194,19 @@ async function runScene(page, scene, outDir, manifest) {
   });
   const desk = await send("Page.addScriptToEvaluateOnNewDocument", { source: desktop(vp) });
 
-  await js(applyMock(scene));
+  // The mock import can hit a module still initialising (a reload in flight):
+  // reload the dev page and try again before giving up.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await js(applyMock(scene));
+      break;
+    } catch (err) {
+      if (attempt >= 3) throw err;
+      console.error(`${scene.id}: mock setup failed (${err.message}), reloading`);
+      await send("Page.navigate", { url: DEV_URL });
+      await sleep(1500);
+    }
+  }
   await js("window.__parityStale = true");
   await send("Page.navigate", { url: DEV_URL });
   let settled = false;
@@ -199,6 +217,15 @@ async function runScene(page, scene, outDir, manifest) {
   }
   if (!settled) console.error(`${scene.id}: page never settled, shooting anyway`);
   else console.log(`${scene.id}: settled after ${Date.now() - started} ms`);
+  if (scene.htmlSource) {
+    // The app stays mounted on a detached #app; the page shows the fragment.
+    await js(
+      `(() => { document.activeElement?.blur?.(); document.body.innerHTML = ${JSON.stringify(scene.htmlSource)}; return true; })()`,
+    );
+    await js(
+      "new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))",
+    );
+  }
 
   const mouse = { x: 0, y: 0 };
   const mouseEvent = (type, extra = {}) =>

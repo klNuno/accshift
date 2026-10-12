@@ -6,7 +6,7 @@ Every screen of the egui port is compared, pixel by pixel, with the same screen 
 - `diff.mjs` compares reference frames with egui frames and writes a report.
 - `dump-data.mjs` exports the mock's command results to `data/<scenario>.json`, so the egui side runs on the same data.
 - `harness.mjs` is the shared plumbing: vite dev server, app launch, CDP client, window and data-dir checks.
-- `scenes/*.json` are the scenes, `data/*.json` the dumped mock data.
+- `scenes/*.json` are the scenes, `fragments/*.html` the static CSS boxes of the `primitives-*` scenes, `data/*.json` the dumped mock data.
 
 Node 22+ and ffmpeg on `PATH`. No npm dependency.
 
@@ -64,6 +64,7 @@ The frontend comes from `vite dev` on port 1420 (the `devUrl` compiled into the 
 - `theme` and `locale` patch `client.settings` (`themeId`, `language`). A `seed` key is a store id (`client.view-mode`) or the suffix of its `CLIENT_STORE_` constant in `src/lib/storage/storeIds.ts` (`SETTINGS`); an object value is merged over the scenario's own store, anything else replaces it.
 - `key` takes `Ctrl`, `Shift`, `Alt` and `Meta` prefixes joined with `+`, then a character or a key name (`Enter`, `Escape`, `Backspace`, `Tab`, `Delete`, `Home`, `End`, arrow keys, `Space`). `text` types character by character. `scroll` is `[x, y, deltaY]`.
 - A shot waits for nothing: put a `wait` before it, long enough for transitions to end.
+- `html` (optional) names a fragment file, relative to the scene file. `ref.mjs` replaces the page body with it once the scene has settled; the egui runner draws the same file with `ui::paint` instead of the app. The `primitives-*` scenes use `fragments/*.html` this way to calibrate the CSS box painter at 1, 1.25 and 1.5 pixels per point. Only absolutely positioned `<div>`s with inline `style` are drawn on the egui side.
 - `alias` on a shot is optional: the file name, without extension, of the same shot in an older capture set (the spike's `--capture` PAMs). `diff.mjs --batch` uses it when `<egui dir>/<id>/<shot>` does not exist.
 
 Before each scene, the page is reloaded into its mock state, and runs once every image is decoded and no avatar is blurred.

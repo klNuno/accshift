@@ -1,41 +1,52 @@
-//! Spike: the accshift main screen in egui. See `README.md` next to this crate.
+//! The accshift UI in egui. See `README.md` next to this crate.
 
-pub mod app;
 pub mod avatars;
 pub mod backdrop;
 pub mod bench;
-pub mod capture;
 pub mod data;
+pub mod harness;
 pub mod icons;
+pub mod screens;
 #[cfg(feature = "software")]
 pub mod soft;
 pub mod theme;
+pub mod ui;
 
-pub use app::{AccshiftApp, Options};
+pub use screens::main_spike::{AccshiftApp, Options};
+pub use screens::Screen;
 
 #[cfg(all(feature = "software", feature = "glow"))]
 compile_error!("pick one renderer: `software` (default) or `glow` with --no-default-features");
 
-/// What both runners drive: the app plus the optional capture script. The
-/// window is cleared to transparent so the OS acrylic shows through the 55 %
-/// window fill, exactly like the Tauri window.
+/// What both runners drive: the current screen plus the optional scene run.
+/// The window is cleared to transparent so the OS acrylic shows through the
+/// 55 % window fill, exactly like the Tauri window.
 pub struct Shell {
-    pub app: AccshiftApp,
-    pub capture: Option<capture::Capture>,
+    pub screen: Screen,
+    pub scenes: Option<harness::SceneRun>,
 }
 
 impl Shell {
     pub fn input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        if let Some(capture) = &mut self.capture {
-            capture.feed(ctx, raw_input, self.app.avatars_ready());
+        if let Some(run) = &mut self.scenes {
+            run.feed(ctx, raw_input, self.screen.ready());
         }
     }
 
     pub fn frame(&mut self, ui: &mut egui::Ui) {
-        if let Some(capture) = &mut self.capture {
-            capture.collect(ui.ctx());
+        if let Some(run) = &mut self.scenes {
+            run.collect(ui.ctx());
+            if let Some(scene) = run.take_build() {
+                match Screen::for_scene(ui.ctx(), &scene) {
+                    Ok(screen) => self.screen = screen,
+                    Err(why) => {
+                        self.screen = Screen::Blank;
+                        run.skip(&why);
+                    }
+                }
+            }
         }
-        self.app.ui(ui);
+        self.screen.ui(ui);
     }
 }
 

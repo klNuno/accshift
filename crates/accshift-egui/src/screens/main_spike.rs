@@ -1020,7 +1020,9 @@ fn semibold() -> FontFamily {
 
 /// Segoe UI from the system, like the webview's `system-ui` fallback (Inter
 /// is not installed here, so the Tauri build renders Segoe UI too).
-fn install_fonts(ctx: &egui::Context) {
+/// The scene runner calls it before the first frame: a screen built
+/// mid-frame only gets its fonts one frame later.
+pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
     let dir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
     let read = |name: &str| std::fs::read(format!(r"{dir}\Fonts\{name}")).ok();

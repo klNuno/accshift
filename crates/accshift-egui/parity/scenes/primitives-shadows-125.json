@@ -1,0 +1,21 @@
+{
+  "id": "primitives-shadows-125",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 480,
+    "height": 240,
+    "scale": 1.25
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "html": "../fragments/shadows.html",
+  "steps": [
+    {
+      "wait": 300
+    },
+    {
+      "shot": "frame"
+    }
+  ]
+}
