@@ -15,9 +15,16 @@
 //!   and the settings refresh actions, driven through [`jobs`].
 //! - [`display`]: folder navigation, search and the flat list of cards a grid
 //!   draws.
+//! - [`secure`]: the PIN, the inactivity blur, the window activity and the
+//!   secure screen; [`streamer`]: streamer mode.
+//! - [`bulk_edit`], [`platform_add_flow`], [`platform_shell`] and
+//!   [`cs2_bridge`]: the Steam bulk edit, the add-account flow, the platform
+//!   shell state and the CS2 bridge queue.
 
 pub mod accounts;
 pub mod backend;
+pub mod bulk_edit;
+pub mod cs2_bridge;
 pub mod dispatch;
 pub mod display;
 pub mod error;
@@ -29,11 +36,15 @@ pub mod legacy_web_storage;
 pub mod menu;
 pub mod mock;
 pub mod personas;
+pub mod platform_add_flow;
+pub mod platform_shell;
 pub mod platforms;
 pub mod real;
+pub mod secure;
 pub mod settings;
 pub mod storage;
 pub mod stores;
+pub mod streamer;
 pub mod text;
 pub mod time;
 pub mod types;

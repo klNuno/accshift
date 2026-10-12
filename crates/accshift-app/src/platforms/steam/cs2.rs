@@ -174,6 +174,12 @@ impl Cs2Bridge {
         }
     }
 
+    /// Records the enabled flag a bridge check read from the settings
+    /// (`enabledKnown = true` in `triggerCs2BridgeCheck`).
+    pub fn note_enabled(&mut self, enabled: bool) {
+        self.enabled = Some(enabled);
+    }
+
     /// `triggerCs2BridgeCheck` result: merges a re-checked row.
     pub fn apply_check(&mut self, account: Cs2BridgeAccount) {
         self.data.insert(account.steam_id.clone(), account);
