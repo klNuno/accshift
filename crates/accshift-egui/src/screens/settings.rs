@@ -969,7 +969,7 @@ pub fn draw(
         content_h = h;
         extra = actions;
     }
-    for (spec, rect) in cards.iter().zip(&grid.rects) {
+    for (k, (spec, rect)) in cards.iter().zip(&grid.rects).enumerate() {
         card::paint_frame(&content_ui, *rect, v, CardKind::Panel);
         let inner = card::content(*rect, CardKind::Panel, ppp);
         let mut y = inner.top();
@@ -979,7 +979,10 @@ pub fn draw(
             }
             let h = item_height(&ctx, &c, item, inner.width());
             let r = Rect::from_min_size(pos2(inner.left(), y), vec2(inner.width(), h));
-            let id = c.scope.with((active.as_str(), rect.left() as i32, i));
+            // By card and item: two cards share a left edge when one spans
+            // the row (telemetry under privacy), and an id clash leaves the
+            // first widget without a hit box.
+            let id = c.scope.with((active.as_str(), k, i));
             out.extend(paint_item(&mut content_ui, r, id, &c, item));
             y += h;
         }

@@ -1693,6 +1693,28 @@ mod scene_tests {
         assert!(toasts(&run).is_empty());
     }
 
+    /// The streamer mode row of the privacy tab answers the pointer: the
+    /// telemetry card under it once took its id, and its hit box with it.
+    #[test]
+    fn privacy_toggle_keeps_its_hit_box() {
+        let mut run = Run::new("settings-glass-dark-100", 1.0);
+        run.settle();
+        run.click(pos2(87.0, 18.0));
+        run.click(pos2(93.0, 176.0));
+        run.send(Event::PointerMoved(pos2(448.0, 267.0)));
+        run.frame();
+        run.frame();
+        let hovered = run.ctx.viewport(|vp| {
+            vp.interact_widgets.hovered.iter().any(|id| {
+                vp.prev_pass
+                    .widgets
+                    .get(*id)
+                    .is_some_and(|w| w.interact_rect.contains(pos2(448.0, 267.0)))
+            })
+        });
+        assert!(hovered);
+    }
+
     /// The huge scenario scrolled down and back with the CPU renderer:
     /// median and p99 of the whole frame (ui, tessellation, raster) over 300
     /// frames. `cargo test --release --lib huge_scroll -- --ignored
