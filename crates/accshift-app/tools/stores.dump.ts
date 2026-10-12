@@ -9,6 +9,8 @@
 //
 // From the repo root:
 //   build-safe node node_modules/vitest/vitest.mjs run --config crates/accshift-app/tools/vitest.dump.config.mjs
+//   vp fmt crates/accshift-app/tests/data/stores
+// The second step matches what the pre-commit hook does to staged JSON.
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
