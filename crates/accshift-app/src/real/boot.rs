@@ -68,11 +68,11 @@ impl RealBackend {
     }
 
     /// The telemetry half of `finish_boot` (app.rs lines 153-167:
-    /// `emit_first_run_once`, `AppLaunched`, `emit_accounts_snapshots`). It
-    /// needs the telemetry runtime (`telemetry_runtime.rs`), which part 2 of
-    /// the port brings; until then a first boot sends nothing, which is what
-    /// the Tauri app does without consent.
-    pub(super) fn after_first_boot(&self) {}
+    /// `emit_first_run_once`, `AppLaunched`, `emit_accounts_snapshots`), in
+    /// `real/telemetry.rs`.
+    pub(super) fn after_first_boot(&self) {
+        self.record_first_boot();
+    }
 }
 
 fn spawn_snapshot_upgrade(upgrade_ctx: AppCtx) -> std::thread::JoinHandle<()> {

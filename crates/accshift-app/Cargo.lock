@@ -14,6 +14,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "tokio",
  "windows-sys 0.61.2",
 ]
 

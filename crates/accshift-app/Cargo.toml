@@ -26,6 +26,9 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 # `descriptor_select_file`.
 rfd = "0.17"
+# The async half of the Steam, CS2 bridge and Roblox commands (Tauri runs them
+# on its tokio runtime). Same minor as the root workspace pin.
+tokio = { version = "1.47", features = ["rt-multi-thread"] }
 
 [target.'cfg(windows)'.dependencies]
 # `get_desktop_wallpaper`: the Progman capture of
