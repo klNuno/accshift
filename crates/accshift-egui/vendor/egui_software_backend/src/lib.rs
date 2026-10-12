@@ -27,12 +27,14 @@ use crate::stats::RasterStats;
 use crate::{
     color::{AvailableImpl, SelectedImpl, swizzle_rgba_bgra},
     egui_texture::EguiTexture,
+    glyph_coverage::GlyphAtlas,
     hash::Hash32,
     render::{draw_egui_mesh, egui_orient2df},
 };
 
 pub(crate) mod color;
 pub(crate) mod egui_texture;
+pub mod glyph_coverage;
 pub(crate) mod hash;
 pub(crate) mod math;
 pub(crate) mod raster;
@@ -85,6 +87,9 @@ pub struct EguiSoftwareRender {
     allow_raster_opt: bool,
     cacheing_enabled: bool,
     simd_impl: AvailableImpl,
+    /// Per-colour coverage copies of the font atlas, when the caller gave
+    /// tables (`with_glyph_coverage`).
+    glyph_atlas: Option<GlyphAtlas>,
     #[cfg(feature = "raster_stats")]
     pub stats: RasterStats,
 }
@@ -108,9 +113,44 @@ impl EguiSoftwareRender {
             allow_raster_opt: true,
             cacheing_enabled: true,
             simd_impl: Default::default(),
+            glyph_atlas: None,
             #[cfg(feature = "raster_stats")]
             stats: Default::default(),
         }
+    }
+
+    /// Glyph coverage goes through `tables[class]`, the class being Skia's
+    /// luminance class of the text colour (see [`glyph_coverage`]). Without
+    /// it, the font atlas is sampled as egui wrote it.
+    pub fn with_glyph_coverage(mut self, tables: glyph_coverage::CoverageTables) -> Self {
+        self.glyph_atlas = Some(GlyphAtlas::new(tables));
+        self
+    }
+
+    /// Gives every luminance class drawn by a glyph this frame its copy of
+    /// the atlas, rebuilding the stacked texture when one is added.
+    fn ensure_glyph_classes(&mut self, paint_jobs: &[egui::ClippedPrimitive]) {
+        let Some(atlas) = &mut self.glyph_atlas else {
+            return;
+        };
+        if atlas.raw.is_empty() {
+            return;
+        }
+        let meshes = paint_jobs.iter().filter_map(|job| match &job.primitive {
+            egui::epaint::Primitive::Mesh(mesh) => Some(mesh),
+            egui::epaint::Primitive::Callback(_) => None,
+        });
+        let missing = atlas.missing_classes(meshes);
+        if !missing.contains(&true) {
+            return;
+        }
+        for (class, _) in missing.iter().enumerate().filter(|(_, m)| **m) {
+            atlas.add_slot(class);
+        }
+        let [w, h] = atlas.size;
+        let rows = h * (1 + atlas.slots.len());
+        let texture = EguiTexture::from_data(atlas.stacked(), [w, rows], atlas.options);
+        self.textures.insert(egui::TextureId::default(), texture);
     }
 
     /// If true: attempts to optimize by converting suitable triangle pairs into rectangles for faster rendering.
@@ -209,6 +249,7 @@ impl EguiSoftwareRender {
         self.tiles_dim = [width.div_ceil(TILE_SIZE), height.div_ceil(TILE_SIZE)];
 
         self.set_textures(textures_delta);
+        self.ensure_glyph_classes(paint_jobs);
 
         self.render_prims_to_cache(paint_jobs, pixels_per_point);
 
@@ -417,6 +458,7 @@ impl EguiSoftwareRender {
         self.stats.clear();
 
         self.set_textures(textures_delta);
+        self.ensure_glyph_classes(paint_jobs);
 
         self.target_size = vec2(
             direct_draw_buffer.width as f32,
@@ -506,9 +548,16 @@ impl EguiSoftwareRender {
         mesh_max: &mut Vec2,
     ) -> Mesh {
         let mut px_mesh = mesh.clone();
+        let glyph_atlas = self
+            .glyph_atlas
+            .as_ref()
+            .filter(|_| mesh.texture_id == egui::TextureId::default());
 
         for v in px_mesh.vertices.iter_mut() {
             v.pos *= pixels_per_point;
+            if let Some(atlas) = glyph_atlas {
+                v.uv = atlas.remap_uv(v.uv, v.color);
+            }
 
             match self.output_field_order {
                 ColorFieldOrder::Rgba => (), // egui uses rgba
@@ -889,6 +938,32 @@ impl EguiSoftwareRender {
                 }
             };
             let size = delta.image.size();
+            if *id == egui::TextureId::default()
+                && let Some(atlas) = &mut self.glyph_atlas
+            {
+                let order = self.output_field_order;
+                let texel = |i: usize| match order {
+                    ColorFieldOrder::Rgba => pixels[i].to_array(),
+                    ColorFieldOrder::Bgra => swizzle_rgba_bgra(pixels[i].to_array()),
+                };
+                match delta.pos {
+                    Some(pos) if atlas.size[0] > 0 => {
+                        if let Some(texture) = self.textures.get_mut(id) {
+                            atlas.write_region(&mut texture.data, pos, size, texel);
+                        }
+                    }
+                    _ => {
+                        atlas.raw = (0..size[0] * size[1]).map(texel).collect();
+                        atlas.size = size;
+                        atlas.options = delta.options;
+                        let rows = size[1] * (1 + atlas.slots.len());
+                        let texture =
+                            EguiTexture::from_data(atlas.stacked(), [size[0], rows], delta.options);
+                        self.textures.insert(*id, texture);
+                    }
+                }
+                continue;
+            }
             if let Some(pos) = delta.pos {
                 if let Some(texture) = self.textures.get_mut(id) {
                     for y in 0..size[1] {

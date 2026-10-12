@@ -318,7 +318,63 @@ async function runScene(page, scene, outDir, manifest) {
       });
     } else console.error(`${scene.id}: unknown step ${JSON.stringify(step)}`);
   }
+  if (scene.probe) await probeText(page, scene, outDir);
   await send("Page.removeScriptToEvaluateOnNewDocument", { identifier: desk.identifier });
+}
+
+// `probe` (optional, with `html`): after the shots, every `body p` of the
+// fragment is measured and asked which installed face draws it. Writes
+// <out>/<id>/probe.json: per line the computed font values, the line box,
+// the text's own box (a Range over the contents: advances plus letter
+// spacing), the baseline (bottom of a zero-size inline-block appended for
+// the measure, then removed) in CSS px, and CSS.getPlatformFontsForNode.
+const PROBE = `
+(() => [...document.querySelectorAll("body p")].map((p) => {
+  const box = p.getBoundingClientRect();
+  const range = document.createRange();
+  range.selectNodeContents(p);
+  const ink = range.getBoundingClientRect();
+  const mark = document.createElement("span");
+  mark.style.cssText = "display:inline-block;width:0;height:0;vertical-align:baseline";
+  p.appendChild(mark);
+  const baseline = mark.getBoundingClientRect().bottom;
+  mark.remove();
+  const cs = getComputedStyle(p);
+  return {
+    text: p.textContent,
+    family: cs.fontFamily,
+    size: cs.fontSize,
+    weight: cs.fontWeight,
+    lineHeight: cs.lineHeight,
+    letterSpacing: cs.letterSpacing,
+    transform: cs.textTransform,
+    box: [box.left, box.top, box.width, box.height],
+    text_box: [ink.left, ink.top, ink.width, ink.height],
+    baseline,
+  };
+}))()
+`;
+
+async function probeText(page, scene, outDir) {
+  const { send, js } = page;
+  const lines = await js(PROBE);
+  await send("DOM.enable");
+  await send("CSS.enable");
+  const { root } = await send("DOM.getDocument", { depth: -1 });
+  const { nodeIds } = await send("DOM.querySelectorAll", {
+    nodeId: root.nodeId,
+    selector: "body p",
+  });
+  for (const [i, nodeId] of nodeIds.entries()) {
+    const { fonts } = await send("CSS.getPlatformFontsForNode", { nodeId });
+    if (lines[i]) lines[i].platformFonts = fonts;
+  }
+  await send("CSS.disable");
+  await send("DOM.disable");
+  const dir = join(outDir, scene.id);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "probe.json"), JSON.stringify(lines, null, 2) + "\n");
+  console.log(`${scene.id}/probe.json ${lines.length} lines`);
 }
 
 async function main() {

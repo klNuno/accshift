@@ -49,6 +49,21 @@ impl EguiTexture {
         }
     }
 
+    /// A texture from texels already in the output channel order.
+    pub fn from_data(data: Vec<[u8; 4]>, size: [usize; 2], options: TextureOptions) -> EguiTexture {
+        let uv_zero_val = data[0];
+        EguiTexture {
+            data,
+            width_extent: size[0] as i32 - 1,
+            height_extent: size[1] as i32 - 1,
+            width: size[0],
+            height: size[1],
+            fsize: vec2(size[0] as f32, size[1] as f32),
+            options,
+            uv_zero_val,
+        }
+    }
+
     #[allow(dead_code)]
     pub fn sample_nearest(&self, uv: Vec2) -> [u8; 4] {
         let ss_x = ((uv.x * self.fsize.x) as i32).max(0).min(self.width_extent);

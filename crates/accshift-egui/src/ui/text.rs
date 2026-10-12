@@ -1,0 +1,896 @@
+//! Text the way WebView2 draws it.
+//!
+//! This module owns the fonts and the CSS text semantics of the port:
+//!
+//! - which face draws a CSS family stack at a weight ([`faces`]): the files
+//!   WebView2 picks, one egui [`FontFamily`] per face list, loaded on first
+//!   use;
+//! - [`TextStyle`], a CSS text description (family stack, size, weight,
+//!   `line-height`, `letter-spacing`, `text-transform`, `white-space: nowrap`,
+//!   `text-overflow: ellipsis`, `text-align`, colour);
+//! - the line box: Chromium computes it in CSS px with the face's ascent and
+//!   descent rounded separately and the half-leading floored, then scales it
+//!   by the device pixel ratio ([`LineBox`]); every glyph is moved onto that
+//!   baseline, whatever face drew it;
+//! - the coverage curve of Skia's grayscale glyphs ([`gamma`]), applied by the
+//!   software backend.
+//!
+//! Measured against WebView2 with `parity/fragments/typography*.html` and the
+//! `typography-*` scenes (the probe in `parity/ref.mjs` records the face, line
+//! box and baseline of every line).
+
+pub mod faces;
+pub mod gamma;
+
+use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock};
+
+use egui::epaint::text::{FontTweak, HintingTarget, SmoothHinting, TextOptions, VariationCoords};
+use egui::text::{LayoutJob, TextFormat, TextWrapping};
+use egui::{
+    pos2, vec2, Align, Color32, Context, FontData, FontDefinitions, FontFamily, FontId, Galley, Id,
+    Painter, Pos2, Rect,
+};
+
+use crate::ui::css;
+use faces::{Catalog, Choice, FaceMetrics, Source};
+
+/// `--font-ui` of `src/app.css` with the built-in themes' `Inter` in front.
+pub const UI_STACK: &str = "Inter, system-ui, Avenir, Helvetica, Arial, \"Microsoft YaHei UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Noto Sans CJK SC\", \"Noto Sans SC\", \"Noto Sans SC Subset\", sans-serif";
+/// The monospace stack of the settings and the theme editor.
+pub const MONO_STACK: &str = "ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace";
+/// `WaveText`'s pixel font.
+pub const PIXEL_STACK: &str = "\"VT323\", \"Courier New\", \"Microsoft YaHei UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Noto Sans CJK SC\", \"Noto Sans SC Subset\", sans-serif";
+
+/// The size the `Proportional` and [`SEMIBOLD`] aliases are drawn at, for
+/// their gasp behaviour: the UI's 13 px.
+const ALIAS_PPEM: f32 = 13.0;
+
+/// egui family of the UI stack at 600, for code that names it directly.
+pub const SEMIBOLD: &str = "semibold";
+
+/// CSS `line-height`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LineHeight {
+    /// The face's ascent, descent and line gap, each rounded.
+    Normal,
+    /// A multiple of the font size.
+    Number(f32),
+    Px(f32),
+}
+
+/// CSS `text-transform`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextTransform {
+    #[default]
+    None,
+    Uppercase,
+    Lowercase,
+    Capitalize,
+}
+
+/// CSS `text-align`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+/// The computed text style of one element.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextStyle {
+    /// CSS `font-family`, as written.
+    pub family: Arc<str>,
+    /// `font-size` in CSS px.
+    pub size: f32,
+    pub weight: u16,
+    pub line_height: LineHeight,
+    /// `letter-spacing` in CSS px, added after every character.
+    pub letter_spacing: f32,
+    pub transform: TextTransform,
+    /// `white-space: nowrap`.
+    pub nowrap: bool,
+    /// `text-overflow: ellipsis` (with `overflow: hidden`): only with `nowrap`.
+    pub ellipsis: bool,
+    pub align: TextAlign,
+    pub color: Color32,
+}
+
+impl Default for TextStyle {
+    /// What `:root` gives every element: the UI stack, 400, `line-height`
+    /// 1.5 (`--line-height`), no letter spacing, at the browser's 16 px.
+    fn default() -> Self {
+        Self {
+            family: Arc::from(UI_STACK),
+            size: 16.0,
+            weight: 400,
+            line_height: LineHeight::Number(1.5),
+            letter_spacing: 0.0,
+            transform: TextTransform::None,
+            nowrap: false,
+            ellipsis: false,
+            align: TextAlign::Left,
+            color: Color32::WHITE,
+        }
+    }
+}
+
+impl TextStyle {
+    /// `size` px at `weight` in the UI stack, everything else from `:root`.
+    pub fn new(size: f32, weight: u16) -> Self {
+        Self {
+            size,
+            weight,
+            ..Self::default()
+        }
+    }
+
+    pub fn family(mut self, stack: &str) -> Self {
+        self.family = Arc::from(stack);
+        self
+    }
+
+    pub fn line_height(mut self, line_height: LineHeight) -> Self {
+        self.line_height = line_height;
+        self
+    }
+
+    /// `letter-spacing` in em.
+    pub fn letter_spacing_em(mut self, em: f32) -> Self {
+        self.letter_spacing = em * self.size;
+        self
+    }
+
+    pub fn letter_spacing_px(mut self, px: f32) -> Self {
+        self.letter_spacing = px;
+        self
+    }
+
+    pub fn transform(mut self, transform: TextTransform) -> Self {
+        self.transform = transform;
+        self
+    }
+
+    /// `white-space: nowrap`, with `text-overflow: ellipsis` when `ellipsis`.
+    pub fn nowrap(mut self, ellipsis: bool) -> Self {
+        self.nowrap = true;
+        self.ellipsis = ellipsis;
+        self
+    }
+
+    pub fn align(mut self, align: TextAlign) -> Self {
+        self.align = align;
+        self
+    }
+
+    pub fn color(mut self, color: Color32) -> Self {
+        self.color = color;
+        self
+    }
+
+    /// The style an element with these declarations computes, over the
+    /// `:root` defaults. Unknown properties are ignored, invalid values give
+    /// `None`.
+    pub fn from_css(decls: &str) -> Option<Self> {
+        let mut style = Self::default();
+        let mut spacing = None;
+        for decl in css::split_top(decls, ';') {
+            let Some((prop, value)) = decl.split_once(':') else {
+                continue;
+            };
+            let value = value.trim().trim_end_matches("!important").trim();
+            match prop.trim() {
+                "font-family" => style.family = Arc::from(value),
+                "font-size" => style.size = css::px(value)?,
+                "font-weight" => {
+                    style.weight = match value {
+                        "normal" => 400,
+                        "bold" => 700,
+                        v => v.parse().ok()?,
+                    }
+                }
+                "line-height" => {
+                    style.line_height = if value == "normal" {
+                        LineHeight::Normal
+                    } else if let Ok(n) = value.parse::<f32>() {
+                        LineHeight::Number(n)
+                    } else if let Some(p) = value.strip_suffix('%') {
+                        LineHeight::Number(p.trim().parse::<f32>().ok()? / 100.0)
+                    } else {
+                        LineHeight::Px(css::px(value)?)
+                    }
+                }
+                "letter-spacing" => spacing = Some(value.to_string()),
+                "text-transform" => {
+                    style.transform = match value {
+                        "uppercase" => TextTransform::Uppercase,
+                        "lowercase" => TextTransform::Lowercase,
+                        "capitalize" => TextTransform::Capitalize,
+                        _ => TextTransform::None,
+                    }
+                }
+                "white-space" => style.nowrap = value == "nowrap" || value == "pre",
+                "text-overflow" => style.ellipsis = value == "ellipsis",
+                "text-align" => {
+                    style.align = match value {
+                        "center" => TextAlign::Center,
+                        "right" | "end" => TextAlign::Right,
+                        _ => TextAlign::Left,
+                    }
+                }
+                "color" => style.color = css::color(value)?.to_color32(),
+                _ => {}
+            }
+        }
+        // `em` resolves against the element's own font size.
+        if let Some(v) = spacing {
+            style.letter_spacing = match v.as_str() {
+                "normal" | "0" => 0.0,
+                v => match v.strip_suffix("em") {
+                    Some(em) => em.trim().parse::<f32>().ok()? * style.size,
+                    None => css::px(v)?,
+                },
+            };
+        }
+        Some(style)
+    }
+
+    /// The line box of this style, once its face is known.
+    pub fn line_box(&self, ctx: &Context) -> Option<LineBox> {
+        let ppem = self.size * ctx.pixels_per_point();
+        let resolved = resolve(ctx, &self.family, self.weight, ppem)?;
+        Some(LineBox::new(&resolved.metrics, self.size, self.line_height))
+    }
+
+    fn transformed(&self, text: &str) -> String {
+        match self.transform {
+            TextTransform::None => text.to_string(),
+            TextTransform::Uppercase => text.to_uppercase(),
+            TextTransform::Lowercase => text.to_lowercase(),
+            TextTransform::Capitalize => {
+                let mut out = String::with_capacity(text.len());
+                let mut start = true;
+                for c in text.chars() {
+                    if start && c.is_alphanumeric() {
+                        out.extend(c.to_uppercase());
+                        start = false;
+                    } else {
+                        if c.is_whitespace() {
+                            start = true;
+                        }
+                        out.push(c);
+                    }
+                }
+                out
+            }
+        }
+    }
+}
+
+/// One line box, in CSS px.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LineBox {
+    pub height: f32,
+    /// From the top of the line box.
+    pub baseline: f32,
+}
+
+impl LineBox {
+    /// Chromium's line box: ascent and descent rounded separately at the CSS
+    /// font size, the line height kept to LayoutUnit precision (1/64 px), the
+    /// half-leading floored to whole px. Matches the 252 baselines of the
+    /// typography fragments at scales 1, 1.25 and 1.5.
+    pub fn new(m: &FaceMetrics, size: f32, line_height: LineHeight) -> Self {
+        let scale = size / m.units_per_em;
+        let ascent = (m.ascent * scale).round();
+        let descent = (m.descent * scale).round();
+        let height = match line_height {
+            LineHeight::Normal => ascent + descent + (m.line_gap * scale).round(),
+            LineHeight::Number(n) => n * size,
+            LineHeight::Px(px) => px,
+        };
+        let height = (height * 64.0).floor() / 64.0;
+        let half_leading = ((height - (ascent + descent)) / 2.0).floor();
+        Self {
+            height,
+            baseline: ascent + half_leading,
+        }
+    }
+}
+
+/// Laid out text, ready to paint.
+#[derive(Clone, Debug)]
+pub struct TextLayout {
+    pub galley: Arc<Galley>,
+    /// Where the galley goes, on the device pixel grid.
+    pub pos: Pos2,
+    /// Widest line in CSS px: advances plus `letter-spacing` after every
+    /// character, like the inline box.
+    pub width: f32,
+    /// All line boxes.
+    pub height: f32,
+    pub line_box: LineBox,
+    pub lines: usize,
+}
+
+impl TextLayout {
+    pub fn paint(&self, painter: &Painter) {
+        painter.add(egui::epaint::TextShape::new(
+            self.pos,
+            self.galley.clone(),
+            Color32::PLACEHOLDER,
+        ));
+    }
+}
+
+/// Lays `text` out in `rect`: its top is the top of the first line box, its
+/// left and width the containing block (for wrapping, alignment and the
+/// ellipsis). `None` while the style's faces are not loaded yet (the first
+/// frame that uses a new face): a repaint is requested.
+pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Option<TextLayout> {
+    let resolved = resolve(
+        ctx,
+        &style.family,
+        style.weight,
+        style.size * ctx.pixels_per_point(),
+    )?;
+    let bound = ctx.fonts(|f| f.definitions().families.contains_key(&resolved.family));
+    if !bound {
+        ctx.request_repaint();
+        return None;
+    }
+    let text = style.transformed(text);
+    if text.chars().any(is_han) {
+        need_cjk(ctx);
+    }
+    let ppp = ctx.pixels_per_point();
+    let line_box = LineBox::new(&resolved.metrics, style.size, style.line_height);
+    let avail = if rect.width().is_finite() && rect.width() > 0.0 {
+        rect.width()
+    } else {
+        f32::INFINITY
+    };
+    let job = |lead: f32| {
+        let mut job = LayoutJob::default();
+        job.append(
+            &text,
+            lead,
+            TextFormat {
+                font_id: FontId::new(style.size, resolved.family.clone()),
+                extra_letter_spacing: style.letter_spacing,
+                line_height: Some(line_box.height),
+                color: style.color,
+                valign: Align::TOP,
+                ..Default::default()
+            },
+        );
+        job.wrap = match (style.nowrap, style.ellipsis) {
+            (true, true) => TextWrapping::truncate_at_width(avail + lead),
+            (true, false) => TextWrapping::no_max_width(),
+            (false, _) => TextWrapping::wrap_at_width(avail + lead),
+        };
+        job
+    };
+    let offset = |w: f32| match style.align {
+        TextAlign::Left => 0.0,
+        TextAlign::Center if avail.is_finite() => ((avail - w) / 2.0 * 64.0).floor() / 64.0,
+        TextAlign::Right if avail.is_finite() => avail - w,
+        _ => 0.0,
+    };
+
+    let mut galley = ctx.fonts_mut(|f| f.layout_job(job(0.0)));
+    let widths: Vec<f32> = galley
+        .rows
+        .iter()
+        .map(|r| row_width(&r.row, style.letter_spacing))
+        .collect();
+    // One line: the fractional part of its device x goes into the layout
+    // (leading space), so glyphs land on the same quarter pixels as Skia's.
+    let mut lead = 0.0;
+    let origin_x = if galley.rows.len() == 1 {
+        let x = (rect.left() + offset(widths[0])) * ppp;
+        let xi = (x + 1e-3).floor();
+        let frac = x - xi;
+        if frac > 1e-3 {
+            lead = frac;
+            galley = ctx.fonts_mut(|f| f.layout_job(job(frac / ppp)));
+        }
+        xi / ppp
+    } else {
+        (rect.left() * ppp).round() / ppp
+    };
+    let origin_y = (rect.top() * ppp).floor() / ppp;
+    let lines = galley.rows.len();
+
+    let g = Arc::make_mut(&mut galley);
+    let mut bounds = Rect::NOTHING;
+    for (i, placed) in g.rows.iter_mut().enumerate() {
+        if lines > 1 {
+            let x = rect.left() + offset(widths[i]);
+            placed.pos.x = (x * ppp).round() / ppp - origin_x;
+        }
+        let baseline = (rect.top() + line_box.baseline + i as f32 * line_box.height) * ppp;
+        let target = snap(baseline) / ppp - origin_y - placed.pos.y;
+        let row = Arc::make_mut(&mut placed.row);
+        // The pen in device px: egui puts every CJK glyph on a whole pixel
+        // (no sub-pixel bins for them), Skia on a quarter pixel like the rest.
+        let mut pen = if i == 0 { lead } else { 0.0 };
+        for (k, glyph) in row.glyphs.iter_mut().enumerate() {
+            if k > 0 {
+                pen += style.letter_spacing * ppp;
+            }
+            let exact = pen;
+            pen += glyph.advance_width * ppp;
+            let dx = if is_han(glyph.chr) {
+                ((exact * 4.0).round() / 4.0 - glyph.pos.x * ppp) / ppp
+            } else {
+                0.0
+            };
+            let dy = target - glyph.pos.y;
+            glyph.pos.y = target;
+            if (dx == 0.0 && dy == 0.0) || glyph.uv_rect.is_nothing() {
+                continue;
+            }
+            let first = glyph.first_vertex as usize;
+            if let Some(quad) = row.visuals.mesh.vertices.get_mut(first..first + 4) {
+                for v in quad {
+                    v.pos += vec2(dx, dy);
+                }
+            }
+        }
+        row.visuals.mesh_bounds = row.visuals.mesh.calc_bounds();
+        bounds = bounds.union(row.visuals.mesh_bounds.translate(placed.pos.to_vec2()));
+    }
+    g.mesh_bounds = bounds;
+    let width = widths.iter().copied().fold(0.0, f32::max);
+    g.rect = Rect::from_min_size(Pos2::ZERO, vec2(width, lines as f32 * line_box.height));
+
+    Some(TextLayout {
+        galley,
+        pos: pos2(origin_x, origin_y),
+        width,
+        height: lines as f32 * line_box.height,
+        line_box,
+        lines,
+    })
+}
+
+/// [`layout`] then paint.
+pub fn paint(painter: &Painter, rect: Rect, text: &str, style: &TextStyle) -> Option<TextLayout> {
+    let laid = layout(painter.ctx(), text, style, rect)?;
+    laid.paint(painter);
+    Some(laid)
+}
+
+/// Width of `text` in CSS px, as an inline box of this style.
+pub fn measure(ctx: &Context, text: &str, style: &TextStyle) -> Option<f32> {
+    let mut style = style.clone();
+    style.nowrap = true;
+    style.ellipsis = false;
+    style.align = TextAlign::Left;
+    layout(
+        ctx,
+        text,
+        &style,
+        Rect::from_min_size(Pos2::ZERO, vec2(f32::INFINITY, 0.0)),
+    )
+    .map(|l| l.width)
+}
+
+/// Whether the faces of `style` are bound in the current frame.
+pub fn ready(ctx: &Context, style: &TextStyle) -> bool {
+    resolve(
+        ctx,
+        &style.family,
+        style.weight,
+        style.size * ctx.pixels_per_point(),
+    )
+    .is_some_and(|r| ctx.fonts(|f| f.definitions().families.contains_key(&r.family)))
+}
+
+/// Advances of a row plus the letter spacing after each character.
+fn row_width(row: &egui::epaint::text::Row, spacing: f32) -> f32 {
+    row.glyphs.iter().map(|g| g.advance_width + spacing).sum()
+}
+
+/// The ranges of the Han `@font-face` rules of `src/app.css`.
+fn is_han(c: char) -> bool {
+    matches!(c as u32,
+        0x2E80..=0x2EFF | 0x3000..=0x303F | 0x31C0..=0x31EF | 0x3400..=0x4DBF
+        | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0xFE30..=0xFE4F | 0xFF00..=0xFFEF)
+}
+
+// ---------------------------------------------------------------- fonts
+
+/// The faces loaded so far and the egui families made of them.
+struct Book {
+    /// Han fallback faces join the families (set once CJK text shows up).
+    cjk: bool,
+    /// egui fonts by name: a face and its gasp behaviour.
+    faces: HashMap<String, Arc<FontData>>,
+    /// Metrics by face.
+    metrics: HashMap<String, FaceMetrics>,
+    /// egui family name to its face keys, in fallback order.
+    families: BTreeMap<String, Vec<String>>,
+    /// By stack, weight and ppem.
+    resolved: HashMap<(Arc<str>, u16, u16), Option<Resolved>>,
+    /// Faces of egui's `Proportional` family (its own widgets).
+    proportional: Vec<String>,
+    /// Faces of the UI stack at 600 ([`SEMIBOLD`]).
+    semibold: Vec<String>,
+    dirty: bool,
+}
+
+#[derive(Clone)]
+struct Resolved {
+    family: FontFamily,
+    metrics: FaceMetrics,
+}
+
+type SharedBook = Arc<Mutex<Book>>;
+
+fn book(ctx: &Context) -> SharedBook {
+    ctx.data_mut(|d| {
+        d.get_temp_mut_or_insert_with(Id::new("accshift.ui.text.book"), || {
+            Arc::new(Mutex::new(Book {
+                cjk: false,
+                faces: HashMap::new(),
+                metrics: HashMap::new(),
+                families: BTreeMap::new(),
+                resolved: HashMap::new(),
+                proportional: Vec::new(),
+                semibold: Vec::new(),
+                dirty: false,
+            }))
+        })
+        .clone()
+    })
+}
+
+/// Face file bytes, read once per process and kept for its lifetime (egui
+/// holds them as long as the fonts live).
+fn bytes(source: &Source) -> Option<&'static [u8]> {
+    type Files = Mutex<HashMap<PathBuf, Option<&'static [u8]>>>;
+    static FILES: OnceLock<Files> = OnceLock::new();
+    match source {
+        Source::Bundled(_, bytes) => Some(bytes),
+        Source::File(path) => {
+            let mut files = FILES.get_or_init(Default::default).lock().ok()?;
+            *files.entry(path.clone()).or_insert_with(|| {
+                std::fs::read(path)
+                    .ok()
+                    .map(|b| &*Box::leak(b.into_boxed_slice()))
+            })
+        }
+    }
+}
+
+impl Book {
+    /// Loads a face as drawn at `ppem` device px: its egui font name and
+    /// metrics. A face gets one egui font per `gasp` behaviour (vertical
+    /// smoothing or not), so a family draws each size like DirectWrite.
+    fn load(&mut self, choice: &Choice, ppem: f32) -> Option<(String, FaceMetrics)> {
+        let base = choice.key();
+        let data = bytes(&choice.entry.source)?;
+        let metrics = match self.metrics.get(&base) {
+            Some(m) => *m,
+            None => {
+                let m = FaceMetrics::read(data, choice.entry.index)?;
+                self.metrics.insert(base.clone(), m);
+                m
+            }
+        };
+        let smooth = metrics.symmetric_smoothing(ppem);
+        let key = format!("{base}~{}", if smooth { "s" } else { "a" });
+        if self.faces.contains_key(&key) {
+            return Some((key, metrics));
+        }
+        let mut tweak = FontTweak {
+            hinting: Some(true),
+            subpixel_binning: Some(true),
+            hinting_target: HintingTarget::Smooth(SmoothHinting {
+                light: true,
+                symmetric_rendering: smooth,
+                preserve_linear_metrics: true,
+            }),
+            ..FontTweak::default()
+        };
+        if let Some(w) = choice.wght {
+            tweak.coords = VariationCoords::new([(*b"wght", w)]);
+        }
+        let mut font = FontData::from_static(data);
+        font.index = choice.entry.index;
+        font.tweak = tweak;
+        self.faces.insert(key.clone(), Arc::new(font));
+        self.dirty = true;
+        Some((key, metrics))
+    }
+
+    fn resolve(&mut self, stack: &Arc<str>, weight: u16, ppem: f32) -> Option<Resolved> {
+        let ppem = ppem.round().clamp(1.0, 4096.0);
+        let cache_key = (stack.clone(), weight, ppem as u16);
+        if let Some(r) = self.resolved.get(&cache_key) {
+            return r.clone();
+        }
+        let catalog = Catalog::system();
+        let mut keys: Vec<String> = Vec::new();
+        let mut metrics = None;
+        for name in css::split_top(stack, ',') {
+            let Some(name) = faces::normalize(name) else {
+                continue;
+            };
+            if !catalog.has(&name) {
+                continue;
+            }
+            let cjk = faces::CJK_FAMILIES.contains(&name.as_str());
+            // The first family present is the primary font; after it only
+            // the Han fallback faces matter (every UI face covers Latin and
+            // Cyrillic).
+            if metrics.is_some() && !(cjk && self.cjk) {
+                continue;
+            }
+            let Some(choice) = catalog.pick(&name, weight, &mut |s| bytes(s)) else {
+                continue;
+            };
+            let Some((key, m)) = self.load(&choice, ppem) else {
+                continue;
+            };
+            metrics.get_or_insert(m);
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        // Off Windows, egui's own fonts close every family.
+        #[cfg(not(windows))]
+        {
+            let defaults = FontDefinitions::default();
+            for name in defaults
+                .families
+                .get(&FontFamily::Proportional)
+                .into_iter()
+                .flatten()
+            {
+                if metrics.is_none() {
+                    metrics = defaults
+                        .font_data
+                        .get(name)
+                        .and_then(|d| FaceMetrics::read(&d.font, d.index));
+                }
+                keys.push(format!("egui:{name}"));
+            }
+        }
+        let resolved = metrics.map(|metrics| {
+            let name = keys.join("|");
+            if !self.families.contains_key(&name) {
+                self.families.insert(name.clone(), keys);
+                self.dirty = true;
+            }
+            Resolved {
+                family: FontFamily::Name(name.into()),
+                metrics,
+            }
+        });
+        self.resolved.insert(cache_key, resolved.clone());
+        resolved
+    }
+
+    /// Points `Proportional` and [`SEMIBOLD`] at the UI stack's faces.
+    fn alias(&mut self) {
+        let ui: Arc<str> = Arc::from(UI_STACK);
+        for (weight, slot) in [(400, 0), (600, 1)] {
+            let keys = match self.resolve(&ui, weight, ALIAS_PPEM) {
+                Some(Resolved {
+                    family: FontFamily::Name(name),
+                    ..
+                }) => self.families.get(&*name).cloned().unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            if slot == 0 {
+                self.proportional = keys;
+            } else {
+                self.semibold = keys;
+            }
+        }
+    }
+
+    fn definitions(&self) -> FontDefinitions {
+        let defaults = FontDefinitions::default();
+        let mut defs = FontDefinitions::empty();
+        for (key, data) in &self.faces {
+            defs.font_data.insert(key.clone(), data.clone());
+        }
+        for (name, data) in &defaults.font_data {
+            defs.font_data.insert(format!("egui:{name}"), data.clone());
+        }
+        let egui_name = |k: &String| k.clone();
+        for (name, keys) in &self.families {
+            defs.families.insert(
+                FontFamily::Name(name.as_str().into()),
+                keys.iter().map(egui_name).collect(),
+            );
+        }
+        let mut proportional = self.proportional.clone();
+        if proportional.is_empty() {
+            proportional = defaults
+                .families
+                .get(&FontFamily::Proportional)
+                .into_iter()
+                .flatten()
+                .map(|n| format!("egui:{n}"))
+                .collect();
+        }
+        let semibold = if self.semibold.is_empty() {
+            proportional.clone()
+        } else {
+            self.semibold.clone()
+        };
+        defs.families
+            .insert(FontFamily::Name(SEMIBOLD.into()), semibold);
+        defs.families
+            .insert(FontFamily::Monospace, proportional.clone());
+        defs.families.insert(FontFamily::Proportional, proportional);
+        defs
+    }
+}
+
+/// Resolves a family stack at a weight, loading its faces; new faces are
+/// handed to egui for the next frame.
+fn resolve(ctx: &Context, stack: &Arc<str>, weight: u16, ppem: f32) -> Option<Resolved> {
+    let book = book(ctx);
+    let mut b = book.lock().ok()?;
+    let r = b.resolve(stack, weight, ppem);
+    if b.dirty {
+        b.dirty = false;
+        ctx.set_fonts(b.definitions());
+    }
+    r
+}
+
+/// Han text showed up: the CJK fallback faces join every family.
+fn need_cjk(ctx: &Context) {
+    let book = book(ctx);
+    let Ok(mut b) = book.lock() else {
+        return;
+    };
+    if b.cjk {
+        return;
+    }
+    b.cjk = true;
+    b.resolved.clear();
+    b.alias();
+    b.dirty = false;
+    ctx.set_fonts(b.definitions());
+    ctx.request_repaint();
+}
+
+/// Installs the faces of the UI stack at 400, 600 and 700 (what the first
+/// frame draws) and the text options. Call before the first frame: fonts set
+/// during a frame only apply from the next one. `cjk` loads the Han fallback
+/// faces up front (Chinese locale); otherwise they load on the first Han
+/// character.
+pub fn install(ctx: &Context, cjk: bool) {
+    let started = std::time::Instant::now();
+    let book = book(ctx);
+    if let Ok(mut b) = book.lock() {
+        b.cjk = cjk;
+        b.resolved.clear();
+        let ui: Arc<str> = Arc::from(UI_STACK);
+        // Every gasp behaviour of the UI sizes, so no size met later adds a
+        // family (new fonts rebuild the whole glyph atlas).
+        for weight in [400, 600, 700] {
+            for ppem in 6..=40 {
+                b.resolve(&ui, weight, ppem as f32);
+            }
+        }
+        b.alias();
+        b.dirty = false;
+        ctx.set_fonts(b.definitions());
+    }
+    let options = text_options();
+    ctx.all_styles_mut(|s| s.visuals.text_options = options);
+    crate::bench::mark_with(
+        "fonts",
+        &format!("\"ms\":{:.3}", started.elapsed().as_secs_f64() * 1000.0),
+    );
+}
+
+/// The egui family of the UI stack at `weight`, for code that lays text out
+/// with egui directly (the spike screen). [`install`] binds 400, 600 and 700.
+pub fn ui_family(ctx: &Context, weight: u16) -> FontFamily {
+    resolve(ctx, &Arc::from(UI_STACK), weight, ALIAS_PPEM)
+        .map_or(FontFamily::Proportional, |r| r.family)
+}
+
+/// Text options as measured against WebView2 (typography scenes, PSNR):
+///
+/// - hinting on: skrifa runs the faces' TrueType instructions like
+///   DirectWrite does (off: -3.5 dB, the monochrome target: -4.5 dB), light,
+///   with the vertical smoothing of each face's `gasp` table at the drawn
+///   size (+0.6 dB over one fixed choice);
+/// - sub-pixel binning on: Skia positions glyphs on quarter pixels too (off:
+///   -2.3 dB);
+/// - with the software renderer the atlas keeps raw coverage and the backend
+///   applies [`coverage_tables`]; glow gets the curve of white text.
+pub fn text_options() -> TextOptions {
+    TextOptions {
+        font_hinting: true,
+        subpixel_binning: true,
+        color_transfer_function: if cfg!(feature = "software") {
+            egui::epaint::FontColorTransferFunction::Off
+        } else {
+            egui::epaint::FontColorTransferFunction::Gamma(1.0 / gamma::CHROMIUM.gamma)
+        },
+        ..TextOptions::default()
+    }
+}
+
+/// The per-luminance-class coverage tables for the software backend
+/// (`EguiSoftwareRender::with_glyph_coverage`).
+pub fn coverage_tables() -> [[u8; 256]; gamma::CLASSES] {
+    gamma::CHROMIUM.tables()
+}
+
+/// Skia rounds glyph origins with `floor(v + 0.5)`: a baseline at x.5 device
+/// px goes down the page.
+fn snap(v: f32) -> f32 {
+    (v + 0.5).floor()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn segoe() -> FaceMetrics {
+        FaceMetrics {
+            units_per_em: 2048.0,
+            ascent: 2210.0,
+            descent: 514.0,
+            line_gap: 0.0,
+            gasp: Default::default(),
+            gasp_len: 0,
+        }
+    }
+
+    #[test]
+    fn line_boxes_match_the_probe() {
+        // From typography-100/probe.json: (size, line-height, baseline).
+        for (size, lh, baseline) in [
+            (8.0, LineHeight::Number(1.0), 7.0),
+            (9.0, LineHeight::Number(1.5), 10.0),
+            (9.0, LineHeight::Number(1.2), 9.0),
+            (9.0, LineHeight::Number(1.0), 8.0),
+            (10.0, LineHeight::Px(13.0), 10.0),
+            (11.0, LineHeight::Number(1.45), 12.0),
+            (12.0, LineHeight::Number(1.5), 14.0),
+            (12.0, LineHeight::Number(1.55), 14.0),
+            (12.5, LineHeight::Number(1.6), 15.0),
+            (14.0, LineHeight::Number(1.0), 12.0),
+            (16.0, LineHeight::Number(1.5), 18.0),
+        ] {
+            let lb = LineBox::new(&segoe(), size, lh);
+            assert_eq!(lb.baseline, baseline, "{size}px {lh:?}");
+        }
+        assert_eq!(
+            LineBox::new(&segoe(), 12.0, LineHeight::Normal).height,
+            16.0
+        );
+    }
+
+    #[test]
+    fn css_styles() {
+        let s = TextStyle::from_css(
+            "left: 3px; font-size: 9px; font-weight: 700; line-height: 1.2; letter-spacing: 0.08em; text-transform: uppercase; color: #7c7c88",
+        )
+        .unwrap();
+        assert_eq!(s.size, 9.0);
+        assert_eq!(s.weight, 700);
+        assert_eq!(s.line_height, LineHeight::Number(1.2));
+        assert!((s.letter_spacing - 0.72).abs() < 1e-6);
+        assert_eq!(s.transform, TextTransform::Uppercase);
+        assert_eq!(s.color, Color32::from_rgb(0x7c, 0x7c, 0x88));
+        assert_eq!(s.transformed("Startup"), "STARTUP");
+    }
+}

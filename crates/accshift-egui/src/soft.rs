@@ -365,7 +365,8 @@ impl ApplicationHandler<UserEvent> for Runner {
             state,
             info,
             shell,
-            render: EguiSoftwareRender::new(ColorFieldOrder::Bgra),
+            render: EguiSoftwareRender::new(ColorFieldOrder::Bgra)
+                .with_glyph_coverage(crate::ui::text::coverage_tables()),
             textures: Default::default(),
             actions: Vec::new(),
             full_present: true,

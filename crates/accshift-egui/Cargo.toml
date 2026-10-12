@@ -51,6 +51,9 @@ egui_extras = { version = "0.36", default-features = false, features = ["svg"] }
 # The same resvg egui_extras rasterizes with, for its options type.
 resvg = { version = "0.45", default-features = false }
 raw-window-handle = "0.6"
+# Face metrics (ascent, descent, line gap, weights) for the CSS line box: the
+# same skrifa epaint draws glyphs with.
+skrifa = "0.44"
 # Scene runner only (`--scene`): scene files in, PNG shots out. Neither is
 # touched on the normal startup path.
 serde_json = "1"
@@ -68,6 +71,7 @@ windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Graphics_Dwm",
   "Win32_Graphics_Gdi",
+  "Win32_System_Registry",
   "Win32_UI_Accessibility",
 ] }
 

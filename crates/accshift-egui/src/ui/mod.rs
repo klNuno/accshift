@@ -5,3 +5,4 @@
 pub mod anim;
 pub mod css;
 pub mod paint;
+pub mod text;

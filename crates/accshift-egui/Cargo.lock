@@ -151,6 +151,7 @@ dependencies = [
  "raw-window-handle",
  "resvg",
  "serde_json",
+ "skrifa",
  "softbuffer",
  "window-vibrancy",
  "windows-sys 0.61.2",

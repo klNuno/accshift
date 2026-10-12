@@ -48,7 +48,7 @@ impl Screen {
         match self {
             Screen::Blank => false,
             Screen::Main(app) => app.avatars_ready(),
-            Screen::Primitives(_) => true,
+            Screen::Primitives(p) => p.ready(),
         }
     }
 

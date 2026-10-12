@@ -7,13 +7,11 @@
 
 use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
-use std::sync::Arc;
 
 use egui::epaint::{RectShape, TextShape};
 use egui::{
-    pos2, vec2, Align2, Color32, ColorImage, CornerRadius, FontData, FontDefinitions, FontFamily,
-    FontId, Id, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, TextureHandle, TextureOptions, Ui,
-    Vec2,
+    pos2, vec2, Align2, Color32, ColorImage, CornerRadius, FontFamily, FontId, Id, Pos2, Rect,
+    Sense, Shape, Stroke, StrokeKind, TextureHandle, TextureOptions, Ui, Vec2,
 };
 
 use crate::avatars::{self, Decoded};
@@ -1015,41 +1013,14 @@ impl AccshiftApp {
 // --------------------------------------------------------------- helpers
 
 fn semibold() -> FontFamily {
-    FontFamily::Name("semibold".into())
+    FontFamily::Name(crate::ui::text::SEMIBOLD.into())
 }
 
-/// Segoe UI from the system, like the webview's `system-ui` fallback (Inter
-/// is not installed here, so the Tauri build renders Segoe UI too).
-/// The scene runner calls it before the first frame: a screen built
-/// mid-frame only gets its fonts one frame later.
+/// The faces WebView2 draws the UI with ([`crate::ui::text`]). The scene
+/// runner calls it before the first frame: fonts set mid-frame only apply one
+/// frame later.
 pub fn install_fonts(ctx: &egui::Context) {
-    let mut fonts = FontDefinitions::default();
-    let dir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
-    let read = |name: &str| std::fs::read(format!(r"{dir}\Fonts\{name}")).ok();
-    if let Some(bytes) = read("segoeui.ttf") {
-        fonts
-            .font_data
-            .insert("segoe".into(), Arc::new(FontData::from_owned(bytes)));
-        // On Windows egui ships no fonts of its own (see Cargo.toml): Segoe
-        // UI is then the whole proportional family and the monospace one.
-        for family in [FontFamily::Proportional, FontFamily::Monospace] {
-            let list = fonts.families.entry(family.clone()).or_default();
-            if family == FontFamily::Proportional || list.is_empty() {
-                list.insert(0, "segoe".into());
-            }
-        }
-    }
-    let mut semibold_family = Vec::new();
-    if let Some(bytes) = read("seguisb.ttf") {
-        fonts.font_data.insert(
-            "segoe-semibold".into(),
-            Arc::new(FontData::from_owned(bytes)),
-        );
-        semibold_family.push("segoe-semibold".to_string());
-    }
-    semibold_family.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
-    fonts.families.insert(semibold(), semibold_family);
-    ctx.set_fonts(fonts);
+    crate::ui::text::install(ctx, false);
 }
 
 fn button(ui: &Ui, id: Id, rect: Rect, label: &str) -> egui::Response {
