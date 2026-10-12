@@ -5,7 +5,7 @@
 //! - [`warnings`] holds `warnings.ts`, ban warnings.
 //! - [`context_menu`] holds `contextMenu.ts`.
 //! - [`cs2`] holds `cs2CardContent.ts` and the data half of `cs2Bridge.svelte.ts`.
-//! - [`friend_code`], [`settings_schema`]: their TS namesakes.
+//! - [`friend_code`] and [`settings_schema`] hold their TS namesakes.
 //! - here: `adapter.ts` mappings, `steamIdUtils.ts`, the toast wording.
 
 pub mod api;

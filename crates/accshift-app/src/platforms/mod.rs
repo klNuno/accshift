@@ -8,8 +8,8 @@
 //!   user's descriptors) and one [`adapter::PlatformAdapter`] per platform.
 //! - [`adapter::PlatformAdapter`] holds account shapes, switch, add flow, labels,
 //!   context menu entries, warnings and toast wording for one platform.
-//! - [`steam`], [`riot`], [`roblox`], [`generic`]: the per-platform pieces.
-//! - [`warnings`], [`card`], [`path_error`], [`icons`]: shared models.
+//! - [`steam`], [`riot`], [`roblox`] and [`generic`] hold the per-platform pieces.
+//! - [`warnings`], [`card`], [`path_error`] and [`icons`] hold shared models.
 //!
 //! Every user-facing string is a [`crate::text::Text`] (an i18n key plus
 //! parameters) resolved at draw time. Every backend call goes through

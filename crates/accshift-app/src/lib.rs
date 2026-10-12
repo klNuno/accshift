@@ -20,12 +20,16 @@ pub mod i18n;
 pub mod jobs;
 pub mod js;
 pub mod legacy_web_storage;
+pub mod menu;
 pub mod mock;
 pub mod personas;
+pub mod platforms;
 pub mod real;
 pub mod settings;
 pub mod storage;
 pub mod stores;
+pub mod text;
+pub mod time;
 pub mod types;
 
 pub use backend::{Backend, COMMANDS};
