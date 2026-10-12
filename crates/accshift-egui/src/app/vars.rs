@@ -76,6 +76,8 @@ pub struct Vars {
     pub motion_avatar_defer: f64,
     /// `--line-height` (unitless), the body's `line-height`.
     pub line_height: f32,
+    /// `--overlay-blur`, CSS px: the dialogs' `backdrop-filter: blur()`.
+    pub overlay_blur: f32,
 }
 
 /// `accshift_theme::Rgba` (channels 0 to 1) in the painter's colour type
@@ -148,6 +150,7 @@ impl Vars {
                 .number("--line-height")
                 .filter(|n| n.is_finite() && *n > 0.0)
                 .unwrap_or(1.5),
+            overlay_blur: theme.length_px("--overlay-blur").unwrap_or(4.0),
         }
     }
 

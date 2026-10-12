@@ -3,6 +3,7 @@
 //! that describe them ([`css`]) and CSS animation timing ([`anim`]).
 
 pub mod anim;
+pub mod backdrop_filter;
 pub mod components;
 pub mod css;
 pub mod paint;

@@ -57,6 +57,7 @@ use serde_json::Value;
 use crate::screens::workspace::Workspace;
 use crate::ui::anim::{self, Motion};
 use crate::ui::components::context_menu::{self, MenuEvent, SubmenuLoad};
+use crate::ui::components::dialog::DialogEvent;
 use crate::ui::components::toast::ToastEvent;
 use accounts::Accounts;
 use clock::Clock;
@@ -113,6 +114,10 @@ pub enum Action {
     Menu(u64, MenuEvent),
     /// `.content` scrolled.
     ContentScrolled,
+    /// The input dialog mounted as this number reported something.
+    InputDialog(u64, DialogEvent),
+    /// The confirm dialog mounted as this number reported something.
+    ConfirmDialog(u64, DialogEvent),
 }
 
 /// What a right click opened the menu on.
@@ -279,6 +284,11 @@ pub struct AppModel {
     /// The open menu's submenu loaders and their results.
     submenus: Vec<(SubmenuLoader, SubmenuLoad)>,
     submenu_jobs: Vec<(SubmenuLoader, SubmenuJob)>,
+    /// The mount number of the open input and confirm dialogs: a dialog
+    /// that opens mounts fresh (animations, focus).
+    input_mount: Option<u64>,
+    confirm_mount: Option<u64>,
+    mounts: u64,
     /// Chromium's keyboard modality: a key press sets it, a press that
     /// focuses an element clears it. Focus rings follow it (`:focus-visible`).
     focus_visible: bool,
@@ -358,6 +368,9 @@ impl AppModel {
             menu_open_id: 0,
             submenus: Vec::new(),
             submenu_jobs: Vec::new(),
+            input_mount: None,
+            confirm_mount: None,
+            mounts: 0,
             focus_visible: false,
             last_time: 0.0,
             os_reduced_motion: false,
@@ -396,6 +409,11 @@ impl AppModel {
     /// The context menu and dialogs.
     pub fn dialogs(&self) -> &AppDialogs {
         &self.dialogs
+    }
+
+    /// The mount numbers of the open input and confirm dialogs.
+    pub fn dialog_mounts(&self) -> (Option<u64>, Option<u64>) {
+        (self.input_mount, self.confirm_mount)
     }
 
     /// Where the maximize button was last drawn (Snap Layouts hook).
@@ -624,6 +642,7 @@ impl AppModel {
         if let Some(deadline) = self.toasts.next_deadline() {
             ctx.request_repaint_after(deadline.saturating_duration_since(instant));
         }
+        self.mount_dialogs();
         let actions = shell::draw(self, ui, now);
         self.apply(&ctx, actions, now);
         // Boot marks for the startup bench.
@@ -648,6 +667,7 @@ impl AppModel {
         for action in actions {
             self.apply_one(ctx, action);
         }
+        self.mount_dialogs();
         if let Some(b) = self.booted.as_mut() {
             let key = b.nav.panel_key();
             if key != b.panel.0 {
@@ -727,6 +747,16 @@ impl AppModel {
             Action::ContentScrolled => {
                 if self.dialogs.context_menu().is_some() {
                     self.close_context_menu(ctx);
+                }
+            }
+            Action::InputDialog(mount, event) => {
+                if self.input_mount == Some(mount) {
+                    self.apply_input_dialog(ctx, event);
+                }
+            }
+            Action::ConfirmDialog(mount, event) => {
+                if self.confirm_mount == Some(mount) {
+                    self.apply_confirm_dialog(ctx, event);
                 }
             }
             Action::OpenSettings => self.toggle_settings_panel(),
@@ -829,6 +859,74 @@ impl AppModel {
                 self.apply_effects(ctx, effects);
             }
         }
+    }
+
+    /// Numbers the dialogs that just opened, forgets the closed ones.
+    fn mount_dialogs(&mut self) {
+        let mounts = &mut self.mounts;
+        let mut mount = |open: bool, slot: &mut Option<u64>| match (open, *slot) {
+            (true, None) => {
+                *mounts += 1;
+                *slot = Some(*mounts);
+            }
+            (false, Some(_)) => *slot = None,
+            _ => {}
+        };
+        mount(self.dialogs.input_dialog().is_some(), &mut self.input_mount);
+        mount(
+            self.dialogs.confirm_dialog().is_some(),
+            &mut self.confirm_mount,
+        );
+    }
+
+    fn apply_input_dialog(&mut self, ctx: &Context, event: DialogEvent) {
+        match event {
+            DialogEvent::Input(value) => {
+                if let Some(dialog) = self.dialogs.input_dialog_mut() {
+                    dialog.set_value(value);
+                }
+            }
+            DialogEvent::Cancel => self.dialogs.close_input_dialog(),
+            DialogEvent::Submit | DialogEvent::Confirm => {
+                let Some(b) = self.booted.as_mut() else {
+                    return;
+                };
+                let folder = b
+                    .accounts
+                    .navigation
+                    .current_folder_id()
+                    .map(str::to_string);
+                let effects = self.dialogs.submit_input(&mut DialogContext {
+                    stores: &mut b.stores,
+                    active_tab: &b.nav.active_tab,
+                    current_folder_id: folder.as_deref(),
+                });
+                self.apply_effects(ctx, effects);
+            }
+        }
+    }
+
+    fn apply_confirm_dialog(&mut self, ctx: &Context, event: DialogEvent) {
+        let effects = match event {
+            DialogEvent::Cancel => self.dialogs.close_confirm_dialog(),
+            DialogEvent::Confirm | DialogEvent::Submit => {
+                let Some(b) = self.booted.as_mut() else {
+                    return;
+                };
+                let folder = b
+                    .accounts
+                    .navigation
+                    .current_folder_id()
+                    .map(str::to_string);
+                self.dialogs.confirm_current(&mut DialogContext {
+                    stores: &mut b.stores,
+                    active_tab: &b.nav.active_tab,
+                    current_folder_id: folder.as_deref(),
+                })
+            }
+            DialogEvent::Input(_) => return,
+        };
+        self.apply_effects(ctx, effects);
     }
 
     /// `item.submenuLoader()` on the job pool, grouped like the menu.

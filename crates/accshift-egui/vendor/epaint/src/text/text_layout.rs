@@ -662,7 +662,9 @@ fn line_break(
 
         let potential_row_width = paragraph.glyphs[i].max_x() - row_start_x;
 
-        if wrap_width < potential_row_width {
+        // accshift: spaces at the end of a line hang past the wrap width, as
+        // in CSS (`white-space: normal`): only a visible glyph breaks.
+        if wrap_width < potential_row_width && !paragraph.glyphs[i].chr.is_whitespace() {
             // Row break:
 
             if first_row_indentation > 0.0

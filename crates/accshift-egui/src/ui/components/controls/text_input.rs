@@ -1,14 +1,19 @@
-//! `.text-input`: the panel's single-line field, as text, number
-//! (`.number-input`) or password. `border: 1px solid var(--border)`,
-//! `border-radius: 8px`, `background: var(--bg-input)`, 12 px `--fg`,
-//! `padding: 9px 10px`, no outline; focus tints the border to
-//! `color-mix(--fg-muted 55%, --border)`.
+//! A single-line field, as text, number (`.number-input`) or password, in
+//! one of two looks ([`FieldStyle`]):
+//!
+//! - `.text-input` of the panel: `border: 1px solid var(--border)`,
+//!   `border-radius: 8px`, `background: var(--bg-input)`, 12 px `--fg`,
+//!   `padding: 9px 10px`, no outline; focus tints the border to
+//!   `color-mix(--fg-muted 55%, --border)`;
+//! - `.input` of `InputDialog.svelte`: `--border-width` in `--border`,
+//!   `border-radius: 4px`, `background: var(--bg-solid)`, 13 px,
+//!   `padding: 8px 10px`; focus turns the border `--bg-elevated`.
 //!
 //! Editing keeps the caret at the end of the value: typing appends,
 //! Backspace removes the last character. Enter commits, focus loss blurs.
 
 use egui::accesskit::Role;
-use egui::{pos2, vec2, Event, Id, Key, Rect, Sense, Ui, WidgetInfo};
+use egui::{pos2, vec2, Event, Id, Key, Rect, Sense, Ui, Vec2, WidgetInfo};
 
 use super::{take_focus, T120};
 use crate::app::vars::Vars;
@@ -18,18 +23,87 @@ use crate::ui::paint::{Border, BoxStyle, Corners};
 use crate::ui::snap;
 use crate::ui::text::{self, LineHeight, TextStyle};
 
-/// The field's border-box height: an 18 px line, 9 px padding, a 1 px
-/// border laid out floored to device pixels.
+/// One look of the field.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FieldStyle {
+    /// Size, weight and line height; the colour is `--fg`.
+    pub font: TextStyle,
+    /// The line box height, CSS px.
+    pub line: f32,
+    /// `padding` left and right, top and bottom.
+    pub padding: Vec2,
+    /// `border-width`, CSS px, laid out floored to device pixels.
+    pub border: f32,
+    pub radius: f32,
+    pub background: Rgba,
+    pub border_color: Rgba,
+    pub border_focus: Rgba,
+    /// The caret's height, CSS px, centred on the line box.
+    pub caret_height: f32,
+    /// The caret is 1 CSS px wide, rounded to device pixels; otherwise one
+    /// device pixel at every scale.
+    pub caret_scaled: bool,
+}
+
+impl FieldStyle {
+    /// The border-box height: line, padding and border.
+    pub fn height(&self, ppp: f32) -> f32 {
+        self.line + 2.0 * self.padding.y + 2.0 * snap::border_width(self.border, ppp)
+    }
+
+    /// Where the text line goes inside `rect`.
+    fn line_rect(&self, rect: Rect, ppp: f32) -> Rect {
+        let b = snap::border_width(self.border, ppp);
+        Rect::from_min_max(
+            pos2(
+                rect.left() + b + self.padding.x,
+                rect.top() + b + self.padding.y,
+            ),
+            pos2(
+                rect.right() - b - self.padding.x,
+                rect.top() + b + self.padding.y + self.line,
+            ),
+        )
+    }
+}
+
+/// `.text-input` of the settings panel.
+pub fn settings_style(v: &Vars) -> FieldStyle {
+    FieldStyle {
+        font: TextStyle::new(12.0, 400).line_height(LineHeight::Px(18.0)),
+        line: 18.0,
+        padding: vec2(10.0, 9.0),
+        border: 1.0,
+        radius: 8.0,
+        background: v.bg_input,
+        border_color: v.border,
+        border_focus: v.fg_muted.mix(0.55, v.border),
+        caret_height: 14.0,
+        caret_scaled: false,
+    }
+}
+
+/// `.input` of `InputDialog.svelte` (caret measured on WebView2: 17 px at
+/// 1x, 26 device px at 1.5x).
+pub fn dialog_style(v: &Vars) -> FieldStyle {
+    FieldStyle {
+        font: TextStyle::new(13.0, 400).line_height(LineHeight::Px(19.5)),
+        line: 19.5,
+        padding: vec2(10.0, 8.0),
+        border: v.border_px(),
+        radius: 4.0,
+        background: v.bg_solid,
+        border_color: v.border,
+        border_focus: v.bg_elevated,
+        caret_height: 17.0,
+        caret_scaled: true,
+    }
+}
+
+/// The settings field's border-box height: an 18 px line, 9 px padding, a
+/// 1 px border laid out floored to device pixels.
 pub fn height(ppp: f32) -> f32 {
     36.0 + 2.0 * snap::border_width(1.0, ppp)
-}
-/// Border plus left padding, the border laid out floored to device pixels.
-fn pad_x(ppp: f32) -> f32 {
-    10.0 + snap::border_width(1.0, ppp)
-}
-/// Border plus top padding.
-fn pad_y(ppp: f32) -> f32 {
-    9.0 + snap::border_width(1.0, ppp)
 }
 
 /// Chromium's spin button of a focused or hovered `type="number"` field:
@@ -82,6 +156,7 @@ pub enum InputKind {
 }
 
 pub struct TextInputProps<'a> {
+    pub style: &'a FieldStyle,
     pub kind: InputKind,
     pub placeholder: &'a str,
     /// The accessible name (`<label>` or `aria-label`).
@@ -106,13 +181,6 @@ pub struct TextInputEvents {
     pub focused: bool,
 }
 
-fn style(v: &Vars) -> TextStyle {
-    TextStyle::new(12.0, 400)
-        .line_height(LineHeight::Px(18.0))
-        .nowrap(false)
-        .color(v.fg.to_color32())
-}
-
 fn accepts(kind: InputKind, c: char) -> bool {
     match kind {
         InputKind::Number => c.is_ascii_digit() || matches!(c, '-' | '+' | '.' | 'e' | 'E'),
@@ -131,6 +199,8 @@ pub fn text_input(
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
     let v = props.vars;
+    let st = props.style;
+    let font = st.font.clone().nowrap(false).color(v.fg.to_color32());
     let response = ui.interact(
         rect,
         id,
@@ -225,47 +295,45 @@ pub fn text_input(
     });
 
     let border = if focused {
-        v.fg_muted.mix(0.55, v.border)
+        st.border_focus
     } else {
-        v.border
+        st.border_color
     };
     let border = anim::transition(&ctx, id.with("border"), border, &T120);
     let boxed = snap::rect(rect, ppp);
     BoxStyle {
-        background: v.bg_input,
-        radius: Corners::all(8.0),
-        border: Border::all(snap::border_width(1.0, ppp), border),
+        background: st.background,
+        radius: Corners::all(st.radius),
+        border: Border::all(snap::border_width(st.border, ppp), border),
         ..BoxStyle::default()
     }
     .paint(ui.painter(), boxed);
-    let text_rect = Rect::from_min_max(
-        pos2(rect.left() + pad_x(ppp), rect.top() + pad_y(ppp)),
-        pos2(rect.right() - pad_x(ppp), rect.top() + pad_y(ppp) + 18.0),
-    );
+    let text_rect = st.line_rect(rect, ppp);
     if props.kind == InputKind::Number && props.enabled && (focused || response.hovered()) {
         paint_spin_button(ui.painter(), text_rect, props.dark);
     }
     let painter = ui
         .painter()
         .with_clip_rect(text_rect.intersect(ui.clip_rect()));
-    let caret_x = if shown.is_empty() {
+    // The text's width: the caret goes at its end.
+    let text_w = if shown.is_empty() {
         if !props.placeholder.is_empty() {
-            let placeholder = style(v).color(v.fg_subtle.mix(0.55, Rgba::TRANSPARENT).to_color32());
+            let placeholder = font
+                .clone()
+                .color(v.fg_subtle.mix(0.55, Rgba::TRANSPARENT).to_color32());
             text::paint(&painter, text_rect, props.placeholder, &placeholder);
         }
-        text_rect.left()
+        0.0
     } else {
-        text::paint(&painter, text_rect, &shown, &style(v))
-            .map_or(text_rect.left(), |l| text_rect.left() + l.width)
+        text::paint(&painter, text_rect, &shown, &font).map_or(0.0, |l| l.width)
     };
     if focused {
         let now = ui.input(|i| i.time);
         let since = now - ctx.data(|d| d.get_temp::<f64>(last_edit).unwrap_or(now));
         let phase = (since / BLINK).floor() as i64;
         if phase % 2 == 0 {
-            let x = snap::coord(caret_x, ppp);
             ui.painter().rect_filled(
-                Rect::from_min_size(pos2(x, text_rect.top() + 2.0), vec2(1.0 / ppp, 14.0)),
+                caret_rect(st, text_rect, text_w, ppp),
                 0.0,
                 v.fg.to_color32(),
             );
@@ -274,4 +342,22 @@ pub fn text_input(
         ctx.request_repaint_after(std::time::Duration::from_secs_f64(next.max(0.01)));
     }
     events
+}
+
+/// The caret after `text_w` (points) of text in the line box `line`:
+/// `caret_height` rounded to device pixels and centred; its left edge is
+/// the text's end in `LayoutUnit`s (the width truncated to 1/64 device px)
+/// floored to the device grid (measured after typed text at 1x and 1.5x).
+fn caret_rect(st: &FieldStyle, line: Rect, text_w: f32, ppp: f32) -> Rect {
+    let h = snap::round_device(st.caret_height * ppp);
+    let top = (snap::layout_unit(line.top() * ppp) + (snap::layout_unit(st.line * ppp) - h) / 2.0)
+        .floor();
+    let w = if st.caret_scaled {
+        snap::round_device(ppp).max(1.0)
+    } else {
+        1.0
+    };
+    let end = snap::layout_unit(line.left() * ppp) + (text_w * ppp * 64.0).floor() / 64.0;
+    let left = end.floor();
+    Rect::from_min_size(pos2(left, top) / ppp, vec2(w, h) / ppp)
 }

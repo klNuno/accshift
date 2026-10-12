@@ -25,6 +25,7 @@ use egui::{Color32, Mesh, Pos2, Vec2, vec2};
 #[cfg(feature = "raster_stats")]
 use crate::stats::RasterStats;
 use crate::{
+    backdrop::BackdropOp,
     color::{AvailableImpl, SelectedImpl, swizzle_rgba_bgra},
     egui_texture::EguiTexture,
     glyph_coverage::GlyphAtlas,
@@ -32,6 +33,7 @@ use crate::{
     render::{draw_egui_mesh, egui_orient2df},
 };
 
+pub mod backdrop;
 pub(crate) mod color;
 pub(crate) mod egui_texture;
 pub mod glyph_coverage;
@@ -90,8 +92,30 @@ pub struct EguiSoftwareRender {
     /// Per-colour coverage copies of the font atlas, when the caller gave
     /// tables (`with_glyph_coverage`).
     glyph_atlas: Option<GlyphAtlas>,
+    /// Reads backdrop operations out of paint callbacks (`with_backdrop`).
+    backdrop_classifier: Option<BackdropClassifier>,
+    backdrop: Backdrop,
     #[cfg(feature = "raster_stats")]
     pub stats: RasterStats,
+}
+
+/// See [`EguiSoftwareRender::with_backdrop`].
+pub type BackdropClassifier =
+    alloc::boxed::Box<dyn Fn(&egui::PaintCallback) -> Option<BackdropOp> + Send + Sync>;
+
+/// The backdrop layer of the current frame, and what lets the next one reuse
+/// its blur.
+#[derive(Default)]
+struct Backdrop {
+    /// This frame has a layer: `out` holds the frame with it landed.
+    active: bool,
+    /// The buffer holds a layered frame: the next copy has to be full.
+    shown: bool,
+    force_full: bool,
+    out: Vec<[u8; 4]>,
+    blurred: Vec<[u8; 4]>,
+    /// Size, sigma bits and root of `blurred`.
+    key: Option<(usize, usize, u32, Option<usize>)>,
 }
 
 impl EguiSoftwareRender {
@@ -114,9 +138,19 @@ impl EguiSoftwareRender {
             cacheing_enabled: true,
             simd_impl: Default::default(),
             glyph_atlas: None,
+            backdrop_classifier: None,
+            backdrop: Backdrop::default(),
             #[cfg(feature = "raster_stats")]
             stats: Default::default(),
         }
+    }
+
+    /// Paint callbacks the classifier maps to a [`BackdropOp`] draw
+    /// `backdrop-filter: blur()` layers (see [`backdrop`]). Without it, or
+    /// with the cache off, callbacks are skipped.
+    pub fn with_backdrop(mut self, classifier: BackdropClassifier) -> Self {
+        self.backdrop_classifier = Some(classifier);
+        self
     }
 
     /// Glyph coverage goes through `tables[class]`, the class being Skia's
@@ -251,6 +285,27 @@ impl EguiSoftwareRender {
         self.set_textures(textures_delta);
         self.ensure_glyph_classes(paint_jobs);
 
+        // A backdrop layer splits the frame: what comes before it goes
+        // through the cache as usual, the layer and what follows are drawn
+        // over a copy.
+        let ops: Vec<(usize, BackdropOp)> = match &self.backdrop_classifier {
+            Some(classify) => paint_jobs
+                .iter()
+                .enumerate()
+                .filter_map(|(i, job)| match &job.primitive {
+                    egui::epaint::Primitive::Callback(cb) => classify(cb).map(|op| (i, op)),
+                    egui::epaint::Primitive::Mesh(_) => None,
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        let begin = ops
+            .iter()
+            .find_map(|&(i, op)| matches!(op, BackdropOp::Begin { .. }).then_some((i, op)));
+        let base_end = begin.map_or(paint_jobs.len(), |(i, _)| i);
+        let paint_jobs_all = paint_jobs;
+        let paint_jobs = &paint_jobs_all[..base_end];
+
         self.render_prims_to_cache(paint_jobs, pixels_per_point);
 
         self.update_dirty_tiles();
@@ -272,7 +327,99 @@ impl EguiSoftwareRender {
             self.update_canvas_from_cached();
         }
 
+        let was_shown = self.backdrop.shown;
+        self.backdrop.active = false;
+        if let Some((k, BackdropOp::Begin { sigma, opacity })) = begin {
+            let end = ops
+                .iter()
+                .find_map(|&(i, op)| (i > k && op == BackdropOp::End).then_some(i))
+                .unwrap_or(paint_jobs_all.len());
+            let root = ops
+                .iter()
+                .filter(|&&(i, op)| i < k && op == BackdropOp::Root)
+                .map(|&(i, _)| i)
+                .next_back();
+            self.compose_backdrop(
+                paint_jobs_all,
+                [root.map_or(0, |r| r + 1), k, end],
+                root,
+                sigma,
+                opacity,
+                pixels_per_point,
+                reinit_canvas,
+            );
+            self.backdrop.active = true;
+        }
+        self.backdrop.force_full = was_shown && !self.backdrop.active;
+        self.backdrop.shown = self.backdrop.active;
+
         self.free_textures(textures_delta);
+    }
+
+    /// The layer of `paint_jobs[k]` (a `Begin`): the backdrop root's pixels
+    /// (cached primitives after `root`, or the whole canvas) blurred, the
+    /// layer's own jobs drawn into it, landed on a copy of the canvas, then
+    /// the jobs after `end` drawn on top.
+    #[allow(clippy::too_many_arguments)]
+    fn compose_backdrop(
+        &mut self,
+        paint_jobs: &[egui::ClippedPrimitive],
+        [_, k, end]: [usize; 3],
+        root: Option<usize>,
+        sigma: f32,
+        opacity: f32,
+        pixels_per_point: f32,
+        canvas_changed: bool,
+    ) {
+        let (width, height) = (self.canvas.width, self.canvas.height);
+        let key = (width, height, sigma.to_bits(), root);
+        if canvas_changed || self.backdrop.key != Some(key) {
+            self.backdrop.blurred = match root {
+                Some(r) => {
+                    let source = self.composite_after(r);
+                    backdrop::blur(&source, width, height, sigma)
+                }
+                None => backdrop::blur(&self.canvas.data, width, height, sigma),
+            };
+            self.backdrop.key = Some(key);
+        }
+        let mut layer = self.backdrop.blurred.clone();
+        let layer_jobs = paint_jobs.get(k + 1..end).unwrap_or(&[]);
+        self.draw_jobs_direct(
+            &mut BufferMutRef::new(&mut layer, width, height),
+            layer_jobs,
+            pixels_per_point,
+        );
+        let mut out = core::mem::take(&mut self.backdrop.out);
+        out.clear();
+        out.extend_from_slice(&self.canvas.data);
+        backdrop::land(&mut out, &layer, opacity);
+        let after = paint_jobs.get(end + 1..).unwrap_or(&[]);
+        self.draw_jobs_direct(
+            &mut BufferMutRef::new(&mut out, width, height),
+            after,
+            pixels_per_point,
+        );
+        self.backdrop.out = out;
+    }
+
+    /// The cached primitives painted after `after`, over transparent.
+    fn composite_after(&self, after: usize) -> Vec<[u8; 4]> {
+        let mut sorted: Vec<&CachedPrimitive> = self
+            .cached_primitives
+            .values()
+            .filter(|p| p.z_order > after)
+            .collect();
+        sorted.sort_unstable_by_key(|p| p.z_order);
+        let (width, height) = (self.canvas.width, self.canvas.height);
+        let mut data = vec![[0u8; 4]; width * height];
+        let mut buffer = BufferMutRef::new(&mut data, width, height);
+        for ty in 0..self.tiles_dim[1] {
+            for tx in 0..self.tiles_dim[0] {
+                update_canvas_tile(self.simd_impl, &sorted, &mut buffer, tx, ty, height, 0);
+            }
+        }
+        data
     }
 
     /// Draw canvas alpha over given buffer.
@@ -281,6 +428,15 @@ impl EguiSoftwareRender {
     pub fn blit_canvas_to_buffer(&mut self, buffer: &mut BufferMutRef) {
         #[cfg(feature = "raster_stats")]
         let start = std::time::Instant::now();
+
+        if self.backdrop.active {
+            assert_eq!(buffer.data.len(), self.backdrop.out.len());
+            let out = &self.backdrop.out;
+            dispatch_simd_impl!(self.simd_impl, |simd_impl| {
+                simd_impl.egui_blend_u8_slice(out, buffer.data)
+            });
+            return;
+        }
 
         // Simple tile-less version
         // buffer.data.iter_mut().zip(self.canvas.iter()).for_each(|(pixel, src)| {
@@ -392,7 +548,11 @@ impl EguiSoftwareRender {
         let height = self.canvas.height;
         assert_eq!(buffer.data.len(), width * height);
         assert_eq!(self.canvas.data.len(), width * height);
-        if full {
+        if self.backdrop.active {
+            buffer.data.copy_from_slice(&self.backdrop.out);
+            return vec![[0, 0, width, height]];
+        }
+        if full || self.backdrop.force_full {
             buffer.data.copy_from_slice(&self.canvas.data);
             return vec![[0, 0, width, height]];
         }
@@ -468,6 +628,23 @@ impl EguiSoftwareRender {
         #[cfg(feature = "raster_stats")]
         let start = std::time::Instant::now();
 
+        self.draw_jobs_direct(direct_draw_buffer, paint_jobs, pixels_per_point);
+
+        #[cfg(feature = "raster_stats")]
+        {
+            self.stats.render_direct = start.elapsed().as_secs_f32();
+        }
+        self.free_textures(textures_delta);
+    }
+
+    /// Draws `paint_jobs` straight into `direct_draw_buffer`, callbacks
+    /// skipped.
+    fn draw_jobs_direct(
+        &mut self,
+        direct_draw_buffer: &mut BufferMutRef,
+        paint_jobs: &[egui::ClippedPrimitive],
+        pixels_per_point: f32,
+    ) {
         for egui::ClippedPrimitive {
             clip_rect,
             primitive,
@@ -532,12 +709,6 @@ impl EguiSoftwareRender {
                 );
             }
         }
-
-        #[cfg(feature = "raster_stats")]
-        {
-            self.stats.render_direct = start.elapsed().as_secs_f32();
-        }
-        self.free_textures(textures_delta);
     }
 
     fn prepare_px_mesh(

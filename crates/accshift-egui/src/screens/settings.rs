@@ -1313,7 +1313,9 @@ fn paint_item(ui: &mut Ui, r: Rect, id: Id, c: &Ctx, item: &Item) -> Vec<Setting
                         InputField::Pin => c.panel.pin_code_input.clone(),
                         InputField::CurrentPin => c.panel.current_pin_input.clone(),
                     };
+                    let style = text_input::settings_style(v);
                     let props = TextInputProps {
+                        style: &style,
                         kind: *kind,
                         placeholder,
                         label,

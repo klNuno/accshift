@@ -365,10 +365,10 @@ pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Optio
     } else {
         f32::INFINITY
     };
-    let job = |lead: f32| {
+    let job_for = |text: &str, lead: f32| {
         let mut job = LayoutJob::default();
         job.append(
-            &text,
+            text,
             lead,
             TextFormat {
                 font_id: FontId::new(style.size, resolved.family.clone()),
@@ -386,6 +386,7 @@ pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Optio
         };
         job
     };
+    let job = |lead: f32| job_for(&text, lead);
     let offset = |w: f32| match style.align {
         TextAlign::Left => 0.0,
         TextAlign::Center if avail.is_finite() => ((avail - w) / 2.0 * 64.0).floor() / 64.0,
@@ -394,6 +395,21 @@ pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Optio
     };
 
     let mut galley = ctx.fonts_mut(|f| f.layout_job(job(0.0)));
+    // A wrapped line starts on the device grid in Blink, but egui keeps the
+    // sub-pixel phase its glyphs had in the paragraph: each line after the
+    // first is laid out again on its own.
+    if galley.rows.len() > 1 {
+        let g = Arc::make_mut(&mut galley);
+        for placed in g.rows.iter_mut().skip(1) {
+            let line: String = placed.row.glyphs.iter().map(|glyph| glyph.chr).collect();
+            let mut single = job_for(&line, 0.0);
+            single.wrap = TextWrapping::no_max_width();
+            let alone = ctx.fonts_mut(|f| f.layout_job(single));
+            if let Some(first) = alone.rows.first() {
+                placed.row = first.row.clone();
+            }
+        }
+    }
     let widths: Vec<f32> = galley
         .rows
         .iter()

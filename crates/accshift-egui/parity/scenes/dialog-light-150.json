@@ -1,0 +1,119 @@
+{
+  "id": "dialog-light-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "light",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "rclick": [430, 400]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [474, 416]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "input-empty"
+    },
+    {
+      "dom": "input-empty",
+      "select": ".overlay, .overlay *"
+    },
+    {
+      "text": "Ranked"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "input-typed"
+    },
+    {
+      "dom": "input-typed",
+      "select": ".overlay, .overlay *"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "rclick": [95, 152]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [131, 173]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "rename"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "rclick": [205, 152]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [240, 377]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "confirm"
+    },
+    {
+      "dom": "confirm",
+      "select": ".overlay, .overlay *"
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "confirm-tab"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "closed"
+    }
+  ]
+}

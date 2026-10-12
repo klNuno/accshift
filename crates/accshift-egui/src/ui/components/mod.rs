@@ -17,6 +17,7 @@ pub mod back_card;
 pub mod breadcrumb;
 pub mod context_menu;
 pub mod controls;
+pub mod dialog;
 pub mod focus;
 pub mod folder_card;
 pub mod icon;

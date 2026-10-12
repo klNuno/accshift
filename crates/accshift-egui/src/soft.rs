@@ -295,6 +295,19 @@ fn os_wants_full_paint(_window: &Window) -> bool {
 }
 
 /// The frame as egui's glow painter returns it: premultiplied RGBA.
+/// The renderer's view of [`crate::ui::backdrop_filter::Mark`].
+fn backdrop_op(
+    callback: &egui::PaintCallback,
+) -> Option<egui_software_backend::backdrop::BackdropOp> {
+    use crate::ui::backdrop_filter::Mark;
+    use egui_software_backend::backdrop::BackdropOp;
+    Mark::of(callback).map(|mark| match mark {
+        Mark::Root => BackdropOp::Root,
+        Mark::Begin { sigma, opacity } => BackdropOp::Begin { sigma, opacity },
+        Mark::End => BackdropOp::End,
+    })
+}
+
 fn read_pixels(bgra: &[[u8; 4]], size: [usize; 2]) -> Arc<egui::ColorImage> {
     let pixels = bgra
         .iter()
@@ -366,7 +379,8 @@ impl ApplicationHandler<UserEvent> for Runner {
             info,
             shell,
             render: EguiSoftwareRender::new(ColorFieldOrder::Bgra)
-                .with_glyph_coverage(crate::ui::text::coverage_tables()),
+                .with_glyph_coverage(crate::ui::text::coverage_tables())
+                .with_backdrop(Box::new(backdrop_op)),
             textures: Default::default(),
             actions: Vec::new(),
             full_present: true,

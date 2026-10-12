@@ -1843,6 +1843,116 @@ mod scene_tests {
         assert!(!open(&run));
     }
 
+    /// The input and confirm dialogs of the `dialog-*` scenes, driven like a
+    /// user: Escape and the overlay cancel, Tab cycles inside, Enter submits
+    /// the new folder, and the delete confirm opens on Cancel.
+    #[test]
+    fn dialogs_cancel_cycle_and_submit() {
+        use crate::ui::components::dialog;
+        use egui::Id;
+
+        let app = |run: &Run| match &run.screen {
+            Screen::App(app) => (
+                app.dialogs().input_dialog().map(|d| d.value().to_string()),
+                app.dialogs().confirm_dialog().is_some(),
+                app.dialog_mounts(),
+            ),
+            _ => panic!("not the app"),
+        };
+        let focused = |run: &Run| run.ctx.memory(|m| m.focused());
+        let labels = |run: &Run| -> Vec<String> { run.boxes().into_iter().map(|b| b.0).collect() };
+        let tab = |run: &mut Run, shift: bool| {
+            for pressed in [true, false] {
+                run.send(Event::Key {
+                    key: Key::Tab,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers: if shift {
+                        Modifiers::SHIFT
+                    } else {
+                        Modifiers::NONE
+                    },
+                });
+                run.frame();
+            }
+        };
+        // The scene's "New folder": the empty grid's menu, its only entry.
+        let new_folder = |run: &mut Run| {
+            run.rclick(pos2(430.0, 400.0));
+            run.click(pos2(474.0, 416.0));
+        };
+
+        let mut run = Run::new("dialog-light-100", 1.0);
+        run.settle();
+        new_folder(&mut run);
+        let (value, _, (Some(mount), _)) = app(&run) else {
+            panic!("no input dialog")
+        };
+        assert_eq!(value.as_deref(), Some(""));
+        let ids = Id::new(dialog::INPUT_ID).with(mount);
+        assert_eq!(focused(&run), Some(ids.with("input")));
+        run.send(Event::Text("Ranked".into()));
+        run.frame();
+        assert_eq!(app(&run).0.as_deref(), Some("Ranked"));
+        // The field, Cancel, OK, and around.
+        tab(&mut run, false);
+        assert_eq!(focused(&run), Some(ids.with("cancel")));
+        tab(&mut run, false);
+        assert_eq!(focused(&run), Some(ids.with("ok")));
+        tab(&mut run, false);
+        assert_eq!(focused(&run), Some(ids.with("input")));
+        tab(&mut run, true);
+        assert_eq!(focused(&run), Some(ids.with("ok")));
+        run.key(Key::Escape);
+        assert_eq!(app(&run).0, None);
+        assert!(!labels(&run).iter().any(|l| l == "Ranked"));
+
+        // A press on the overlay, outside the 290..570 x 146..294 box.
+        new_folder(&mut run);
+        assert!(app(&run).0.is_some());
+        run.click(pos2(40.0, 120.0));
+        assert_eq!(app(&run).0, None);
+
+        new_folder(&mut run);
+        run.send(Event::Text("Ranked".into()));
+        run.frame();
+        run.key(Key::Enter);
+        run.settle();
+        assert_eq!(app(&run).0, None);
+        assert!(labels(&run).iter().any(|l| l == "Ranked"));
+
+        // "Delete folder", the folder menu's last entry, opens on Cancel:
+        // Enter there keeps the folder, Tab then Enter deletes it.
+        let delete = |run: &mut Run| {
+            run.rclick(pos2(95.0, 152.0));
+            run.key(Key::End);
+            run.key(Key::Enter);
+            run.frame();
+        };
+        let smurfs = |run: &Run| labels(run).iter().any(|l| l == "Smurfs");
+        assert!(smurfs(&run));
+        delete(&mut run);
+        let (_, true, (_, Some(mount))) = app(&run) else {
+            panic!("no confirm dialog")
+        };
+        let ids = Id::new(dialog::CONFIRM_ID).with(mount);
+        assert_eq!(focused(&run), Some(ids.with("cancel")));
+        run.key(Key::Enter);
+        run.settle();
+        assert!(!app(&run).1);
+        assert!(smurfs(&run));
+        delete(&mut run);
+        tab(&mut run, false);
+        let mount = app(&run).2 .1.unwrap();
+        let ids = Id::new(dialog::CONFIRM_ID).with(mount);
+        assert_eq!(focused(&run), Some(ids.with("confirm")));
+        run.key(Key::Enter);
+        run.settle();
+        assert!(!app(&run).1);
+        assert!(!smurfs(&run));
+    }
+
     /// The streamer mode row of the privacy tab answers the pointer: the
     /// telemetry card under it once took its id, and its hit box with it.
     #[test]

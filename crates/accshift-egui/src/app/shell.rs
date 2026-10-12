@@ -7,8 +7,8 @@
 //!     .app-shell        var(--bg) and var(--bg-image)
 //!       TitleBar        Windows and Linux, page-entrance
 //!       {#key panelKey} the panel, page-entrance on every switch
-//!     AppDialogs        the toast stack, then the context menu (dialogs
-//!                       not ported yet)
+//!     AppDialogs        the toast stack, the input and confirm dialogs,
+//!                       then the context menu
 //! ```
 //!
 //! Before the boot payload lands the frame is `opacity: 0`: nothing but the
@@ -24,7 +24,9 @@ use super::{Action, AppModel, Booted};
 use crate::screens::settings;
 use crate::screens::workspace::{self, WorkspaceInput};
 use crate::ui::anim::{Animation, Fill, Motion, Timing};
+use crate::ui::backdrop_filter::Mark;
 use crate::ui::components::context_menu::{self, ContextMenuProps};
+use crate::ui::components::dialog::{self, DialogProps};
 use crate::ui::components::title_bar::{self, TitleBarProps};
 use crate::ui::components::toast::{self, ToastProps};
 use crate::ui::paint::BoxStyle;
@@ -102,6 +104,9 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
             Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
             Color32::WHITE,
         );
+        // The backdrop root is `.app-shell`: the desktop stays sharp under
+        // the dialogs' blur.
+        Mark::Root.paint(ui.painter(), window);
     }
     let Some(booted) = app.booted.as_ref() else {
         return Vec::new();
@@ -200,6 +205,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
     let dialogs = &app.dialogs;
     let submenus = &app.submenus;
     let open_id = app.menu_open_id;
+    let (input_mount, confirm_mount) = (app.input_mount, app.confirm_mount);
     if dialogs.context_menu().is_none() {
         // Nothing open: the next menu mounts fresh.
         context_menu::reset(&ctx);
@@ -293,7 +299,31 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                     .into_iter()
                     .map(Action::Toast),
             );
-            // `<ContextMenu>`, above the toasts (`--z-menu`).
+            // The dialogs (`--z-dialog`), above the toasts.
+            let dialog_props = |mount| DialogProps {
+                vars: &vars,
+                locale: *locale,
+                viewport: window,
+                focus_visible,
+                dark: theme.theme.color_scheme == ColorScheme::Dark,
+                mount,
+            };
+            if let (Some(state), Some(mount)) = (dialogs.input_dialog(), input_mount) {
+                actions.extend(
+                    dialog::input_dialog(ui, &dialog_props(mount), state)
+                        .into_iter()
+                        .map(|event| Action::InputDialog(mount, event)),
+                );
+            }
+            if let (Some(state), Some(mount)) = (dialogs.confirm_dialog(), confirm_mount) {
+                let bg = dialog::confirm_background(&state.confirm_color, &theme.resolved, &vars);
+                actions.extend(
+                    dialog::confirm_dialog(ui, &dialog_props(mount), state, bg)
+                        .into_iter()
+                        .map(|event| Action::ConfirmDialog(mount, event)),
+                );
+            }
+            // `<ContextMenu>`, above the dialogs (`--z-menu`).
             if let Some(menu) = dialogs.context_menu() {
                 let adapter = accounts.registry.adapter(&nav.active_tab);
                 let items = dialogs.context_menu_items(&MenuInput {
