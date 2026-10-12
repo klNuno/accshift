@@ -32,6 +32,12 @@ tokio = { version = "1.47", features = ["rt-multi-thread"] }
 # `legacy_web_storage`: the WebKit origin folder name (SHA-256). Same major
 # as accshift-core, so nothing new is built.
 sha2 = "0.11"
+# `time`: the local time zone with its DST rules, as WebView2 formats dates.
+# Default features: `tz-system` reads the Windows zone id and maps it to
+# IANA, `tzdb-bundle-platform` embeds the tzdb on Windows (no network, no
+# installed database) and reads /usr/share/zoneinfo elsewhere. Same version
+# as the root workspace lock.
+jiff = "0.2.35"
 
 [target.'cfg(windows)'.dependencies]
 # `get_desktop_wallpaper`: the Progman capture of

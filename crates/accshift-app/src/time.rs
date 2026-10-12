@@ -8,12 +8,37 @@
 //! The absolute formats reproduce what `Intl.DateTimeFormat` prints for the
 //! seven shipped locales with `{ year: "numeric", month: "short", day:
 //! "numeric" }` (plus `hour`/`minute: "2-digit"`), checked against Node's ICU
-//! by `tests/platform_time.rs`. `Intl` renders in the machine's time zone; this
-//! port has no time zone database, so the caller passes the local UTC offset
-//! in minutes.
+//! by `tests/platform_time.rs`. `Intl` renders in the machine's time zone with
+//! its DST rules; so does this port, through a [`TimeZone`] the caller passes:
+//! [`system_zone`] in the app (jiff maps the Windows zone id to IANA and reads
+//! its embedded tzdb, no network and no installed database), a named or fixed
+//! zone in tests.
 
 use crate::i18n::{self, Locale, DEFAULT_LOCALE};
+use jiff::tz::Offset;
+use jiff::Timestamp;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+pub use jiff::tz::TimeZone;
+
+/// The machine's time zone, DST rules included, as WebView2 sees it. UTC when
+/// the system zone cannot be read. jiff reads `TZ` first when it is set,
+/// which WebView2 ignores.
+pub fn system_zone() -> TimeZone {
+    TimeZone::try_system().unwrap_or(TimeZone::UTC)
+}
+
+/// An IANA zone by name (`Europe/Paris`), from jiff's tzdb (embedded on
+/// Windows, `/usr/share/zoneinfo` elsewhere).
+pub fn named_zone(name: &str) -> Option<TimeZone> {
+    TimeZone::get(name).ok()
+}
+
+/// A zone that is always `utc_offset_minutes` ahead of UTC (UTC+2 is 120).
+pub fn fixed_zone(utc_offset_minutes: i32) -> TimeZone {
+    Offset::from_seconds(utc_offset_minutes.saturating_mul(60))
+        .map_or(TimeZone::UTC, TimeZone::fixed)
+}
 
 /// Ceiling for a plausible Unix *seconds* timestamp: 1e11 seconds lands
 /// thousands of years from now, while a millisecond timestamp of today is
@@ -71,21 +96,21 @@ impl Clock {
 }
 
 /// What a relative time needs besides the timestamp.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TimeContext {
     /// `Date.now()`.
     pub now_ms: f64,
     pub locale: Locale,
-    /// Local time minus UTC, in minutes (UTC+2 is 120).
-    pub utc_offset_minutes: i32,
+    /// The zone absolute dates render in.
+    pub zone: TimeZone,
 }
 
 impl TimeContext {
-    pub fn new(clock: &Clock, locale: Locale, utc_offset_minutes: i32) -> Self {
+    pub fn new(clock: &Clock, locale: Locale, zone: TimeZone) -> Self {
         Self {
             now_ms: clock.now_ms(),
             locale,
-            utc_offset_minutes,
+            zone,
         }
     }
 }
@@ -114,27 +139,17 @@ struct Civil {
     minute: u32,
 }
 
-/// Howard Hinnant's `civil_from_days` on the local timestamp.
-fn civil(timestamp_s: f64, utc_offset_minutes: i32) -> Civil {
-    let local = timestamp_s.floor() as i64 + i64::from(utc_offset_minutes) * 60;
-    let days = local.div_euclid(86_400);
-    let seconds = local.rem_euclid(86_400);
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    Civil {
-        year,
-        month,
-        day,
-        hour: (seconds / 3600) as u32,
-        minute: ((seconds % 3600) / 60) as u32,
-    }
+/// The local calendar moment of a Unix seconds stamp in `zone`, `None`
+/// outside jiff's range (years -9999 to 9999).
+fn civil(timestamp_s: f64, zone: &TimeZone) -> Option<Civil> {
+    let at = zone.to_datetime(Timestamp::from_second(timestamp_s.floor() as i64).ok()?);
+    Some(Civil {
+        year: i64::from(at.year()),
+        month: at.month() as u32,
+        day: at.day() as u32,
+        hour: at.hour() as u32,
+        minute: at.minute() as u32,
+    })
 }
 
 const MONTHS_EN: [&str; 12] = [
@@ -204,17 +219,12 @@ fn time_part(locale: Locale, at: &Civil) -> String {
 
 /// `formatAbsoluteDateFromUnixSeconds`: the localized calendar day, empty when
 /// the value is not usable Unix seconds.
-pub fn format_absolute_date(
-    timestamp: Option<f64>,
-    locale: Locale,
-    utc_offset_minutes: i32,
-) -> String {
-    match timestamp {
-        Some(value) if is_unix_seconds(timestamp) => {
-            date_part(locale, &civil(value, utc_offset_minutes))
-        }
-        _ => String::new(),
-    }
+pub fn format_absolute_date(timestamp: Option<f64>, locale: Locale, zone: &TimeZone) -> String {
+    timestamp
+        .filter(|_| is_unix_seconds(timestamp))
+        .and_then(|value| civil(value, zone))
+        .map(|at| date_part(locale, &at))
+        .unwrap_or_default()
 }
 
 /// `formatAbsoluteDateTimeFromUnixSeconds`: day and time for the tooltip
@@ -222,12 +232,14 @@ pub fn format_absolute_date(
 pub fn format_absolute_date_time(
     timestamp: Option<f64>,
     locale: Locale,
-    utc_offset_minutes: i32,
+    zone: &TimeZone,
 ) -> String {
-    let Some(value) = timestamp.filter(|_| is_unix_seconds(timestamp)) else {
+    let Some(at) = timestamp
+        .filter(|_| is_unix_seconds(timestamp))
+        .and_then(|value| civil(value, zone))
+    else {
         return String::new();
     };
-    let at = civil(value, utc_offset_minutes);
     let separator = if locale == Locale::Zh { " " } else { ", " };
     format!(
         "{}{separator}{}",
@@ -272,7 +284,7 @@ pub fn format_relative_time(
     }
     let days = (delta_ms / DAY_MS).floor();
     if days > ABSOLUTE_AFTER_DAYS {
-        return format_absolute_date(timestamp, locale, ctx.utc_offset_minutes);
+        return format_absolute_date(timestamp, locale, &ctx.zone);
     }
     let key = if days > 1.0 {
         "time.daysAgo"

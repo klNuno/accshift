@@ -1,22 +1,28 @@
 //! `src/lib/shared/time.test.ts` ported, plus the absolute formats checked
-//! against what Node's `Intl.DateTimeFormat` prints
+//! against what Node's `Intl.DateTimeFormat` prints in UTC, Europe/Paris,
+//! America/New_York and Asia/Kolkata, on both sides of every DST change
 //! (`tests/data/platform/time_formats.json`, from `dump_time_formats.mjs`).
 
 use accshift_app::i18n::Locale;
 use accshift_app::mock::NOW;
 use accshift_app::time::{
     format_absolute_date, format_absolute_date_time, format_relative_time,
-    format_relative_time_compact, is_unix_seconds, unix_ms_to_seconds, Clock, TimeContext,
-    UNKNOWN_KEY,
+    format_relative_time_compact, is_unix_seconds, named_zone, system_zone, unix_ms_to_seconds,
+    Clock, TimeContext, TimeZone, UNKNOWN_KEY,
 };
 use serde_json::Value;
+use std::time::Instant;
 
 const MINUTE: f64 = 60.0;
 const HOUR: f64 = 60.0 * MINUTE;
 const DAY: f64 = 24.0 * HOUR;
 
 fn ctx() -> TimeContext {
-    TimeContext::new(&Clock::fixed(NOW as f64 * 1000.0), Locale::En, 0)
+    TimeContext::new(
+        &Clock::fixed(NOW as f64 * 1000.0),
+        Locale::En,
+        TimeZone::UTC,
+    )
 }
 
 fn seconds_ago(seconds: f64) -> f64 {
@@ -172,7 +178,7 @@ const OCTOBER_2025: f64 = 1_760_000_000.0;
 
 #[test]
 fn absolute_localized_day() {
-    let result = format_absolute_date(Some(OCTOBER_2025), Locale::En, 0);
+    let result = format_absolute_date(Some(OCTOBER_2025), Locale::En, &TimeZone::UTC);
     assert!(
         result.contains("2025") && result.contains("Oct"),
         "{result}"
@@ -181,7 +187,7 @@ fn absolute_localized_day() {
 
 #[test]
 fn absolute_localized_day_and_time() {
-    let result = format_absolute_date_time(Some(OCTOBER_2025), Locale::En, 0);
+    let result = format_absolute_date_time(Some(OCTOBER_2025), Locale::En, &TimeZone::UTC);
     assert!(result.contains("2025"));
     let has_time = result
         .split(|c: char| !c.is_ascii_digit() && c != ':')
@@ -195,19 +201,25 @@ fn absolute_localized_day_and_time() {
 
 #[test]
 fn absolute_follows_locale() {
-    let en = format_absolute_date(Some(OCTOBER_2025), Locale::En, 0);
-    let fr = format_absolute_date(Some(OCTOBER_2025), Locale::Fr, 0);
+    let en = format_absolute_date(Some(OCTOBER_2025), Locale::En, &TimeZone::UTC);
+    let fr = format_absolute_date(Some(OCTOBER_2025), Locale::Fr, &TimeZone::UTC);
     assert!(fr.contains("2025"));
     assert_ne!(fr, en);
 }
 
 #[test]
 fn absolute_empty_for_non_seconds() {
-    assert_eq!(format_absolute_date(None, Locale::En, 0), "");
-    assert_eq!(format_absolute_date(Some(0.0), Locale::En, 0), "");
-    assert_eq!(format_absolute_date_time(None, Locale::En, 0), "");
+    assert_eq!(format_absolute_date(None, Locale::En, &TimeZone::UTC), "");
     assert_eq!(
-        format_absolute_date_time(Some(1_760_000_000_000.0), Locale::En, 0),
+        format_absolute_date(Some(0.0), Locale::En, &TimeZone::UTC),
+        ""
+    );
+    assert_eq!(
+        format_absolute_date_time(None, Locale::En, &TimeZone::UTC),
+        ""
+    );
+    assert_eq!(
+        format_absolute_date_time(Some(1_760_000_000_000.0), Locale::En, &TimeZone::UTC),
         ""
     );
 }
@@ -235,21 +247,76 @@ fn absolute_formats_match_node_intl() {
     );
     let fixture: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let rows = fixture["rows"].as_array().unwrap();
-    assert!(rows.len() > 100);
+    let mut zone_cases = 0;
     for row in rows {
+        let zone_name = row["zone"].as_str().unwrap();
+        let zone = named_zone(zone_name).unwrap_or_else(|| panic!("no zone {zone_name}"));
         let locale = locale_of(row["locale"].as_str().unwrap());
         let stamp = row["stamp"].as_f64().unwrap();
+        let offset = zone
+            .to_offset(jiff::Timestamp::from_second(stamp as i64).unwrap())
+            .seconds();
         assert_eq!(
-            format_absolute_date(Some(stamp), locale, 0),
+            i64::from(offset),
+            row["offset"].as_i64().unwrap() * 60,
+            "offset {row}"
+        );
+        assert_eq!(
+            format_absolute_date(Some(stamp), locale, &zone),
             row["date"].as_str().unwrap(),
             "date {row}"
         );
         assert_eq!(
-            format_absolute_date_time(Some(stamp), locale, 0),
+            format_absolute_date_time(Some(stamp), locale, &zone),
             row["dateTime"].as_str().unwrap(),
             "dateTime {row}"
         );
+        if zone_name != "UTC" {
+            zone_cases += 1;
+        }
     }
+    // Paris and New York: 6 DST changes each (2025, 2026, 2040).
+    for zone in ["Europe/Paris", "America/New_York"] {
+        assert_eq!(
+            fixture["changes"][zone].as_array().unwrap().len(),
+            6,
+            "{zone}"
+        );
+    }
+    assert!(zone_cases > 900, "{zone_cases}");
+    eprintln!("time-zones: {zone_cases} zone cases equal to Node");
+}
+
+#[test]
+fn july_date_keeps_summer_time_in_january() {
+    // 2025-07-09 21:30 UTC is 23:30 in Paris (UTC+2) even when "now" is a
+    // January day at UTC+1: the offset is the stamp's, not today's.
+    let paris = named_zone("Europe/Paris").unwrap();
+    assert_eq!(
+        format_absolute_date_time(Some(1_752_096_600.0), Locale::Fr, &paris),
+        "9 juil. 2025, 23:30"
+    );
+    assert_eq!(
+        format_absolute_date_time(Some(1_736_458_200.0), Locale::Fr, &paris),
+        "9 janv. 2025, 22:30"
+    );
+}
+
+#[test]
+fn system_zone_loads() {
+    let started = Instant::now();
+    let zone = system_zone();
+    let first = started.elapsed();
+    let started = Instant::now();
+    let again = system_zone();
+    let cached = started.elapsed();
+    assert_eq!(zone, again);
+    eprintln!(
+        "system zone {:?}: first load {} us, cached {} us",
+        zone.iana_name(),
+        first.as_micros(),
+        cached.as_micros()
+    );
 }
 
 #[test]
@@ -257,15 +324,23 @@ fn utc_offset_moves_the_day() {
     // 2025-10-09 23:30 UTC is the 10th at UTC+2 and still the 9th at UTC-2.
     let stamp = 1_760_052_600.0;
     assert_eq!(
-        format_absolute_date(Some(stamp), Locale::En, 0),
+        format_absolute_date(Some(stamp), Locale::En, &TimeZone::UTC),
         "Oct 9, 2025"
     );
     assert_eq!(
-        format_absolute_date(Some(stamp), Locale::En, 120),
+        format_absolute_date(
+            Some(stamp),
+            Locale::En,
+            &accshift_app::time::fixed_zone(120)
+        ),
         "Oct 10, 2025"
     );
     assert_eq!(
-        format_absolute_date(Some(stamp), Locale::En, -120),
+        format_absolute_date(
+            Some(stamp),
+            Locale::En,
+            &accshift_app::time::fixed_zone(-120)
+        ),
         "Oct 9, 2025"
     );
 }
