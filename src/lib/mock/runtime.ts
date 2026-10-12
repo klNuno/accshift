@@ -38,6 +38,8 @@ interface MockOverrides {
   stores?: Record<string, unknown>;
   /** Replaces the scenario's accounts with N generated ones. */
   accountCount?: number;
+  /** `detect_streaming_software` reports streaming software running. */
+  streaming?: boolean;
 }
 
 function readOverrides(): MockOverrides {
@@ -78,6 +80,8 @@ if (typeof overrides.accountCount === "number") {
 if (overrides.stores) spec.stores = { ...spec.stores, ...overrides.stores };
 
 const handlers: Record<string, Handler> = createHandlers(spec);
+// Streamer mode's poll: OBS "running" without touching the process table.
+if (overrides.streaming) handlers.detect_streaming_software = () => true;
 
 /** Live knobs: changing these takes effect on the next call, without a reload. */
 let latencyMs = overrides.latencyMs ?? 0;
@@ -168,6 +172,8 @@ const api = {
   },
   /** Replace the account list with N generated ones, any scenario (reloads). */
   accounts: (count: number) => persist({ accountCount: count }, true),
+  /** Pretend streaming software runs, to reach the streamer overlay (reloads). */
+  streaming: (on: boolean) => persist({ streaming: on }, true),
   /** Pretend to run on another OS — titlebar, traffic lights, paths (reloads). */
   os: (name: "windows" | "macos" | "linux") => persist({ runtimeOs: name }, true),
   /** Start from a given client store, e.g. seed("client.settings", {themeId:"glass"}) (reloads). */
@@ -213,6 +219,6 @@ export function installMockApi() {
   console.info(
     `[mock] IPC mocked — scenario "${scenarioId}" (${spec.label})${FROZEN ? " [frozen]" : ""}\n` +
       "[mock] __mock.state() · .scenarios() · .use(id) · .accounts(n) · .os(name) · " +
-      ".seed(store, value) · .latency(ms) · .fail(cmd, msg) · .reset()",
+      ".streaming(on) · .seed(store, value) · .latency(ms) · .fail(cmd, msg) · .reset()",
   );
 }

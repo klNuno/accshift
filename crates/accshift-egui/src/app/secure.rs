@@ -1,5 +1,6 @@
 //! The secure screen as `App.svelte` feeds it (`useSecureScreen.svelte.ts`):
-//! activity, window state and the settings in, its events out.
+//! activity, window state and the settings in, its events out. Streamer
+//! mode (`useStreamerMode.svelte.ts`) too.
 
 use std::time::Instant;
 
@@ -10,6 +11,26 @@ use egui::{Context, Event};
 use super::AppModel;
 
 impl AppModel {
+    /// One frame of streamer mode, before drawing. App.svelte starts the
+    /// poll on `boot-ready`: here, the first frame with the boot payload.
+    pub(super) fn tick_streamer(&mut self, ctx: &Context) {
+        let Some(b) = self.booted.as_mut() else {
+            return;
+        };
+        let now = Instant::now();
+        // `enabled` derives from the settings.
+        b.streamer.sync_settings(b.stores.settings());
+        if !b.streamer.is_running() {
+            b.streamer.start(&self.jobs, now);
+        }
+        // `isHidden`: minimized, which also hides the page.
+        let hidden = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
+        b.streamer.tick(&self.jobs, now, hidden);
+        if let Some(due) = b.streamer.next_deadline() {
+            ctx.request_repaint_after(due.saturating_duration_since(now));
+        }
+    }
+
     /// One frame of the secure screen, before drawing.
     pub(super) fn tick_secure(&mut self, ctx: &Context) {
         let Some(b) = self.booted.as_mut() else {

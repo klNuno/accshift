@@ -4,6 +4,8 @@
 //! - `.theme-action-btn` (General): flex 1, 11 px, `--bg-card`;
 //! - `.inline-link-btn` (Privacy): a bare link in `--accent-text`;
 //! - `.wiki-btn` (General): a 20 px round "?".
+//!
+//! Each lists the colours its `transition` eases; the others switch at once.
 
 use egui::accesskit::Role;
 use egui::{pos2, vec2, Context, Id, Rect, Sense, Stroke, Ui, Vec2, WidgetInfo, WidgetType};
@@ -34,6 +36,16 @@ pub struct ButtonStyle {
     pub underline_hover: bool,
     /// `:disabled { opacity }`.
     pub disabled_opacity: f32,
+    /// What its `transition` eases over 120 ms; the rest switches at once.
+    pub transitions: Transitions,
+}
+
+/// The colours a button's `transition: ... 120ms ease-out` lists.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Transitions {
+    pub background: bool,
+    pub border: bool,
+    pub color: bool,
 }
 
 /// `.btn-export`.
@@ -51,6 +63,11 @@ pub fn export_style(v: &Vars) -> ButtonStyle {
         color_hover: v.fg,
         underline_hover: false,
         disabled_opacity: 0.5,
+        transitions: Transitions {
+            background: true,
+            border: true,
+            color: false,
+        },
     }
 }
 
@@ -69,6 +86,11 @@ pub fn theme_action_style(v: &Vars) -> ButtonStyle {
         color_hover: v.fg,
         underline_hover: false,
         disabled_opacity: 1.0,
+        transitions: Transitions {
+            background: true,
+            border: false,
+            color: false,
+        },
     }
 }
 
@@ -87,6 +109,7 @@ pub fn link_style(v: &Vars) -> ButtonStyle {
         color_hover: v.accent_text,
         underline_hover: true,
         disabled_opacity: 1.0,
+        transitions: Transitions::default(),
     }
 }
 
@@ -105,7 +128,31 @@ pub fn wiki_style(v: &Vars) -> ButtonStyle {
         color_hover: v.fg,
         underline_hover: false,
         disabled_opacity: 1.0,
+        transitions: Transitions {
+            background: false,
+            border: true,
+            color: true,
+        },
     }
+}
+
+/// Background, border and text colour this frame: the ones its
+/// `transition` lists ease towards the hover state, the others jump.
+fn colors(ctx: &Context, id: Id, s: &ButtonStyle, hovered: bool) -> (Rgba, Rgba, Rgba) {
+    let ease = |key: &str, eased: bool, rest: Rgba, hover: Rgba| {
+        let target = if hovered { hover } else { rest };
+        if eased {
+            anim::transition(ctx, id.with(key), target, &T120)
+        } else {
+            target
+        }
+    };
+    let t = s.transitions;
+    (
+        ease("bg", t.background, s.background, s.background_hover),
+        ease("border", t.border, s.border_color, s.border_hover),
+        ease("fg", t.color, s.color, s.color_hover),
+    )
 }
 
 /// The `width: auto` border box of `label` in `style`.
@@ -149,20 +196,7 @@ pub fn button(ui: &mut Ui, rect: Rect, id: Id, props: &ButtonProps) -> bool {
     ctx.accesskit_node_builder(id, |node| node.set_role(Role::Button));
     let focused = props.enabled && take_focus(ui, &response);
     let hovered = props.enabled && response.hovered();
-    let pick = |a: Rgba, b: Rgba| if hovered { b } else { a };
-    let bg = anim::transition(
-        &ctx,
-        id.with("bg"),
-        pick(s.background, s.background_hover),
-        &T120,
-    );
-    let border = anim::transition(
-        &ctx,
-        id.with("border"),
-        pick(s.border_color, s.border_hover),
-        &T120,
-    );
-    let color = anim::transition(&ctx, id.with("fg"), pick(s.color, s.color_hover), &T120);
+    let (bg, border, color) = colors(&ctx, id, s, hovered);
     let mut painter = ui.painter().clone();
     if !props.enabled {
         painter.multiply_opacity(s.disabled_opacity);
@@ -206,4 +240,51 @@ pub fn button(ui: &mut Ui, rect: Rect, id: Id, props: &ButtonProps) -> bool {
     let keyed =
         focused && ui.input(|i| i.key_pressed(egui::Key::Space) || i.key_pressed(egui::Key::Enter));
     props.enabled && (response.clicked() || keyed)
+}
+
+#[cfg(test)]
+mod tests {
+    use egui::RawInput;
+
+    use super::*;
+
+    #[test]
+    fn only_the_colours_its_transition_lists_ease() {
+        let v = Vars::new(&accshift_theme::ResolvedTheme::new(
+            &accshift_theme::theme_application(
+                &accshift_theme::ThemeRegistry::new().theme(Some("glass-dark")),
+                100.0,
+                true,
+            ),
+        ));
+        let ctx = Context::default();
+        let id = Id::new("button");
+        let frame = |style: &ButtonStyle, time: f64, hovered: bool| {
+            let mut out = None;
+            let input = RawInput {
+                time: Some(time),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                out = Some(colors(ui.ctx(), id, style, hovered));
+            });
+            output.textures_delta.clear();
+            out.unwrap()
+        };
+        // `.theme-action-btn { transition: background 120ms ease-out }`:
+        // 20 ms into the hover the text is already `--fg`, the background
+        // is still on its way.
+        let theme = theme_action_style(&v);
+        frame(&theme, 0.0, false);
+        let (bg, _, fg) = frame(&theme, 0.02, true);
+        assert_eq!(fg, v.fg);
+        assert_ne!(bg, theme.background_hover);
+        assert_eq!(frame(&theme, 0.2, true).0, theme.background_hover);
+        // `.wiki-btn` eases its colour and border instead.
+        let wiki = wiki_style(&v);
+        frame(&wiki, 1.0, false);
+        let (_, border, fg) = frame(&wiki, 1.02, true);
+        assert_ne!(fg, v.fg);
+        assert_ne!(border, wiki.border_hover);
+    }
 }

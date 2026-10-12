@@ -17,7 +17,9 @@
 //!   `cs2_bridge_`, `telemetry_`, `pin_`) the mock does not fake is refused
 //!   with `mock mode: <command> is not available`;
 //! - [`MockBackend::fail`] and [`MockBackend::latency`] are the `__mock.fail`
-//!   and `__mock.latency` overrides, ignored on the frozen `demo` scenario.
+//!   and `__mock.latency` overrides, ignored on the frozen `demo` scenario;
+//! - [`MockBackend::set_streaming`] is `accshift.mock.overrides.streaming`:
+//!   `detect_streaming_software` answers true.
 //!
 //! Nothing here reaches Steam, the keyring, the registry or the disk outside
 //! the scenario file.
@@ -103,6 +105,8 @@ struct MockState {
     pin_unlocked: bool,
     latency_ms: u64,
     failures: BTreeMap<String, String>,
+    /// `overrides.streaming`.
+    streaming: bool,
 }
 
 /// See the module documentation.
@@ -180,6 +184,7 @@ impl MockBackend {
                 pin_unlocked: true,
                 latency_ms: 0,
                 failures: BTreeMap::new(),
+                streaming: false,
             }),
             spec: file.spec,
         };
@@ -286,6 +291,14 @@ impl MockBackend {
             None => state.failures.remove(command),
         };
         true
+    }
+
+    /// `accshift.mock.overrides.streaming`, which a scene writes before the
+    /// page loads, as `runtimeOs`: `detect_streaming_software` reports
+    /// streaming software running. A failure set with [`Self::fail`] still
+    /// wins, as in `mockInvoke`.
+    pub fn set_streaming(&self, on: bool) {
+        self.lock().streaming = on;
     }
 
     /// `__mock.os(name)`: the OS `get_runtime_os` and the boot payload report.
@@ -601,7 +614,8 @@ impl Backend for MockBackend {
         self.call("get_runtime_os", json!({}))
     }
     fn detect_streaming_software(&self) -> BackendResult<bool> {
-        self.call("detect_streaming_software", json!({}))
+        let recorded: bool = self.call("detect_streaming_software", json!({}))?;
+        Ok(recorded || self.lock().streaming)
     }
     fn migrate_legacy_config(&self) -> BackendResult<String> {
         self.call("migrate_legacy_config", json!({}))

@@ -1,0 +1,61 @@
+{
+  "id": "streamer-light-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "light",
+  "locale": "en",
+  "streaming": true,
+  "seed": {
+    "SETTINGS": {
+      "streamerMode": "auto",
+      "animations": "off"
+    }
+  },
+  "steps": [
+    {
+      "move": [430, 300]
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "shot": "overlay"
+    },
+    {
+      "dom": "overlay",
+      "select": ".streamer-overlay, .streamer-overlay *"
+    },
+    {
+      "move": [351, 268]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "hover-disable"
+    },
+    {
+      "move": [472, 268]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "hover-subtle"
+    },
+    {
+      "move": [842, 18]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "close-hover"
+    }
+  ]
+}

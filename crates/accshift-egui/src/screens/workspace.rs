@@ -1872,6 +1872,47 @@ mod scene_tests {
         assert!(toasts(&run).is_empty());
     }
 
+    /// `streamer-*` scenes: the mock reports OBS running, the overlay
+    /// covers the app and swallows its input; "Disable" hides it for the
+    /// session, "Disable permanently" also saves `streamerMode: "off"`.
+    #[test]
+    fn streamer_mode_covers_the_app_until_disabled() {
+        use accshift_app::settings::StreamerMode;
+        let state = |run: &Run| match &run.screen {
+            Screen::App(app) => {
+                let b = app.booted().unwrap();
+                (
+                    b.streamer.active(),
+                    b.stores.settings().streamer_mode,
+                    b.nav.show_settings,
+                )
+            }
+            _ => panic!("not the app"),
+        };
+        let wait_active = |run: &mut Run| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !state(run).0 {
+                assert!(Instant::now() < deadline, "streamer mode never came up");
+                run.frame();
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        let mut run = Run::new("streamer-glass-dark-100", 1.0);
+        run.settle();
+        wait_active(&mut run);
+        // The settings gear under the overlay gets nothing.
+        run.click(pos2(87.0, 18.0));
+        assert_eq!(state(&run), (true, StreamerMode::Auto, false));
+        run.click(pos2(351.0, 268.0));
+        assert_eq!(state(&run), (false, StreamerMode::Auto, false));
+
+        let mut run = Run::new("streamer-glass-dark-100", 1.0);
+        run.settle();
+        wait_active(&mut run);
+        run.click(pos2(472.0, 268.0));
+        assert_eq!(state(&run), (false, StreamerMode::Off, false));
+    }
+
     /// The account menu of the `menu-*` scenes: Escape and a press outside
     /// close it, hovering "Copy..." opens its submenu at once, and an entry
     /// there copies with a toast (the demo usernames are empty, so SteamID64).

@@ -54,6 +54,7 @@ use accshift_app::secure::screen::SecureScreen;
 use accshift_app::settings::AnimationsMode;
 use accshift_app::storage::{self, StoreId};
 use accshift_app::stores::{ClientStores, StoreContext, ViewMode};
+use accshift_app::streamer::StreamerModeController;
 use accshift_app::types::BootPayload;
 use accshift_theme::{
     theme_application, window_backdrop, AppTheme, CustomThemePayload, ResolvedTheme,
@@ -66,7 +67,7 @@ use crate::screens::workspace::Workspace;
 use crate::ui::anim::{self, Motion};
 use crate::ui::components::context_menu::{self, MenuEvent, SubmenuLoad};
 use crate::ui::components::dialog::DialogEvent;
-use crate::ui::components::secure_overlays::PinEvent;
+use crate::ui::components::secure_overlays::{PinEvent, StreamerEvent};
 use crate::ui::components::toast::ToastEvent;
 use accounts::Accounts;
 use clock::Clock;
@@ -118,6 +119,8 @@ pub enum Action {
     Toast(ToastEvent),
     /// The PIN lock: a new attempt, its window buttons, a drag.
     Pin(PinEvent),
+    /// From the streamer overlay.
+    Streamer(StreamerEvent),
     /// A right click on a card, a folder or the workspace background, at
     /// this window point (`openAccountContextMenu` and its siblings).
     ContextMenu(MenuTarget, Pos2),
@@ -148,6 +151,8 @@ pub struct MockSetup {
     pub theme: Option<String>,
     pub locale: Option<String>,
     pub seed: Option<Value>,
+    /// `overrides.streaming`: streaming software "runs".
+    pub streaming: bool,
     /// `parity/data`.
     pub data_dir: PathBuf,
     /// The repo root, to resolve the mock avatar paths.
@@ -267,6 +272,8 @@ pub struct Booted {
     pub workspace: Workspace,
     /// The AFK cover and the PIN lock.
     pub secure: SecureScreen,
+    /// `createStreamerModeController`.
+    pub streamer: StreamerModeController,
     /// `handleAppMounted` ran.
     secure_mounted: bool,
     /// The settings panel was open last frame (`handleSettingsClosed`).
@@ -338,6 +345,7 @@ impl AppModel {
         }
         let mock = MockBackend::from_json(&scenario.to_string(), setup.repo_root.as_deref())
             .map_err(|e| format!("{}: {e}", file.display()))?;
+        mock.set_streaming(setup.streaming);
         let mock = Arc::new(mock);
         let clock = Clock::pinned(mock.now());
         let backend: Arc<dyn Backend> = mock.clone();
@@ -535,6 +543,7 @@ impl AppModel {
         };
         let locale = stores.language();
         let secure = SecureScreen::new(stores.settings(), Instant::now());
+        let streamer = StreamerModeController::new(stores.settings());
         let theme = compute_theme(&registry, &stores, runtime_os, self.os_reduced_motion);
         anim::set_motion(ctx, theme.motion);
         let panel = (nav.panel_key(), now);
@@ -565,6 +574,7 @@ impl AppModel {
             accounts,
             workspace: Workspace::new(),
             secure,
+            streamer,
             secure_mounted: false,
             secure_in_settings: false,
         });
@@ -631,6 +641,7 @@ impl AppModel {
         }
         self.sync_settings(&ctx);
         self.tick_secure(&ctx);
+        self.tick_streamer(&ctx);
         self.tick_settings_panel(&ctx, Instant::now());
         self.pump_saves();
         // `had_keyboard_event`: a key without Ctrl, Alt or Meta sets it; a
@@ -771,6 +782,22 @@ impl AppModel {
                 PinEvent::Minimize => self.apply_one(ctx, Action::Minimize),
                 PinEvent::Close => self.apply_one(ctx, Action::Close),
                 PinEvent::StartDrag => self.apply_one(ctx, Action::StartDrag),
+            },
+            Action::Streamer(event) => match event {
+                StreamerEvent::Dismiss => {
+                    if let Some(b) = self.booted.as_mut() {
+                        b.streamer.dismiss();
+                    }
+                }
+                StreamerEvent::DisablePermanently => {
+                    if let Some(b) = self.booted.as_mut() {
+                        b.streamer.disable_permanently(&mut b.stores);
+                    }
+                    self.sync_settings(ctx);
+                }
+                StreamerEvent::Minimize => self.apply_one(ctx, Action::Minimize),
+                StreamerEvent::Close => self.apply_one(ctx, Action::Close),
+                StreamerEvent::StartDrag => self.apply_one(ctx, Action::StartDrag),
             },
             Action::Toast(event) => match event {
                 ToastEvent::Hover(id, hovered) => {

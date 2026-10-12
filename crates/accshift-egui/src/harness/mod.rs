@@ -74,6 +74,8 @@ pub struct Scene {
     pub theme: Option<String>,
     pub locale: Option<String>,
     pub seed: Option<serde_json::Value>,
+    /// `streaming`: the mock reports streaming software running.
+    pub streaming: bool,
     /// The `html` fragment (resolved next to the scene file) and its text.
     pub html: Option<(PathBuf, String)>,
     pub steps: Vec<Step>,
@@ -186,6 +188,10 @@ pub fn load(path: &Path) -> Result<Scene, String> {
         theme: s("theme"),
         locale: s("locale"),
         seed: v.get("seed").cloned(),
+        streaming: v
+            .get("streaming")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
         html,
         steps,
     })

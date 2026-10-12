@@ -12,9 +12,11 @@
 //!                       then the context menu
 //!     AppScreenOverlays the AFK cover and its version strip, then the PIN
 //!                       lock
+//!     StreamerModeOverlay  between the two (z 400 against 320 and 500)
 //! ```
 //!
-//! `.app-shell.obscured` (`filter: blur(10px) saturate(82%)`,
+//! `.app-shell.obscured` (the secure screen or streamer mode:
+//! `filter: blur(10px) saturate(82%)`,
 //! `transform: scale(1.01)`, 320 ms ease-out) is a [`Mark::Filter`] after
 //! the shell's shapes: the software renderer filters them as one layer.
 //!
@@ -34,7 +36,7 @@ use crate::ui::anim::{self, Animation, Fill, Motion, Timing, Transition};
 use crate::ui::backdrop_filter::Mark;
 use crate::ui::components::context_menu::{self, ContextMenuProps};
 use crate::ui::components::dialog::{self, DialogProps};
-use crate::ui::components::secure_overlays::{self, AfkProps, PinProps};
+use crate::ui::components::secure_overlays::{self, AfkProps, PinProps, StreamerProps};
 use crate::ui::components::title_bar::{self, TitleBarProps};
 use crate::ui::components::toast::{self, ToastProps};
 use crate::ui::paint::BoxStyle;
@@ -61,6 +63,13 @@ struct AfkView {
     wave: bool,
     reveal_delay: f64,
     version: Option<String>,
+}
+
+/// What the streamer overlay draws this frame.
+struct StreamerView {
+    active: bool,
+    /// `!motionPaused`.
+    motion: bool,
 }
 
 /// What the PIN lock draws this frame.
@@ -238,7 +247,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         context_menu::reset(&ctx);
     }
     let pin_focus = std::mem::take(&mut app.pin_focus);
-    let (obscured, afk, pin) = match app.booted.as_ref() {
+    let (obscured, afk, pin, streamer) = match app.booted.as_ref() {
         Some(b) => {
             let s = &b.secure;
             let afk = (!s.render_suspended()).then(|| AfkView {
@@ -254,10 +263,15 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                 unlocking: s.is_pin_unlocking(),
                 code_len: s.pin_code_length(),
             });
-            (s.is_obscured(), afk, pin)
+            let streamer = StreamerView {
+                active: b.streamer.active(),
+                motion: !s.motion_paused(),
+            };
+            (s.is_obscured(), afk, pin, Some(streamer))
         }
-        None => (false, None, None),
+        None => (false, None, None, None),
     };
+    let streaming = streamer.as_ref().is_some_and(|s| s.active);
     let Some(Booted {
         accounts,
         workspace: ws,
@@ -271,10 +285,10 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         return actions;
     };
     let platform = platforms.iter().find(|p| p.id == nav.active_tab);
-    // `inert` on `.app-shell` under the lock: the shell gets no input.
-    let held = pin
-        .as_ref()
-        .map(|_| ctx.input_mut(|i| std::mem::take(&mut i.events)));
+    // `inert` on `.app-shell` under the lock or streamer mode: the shell
+    // gets no input.
+    let held =
+        (pin.is_some() || streaming).then(|| ctx.input_mut(|i| std::mem::take(&mut i.events)));
     ui.with_visual_transform(frame_transform, |ui| {
         let mut frame_ui = ui.new_child(UiBuilder::new().max_rect(window));
         frame_ui.multiply_opacity(frame.opacity);
@@ -418,7 +432,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
     let k = anim::transition_bool(
         &ctx,
         egui::Id::new("app-shell/obscured"),
-        obscured,
+        obscured || streaming,
         &OBSCURE,
     );
     if k > 0.0 {
@@ -444,6 +458,20 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                 reveal_delay: afk.reveal_delay,
                 version: afk.version.as_deref(),
             },
+        );
+    }
+    if let Some(view) = streamer {
+        let props = StreamerProps {
+            vars: &vars,
+            locale: *locale,
+            active: view.active,
+            motion: view.motion,
+            focus_visible,
+        };
+        actions.extend(
+            secure_overlays::streamer_overlay(ui, stage, &props)
+                .into_iter()
+                .map(Action::Streamer),
         );
     }
     if let Some(pin) = pin {
