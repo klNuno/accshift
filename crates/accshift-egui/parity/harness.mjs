@@ -155,8 +155,16 @@ export async function startVite({ logFile }) {
  * Launch the parity build against the dev server. `scratch` receives the app
  * directories (ACCSHIFT_PARITY_DIR), the WebView2 profile and the binary copy.
  * `onStderr` sees every stderr line (the `parity-window` samples among them).
+ *
+ * `scale` (optional) is Chromium's real device scale factor, through
+ * `--force-device-scale-factor`: what a Windows display at that scaling
+ * gives. Layout then runs in device pixels (border widths floored to whole
+ * device pixels, boxes snapped to the device grid). The CDP emulation
+ * (`Emulation.setDeviceMetricsOverride` with a `deviceScaleFactor`) is not
+ * the same thing: it lays the page out at the window's own factor and scales
+ * the frame, so 1 CSS px of border stays 1.5 device px at 150 %.
  */
-export async function launchApp({ exe, scratch, logFile, onStderr, windowMode }) {
+export async function launchApp({ exe, scratch, logFile, onStderr, windowMode, scale }) {
   assertParityBuild(exe);
   rmSync(scratch, { recursive: true, force: true });
   mkdirSync(join(scratch, "bin"), { recursive: true });
@@ -176,6 +184,7 @@ export async function launchApp({ exe, scratch, logFile, onStderr, windowMode })
     // cloaked, off-screen window as occluded and stop painting.
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: [
       `--remote-debugging-port=${cdpPort}`,
+      ...(scale ? [`--force-device-scale-factor=${scale}`] : []),
       "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion",
       "--disable-backgrounding-occluded-windows",
       "--disable-renderer-backgrounding",

@@ -9,6 +9,10 @@
 // profile and binary copy, removed after the run; default <out>/.scratch),
 // --window hidden|cloak (default hidden: the window is never shown).
 //
+// The app is launched once per scale with `--force-device-scale-factor`, the
+// device scale factor a Windows display at that scaling gives (harness.mjs,
+// launchApp `scale`); the viewport is set in CSS px with CDP.
+//
 // Output: <out>/<scene id>/<shot>.png at viewport x scale, <out>/manifest.json
 // (every shot, with its `alias` if the scene gives one, read by
 // diff.mjs --batch), <out>/run.json (window samples and the real-dir check).
@@ -186,12 +190,19 @@ function pngSize(buf) {
 async function runScene(page, scene, outDir, manifest) {
   const { send, js } = page;
   const vp = scene.viewport;
+  // The viewport in CSS px; the scale is the app's real device scale factor
+  // (launchApp `scale`), never the CDP emulated one: that one lays the page
+  // out at the window's factor and scales the frame (see harness.mjs).
   await send("Emulation.setDeviceMetricsOverride", {
     width: vp.width,
     height: vp.height,
-    deviceScaleFactor: vp.scale,
+    deviceScaleFactor: 0,
     mobile: false,
   });
+  const dpr = await js("window.devicePixelRatio");
+  if (Math.abs(dpr - vp.scale) > 1e-6) {
+    throw new Error(`${scene.id}: devicePixelRatio ${dpr}, scene scale ${vp.scale}`);
+  }
   const desk = await send("Page.addScriptToEvaluateOnNewDocument", { source: desktop(vp) });
 
   // The mock import can hit a module still initialising (a reload in flight):
@@ -394,29 +405,39 @@ async function main() {
   const vite = await startVite({ logFile: join(out, "vite.log") });
   let app = null;
   const manifest = [];
+  // One app per scale: `--force-device-scale-factor` is fixed at launch.
+  const scales = [...new Set(scenes.map((s) => s.viewport.scale))];
   try {
-    app = await launchApp({
-      exe,
-      scratch: join(scratch, "run"),
-      logFile: join(out, "app.log"),
-      onStderr: watch.onLine,
-      windowMode: opts.window,
-    });
-    const { send } = app.page;
-    await send("Page.enable");
-    await send("Runtime.enable");
-    await send("Emulation.setEmulatedMedia", {
-      features: [{ name: "prefers-reduced-motion", value: "no-preference" }],
-    });
-    await send("Page.addScriptToEvaluateOnNewDocument", { source: PIN_CLOCK });
-    for (const scene of scenes) await runScene(app.page, scene, out, manifest);
+    for (const scale of scales) {
+      app = await launchApp({
+        exe,
+        scratch: join(scratch, "run"),
+        logFile: join(out, `app-${scale}.log`),
+        onStderr: watch.onLine,
+        windowMode: opts.window,
+        scale,
+      });
+      const { send } = app.page;
+      await send("Page.enable");
+      await send("Runtime.enable");
+      await send("Emulation.setEmulatedMedia", {
+        features: [{ name: "prefers-reduced-motion", value: "no-preference" }],
+      });
+      await send("Page.addScriptToEvaluateOnNewDocument", { source: PIN_CLOCK });
+      for (const scene of scenes.filter((s) => s.viewport.scale === scale)) {
+        await runScene(app.page, scene, out, manifest);
+      }
+      await app.close();
+      app = null;
+    }
   } finally {
     await app?.close();
     await vite.close();
   }
 
   // The last samples land while the app shuts down. The scratch run (binary
-  // copy, app dirs, WebView2 profile) goes with it; app.log stays in <out>.
+  // copy, app dirs, WebView2 profile) goes with it; app-<scale>.log stays in
+  // <out>.
   await sleep(300);
   rmSync(join(scratch, "run"), { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   const after = Object.fromEntries(dirs.map((d) => [d, snapshotTree(d)]));

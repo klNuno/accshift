@@ -32,6 +32,8 @@ A debug `accshift-gui` built with the `parity-capture` feature. That build:
 
 The frontend comes from `vite dev` on port 1420 (the `devUrl` compiled into the debug app) with `VITE_MOCK=dev`, the non-frozen mock, so each scene picks its own scenario. CDP is opened on a free port through `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`, which also turns off Chromium's native occlusion tracking so the unseen window keeps painting.
 
+The scale is real: `ref.mjs` launches the app once per scene scale with `--force-device-scale-factor=<scale>` in the same arguments (`launchApp({ scale })` in `harness.mjs`), which is what a Windows display at that scaling gives, and sets only the viewport size, in CSS px, through `Emulation.setDeviceMetricsOverride` (`deviceScaleFactor: 0`). It refuses a scene whose `devicePixelRatio` differs from its scale. The CDP emulated factor is not used: it lays the page out at the window's own factor and scales the frame, so a 1px border stays 1.5 device px at 150 % and boxes snap to whole CSS px, where a real 150 % display lays out in device pixels (border floored to 1 device px, edges snapped to the device grid). References taken before 2026-10-12 used the emulation and are wrong at 1.25 and 1.5. Two runs at 1.5 give identical frames for the title bar and primitives scenes and 103 to 112 dB on `spike-main`.
+
 ## Scene format
 
 `scenes/<id>.json`, the contract between `ref.mjs` and the egui runner (`accshift-egui --scene`):
