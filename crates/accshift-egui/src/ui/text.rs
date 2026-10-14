@@ -99,6 +99,8 @@ pub struct TextStyle {
     pub nowrap: bool,
     /// `text-overflow: ellipsis` (with `overflow: hidden`): only with `nowrap`.
     pub ellipsis: bool,
+    /// `font-variant-numeric: tabular-nums` (the `tnum` feature).
+    pub tabular_nums: bool,
     pub align: TextAlign,
     pub color: Color32,
 }
@@ -116,6 +118,7 @@ impl Default for TextStyle {
             transform: TextTransform::None,
             nowrap: false,
             ellipsis: false,
+            tabular_nums: false,
             align: TextAlign::Left,
             color: Color32::WHITE,
         }
@@ -162,6 +165,12 @@ impl TextStyle {
     pub fn nowrap(mut self, ellipsis: bool) -> Self {
         self.nowrap = true;
         self.ellipsis = ellipsis;
+        self
+    }
+
+    /// `font-variant-numeric: tabular-nums`.
+    pub fn tabular_nums(mut self) -> Self {
+        self.tabular_nums = true;
         self
     }
 
@@ -218,6 +227,9 @@ impl TextStyle {
                 }
                 "white-space" => style.nowrap = value == "nowrap" || value == "pre",
                 "text-overflow" => style.ellipsis = value == "ellipsis",
+                "font-variant-numeric" => {
+                    style.tabular_nums = value.split_whitespace().any(|v| v == "tabular-nums")
+                }
                 "text-align" => {
                     style.align = match value {
                         "center" => TextAlign::Center,
@@ -379,6 +391,9 @@ pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Optio
                 ..Default::default()
             },
         );
+        if style.tabular_nums {
+            job.font_features.push((*b"tnum", 1));
+        }
         job.wrap = match (style.nowrap, style.ellipsis) {
             (true, true) => TextWrapping::truncate_at_width(avail + lead),
             (true, false) => TextWrapping::no_max_width(),
@@ -410,10 +425,27 @@ pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Optio
             }
         }
     }
+    // A line that ends at a wrap drops its trailing spaces (they hang past
+    // the box and do not count for `text-align`, CSS Text 3 4.1.3).
+    let last = galley.rows.len().saturating_sub(1);
     let widths: Vec<f32> = galley
         .rows
         .iter()
-        .map(|r| row_width(&r.row, style.letter_spacing))
+        .enumerate()
+        .map(|(i, r)| {
+            let glyphs = &r.row.glyphs;
+            let kept = if i < last {
+                glyphs.len()
+                    - glyphs
+                        .iter()
+                        .rev()
+                        .take_while(|g| g.chr.is_whitespace())
+                        .count()
+            } else {
+                glyphs.len()
+            };
+            row_width(&glyphs[..kept], style.letter_spacing)
+        })
         .collect();
     // The fractional part of each line's device x goes into its layout
     // (leading space), so glyphs land on the same quarter pixels as Skia's:
@@ -557,8 +589,8 @@ fn glyph_rasterizer() -> bool {
 }
 
 /// Advances of a row plus the letter spacing after each character.
-fn row_width(row: &egui::epaint::text::Row, spacing: f32) -> f32 {
-    row.glyphs.iter().map(|g| g.advance_width + spacing).sum()
+fn row_width(glyphs: &[egui::epaint::text::Glyph], spacing: f32) -> f32 {
+    glyphs.iter().map(|g| g.advance_width + spacing).sum()
 }
 
 /// The ranges of the Han `@font-face` rules of `src/app.css`.
@@ -920,6 +952,41 @@ fn layout_unit(v: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tabular_nums_give_blinks_widths() {
+        // Widths from a probe of `font-variant-numeric: tabular-nums` in
+        // WebView2, 9px 600 in the UI stack: the figures share one advance.
+        let ctx = Context::default();
+        install(&ctx, false);
+        let plain = TextStyle::new(9.0, 600);
+        let tabular = plain.clone().tabular_nums();
+        let mut got = Vec::new();
+        for t in 0..2 {
+            let input = egui::RawInput {
+                time: Some(f64::from(t)),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                got = [
+                    (&plain, "3120/5000", 42.328_125),
+                    (&plain, "1111", 14.484_375),
+                    (&tabular, "3120/5000", 43.703_125),
+                    (&tabular, "4999/5000", 43.703_125),
+                    (&tabular, "1111", 20.0),
+                    (&tabular, "0000", 20.0),
+                ]
+                .iter()
+                .map(|(style, s, want)| (*s, measure(ui.ctx(), s, style), *want))
+                .collect();
+            });
+            out.textures_delta.clear();
+        }
+        for (s, w, want) in got {
+            let w = w.expect("faces loaded on the second frame");
+            assert!((w - want).abs() < 0.02, "{s}: {w} against {want}");
+        }
+    }
 
     fn segoe() -> FaceMetrics {
         FaceMetrics {

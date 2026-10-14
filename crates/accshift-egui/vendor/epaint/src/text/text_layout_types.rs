@@ -94,6 +94,11 @@ pub struct LayoutJob {
     /// If `true`, trailing whitespace is included in the row width used for alignment.
     /// This is desirable for text editors where the user expects to see their spaces.
     pub keep_trailing_whitespace: bool,
+
+    /// accshift patch: OpenType features handed to the shaper for every
+    /// section, as tag and value (`(*b"tnum", 1)` for
+    /// `font-variant-numeric: tabular-nums`).
+    pub font_features: Vec<([u8; 4], u32)>,
 }
 
 impl Default for LayoutJob {
@@ -109,6 +114,7 @@ impl Default for LayoutJob {
             justify: false,
             round_output_to_gui: true,
             keep_trailing_whitespace: false,
+            font_features: Vec::new(),
         }
     }
 }
@@ -317,6 +323,7 @@ impl core::hash::Hash for LayoutJob {
             justify,
             round_output_to_gui,
             keep_trailing_whitespace,
+            font_features,
         } = self;
 
         text.hash(state);
@@ -328,6 +335,7 @@ impl core::hash::Hash for LayoutJob {
         justify.hash(state);
         round_output_to_gui.hash(state);
         keep_trailing_whitespace.hash(state);
+        font_features.hash(state);
     }
 }
 

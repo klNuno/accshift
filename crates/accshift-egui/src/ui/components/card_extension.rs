@@ -497,7 +497,10 @@ fn section(
     }
     if let Some(progress) = &sec.progress {
         next(&mut y);
-        let label_style = TextStyle::new(9.0, 600).color(v.fg_muted.to_color32());
+        // `.progress-label`: 9px 600, `font-variant-numeric: tabular-nums`.
+        let label_style = TextStyle::new(9.0, 600)
+            .tabular_nums()
+            .color(v.fg_muted.to_color32());
         let (label_w, label_h) = match &progress.label {
             Some(l) => (
                 ceil_unit(text::measure(ctx, l, &label_style).unwrap_or(0.0), ppp),

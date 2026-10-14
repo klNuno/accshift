@@ -507,7 +507,14 @@ fn layout_section(
                 flags |= harfrust::BufferFlags::END_OF_TEXT;
             }
 
-            let glyph_buffer = shape_text(font_face, run_text, &format.coords, shape_buffer, flags);
+            let glyph_buffer = shape_text(
+                font_face,
+                run_text,
+                &format.coords,
+                &job.font_features,
+                shape_buffer,
+                flags,
+            );
 
             layout_shaped_run(
                 font,
@@ -1417,6 +1424,7 @@ fn shape_text(
     font_face: &FontFace,
     text: &str,
     coords: &VariationCoords,
+    font_features: &[([u8; 4], u32)],
     mut buffer: harfrust::UnicodeBuffer,
     flags: harfrust::BufferFlags,
 ) -> harfrust::GlyphBuffer {
@@ -1446,7 +1454,12 @@ fn shape_text(
     buffer.push_str(text);
     buffer.guess_segment_properties();
 
-    shaper.shape(buffer, harfrust::ShapeOptions::new())
+    // accshift patch: the section's OpenType features.
+    let features: Vec<harfrust::Feature> = font_features
+        .iter()
+        .map(|(tag, value)| harfrust::Feature::new(harfrust::Tag::new(tag), *value, ..))
+        .collect();
+    shaper.shape(buffer, harfrust::ShapeOptions::new().features(&features))
 }
 
 // ----------------------------------------------------------------------------

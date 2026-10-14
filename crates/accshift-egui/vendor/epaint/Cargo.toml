@@ -1,10 +1,15 @@
 # Vendored epaint 0.36.2 (crates.io, egui commit 49682f8b), wired in through
-# [patch.crates-io] in crates/accshift-egui/Cargo.toml. One patch, marked
-# "accshift patch" in src/text/font.rs and src/text/fonts.rs: a font can carry
-# a GlyphRasterizer (FontData::rasterizer) that supplies the glyph coverage
-# instead of skrifa plus vello_cpu, so ui::text can rasterize with DirectWrite
-# like WebView2. Layout, advances and the atlas are untouched. The bench and
-# dev-dependencies are dropped so they stay out of the lockfile.
+# [patch.crates-io] in crates/accshift-egui/Cargo.toml. Two patches, each
+# marked "accshift patch":
+# - src/text/font.rs and src/text/fonts.rs: a font can carry a GlyphRasterizer
+#   (FontData::rasterizer) that supplies the glyph coverage instead of skrifa
+#   plus vello_cpu, so ui::text can rasterize with DirectWrite like WebView2.
+#   Layout, advances and the atlas are untouched.
+# - src/text/text_layout_types.rs, src/text/text_layout.rs and
+#   src/text/fonts.rs: a LayoutJob carries OpenType features (font_features)
+#   that reach harfrust, so ui::text can map `font-variant-numeric:
+#   tabular-nums` to `tnum`.
+# The bench and dev-dependencies are dropped so they stay out of the lockfile.
 
 [package]
 edition = "2024"
