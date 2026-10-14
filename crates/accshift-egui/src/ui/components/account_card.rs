@@ -19,7 +19,8 @@
 //!   `--avatar-radius`, `--bg-muted`; on card hover `--bg-elevated` and
 //!   `translateY(-1px)`, the picture `scale(1.04)`; `.avatar.active` outline
 //!   2 px `color-mix(--fg 20%, transparent)`. The picture blurs (`blur(6px)
-//!   brightness(.5)`, 300 ms) while armed, switching or refreshing.
+//!   brightness(.5)`, 300 ms) while armed, switching or refreshing; the
+//!   initials (`blur(4px) brightness(.5)`, 300 ms) while armed or switching.
 //! - `.name`: a block line of the body font (16 px, `--line-height`) holding
 //!   the inline-block `.name-inner` (12 px 500, `line-height: 1.2`). With
 //!   `overflow: hidden` the inline-block sits on the line's baseline by its
@@ -32,14 +33,12 @@
 //!   `.confirm-hint` scrim at the bottom, both `fadeIn` 150 ms.
 //!
 //! - The extension panel: [`super::card_extension`], under the face.
-//!
-//! Not ported yet: the blur of the initials (they only dim).
 
 use egui::accesskit::Role;
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
 use egui::{
-    pos2, vec2, Color32, Context, Id, Key, Pos2, Rect, Sense, Shape, TextureId, Ui, WidgetInfo,
-    WidgetType,
+    pos2, vec2, Color32, Context, Id, Key, Pos2, Rect, Sense, Shape, TextureId, Ui, Vec2,
+    WidgetInfo, WidgetType,
 };
 
 use accshift_app::actions::avatar_fallback::avatar_initials;
@@ -61,6 +60,7 @@ use crate::ui::anim::{self, Animation, Fill, Keyframes, Timing, Transition};
 use crate::ui::paint::{self, Border, BoxShadow, BoxStyle, Corners, Gradient, Transform};
 use crate::ui::snap;
 use crate::ui::text::{self, LineBox, LineHeight, TextAlign, TextStyle};
+use crate::ui::text_shadow::{self, TextShadow};
 
 /// `transition: background 180ms ease-out, transform 180ms ease-out,
 /// box-shadow 180ms ease-out`.
@@ -535,6 +535,13 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
     let blur_on = item.avatar.refreshing || st.confirm || item.switching;
     let blur = anim::transition_bool(&ctx, id.with("blur"), blur_on, &T300);
     st.blurring = blur_on || blur > 0.0;
+    // `.initials.blurred-text`: armed or switching, not refreshing.
+    let text_blur = anim::transition_bool(
+        &ctx,
+        id.with("text-blur"),
+        st.confirm || item.switching,
+        &T300,
+    );
 
     let (enter_opacity, enter_scale) = entrance(ui, id, v);
     let transform = if enter_opacity < 1.0 {
@@ -680,9 +687,11 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
                 ..BoxStyle::default()
             }
             .paint_transformed(&layer, avatar, avatar_transform);
-            // `.initials.blurred-text`: `brightness(.5)` (the blur is not
-            // ported).
-            let dim = 1.0 - 0.5 * blur;
+            // `.initials.blurred-text`: `blur(4px) brightness(.5)`, the
+            // filter interpolated as one. The blur is the glyph coverage
+            // through a gaussian of sigma 4 px, as a `text-shadow` of blur
+            // radius 8 px in place of the text.
+            let dim = 1.0 - 0.5 * text_blur;
             let fg = v.fg;
             let color = Rgba::new(fg.r * dim, fg.g * dim, fg.b * dim, fg.a);
             let style = TextStyle::new(20.0, 600)
@@ -695,7 +704,19 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
                 pos2(mapped.left(), mapped.top() + snap::centre(size, line, ppp)),
                 vec2(mapped.width(), line),
             );
-            text::paint(&layer, text_rect, &avatar_initials(&item.name), &style);
+            let initials = avatar_initials(&item.name);
+            if text_blur > 0.0 {
+                if let Some(layout) = text::layout(&ctx, &initials, &style, text_rect) {
+                    let shadow = TextShadow {
+                        offset: Vec2::ZERO,
+                        blur: 8.0 * text_blur,
+                        color,
+                    };
+                    text_shadow::paint(&layer, &layout, &[shadow], None, 1.0);
+                }
+            } else {
+                text::paint(&layer, text_rect, &initials, &style);
+            }
         }
         AvatarContent::Loading => {}
     }
@@ -1129,9 +1150,9 @@ fn paint_confirm_hint(
     let ctx = painter.ctx();
     let pad = v.grid_card_padding();
     let label = translate(props.locale, "card.clickAgainToSwitch");
+    // The hint wraps (`white-space: normal`).
     let style = TextStyle::new(9.0, 600)
         .line_height(LineHeight::Number(1.2))
-        .nowrap(false)
         .align(TextAlign::Center)
         .color(v.fg.alpha(v.fg.a * shown).to_color32());
     let lb = line_box(ctx, &style);
@@ -1203,6 +1224,33 @@ pub(crate) fn cover_uv(size: [usize; 2], zoom: f32) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_confirm_hint_wraps_as_in_blink() {
+        // `.confirm-hint` on a 110 px card: 84 px wide, 78 px of text, and
+        // "Click again to switch" is 83.3 px: two lines (25.58 px tall in
+        // Blink, 2 x 10.8 + 4).
+        let ctx = Context::default();
+        text::install(&ctx, false);
+        let style = TextStyle::new(9.0, 600)
+            .line_height(LineHeight::Number(1.2))
+            .align(TextAlign::Center);
+        let mut lines = 0;
+        for t in 0..2 {
+            let input = egui::RawInput {
+                time: Some(f64::from(t)),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                let r = Rect::from_min_size(Pos2::ZERO, vec2(78.0, 20.0));
+                if let Some(l) = text::layout(ui.ctx(), "Click again to switch", &style, r) {
+                    lines = l.lines;
+                }
+            });
+            out.textures_delta.clear();
+        }
+        assert_eq!(lines, 2);
+    }
 
     #[test]
     fn cover_crops_the_long_side() {

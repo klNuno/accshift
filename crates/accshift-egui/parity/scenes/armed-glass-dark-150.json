@@ -1,0 +1,67 @@
+{
+  "id": "armed-glass-dark-150",
+  "scenario": "dev",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "seed": {
+    "SETTINGS": {
+      "viewMode": "grid",
+      "animations": "off",
+      "accountDisplay": {
+        "showUsernames": true,
+        "showCardNotesInline": false
+      }
+    }
+  },
+  "steps": [
+    {
+      "wait": 800
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "click": [315, 150]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "initials"
+    },
+    {
+      "dom": "initials",
+      "select": ".card, .confirm-hint, .initials, .avatar, .play-overlay"
+    },
+    {
+      "click": [600, 380]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "click": [205, 150]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "picture"
+    },
+    {
+      "click": [600, 380]
+    },
+    {
+      "wait": 500
+    }
+  ]
+}
