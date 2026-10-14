@@ -7,9 +7,10 @@
 //! stable key and that size. The card fades the picture in on its own
 //! (`avatar_fade_in`).
 //!
-//! Decoders: SVG (resvg, the mock's avatars) and PNG. JPEG, what Steam's CDN
-//! serves, needs a decoder this crate does not link yet: such a picture
-//! fails and the card shows its initials.
+//! Decoders: SVG (resvg, the mock's avatars), PNG, and JPEG (what Steam's
+//! CDN serves). A bitmap is cropped to its centred square (`object-fit:
+//! cover` in a square box) and scaled to the box as WebView2 scales it
+//! ([`crate::ui::resample`]).
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -248,8 +249,9 @@ pub fn blur_cover(image: &ColorImage, px: usize, sigma: f32, factor: f32) -> Col
     ColorImage::new([px, px], pixels)
 }
 
-/// Decodes an avatar for a `px` device pixel box. SVGs rasterize at that
-/// size (covering it, like `object-fit: cover`); bitmaps keep theirs.
+/// Decodes an avatar for a `px` device pixel box, covering it like
+/// `object-fit: cover`: SVGs rasterize at that size, bitmaps are cropped to
+/// their centred square then scaled to it.
 pub fn decode(image: &AvatarImage, px: u32) -> Result<ColorImage, String> {
     let bytes: Arc<[u8]> = match image {
         AvatarImage::File { path, .. } => std::fs::read(path)
@@ -258,12 +260,48 @@ pub fn decode(image: &AvatarImage, px: u32) -> Result<ColorImage, String> {
         AvatarImage::Bytes { bytes, .. } => Arc::clone(bytes),
     };
     if bytes.starts_with(b"\x89PNG") {
-        return decode_png(&bytes);
+        return Ok(cover(&decode_png(&bytes)?, px));
+    }
+    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        return Ok(cover(&decode_jpeg(&bytes)?, px));
     }
     if is_svg(&bytes) {
         return crate::avatars::raster(&bytes, px.max(1));
     }
     Err("unsupported avatar format".into())
+}
+
+/// The centred square of `image`, scaled to `px` device pixels.
+fn cover(image: &ColorImage, px: u32) -> ColorImage {
+    let [w, h] = image.size;
+    let side = w.min(h);
+    let square = if w == h {
+        image.clone()
+    } else {
+        let (x0, y0) = ((w - side) / 2, (h - side) / 2);
+        let pixels = (0..side)
+            .flat_map(|y| image.pixels[(y0 + y) * w + x0..][..side].iter().copied())
+            .collect();
+        ColorImage::new([side, side], pixels)
+    };
+    crate::ui::resample::resample(&square, px.max(1) as usize)
+}
+
+/// A baseline or progressive JPEG, as sRGB (Blink applies no profile to a
+/// JPEG that carries none, which is what Steam serves).
+fn decode_jpeg(bytes: &[u8]) -> Result<ColorImage, String> {
+    let decoded = image::load_from_memory_with_format(bytes, image::ImageFormat::Jpeg)
+        .map_err(|e| e.to_string())?
+        .into_rgb8();
+    let (w, h) = (decoded.width() as usize, decoded.height() as usize);
+    let pixels = decoded
+        .as_raw()
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|&[r, g, b]| Color32::from_rgb(r, g, b))
+        .collect();
+    Ok(ColorImage::new([w, h], pixels))
 }
 
 fn is_svg(bytes: &[u8]) -> bool {
@@ -337,21 +375,37 @@ mod tests {
                 .write_image_data(&[255, 0, 0, 255, 0, 0, 255, 128])
                 .unwrap();
         }
+        assert_eq!(
+            decode_png(&out).unwrap().pixels[0],
+            Color32::from_rgb(255, 0, 0)
+        );
         let image = AvatarImage::Bytes {
             key: "k".into(),
             bytes: out.into(),
         };
-        let decoded = decode(&image, 68).unwrap();
-        assert_eq!(decoded.size, [2, 1]);
-        assert_eq!(decoded.pixels[0], Color32::from_rgb(255, 0, 0));
+        // A 2 x 1 picture covers the box with its left pixel.
+        let decoded = decode(&image, 4).unwrap();
+        assert_eq!(decoded.size, [4, 4]);
+        assert_eq!(decoded.pixels[5], Color32::from_rgb(255, 0, 0));
     }
 
     #[test]
-    fn jpeg_is_reported_unsupported() {
-        let image = AvatarImage::Bytes {
+    fn jpeg_decodes_and_covers_the_box() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../src/lib/mock/avatars/photo.jpg");
+        let image = AvatarImage::File {
+            key: "photo".into(),
+            path: root,
+        };
+        let decoded = decode(&image, 102).unwrap();
+        assert_eq!(decoded.size, [102, 102]);
+        // The face's yellow at the centre, through the JPEG's chroma.
+        let c = decoded.pixels[50 * 102 + 51];
+        assert!(c.r() > 220 && c.g() > 180 && c.b() < 130, "{c:?}");
+        let broken = AvatarImage::Bytes {
             key: "j".into(),
             bytes: vec![0xff, 0xd8, 0xff, 0xe0].into(),
         };
-        assert!(decode(&image, 68).is_err());
+        assert!(decode(&broken, 68).is_err());
     }
 }

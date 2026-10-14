@@ -24,6 +24,8 @@
 //   `locale` patch `client.settings` (`themeId`, `language`); a `seed` key is a
 //   store id ("client.view-mode") or the suffix of its CLIENT_STORE_ constant
 //   ("SETTINGS"), and an object value is merged over the scenario's store.
+//   Seeded strings under `src/lib/mock/avatars/` become same-origin URLs, as
+//   the app's own avatar URLs before dump-data.mjs made them repo-relative.
 // - the clock: `Date.now()` and `new Date()` start at the mock's NOW
 //   (1_791_000_000 s) and advance with `performance.now()` (PIN_CLOCK in
 //   harness.mjs).
@@ -94,12 +96,21 @@ const applyMock = (scene) => `
   if (!SCENARIOS[scene.scenario]) throw new Error("unknown scenario " + scene.scenario);
   const base = SCENARIOS[scene.scenario]().stores;
   const plain = (v) => v && typeof v === "object" && !Array.isArray(v);
+  const asset = (v) =>
+    typeof v === "string" && v.startsWith("src/lib/mock/avatars/")
+      ? new URL(v, location.origin).toString()
+      : Array.isArray(v)
+        ? v.map(asset)
+        : plain(v)
+          ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, asset(x)]))
+          : v;
   const stores = {};
   const settings = { ...(base["client.settings"] ?? {}) };
   if (scene.theme) settings.themeId = scene.theme;
   if (scene.locale) settings.language = scene.locale;
   stores["client.settings"] = settings;
-  for (const [key, value] of Object.entries(scene.seed ?? {})) {
+  for (const [key, raw] of Object.entries(scene.seed ?? {})) {
+    const value = asset(raw);
     const id = ids["CLIENT_STORE_" + key] ?? key;
     const prev = stores[id] ?? base[id];
     stores[id] = plain(value) && plain(prev) ? { ...prev, ...value } : value;

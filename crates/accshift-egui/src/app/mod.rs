@@ -47,7 +47,7 @@ use accshift_app::menu::{
     build_context_menu_items, PlatformTask, SubmenuLoader, TaskEffect, TaskOutcome,
     ACCOUNT_CONTEXT_GROUP_ORDER,
 };
-use accshift_app::mock::MockBackend;
+use accshift_app::mock::{resolve_avatars, MockBackend};
 use accshift_app::platforms::PlatformAccount;
 use accshift_app::real::RealBackend;
 use accshift_app::secure::screen::SecureScreen;
@@ -164,7 +164,8 @@ pub struct MockSetup {
 impl MockSetup {
     /// `theme` and `locale` patch `client.settings`; a `seed` key is a store
     /// id or the suffix of its `CLIENT_STORE_` constant, an object merges over
-    /// the scenario's store and anything else replaces it.
+    /// the scenario's store and anything else replaces it. Avatar paths in a
+    /// seed resolve against the repo like the scenario's own.
     pub fn patch_stores(&self, stores: &mut std::collections::BTreeMap<String, Value>) {
         let settings_id = storage::CLIENT_STORE_SETTINGS;
         let mut settings = stores
@@ -184,15 +185,14 @@ impl MockSetup {
         };
         for (key, value) in seed {
             let id = store_id_for_seed(key).unwrap_or(key.as_str()).to_string();
+            let value = resolve_avatars(value.clone(), self.repo_root.as_deref());
             let merged = match (value, stores.get(&id)) {
                 (Value::Object(over), Some(Value::Object(base))) => {
                     let mut out = base.clone();
-                    for (k, v) in over {
-                        out.insert(k.clone(), v.clone());
-                    }
+                    out.extend(over);
                     Value::Object(out)
                 }
-                _ => value.clone(),
+                (value, _) => value,
             };
             stores.insert(id, merged);
         }
@@ -201,7 +201,7 @@ impl MockSetup {
 
 /// `CLIENT_STORE_<SUFFIX>` of `src/lib/storage/storeIds.ts` for a seed key.
 /// The suffixes follow the ids (`client.view-mode` is `VIEW_MODE`), except
-/// the caches, which nothing seeds.
+/// the caches, which a seed names by their full id.
 fn store_id_for_seed(key: &str) -> Option<StoreId> {
     storage::CLIENT_STORE_IDS.into_iter().find(|id| {
         id.strip_prefix("client.")

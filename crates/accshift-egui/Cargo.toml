@@ -62,6 +62,9 @@ skrifa = "0.44"
 # touched on the normal startup path.
 serde_json = "1"
 png = "0.18"
+# Steam's CDN serves avatars as JPEG; the same image build accshift-app
+# already links (zune-jpeg underneath).
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 [target.'cfg(not(windows))'.dependencies]
 egui = { version = "0.36", features = ["default_fonts"] }

@@ -185,6 +185,7 @@ dependencies = [
  "egui-winit",
  "egui_extras",
  "egui_software_backend",
+ "image",
  "png 0.18.1",
  "raw-window-handle",
  "resvg",

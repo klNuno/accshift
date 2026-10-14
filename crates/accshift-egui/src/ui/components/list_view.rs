@@ -996,6 +996,21 @@ fn avatar_rings(ui: &Ui, rect: Rect, look: RowLook, v: &Vars) {
     }
 }
 
+/// Blink's flex shrink of the preview column, for its two items that can
+/// shrink (bases `a` and `b`, minimum 0): each gives way in proportion to its
+/// base, `LayoutUnit::FromFloatRound` on the device length.
+fn flex_shrink(overflow: f32, a: f32, b: f32, ppp: f32) -> (f32, f32) {
+    let sum = a + b;
+    if overflow <= 0.0 || sum <= 0.0 {
+        return (a, b);
+    }
+    let give = |base: f32| {
+        let shrunk = base - overflow.min(sum) * base / sum;
+        snap::layout_unit(shrunk * ppp) / ppp
+    };
+    (give(a), give(b))
+}
+
 /// The row's and the preview's avatar boxes.
 #[derive(Clone, Copy)]
 struct AvatarSize {
@@ -1052,6 +1067,25 @@ fn loader(ui: &Ui, id: Id, centre: Pos2, size: AvatarSize, fade: f32, v: &Vars) 
     );
 }
 
+/// `object-fit: cover` of a square crop in a box that flex shrink made
+/// shorter than wide: Blink pixel-snaps the whole picture, centred on the
+/// box, then clips it to the box, so `uv` keeps the band the box shows.
+fn box_uv(uv: Rect, rect: Rect, ppp: f32) -> Rect {
+    if rect.height() >= rect.width() {
+        return uv;
+    }
+    let image = snap::rect(
+        Rect::from_center_size(rect.center(), vec2(rect.width(), rect.width())),
+        ppp,
+    );
+    let shown = snap::rect(rect, ppp);
+    let at = |y: f32| uv.top() + uv.height() * (y - image.top()) / image.height();
+    Rect::from_min_max(
+        pos2(uv.left(), at(shown.top())),
+        pos2(uv.right(), at(shown.bottom())),
+    )
+}
+
 /// `.avatar`: `--bg-muted` under the picture (faded in on decode), or the
 /// initials on their gradient, or the loader.
 fn paint_avatar(
@@ -1089,7 +1123,7 @@ fn paint_avatar(
                     painter,
                     blurred,
                     snapped,
-                    cover_uv([1, 1], 1.0),
+                    box_uv(cover_uv([1, 1], 1.0), rect, ppp),
                     radius,
                     tint(reveal, 0.5),
                 ),
@@ -1097,7 +1131,7 @@ fn paint_avatar(
                     painter,
                     picture.texture,
                     snapped,
-                    cover_uv(picture.size, 1.0),
+                    box_uv(cover_uv(picture.size, 1.0), rect, ppp),
                     radius,
                     tint(reveal, if switching { 0.5 } else { 1.0 }),
                 ),
@@ -1289,24 +1323,48 @@ fn preview_panel(
     if button {
         total += 16.0 + button_h;
     }
+    // Past the column's height every item shrinks in proportion to its
+    // size, but only `.avatar-large` and a nowrap `.meta-stack` can: their
+    // `overflow: hidden` drops `min-height: auto` to 0.
+    let meta_h = meta_lines as f32 * meta_line;
+    let meta_shrinks = !a.pending_setup;
+    let (avatar_h, meta_box_h) = flex_shrink(
+        total - inner.height(),
+        120.0,
+        if meta_shrinks { meta_h } else { 0.0 },
+        ppp,
+    );
+    let meta_box_h = if meta_shrinks { meta_box_h } else { meta_h };
+    total -= (120.0 - avatar_h) + (meta_h - meta_box_h);
     let mut y = inner.top() + snap::centre(inner.height(), total, ppp);
     let centre_x = |w: f32| inner.left() + snap::centre(width, w, ppp);
 
-    let avatar = Rect::from_min_size(pos2(centre_x(120.0), y), vec2(120.0, 120.0));
+    let avatar = Rect::from_min_size(pos2(centre_x(120.0), y), vec2(120.0, avatar_h));
     paint_avatar(ui, id, avatar, content, a, v, AvatarSize::PREVIEW);
-    y += 120.0 + 16.0;
+    y += avatar_h + 16.0;
     text::paint(&painter, at(y, name_h), &a.name, &name_style);
     y += name_h;
     if meta_lines > 0 {
         y += 4.0;
+        let clipped = painter.with_clip_rect(
+            painter
+                .clip_rect()
+                .intersect(snap::rect(at(y, meta_box_h), ppp)),
+        );
+        let mut line_y = y;
         if show_username {
-            text::paint(&painter, at(y, meta_line), &a.account.username, &username);
-            y += meta_line;
+            text::paint(
+                &clipped,
+                at(line_y, meta_line),
+                &a.account.username,
+                &username,
+            );
+            line_y += meta_line;
         }
         if let Some(label) = &last_login {
-            text::paint(&painter, at(y, meta_line), label, &meta);
-            y += meta_line;
+            text::paint(&clipped, at(line_y, meta_line), label, &meta);
         }
+        y += meta_box_h;
     }
     if !chips.is_empty() {
         y += 6.0;
@@ -1657,6 +1715,30 @@ mod tests {
 
         let events = bench.press(ROW0, PointerButton::Secondary);
         assert!(matches!(&events[..], [ListEvent::AccountMenu(a, _)] if a.id == "a"));
+    }
+
+    #[test]
+    fn the_preview_column_shrinks_like_blink() {
+        // 30 px too tall with a 120 px avatar and one 14.4 px meta line:
+        // Blink gives 26.79 and 3.21 px, rounded to 1/64.
+        let (avatar, meta) = flex_shrink(30.0, 120.0, 14.4, 1.0);
+        assert_eq!(avatar, 93.21875);
+        assert!((meta - 11.184).abs() < 1.0 / 64.0, "{meta}");
+        assert_eq!(flex_shrink(-4.0, 120.0, 14.4, 1.0), (120.0, 14.4));
+        assert_eq!(flex_shrink(500.0, 120.0, 14.4, 1.5), (0.0, 0.0));
+        let full = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+        let uv = box_uv(
+            full,
+            Rect::from_min_size(pos2(0.0, 0.0), vec2(120.0, 90.0)),
+            1.0,
+        );
+        assert_eq!(uv, Rect::from_min_max(pos2(0.0, 0.125), pos2(1.0, 0.875)));
+        // A 93.2 px box at y 108: the picture snaps to 95..215, the box to
+        // 108..201, so the band starts on a whole texel.
+        let rect = Rect::from_min_size(pos2(674.0, 108.0), vec2(120.0, 93.21875));
+        let uv = box_uv(full, rect, 1.0);
+        assert_eq!(uv.top() * 120.0, 13.0);
+        assert_eq!(uv.bottom() * 120.0, 106.0);
     }
 
     #[test]

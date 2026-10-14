@@ -157,3 +157,32 @@ fn seed_keys_patch_the_scenario_stores() {
     assert_eq!(stores["client.view-mode"], "list");
     assert_eq!(stores["client.folders"], serde_json::json!([]));
 }
+
+#[test]
+fn seeded_avatar_paths_resolve_like_the_scenarios() {
+    let root = PathBuf::from("repo");
+    let setup = MockSetup {
+        seed: Some(serde_json::json!({
+            "cache.steam.profiles": {
+                "1": { "url": "src/lib/mock/avatars/photo.jpg", "timestamp": 1 },
+            },
+        })),
+        repo_root: Some(root.clone()),
+        ..MockSetup::default()
+    };
+    let mut stores = BTreeMap::new();
+    stores.insert(
+        "cache.steam.profiles".to_string(),
+        serde_json::json!({ "2": { "url": "kept", "timestamp": 1 } }),
+    );
+    setup.patch_stores(&mut stores);
+    let cache = &stores["cache.steam.profiles"];
+    let photo = root
+        .join("src")
+        .join("lib")
+        .join("mock")
+        .join("avatars")
+        .join("photo.jpg");
+    assert_eq!(cache["1"]["url"], photo.to_string_lossy().as_ref());
+    assert_eq!(cache["2"]["url"], "kept");
+}
