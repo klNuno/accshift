@@ -36,6 +36,7 @@ impl Screen {
             locale: scene.locale.clone(),
             seed: scene.seed.clone(),
             streaming: scene.streaming,
+            cs2: scene.cs2.clone(),
             data_dir,
             repo_root,
         };

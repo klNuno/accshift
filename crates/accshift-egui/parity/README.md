@@ -64,6 +64,7 @@ The scale is real: `ref.mjs` launches the app once per scene scale with `--force
 - Coordinates are CSS pixels of the viewport (1 CSS px = 1 egui point). Output: `<out>/<id>/<shot>.png`, viewport times scale.
 - `scenario` is a key of `SCENARIOS` in `src/lib/mock/scenarios.ts`; `os` sets the mock's runtime OS.
 - `streaming` (optional, `true`) makes `detect_streaming_software` report streaming software running (`__mock.streaming`), so a scene seeded with `streamerMode: "auto"` reaches the streamer overlay.
+- `cs2` (optional, an array of `Cs2BridgeAccount` rows) enables the CS2 bridge and answers `cs2_bridge_fetch` and `cs2_bridge_check` with these rows (`__mock.cs2`), so Steam cards show the CS2 badge and section.
 - `theme` and `locale` patch `client.settings` (`themeId`, `language`). A `seed` key is a store id (`client.view-mode`) or the suffix of its `CLIENT_STORE_` constant in `src/lib/storage/storeIds.ts` (`SETTINGS`); an object value is merged over the scenario's own store, anything else replaces it.
 - `key` takes `Ctrl`, `Shift`, `Alt` and `Meta` prefixes joined with `+`, then a character or a key name (`Enter`, `Escape`, `Backspace`, `Tab`, `Delete`, `Home`, `End`, arrow keys, `Space`). `text` types character by character. `scroll` is `[x, y, deltaY]`.
 - A shot waits for nothing: put a `wait` before it, long enough for transitions to end.

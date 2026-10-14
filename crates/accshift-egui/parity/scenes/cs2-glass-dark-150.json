@@ -1,0 +1,138 @@
+{
+  "id": "cs2-glass-dark-150",
+  "scenario": "dev",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "seed": {
+    "SETTINGS": {
+      "viewMode": "grid",
+      "animations": "off",
+      "accountDisplay": {
+        "showUsernames": true,
+        "showCardNotesInline": false
+      }
+    },
+    "client.account-card-notes": {
+      "76561198100000001": "Main account, keep the trade lock in mind"
+    }
+  },
+  "cs2": [
+    {
+      "steamId": "76561198100000001",
+      "level": 24,
+      "xp": 3120,
+      "xpMax": 5000,
+      "caseEarned": true,
+      "weekStartTs": 1790812800,
+      "lastUpdated": "2026-09-30T18:00:00Z"
+    },
+    {
+      "steamId": "76561198100000002",
+      "level": 8,
+      "xp": 450,
+      "xpMax": 5000,
+      "caseEarned": false,
+      "weekStartTs": 1790812800,
+      "lastUpdated": "2026-09-30T18:00:00Z"
+    },
+    {
+      "steamId": "76561198100000003",
+      "level": 40,
+      "xp": 4999,
+      "xpMax": 5000,
+      "caseEarned": false,
+      "weekStartTs": 1790812800,
+      "lastUpdated": "2026-09-30T18:00:00Z"
+    },
+    {
+      "steamId": "76561198100000006",
+      "level": null,
+      "xp": null,
+      "xpMax": 5000,
+      "caseEarned": true,
+      "weekStartTs": null,
+      "lastUpdated": null
+    }
+  ],
+  "steps": [
+    {
+      "wait": 800
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "shot": "root"
+    },
+    {
+      "dom": "root",
+      "select": ".username, .username-badge"
+    },
+    {
+      "move": [205, 150]
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "hover-main"
+    },
+    {
+      "dom": "hover-main",
+      "select": ".card-shell, .card, .username, .username-badge, .extension-surface, .details, .section, .section-title, .section-text, .progress-row, .progress-track, .progress-fill, .progress-label, .chip"
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "move": [315, 150]
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "hover-noavatar"
+    },
+    {
+      "dom": "hover-noavatar",
+      "select": ".card-shell, .card, .username, .username-badge, .extension-surface, .details, .section, .section-title, .section-text, .progress-row, .progress-track, .progress-fill, .progress-label, .chip"
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "move": [425, 150]
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "hover-vac"
+    },
+    {
+      "dom": "hover-vac",
+      "select": ".card-shell, .card, .username, .username-badge, .extension-surface, .details, .section, .section-title, .section-text, .progress-row, .progress-track, .progress-fill, .progress-label, .chip"
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

@@ -153,6 +153,8 @@ pub struct MockSetup {
     pub seed: Option<Value>,
     /// `overrides.streaming`: streaming software "runs".
     pub streaming: bool,
+    /// `overrides.cs2`: the CS2 bridge rows, the bridge enabled.
+    pub cs2: Option<Vec<Value>>,
     /// `parity/data`.
     pub data_dir: PathBuf,
     /// The repo root, to resolve the mock avatar paths.
@@ -346,6 +348,7 @@ impl AppModel {
         let mock = MockBackend::from_json(&scenario.to_string(), setup.repo_root.as_deref())
             .map_err(|e| format!("{}: {e}", file.display()))?;
         mock.set_streaming(setup.streaming);
+        mock.set_cs2(setup.cs2.clone());
         let mock = Arc::new(mock);
         let clock = Clock::pinned(mock.now());
         let backend: Arc<dyn Backend> = mock.clone();

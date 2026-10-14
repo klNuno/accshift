@@ -19,7 +19,9 @@
 //! - [`MockBackend::fail`] and [`MockBackend::latency`] are the `__mock.fail`
 //!   and `__mock.latency` overrides, ignored on the frozen `demo` scenario;
 //! - [`MockBackend::set_streaming`] is `accshift.mock.overrides.streaming`:
-//!   `detect_streaming_software` answers true.
+//!   `detect_streaming_software` answers true;
+//! - [`MockBackend::set_cs2`] is `accshift.mock.overrides.cs2`: the CS2
+//!   bridge reads as enabled and answers with the rows given.
 //!
 //! Nothing here reaches Steam, the keyring, the registry or the disk outside
 //! the scenario file.
@@ -107,6 +109,8 @@ struct MockState {
     failures: BTreeMap<String, String>,
     /// `overrides.streaming`.
     streaming: bool,
+    /// `overrides.cs2`: the bridge rows, `None` when the bridge is off.
+    cs2: Option<Vec<Value>>,
 }
 
 /// See the module documentation.
@@ -185,6 +189,7 @@ impl MockBackend {
                 latency_ms: 0,
                 failures: BTreeMap::new(),
                 streaming: false,
+                cs2: None,
             }),
             spec: file.spec,
         };
@@ -301,6 +306,15 @@ impl MockBackend {
         self.lock().streaming = on;
     }
 
+    /// `accshift.mock.overrides.cs2`: the CS2 bridge reads as enabled and
+    /// answers `cs2_bridge_fetch` with `rows` and `cs2_bridge_check` with the
+    /// row of that Steam id. `None` leaves the scenario's own answers. Like
+    /// `streaming`, it holds on `demo` too: the bench serves that scenario
+    /// from a `VITE_MOCK=dev` build, where overrides are read.
+    pub fn set_cs2(&self, rows: Option<Vec<Value>>) {
+        self.lock().cs2 = rows;
+    }
+
     /// `__mock.os(name)`: the OS `get_runtime_os` and the boot payload report.
     /// Returns false on the frozen scenario.
     pub fn set_runtime_os(&self, os: &str) -> bool {
@@ -370,7 +384,12 @@ impl MockBackend {
         if let Some(message) = failure {
             return Err(BackendError::new(message));
         }
-        let value = if self.is_mocked(command) {
+        let cs2 = self.lock().cs2.is_some()
+            && matches!(
+                command,
+                "cs2_bridge_get_settings" | "cs2_bridge_fetch" | "cs2_bridge_check"
+            );
+        let value = if self.is_mocked(command) || cs2 {
             if latency_ms > 0 {
                 std::thread::sleep(Duration::from_millis(latency_ms));
             }
@@ -468,6 +487,19 @@ impl MockBackend {
                 let id = arg_str(args, &["userId", "accountId"]).unwrap_or_default();
                 self.recorded_by_id(command, &["userId", "accountId"], &id)
                     .unwrap_or_else(|| json!({ "avatarUrl": null }))
+            }
+            "cs2_bridge_get_settings" if self.lock().cs2.is_some() => {
+                json!({ "enabled": true, "url": "", "tokenConfigured": true })
+            }
+            "cs2_bridge_fetch" if self.lock().cs2.is_some() => {
+                Value::Array(self.lock().cs2.clone().unwrap_or_default())
+            }
+            "cs2_bridge_check" if self.lock().cs2.is_some() => {
+                let id = arg_str(args, &["steamId"]).unwrap_or_default();
+                let rows = self.lock().cs2.clone().unwrap_or_default();
+                rows.into_iter()
+                    .find(|row| row["steamId"].as_str() == Some(id.as_str()))
+                    .unwrap_or(Value::Null)
             }
             "cs2_bridge_get_settings" => cs2_settings_from_fixture(self.answer(command, args)?),
             _ => self.answer(command, args)?,

@@ -109,6 +109,7 @@ const applyMock = (scene) => `
   const overrides = { scenario: scene.scenario, stores };
   if (scene.os) overrides.runtimeOs = scene.os;
   if (scene.streaming) overrides.streaming = true;
+  if (scene.cs2) overrides.cs2 = scene.cs2;
   localStorage.setItem("accshift.mock.overrides", JSON.stringify(overrides));
   return Object.keys(stores);
 })()

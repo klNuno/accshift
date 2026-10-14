@@ -18,6 +18,7 @@
  */
 import { type Handler, createHandlers, delay, generateAccounts } from "./fixtures";
 import { AVATARS, DEFAULT_SCENARIO, SCENARIOS } from "./scenarios";
+import type { Cs2BridgeAccount } from "$lib/platforms/steam/steamApi";
 
 /** Injected by vite.config.js from VITE_MOCK / VITE_DEMO. */
 declare const __MOCK_SCENARIO__: string;
@@ -40,6 +41,8 @@ interface MockOverrides {
   accountCount?: number;
   /** `detect_streaming_software` reports streaming software running. */
   streaming?: boolean;
+  /** The CS2 bridge is enabled and answers with these rows. */
+  cs2?: Cs2BridgeAccount[];
 }
 
 function readOverrides(): MockOverrides {
@@ -82,6 +85,13 @@ if (overrides.stores) spec.stores = { ...spec.stores, ...overrides.stores };
 const handlers: Record<string, Handler> = createHandlers(spec);
 // Streamer mode's poll: OBS "running" without touching the process table.
 if (overrides.streaming) handlers.detect_streaming_software = () => true;
+// The CS2 bridge "configured", answering with the rows given.
+if (overrides.cs2) {
+  const rows = overrides.cs2;
+  handlers.cs2_bridge_get_settings = () => ({ enabled: true, url: "", tokenConfigured: true });
+  handlers.cs2_bridge_fetch = () => rows;
+  handlers.cs2_bridge_check = (args) => rows.find((row) => row.steamId === args.steamId) ?? null;
+}
 
 /** Live knobs: changing these takes effect on the next call, without a reload. */
 let latencyMs = overrides.latencyMs ?? 0;
@@ -174,6 +184,8 @@ const api = {
   accounts: (count: number) => persist({ accountCount: count }, true),
   /** Pretend streaming software runs, to reach the streamer overlay (reloads). */
   streaming: (on: boolean) => persist({ streaming: on }, true),
+  /** Enable the CS2 bridge with these rows, `null` to turn it off (reloads). */
+  cs2: (rows: Cs2BridgeAccount[] | null) => persist({ cs2: rows ?? undefined }, true),
   /** Pretend to run on another OS — titlebar, traffic lights, paths (reloads). */
   os: (name: "windows" | "macos" | "linux") => persist({ runtimeOs: name }, true),
   /** Start from a given client store, e.g. seed("client.settings", {themeId:"glass"}) (reloads). */
@@ -219,6 +231,6 @@ export function installMockApi() {
   console.info(
     `[mock] IPC mocked — scenario "${scenarioId}" (${spec.label})${FROZEN ? " [frozen]" : ""}\n` +
       "[mock] __mock.state() · .scenarios() · .use(id) · .accounts(n) · .os(name) · " +
-      ".streaming(on) · .seed(store, value) · .latency(ms) · .fail(cmd, msg) · .reset()",
+      ".streaming(on) · .cs2(rows) · .seed(store, value) · .latency(ms) · .fail(cmd, msg) · .reset()",
   );
 }

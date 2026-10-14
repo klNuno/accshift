@@ -7,20 +7,28 @@
 //! the display lists, feed `track_priming` the new visible ids, then build
 //! the [`DisplayView`] the workspace draws. Repaint deadlines from the loader
 //! and the debounce are requested from egui.
+//!
+//! The Steam tab also runs the CS2 bridge queue (`loadCs2BridgeData` when
+//! the tab shows accounts, `triggerCs2BridgeCheck` after a switch) and keeps
+//! each card's CS2 section and username badge in [`Cs2Cards`].
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use accshift_app::accounts::loader::LoadOptions;
+use accshift_app::accounts::loader::{AccountLoader, LoadOptions};
 use accshift_app::accounts::loading::{AccountLoading, LoadingContext};
 use accshift_app::accounts::profile_cache::{ProfileCaches, UrlPolicy};
 use accshift_app::accounts::LoadingEvent;
+use accshift_app::cs2_bridge::Cs2BridgeQueue;
 use accshift_app::display::{
     build_display_view, CardContext, DisplayBody, DisplayLists, DisplayPipeline, DisplayView,
     DragPreview, FolderNavigation, PipelineInput,
 };
 use accshift_app::jobs::Jobs;
+use accshift_app::platforms::card::{CardSection, UsernameBadge};
 use accshift_app::platforms::descriptors::PlatformDescriptor;
+use accshift_app::platforms::steam::cs2::{cs2_extension_sections, cs2_username_badge};
 use accshift_app::platforms::{self as app_platforms, PlatformRegistry};
 use accshift_app::stores::ClientStores;
 use accshift_app::time::Clock;
@@ -52,6 +60,87 @@ fn load_options(silent: bool, defer_background: bool) -> LoadOptions {
     }
 }
 
+/// One account's CS2 bridge content: `cs2ExtensionSections` and
+/// `cs2UsernameBadge`.
+#[derive(Clone, Debug, Default)]
+pub struct Cs2Card {
+    pub sections: Vec<CardSection>,
+    pub badge: Option<UsernameBadge>,
+}
+
+/// The CS2 content of the Steam tab's cards, rebuilt when the bridge cache
+/// changes (`getCs2BridgeVersion`). Empty on every other tab.
+#[derive(Default)]
+pub struct Cs2Cards {
+    pub queue: Cs2BridgeQueue,
+    /// The tab and account list version the load effect last ran for: it
+    /// reruns when either changes, as the `$effect` reading `activeTab` and
+    /// `loader.accounts`.
+    effect: Option<(String, u64)>,
+    /// The bridge version and account list version the map was built from.
+    built: Option<(u64, u64)>,
+    by_id: HashMap<String, Cs2Card>,
+}
+
+impl Cs2Cards {
+    /// The card content of `account_id`, if the bridge has a row for it.
+    pub fn card(&self, account_id: &str) -> Option<&Cs2Card> {
+        self.by_id.get(account_id)
+    }
+
+    /// One frame: queue the tab's load and the switch checks, run the queue,
+    /// then rebuild the map when the cache moved.
+    fn update(
+        &mut self,
+        jobs: &Jobs,
+        registry: &PlatformRegistry,
+        tab: &str,
+        loader: &AccountLoader,
+        checks: Vec<String>,
+        now_ms: f64,
+    ) {
+        let Some(steam) = registry.adapter("steam") else {
+            return;
+        };
+        let accounts = loader.accounts();
+        let accounts_version = loader.accounts_version();
+        for steam_id in checks {
+            self.queue.check(steam_id);
+        }
+        let effect = self.effect.as_ref().map(|(t, v)| (t.as_str(), *v));
+        if effect != Some((tab, accounts_version)) {
+            self.effect = Some((tab.to_string(), accounts_version));
+            let state = steam.state();
+            self.queue
+                .ensure_loaded(&state.cs2, tab, accounts.len(), now_ms);
+        }
+        self.queue.tick(jobs, &steam, now_ms);
+        if tab != "steam" {
+            self.by_id.clear();
+            self.built = None;
+            return;
+        }
+        let state = steam.state();
+        let key = (state.cs2.version(), accounts_version);
+        if self.built == Some(key) {
+            return;
+        }
+        self.built = Some(key);
+        self.by_id = accounts
+            .iter()
+            .filter_map(|account| {
+                let id = &account.id;
+                let data = state.cs2.data(id);
+                let card = Cs2Card {
+                    sections: cs2_extension_sections(data),
+                    badge: cs2_username_badge(data),
+                };
+                (card.badge.is_some() || !card.sections.is_empty()).then(|| (id.clone(), card))
+            })
+            .collect();
+    }
+}
+
 /// Everything the workspace reads, owned by the model.
 pub struct Accounts {
     pub registry: PlatformRegistry,
@@ -68,6 +157,7 @@ pub struct Accounts {
     /// from it.
     pub prev_view: DisplayView,
     pub avatars: AvatarTextures,
+    pub cs2: Cs2Cards,
 }
 
 impl Accounts {
@@ -135,6 +225,7 @@ impl Accounts {
                 body: DisplayBody::Loading,
             },
             avatars: AvatarTextures::new(policy),
+            cs2: Cs2Cards::default(),
         };
         accounts
             .navigation
@@ -240,13 +331,24 @@ impl Accounts {
             self.loading.poll(&mut lctx)
         };
         self.lists.visible_account_ids = visible;
+        let mut checks = Vec::new();
         for event in events {
-            if let LoadingEvent::AccountsLoaded { platform_id } = event {
-                if platform_id == tab {
+            match event {
+                LoadingEvent::AccountsLoaded { platform_id } if platform_id == tab => {
                     self.navigation.refresh_current_items(stores, tab);
                 }
+                LoadingEvent::Cs2Check { steam_id } => checks.push(steam_id),
+                _ => {}
             }
         }
+        self.cs2.update(
+            jobs,
+            &self.registry,
+            tab,
+            &self.loading.loader,
+            checks,
+            self.clock.now_ms(),
+        );
         self.pipeline.tick(now);
         self.lists = self.pipeline.compute(&PipelineInput {
             navigation: &self.navigation,
@@ -302,6 +404,7 @@ impl Accounts {
     pub fn settled(&self) -> bool {
         !self.loading.loader.loading()
             && !self.loading.has_pending_work()
+            && !self.cs2.queue.is_busy()
             && self.pipeline.next_deadline().is_none()
     }
 }

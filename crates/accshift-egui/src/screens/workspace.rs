@@ -452,6 +452,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
         navigation,
         registry,
         clock,
+        cs2,
         ..
     } = &mut *input.accounts;
     let tab = input.platform.map_or("", |p| p.id.as_str());
@@ -891,11 +892,19 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                 }
             }
             Node::Account(a) => {
-                // `createWarningExtensionSection`, `createNoteExtensionSection`.
+                // `createWarningExtensionSection`, `createNoteExtensionSection`,
+                // then the extra sections (Steam's CS2 bridge row).
+                let cs2 = cs2.card(&a.account.id).cloned();
                 let sections: Vec<_> = warning_section(a.warning.as_ref(), input.locale)
                     .into_iter()
                     .chain(note_section(&a.note, a.show_note_inline))
+                    .chain(cs2.iter().flat_map(|c| c.sections.iter().cloned()))
                     .collect();
+                // `bulkEditMode ? null : getUsernameBadge(account.id)`.
+                let badge = cs2
+                    .as_ref()
+                    .and_then(|c| c.badge.as_ref())
+                    .filter(|_| !a.single_click_switch);
                 let start = shape_count(&ctx, layer);
                 let out = account_card::account_card(
                     &mut child,
@@ -909,7 +918,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                         focus_visible: input.focus_visible,
                         locale: input.locale,
                         time: &time,
-                        badge: None,
+                        badge,
                         extension: &sections,
                         extension_disabled: a.single_click_switch,
                         glass: input.glass,

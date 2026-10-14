@@ -270,6 +270,32 @@ fn fail_and_latency_overrides() {
 }
 
 #[test]
+fn the_cs2_override_enables_the_bridge() {
+    let mock = load("dev");
+    assert!(!mock.cs2_bridge_get_settings().unwrap().enabled);
+    assert!(mock.cs2_bridge_fetch().is_err());
+    let row = json!({
+        "steamId": "76561198100000001", "level": 24, "xp": 3120, "xpMax": 5000,
+        "caseEarned": true, "weekStartTs": null, "lastUpdated": null,
+    });
+    mock.set_cs2(Some(vec![row]));
+    assert!(mock.cs2_bridge_get_settings().unwrap().enabled);
+    let rows = mock.cs2_bridge_fetch().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].level, Some(24));
+    let checked = mock.cs2_bridge_check("76561198100000001").unwrap();
+    assert_eq!(checked.map(|a| a.xp), Some(Some(3120)));
+    assert!(mock
+        .cs2_bridge_check("76561198100000002")
+        .unwrap()
+        .is_none());
+    // The other bridge commands stay refused.
+    assert!(mock.cs2_bridge_test().is_err());
+    mock.set_cs2(None);
+    assert!(!mock.cs2_bridge_get_settings().unwrap().enabled);
+}
+
+#[test]
 fn the_demo_scenario_ignores_overrides() {
     let mock = load("demo");
     assert!(!mock.fail("get_runtime_os", Some("boom")));
