@@ -464,7 +464,9 @@
       viewMode,
       settingsPanel.showSettings,
     );
-    cardFocus.clear();
+    // `clear` reads the focused id: untracked, or the effect would depend
+    // on it and drop every focus the arrows set.
+    untrack(() => cardFocus.clear());
   });
 
   // Collapsed sections were view state of the workspace that {#key panelKey}

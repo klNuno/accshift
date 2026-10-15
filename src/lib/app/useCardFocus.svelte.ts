@@ -1,4 +1,5 @@
 import type { ItemRef } from "$lib/features/folders/types";
+import { cardsPerRow, liveCardWidth } from "$lib/shared/useGridLayout.svelte";
 
 type CardFocusDeps = {
   /** Cards in visual order (folders then accounts, sections flattened). */
@@ -87,21 +88,20 @@ export function createCardFocus({ getItems, getWrapperRef, getViewMode }: CardFo
     el.scrollIntoView({ block: "nearest" });
   }
 
-  /** Cards per row, measured from live layout so it follows zoom and resize.
-   *  List view is always a single column. */
-  function measureColumns(): number {
+  /** Cards per row of the grid holding `item`, from its live width so it
+   *  follows zoom, density and resize. Each section of the sections layout
+   *  has its own grid, and one with a single card still wraps at the full
+   *  width. List view is always a single column. */
+  function measureColumns(item: ItemRef): number {
     if (getViewMode() === "list") return 1;
-    const wrapper = getWrapperRef();
-    if (!wrapper) return 1;
-    const cards = wrapper.querySelectorAll<HTMLElement>("[data-account-id], [data-folder-id]");
-    if (cards.length === 0) return 1;
-    const firstTop = cards[0].offsetTop;
-    let columns = 0;
-    for (const card of cards) {
-      if (Math.abs(card.offsetTop - firstTop) > 4) break;
-      columns += 1;
-    }
-    return Math.max(1, columns);
+    const grid = findElement(item)?.closest<HTMLElement>(".grid-container");
+    if (!grid) return 1;
+    const style = getComputedStyle(grid);
+    const width =
+      grid.clientWidth -
+      Number.parseFloat(style.paddingLeft) -
+      Number.parseFloat(style.paddingRight);
+    return Math.max(1, cardsPerRow(width, liveCardWidth()));
   }
 
   function setFocused(id: string | null) {
@@ -119,7 +119,7 @@ export function createCardFocus({ getItems, getWrapperRef, getViewMode }: CardFo
       setFocused(items[0].id);
       return true;
     }
-    const columns = measureColumns();
+    const columns = measureColumns(items[currentIndex]);
     const delta =
       direction === "left"
         ? -1
