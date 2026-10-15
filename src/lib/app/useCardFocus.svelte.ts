@@ -1,4 +1,5 @@
 import type { ItemRef } from "$lib/features/folders/types";
+import { cardsPerRow, liveCardWidth } from "$lib/shared/useGridLayout.svelte";
 
 type CardFocusDeps = {
   /** Cards in visual order (folders then accounts, sections flattened). */
@@ -14,9 +15,6 @@ function cardSelector(item: ItemRef): string {
 }
 
 const CARD_SELECTOR = "[data-account-id], [data-folder-id]";
-/** A focusable card: a whole section of the sections layout also carries
- *  `data-folder-id`, but it is no card. */
-const ITEM_SELECTOR = "[data-account-id], [data-folder-id]:not([data-section-card])";
 const INTERACTIVE_SELECTOR = [
   "button",
   "a[href]",
@@ -50,18 +48,6 @@ export function isCardKeyTarget(target: EventTarget | null, wrapper: Element | n
   if (!wrapper || !wrapper.contains(target)) return false;
   if (target.matches(CARD_SELECTOR)) return true;
   return !target.matches(INTERACTIVE_SELECTOR);
-}
-
-/** Leading grid slots on the first slot's row, from their tops: the cards
- *  per row. */
-export function countColumns(tops: number[]): number {
-  if (tops.length === 0) return 1;
-  let columns = 0;
-  for (const top of tops) {
-    if (Math.abs(top - tops[0]) > 4) break;
-    columns += 1;
-  }
-  return columns;
 }
 
 /** Virtual roving focus for the card grid. The cards are managed by the drag
@@ -102,18 +88,20 @@ export function createCardFocus({ getItems, getWrapperRef, getViewMode }: CardFo
     el.scrollIntoView({ block: "nearest" });
   }
 
-  /** Cards per row, measured from live layout so it follows zoom and resize:
-   *  the slots on the first row of the first card's grid, the back card
-   *  included since it takes one. Slot boxes, not `offsetTop`: an account
-   *  card's offset parent is its own `.card-shell`. List view is always a
-   *  single column. */
-  function measureColumns(): number {
+  /** Cards per row of the grid holding `item`, from its live width so it
+   *  follows zoom, density and resize. Each section of the sections layout
+   *  has its own grid, and one with a single card still wraps at the full
+   *  width. List view is always a single column. */
+  function measureColumns(item: ItemRef): number {
     if (getViewMode() === "list") return 1;
-    const first = getWrapperRef()?.querySelector<HTMLElement>(ITEM_SELECTOR);
-    const grid = first?.closest<HTMLElement>(".grid-container");
+    const grid = findElement(item)?.closest<HTMLElement>(".grid-container");
     if (!grid) return 1;
-    const tops = Array.from(grid.children, (slot) => slot.getBoundingClientRect().top);
-    return Math.max(1, countColumns(tops));
+    const style = getComputedStyle(grid);
+    const width =
+      grid.clientWidth -
+      Number.parseFloat(style.paddingLeft) -
+      Number.parseFloat(style.paddingRight);
+    return Math.max(1, cardsPerRow(width, liveCardWidth()));
   }
 
   function setFocused(id: string | null) {
@@ -131,7 +119,7 @@ export function createCardFocus({ getItems, getWrapperRef, getViewMode }: CardFo
       setFocused(items[0].id);
       return true;
     }
-    const columns = measureColumns();
+    const columns = measureColumns(items[currentIndex]);
     const delta =
       direction === "left"
         ? -1

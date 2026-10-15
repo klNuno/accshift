@@ -55,7 +55,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const { countColumns, createCardFocus, isCardKeyTarget } = await import("./useCardFocus.svelte");
+const { createCardFocus, isCardKeyTarget } = await import("./useCardFocus.svelte");
 
 function buildPage() {
   const body = fakeDocument.body!;
@@ -127,17 +127,5 @@ describe("virtual focus release", () => {
     focus.releaseIfOutside(page.card as unknown as Element);
     focus.releaseIfOutside(page.body as unknown as Element);
     expect(focus.focusedId).toBe("a1");
-  });
-});
-
-describe("columns", () => {
-  it("counts the slots on the first row", () => {
-    expect(countColumns([84, 84, 84, 230, 230])).toBe(3);
-    expect(countColumns([84, 86, 82, 230])).toBe(3);
-  });
-
-  it("reads one column for a single card or none", () => {
-    expect(countColumns([84])).toBe(1);
-    expect(countColumns([])).toBe(1);
   });
 });
