@@ -1,5 +1,5 @@
 # Vendored epaint 0.36.2 (crates.io, egui commit 49682f8b), wired in through
-# [patch.crates-io] in crates/accshift-egui/Cargo.toml. Two patches, each
+# [patch.crates-io] in crates/accshift-egui/Cargo.toml. Three patches, each
 # marked "accshift patch":
 # - src/text/font.rs and src/text/fonts.rs: a font can carry a GlyphRasterizer
 #   (FontData::rasterizer) that supplies the glyph coverage instead of skrifa
@@ -9,6 +9,10 @@
 #   src/text/fonts.rs: a LayoutJob carries OpenType features (font_features)
 #   that reach harfrust, so ui::text can map `font-variant-numeric:
 #   tabular-nums` to `tnum`.
+# - src/text/text_layout.rs and src/text/fonts.rs: wrapping measures rows on
+#   the exact pen positions instead of glyphs snapped to a quarter pixel, and
+#   a job with round_output_to_gui off keeps its fractional max_width, so a
+#   box sized to its own text never wraps (Blink's LayoutUnit fit).
 # The bench and dev-dependencies are dropped so they stay out of the lockfile.
 
 [package]

@@ -157,12 +157,13 @@ fn colors(ctx: &Context, id: Id, s: &ButtonStyle, hovered: bool) -> (Rgba, Rgba,
 
 /// The `width: auto` border box of `label` in `style`.
 pub fn size(ctx: &Context, label: &str, style: &ButtonStyle) -> Vec2 {
-    let w = text::measure(ctx, label, &style.font).unwrap_or(0.0);
+    let ppp = ctx.pixels_per_point();
+    let w = snap::content_width(text::measure(ctx, label, &style.font).unwrap_or(0.0), ppp);
     let line = style
         .font
         .line_box(ctx)
         .map_or(style.font.size * 1.5, |b| b.height);
-    let border = snap::border_width(style.border, ctx.pixels_per_point());
+    let border = snap::border_width(style.border, ppp);
     vec2(w, line) + 2.0 * style.padding + Vec2::splat(2.0 * border)
 }
 

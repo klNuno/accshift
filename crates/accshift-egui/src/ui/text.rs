@@ -99,6 +99,9 @@ pub struct TextStyle {
     pub nowrap: bool,
     /// `text-overflow: ellipsis` (with `overflow: hidden`): only with `nowrap`.
     pub ellipsis: bool,
+    /// `overflow-wrap: anywhere`: a word too long for the line breaks at the
+    /// character that overflows (egui would cut after its last punctuation).
+    pub overflow_anywhere: bool,
     /// `font-variant-numeric: tabular-nums` (the `tnum` feature).
     pub tabular_nums: bool,
     pub align: TextAlign,
@@ -118,6 +121,7 @@ impl Default for TextStyle {
             transform: TextTransform::None,
             nowrap: false,
             ellipsis: false,
+            overflow_anywhere: false,
             tabular_nums: false,
             align: TextAlign::Left,
             color: Color32::WHITE,
@@ -165,6 +169,12 @@ impl TextStyle {
     pub fn nowrap(mut self, ellipsis: bool) -> Self {
         self.nowrap = true;
         self.ellipsis = ellipsis;
+        self
+    }
+
+    /// `overflow-wrap: anywhere`.
+    pub fn overflow_anywhere(mut self) -> Self {
+        self.overflow_anywhere = true;
         self
     }
 
@@ -227,6 +237,7 @@ impl TextStyle {
                 }
                 "white-space" => style.nowrap = value == "nowrap" || value == "pre",
                 "text-overflow" => style.ellipsis = value == "ellipsis",
+                "overflow-wrap" | "word-wrap" => style.overflow_anywhere = value == "anywhere",
                 "font-variant-numeric" => {
                     style.tabular_nums = value.split_whitespace().any(|v| v == "tabular-nums")
                 }
@@ -394,19 +405,36 @@ pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Optio
         if style.tabular_nums {
             job.font_features.push((*b"tnum", 1));
         }
+        // egui pads the wrap width by half a point for its rounded sizes;
+        // Blink wraps once the line, ceiled to a LayoutUnit (1/64 device
+        // px), is wider than its box: a box sized to its text keeps it.
+        job.round_output_to_gui = false;
+        let fit = avail + lead + 1.0 / 64.0 / ppp;
         job.wrap = match (style.nowrap, style.ellipsis) {
             (true, true) => TextWrapping::truncate_at_width(avail + lead),
             (true, false) => TextWrapping::no_max_width(),
-            (false, _) => TextWrapping::wrap_at_width(avail + lead),
+            (false, _) => TextWrapping::wrap_at_width(fit),
         };
+        // Without a space, every character is a break opportunity; with
+        // spaces egui still prefers them, and only an overlong word differs.
+        if style.overflow_anywhere && !text.contains(char::is_whitespace) {
+            job.wrap.break_anywhere = true;
+        }
         job
     };
     let job = |lead: f32| job_for(&text, lead);
-    let offset = |w: f32| match style.align {
-        TextAlign::Left => 0.0,
-        TextAlign::Center if avail.is_finite() => ((avail - w) / 2.0 * 64.0).floor() / 64.0,
-        TextAlign::Right if avail.is_finite() => avail - w,
-        _ => 0.0,
+    // Blink aligns in LayoutUnits (1/64 device px): the box as laid out, the
+    // line ceiled, no negative slack, the centre's half rounded down.
+    let offset = |w: f32| {
+        let units = |v: f32| (v * ppp * 64.0).round();
+        let line = crate::ui::snap::content_width(w, ppp);
+        let slack = (units(avail) - units(line)).max(0.0);
+        match style.align {
+            TextAlign::Left => 0.0,
+            TextAlign::Center if avail.is_finite() => (slack / 2.0).floor() / 64.0 / ppp,
+            TextAlign::Right if avail.is_finite() => slack / 64.0 / ppp,
+            _ => 0.0,
+        }
     };
 
     let mut galley = ctx.fonts_mut(|f| f.layout_job(job(0.0)));

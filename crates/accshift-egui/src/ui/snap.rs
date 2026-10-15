@@ -34,6 +34,14 @@ pub fn layout_unit(device: f32) -> f32 {
     (device * LU).round() / LU
 }
 
+/// A width in points ceiled to `LayoutUnit`s, in points: Blink sizes an
+/// inline item, and a box sized to its text, with `FromFloatCeil`, so the
+/// text never wraps in it. The slack keeps a width already on the grid,
+/// give or take f32 error, where it is.
+pub fn content_width(w: f32, ppp: f32) -> f32 {
+    (w * ppp * LU - 1e-3).ceil() / LU / ppp
+}
+
 /// `LayoutUnit::Round()`: a device position rounded half up.
 pub fn round_device(device: f32) -> f32 {
     (layout_unit(device) + 0.5).floor()

@@ -79,6 +79,10 @@ struct Paragraph {
 
     pub glyphs: Vec<Glyph>,
 
+    /// accshift patch: the exact pen position of each glyph in physical
+    /// pixels, before the sub-pixel snap of [`Glyph::pos`], for wrapping.
+    pub starts_px: Vec<f32>,
+
     /// In case of an empty paragraph ("\n"), use this as height.
     pub empty_paragraph_height: f32,
 }
@@ -89,6 +93,7 @@ impl Paragraph {
             cursor_x_px: 0.0,
             section_index_at_start,
             glyphs: vec![],
+            starts_px: vec![],
             empty_paragraph_height: 0.0,
         }
     }
@@ -382,6 +387,9 @@ fn layout_shaped_run(
                 glyph_alloc.uv_rect,
             )
         };
+        paragraph
+            .starts_px
+            .push(paragraph.cursor_x_px - glyph.advance_width * ctx.pixels_per_point);
         paragraph.glyphs.push(glyph);
         cluster_glyph_count += 1;
     }
@@ -424,6 +432,7 @@ fn emit_continuation_glyphs(
     let physical_x = paragraph.cursor_x_px.round() as i32;
 
     for chr in cluster_text.chars().skip(cluster_glyph_count) {
+        paragraph.starts_px.push(paragraph.cursor_x_px);
         paragraph
             .glyphs
             .push(ctx.glyph(chr, physical_x, 0.0, face_metrics, UvRect::default()));
@@ -642,7 +651,7 @@ fn rows_from_paragraphs(
                     ends_with_newline: !is_last_paragraph,
                 });
             } else {
-                line_break(&paragraph, job, &mut rows, elided);
+                line_break(&paragraph, job, pixels_per_point, &mut rows, elided);
                 let placed_row = rows.last_mut().unwrap();
                 placed_row.ends_with_newline = !is_last_paragraph;
             }
@@ -655,6 +664,7 @@ fn rows_from_paragraphs(
 fn line_break(
     paragraph: &Paragraph,
     job: &LayoutJob,
+    ppp: f32,
     out_rows: &mut Vec<PlacedRow>,
     elided: &mut bool,
 ) {
@@ -666,6 +676,11 @@ fn line_break(
     let mut first_row_indentation = paragraph.glyphs[0].pos.x;
     let mut row_start_x = 0.0;
     let mut row_start_idx = 0;
+    // accshift patch: rows are measured on the exact pen positions, not on
+    // glyphs snapped to a quarter pixel (up to 0.125 px wider, which broke
+    // a box sized to its own text) or egui's half point of slack.
+    let exact = |i: usize| paragraph.starts_px.get(i).map_or(paragraph.glyphs[i].pos.x, |x| x / ppp);
+    let mut row_start_exact = 0.0;
 
     for i in 0..paragraph.glyphs.len() {
         if job.wrap.max_rows <= out_rows.len() {
@@ -673,7 +688,8 @@ fn line_break(
             break;
         }
 
-        let potential_row_width = paragraph.glyphs[i].max_x() - row_start_x;
+        let potential_row_width =
+            exact(i) + paragraph.glyphs[i].advance_width - row_start_exact;
 
         // accshift: spaces at the end of a line hang past the wrap width, as
         // in CSS (`white-space: normal`): only a visible glyph breaks.
@@ -725,6 +741,7 @@ fn line_break(
                 // Start a new row:
                 row_start_idx = last_kept_index + 1;
                 row_start_x = paragraph.glyphs[row_start_idx].pos.x;
+                row_start_exact = exact(row_start_idx);
                 row_break_candidates.forget_before_idx(row_start_idx);
             } else {
                 // Found no place to break, so we have to overrun wrap_width.

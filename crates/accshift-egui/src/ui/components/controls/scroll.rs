@@ -47,7 +47,11 @@ pub fn scroll(
     vars: &Vars,
 ) -> f32 {
     let ppp = ui.ctx().pixels_per_point();
-    let max = (content - viewport.height()).max(0.0);
+    // Chromium's maximum offset comes from the pixel-snapped contents and
+    // client sizes (`SnapSizeToPixel`): content ending on half a pixel
+    // scrolls that half pixel further.
+    let snapped = |len: f32| ((viewport.top() + len) * ppp).round() - (viewport.top() * ppp).round();
+    let max = ((snapped(content) - snapped(viewport.height())) / ppp).max(0.0);
     let over = ui.rect_contains_pointer(viewport);
     if over {
         let delta: f32 = ui.input(|i| {

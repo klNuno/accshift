@@ -1096,7 +1096,9 @@ impl GalleyCache {
         pixels_per_point: f32,
         allow_split_paragraphs: bool,
     ) -> (u64, Arc<Galley>) {
-        if job.wrap.max_width.is_finite() {
+        // accshift patch: a job without rounded output (ui::text, which sizes
+        // its boxes itself) wraps at its exact width, like Blink.
+        if job.round_output_to_gui && job.wrap.max_width.is_finite() {
             // Protect against rounding errors in egui layout code.
 
             // Say the user asks to wrap at width 200.0.
