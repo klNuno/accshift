@@ -277,6 +277,23 @@ impl TextStyle {
         ))
     }
 
+    /// Blink's intrinsic width of a text `<input>` (`size` 20) in this style,
+    /// in points: `ceil(20 cw + max(0, max_char - cw))` device px. Skia's
+    /// DirectWrite port reports no average char width, so Blink takes the
+    /// advance of "x" as `cw`, rounded only from a .5 fraction up, unless it
+    /// passes 1.7 times the "0" (then `cw` is the "0" and `max_char` is
+    /// dropped); `max_char` is the face's glyph box at the device size,
+    /// rounded (`TextFieldIntrinsicInlineSize`).
+    pub fn text_field_width(&self, ctx: &Context) -> Option<f32> {
+        let ppp = ctx.pixels_per_point();
+        let ppem = self.size * ppp;
+        let m = resolve(ctx, &self.family, self.weight, ppem)?.metrics;
+        let x = measure(ctx, "x", self)? * ppp;
+        let zero = measure(ctx, "0", self)? * ppp;
+        let max_char = m.glyph_box / m.units_per_em * ppem;
+        Some(text_field_device(x, zero, max_char) / ppp)
+    }
+
     fn transformed(&self, text: &str) -> String {
         match self.transform {
             TextTransform::None => text.to_string(),
@@ -977,6 +994,18 @@ fn layout_unit(v: f32) -> f32 {
     (v * 64.0).round() / 64.0
 }
 
+/// [`TextStyle::text_field_width`] in device px, from the advances of "x"
+/// and "0" and the glyph box width, all at the device size.
+fn text_field_device(x: f32, zero: f32, max_char: f32) -> f32 {
+    let device = if zero > 0.0 && x > zero * 1.7 {
+        20.0 * zero
+    } else {
+        let cw = x.max(x.round());
+        20.0 * cw + (max_char.round() - cw).max(0.0)
+    };
+    device.ceil()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1016,12 +1045,36 @@ mod tests {
         }
     }
 
+    #[test]
+    fn text_fields_match_blinks_intrinsic_width() {
+        // A `size` 20 field in Segoe UI ("x" 940, "0" 1171, glyph box 5267
+        // per 2048 em), measured on WebView2 per device font size.
+        for (ppem, want) in [
+            (12.0, 145.0),
+            (13.0, 147.0),
+            (14.0, 159.0),
+            (15.0, 172.0),
+            (16.0, 181.0),
+            (17.0, 196.0),
+            (18.0, 203.0),
+            (19.0, 220.0),
+            (20.0, 226.0),
+            (21.0, 244.0),
+            (24.0, 272.0),
+        ] {
+            let em = |u: f32| u / 2048.0 * ppem;
+            let got = text_field_device(em(940.0), em(1171.0), em(5267.0));
+            assert_eq!(got, want, "{ppem} px");
+        }
+    }
+
     fn segoe() -> FaceMetrics {
         FaceMetrics {
             units_per_em: 2048.0,
             ascent: 2210.0,
             descent: 514.0,
             line_gap: 0.0,
+            glyph_box: 5267.0,
             gasp: Default::default(),
             gasp_len: 0,
         }

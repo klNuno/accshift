@@ -44,9 +44,6 @@ const ROW_GAP: f32 = 8.0;
 const TITLE_GAP: f32 = 12.0;
 /// `.platform-search { width: 200px }`, border box.
 const SEARCH_W: f32 = 200.0;
-/// The search pill's min-content width: padding, border, the 12 px icon,
-/// the 7 px gap and the field's intrinsic width at 12 px (measured).
-const SEARCH_MIN_W: f32 = 188.0;
 /// `.toggle`: 36x20.
 const SWITCH: egui::Vec2 = vec2(36.0, 20.0);
 /// `.platform-main { gap: 3px }`.
@@ -76,7 +73,10 @@ pub enum Item {
         busy: bool,
     },
     /// A refused or skipped file and why.
-    Problem { name: String, detail: String },
+    Problem {
+        name: String,
+        detail: String,
+    },
 }
 
 /// `.platform-chip`: a `role="switch"` button.
@@ -513,8 +513,14 @@ pub(super) fn paint(ui: &mut Ui, r: Rect, id: Id, c: &Ctx, item: &Item) -> Vec<S
                 &style.nowrap(false),
             );
             // `justify-content: space-between`; past the row's width the
-            // pill keeps its min-content width and sits after the h3.
-            let pill_w = (r.width() - title_w - TITLE_GAP).clamp(SEARCH_MIN_W, SEARCH_W);
+            // pill keeps its min-content width (padding, border, the 12 px
+            // icon, the 7 px gap, the field's intrinsic width) and sits after
+            // the h3.
+            let field = TextStyle::new(12.0, 400)
+                .text_field_width(&ctx)
+                .unwrap_or(145.0);
+            let min_w = 22.0 + 2.0 * snap::border_width(1.0, ppp) + 19.0 + field;
+            let pill_w = (r.width() - title_w - TITLE_GAP).clamp(min_w.min(SEARCH_W), SEARCH_W);
             let left = r.left() + (title_w + TITLE_GAP).max(r.width() - pill_w);
             let pill = Rect::from_min_size(pos2(left, r.top()), vec2(pill_w, pill_h));
             if let Some(text) = search_pill(ui, pill, c) {
@@ -692,15 +698,17 @@ fn search_pill(ui: &mut Ui, pill: Rect, c: &Ctx) -> Option<String> {
         border_color: Rgba::TRANSPARENT,
         border_focus: Rgba::TRANSPARENT,
         placeholder: v.fg_subtle,
-        caret_height: 14.0,
-        caret_scaled: false,
+        // The field keeps `line-height: normal` inside its 18 px line: the
+        // caret spans Segoe UI's ascent and descent, 16 px, 1 px wide.
+        caret_height: 16.0,
+        caret_scaled: true,
         border_transition: false,
     };
     let placeholder = translate(c.locale, "settings.platformSearchPlaceholder");
     let mut value = c.panel.platform_search.clone();
     let props = TextInputProps {
         style: &style,
-        kind: InputKind::Text,
+        kind: InputKind::Search,
         placeholder: &placeholder,
         label: &placeholder,
         max_len: None,

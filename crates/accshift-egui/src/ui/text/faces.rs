@@ -76,6 +76,9 @@ pub struct FaceMetrics {
     pub ascent: f32,
     pub descent: f32,
     pub line_gap: f32,
+    /// The `head` glyph box width (`xMax - xMin`), which Skia reports as
+    /// the max char width and Blink uses to size text fields.
+    pub glyph_box: f32,
     /// `gasp` ranges: highest ppem of the range, and whether DirectWrite
     /// smooths vertically there (`GASP_SYMMETRIC_SMOOTHING`).
     pub(super) gasp: [(u16, bool); 8],
@@ -115,7 +118,9 @@ impl FaceMetrics {
     /// adds over the win metrics.
     pub fn read(bytes: &[u8], index: u32) -> Option<Self> {
         let font = skrifa::FontRef::from_index(bytes, index).ok()?;
-        let upm = f32::from(font.head().ok()?.units_per_em());
+        let head = font.head().ok()?;
+        let upm = f32::from(head.units_per_em());
+        let glyph_box = f32::from(head.x_max()) - f32::from(head.x_min());
         let hhea = font.hhea().ok();
         let (h_asc, h_desc, h_gap) = hhea.as_ref().map_or((0.0, 0.0, 0.0), |h| {
             (
@@ -128,6 +133,7 @@ impl FaceMetrics {
             return Some(
                 Self {
                     units_per_em: upm,
+                    glyph_box,
                     ascent: h_asc,
                     descent: h_desc,
                     line_gap: h_gap,
@@ -144,6 +150,7 @@ impl FaceMetrics {
             if use_typo {
                 Self {
                     units_per_em: upm,
+                    glyph_box,
                     ascent: f32::from(os2.s_typo_ascender()),
                     descent: -f32::from(os2.s_typo_descender()),
                     line_gap: f32::from(os2.s_typo_line_gap()),
@@ -155,6 +162,7 @@ impl FaceMetrics {
                 let descent = f32::from(os2.us_win_descent());
                 Self {
                     units_per_em: upm,
+                    glyph_box,
                     ascent,
                     descent,
                     line_gap: (h_asc + h_desc + h_gap - ascent - descent).max(0.0),

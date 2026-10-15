@@ -61,16 +61,21 @@ pub fn is_open(ui: &Ui, id: Id) -> bool {
 fn paint_arrow(ui: &Ui, rect: Rect, color: egui::Color32) {
     let ppp = ui.ctx().pixels_per_point();
     let side = 5.0 * ppp;
-    let pad_w = rect.width() - 2.0;
-    let pad_h = rect.height() - 2.0;
-    let y = ((rect.top() + 1.0 + (pad_h - 5.0) * 0.5 - 1.0) * ppp).round();
+    // Chromium places the squares in the padding box of the snapped border
+    // box, the 1 px border floored to whole device pixels (1.5 is 1 at
+    // 150 %): from the raw box the first square lands a pixel left and a
+    // seam opens between the halves.
+    let area = snap::device_rect(rect, ppp).shrink(snap::border_device(1.0, ppp));
+    let y = snap::round_device(area.top() + (area.height() - side) * 0.5 - ppp);
     let squares = [
-        (rect.left() + 1.0 + pad_w - 5.0 - 18.0, true),
-        (rect.left() + 1.0 + pad_w - 5.0 - 13.0, false),
+        (area.right() - side - 18.0 * ppp, true),
+        (area.right() - side - 13.0 * ppp, false),
     ];
-    let painter = ui.painter();
+    // One untessellated quad per run: epaint strokes a rect one device pixel
+    // wide as a line and moves it a pixel right.
+    let mut mesh = egui::Mesh::default();
     for (x, first) in squares {
-        let x = (x * ppp).round();
+        let x = snap::round_device(x);
         let n = side.ceil() as i32;
         for j in 0..n {
             let cy = j as f32 + 0.5;
@@ -88,9 +93,10 @@ fn paint_arrow(ui: &Ui, rect: Rect, color: egui::Color32) {
                 pos2((x + i0) / ppp, (y + j as f32) / ppp),
                 pos2((x + i1) / ppp, (y + j as f32 + 1.0) / ppp),
             );
-            painter.rect_filled(r, 0.0, color);
+            mesh.add_colored_rect(r, color);
         }
     }
+    ui.painter().add(egui::Shape::mesh(mesh));
 }
 
 /// Draws the select into `rect` (38 px high) and its list when open.

@@ -27,6 +27,8 @@ use accshift_app::actions::toasts::{AddToastOptions, ToastQueue, ToastType};
 use accshift_app::error::{BackendError, BackendResult};
 use accshift_app::i18n::{Locale, TranslationValue};
 use accshift_app::jobs::{Jobs, Pending, Poll};
+use accshift_app::platforms::descriptors::PlatformDescriptor;
+use accshift_app::platforms::path_error::platform_path_error_message;
 use accshift_app::secure::pin::{hash_pin_code, sanitize_pin_digits, unlock_pin_session};
 use accshift_app::settings::{
     api_key_draft_after_successful_save, merge_settings_draft, AnimationsMode, AppSettings,
@@ -34,8 +36,6 @@ use accshift_app::settings::{
 };
 use accshift_app::stores::ClientStores;
 use accshift_app::text::Text;
-use accshift_app::platforms::descriptors::PlatformDescriptor;
-use accshift_app::platforms::path_error::platform_path_error_message;
 use accshift_app::types::{DescriptorPreview, TelemetryUiState, UserPlatformReport};
 use egui::Context;
 use serde_json::Value;
@@ -176,7 +176,10 @@ pub enum SettingsAction {
     ReloadDescriptors,
     OpenDescriptorsFolder,
     /// A loaded descriptor's remove button: asks first.
-    RemoveDescriptor { id: String, name: String },
+    RemoveDescriptor {
+        id: String,
+        name: String,
+    },
     /// The preview dialog's install button.
     InstallDescriptor,
     /// The preview dialog's cancel button or Escape.

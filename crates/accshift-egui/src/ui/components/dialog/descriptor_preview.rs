@@ -146,7 +146,10 @@ impl Inline {
     fn paint(&self, painter: &Painter, origin: Pos2) {
         for run in &self.runs {
             let (top, baseline) = self.lines[run.line];
-            let lb = run.style.line_box(painter.ctx()).map_or(0.0, |l| l.baseline);
+            let lb = run
+                .style
+                .line_box(painter.ctx())
+                .map_or(0.0, |l| l.baseline);
             let rect = Rect::from_min_size(
                 pos2(origin.x + run.x, origin.y + top + baseline - lb),
                 vec2(f32::INFINITY, 0.0),
@@ -174,7 +177,6 @@ enum Lead {
     Own,
     Shared,
 }
-
 
 /// Splits `text`, one inline item, at its spaces into words of `style`; the
 /// first takes `lead` as its space (the one between this run and the last).
@@ -297,8 +299,11 @@ fn head(ctx: &Context, items: Vec<(String, TextStyle)>, width: f32) -> Inline {
     let mut rows: Vec<Vec<(String, TextStyle, f32)>> = vec![Vec::new()];
     let mut x = 0.0f32;
     for (s, style) in items {
-        let w = snap::content_width(text::measure(ctx, &s, &style).unwrap_or(0.0), ctx.pixels_per_point())
-            .min(width);
+        let w = snap::content_width(
+            text::measure(ctx, &s, &style).unwrap_or(0.0),
+            ctx.pixels_per_point(),
+        )
+        .min(width);
         let row = rows.last_mut().expect("a row");
         if !row.is_empty() && x + HEAD_GAP + w > width + 1e-3 {
             rows.push(vec![(s, style, w)]);
@@ -313,7 +318,10 @@ fn head(ctx: &Context, items: Vec<(String, TextStyle)>, width: f32) -> Inline {
     let mut top = 0.0;
     let last_row = rows.len() - 1;
     for (r, row) in rows.into_iter().enumerate() {
-        let boxes: Vec<LineBox> = row.iter().filter_map(|(_, st, _)| st.line_box(ctx)).collect();
+        let boxes: Vec<LineBox> = row
+            .iter()
+            .filter_map(|(_, st, _)| st.line_box(ctx))
+            .collect();
         let baseline = boxes.iter().map(|b| b.baseline).fold(0.0, f32::max);
         let height = boxes
             .iter()
@@ -413,7 +421,11 @@ fn blocks(
                 out.push((if i == 0 { SECTION_GAP } else { LIST_GAP }, item));
             }
         };
-        let roots = plan.roots.iter().map(|r| para(r.clone(), &s.mono)).collect();
+        let roots = plan
+            .roots
+            .iter()
+            .map(|r| para(r.clone(), &s.mono))
+            .collect();
         section(&mut out, "descriptor.previewRoots", roots);
         let li_space = text::measure(ctx, " ", &s.li).unwrap_or(0.0);
         let steps = plan
@@ -464,7 +476,10 @@ fn blocks(
         );
         out.push((BODY_GAP, para(text, &s.warn)));
     }
-    out.push((BODY_GAP, para(t("descriptor.previewNothingWritten"), &s.quiet)));
+    out.push((
+        BODY_GAP,
+        para(t("descriptor.previewNothingWritten"), &s.quiet),
+    ));
     out
 }
 
@@ -553,7 +568,12 @@ pub fn descriptor_preview_dialog(
                     }
                     Block::Blocked(text, style, _) => {
                         BoxStyle {
-                            background: Rgba::new(v.danger.r, v.danger.g, v.danger.b, v.danger.a * 0.14),
+                            background: Rgba::new(
+                                v.danger.r,
+                                v.danger.g,
+                                v.danger.b,
+                                v.danger.a * 0.14,
+                            ),
                             radius: Corners::all(6.0),
                             ..BoxStyle::default()
                         }

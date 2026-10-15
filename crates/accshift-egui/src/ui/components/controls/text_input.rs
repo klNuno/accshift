@@ -169,7 +169,16 @@ pub enum InputKind {
     Number,
     /// `type="password"`: every character drawn as a bullet.
     Password,
+    /// `type="search"` with its cancel button hidden (`appearance: none`):
+    /// the button still keeps [`SEARCH_SLOT`] at the inline end, where the
+    /// text and the placeholder clip.
+    Search,
 }
+
+/// The inline-end slot of a hidden search cancel button, CSS px: Chromium
+/// clips the placeholder 4 px before the field's edge at every scale from
+/// 100 to 200 % (measured).
+pub const SEARCH_SLOT: f32 = 4.0;
 
 pub struct TextInputProps<'a> {
     pub style: &'a FieldStyle,
@@ -200,7 +209,7 @@ pub struct TextInputEvents {
 fn accepts(kind: InputKind, c: char) -> bool {
     match kind {
         InputKind::Number => c.is_ascii_digit() || matches!(c, '-' | '+' | '.' | 'e' | 'E'),
-        InputKind::Text | InputKind::Password => !c.is_control(),
+        InputKind::Text | InputKind::Password | InputKind::Search => !c.is_control(),
     }
 }
 
@@ -289,12 +298,19 @@ pub fn text_input(
                     }
                 }
                 Event::Key {
-                    key:
-                        Key::ArrowLeft | Key::ArrowRight | Key::Home | Key::End | Key::Delete,
+                    key: Key::ArrowLeft | Key::ArrowRight | Key::Home | Key::End | Key::Delete,
                     pressed: true,
                     ..
                 } => {
-                    if selected && matches!(event, Event::Key { key: Key::Delete, .. }) {
+                    if selected
+                        && matches!(
+                            event,
+                            Event::Key {
+                                key: Key::Delete,
+                                ..
+                            }
+                        )
+                    {
                         value.clear();
                         events.changed = true;
                     }
@@ -333,6 +349,8 @@ pub fn text_input(
             Role::PasswordInput
         } else if props.kind == InputKind::Number {
             Role::SpinButton
+        } else if props.kind == InputKind::Search {
+            Role::SearchInput
         } else {
             Role::TextInput
         });
@@ -357,7 +375,11 @@ pub fn text_input(
         ..BoxStyle::default()
     }
     .paint(ui.painter(), boxed);
-    let text_rect = st.line_rect(rect, ppp);
+    let mut text_rect = st.line_rect(rect, ppp);
+    if props.kind == InputKind::Search {
+        // The inner editor ends at the slot, its clip snapped like any box.
+        text_rect.max.x = snap::coord(text_rect.max.x - SEARCH_SLOT, ppp);
+    }
     if props.kind == InputKind::Number && props.enabled && (focused || response.hovered()) {
         paint_spin_button(ui.painter(), text_rect, props.dark);
     }
@@ -424,12 +446,17 @@ fn caret_rect(st: &FieldStyle, line: Rect, text_w: f32, after_text: bool, ppp: f
     } else {
         0.0
     };
-    let end = start + lead + text;
-    let left = if after_text {
-        (end - caret / 2.0 + 0.5).floor()
+    // After text, `ComputeLocalCaretRectAtTextOffset`: the caret is centred
+    // on the text's end and rounded to a whole pixel from the field's inner
+    // editor (`ClampAndRound`), whose origin keeps its fraction; painting
+    // then snaps both edges, so a 1.5 px caret is 1 or 2 device px.
+    let (left, right) = if after_text {
+        let x = start + ((lead + text - caret / 2.0).max(0.0) + 0.5).floor();
+        ((x + 0.5).floor(), (x + caret + 0.5).floor())
     } else {
-        end.floor()
+        let left = (start + lead + text).floor();
+        (left, (left + caret + 0.5).floor())
     };
-    let w = ((left + caret + 0.5).floor() - left).max(1.0);
+    let w = (right - left).max(1.0);
     Rect::from_min_size(pos2(left, top) / ppp, vec2(w, h) / ppp)
 }
