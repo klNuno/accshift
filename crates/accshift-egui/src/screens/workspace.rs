@@ -227,6 +227,9 @@ pub struct Workspace {
     cards_scroll: Option<f32>,
     /// `measureColumns()` on the last frame's grid.
     pub columns: usize,
+    /// `scroll` came from `scrollIntoView` and sits on a device pixel; the
+    /// wheel and the thumb put it back on a CSS pixel.
+    scroll_revealed: bool,
 }
 
 impl Workspace {
@@ -349,6 +352,8 @@ struct Placed<'a> {
     clip: Option<Rect>,
     opacity: f32,
     node: Node<'a>,
+    /// Cards per row of its grid (1 off the grids).
+    per_row: usize,
 }
 
 /// One section of the sections layout.
@@ -419,6 +424,7 @@ fn flow<'a>(
                 clip,
                 opacity,
                 node,
+                per_row,
             });
         }
         y += line + GAP;
@@ -463,9 +469,15 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
         });
         if let Some(r) = target {
             // Back from the screen to the scroll box: the padding included.
-            let top = r.top() - viewport.top() + drawn_at;
-            let bottom = r.bottom() - viewport.top() + drawn_at;
-            ws.scroll = scroll::nearest(ws.scroll, viewport.height(), top, bottom);
+            // On Blink's 1/64 px layout unit, or float noise from a
+            // fractional `drawn_at` turns 220.5 device px into 220.4999.
+            let unit = |x: f32| (x * 64.0).round() / 64.0;
+            let top = unit(r.top() - viewport.top() + drawn_at);
+            let bottom = unit(r.bottom() - viewport.top() + drawn_at);
+            // The scroll offset lands on a whole device pixel.
+            let to = scroll::nearest(ws.scroll, viewport.height(), top, bottom);
+            ws.scroll = (to * ppp).round() / ppp;
+            ws.scroll_revealed = true;
         }
     }
 
@@ -762,6 +774,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                                 clip: None,
                                 opacity: 1.0,
                                 node: Node::EmptyFolder,
+                                per_row: 1,
                             });
                             y = top + 20.0;
                         } else {
@@ -1027,18 +1040,21 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
             })
             .collect();
     }
-    // `measureColumns()`: the slots on the row of the first card, the back
-    // card included.
-    let slot = |p: &Placed| matches!(p.node, Node::Back | Node::Folder(_) | Node::Account(_));
-    let first = placed
+    // `measureColumns(item)`: cards per row of the focused card's grid, so
+    // each section of the sections layout counts its own.
+    fn card_id<'p>(p: &'p Placed) -> Option<&'p str> {
+        match &p.node {
+            Node::Folder(f) => Some(f.folder.id.as_str()),
+            Node::Account(a) => Some(a.account.id.as_str()),
+            _ => None,
+        }
+    }
+    let focused = ws.kb_focus.as_deref();
+    ws.columns = placed
         .iter()
-        .find(|p| matches!(p.node, Node::Folder(_) | Node::Account(_)));
-    ws.columns = first.map_or(1, |first| {
-        placed
-            .iter()
-            .filter(|p| slot(p) && (p.rect.top() - first.rect.top()).abs() <= 4.0)
-            .count()
-    });
+        .find(|p| focused.is_some() && card_id(p) == focused)
+        .or_else(|| placed.iter().find(|p| card_id(p).is_some()))
+        .map_or(1, |p| p.per_row);
     drop(placed);
     let sliding = !slides.is_empty();
     ws.slides = slides;
@@ -1085,6 +1101,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
     ws.pointer = ctx.input(|i| i.pointer.latest_pos());
     if dy != 0.0 {
         ws.scroll -= dy;
+        ws.scroll_revealed = false;
     }
     if focused_now != ws.focused {
         ws.focused = focused_now;
@@ -1093,13 +1110,20 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
             let bottom = r.bottom() + PAD_TOP + 2.0;
             if top < ws.scroll {
                 ws.scroll = top;
+                ws.scroll_revealed = false;
             } else if bottom > ws.scroll + viewport.height() {
                 ws.scroll = bottom - viewport.height();
+                ws.scroll_revealed = false;
             }
         }
     }
     scrollbar(ui, rect, ws, v, content_h, max_scroll);
-    ws.scroll = ws.scroll.clamp(0.0, max_scroll).round();
+    let clamped = ws.scroll.clamp(0.0, max_scroll);
+    ws.scroll = if ws.scroll_revealed {
+        (clamped * ppp).round() / ppp
+    } else {
+        clamped.round()
+    };
     if ws.scroll != scroll {
         ctx.request_repaint();
         // `scroll` (capture) on the document: an open menu closes.
@@ -1341,6 +1365,7 @@ fn lay_sections<'a>(
                 clip: None,
                 opacity: 1.0,
                 node: Node::Header(h),
+                per_row: 1,
             });
             y += height;
         }
@@ -1692,6 +1717,7 @@ fn scrollbar(
         if let (Some((from, start)), Some(p)) = (ws.thumb_drag, response.interact_pointer_pos()) {
             if travel > 0.0 {
                 ws.scroll = start + (p.y - from) * max_scroll / travel;
+                ws.scroll_revealed = false;
             }
         }
     } else {

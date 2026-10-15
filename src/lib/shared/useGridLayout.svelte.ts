@@ -11,8 +11,13 @@ export function cardWidthForDensity(densityScale: number): number {
   return CARD_WIDTH * scale;
 }
 
+/** Cards that fit on a `.grid-container` row `availableWidth` px wide. */
+export function cardsPerRow(availableWidth: number, cardWidth: number): number {
+  return Math.floor((availableWidth + GAP) / (cardWidth + GAP));
+}
+
 /** Live card width: reads the --density-scale the theme actually applied. */
-function liveCardWidth(): number {
+export function liveCardWidth(): number {
   if (typeof document === "undefined") return CARD_WIDTH;
   const raw = getComputedStyle(document.documentElement).getPropertyValue("--density-scale");
   return cardWidthForDensity(Number.parseFloat(raw));
@@ -42,9 +47,9 @@ export function createGridLayout() {
     if (!wrapperRef) return;
     const cardWidth = liveCardWidth();
     const availableWidth = wrapperRef.clientWidth;
-    const cardsPerRow = Math.floor((availableWidth + GAP) / (cardWidth + GAP));
-    if (cardsPerRow < 1) return;
-    const totalCardsWidth = cardsPerRow * cardWidth + (cardsPerRow - 1) * GAP;
+    const perRow = cardsPerRow(availableWidth, cardWidth);
+    if (perRow < 1) return;
+    const totalCardsWidth = perRow * cardWidth + (perRow - 1) * GAP;
     paddingLeft = Math.floor((availableWidth - totalCardsWidth) / 2);
   }
 
