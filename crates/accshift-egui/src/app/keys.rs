@@ -421,9 +421,17 @@ impl AppModel {
         let focused = ctx.memory(|m| m.focused());
         let focus_moved = focused != self.card_focus_widget;
         self.card_focus_widget = focused;
+        let cards = b.accounts.card_focus_signature();
+        let cards_changed = self.card_focus_cards != Some(cards);
+        self.card_focus_cards = Some(cards);
         let ws = &mut b.workspace;
         if changed {
             ws.kb_focus = None;
+        }
+        // The `$effect` on the rendered cards: `syncDom` scrolls the focused
+        // card back into view.
+        if cards_changed && ws.kb_focus.is_some() {
+            ws.kb_reveal = true;
         }
         if !CARD_NAV_SCOPES.contains(&scope) {
             return;

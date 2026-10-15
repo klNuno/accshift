@@ -296,20 +296,34 @@ impl Accounts {
     /// `getItems` of `createCardFocus`: the cards in visual order, folders
     /// then accounts, the cards of a collapsed section left out.
     pub fn card_focus_items(&self) -> Vec<accshift_app::folders::ItemRef> {
+        self.card_focus_iter().cloned().collect()
+    }
+
+    /// A hash of [`Self::card_focus_items`]: the card list changed when it
+    /// does.
+    pub fn card_focus_signature(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for item in self.card_focus_iter() {
+            item.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    fn card_focus_iter(&self) -> Box<dyn Iterator<Item = &accshift_app::folders::ItemRef> + '_> {
         match &self.lists.sections {
-            Some(sections) => sections
-                .iter()
-                .filter(|section| !self.pipeline.is_section_collapsed(section))
-                .flat_map(|section| section.folder_items.iter().chain(&section.account_items))
-                .cloned()
-                .collect(),
-            None => self
-                .lists
-                .folder_items
-                .iter()
-                .chain(&self.lists.account_items)
-                .cloned()
-                .collect(),
+            Some(sections) => Box::new(
+                sections
+                    .iter()
+                    .filter(|section| !self.pipeline.is_section_collapsed(section))
+                    .flat_map(|section| section.folder_items.iter().chain(&section.account_items)),
+            ),
+            None => Box::new(
+                self.lists
+                    .folder_items
+                    .iter()
+                    .chain(&self.lists.account_items),
+            ),
         }
     }
 

@@ -343,6 +343,8 @@ pub struct AppModel {
     card_focus_context: Option<(String, Option<String>, String, bool, bool)>,
     /// The widget holding real focus last frame (`focusin`).
     card_focus_widget: Option<egui::Id>,
+    /// [`Accounts::card_focus_signature`](accounts::Accounts::card_focus_signature) last frame.
+    card_focus_cards: Option<u64>,
 }
 
 impl AppModel {
@@ -431,6 +433,7 @@ impl AppModel {
             palette: None,
             card_focus_context: None,
             card_focus_widget: None,
+            card_focus_cards: None,
         }
     }
 
