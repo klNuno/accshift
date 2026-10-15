@@ -23,6 +23,8 @@
 pub mod accounts;
 pub mod avatars;
 pub mod clock;
+pub(crate) mod keys;
+mod palette;
 pub mod platforms;
 mod secure;
 pub mod settings_panel;
@@ -36,6 +38,7 @@ use std::time::Instant;
 use accshift_app::actions::dialogs::{
     finish_rename_account, rename_account_blocking, AppDialogs, AppMenuEntry, DialogContext,
 };
+use accshift_app::actions::keyboard::KeyboardController;
 use accshift_app::actions::toasts::AddToastOptions;
 use accshift_app::actions::{load_options, shell as app_shell, AppEffect};
 use accshift_app::backend::Backend;
@@ -65,6 +68,7 @@ use serde_json::Value;
 
 use crate::screens::workspace::Workspace;
 use crate::ui::anim::{self, Motion};
+use crate::ui::components::command_palette::PaletteEvent;
 use crate::ui::components::context_menu::{self, MenuEvent, SubmenuLoad};
 use crate::ui::components::dialog::DialogEvent;
 use crate::ui::components::secure_overlays::{PinEvent, StreamerEvent};
@@ -128,6 +132,8 @@ pub enum Action {
     Menu(u64, MenuEvent),
     /// `.content` scrolled.
     ContentScrolled,
+    /// The command palette mounted as this number reported something.
+    Palette(u64, PaletteEvent),
     /// The input dialog mounted as this number reported something.
     InputDialog(u64, DialogEvent),
     /// The confirm dialog mounted as this number reported something.
@@ -328,6 +334,10 @@ pub struct AppModel {
     /// Frames drawn, for the boot marks.
     frames: u64,
     ready_marked: bool,
+    /// `createKeyboardController` with the app's bindings.
+    keyboard: KeyboardController,
+    /// `paletteOpen`: the open command palette.
+    palette: Option<palette::PaletteState>,
 }
 
 impl AppModel {
@@ -412,6 +422,8 @@ impl AppModel {
             pin_focus: false,
             frames: 0,
             ready_marked: false,
+            keyboard: KeyboardController::default(),
+            palette: None,
         }
     }
 
@@ -455,6 +467,13 @@ impl AppModel {
     /// The mount numbers of the open input and confirm dialogs.
     pub fn dialog_mounts(&self) -> (Option<u64>, Option<u64>) {
         (self.input_mount, self.confirm_mount)
+    }
+
+    /// The open command palette: its mount, query and highlighted row.
+    pub fn palette(&self) -> Option<(u64, &str, usize)> {
+        self.palette
+            .as_ref()
+            .map(|p| (p.mount, p.view.model.query(), p.view.model.active_index()))
     }
 
     /// Where the maximize button was last drawn (Snap Layouts hook).
@@ -692,6 +711,8 @@ impl AppModel {
         if let Some(deadline) = self.toasts.next_deadline() {
             ctx.request_repaint_after(deadline.saturating_duration_since(instant));
         }
+        // The window's `keydown` listener, before any component reads keys.
+        self.dispatch_keys(&ctx);
         self.mount_dialogs();
         let actions = shell::draw(self, ui, now);
         self.apply(&ctx, actions, now);
@@ -823,6 +844,14 @@ impl AppModel {
             Action::ContentScrolled => {
                 if self.dialogs.context_menu().is_some() {
                     self.close_context_menu(ctx);
+                }
+            }
+            Action::Palette(mount, event) => {
+                if self.palette.as_ref().is_some_and(|p| p.mount == mount) {
+                    self.set_palette_open(ctx, false);
+                    if let PaletteEvent::Run(action) = event {
+                        self.run_palette(ctx, action);
+                    }
                 }
             }
             Action::InputDialog(mount, event) => {

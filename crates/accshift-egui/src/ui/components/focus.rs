@@ -27,3 +27,34 @@ pub fn ua_ring(ui: &Ui, rect: Rect, radius: f32, vars: &Vars) {
         StrokeKind::Outside,
     );
 }
+
+/// Where the focused text field's id is kept between frames.
+fn text_field_key() -> egui::Id {
+    egui::Id::new("focused-text-field")
+}
+
+/// A text field calls this while it holds focus, so the keyboard
+/// dispatcher reads `isEditableTarget` as the DOM does. The field also
+/// keeps the arrows and Escape: a DOM input moves its caret on the first
+/// and keeps focus on the second, where egui would move or drop focus
+/// before anything reads the key. Tab still leaves it.
+pub fn mark_text_field(ctx: &egui::Context, id: egui::Id) {
+    ctx.data_mut(|d| d.insert_temp(text_field_key(), id));
+    ctx.memory_mut(|m| {
+        m.set_focus_lock_filter(
+            id,
+            egui::EventFilter {
+                tab: false,
+                horizontal_arrows: true,
+                vertical_arrows: true,
+                escape: true,
+            },
+        )
+    });
+}
+
+/// `isEditableTarget(document.activeElement)`: focus is in a text field.
+pub fn text_field_focused(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<egui::Id>(text_field_key()))
+        .is_some_and(|id| ctx.memory(|m| m.has_focus(id)))
+}

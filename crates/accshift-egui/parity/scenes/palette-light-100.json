@@ -1,0 +1,105 @@
+{
+  "id": "palette-light-100",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.0
+  },
+  "theme": "light",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Ctrl+k"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "idle"
+    },
+    {
+      "dom": "idle",
+      "select": ".palette-overlay, .palette-overlay *"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "key": "Ctrl+k"
+    },
+    {
+      "wait": 100
+    },
+    {
+      "key": "ArrowUp"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "shot": "last"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "key": "Ctrl+k"
+    },
+    {
+      "wait": 100
+    },
+    {
+      "move": [430, 185]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "shot": "hover"
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "text": "acc"
+    },
+    {
+      "wait": 250
+    },
+    {
+      "shot": "typed"
+    },
+    {
+      "text": "zzq"
+    },
+    {
+      "wait": 250
+    },
+    {
+      "shot": "empty"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 200
+    }
+  ]
+}

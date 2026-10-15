@@ -16,6 +16,7 @@ pub mod avatar_fade_in;
 pub mod back_card;
 pub mod breadcrumb;
 pub mod card_extension;
+pub mod command_palette;
 pub mod context_menu;
 pub mod controls;
 pub mod dialog;

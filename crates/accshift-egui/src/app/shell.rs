@@ -34,6 +34,7 @@ use crate::screens::settings;
 use crate::screens::workspace::{self, WorkspaceInput};
 use crate::ui::anim::{self, Animation, Fill, Motion, Timing, Transition};
 use crate::ui::backdrop_filter::Mark;
+use crate::ui::components::command_palette::{self, PaletteProps};
 use crate::ui::components::context_menu::{self, ContextMenuProps};
 use crate::ui::components::dialog::{self, DialogProps};
 use crate::ui::components::secure_overlays::{self, AfkProps, PinProps, StreamerProps};
@@ -235,6 +236,8 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                 .map(|b| settings::View::new(b, window.width()))
         })
         .flatten();
+    // `commandRegistry.getCommands()` while the palette is mounted.
+    let palette_commands = app.palette.is_some().then(|| app.palette_commands());
     let settings_panel = &mut app.settings_panel;
     let focus_visible = app.focus_visible;
     let toasts = app.toasts.toasts();
@@ -246,6 +249,12 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         // Nothing open: the next menu mounts fresh.
         context_menu::reset(&ctx);
     }
+    let palette = &mut app.palette;
+    // A dialog or the palette covers the panel: the wheel lands on its
+    // overlay, never on the content under it.
+    let modal = palette.is_some()
+        || (dialogs.input_dialog().is_some() && input_mount.is_some())
+        || (dialogs.confirm_dialog().is_some() && confirm_mount.is_some());
     let pin_focus = std::mem::take(&mut app.pin_focus);
     let (obscured, afk, pin, streamer) = match app.booted.as_ref() {
         Some(b) => {
@@ -325,6 +334,15 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
             } else {
                 stage
             };
+            let wheel = modal.then(|| {
+                ctx.input_mut(|i| {
+                    let (wheel, rest) = std::mem::take(&mut i.events)
+                        .into_iter()
+                        .partition(|e| matches!(e, egui::Event::MouseWheel { .. }));
+                    i.events = rest;
+                    wheel
+                })
+            });
             if show_workspace {
                 let input = WorkspaceInput {
                     vars: &vars,
@@ -351,6 +369,9 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                 actions.extend(layer(ui, panel, o, rise, |ui| {
                     settings::draw(ui, panel, sp, view, focus_visible)
                 }));
+            }
+            if let Some(wheel) = wheel {
+                ctx.input_mut(|i| i.events.extend(wheel));
             }
             // `.inactivity-frost` (`--z-frost`), above the panel and the
             // title bar.
@@ -418,6 +439,24 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                     context_menu::context_menu(ui, &props)
                         .into_iter()
                         .map(|event| Action::Menu(open_id, event)),
+                );
+            }
+            // `<CommandPalette>`, after `AppDialogs`.
+            if let (Some(state), Some(cmds)) = (palette.as_mut(), palette_commands.as_ref()) {
+                let props = PaletteProps {
+                    vars: &vars,
+                    locale: *locale,
+                    viewport: window,
+                    commands: &cmds.commands,
+                    accents: &cmds.accents,
+                    mount: state.mount,
+                    now,
+                };
+                let mount = state.mount;
+                actions.extend(
+                    command_palette::command_palette(ui, &props, &mut state.view)
+                        .into_iter()
+                        .map(|event| Action::Palette(mount, event)),
                 );
             }
         });

@@ -1431,7 +1431,7 @@ fn search_field(
     let ppp = ctx.pixels_per_point();
     let layout = rect;
     let rect = snap::rect(rect, ppp);
-    let id = Id::new("workspace-search");
+    let id = Id::new(crate::app::keys::SEARCH_ID);
     let response = ui.interact(rect, id, Sense::click());
     let response = response.on_hover_cursor(egui::CursorIcon::Text);
     response.widget_info(|| WidgetInfo::text_edit(true, value, value, placeholder));
@@ -1455,6 +1455,9 @@ fn search_field(
         }
     }
     let focused = response.has_focus();
+    if focused {
+        crate::ui::components::focus::mark_text_field(&ctx, id);
+    }
     if focused && !state.focused {
         state.blink_from = now;
     }
@@ -2458,5 +2461,123 @@ mod scene_tests {
         assert_eq!(run.workspace().list.selected, None);
         run.click(pos2(300.0, 111.0));
         assert_eq!(labels(&run)[0], "Smurfs");
+    }
+
+    /// The app's binding table and the command palette: Ctrl+K opens it on
+    /// its focused field, typing filters, Enter runs, Escape and a second
+    /// Ctrl+K close, the arrows move the highlight; the tab, view and
+    /// search shortcuts reach the app.
+    #[test]
+    fn keyboard_shortcuts_and_the_palette() {
+        use crate::ui::components::command_palette;
+        use accshift_app::stores::ViewMode;
+
+        let chord = |run: &mut Run, key: Key, modifiers: Modifiers| {
+            for pressed in [true, false] {
+                run.send(Event::Key {
+                    key,
+                    physical_key: Some(key),
+                    pressed,
+                    repeat: false,
+                    modifiers,
+                });
+                run.frame();
+            }
+        };
+        fn app(run: &Run) -> &crate::app::AppModel {
+            match &run.screen {
+                Screen::App(app) => app,
+                _ => panic!("not the app"),
+            }
+        }
+        let palette = |run: &Run| app(run).palette().map(|(m, q, a)| (m, q.to_string(), a));
+        let nav = |run: &Run| app(run).booted().unwrap().nav.clone();
+        let view_mode = |run: &Run| app(run).booted().unwrap().stores.view_mode();
+        let ctrl = Modifiers::CTRL;
+        let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
+
+        let mut run = Run::new("workspace-glass-dark-100", 1.0);
+        run.settle();
+        assert_eq!(palette(&run), None);
+        chord(&mut run, Key::K, ctrl);
+        let (mount, query, active) = palette(&run).expect("Ctrl+K opens the palette");
+        assert_eq!((query.as_str(), active), ("", 0));
+        let focused = run.ctx.memory(|m| m.focused());
+        assert_eq!(focused, Some(command_palette::input_id(mount)));
+        // The arrows wrap; End and Home go to the ends of an idle list.
+        run.key(Key::ArrowUp);
+        let last = palette(&run).unwrap().2;
+        assert!(last > 5, "the idle list holds accounts, actions and tabs");
+        run.key(Key::ArrowDown);
+        assert_eq!(palette(&run).unwrap().2, 0);
+        run.key(Key::End);
+        assert_eq!(palette(&run).unwrap().2, last);
+        run.key(Key::Home);
+        assert_eq!(palette(&run).unwrap().2, 0);
+        // A second Ctrl+K closes, Escape too.
+        chord(&mut run, Key::K, ctrl);
+        assert_eq!(palette(&run), None);
+        chord(&mut run, Key::K, ctrl);
+        assert!(palette(&run).is_some_and(|p| p.0 > mount), "a fresh mount");
+        run.key(Key::Escape);
+        assert_eq!(palette(&run), None);
+        // Typing filters and resets the highlight; Enter runs the first
+        // match, here the settings, and closes.
+        chord(&mut run, Key::K, ctrl);
+        run.key(Key::ArrowDown);
+        run.send(Event::Text("settings".into()));
+        run.frame();
+        assert_eq!(
+            palette(&run).map(|p| (p.1, p.2)),
+            Some(("settings".into(), 0))
+        );
+        run.key(Key::Enter);
+        assert_eq!(palette(&run), None);
+        assert!(nav(&run).show_settings);
+        chord(&mut run, Key::Comma, ctrl);
+        assert!(!nav(&run).show_settings);
+        // A press on the overlay outside the box closes.
+        chord(&mut run, Key::K, ctrl);
+        run.click(pos2(30.0, 400.0));
+        assert_eq!(palette(&run), None);
+
+        // Tabs: Ctrl+Tab cycles steam, riot, roblox; Ctrl+3 jumps.
+        assert_eq!(nav(&run).active_tab, "steam");
+        chord(&mut run, Key::Tab, ctrl);
+        assert_eq!(nav(&run).active_tab, "riot");
+        chord(&mut run, Key::Tab, ctrl_shift);
+        assert_eq!(nav(&run).active_tab, "steam");
+        chord(&mut run, Key::Num3, ctrl);
+        assert_eq!(nav(&run).active_tab, "roblox");
+        chord(&mut run, Key::Num1, ctrl);
+        assert_eq!(nav(&run).active_tab, "steam");
+        run.settle();
+
+        // Ctrl+Shift+L flips the view.
+        assert_eq!(view_mode(&run), ViewMode::Grid);
+        chord(&mut run, Key::L, ctrl_shift);
+        assert_eq!(view_mode(&run), ViewMode::List);
+        chord(&mut run, Key::L, ctrl_shift);
+        assert_eq!(view_mode(&run), ViewMode::Grid);
+
+        // Ctrl+F focuses the search; Escape clears and blurs it.
+        let search = egui::Id::new(crate::app::keys::SEARCH_ID);
+        chord(&mut run, Key::F, ctrl);
+        assert!(run.ctx.memory(|m| m.has_focus(search)));
+        run.send(Event::Text("zz".into()));
+        run.frame();
+        let query = |run: &Run| {
+            app(run)
+                .booted()
+                .unwrap()
+                .accounts
+                .navigation
+                .search_query()
+                .to_string()
+        };
+        assert_eq!(query(&run), "zz");
+        run.key(Key::Escape);
+        assert_eq!(query(&run), "");
+        assert!(!run.ctx.memory(|m| m.has_focus(search)));
     }
 }
