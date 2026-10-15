@@ -40,7 +40,7 @@ use crate::app::vars::Vars;
 use crate::theme::Rgba;
 use crate::ui::anim::{self, Animation, Keyframes, Timing};
 use crate::ui::backdrop_filter::Mark;
-use crate::ui::components::controls::scroll;
+use crate::ui::components::controls::scroll::{self, nearest};
 use crate::ui::paint::{Border, BoxShadow, BoxStyle, Corners};
 use crate::ui::snap;
 use crate::ui::text::{self, LineHeight, TextAlign, TextStyle, TextTransform};
@@ -231,18 +231,6 @@ fn place(
         y += height;
     }
     (out, y + LIST_PAD)
-}
-
-/// `scrollIntoView({ block: "nearest" })` of `[top, bottom)` in a
-/// scrollport `view` high scrolled to `scroll`.
-fn nearest(scroll: f32, view: f32, top: f32, bottom: f32) -> f32 {
-    if top < scroll {
-        top
-    } else if bottom > scroll + view {
-        (bottom - view).min(top)
-    } else {
-        scroll
-    }
 }
 
 /// The field's keys: (moved the highlight, Enter pressed). Taken keys leave

@@ -154,6 +154,8 @@ pub struct AccountCardProps<'a> {
     pub extension_disabled: bool,
     /// `html[data-glass="1"]`.
     pub glass: bool,
+    /// `[data-kb-focus]`: the card the arrow keys moved to.
+    pub kb_focus: bool,
 }
 
 /// What the card painted and what the user did.
@@ -885,12 +887,16 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
     }
 
     // Ban outlines, after the content like any outline; the surface's
-    // while the extension shows.
-    let tone = item
-        .warning
-        .as_ref()
-        .and_then(|w| w.card_outline_tone)
-        .filter(|_| !extension_visible);
+    // while the extension shows. They replace the focus ring's colour and
+    // width but keep its `outline-offset: 2px`.
+    let ring_on = props.kb_focus || (props.focus_visible && response.has_focus());
+    let (ring_rect, ring_radius) = if ring_on {
+        (rect.expand(2.0), v.radius_md + 2.0)
+    } else {
+        (rect, v.radius_md)
+    };
+    let banned = item.warning.as_ref().and_then(|w| w.card_outline_tone);
+    let tone = banned.filter(|_| !extension_visible);
     if let Some(tone) = tone {
         let base = match tone {
             WarningTone::Red => BAN_RED,
@@ -902,16 +908,26 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
             base
         };
         BoxStyle {
-            radius: Corners::all(v.radius_md),
+            radius: Corners::all(ring_radius),
             shadows: vec![ring(snap::border_width(2.0, ppp), color)],
             opacity,
             ..BoxStyle::default()
         }
-        .paint_transformed(ui.painter(), rect, transform);
+        .paint_transformed(ui.painter(), ring_rect, transform);
     }
 
-    if props.focus_visible && response.has_focus() {
-        super::focus::card_ring(ui, rect, v.radius_md, v);
+    // `[data-kb-focus]` and `:focus-visible`, under the card's transform.
+    if ring_on && banned.is_none() {
+        BoxStyle {
+            radius: Corners::all(ring_radius),
+            shadows: vec![ring(
+                snap::border_width(2.0, ppp),
+                v.fg.mix(0.65, Rgba::TRANSPARENT),
+            )],
+            opacity,
+            ..BoxStyle::default()
+        }
+        .paint_transformed(ui.painter(), ring_rect, transform);
     }
     set_state(&ctx, id, st);
     CardOutput {

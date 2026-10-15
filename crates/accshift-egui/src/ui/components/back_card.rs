@@ -50,6 +50,7 @@ pub fn back_card(ui: &mut Ui, rect: Rect, props: &BackCardProps) -> Vec<BackCard
             accent: props.accent,
             drag_over: props.drag_over,
             dragged: false,
+            kb_focus: false,
         },
         v,
     );

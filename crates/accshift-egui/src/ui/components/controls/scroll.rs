@@ -19,6 +19,18 @@ const MIN_THUMB: f32 = 18.0;
 /// A line of wheel delta, in px.
 const LINE: f32 = 40.0;
 
+/// `scrollIntoView({ block: "nearest" })` of `[top, bottom)` in a
+/// scrollport `view` high scrolled to `scroll`: the new offset.
+pub fn nearest(scroll: f32, view: f32, top: f32, bottom: f32) -> f32 {
+    if top < scroll {
+        top
+    } else if bottom > scroll + view {
+        (bottom - view).min(top)
+    } else {
+        scroll
+    }
+}
+
 /// Whether `content` overflows a viewport `viewport` high.
 pub fn overflows(viewport: f32, content: f32) -> bool {
     content > viewport + 0.5

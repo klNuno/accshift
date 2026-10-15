@@ -293,6 +293,26 @@ impl Accounts {
         self.set_search("", Instant::now());
     }
 
+    /// `getItems` of `createCardFocus`: the cards in visual order, folders
+    /// then accounts, the cards of a collapsed section left out.
+    pub fn card_focus_items(&self) -> Vec<accshift_app::folders::ItemRef> {
+        match &self.lists.sections {
+            Some(sections) => sections
+                .iter()
+                .filter(|section| !self.pipeline.is_section_collapsed(section))
+                .flat_map(|section| section.folder_items.iter().chain(&section.account_items))
+                .cloned()
+                .collect(),
+            None => self
+                .lists
+                .folder_items
+                .iter()
+                .chain(&self.lists.account_items)
+                .cloned()
+                .collect(),
+        }
+    }
+
     /// `navigation.searchQuery = value` and the pipeline's debounce.
     pub fn set_search(&mut self, query: &str, now: Instant) {
         if query == self.navigation.search_query() {

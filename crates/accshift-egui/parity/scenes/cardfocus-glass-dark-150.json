@@ -1,0 +1,125 @@
+{
+  "id": "cardfocus-glass-dark-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "ArrowRight"
+    },
+    {
+      "wait": 250
+    },
+    {
+      "shot": "first"
+    },
+    {
+      "key": "ArrowRight"
+    },
+    {
+      "key": "ArrowDown"
+    },
+    {
+      "wait": 250
+    },
+    {
+      "shot": "down"
+    },
+    {
+      "key": "Delete"
+    },
+    {
+      "wait": 350
+    },
+    {
+      "shot": "menu"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 250
+    },
+    {
+      "key": "ArrowDown"
+    },
+    {
+      "key": "ArrowDown"
+    },
+    {
+      "key": "ArrowDown"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "scrolled"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "shot": "cleared"
+    },
+    {
+      "key": "ArrowRight"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "back"
+    },
+    {
+      "key": "F2"
+    },
+    {
+      "wait": 350
+    },
+    {
+      "shot": "rename"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 250
+    },
+    {
+      "key": "Ctrl+Shift+l"
+    },
+    {
+      "wait": 700
+    },
+    {
+      "key": "ArrowDown"
+    },
+    {
+      "key": "ArrowDown"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "list"
+    }
+  ]
+}

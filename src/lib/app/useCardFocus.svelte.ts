@@ -14,6 +14,9 @@ function cardSelector(item: ItemRef): string {
 }
 
 const CARD_SELECTOR = "[data-account-id], [data-folder-id]";
+/** A focusable card: a whole section of the sections layout also carries
+ *  `data-folder-id`, but it is no card. */
+const ITEM_SELECTOR = "[data-account-id], [data-folder-id]:not([data-section-card])";
 const INTERACTIVE_SELECTOR = [
   "button",
   "a[href]",
@@ -47,6 +50,18 @@ export function isCardKeyTarget(target: EventTarget | null, wrapper: Element | n
   if (!wrapper || !wrapper.contains(target)) return false;
   if (target.matches(CARD_SELECTOR)) return true;
   return !target.matches(INTERACTIVE_SELECTOR);
+}
+
+/** Leading grid slots on the first slot's row, from their tops: the cards
+ *  per row. */
+export function countColumns(tops: number[]): number {
+  if (tops.length === 0) return 1;
+  let columns = 0;
+  for (const top of tops) {
+    if (Math.abs(top - tops[0]) > 4) break;
+    columns += 1;
+  }
+  return columns;
 }
 
 /** Virtual roving focus for the card grid. The cards are managed by the drag
@@ -87,21 +102,18 @@ export function createCardFocus({ getItems, getWrapperRef, getViewMode }: CardFo
     el.scrollIntoView({ block: "nearest" });
   }
 
-  /** Cards per row, measured from live layout so it follows zoom and resize.
-   *  List view is always a single column. */
+  /** Cards per row, measured from live layout so it follows zoom and resize:
+   *  the slots on the first row of the first card's grid, the back card
+   *  included since it takes one. Slot boxes, not `offsetTop`: an account
+   *  card's offset parent is its own `.card-shell`. List view is always a
+   *  single column. */
   function measureColumns(): number {
     if (getViewMode() === "list") return 1;
-    const wrapper = getWrapperRef();
-    if (!wrapper) return 1;
-    const cards = wrapper.querySelectorAll<HTMLElement>("[data-account-id], [data-folder-id]");
-    if (cards.length === 0) return 1;
-    const firstTop = cards[0].offsetTop;
-    let columns = 0;
-    for (const card of cards) {
-      if (Math.abs(card.offsetTop - firstTop) > 4) break;
-      columns += 1;
-    }
-    return Math.max(1, columns);
+    const first = getWrapperRef()?.querySelector<HTMLElement>(ITEM_SELECTOR);
+    const grid = first?.closest<HTMLElement>(".grid-container");
+    if (!grid) return 1;
+    const tops = Array.from(grid.children, (slot) => slot.getBoundingClientRect().top);
+    return Math.max(1, countColumns(tops));
   }
 
   function setFocused(id: string | null) {

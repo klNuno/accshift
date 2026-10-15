@@ -99,6 +99,14 @@
     background: color-mix(in srgb, var(--drag-accent, var(--accent)) 10%, transparent);
   }
 
+  /* The arrow-key focus: app.css's ring loses to the outline above. The
+     attribute is set from script, so the compiler would prune it unless
+     global. */
+  .card:global([data-kb-focus]) {
+    outline: 2px var(--focus-ring-style) color-mix(in srgb, var(--fg) 65%, transparent);
+    outline-offset: 2px;
+  }
+
   .card.dragging {
     opacity: 0.4;
     transform: scale(0.95);

@@ -33,6 +33,7 @@ use accshift_app::actions::extension::{note_section, warning_section};
 use accshift_app::display::{
     AccountCardItem, DisplayBody, DisplayItem, FolderCardItem, SectionHeaderItem, SectionLabel,
 };
+use accshift_app::folders::{ItemKind, ItemRef};
 use accshift_app::i18n::{translate, Locale};
 use accshift_app::jobs::Jobs;
 use accshift_app::stores::{ClientStores, ViewMode};
@@ -54,6 +55,7 @@ use crate::ui::components::avatar_fade_in;
 use crate::ui::components::back_card::{self, BackCardEvent, BackCardProps};
 use crate::ui::components::breadcrumb::{self, BreadcrumbProps, Crumb};
 use crate::ui::components::context_menu;
+use crate::ui::components::controls::scroll;
 use crate::ui::components::folder_card::{self, entrance, FolderCardEvent, FolderCardProps};
 use crate::ui::components::list_view::{self, ListEvent, ListHost, ListProps, ListState};
 use crate::ui::components::search_cancel;
@@ -213,6 +215,18 @@ pub struct Workspace {
     zone: Option<accshift_app::time::TimeZone>,
     /// The list view's selection and scroll.
     list: ListState,
+    /// `cardFocus.focusedId`: the card the arrow keys moved to, painted
+    /// with the `[data-kb-focus]` ring.
+    pub kb_focus: Option<String>,
+    /// `syncDom`'s `scrollIntoView({ block: "nearest" })` is due.
+    pub kb_reveal: bool,
+    /// The last frame's folder and account cards (list rows in the list
+    /// view) in DOM order, on screen.
+    pub cards: Vec<(ItemRef, Rect)>,
+    /// The grid offset `cards` were drawn at; `None` for list rows.
+    cards_scroll: Option<f32>,
+    /// `measureColumns()` on the last frame's grid.
+    pub columns: usize,
 }
 
 impl Workspace {
@@ -232,6 +246,22 @@ impl Workspace {
             && self.visible_decoding == 0
             && (!full || now - self.last_mount >= vars.motion_card_entrance)
             && (!full || now - self.last_reveal >= vars.motion_avatar_fade)
+    }
+
+    /// Whether `id` is a box the workspace mounted (a card, a header, a
+    /// list row): `wrapper.contains(target)` of the card focus.
+    pub fn owns(&self, id: Id) -> bool {
+        self.mounts
+            .iter()
+            .any(|(key, (generation, _))| Id::new(("ws-card", key.as_str(), *generation)) == id)
+    }
+
+    /// The card `item` on screen, as `getBoundingClientRect` reads it.
+    pub fn card_rect(&self, item: &ItemRef) -> Option<Rect> {
+        self.cards
+            .iter()
+            .find(|(card, _)| card == item)
+            .map(|(_, r)| *r)
     }
 
     /// The mount id of `key` this frame.
@@ -420,11 +450,30 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
     let inner_w = viewport.width() - 2.0 * PAD_X;
     let clip = viewport.intersect(ui.clip_rect());
     let origin = pos2(viewport.left() + PAD_X, viewport.top() + PAD_TOP);
+    // `syncDom`: the card the arrows moved to scrolls into view, from the
+    // boxes the last frame drew, before anything draws. The list view
+    // scrolls its own panel.
+    if let Some(drawn_at) = ws.cards_scroll.filter(|_| ws.kb_reveal) {
+        ws.kb_reveal = false;
+        let target = ws.kb_focus.as_ref().and_then(|id| {
+            ws.cards
+                .iter()
+                .find(|(card, _)| &card.id == id)
+                .map(|(_, r)| *r)
+        });
+        if let Some(r) = target {
+            // Back from the screen to the scroll box: the padding included.
+            let top = r.top() - viewport.top() + drawn_at;
+            let bottom = r.bottom() - viewport.top() + drawn_at;
+            ws.scroll = scroll::nearest(ws.scroll, viewport.height(), top, bottom);
+        }
+    }
 
     let mut slides = std::mem::take(&mut ws.slides);
     let mut placed: Vec<Placed> = Vec::new();
     // Everything above the cards, in content coordinates.
     let mut y = 0.0;
+    let mut list_mode = false;
     let path_owned: Vec<(String, String)> = input
         .accounts
         .navigation
@@ -599,6 +648,8 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                     let h = (viewport.height() - PAD_TOP - PAD_BOTTOM - y).max(0.0);
                     let r = to_screen(Rect::from_min_size(pos2(0.0, y), vec2(inner_w, h)));
                     let mut list = std::mem::take(&mut ws.list);
+                    let kb_focus = ws.kb_focus.clone();
+                    let kb_reveal = std::mem::take(&mut ws.kb_reveal);
                     let mut host = Host {
                         ws: &mut *ws,
                         avatars: &mut *avatars,
@@ -621,6 +672,8 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                         focus_visible: input.focus_visible,
                         dark: input.dark,
                         time: &time,
+                        kb_focus: kb_focus.as_deref(),
+                        kb_reveal,
                     };
                     let transform = egui::emath::TSTransform::from_translation(vec2(0.0, rise));
                     let events = ui
@@ -632,6 +685,9 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                         })
                         .inner;
                     ws.list = list;
+                    ws.cards = ws.list.cards.clone();
+                    ws.cards_scroll = None;
+                    list_mode = true;
                     for event in events {
                         actions.push(match event {
                             ListEvent::Back => Action::NavigateBack,
@@ -729,6 +785,8 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
     let layer = ui.layer_id();
     let cards_from = shape_count(&ctx, layer);
     let mut stacks = Vec::new();
+    let kb_focus = ws.kb_focus.clone();
+    let kb = |id: &str| kb_focus.as_deref() == Some(id);
     for p in &placed {
         ws.layout.push((p.node.label(), p.rect));
         let id = ws.mount(&p.key, frame, now);
@@ -878,6 +936,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                         drag_over: false,
                         dragged: f.dragged,
                         focus_visible: input.focus_visible,
+                        kb_focus: kb(&f.folder.id),
                     },
                 ) {
                     match event {
@@ -922,6 +981,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                         extension: &sections,
                         extension_disabled: a.single_click_switch,
                         glass: input.glass,
+                        kb_focus: kb(&a.account.id),
                     },
                 );
                 stacks.push(Stack {
@@ -947,6 +1007,38 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
         }
     }
     restack(&ctx, layer, cards_from..shape_count(&ctx, layer), &stacks);
+    if !list_mode {
+        ws.cards_scroll = Some(scroll);
+        ws.cards = placed
+            .iter()
+            .filter_map(|p| {
+                let item = match &p.node {
+                    Node::Folder(f) => ItemRef {
+                        kind: ItemKind::Folder,
+                        id: f.folder.id.clone(),
+                    },
+                    Node::Account(a) => ItemRef {
+                        kind: ItemKind::Account,
+                        id: a.account.id.clone(),
+                    },
+                    _ => return None,
+                };
+                Some((item, to_screen(p.rect)))
+            })
+            .collect();
+    }
+    // `measureColumns()`: the slots on the row of the first card, the back
+    // card included.
+    let slot = |p: &Placed| matches!(p.node, Node::Back | Node::Folder(_) | Node::Account(_));
+    let first = placed
+        .iter()
+        .find(|p| matches!(p.node, Node::Folder(_) | Node::Account(_)));
+    ws.columns = first.map_or(1, |first| {
+        placed
+            .iter()
+            .filter(|p| slot(p) && (p.rect.top() - first.rect.top()).abs() <= 4.0)
+            .count()
+    });
     drop(placed);
     let sliding = !slides.is_empty();
     ws.slides = slides;
@@ -2467,6 +2559,79 @@ mod scene_tests {
     /// its focused field, typing filters, Enter runs, Escape and a second
     /// Ctrl+K close, the arrows move the highlight; the tab, view and
     /// search shortcuts reach the app.
+    #[test]
+    fn card_focus_follows_the_arrows() {
+        fn app(run: &Run) -> &crate::app::AppModel {
+            match &run.screen {
+                Screen::App(app) => app,
+                _ => panic!("not the app"),
+            }
+        }
+        let focus = |run: &Run| app(run).booted().unwrap().workspace.kb_focus.clone();
+        let label = |run: &Run| {
+            let b = app(run).booted().unwrap();
+            let id = b.workspace.kb_focus.clone()?;
+            b.accounts.view.items().iter().find_map(|item| match item {
+                accshift_app::display::DisplayItem::Folder(f) if f.folder.id == id => {
+                    Some(f.folder.name.clone())
+                }
+                accshift_app::display::DisplayItem::Account(a) if a.account.id == id => {
+                    Some(a.name.clone())
+                }
+                _ => None,
+            })
+        };
+        let mut run = Run::new("workspace-glass-dark-100", 1.0);
+        run.settle();
+        assert_eq!(focus(&run), None);
+        // The first arrow lands on the first card, the next ones move by
+        // one or by a row of seven (the folder takes the first slot).
+        run.key(Key::ArrowRight);
+        assert_eq!(label(&run).as_deref(), Some("Smurfs"));
+        run.key(Key::ArrowRight);
+        assert_eq!(label(&run).as_deref(), Some("main"));
+        run.key(Key::ArrowDown);
+        assert_eq!(label(&run).as_deref(), Some("lan party"));
+        // Past the last row it stays.
+        run.key(Key::ArrowDown);
+        assert_eq!(label(&run).as_deref(), Some("lan party"));
+        run.key(Key::ArrowUp);
+        assert_eq!(label(&run).as_deref(), Some("main"));
+        // Escape clears, then a pointer press does.
+        run.key(Key::Escape);
+        assert_eq!(focus(&run), None);
+        run.key(Key::ArrowRight);
+        assert!(focus(&run).is_some());
+        run.click(pos2(840.0, 420.0));
+        assert_eq!(focus(&run), None);
+        // Delete opens the menu of the focused card at its centre, F2 the
+        // rename dialog of a folder.
+        run.key(Key::ArrowRight);
+        run.key(Key::Delete);
+        assert!(
+            app(&run).dialogs().context_menu().is_some(),
+            "Delete opens the menu"
+        );
+        run.key(Key::Escape);
+        assert!(app(&run).dialogs().context_menu().is_none());
+        assert_eq!(
+            label(&run).as_deref(),
+            Some("Smurfs"),
+            "the menu keeps the focus"
+        );
+        run.key(Key::F2);
+        assert!(
+            app(&run).dialogs().input_dialog().is_some(),
+            "F2 renames the folder"
+        );
+        run.key(Key::Escape);
+        // Enter opens the focused folder, and the new folder clears it.
+        run.key(Key::Enter);
+        let b = app(&run).booted().unwrap();
+        assert!(b.accounts.navigation.current_folder_id().is_some());
+        assert_eq!(focus(&run), None);
+    }
+
     #[test]
     fn keyboard_shortcuts_and_the_palette() {
         use crate::ui::components::command_palette;

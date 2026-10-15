@@ -1,0 +1,124 @@
+{
+  "id": "cardfocus-ban-glass-dark-150",
+  "scenario": "dev",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "seed": {
+    "SETTINGS": {
+      "viewMode": "grid",
+      "animations": "off",
+      "accountDisplay": {
+        "showUsernames": true,
+        "showCardNotesInline": false
+      }
+    },
+    "client.account-card-notes": {
+      "76561198100000001": "Main account, keep the trade lock in mind",
+      "76561198100000006": "Fresh account for the summer sale"
+    }
+  },
+  "steps": [
+    {
+      "wait": 800
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "key": "ArrowRight"
+    },
+    {
+      "wait": 150
+    },
+    {
+      "key": "ArrowRight"
+    },
+    {
+      "wait": 150
+    },
+    {
+      "key": "ArrowRight"
+    },
+    {
+      "wait": 150
+    },
+    {
+      "key": "ArrowRight"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "kb-vac"
+    },
+    {
+      "move": [425, 150]
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "kb-vac-hover"
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "key": "ArrowRight"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "kb-trade"
+    },
+    {
+      "key": "ArrowLeft"
+    },
+    {
+      "wait": 150
+    },
+    {
+      "key": "ArrowLeft"
+    },
+    {
+      "wait": 150
+    },
+    {
+      "key": "ArrowLeft"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "kb-main"
+    },
+    {
+      "move": [205, 150]
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "kb-main-hover"
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

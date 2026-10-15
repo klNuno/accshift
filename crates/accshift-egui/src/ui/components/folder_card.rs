@@ -63,6 +63,8 @@ pub struct FolderCardProps<'a> {
     pub dragged: bool,
     /// Keyboard focus is showing (`:focus-visible`).
     pub focus_visible: bool,
+    /// `[data-kb-focus]`: the card the arrow keys moved to.
+    pub kb_focus: bool,
 }
 
 /// Which card [`frame`] paints and its state classes.
@@ -76,6 +78,9 @@ pub(crate) struct CardState {
     pub drag_over: bool,
     /// `.dragging` (folder cards only).
     pub dragged: bool,
+    /// `.card[data-kb-focus]` (folder cards only): the arrow keys moved
+    /// here.
+    pub kb_focus: bool,
 }
 
 /// The card box drawn, for its children.
@@ -128,6 +133,7 @@ pub(crate) fn frame(
         accent,
         drag_over,
         dragged,
+        kb_focus,
     } = state;
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
@@ -150,7 +156,10 @@ pub(crate) fn frame(
         (None, true, false) => vars.bg_card_hover,
         (None, false, false) => transparent,
     };
-    let outline = if drag_over {
+    // `.card[data-kb-focus]` comes last and wins over both.
+    let outline = if kb_focus {
+        vars.fg.mix(0.65, transparent)
+    } else if drag_over {
         accent.mix(0.55, transparent)
     } else if hovered {
         vars.fg_subtle.mix(0.45, transparent)
@@ -209,14 +218,17 @@ pub(crate) fn frame(
 
     let mut shadows = Vec::new();
     // The outline is drawn outside the border box, above the shadows; its
-    // width snaps like a border.
-    shadows.push(BoxShadow {
-        offset: egui::Vec2::ZERO,
-        blur: 0.0,
-        spread: snap::border_width(1.0, ppp),
-        color: outline,
-        inset: false,
-    });
+    // width snaps like a border. Only its colour eases: the arrow-key
+    // focus widens it and moves it out at once.
+    if !kb_focus {
+        shadows.push(BoxShadow {
+            offset: egui::Vec2::ZERO,
+            blur: 0.0,
+            spread: snap::border_width(1.0, ppp),
+            color: outline,
+            inset: false,
+        });
+    }
     if drag_over {
         shadows.push(BoxShadow {
             offset: egui::Vec2::ZERO,
@@ -242,6 +254,23 @@ pub(crate) fn frame(
         ..BoxStyle::default()
     }
     .paint_transformed(ui.painter(), rect, transform);
+    if kb_focus {
+        // `outline: 2px; outline-offset: 2px`, its radius grown by the
+        // offset.
+        BoxStyle {
+            radius: Corners::all(vars.radius_md + 2.0),
+            shadows: vec![BoxShadow {
+                offset: egui::Vec2::ZERO,
+                blur: 0.0,
+                spread: snap::border_width(2.0, ppp),
+                color: outline,
+                inset: false,
+            }],
+            opacity,
+            ..BoxStyle::default()
+        }
+        .paint_transformed(ui.painter(), rect.expand(2.0), transform);
+    }
 
     Frame {
         response,
@@ -357,13 +386,14 @@ pub fn folder_card(ui: &mut Ui, rect: Rect, props: &FolderCardProps) -> Vec<Fold
             accent: props.accent,
             drag_over: props.drag_over,
             dragged: props.dragged,
+            kb_focus: props.kb_focus,
         },
         v,
     );
     icon_wrap(ui, &f, v, icons::FOLDER, 30.0);
     let style = name_style(v);
     name(ui, &f, name_rect(f.layout, v, 18.0), props.name, &style);
-    if props.focus_visible && f.response.has_focus() {
+    if props.focus_visible && f.response.has_focus() && !props.kb_focus {
         super::focus::card_ring(ui, f.rect, v.radius_md, v);
     }
     let mut events = Vec::new();

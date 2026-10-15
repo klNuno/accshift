@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 
 use accshift_app::display::{AccountCardItem, DisplayItem, SectionHeaderItem, SectionLabel};
-use accshift_app::folders::FolderInfo;
+use accshift_app::folders::{FolderInfo, ItemRef};
 use accshift_app::i18n::{translate, Locale};
 use accshift_app::platforms::warnings::WarningTone;
 use accshift_app::platforms::PlatformAccount;
@@ -77,6 +77,8 @@ pub struct ListState {
     /// The last frame's rows and headers with their labels, on screen,
     /// scrolled: the behaviour tests read them.
     pub layout: Vec<(String, Rect)>,
+    /// The last frame's folder and account rows on screen, in DOM order.
+    pub cards: Vec<(ItemRef, Rect)>,
     /// Per section key: folded last frame, and its rows while unfolded.
     sections: HashMap<String, (bool, Vec<DisplayItem>)>,
     slides: HashMap<String, Slide>,
@@ -109,6 +111,10 @@ pub struct ListProps<'a> {
     /// `color-scheme: dark`, for the focus ring.
     pub dark: bool,
     pub time: &'a TimeContext,
+    /// `cardFocus.focusedId`: the row painted with `[data-kb-focus]`.
+    pub kb_focus: Option<&'a str>,
+    /// Scroll the focused row into view (`syncDom`).
+    pub kb_reveal: bool,
 }
 
 /// What the list reports.
@@ -420,11 +426,22 @@ pub fn list_view(
     state.pointer = ctx.input(|i| i.pointer.latest_pos());
     let scroll_before = state.scroll;
     state.scroll = (state.scroll - dy).clamp(0.0, max_scroll).round();
+    // `syncDom`: the row the arrows moved to scrolls into view.
+    let kb_target = places
+        .iter()
+        .find(|place| props.kb_focus.is_some() && item_id(place.item) == props.kb_focus);
+    if let Some(place) = kb_target.filter(|_| props.kb_reveal) {
+        let (top, bottom) = (place.top, place.top + place.h);
+        state.scroll = super::controls::scroll::nearest(state.scroll, panel.height(), top, bottom)
+            .clamp(0.0, max_scroll)
+            .round();
+    }
 
     let clip = panel.intersect(ui.clip_rect());
     let focused_now = ctx.memory(|m| m.focused());
     let mut focused_box = None;
     state.layout.clear();
+    state.cards.clear();
     let scrolled = panel.min.to_vec2() - vec2(0.0, state.scroll);
     for place in &places {
         let (item, h) = (place.item, place.h);
@@ -450,6 +467,12 @@ pub fn list_view(
             DisplayItem::Account(a) => a.name.clone(),
         };
         state.layout.push((label, row));
+        let kb_focus = props.kb_focus.is_some() && item_id(item) == props.kb_focus;
+        match item {
+            DisplayItem::Folder(f) => state.cards.push((ItemRef::folder(&f.folder.id), row)),
+            DisplayItem::Account(a) => state.cards.push((ItemRef::account(&a.account.id), row)),
+            _ => {}
+        }
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(row));
         child.set_clip_rect(clip);
         child.multiply_opacity(place.opacity);
@@ -500,6 +523,7 @@ pub fn list_view(
             DisplayItem::Folder(f) => {
                 let look = RowLook {
                     dragged: f.dragged,
+                    kb_focus,
                     ..RowLook::default()
                 };
                 let r = list_row(&mut child, row, id, &f.folder.name, look, props, visible);
@@ -523,6 +547,7 @@ pub fn list_view(
                     red: warning.is_some_and(|w| w.list_has_red),
                     orange: warning.is_some_and(|w| w.list_has_orange),
                     dragged: a.dragged,
+                    kb_focus,
                 };
                 let r = list_row(&mut child, row, id, &a.name, look, props, visible);
                 let px = (ICON * ppp).round() as u32;
@@ -677,6 +702,15 @@ fn cubic_out(t: f64) -> f64 {
     f * f * f + 1.0
 }
 
+/// The card focus id of a folder or account row.
+fn item_id(item: &DisplayItem) -> Option<&str> {
+    match item {
+        DisplayItem::Folder(f) => Some(&f.folder.id),
+        DisplayItem::Account(a) => Some(&a.account.id),
+        _ => None,
+    }
+}
+
 /// The states a row draws.
 #[derive(Clone, Copy, Default)]
 struct RowLook {
@@ -686,6 +720,8 @@ struct RowLook {
     red: bool,
     orange: bool,
     dragged: bool,
+    /// `[data-kb-focus]`.
+    kb_focus: bool,
 }
 
 /// A row drawn: where its parts go and what it got.
@@ -737,6 +773,7 @@ fn list_row(
         red,
         orange,
         dragged,
+        kb_focus,
     } = look;
     let c = custom.is_some();
     let cc = custom.unwrap_or(Rgba::TRANSPARENT);
@@ -771,6 +808,8 @@ fn list_row(
     let focused = response.has_focus();
     if visible && focused && props.focus_visible {
         auto_ring(ui.painter(), painted, 6.0, props.dark, ppp);
+    } else if visible && kb_focus {
+        super::focus::card_ring(ui, painted, 6.0, v);
     }
     let keys = focused && ctx.input(|i| i.key_pressed(Key::Enter) || i.key_pressed(Key::Space));
     let inset = vec2(bw + ROW_PAD_X, bw + ROW_PAD_Y);
@@ -1663,6 +1702,8 @@ mod tests {
                 focus_visible: false,
                 dark: true,
                 time: &time,
+                kb_focus: None,
+                kb_reveal: false,
             };
             let (state, items) = (&mut self.state, &self.items);
             let mut out = Vec::new();

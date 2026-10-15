@@ -338,6 +338,11 @@ pub struct AppModel {
     keyboard: KeyboardController,
     /// `paletteOpen`: the open command palette.
     palette: Option<palette::PaletteState>,
+    /// What the card focus was set under (tab, folder, query, list view,
+    /// settings): a change clears it.
+    card_focus_context: Option<(String, Option<String>, String, bool, bool)>,
+    /// The widget holding real focus last frame (`focusin`).
+    card_focus_widget: Option<egui::Id>,
 }
 
 impl AppModel {
@@ -424,6 +429,8 @@ impl AppModel {
             ready_marked: false,
             keyboard: KeyboardController::default(),
             palette: None,
+            card_focus_context: None,
+            card_focus_widget: None,
         }
     }
 
@@ -712,6 +719,7 @@ impl AppModel {
             ctx.request_repaint_after(deadline.saturating_duration_since(instant));
         }
         // The window's `keydown` listener, before any component reads keys.
+        self.track_card_focus(&ctx);
         self.dispatch_keys(&ctx);
         self.mount_dialogs();
         let actions = shell::draw(self, ui, now);
