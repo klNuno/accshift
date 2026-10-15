@@ -25,6 +25,9 @@ pub struct SelectProps<'a> {
     /// The option labels, in order.
     pub options: &'a [String],
     pub selected: usize,
+    /// `<option disabled>` per option; shorter (or empty) means enabled.
+    /// The arrows skip a disabled option and the list will not pick it.
+    pub disabled: &'a [bool],
     /// The accessible name.
     pub label: &'a str,
     pub vars: &'a Vars,
@@ -115,6 +118,9 @@ pub fn select(ui: &mut Ui, rect: Rect, id: Id, props: &SelectProps) -> SelectEve
         ..SelectEvents::default()
     };
     let n = props.options.len();
+    let off = |i: usize| props.disabled.get(i).copied().unwrap_or(false);
+    let next = |from: usize| (from + 1..n).find(|&i| !off(i));
+    let prev = |from: usize| (0..from).rev().find(|&i| !off(i));
     if response.clicked() {
         open = if open.is_some() {
             None
@@ -146,11 +152,11 @@ pub fn select(ui: &mut Ui, rect: Rect, id: Id, props: &SelectProps) -> SelectEve
         match open {
             Some(hi) => {
                 if up {
-                    open = Some(hi.saturating_sub(1));
+                    open = Some(prev(hi).unwrap_or(hi));
                 } else if down {
-                    open = Some((hi + 1).min(n - 1));
+                    open = Some(next(hi).unwrap_or(hi));
                 } else if enter || space {
-                    if hi != props.selected {
+                    if hi != props.selected && !off(hi) {
                         events.changed = Some(hi);
                     }
                     open = None;
@@ -163,10 +169,10 @@ pub fn select(ui: &mut Ui, rect: Rect, id: Id, props: &SelectProps) -> SelectEve
             None => {
                 if alt_down || enter || space {
                     open = Some(props.selected);
-                } else if up && props.selected > 0 {
-                    events.changed = Some(props.selected - 1);
-                } else if down && props.selected + 1 < n {
-                    events.changed = Some(props.selected + 1);
+                } else if up {
+                    events.changed = prev(props.selected);
+                } else if down {
+                    events.changed = next(props.selected);
                 }
             }
         }
@@ -235,8 +241,16 @@ pub fn select(ui: &mut Ui, rect: Rect, id: Id, props: &SelectProps) -> SelectEve
                         pos2(list.left() + 1.0, list.top() + 1.0 + ROW * i as f32),
                         vec2(list.width() - 2.0, ROW),
                     );
-                    let r = ui.interact(row, id.with(("option", i)), Sense::click());
-                    if r.hovered() && ui.input(|inp| inp.pointer.delta() != egui::Vec2::ZERO) {
+                    let sense = if off(i) {
+                        Sense::hover()
+                    } else {
+                        Sense::click()
+                    };
+                    let r = ui.interact(row, id.with(("option", i)), sense);
+                    if !off(i)
+                        && r.hovered()
+                        && ui.input(|inp| inp.pointer.delta() != egui::Vec2::ZERO)
+                    {
                         ctx.data_mut(|d| d.insert_temp(open_key, i));
                     }
                     if r.clicked() {
@@ -251,7 +265,13 @@ pub fn select(ui: &mut Ui, rect: Rect, id: Id, props: &SelectProps) -> SelectEve
                         pos2(row.left() + 4.0, row.top() + 1.0),
                         vec2(row.width() - 8.0, 18.0),
                     );
-                    text::paint(ui.painter(), text_rect, label, &style(v));
+                    // `GrayText` for a disabled option.
+                    let font = if off(i) {
+                        style(v).color(v.fg_subtle.to_color32())
+                    } else {
+                        style(v)
+                    };
+                    text::paint(ui.painter(), text_rect, label, &font);
                 }
             });
         if let Some(i) = picked {

@@ -21,6 +21,11 @@
 //! On close the Svelte gives focus back to what had it at mount when that
 //! element still exists; from the context menu that is the menu item, gone
 //! by then, so focus is simply dropped.
+//!
+//! [`descriptor_preview`] builds the descriptor preview on the same base.
+
+mod descriptor_preview;
+pub use descriptor_preview::{descriptor_preview_dialog, PreviewState, PREVIEW_ID};
 
 use egui::emath::TSTransform;
 use egui::epaint::RectShape;
@@ -113,12 +118,6 @@ fn destructive(color: &str) -> bool {
     color.trim().is_empty() || color.contains("danger")
 }
 
-/// A width in CSS px rounded up to `LayoutUnit`s, as an inline box takes
-/// the width of its text.
-fn layout_width(w: f32, ppp: f32) -> f32 {
-    (w * ppp * 64.0).ceil() / 64.0 / ppp
-}
-
 /// One button of `.actions`.
 struct Button<'a> {
     id: Id,
@@ -127,6 +126,8 @@ struct Button<'a> {
     /// `border-width`, 0 for the filled buttons.
     border: f32,
     enabled: bool,
+    /// `transition: all 100ms`; the preview dialog's buttons have none.
+    eased: bool,
 }
 
 impl Button<'_> {
@@ -134,7 +135,7 @@ impl Button<'_> {
     fn width(&self, ctx: &Context) -> f32 {
         let ppp = ctx.pixels_per_point();
         let text = text::measure(ctx, self.label, &self.font).unwrap_or(0.0);
-        layout_width(text, ppp) + 24.0 + 2.0 * snap::border_width(self.border, ppp)
+        snap::content_width(text, ppp) + 24.0 + 2.0 * snap::border_width(self.border, ppp)
     }
 }
 
@@ -193,8 +194,14 @@ fn button(
     let focused = b.enabled && take_focus(ui, &response);
     let hovered = b.enabled && response.hovered();
     let target = look(hovered);
-    let bg = anim::transition(&ctx, b.id.with("bg"), target.background, &T100);
-    let fg = anim::transition(&ctx, b.id.with("fg"), target.color, &T100);
+    let (bg, fg) = if b.eased {
+        (
+            anim::transition(&ctx, b.id.with("bg"), target.background, &T100),
+            anim::transition(&ctx, b.id.with("fg"), target.color, &T100),
+        )
+    } else {
+        (target.background, target.color)
+    };
     // `:active { transform: scale(0.97) }`, eased by the same transition.
     let pressed = press_scale && b.enabled && response.is_pointer_button_down_on();
     let scale = anim::transition(
@@ -439,6 +446,7 @@ fn cancel_button<'a>(id: Id, label: &'a str, v: &Vars) -> Button<'a> {
         font: TextStyle::new(12.0, 400).line_height(LineHeight::Px(18.0)),
         border: v.border_px(),
         enabled: true,
+        eased: true,
     }
 }
 
@@ -491,6 +499,7 @@ pub fn confirm_dialog(
         font: TextStyle::new(12.0, 600).line_height(LineHeight::Px(18.0)),
         border: 0.0,
         enabled: true,
+        eased: true,
     };
     let actions_h = 30.0 + 2.0 * snap::border_width(cancel.border, ctx.pixels_per_point());
     let order = [cancel.id, confirm.id];
@@ -585,6 +594,7 @@ pub fn input_dialog(
         font: TextStyle::new(12.0, 500).line_height(LineHeight::Px(18.0)),
         border: 0.0,
         enabled: state.can_submit(),
+        eased: true,
     };
     let actions_h = 30.0 + 2.0 * snap::border_width(cancel.border, ppp);
     let input_id = id.with("input");

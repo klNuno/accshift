@@ -1,0 +1,65 @@
+{
+  "id": "settings-descriptor-preview-light-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "light",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [87, 18]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "click": [93, 141]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "scroll": [350, 300, 600]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click": [258, 354]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "preview"
+    },
+    {
+      "click": [669, 374]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "installed"
+    }
+  ]
+}

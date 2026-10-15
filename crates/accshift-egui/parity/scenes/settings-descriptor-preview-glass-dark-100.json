@@ -1,0 +1,95 @@
+{
+  "id": "settings-descriptor-preview-glass-dark-100",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [87, 18]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "click": [93, 141]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "scroll": [350, 300, 600]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click": [258, 354]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "preview"
+    },
+    {
+      "move": [607, 374]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "hover-cancel"
+    },
+    {
+      "move": [669, 374]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "hover-add"
+    },
+    {
+      "move": [420, 250]
+    },
+    {
+      "scroll": [420, 250, 300]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "scrolled"
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "tab"
+    }
+  ]
+}

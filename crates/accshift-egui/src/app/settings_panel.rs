@@ -12,16 +12,19 @@
 //! write is adopted into every field the user has not edited
 //! (`adoptExternalSettings`). Escape and the close button flush, then close.
 //!
-//! The Platforms tab and the per-platform tabs read and edit the same state
-//! ([`SettingsPanel::platform_paths`], the API key draft, the numeric inputs
-//! of the data refresh); they are drawn by a later port.
+//! The Platforms tab (`SettingsPlatformsTab.svelte`) toggles platforms,
+//! picks the startup one and runs the descriptor folder calls one at a time
+//! ([`SettingsPanel::descriptor_busy`]). The per-platform tabs read and edit
+//! the same state ([`SettingsPanel::platform_paths`], the API key draft, the
+//! numeric inputs of the data refresh); they are drawn by a later port.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
+use accshift_app::actions::dialogs::{ConfirmConfig, ConfirmTicket};
 use accshift_app::actions::navigation::SettingsTabBar;
 use accshift_app::actions::toasts::{AddToastOptions, ToastQueue, ToastType};
-use accshift_app::error::BackendResult;
+use accshift_app::error::{BackendError, BackendResult};
 use accshift_app::i18n::{Locale, TranslationValue};
 use accshift_app::jobs::{Jobs, Pending, Poll};
 use accshift_app::secure::pin::{hash_pin_code, sanitize_pin_digits, unlock_pin_session};
@@ -31,12 +34,14 @@ use accshift_app::settings::{
 };
 use accshift_app::stores::ClientStores;
 use accshift_app::text::Text;
-use accshift_app::types::TelemetryUiState;
+use accshift_app::platforms::descriptors::PlatformDescriptor;
+use accshift_app::platforms::path_error::platform_path_error_message;
+use accshift_app::types::{DescriptorPreview, TelemetryUiState, UserPlatformReport};
 use egui::Context;
 use serde_json::Value;
 
 use super::platforms::{self, PlatformDef, RuntimeOs};
-use super::AppModel;
+use super::{AppModel, Booted};
 
 /// `PIN_CODE_LENGTH`.
 pub const PIN_CODE_LENGTH: usize = 4;
@@ -126,6 +131,8 @@ pub enum SettingFlag {
     Cli,
     /// `streamerMode`: `auto` when on, `off` when off.
     StreamerMode,
+    /// `personasEnabled`, the Platforms tab's personas chip.
+    Personas,
 }
 
 /// What the panel's components ask for.
@@ -158,7 +165,45 @@ pub enum SettingsAction {
     RetryTelemetryDeletion,
     ExportTelemetry,
     RetryTelemetryLoad,
+    /// The Platforms tab's search field (`platformSearch`).
+    PlatformSearch(String),
+    /// A platform chip: `togglePlatform`.
+    TogglePlatform(String),
+    /// The startup platform select.
+    DefaultPlatform(String),
+    /// "Add from a file": pick, then preview.
+    PickDescriptor,
+    ReloadDescriptors,
+    OpenDescriptorsFolder,
+    /// A loaded descriptor's remove button: asks first.
+    RemoveDescriptor { id: String, name: String },
+    /// The preview dialog's install button.
+    InstallDescriptor,
+    /// The preview dialog's cancel button or Escape.
+    CancelDescriptorPreview,
 }
+
+/// A descriptor folder call of the Platforms tab (`runDescriptorTask`).
+#[derive(Clone, Debug, PartialEq)]
+enum DescriptorTask {
+    Reload,
+    Pick,
+    Install { name: String },
+    Remove { id: String, name: String },
+    OpenFolder,
+}
+
+/// What a descriptor folder call answered.
+enum DescriptorDone {
+    Report(UserPlatformReport),
+    /// The picked file and its preview (boxed, it dwarfs the rest); `None`
+    /// when the picker was cancelled.
+    Picked(Option<Box<(String, DescriptorPreview)>>),
+    Opened,
+}
+
+/// A platform path asked for when a chip enabled the platform.
+type PathJob = Pending<(String, BackendResult<String>)>;
 
 /// What a finished telemetry or link call does next.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -222,6 +267,26 @@ pub struct SettingsPanel {
     pub api_key_error: bool,
     pub platform_paths: BTreeMap<String, String>,
     pub platform_path_errors: BTreeMap<String, bool>,
+    path_jobs: Vec<PathJob>,
+    /// `platformSearch` of the Platforms tab.
+    pub platform_search: String,
+    /// mod+f asked for the search field: focus it and select its text.
+    pub focus_platform_search: bool,
+    /// `userPlatforms`: what the backend last read in the descriptor
+    /// folder.
+    pub user_platforms: Option<UserPlatformReport>,
+    pub descriptor_busy: bool,
+    pub descriptor_notice: String,
+    pub descriptor_error: String,
+    descriptor_job: Option<(Pending<BackendResult<DescriptorDone>>, DescriptorTask)>,
+    /// The picked file the preview dialog shows.
+    pub descriptor_preview: Option<DescriptorPreview>,
+    /// Bumped each time the preview opens: its animations and focus restart.
+    pub preview_mount: u64,
+    /// The path the picker returned, held until the user decides.
+    preview_path: String,
+    /// The descriptor the removal confirm is about, and its ticket.
+    pending_removal: Option<(String, String, ConfirmTicket)>,
     /// `.settings-content`'s `scrollTop`.
     pub scroll: f32,
     /// Text for the clipboard once the frame has the context.
@@ -299,6 +364,7 @@ impl SettingsPanel {
         jobs: &Jobs,
         platforms: &[PlatformDef],
         os: RuntimeOs,
+        user_platforms: Option<UserPlatformReport>,
     ) -> Self {
         let mut draft = stores.settings().clone();
         normalize(&mut draft, platforms, os);
@@ -351,6 +417,18 @@ impl SettingsPanel {
             api_key_error: false,
             platform_paths: BTreeMap::new(),
             platform_path_errors: BTreeMap::new(),
+            path_jobs: Vec::new(),
+            platform_search: String::new(),
+            focus_platform_search: false,
+            user_platforms,
+            descriptor_busy: false,
+            descriptor_notice: String::new(),
+            descriptor_error: String::new(),
+            descriptor_job: None,
+            descriptor_preview: None,
+            preview_mount: 0,
+            preview_path: String::new(),
+            pending_removal: None,
             scroll: 0.0,
             clipboard: None,
             draft,
@@ -495,6 +573,74 @@ impl SettingsPanel {
     fn refresh_telemetry(&mut self, jobs: &Jobs) {
         self.telemetry_job = Some(jobs.run(|backend| backend.telemetry_get_state()));
     }
+
+    /// `runDescriptorTask`: one folder call at a time, the buttons disabled
+    /// meanwhile.
+    fn run_descriptor_task(
+        &mut self,
+        jobs: &Jobs,
+        task: DescriptorTask,
+        call: impl FnOnce(&dyn accshift_app::backend::Backend) -> BackendResult<DescriptorDone>
+            + Send
+            + 'static,
+    ) {
+        if self.descriptor_job.is_some() {
+            return;
+        }
+        self.descriptor_busy = true;
+        self.descriptor_error.clear();
+        self.descriptor_job = Some((jobs.run(call), task));
+    }
+
+    /// `togglePlatform`: the last selectable platform stays on; enabling one
+    /// asks for its path. Selectable (`isPlatformSelectable`) is known and
+    /// supported on this system.
+    fn toggle_platform(&mut self, jobs: &Jobs, defs: &[PlatformDef], os: RuntimeOs, id: &str) {
+        let enabled = &mut self.draft.enabled_platforms;
+        if enabled.iter().any(|p| p == id) {
+            let selectable: Vec<&String> = enabled
+                .iter()
+                .filter(|p| platforms::usable(defs, p, os))
+                .collect();
+            if selectable.len() <= 1 && selectable.iter().any(|p| *p == id) {
+                return;
+            }
+            enabled.retain(|p| p != id);
+            return;
+        }
+        if !platforms::usable(defs, id, os) {
+            return;
+        }
+        enabled.push(id.to_string());
+        if !self.platform_paths.contains_key(id) {
+            self.platform_paths.insert(id.to_string(), String::new());
+            let id = id.to_string();
+            self.path_jobs.push(jobs.run(move |backend| {
+                let path = backend.platform_get_path(&id);
+                (id, path)
+            }));
+        }
+    }
+}
+
+/// `applyReport`: the folder's descriptors become the user platforms of the
+/// tabs, the account registry and the stores.
+fn apply_report(b: &mut Booted, report: &UserPlatformReport) {
+    let loaded: Vec<Value> = report
+        .loaded
+        .iter()
+        .filter_map(|d| serde_json::to_value(d).ok())
+        .collect();
+    b.platforms = platforms::with_user(&loaded);
+    let descriptors: Vec<PlatformDescriptor> = loaded
+        .iter()
+        .filter_map(PlatformDescriptor::from_value)
+        .collect();
+    b.accounts.registry.register_user_platforms(&descriptors);
+    let mut ctx = b.stores.context().clone();
+    ctx.platform_ids = b.platforms.iter().map(|p| p.id.clone()).collect();
+    b.stores.set_context(ctx);
+    b.user_platforms = Some(report.clone());
 }
 
 /// `normalizeSettings`.
@@ -510,10 +656,8 @@ pub fn normalize(s: &mut AppSettings, platforms: &[PlatformDef], os: RuntimeOs) 
     if !s.pin_enabled {
         s.pin_hash.clear();
     }
-    let implemented = |id: &str| settings_tab_key(id).is_some();
-    if !platforms.iter().any(|p| {
-        p.id == s.default_platform_id && (implemented(&p.id) || s.enabled_platforms.contains(&p.id))
-    }) {
+    // Every platform of the registry is `implemented`, user ones included.
+    if !platforms.iter().any(|p| p.id == s.default_platform_id) {
         s.default_platform_id = "steam".to_string();
     }
     if s.enabled_platforms.is_empty() {
@@ -525,7 +669,7 @@ pub fn normalize(s: &mut AppSettings, platforms: &[PlatformDef], os: RuntimeOs) 
     let selectable: Vec<&String> = s
         .enabled_platforms
         .iter()
-        .filter(|id| implemented(id) && platforms::usable(platforms, id, os))
+        .filter(|id| platforms::usable(platforms, id, os))
         .collect();
     if let Some(first) = selectable.first() {
         if !selectable.contains(&&s.default_platform_id) {
@@ -556,6 +700,7 @@ impl AppModel {
             &self.jobs,
             &b.platforms,
             b.runtime_os,
+            b.user_platforms.clone(),
         ));
     }
 
@@ -661,15 +806,25 @@ impl AppModel {
                 Ok(()) => {
                     panel.platform_path_errors.insert(id, false);
                 }
-                Err(_) => {
+                Err(error) => {
+                    // A known code says what is wrong with the folder; the
+                    // rest falls back to naming the platform.
+                    let name = b
+                        .platforms
+                        .iter()
+                        .find(|p| p.id == id)
+                        .map_or_else(|| id.clone(), |p| p.name.clone());
+                    let text = platform_path_error_message(
+                        &error.message,
+                        Text::with(
+                            "settings.pathSaveFailed",
+                            [("platform", TranslationValue::Str(name))],
+                        ),
+                    );
                     panel.platform_path_errors.insert(id, true);
                     paths_saved = false;
-                    toast(
-                        &mut self.toasts,
-                        "settings.pathSaveFailed",
-                        ToastType::Error,
-                        now,
-                    );
+                    self.toasts
+                        .add(text, AddToastOptions::kind(ToastType::Error), now);
                 }
             }
         }
@@ -796,6 +951,74 @@ impl AppModel {
         if refresh {
             panel.refresh_telemetry(jobs);
         }
+        let mut paths = Vec::new();
+        panel.path_jobs.retain_mut(|job| match job.poll() {
+            Poll::Waiting => true,
+            Poll::Ready(done) => {
+                paths.push(done);
+                false
+            }
+            Poll::Gone => false,
+        });
+        for (id, path) in paths {
+            if let Ok(path) = path {
+                if panel.draft.enabled_platforms.contains(&id) {
+                    panel.platform_paths.insert(id, path);
+                }
+            }
+        }
+        let descriptor = panel.descriptor_job.as_mut().and_then(|(job, task)| {
+            let result = match job.poll() {
+                Poll::Waiting => return None,
+                Poll::Ready(result) => result,
+                Poll::Gone => Err(BackendError::new("cancelled")),
+            };
+            Some((task.clone(), result))
+        });
+        if let Some((task, result)) = descriptor {
+            panel.descriptor_job = None;
+            panel.descriptor_busy = false;
+            let locale = panel.draft.language;
+            let named = |key: &str, name: &str| {
+                accshift_app::i18n::translate_with(
+                    locale,
+                    key,
+                    &[("platform", TranslationValue::Str(name.to_string()))],
+                )
+            };
+            match result {
+                Err(error) => {
+                    panel.descriptor_notice.clear();
+                    panel.descriptor_error = error.message;
+                }
+                Ok(DescriptorDone::Report(report)) => {
+                    apply_report(b, &report);
+                    panel.user_platforms = Some(report);
+                    match task {
+                        DescriptorTask::Reload => panel.descriptor_notice.clear(),
+                        DescriptorTask::Install { name } => {
+                            panel.descriptor_notice = named("descriptor.installed", &name);
+                            panel.descriptor_preview = None;
+                        }
+                        DescriptorTask::Remove { id, name } => {
+                            panel.descriptor_notice = named("descriptor.removed", &name);
+                            // The platform stops existing, so it cannot
+                            // stay in the enabled set.
+                            panel.draft.enabled_platforms.retain(|p| *p != id);
+                        }
+                        DescriptorTask::Pick | DescriptorTask::OpenFolder => {}
+                    }
+                }
+                Ok(DescriptorDone::Picked(Some(picked))) => {
+                    let (path, preview) = *picked;
+                    panel.descriptor_notice.clear();
+                    panel.descriptor_preview = Some(preview);
+                    panel.preview_mount += 1;
+                    panel.preview_path = path;
+                }
+                Ok(DescriptorDone::Picked(None) | DescriptorDone::Opened) => {}
+            }
+        }
         if let Some(text) = panel.clipboard.take() {
             ctx.copy_text(text);
         }
@@ -874,6 +1097,12 @@ impl AppModel {
             SettingsAction::Close | SettingsAction::ReplayOnboarding => {}
             SettingsAction::SelectTab(id) => {
                 let was_privacy = panel.tab_bar.active_tab() == "privacy";
+                if panel.tab_bar.active_tab() == "platforms" && id != "platforms" {
+                    // The Svelte tab unmounts: its search and notices go.
+                    panel.platform_search.clear();
+                    panel.descriptor_notice.clear();
+                    panel.descriptor_error.clear();
+                }
                 panel.tab_bar.select(&id);
                 panel.scroll = 0.0;
                 if id == "privacy" && !was_privacy {
@@ -912,6 +1141,7 @@ impl AppModel {
                     }
                     SettingFlag::MinimizeOnAccountSwitch => d.minimize_on_account_switch ^= true,
                     SettingFlag::DeepLinks => d.deep_links_enabled ^= true,
+                    SettingFlag::Personas => d.personas_enabled ^= true,
                     SettingFlag::Cli => d.cli_enabled ^= true,
                     SettingFlag::StreamerMode => {
                         d.streamer_mode = match d.streamer_mode {
@@ -1043,6 +1273,94 @@ impl AppModel {
                 }
             }
             SettingsAction::RetryTelemetryLoad => panel.refresh_telemetry(jobs),
+            SettingsAction::PlatformSearch(text) => panel.platform_search = text,
+            SettingsAction::TogglePlatform(id) => {
+                if let Some(b) = self.booted.as_ref() {
+                    panel.toggle_platform(jobs, &b.platforms, b.runtime_os, &id);
+                }
+            }
+            SettingsAction::DefaultPlatform(id) => panel.draft.default_platform_id = id,
+            SettingsAction::ReloadDescriptors => {
+                panel.run_descriptor_task(jobs, DescriptorTask::Reload, |b| {
+                    b.reload_user_platforms().map(DescriptorDone::Report)
+                });
+            }
+            SettingsAction::PickDescriptor => {
+                panel.run_descriptor_task(jobs, DescriptorTask::Pick, |b| {
+                    // A cancelled or failed picker leaves everything alone.
+                    let Ok(path) = b.descriptor_select_file() else {
+                        return Ok(DescriptorDone::Picked(None));
+                    };
+                    if path.is_empty() {
+                        return Ok(DescriptorDone::Picked(None));
+                    }
+                    let preview = b.descriptor_preview_file(&path)?;
+                    Ok(DescriptorDone::Picked(Some(Box::new((path, preview)))))
+                });
+            }
+            SettingsAction::InstallDescriptor => {
+                if let Some(preview) = panel.descriptor_preview.as_ref() {
+                    let name = preview.descriptor.name.clone();
+                    let path = panel.preview_path.clone();
+                    panel.run_descriptor_task(jobs, DescriptorTask::Install { name }, move |b| {
+                        b.descriptor_install_file(&path).map(DescriptorDone::Report)
+                    });
+                }
+            }
+            SettingsAction::CancelDescriptorPreview => panel.descriptor_preview = None,
+            SettingsAction::OpenDescriptorsFolder => {
+                panel.run_descriptor_task(jobs, DescriptorTask::OpenFolder, |b| {
+                    b.open_descriptors_folder().map(|()| DescriptorDone::Opened)
+                });
+            }
+            SettingsAction::RemoveDescriptor { id, name } => {
+                let mut effects = Vec::new();
+                let ticket = self.dialogs.request_confirm(
+                    ConfirmConfig {
+                        title: Text::with(
+                            "descriptor.removeConfirmTitle",
+                            [("platform", TranslationValue::Str(name.clone()))],
+                        ),
+                        message: Text::key("descriptor.removeConfirmMessage"),
+                        confirm_label: Some(Text::key("descriptor.remove")),
+                        confirm_color: None,
+                    },
+                    &mut effects,
+                );
+                panel.pending_removal = Some((id, name, ticket));
+                self.apply_effects(ctx, effects);
+            }
+        }
+    }
+
+    /// The removal confirm settled (`confirmRemoval`, or its cancel).
+    pub(super) fn settle_descriptor_removal(&mut self, ticket: ConfirmTicket, allowed: bool) {
+        let jobs = &self.jobs;
+        let Some(panel) = self.settings_panel.as_mut() else {
+            return;
+        };
+        let Some((id, name, _)) = panel
+            .pending_removal
+            .take_if(|(_, _, pending)| *pending == ticket)
+        else {
+            return;
+        };
+        if allowed {
+            let remove = id.clone();
+            panel.run_descriptor_task(jobs, DescriptorTask::Remove { id, name }, move |b| {
+                b.descriptor_remove(&remove).map(DescriptorDone::Report)
+            });
+        }
+    }
+
+    /// mod+f in the settings scope (`focusPlatformSearch`).
+    pub(super) fn focus_platform_search(&mut self) {
+        if let Some(panel) = self.settings_panel.as_mut() {
+            if panel.tab_bar.active_tab() != "platforms" {
+                panel.tab_bar.select("platforms");
+                panel.scroll = 0.0;
+            }
+            panel.focus_platform_search = true;
         }
     }
 }

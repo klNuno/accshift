@@ -208,6 +208,85 @@ export function createHandlers(spec: MockSpec): Record<string, Handler> {
     rejected: [],
   });
 
+  // An invented descriptor and the plan the dry run would build for it, so
+  // the preview dialog can be opened and recorded. Installing it still adds
+  // nothing: the report stays the empty folder above.
+  const ACME_DIR = "C:\\Users\\player\\AppData\\Roaming\\Acme Launcher";
+  const PICKED_DESCRIPTOR = "C:\\Users\\player\\Downloads\\acme.json";
+  const descriptorPreview = (path: string) => ({
+    source: path,
+    descriptor: {
+      id: "acme",
+      schemaVersion: 1,
+      name: "Acme Launcher",
+      shortName: "Acme",
+      os: {
+        windows: {
+          roots: { files: ["${APPDATA}/Acme Launcher"] },
+          detect: { executableResolves: true },
+          executable: {
+            fileName: "AcmeLauncher.exe",
+            candidates: [{ kind: "path", template: "${ProgramFiles}/Acme/AcmeLauncher.exe" }],
+          },
+          identity: {
+            source: { kind: "synthetic" },
+            format: { charset: "alphanumeric", maxLength: 64 },
+            current: "config",
+          },
+          state: {
+            files: [
+              {
+                live: "${APPDATA}/Acme Launcher/session.json",
+                snapshot: "session.json",
+                snapshotMarker: true,
+              },
+            ],
+          },
+          close: { processes: ["AcmeLauncher.exe"] },
+          launch: {},
+        },
+      },
+    },
+    fileName: "acme.json",
+    replaces: false,
+    blocked: "",
+    plan: {
+      platformId: "acme",
+      operation: "switch",
+      accountId: "preview",
+      applied: false,
+      roots: [ACME_DIR],
+      steps: [
+        { action: "close", kind: "process", target: "AcmeLauncher.exe" },
+        {
+          action: "capture",
+          kind: "file",
+          target: `${ACME_DIR}\\session.json`,
+          snapshot: "acme\\current\\session.json",
+        },
+        {
+          action: "delete",
+          kind: "directory",
+          target: `${ACME_DIR}\\cache`,
+          note: "skipped: not there",
+        },
+        {
+          action: "restore",
+          kind: "file",
+          target: `${ACME_DIR}\\session.json`,
+          snapshot: "acme\\preview\\session.json",
+        },
+        {
+          action: "launch",
+          kind: "executable",
+          target: "C:\\Program Files\\Acme\\AcmeLauncher.exe",
+        },
+      ],
+      warnings: ["No snapshot for this account yet: add it through setup first."],
+    },
+    planProblem: "",
+  });
+
   // The backend PIN session (`PinSession` in accshift-core). Saves are no-ops
   // here, so the PIN is the one the window holds in memory; the session starts
   // locked when the scenario's store carries one, as the real one does.
@@ -333,16 +412,13 @@ export function createHandlers(spec: MockSpec): Record<string, Handler> {
     platform_set_account_label: () => null,
     // The descriptor folder is the recording machine's, so a mock session
     // reports it empty and every call that would change it does nothing. The
-    // picker in particular must never open a real file dialog.
+    // picker in particular must never open a real file dialog: it answers an
+    // invented file, which previews the invented descriptor above.
     reload_user_platforms: () => emptyUserPlatforms(),
     descriptor_install_file: () => emptyUserPlatforms(),
     descriptor_remove: () => emptyUserPlatforms(),
-    descriptor_select_file: () => {
-      throw "cancelled";
-    },
-    descriptor_preview_file: () => {
-      throw "a mock session adds no platform";
-    },
+    descriptor_select_file: () => PICKED_DESCRIPTOR,
+    descriptor_preview_file: (args) => descriptorPreview(String(args.path ?? PICKED_DESCRIPTOR)),
     open_descriptors_folder: () => null,
     platform_dry_run: (args) => ({
       platformId: String(args.platformId ?? ""),

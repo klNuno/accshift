@@ -1,0 +1,62 @@
+{
+  "id": "settings-platforms-ctrlf-glass-dark-100",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [87, 18]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "key": "Ctrl+F"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "ctrl-f"
+    },
+    {
+      "text": "st"
+    },
+    {
+      "click": [700, 380]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [93, 104]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "key": "Ctrl+F"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "ctrl-f-select"
+    }
+  ]
+}

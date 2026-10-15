@@ -29,6 +29,7 @@ use egui::layers::ShapeIdx;
 use egui::{pos2, vec2, Color32, Rect, Ui, UiBuilder};
 
 use super::platforms::{PlatformDef, RuntimeOs};
+use super::settings_panel::SettingsAction;
 use super::{Action, AppModel, Booted};
 use crate::screens::settings;
 use crate::screens::workspace::{self, WorkspaceInput};
@@ -254,7 +255,10 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
     // overlay, never on the content under it.
     let modal = palette.is_some()
         || (dialogs.input_dialog().is_some() && input_mount.is_some())
-        || (dialogs.confirm_dialog().is_some() && confirm_mount.is_some());
+        || (dialogs.confirm_dialog().is_some() && confirm_mount.is_some())
+        || settings_panel
+            .as_ref()
+            .is_some_and(|p| p.descriptor_preview.is_some());
     let pin_focus = std::mem::take(&mut app.pin_focus);
     let (obscured, afk, pin, streamer) = match app.booted.as_ref() {
         Some(b) => {
@@ -399,6 +403,30 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                 dark: theme.theme.color_scheme == ColorScheme::Dark,
                 mount,
             };
+            // `DescriptorPreviewDialog`, mounted by the Platforms tab: fixed
+            // over the window, under `AppDialogs` in the DOM.
+            if let Some(sp) = settings_panel.as_ref() {
+                if let Some(preview) = sp.descriptor_preview.as_ref() {
+                    let state = dialog::PreviewState {
+                        preview,
+                        busy: sp.descriptor_busy,
+                    };
+                    actions.extend(
+                        dialog::descriptor_preview_dialog(
+                            ui,
+                            &dialog_props(sp.preview_mount),
+                            &state,
+                        )
+                        .into_iter()
+                        .map(|event| {
+                            Action::Settings(match event {
+                                dialog::DialogEvent::Confirm => SettingsAction::InstallDescriptor,
+                                _ => SettingsAction::CancelDescriptorPreview,
+                            })
+                        }),
+                    );
+                }
+            }
             if let (Some(state), Some(mount)) = (dialogs.input_dialog(), input_mount) {
                 actions.extend(
                     dialog::input_dialog(ui, &dialog_props(mount), state)

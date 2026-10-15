@@ -17,8 +17,10 @@
 //!
 //! A tab is a list of cards, a card a list of [`Item`]s: heights come first
 //! (rows of the grid take their tallest card), painting second. The
-//! Platforms tab and the per-platform tabs get [`PlatformTabProps`] and an
-//! empty slot until their port lands.
+//! Platforms tab builds its cards in [`platforms_tab`]; the per-platform
+//! tabs get [`PlatformTabProps`] and an empty slot until their port lands.
+
+mod platforms_tab;
 
 use accshift_app::i18n::{translate, translate_with, Locale, TranslationValue, LANGUAGE_OPTIONS};
 use accshift_app::settings::{AnimationsMode, StreamerMode};
@@ -173,6 +175,11 @@ enum Item {
     /// A `p.hint` closing the `.field` before it: the field's 8 px gap
     /// after the control instead of the card's 12.
     FieldHint(String, bool),
+    /// Children with a gap of their own (`.platforms`, `.descriptor-head`,
+    /// `.descriptor-list`).
+    Stack(f32, Vec<Item>),
+    /// One of the Platforms tab's own items.
+    Platforms(platforms_tab::Item),
 }
 
 /// The space above `item` when it follows another one in a card.
@@ -187,7 +194,10 @@ enum Control {
     Select {
         options: Vec<String>,
         selected: usize,
-        on_change: fn(usize) -> SettingsAction,
+        /// What picking each option does.
+        actions: Vec<SettingsAction>,
+        /// `<option disabled>`; empty when none is.
+        disabled: Vec<bool>,
     },
     Slider {
         min: f64,
@@ -287,7 +297,11 @@ fn general_cards(panel: &SettingsPanel, view: &View, l: Locale) -> Vec<CardSpec>
                     control: Control::Select {
                         options: languages,
                         selected: language,
-                        on_change: |i| SettingsAction::Language(LANGUAGE_OPTIONS[i].code),
+                        actions: LANGUAGE_OPTIONS
+                            .iter()
+                            .map(|o| SettingsAction::Language(o.code))
+                            .collect(),
+                        disabled: Vec::new(),
                     },
                 },
                 Item::Field {
@@ -311,13 +325,15 @@ fn general_cards(panel: &SettingsPanel, view: &View, l: Locale) -> Vec<CardSpec>
                             t("settings.animationsOff"),
                         ],
                         selected: animations,
-                        on_change: |i| {
-                            SettingsAction::Animations(match i {
-                                0 => AnimationsMode::System,
-                                1 => AnimationsMode::On,
-                                _ => AnimationsMode::Off,
-                            })
-                        },
+                        actions: [
+                            AnimationsMode::System,
+                            AnimationsMode::On,
+                            AnimationsMode::Off,
+                        ]
+                        .into_iter()
+                        .map(SettingsAction::Animations)
+                        .collect(),
+                        disabled: Vec::new(),
                     },
                 },
             ],
@@ -636,6 +652,14 @@ fn item_height(ctx: &Context, c: &Ctx, item: &Item, width: f32) -> f32 {
         Item::Hint(text, _) | Item::FieldHint(text, _) => {
             wrapped_height(ctx, text, &hint_style(v), width)
         }
+        Item::Stack(gap, items) => {
+            items
+                .iter()
+                .map(|i| item_height(ctx, c, i, width))
+                .sum::<f32>()
+                + gap * items.len().saturating_sub(1) as f32
+        }
+        Item::Platforms(item) => platforms_tab::height(ctx, c, item, width),
     }
 }
 
@@ -923,6 +947,11 @@ pub fn draw(
 
     // ------------------------------------------------------------ content
     let viewport = Rect::from_min_max(pos2(main.left(), header.bottom() + 10.0), main.max);
+    // mod+f: the search field takes focus with its text selected.
+    if std::mem::take(&mut panel.focus_platform_search) && active == "platforms" {
+        ui.memory_mut(|m| m.request_focus(platforms_tab::search_id()));
+        text_input::select_all(&ctx, platforms_tab::search_id());
+    }
     let c = Ctx {
         panel,
         view,
@@ -932,6 +961,7 @@ pub fn draw(
     };
     let cards = match active.as_str() {
         "general" => general_cards(c.panel, view, locale),
+        "platforms" => platforms_tab::cards(c.panel, view, locale),
         "privacy" => privacy_cards(c.panel, locale),
         _ => Vec::new(),
     };
@@ -1250,7 +1280,8 @@ fn paint_item(ui: &mut Ui, r: Rect, id: Id, c: &Ctx, item: &Item) -> Vec<Setting
                 Control::Select {
                     options,
                     selected,
-                    on_change,
+                    actions,
+                    disabled,
                 } => {
                     let height = text_input::height(ui.ctx().pixels_per_point());
                     let rect =
@@ -1258,12 +1289,13 @@ fn paint_item(ui: &mut Ui, r: Rect, id: Id, c: &Ctx, item: &Item) -> Vec<Setting
                     let props = SelectProps {
                         options,
                         selected: *selected,
+                        disabled,
                         label,
                         vars: v,
                     };
                     let ev = select::select(ui, rect, id.with("select"), &props);
-                    if let Some(i) = ev.changed {
-                        out.push(on_change(i));
+                    if let Some(action) = ev.changed.and_then(|i| actions.get(i)) {
+                        out.push(action.clone());
                     }
                 }
                 Control::Slider {
@@ -1409,6 +1441,16 @@ fn paint_item(ui: &mut Ui, r: Rect, id: Id, c: &Ctx, item: &Item) -> Vec<Setting
                 &style,
             );
         }
+        Item::Stack(gap, items) => {
+            let mut y = r.top();
+            for (i, child) in items.iter().enumerate() {
+                let h = item_height(&ctx, c, child, r.width());
+                let rect = Rect::from_min_size(pos2(r.left(), y), vec2(r.width(), h));
+                out.extend(paint_item(ui, rect, id.with(i), c, child));
+                y += h + gap;
+            }
+        }
+        Item::Platforms(item) => out.extend(platforms_tab::paint(ui, r, id, c, item)),
     }
     out
 }

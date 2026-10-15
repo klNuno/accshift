@@ -282,6 +282,9 @@ pub struct Booted {
     pub secure: SecureScreen,
     /// `createStreamerModeController`.
     pub streamer: StreamerModeController,
+    /// What the backend last read in the descriptor folder (the boot
+    /// payload's, then the Platforms tab's last reload).
+    pub user_platforms: Option<accshift_app::types::UserPlatformReport>,
     /// `handleAppMounted` ran.
     secure_mounted: bool,
     /// The settings panel was open last frame (`handleSettingsClosed`).
@@ -539,6 +542,7 @@ impl AppModel {
             None,
             self.mock.is_some(),
         );
+        let user_platforms = payload.user_platforms.clone();
         let loaded: Vec<Value> = payload
             .user_platforms
             .loaded
@@ -607,6 +611,7 @@ impl AppModel {
             workspace: Workspace::new(),
             secure,
             streamer,
+            user_platforms: Some(user_platforms),
             secure_mounted: false,
             secure_in_settings: false,
         });
@@ -1223,6 +1228,9 @@ impl AppModel {
                 // The stores hold the new colours and notes; the view reads
                 // them every frame.
                 AppEffect::CardColorsChanged | AppEffect::CardNotesChanged => {}
+                AppEffect::ConfirmSettled { ticket, allowed } => {
+                    self.settle_descriptor_removal(ticket, allowed);
+                }
                 _ => {}
             }
         }

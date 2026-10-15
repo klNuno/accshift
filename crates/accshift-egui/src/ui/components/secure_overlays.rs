@@ -626,6 +626,7 @@ fn input_style(v: &Vars) -> FieldStyle {
         background: v.bg,
         border_color: v.border,
         border_focus: FOCUS,
+        placeholder: v.fg_subtle.mix(0.55, Rgba::TRANSPARENT),
         // Segoe UI's ascent plus descent at 16 px.
         caret_height: 21.28,
         caret_scaled: true,

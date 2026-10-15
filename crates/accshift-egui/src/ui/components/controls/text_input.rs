@@ -11,6 +11,8 @@
 //!
 //! Editing keeps the caret at the end of the value: typing appends,
 //! Backspace removes the last character. Enter commits, focus loss blurs.
+//! [`select_all`] (`input.select()`) highlights the whole value until the
+//! next key: typing then replaces it, Backspace clears it.
 
 use egui::accesskit::Role;
 use egui::{pos2, vec2, Event, Id, Key, Rect, Sense, Ui, Vec2, WidgetInfo};
@@ -38,6 +40,8 @@ pub struct FieldStyle {
     pub background: Rgba,
     pub border_color: Rgba,
     pub border_focus: Rgba,
+    /// `::placeholder` colour.
+    pub placeholder: Rgba,
     /// The caret's height, CSS px, centred on the line box.
     pub caret_height: f32,
     /// The caret is 1 CSS px wide, rounded to device pixels; otherwise one
@@ -80,6 +84,7 @@ pub fn settings_style(v: &Vars) -> FieldStyle {
         background: v.bg_input,
         border_color: v.border,
         border_focus: v.fg_muted.mix(0.55, v.border),
+        placeholder: v.fg_subtle.mix(0.55, Rgba::TRANSPARENT),
         caret_height: 14.0,
         caret_scaled: false,
         border_transition: true,
@@ -98,6 +103,7 @@ pub fn dialog_style(v: &Vars) -> FieldStyle {
         background: v.bg_solid,
         border_color: v.border,
         border_focus: v.bg_elevated,
+        placeholder: v.fg_subtle.mix(0.55, Rgba::TRANSPARENT),
         caret_height: 17.0,
         caret_scaled: true,
         border_transition: true,
@@ -146,6 +152,12 @@ fn paint_spin_button(painter: &egui::Painter, content: Rect, dark: bool) {
         (6.9, h - 1.0),
     ]);
 }
+/// `input.select()` on the field `id`: its whole value is selected until
+/// the next key.
+pub fn select_all(ctx: &egui::Context, id: Id) {
+    ctx.data_mut(|d| d.insert_temp(id.with("select-all"), true));
+}
+
 /// Chromium's caret blink half-period.
 const BLINK: f64 = 0.5;
 
@@ -237,6 +249,10 @@ pub fn text_input(
         ..TextInputEvents::default()
     };
     let last_edit = id.with("edit-at");
+    let select_key = id.with("select-all");
+    let mut selected = focused
+        && !value.is_empty()
+        && ctx.data(|d| d.get_temp::<bool>(select_key).unwrap_or(false));
     if focused {
         let now = ui.input(|i| i.time);
         if !was_focused {
@@ -246,6 +262,11 @@ pub fn text_input(
         for event in input {
             match event {
                 Event::Text(t) => {
+                    if selected && t.chars().any(|c| accepts(props.kind, c)) {
+                        value.clear();
+                        selected = false;
+                        events.changed = true;
+                    }
                     for c in t.chars().filter(|c| accepts(props.kind, *c)) {
                         if props.max_len.is_some_and(|m| value.chars().count() >= m) {
                             break;
@@ -259,9 +280,25 @@ pub fn text_input(
                     pressed: true,
                     ..
                 } => {
-                    if value.pop().is_some() {
+                    if selected {
+                        value.clear();
+                        selected = false;
+                        events.changed = true;
+                    } else if value.pop().is_some() {
                         events.changed = true;
                     }
+                }
+                Event::Key {
+                    key:
+                        Key::ArrowLeft | Key::ArrowRight | Key::Home | Key::End | Key::Delete,
+                    pressed: true,
+                    ..
+                } => {
+                    if selected && matches!(event, Event::Key { key: Key::Delete, .. }) {
+                        value.clear();
+                        events.changed = true;
+                    }
+                    selected = false;
                 }
                 Event::Key {
                     key: Key::Enter,
@@ -275,7 +312,10 @@ pub fn text_input(
             ctx.data_mut(|d| d.insert_temp(last_edit, now));
         }
     }
-    ctx.data_mut(|d| d.insert_temp(id.with("had-focus"), focused));
+    ctx.data_mut(|d| {
+        d.insert_temp(id.with("had-focus"), focused);
+        d.insert_temp(select_key, selected);
+    });
     let shown: String = match props.kind {
         InputKind::Password => "\u{2022}".repeat(value.chars().count()),
         _ => value.clone(),
@@ -327,16 +367,26 @@ pub fn text_input(
     // The text's width: the caret goes at its end.
     let text_w = if shown.is_empty() {
         if !props.placeholder.is_empty() {
-            let placeholder = font
-                .clone()
-                .color(v.fg_subtle.mix(0.55, Rgba::TRANSPARENT).to_color32());
+            let placeholder = font.clone().color(st.placeholder.to_color32());
             text::paint(&painter, text_rect, props.placeholder, &placeholder);
         }
         0.0
     } else {
+        if selected {
+            // `::selection { background: color-mix(--accent 45%, transparent) }`.
+            let w = text::measure(&ctx, &shown, &font).unwrap_or(0.0);
+            painter.rect_filled(
+                snap::rect(
+                    Rect::from_min_size(text_rect.min, vec2(w, text_rect.height())),
+                    ppp,
+                ),
+                0.0,
+                v.accent.mix(0.45, Rgba::TRANSPARENT).to_color32(),
+            );
+        }
         text::paint(&painter, text_rect, &shown, &font).map_or(0.0, |l| l.width)
     };
-    if focused {
+    if focused && !selected {
         let now = ui.input(|i| i.time);
         let since = now - ctx.data(|d| d.get_temp::<f64>(last_edit).unwrap_or(now));
         let phase = (since / BLINK).floor() as i64;

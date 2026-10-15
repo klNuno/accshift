@@ -520,7 +520,7 @@ impl AppModel {
             KeyAction::BlurSearch => ctx.memory_mut(|m| m.surrender_focus(Id::new(SEARCH_ID))),
             KeyAction::FocusSearch => ctx.memory_mut(|m| m.request_focus(Id::new(SEARCH_ID))),
             // The settings panel has no search field yet.
-            KeyAction::FocusSettingsSearch => {}
+            KeyAction::FocusSettingsSearch => self.focus_platform_search(),
             KeyAction::AddAccount => self.apply_one(ctx, Action::AddAccount),
             KeyAction::NewFolder => self.dialogs.open_new_folder_dialog(),
             KeyAction::Refresh => self.apply_one(ctx, Action::Refresh),

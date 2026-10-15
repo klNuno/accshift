@@ -37,7 +37,99 @@
     "descriptor_preview_file": [
       {
         "args": {},
-        "error": "a mock session adds no platform"
+        "result": {
+          "source": "C:\\Users\\player\\Downloads\\acme.json",
+          "descriptor": {
+            "id": "acme",
+            "schemaVersion": 1,
+            "name": "Acme Launcher",
+            "shortName": "Acme",
+            "os": {
+              "windows": {
+                "roots": {
+                  "files": ["${APPDATA}/Acme Launcher"]
+                },
+                "detect": {
+                  "executableResolves": true
+                },
+                "executable": {
+                  "fileName": "AcmeLauncher.exe",
+                  "candidates": [
+                    {
+                      "kind": "path",
+                      "template": "${ProgramFiles}/Acme/AcmeLauncher.exe"
+                    }
+                  ]
+                },
+                "identity": {
+                  "source": {
+                    "kind": "synthetic"
+                  },
+                  "format": {
+                    "charset": "alphanumeric",
+                    "maxLength": 64
+                  },
+                  "current": "config"
+                },
+                "state": {
+                  "files": [
+                    {
+                      "live": "${APPDATA}/Acme Launcher/session.json",
+                      "snapshot": "session.json",
+                      "snapshotMarker": true
+                    }
+                  ]
+                },
+                "close": {
+                  "processes": ["AcmeLauncher.exe"]
+                },
+                "launch": {}
+              }
+            }
+          },
+          "fileName": "acme.json",
+          "replaces": false,
+          "blocked": "",
+          "plan": {
+            "platformId": "acme",
+            "operation": "switch",
+            "accountId": "preview",
+            "applied": false,
+            "roots": ["C:\\Users\\player\\AppData\\Roaming\\Acme Launcher"],
+            "steps": [
+              {
+                "action": "close",
+                "kind": "process",
+                "target": "AcmeLauncher.exe"
+              },
+              {
+                "action": "capture",
+                "kind": "file",
+                "target": "C:\\Users\\player\\AppData\\Roaming\\Acme Launcher\\session.json",
+                "snapshot": "acme\\current\\session.json"
+              },
+              {
+                "action": "delete",
+                "kind": "directory",
+                "target": "C:\\Users\\player\\AppData\\Roaming\\Acme Launcher\\cache",
+                "note": "skipped: not there"
+              },
+              {
+                "action": "restore",
+                "kind": "file",
+                "target": "C:\\Users\\player\\AppData\\Roaming\\Acme Launcher\\session.json",
+                "snapshot": "acme\\preview\\session.json"
+              },
+              {
+                "action": "launch",
+                "kind": "executable",
+                "target": "C:\\Program Files\\Acme\\AcmeLauncher.exe"
+              }
+            ],
+            "warnings": ["No snapshot for this account yet: add it through setup first."]
+          },
+          "planProblem": ""
+        }
       }
     ],
     "descriptor_remove": [
@@ -54,7 +146,7 @@
     "descriptor_select_file": [
       {
         "args": {},
-        "error": "cancelled"
+        "result": "C:\\Users\\player\\Downloads\\acme.json"
       }
     ],
     "detect_streaming_software": [
