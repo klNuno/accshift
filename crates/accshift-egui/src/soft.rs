@@ -81,6 +81,13 @@ struct Live {
     shown: bool,
 }
 
+impl Drop for Live {
+    fn drop(&mut self) {
+        // Deltas of frames a minimized or closing window never drew.
+        self.textures.clear();
+    }
+}
+
 struct Runner {
     ctx: egui::Context,
     proxy: EventLoopProxy<UserEvent>,
@@ -151,6 +158,9 @@ impl Runner {
         let mut damaged_px = 0usize;
 
         let size = live.window.inner_size();
+        // A normal run's window waits for boot (or the failsafe); a scene's
+        // shows with its first frame, cloaked.
+        let show = !live.shown && live.shell.take_show(Instant::now());
         let mut screenshot = None;
         if let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) {
             live.surface.resize(w, h).expect("softbuffer resize");
@@ -159,6 +169,7 @@ impl Runner {
             // that changed; a new one (first frame, resize) or a repaint the
             // OS asked for gets everything.
             let full = std::mem::take(&mut live.full_present)
+                || show
                 || buffer.age() == 0
                 || os_wants_full_paint(&live.window);
             // SAFETY: [u8; 4] has the size of u32 and a weaker alignment.
@@ -171,7 +182,7 @@ impl Runner {
             } else {
                 window_px
             };
-            let textures = std::mem::take(&mut live.textures);
+            let mut textures = std::mem::take(&mut live.textures);
             live.render.render_to_canvas(
                 canvas_px[0],
                 canvas_px[1],
@@ -179,6 +190,8 @@ impl Runner {
                 &textures,
                 out.pixels_per_point,
             );
+            // Applied: epaint asserts a dropped delta was handled.
+            textures.clear();
             // Premultiplied BGRA over transparent, and GDI keeps the alpha
             // byte, so the acrylic shows through where egui paints nothing.
             let tiles = if zoomed {
@@ -224,14 +237,19 @@ impl Runner {
                 .iter()
                 .map(|r| r.width.get() as usize * r.height.get() as usize)
                 .sum();
-            if !live.shown {
-                // Like eframe, the window waits for its first frame, but it
-                // shows right before that frame's present: a blit into a
-                // hidden window is lost, and the repaint the OS asks for when
-                // it shows would be swallowed by the next damaged-tiles
+            if show {
+                // The window shows right before a full present: a blit into
+                // a hidden window is lost, and the repaint the OS asks for
+                // when it shows would be swallowed by the next damaged-tiles
                 // present, since softbuffer validates the whole window.
                 live.shown = true;
-                live.window.set_visible(true);
+                show_window(
+                    &live.window,
+                    live.shell
+                        .window
+                        .as_ref()
+                        .is_some_and(|h| h.focuses_on_show()),
+                );
             }
             buffer
                 .present_with_damage(&damage)
@@ -288,10 +306,16 @@ impl Runner {
             ctx.request_repaint();
         }
 
-        if !live.shown {
-            // A zero-sized first frame presented nothing; show anyway.
+        if show && !live.shown {
+            // A zero-sized frame presented nothing; show anyway.
             live.shown = true;
-            live.window.set_visible(true);
+            show_window(
+                &live.window,
+                live.shell
+                    .window
+                    .as_ref()
+                    .is_some_and(|h| h.focuses_on_show()),
+            );
         }
         if live
             .info
@@ -299,9 +323,42 @@ impl Runner {
             .iter()
             .any(|e| matches!(e, ViewportEvent::Close))
         {
-            event_loop.exit();
+            self.close(event_loop);
         }
     }
+
+    /// The title bar's close button or the system's (Alt+F4, the taskbar):
+    /// the shell's close sequence, then the loop ends.
+    fn close(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(live) = &mut self.live {
+            let geometry = geometry(&live.window);
+            let window = &live.window;
+            live.shell.close(geometry, || window.set_visible(false));
+        }
+        event_loop.exit();
+    }
+}
+
+/// `show_main_window`: show, then `set_focus` for a normal run.
+fn show_window(window: &Window, focus: bool) {
+    window.set_visible(true);
+    if focus {
+        window.focus_window();
+    }
+}
+
+/// boot.rs `current_geometry` on the winit window: inner size and outer
+/// origin, which the frame makes tao's.
+fn geometry(window: &Window) -> Option<crate::window::Geometry> {
+    let outer = window.outer_position().ok()?;
+    let inner = window.inner_size();
+    crate::window::Geometry::read(
+        window.is_maximized(),
+        window.is_minimized().unwrap_or(false),
+        window.scale_factor(),
+        (inner.width, inner.height),
+        (outer.x, outer.y),
+    )
 }
 
 /// Whether Windows has part of the client area marked for repaint: it does
@@ -525,8 +582,13 @@ impl ApplicationHandler<UserEvent> for Runner {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => {
-                event_loop.exit();
+                self.close(event_loop);
                 return;
+            }
+            WindowEvent::Moved(_) => {
+                if let Some(live) = &self.live {
+                    live.shell.window_moved(geometry(&live.window));
+                }
             }
             WindowEvent::RedrawRequested => {
                 // Only the OS asks for this (the runner paints directly), and

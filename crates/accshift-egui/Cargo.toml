@@ -81,12 +81,17 @@ egui = { version = "0.36", features = ["default_fonts"] }
 window-vibrancy = "0.8"
 # DWM cloak for the bench build: the window exists and renders, but is never
 # composited on screen. UI Automation: warmed up off the UI thread at start.
+# The main window's frame (window/frame.rs): tao's insets, hit test and
+# minimum size, the monitors and their DPI, the auto-hidden taskbar.
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Graphics_Dwm",
   "Win32_Graphics_Gdi",
+  "Win32_System_LibraryLoader",
   "Win32_System_Registry",
   "Win32_UI_Accessibility",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
 # DirectWrite glyph coverage (ui::text::dwrite): COM interfaces, which

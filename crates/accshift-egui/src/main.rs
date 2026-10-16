@@ -1,7 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use accshift_egui::{bench, harness, AppModel, Screen, Shell};
+use accshift_app::real::RealBackend;
+use accshift_core::config;
+use accshift_egui::{bench, harness, window, AppModel, Screen, Shell};
 use raw_window_handle::HasWindowHandle;
+use std::sync::Arc;
 
 fn main() {
     let bench_build = cfg!(feature = "startup-bench");
@@ -60,7 +63,14 @@ fn main() {
             },
         ),
     );
-    if hidden {
+    // Debug builds: the window shell on a scratch folder, unseen
+    // (window/probe.rs).
+    #[cfg(all(debug_assertions, windows))]
+    let probe = window::probe::dir();
+    #[cfg(not(all(debug_assertions, windows)))]
+    let probe: Option<std::path::PathBuf> = None;
+    let probing = probe.is_some();
+    if hidden || probing {
         // Safety net: a hidden process never outlives its run by much.
         let budget = 60 + 30 * scene_files.len() as u64;
         std::thread::spawn(move || {
@@ -89,15 +99,36 @@ fn main() {
         bench::mark("uia_warm");
     });
 
-    // The core is called directly, no IPC: read the real Steam login list
-    // (read-only) off the UI thread, to prove the link and time it.
-    std::thread::spawn(|| {
-        let path = std::path::Path::new(r"C:\Program Files (x86)\Steam");
-        let count = accshift_core::platforms::steam::accounts::get_accounts(path)
-            .map(|accounts| accounts.len())
-            .unwrap_or(0);
-        bench::mark_with("core_accounts", &format!("\"count\":{count}"));
+    if bench_build {
+        // The core is called directly, no IPC: read the real Steam login
+        // list (read-only) off the UI thread, to time the link.
+        std::thread::spawn(|| {
+            let path = std::path::Path::new(r"C:\Program Files (x86)\Steam");
+            let count = accshift_core::platforms::steam::accounts::get_accounts(path)
+                .map(|accounts| accounts.len())
+                .unwrap_or(0);
+            bench::mark_with("core_accounts", &format!("\"count\":{count}"));
+        });
+    }
+
+    // A normal run: the backend on the user's app folders, and the window
+    // where Tauri's opens (`build_main_window`).
+    let real = (!hidden).then(|| {
+        #[cfg(all(debug_assertions, windows))]
+        if let Some(dir) = probe {
+            return Arc::new(RealBackend::with_context(window::probe::context(dir)));
+        }
+        match RealBackend::new() {
+            Ok(backend) => Arc::new(backend),
+            Err(err) => {
+                eprintln!("accshift: {err}");
+                std::process::exit(1);
+            }
+        }
     });
+    let saved = real
+        .as_ref()
+        .map(|backend| config::load_window(backend.context().as_ref()));
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Accshift")
@@ -109,9 +140,17 @@ fn main() {
         // `OleInitialize` on the UI thread before the window exists.
         .with_drag_and_drop(false)
         .with_resizable(true);
-    if !scene_mode {
-        // A scene sets its own viewport, which may be smaller.
-        viewport = viewport.with_min_inner_size([520.0, 320.0]);
+    if let Some(saved) = &saved {
+        // The frame (window/frame.rs) moves and sizes it on Windows.
+        let (width, height) = saved
+            .size
+            .unwrap_or((config::DEFAULT_WINDOW_WIDTH, config::DEFAULT_WINDOW_HEIGHT));
+        viewport = viewport
+            .with_inner_size([width as f32, height as f32])
+            .with_min_inner_size([
+                config::MIN_WINDOW_WIDTH as f32,
+                config::MIN_WINDOW_HEIGHT as f32,
+            ]);
     }
     if hidden {
         // Never activated, never in the taskbar, off every monitor, and
@@ -121,34 +160,52 @@ fn main() {
             .with_active(false)
             .with_taskbar(false)
             .with_position([-32000.0, -32000.0]);
+    } else if probing {
+        // On screen where the frame puts it, but cloaked below.
+        viewport = viewport.with_active(false).with_taskbar(false);
     }
 
     // Shared by both runners once the window exists.
-    let build = move |ctx: &egui::Context, window: &dyn HasWindowHandle| {
+    let build = move |ctx: &egui::Context, handle: &dyn HasWindowHandle| {
         #[cfg(windows)]
-        window_effects(window, hidden, !opaque);
+        {
+            if let (Some(saved), Some(hwnd)) = (&saved, hwnd(handle)) {
+                window::frame::install(hwnd, saved);
+                #[cfg(debug_assertions)]
+                if probing {
+                    window::probe::spawn(hwnd);
+                }
+            }
+            // A normal run's backdrop follows the theme (window::Host).
+            window_effects(handle, hidden || probing, !opaque && real.is_none());
+        }
         #[cfg(not(windows))]
-        let _ = window;
+        let _ = (handle, &saved);
         bench::mark("app_created");
         let scenes = scenes.map(|(scenes, out)| {
             std::fs::create_dir_all(&out).ok();
             harness::SceneRun::new(scenes, out)
         });
-        let screen = if scenes.is_some() {
-            // Each scene builds its own screen once the window has its size.
-            accshift_egui::screens::main_spike::install_fonts(ctx);
-            Screen::Blank
-        } else {
+        match real {
             // The real app folders, through accshift-core.
-            match AppModel::real(ctx) {
-                Ok(app) => Screen::App(Box::new(app)),
-                Err(err) => {
-                    eprintln!("accshift: {err}");
-                    std::process::exit(1);
-                }
+            Some(backend) => {
+                #[cfg(windows)]
+                let hwnd = hwnd(handle).map_or(0, |h| h as isize);
+                #[cfg(not(windows))]
+                let hwnd = 0;
+                Shell::new(
+                    Screen::App(Box::new(AppModel::real(ctx, Arc::clone(&backend)))),
+                    scenes,
+                )
+                .with_window(window::Host::new(backend, hwnd).focus_on_show(!probing))
             }
-        };
-        Shell::new(screen, scenes)
+            None => {
+                // Each scene builds its own screen once the window has its
+                // size.
+                accshift_egui::screens::main_spike::install_fonts(ctx);
+                Shell::new(Screen::Blank, scenes)
+            }
+        }
     };
 
     #[cfg(feature = "software")]
@@ -194,22 +251,25 @@ fn main() {
 }
 
 #[cfg(windows)]
+fn hwnd(window: &dyn HasWindowHandle) -> Option<windows_sys::Win32::Foundation::HWND> {
+    match window.window_handle().ok()?.as_raw() {
+        raw_window_handle::RawWindowHandle::Win32(h) => Some(h.hwnd.get() as _),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
 fn window_effects(window: &dyn HasWindowHandle, cloak: bool, acrylic: bool) {
-    use raw_window_handle::RawWindowHandle;
-    if cloak {
-        if let Ok(handle) = window.window_handle() {
-            if let RawWindowHandle::Win32(h) = handle.as_raw() {
-                let on: i32 = 1;
-                // SAFETY: valid HWND owned by the runner, 4-byte BOOL attribute.
-                unsafe {
-                    windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute(
-                        h.hwnd.get() as _,
-                        windows_sys::Win32::Graphics::Dwm::DWMWA_CLOAK as u32,
-                        &on as *const i32 as *const _,
-                        4,
-                    );
-                }
-            }
+    if let Some(hwnd) = hwnd(window).filter(|_| cloak) {
+        let on: i32 = 1;
+        // SAFETY: valid HWND owned by the runner, 4-byte BOOL attribute.
+        unsafe {
+            windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute(
+                hwnd,
+                windows_sys::Win32::Graphics::Dwm::DWMWA_CLOAK as u32,
+                &on as *const i32 as *const _,
+                4,
+            );
         }
     }
     // Glass Dark's material in Tauri: acrylic with a heavy black tint

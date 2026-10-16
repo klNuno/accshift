@@ -995,7 +995,7 @@ impl AppModel {
     }
 
     /// `flushSettingsNow`.
-    fn flush_settings(&mut self, now: Instant) {
+    pub(super) fn flush_settings(&mut self, now: Instant) {
         if let Some(p) = self.settings_panel.as_mut() {
             p.save_at = None;
         }

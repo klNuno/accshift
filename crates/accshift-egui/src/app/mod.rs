@@ -474,12 +474,13 @@ impl AppModel {
         Ok(model)
     }
 
-    /// A normal run on the user's real app folders.
-    pub fn real(ctx: &Context) -> Result<AppModel, String> {
-        let backend: Arc<dyn Backend> = Arc::new(RealBackend::new()?);
+    /// A normal run on the user's real app folders, the backend shared with
+    /// the window ([`crate::window::Host`]).
+    pub fn real(ctx: &Context, backend: Arc<RealBackend>) -> AppModel {
+        let backend: Arc<dyn Backend> = backend;
         let mut model = AppModel::with_backend(ctx, backend, None, Clock::wall());
         model.os_reduced_motion = os_prefers_reduced_motion();
-        Ok(model)
+        model
     }
 
     /// Any backend; the boot payload is requested at once.
@@ -548,6 +549,11 @@ impl AppModel {
     #[cfg(test)]
     pub(crate) fn booted_mut(&mut self) -> Option<&mut Booted> {
         self.booted.as_mut()
+    }
+
+    /// The OS backdrop the current theme (or its editor preview) asks for.
+    pub fn window_backdrop(&self) -> Option<&WindowBackdrop> {
+        self.booted.as_ref().map(|b| &b.theme.backdrop)
     }
 
     pub fn boot_error(&self) -> Option<&str> {
@@ -753,6 +759,46 @@ impl AppModel {
         b.locale = b.stores.language();
         // Harness scenes clear egui memory: keep the motion flag in it.
         anim::set_motion(ctx, b.theme.motion);
+    }
+
+    /// `flushAppState` on close, after `uiScale.destroy`: the pending UI
+    /// scale, the settings panel's debounced save, the saves in flight,
+    /// then every store write still queued, blocking. The first error wins.
+    pub fn flush_app_state(&mut self) -> Result<(), String> {
+        let live = self.ui_scale_live;
+        if let Some(b) = self.booted.as_mut() {
+            let stored = b.stores.settings().ui_scale_percent;
+            if let Some(value) = self.ui_scale.destroy(live.unwrap_or(stored)) {
+                if stored != value {
+                    let mut next = b.stores.settings().clone();
+                    next.ui_scale_percent = value;
+                    b.stores.save_settings(&next);
+                }
+            }
+        }
+        self.flush_settings(Instant::now());
+        let Some(b) = self.booted.as_mut() else {
+            return Ok(());
+        };
+        let mut first_error = None;
+        for (id, pending) in self.saves.drain(..) {
+            if let Some(result) = pending.wait() {
+                if let Err(e) = &result {
+                    first_error.get_or_insert_with(|| e.message.clone());
+                }
+                b.stores.finish_save(id, &result);
+            }
+        }
+        for save in b.stores.take_all_saves() {
+            let result = self
+                .backend
+                .save_client_storage_store(save.store_id, &save.value);
+            if let Err(e) = &result {
+                first_error.get_or_insert_with(|| e.message.clone());
+            }
+            b.stores.finish_save(save.store_id, &result);
+        }
+        first_error.map_or(Ok(()), Err)
     }
 
     /// Saves the stores asked for, through the job pool.
