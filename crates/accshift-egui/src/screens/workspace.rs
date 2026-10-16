@@ -48,6 +48,7 @@ use crate::app::vars::{rgba, Vars};
 use crate::app::{Action, MenuTarget};
 use crate::theme::Rgba;
 use crate::ui::anim::Motion;
+use crate::ui::backdrop_filter::Mark;
 use crate::ui::components::account_card::{
     self, AccountCardProps, AvatarContent, AvatarPicture, CardEvent,
 };
@@ -63,6 +64,7 @@ use crate::ui::components::search_cancel;
 use crate::ui::components::section_header::{self, SectionHeaderEvent, SectionHeaderProps};
 use crate::ui::components::use_grid_layout::{grid_layout, GAP};
 use crate::ui::components::view_toggle::{self, ViewToggleProps};
+use crate::ui::components::TransformScope;
 use crate::ui::css;
 use crate::ui::paint::{Border, BoxStyle, Corners, Gradient};
 use crate::ui::snap;
@@ -172,6 +174,36 @@ fn restack(ctx: &Context, layer: LayerId, span: std::ops::Range<usize>, cards: &
             }
         }
     });
+}
+
+/// `.section { transition: opacity 140ms ease-out, transform 140ms
+/// ease-out }`.
+const SECTION_DRAG: crate::ui::anim::Transition =
+    crate::ui::anim::Transition::new(0.14, crate::ui::anim::Timing::EASE_OUT);
+
+/// A `.section` under `opacity` and `transform: scale()` while it draws,
+/// its nodes' keys starting with `prefix`.
+struct OpenSection {
+    prefix: String,
+    opacity: f32,
+    /// Its [`crate::ui::components::snap_offset`]: its nodes lay out from
+    /// there.
+    snap: egui::Vec2,
+    /// The scale about the section's centre, when not 1.
+    scope: Option<TransformScope>,
+}
+
+impl OpenSection {
+    /// Lands the group and scales its shapes. The scroll clip stays where
+    /// it is, as the scroller's own.
+    fn close(self, ui: &Ui, clip: Rect) {
+        if !cfg!(feature = "glow") {
+            Mark::End.paint(ui.painter(), clip);
+        }
+        if let Some(scope) = self.scope {
+            scope.end(ui.ctx(), Some(clip));
+        }
+    }
 }
 
 /// A section grid entering or leaving.
@@ -290,7 +322,11 @@ impl Workspace {
     /// `getBoundingClientRect()` of a card: its box under the transform
     /// its transitions are at.
     pub fn bounding_rect(&self, ctx: &Context, item: &ItemRef) -> Option<Rect> {
-        let r = self.card_rect(item)?;
+        let Some(r) = self.card_rect(item) else {
+            // A `.section` wrapper (sections mode), at rest when the drag
+            // starts.
+            return self.section_rect(item);
+        };
         let Some(id) = self.card_ids.get(item) else {
             return Some(r);
         };
@@ -329,6 +365,17 @@ impl Workspace {
         self.cards
             .iter()
             .find(|(card, _)| card == item)
+            .map(|(_, r)| *r)
+    }
+
+    /// The `.section` box of a folder section, in screen points.
+    fn section_rect(&self, item: &ItemRef) -> Option<Rect> {
+        if item.kind != ItemKind::Folder {
+            return None;
+        }
+        self.sections
+            .iter()
+            .find(|(folder, _)| folder.as_deref() == Some(item.id.as_str()))
             .map(|(_, r)| *r)
     }
 
@@ -497,6 +544,45 @@ fn flow<'a>(
     y - GAP - top
 }
 
+/// A node a keyed `{#each}` moved: Chromium detaches it and inserts it
+/// again, which restarts its CSS animations (`card-entrance`).
+#[derive(Clone)]
+pub enum Moved {
+    /// A `.section` by folder id, with its header and cards.
+    Section(String),
+    /// A card by kind and id.
+    Card(ItemKind, String),
+}
+
+fn moved_id() -> Id {
+    Id::new("ws-moved")
+}
+
+/// Mounts `nodes` anew at the next draw.
+pub fn remount(ctx: &Context, nodes: Vec<Moved>) {
+    if nodes.is_empty() {
+        return;
+    }
+    ctx.data_mut(|d| {
+        let mut all = d.get_temp::<Vec<Moved>>(moved_id()).unwrap_or_default();
+        all.extend(nodes);
+        d.insert_temp(moved_id(), all);
+    });
+}
+
+impl Moved {
+    /// Whether the mount `key` belongs to this node.
+    fn owns(&self, key: &str) -> bool {
+        match self {
+            Moved::Section(id) => key.contains(&format!("/s/{id}/")),
+            Moved::Card(kind, id) => {
+                let tag = if *kind == ItemKind::Folder { "f" } else { "a" };
+                key.ends_with(&format!("/{tag}/{id}"))
+            }
+        }
+    }
+}
+
 /// Draws the workspace into `rect` (the panel slot below the title bar).
 pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) -> Vec<Action> {
     let ctx = ui.ctx().clone();
@@ -512,6 +598,23 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
         ws.decoding.clear();
     }
     ws.last_frame = Some(frame);
+    let moved = ctx
+        .data_mut(|d| d.remove_temp::<Vec<Moved>>(moved_id()))
+        .unwrap_or_default();
+    if !moved.is_empty() {
+        ws.mounts
+            .retain(|key, _| !moved.iter().any(|m| m.owns(key)));
+        // An inserted `.section` has no style to transition from.
+        ctx.data_mut(|d| {
+            for m in &moved {
+                if let Moved::Section(id) = m {
+                    let sid = Id::new(("section-dragged", id));
+                    d.remove::<crate::ui::anim::TransitionState<f32>>(sid.with("o"));
+                    d.remove::<crate::ui::anim::TransitionState<f32>>(sid.with("s"));
+                }
+            }
+        });
+    }
     let mut actions = Vec::new();
     let accent = input.platform.map_or(v.accent, |p| p.accent);
     let platform_name = input.platform.map_or("", |p| p.name.as_str());
@@ -937,7 +1040,77 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
     let mut card_ids = HashMap::new();
     let mut back_rect = None;
     let mut ghost_avatar = None;
+    // `.section.is-dragged`: the dragged section fades and shrinks as one.
+    let dragged_section = ws
+        .ghost
+        .as_ref()
+        .filter(|g| grid_dragging && g.item.kind == ItemKind::Folder)
+        .map(|g| g.item.id.clone());
+    let mut open_section: Option<OpenSection> = None;
+    let mut ghost_section: Option<String> = None;
+    let mut section_avatars: HashMap<String, AvatarContent> = HashMap::new();
     for p in &placed {
+        if open_section
+            .as_ref()
+            .is_some_and(|o| !p.key.starts_with(&o.prefix))
+        {
+            if let Some(o) = open_section.take() {
+                o.close(ui, clip);
+            }
+        }
+        if let Node::Header(SectionHeaderItem {
+            label: SectionLabel::Folder(f),
+            ..
+        }) = &p.node
+        {
+            let prefix = p.key.strip_suffix("header").unwrap_or(&p.key).to_string();
+            let on = dragged_section.as_deref() == Some(f.id.as_str());
+            if on {
+                ghost_section = Some(prefix.clone());
+            }
+            let sid = Id::new(("section-dragged", &f.id));
+            let opacity = crate::ui::anim::transition(
+                &ctx,
+                sid.with("o"),
+                if on { 0.35 } else { 1.0 },
+                &SECTION_DRAG,
+            );
+            let scale = crate::ui::anim::transition(
+                &ctx,
+                sid.with("s"),
+                if on { 0.97 } else { 1.0 },
+                &SECTION_DRAG,
+            );
+            if opacity < 1.0 || scale < 1.0 {
+                let section = section_boxes
+                    .iter()
+                    .find(|(folder, _)| folder.as_deref() == Some(f.id.as_str()))
+                    .map_or(to_screen(p.rect), |(_, r)| to_screen(*r));
+                if !cfg!(feature = "glow") {
+                    Mark::Group { opacity }.paint(ui.painter(), clip);
+                }
+                let snap = if scale != 1.0 {
+                    crate::ui::components::snap_offset(&ctx, section.min)
+                } else {
+                    egui::Vec2::ZERO
+                };
+                open_section = Some(OpenSection {
+                    prefix,
+                    opacity,
+                    snap,
+                    scope: (scale != 1.0).then(|| {
+                        TransformScope::begin(
+                            &ctx,
+                            layer,
+                            egui::emath::TSTransform::new(
+                                (section.center() + snap).to_vec2() * (1.0 - scale),
+                                scale,
+                            ),
+                        )
+                    }),
+                });
+            }
+        }
         ws.layout.push((p.node.label(), p.rect));
         let id = ws.mount(&p.key, frame, now);
         match &p.node {
@@ -956,7 +1129,8 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
             .expand(32.0)
             .intersects(view_rect)
             && p.clip.is_none_or(|c| c.height() > 0.0);
-        let screen = to_screen(p.rect);
+        let snap = open_section.as_ref().map_or(egui::Vec2::ZERO, |o| o.snap);
+        let screen = to_screen(p.rect).translate(snap);
         if matches!(p.node, Node::Account(_)) {
             // `data-tour="account-card"` on every card: the first wins.
             onboarding::record_target(&ctx, |t| {
@@ -996,6 +1170,13 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                 ghost_avatar = avatar.clone();
             }
         }
+        if let Some(avatar) = avatar.as_ref().filter(|_| {
+            ghost_section
+                .as_ref()
+                .is_some_and(|pre| p.key.starts_with(pre.as_str()))
+        }) {
+            section_avatars.insert(p.key.clone(), avatar.clone());
+        }
         if !visible {
             // Laid out and sensed, not painted; its entrance and fade clocks
             // run as if it were on screen.
@@ -1021,11 +1202,16 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
         }
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(screen));
         let child_clip = match p.clip {
-            Some(c) => to_screen(c).intersect(clip),
+            Some(c) => to_screen(c).translate(snap).intersect(clip),
             None => clip,
         };
         child.set_clip_rect(child_clip);
         child.multiply_opacity(p.opacity);
+        if cfg!(feature = "glow") {
+            if let Some(o) = &open_section {
+                child.multiply_opacity(o.opacity);
+            }
+        }
         match &p.node {
             Node::Back => {
                 for event in back_card::back_card(
@@ -1182,6 +1368,9 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
             }
         }
     }
+    if let Some(o) = open_section.take() {
+        o.close(ui, clip);
+    }
     restack(&ctx, layer, cards_from..shape_count(&ctx, layer), &stacks);
     ws.card_ids = card_ids;
     if list_mode {
@@ -1209,6 +1398,37 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
         })?;
         Some((g, node))
     });
+    let section_ghost = ws
+        .ghost
+        .clone()
+        .filter(|_| ghost_node.is_none())
+        .zip(ghost_section)
+        .and_then(|(g, prefix)| Some((ws.section_rect(&g.item)?, g, prefix)));
+    if let Some((at, g, prefix)) = section_ghost {
+        let parts: Vec<(&Node, Rect, String)> = placed
+            .iter()
+            .filter(|p| p.key.starts_with(&prefix))
+            .map(|p| (&p.node, to_screen(p.rect), p.key.clone()))
+            .collect();
+        draw_section_ghost(
+            ui,
+            &g,
+            &parts,
+            at.min,
+            &section_avatars,
+            pointer,
+            &GhostInput {
+                vars: v,
+                resolved: input.resolved,
+                accent,
+                locale: input.locale,
+                time: &time,
+                glass: input.glass,
+                cs2,
+                avatar: None,
+            },
+        );
+    }
     if let Some((g, node)) = ghost_node {
         draw_ghost(
             ui,
@@ -1672,18 +1892,93 @@ fn draw_ghost(ui: &Ui, g: &Ghost, node: &Node, pointer: egui::Pos2, input: &Ghos
     let (enter_opacity, _) = entrance(ui, g.id, v);
     let entering = enter_opacity < 1.0;
     let (scale, opacity) = if entering { (1.0, 1.0) } else { (1.05, 0.85) };
-    crate::ui::components::drag_ghost(&ctx, r, scale, opacity, |gui| {
-        ghost_card(gui, g, node, r, badge, input);
+    crate::ui::components::drag_ghost(&ctx, r, scale, opacity, |gui, r| {
+        ghost_card(gui, g.id, node, r, badge, input.avatar.clone(), true, input);
     });
 }
 
-/// The clone inside the ghost: the source card at rest.
+/// `ghostEl` of a dragged `.section`: the wrapper cloned with its header
+/// and cards (which replay `card-entrance`), its inline shadow around a
+/// box with no background. `parts` are the section's nodes with their
+/// boxes on screen, `origin` the section's corner they sit in.
+fn draw_section_ghost(
+    ui: &Ui,
+    g: &Ghost,
+    parts: &[(&Node, Rect, String)],
+    origin: egui::Pos2,
+    avatars: &HashMap<String, AvatarContent>,
+    pointer: egui::Pos2,
+    input: &GhostInput,
+) {
+    let ctx = ui.ctx().clone();
+    let v = input.vars;
+    let r = Rect::from_min_size(g.rect.min + (pointer - g.anchor), g.rect.size());
+    crate::ui::components::drag_ghost(&ctx, r, 1.05, 0.85, |gui, r| {
+        BoxStyle {
+            shadows: vec![account_card::GHOST_SHADOW],
+            ..BoxStyle::default()
+        }
+        .paint(gui.painter(), r);
+        for (node, screen, key) in parts {
+            let rect = screen.translate(r.min - origin);
+            let id = g.id.with(key);
+            match node {
+                Node::Header(h) => {
+                    let (folder, label) = match &h.label {
+                        SectionLabel::Folder(f) => (Some(f.id.as_str()), f.name.clone()),
+                        SectionLabel::Root => (None, translate(input.locale, "list.rootSection")),
+                    };
+                    let mut child = gui.new_child(egui::UiBuilder::new().max_rect(rect));
+                    section_header::section_header(
+                        &mut child,
+                        rect,
+                        &SectionHeaderProps {
+                            vars: v,
+                            id,
+                            folder,
+                            label: &label,
+                            count: h.count,
+                            card_color: card_color(input.resolved, v, &h.card_color),
+                            accent: input.accent,
+                            collapsed: h.collapsed,
+                            focus_visible: false,
+                        },
+                    );
+                }
+                Node::Folder(_) | Node::Account(_) => {
+                    let cs2 = match node {
+                        Node::Account(a) => input.cs2.card(&a.account.id).cloned(),
+                        _ => None,
+                    };
+                    let badge = match node {
+                        Node::Account(a) => cs2
+                            .as_ref()
+                            .and_then(|c| c.badge.as_ref())
+                            .filter(|_| !a.single_click_switch),
+                        _ => None,
+                    };
+                    let mut child = gui.new_child(egui::UiBuilder::new().max_rect(rect));
+                    child.set_clip_rect(Rect::EVERYTHING);
+                    let avatar = avatars.get(key).cloned();
+                    ghost_card(&mut child, id, node, rect, badge, avatar, false, input);
+                }
+                _ => {}
+            }
+        }
+    });
+}
+
+/// The clone inside the ghost: the source card at rest. `shadow`: the
+/// card is the ghost itself and takes its inline `box-shadow`.
+#[allow(clippy::too_many_arguments)]
 fn ghost_card(
     gui: &mut Ui,
-    g: &Ghost,
+    id: Id,
     node: &Node,
     r: Rect,
     badge: Option<&accshift_app::platforms::card::UsernameBadge>,
+    avatar: Option<AvatarContent>,
+    shadow: bool,
     input: &GhostInput,
 ) {
     let v = input.vars;
@@ -1694,7 +1989,7 @@ fn ghost_card(
                 r,
                 &FolderCardProps {
                     vars: v,
-                    id: g.id,
+                    id,
                     name: &f.folder.name,
                     card_color: card_color(input.resolved, v, &f.card_color),
                     accent: input.accent,
@@ -1703,7 +1998,7 @@ fn ghost_card(
                     focus_visible: false,
                     kb_focus: false,
                     grid_dragging: false,
-                    ghost: true,
+                    ghost: shadow,
                 },
             );
         }
@@ -1716,10 +2011,10 @@ fn ghost_card(
                 r,
                 &AccountCardProps {
                     vars: v,
-                    id: g.id,
+                    id,
                     item: &item,
                     card_color: card_color(input.resolved, v, &a.card_color),
-                    avatar: input.avatar.clone().unwrap_or(AvatarContent::Loading),
+                    avatar: avatar.unwrap_or(AvatarContent::Loading),
                     focus_visible: false,
                     locale: input.locale,
                     time: input.time,
@@ -1729,7 +2024,7 @@ fn ghost_card(
                     glass: input.glass,
                     kb_focus: false,
                     grid_dragging: false,
-                    ghost: true,
+                    ghost: shadow,
                 },
             );
         }

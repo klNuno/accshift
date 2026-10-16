@@ -460,7 +460,8 @@ impl Accounts {
     }
 
     /// A preview reorder moving the dragged card's node takes `:active`
-    /// off it, as Chromium does when Svelte moves the node.
+    /// off it, as Chromium does when Svelte moves the node, and every node
+    /// it moves replays its entrance.
     fn track_drag_order(&mut self, ctx: &egui::Context) {
         // From the press on: the move that starts the drag can show the
         // preview in the same frame.
@@ -489,11 +490,24 @@ impl Accounts {
             (_, accshift_app::folders::ItemKind::Folder) => ids(&self.lists.folder_items),
             (_, accshift_app::folders::ItemKind::Account) => ids(&self.lists.account_items),
         };
-        if !self.drag_order.is_empty()
-            && order != self.drag_order
-            && super::drag::each_moves(&self.drag_order, &order, &item.id)
-        {
-            crate::ui::components::drop_held(ctx);
+        if !self.drag_order.is_empty() && order != self.drag_order {
+            let moved = super::drag::each_moved(&self.drag_order, &order);
+            if moved.contains(&item.id) {
+                crate::ui::components::drop_held(ctx);
+            }
+            let section = self.lists.sections.is_some()
+                && item.kind == accshift_app::folders::ItemKind::Folder;
+            let nodes = moved
+                .into_iter()
+                .map(|id| {
+                    if section {
+                        crate::screens::workspace::Moved::Section(id)
+                    } else {
+                        crate::screens::workspace::Moved::Card(item.kind, id)
+                    }
+                })
+                .collect();
+            crate::screens::workspace::remount(ctx, nodes);
         }
         self.drag_order = order;
     }

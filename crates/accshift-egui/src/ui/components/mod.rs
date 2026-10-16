@@ -79,13 +79,11 @@ pub fn drag_ghost(
     r: egui::Rect,
     scale: f32,
     opacity: f32,
-    add: impl FnOnce(&mut egui::Ui),
+    add: impl FnOnce(&mut egui::Ui, egui::Rect),
 ) {
     let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("drag-ghost"));
-    ctx.set_transform_layer(
-        layer,
-        egui::emath::TSTransform::new(r.center().to_vec2() * (1.0 - scale), scale),
-    );
+    let r = r.translate(snap_offset(ctx, r.min));
+    let t = egui::emath::TSTransform::new(r.center().to_vec2() * (1.0 - scale), scale);
     egui::Area::new(layer.id)
         .order(layer.order)
         .interactable(false)
@@ -101,11 +99,86 @@ pub fn drag_ghost(
             } else {
                 gui.multiply_opacity(opacity);
             }
-            add(&mut gui);
+            let scope = TransformScope::begin(ctx, gui.layer_id(), t);
+            add(&mut gui, r);
+            scope.end(ctx, None);
             if group {
                 crate::ui::backdrop_filter::Mark::End.paint(gui.painter(), r);
             }
         });
+}
+
+/// What a box under a scale moves by before it lays out its content:
+/// Blink drops the subpixel part of its offset in layout units (the
+/// transform could not keep it), so its corner `corner` sits on a whole
+/// device pixel.
+pub fn snap_offset(ctx: &egui::Context, corner: egui::Pos2) -> egui::Vec2 {
+    let ppp = ctx.pixels_per_point();
+    let device = (corner.to_vec2() * ppp * 64.0).round() / 64.0;
+    (device.round() - device) / ppp
+}
+
+/// Shapes painted under a CSS `transform` (a scale about a point): the
+/// boxes and meshes are mapped once painted, the text is laid out at its
+/// transformed size as it is painted ([`crate::ui::text::layout`]). Scopes
+/// nest.
+#[must_use]
+pub struct TransformScope {
+    layer: egui::LayerId,
+    from: usize,
+    t: egui::emath::TSTransform,
+    outer: Option<egui::emath::TSTransform>,
+}
+
+impl TransformScope {
+    /// Starts painting under `t` on `layer`.
+    pub fn begin(ctx: &egui::Context, layer: egui::LayerId, t: egui::emath::TSTransform) -> Self {
+        let outer = crate::ui::text::transform(ctx);
+        crate::ui::text::set_transform(ctx, Some(outer.map_or(t, |o| o * t)));
+        Self {
+            layer,
+            from: shape_count(ctx, layer),
+            t,
+            outer,
+        }
+    }
+
+    /// Maps what was painted since [`Self::begin`], clip rects included.
+    /// `base`: the clip of the transformed element's container (a
+    /// scroller's), which stays where it is and bounds the mapped ones.
+    pub fn end(self, ctx: &egui::Context, base: Option<egui::Rect>) {
+        crate::ui::text::set_transform(ctx, self.outer);
+        let to = shape_count(ctx, self.layer);
+        if to <= self.from {
+            return;
+        }
+        ctx.graphics_mut(|g| {
+            let list = g.entry(self.layer);
+            let shapes: Vec<egui::epaint::ClippedShape> = list
+                .all_entries()
+                .skip(self.from)
+                .take(to - self.from)
+                .cloned()
+                .collect();
+            for (i, s) in shapes.into_iter().enumerate() {
+                let clip = match base {
+                    None => self.t.mul_rect(s.clip_rect),
+                    Some(base) if s.clip_rect == base => base,
+                    Some(base) => self.t.mul_rect(s.clip_rect).intersect(base),
+                };
+                let mut shape = s.shape;
+                if !matches!(shape, egui::Shape::Text(_)) {
+                    shape.transform(self.t);
+                }
+                list.set(egui::layers::ShapeIdx(self.from + i), clip, shape);
+            }
+        });
+    }
+}
+
+/// Shapes on `layer` so far this frame.
+pub fn shape_count(ctx: &egui::Context, layer: egui::LayerId) -> usize {
+    ctx.graphics(|g| g.get(layer).map_or(0, |l| l.next_idx().0))
 }
 
 fn held_id() -> egui::Id {

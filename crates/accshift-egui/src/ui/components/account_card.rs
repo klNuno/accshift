@@ -575,7 +575,8 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
     );
 
     let (enter_opacity, enter_scale) = entrance(ui, id, v);
-    let transform = if enter_opacity < 1.0 {
+    let entering = enter_opacity < 1.0;
+    let transform = if entering {
         Transform::scale(enter_scale)
     } else {
         Transform {
@@ -583,12 +584,27 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
             scale,
         }
     };
+    // A scaled box sits on whole device pixels and lays its content out
+    // from there.
+    let (layout, rect) = if transform.scale != 1.0 {
+        let layout = layout.translate(super::snap_offset(&ctx, layout.min));
+        (layout, snap::rect(layout, ppp))
+    } else {
+        (layout, rect)
+    };
     // `.dragging { opacity: .4 }`: one layer, as the folder card's.
-    let group = dragged && !cfg!(feature = "glow");
+    // `animation` overrides `opacity` too: a dragged card moved by the
+    // preview replays its entrance from 0 to 1, then drops back to .4.
+    let group = dragged && !entering && !cfg!(feature = "glow");
     if group {
         super::folder_card::drag_group(ui, rect);
     }
-    let opacity = enter_opacity * if dragged && !group { 0.4 } else { 1.0 };
+    let opacity = enter_opacity
+        * if dragged && !group && !entering {
+            0.4
+        } else {
+            1.0
+        };
 
     // The extension surface, under the face.
     let mut surface = None;
@@ -867,7 +883,24 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
     } else {
         inner.intersect(name_box)
     };
+    // Under a scale (dragged, entering) the text is laid out at its
+    // transformed size and its boxes mapped; the hover lift only moves it.
+    let scaled = transform.scale != 1.0;
+    let scope = scaled.then(|| {
+        let s = transform.scale;
+        crate::ui::components::TransformScope::begin(
+            &ctx,
+            painter.layer_id(),
+            egui::emath::TSTransform::new(
+                layout.center().to_vec2() * (1.0 - s) + transform.translate,
+                s,
+            ),
+        )
+    });
     let shift_by = |r: Rect| {
+        if scaled {
+            return r;
+        }
         let m = map_rect(layout, transform, r);
         Rect::from_center_size(m.center(), r.size())
     };
@@ -915,6 +948,9 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
                 .align(TextAlign::Center);
             text::paint(&painter, shift_by(r), &label, &style);
         }
+    }
+    if let Some(scope) = scope {
+        scope.end(&ctx, Some(painter.clip_rect()));
     }
 
     // `.confirm-hint`, positioned at the card's bottom.

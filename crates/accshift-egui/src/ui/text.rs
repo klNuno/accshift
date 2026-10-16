@@ -134,6 +134,19 @@ impl Default for TextStyle {
 }
 
 impl TextStyle {
+    /// The style under `transform: scale(s)`: what Skia rasterizes.
+    pub fn scaled(&self, s: f32) -> Self {
+        Self {
+            size: self.size * s,
+            letter_spacing: self.letter_spacing * s,
+            line_height: match self.line_height {
+                LineHeight::Px(px) => LineHeight::Px(px * s),
+                other => other,
+            },
+            ..self.clone()
+        }
+    }
+
     /// `size` px at `weight` in the UI stack, everything else from `:root`.
     pub fn new(size: f32, weight: u16) -> Self {
         Self {
@@ -410,11 +423,80 @@ impl TextLayout {
     }
 }
 
+fn transform_id() -> egui::Id {
+    egui::Id::new("text-transform")
+}
+
+/// The CSS transform text is painted under, set by
+/// [`crate::ui::components::TransformScope`].
+pub(crate) fn transform(ctx: &Context) -> Option<egui::emath::TSTransform> {
+    ctx.data(|d| d.get_temp::<Option<egui::emath::TSTransform>>(transform_id()))
+        .flatten()
+}
+
+/// Sets the transform of [`transform`].
+pub(crate) fn set_transform(ctx: &Context, t: Option<egui::emath::TSTransform>) {
+    ctx.data_mut(|d| d.insert_temp(transform_id(), t));
+}
+
 /// Lays `text` out in `rect`: its top is the top of the first line box, its
 /// left and width the containing block (for wrapping, alignment and the
 /// ellipsis). `None` while the style's faces are not loaded yet (the first
 /// frame that uses a new face): a repaint is requested.
+///
+/// Under a [`transform`], the metrics and the lines stay those of the
+/// layout and the galley is laid out again at the transformed size where
+/// the transform puts it: Skia rasterizes glyphs at their device size (a
+/// stretched atlas glyph blurs), on baselines mapped from the layout's and
+/// rounded.
 pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Option<TextLayout> {
+    let mut laid = layout_at(ctx, text, style, rect, None)?;
+    let Some(t) = transform(ctx).filter(|t| *t != egui::emath::TSTransform::IDENTITY) else {
+        return Some(laid);
+    };
+    let ppp = ctx.pixels_per_point();
+    let baselines: Vec<f32> = (0..laid.lines)
+        .map(|i| {
+            // Blink rounds the text box's top where it is laid out ("to
+            // ensure consistent line heights"), the transform maps that.
+            let device = layout_unit(rect.top() * ppp)
+                + layout_unit((laid.line_box.baseline + i as f32 * laid.line_box.height) * ppp);
+            t.translation.y + t.scaling * snap(device) / ppp
+        })
+        .collect();
+    // The lines as laid out, ellipsis included: rounding at the new size
+    // must not wrap or cut them again.
+    let lines: Vec<String> = laid
+        .galley
+        .rows
+        .iter()
+        .map(|r| r.row.glyphs.iter().map(|g| g.chr).collect())
+        .collect();
+    let mut drawn_style = style.scaled(t.scaling);
+    drawn_style.nowrap = true;
+    drawn_style.ellipsis = false;
+    drawn_style.overflow_anywhere = false;
+    let drawn = layout_at(
+        ctx,
+        &lines.join("\n"),
+        &drawn_style,
+        t.mul_rect(rect),
+        Some(&baselines),
+    )?;
+    laid.galley = drawn.galley;
+    laid.pos = drawn.pos;
+    Some(laid)
+}
+
+/// [`layout`] without the transform. `baselines`: where each line's
+/// baseline goes, in points, instead of the line boxes'.
+fn layout_at(
+    ctx: &Context,
+    text: &str,
+    style: &TextStyle,
+    rect: Rect,
+    baselines: Option<&[f32]>,
+) -> Option<TextLayout> {
     let resolved = resolve(
         ctx,
         &style.family,
@@ -614,8 +696,13 @@ pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Optio
     for (i, placed) in g.rows.iter_mut().enumerate() {
         // In LayoutUnits (1/64 device px), so that a line box scaled back
         // from CSS px lands exactly where Blink put it.
-        let baseline = layout_unit(rect.top() * ppp)
-            + layout_unit((line_box.baseline + i as f32 * line_box.height) * ppp);
+        let baseline = match baselines.and_then(|b| b.get(i)) {
+            Some(b) => b * ppp,
+            None => {
+                layout_unit(rect.top() * ppp)
+                    + layout_unit((line_box.baseline + i as f32 * line_box.height) * ppp)
+            }
+        };
         let target = snap(baseline) / ppp - origin_y - placed.pos.y;
         let row = Arc::make_mut(&mut placed.row);
         // The pen in device px: egui puts every CJK glyph on a whole pixel
@@ -692,11 +779,12 @@ pub fn measure(ctx: &Context, text: &str, style: &TextStyle) -> Option<f32> {
     style.nowrap = true;
     style.ellipsis = false;
     style.align = TextAlign::Left;
-    layout(
+    layout_at(
         ctx,
         text,
         &style,
         Rect::from_min_size(Pos2::ZERO, vec2(f32::INFINITY, 0.0)),
+        None,
     )
     .map(|l| l.width)
 }

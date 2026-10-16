@@ -11,6 +11,9 @@
 //! A CSS transform moves the snapped icon afterwards: a `translateY(-1px)`
 //! at 150 % leaves it on a half pixel, and Skia draws the path there.
 //! [`paint_shifted`] rasterizes at that sub-pixel offset (1/16 px steps).
+//! Under a [`crate::ui::components::TransformScope`] (a scale), the icon is
+//! rasterized at its transformed size where the transform puts it, as Skia
+//! draws the path in device space.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -51,13 +54,8 @@ pub fn snapped_origin(min: Pos2, ppp: f32) -> Pos2 {
 pub fn paint(painter: &Painter, svg: &'static [u8], rect: Rect, color: Rgba, scale: f32) {
     let ppp = painter.ctx().pixels_per_point();
     let rect = scaled(rect, scale);
-    paint_device(
-        painter,
-        svg,
-        rect.width() * ppp,
-        snapped_origin(rect.min, ppp) * ppp,
-        color,
-    );
+    let local = Rect::from_min_size(snapped_origin(rect.min, ppp), rect.size());
+    paint_mapped(painter, svg, local, color);
 }
 
 /// [`paint`] for an icon under a transform: `rect` is its untransformed box,
@@ -73,8 +71,25 @@ pub fn paint_shifted(
 ) {
     let ppp = painter.ctx().pixels_per_point();
     let local = Rect::from_min_size(snapped_origin(rect.min, ppp), rect.size());
-    let rect = scaled(local, scale).translate(shift);
-    paint_device(painter, svg, rect.width() * ppp, rect.min * ppp, color);
+    paint_mapped(painter, svg, scaled(local, scale).translate(shift), color);
+}
+
+/// Draws `svg` over `rect` (points, placed), mapped by the scope's
+/// transform if one is open: the shape goes in untransformed, and the scope
+/// maps it onto the box it was rasterized for.
+fn paint_mapped(painter: &Painter, svg: &'static [u8], rect: Rect, color: Rgba) {
+    let ppp = painter.ctx().pixels_per_point();
+    let t = crate::ui::text::transform(painter.ctx())
+        .filter(|t| *t != egui::emath::TSTransform::IDENTITY);
+    let mapped = t.map_or(rect, |t| t.mul_rect(rect));
+    paint_device(
+        painter,
+        svg,
+        mapped.width() * ppp,
+        mapped.min * ppp,
+        color,
+        t,
+    );
 }
 
 fn scaled(rect: Rect, scale: f32) -> Rect {
@@ -87,7 +102,14 @@ fn scaled(rect: Rect, scale: f32) -> Rect {
 
 /// Draws `svg` at `size` device px with its top left corner at `origin`
 /// (device px, fractions kept to 1/16 px).
-fn paint_device(painter: &Painter, svg: &'static [u8], size: f32, origin: Pos2, color: Rgba) {
+fn paint_device(
+    painter: &Painter,
+    svg: &'static [u8],
+    size: f32,
+    origin: Pos2,
+    color: Rgba,
+    t: Option<egui::emath::TSTransform>,
+) {
     if color.a <= 0.0 {
         return;
     }
@@ -118,6 +140,7 @@ fn paint_device(painter: &Painter, svg: &'static [u8], size: f32, origin: Pos2, 
     };
     let [w, h] = texture.size();
     let dest = Rect::from_min_size(base / ppp, vec2(w as f32 / ppp, h as f32 / ppp));
+    let dest = t.map_or(dest, |t| t.inverse().mul_rect(dest));
     painter.image(
         texture.id(),
         dest,

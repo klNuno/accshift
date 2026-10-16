@@ -850,6 +850,8 @@ impl AppModel {
                 .is_open()
                 .then(|| b.bulk.selected_ids().iter().cloned().collect());
         }
+        // No transform scope outlives the frame that opened it.
+        crate::ui::text::set_transform(&ctx, None);
         crate::ui::components::track_held(&ctx);
         self.track_drag(&ctx);
         if let Some(b) = self.booted.as_mut() {

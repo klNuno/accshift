@@ -229,13 +229,28 @@ pub(crate) fn frame(
             scale,
         }
     };
+    // A scaled box sits on whole device pixels and lays its content out
+    // from there.
+    let (layout, rect) = if transform.scale != 1.0 {
+        let layout = layout.translate(super::snap_offset(&ctx, layout.min));
+        (layout, snap::rect(layout, ppp))
+    } else {
+        (layout, rect)
+    };
     // `.dragging { opacity: .4 }` fades the card as one group: a layer
     // where the renderer has them, each shape where it has not.
-    let group = dragged && !cfg!(feature = "glow");
+    // `animation` overrides `opacity` too: a dragged card moved by the
+    // preview replays its entrance from 0 to 1, then drops back to .4.
+    let group = dragged && !entering && !cfg!(feature = "glow");
     if group {
         drag_group(ui, rect);
     }
-    let opacity = enter_opacity * if dragged && !group { 0.4 } else { 1.0 };
+    let opacity = enter_opacity
+        * if dragged && !group && !entering {
+            0.4
+        } else {
+            1.0
+        };
 
     let mut shadows = Vec::new();
     // The outline is drawn outside the border box, above the shadows; its
@@ -376,10 +391,27 @@ pub(crate) fn icon_wrap(ui: &Ui, f: &Frame, vars: &Vars, svg: &'static [u8], svg
 pub(crate) fn name(ui: &Ui, f: &Frame, rect: Rect, label: &str, style: &TextStyle) {
     let mut painter = ui.painter().clone();
     painter.multiply_opacity(f.opacity);
-    let mapped = map_rect(f.layout, f.transform, rect);
-    let moved = Rect::from_center_size(mapped.center(), rect.size());
-    painter.set_clip_rect(painter.clip_rect().intersect(mapped.expand(1.0)));
-    text::paint(&painter, moved, label, style);
+    let base = painter.clip_rect();
+    let s = f.transform.scale;
+    if s == 1.0 {
+        let mapped = map_rect(f.layout, f.transform, rect);
+        painter.set_clip_rect(base.intersect(mapped.expand(1.0)));
+        let moved = Rect::from_center_size(mapped.center(), rect.size());
+        text::paint(&painter, moved, label, style);
+        return;
+    }
+    painter.set_clip_rect(base.intersect(rect.expand(1.0)));
+    // Under a scale the text is laid out at its transformed size.
+    let scope = super::TransformScope::begin(
+        ui.ctx(),
+        painter.layer_id(),
+        egui::emath::TSTransform::new(
+            f.layout.center().to_vec2() * (1.0 - s) + f.transform.translate,
+            s,
+        ),
+    );
+    text::paint(&painter, rect, label, style);
+    scope.end(ui.ctx(), Some(base));
 }
 
 /// The name box of a card: under the icon wrap and its 8 px margin.

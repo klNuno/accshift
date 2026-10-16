@@ -225,14 +225,15 @@ impl EachList {
 }
 
 /// Svelte 5's keyed `{#each}` reconcile (`reconcile` in `each.js`) over a
-/// reorder of the same keys: whether it moves `key`'s node. Chromium drops
-/// `:active` from a node it moves (`ActiveChainNodeDetached`).
-pub(super) fn each_moves(old: &[String], new: &[String], key: &str) -> bool {
+/// reorder of the same keys: the keys whose node it moves. Chromium drops
+/// `:active` from a node it moves (`ActiveChainNodeDetached`) and restarts
+/// its CSS animations.
+pub(super) fn each_moved(old: &[String], new: &[String]) -> Vec<String> {
     let n = old.len();
     let index = |k: &str| old.iter().position(|o| o == k);
-    let Some(target) = index(key).filter(|_| new.len() == n) else {
-        return false;
-    };
+    if new.len() != n {
+        return Vec::new();
+    }
     let mut list = EachList {
         prev: (0..n).map(|i| i.checked_sub(1)).collect(),
         next: (0..n).map(|i| (i + 1 < n).then_some(i + 1)).collect(),
@@ -243,11 +244,11 @@ pub(super) fn each_moves(old: &[String], new: &[String], key: &str) -> bool {
     let mut seen = std::collections::BTreeSet::new();
     let mut matched: Vec<usize> = Vec::new();
     let mut stashed: Vec<usize> = Vec::new();
-    let mut moved = false;
+    let mut moved = std::collections::BTreeSet::new();
     let mut i = 0;
     while i < n {
         let Some(effect) = index(&new[i]) else {
-            return false;
+            return Vec::new();
         };
         i += 1;
         if Some(effect) != current {
@@ -257,7 +258,7 @@ pub(super) fn each_moves(old: &[String], new: &[String], key: &str) -> bool {
                     let start = stashed[0];
                     prev = list.prev[start];
                     let (a, b) = (matched[0], matched[matched.len() - 1]);
-                    moved |= matched.contains(&target);
+                    moved.extend(matched.iter().copied());
                     for s in &stashed {
                         seen.remove(s);
                     }
@@ -272,7 +273,7 @@ pub(super) fn each_moves(old: &[String], new: &[String], key: &str) -> bool {
                 } else {
                     // Earlier items move to the back.
                     seen.remove(&effect);
-                    moved |= effect == target;
+                    moved.insert(effect);
                     list.link(list.prev[effect], list.next[effect]);
                     let after = match prev {
                         None => list.first,
@@ -299,15 +300,19 @@ pub(super) fn each_moves(old: &[String], new: &[String], key: &str) -> bool {
         prev = Some(effect);
         current = list.next[effect];
     }
-    moved
+    moved.into_iter().map(|i| old[i].clone()).collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::each_moves;
+    use super::each_moved;
 
     fn keys(s: &str) -> Vec<String> {
         s.chars().map(String::from).collect()
+    }
+
+    fn each_moves(old: &[String], new: &[String], key: &str) -> bool {
+        each_moved(old, new).iter().any(|k| k == key)
     }
 
     #[test]
@@ -326,6 +331,11 @@ mod tests {
 
     #[test]
     fn an_unchanged_order_moves_nothing() {
-        assert!(!each_moves(&keys("abc"), &keys("abc"), "b"));
+        assert!(each_moved(&keys("abc"), &keys("abc")).is_empty());
+    }
+
+    #[test]
+    fn later_items_to_the_front_move_as_a_block() {
+        assert_eq!(each_moved(&keys("abcde"), &keys("deabc")), keys("de"));
     }
 }

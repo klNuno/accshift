@@ -540,6 +540,20 @@ pub fn list_view(
         })
         .collect();
     let mut ghost = None;
+    // A dragged `.section` (a folder section in sections mode): its box
+    // and the rows inside, for the clone.
+    let section_ghost = props
+        .ghost
+        .as_ref()
+        .filter(|g| g.item.kind == accshift_app::folders::ItemKind::Folder)
+        .and_then(|g| {
+            state
+                .section_boxes
+                .iter()
+                .find(|(folder, _)| folder.as_deref() == Some(g.item.id.as_str()))
+                .map(|(_, r)| *r)
+        });
+    let mut section_parts = Vec::new();
     for place in &places {
         let (item, h) = (place.item, place.h);
         let local = Rect::from_min_size(pos2(PAD, place.top), vec2(row_w, h));
@@ -589,6 +603,11 @@ pub fn list_view(
             if g.item == item_ref {
                 ghost = Some((item, h, id, key.clone(), kb_focus));
             }
+        }
+        if section_ghost
+            .is_some_and(|b| b.top() <= row.top() + 0.5 && row.bottom() <= b.bottom() + 0.5)
+        {
+            section_parts.push((item, row, id, key.clone(), kb_focus));
         }
         match item {
             DisplayItem::SectionHeader(h) => {
@@ -697,6 +716,9 @@ pub fn list_view(
         }
     }
 
+    if let (Some(g), Some(at), None) = (&props.ghost, section_ghost, &ghost) {
+        ghost_section(&ctx, g, &section_parts, at.min, state, props, host);
+    }
     if let (Some(g), Some((item, h, source, key, kb_focus))) = (&props.ghost, ghost) {
         ghost_row(
             &ctx,
@@ -889,7 +911,7 @@ fn ghost_row(
     let v = props.vars;
     let ppp = ctx.pixels_per_point();
     let r = Rect::from_min_size(g.rect.min + g.offset, vec2(g.rect.width(), h));
-    super::drag_ghost(ctx, r, 1.05, 0.85, |gui| match item {
+    super::drag_ghost(ctx, r, 1.05, 0.85, |gui, r| match item {
         DisplayItem::Folder(f) => {
             let look = RowLook {
                 kb_focus,
@@ -913,6 +935,78 @@ fn ghost_row(
             account_info(gui, &row, a, look, props);
         }
         _ => {}
+    });
+}
+
+/// `ghostEl` of a dragged list `.section`: the wrapper cloned with its
+/// header and rows, its inline shadow around a box with no background.
+/// `parts` are the section's rows on screen, `origin` the section's corner.
+fn ghost_section(
+    ctx: &egui::Context,
+    g: &RowGhost,
+    parts: &[(&DisplayItem, Rect, Id, String, bool)],
+    origin: Pos2,
+    state: &ListState,
+    props: &ListProps,
+    host: &mut dyn ListHost,
+) {
+    let v = props.vars;
+    let ppp = ctx.pixels_per_point();
+    let r = Rect::from_min_size(g.rect.min + g.offset, g.rect.size());
+    super::drag_ghost(ctx, r, 1.05, 0.85, |gui, r| {
+        BoxStyle {
+            shadows: vec![super::account_card::GHOST_SHADOW],
+            ..BoxStyle::default()
+        }
+        .paint(gui.painter(), r);
+        for (item, row, source, key, kb_focus) in parts {
+            let rect = row.translate(r.min - origin);
+            let id = g.id.with(key);
+            match item {
+                DisplayItem::SectionHeader(h) => {
+                    let label = header_label(props.locale, h);
+                    let folder = match &h.label {
+                        SectionLabel::Folder(f) => Some(f.id.as_str()),
+                        SectionLabel::Root => None,
+                    };
+                    let mut child = gui.new_child(egui::UiBuilder::new().max_rect(rect));
+                    section_header::section_header(
+                        &mut child,
+                        rect,
+                        &SectionHeaderProps {
+                            vars: v,
+                            id,
+                            folder,
+                            label: &label,
+                            count: h.count,
+                            card_color: host.card_color(&h.card_color),
+                            accent: props.accent,
+                            collapsed: h.collapsed,
+                            focus_visible: false,
+                        },
+                    );
+                }
+                DisplayItem::Folder(f) => {
+                    let look = RowLook {
+                        kb_focus: *kb_focus,
+                        ..RowLook::default()
+                    };
+                    let row = list_row(gui, rect, id, &f.folder.name, look, props, true);
+                    icon_box(gui, &row, icons::FOLDER, v);
+                    plain_name(gui, &row, &f.folder.name, v);
+                }
+                DisplayItem::Account(a) => {
+                    let look = account_look(a, state, *kb_focus, host);
+                    let row = list_row(gui, rect, id, &a.name, look, props, true);
+                    let px = (ICON * ppp).round() as u32;
+                    let content = host.avatar(key, a, px, true);
+                    avatar_rings(gui, row.icon, look, v);
+                    paint_avatar(gui, *source, row.icon, &content, a, v, AvatarSize::ROW);
+                    account_info(gui, &row, a, look, props);
+                }
+                DisplayItem::Back => {}
+            }
+        }
     });
 }
 
