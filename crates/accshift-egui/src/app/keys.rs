@@ -50,6 +50,7 @@ fn dom_key(key: Key, shift: bool) -> Option<(String, String)> {
         Key::Equals => Some(("=".into(), "Equal".into())),
         Key::Minus => Some(("-".into(), "Minus".into())),
         Key::Comma => Some((",".into(), "Comma".into())),
+        k if k == crate::CONTEXT_MENU_KEY => named("ContextMenu"),
         _ => {
             if let Some(rest) = name.strip_prefix('F').filter(|r| r.parse::<u8>().is_ok()) {
                 return Some((format!("F{rest}"), format!("F{rest}")));
@@ -614,5 +615,11 @@ mod tests {
         let ev = key_event(&press(Key::Plus, None, Modifiers::CTRL), false).unwrap();
         assert_eq!(ev.code, "Equal");
         assert!(key_event(&press(Key::Backtick, None, Modifiers::NONE), false).is_none());
+        let menu = crate::CONTEXT_MENU_KEY;
+        let ev = key_event(&press(menu, Some(menu), Modifiers::NONE), false).unwrap();
+        assert_eq!(
+            (ev.key.as_str(), ev.code.as_str()),
+            ("ContextMenu", "ContextMenu")
+        );
     }
 }

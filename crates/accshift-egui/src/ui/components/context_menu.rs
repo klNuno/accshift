@@ -173,6 +173,9 @@ struct State {
     focus_submenu: Option<usize>,
     /// The first entry still has to take focus.
     mount_focus: bool,
+    /// Opened by a key (the context menu key, Shift+F10, Delete), not at
+    /// the pointer.
+    from_key: bool,
     /// Last drawn boxes, for [`contains`].
     menu_rect: Option<Rect>,
     submenu_rect: Option<Rect>,
@@ -850,6 +853,7 @@ pub fn context_menu(ui: &mut Ui, props: &ContextMenuProps) -> Vec<MenuEvent> {
         .unwrap_or_else(|| State {
             open_id: props.open_id,
             mount_focus: true,
+            from_key: props.keyboard,
             ..State::default()
         });
     let mut events = Vec::new();
@@ -1008,13 +1012,19 @@ pub fn context_menu(ui: &mut Ui, props: &ContextMenuProps) -> Vec<MenuEvent> {
     );
 
     // The box itself takes the pointer: nothing under it reacts. Its top
-    // and left pixel edges excepted: WebView2 leaves the element under a
-    // menu that opens at the pointer hovered, the pointer on the menu's
-    // pixel-snapped corner at 100 and 150 %, while a clamped menu that
-    // lands over the pointer takes it at once (all measured).
+    // and left pixel edges excepted when it opened at the pointer: WebView2
+    // leaves the element under such a menu hovered, the pointer on the
+    // menu's pixel-snapped corner at 100 and 150 %, while a clamped menu
+    // that lands over the pointer takes it at once. A menu a key opened
+    // hit-tests on its layout box, as Blink does: at 150 % the pointer on
+    // its unsnapped left edge is over it (all measured).
     let ppp = ctx.pixels_per_point();
-    let hit = snap::rect(menu_rect, ppp);
-    let hit = Rect::from_min_max(hit.min + vec2(EDGE, EDGE), hit.max);
+    let hit = if st.from_key {
+        menu_rect
+    } else {
+        let hit = snap::rect(menu_rect, ppp);
+        Rect::from_min_max(hit.min + vec2(EDGE, EDGE), hit.max)
+    };
     ui.interact(hit, menu_id, Sense::click());
     ctx.accesskit_node_builder(menu_id, |node| node.set_role(Role::Menu));
     paint_box(ui, menu_rect, v, menu_layout.border);

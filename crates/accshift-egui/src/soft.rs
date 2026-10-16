@@ -76,6 +76,8 @@ struct Live {
     /// zoom before the resample ([`crate::zoom`]).
     stage_zoom: f32,
     stage: Vec<[u8; 4]>,
+    /// The held modifiers, for the keys egui-winit drops.
+    modifiers: egui::Modifiers,
     shown: bool,
 }
 
@@ -376,6 +378,45 @@ fn read_pixels(bgra: &[[u8; 4]], size: [usize; 2]) -> Arc<egui::ColorImage> {
     Arc::new(egui::ColorImage::new(size, pixels))
 }
 
+/// egui-winit drops the context menu key, egui having none: it goes in as
+/// [`crate::CONTEXT_MENU_KEY`].
+fn context_menu_key(live: &mut Live, event: &WindowEvent) -> bool {
+    use winit::keyboard::{Key, NamedKey};
+    let key = match event {
+        WindowEvent::ModifiersChanged(held) => {
+            // As egui-winit reads them.
+            let held = held.state();
+            let mac = cfg!(target_os = "macos");
+            live.modifiers = egui::Modifiers {
+                alt: held.alt_key(),
+                ctrl: held.control_key(),
+                shift: held.shift_key(),
+                mac_cmd: mac && held.super_key(),
+                command: if mac {
+                    held.super_key()
+                } else {
+                    held.control_key()
+                },
+            };
+            return false;
+        }
+        WindowEvent::KeyboardInput { event: key, .. } => key,
+        _ => return false,
+    };
+    if key.logical_key != Key::Named(NamedKey::ContextMenu) {
+        return false;
+    }
+    let modifiers = live.modifiers;
+    live.state.egui_input_mut().events.push(egui::Event::Key {
+        key: crate::CONTEXT_MENU_KEY,
+        physical_key: Some(crate::CONTEXT_MENU_KEY),
+        pressed: key.state.is_pressed(),
+        repeat: key.repeat,
+        modifiers,
+    });
+    true
+}
+
 impl ApplicationHandler<UserEvent> for Runner {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let Some(init) = self.init.take() else { return };
@@ -446,6 +487,7 @@ impl ApplicationHandler<UserEvent> for Runner {
             full_present: true,
             stage_zoom: 1.0,
             stage: Vec::new(),
+            modifiers: egui::Modifiers::NONE,
             shown: false,
         });
         self.paint(event_loop);
@@ -499,7 +541,8 @@ impl ApplicationHandler<UserEvent> for Runner {
         }
         let Some(live) = &mut self.live else { return };
         let response = live.state.on_window_event(&live.window, &event);
-        if response.repaint {
+        let menu_key = context_menu_key(live, &event);
+        if response.repaint || menu_key {
             self.repaint_at(Instant::now());
         }
     }

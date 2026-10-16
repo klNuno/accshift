@@ -87,6 +87,12 @@ impl Shell {
     }
 }
 
+/// The context menu key (`e.key == "ContextMenu"`). egui has no such key,
+/// so the software runner and the scenes send it as F35, which no Windows
+/// keyboard reports (winit stops at F24 there). eframe hands the app no
+/// window event, so the glow runner never sees it.
+pub const CONTEXT_MENU_KEY: egui::Key = egui::Key::F35;
+
 /// Chromium dispatches input events one at a time; egui hands a frame its
 /// whole batch. A pointer press makes the focused field give up focus
 /// (`SurrenderFocusOn::Presses`) in its `interact`, before it reads the

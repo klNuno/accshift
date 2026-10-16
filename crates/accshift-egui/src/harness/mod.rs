@@ -254,9 +254,13 @@ fn key_events(spec: &str) -> Result<Vec<Event>, String> {
         None => ("", spec),
     };
     let modifiers = modifiers(held)?;
-    let key = Key::from_name(name)
-        .or_else(|| Key::from_name(&name.to_uppercase()))
-        .ok_or_else(|| format!("unknown key {name}"))?;
+    let key = if name == "ContextMenu" {
+        crate::CONTEXT_MENU_KEY
+    } else {
+        Key::from_name(name)
+            .or_else(|| Key::from_name(&name.to_uppercase()))
+            .ok_or_else(|| format!("unknown key {name}"))?
+    };
     let ev = |pressed| Event::Key {
         key,
         physical_key: None,

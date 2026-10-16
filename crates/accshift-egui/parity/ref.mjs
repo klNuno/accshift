@@ -156,6 +156,7 @@ const KEYS = {
   Backspace: { code: "Backspace", windowsVirtualKeyCode: 8 },
   Tab: { code: "Tab", windowsVirtualKeyCode: 9 },
   Delete: { code: "Delete", windowsVirtualKeyCode: 46 },
+  ContextMenu: { code: "ContextMenu", windowsVirtualKeyCode: 93 },
   Home: { code: "Home", windowsVirtualKeyCode: 36 },
   End: { code: "End", windowsVirtualKeyCode: 35 },
   ArrowLeft: { code: "ArrowLeft", windowsVirtualKeyCode: 37 },
