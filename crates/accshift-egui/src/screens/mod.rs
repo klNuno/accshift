@@ -37,6 +37,7 @@ impl Screen {
             seed: scene.seed.clone(),
             streaming: scene.streaming,
             cs2: scene.cs2.clone(),
+            onboarding: scene.onboarding,
             data_dir,
             repo_root,
         };

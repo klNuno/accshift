@@ -19,8 +19,8 @@ mod fold_table;
 mod view;
 
 pub use view::{
-    build_display_view, AccountCardItem, AvatarView, CardContext, DisplayBody, DisplayItem,
-    DisplayView, FolderCardItem, SectionHeaderItem, SectionLabel,
+    build_display_view, build_mock_view, AccountCardItem, AvatarView, CardContext, DisplayBody,
+    DisplayItem, DisplayView, FolderCardItem, SectionHeaderItem, SectionLabel,
 };
 
 use crate::folders::{FolderInfo, FolderSection, ItemKind, ItemRef};

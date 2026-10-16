@@ -78,6 +78,9 @@ pub struct Vars {
     pub motion_avatar_defer: f64,
     /// `--line-height` (unitless), the body's `line-height`.
     pub line_height: f32,
+    /// `color-scheme: dark` on the root (`app.css`, then the theme's
+    /// `colorScheme`): it picks the outer colour of the UA focus ring.
+    pub dark: bool,
     /// `--overlay-blur`, CSS px: the dialogs' `backdrop-filter: blur()`.
     pub overlay_blur: f32,
 }
@@ -148,6 +151,7 @@ impl Vars {
             radius_md: theme.length_px("--radius-md").unwrap_or(8.0),
             avatar_radius: theme.length_px("--avatar-radius").unwrap_or(6.0),
             density_scale,
+            dark: true,
             motion_avatar_defer: seconds("--motion-avatar-defer", 380.0),
             line_height: theme
                 .number("--line-height")

@@ -21,7 +21,9 @@
 //! - [`MockBackend::set_streaming`] is `accshift.mock.overrides.streaming`:
 //!   `detect_streaming_software` answers true;
 //! - [`MockBackend::set_cs2`] is `accshift.mock.overrides.cs2`: the CS2
-//!   bridge reads as enabled and answers with the rows given.
+//!   bridge reads as enabled and answers with the rows given;
+//! - [`MockBackend::set_onboarding`] is `accshift.mock.overrides.onboarding`:
+//!   `telemetry_get_state` reports the first-run onboarding as never done.
 //!
 //! Nothing here reaches Steam, the keyring, the registry or the disk outside
 //! the scenario file.
@@ -111,6 +113,8 @@ struct MockState {
     streaming: bool,
     /// `overrides.cs2`: the bridge rows, `None` when the bridge is off.
     cs2: Option<Vec<Value>>,
+    /// `overrides.onboarding`.
+    onboarding: bool,
 }
 
 /// See the module documentation.
@@ -190,6 +194,7 @@ impl MockBackend {
                 failures: BTreeMap::new(),
                 streaming: false,
                 cs2: None,
+                onboarding: false,
             }),
             spec: file.spec,
         };
@@ -313,6 +318,12 @@ impl MockBackend {
     /// from a `VITE_MOCK=dev` build, where overrides are read.
     pub fn set_cs2(&self, rows: Option<Vec<Value>>) {
         self.lock().cs2 = rows;
+    }
+
+    /// `accshift.mock.overrides.onboarding`: `telemetry_get_state` reports
+    /// `onboarding_completed: false`, so the first-run onboarding opens.
+    pub fn set_onboarding(&self, on: bool) {
+        self.lock().onboarding = on;
     }
 
     /// `__mock.os(name)`: the OS `get_runtime_os` and the boot payload report.
@@ -937,7 +948,11 @@ impl Backend for MockBackend {
         self.call("delete_custom_theme", json!({ "themeId": theme_id }))
     }
     fn telemetry_get_state(&self) -> BackendResult<TelemetryUiState> {
-        self.call("telemetry_get_state", json!({}))
+        let mut state: TelemetryUiState = self.call("telemetry_get_state", json!({}))?;
+        if self.lock().onboarding {
+            state.onboarding_completed = false;
+        }
+        Ok(state)
     }
     fn telemetry_set_mode_a(&self, enabled: bool) -> BackendResult<()> {
         self.call("telemetry_set_mode_a", json!({ "enabled": enabled }))

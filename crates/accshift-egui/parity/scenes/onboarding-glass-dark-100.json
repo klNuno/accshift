@@ -1,0 +1,40 @@
+{
+  "id": "onboarding-glass-dark-100",
+  "scenario": "demo",
+  "os": "windows",
+  "onboarding": true,
+  "viewport": {
+    "width": 1000,
+    "height": 680,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "steps": [
+    { "wait": 1500 },
+    { "shot": "welcome" },
+    { "click": [677, 472] },
+    { "move": [950, 400] },
+    { "wait": 800 },
+    { "shot": "feature-1" },
+    { "click": [700, 621] },
+    { "move": [950, 400] },
+    { "wait": 700 },
+    { "shot": "feature-2" },
+    { "click": [700, 621] },
+    { "move": [950, 400] },
+    { "wait": 700 },
+    { "dom": "feature-3", "select": ".modal *, .spotlight, .mock-ctx-menu, .mock-ctx-menu *" },
+    { "shot": "feature-3" },
+    { "click": [700, 621] },
+    { "move": [950, 400] },
+    { "wait": 700 },
+    { "dom": "feature-4", "select": ".modal *, .spotlight" },
+    { "shot": "feature-4" },
+    { "click": [700, 621] },
+    { "move": [950, 400] },
+    { "wait": 1000 },
+    { "dom": "deal", "select": ".modal, .modal *" },
+    { "shot": "deal" }
+  ]
+}

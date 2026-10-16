@@ -79,6 +79,9 @@ pub struct FaceMetrics {
     /// The `head` glyph box width (`xMax - xMin`), which Skia reports as
     /// the max char width and Blink uses to size text fields.
     pub glyph_box: f32,
+    /// `OS/2` `sxHeight` (half the em without one), which DirectWrite
+    /// reports and `vertical-align: middle` centres on.
+    pub x_height: f32,
     /// `gasp` ranges: highest ppem of the range, and whether DirectWrite
     /// smooths vertically there (`GASP_SYMMETRIC_SMOOTHING`).
     pub(super) gasp: [(u16, bool); 8],
@@ -134,6 +137,7 @@ impl FaceMetrics {
                 Self {
                     units_per_em: upm,
                     glyph_box,
+                    x_height: upm / 2.0,
                     ascent: h_asc,
                     descent: h_desc,
                     line_gap: h_gap,
@@ -143,6 +147,7 @@ impl FaceMetrics {
                 .with_gasp(&font),
             );
         };
+        let x_height = os2.sx_height().map_or(upm / 2.0, f32::from);
         let use_typo = os2
             .fs_selection()
             .contains(skrifa::raw::tables::os2::SelectionFlags::USE_TYPO_METRICS);
@@ -151,6 +156,7 @@ impl FaceMetrics {
                 Self {
                     units_per_em: upm,
                     glyph_box,
+                    x_height,
                     ascent: f32::from(os2.s_typo_ascender()),
                     descent: -f32::from(os2.s_typo_descender()),
                     line_gap: f32::from(os2.s_typo_line_gap()),
@@ -163,6 +169,7 @@ impl FaceMetrics {
                 Self {
                     units_per_em: upm,
                     glyph_box,
+                    x_height,
                     ascent,
                     descent,
                     line_gap: (h_asc + h_desc + h_gap - ascent - descent).max(0.0),

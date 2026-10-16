@@ -78,6 +78,8 @@ pub struct Scene {
     pub streaming: bool,
     /// `cs2`: the CS2 bridge is enabled and answers with these rows.
     pub cs2: Option<Vec<serde_json::Value>>,
+    /// `onboarding`: the first-run onboarding was never completed.
+    pub onboarding: bool,
     /// The `html` fragment (resolved next to the scene file) and its text.
     pub html: Option<(PathBuf, String)>,
     pub steps: Vec<Step>,
@@ -195,6 +197,10 @@ pub fn load(path: &Path) -> Result<Scene, String> {
             .and_then(|x| x.as_bool())
             .unwrap_or(false),
         cs2: v.get("cs2").and_then(|x| x.as_array()).cloned(),
+        onboarding: v
+            .get("onboarding")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
         html,
         steps,
     })

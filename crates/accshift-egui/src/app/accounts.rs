@@ -22,14 +22,14 @@ use accshift_app::accounts::profile_cache::{ProfileCaches, UrlPolicy};
 use accshift_app::accounts::LoadingEvent;
 use accshift_app::cs2_bridge::Cs2BridgeQueue;
 use accshift_app::display::{
-    build_display_view, CardContext, DisplayBody, DisplayLists, DisplayPipeline, DisplayView,
-    DragPreview, FolderNavigation, PipelineInput,
+    build_display_view, build_mock_view, CardContext, DisplayBody, DisplayLists, DisplayPipeline,
+    DisplayView, DragPreview, FolderNavigation, PipelineInput,
 };
 use accshift_app::jobs::Jobs;
 use accshift_app::platforms::card::{CardSection, UsernameBadge};
 use accshift_app::platforms::descriptors::PlatformDescriptor;
 use accshift_app::platforms::steam::cs2::{cs2_extension_sections, cs2_username_badge};
-use accshift_app::platforms::{self as app_platforms, PlatformRegistry};
+use accshift_app::platforms::{self as app_platforms, PlatformAccount, PlatformRegistry};
 use accshift_app::stores::ClientStores;
 use accshift_app::time::Clock;
 use egui::Context;
@@ -141,6 +141,17 @@ impl Cs2Cards {
     }
 }
 
+/// The shipped platforms plus the user descriptors of the boot payload.
+pub fn platform_registry(user_platforms: &[Value]) -> PlatformRegistry {
+    let mut registry = PlatformRegistry::shipped();
+    let descriptors: Vec<PlatformDescriptor> = user_platforms
+        .iter()
+        .filter_map(PlatformDescriptor::from_value)
+        .collect();
+    registry.register_user_platforms(&descriptors);
+    registry
+}
+
 /// Everything the workspace reads, owned by the model.
 pub struct Accounts {
     pub registry: PlatformRegistry,
@@ -158,6 +169,8 @@ pub struct Accounts {
     pub prev_view: DisplayView,
     pub avatars: AvatarTextures,
     pub cs2: Cs2Cards,
+    /// `onboarding.mockActive`: the tour's mock accounts replace the grid.
+    pub tour: Option<Vec<PlatformAccount>>,
 }
 
 impl Accounts {
@@ -181,24 +194,18 @@ impl Accounts {
         self.navigation.refresh_current_items(stores, active_tab);
     }
 
-    /// The boot wiring: registry with the user platforms, the loader on the
-    /// active tab, and the first `loadAccounts(false, false, false, false,
-    /// true)` of `App.svelte`'s mount.
+    /// The boot wiring: the loader on the active tab over `registry` (see
+    /// [`platform_registry`]), and the first `loadAccounts(false, false,
+    /// false, false, true)` of `App.svelte`'s mount.
     pub fn boot(
         jobs: &Jobs,
         stores: &mut ClientStores,
-        user_platforms: &[Value],
+        registry: PlatformRegistry,
         active_tab: &str,
         runtime_os: RuntimeOs,
         clock: Clock,
         mock: bool,
     ) -> Accounts {
-        let mut registry = PlatformRegistry::shipped();
-        let descriptors: Vec<PlatformDescriptor> = user_platforms
-            .iter()
-            .filter_map(PlatformDescriptor::from_value)
-            .collect();
-        registry.register_user_platforms(&descriptors);
         // The mock's avatars are local SVG files; the real backend only
         // trusts http(s).
         let policy = if mock {
@@ -226,6 +233,7 @@ impl Accounts {
             },
             avatars: AvatarTextures::new(policy),
             cs2: Cs2Cards::default(),
+            tour: None,
         };
         accounts
             .navigation
@@ -408,21 +416,22 @@ impl Accounts {
             self.loading.track_priming(&lctx, grid_hidden);
         }
         let adapter = self.registry.adapter(tab);
-        let view = build_display_view(
-            &CardContext {
-                loader: &self.loading.loader,
-                stores,
-                navigation: &self.navigation,
-                platform: self.registry.definition(tab),
-                adapter: adapter.as_deref(),
-                active_tab: tab,
-                pending_setup_account: None,
-                bulk_selection: None,
-                drag_item: None,
-                collapsed_sections: self.pipeline.collapsed_sections(),
-            },
-            &self.lists,
-        );
+        let card_ctx = CardContext {
+            loader: &self.loading.loader,
+            stores,
+            navigation: &self.navigation,
+            platform: self.registry.definition(tab),
+            adapter: adapter.as_deref(),
+            active_tab: tab,
+            pending_setup_account: None,
+            bulk_selection: None,
+            drag_item: None,
+            collapsed_sections: self.pipeline.collapsed_sections(),
+        };
+        let view = match &self.tour {
+            Some(mock) => build_mock_view(&card_ctx, mock),
+            None => build_display_view(&card_ctx, &self.lists),
+        };
         self.prev_view = std::mem::replace(&mut self.view, view);
         self.avatars.poll(ctx);
         let deadlines = [

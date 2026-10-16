@@ -277,6 +277,15 @@ impl TextStyle {
         ))
     }
 
+    /// The face's x-height at this size, in points: DirectWrite's, rounded
+    /// to whole device px like Blink's `FontMetrics::XHeight`.
+    pub fn x_height(&self, ctx: &Context) -> Option<f32> {
+        let ppp = ctx.pixels_per_point();
+        let ppem = self.size * ppp;
+        let m = resolve(ctx, &self.family, self.weight, ppem)?.metrics;
+        Some((m.x_height / m.units_per_em * ppem).round() / ppp)
+    }
+
     /// Blink's intrinsic width of a text `<input>` (`size` 20) in this style,
     /// in points: `ceil(20 cw + max(0, max_char - cw))` device px. Skia's
     /// DirectWrite port reports no average char width, so Blink takes the
@@ -1075,6 +1084,7 @@ mod tests {
             descent: 514.0,
             line_gap: 0.0,
             glyph_box: 5267.0,
+            x_height: 1062.0,
             gasp: Default::default(),
             gasp_len: 0,
         }

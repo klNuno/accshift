@@ -1190,6 +1190,69 @@ fn paint_shadow(painter: &Painter, geo: &BoxGeometry, s: &BoxShadow, opacity: f3
     if !s.inset && (shape.width() <= 0.0 || shape.height() <= 0.0) {
         return;
     }
+    paint_shadow_mask(painter, &clip, &shape, sigma, s.inset, color, ppp);
+}
+
+/// `box-shadow: 0 0 0 <spread> color` with a spread past any window (the
+/// tour spotlight's 9999 px): everything in `viewport` outside the rounded
+/// box `rect` (points), the box's edge anti-aliased like its own. A real
+/// spread would round the shadow's corners by `radius + spread`, which no
+/// window reaches, so a plain frame two device pixels wide carries the edge
+/// and solid bands cover the rest.
+pub fn paint_outside(painter: &Painter, viewport: Rect, rect: Rect, radius: f32, color: Rgba) {
+    let c = to_color32(premul(color, 1.0));
+    if c.a() == 0 {
+        return;
+    }
+    let ppp = painter.ctx().pixels_per_point();
+    let geo = BoxGeometry::new(
+        rect,
+        Transform::NONE,
+        Corners::all(radius),
+        &Border::NONE,
+        ppp,
+    );
+    let bb = geo.border_box;
+    let frame = RRect::new(
+        bb.x0.floor() - 2.0,
+        bb.y0.floor() - 2.0,
+        bb.x1.ceil() + 2.0,
+        bb.y1.ceil() + 2.0,
+        [Vec2::ZERO; 4],
+    );
+    paint_shadow_mask(painter, &bb, &frame, 0.0, false, c, ppp);
+    let vp = snap::device_rect(viewport, ppp);
+    let inv = 1.0 / ppp;
+    let band = |x0: f32, y0: f32, x1: f32, y1: f32| {
+        let (x0, x1) = (x0.max(vp.min.x), x1.min(vp.max.x));
+        let (y0, y1) = (y0.max(vp.min.y), y1.min(vp.max.y));
+        if x1 > x0 && y1 > y0 {
+            painter.rect_filled(
+                Rect::from_min_max(pos2(x0 * inv, y0 * inv), pos2(x1 * inv, y1 * inv)),
+                0.0,
+                c,
+            );
+        }
+    };
+    band(vp.min.x, vp.min.y, vp.max.x, frame.y0);
+    band(vp.min.x, frame.y1, vp.max.x, vp.max.y);
+    band(vp.min.x, frame.y0, frame.x0, frame.y1);
+    band(frame.x1, frame.y0, vp.max.x, frame.y1);
+}
+
+/// The shadow of `shape` blurred by `sigma` (device px), cut by `clip`
+/// (outside it for an outer shadow, inside it for an inset one), as a
+/// nine-sliced mask texture tinted `color`.
+fn paint_shadow_mask(
+    painter: &Painter,
+    clip: &RRect,
+    shape: &RRect,
+    sigma: f32,
+    inset: bool,
+    color: Color32,
+    ppp: f32,
+) {
+    let (clip, shape) = (*clip, *shape);
     let reach = if sigma > 0.0 {
         (3.0 * sigma).ceil() + 1.0
     } else {
@@ -1197,7 +1260,7 @@ fn paint_shadow(painter: &Painter, geo: &BoxGeometry, s: &BoxShadow, opacity: f3
     };
     // Mask region in device pixels: the blurred shape for an outer shadow,
     // the padding box for an inset one.
-    let (x0, y0, x1, y1) = if s.inset {
+    let (x0, y0, x1, y1) = if inset {
         (clip.x0, clip.y0, clip.x1, clip.y1)
     } else {
         (
@@ -1233,11 +1296,11 @@ fn paint_shadow(painter: &Painter, geo: &BoxGeometry, s: &BoxShadow, opacity: f3
         (y1 - y0 - sy.map_or(0, |s| s.extra)) as usize,
     ];
     let mut h = DefaultHasher::new();
-    (s.inset, size, (sigma * 64.0).round() as i64).hash(&mut h);
+    (inset, size, (sigma * 64.0).round() as i64).hash(&mut h);
     hash_rrect(&mut h, &clip_m, Vec2::ZERO);
     hash_rrect(&mut h, &shape_m, Vec2::ZERO);
     let tex = cached_texture(painter.ctx(), h.finish(), || {
-        render_shadow_mask(size, sigma, &clip_m, &shape_m, !s.inset)
+        render_shadow_mask(size, sigma, &clip_m, &shape_m, !inset)
     });
 
     let mut mesh = Mesh::with_texture(tex);
@@ -1469,6 +1532,30 @@ impl RRectClipper {
         }
         out
     }
+}
+
+/// A solid band `width` device px wide just inside the rounded rect `outer`
+/// (device px, circular radius in device px), anti-aliased like a border
+/// but never snapped: a focus ring's strokes land on fractions.
+pub fn paint_device_band(painter: &Painter, outer: Rect, radius: f32, width: f32, color: Rgba) {
+    if width <= 0.0 || color.a <= 0.0 {
+        return;
+    }
+    let ppp = painter.ctx().pixels_per_point();
+    let border_box = RRect::new(
+        outer.min.x,
+        outer.min.y,
+        outer.max.x,
+        outer.max.y,
+        [Vec2::splat(radius.max(0.0)); 4],
+    );
+    let widths = Sides::all(width);
+    let geo = BoxGeometry {
+        border_box,
+        widths,
+        padding_box: border_box.inset(widths),
+    };
+    paint_border(painter, &geo, &Border::all(width / ppp, color), 1.0, ppp);
 }
 
 /// Paint `shapes` clipped to a rounded rect (`overflow: hidden` on a box

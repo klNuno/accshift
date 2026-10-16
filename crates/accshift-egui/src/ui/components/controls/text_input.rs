@@ -73,7 +73,8 @@ impl FieldStyle {
     }
 }
 
-/// `.text-input` of the settings panel.
+/// `.text-input` of the settings panel (caret measured on WebView2: 16 px
+/// at 1x, 24 device px and 2 wide at 1.5x).
 pub fn settings_style(v: &Vars) -> FieldStyle {
     FieldStyle {
         font: TextStyle::new(12.0, 400).line_height(LineHeight::Px(18.0)),
@@ -85,8 +86,8 @@ pub fn settings_style(v: &Vars) -> FieldStyle {
         border_color: v.border,
         border_focus: v.fg_muted.mix(0.55, v.border),
         placeholder: v.fg_subtle.mix(0.55, Rgba::TRANSPARENT),
-        caret_height: 14.0,
-        caret_scaled: false,
+        caret_height: 16.0,
+        caret_scaled: true,
         border_transition: true,
     }
 }
@@ -434,8 +435,12 @@ pub fn text_input(
 /// 659 after "12" ending at 660, 2 device px wide).
 fn caret_rect(st: &FieldStyle, line: Rect, text_w: f32, after_text: bool, ppp: f32) -> Rect {
     let h = snap::round_device(st.caret_height * ppp);
-    let top = (snap::layout_unit(line.top() * ppp) + (snap::layout_unit(st.line * ppp) - h) / 2.0)
-        .floor();
+    // The caret spans the text fragment, `h` (rounded ascent plus rounded
+    // descent) below a half-leading LayoutNG floors to a whole pixel
+    // (`CalculateLeadingSpace`), from the line top, whose fraction stays;
+    // painting rounds (a field at y 189.78 puts a 16 px caret on 201).
+    let local = ((snap::layout_unit(st.line * ppp) - h) / 2.0).floor();
+    let top = (snap::layout_unit(line.top() * ppp) + local + 0.5).floor();
     // `LocalFrameView::CaretWidth`: 1 CSS px in layout units.
     let caret = if st.caret_scaled { ppp.max(1.0) } else { 1.0 };
     let start = snap::layout_unit(line.left() * ppp);

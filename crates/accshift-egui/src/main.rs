@@ -148,7 +148,7 @@ fn main() {
                 }
             }
         };
-        Shell { screen, scenes }
+        Shell::new(screen, scenes)
     };
 
     #[cfg(feature = "software")]

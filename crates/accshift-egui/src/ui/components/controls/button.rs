@@ -3,7 +3,8 @@
 //! - `.btn-export` (Privacy): padded, `--bg-card` lifted 12% to white;
 //! - `.theme-action-btn` (General): flex 1, 11 px, `--bg-card`;
 //! - `.inline-link-btn` (Privacy): a bare link in `--accent-text`;
-//! - `.wiki-btn` (General): a 20 px round "?".
+//! - `.wiki-btn` (General): a 20 px round "?";
+//! - `.browse-btn` (platform tabs): the button at the end of an input row.
 //!
 //! Each lists the colours its `transition` eases; the others switch at once.
 
@@ -91,6 +92,26 @@ pub fn theme_action_style(v: &Vars) -> ButtonStyle {
             border: false,
             color: false,
         },
+    }
+}
+
+/// `.browse-btn` of the platform tabs: `--bg-card`, 12 px, `padding: 0
+/// 12px`, stretched to the row; hover `--bg-card-hover`, no transition.
+pub fn browse_style(v: &Vars) -> ButtonStyle {
+    ButtonStyle {
+        font: TextStyle::new(12.0, 400).line_height(LineHeight::Px(18.0)),
+        padding: vec2(12.0, 0.0),
+        border: 1.0,
+        radius: 8.0,
+        background: v.bg_card,
+        background_hover: v.bg_card_hover,
+        border_color: v.border,
+        border_hover: v.border,
+        color: v.fg,
+        color_hover: v.fg,
+        underline_hover: false,
+        disabled_opacity: 0.5,
+        transitions: Transitions::default(),
     }
 }
 
@@ -237,7 +258,15 @@ pub fn button(ui: &mut Ui, rect: Rect, id: Id, props: &ButtonProps) -> bool {
             );
         }
     }
-    focus_ring(ui, boxed, s.radius, props.vars, props.focus, focused);
+    focus_ring(
+        ui,
+        boxed,
+        s.radius,
+        s.border,
+        props.vars,
+        props.focus,
+        focused,
+    );
     let keyed =
         focused && ui.input(|i| i.key_pressed(egui::Key::Space) || i.key_pressed(egui::Key::Enter));
     props.enabled && (response.clicked() || keyed)

@@ -312,6 +312,34 @@ fn rendered_accounts<'a>(ctx: &CardContext<'a>) -> HashMap<&'a str, &'a Platform
     map
 }
 
+/// The onboarding tour's grid (`onboarding.mockActive` in `App.svelte`):
+/// `mockItems` over `mockMap`, no folder and no section, the rest of
+/// `AppWorkspace.svelte`'s branches unchanged (the back card inside a
+/// folder, the loader's error banner).
+pub fn build_mock_view(ctx: &CardContext<'_>, accounts: &[PlatformAccount]) -> DisplayView {
+    let error = ctx.loader.error().map(|message| {
+        ctx.adapter
+            .and_then(|adapter| adapter.load_error_toast(message))
+            .unwrap_or_else(|| Text::key("app.loadErrorGeneric"))
+    });
+    let mut items = Vec::new();
+    let mut folder_empty = false;
+    if ctx.navigation.current_folder_id().is_some() && !ctx.navigation.is_searching() {
+        items.push(DisplayItem::Back);
+        folder_empty = accounts.is_empty();
+    }
+    for account in accounts {
+        items.push(DisplayItem::Account(Box::new(account_card(ctx, account))));
+    }
+    DisplayView {
+        error,
+        body: DisplayBody::Items {
+            items,
+            folder_empty,
+        },
+    }
+}
+
 /// Builds the workspace content from the pipeline output, following the
 /// branches of `AppWorkspace.svelte` (loading, empty, no search results,
 /// sections or flat grid).

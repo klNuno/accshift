@@ -43,6 +43,8 @@ interface MockOverrides {
   streaming?: boolean;
   /** The CS2 bridge is enabled and answers with these rows. */
   cs2?: Cs2BridgeAccount[];
+  /** `telemetry_get_state` reports the first-run onboarding as never done. */
+  onboarding?: boolean;
 }
 
 function readOverrides(): MockOverrides {
@@ -91,6 +93,14 @@ if (overrides.cs2) {
   handlers.cs2_bridge_get_settings = () => ({ enabled: true, url: "", tokenConfigured: true });
   handlers.cs2_bridge_fetch = () => rows;
   handlers.cs2_bridge_check = (args) => rows.find((row) => row.steamId === args.steamId) ?? null;
+}
+// The first-run onboarding, as on a fresh install.
+if (overrides.onboarding) {
+  const telemetryState = handlers.telemetry_get_state;
+  handlers.telemetry_get_state = async (args) => ({
+    ...((await telemetryState(args)) as object),
+    onboarding_completed: false,
+  });
 }
 
 /** Live knobs: changing these takes effect on the next call, without a reload. */

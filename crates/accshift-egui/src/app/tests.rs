@@ -186,3 +186,55 @@ fn seeded_avatar_paths_resolve_like_the_scenarios() {
     assert_eq!(cache["1"]["url"], photo.to_string_lossy().as_ref());
     assert_eq!(cache["2"]["url"], "kept");
 }
+
+#[test]
+fn a_fresh_install_enables_the_detected_platforms() {
+    use accshift_app::platforms::{PlatformRegistry, RuntimeOs as AppOs};
+    use accshift_app::storage::ClientStorage;
+    use accshift_app::types::ClientStorageSnapshot;
+
+    let stores_with = |entries: Vec<(&str, Value)>| {
+        let snapshot = ClientStorageSnapshot {
+            manifest: Default::default(),
+            stores: entries
+                .into_iter()
+                .map(|(id, value)| (id.to_string(), value))
+                .collect(),
+        };
+        ClientStores::new(
+            ClientStorage::from_snapshot(snapshot),
+            StoreContext::shipped(),
+        )
+    };
+    let registry = PlatformRegistry::shipped();
+    let found = ["riot".to_string(), "nope".to_string(), "steam".to_string()];
+
+    // Nothing stored: the usable detected platforms become the enabled set,
+    // the first one the default, and the onboarding names them.
+    let mut fresh = stores_with(Vec::new());
+    let detected =
+        enable_detected_platforms_on_first_run(&mut fresh, &found, &registry, AppOs::Windows);
+    assert_eq!(detected, ["riot", "steam"]);
+    assert_eq!(fresh.settings().enabled_platforms, ["riot", "steam"]);
+    assert_eq!(fresh.settings().default_platform_id, "riot");
+    assert!(fresh.has_stored_settings());
+
+    // Detection found nothing: the defaults stay, nothing is written.
+    let mut empty = stores_with(Vec::new());
+    assert!(
+        enable_detected_platforms_on_first_run(&mut empty, &[], &registry, AppOs::Windows)
+            .is_empty()
+    );
+    assert!(!empty.has_stored_settings());
+
+    // Stored settings belong to the user, however few platforms they enable.
+    let mut stored = stores_with(vec![(
+        storage::CLIENT_STORE_SETTINGS,
+        serde_json::json!({ "enabledPlatforms": ["epic"], "defaultPlatformId": "epic" }),
+    )]);
+    assert!(
+        enable_detected_platforms_on_first_run(&mut stored, &found, &registry, AppOs::Windows)
+            .is_empty()
+    );
+    assert_eq!(stored.settings().enabled_platforms, ["epic"]);
+}

@@ -821,7 +821,7 @@ fn platform_chip(ui: &mut Ui, rect: Rect, id: Id, c: &Ctx, chip: &Chip) -> bool 
     }
     .paint(&painter, snap::translated(knob, vec2(shift, 0.0), ppp));
 
-    focus_ring(ui, boxed, 10.0, v, c.focus, focused);
+    focus_ring(ui, boxed, 10.0, 1.0, v, c.focus, focused);
     let keyed =
         focused && ui.input(|i| i.key_pressed(egui::Key::Space) || i.key_pressed(egui::Key::Enter));
     active && (response.clicked() || keyed)

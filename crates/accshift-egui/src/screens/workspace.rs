@@ -58,6 +58,7 @@ use crate::ui::components::context_menu;
 use crate::ui::components::controls::scroll;
 use crate::ui::components::folder_card::{self, entrance, FolderCardEvent, FolderCardProps};
 use crate::ui::components::list_view::{self, ListEvent, ListHost, ListProps, ListState};
+use crate::ui::components::onboarding;
 use crate::ui::components::search_cancel;
 use crate::ui::components::section_header::{self, SectionHeaderEvent, SectionHeaderProps};
 use crate::ui::components::use_grid_layout::{grid_layout, GAP};
@@ -810,6 +811,12 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
             .intersects(view_rect)
             && p.clip.is_none_or(|c| c.height() > 0.0);
         let screen = to_screen(p.rect);
+        if matches!(p.node, Node::Account(_)) {
+            // `data-tour="account-card"` on every card: the first wins.
+            onboarding::record_target(&ctx, |t| {
+                t.account_card.get_or_insert(screen);
+            });
+        }
         if focused_now == Some(id) {
             focused_rect = Some(p.rect);
         }

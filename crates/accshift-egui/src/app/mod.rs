@@ -24,6 +24,7 @@ pub mod accounts;
 pub mod avatars;
 pub mod clock;
 pub(crate) mod keys;
+pub mod onboarding;
 mod palette;
 pub mod platforms;
 mod secure;
@@ -46,6 +47,7 @@ use accshift_app::error::BackendResult;
 use accshift_app::folders::FolderInfo;
 use accshift_app::i18n::Locale;
 use accshift_app::jobs::{Jobs, Pending, Poll};
+use accshift_app::lifecycle::app_shell::first_run_platforms;
 use accshift_app::menu::{
     build_context_menu_items, PlatformTask, SubmenuLoader, TaskEffect, TaskOutcome,
     ACCOUNT_CONTEXT_GROUP_ORDER,
@@ -138,6 +140,8 @@ pub enum Action {
     InputDialog(u64, DialogEvent),
     /// The confirm dialog mounted as this number reported something.
     ConfirmDialog(u64, DialogEvent),
+    /// The first-run onboarding.
+    Onboarding(onboarding::OnboardingEvent),
 }
 
 /// What a right click opened the menu on.
@@ -161,6 +165,8 @@ pub struct MockSetup {
     pub streaming: bool,
     /// `overrides.cs2`: the CS2 bridge rows, the bridge enabled.
     pub cs2: Option<Vec<Value>>,
+    /// `overrides.onboarding`: the first-run onboarding was never completed.
+    pub onboarding: bool,
     /// `parity/data`.
     pub data_dir: PathBuf,
     /// The repo root, to resolve the mock avatar paths.
@@ -285,13 +291,64 @@ pub struct Booted {
     /// What the backend last read in the descriptor folder (the boot
     /// payload's, then the Platforms tab's last reload).
     pub user_platforms: Option<accshift_app::types::UserPlatformReport>,
+    /// `getDetectedPlatforms`: what first-run detection found and can use,
+    /// empty when it did not run or found nothing.
+    pub detected_platforms: Vec<String>,
     /// `handleAppMounted` ran.
     secure_mounted: bool,
     /// The settings panel was open last frame (`handleSettingsClosed`).
     secure_in_settings: bool,
 }
 
-type BootResult = BackendResult<BootPayload>;
+/// The boot payload and, on a fresh install, what launcher detection found.
+struct Boot {
+    payload: BootPayload,
+    detected: Vec<String>,
+}
+
+type BootResult = BackendResult<Boot>;
+
+/// `enableDetectedPlatformsOnFirstRun`, once the stores are read: without
+/// stored settings, the usable platforms `detected` found become the enabled
+/// set, the first one the default. Returns `setDetectedPlatforms`' list.
+fn enable_detected_platforms_on_first_run(
+    stores: &mut ClientStores,
+    detected: &[String],
+    registry: &accshift_app::platforms::PlatformRegistry,
+    os: accshift_app::platforms::RuntimeOs,
+) -> Vec<String> {
+    if stores.has_stored_settings() {
+        return Vec::new();
+    }
+    let first = first_run_platforms(detected, registry, os);
+    if let Some((enabled, default)) = first.enable {
+        let mut next = stores.settings().clone();
+        next.enabled_platforms = enabled;
+        next.default_platform_id = default;
+        stores.save_settings(&next);
+    }
+    first.detected
+}
+
+/// `get_boot_payload`, then `platform_detect_installed` when no settings
+/// were ever stored (`enableDetectedPlatformsOnFirstRun`, awaited before the
+/// first tab is picked). Asked in the same job so boot waits once; an error
+/// counts as nothing found, as in TS.
+fn start_boot(jobs: &Jobs) -> Pending<BootResult> {
+    jobs.run(|backend| {
+        let payload = backend.get_boot_payload()?;
+        let fresh = !payload
+            .storage_snapshot
+            .stores
+            .contains_key(storage::CLIENT_STORE_SETTINGS);
+        let detected = if fresh {
+            backend.platform_detect_installed().unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        Ok(Boot { payload, detected })
+    })
+}
 type SubmenuJob = Pending<BackendResult<Vec<AppMenuEntry>>>;
 
 /// The application model. See the module documentation.
@@ -348,6 +405,8 @@ pub struct AppModel {
     card_focus_widget: Option<egui::Id>,
     /// [`Accounts::card_focus_signature`](accounts::Accounts::card_focus_signature) last frame.
     card_focus_cards: Option<u64>,
+    /// `createOnboardingTour` and the mounted `TelemetryOnboarding`.
+    onboarding: onboarding::Onboarding,
 }
 
 impl AppModel {
@@ -369,6 +428,7 @@ impl AppModel {
             .map_err(|e| format!("{}: {e}", file.display()))?;
         mock.set_streaming(setup.streaming);
         mock.set_cs2(setup.cs2.clone());
+        mock.set_onboarding(setup.onboarding);
         let mock = Arc::new(mock);
         let clock = Clock::pinned(mock.now());
         let backend: Arc<dyn Backend> = mock.clone();
@@ -399,7 +459,7 @@ impl AppModel {
     ) -> AppModel {
         let wake = ctx.clone();
         let jobs = Jobs::new(Arc::clone(&backend), 2, move || wake.request_repaint());
-        let boot_job = Some(jobs.run(|backend| backend.get_boot_payload()));
+        let boot_job = Some(start_boot(&jobs));
         crate::ui::text::install(ctx, false);
         // Chromium hits exactly what is under the pointer: no 5 px slop.
         ctx.all_styles_mut(|style| style.interaction.interact_radius = 0.0);
@@ -437,6 +497,7 @@ impl AppModel {
             card_focus_context: None,
             card_focus_widget: None,
             card_focus_cards: None,
+            onboarding: onboarding::Onboarding::default(),
         }
     }
 
@@ -524,8 +585,11 @@ impl AppModel {
     }
 
     fn finish_boot(&mut self, ctx: &Context, result: BootResult, now: f64) {
-        let mut payload = match result {
-            Ok(payload) => payload,
+        let Boot {
+            mut payload,
+            detected,
+        } = match result {
+            Ok(boot) => boot,
             Err(error) => {
                 self.boot_error = Some(error.message);
                 return;
@@ -563,6 +627,13 @@ impl AppModel {
         store_ctx.theme_ids = registry.all_themes().into_iter().map(|t| t.id).collect();
         store_ctx.preferred_languages = preferred_languages();
         let mut stores = ClientStores::new(storage, store_ctx);
+        let platform_registry = accounts::platform_registry(&loaded);
+        let detected = enable_detected_platforms_on_first_run(
+            &mut stores,
+            &detected,
+            &platform_registry,
+            accounts::app_os(runtime_os),
+        );
         if let Some(mock) = &self.mock {
             // The TS mock reads the live settings for its PIN gate.
             mock.set_pin_settings(&stores.settings().to_value());
@@ -590,7 +661,7 @@ impl AppModel {
         let accounts = Accounts::boot(
             &self.jobs,
             &mut stores,
-            &loaded,
+            platform_registry,
             &nav.active_tab,
             runtime_os,
             app_clock,
@@ -612,12 +683,15 @@ impl AppModel {
             secure,
             streamer,
             user_platforms: Some(user_platforms),
+            detected_platforms: detected,
             secure_mounted: false,
             secure_in_settings: false,
         });
         // `finish_boot` (marks, the startup event); the real shell shows the
         // window here. Fire and forget.
         drop(self.jobs.run(|backend| backend.finish_boot("egui", None)));
+        // `onMount`: `onboarding.openIfNeverCompleted()`.
+        self.onboarding.start(&self.jobs);
     }
 
     /// Settings changed under us (a store write or an external refresh):
@@ -661,6 +735,10 @@ impl AppModel {
     /// One frame.
     pub fn frame(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        // Chromium moves focus on mousedown: a press outside the focused
+        // element blurs it, and a click on a `<label>` then focuses its
+        // control on the release (egui's default waits for the click).
+        ctx.options_mut(|o| o.input_options.surrender_focus_on = egui::SurrenderFocusOn::Presses);
         let now = ctx.input(|i| i.time);
         self.last_time = now;
         if let Some(job) = &mut self.boot_job {
@@ -706,7 +784,13 @@ impl AppModel {
         }
         self.pump_submenus();
         self.pump_tasks(&ctx);
+        if let Some(tab) = self.booted.as_ref().map(|b| b.nav.active_tab.clone()) {
+            let (_, effects) = self.onboarding.tick(&self.jobs, now, &tab);
+            self.apply_effects(&ctx, effects);
+        }
         if let Some(b) = self.booted.as_mut() {
+            // The tour's fake accounts replace the grid while it runs.
+            b.accounts.tour = self.onboarding.mock_grid(b.locale);
             let grid_hidden = b.nav.show_settings || b.nav.show_personas;
             let expanded = b.stores.settings().account_display.expanded_folders;
             b.accounts.update(
@@ -912,6 +996,14 @@ impl AppModel {
                 b.nav.show_settings = false;
                 b.nav.active_tab = tab.clone();
                 b.accounts.change_tab(&self.jobs, &mut b.stores, &tab);
+            }
+            Action::Onboarding(event) => {
+                let Some(tab) = self.booted.as_ref().map(|b| b.nav.active_tab.clone()) else {
+                    return;
+                };
+                let now = ctx.input(|i| i.time);
+                let effects = self.onboarding.apply(&self.jobs, event, now, &tab);
+                self.apply_effects(ctx, effects);
             }
         }
     }
@@ -1231,6 +1323,12 @@ impl AppModel {
                 AppEffect::ConfirmSettled { ticket, allowed } => {
                     self.settle_descriptor_removal(ticket, allowed);
                 }
+                // `shell.setActiveTab`: the tab alone, no load (the tour).
+                AppEffect::SetActiveTab(tab) => {
+                    if let Some(b) = self.booted.as_mut() {
+                        b.nav.active_tab = tab;
+                    }
+                }
                 _ => {}
             }
         }
@@ -1273,7 +1371,10 @@ fn compute_theme(
     let backdrop_available = os != RuntimeOs::Linux && (!liquid_backdrop_active || wallpaper_ready);
     let application = theme_application(&theme, key.opacity as f64, backdrop_available);
     let resolved = ResolvedTheme::new(&application);
-    let vars = Vars::new(&resolved);
+    let vars = Vars {
+        dark: application.color_scheme == accshift_theme::ColorScheme::Dark,
+        ..Vars::new(&resolved)
+    };
     let backdrop = window_backdrop(theme.glass, &theme.id, theme.liquid);
     let motion = match accshift_theme::motion_attribute(
         animations_mode(key.animations),

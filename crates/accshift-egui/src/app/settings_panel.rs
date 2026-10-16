@@ -21,9 +21,13 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
+use accshift_app::accounts::refresh::{
+    apply_refresh_job, run_refresh_job, RefreshJobResult, RefreshKind,
+};
 use accshift_app::actions::dialogs::{ConfirmConfig, ConfirmTicket};
 use accshift_app::actions::navigation::SettingsTabBar;
 use accshift_app::actions::toasts::{AddToastOptions, ToastQueue, ToastType};
+use accshift_app::actions::{load_options, AppEffect};
 use accshift_app::error::{BackendError, BackendResult};
 use accshift_app::i18n::{Locale, TranslationValue};
 use accshift_app::jobs::{Jobs, Pending, Poll};
@@ -32,11 +36,14 @@ use accshift_app::platforms::path_error::platform_path_error_message;
 use accshift_app::secure::pin::{hash_pin_code, sanitize_pin_digits, unlock_pin_session};
 use accshift_app::settings::{
     api_key_draft_after_successful_save, merge_settings_draft, AnimationsMode, AppSettings,
-    StreamerMode,
+    SteamShutdownMode, StreamerMode,
 };
 use accshift_app::stores::ClientStores;
 use accshift_app::text::Text;
-use accshift_app::types::{DescriptorPreview, TelemetryUiState, UserPlatformReport};
+use accshift_app::types::{
+    Cs2BridgeSettings, Cs2BridgeTestResult, DescriptorPreview, RobloxAccount, TelemetryUiState,
+    UserPlatformReport,
+};
 use egui::Context;
 use serde_json::Value;
 
@@ -56,6 +63,8 @@ pub const INTEGRATIONS_WIKI_URL: &str = "https://github.com/klNuno/accshift/wiki
 /// `TELEMETRY_DOC_URL`.
 pub const TELEMETRY_DOC_URL: &str =
     "https://github.com/klNuno/accshift/blob/main/docs/analytics.md";
+/// `Cs2BridgeSettings.svelte`'s `WIKI_URL`.
+pub const CS2_WIKI_URL: &str = "https://github.com/klNuno/accshift/wiki/CS2-Bridge";
 
 /// `clampInt`: rounded and clamped, `fallback` for a non-finite value.
 pub fn clamp_int(value: Option<f64>, min: i64, max: i64, fallback: i64) -> i64 {
@@ -133,6 +142,12 @@ pub enum SettingFlag {
     StreamerMode,
     /// `personasEnabled`, the Platforms tab's personas chip.
     Personas,
+    /// `accountDisplay.showUsernames`, the Steam tab.
+    ShowUsernames,
+    /// `platformSettings.steam.runAsAdmin`.
+    SteamRunAsAdmin,
+    /// `platformSettings.steam.shutdownMode`: `force` when on.
+    SteamForceShutdown,
 }
 
 /// What the panel's components ask for.
@@ -184,6 +199,106 @@ pub enum SettingsAction {
     InstallDescriptor,
     /// The preview dialog's cancel button or Escape.
     CancelDescriptorPreview,
+    /// A platform tab's last login toggle
+    /// (`accountDisplay.showLastLoginPerPlatform[id]`).
+    ToggleLastLogin(String),
+    /// `healthCheckPerPlatform[id]`: off when `false`, on otherwise.
+    ToggleHealthCheck(String),
+    /// A platform tab's path field.
+    PlatformPath(String, String),
+    /// Its "Choose..." button: `choosePlatformPath`.
+    ChoosePlatformPath(String),
+    /// The Roblox tab's cookie field.
+    RobloxCookie(String),
+    /// Its add button: `handleAddByCookie`.
+    AddRobloxCookie,
+    /// The Steam launch options field.
+    SteamLaunchOptions(String),
+    /// The Steam Web API key field (`onApiKeyInput`).
+    ApiKeyInput(String),
+    /// "Clear key": `clearApiKey`.
+    ClearApiKey,
+    /// "Get key": `openSteamApiKeyPage`.
+    OpenSteamApiKeyPage,
+    /// A "Refresh now" button: `handleRefreshAvatarsNow` or
+    /// `handleRefreshBansNow`.
+    RefreshNow(RefreshKind),
+    /// The CS2 bridge toggle (`toggleEnabled`, once its settings are read).
+    Cs2Toggle,
+    /// The bridge link field, then its blur (`save(null)`).
+    Cs2Url(String),
+    Cs2UrlBlur,
+    /// "Test": `runTest`.
+    Cs2Test,
+    /// The token field, then its blur (`save(tokenInput)` when not blank).
+    Cs2Token(String),
+    Cs2TokenBlur,
+    /// "Clear token": `save("")`.
+    Cs2ClearToken,
+    /// The CS2 card's "?" button.
+    OpenCs2Wiki,
+}
+
+/// `Cs2BridgeSettings.svelte`'s `status`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Cs2Status {
+    #[default]
+    Unknown,
+    Testing,
+    Ok,
+    Fail,
+}
+
+/// `Cs2BridgeSettings.svelte`'s own state: it mounts with the Steam tab,
+/// reads the bridge settings, tests a configured link, and goes when the tab
+/// unmounts.
+#[derive(Default)]
+pub struct Cs2Form {
+    pub enabled: bool,
+    pub url: String,
+    pub token_input: String,
+    pub token_configured: bool,
+    /// The settings were read (or failed to): the toggle and blur saves
+    /// wait for it.
+    pub loaded: bool,
+    pub url_error: bool,
+    pub status: Cs2Status,
+    pub status_detail: String,
+    pub status_error: String,
+    load_job: Option<Pending<BackendResult<Cs2BridgeSettings>>>,
+    test_job: Option<Pending<BackendResult<Cs2BridgeTestResult>>>,
+    /// `save(token)` calls, with the token each sent.
+    save_jobs: Vec<(Pending<BackendResult<()>>, Option<String>)>,
+}
+
+impl Cs2Form {
+    /// The component's mount `$effect`.
+    fn mount(jobs: &Jobs) -> Cs2Form {
+        Cs2Form {
+            load_job: Some(jobs.run(|b| b.cs2_bridge_get_settings())),
+            ..Cs2Form::default()
+        }
+    }
+
+    /// `runTest`.
+    fn run_test(&mut self, jobs: &Jobs) {
+        if self.url.trim().is_empty() {
+            self.status = Cs2Status::Unknown;
+            self.status_detail.clear();
+            self.status_error.clear();
+            return;
+        }
+        self.status = Cs2Status::Testing;
+        self.status_error.clear();
+        self.test_job = Some(jobs.run(|b| b.cs2_bridge_test()));
+    }
+
+    /// `save(token)`.
+    fn save(&mut self, jobs: &Jobs, token: Option<String>) {
+        let (enabled, url, sent) = (self.enabled, self.url.trim().to_string(), token.clone());
+        let job = jobs.run(move |b| b.cs2_bridge_set_settings(enabled, &url, sent.as_deref()));
+        self.save_jobs.push((job, token));
+    }
 }
 
 /// A descriptor folder call of the Platforms tab (`runDescriptorTask`).
@@ -205,7 +320,8 @@ enum DescriptorDone {
     Opened,
 }
 
-/// A platform path asked for when a chip enabled the platform.
+/// A platform path asked for when a chip enabled the platform, or picked
+/// with "Choose...".
 type PathJob = Pending<(String, BackendResult<String>)>;
 
 /// What a finished telemetry or link call does next.
@@ -213,6 +329,10 @@ type PathJob = Pending<(String, BackendResult<String>)>;
 enum Followup {
     /// A failure toasts this key as an error.
     ErrorToast(&'static str),
+    /// A failure toasts this key with the default type.
+    InfoToast(&'static str),
+    /// `clearApiKey`.
+    ClearApiKey,
     /// `toggleModeA`: a failure reloads the state.
     ModeA,
     /// `toggleModeB`.
@@ -271,6 +391,19 @@ pub struct SettingsPanel {
     pub platform_paths: BTreeMap<String, String>,
     pub platform_path_errors: BTreeMap<String, bool>,
     path_jobs: Vec<PathJob>,
+    /// `platform_select_path` calls of the "Choose..." buttons.
+    pick_jobs: Vec<PathJob>,
+    /// `RobloxSettingsTab.svelte`'s own state, gone when the tab unmounts:
+    /// `cookieValue`, `isAdding`, `errorMessage`.
+    pub roblox_cookie: String,
+    pub roblox_adding: bool,
+    pub roblox_error: String,
+    roblox_job: Option<Pending<BackendResult<RobloxAccount>>>,
+    /// The Steam tab's CS2 bridge card, while the tab is mounted.
+    pub cs2: Option<Cs2Form>,
+    /// `avatarRefreshLoading` and `banRefreshLoading`: the runs in flight.
+    avatar_refresh: Option<Pending<RefreshJobResult>>,
+    ban_refresh: Option<Pending<RefreshJobResult>>,
     /// `platformSearch` of the Platforms tab.
     pub platform_search: String,
     /// mod+f asked for the search field: focus it and select its text.
@@ -421,6 +554,14 @@ impl SettingsPanel {
             platform_paths: BTreeMap::new(),
             platform_path_errors: BTreeMap::new(),
             path_jobs: Vec::new(),
+            pick_jobs: Vec::new(),
+            roblox_cookie: String::new(),
+            roblox_adding: false,
+            roblox_error: String::new(),
+            roblox_job: None,
+            cs2: None,
+            avatar_refresh: None,
+            ban_refresh: None,
             platform_search: String::new(),
             focus_platform_search: false,
             user_platforms,
@@ -451,6 +592,116 @@ impl SettingsPanel {
     }
 
     /// The current-PIN field is waiting out a failure.
+    /// `avatarRefreshLoading` or `banRefreshLoading`.
+    pub fn refresh_loading(&self, kind: RefreshKind) -> bool {
+        match kind {
+            RefreshKind::Avatars => self.avatar_refresh.is_some(),
+            RefreshKind::Bans => self.ban_refresh.is_some(),
+        }
+    }
+
+    /// The Steam tab is drawn: active, and its path read
+    /// (`platformId in platformPaths`).
+    fn steam_mounted(&self) -> bool {
+        self.tab_bar.active_tab() == "platform:steam" && self.platform_paths.contains_key("steam")
+    }
+
+    /// Polls the CS2 card's calls; true when a save asks the account cards
+    /// to reload the bridge (`invalidateCs2Bridge`, then `loadCs2BridgeData`
+    /// when it is on).
+    fn tick_cs2(&mut self, jobs: &Jobs, toasts: &mut ToastQueue, now: Instant) -> Option<bool> {
+        let locale = self.draft.language;
+        let form = self.cs2.as_mut()?;
+        if let Some(job) = &mut form.load_job {
+            let landed = match job.poll() {
+                Poll::Waiting => None,
+                Poll::Ready(result) => Some(result.ok()),
+                Poll::Gone => Some(None),
+            };
+            if let Some(settings) = landed {
+                form.load_job = None;
+                // Unavailable: the defaults stay, a save surfaces errors.
+                if let Some(settings) = settings {
+                    form.enabled = settings.enabled;
+                    form.url = settings.url;
+                    form.token_configured = settings.token_configured;
+                    if form.enabled && !form.url.is_empty() {
+                        form.run_test(jobs);
+                    }
+                }
+                form.loaded = true;
+            }
+        }
+        if let Some(job) = &mut form.test_job {
+            let landed = match job.poll() {
+                Poll::Waiting => None,
+                Poll::Ready(result) => Some(result),
+                Poll::Gone => Some(Err(BackendError::new("cancelled"))),
+            };
+            if let Some(result) = landed {
+                form.test_job = None;
+                let fail = accshift_app::i18n::translate(locale, "settings.cs2BridgeStatusFail");
+                match result {
+                    Ok(r) if r.ok => {
+                        form.status = Cs2Status::Ok;
+                        form.status_detail = accshift_app::i18n::translate_with(
+                            locale,
+                            "settings.cs2BridgeStatusOk",
+                            &[
+                                ("count", TranslationValue::Num(r.account_count as f64)),
+                                ("ms", TranslationValue::Num(r.latency_ms as f64)),
+                            ],
+                        );
+                        form.status_error.clear();
+                    }
+                    Ok(r) => {
+                        form.status = Cs2Status::Fail;
+                        form.status_detail = fail;
+                        form.status_error = r.error.unwrap_or_default();
+                    }
+                    Err(error) => {
+                        form.status = Cs2Status::Fail;
+                        form.status_detail = fail;
+                        form.status_error = error.message;
+                    }
+                }
+            }
+        }
+        let mut saved = Vec::new();
+        form.save_jobs.retain_mut(|(job, token)| match job.poll() {
+            Poll::Waiting => true,
+            Poll::Ready(result) => {
+                saved.push((result, token.take()));
+                false
+            }
+            Poll::Gone => false,
+        });
+        let mut reload = None;
+        for (result, token) in saved {
+            match result {
+                Ok(()) => {
+                    form.url_error = false;
+                    if let Some(token) = token {
+                        form.token_configured = !token.trim().is_empty();
+                        form.token_input.clear();
+                    }
+                    reload = Some(form.enabled);
+                    form.run_test(jobs);
+                }
+                Err(_) => {
+                    form.url_error = true;
+                    toast(
+                        toasts,
+                        "settings.cs2BridgeSaveFailed",
+                        ToastType::Error,
+                        now,
+                    );
+                }
+            }
+        }
+        reload
+    }
+
     pub fn current_pin_busy(&self) -> bool {
         self.current_pin_busy_until.is_some()
     }
@@ -911,6 +1162,29 @@ impl AppModel {
                 (Followup::ErrorToast(key), Err(_)) => {
                     toast(&mut self.toasts, key, ToastType::Error, now);
                 }
+                (Followup::InfoToast(key), Err(_)) => {
+                    toast(&mut self.toasts, key, ToastType::Info, now);
+                }
+                (Followup::ClearApiKey, Ok(_)) => {
+                    panel.api_key_configured = false;
+                    panel.api_key.clear();
+                    panel.api_key_touched = false;
+                    panel.api_key_error = false;
+                    toast(
+                        &mut self.toasts,
+                        "settings.apiKeyCleared",
+                        ToastType::Info,
+                        now,
+                    );
+                }
+                (Followup::ClearApiKey, Err(_)) => {
+                    toast(
+                        &mut self.toasts,
+                        "settings.apiKeyClearFailed",
+                        ToastType::Error,
+                        now,
+                    );
+                }
                 (Followup::ModeA, Err(_)) => refresh = true,
                 (Followup::ModeB { next }, result) => {
                     panel.mode_b_busy = false;
@@ -967,6 +1241,96 @@ impl AppModel {
             if let Ok(path) = path {
                 if panel.draft.enabled_platforms.contains(&id) {
                     panel.platform_paths.insert(id, path);
+                }
+            }
+        }
+        // `choosePlatformPath`: only a real path replaces the field; a
+        // cancel or a failed dialog leaves it alone.
+        let mut picked = Vec::new();
+        panel.pick_jobs.retain_mut(|job| match job.poll() {
+            Poll::Waiting => true,
+            Poll::Ready(done) => {
+                picked.push(done);
+                false
+            }
+            Poll::Gone => false,
+        });
+        for (id, path) in picked {
+            if let Ok(path) = path {
+                let trimmed = path.trim();
+                if !trimmed.is_empty() {
+                    panel.platform_paths.insert(id, trimmed.to_string());
+                }
+            }
+        }
+        // `Cs2BridgeSettings` mounts with the Steam tab and loses its state
+        // when the tab goes.
+        if !panel.steam_mounted() {
+            panel.cs2 = None;
+        } else if panel.cs2.is_none() {
+            panel.cs2 = Some(Cs2Form::mount(jobs));
+        }
+        if let Some(enabled) = panel.tick_cs2(jobs, &mut self.toasts, now) {
+            if let Some(steam) = b.accounts.registry.adapter("steam") {
+                let mut state = steam.state();
+                state.cs2.invalidate();
+                if enabled {
+                    let now_ms = b.accounts.clock.now_ms();
+                    b.accounts.cs2.queue.load(&state.cs2, true, now_ms);
+                }
+            }
+        }
+        // The "Refresh now" runs: their cache writes and stores land here,
+        // then their toasts and the active tab's reload.
+        let mut effects = Vec::new();
+        for slot in [&mut panel.avatar_refresh, &mut panel.ban_refresh] {
+            let Some(job) = slot else {
+                continue;
+            };
+            match job.poll() {
+                Poll::Waiting => {}
+                Poll::Ready(result) => {
+                    *slot = None;
+                    let report =
+                        apply_refresh_job(result, &mut b.stores, b.accounts.loading.caches());
+                    effects.extend(report.toasts.into_iter().map(AppEffect::Toast));
+                    if let Some(options) = report.reload_active {
+                        effects.push(AppEffect::LoadAccounts(options));
+                    }
+                }
+                Poll::Gone => *slot = None,
+            }
+        }
+        let mut account_added = false;
+        if let Some(job) = &mut panel.roblox_job {
+            let landed = match job.poll() {
+                Poll::Waiting => None,
+                Poll::Ready(result) => Some(result),
+                Poll::Gone => Some(Err(BackendError::new("cancelled"))),
+            };
+            if let Some(result) = landed {
+                panel.roblox_job = None;
+                panel.roblox_adding = false;
+                match result {
+                    Ok(account) => {
+                        let _ = jobs.run(|b| b.telemetry_track_account_added("roblox"));
+                        panel.roblox_cookie.clear();
+                        let profile = if account.display_name.is_empty() {
+                            account.username
+                        } else {
+                            account.display_name
+                        };
+                        self.toasts.add(
+                            Text::with(
+                                "roblox.setupReadyWithProfile",
+                                [("profile", TranslationValue::Str(profile))],
+                            ),
+                            AddToastOptions::default(),
+                            now,
+                        );
+                        account_added = true;
+                    }
+                    Err(error) => panel.roblox_error = error.message,
                 }
             }
         }
@@ -1066,6 +1430,15 @@ impl AppModel {
             panel.save_at = None;
             self.persist_settings(now);
         }
+        if account_added {
+            // `onAccountAdded`: `loadAccounts(true)`.
+            effects.push(AppEffect::LoadAccounts(load_options(
+                true, false, false, false,
+            )));
+        }
+        if !effects.is_empty() {
+            self.apply_effects(ctx, effects);
+        }
     }
 
     /// When the panel next needs a frame without input.
@@ -1084,9 +1457,11 @@ impl AppModel {
             action,
             SettingsAction::Close | SettingsAction::ReplayOnboarding
         ) {
-            // `closePanel()`; the replay then hands over to the onboarding
-            // tour, which belongs to the overlays port.
+            // `await closePanel()`, then the replay opens the onboarding.
             self.close_settings_panel();
+            if action == SettingsAction::ReplayOnboarding {
+                self.onboarding.open();
+            }
             return;
         }
         let jobs = &self.jobs;
@@ -1105,6 +1480,12 @@ impl AppModel {
                     panel.platform_search.clear();
                     panel.descriptor_notice.clear();
                     panel.descriptor_error.clear();
+                }
+                if panel.tab_bar.active_tab() != id {
+                    // `ActivePlatformComponent` changes: the Roblox tab's
+                    // own state goes with it.
+                    panel.roblox_cookie.clear();
+                    panel.roblox_error.clear();
                 }
                 panel.tab_bar.select(&id);
                 panel.scroll = 0.0;
@@ -1146,6 +1527,15 @@ impl AppModel {
                     SettingFlag::DeepLinks => d.deep_links_enabled ^= true,
                     SettingFlag::Personas => d.personas_enabled ^= true,
                     SettingFlag::Cli => d.cli_enabled ^= true,
+                    SettingFlag::ShowUsernames => d.account_display.show_usernames ^= true,
+                    SettingFlag::SteamRunAsAdmin => d.platform_settings.steam.run_as_admin ^= true,
+                    SettingFlag::SteamForceShutdown => {
+                        let steam = &mut d.platform_settings.steam;
+                        steam.shutdown_mode = match steam.shutdown_mode {
+                            SteamShutdownMode::Force => SteamShutdownMode::Graceful,
+                            SteamShutdownMode::Graceful => SteamShutdownMode::Force,
+                        };
+                    }
                     SettingFlag::StreamerMode => {
                         d.streamer_mode = match d.streamer_mode {
                             StreamerMode::Auto => StreamerMode::Off,
@@ -1332,6 +1722,131 @@ impl AppModel {
                 );
                 panel.pending_removal = Some((id, name, ticket));
                 self.apply_effects(ctx, effects);
+            }
+            SettingsAction::ToggleLastLogin(id) => {
+                let shown = &mut panel.draft.account_display.show_last_login_per_platform;
+                let next = !shown.get(&id).copied().unwrap_or(false);
+                shown.insert(id, next);
+            }
+            SettingsAction::ToggleHealthCheck(id) => {
+                let checks = &mut panel.draft.health_check_per_platform;
+                let next = checks.get(&id) == Some(&false);
+                checks.insert(id, next);
+            }
+            SettingsAction::PlatformPath(id, path) => {
+                panel.platform_paths.insert(id, path);
+            }
+            SettingsAction::ChoosePlatformPath(id) => {
+                panel.pick_jobs.push(jobs.run(move |b| {
+                    let path = b.platform_select_path(&id);
+                    (id, path)
+                }));
+            }
+            SettingsAction::RobloxCookie(text) => panel.roblox_cookie = text,
+            SettingsAction::AddRobloxCookie => {
+                let trimmed = panel.roblox_cookie.trim().to_string();
+                if trimmed.is_empty() || panel.roblox_adding {
+                    return;
+                }
+                panel.roblox_adding = true;
+                panel.roblox_error.clear();
+                panel.roblox_job = Some(jobs.run(move |b| {
+                    // The paste is the second door into adding a Roblox
+                    // account: it reports its own funnel start. The failure
+                    // half is reported by the backend command.
+                    let _ = b.telemetry_track_account_add_started("roblox");
+                    b.roblox_add_account_by_cookie(&trimmed)
+                }));
+            }
+            SettingsAction::SteamLaunchOptions(text) => {
+                panel.draft.platform_settings.steam.launch_options = text;
+            }
+            SettingsAction::ApiKeyInput(text) => {
+                panel.api_key = text;
+                panel.api_key_touched = true;
+            }
+            SettingsAction::ClearApiKey => call(
+                panel,
+                Followup::ClearApiKey,
+                Box::new(|b| b.steam_set_api_key("").map(|()| Value::Null)),
+            ),
+            SettingsAction::OpenSteamApiKeyPage => call(
+                panel,
+                Followup::InfoToast("settings.openApiKeyFailed"),
+                Box::new(|b| b.steam_open_api_key_page().map(|()| Value::Null)),
+            ),
+            SettingsAction::OpenCs2Wiki => call(
+                panel,
+                Followup::ErrorToast("settings.openHelpFailed"),
+                Box::new(|b| b.open_url(CS2_WIKI_URL).map(|()| Value::Null)),
+            ),
+            SettingsAction::RefreshNow(kind) => {
+                let Some(b) = self.booted.as_ref() else {
+                    return;
+                };
+                if panel.refresh_loading(kind) {
+                    return;
+                }
+                // `refreshAvatarsNow` / `refreshBansNow` read the stored
+                // settings and the stores as they are now; the run works on
+                // copies and hands its writes back to the tick.
+                let registry = b.accounts.registry.clone();
+                let caches = std::sync::Arc::clone(b.accounts.loading.caches());
+                let stores = b.stores.clone();
+                let settings = b.stores.settings().clone();
+                let tab = b.nav.active_tab.clone();
+                let clock = b.accounts.clock.clone();
+                let job = jobs.run(move |backend| {
+                    let now_ms = move || clock.now_ms();
+                    run_refresh_job(
+                        kind, &registry, &tab, backend, &caches, stores, &settings, &now_ms,
+                    )
+                });
+                match kind {
+                    RefreshKind::Avatars => panel.avatar_refresh = Some(job),
+                    RefreshKind::Bans => panel.ban_refresh = Some(job),
+                }
+            }
+            SettingsAction::Cs2Toggle => {
+                if let Some(form) = panel.cs2.as_mut().filter(|f| f.loaded) {
+                    form.enabled = !form.enabled;
+                    form.save(jobs, None);
+                }
+            }
+            SettingsAction::Cs2Url(text) => {
+                if let Some(form) = panel.cs2.as_mut() {
+                    form.url = text;
+                }
+            }
+            SettingsAction::Cs2UrlBlur => {
+                if let Some(form) = panel.cs2.as_mut().filter(|f| f.loaded) {
+                    form.save(jobs, None);
+                }
+            }
+            SettingsAction::Cs2Test => {
+                if let Some(form) = panel.cs2.as_mut() {
+                    form.run_test(jobs);
+                }
+            }
+            SettingsAction::Cs2Token(text) => {
+                if let Some(form) = panel.cs2.as_mut() {
+                    form.token_input = text;
+                }
+            }
+            SettingsAction::Cs2TokenBlur => {
+                if let Some(form) = panel
+                    .cs2
+                    .as_mut()
+                    .filter(|f| f.loaded && !f.token_input.trim().is_empty())
+                {
+                    let token = form.token_input.clone();
+                    form.save(jobs, Some(token));
+                }
+            }
+            SettingsAction::Cs2ClearToken => {
+                if let Some(form) = panel.cs2.as_mut() {
+                    form.save(jobs, Some(String::new()));
+                }
             }
         }
     }

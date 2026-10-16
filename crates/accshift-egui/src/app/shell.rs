@@ -38,6 +38,7 @@ use crate::ui::backdrop_filter::Mark;
 use crate::ui::components::command_palette::{self, PaletteProps};
 use crate::ui::components::context_menu::{self, ContextMenuProps};
 use crate::ui::components::dialog::{self, DialogProps};
+use crate::ui::components::onboarding::{self, OnboardingProps};
 use crate::ui::components::secure_overlays::{self, AfkProps, PinProps, StreamerProps};
 use crate::ui::components::title_bar::{self, TitleBarProps};
 use crate::ui::components::toast::{self, ToastProps};
@@ -150,6 +151,8 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         return Vec::new();
     };
     let ctx = ui.ctx().clone();
+    // The title bar and the grid record the tour's targets as they draw.
+    onboarding::reset_targets(&ctx);
     let motion = booted.theme.motion;
     let local = now - booted.boot_at;
     if motion == Motion::Full && local < BOOT_CASCADE {
@@ -178,7 +181,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         vars: &vars,
         locale: booted.locale,
         runtime_os: os,
-        hide_actions: false,
+        hide_actions: app.onboarding.hide_actions(),
         personas_visible: booted.stores.settings().personas_enabled,
         personas_active: nav.show_personas,
         active_tab: &nav.active_tab,
@@ -251,9 +254,16 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         context_menu::reset(&ctx);
     }
     let palette = &mut app.palette;
-    // A dialog or the palette covers the panel: the wheel lands on its
-    // overlay, never on the content under it.
+    // `TelemetryOnboarding`, unless the secure screen suspended rendering.
+    let tour = app.onboarding.view.as_ref().filter(|_| {
+        !app.booted
+            .as_ref()
+            .is_some_and(|b| b.secure.render_suspended())
+    });
+    // A dialog, the palette or the onboarding's click shield covers the
+    // panel: the wheel lands on its overlay, never on the content under it.
     let modal = palette.is_some()
+        || tour.is_some()
         || (dialogs.input_dialog().is_some() && input_mount.is_some())
         || (dialogs.confirm_dialog().is_some() && confirm_mount.is_some())
         || settings_panel
@@ -292,6 +302,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         stores,
         platforms,
         locale,
+        detected_platforms,
         ..
     }) = app.booted.as_mut()
     else {
@@ -514,6 +525,46 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
             }
             .paint(ui.painter(), window);
         }
+    }
+    // `TelemetryOnboarding`: in `.app-frame`, after `.app-shell` (out of its
+    // obscured filter), before the screen overlays.
+    if let Some(view) = tour {
+        // `detectedPlatformDefs` (registry order) when detection found
+        // something, else `shell.compatiblePlatforms`.
+        let detected = !detected_platforms.is_empty();
+        let names: Vec<String> = platforms
+            .iter()
+            .filter(|p| {
+                if detected {
+                    detected_platforms.contains(&p.id)
+                } else {
+                    p.supports(os)
+                }
+            })
+            .map(|p| p.name.clone())
+            .collect();
+        let props = OnboardingProps {
+            vars: &vars,
+            locale: *locale,
+            viewport: window,
+            titlebar_h: bar_h,
+            version: accshift_app::lifecycle::updater::APP_VERSION,
+            platforms: &names,
+            detected,
+            view,
+            focus_visible,
+            dark: theme.theme.color_scheme == ColorScheme::Dark,
+            now,
+        };
+        ui.with_visual_transform(frame_transform, |ui| {
+            let mut frame_ui = ui.new_child(UiBuilder::new().max_rect(window));
+            frame_ui.multiply_opacity(frame.opacity);
+            actions.extend(
+                onboarding::onboarding(&mut frame_ui, &props)
+                    .into_iter()
+                    .map(Action::Onboarding),
+            );
+        });
     }
     if let Some(afk) = afk {
         secure_overlays::afk_overlay(

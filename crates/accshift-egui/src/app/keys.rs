@@ -260,8 +260,7 @@ impl AppModel {
                 b.secure.is_pin_locked() || b.streamer.active() || b.secure.render_suspended()
             }
             KeyScope::Palette => self.palette.is_some(),
-            // The telemetry onboarding is a later port.
-            KeyScope::Onboarding => false,
+            KeyScope::Onboarding => self.onboarding.tour.open(),
             KeyScope::Dialog => {
                 self.dialogs.input_dialog().is_some() || self.dialogs.confirm_dialog().is_some()
             }

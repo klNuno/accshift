@@ -19,13 +19,14 @@
 
 use egui::accesskit::Role;
 use egui::{
-    pos2, vec2, Color32, CornerRadius, FontId, Id, LayerId, Order, PointerButton, Rect, Response,
-    Sense, Stroke, StrokeKind, Ui, WidgetInfo, WidgetType,
+    pos2, vec2, Color32, FontId, Id, LayerId, Order, PointerButton, Rect, Response, Sense, Ui,
+    WidgetInfo, WidgetType,
 };
 
 use accshift_app::i18n::{translate, Locale};
 
 use super::icon;
+use super::onboarding;
 use super::platform_icons;
 use crate::app::platforms::{PlatformDef, RuntimeOs};
 use crate::app::vars::Vars;
@@ -173,6 +174,12 @@ pub fn title_bar(ui: &mut Ui, rect: Rect, props: &TitleBarProps) -> Vec<Action> 
             let r = Rect::from_min_size(pos2(x0 + index as f32 * 32.0, y), vec2(26.0, 26.0));
             let label = translate(props.locale, key);
             let active_mode = index == 3 && props.bulk_edit_active;
+            if index == 1 {
+                // `data-tour="add-account"`.
+                onboarding::record_target(ui.ctx(), |t| {
+                    t.add_account.get_or_insert(r);
+                });
+            }
             if action_button(ui, r, svg, &label, enabled, active_mode, props) {
                 actions.push(action);
             }
@@ -281,15 +288,11 @@ fn track_focus(ui: &Ui, response: &Response, enabled: bool) -> bool {
     response.has_focus() || focused(ui) == Some(response.id)
 }
 
-/// The UA `:focus-visible` ring of a button, keyboard focus only.
+/// The UA `:focus-visible` ring of a borderless button, keyboard focus
+/// only.
 fn focus_ring(ui: &Ui, rect: Rect, radius: f32, props: &TitleBarProps, focused: bool) {
     if focused && props.focus_visible {
-        ui.painter().rect_stroke(
-            rect,
-            CornerRadius::same(radius.round() as u8),
-            Stroke::new(2.0, props.vars.fg.to_color32()),
-            StrokeKind::Outside,
-        );
+        super::controls::paint_ua_focus_ring(ui.painter(), rect, radius, 0.0, props.vars.dark);
     }
 }
 
@@ -431,16 +434,18 @@ fn tabs(ui: &mut Ui, bar: Rect, content_h: f32, props: &TitleBarProps, actions: 
     let ppp = ctx.pixels_per_point();
     // `left: 50%; top: 50%; transform: translate(-50%, -50%)` in the bar's
     // padding box, then the composited layer's offset rounded.
-    let strip = snap::composited(
-        Rect::from_min_size(
-            pos2(
-                bar.left() + bar.width() / 2.0 - total / 2.0,
-                bar.top() + content_h / 2.0 - 14.0,
-            ),
-            vec2(total, 28.0),
+    let laid = Rect::from_min_size(
+        pos2(
+            bar.left() + bar.width() / 2.0 - total / 2.0,
+            bar.top() + content_h / 2.0 - 14.0,
         ),
-        ppp,
+        vec2(total, 28.0),
     );
+    // `data-tour="platforms"`: the layout box, unsnapped.
+    onboarding::record_target(&ctx, |t| {
+        t.platforms.get_or_insert(laid);
+    });
+    let strip = snap::composited(laid, ppp);
     let (x0, y) = (strip.left(), strip.top());
     let v = props.vars;
     for (index, tab) in list.iter().enumerate() {

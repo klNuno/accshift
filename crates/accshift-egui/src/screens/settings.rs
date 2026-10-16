@@ -17,10 +17,13 @@
 //!
 //! A tab is a list of cards, a card a list of [`Item`]s: heights come first
 //! (rows of the grid take their tallest card), painting second. The
-//! Platforms tab builds its cards in [`platforms_tab`]; the per-platform
-//! tabs get [`PlatformTabProps`] and an empty slot until their port lands.
+//! Platforms tab builds its cards in [`platforms_tab`], the per-platform
+//! tabs in [`platform_tab`] and [`steam_tab`]; a platform without a settings
+//! component (a user descriptor) shows an empty grid.
 
+mod platform_tab;
 mod platforms_tab;
+mod steam_tab;
 
 use accshift_app::i18n::{translate, translate_with, Locale, TranslationValue, LANGUAGE_OPTIONS};
 use accshift_app::settings::{AnimationsMode, StreamerMode};
@@ -116,28 +119,6 @@ impl View {
     }
 }
 
-/// What the Platforms tab and the per-platform tabs get from the panel.
-pub struct PlatformTabProps<'a> {
-    /// `platforms`, or `platform:<id>`.
-    pub tab_id: &'a str,
-    /// The platform of a `platform:<id>` tab.
-    pub platform: Option<&'a PlatformDef>,
-    /// Draft, API key draft, platform paths and errors, the data-refresh
-    /// number fields.
-    pub panel: &'a SettingsPanel,
-    pub vars: &'a Vars,
-    pub locale: Locale,
-    pub runtime_os: RuntimeOs,
-    pub dark: bool,
-    pub focus: FocusCtx,
-}
-
-/// The slot of the Platforms tab and the per-platform tabs: nothing is drawn
-/// until their port lands. Returns the content height and the actions.
-pub fn platform_tab(_ui: &mut Ui, _grid: Rect, _props: &PlatformTabProps) -> (f32, Vec<Action>) {
-    (0.0, Vec::new())
-}
-
 fn tr(locale: Locale, key: &str) -> String {
     translate(locale, key)
 }
@@ -180,6 +161,10 @@ enum Item {
     Stack(f32, Vec<Item>),
     /// One of the Platforms tab's own items.
     Platforms(platforms_tab::Item),
+    /// One of a per-platform tab's own items.
+    Platform(platform_tab::Item),
+    /// One of the Steam tab's own items.
+    Steam(steam_tab::Item),
 }
 
 /// The space above `item` when it follows another one in a card.
@@ -660,6 +645,8 @@ fn item_height(ctx: &Context, c: &Ctx, item: &Item, width: f32) -> f32 {
                 + gap * items.len().saturating_sub(1) as f32
         }
         Item::Platforms(item) => platforms_tab::height(ctx, c, item, width),
+        Item::Platform(item) => platform_tab::height(ctx, c, item, width),
+        Item::Steam(item) => steam_tab::height(ctx, c, item, width),
     }
 }
 
@@ -952,6 +939,9 @@ pub fn draw(
         ui.memory_mut(|m| m.request_focus(platforms_tab::search_id()));
         text_input::select_all(&ctx, platforms_tab::search_id());
     }
+    let platform = active
+        .strip_prefix("platform:")
+        .and_then(|id| view.platforms.iter().find(|p| p.id == id));
     let c = Ctx {
         panel,
         view,
@@ -959,12 +949,19 @@ pub fn draw(
         focus,
         scope: Id::new("settings"),
     };
-    let cards = match active.as_str() {
-        "general" => general_cards(c.panel, view, locale),
-        "platforms" => platforms_tab::cards(c.panel, view, locale),
-        "privacy" => privacy_cards(c.panel, locale),
+    let cards = match (active.as_str(), platform) {
+        ("general", _) => general_cards(c.panel, view, locale),
+        ("platforms", _) => platforms_tab::cards(c.panel, view, locale),
+        ("privacy", _) => privacy_cards(c.panel, locale),
+        (_, Some(p)) => platform_tab::cards(c.panel, view, locale, p),
         _ => Vec::new(),
     };
+    // A platform tab's cards carry its accent; Steam's own cards
+    // (`.platform-display-card`) lose the border colour to the panel.
+    let kind = platform.map_or(CardKind::Panel, |p| CardKind::Platform {
+        accent: p.accent,
+        tint_border: p.id != "steam",
+    });
     // Chromium lays out without the bar, then with it when that overflows.
     let origin = pos2(viewport.left(), viewport.top() - c.panel.scroll);
     let mut width = viewport.width() - 4.0;
@@ -975,33 +972,10 @@ pub fn draw(
     }
     let mut content_ui = ui.new_child(egui::UiBuilder::new().max_rect(viewport));
     content_ui.set_clip_rect(viewport.intersect(ui.clip_rect()));
-    let mut extra = Vec::new();
-    let mut content_h = grid.height;
-    if cards.is_empty() {
-        let platform = active
-            .strip_prefix("platform:")
-            .and_then(|id| view.platforms.iter().find(|p| p.id == id));
-        let props = PlatformTabProps {
-            tab_id: &active,
-            platform,
-            panel: c.panel,
-            vars: v,
-            locale,
-            runtime_os: view.runtime_os,
-            dark: view.dark,
-            focus,
-        };
-        let (h, actions) = platform_tab(
-            &mut content_ui,
-            Rect::from_min_size(origin, vec2(width, 0.0)),
-            &props,
-        );
-        content_h = h;
-        extra = actions;
-    }
+    let content_h = grid.height;
     for (k, (spec, rect)) in cards.iter().zip(&grid.rects).enumerate() {
-        card::paint_frame(&content_ui, *rect, v, CardKind::Panel);
-        let inner = card::content(*rect, CardKind::Panel, ppp);
+        card::paint_frame(&content_ui, *rect, v, kind);
+        let inner = card::content(*rect, ppp);
         let mut y = inner.top();
         for (i, item) in spec.items.iter().enumerate() {
             if i > 0 {
@@ -1033,9 +1007,7 @@ pub fn draw(
         out.push(SettingsAction::Close);
     }
     let _ = anim::motion(&ctx);
-    let mut actions: Vec<Action> = out.into_iter().map(Action::Settings).collect();
-    actions.extend(extra);
-    actions
+    out.into_iter().map(Action::Settings).collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1105,7 +1077,15 @@ fn nav_item(
             .paint(ui.painter(), snap::rect(dot, ppp));
         }
     }
-    crate::ui::components::controls::focus_ring(ui, snap::rect(rect, ppp), 8.0, v, focus, focused);
+    crate::ui::components::controls::focus_ring(
+        ui,
+        snap::rect(rect, ppp),
+        8.0,
+        0.0,
+        v,
+        focus,
+        focused,
+    );
     response.clicked()
         || (focused && ui.input(|i| i.key_pressed(Key::Enter) || i.key_pressed(Key::Space)))
 }
@@ -1179,7 +1159,15 @@ fn footer_button(
         fg,
         1.0,
     );
-    crate::ui::components::controls::focus_ring(ui, snap::rect(rect, ppp), 8.0, v, focus, focused);
+    crate::ui::components::controls::focus_ring(
+        ui,
+        snap::rect(rect, ppp),
+        8.0,
+        0.0,
+        v,
+        focus,
+        focused,
+    );
     response.clicked()
         || (focused && ui.input(|i| i.key_pressed(Key::Enter) || i.key_pressed(Key::Space)))
 }
@@ -1214,7 +1202,15 @@ fn close_button(ui: &mut Ui, rect: Rect, label: &str, v: &Vars, focus: FocusCtx)
         fg,
         1.0,
     );
-    crate::ui::components::controls::focus_ring(ui, snap::rect(rect, ppp), 6.0, v, focus, focused);
+    crate::ui::components::controls::focus_ring(
+        ui,
+        snap::rect(rect, ppp),
+        6.0,
+        0.0,
+        v,
+        focus,
+        focused,
+    );
     response.clicked()
         || (focused && ui.input(|i| i.key_pressed(Key::Enter) || i.key_pressed(Key::Space)))
 }
@@ -1256,6 +1252,14 @@ fn paint_item(ui: &mut Ui, r: Rect, id: Id, c: &Ctx, item: &Item) -> Vec<Setting
             hint,
             control,
         } => {
+            // `label.field` (and the PIN fields' `label[for]`): a click on
+            // the label focuses the control.
+            let target = id.with(match control {
+                Control::Select { .. } => "select",
+                Control::Slider { .. } => "slider",
+                Control::Input { .. } => "input",
+            });
+            crate::ui::components::controls::label_target(ui, r, id.with("label"), target);
             let label_rect = Rect::from_min_size(r.min, vec2(r.width(), 18.0));
             let style = field_label_style(v);
             text::paint(ui.painter(), label_rect, label, &style);
@@ -1451,6 +1455,8 @@ fn paint_item(ui: &mut Ui, r: Rect, id: Id, c: &Ctx, item: &Item) -> Vec<Setting
             }
         }
         Item::Platforms(item) => out.extend(platforms_tab::paint(ui, r, id, c, item)),
+        Item::Platform(item) => out.extend(platform_tab::paint(ui, r, id, c, item)),
+        Item::Steam(item) => out.extend(steam_tab::paint(ui, r, id, c, item)),
     }
     out
 }
@@ -1658,7 +1664,7 @@ fn theme_grid(ui: &mut Ui, r: Rect, id: Id, c: &Ctx) -> Vec<SettingsAction> {
             &name,
             &label_style,
         );
-        crate::ui::components::controls::focus_ring(ui, boxed, 8.0, v, c.focus, focused);
+        crate::ui::components::controls::focus_ring(ui, boxed, 8.0, 2.0, v, c.focus, focused);
         let keyed = focused && ui.input(|i| i.key_pressed(Key::Enter) || i.key_pressed(Key::Space));
         if response.clicked() || keyed {
             out.push(SettingsAction::Theme(theme.id.clone()));

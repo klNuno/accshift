@@ -4,6 +4,7 @@ use accshift_app::dispatch::dispatch;
 use accshift_app::jobs::{Jobs, Poll};
 use accshift_app::mock::{cs2_settings_from_fixture, MockBackend, AVATAR_DIR, NOW};
 use accshift_app::real::{RealBackend, PORTED};
+use accshift_app::types::DescriptorPreview;
 use accshift_app::{Backend, BackendError, COMMANDS};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -127,6 +128,11 @@ fn every_recorded_call_answers_as_recorded() {
                         let mut want = expected(&call["result"], &root);
                         if command == "cs2_bridge_get_settings" {
                             want = cs2_settings_from_fixture(want);
+                        }
+                        if command == "descriptor_preview_file" {
+                            // The typed descriptor writes out every field it
+                            // defaults; the recording only has the file's.
+                            want = typed::<DescriptorPreview>(want);
                         }
                         assert_eq!(answer, Ok(want), "{id}: {command} {args}");
                     }
@@ -418,4 +424,10 @@ fn the_real_backend_dispatches_every_command_and_refuses_the_unported() {
         assert_eq!(answer, Err(BackendError::not_ported(command)), "{command}");
     }
     assert!(dispatch(&real, "minimize_window", &json!({})).is_none());
+}
+
+/// `value` read as `T` and written back, as the typed backend answers it.
+fn typed<T: serde::de::DeserializeOwned + serde::Serialize>(value: Value) -> Value {
+    let parsed: T = serde_json::from_value(value).expect("the recording reads as the type");
+    serde_json::to_value(parsed).expect("the type writes back")
 }

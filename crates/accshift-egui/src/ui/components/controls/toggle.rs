@@ -229,7 +229,7 @@ pub fn toggle(ui: &mut Ui, rect: Rect, id: Id, props: &ToggleProps) -> bool {
     }
     .paint(&painter, snap::translated(knob, vec2(shift, 0.0), ppp));
 
-    focus_ring(ui, boxed, 8.0, v, props.focus, focused);
+    focus_ring(ui, boxed, 8.0, 1.0, v, props.focus, focused);
     let keyed =
         focused && ui.input(|i| i.key_pressed(egui::Key::Space) || i.key_pressed(egui::Key::Enter));
     active && (response.clicked() || keyed)

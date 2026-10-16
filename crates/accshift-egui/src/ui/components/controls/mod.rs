@@ -17,10 +17,12 @@ pub mod slider;
 pub mod text_input;
 pub mod toggle;
 
-use egui::{CornerRadius, Id, Rect, Response, Stroke, StrokeKind, Ui};
+use egui::{Id, Painter, Rect, Response, Sense, Ui};
 
 use crate::app::vars::Vars;
+use crate::theme::Rgba;
 use crate::ui::anim::{Timing, Transition};
+use crate::ui::{paint, snap};
 
 /// `transition: <property> 120ms ease-out`, the panel's one transition.
 pub const T120: Transition = Transition::new(0.12, Timing::EASE_OUT);
@@ -45,16 +47,64 @@ pub fn take_focus(ui: &Ui, response: &Response) -> bool {
     response.has_focus()
 }
 
-/// The UA `:focus-visible` ring of a button: 2 px outside the border box
-/// in `--fg`, following the radius (the title bar draws the same ring).
-pub fn focus_ring(ui: &Ui, rect: Rect, radius: f32, vars: &Vars, focus: FocusCtx, focused: bool) {
+/// A `<label>` wrapping a control (`label.field`): a click on it, outside
+/// the control and the widgets painted after it, focuses the control
+/// (label activation). Call it before painting what it wraps. The label is
+/// no Tab stop.
+pub fn label_target(ui: &Ui, rect: Rect, id: Id, target: Id) {
+    if ui.interact(rect, id, Sense::CLICK).clicked() {
+        ui.memory_mut(|m| m.request_focus(target));
+    }
+}
+
+/// The UA `:focus-visible` ring, keyboard focus only: see
+/// [`paint_ua_focus_ring`]. `border` is the control's `border-width`.
+pub fn focus_ring(
+    ui: &Ui,
+    rect: Rect,
+    radius: f32,
+    border: f32,
+    vars: &Vars,
+    focus: FocusCtx,
+    focused: bool,
+) {
     if focused && focus.visible {
-        ui.painter().rect_stroke(
-            rect,
-            CornerRadius::same(radius.round().clamp(0.0, 255.0) as u8),
-            Stroke::new(2.0, vars.fg.to_color32()),
-            StrokeKind::Outside,
-        );
+        paint_ua_focus_ring(ui.painter(), rect, radius, border, vars.dark);
+    }
+}
+
+/// `-webkit-focus-ring-color` off macOS.
+const UA_FOCUS_INNER: Rgba = Rgba::hex(0x101010, 1.0);
+
+/// Chromium's `outline: auto` (`OutlinePainter::PaintFocusRing`) around the
+/// snapped border box `rect`. `outline-width: medium` (3 px, floored to
+/// device pixels like a border) makes two strokes 2/3 of it wide, all in
+/// device pixels and never snapped. The inner one, `#101010`, is centred
+/// 1 px inside the border box when its border is at least 1 px; the outer
+/// one is centred ceil(1/3 of it) further out and painted first, white, or
+/// `#101010` under `color-scheme: dark`. Both keep the border radius on
+/// their centre line: only the rect grows. Measured on WebView2: at 1x a
+/// 1 px white line outside a 2 px dark one over the border; at 1.5x 2.33
+/// dark over 2 white.
+pub fn paint_ua_focus_ring(painter: &Painter, rect: Rect, radius: f32, border: f32, dark: bool) {
+    let ppp = painter.ctx().pixels_per_point();
+    let d = snap::device_rect(rect, ppp);
+    let stroke = snap::border_device(3.0, ppp);
+    let width = stroke / 3.0 * 2.0;
+    let offset = if snap::border_device(border, ppp) >= 1.0 {
+        -1.0
+    } else {
+        0.0
+    };
+    let outer = if dark { UA_FOCUS_INNER } else { WHITE };
+    let r = radius * ppp;
+    for (centre, color) in [
+        (offset + (stroke / 3.0).ceil(), outer),
+        (offset, UA_FOCUS_INNER),
+    ] {
+        let edge = centre + width / 2.0;
+        let corner = if r > 0.0 { r + width / 2.0 } else { 0.0 };
+        paint::paint_device_band(painter, d.expand(edge), corner, width, color);
     }
 }
 
