@@ -23,16 +23,22 @@ pub const CLASSES: usize = 8;
 /// One table per luminance class, indexed by raw coverage (0 to 255).
 pub type CoverageTables = [[u8; 256]; CLASSES];
 
-/// Skia's class of a text colour: `SkComputeLuminance` on the colour without
-/// its alpha (premultiplied vertex colours are divided back), top three bits.
+/// Skia's class of a text colour, on the colour without its alpha
+/// (premultiplied vertex colours are divided back): the rec first keeps 3
+/// bits per channel (`SkMaskGamma::CanonicalColor`), then an A8 mask folds
+/// that colour to `SkComputeLuminance`, whose top three bits pick the table.
+/// Amber `#f59e0b` is class 4 that way, 5 from its raw channels.
 #[inline]
 pub fn class_of(color: Color32) -> usize {
     let a = color.a() as u32;
     if a == 0 {
         return 0;
     }
-    let un = |c: u8| ((c as u32 * 255 + a / 2) / a).min(255);
-    let lum = (un(color.r()) * 54 + un(color.g()) * 183 + un(color.b()) * 19) >> 8;
+    let canon = |c: u8| {
+        let c3 = ((c as u32 * 255 + a / 2) / a).min(255) >> 5;
+        (c3 << 5) | (c3 << 2) | (c3 >> 1)
+    };
+    let lum = (canon(color.r()) * 54 + canon(color.g()) * 183 + canon(color.b()) * 19) >> 8;
     (lum >> 5) as usize
 }
 
@@ -162,8 +168,10 @@ mod tests {
     fn classes_follow_skia_luminance() {
         assert_eq!(class_of(Color32::WHITE), 7);
         assert_eq!(class_of(Color32::BLACK), 0);
-        // #aeaeba: luminance 175, class 5.
+        // #aeaeba: canonical #b6b6b6, luminance 182, class 5.
         assert_eq!(class_of(Color32::from_rgb(0xae, 0xae, 0xba)), 5);
+        // #f59e0b: canonical #ff9200, luminance 158, class 4 (raw 165, 5).
+        assert_eq!(class_of(Color32::from_rgb(0xf5, 0x9e, 0x0b)), 4);
         // Alpha does not change the class.
         assert_eq!(
             class_of(Color32::from_rgba_unmultiplied(0xae, 0xae, 0xba, 100)),
