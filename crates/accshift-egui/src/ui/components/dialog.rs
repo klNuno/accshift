@@ -25,7 +25,9 @@
 //! [`descriptor_preview`] builds the descriptor preview on the same base.
 
 mod descriptor_preview;
+mod theme_editor;
 pub use descriptor_preview::{descriptor_preview_dialog, PreviewState, PREVIEW_ID};
+pub use theme_editor::{theme_editor_dialog, THEME_EDITOR_ID};
 
 use egui::emath::TSTransform;
 use egui::epaint::RectShape;

@@ -62,6 +62,9 @@ const PAD: f32 = 4.0;
 const RADIUS: f32 = 6.0;
 /// `EDGE_GAP`, and the 4 px between the menu and its submenu.
 const EDGE_GAP: f32 = 4.0;
+/// How far in from the box's top and left edges the pointer counts as over
+/// it: one layout unit.
+const EDGE: f32 = 1.0 / 64.0;
 const SUB_GAP: f32 = 4.0;
 /// `.menu-item { padding: 6px 10px; border-radius: 4px; font-size: 12px }`.
 const ITEM_PAD_X: f32 = 10.0;
@@ -1004,9 +1007,15 @@ pub fn context_menu(ui: &mut Ui, props: &ContextMenuProps) -> Vec<MenuEvent> {
         size,
     );
 
-    // The box itself takes the pointer: nothing under it reacts.
+    // The box itself takes the pointer: nothing under it reacts. Its top
+    // and left pixel edges excepted: WebView2 leaves the element under a
+    // menu that opens at the pointer hovered, the pointer on the menu's
+    // pixel-snapped corner at 100 and 150 %, while a clamped menu that
+    // lands over the pointer takes it at once (all measured).
     let ppp = ctx.pixels_per_point();
-    ui.interact(snap::rect(menu_rect, ppp), menu_id, Sense::click());
+    let hit = snap::rect(menu_rect, ppp);
+    let hit = Rect::from_min_max(hit.min + vec2(EDGE, EDGE), hit.max);
+    ui.interact(hit, menu_id, Sense::click());
     ctx.accesskit_node_builder(menu_id, |node| node.set_role(Role::Menu));
     paint_box(ui, menu_rect, v, menu_layout.border);
     let focus_now = focus_to.or(focused_id);

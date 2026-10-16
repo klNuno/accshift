@@ -277,7 +277,10 @@ async function runScene(page, scene, outDir, manifest) {
         ? {
             key: name,
             code: /[a-z]/i.test(name) ? `Key${upper}` : /\d/.test(name) ? `Digit${name}` : "",
-            windowsVirtualKeyCode: upper.charCodeAt(0),
+            // Letters and digits are their own virtual key; a punctuation
+            // character's code point is some other key ("." is 46,
+            // VK_DELETE, which deletes instead of typing).
+            windowsVirtualKeyCode: /[a-z\d]/i.test(name) ? upper.charCodeAt(0) : 0,
             text: name,
           }
         : { key: name, code: name };
@@ -389,6 +392,7 @@ async function dumpDom(page, scene, outDir, step) {
       focused: document.activeElement === el,
       focusVisible: el.matches(":focus-visible"),
       hover: el.matches(":hover"),
+      src: el.getAttribute("src")?.slice(0, 160) ?? undefined,
       rect: [r.x, r.y, r.width, r.height],
       css: Object.fromEntries(${JSON.stringify(DOM_PROPS)}.map((p) => [p, cs[p]])),
     };

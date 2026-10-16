@@ -99,6 +99,91 @@ pub struct EguiSoftwareRender {
     pub stats: RasterStats,
 }
 
+/// A backdrop layer: its `Begin` job, its `End` job (or the frame's end)
+/// and the `Begin` itself.
+#[derive(Clone, Copy, Debug)]
+struct Layer {
+    begin: usize,
+    end: usize,
+    op: BackdropOp,
+}
+
+/// The frame's top-level layers in paint order. A `Begin` inside a layer
+/// opens no layer of its own: it and its `End` are skipped.
+fn backdrop_layers(ops: &[(usize, BackdropOp)], len: usize) -> Vec<Layer> {
+    let mut layers = Vec::new();
+    let mut open: Option<(usize, BackdropOp)> = None;
+    let mut depth = 0usize;
+    for &(i, op) in ops {
+        match op {
+            BackdropOp::Begin { .. } if open.is_none() => open = Some((i, op)),
+            BackdropOp::Begin { .. } => depth += 1,
+            BackdropOp::End if depth > 0 => depth -= 1,
+            BackdropOp::End => {
+                if let Some((begin, op)) = open.take() {
+                    layers.push(Layer { begin, end: i, op });
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some((begin, op)) = open {
+        layers.push(Layer {
+            begin,
+            end: len,
+            op,
+        });
+    }
+    layers
+}
+
+/// The device-pixel columns and rows a layer can touch: its clip box and
+/// every mesh it draws (a shadow may spill out of the box), or the whole
+/// canvas without a clip.
+fn layer_span(
+    clip: Option<backdrop::BackdropClip>,
+    jobs: &[egui::ClippedPrimitive],
+    pixels_per_point: f32,
+    width: usize,
+    height: usize,
+) -> [Range<usize>; 2] {
+    let Some(clip) = clip else {
+        return [0..width, 0..height];
+    };
+    let mut min = clip.min;
+    let mut max = clip.max;
+    for job in jobs {
+        let egui::epaint::Primitive::Mesh(mesh) = &job.primitive else {
+            continue;
+        };
+        let mut lo = [f32::MAX; 2];
+        let mut hi = [f32::MIN; 2];
+        for v in &mesh.vertices {
+            lo = [lo[0].min(v.pos.x), lo[1].min(v.pos.y)];
+            hi = [hi[0].max(v.pos.x), hi[1].max(v.pos.y)];
+        }
+        let c = job.clip_rect;
+        lo = [lo[0].max(c.min.x), lo[1].max(c.min.y)];
+        hi = [hi[0].min(c.max.x), hi[1].min(c.max.y)];
+        if lo[0] < hi[0] && lo[1] < hi[1] {
+            min = [
+                min[0].min(lo[0] * pixels_per_point),
+                min[1].min(lo[1] * pixels_per_point),
+            ];
+            max = [
+                max[0].max(hi[0] * pixels_per_point),
+                max[1].max(hi[1] * pixels_per_point),
+            ];
+        }
+    }
+    let span = |lo: f32, hi: f32, n: usize| {
+        let a = (lo.floor().max(0.0) as usize).min(n);
+        let b = (hi.ceil().max(0.0) as usize).min(n);
+        a..b.max(a)
+    };
+    [span(min[0], max[0], width), span(min[1], max[1], height)]
+}
+
 /// See [`EguiSoftwareRender::with_backdrop`].
 pub type BackdropClassifier =
     alloc::boxed::Box<dyn Fn(&egui::PaintCallback) -> Option<BackdropOp> + Send + Sync>;
@@ -308,11 +393,15 @@ impl EguiSoftwareRender {
         let filter = ops
             .iter()
             .find_map(|&(i, op)| matches!(op, BackdropOp::Filter { .. }).then_some((i, op)));
-        let begin = ops
-            .iter()
-            .find_map(|&(i, op)| matches!(op, BackdropOp::Begin { .. }).then_some((i, op)))
-            .filter(|_| filter.is_none());
-        let base_end = filter.or(begin).map_or(paint_jobs.len(), |(i, _)| i);
+        let layers = if filter.is_none() {
+            backdrop_layers(&ops, paint_jobs.len())
+        } else {
+            Vec::new()
+        };
+        let base_end = filter
+            .map(|(i, _)| i)
+            .or(layers.first().map(|l| l.begin))
+            .unwrap_or(paint_jobs.len());
         let paint_jobs_all = paint_jobs;
         let paint_jobs = &paint_jobs_all[..base_end];
 
@@ -362,31 +451,16 @@ impl EguiSoftwareRender {
                 reinit_canvas,
             );
             self.backdrop.active = true;
-        } else if let Some((
-            k,
-            BackdropOp::Begin {
-                sigma,
-                opacity,
-                saturate,
-                clip,
-            },
-        )) = begin
-        {
-            let end = ops
-                .iter()
-                .find_map(|&(i, op)| (i > k && op == BackdropOp::End).then_some(i))
-                .unwrap_or(paint_jobs_all.len());
+        } else if let Some(first) = layers.first() {
             let root = ops
                 .iter()
-                .filter(|&&(i, op)| i < k && op == BackdropOp::Root)
+                .filter(|&&(i, op)| i < first.begin && op == BackdropOp::Root)
                 .map(|&(i, _)| i)
                 .next_back();
             self.compose_backdrop(
                 paint_jobs_all,
-                [root.map_or(0, |r| r + 1), k, end],
+                &layers,
                 root,
-                [sigma, opacity, saturate],
-                clip,
                 pixels_per_point,
                 reinit_canvas,
             );
@@ -398,59 +472,135 @@ impl EguiSoftwareRender {
         self.free_textures(textures_delta);
     }
 
-    /// The layer of `paint_jobs[k]` (a `Begin`): the backdrop root's pixels
-    /// (cached primitives after `root`, or the whole canvas) blurred, the
-    /// layer's own jobs drawn into it, landed on a copy of the canvas, then
-    /// the jobs after `end` drawn on top.
-    #[allow(clippy::too_many_arguments)]
+    /// The layers of the frame, in paint order. Each starts as its backdrop
+    /// (the backdrop root's pixels so far: cached primitives after `root`,
+    /// or the whole canvas) blurred, takes its own jobs, and lands on the
+    /// frame; the jobs up to the next layer draw on top. The first layer's
+    /// blur is kept for the next frame; a later one's backdrop holds the
+    /// layers before it, so it is blurred again each frame.
     fn compose_backdrop(
         &mut self,
         paint_jobs: &[egui::ClippedPrimitive],
-        [_, k, end]: [usize; 3],
+        layers: &[Layer],
         root: Option<usize>,
-        [sigma, opacity, saturate]: [f32; 3],
-        clip: Option<backdrop::BackdropClip>,
         pixels_per_point: f32,
         canvas_changed: bool,
     ) {
         let (width, height) = (self.canvas.width, self.canvas.height);
-        let key = (
-            width,
-            height,
-            backdrop::begin_key(sigma, saturate, clip),
-            root,
-        );
-        if canvas_changed || self.backdrop.key != Some(key) {
-            let source = match root {
-                Some(r) => self.composite_after(r),
-                None => self.canvas.data.clone(),
-            };
-            self.backdrop.blurred = match clip {
-                Some(clip) => {
-                    backdrop::element_backdrop(&source, width, height, clip, sigma, saturate)
-                }
-                None => backdrop::blur(&source, width, height, sigma),
-            };
-            self.backdrop.key = Some(key);
-        }
-        let mut layer = self.backdrop.blurred.clone();
-        let layer_jobs = paint_jobs.get(k + 1..end).unwrap_or(&[]);
-        self.draw_jobs_direct(
-            &mut BufferMutRef::new(&mut layer, width, height),
-            layer_jobs,
-            pixels_per_point,
-        );
         let mut out = core::mem::take(&mut self.backdrop.out);
         out.clear();
         out.extend_from_slice(&self.canvas.data);
-        backdrop::land(&mut out, &layer, opacity);
-        let after = paint_jobs.get(end + 1..).unwrap_or(&[]);
+        // A later layer's backdrop: the root's pixels with what came since
+        // landed on them. The frame itself serves when there is no root.
+        let mut under = match root {
+            Some(r) if layers.len() > 1 => Some(self.composite_after(r)),
+            _ => None,
+        };
+        for (n, layer) in layers.iter().enumerate() {
+            let BackdropOp::Begin {
+                sigma,
+                opacity,
+                saturate,
+                clip,
+            } = layer.op
+            else {
+                continue;
+            };
+            let mut pixels = if n == 0 {
+                let key = (
+                    width,
+                    height,
+                    backdrop::begin_key(sigma, saturate, clip),
+                    root,
+                );
+                if canvas_changed || self.backdrop.key != Some(key) {
+                    let source: Cow<[[u8; 4]]> = match root {
+                        Some(r) => Cow::Owned(self.composite_after(r)),
+                        None => Cow::Borrowed(&self.canvas.data),
+                    };
+                    self.backdrop.blurred =
+                        backdrop::backdrop_of(&source, width, height, clip, sigma, saturate);
+                    self.backdrop.key = Some(key);
+                }
+                self.backdrop.blurred.clone()
+            } else {
+                let source = under.as_deref().unwrap_or(&out[..]);
+                backdrop::backdrop_of(source, width, height, clip, sigma, saturate)
+            };
+            let jobs = paint_jobs.get(layer.begin + 1..layer.end).unwrap_or(&[]);
+            self.draw_jobs_layered(&mut pixels, width, height, jobs, pixels_per_point);
+            let span = layer_span(clip, jobs, pixels_per_point, width, height);
+            backdrop::land_span(&mut out, &pixels, opacity, width, span.clone());
+            let next = layers.get(n + 1).map_or(paint_jobs.len(), |l| l.begin);
+            let after = paint_jobs.get(layer.end + 1..next).unwrap_or(&[]);
+            if let Some(under) = under.as_mut().filter(|_| n + 1 < layers.len()) {
+                backdrop::land_span(under, &pixels, opacity, width, span);
+                self.draw_jobs_direct(
+                    &mut BufferMutRef::new(under, width, height),
+                    after,
+                    pixels_per_point,
+                );
+            }
+            self.draw_jobs_direct(
+                &mut BufferMutRef::new(&mut out, width, height),
+                after,
+                pixels_per_point,
+            );
+        }
+        self.backdrop.out = out;
+    }
+
+    /// Draws `jobs` on `buffer`, a layer nested in them as its own: it
+    /// starts as its backdrop in `buffer`, takes its jobs (layers nested in
+    /// it included) and lands at its opacity, like the frame's top-level
+    /// layers (a faded button in a glass dialog).
+    fn draw_jobs_layered(
+        &mut self,
+        buffer: &mut [[u8; 4]],
+        width: usize,
+        height: usize,
+        jobs: &[egui::ClippedPrimitive],
+        pixels_per_point: f32,
+    ) {
+        let ops: Vec<(usize, BackdropOp)> = match &self.backdrop_classifier {
+            Some(classify) => jobs
+                .iter()
+                .enumerate()
+                .filter_map(|(i, job)| match &job.primitive {
+                    egui::epaint::Primitive::Callback(cb) => classify(cb).map(|op| (i, op)),
+                    egui::epaint::Primitive::Mesh(_) => None,
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        let mut at = 0;
+        for layer in backdrop_layers(&ops, jobs.len()) {
+            self.draw_jobs_direct(
+                &mut BufferMutRef::new(buffer, width, height),
+                &jobs[at..layer.begin],
+                pixels_per_point,
+            );
+            at = (layer.end + 1).min(jobs.len());
+            let BackdropOp::Begin {
+                sigma,
+                opacity,
+                saturate,
+                clip,
+            } = layer.op
+            else {
+                continue;
+            };
+            let mut pixels = backdrop::backdrop_of(buffer, width, height, clip, sigma, saturate);
+            let inner = &jobs[layer.begin + 1..layer.end.min(jobs.len())];
+            self.draw_jobs_layered(&mut pixels, width, height, inner, pixels_per_point);
+            let span = layer_span(clip, inner, pixels_per_point, width, height);
+            backdrop::land_span(buffer, &pixels, opacity, width, span);
+        }
         self.draw_jobs_direct(
-            &mut BufferMutRef::new(&mut out, width, height),
-            after,
+            &mut BufferMutRef::new(buffer, width, height),
+            &jobs[at..],
             pixels_per_point,
         );
-        self.backdrop.out = out;
     }
 
     /// The filter of `paint_jobs[f]` on the element from `root` on, landed
@@ -1526,5 +1676,66 @@ impl<'a> BufferRef<'a> {
     #[inline(always)]
     pub fn get_ref(&self, x: usize, y: usize) -> &[u8; 4] {
         &self.data[x + y * self.width]
+    }
+}
+
+#[cfg(test)]
+mod layer_tests {
+    use super::*;
+
+    fn begin(opacity: f32) -> BackdropOp {
+        BackdropOp::Begin {
+            sigma: 0.0,
+            opacity,
+            saturate: 1.0,
+            clip: None,
+        }
+    }
+
+    #[test]
+    fn layers_pair_each_begin_with_its_end() {
+        let ops = [
+            (0, BackdropOp::Root),
+            (2, begin(0.6)),
+            (4, BackdropOp::End),
+            (6, begin(1.0)),
+            (9, BackdropOp::End),
+        ];
+        let layers = backdrop_layers(&ops, 12);
+        let spans: Vec<_> = layers.iter().map(|l| (l.begin, l.end)).collect();
+        assert_eq!(spans, [(2, 4), (6, 9)]);
+    }
+
+    #[test]
+    fn a_nested_begin_opens_no_layer_and_an_open_one_runs_to_the_end() {
+        let ops = [
+            (1, begin(1.0)),
+            (2, begin(0.5)),
+            (3, BackdropOp::End),
+            (5, BackdropOp::End),
+            (7, begin(1.0)),
+        ];
+        let layers = backdrop_layers(&ops, 10);
+        let spans: Vec<_> = layers.iter().map(|l| (l.begin, l.end)).collect();
+        assert_eq!(spans, [(1, 5), (7, 10)]);
+    }
+
+    #[test]
+    fn a_clipped_layer_spans_its_box_and_what_spills_out() {
+        let clip = backdrop::BackdropClip {
+            min: [10.2, 4.0],
+            max: [20.0, 8.5],
+            radius: 2.0,
+        };
+        assert_eq!(layer_span(Some(clip), &[], 2.0, 100, 50), [10..20, 4..9]);
+        let mut mesh = Mesh::default();
+        mesh.colored_vertex(egui::pos2(3.0, 1.0), Color32::WHITE);
+        mesh.colored_vertex(egui::pos2(12.0, 30.0), Color32::WHITE);
+        let job = egui::ClippedPrimitive {
+            clip_rect: egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(40.0, 20.0)),
+            primitive: egui::epaint::Primitive::Mesh(mesh),
+        };
+        assert_eq!(layer_span(Some(clip), &[job], 2.0, 100, 50), [6..24, 2..40]);
+        assert_eq!(layer_span(None, &[], 2.0, 100, 50), [0..100, 0..50]);
     }
 }

@@ -48,6 +48,7 @@ use egui::Context;
 use serde_json::Value;
 
 use super::platforms::{self, PlatformDef, RuntimeOs};
+use super::theme_editor::{ThemeEditor, ThemeEditorEvent};
 use super::{AppModel, Booted};
 
 /// `PIN_CODE_LENGTH`.
@@ -175,6 +176,10 @@ pub enum SettingsAction {
     TogglePin,
     ReplayOnboarding,
     ExportTheme,
+    /// "Customize" or "Edit": the theme editor on the selected theme.
+    CustomizeTheme,
+    /// The theme editor's buttons, Escape or a click on its overlay.
+    ThemeEditor(ThemeEditorEvent),
     ToggleTelemetryA,
     ToggleTelemetryB,
     RetryTelemetryDeletion,
@@ -423,6 +428,10 @@ pub struct SettingsPanel {
     preview_path: String,
     /// The descriptor the removal confirm is about, and its ticket.
     pending_removal: Option<(String, String, ConfirmTicket)>,
+    /// `editing`: the theme editor, open over the General tab.
+    pub theme_editor: Option<ThemeEditor>,
+    /// Bumped per open of the theme editor.
+    theme_editor_mount: u64,
     /// `.settings-content`'s `scrollTop`.
     pub scroll: f32,
     /// Text for the clipboard once the frame has the context.
@@ -571,6 +580,8 @@ impl SettingsPanel {
             descriptor_job: None,
             descriptor_preview: None,
             preview_mount: 0,
+            theme_editor: None,
+            theme_editor_mount: 0,
             preview_path: String::new(),
             pending_removal: None,
             scroll: 0.0,
@@ -932,7 +943,7 @@ pub fn normalize(s: &mut AppSettings, platforms: &[PlatformDef], os: RuntimeOs) 
     }
 }
 
-fn toast(toasts: &mut ToastQueue, key: &str, kind: ToastType, now: Instant) {
+pub(super) fn toast(toasts: &mut ToastQueue, key: &str, kind: ToastType, now: Instant) {
     toasts.add(Text::key(key), AddToastOptions::kind(kind), now);
 }
 
@@ -1625,6 +1636,35 @@ impl AppModel {
                     );
                 }
             }
+            SettingsAction::CustomizeTheme => {
+                if let Some(b) = self.booted.as_ref() {
+                    panel.theme_editor_mount += 1;
+                    panel.theme_editor = Some(ThemeEditor::start_from(
+                        &b.registry,
+                        &panel.draft.theme_id,
+                        b.locale,
+                        panel.draft.background_opacity as f64,
+                        panel.theme_editor_mount,
+                    ));
+                }
+            }
+            SettingsAction::ThemeEditor(event) => match event {
+                // `onCancel`: the tick puts the settings' theme back.
+                ThemeEditorEvent::Cancel => panel.theme_editor = None,
+                ThemeEditorEvent::Save => {
+                    if let (Some(editor), Some(b)) =
+                        (panel.theme_editor.as_mut(), self.booted.as_ref())
+                    {
+                        editor.save(&b.registry, jobs);
+                    }
+                }
+                // `navigator.clipboard.writeText`, no toast.
+                ThemeEditorEvent::Export => {
+                    if let Some(editor) = panel.theme_editor.as_ref() {
+                        panel.clipboard = Some(editor.export());
+                    }
+                }
+            },
             SettingsAction::ToggleTelemetryA => {
                 if let Some(t) = panel.telemetry.as_mut() {
                     let next = !t.mode_a_enabled;

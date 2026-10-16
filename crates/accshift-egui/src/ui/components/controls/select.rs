@@ -58,42 +58,53 @@ pub fn is_open(ui: &Ui, id: Id) -> bool {
 /// The two gradient squares, filled per device pixel like Chromium's hard
 /// stops: the first keeps its top-right half (`45deg, transparent 50%,
 /// C 50%`), the second its top-left half (`135deg, C 50%, transparent 50%`).
+/// A pixel centre on the diagonal takes the second stop.
 fn paint_arrow(ui: &Ui, rect: Rect, color: egui::Color32) {
     let ppp = ui.ctx().pixels_per_point();
     let side = 5.0 * ppp;
-    // Chromium places the squares in the padding box of the snapped border
-    // box, the 1 px border floored to whole device pixels (1.5 is 1 at
-    // 150 %): from the raw box the first square lands a pixel left and a
-    // seam opens between the halves.
-    let area = snap::device_rect(rect, ppp).shrink(snap::border_device(1.0, ppp));
-    let y = snap::round_device(area.top() + (area.height() - side) * 0.5 - ppp);
+    // Chromium resolves both positions in the unsnapped padding box, the
+    // 1 px border floored to whole device pixels (1.5 is 1 at 150 %), and
+    // rounds each square's origin on its own: at 150 % the squares are 7.5
+    // px wide, so they land 7 or 8 px apart, and the first one's last
+    // column is half covered, a seam when the second starts a pixel later.
+    let border = snap::border_device(1.0, ppp);
+    let area = Rect::from_min_max(rect.min * ppp, rect.max * ppp).shrink(border);
+    let free = area.size() - vec2(side, side);
+    let y = snap::round_device(area.top() + free.y * 0.5 - ppp);
     let squares = [
-        (area.right() - side - 18.0 * ppp, true),
-        (area.right() - side - 13.0 * ppp, false),
+        (area.left() + free.x - 18.0 * ppp, true),
+        (area.left() + free.x - 13.0 * ppp, false),
     ];
     // One untessellated quad per run: epaint strokes a rect one device pixel
     // wide as a line and moves it a pixel right.
     let mut mesh = egui::Mesh::default();
+    let n = side.ceil();
+    let mut run = |x0: f32, x1: f32, row: f32, color: egui::Color32| {
+        mesh.add_colored_rect(
+            Rect::from_min_max(pos2(x0 / ppp, row / ppp), pos2(x1 / ppp, (row + 1.0) / ppp)),
+            color,
+        );
+    };
     for (x, first) in squares {
         let x = snap::round_device(x);
-        let n = side.ceil() as i32;
-        for j in 0..n {
-            let cy = j as f32 + 0.5;
-            if cy >= side {
-                continue;
+        for j in 0..n as i32 {
+            let (row, cy) = (y + j as f32, j as f32 + 0.5);
+            if first {
+                // Pixels `j..n`, the last one cut by the tile's right edge.
+                let edge = side - (n - 1.0);
+                let full_end = if edge < 1.0 { n - 1.0 } else { n };
+                if (j as f32) < full_end {
+                    run(x + j as f32, x + full_end, row, color);
+                }
+                if edge < 1.0 {
+                    run(x + n - 1.0, x + n, row, color.gamma_multiply(edge));
+                }
+            } else {
+                let i1 = (side - cy - 0.5).ceil();
+                if i1 > 0.0 {
+                    run(x, x + i1, row, color);
+                }
             }
-            // The covered run of row `j`, in device px.
-            let (from, to) = if first { (cy, side) } else { (0.0, side - cy) };
-            let i0 = (from - 0.5).ceil().max(0.0);
-            let i1 = (to - 0.5).ceil();
-            if i1 <= i0 {
-                continue;
-            }
-            let r = Rect::from_min_max(
-                pos2((x + i0) / ppp, (y + j as f32) / ppp),
-                pos2((x + i1) / ppp, (y + j as f32 + 1.0) / ppp),
-            );
-            mesh.add_colored_rect(r, color);
         }
     }
     ui.painter().add(egui::Shape::mesh(mesh));

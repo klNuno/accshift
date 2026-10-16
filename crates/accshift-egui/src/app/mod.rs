@@ -26,10 +26,13 @@ pub mod clock;
 pub(crate) mod keys;
 pub mod onboarding;
 mod palette;
+pub mod persona_wizard;
+pub mod personas;
 pub mod platforms;
 mod secure;
 pub mod settings_panel;
 mod shell;
+pub mod theme_editor;
 pub mod vars;
 
 use std::path::PathBuf;
@@ -142,6 +145,8 @@ pub enum Action {
     ConfirmDialog(u64, DialogEvent),
     /// The first-run onboarding.
     Onboarding(onboarding::OnboardingEvent),
+    /// The personas panel.
+    Personas(personas::PersonasEvent),
 }
 
 /// What a right click opened the menu on.
@@ -273,6 +278,9 @@ pub struct Booted {
     pub platforms: Vec<PlatformDef>,
     pub registry: ThemeRegistry,
     pub theme: ThemeState,
+    /// The theme editor's draft while it paints the app
+    /// (`previewSnapshot`): settings changes do not re-apply over it.
+    pub theme_preview: Option<accshift_theme::ThemeDocument>,
     pub locale: Locale,
     pub nav: Navigation,
     /// `ctx.input().time` when `boot-ready` was set.
@@ -294,6 +302,8 @@ pub struct Booted {
     /// `getDetectedPlatforms`: what first-run detection found and can use,
     /// empty when it did not run or found nothing.
     pub detected_platforms: Vec<String>,
+    /// `createPersonaController`.
+    pub personas: accshift_app::actions::personas::PersonaController,
     /// `handleAppMounted` ran.
     secure_mounted: bool,
     /// The settings panel was open last frame (`handleSettingsClosed`).
@@ -407,6 +417,8 @@ pub struct AppModel {
     card_focus_cards: Option<u64>,
     /// `createOnboardingTour` and the mounted `TelemetryOnboarding`.
     onboarding: onboarding::Onboarding,
+    /// The persona switch confirm and the mounted personas panel.
+    personas: personas::PersonasState,
 }
 
 impl AppModel {
@@ -498,6 +510,7 @@ impl AppModel {
             card_focus_widget: None,
             card_focus_cards: None,
             onboarding: onboarding::Onboarding::default(),
+            personas: personas::PersonasState::default(),
         }
     }
 
@@ -581,6 +594,7 @@ impl AppModel {
                 && !b.accounts.avatars.busy()
                 && b.workspace
                     .settled(&b.theme.vars, b.theme.motion, self.last_time)
+                && self.personas.panel.as_ref().is_none_or(|p| p.settled())
         })
     }
 
@@ -667,12 +681,14 @@ impl AppModel {
             app_clock,
             self.mock.is_some(),
         );
+        let persona_controller = personas::controller(&stores);
         self.booted = Some(Booted {
             runtime_os,
             stores,
             platforms,
             registry,
             theme,
+            theme_preview: None,
             locale,
             nav,
             boot_at: now,
@@ -684,6 +700,7 @@ impl AppModel {
             streamer,
             user_platforms: Some(user_platforms),
             detected_platforms: detected,
+            personas: persona_controller,
             secure_mounted: false,
             secure_in_settings: false,
         });
@@ -702,7 +719,7 @@ impl AppModel {
         };
         b.stores.sync();
         let key = theme_key(&b.stores, &b.registry, b.runtime_os);
-        if key != b.theme.key {
+        if key != b.theme.key && b.theme_preview.is_none() {
             b.theme = compute_theme(&b.registry, &b.stores, b.runtime_os, self.os_reduced_motion);
         }
         b.locale = b.stores.language();
@@ -758,6 +775,7 @@ impl AppModel {
         self.tick_secure(&ctx);
         self.tick_streamer(&ctx);
         self.tick_settings_panel(&ctx, Instant::now());
+        self.tick_theme_editor(Instant::now());
         self.pump_saves();
         // `had_keyboard_event`: a key without Ctrl, Alt or Meta sets it; a
         // press of any button that focuses an element clears it (mouse
@@ -803,6 +821,7 @@ impl AppModel {
                 Instant::now(),
             );
         }
+        self.tick_personas(&ctx);
         // `Toast.svelte`'s `setTimeout`: expired toasts go before drawing,
         // and the next expiry wakes the UI.
         let instant = Instant::now();
@@ -966,6 +985,7 @@ impl AppModel {
             }
             Action::OpenSettings => self.toggle_settings_panel(),
             Action::Settings(action) => self.apply_settings(ctx, action),
+            Action::Personas(event) => self.apply_personas(ctx, event),
             Action::OpenPersonas => {
                 if let Some(b) = self.booted.as_mut() {
                     if b.stores.settings().personas_enabled {
@@ -1322,6 +1342,10 @@ impl AppModel {
                 AppEffect::CardColorsChanged | AppEffect::CardNotesChanged => {}
                 AppEffect::ConfirmSettled { ticket, allowed } => {
                     self.settle_descriptor_removal(ticket, allowed);
+                    self.settle_persona_confirm(ticket, allowed);
+                }
+                AppEffect::CustomMenu(id) => {
+                    self.apply_persona_menu(ctx, &id);
                 }
                 // `shell.setActiveTab`: the tab alone, no load (the tour).
                 AppEffect::SetActiveTab(tab) => {
@@ -1356,7 +1380,7 @@ fn theme_key(stores: &ClientStores, registry: &ThemeRegistry, os: RuntimeOs) -> 
 
 /// `useThemeApplication`: the theme of the settings, applied with the
 /// backdrop the OS can give, and the motion preference.
-fn compute_theme(
+pub(super) fn compute_theme(
     registry: &ThemeRegistry,
     stores: &ClientStores,
     os: RuntimeOs,
@@ -1364,6 +1388,25 @@ fn compute_theme(
 ) -> ThemeState {
     let key = theme_key(stores, registry, os);
     let theme = registry.theme(Some(&key.theme_id));
+    theme_state(key, theme, os_reduced_motion)
+}
+
+/// `previewThemeDocument`: the theme editor's draft, applied with the
+/// inputs of the settings' theme.
+pub(super) fn preview_theme(
+    registry: &ThemeRegistry,
+    stores: &ClientStores,
+    os: RuntimeOs,
+    os_reduced_motion: bool,
+    draft: &accshift_theme::ThemeDocument,
+) -> ThemeState {
+    let key = theme_key(stores, registry, os);
+    let theme = registry.theme_from_document(draft);
+    theme_state(key, theme, os_reduced_motion)
+}
+
+fn theme_state(key: ThemeKey, theme: AppTheme, os_reduced_motion: bool) -> ThemeState {
+    let os = key.os;
     let liquid_backdrop_active = theme.liquid && os == RuntimeOs::Windows;
     // Linux compositors have no blur-behind; Liquid Glass waits for a
     // wallpaper snapshot, which the window-shell job captures.

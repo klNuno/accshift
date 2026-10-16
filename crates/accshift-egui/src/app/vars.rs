@@ -53,6 +53,8 @@ pub struct Vars {
     pub afk_text: Rgba,
     /// `--success`.
     pub success: Rgba,
+    /// `--warning`.
+    pub warning: Rgba,
     /// `--elevation-medium`, first on top.
     pub elevation_medium: Vec<BoxShadow>,
     /// `--accent`.
@@ -138,6 +140,7 @@ impl Vars {
             danger: color("--danger"),
             afk_text: color("--afk-text"),
             success: color("--success"),
+            warning: color("--warning"),
             elevation_medium: theme
                 .substitute("--elevation-medium")
                 .and_then(|value| css::shadows(&value))

@@ -1351,14 +1351,26 @@ impl BoxStyle {
             paint_shadow(painter, &geo, s, opacity, ppp);
         }
         let bg = to_color32(premul(self.background, opacity));
-        fill_rrect(
-            painter,
-            &geo.border_box,
-            bg,
-            TextureId::default(),
-            None,
-            ppp,
-        );
+        // Blink's `kBackgroundBleedShrinkBackground`: under an opaque border
+        // on every side of a rounded box, the background colour fills the
+        // border box inset by half the border, so its anti-aliased corners
+        // stay under the border's instead of doubling their coverage.
+        let w = geo.widths;
+        let obscured = [
+            (w.top, self.border.color.top),
+            (w.right, self.border.color.right),
+            (w.bottom, self.border.color.bottom),
+            (w.left, self.border.color.left),
+        ]
+        .iter()
+        .all(|(w, c)| *w > 0.0 && c.a >= 1.0);
+        let rounded = geo.border_box.r.iter().any(|r| r.x > 0.0 && r.y > 0.0);
+        let fill = if obscured && rounded {
+            geo.border_box.inset(w.map(|w| w * 0.5))
+        } else {
+            geo.border_box
+        };
+        fill_rrect(painter, &fill, bg, TextureId::default(), None, ppp);
         for g in self.images.iter().rev() {
             paint_gradient(painter, &geo, g, opacity, ppp);
         }

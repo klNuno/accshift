@@ -262,6 +262,15 @@ fn layout_shaped_run(
         let glyph_id = skrifa::GlyphId::new(info.glyph_id);
         let cluster = info.cluster;
         let mut advance_width_px = pos.x_advance as f32 * px_scale;
+        // accshift patch: a face measured with GDI-compatible metrics (Skia's
+        // embedded bitmap branch) keeps its rounded advance; GPOS stays.
+        if let Some(correction) = font
+            .fonts_by_id
+            .get(&run.font_key)
+            .and_then(|ff| ff.advance_correction_px(glyph_id, face_metrics))
+        {
+            advance_width_px += correction;
+        }
         let x_offset_px = pos.x_offset as f32 * px_scale;
         let y_offset_px = -(pos.y_offset as f32 * px_scale); // harfrust Y+ up → screen Y+ down
 

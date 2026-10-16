@@ -63,8 +63,13 @@ skrifa = "0.44"
 serde_json = "1"
 png = "0.18"
 # Steam's CDN serves avatars as JPEG; the same image build accshift-app
-# already links (zune-jpeg underneath).
-image = { version = "0.25", default-features = false, features = ["jpeg"] }
+# already links (zune-jpeg underneath). A persona's custom image is any of
+# these, re-encoded as a JPEG cover; png and image-webp are linked already.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp"] }
+# The persona image picker (`<input type="file">`) and its data URL: the
+# versions accshift-app already builds.
+rfd = "0.17"
+base64 = "0.23"
 # The onboarding's two looping clips, shipped as animated WebP.
 image-webp = "0.2"
 

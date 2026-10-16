@@ -265,6 +265,9 @@ pub fn decode(image: &AvatarImage, px: u32) -> Result<ColorImage, String> {
     if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
         return Ok(cover(&decode_jpeg(&bytes)?, px));
     }
+    if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        return Ok(cover(&decode_webp(&bytes)?, px));
+    }
     if is_svg(&bytes) {
         return crate::avatars::raster(&bytes, px.max(1));
     }
@@ -302,6 +305,29 @@ fn decode_jpeg(bytes: &[u8]) -> Result<ColorImage, String> {
         .map(|&[r, g, b]| Color32::from_rgb(r, g, b))
         .collect();
     Ok(ColorImage::new([w, h], pixels))
+}
+
+/// A still WebP, lossy or lossless: the covers Chromium's canvas encoded.
+fn decode_webp(bytes: &[u8]) -> Result<ColorImage, String> {
+    let mut decoder =
+        image_webp::WebPDecoder::new(Cursor::new(bytes)).map_err(|e| e.to_string())?;
+    let (w, h) = decoder.dimensions();
+    let mut buf = vec![0; decoder.output_buffer_size().ok_or("webp too large")?];
+    decoder.read_image(&mut buf).map_err(|e| e.to_string())?;
+    let pixels = if decoder.has_alpha() {
+        buf.as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&[r, g, b, a]| Color32::from_rgba_unmultiplied(r, g, b, a))
+            .collect()
+    } else {
+        buf.as_chunks::<3>()
+            .0
+            .iter()
+            .map(|&[r, g, b]| Color32::from_rgb(r, g, b))
+            .collect()
+    };
+    Ok(ColorImage::new([w as usize, h as usize], pixels))
 }
 
 fn is_svg(bytes: &[u8]) -> bool {

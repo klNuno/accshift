@@ -246,6 +246,19 @@ fn avatar_sources_follow_the_policy() {
         avatar_source("file:///C:/avatars/2.svg", UrlPolicy::HttpOrFile),
         AvatarSource::File(PathBuf::from("/C:/avatars/2.svg"))
     );
+    // A persona cover: the bytes of a base64 data URL, under either policy.
+    assert_eq!(
+        avatar_source("data:image/webp;base64,UklGRg==", UrlPolicy::HttpOnly),
+        AvatarSource::Data(b"RIFF".to_vec())
+    );
+    assert_eq!(
+        avatar_source("data:image/svg+xml,<svg/>", UrlPolicy::HttpOrFile),
+        AvatarSource::Unsupported
+    );
+    assert_eq!(
+        avatar_source("data:text/html;base64,PGI+", UrlPolicy::HttpOrFile),
+        AvatarSource::Unsupported
+    );
 }
 
 #[test]

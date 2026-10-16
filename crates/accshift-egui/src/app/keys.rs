@@ -126,6 +126,10 @@ struct Host {
     /// The focus moved: `syncDom` scrolls it into view.
     moved: bool,
     cards: Vec<CardEffect>,
+    /// The personas panel shows its wizard (`editing`).
+    personas_editing: bool,
+    /// Escape went to the wizard (`personasPanelRef.handleEscape()`).
+    personas_escape: bool,
 }
 
 /// What a binding asked of the focused card.
@@ -173,13 +177,15 @@ impl KeyHost for Host {
     fn is_bulk_edit_toggle_allowed(&self) -> bool {
         self.bulk_edit_allowed
     }
-    // Drag and the personas panel are later ports: nothing is dragged or
-    // open, so their Escape passes.
+    // Drag is a later port: nothing is dragged, so its Escape passes.
     fn cancel_drag_from_escape(&mut self) -> bool {
         false
     }
+    /// `PersonasPanel.handleEscape`: the wizard steps back, the grid lets
+    /// the panel close.
     fn personas_panel_escape(&mut self) -> bool {
-        false
+        self.personas_escape = self.personas_editing;
+        self.personas_editing
     }
     /// `cardFocus.move`: the first card when none is focused, then by one
     /// or by a row; past either end it stays.
@@ -337,6 +343,12 @@ impl AppModel {
             on_screen: ws.cards.iter().map(|(item, _)| item.clone()).collect(),
             moved: false,
             cards: Vec::new(),
+            personas_editing: self
+                .personas
+                .panel
+                .as_ref()
+                .is_some_and(|p| p.editing.is_some()),
+            personas_escape: false,
         })
     }
 
@@ -369,6 +381,9 @@ impl AppModel {
                     b.workspace.kb_reveal = true;
                 }
                 ctx.request_repaint();
+            }
+            if host.personas_escape {
+                self.wizard_escape(ctx);
             }
             for action in host.actions {
                 self.apply_key(ctx, action);

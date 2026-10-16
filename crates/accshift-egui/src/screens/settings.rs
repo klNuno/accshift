@@ -703,14 +703,14 @@ fn grid_layout(
     } else {
         (((width + GRID_GAP) / (GRID_MIN + GRID_GAP)).floor() as usize).max(1)
     };
-    let col_w = (width - GRID_GAP * (cols - 1) as f32) / cols as f32;
+    let tracks = snap::fr_tracks(width, cols, GRID_GAP, ctx.pixels_per_point());
     let placed = place(cards, cols, c.view.viewport_width > 980.0);
     let rows = placed.iter().map(|p| p.1 + 1).max().unwrap_or(0);
     let heights: Vec<f32> = cards
         .iter()
         .zip(&placed)
-        .map(|(spec, (_, _, span))| {
-            let w = col_w * *span as f32 + GRID_GAP * (*span - 1) as f32;
+        .map(|(spec, (col, _, span))| {
+            let (_, w) = snap::track_span(&tracks, *col, *span);
             card_height(ctx, c, spec, w)
         })
         .collect();
@@ -728,9 +728,8 @@ fn grid_layout(
         .iter()
         .zip(&heights)
         .map(|((col, row, span), h)| {
-            let x = origin.x + (col_w + GRID_GAP) * *col as f32;
-            let w = col_w * *span as f32 + GRID_GAP * (*span - 1) as f32;
-            Rect::from_min_size(pos2(x, row_y[*row]), vec2(w, *h))
+            let (x, w) = snap::track_span(&tracks, *col, *span);
+            Rect::from_min_size(pos2(origin.x + x, row_y[*row]), vec2(w, *h))
         })
         .collect();
     let height = if rows == 0 {
@@ -1558,15 +1557,14 @@ fn theme_grid(ui: &mut Ui, r: Rect, id: Id, c: &Ctx) -> Vec<SettingsAction> {
     let ppp = ctx.pixels_per_point();
     let v = &c.view.vars;
     let mut out = Vec::new();
-    let (cols, col_w) = theme_columns(r.width());
+    let (cols, _) = theme_columns(r.width());
+    let tracks = snap::fr_tracks(r.width(), cols, 8.0, ppp);
     let top = r.top() + 4.0;
     for (i, theme) in c.view.themes.iter().enumerate() {
         let (col, row) = (i % cols, i / cols);
+        let (left, col_w) = tracks[col];
         let rect = Rect::from_min_size(
-            pos2(
-                r.left() + (col_w + 8.0) * col as f32,
-                top + (swatch_h(ppp) + 8.0) * row as f32,
-            ),
+            pos2(r.left() + left, top + (swatch_h(ppp) + 8.0) * row as f32),
             vec2(col_w, swatch_h(ppp)),
         );
         let name = if theme.is_custom {
@@ -1695,9 +1693,13 @@ fn theme_grid(ui: &mut Ui, r: Rect, id: Id, c: &Ctx) -> Vec<SettingsAction> {
             vars: v,
             focus: c.focus,
         };
-        // The theme editor and the clipboard import are later ports.
-        if button::button(ui, rect, id.with(("theme-action", k)), &props) && k == 2 {
-            out.push(SettingsAction::ExportTheme);
+        // The clipboard import is a later port.
+        if button::button(ui, rect, id.with(("theme-action", k)), &props) {
+            match k {
+                0 => out.push(SettingsAction::CustomizeTheme),
+                2 => out.push(SettingsAction::ExportTheme),
+                _ => {}
+            }
         }
     }
     out

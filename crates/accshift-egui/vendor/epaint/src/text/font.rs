@@ -6,10 +6,12 @@
 //! - `allocate_glyph_uncached` asks it for the glyph coverage first and falls
 //!   back to skrifa plus `vello_cpu` when it returns `None`;
 //! - CJK glyphs get sub-pixel bins like every other glyph (Skia bins them
-//!   all), instead of being rounded to a whole pixel.
+//!   all), instead of being rounded to a whole pixel;
+//! - its `advance` replaces the linear advance of a shaped glyph when it
+//!   returns one (GDI-compatible metrics), GPOS adjustments kept.
 //!
-//! Nothing else changes: advances, layout, the atlas and the colour transfer
-//! function are upstream's. Every change is marked "accshift patch".
+//! Nothing else changes: layout, the atlas and the colour transfer function
+//! are upstream's. Every change is marked "accshift patch".
 
 use ecolor::Color32;
 use emath::{GuiRounding as _, OrderedFloat, Vec2, vec2};
@@ -68,6 +70,13 @@ pub trait GlyphRasterizer: Send + Sync {
     /// The coverage of a glyph; an empty image for a glyph with no ink,
     /// `None` to fall back to epaint's own rasterizer.
     fn rasterize(&self, request: &GlyphRequest) -> Option<GlyphImage>;
+
+    /// The advance of a glyph at `ppem` device px, in device px, when it is
+    /// not the linear one (GDI-compatible metrics); `None` keeps the font's.
+    fn advance(&self, glyph_id: u16, ppem: f32) -> Option<f32> {
+        let _ = (glyph_id, ppem);
+        None
+    }
 }
 
 /// A shared [`GlyphRasterizer`]; two are equal when they are the same object.
@@ -625,6 +634,24 @@ impl FontFace {
 
         self.glyph_id_cache.insert(c, resolution);
         Some(resolution)
+    }
+
+    /// accshift patch: how far the rasterizer's advance for `glyph_id` is
+    /// from the linear one, in device px (`None`: no rasterizer advance).
+    pub(crate) fn advance_correction_px(
+        &self,
+        glyph_id: GlyphId,
+        metrics: &StyledMetrics,
+    ) -> Option<f32> {
+        let rasterizer = self.rasterizer.as_ref()?;
+        let id = u16::try_from(glyph_id.to_u32()).ok()?;
+        let advance = rasterizer.0.advance(id, metrics.scale)?;
+        let font_data = self.font.borrow_dependent();
+        let linear = font_data
+            .skrifa
+            .glyph_metrics(skrifa::instance::Size::unscaled(), &metrics.location)
+            .advance_width(glyph_id)?;
+        Some(advance - linear * metrics.px_scale_factor)
     }
 
     /// Unscaled advance width for `c` at the given variation location.

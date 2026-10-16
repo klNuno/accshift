@@ -31,8 +31,8 @@ use egui::{pos2, vec2, Color32, Rect, Ui, UiBuilder};
 use super::platforms::{PlatformDef, RuntimeOs};
 use super::settings_panel::SettingsAction;
 use super::{Action, AppModel, Booted};
-use crate::screens::settings;
 use crate::screens::workspace::{self, WorkspaceInput};
+use crate::screens::{personas, settings};
 use crate::ui::anim::{self, Animation, Fill, Motion, Timing, Transition};
 use crate::ui::backdrop_filter::Mark;
 use crate::ui::components::command_palette::{self, PaletteProps};
@@ -201,7 +201,6 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         focus_visible: app.focus_visible,
     };
     let panel_since = booted.panel.1;
-    // Personas are not ported: their slot stays empty.
     let show_workspace = !nav.show_settings && !nav.show_personas;
     let compatible_platforms = enabled.iter().filter(|p| p.supports(os)).count();
     let panel_key = nav.panel_key();
@@ -243,6 +242,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
     // `commandRegistry.getCommands()` while the palette is mounted.
     let palette_commands = app.palette.is_some().then(|| app.palette_commands());
     let settings_panel = &mut app.settings_panel;
+    let personas_panel = &mut app.personas.panel;
     let focus_visible = app.focus_visible;
     let toasts = app.toasts.toasts();
     let dialogs = &app.dialogs;
@@ -268,7 +268,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         || (dialogs.confirm_dialog().is_some() && confirm_mount.is_some())
         || settings_panel
             .as_ref()
-            .is_some_and(|p| p.descriptor_preview.is_some());
+            .is_some_and(|p| p.descriptor_preview.is_some() || p.theme_editor.is_some());
     let pin_focus = std::mem::take(&mut app.pin_focus);
     let (obscured, afk, pin, streamer) = match app.booted.as_ref() {
         Some(b) => {
@@ -303,6 +303,8 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         platforms,
         locale,
         detected_platforms,
+        personas: persona_ctl,
+        registry: theme_registry,
         ..
     }) = app.booted.as_mut()
     else {
@@ -385,6 +387,21 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                     settings::draw(ui, panel, sp, view, focus_visible)
                 }));
             }
+            if let Some(pp) = personas_panel.as_mut().filter(|_| nav.show_personas) {
+                let input = personas::PersonasInput {
+                    vars: &vars,
+                    resolved: &theme.resolved,
+                    locale: *locale,
+                    personas: persona_ctl.personas(),
+                    switching_id: persona_ctl.switching_persona_id(),
+                    panel: pp,
+                    avatars: &mut accounts.avatars,
+                    jobs,
+                };
+                actions.extend(layer(ui, panel, o, rise, |ui| {
+                    personas::draw(ui, panel, input)
+                }));
+            }
             if let Some(wheel) = wheel {
                 ctx.input_mut(|i| i.events.extend(wheel));
             }
@@ -437,6 +454,29 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                         }),
                     );
                 }
+            }
+            // `ThemeEditor`, mounted by the General tab: fixed over the
+            // window, under `AppDialogs` in the DOM.
+            if let Some(editor) = settings_panel
+                .as_mut()
+                .and_then(|sp| sp.theme_editor.as_mut())
+            {
+                let accent_fg = theme
+                    .resolved
+                    .eval_color("var(--accent-fg)")
+                    .map(crate::app::vars::rgba)
+                    .unwrap_or(vars.fg);
+                actions.extend(
+                    dialog::theme_editor_dialog(
+                        ui,
+                        &dialog_props(editor.mount),
+                        theme_registry,
+                        accent_fg,
+                        editor,
+                    )
+                    .into_iter()
+                    .map(|event| Action::Settings(SettingsAction::ThemeEditor(event))),
+                );
             }
             if let (Some(state), Some(mount)) = (dialogs.input_dialog(), input_mount) {
                 actions.extend(

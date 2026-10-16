@@ -118,10 +118,63 @@ pub fn centre(outer: f32, inner: f32, ppp: f32) -> f32 {
     ((free * LU / 2.0).trunc() / LU) / ppp
 }
 
+/// `count` equal `1fr` tracks with `gap` across `width` (points), as
+/// Blink sizes them: the free space shared in single precision, each track
+/// floored to `LayoutUnit`s with the rest carried to the next. Five tracks
+/// of 776 px are 155.1875 then four of 155.203125, not 155.2: a label in
+/// the third lands 1/64 px further left, enough to change a glyph's
+/// quarter-pixel bin. Each track's offset and width, in points.
+pub fn fr_tracks(width: f32, count: usize, gap: f32, ppp: f32) -> Vec<(f32, f32)> {
+    let count = count.max(1);
+    let gap = layout_unit(gap * ppp);
+    let fr = (layout_unit(width * ppp) - gap * (count - 1) as f32) / count as f32;
+    let (mut carry, mut x) = (0.0f32, 0.0f32);
+    (0..count)
+        .map(|_| {
+            let share = fr + carry;
+            let units = (share * LU).floor().max(0.0);
+            carry = share - units / LU;
+            let w = units / LU;
+            let track = (x / ppp, w / ppp);
+            x += w + gap;
+            track
+        })
+        .collect()
+}
+
+/// The span of tracks `first..first + n` of [`fr_tracks`]: offset and
+/// width, gaps included.
+pub fn track_span(tracks: &[(f32, f32)], first: usize, n: usize) -> (f32, f32) {
+    let last = tracks[(first + n.max(1) - 1).min(tracks.len() - 1)];
+    let start = tracks[first.min(tracks.len() - 1)].0;
+    (start, last.0 + last.1 - start)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use egui::vec2;
+
+    #[test]
+    fn fr_tracks_carry_the_spare_units_like_blink() {
+        let units = |w: f32, n: usize, gap: f32, ppp: f32| -> Vec<f32> {
+            fr_tracks(w, n, gap, ppp)
+                .iter()
+                .map(|t| t.1 * ppp * LU)
+                .collect()
+        };
+        // Chromium's DOM: the meta grid at 100 % and 150 %, the platform
+        // grid at 100 %.
+        assert_eq!(units(672.0, 3, 10.0, 1.0), [13909.0; 3]);
+        assert_eq!(
+            units(1009.0 / 1.5, 3, 10.0, 1.5),
+            [20885.0, 20885.0, 20886.0]
+        );
+        assert_eq!(units(816.0, 5, 10.0, 1.0)[..3], [9932.0, 9933.0, 9933.0]);
+        let third = fr_tracks(816.0, 5, 10.0, 1.0)[2].0;
+        // The third card at x 352.390625 in a grid at 22: 21145 units in.
+        assert_eq!(third * LU, 21_145.0);
+    }
 
     fn dev(r: Rect, ppp: f32) -> [f32; 4] {
         [r.min.x, r.min.y, r.max.x, r.max.y].map(|v| (v * ppp * 1000.0).round() / 1000.0)

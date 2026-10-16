@@ -78,6 +78,12 @@ pub const BACK: &[u8] = svg!(
     "fill=\"none\" stroke=\"white\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"",
     "<path d=\"M19 12H5\"/><path d=\"M12 19l-7-7 7-7\"/>"
 );
+/// `PersonaWizard.svelte`'s unassign button.
+pub const UNASSIGN: &[u8] = svg!(
+    "0 0 24 24",
+    "fill=\"none\" stroke=\"white\" stroke-width=\"2\" stroke-linecap=\"round\"",
+    "<path d=\"M18 6 6 18M6 6l12 12\"/>"
+);
 pub const PLAY: &[u8] = svg!("0 0 24 24", "fill=\"white\"", "<path d=\"M8 5v14l11-7z\"/>");
 pub const PERSONAS: &[u8] = svg!(
     "0 0 24 24",

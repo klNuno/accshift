@@ -106,6 +106,9 @@ pub struct TextStyle {
     pub tabular_nums: bool,
     pub align: TextAlign,
     pub color: Color32,
+    /// The text continues an inline item: its start is the shaper's float
+    /// offset, not a `LayoutUnit` like an item's.
+    pub mid_item: bool,
 }
 
 impl Default for TextStyle {
@@ -125,6 +128,7 @@ impl Default for TextStyle {
             tabular_nums: false,
             align: TextAlign::Left,
             color: Color32::WHITE,
+            mid_item: false,
         }
     }
 }
@@ -181,6 +185,12 @@ impl TextStyle {
     /// `font-variant-numeric: tabular-nums`.
     pub fn tabular_nums(mut self) -> Self {
         self.tabular_nums = true;
+        self
+    }
+
+    /// See [`TextStyle::mid_item`].
+    pub fn mid_item(mut self) -> Self {
+        self.mid_item = true;
         self
     }
 
@@ -275,6 +285,19 @@ impl TextStyle {
             self.line_height,
             ctx.pixels_per_point(),
         ))
+    }
+
+    /// The text fragment in its line box, CSS px: the top (the floored
+    /// half-leading) and the height (ascent plus descent, each rounded at
+    /// the device size). Blink's caret spans it.
+    pub fn fragment(&self, ctx: &Context) -> Option<(f32, f32)> {
+        let ppp = ctx.pixels_per_point();
+        let m = resolve(ctx, &self.family, self.weight, self.size * ppp)?.metrics;
+        let em = self.size * ppp / m.units_per_em;
+        let content = (m.ascent * em).round() + (m.descent * em).round();
+        let line = LineBox::new(&m, self.size, self.line_height, ppp);
+        let half_leading = ((line.height * ppp - content) / 2.0).floor();
+        Some((half_leading / ppp, content / ppp))
     }
 
     /// The face's x-height at this size, in points: DirectWrite's, rounded
@@ -407,6 +430,34 @@ pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Optio
     if text.chars().any(is_han) {
         need_cjk(ctx);
     }
+    // Symbols no face of the stack has go to Chromium's per-block fallback
+    // faces: one family per kind, the stack's faces first.
+    let mut fallback_families: [Option<FontFamily>; 2] = [None, None];
+    for c in text.chars() {
+        let kind = fallback_of(c);
+        let Some(slot) = kind.slot() else {
+            continue;
+        };
+        if fallback_families[slot].is_none() {
+            let family = resolve_fallback(
+                ctx,
+                &style.family,
+                style.weight,
+                style.size * ctx.pixels_per_point(),
+                kind,
+            )?;
+            if !ctx.fonts(|f| f.definitions().families.contains_key(&family)) {
+                ctx.request_repaint();
+                return None;
+            }
+            fallback_families[slot] = Some(family);
+        }
+    }
+    let family_of = |kind: Fallback| {
+        kind.slot()
+            .and_then(|slot| fallback_families[slot].clone())
+            .unwrap_or_else(|| resolved.family.clone())
+    };
     let ppp = ctx.pixels_per_point();
     let line_box = LineBox::new(&resolved.metrics, style.size, style.line_height, ppp);
     let avail = if rect.width().is_finite() && rect.width() > 0.0 {
@@ -416,18 +467,26 @@ pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Optio
     };
     let job_for = |text: &str, lead: f32| {
         let mut job = LayoutJob::default();
-        job.append(
-            text,
-            lead,
-            TextFormat {
-                font_id: FontId::new(style.size, resolved.family.clone()),
-                extra_letter_spacing: style.letter_spacing,
-                line_height: Some(line_box.height),
-                color: style.color,
-                valign: Align::TOP,
-                ..Default::default()
-            },
-        );
+        let format = |kind: Fallback| TextFormat {
+            font_id: FontId::new(style.size, family_of(kind)),
+            extra_letter_spacing: style.letter_spacing,
+            line_height: Some(line_box.height),
+            color: style.color,
+            valign: Align::TOP,
+            ..Default::default()
+        };
+        // One section per run of a fallback kind.
+        let mut start = 0;
+        let mut lead = lead;
+        let mut kind = text.chars().next().map_or(Fallback::None, fallback_of);
+        for (i, c) in text.char_indices() {
+            let k = fallback_of(c);
+            if k != kind {
+                job.append(&text[start..i], lead, format(kind));
+                (start, lead, kind) = (i, 0.0, k);
+            }
+        }
+        job.append(&text[start..], lead, format(kind));
         if style.tabular_nums {
             job.font_features.push((*b"tnum", 1));
         }
@@ -506,6 +565,9 @@ pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Optio
     // Blink keeps a line's sub-pixel start, wrapped or not.
     let mut lead = 0.0;
     let mut leads = vec![0.0; galley.rows.len()];
+    // An item starts on a `LayoutUnit`; a word inside one keeps the float
+    // pen of the shaper.
+    let start = |x: f32| if style.mid_item { x } else { layout_unit(x) };
     let origin_x = if galley.rows.len() == 1 {
         // A line too long for its box is start-aligned (CSS Text 3,
         // `text-align`), the ellipsis cut included.
@@ -514,12 +576,12 @@ pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Optio
         } else {
             offset(widths[0])
         };
-        let x = (rect.left() + shift) * ppp;
+        let x = start((rect.left() + shift) * ppp);
         let xi = (x + 1e-3).floor();
         let frac = x - xi;
         if frac > 1e-3 {
             lead = frac;
-            galley = ctx.fonts_mut(|f| f.layout_job(job(frac / ppp)));
+            galley = ctx.fonts_mut(|f| f.layout_job(job(lead_points(frac, ppp))));
         }
         leads[0] = lead;
         xi / ppp
@@ -527,12 +589,12 @@ pub fn layout(ctx: &Context, text: &str, style: &TextStyle, rect: Rect) -> Optio
         let origin = (rect.left() * ppp).floor() / ppp;
         let g = Arc::make_mut(&mut galley);
         for (i, placed) in g.rows.iter_mut().enumerate() {
-            let x = (rect.left() + offset(widths[i])) * ppp;
+            let x = start((rect.left() + offset(widths[i])) * ppp);
             let xi = (x + 1e-3).floor();
             let frac = x - xi;
             if frac > 1e-3 {
                 let line: String = placed.row.glyphs.iter().map(|glyph| glyph.chr).collect();
-                let mut single = job_for(&line, frac / ppp);
+                let mut single = job_for(&line, lead_points(frac, ppp));
                 single.wrap = TextWrapping::no_max_width();
                 let alone = ctx.fonts_mut(|f| f.layout_job(single));
                 if let Some(first) = alone.rows.first() {
@@ -608,6 +670,22 @@ pub fn paint(painter: &Painter, rect: Rect, text: &str, style: &TextStyle) -> Op
     Some(laid)
 }
 
+/// A line's sub-pixel start in points such that epaint's pen, which
+/// multiplies it back by `ppp`, starts exactly at `frac` device px: a pen
+/// one ulp short puts a glyph that Blink lands on a bin boundary (an
+/// eighth of a pixel) in the bin below.
+fn lead_points(frac: f32, ppp: f32) -> f32 {
+    let lead = frac / ppp;
+    [
+        lead,
+        f32::from_bits(lead.to_bits() + 1),
+        f32::from_bits(lead.to_bits() - 1),
+    ]
+    .into_iter()
+    .find(|l| l * ppp == frac)
+    .unwrap_or(lead)
+}
+
 /// Width of `text` in CSS px, as an inline box of this style.
 pub fn measure(ctx: &Context, text: &str, style: &TextStyle) -> Option<f32> {
     let mut style = style.clone();
@@ -647,6 +725,50 @@ fn row_width(glyphs: &[egui::epaint::text::Glyph], spacing: f32) -> f32 {
     glyphs.iter().map(|g| g.advance_width + spacing).sum()
 }
 
+/// Where Chromium looks for a symbol no face of the stack has
+/// (`GetFontBasedOnUnicodeBlock`, `font_fallback_win.cc`): arrows, maths,
+/// technical and geometric shapes go to the math faces, the other symbol
+/// blocks to Segoe UI Symbol. Probed: U+21BA draws with Cambria Math.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Fallback {
+    None,
+    Math,
+    Symbol,
+}
+
+impl Fallback {
+    fn slot(self) -> Option<usize> {
+        match self {
+            Fallback::None => None,
+            Fallback::Math => Some(0),
+            Fallback::Symbol => Some(1),
+        }
+    }
+
+    /// The faces after the stack's, in order (normalized names).
+    fn faces(self) -> &'static [&'static str] {
+        match self {
+            Fallback::None => &[],
+            Fallback::Math => &["cambria math", "segoe ui symbol"],
+            Fallback::Symbol => &["segoe ui symbol"],
+        }
+    }
+}
+
+fn fallback_of(c: char) -> Fallback {
+    match c as u32 {
+        // Arrows, Mathematical Operators, Miscellaneous Technical; Geometric
+        // Shapes; Miscellaneous Mathematical Symbols-A, Supplemental
+        // Arrows-A; Supplemental Arrows-B, Miscellaneous Mathematical
+        // Symbols-B, Supplemental Mathematical Operators.
+        0x2190..=0x23FF | 0x25A0..=0x25FF | 0x27C0..=0x27FF | 0x2900..=0x2AFF => Fallback::Math,
+        // Control Pictures to Block Elements, Miscellaneous Symbols,
+        // Dingbats, Braille, Miscellaneous Symbols and Arrows.
+        0x2400..=0x259F | 0x2600..=0x27BF | 0x2800..=0x28FF | 0x2B00..=0x2BFF => Fallback::Symbol,
+        _ => Fallback::None,
+    }
+}
+
 /// The ranges of the Han `@font-face` rules of `src/app.css`.
 fn is_han(c: char) -> bool {
     matches!(c as u32,
@@ -660,6 +782,9 @@ fn is_han(c: char) -> bool {
 struct Book {
     /// Han fallback faces join the families (set once CJK text shows up).
     cjk: bool,
+    /// Stack families closed by a symbol [`Fallback`]'s faces, by stack,
+    /// weight, ppem and kind.
+    fallbacks: HashMap<(Arc<str>, u16, u16, Fallback), Option<FontFamily>>,
     /// egui fonts by name: a face and its gasp behaviour.
     faces: HashMap<String, Arc<FontData>>,
     /// Metrics by face.
@@ -688,6 +813,7 @@ fn book(ctx: &Context) -> SharedBook {
         d.get_temp_mut_or_insert_with(Id::new("accshift.ui.text.book"), || {
             Arc::new(Mutex::new(Book {
                 cjk: false,
+                fallbacks: HashMap::new(),
                 faces: HashMap::new(),
                 metrics: HashMap::new(),
                 families: BTreeMap::new(),
@@ -834,6 +960,48 @@ impl Book {
         resolved
     }
 
+    /// The stack's family with `kind`'s faces after its own.
+    fn resolve_fallback(
+        &mut self,
+        stack: &Arc<str>,
+        weight: u16,
+        ppem: f32,
+        kind: Fallback,
+    ) -> Option<FontFamily> {
+        let primary = self.resolve(stack, weight, ppem)?;
+        let ppem = ppem.round().clamp(1.0, 4096.0);
+        let cache_key = (stack.clone(), weight, ppem as u16, kind);
+        if let Some(f) = self.fallbacks.get(&cache_key) {
+            return f.clone();
+        }
+        let FontFamily::Name(name) = &primary.family else {
+            return None;
+        };
+        let mut keys = self.families.get(&**name).cloned().unwrap_or_default();
+        let catalog = Catalog::system();
+        for face in kind.faces() {
+            if !catalog.has(face) {
+                continue;
+            }
+            let loaded = catalog
+                .pick(face, weight, &mut |s| bytes(s))
+                .and_then(|choice| self.load(&choice, ppem));
+            if let Some((key, _)) = loaded {
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+        }
+        let joined = keys.join("|");
+        if !self.families.contains_key(&joined) {
+            self.families.insert(joined.clone(), keys);
+            self.dirty = true;
+        }
+        let family = Some(FontFamily::Name(joined.into()));
+        self.fallbacks.insert(cache_key, family.clone());
+        family
+    }
+
     /// Points `Proportional` and [`SEMIBOLD`] at the UI stack's faces.
     fn alias(&mut self) {
         let ui: Arc<str> = Arc::from(UI_STACK);
@@ -906,6 +1074,24 @@ fn resolve(ctx: &Context, stack: &Arc<str>, weight: u16, ppem: f32) -> Option<Re
     r
 }
 
+/// [`Book::resolve_fallback`], handing new faces to egui for the next frame.
+fn resolve_fallback(
+    ctx: &Context,
+    stack: &Arc<str>,
+    weight: u16,
+    ppem: f32,
+    kind: Fallback,
+) -> Option<FontFamily> {
+    let book = book(ctx);
+    let mut b = book.lock().ok()?;
+    let r = b.resolve_fallback(stack, weight, ppem, kind);
+    if b.dirty {
+        b.dirty = false;
+        ctx.set_fonts(b.definitions());
+    }
+    r
+}
+
 /// Han text showed up: the CJK fallback faces join every family.
 fn need_cjk(ctx: &Context) {
     let book = book(ctx);
@@ -917,6 +1103,7 @@ fn need_cjk(ctx: &Context) {
     }
     b.cjk = true;
     b.resolved.clear();
+    b.fallbacks.clear();
     b.alias();
     b.dirty = false;
     ctx.set_fonts(b.definitions());

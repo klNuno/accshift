@@ -79,9 +79,12 @@ fn layout(ctx: &Context, width: f32, props: &ToggleProps) -> Layout {
     } else {
         props.off_label
     };
-    let state_w = text::measure(ctx, state, &state_style(v)).unwrap_or(0.0);
-    let right_w = state_w + RIGHT_GAP + SWITCH.x;
     let ppp = ctx.pixels_per_point();
+    // An inline item's width is ceiled to a `LayoutUnit`, and so is the
+    // right part that hugs it.
+    let state_w = text::measure(ctx, state, &state_style(v)).unwrap_or(0.0);
+    let state_w = snap::content_width(state_w, ppp);
+    let right_w = state_w + RIGHT_GAP + SWITCH.x;
     let avail = (width - 2.0 * pad_x(ppp) - right_w).max(0.0);
     // `.main` shrinks: its max-content width, or what the right part leaves.
     let label_max = text::measure(ctx, props.label, &label_style(v)).unwrap_or(0.0);

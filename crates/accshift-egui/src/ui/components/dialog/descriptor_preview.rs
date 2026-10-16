@@ -132,6 +132,8 @@ struct Placed {
     style: TextStyle,
     x: f32,
     line: usize,
+    /// A word after the first of an inline item: see [`TextStyle::mid_item`].
+    mid_item: bool,
 }
 
 /// A laid out inline formatting context: its runs and line boxes (top and
@@ -154,7 +156,13 @@ impl Inline {
                 pos2(origin.x + run.x, origin.y + top + baseline - lb),
                 vec2(f32::INFINITY, 0.0),
             );
-            text::paint(painter, rect, &run.text, &run.style.clone().nowrap(false));
+            let style = run.style.clone().nowrap(false);
+            let style = if run.mid_item {
+                style.mid_item()
+            } else {
+                style
+            };
+            text::paint(painter, rect, &run.text, &style);
         }
     }
 }
@@ -236,6 +244,7 @@ fn inline(ctx: &Context, strut: &TextStyle, words: Vec<Word>, width: f32) -> Inl
                         style: style.clone(),
                         x: 0.0,
                         line,
+                        mid_item: false,
                     });
                     line += 1;
                     next = ch.to_string();
@@ -248,17 +257,20 @@ fn inline(ctx: &Context, strut: &TextStyle, words: Vec<Word>, width: f32) -> Inl
                 style,
                 x: 0.0,
                 line,
+                mid_item: false,
             });
             empty = false;
             continue;
         }
         let mut at = x;
-        for ((s, style), rw) in word.runs.into_iter().zip(widths) {
+        let mid_item = word.item.is_none() && at > 0.0;
+        for (k, ((s, style), rw)) in word.runs.into_iter().zip(widths).enumerate() {
             runs.push(Placed {
                 text: s,
                 style,
                 x: at,
                 line,
+                mid_item: mid_item && k == 0,
             });
             at += rw;
         }
@@ -342,6 +354,7 @@ fn head(ctx: &Context, items: Vec<(String, TextStyle)>, width: f32) -> Inline {
                 style,
                 x: left,
                 line: r,
+                mid_item: false,
             });
             x = left + w + HEAD_GAP;
         }

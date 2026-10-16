@@ -434,15 +434,56 @@ fn upscale(src: &[[u8; 4]], w: usize, h: usize, dw: usize, dh: usize) -> Vec<[u8
 pub fn land(dst: &mut [[u8; 4]], layer: &[[u8; 4]], opacity: f32) {
     let op = (opacity.clamp(0.0, 1.0) * 255.0 + 0.5) as u32;
     for (d, s) in dst.iter_mut().zip(layer) {
-        let s = if op == 255 {
-            *s
-        } else {
-            s.map(|v| ((v as u32 * op + 127) / 255) as u8)
-        };
-        let inv = 255 - s[3] as u32;
-        *d = core::array::from_fn(|c| {
-            (s[c] as u32 + (d[c] as u32 * inv + 127) / 255).min(255) as u8
-        });
+        land_pixel(d, s, op);
+    }
+}
+
+/// [`land`] on `columns` x `rows` only, both images `width` pixels wide:
+/// the rest of the layer is transparent.
+pub fn land_span(
+    dst: &mut [[u8; 4]],
+    layer: &[[u8; 4]],
+    opacity: f32,
+    width: usize,
+    [columns, rows]: [core::ops::Range<usize>; 2],
+) {
+    if columns.start == 0 && columns.end == width {
+        let span = rows.start * width..rows.end * width;
+        return land(&mut dst[span.clone()], &layer[span], opacity);
+    }
+    let op = (opacity.clamp(0.0, 1.0) * 255.0 + 0.5) as u32;
+    for y in rows {
+        let span = y * width + columns.start..y * width + columns.end;
+        for (d, s) in dst[span.clone()].iter_mut().zip(&layer[span]) {
+            land_pixel(d, s, op);
+        }
+    }
+}
+
+#[inline]
+fn land_pixel(d: &mut [u8; 4], s: &[u8; 4], op: u32) {
+    let s = if op == 255 {
+        *s
+    } else {
+        s.map(|v| ((v as u32 * op + 127) / 255) as u8)
+    };
+    let inv = 255 - s[3] as u32;
+    *d = core::array::from_fn(|c| (s[c] as u32 + (d[c] as u32 * inv + 127) / 255).min(255) as u8);
+}
+
+/// A `Begin`'s starting pixels: the element's own backdrop with a clip, the
+/// whole canvas blurred without.
+pub fn backdrop_of(
+    src: &[[u8; 4]],
+    width: usize,
+    height: usize,
+    clip: Option<BackdropClip>,
+    sigma: f32,
+    saturate: f32,
+) -> Vec<[u8; 4]> {
+    match clip {
+        Some(clip) => element_backdrop(src, width, height, clip, sigma, saturate),
+        None => blur(src, width, height, sigma),
     }
 }
 
@@ -516,6 +557,29 @@ mod tests {
         let out = element_backdrop(&src, 8, 8, clip, 0.0, 1.0);
         assert_eq!(out[4 * 8 + 1][3], 128);
         assert_eq!(out[4 * 8][3], 0);
+    }
+
+    #[test]
+    fn landing_a_span_leaves_the_rest_alone() {
+        let mut dst = vec![[10u8, 10, 10, 255]; 4 * 3];
+        let layer = vec![[200u8, 0, 0, 255]; 4 * 3];
+        land_span(&mut dst, &layer, 1.0, 4, [1..3, 1..2]);
+        for (i, p) in dst.iter().enumerate() {
+            let inside = (5..7).contains(&i);
+            assert_eq!(
+                *p,
+                if inside {
+                    [200, 0, 0, 255]
+                } else {
+                    [10, 10, 10, 255]
+                },
+                "pixel {i}"
+            );
+        }
+        let mut whole = vec![[10u8, 10, 10, 255]; 4 * 3];
+        land_span(&mut whole, &layer, 0.6, 4, [0..4, 2..3]);
+        assert_eq!(whole[0], [10, 10, 10, 255]);
+        assert_eq!(whole[8], [124, 4, 4, 255]);
     }
 
     #[test]

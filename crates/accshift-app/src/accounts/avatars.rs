@@ -327,7 +327,9 @@ impl AvatarImage {
 pub enum AvatarSource {
     Http(String),
     File(PathBuf),
-    /// Neither: the card shows its initials.
+    /// A `data:image/...;base64,` URL (a persona's cover): its bytes.
+    Data(Vec<u8>),
+    /// None of these: the card shows its initials.
     Unsupported,
 }
 
@@ -341,7 +343,33 @@ pub fn avatar_source(url: &str, policy: UrlPolicy) -> AvatarSource {
         let path = trimmed.strip_prefix("file://").unwrap_or(trimmed);
         return AvatarSource::File(PathBuf::from(path));
     }
+    if let Some(bytes) = data_url_bytes(trimmed) {
+        return AvatarSource::Data(bytes);
+    }
     AvatarSource::Unsupported
+}
+
+/// The payload of a base64 `data:image/` URL.
+fn data_url_bytes(url: &str) -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    let rest = url.strip_prefix("data:image/")?;
+    let (meta, payload) = rest.split_once(',')?;
+    if !meta.ends_with(";base64") {
+        return None;
+    }
+    base64::engine::general_purpose::STANDARD
+        .decode(payload.trim())
+        .ok()
+        .filter(|bytes| !bytes.is_empty())
+}
+
+/// A short cache key for a data URL: its length and a hash, so a 300 kB
+/// cover is not copied into every texture key.
+fn data_url_key(url: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    url.hash(&mut hasher);
+    format!("data:{}:{:016x}", url.len(), hasher.finish())
 }
 
 /// What [`AvatarImages::request`] answers.
@@ -402,6 +430,15 @@ impl AvatarImages {
             AvatarSource::Http(_) => {
                 self.entries.insert(url.to_string(), ImageEntry::Loading);
                 AvatarFetch::Start(url.to_string())
+            }
+            AvatarSource::Data(bytes) => {
+                let image = AvatarImage::Bytes {
+                    key: data_url_key(url),
+                    bytes: bytes.into(),
+                };
+                self.entries
+                    .insert(url.to_string(), ImageEntry::Ready(image.clone()));
+                AvatarFetch::Ready(image)
             }
             AvatarSource::Unsupported => {
                 self.entries.insert(url.to_string(), ImageEntry::Failed);
