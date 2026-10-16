@@ -34,6 +34,8 @@ pub struct BackCardProps<'a> {
     pub accent: Rgba,
     pub drag_over: bool,
     pub focus_visible: bool,
+    /// `.is-dragging` on the grid.
+    pub grid_dragging: bool,
 }
 
 /// Draws the back card over `rect` (its layout box).
@@ -51,6 +53,8 @@ pub fn back_card(ui: &mut Ui, rect: Rect, props: &BackCardProps) -> Vec<BackCard
             drag_over: props.drag_over,
             dragged: false,
             kb_focus: false,
+            grid_dragging: props.grid_dragging,
+            ghost: false,
         },
         v,
     );
@@ -71,7 +75,7 @@ pub fn back_card(ui: &mut Ui, rect: Rect, props: &BackCardProps) -> Vec<BackCard
         super::focus::card_ring(ui, f.rect, v.radius_md, v);
     }
     let mut events = Vec::new();
-    if f.response.clicked() {
+    if super::clicked(&f.response) {
         events.push(BackCardEvent::Back);
     }
     events

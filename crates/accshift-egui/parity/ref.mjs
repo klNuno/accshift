@@ -429,6 +429,7 @@ async function dumpDom(page, scene, outDir, step) {
           focused: document.activeElement === el,
           focusVisible: el.matches(":focus-visible"),
           hover: el.matches(":hover"),
+          active: el.matches(":active"),
           src: el.getAttribute("src")?.slice(0, 160) ?? undefined,
           rect: [r.x, r.y, r.width, r.height],
           css: Object.fromEntries(props.map((p) => [p, cs[p]])),

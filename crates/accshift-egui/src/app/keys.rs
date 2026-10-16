@@ -133,6 +133,10 @@ struct Host {
     personas_editing: bool,
     /// Escape went to the wizard (`personasPanelRef.handleEscape()`).
     personas_escape: bool,
+    /// A card is pressed or dragged.
+    drag_in_flight: bool,
+    /// Escape cancelled it (`drag.cancelFromEscape()`).
+    drag_escape: bool,
 }
 
 /// What a binding asked of the focused card.
@@ -180,9 +184,9 @@ impl KeyHost for Host {
     fn is_bulk_edit_toggle_allowed(&self) -> bool {
         self.bulk_edit_allowed
     }
-    // Drag is a later port: nothing is dragged, so its Escape passes.
     fn cancel_drag_from_escape(&mut self) -> bool {
-        false
+        self.drag_escape = self.drag_in_flight;
+        self.drag_in_flight
     }
     /// `PersonasPanel.handleEscape`: the wizard steps back, the grid lets
     /// the panel close.
@@ -352,6 +356,8 @@ impl AppModel {
                 .as_ref()
                 .is_some_and(|p| p.editing.is_some()),
             personas_escape: false,
+            drag_in_flight: b.accounts.drag.in_flight(),
+            drag_escape: false,
         })
     }
 
@@ -387,6 +393,12 @@ impl AppModel {
             }
             if host.personas_escape {
                 self.wizard_escape(ctx);
+            }
+            if host.drag_escape {
+                if let Some(b) = self.booted.as_mut() {
+                    b.accounts.drag.cancel_from_escape();
+                }
+                ctx.request_repaint();
             }
             for action in host.actions {
                 self.apply_key(ctx, action);

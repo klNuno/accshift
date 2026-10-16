@@ -1,0 +1,50 @@
+{
+  "id": "drag-reorder-light-100",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "light",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "down": [315, 150]
+    },
+    {
+      "wait": 250
+    },
+    {
+      "move": [330, 150]
+    },
+    {
+      "wait": 350
+    },
+    {
+      "shot": "lifted"
+    },
+    {
+      "move": [530, 150]
+    },
+    {
+      "wait": 450
+    },
+    {
+      "shot": "preview"
+    },
+    {
+      "up": [530, 150]
+    },
+    {
+      "wait": 450
+    },
+    {
+      "shot": "dropped"
+    }
+  ]
+}

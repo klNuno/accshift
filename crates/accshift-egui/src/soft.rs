@@ -357,6 +357,7 @@ fn backdrop_op(
                 radius: r * ppp,
             }),
         },
+        Mark::Group { opacity } => BackdropOp::Group { opacity },
         Mark::End => BackdropOp::End,
         Mark::Filter {
             sigma,

@@ -235,14 +235,71 @@ pub struct Workspace {
     cards_scroll: Option<f32>,
     /// `measureColumns()` on the last frame's grid.
     pub columns: usize,
+    /// The back card (the back row in the list view) last frame, on screen.
+    pub back: Option<Rect>,
+    /// The `.section` boxes last frame, on screen, with their folder
+    /// (`None` for the root section).
+    pub sections: Vec<(Option<String>, Rect)>,
+    /// `[data-sections-mode]` last frame.
+    pub sections_mode: bool,
+    /// `.list-container` last frame.
+    pub list_mode: bool,
+    /// The scroll box last frame: what it clips is not under the pointer.
+    pub viewport: Option<Rect>,
+    /// The cards' mount ids last frame: their transitions give
+    /// `getBoundingClientRect`.
+    card_ids: HashMap<ItemRef, Id>,
+    /// `ghostEl`, while a card is dragged.
+    pub ghost: Option<Ghost>,
+    /// `animate:flip` per card key: the offset it slides back from and
+    /// when it started.
+    flips: HashMap<String, (egui::Vec2, f64)>,
+    /// Each card's layout and painted top left last frame.
+    last_boxes: HashMap<String, (egui::Pos2, egui::Pos2)>,
     /// `scroll` came from `scrollIntoView` and sits on a device pixel; the
     /// wheel and the thumb put it back on a CSS pixel.
     scroll_revealed: bool,
 }
 
+/// `ghostEl`: a clone of the dragged card following the pointer.
+#[derive(Clone, Debug)]
+pub struct Ghost {
+    pub item: ItemRef,
+    /// `sourceEl.getBoundingClientRect()` when the drag started.
+    pub rect: Rect,
+    /// The pointer when the drag started.
+    pub anchor: egui::Pos2,
+    /// A fresh mount: the clone replays `card-entrance`.
+    pub id: Id,
+}
+
+/// `animate:flip`'s duration while a card is dragged.
+const FLIP: f64 = 0.2;
+
 impl Workspace {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The workspace was drawn last frame: its boxes are on screen.
+    pub fn drawn_last_frame(&self, ctx: &Context) -> bool {
+        self.last_frame
+            .is_some_and(|last| last + 1 == ctx.cumulative_frame_nr())
+    }
+
+    /// `getBoundingClientRect()` of a card: its box under the transform
+    /// its transitions are at.
+    pub fn bounding_rect(&self, ctx: &Context, item: &ItemRef) -> Option<Rect> {
+        let r = self.card_rect(item)?;
+        let Some(id) = self.card_ids.get(item) else {
+            return Some(r);
+        };
+        let ty = crate::ui::anim::peek::<f32>(ctx, id.with("ty")).unwrap_or(0.0);
+        let scale = crate::ui::anim::peek::<f32>(ctx, id.with("scale")).unwrap_or(1.0);
+        Some(Rect::from_center_size(
+            r.center() + vec2(0.0, ty),
+            r.size() * scale,
+        ))
     }
 
     /// `scrollTop` of the content box.
@@ -522,8 +579,17 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
         registry,
         clock,
         cs2,
+        drag,
         ..
     } = &mut *input.accounts;
+    let grid_dragging = drag.is_dragging();
+    let drag_over_folder = drag.drag_over_folder_id().map(str::to_owned);
+    let drag_over_back = drag.drag_over_back();
+    let pointer = {
+        let (x, y) = drag.pointer();
+        pos2(x, y)
+    };
+    let mut section_boxes: Vec<(Option<String>, Rect)> = Vec::new();
     let tab = input.platform.map_or("", |p| p.id.as_str());
     let adapter_ready = registry.adapter(tab).is_some();
     let time = accshift_app::time::TimeContext {
@@ -673,6 +739,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                     };
                     let r = to_screen(Rect::from_min_size(pos2(0.0, y), vec2(inner_w, list_h)));
                     let mut list = std::mem::take(&mut ws.list);
+                    let list_ghost = ws.ghost.clone().filter(|_| grid_dragging);
                     let kb_focus = ws.kb_focus.clone();
                     let kb_reveal = std::mem::take(&mut ws.kb_reveal);
                     let mut host = Host {
@@ -699,6 +766,15 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                         time: &time,
                         kb_focus: kb_focus.as_deref(),
                         kb_reveal,
+                        drag_over_folder: drag_over_folder.as_deref(),
+                        drag_over_back,
+                        dragging: grid_dragging,
+                        ghost: list_ghost.as_ref().map(|g| list_view::RowGhost {
+                            item: &g.item,
+                            rect: g.rect,
+                            offset: pointer - g.anchor,
+                            id: g.id,
+                        }),
                     };
                     let transform = egui::emath::TSTransform::from_translation(vec2(0.0, rise));
                     let events = ui
@@ -749,6 +825,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                             &mut slides,
                             &mut ws.collapsed,
                             &mut placed,
+                            &mut section_boxes,
                             sections,
                             items,
                             prev_view.items(),
@@ -804,6 +881,47 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
     let content_h = PAD_TOP + y + PAD_BOTTOM;
     ws.content_height = content_h;
 
+    // `animate:flip`, 200 ms while a card is dragged and at most 100
+    // render: a card the preview moves slides from where it showed. The
+    // dragged card jumps.
+    let rendered: usize = match &lists.sections {
+        Some(sections) => sections
+            .iter()
+            .map(|s| s.folder_items.len() + s.account_items.len())
+            .sum(),
+        None => lists.folder_items.len() + lists.account_items.len(),
+    };
+    let flip = grid_dragging && rendered <= 100;
+    let mut boxes = HashMap::new();
+    for p in &mut placed {
+        let dragged = match &p.node {
+            Node::Folder(f) => f.dragged,
+            Node::Account(a) => a.dragged,
+            _ => continue,
+        };
+        let layout = p.rect.min;
+        if let Some((was, shown)) = ws.last_boxes.get(&p.key).copied() {
+            if was != layout {
+                if flip && !dragged {
+                    ws.flips.insert(p.key.clone(), (shown - layout, now));
+                } else {
+                    ws.flips.remove(&p.key);
+                }
+            }
+        }
+        if let Some((from, start)) = ws.flips.get(&p.key).copied() {
+            let t = ((now - start) / FLIP).clamp(0.0, 1.0);
+            if t >= 1.0 {
+                ws.flips.remove(&p.key);
+            } else {
+                p.rect = p.rect.translate(from * (1.0 - cubic_out(t) as f32));
+                ctx.request_repaint();
+            }
+        }
+        boxes.insert(p.key.clone(), (layout, p.rect.min));
+    }
+    ws.last_boxes = boxes;
+
     // Draw the cards.
     let view_rect = Rect::from_min_size(pos2(0.0, scroll - PAD_TOP), viewport.size());
     let avatar_px = (v.grid_card_avatar_size() * ppp).round() as u32;
@@ -816,9 +934,22 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
     let mut stacks = Vec::new();
     let kb_focus = ws.kb_focus.clone();
     let kb = |id: &str| kb_focus.as_deref() == Some(id);
+    let mut card_ids = HashMap::new();
+    let mut back_rect = None;
+    let mut ghost_avatar = None;
     for p in &placed {
         ws.layout.push((p.node.label(), p.rect));
         let id = ws.mount(&p.key, frame, now);
+        match &p.node {
+            Node::Folder(f) => {
+                card_ids.insert(ItemRef::folder(&f.folder.id), id);
+            }
+            Node::Account(a) => {
+                card_ids.insert(ItemRef::account(&a.account.id), id);
+            }
+            Node::Back => back_rect = Some(to_screen(p.rect)),
+            _ => {}
+        }
         let visible = p
             .clip
             .map_or(p.rect, |c| p.rect.intersect(c))
@@ -860,6 +991,11 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
             }
             _ => None,
         };
+        if let (Node::Account(a), Some(g)) = (&p.node, &ws.ghost) {
+            if g.item == ItemRef::account(&a.account.id) {
+                ghost_avatar = avatar.clone();
+            }
+        }
         if !visible {
             // Laid out and sensed, not painted; its entrance and fade clocks
             // run as if it were on screen.
@@ -900,8 +1036,9 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                         id,
                         locale: input.locale,
                         accent,
-                        drag_over: false,
+                        drag_over: drag_over_back,
                         focus_visible: input.focus_visible,
+                        grid_dragging,
                     },
                 ) {
                     match event {
@@ -968,10 +1105,12 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                         name: &f.folder.name,
                         card_color: card_color(input.resolved, v, &f.card_color),
                         accent,
-                        drag_over: false,
+                        drag_over: drag_over_folder.as_deref() == Some(f.folder.id.as_str()),
                         dragged: f.dragged,
                         focus_visible: input.focus_visible,
                         kb_focus: kb(&f.folder.id),
+                        grid_dragging,
+                        ghost: false,
                     },
                 ) {
                     match event {
@@ -1014,9 +1153,11 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                         time: &time,
                         badge,
                         extension: &sections,
-                        extension_disabled: a.single_click_switch,
+                        extension_disabled: a.single_click_switch || grid_dragging,
                         glass: input.glass,
                         kb_focus: kb(&a.account.id),
+                        grid_dragging,
+                        ghost: false,
                     },
                 );
                 stacks.push(Stack {
@@ -1042,6 +1183,50 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
         }
     }
     restack(&ctx, layer, cards_from..shape_count(&ctx, layer), &stacks);
+    ws.card_ids = card_ids;
+    if list_mode {
+        ws.back = ws.list.back;
+        ws.sections = ws.list.section_boxes.clone();
+    } else {
+        ws.back = back_rect;
+        ws.sections = section_boxes
+            .into_iter()
+            .map(|(folder, r)| (folder, to_screen(r)))
+            .collect();
+    }
+    ws.sections_mode = lists.sections.is_some() && (list_mode || !placed.is_empty());
+    ws.list_mode = list_mode;
+    ws.viewport = Some(clip);
+    if !grid_dragging {
+        ws.ghost = None;
+    }
+    // `ghostEl`: `position: fixed` over everything, `pointer-events: none`.
+    let ghost_node = ws.ghost.clone().and_then(|g| {
+        let node = placed.iter().find_map(|p| match &p.node {
+            Node::Account(a) if g.item == ItemRef::account(&a.account.id) => Some(&p.node),
+            Node::Folder(f) if g.item == ItemRef::folder(&f.folder.id) => Some(&p.node),
+            _ => None,
+        })?;
+        Some((g, node))
+    });
+    if let Some((g, node)) = ghost_node {
+        draw_ghost(
+            ui,
+            &g,
+            node,
+            pointer,
+            &GhostInput {
+                vars: v,
+                resolved: input.resolved,
+                accent,
+                locale: input.locale,
+                time: &time,
+                glass: input.glass,
+                cs2,
+                avatar: ghost_avatar,
+            },
+        );
+    }
     if !list_mode {
         ws.cards_scroll = Some(scroll);
         ws.cards = placed
@@ -1289,6 +1474,7 @@ fn lay_sections<'a>(
     slides: &'a mut HashMap<String, Slide>,
     collapsed: &mut HashMap<String, bool>,
     out: &mut Vec<Placed<'a>>,
+    boxes: &mut Vec<(Option<String>, Rect)>,
     sections: &[accshift_app::folders::FolderSection],
     items: &'a [DisplayItem],
     previous: &[DisplayItem],
@@ -1375,6 +1561,11 @@ fn lay_sections<'a>(
             y += SECTIONS_GAP;
         }
         let section_prefix = format!("{prefix}s/{}", part.key);
+        let section_top = y;
+        let folder = part.header.and_then(|h| match &h.label {
+            SectionLabel::Folder(f) => Some(f.id.clone()),
+            SectionLabel::Root => None,
+        });
         if let Some(h) = part.header {
             let height = if h.label == SectionLabel::Root {
                 23.0
@@ -1401,6 +1592,10 @@ fn lay_sections<'a>(
             _ => &part.items,
         };
         if cards.is_empty() {
+            boxes.push((
+                folder,
+                Rect::from_min_size(pos2(left, section_top), vec2(width, y - section_top)),
+            ));
             continue;
         }
         if part.header.is_some() {
@@ -1426,8 +1621,120 @@ fn lay_sections<'a>(
             }
         }
         y += full * factor;
+        boxes.push((
+            folder,
+            Rect::from_min_size(pos2(left, section_top), vec2(width, y - section_top)),
+        ));
     }
     y - top
+}
+
+/// What [`draw_ghost`] reads besides the card.
+struct GhostInput<'a> {
+    vars: &'a Vars,
+    resolved: &'a ResolvedTheme,
+    accent: Rgba,
+    locale: Locale,
+    time: &'a accshift_app::time::TimeContext,
+    glass: bool,
+    cs2: &'a crate::app::accounts::Cs2Cards,
+    avatar: Option<AvatarContent>,
+}
+
+/// `ghostEl`: the source card cloned at the drag start, `position: fixed`
+/// at the pointer, `opacity: 0.85`, `transform: scale(1.05)` and its own
+/// shadow, over everything.
+fn draw_ghost(ui: &Ui, g: &Ghost, node: &Node, pointer: egui::Pos2, input: &GhostInput) {
+    let ctx = ui.ctx().clone();
+    let v = input.vars;
+    let cs2 = match node {
+        Node::Account(a) => input.cs2.card(&a.account.id).cloned(),
+        _ => None,
+    };
+    let badge = match node {
+        Node::Account(a) => cs2
+            .as_ref()
+            .and_then(|c| c.badge.as_ref())
+            .filter(|_| !a.single_click_switch),
+        _ => None,
+    };
+    let height = match node {
+        Node::Account(a) => account_card::height(&ctx, v, a, badge.is_some()),
+        _ => v.grid_card_min_height(),
+    };
+    // `left: clientX - ghostOffsetX`, at the source's width.
+    let r = Rect::from_min_size(
+        g.rect.min + (pointer - g.anchor),
+        vec2(g.rect.width(), height),
+    );
+    // The cloned `.entrance` replays `card-entrance`, which overrides the
+    // inline opacity and transform while it runs.
+    let (enter_opacity, _) = entrance(ui, g.id, v);
+    let entering = enter_opacity < 1.0;
+    let (scale, opacity) = if entering { (1.0, 1.0) } else { (1.05, 0.85) };
+    crate::ui::components::drag_ghost(&ctx, r, scale, opacity, |gui| {
+        ghost_card(gui, g, node, r, badge, input);
+    });
+}
+
+/// The clone inside the ghost: the source card at rest.
+fn ghost_card(
+    gui: &mut Ui,
+    g: &Ghost,
+    node: &Node,
+    r: Rect,
+    badge: Option<&accshift_app::platforms::card::UsernameBadge>,
+    input: &GhostInput,
+) {
+    let v = input.vars;
+    match node {
+        Node::Folder(f) => {
+            folder_card::folder_card(
+                gui,
+                r,
+                &FolderCardProps {
+                    vars: v,
+                    id: g.id,
+                    name: &f.folder.name,
+                    card_color: card_color(input.resolved, v, &f.card_color),
+                    accent: input.accent,
+                    drag_over: false,
+                    dragged: false,
+                    focus_visible: false,
+                    kb_focus: false,
+                    grid_dragging: false,
+                    ghost: true,
+                },
+            );
+        }
+        Node::Account(a) => {
+            // Cloned before the source took `.dragging`.
+            let mut item = AccountCardItem::clone(a);
+            item.dragged = false;
+            account_card::account_card(
+                gui,
+                r,
+                &AccountCardProps {
+                    vars: v,
+                    id: g.id,
+                    item: &item,
+                    card_color: card_color(input.resolved, v, &a.card_color),
+                    avatar: input.avatar.clone().unwrap_or(AvatarContent::Loading),
+                    focus_visible: false,
+                    locale: input.locale,
+                    time: input.time,
+                    badge,
+                    extension: &[],
+                    extension_disabled: true,
+                    glass: input.glass,
+                    kb_focus: false,
+                    grid_dragging: false,
+                    ghost: true,
+                },
+            );
+        }
+        _ => {}
+    }
 }
 
 /// The cards of section `key` in a previous frame's items.

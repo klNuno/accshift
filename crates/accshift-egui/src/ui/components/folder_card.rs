@@ -65,6 +65,10 @@ pub struct FolderCardProps<'a> {
     pub focus_visible: bool,
     /// `[data-kb-focus]`: the card the arrow keys moved to.
     pub kb_focus: bool,
+    /// `.is-dragging` on the grid: a hovered card stays in place.
+    pub grid_dragging: bool,
+    /// The drag ghost: its inline `box-shadow` replaces the card's.
+    pub ghost: bool,
 }
 
 /// Which card [`frame`] paints and its state classes.
@@ -81,6 +85,10 @@ pub(crate) struct CardState {
     /// `.card[data-kb-focus]` (folder cards only): the arrow keys moved
     /// here.
     pub kb_focus: bool,
+    /// `.is-dragging` on the grid.
+    pub grid_dragging: bool,
+    /// The drag ghost.
+    pub ghost: bool,
 }
 
 /// The card box drawn, for its children.
@@ -96,6 +104,8 @@ pub(crate) struct Frame {
     pub icon_fg: Rgba,
     pub icon_lift: f32,
     pub opacity: f32,
+    /// `.dragging` fades the card as one layer, closed by the caller.
+    pub group: bool,
 }
 
 /// `card-entrance`: `(opacity, scale)` at this frame, `(1, 1)` once over.
@@ -134,6 +144,8 @@ pub(crate) fn frame(
         drag_over,
         dragged,
         kb_focus,
+        grid_dragging,
+        ghost,
     } = state;
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
@@ -143,8 +155,8 @@ pub(crate) fn frame(
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
     ctx.accesskit_node_builder(id, |node| node.set_role(Role::Button));
-    let hovered = response.hovered();
-    let pressed = response.is_pointer_button_down_on();
+    let hovered = super::css_hovered(&response);
+    let pressed = super::held(&response);
 
     let transparent = Rgba::TRANSPARENT;
     // Later rules win at equal specificity: `.custom-color:hover` (0,3,0)
@@ -169,6 +181,9 @@ pub(crate) fn frame(
     // `.dragging` (folder only) comes last and wins over `:active`.
     let (ty, scale) = if dragged {
         (0.0, 0.95)
+    } else if grid_dragging && hovered {
+        // `.is-dragging .card:not(.dragging):hover { transform: none }`.
+        (0.0, 1.0)
     } else if pressed {
         (0.0, 0.985)
     } else if hovered {
@@ -214,7 +229,13 @@ pub(crate) fn frame(
             scale,
         }
     };
-    let opacity = enter_opacity * if dragged { 0.4 } else { 1.0 };
+    // `.dragging { opacity: .4 }` fades the card as one group: a layer
+    // where the renderer has them, each shape where it has not.
+    let group = dragged && !cfg!(feature = "glow");
+    if group {
+        drag_group(ui, rect);
+    }
+    let opacity = enter_opacity * if dragged && !group { 0.4 } else { 1.0 };
 
     let mut shadows = Vec::new();
     // The outline is drawn outside the border box, above the shadows; its
@@ -245,6 +266,9 @@ pub(crate) fn frame(
             color: Rgba::new(0.0, 0.0, 0.0, 0.18),
             inset: false,
         });
+    }
+    if ghost {
+        shadows = vec![super::account_card::GHOST_SHADOW];
     }
     BoxStyle {
         background,
@@ -281,7 +305,14 @@ pub(crate) fn frame(
         icon_fg,
         icon_lift,
         opacity,
+        group,
     }
+}
+
+/// Opens the layer of a dragged card, landing at 0.4 on
+/// [`Mark::End`](crate::ui::backdrop_filter::Mark::End).
+pub(crate) fn drag_group(ui: &Ui, rect: Rect) {
+    crate::ui::backdrop_filter::Mark::Group { opacity: 0.4 }.paint(ui.painter(), rect);
 }
 
 /// The `.icon-wrap` box and the icon centred in it, under the card's
@@ -387,6 +418,8 @@ pub fn folder_card(ui: &mut Ui, rect: Rect, props: &FolderCardProps) -> Vec<Fold
             drag_over: props.drag_over,
             dragged: props.dragged,
             kb_focus: props.kb_focus,
+            grid_dragging: props.grid_dragging,
+            ghost: props.ghost,
         },
         v,
     );
@@ -396,8 +429,11 @@ pub fn folder_card(ui: &mut Ui, rect: Rect, props: &FolderCardProps) -> Vec<Fold
     if props.focus_visible && f.response.has_focus() && !props.kb_focus {
         super::focus::card_ring(ui, f.rect, v.radius_md, v);
     }
+    if f.group {
+        crate::ui::backdrop_filter::Mark::End.paint(ui.painter(), f.rect);
+    }
     let mut events = Vec::new();
-    if f.response.clicked() {
+    if super::clicked(&f.response) {
         events.push(FolderCardEvent::Open);
     }
     if f.response.secondary_clicked() {

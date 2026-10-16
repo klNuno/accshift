@@ -156,7 +156,20 @@ pub struct AccountCardProps<'a> {
     pub glass: bool,
     /// `[data-kb-focus]`: the card the arrow keys moved to.
     pub kb_focus: bool,
+    /// `.is-dragging` on the grid: a hovered card stays in place.
+    pub grid_dragging: bool,
+    /// The drag ghost: its inline `box-shadow` replaces the card's.
+    pub ghost: bool,
 }
+
+/// The ghost's inline `box-shadow: 0 8px 24px rgba(0,0,0,0.5)`.
+pub(crate) const GHOST_SHADOW: BoxShadow = BoxShadow {
+    offset: vec2(0.0, 8.0),
+    blur: 24.0,
+    spread: 0.0,
+    color: Rgba::new(0.0, 0.0, 0.0, 0.5),
+    inset: false,
+};
 
 /// What the card painted and what the user did.
 #[derive(Clone, Debug, Default)]
@@ -412,8 +425,8 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
     ctx.accesskit_node_builder(id, |node| node.set_role(Role::Button));
 
     let mut st = state(&ctx, id);
-    let hovered = response.hovered();
-    let pressed = response.is_pointer_button_down_on();
+    let hovered = super::css_hovered(&response);
+    let pressed = super::held(&response);
     let active = item.active;
     let dragged = item.dragged;
     let lift = hovered && !active && !dragged;
@@ -431,10 +444,14 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
     {
         st.confirm = false;
     }
-    let keys = response.has_focus() && !disabled;
+    // A press focuses the card like any `<button>`: its keys then reach it.
+    let keys = !disabled && super::controls::take_focus(ui, &response);
     let key_click = keys && ctx.input(|i| i.key_pressed(Key::Enter) || i.key_pressed(Key::Space));
-    let key_menu = keys && ctx.input(|i| i.modifiers.shift && i.key_pressed(Key::F10));
-    if !disabled && !dragged && (response.clicked() || key_click) {
+    let key_menu = keys
+        && ctx.input(|i| {
+            (i.modifiers.shift && i.key_pressed(Key::F10)) || i.key_pressed(crate::CONTEXT_MENU_KEY)
+        });
+    if !disabled && !dragged && (super::clicked(&response) || key_click) {
         events.push(CardEvent::Activate);
         if item.single_click_switch {
             events.push(CardEvent::Switch);
@@ -446,8 +463,9 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
         }
     }
     if !disabled && (response.secondary_clicked() || key_menu) {
+        // `getBoundingClientRect()`: the layout box, not its snapped edges.
         let at = if key_menu {
-            rect.center()
+            layout.center()
         } else {
             super::context_click_pos(ui).unwrap_or(rect.center())
         };
@@ -508,12 +526,19 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
         (None, true, _) | (None, false, true) => v.bg_card_hover,
         (None, false, false) => v.bg_card,
     };
-    let (ty, scale) = if dragged {
-        (0.0, 0.95)
-    } else if pressed && !active {
+    // `.card:not(.active):active` (0,3,0) beats `.card.dragging` (0,2,0)
+    // and loses to the shell's hover lift (0,5,0); `.is-dragging
+    // .card:not(.dragging):hover { transform: none !important }`.
+    let (ty, scale) = if dragged && pressed && !active {
         (0.0, 0.985)
+    } else if dragged {
+        (0.0, 0.95)
+    } else if props.grid_dragging && hovered {
+        (0.0, 1.0)
     } else if lift {
         (-2.0, 1.0)
+    } else if pressed && !active {
+        (0.0, 0.985)
     } else {
         (0.0, 1.0)
     };
@@ -558,7 +583,12 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
             scale,
         }
     };
-    let opacity = enter_opacity * if dragged { 0.4 } else { 1.0 };
+    // `.dragging { opacity: .4 }`: one layer, as the folder card's.
+    let group = dragged && !cfg!(feature = "glow");
+    if group {
+        super::folder_card::drag_group(ui, rect);
+    }
+    let opacity = enter_opacity * if dragged && !group { 0.4 } else { 1.0 };
 
     // The extension surface, under the face.
     let mut surface = None;
@@ -591,7 +621,9 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
     // Shadows: the active rings, else the hover shadow. Ring lists and the
     // drop shadow interpolate as lists, padded with transparent shadows.
     // While the extension shows, the rings are the surface's.
-    let shadows = if active && extension_visible {
+    let shadows = if props.ghost {
+        vec![GHOST_SHADOW]
+    } else if active && extension_visible {
         Vec::new()
     } else if active {
         let (halo, band, band_w) = match props.card_color {
@@ -932,6 +964,9 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
             ..BoxStyle::default()
         }
         .paint_transformed(ui.painter(), ring_rect, transform);
+    }
+    if group {
+        crate::ui::backdrop_filter::Mark::End.paint(ui.painter(), rect);
     }
     set_state(&ctx, id, st);
     CardOutput {

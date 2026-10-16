@@ -26,6 +26,9 @@ pub enum BackdropOp {
         saturate: f32,
         clip: Option<BackdropClip>,
     },
+    /// Opens a group: a layer that starts transparent, takes its jobs and
+    /// lands at `opacity` (`opacity` on an element, Skia's `saveLayer`).
+    Group { opacity: f32 },
     /// Closes the layer.
     End,
     /// `filter: blur(sigma) saturate(saturate)` then `transform:

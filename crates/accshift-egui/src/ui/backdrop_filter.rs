@@ -25,6 +25,11 @@ pub enum Mark {
         radius: Option<f32>,
         ppp: f32,
     },
+    /// Opens a group (CSS `opacity` on an element): a layer that starts
+    /// transparent and lands at `opacity` on [`Mark::End`].
+    Group {
+        opacity: f32,
+    },
     End,
     /// `filter: blur(sigma) saturate(saturate)` and `transform:
     /// scale(scale)` on everything since [`Mark::Root`] (`.app-shell`

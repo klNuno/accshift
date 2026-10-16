@@ -25,6 +25,7 @@ use accshift_app::display::{
     build_display_view, build_mock_view, CardContext, DisplayBody, DisplayLists, DisplayPipeline,
     DisplayView, DragPreview, FolderNavigation, PipelineInput,
 };
+use accshift_app::drag::DragManager;
 use accshift_app::jobs::Jobs;
 use accshift_app::platforms::card::{CardSection, UsernameBadge};
 use accshift_app::platforms::descriptors::PlatformDescriptor;
@@ -174,6 +175,10 @@ pub struct Accounts {
     /// `bulkEditSelectedIds` while the bulk edit mode is open: the cards
     /// turn accent when selected and switch on one click.
     pub bulk_selection: Option<BTreeSet<String>>,
+    /// `createDragManager`: the card being pressed or dragged.
+    pub drag: DragManager,
+    /// The keys of the dragged card's `{#each}` as last rendered.
+    drag_order: Vec<String>,
 }
 
 impl Accounts {
@@ -238,6 +243,8 @@ impl Accounts {
             cs2: Cs2Cards::default(),
             tour: None,
             bulk_selection: None,
+            drag: DragManager::default(),
+            drag_order: Vec::new(),
         };
         accounts
             .navigation
@@ -398,13 +405,18 @@ impl Accounts {
         self.pipeline.tick(now);
         self.lists = self.pipeline.compute(&PipelineInput {
             navigation: &self.navigation,
-            drag: DragPreview::default(),
+            drag: DragPreview {
+                is_dragging: self.drag.is_dragging(),
+                item: self.drag.drag_item(),
+                preview_index: self.drag.preview_index(),
+            },
             accounts: self.loading.loader.accounts(),
             pending_setup_account: None,
             expanded_folders,
             active_tab: tab,
             stores,
         });
+        self.track_drag_order(ctx);
         {
             let lctx = LoadingContext {
                 jobs,
@@ -429,7 +441,7 @@ impl Accounts {
             active_tab: tab,
             pending_setup_account: None,
             bulk_selection: self.bulk_selection.as_ref(),
-            drag_item: None,
+            drag_item: self.drag.drag_item(),
             collapsed_sections: self.pipeline.collapsed_sections(),
         };
         let view = match &self.tour {
@@ -445,6 +457,45 @@ impl Accounts {
         if let Some(at) = deadlines.into_iter().flatten().min() {
             ctx.request_repaint_after(at.saturating_duration_since(now));
         }
+    }
+
+    /// A preview reorder moving the dragged card's node takes `:active`
+    /// off it, as Chromium does when Svelte moves the node.
+    fn track_drag_order(&mut self, ctx: &egui::Context) {
+        // From the press on: the move that starts the drag can show the
+        // preview in the same frame.
+        let item = match self.drag.drag_item() {
+            Some(item) if self.drag.is_dragging() => item,
+            _ => match self.drag.pressed() {
+                Some(card) => &card.item,
+                None => {
+                    self.drag_order.clear();
+                    return;
+                }
+            },
+        };
+        let ids = |items: &[accshift_app::folders::ItemRef]| -> Vec<String> {
+            items.iter().map(|i| i.id.clone()).collect()
+        };
+        let order = match (&self.lists.sections, item.kind) {
+            (Some(sections), accshift_app::folders::ItemKind::Folder) => sections
+                .iter()
+                .map(|s| {
+                    s.folder
+                        .as_ref()
+                        .map_or("__root__".into(), |f| f.id.clone())
+                })
+                .collect(),
+            (_, accshift_app::folders::ItemKind::Folder) => ids(&self.lists.folder_items),
+            (_, accshift_app::folders::ItemKind::Account) => ids(&self.lists.account_items),
+        };
+        if !self.drag_order.is_empty()
+            && order != self.drag_order
+            && super::drag::each_moves(&self.drag_order, &order, &item.id)
+        {
+            crate::ui::components::drop_held(ctx);
+        }
+        self.drag_order = order;
     }
 
     /// Nothing left to land: no job, no debounce, no avatar download.

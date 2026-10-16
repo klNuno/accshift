@@ -116,8 +116,10 @@ fn backdrop_layers(ops: &[(usize, BackdropOp)], len: usize) -> Vec<Layer> {
     let mut depth = 0usize;
     for &(i, op) in ops {
         match op {
-            BackdropOp::Begin { .. } if open.is_none() => open = Some((i, op)),
-            BackdropOp::Begin { .. } => depth += 1,
+            BackdropOp::Begin { .. } | BackdropOp::Group { .. } if open.is_none() => {
+                open = Some((i, op));
+            }
+            BackdropOp::Begin { .. } | BackdropOp::Group { .. } => depth += 1,
             BackdropOp::End if depth > 0 => depth -= 1,
             BackdropOp::End => {
                 if let Some((begin, op)) = open.take() {
@@ -150,8 +152,19 @@ fn layer_span(
     let Some(clip) = clip else {
         return [0..width, 0..height];
     };
-    let mut min = clip.min;
-    let mut max = clip.max;
+    mesh_span(clip.min, clip.max, jobs, pixels_per_point, width, height)
+}
+
+/// The device-pixel columns and rows of the box `min..max` grown to every
+/// mesh of `jobs`.
+fn mesh_span(
+    mut min: [f32; 2],
+    mut max: [f32; 2],
+    jobs: &[egui::ClippedPrimitive],
+    pixels_per_point: f32,
+    width: usize,
+    height: usize,
+) -> [Range<usize>; 2] {
     for job in jobs {
         let egui::epaint::Primitive::Mesh(mesh) = &job.primitive else {
             continue;
@@ -182,6 +195,23 @@ fn layer_span(
         a..b.max(a)
     };
     [span(min[0], max[0], width), span(min[1], max[1], height)]
+}
+
+/// The device-pixel columns and rows a group's meshes touch.
+fn group_span(
+    jobs: &[egui::ClippedPrimitive],
+    pixels_per_point: f32,
+    width: usize,
+    height: usize,
+) -> [Range<usize>; 2] {
+    mesh_span(
+        [f32::MAX; 2],
+        [f32::MIN; 2],
+        jobs,
+        pixels_per_point,
+        width,
+        height,
+    )
 }
 
 /// See [`EguiSoftwareRender::with_backdrop`].
@@ -497,39 +527,48 @@ impl EguiSoftwareRender {
             _ => None,
         };
         for (n, layer) in layers.iter().enumerate() {
-            let BackdropOp::Begin {
-                sigma,
-                opacity,
-                saturate,
-                clip,
-            } = layer.op
-            else {
-                continue;
-            };
-            let mut pixels = if n == 0 {
-                let key = (
-                    width,
-                    height,
-                    backdrop::begin_key(sigma, saturate, clip),
-                    root,
-                );
-                if canvas_changed || self.backdrop.key != Some(key) {
-                    let source: Cow<[[u8; 4]]> = match root {
-                        Some(r) => Cow::Owned(self.composite_after(r)),
-                        None => Cow::Borrowed(&self.canvas.data),
-                    };
-                    self.backdrop.blurred =
-                        backdrop::backdrop_of(&source, width, height, clip, sigma, saturate);
-                    self.backdrop.key = Some(key);
-                }
-                self.backdrop.blurred.clone()
-            } else {
-                let source = under.as_deref().unwrap_or(&out[..]);
-                backdrop::backdrop_of(source, width, height, clip, sigma, saturate)
-            };
             let jobs = paint_jobs.get(layer.begin + 1..layer.end).unwrap_or(&[]);
-            self.draw_jobs_layered(&mut pixels, width, height, jobs, pixels_per_point);
-            let span = layer_span(clip, jobs, pixels_per_point, width, height);
+            let (pixels, opacity, span) = match layer.op {
+                BackdropOp::Group { opacity } => {
+                    let mut pixels = vec![[0u8; 4]; width * height];
+                    self.draw_jobs_layered(&mut pixels, width, height, jobs, pixels_per_point);
+                    let span = group_span(jobs, pixels_per_point, width, height);
+                    (pixels, opacity, span)
+                }
+                BackdropOp::Begin {
+                    sigma,
+                    opacity,
+                    saturate,
+                    clip,
+                } => {
+                    let mut pixels = if n == 0 {
+                        let key = (
+                            width,
+                            height,
+                            backdrop::begin_key(sigma, saturate, clip),
+                            root,
+                        );
+                        if canvas_changed || self.backdrop.key != Some(key) {
+                            let source: Cow<[[u8; 4]]> = match root {
+                                Some(r) => Cow::Owned(self.composite_after(r)),
+                                None => Cow::Borrowed(&self.canvas.data),
+                            };
+                            self.backdrop.blurred = backdrop::backdrop_of(
+                                &source, width, height, clip, sigma, saturate,
+                            );
+                            self.backdrop.key = Some(key);
+                        }
+                        self.backdrop.blurred.clone()
+                    } else {
+                        let source = under.as_deref().unwrap_or(&out[..]);
+                        backdrop::backdrop_of(source, width, height, clip, sigma, saturate)
+                    };
+                    self.draw_jobs_layered(&mut pixels, width, height, jobs, pixels_per_point);
+                    let span = layer_span(clip, jobs, pixels_per_point, width, height);
+                    (pixels, opacity, span)
+                }
+                _ => continue,
+            };
             backdrop::land_span(&mut out, &pixels, opacity, width, span.clone());
             let next = layers.get(n + 1).map_or(paint_jobs.len(), |l| l.begin);
             let after = paint_jobs.get(layer.end + 1..next).unwrap_or(&[]);
@@ -581,19 +620,26 @@ impl EguiSoftwareRender {
                 pixels_per_point,
             );
             at = (layer.end + 1).min(jobs.len());
-            let BackdropOp::Begin {
-                sigma,
-                opacity,
-                saturate,
-                clip,
-            } = layer.op
-            else {
-                continue;
-            };
-            let mut pixels = backdrop::backdrop_of(buffer, width, height, clip, sigma, saturate);
             let inner = &jobs[layer.begin + 1..layer.end.min(jobs.len())];
+            let (mut pixels, opacity, span) = match layer.op {
+                BackdropOp::Group { opacity } => (
+                    vec![[0u8; 4]; width * height],
+                    opacity,
+                    group_span(inner, pixels_per_point, width, height),
+                ),
+                BackdropOp::Begin {
+                    sigma,
+                    opacity,
+                    saturate,
+                    clip,
+                } => (
+                    backdrop::backdrop_of(buffer, width, height, clip, sigma, saturate),
+                    opacity,
+                    layer_span(clip, inner, pixels_per_point, width, height),
+                ),
+                _ => continue,
+            };
             self.draw_jobs_layered(&mut pixels, width, height, inner, pixels_per_point);
-            let span = layer_span(clip, inner, pixels_per_point, width, height);
             backdrop::land_span(buffer, &pixels, opacity, width, span);
         }
         self.draw_jobs_direct(
@@ -1718,6 +1764,27 @@ mod layer_tests {
         let layers = backdrop_layers(&ops, 10);
         let spans: Vec<_> = layers.iter().map(|l| (l.begin, l.end)).collect();
         assert_eq!(spans, [(1, 5), (7, 10)]);
+    }
+
+    #[test]
+    fn a_group_opens_a_layer_like_a_begin() {
+        let ops = [
+            (1, BackdropOp::Group { opacity: 0.4 }),
+            (2, begin(0.5)),
+            (3, BackdropOp::End),
+            (4, BackdropOp::End),
+            (6, BackdropOp::Group { opacity: 0.85 }),
+            (8, BackdropOp::End),
+        ];
+        let layers = backdrop_layers(&ops, 10);
+        let spans: Vec<_> = layers.iter().map(|l| (l.begin, l.end)).collect();
+        assert_eq!(spans, [(1, 4), (6, 8)]);
+    }
+
+    #[test]
+    fn an_empty_group_spans_nothing() {
+        let [columns, rows] = group_span(&[], 1.5, 40, 30);
+        assert!(columns.is_empty() && rows.is_empty());
     }
 
     #[test]

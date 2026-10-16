@@ -464,6 +464,13 @@ pub fn transition<T: Animatable>(ctx: &Context, id: Id, target: T, spec: &Transi
     value
 }
 
+/// The value the transition `id` shows now, without retargeting it.
+pub fn peek<T: Animatable>(ctx: &Context, id: Id) -> Option<T> {
+    let now = now(ctx);
+    ctx.data(|d| d.get_temp::<TransitionState<T>>(id))
+        .map(|state| state.value(now))
+}
+
 /// A boolean state transitioned as 0.0 or 1.0, the common hover case.
 pub fn transition_bool(ctx: &Context, id: Id, on: bool, spec: &Transition) -> f32 {
     transition(ctx, id, if on { 1.0f32 } else { 0.0 }, spec)

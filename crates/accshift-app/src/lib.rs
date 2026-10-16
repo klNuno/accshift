@@ -32,6 +32,7 @@ pub mod bulk_edit;
 pub mod cs2_bridge;
 pub mod dispatch;
 pub mod display;
+pub mod drag;
 pub mod error;
 pub mod folders;
 pub mod i18n;

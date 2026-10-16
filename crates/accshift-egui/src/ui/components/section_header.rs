@@ -236,7 +236,7 @@ pub fn section_header(
         super::focus::ua_ring(ui, rect, 0.0, v);
     }
     let mut events = Vec::new();
-    if response.clicked() {
+    if super::clicked(&response) {
         events.push(SectionHeaderEvent::Toggle);
     }
     if let Some(folder) = props.folder {

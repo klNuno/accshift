@@ -23,6 +23,7 @@
 pub mod accounts;
 pub mod avatars;
 pub mod clock;
+mod drag;
 pub(crate) mod keys;
 pub mod onboarding;
 mod palette;
@@ -313,6 +314,10 @@ pub struct Booted {
     /// animation starts over.
     pub bulk_mount: u64,
     bulk_key: Option<accshift_app::bulk_edit::BarStep>,
+    /// The primary button is down (`e.buttons` of the drag's moves).
+    drag_held: bool,
+    /// The workspace scroll the drag slots were measured at.
+    drag_scroll: f32,
     /// `handleAppMounted` ran.
     secure_mounted: bool,
     /// The settings panel was open last frame (`handleSettingsClosed`).
@@ -722,6 +727,8 @@ impl AppModel {
             bulk: Default::default(),
             bulk_mount: 0,
             bulk_key: None,
+            drag_held: false,
+            drag_scroll: 0.0,
             secure_mounted: false,
             secure_in_settings: false,
         });
@@ -842,6 +849,10 @@ impl AppModel {
                 .bulk
                 .is_open()
                 .then(|| b.bulk.selected_ids().iter().cloned().collect());
+        }
+        crate::ui::components::track_held(&ctx);
+        self.track_drag(&ctx);
+        if let Some(b) = self.booted.as_mut() {
             let grid_hidden = b.nav.show_settings || b.nav.show_personas;
             let expanded = b.stores.settings().account_display.expanded_folders;
             b.accounts.update(
@@ -895,6 +906,8 @@ impl AppModel {
         if let Some(b) = self.booted.as_mut() {
             // The `setTimeout(0)` that drops an unclaimed click swallow.
             b.bulk.end_frame();
+            b.accounts.drag.end_frame();
+            crate::ui::components::set_click_eaten(ctx, false);
             let step = b.bulk.bar().map(|bar| bar.step());
             if step != b.bulk_key {
                 b.bulk_key = step;

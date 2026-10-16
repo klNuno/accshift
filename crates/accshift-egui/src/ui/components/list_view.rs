@@ -60,6 +60,8 @@ const T_BUTTON: Transition = Transition::new(0.15, Timing::EASE);
 const SPIN: f64 = 0.75;
 /// `transition:slide={{ duration: 220 }}`.
 const SLIDE: f64 = 0.22;
+/// `animate:flip`'s duration while a row is dragged.
+const FLIP: f64 = 0.2;
 const RED: Rgba = Rgba::new(239.0, 68.0, 68.0, 1.0);
 const YELLOW: Rgba = Rgba::new(234.0, 179.0, 8.0, 1.0);
 const ORANGE: Rgba = Rgba::new(251.0, 146.0, 60.0, 1.0);
@@ -79,6 +81,15 @@ pub struct ListState {
     pub layout: Vec<(String, Rect)>,
     /// The last frame's folder and account rows on screen, in DOM order.
     pub cards: Vec<(ItemRef, Rect)>,
+    /// The last frame's back row on screen (`[data-back-card]`).
+    pub back: Option<Rect>,
+    /// The last frame's `.section` wrappers on screen, with their folder
+    /// (none for the root's).
+    pub section_boxes: Vec<(Option<String>, Rect)>,
+    /// `animate:flip`: per row key, the offset it slides from and since when.
+    flips: HashMap<String, (f32, f64)>,
+    /// Per row key, its laid out and its shown top last frame.
+    last_tops: HashMap<String, (f32, f32)>,
     /// Per section key: folded last frame, and its rows while unfolded.
     sections: HashMap<String, (bool, Vec<DisplayItem>)>,
     slides: HashMap<String, Slide>,
@@ -115,6 +126,25 @@ pub struct ListProps<'a> {
     pub kb_focus: Option<&'a str>,
     /// Scroll the focused row into view (`syncDom`).
     pub kb_reveal: bool,
+    /// `dragOverFolderId`: the folder row painted `.drag-over`.
+    pub drag_over_folder: Option<&'a str>,
+    /// `dragOverBack`.
+    pub drag_over_back: bool,
+    /// `dragItem` is set: the flat rows slide to their preview slots.
+    pub dragging: bool,
+    /// The dragged row's `ghostEl`.
+    pub ghost: Option<RowGhost<'a>>,
+}
+
+/// `ghostEl` over a list: the dragged row cloned at the drag start.
+pub struct RowGhost<'a> {
+    pub item: &'a ItemRef,
+    /// `sourceEl.getBoundingClientRect()` when the drag started.
+    pub rect: Rect,
+    /// How far the pointer went since.
+    pub offset: egui::Vec2,
+    /// The clone's own mount.
+    pub id: Id,
 }
 
 /// What the list reports.
@@ -333,6 +363,7 @@ pub fn list_view(
 
     // Every box, in content coordinates.
     let mut places: Vec<Place> = Vec::new();
+    let mut wrappers: Vec<(Option<String>, f32, f32)> = Vec::new();
     let mut y = PAD;
     for (i, block) in blocks.iter().enumerate() {
         if i > 0 {
@@ -350,6 +381,15 @@ pub fn list_view(
                 collapsed,
                 rows,
             } => {
+                let folder = match header {
+                    Some(DisplayItem::SectionHeader(h)) => match &h.label {
+                        SectionLabel::Folder(f) => Some(f.id.clone()),
+                        SectionLabel::Root => None,
+                    },
+                    _ => None,
+                };
+                let wrapper = wrappers.len();
+                wrappers.push((folder, y, y));
                 if let Some(item) = header {
                     let h = box_h(item);
                     places.push(Place::new(item, y, h));
@@ -362,7 +402,10 @@ pub fn list_view(
                         leaving = s.rows.iter().collect();
                         &leaving
                     }
-                    _ if *collapsed => continue,
+                    _ if *collapsed => {
+                        wrappers[wrapper].2 = y;
+                        continue;
+                    }
                     _ => rows,
                 };
                 if header.is_some() {
@@ -394,8 +437,53 @@ pub fn list_view(
                     full += h;
                 }
                 y += full * factor;
+                wrappers[wrapper].2 = y;
             }
         }
+    }
+
+    // `animate:flip` in the flat layout, 200 ms while a row is dragged and
+    // at most 100 render: a row the preview moves slides from where it
+    // showed. The dragged row jumps.
+    if wrappers.is_empty() {
+        let rendered = places
+            .iter()
+            .filter(|p| matches!(p.item, DisplayItem::Folder(_) | DisplayItem::Account(_)))
+            .count();
+        let flip = props.dragging && rendered <= 100;
+        let mut tops = HashMap::new();
+        for place in &mut places {
+            let dragged = match place.item {
+                DisplayItem::Folder(f) => f.dragged,
+                DisplayItem::Account(a) => a.dragged,
+                _ => continue,
+            };
+            let key = key_of(place.item);
+            let layout = place.top;
+            if let Some((was, shown)) = state.last_tops.get(&key).copied() {
+                if was != layout {
+                    if flip && !dragged {
+                        state.flips.insert(key.clone(), (shown - layout, now));
+                    } else {
+                        state.flips.remove(&key);
+                    }
+                }
+            }
+            if let Some((from, start)) = state.flips.get(&key).copied() {
+                let t = ((now - start) / FLIP).clamp(0.0, 1.0);
+                if t >= 1.0 {
+                    state.flips.remove(&key);
+                } else {
+                    place.top += from * (1.0 - cubic_out(t) as f32);
+                    ctx.request_repaint();
+                }
+            }
+            tops.insert(key, (layout, place.top));
+        }
+        state.last_tops = tops;
+    } else {
+        state.flips.clear();
+        state.last_tops.clear();
     }
     let content_h = y + PAD;
     let max_scroll = (content_h - panel.height()).max(0.0);
@@ -442,7 +530,16 @@ pub fn list_view(
     let mut focused_box = None;
     state.layout.clear();
     state.cards.clear();
+    state.back = None;
     let scrolled = panel.min.to_vec2() - vec2(0.0, state.scroll);
+    state.section_boxes = wrappers
+        .into_iter()
+        .map(|(folder, top, bottom)| {
+            let local = Rect::from_x_y_ranges(PAD..=PAD + row_w, top..=bottom);
+            (folder, local.translate(scrolled))
+        })
+        .collect();
+    let mut ghost = None;
     for place in &places {
         let (item, h) = (place.item, place.h);
         let local = Rect::from_min_size(pos2(PAD, place.top), vec2(row_w, h));
@@ -476,6 +573,23 @@ pub fn list_view(
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(row));
         child.set_clip_rect(clip);
         child.multiply_opacity(place.opacity);
+        let (item_ref, dragged) = match item {
+            DisplayItem::Folder(f) => (Some(ItemRef::folder(&f.folder.id)), f.dragged),
+            DisplayItem::Account(a) => (Some(ItemRef::account(&a.account.id)), a.dragged),
+            _ => (None, false),
+        };
+        // `.row.dragging { opacity: .4 }`: one layer, as the cards'.
+        let group = dragged && visible && !cfg!(feature = "glow");
+        if group {
+            super::folder_card::drag_group(&child, row);
+        } else if dragged {
+            child.multiply_opacity(0.4);
+        }
+        if let (Some(g), Some(item_ref)) = (&props.ghost, &item_ref) {
+            if g.item == item_ref {
+                ghost = Some((item, h, id, key.clone(), kb_focus));
+            }
+        }
         match item {
             DisplayItem::SectionHeader(h) => {
                 let label = header_label(props.locale, h);
@@ -509,8 +623,12 @@ pub fn list_view(
                 }
             }
             DisplayItem::Back => {
+                state.back = Some(row);
                 let label = translate(props.locale, "common.back");
-                let look = RowLook::default();
+                let look = RowLook {
+                    drag_over: props.drag_over_back,
+                    ..RowLook::default()
+                };
                 let r = list_row(&mut child, row, id, &label, look, props, visible);
                 if visible {
                     icon_box(&child, &r, icons::BACK, v);
@@ -522,7 +640,7 @@ pub fn list_view(
             }
             DisplayItem::Folder(f) => {
                 let look = RowLook {
-                    dragged: f.dragged,
+                    drag_over: props.drag_over_folder == Some(f.folder.id.as_str()),
                     kb_focus,
                     ..RowLook::default()
                 };
@@ -539,16 +657,7 @@ pub fn list_view(
                 }
             }
             DisplayItem::Account(a) => {
-                let warning = a.warning.as_ref();
-                let look = RowLook {
-                    selected: state.selected.as_deref() == Some(a.account.id.as_str()),
-                    active: a.active,
-                    custom: host.card_color(&a.card_color),
-                    red: warning.is_some_and(|w| w.list_has_red),
-                    orange: warning.is_some_and(|w| w.list_has_orange),
-                    dragged: a.dragged,
-                    kb_focus,
-                };
+                let look = account_look(a, state, kb_focus, host);
                 let r = list_row(&mut child, row, id, &a.name, look, props, visible);
                 let px = (ICON * ppp).round() as u32;
                 let mut content = host.avatar(&key, a, px, visible);
@@ -583,8 +692,24 @@ pub fn list_view(
                 }
             }
         }
+        if group {
+            crate::ui::backdrop_filter::Mark::End.paint(child.painter(), row);
+        }
     }
 
+    if let (Some(g), Some((item, h, source, key, kb_focus))) = (&props.ghost, ghost) {
+        ghost_row(
+            &ctx,
+            g,
+            item,
+            h,
+            (source, &key),
+            kb_focus,
+            state,
+            props,
+            host,
+        );
+    }
     drop(places);
     state.slides = slides;
 
@@ -719,9 +844,76 @@ struct RowLook {
     custom: Option<Rgba>,
     red: bool,
     orange: bool,
-    dragged: bool,
+    /// `.drag-over`.
+    drag_over: bool,
     /// `[data-kb-focus]`.
     kb_focus: bool,
+    /// The drag's clone: never hovered, its own shadow.
+    ghost: bool,
+}
+
+/// An account row's states.
+fn account_look(
+    a: &AccountCardItem,
+    state: &ListState,
+    kb_focus: bool,
+    host: &dyn ListHost,
+) -> RowLook {
+    let warning = a.warning.as_ref();
+    RowLook {
+        selected: state.selected.as_deref() == Some(a.account.id.as_str()),
+        active: a.active,
+        custom: host.card_color(&a.card_color),
+        red: warning.is_some_and(|w| w.list_has_red),
+        orange: warning.is_some_and(|w| w.list_has_orange),
+        kb_focus,
+        ..RowLook::default()
+    }
+}
+
+/// `ghostEl`: the source row cloned at the drag start, `position: fixed` at
+/// the pointer, `opacity: 0.85`, `transform: scale(1.05)` and its own
+/// shadow, over everything. A `.row` has no entrance to replay.
+#[allow(clippy::too_many_arguments)]
+fn ghost_row(
+    ctx: &egui::Context,
+    g: &RowGhost,
+    item: &DisplayItem,
+    h: f32,
+    (source, key): (Id, &str),
+    kb_focus: bool,
+    state: &ListState,
+    props: &ListProps,
+    host: &mut dyn ListHost,
+) {
+    let v = props.vars;
+    let ppp = ctx.pixels_per_point();
+    let r = Rect::from_min_size(g.rect.min + g.offset, vec2(g.rect.width(), h));
+    super::drag_ghost(ctx, r, 1.05, 0.85, |gui| match item {
+        DisplayItem::Folder(f) => {
+            let look = RowLook {
+                kb_focus,
+                ghost: true,
+                ..RowLook::default()
+            };
+            let row = list_row(gui, r, g.id, &f.folder.name, look, props, true);
+            icon_box(gui, &row, icons::FOLDER, v);
+            plain_name(gui, &row, &f.folder.name, v);
+        }
+        DisplayItem::Account(a) => {
+            let look = RowLook {
+                ghost: true,
+                ..account_look(a, state, kb_focus, host)
+            };
+            let row = list_row(gui, r, g.id, &a.name, look, props, true);
+            let px = (ICON * ppp).round() as u32;
+            let content = host.avatar(key, a, px, true);
+            avatar_rings(gui, row.icon, look, v);
+            paint_avatar(gui, source, row.icon, &content, a, v, AvatarSize::ROW);
+            account_info(gui, &row, a, look, props);
+        }
+        _ => {}
+    });
 }
 
 /// A row drawn: where its parts go and what it got.
@@ -764,17 +956,17 @@ fn list_row(
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
     ctx.accesskit_node_builder(id, |node| node.set_role(Role::Button));
-    let hovered = response.hovered();
-
     let RowLook {
         selected,
         active,
         custom,
         red,
         orange,
-        dragged,
+        drag_over,
         kb_focus,
+        ghost,
     } = look;
+    let hovered = super::css_hovered(&response) && !ghost;
     let c = custom.is_some();
     let cc = custom.unwrap_or(Rgba::TRANSPARENT);
     let background = cascade(&[
@@ -785,9 +977,11 @@ fn list_row(
         (3, selected && c, cc.mix(0.22, v.bg_card)),
         (2, active, v.bg_card_hover),
         (3, active && c, cc.mix(0.24, v.bg_card_hover)),
+        (2, drag_over, props.accent.mix(0.10, Rgba::TRANSPARENT)),
     ]);
     let border = cascade(&[
         (2, selected, Rgba::new(255.0, 255.0, 255.0, 0.1)),
+        (2, drag_over, props.accent),
         (2, red, RED.alpha(0.45)),
         (3, orange && !red, YELLOW.alpha(0.45)),
         (3, c && red, RED),
@@ -800,7 +994,11 @@ fn list_row(
             background,
             radius: Corners::all(6.0),
             border: Border::all(bw, border),
-            opacity: if dragged { 0.4 } else { 1.0 },
+            shadows: if ghost {
+                vec![super::account_card::GHOST_SHADOW]
+            } else {
+                Vec::new()
+            },
             ..BoxStyle::default()
         }
         .paint(ui.painter(), painted);
@@ -824,7 +1022,7 @@ fn list_row(
     Row {
         content,
         icon,
-        clicked: response.clicked() || keys,
+        clicked: super::clicked(&response) || keys,
         double_clicked: response.double_clicked(),
         menu: response
             .secondary_clicked()
@@ -1704,6 +1902,10 @@ mod tests {
                 time: &time,
                 kb_focus: None,
                 kb_reveal: false,
+                drag_over_folder: None,
+                drag_over_back: false,
+                dragging: false,
+                ghost: None,
             };
             let (state, items) = (&mut self.state, &self.items);
             let mut out = Vec::new();
