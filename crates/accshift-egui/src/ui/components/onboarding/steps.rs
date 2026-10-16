@@ -443,7 +443,7 @@ impl Welcome {
         for row in &self.rows {
             let row_w: f32 =
                 row.iter().map(|(_, w)| *w).sum::<f32>() + 6.0 * (row.len() - 1) as f32;
-            let mut x = at.x + (width - row_w) / 2.0;
+            let mut x = at.x + snap::centre(width, row_w, ppp);
             for (name, w) in row {
                 let r = Rect::from_min_size(pos2(x, y), vec2(*w, chip_h));
                 BoxStyle {
