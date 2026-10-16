@@ -4,6 +4,7 @@ pub mod app;
 pub mod avatars;
 pub mod backdrop;
 pub mod bench;
+pub mod clipboard;
 pub mod data;
 pub mod harness;
 pub mod icons;

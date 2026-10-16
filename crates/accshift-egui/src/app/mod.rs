@@ -787,6 +787,7 @@ impl AppModel {
         self.tick_streamer(&ctx);
         self.tick_settings_panel(&ctx, Instant::now());
         self.tick_theme_editor(Instant::now());
+        self.tick_theme_import(&ctx, Instant::now());
         self.pump_saves();
         // `had_keyboard_event`: a key without Ctrl, Alt or Meta sets it; a
         // press of any button that focuses an element clears it (mouse

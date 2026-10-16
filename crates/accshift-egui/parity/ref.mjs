@@ -242,6 +242,13 @@ async function runScene(page, scene, outDir, manifest) {
   }
   if (!settled) console.error(`${scene.id}: page never settled, shooting anyway`);
   else console.log(`${scene.id}: settled after ${Date.now() - started} ms`);
+  if (typeof scene.clipboard === "string") {
+    // `navigator.clipboard.readText` answers with the scene's text, never the
+    // machine's clipboard.
+    await js(
+      `(() => { Object.defineProperty(navigator.clipboard, "readText", { configurable: true, value: async () => ${JSON.stringify(scene.clipboard)} }); return true; })()`,
+    );
+  }
   if (scene.htmlSource) {
     // The app stays mounted on a detached #app; the page shows the fragment.
     await js(

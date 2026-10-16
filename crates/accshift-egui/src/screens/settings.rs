@@ -1694,13 +1694,12 @@ fn theme_grid(ui: &mut Ui, r: Rect, id: Id, c: &Ctx) -> Vec<SettingsAction> {
             vars: v,
             focus: c.focus,
         };
-        // The clipboard import is a later port.
         if button::button(ui, rect, id.with(("theme-action", k)), &props) {
-            match k {
-                0 => out.push(SettingsAction::CustomizeTheme),
-                2 => out.push(SettingsAction::ExportTheme),
-                _ => {}
-            }
+            out.push(match k {
+                0 => SettingsAction::CustomizeTheme,
+                1 => SettingsAction::ImportTheme,
+                _ => SettingsAction::ExportTheme,
+            });
         }
     }
     out

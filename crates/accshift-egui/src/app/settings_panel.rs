@@ -48,7 +48,7 @@ use egui::Context;
 use serde_json::Value;
 
 use super::platforms::{self, PlatformDef, RuntimeOs};
-use super::theme_editor::{ThemeEditor, ThemeEditorEvent};
+use super::theme_editor::{ThemeEditor, ThemeEditorEvent, ThemeImport};
 use super::{AppModel, Booted};
 
 /// `PIN_CODE_LENGTH`.
@@ -176,6 +176,8 @@ pub enum SettingsAction {
     TogglePin,
     ReplayOnboarding,
     ExportTheme,
+    /// "Import": a theme file from the clipboard.
+    ImportTheme,
     /// "Customize" or "Edit": the theme editor on the selected theme.
     CustomizeTheme,
     /// The theme editor's buttons, Escape or a click on its overlay.
@@ -432,6 +434,8 @@ pub struct SettingsPanel {
     pub theme_editor: Option<ThemeEditor>,
     /// Bumped per open of the theme editor.
     theme_editor_mount: u64,
+    /// `importFromClipboard` under way.
+    pub theme_import: Option<ThemeImport>,
     /// `.settings-content`'s `scrollTop`.
     pub scroll: f32,
     /// Text for the clipboard once the frame has the context.
@@ -582,6 +586,7 @@ impl SettingsPanel {
             preview_mount: 0,
             theme_editor: None,
             theme_editor_mount: 0,
+            theme_import: None,
             preview_path: String::new(),
             pending_removal: None,
             scroll: 0.0,
@@ -1634,6 +1639,12 @@ impl AppModel {
                         ToastType::Info,
                         now,
                     );
+                }
+            }
+            SettingsAction::ImportTheme => {
+                if panel.theme_import.is_none() {
+                    crate::clipboard::request_text(ctx);
+                    panel.theme_import = Some(ThemeImport::Reading(0));
                 }
             }
             SettingsAction::CustomizeTheme => {

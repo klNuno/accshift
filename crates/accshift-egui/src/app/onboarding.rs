@@ -397,7 +397,10 @@ mod tests {
         let view = o.view.as_ref().unwrap();
         assert!(view.fading && !view.submitting);
         o.tick(&jobs, 12.05, "steam");
-        assert!(o.view.as_ref().unwrap().submitting);
+        // The same tick polls the save it starts: a fast pool has already
+        // answered.
+        let view = o.view.as_ref().unwrap();
+        assert!(view.submitting || view.persist_error);
         tick_until(&mut o, &jobs, 12.1, |o| {
             o.view.as_ref().is_some_and(|v| !v.submitting)
         });

@@ -84,6 +84,8 @@ pub struct Scene {
     pub cs2: Option<Vec<serde_json::Value>>,
     /// `onboarding`: the first-run onboarding was never completed.
     pub onboarding: bool,
+    /// `clipboard`: the text `readText` answers with (empty by default).
+    pub clipboard: String,
     /// The `html` fragment (resolved next to the scene file) and its text.
     pub html: Option<(PathBuf, String)>,
     pub steps: Vec<Step>,
@@ -211,6 +213,7 @@ pub fn load(path: &Path) -> Result<Scene, String> {
             .get("onboarding")
             .and_then(|x| x.as_bool())
             .unwrap_or(false),
+        clipboard: s("clipboard").unwrap_or_default(),
         html,
         steps,
     })
@@ -503,6 +506,9 @@ impl SceneRun {
                 self.run_ops(ctx, raw, now);
             }
             Phase::Running => self.run_ops(ctx, raw, now),
+        }
+        if let Some(scene) = self.scenes.get(self.index) {
+            crate::clipboard::stage(ctx, &scene.clipboard, &mut raw.events);
         }
     }
 

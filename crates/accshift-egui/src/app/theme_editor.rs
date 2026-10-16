@@ -10,13 +10,20 @@
 
 use std::collections::BTreeMap;
 
+use std::time::Instant;
+
+use accshift_app::actions::toasts::{AddToastOptions, ToastQueue, ToastType};
 use accshift_app::i18n::{self, Locale, TranslationValue};
 use accshift_app::jobs::{Jobs, Pending, Poll};
+use accshift_app::text::Text;
 use accshift_theme::{
-    is_built_in_theme, resolve_theme_surface_opacities, resolve_theme_tokens, root_tokens,
-    serialize_theme_document, validate_theme_document, ColorScheme, IssueLevel, PendingSave,
-    ResolvedTokens, ThemeDocument, ThemeIssue, ThemeIssueCode, ThemeRegistry, TokenKey, TokenKind,
+    import_theme_json, is_built_in_theme, resolve_theme_surface_opacities, resolve_theme_tokens,
+    root_tokens, serialize_theme_document, validate_theme_document, ColorScheme, IssueLevel,
+    PendingSave, ResolvedTokens, ThemeDocument, ThemeIssue, ThemeIssueCode, ThemeParseError,
+    ThemeRegistry, TokenKey, TokenKind,
 };
+
+use super::settings_panel::toast;
 
 /// `BLOCKING_CODES`: problems that cannot be saved, each one would be
 /// dropped on the next load.
@@ -55,6 +62,67 @@ pub enum SaveOutcome {
     Saved(ThemeDocument),
     /// The write failed: the editor stays open on its fields.
     Failed,
+}
+
+/// `importFromClipboard` (`SettingsGeneralTab.svelte`): the clipboard read,
+/// then the save.
+pub enum ThemeImport {
+    /// Waiting for the clipboard's text, frames so far.
+    Reading(u8),
+    /// `saveThemeDocument` on a job.
+    Saving {
+        job: Pending<Result<(), String>>,
+        pending: Box<PendingSave>,
+        id: String,
+        migrated: bool,
+        rejected_css: Option<&'static str>,
+    },
+}
+
+/// The theme file in `text` parsed and its save started, or the toast of
+/// why it cannot be.
+fn start_import(
+    text: &str,
+    registry: &ThemeRegistry,
+    jobs: &Jobs,
+    toasts: &mut ToastQueue,
+    now: Instant,
+) -> Option<ThemeImport> {
+    let result = import_theme_json(text);
+    let Some(mut document) = result.document else {
+        // `IMPORT_ERRORS`.
+        let key = match result.error {
+            Some(ThemeParseError::InvalidId) => "settings.themeInvalidId",
+            Some(ThemeParseError::InvalidName) => "settings.themeInvalidName",
+            Some(ThemeParseError::UnsupportedVersion) => "settings.themeUnsupportedVersion",
+            _ => "settings.themeInvalidJson",
+        };
+        toast(toasts, key, ToastType::Error, now);
+        return None;
+    };
+    // An id that collides with a built-in cannot be stored: the copy gets
+    // its own.
+    if is_built_in_theme(&document.id) {
+        document.id = registry.suggest_theme_id(&document.name);
+    }
+    let Ok(pending) = registry.prepare_save(&document, false) else {
+        toast(toasts, "settings.themeInvalidJson", ToastType::Error, now);
+        return None;
+    };
+    let payload = pending.payload.clone();
+    let job = jobs.run(move |backend| {
+        let theme: accshift_app::types::CustomTheme = serde_json::to_value(&payload)
+            .and_then(serde_json::from_value)
+            .map_err(|e| e.to_string())?;
+        backend.save_custom_theme(&theme).map_err(|e| e.message)
+    });
+    Some(ThemeImport::Saving {
+        job,
+        pending: Box::new(pending),
+        id: document.id,
+        migrated: result.migrated_from.is_some(),
+        rejected_css: result.rejected_css,
+    })
 }
 
 pub struct ThemeEditor {
@@ -292,6 +360,78 @@ impl ThemeEditor {
 }
 
 impl super::AppModel {
+    /// Once per frame: the clipboard's text once it comes, then the save's
+    /// end. A clipboard with no text sends nothing, which `readText` reads
+    /// as an empty string.
+    pub(super) fn tick_theme_import(&mut self, ctx: &egui::Context, now: Instant) {
+        let jobs = &self.jobs;
+        let toasts = &mut self.toasts;
+        let (Some(panel), Some(b)) = (self.settings_panel.as_mut(), self.booted.as_mut()) else {
+            return;
+        };
+        match panel.theme_import.take() {
+            None => {}
+            Some(ThemeImport::Reading(frames)) => {
+                let text = match crate::clipboard::pasted(ctx) {
+                    Some(text) => text,
+                    None if frames < 3 => {
+                        panel.theme_import = Some(ThemeImport::Reading(frames + 1));
+                        ctx.request_repaint();
+                        return;
+                    }
+                    None => String::new(),
+                };
+                panel.theme_import = start_import(&text, &b.registry, jobs, toasts, now);
+            }
+            Some(ThemeImport::Saving {
+                mut job,
+                pending,
+                id,
+                migrated,
+                rejected_css,
+            }) => {
+                let result = match job.poll() {
+                    Poll::Waiting => {
+                        panel.theme_import = Some(ThemeImport::Saving {
+                            job,
+                            pending,
+                            id,
+                            migrated,
+                            rejected_css,
+                        });
+                        return;
+                    }
+                    Poll::Ready(result) => result,
+                    Poll::Gone => Err("the save job died".to_owned()),
+                };
+                if result.is_err() {
+                    toast(toasts, "settings.themeInvalidJson", ToastType::Error, now);
+                    return;
+                }
+                b.registry.finish_save(*pending);
+                let mut store_ctx = b.stores.context().clone();
+                store_ctx.theme_ids = b.registry.all_themes().into_iter().map(|t| t.id).collect();
+                b.stores.set_context(store_ctx);
+                panel.draft.theme_id = id;
+                let key = if migrated {
+                    "settings.themeMigrated"
+                } else {
+                    "settings.themeImported"
+                };
+                toast(toasts, key, ToastType::Info, now);
+                // The theme applied without its CSS: silence would look like
+                // the file did nothing.
+                if let Some(construct) = rejected_css {
+                    toasts.add(
+                        Text::with("themeEditor.issueUnsafeCss", [("construct", construct)]),
+                        AddToastOptions::kind(ToastType::Error),
+                        now,
+                    );
+                }
+            }
+        }
+    }
+
     /// Once per frame: the save's end, and the preview following the
     /// draft. Once the editor is gone without a save, the settings' theme
     /// comes back (`onDestroy`: `endThemePreview`).
