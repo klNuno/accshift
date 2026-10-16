@@ -280,7 +280,23 @@ export async function connect(wsUrl) {
     }
     return r.result.value;
   };
-  return { send, js, close: () => ws.close() };
+  // `fn` runs in the page with `args` passed as values: data never becomes
+  // source text.
+  const call = async (fn, ...args) => {
+    const { result: global } = await send("Runtime.evaluate", { expression: "globalThis" });
+    const r = await send("Runtime.callFunctionOn", {
+      objectId: global.objectId,
+      functionDeclaration: fn.toString(),
+      arguments: args.map((value) => ({ value })),
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    if (r.exceptionDetails) {
+      throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
+    }
+    return r.result.value;
+  };
+  return { send, js, call, close: () => ws.close() };
 }
 
 /**

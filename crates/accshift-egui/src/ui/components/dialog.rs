@@ -487,7 +487,7 @@ pub fn confirm_dialog(
     let message = state.message.resolve(props.locale);
     let cancel_label = i18n::translate(props.locale, "common.cancel");
     let confirm_label = state.confirm_label().resolve(props.locale);
-    let width = 360f32.min(props.viewport.width() - 24.0);
+    let width = 360f32.min(crate::zoom::viewport(&ctx).x - 24.0);
     let border = snap::border_width(v.border_px(), ctx.pixels_per_point());
     let inner = width - 2.0 * (border + PADDING);
     let message_style = TextStyle::new(12.0, 400)

@@ -473,7 +473,11 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
     }
     let has_extension = has_card_extension_content(props.extension);
     if hovered && !st.hovered && has_extension {
-        st.opens_left = !card_extension::opens_right(ctx.content_rect().width(), rect.right());
+        // `innerWidth - rect.right` in window px: the stage's zoom included,
+        // the panel's own width not.
+        let zoom = crate::zoom::frame(&ctx);
+        st.opens_left =
+            !card_extension::opens_right(ctx.content_rect().width() * zoom, rect.right() * zoom);
     }
     let extension_visible = has_extension && !dragged && !props.extension_disabled && hovered;
     if hovered && !st.hovered {

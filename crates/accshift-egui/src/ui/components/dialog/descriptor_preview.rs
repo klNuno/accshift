@@ -522,7 +522,7 @@ pub fn descriptor_preview_dialog(
             "common.add"
         },
     );
-    let width = 560f32.min(props.viewport.width() - 24.0);
+    let width = 560f32.min(crate::zoom::viewport(&ctx).x - 24.0);
     let border = snap::border_width(v.border_px(), ppp);
     let inner = width - 2.0 * (border + PADDING);
     let max_h = (props.viewport.height() * 0.6).min(460.0);

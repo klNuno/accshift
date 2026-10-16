@@ -428,9 +428,11 @@ async function measureScale(page, scale, emulate, html, out, measures, titlebar)
     deviceScaleFactor: dsf,
     mobile: false,
   });
-  await js(
-    `(() => { document.activeElement?.blur?.(); document.body.innerHTML = ${JSON.stringify(html)}; return true; })()`,
-  );
+  await page.call((fragment) => {
+    document.activeElement?.blur?.();
+    document.body.innerHTML = fragment;
+    return true;
+  }, html);
   await js(
     "new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => r(true), 300))))",
   );

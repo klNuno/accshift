@@ -1051,7 +1051,7 @@ pub fn theme_editor_dialog(
     let field: FieldStyle = settings_style(v);
     let field_h = field.height(ppp);
 
-    let width = 720f32.min(props.viewport.width() * 0.92);
+    let width = 720f32.min(crate::zoom::viewport(&ctx).x * 0.92);
     let border = snap::border_width(v.border_px(), ppp);
     let inner = width - 2.0 * (border + PADDING);
     let max_h = (props.viewport.height() * 0.62).min(560.0);

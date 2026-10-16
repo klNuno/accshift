@@ -591,7 +591,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
         }
         Body::Toolbar => {
             // `.toolbar-row`.
-            let search_w = SEARCH_W.min(0.38 * ctx.content_rect().width());
+            let search_w = SEARCH_W.min(0.38 * crate::zoom::viewport(&ctx).x);
             let crumb_w = (inner_w - search_w - view_toggle::WIDTH - 2.0 * TOOLBAR_GAP).max(0.0);
             let crumb_h = breadcrumb::height(ui, &crumbs, crumb_w);
             let row_h = crumb_h.max(SEARCH_H);

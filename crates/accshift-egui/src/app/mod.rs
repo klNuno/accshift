@@ -33,6 +33,7 @@ mod secure;
 pub mod settings_panel;
 mod shell;
 pub mod theme_editor;
+mod ui_scale;
 pub mod vars;
 
 use std::path::PathBuf;
@@ -380,6 +381,12 @@ pub struct AppModel {
     boot_error: Option<String>,
     booted: Option<Booted>,
     saves: Vec<(StoreId, Pending<BackendResult<Option<String>>>)>,
+    /// `createUiScale`: the zoom shortcuts and the debounced save.
+    ui_scale: accshift_app::lifecycle::ui_scale::UiScale,
+    /// `uiScalePercent` changed by a shortcut, until it is saved.
+    ui_scale_live: Option<i64>,
+    /// Which raster `.app-shell` holds ([`crate::zoom`]).
+    stage_raster: ui_scale::StageRaster,
     /// The recorder's stand-in desktop under glass themes, scene runs only.
     desktop: Option<TextureHandle>,
     maximize_button: Option<Rect>,
@@ -493,6 +500,9 @@ impl AppModel {
             boot_error: None,
             booted: None,
             saves: Vec::new(),
+            ui_scale: Default::default(),
+            ui_scale_live: None,
+            stage_raster: ui_scale::StageRaster::Unknown,
             desktop: None,
             maximize_button: None,
             settings_panel: None,
@@ -766,7 +776,12 @@ impl AppModel {
         // Chromium moves focus on mousedown: a press outside the focused
         // element blurs it, and a click on a `<label>` then focuses its
         // control on the release (egui's default waits for the click).
-        ctx.options_mut(|o| o.input_options.surrender_focus_on = egui::SurrenderFocusOn::Presses);
+        // The zoom shortcuts go through the binding table (`uiScale`), not
+        // egui's own.
+        ctx.options_mut(|o| {
+            o.input_options.surrender_focus_on = egui::SurrenderFocusOn::Presses;
+            o.zoom_with_keyboard = false;
+        });
         let now = ctx.input(|i| i.time);
         self.last_time = now;
         if let Some(job) = &mut self.boot_job {
@@ -783,6 +798,7 @@ impl AppModel {
             }
         }
         self.sync_settings(&ctx);
+        self.tick_ui_scale(&ctx, Instant::now());
         self.tick_secure(&ctx);
         self.tick_streamer(&ctx);
         self.tick_settings_panel(&ctx, Instant::now());

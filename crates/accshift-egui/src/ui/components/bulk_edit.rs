@@ -681,7 +681,7 @@ pub fn settings(ui: &mut Ui, props: &BulkProps) -> Vec<BulkEvent> {
     ctx.data_mut(|d| d.remove::<Vec<Rect>>(Id::new(COVER_ID)));
 
     // The column, top to bottom.
-    let width = DIALOG_W.min(props.viewport.width() - 24.0);
+    let width = DIALOG_W.min(crate::zoom::viewport(&ctx).x - 24.0);
     let inset = bw + DIALOG_PAD;
     let inner = width - 2.0 * inset;
     let title_style = TextStyle::new(13.0, 650)

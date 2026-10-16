@@ -13,6 +13,7 @@ pub mod screens;
 pub mod soft;
 pub mod theme;
 pub mod ui;
+pub mod zoom;
 
 pub use app::{Action, AppModel};
 pub use screens::Screen;
@@ -39,10 +40,25 @@ impl Shell {
         }
     }
 
-    pub fn input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+    /// The UI zoom the software runner applies to this frame: the stage
+    /// lays out `1 / zoom` as large and is scaled back up. 1 while a scene
+    /// is being set up, and whenever egui's zoom factor carries the zoom
+    /// ([`zoom::upscaled`]).
+    pub fn stage_zoom(&self, ctx: &egui::Context) -> f32 {
+        if zoom::upscaled(ctx) && !self.scenes.as_ref().is_some_and(|run| run.holds_zoom()) {
+            zoom::ui(ctx)
+        } else {
+            1.0
+        }
+    }
+
+    /// `stage` is the zoom [`Self::stage_zoom`] gave for this frame: the
+    /// window's events, the scene's included, move into the stage's points.
+    pub fn input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput, stage: f32) {
         if let Some(run) = &mut self.scenes {
             run.feed(ctx, raw_input, self.screen.ready());
         }
+        zoom::stage_input(raw_input, stage);
         if sequence_input(&mut self.held, &mut raw_input.events) {
             ctx.request_repaint();
         }
@@ -52,6 +68,8 @@ impl Shell {
         if let Some(run) = &mut self.scenes {
             run.collect(ui.ctx());
             if let Some(scene) = run.take_build() {
+                // The new app publishes its own UI zoom once booted.
+                zoom::clear_ui(ui.ctx());
                 match Screen::for_scene(ui.ctx(), &scene) {
                     Ok(screen) => self.screen = screen,
                     Err(why) => {
@@ -62,6 +80,10 @@ impl Shell {
             }
         }
         self.screen.ui(ui);
+        // A scene being set up holds the window's own factor.
+        if !self.scenes.as_ref().is_some_and(|run| run.holds_zoom()) {
+            zoom::apply(ui.ctx());
+        }
     }
 }
 
@@ -120,7 +142,7 @@ pub fn sequence_input(held: &mut Vec<egui::Event>, events: &mut Vec<egui::Event>
 #[cfg(feature = "glow")]
 impl eframe::App for Shell {
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        self.input_hook(ctx, raw_input);
+        self.input_hook(ctx, raw_input, 1.0);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

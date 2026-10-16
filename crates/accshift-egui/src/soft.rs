@@ -72,6 +72,10 @@ struct Live {
     textures: egui::TexturesDelta,
     actions: Vec<egui_winit::ActionRequested>,
     full_present: bool,
+    /// The UI zoom of the last frame, and the stage it rendered at that
+    /// zoom before the resample ([`crate::zoom`]).
+    stage_zoom: f32,
+    stage: Vec<[u8; 4]>,
     shown: bool,
 }
 
@@ -105,18 +109,34 @@ impl Runner {
         let mut raw = live.state.take_egui_input(&live.window);
         raw.viewports.insert(ViewportId::ROOT, live.info.clone());
         live.info.events.clear();
-        live.shell.input_hook(&ctx, &mut raw);
+        let zoom = live.shell.stage_zoom(&ctx);
+        let zoomed = (zoom - 1.0).abs() > 1e-6;
+        if (zoom - live.stage_zoom).abs() > 1e-6 {
+            live.stage_zoom = zoom;
+            live.full_present = true;
+        }
+        live.shell.input_hook(&ctx, &mut raw, zoom);
 
         let started = Instant::now();
         self.last_paint = Some(started);
         let shell = &mut live.shell;
+        crate::zoom::begin_frame(&ctx, zoom);
         let mut out = ctx.run_ui(raw, |ui| shell.frame(ui));
         let ui_done = Instant::now();
+        if let Some(ime) = &mut out.platform_output.ime {
+            // Back from the stage's points to the window's.
+            ime.rect = ime.rect * zoom;
+            ime.cursor_rect = ime.cursor_rect * zoom;
+        }
         live.state.handle_platform_output_with_event_loop(
             &live.window,
             event_loop,
             out.platform_output,
         );
+        if (live.shell.stage_zoom(&ctx) - zoom).abs() > 1e-6 {
+            // The app changed its zoom: the next frame lays out again.
+            ctx.request_repaint();
+        }
         live.textures.append(out.textures_delta);
         let commands = out
             .viewport_output
@@ -143,20 +163,35 @@ impl Runner {
             let pixels = unsafe {
                 std::slice::from_raw_parts_mut(buffer.as_mut_ptr().cast::<[u8; 4]>(), buffer.len())
             };
-            let mut target = BufferMutRef::new(pixels, w.get() as usize, h.get() as usize);
+            let window_px = [w.get() as usize, h.get() as usize];
+            let canvas_px = if zoomed {
+                crate::zoom::stage_size(window_px, zoom)
+            } else {
+                window_px
+            };
             let textures = std::mem::take(&mut live.textures);
             live.render.render_to_canvas(
-                w.get() as usize,
-                h.get() as usize,
+                canvas_px[0],
+                canvas_px[1],
                 &prims,
                 &textures,
                 out.pixels_per_point,
             );
             // Premultiplied BGRA over transparent, and GDI keeps the alpha
             // byte, so the acrylic shows through where egui paints nothing.
-            let damage: Vec<softbuffer::Rect> = live
-                .render
-                .copy_canvas_to_buffer(&mut target, full)
+            let tiles = if zoomed {
+                // The whole stage, then the compositor's scale into the
+                // window; the window presents in full.
+                live.stage.resize(canvas_px[0] * canvas_px[1], [0; 4]);
+                let mut stage = BufferMutRef::new(&mut live.stage, canvas_px[0], canvas_px[1]);
+                live.render.copy_canvas_to_buffer(&mut stage, true);
+                crate::zoom::resample(&live.stage, canvas_px, pixels, window_px, zoom);
+                vec![[0, 0, window_px[0], window_px[1]]]
+            } else {
+                let mut target = BufferMutRef::new(pixels, window_px[0], window_px[1]);
+                live.render.copy_canvas_to_buffer(&mut target, full)
+            };
+            let damage: Vec<softbuffer::Rect> = tiles
                 .into_iter()
                 .filter_map(|[x, y, width, height]| {
                     Some(softbuffer::Rect {
@@ -409,6 +444,8 @@ impl ApplicationHandler<UserEvent> for Runner {
             textures: Default::default(),
             actions: Vec::new(),
             full_present: true,
+            stage_zoom: 1.0,
+            stage: Vec::new(),
             shown: false,
         });
         self.paint(event_loop);

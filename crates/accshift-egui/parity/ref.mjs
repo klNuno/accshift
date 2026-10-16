@@ -163,6 +163,9 @@ const KEYS = {
   ArrowRight: { code: "ArrowRight", windowsVirtualKeyCode: 39 },
   ArrowDown: { code: "ArrowDown", windowsVirtualKeyCode: 40 },
   Space: { key: " ", code: "Space", windowsVirtualKeyCode: 32, text: " " },
+  // The zoom shortcuts match `e.code`: "=" and "-" need their physical key.
+  "=": { code: "Equal", windowsVirtualKeyCode: 187, text: "=" },
+  "-": { code: "Minus", windowsVirtualKeyCode: 189, text: "-" },
 };
 const MODIFIERS = { Alt: 1, Ctrl: 2, Meta: 4, Shift: 8 };
 
@@ -245,15 +248,21 @@ async function runScene(page, scene, outDir, manifest) {
   if (typeof scene.clipboard === "string") {
     // `navigator.clipboard.readText` answers with the scene's text, never the
     // machine's clipboard.
-    await js(
-      `(() => { Object.defineProperty(navigator.clipboard, "readText", { configurable: true, value: async () => ${JSON.stringify(scene.clipboard)} }); return true; })()`,
-    );
+    await page.call((text) => {
+      Object.defineProperty(navigator.clipboard, "readText", {
+        configurable: true,
+        value: async () => text,
+      });
+      return true;
+    }, scene.clipboard);
   }
   if (scene.htmlSource) {
     // The app stays mounted on a detached #app; the page shows the fragment.
-    await js(
-      `(() => { document.activeElement?.blur?.(); document.body.innerHTML = ${JSON.stringify(scene.htmlSource)}; return true; })()`,
-    );
+    await page.call((html) => {
+      document.activeElement?.blur?.();
+      document.body.innerHTML = html;
+      return true;
+    }, scene.htmlSource);
     await js(
       "new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))",
     );
@@ -337,10 +346,14 @@ async function runScene(page, scene, outDir, manifest) {
         await sleep(30);
       }
     } else if ("scroll" in step) {
-      const [x, y, dy] = step.scroll;
+      const [x, y, dy, held = ""] = step.scroll;
       mouse.x = x;
       mouse.y = y;
-      await mouseEvent("mouseWheel", { deltaX: 0, deltaY: dy });
+      const modifiers = held
+        .split("+")
+        .filter(Boolean)
+        .reduce((m, p) => m | (MODIFIERS[p] ?? 0), 0);
+      await mouseEvent("mouseWheel", { deltaX: 0, deltaY: dy, modifiers });
     } else if ("shot" in step) {
       const { data } = await send("Page.captureScreenshot", { format: "png", fromSurface: true });
       const buf = Buffer.from(data, "base64");
@@ -403,22 +416,26 @@ const DOM_PROPS = [
 
 async function dumpDom(page, scene, outDir, step) {
   const select = step.select ?? "body *";
-  const rows =
-    await page.js(`(() => Array.from(document.querySelectorAll(${JSON.stringify(select)}), (el) => {
-    const r = el.getBoundingClientRect();
-    const cs = getComputedStyle(el);
-    return {
-      tag: el.tagName.toLowerCase(),
-      class: el.getAttribute("class") ?? "",
-      text: el.childElementCount === 0 ? el.textContent.trim().slice(0, 60) : "",
-      focused: document.activeElement === el,
-      focusVisible: el.matches(":focus-visible"),
-      hover: el.matches(":hover"),
-      src: el.getAttribute("src")?.slice(0, 160) ?? undefined,
-      rect: [r.x, r.y, r.width, r.height],
-      css: Object.fromEntries(${JSON.stringify(DOM_PROPS)}.map((p) => [p, cs[p]])),
-    };
-  }))()`);
+  const rows = await page.call(
+    (selector, props) =>
+      Array.from(document.querySelectorAll(selector), (el) => {
+        const r = el.getBoundingClientRect();
+        const cs = getComputedStyle(el);
+        return {
+          tag: el.tagName.toLowerCase(),
+          class: el.getAttribute("class") ?? "",
+          text: el.childElementCount === 0 ? el.textContent.trim().slice(0, 60) : "",
+          focused: document.activeElement === el,
+          focusVisible: el.matches(":focus-visible"),
+          hover: el.matches(":hover"),
+          src: el.getAttribute("src")?.slice(0, 160) ?? undefined,
+          rect: [r.x, r.y, r.width, r.height],
+          css: Object.fromEntries(props.map((p) => [p, cs[p]])),
+        };
+      }),
+    select,
+    DOM_PROPS,
+  );
   const dir = join(outDir, scene.id);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${step.dom}.dom.json`), JSON.stringify(rows, null, 1));

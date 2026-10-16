@@ -285,7 +285,7 @@ pub fn toast_stack(ui: &mut Ui, viewport: Rect, props: &ToastProps) -> Vec<Toast
     });
 
     // The flow, bottom up: leaving toasts are out of it.
-    let max_w = MAX_W.min(viewport.width() - 2.0 * EDGE);
+    let max_w = MAX_W.min(crate::zoom::viewport(&ctx).x - 2.0 * EDGE);
     let right = viewport.right() - EDGE;
     let mut bottom = viewport.bottom() - EDGE;
     let geometries: Vec<Option<Geometry>> = stack

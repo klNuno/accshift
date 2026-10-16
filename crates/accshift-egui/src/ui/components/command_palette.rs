@@ -353,7 +353,7 @@ pub fn command_palette(
     let vp = props.viewport;
     let border = snap::border_width(v.border_px(), ppp);
     let rule = snap::border_width(1.0, ppp);
-    let width = WIDTH.min(vp.width() - 48.0);
+    let width = WIDTH.min(crate::zoom::viewport(&ctx).x - 48.0);
     let input_line = line(&ctx, &f.input);
     let input_h = 2.0 * INPUT_PAD.1 + input_line + rule;
     let (placed, content_h) = place(&ctx, &rows, props.commands, &f, rule);

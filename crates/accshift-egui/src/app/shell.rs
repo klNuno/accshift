@@ -138,17 +138,20 @@ fn layer<R>(ui: &mut Ui, rect: Rect, opacity: f32, rise: f32, add: impl FnOnce(&
 }
 
 pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
-    let window = ui.max_rect();
+    // `screen` is the window in the stage's points, `window` the stage
+    // (`.app-stage`, [`crate::zoom::stage_rect`]): the same rect at 100%.
+    let screen = ui.max_rect();
+    let window = crate::zoom::stage_rect(ui.ctx(), screen);
     if let Some(desktop) = &app.desktop {
         ui.painter().image(
             desktop.id(),
-            window,
+            screen,
             Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
             Color32::WHITE,
         );
         // The backdrop root is `.app-shell`: the desktop stays sharp under
         // the dialogs' blur.
-        Mark::Root.paint(ui.painter(), window);
+        Mark::Root.paint(ui.painter(), screen);
     }
     let Some(booted) = app.booted.as_ref() else {
         return Vec::new();
@@ -227,10 +230,11 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
     let mut actions = Vec::new();
     let layer_id = ui.layer_id();
     let start = next_idx(&ctx, layer_id);
-    // `.app-frame`: scale about the centre, rise, fade.
-    let center = window.center().to_vec2();
+    // `.app-frame`: scale about the centre, rise, fade. It holds the stage:
+    // its centre and rise are the window's.
+    let center = screen.center().to_vec2();
     let frame_transform = egui::emath::TSTransform::new(
-        center * (1.0 - frame.scale) + vec2(0.0, frame.rise),
+        center * (1.0 - frame.scale) + vec2(0.0, frame.rise / crate::zoom::frame(&ctx)),
         frame.scale,
     );
     let jobs = &app.jobs;
@@ -239,7 +243,8 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         .then(|| {
             app.booted
                 .as_ref()
-                .map(|b| settings::View::new(b, window.width()))
+                // `@media` widths are the window's, outside the stage's zoom.
+                .map(|b| settings::View::new(b, crate::zoom::viewport(&ctx).x))
         })
         .flatten();
     // `commandRegistry.getCommands()` while the palette is mounted.
@@ -557,7 +562,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                     open_id,
                     items: &items,
                     at: pos2(menu.x, menu.y),
-                    viewport: window,
+                    viewport: screen,
                     keyboard: focus_visible,
                     loads: submenus,
                     now,
@@ -634,7 +639,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         let props = OnboardingProps {
             vars: &vars,
             locale: *locale,
-            viewport: window,
+            viewport: screen,
             titlebar_h: bar_h,
             version: accshift_app::lifecycle::updater::APP_VERSION,
             platforms: &names,
@@ -645,7 +650,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
             now,
         };
         ui.with_visual_transform(frame_transform, |ui| {
-            let mut frame_ui = ui.new_child(UiBuilder::new().max_rect(window));
+            let mut frame_ui = ui.new_child(UiBuilder::new().max_rect(screen));
             frame_ui.multiply_opacity(frame.opacity);
             actions.extend(
                 onboarding::onboarding(&mut frame_ui, &props)
@@ -654,10 +659,13 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
             );
         });
     }
+    // `AppScreenOverlays` and `StreamerModeOverlay` sit outside the stage:
+    // the visible window, under a macOS title bar.
+    let overlay = Rect::from_min_max(pos2(screen.left(), stage.top()), screen.max);
     if let Some(afk) = afk {
         secure_overlays::afk_overlay(
             ui,
-            stage,
+            overlay,
             &AfkProps {
                 vars: &vars,
                 visible: afk.visible,
@@ -676,7 +684,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
             focus_visible,
         };
         actions.extend(
-            secure_overlays::streamer_overlay(ui, stage, &props)
+            secure_overlays::streamer_overlay(ui, overlay, &props)
                 .into_iter()
                 .map(Action::Streamer),
         );
@@ -694,7 +702,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
             dark: theme.theme.color_scheme == ColorScheme::Dark,
         };
         actions.extend(
-            secure_overlays::pin_overlay(ui, stage, &props)
+            secure_overlays::pin_overlay(ui, overlay, &props)
                 .into_iter()
                 .map(Action::Pin),
         );

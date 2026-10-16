@@ -63,7 +63,7 @@ pub enum Step {
     Up(Pos2),
     Key(String),
     Text(String),
-    Scroll(Pos2, f32),
+    Scroll(Pos2, f32, Modifiers),
     Shot(String),
 }
 
@@ -146,7 +146,15 @@ fn parse_step(v: &serde_json::Value) -> Result<Step, String> {
     if let Some(s) = o.get("scroll") {
         let a = s.as_array().ok_or_else(bad)?;
         let f = |i: usize| a.get(i).and_then(serde_json::Value::as_f64).ok_or_else(bad);
-        return Ok(Step::Scroll(pos2(f(0)? as f32, f(1)? as f32), f(2)? as f32));
+        let held = match a.get(3) {
+            None => Modifiers::NONE,
+            Some(m) => modifiers(m.as_str().ok_or_else(bad)?)?,
+        };
+        return Ok(Step::Scroll(
+            pos2(f(0)? as f32, f(1)? as f32),
+            f(2)? as f32,
+            held,
+        ));
     }
     if let Some(s) = o.get("shot") {
         return Ok(Step::Shot(s.as_str().ok_or_else(bad)?.to_owned()));
@@ -219,12 +227,10 @@ pub fn load(path: &Path) -> Result<Scene, String> {
     })
 }
 
-/// `Ctrl+Shift+K`, `Enter`, `a`: the key event and the text it types, if any.
-fn key_events(spec: &str) -> Result<Vec<Event>, String> {
-    let mut parts: Vec<&str> = spec.split('+').collect();
-    let name = parts.pop().ok_or_else(|| format!("empty key {spec}"))?;
+/// `Ctrl+Shift`: the held modifiers.
+fn modifiers(spec: &str) -> Result<Modifiers, String> {
     let mut modifiers = Modifiers::NONE;
-    for m in parts {
+    for m in spec.split('+').filter(|m| !m.is_empty()) {
         match m {
             "Ctrl" => {
                 modifiers.ctrl = true;
@@ -236,6 +242,18 @@ fn key_events(spec: &str) -> Result<Vec<Event>, String> {
             other => return Err(format!("unknown modifier {other} in {spec}")),
         }
     }
+    Ok(modifiers)
+}
+
+/// `Ctrl+Shift+K`, `Enter`, `a`: the key event and the text it types, if any.
+fn key_events(spec: &str) -> Result<Vec<Event>, String> {
+    let (held, name) = match spec.rsplit_once('+') {
+        // `Ctrl++` is Ctrl and the plus key.
+        Some((held, "")) => (held.strip_suffix('+').unwrap_or(held), "+"),
+        Some((held, name)) => (held, name),
+        None => ("", spec),
+    };
+    let modifiers = modifiers(held)?;
     let key = Key::from_name(name)
         .or_else(|| Key::from_name(&name.to_uppercase()))
         .ok_or_else(|| format!("unknown key {name}"))?;
@@ -333,7 +351,7 @@ fn expand(steps: &[Step]) -> Result<VecDeque<Op>, String> {
                     ops.push_back(Op::Wait(0.03));
                 }
             }
-            Step::Scroll(p, dy) => {
+            Step::Scroll(p, dy, held) => {
                 if *p != pointer {
                     pointer = *p;
                     ops.push_back(Op::Event(Event::PointerMoved(*p)));
@@ -344,7 +362,7 @@ fn expand(steps: &[Step]) -> Result<VecDeque<Op>, String> {
                     unit: MouseWheelUnit::Point,
                     delta: vec2(0.0, -dy),
                     phase: TouchPhase::Move,
-                    modifiers: Modifiers::NONE,
+                    modifiers: *held,
                 }));
             }
             Step::Shot(name) => ops.push_back(Op::Shot(name.clone())),
@@ -405,6 +423,12 @@ impl SceneRun {
         self.build.take()
     }
 
+    /// The window is being sized for the next scene: its zoom factor is
+    /// the scene's device scale alone.
+    pub fn holds_zoom(&self) -> bool {
+        matches!(self.phase, Phase::Next | Phase::Sizing { .. }) || self.build.is_some()
+    }
+
     /// The current scene cannot be drawn: count it and move on.
     pub fn skip(&mut self, why: &str) {
         if let Some(scene) = self.scenes.get(self.index) {
@@ -450,6 +474,7 @@ impl SceneRun {
                 // A fresh pointer and fresh widget state for every scene.
                 raw.events.push(Event::PointerGone);
                 ctx.data_mut(|d| d.clear());
+                crate::zoom::set_base(ctx, vp.scale / native);
                 ctx.clear_animations();
                 self.phase = Phase::Sizing {
                     since: now,
@@ -529,6 +554,29 @@ impl SceneRun {
                 }
                 Op::Event(e) => {
                     let is_press = matches!(e, Event::PointerButton { pressed: true, .. });
+                    // Scene coordinates are viewport CSS px; under the UI
+                    // zoom the app's points are smaller. A scaled stage
+                    // moves every event into it already.
+                    let k = if crate::zoom::upscaled(ctx) {
+                        1.0
+                    } else {
+                        1.0 / crate::zoom::ui(ctx)
+                    };
+                    let e = match e {
+                        Event::PointerMoved(p) => Event::PointerMoved((p.to_vec2() * k).to_pos2()),
+                        Event::PointerButton {
+                            pos,
+                            button,
+                            pressed,
+                            modifiers,
+                        } => Event::PointerButton {
+                            pos: (pos.to_vec2() * k).to_pos2(),
+                            button,
+                            pressed,
+                            modifiers,
+                        },
+                        e => e,
+                    };
                     raw.events.push(e);
                     if is_press {
                         return;

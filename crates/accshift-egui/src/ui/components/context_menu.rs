@@ -1072,7 +1072,10 @@ pub fn context_menu(ui: &mut Ui, props: &ContextMenuProps) -> Vec<MenuEvent> {
         let sub_id = base.with(("submenu", st.submenu));
         let entry = &props.items[index.min(props.items.len().saturating_sub(1))];
         let content = submenu_content(entry, props.loads, props.locale);
-        let max_w = SUB_MAX_W.min(vp.width() - 8.0);
+        // `100vw - 8px` and `100vh - 8px`; the placement clamps to the
+        // window in the stage's points (`innerWidth / scale`).
+        let css_vp = crate::zoom::viewport(&ctx);
+        let max_w = SUB_MAX_W.min(css_vp.x - 8.0);
         let sub_layout = layout(
             &ctx,
             v,
@@ -1081,7 +1084,7 @@ pub fn context_menu(ui: &mut Ui, props: &ContextMenuProps) -> Vec<MenuEvent> {
             true,
             SUB_MIN_W,
             max_w,
-            vp.height() - 8.0,
+            css_vp.y - 8.0,
         );
         let border = menu_layout.border;
         // `anchor.offsetTop`: from the padding edge, rounded.

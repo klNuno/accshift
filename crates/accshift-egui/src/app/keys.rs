@@ -19,6 +19,7 @@ use accshift_app::stores::ViewMode;
 use egui::{Context, Event, Id, Key};
 
 use super::platforms::RuntimeOs;
+use super::ui_scale::ZoomKey;
 use super::{Action, AppModel, MenuTarget};
 use crate::ui::components::bulk_edit::BulkEvent;
 use crate::ui::components::focus;
@@ -550,9 +551,9 @@ impl AppModel {
                 self.apply_one(ctx, Action::SetViewMode(next));
             }
             KeyAction::ChangeTab(tab) => self.apply_one(ctx, Action::TabChange(tab)),
-            // `uiScalePercent` is not applied by the egui shell yet (the
-            // `.app-stage` scale transform): the zoom keys wait for it.
-            KeyAction::ZoomIn | KeyAction::ZoomOut | KeyAction::ResetZoom => {}
+            KeyAction::ZoomIn => self.zoom_key(ZoomKey::In, Instant::now()),
+            KeyAction::ZoomOut => self.zoom_key(ZoomKey::Out, Instant::now()),
+            KeyAction::ResetZoom => self.zoom_key(ZoomKey::Reset, Instant::now()),
             KeyAction::NavigateBack => self.apply_one(ctx, Action::NavigateBack),
             KeyAction::ToggleBulkEditAccount(id) => {
                 if let Some(b) = self.booted.as_mut() {
