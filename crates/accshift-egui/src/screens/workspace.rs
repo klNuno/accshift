@@ -109,8 +109,15 @@ pub struct WorkspaceInput<'a> {
     pub dark: bool,
     /// `html[data-glass="1"]`.
     pub glass: bool,
+    /// `bulkEditMode`: the grid and the list keep 52 px free at the bottom
+    /// for the bar.
+    pub bulk_edit: bool,
     pub now: f64,
 }
+
+/// `padding-bottom: 52px` on the grid container and the list wrapper in
+/// bulk edit.
+const BULK_PAD: f32 = 52.0;
 
 /// One account card's shapes in the workspace's layer.
 struct Stack {
@@ -659,7 +666,12 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                     // `.list-wrapper { flex: 1; min-height: 0 }`: the rest
                     // of the box, so `.content` never scrolls.
                     let h = (viewport.height() - PAD_TOP - PAD_BOTTOM - y).max(0.0);
-                    let r = to_screen(Rect::from_min_size(pos2(0.0, y), vec2(inner_w, h)));
+                    let list_h = if input.bulk_edit {
+                        (h - BULK_PAD).max(0.0)
+                    } else {
+                        h
+                    };
+                    let r = to_screen(Rect::from_min_size(pos2(0.0, y), vec2(inner_w, list_h)));
                     let mut list = std::mem::take(&mut ws.list);
                     let kb_focus = ws.kb_focus.clone();
                     let kb_reveal = std::mem::take(&mut ws.kb_reveal);
@@ -781,6 +793,9 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                         } else {
                             y += h;
                         }
+                    }
+                    if input.bulk_edit {
+                        y += BULK_PAD;
                     }
                 }
             }

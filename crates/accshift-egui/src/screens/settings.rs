@@ -1295,6 +1295,7 @@ fn paint_item(ui: &mut Ui, r: Rect, id: Id, c: &Ctx, item: &Item) -> Vec<Setting
                         disabled,
                         label,
                         vars: v,
+                        look: None,
                     };
                     let ev = select::select(ui, rect, id.with("select"), &props);
                     if let Some(action) = ev.changed.and_then(|i| actions.get(i)) {

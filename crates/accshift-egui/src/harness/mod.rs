@@ -57,6 +57,10 @@ pub enum Step {
     Click(Pos2),
     DblClick(Pos2),
     RClick(Pos2),
+    /// The primary button pressed at a point and held: a drag starts.
+    Down(Pos2),
+    /// The held button released at a point.
+    Up(Pos2),
     Key(String),
     Text(String),
     Scroll(Pos2, f32),
@@ -124,6 +128,12 @@ fn parse_step(v: &serde_json::Value) -> Result<Step, String> {
     }
     if let Some(p) = o.get("rclick") {
         return Ok(Step::RClick(point(p).ok_or_else(bad)?));
+    }
+    if let Some(p) = o.get("down") {
+        return Ok(Step::Down(point(p).ok_or_else(bad)?));
+    }
+    if let Some(p) = o.get("up") {
+        return Ok(Step::Up(point(p).ok_or_else(bad)?));
     }
     if let Some(k) = o.get("key") {
         return Ok(Step::Key(k.as_str().ok_or_else(bad)?.to_owned()));
@@ -293,6 +303,15 @@ fn expand(steps: &[Step]) -> Result<VecDeque<Op>, String> {
                 if matches!(step, Step::DblClick(_)) {
                     press(&mut ops, *p, b);
                 }
+            }
+            Step::Down(p) | Step::Up(p) => {
+                pointer = *p;
+                ops.push_back(Op::Event(Event::PointerMoved(*p)));
+                ops.push_back(button(
+                    *p,
+                    PointerButton::Primary,
+                    matches!(step, Step::Down(_)),
+                ));
             }
             Step::Key(spec) => {
                 for e in key_events(spec)? {

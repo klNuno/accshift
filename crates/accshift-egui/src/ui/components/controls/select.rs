@@ -9,10 +9,13 @@
 //! var(--bg-solid); color: var(--fg) }`), not a measured one.
 
 use egui::accesskit::Role;
-use egui::{pos2, vec2, Area, Id, Key, Order, Rect, Sense, Ui, WidgetInfo, WidgetType};
+use egui::{
+    pos2, vec2, Area, Color32, Id, Key, Order, Pos2, Rect, Sense, Ui, Vec2, WidgetInfo, WidgetType,
+};
 
 use super::{take_focus, T120};
 use crate::app::vars::Vars;
+use crate::theme::Rgba;
 use crate::ui::anim;
 use crate::ui::paint::{Border, BoxStyle, Corners};
 use crate::ui::snap;
@@ -31,6 +34,123 @@ pub struct SelectProps<'a> {
     /// The accessible name.
     pub label: &'a str,
     pub vars: &'a Vars,
+    /// A `<select>` that keeps Chromium's own menulist arrow
+    /// (`appearance: auto`) inside the page's box; `None` is the settings
+    /// field (`.select-input`).
+    pub look: Option<&'a NativeLook>,
+}
+
+/// The box of an `appearance: auto` select; the arrow is the theme's.
+#[derive(Clone, Debug)]
+pub struct NativeLook {
+    /// The text, its colour (also the arrow's) included.
+    pub font: TextStyle,
+    /// `padding` left and right, top and bottom.
+    pub padding: Vec2,
+    pub radius: f32,
+    pub background: Rgba,
+    pub border: Rgba,
+    /// `color`, which the arrow takes.
+    pub arrow: Rgba,
+}
+
+/// `MenuListArrowWidthInDIP` without a scrollbar arrow size.
+const ARROW_BOX: f32 = 15.0;
+
+/// `LayoutThemeDefault` and `ThemePainterDefault::SetupMenuListArrow` as
+/// WebView2 paints them: the arrow box is `int(15 * zoom)` device px at the
+/// right inside the border, the arrow `8 * box / 15`, its left edge
+/// truncated to a whole pixel, centred on the box's middle row. The
+/// refreshed arrow is a chevron: two 45 degree arms from a quarter to three
+/// quarters of the arrow's height, a 2.12 device px butt-capped, mitred
+/// stroke at every scale (fitted on 1x and 1.5x captures).
+fn paint_native_arrow(painter: &egui::Painter, rect: Rect, color: Rgba, ppp: f32) {
+    let r = snap::device_rect(rect, ppp);
+    let right = r.right() - snap::border_device(1.0, ppp);
+    let boxed = (ARROW_BOX * ppp).trunc();
+    let size = 8.0 * boxed / ARROW_BOX;
+    let left = (right - (boxed + size) / 2.0).trunc();
+    let apex_x = left + (size.trunc() / 2.0).trunc();
+    let middle = r.top() + (r.height() / 2.0).trunc();
+    let top = middle - size / 2.0;
+    let half = size / 2.0;
+    let points = [
+        pos2(apex_x - half, top + size * 0.25),
+        pos2(apex_x, top + size * 0.75),
+        pos2(apex_x + half, top + size * 0.25),
+    ];
+    paint_device_chevron(painter, points, 3.0 / std::f32::consts::SQRT_2, color, ppp);
+}
+
+/// A butt-capped polyline of three device points with a mitred corner,
+/// antialiased from 16 x 16 samples per device pixel.
+fn paint_device_chevron(painter: &egui::Painter, p: [Pos2; 3], width: f32, color: Rgba, ppp: f32) {
+    let half = width / 2.0;
+    let on = |q: Pos2, a: Pos2, b: Pos2| {
+        let u = (b - a).normalized();
+        let t = (q - a).dot(u);
+        let n = u.x * (q.y - a.y) - u.y * (q.x - a.x);
+        (0.0..=(b - a).length()).contains(&t) && n.abs() <= half
+    };
+    // The miter fills the outer side of the corner, under the apex here.
+    let (d1, d2) = ((p[1] - p[0]).normalized(), (p[2] - p[1]).normalized());
+    let normal = |d: Vec2| vec2(-d.y, d.x);
+    let side = if (normal(d1) + normal(d2)).dot(d2 - d1) < 0.0 {
+        half
+    } else {
+        -half
+    };
+    let (o1, o2) = (p[1] + normal(d1) * side, p[1] + normal(d2) * side);
+    let cross = |u: Vec2, v: Vec2| u.x * v.y - u.y * v.x;
+    let tip = o1 + d1 * (cross(o2 - o1, d2) / cross(d1, d2));
+    let corner = [p[1], o1, tip, o2];
+    let in_corner = |q: Pos2| {
+        let s: Vec<f32> = (0..4)
+            .map(|i| cross(corner[(i + 1) % 4] - corner[i], q - corner[i]))
+            .collect();
+        s.iter().all(|v| *v >= 0.0) || s.iter().all(|v| *v <= 0.0)
+    };
+    let inside = |q: Pos2| on(q, p[0], p[1]) || on(q, p[1], p[2]) || in_corner(q);
+    const N: usize = 16;
+    let xs = p.iter().map(|q| q.x).chain([tip.x]);
+    let ys = p.iter().map(|q| q.y).chain([tip.y]);
+    let (x0, x1) = xs.fold((f32::MAX, f32::MIN), |(a, b), x| (a.min(x), b.max(x)));
+    let (y0, y1) = ys.fold((f32::MAX, f32::MIN), |(a, b), y| (a.min(y), b.max(y)));
+    let mut mesh = egui::Mesh::default();
+    for py in (y0 - half).floor() as i32..(y1 + half).ceil() as i32 {
+        for px in (x0 - half).floor() as i32..(x1 + half).ceil() as i32 {
+            let mut hits = 0;
+            for sy in 0..N {
+                for sx in 0..N {
+                    let q = pos2(
+                        px as f32 + (sx as f32 + 0.5) / N as f32,
+                        py as f32 + (sy as f32 + 0.5) / N as f32,
+                    );
+                    hits += usize::from(inside(q));
+                }
+            }
+            if hits > 0 {
+                let c = coverage_color(color, hits as f32 / (N * N) as f32);
+                mesh.add_colored_rect(
+                    Rect::from_min_size(pos2(px as f32, py as f32) / ppp, Vec2::splat(1.0 / ppp)),
+                    c,
+                );
+            }
+        }
+    }
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+/// `color` at `k` coverage, premultiplied, no gamma.
+fn coverage_color(color: Rgba, k: f32) -> Color32 {
+    let a = color.a * k;
+    let c = |v: f32| (v * a).round().clamp(0.0, 255.0) as u8;
+    Color32::from_rgba_premultiplied(
+        c(color.r),
+        c(color.g),
+        c(color.b),
+        (a * 255.0).round().clamp(0.0, 255.0) as u8,
+    )
 }
 
 /// What happened this frame.
@@ -210,28 +330,56 @@ pub fn select(ui: &mut Ui, rect: Rect, id: Id, props: &SelectProps) -> SelectEve
         }
     }
 
-    let border = if focused {
-        v.fg_muted.mix(0.55, v.border)
-    } else {
-        v.border
-    };
-    let border = anim::transition(&ctx, id.with("border"), border, &T120);
     let boxed = snap::rect(rect, ppp);
-    BoxStyle {
-        background: v.bg_input,
-        radius: Corners::all(8.0),
-        border: Border::all(snap::border_width(1.0, ppp), border),
-        ..BoxStyle::default()
-    }
-    .paint(ui.painter(), boxed);
-    // `padding-right: 34px` leaves the arrow its room.
     let edge = snap::border_width(1.0, ppp);
-    let text_rect = Rect::from_min_max(
-        pos2(rect.left() + 10.0 + edge, rect.top() + 9.0 + edge),
-        pos2(rect.right() - 34.0 - edge, rect.top() + 27.0 + edge),
-    );
-    text::paint(ui.painter(), text_rect, &current, &style(v));
-    paint_arrow(ui, rect, v.fg_muted.to_color32());
+    if let Some(look) = props.look {
+        BoxStyle {
+            background: look.background,
+            radius: Corners::all(look.radius),
+            border: Border::all(edge, look.border),
+            ..BoxStyle::default()
+        }
+        .paint(ui.painter(), boxed);
+        // The inner element: `PopupInternalPaddingStart` (4 px) and 1 px
+        // top and bottom, whole device pixels of the zoom, centred in the
+        // content box (`margin: auto`); its right edge stops at the arrow box.
+        let line = look.font.line_box(&ctx).map_or(16.5, |l| l.height);
+        let pad_y = ppp.trunc() / ppp;
+        let content_top = rect.top() + edge + look.padding.y;
+        let content_h = rect.height() - 2.0 * (edge + look.padding.y);
+        let top = content_top + snap::centre(content_h, line + 2.0 * pad_y, ppp) + pad_y;
+        let left = rect.left() + edge + look.padding.x + (4.0 * ppp).trunc() / ppp;
+        let right = rect.right() - edge - look.padding.x - ((ARROW_BOX * ppp).trunc() + 1.0) / ppp;
+        let text_rect = Rect::from_min_max(pos2(left, top), pos2(right.max(left), top + line));
+        text::paint(
+            ui.painter(),
+            text_rect,
+            &current,
+            &look.font.clone().nowrap(true),
+        );
+        paint_native_arrow(ui.painter(), rect, look.arrow, ppp);
+    } else {
+        let border = if focused {
+            v.fg_muted.mix(0.55, v.border)
+        } else {
+            v.border
+        };
+        let border = anim::transition(&ctx, id.with("border"), border, &T120);
+        BoxStyle {
+            background: v.bg_input,
+            radius: Corners::all(8.0),
+            border: Border::all(edge, border),
+            ..BoxStyle::default()
+        }
+        .paint(ui.painter(), boxed);
+        // `padding-right: 34px` leaves the arrow its room.
+        let text_rect = Rect::from_min_max(
+            pos2(rect.left() + 10.0 + edge, rect.top() + 9.0 + edge),
+            pos2(rect.right() - 34.0 - edge, rect.top() + 27.0 + edge),
+        );
+        text::paint(ui.painter(), text_rect, &current, &style(v));
+        paint_arrow(ui, rect, v.fg_muted.to_color32());
+    }
 
     if let Some(hi) = open {
         events.open = true;

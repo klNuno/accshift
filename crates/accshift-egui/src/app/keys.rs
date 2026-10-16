@@ -20,6 +20,7 @@ use egui::{Context, Event, Id, Key};
 
 use super::platforms::RuntimeOs;
 use super::{Action, AppModel, MenuTarget};
+use crate::ui::components::bulk_edit::BulkEvent;
 use crate::ui::components::focus;
 
 /// The search field's widget id (`searchInputRef`).
@@ -271,7 +272,7 @@ impl AppModel {
                 self.dialogs.input_dialog().is_some() || self.dialogs.confirm_dialog().is_some()
             }
             KeyScope::ContextMenu => self.dialogs.context_menu().is_some(),
-            KeyScope::BulkEdit => b.nav.bulk_edit,
+            KeyScope::BulkEdit => b.bulk.is_open(),
             KeyScope::Settings => b.nav.show_settings,
             KeyScope::Personas => b.nav.show_personas,
             KeyScope::App => false,
@@ -553,10 +554,17 @@ impl AppModel {
             // `.app-stage` scale transform): the zoom keys wait for it.
             KeyAction::ZoomIn | KeyAction::ZoomOut | KeyAction::ResetZoom => {}
             KeyAction::NavigateBack => self.apply_one(ctx, Action::NavigateBack),
-            // Bulk edit selection is a later port.
-            KeyAction::ToggleBulkEditAccount(_)
-            | KeyAction::BulkEditSelectAll
-            | KeyAction::BulkEditDeselectAll => {}
+            KeyAction::ToggleBulkEditAccount(id) => {
+                if let Some(b) = self.booted.as_mut() {
+                    b.bulk.toggle_account(&id);
+                }
+            }
+            KeyAction::BulkEditSelectAll => {
+                self.apply_one(ctx, Action::Bulk(BulkEvent::SelectAll));
+            }
+            KeyAction::BulkEditDeselectAll => {
+                self.apply_one(ctx, Action::Bulk(BulkEvent::DeselectAll));
+            }
         }
     }
 }

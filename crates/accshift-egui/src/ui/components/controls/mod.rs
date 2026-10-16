@@ -38,8 +38,15 @@ pub struct FocusCtx {
 /// Tab on its own; this adds the pointer half. Returns whether `response`
 /// holds focus after this frame's input.
 pub fn take_focus(ui: &Ui, response: &Response) -> bool {
-    let pressed_here =
-        response.is_pointer_button_down_on() && ui.input(|i| i.pointer.any_pressed());
+    // A frame that also carries the previous click's release (two quick
+    // clicks) clears egui's pointer-down flag: the press is then read from
+    // the hit test, as Chromium dispatches each event on its own.
+    let pressed_here = ui.input(|i| i.pointer.any_pressed())
+        && (response.is_pointer_button_down_on()
+            || (response.enabled()
+                && ui
+                    .ctx()
+                    .viewport(|vp| vp.hits.click.is_some_and(|w| w.id == response.id))));
     if pressed_here {
         response.request_focus();
         return true;

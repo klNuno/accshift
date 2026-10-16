@@ -958,7 +958,7 @@ impl AppModel {
             return;
         };
         b.nav.show_personas = false;
-        b.nav.bulk_edit = false;
+        b.bulk.close();
         b.nav.show_settings = true;
         self.settings_panel = Some(SettingsPanel::open(
             &b.stores,

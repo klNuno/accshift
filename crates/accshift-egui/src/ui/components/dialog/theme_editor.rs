@@ -1303,6 +1303,7 @@ fn paint_block(
                         disabled: &[],
                         label: &row.label,
                         vars: v,
+                        look: None,
                     },
                 );
                 if let Some(k) = ev.changed {
@@ -1472,6 +1473,7 @@ fn meta_grid(
             disabled: &[],
             label: &i18n::translate(locale, "themeEditor.base"),
             vars: v,
+            look: None,
         },
     );
     if let Some(k) = ev.changed {
@@ -1492,6 +1494,7 @@ fn meta_grid(
             disabled: &[],
             label: &i18n::translate(locale, "themeEditor.colorScheme"),
             vars: v,
+            look: None,
         },
     );
     if let Some(k) = ev.changed {

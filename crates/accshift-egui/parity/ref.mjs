@@ -252,9 +252,16 @@ async function runScene(page, scene, outDir, manifest) {
     );
   }
 
-  const mouse = { x: 0, y: 0 };
+  const mouse = { x: 0, y: 0, held: false };
+  // A move while "down" holds the primary button reports it, like a drag.
   const mouseEvent = (type, extra = {}) =>
-    send("Input.dispatchMouseEvent", { type, x: mouse.x, y: mouse.y, ...extra });
+    send("Input.dispatchMouseEvent", {
+      type,
+      x: mouse.x,
+      y: mouse.y,
+      ...(mouse.held ? { button: "left", buttons: 1 } : {}),
+      ...extra,
+    });
   const moveTo = async ([x, y]) => {
     mouse.x = x;
     mouse.y = y;
@@ -308,6 +315,14 @@ async function runScene(page, scene, outDir, manifest) {
     } else if ("rclick" in step) {
       await moveTo(step.rclick);
       await press("right", 1);
+    } else if ("down" in step) {
+      await moveTo(step.down);
+      await mouseEvent("mousePressed", { button: "left", buttons: 1, clickCount: 1 });
+      mouse.held = true;
+    } else if ("up" in step) {
+      await moveTo(step.up);
+      mouse.held = false;
+      await mouseEvent("mouseReleased", { button: "left", buttons: 0, clickCount: 1 });
     } else if ("key" in step) await stroke(step.key);
     else if ("text" in step) {
       for (const ch of step.text) {

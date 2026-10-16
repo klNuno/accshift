@@ -44,10 +44,10 @@ use accshift_app::actions::dialogs::{
 };
 use accshift_app::actions::keyboard::KeyboardController;
 use accshift_app::actions::toasts::AddToastOptions;
-use accshift_app::actions::{load_options, shell as app_shell, AppEffect};
+use accshift_app::actions::{card_actions, load_options, shell as app_shell, AppEffect};
 use accshift_app::backend::Backend;
 use accshift_app::error::BackendResult;
-use accshift_app::folders::FolderInfo;
+use accshift_app::folders::{FolderInfo, ItemKind};
 use accshift_app::i18n::Locale;
 use accshift_app::jobs::{Jobs, Pending, Poll};
 use accshift_app::lifecycle::app_shell::first_run_platforms;
@@ -73,6 +73,7 @@ use serde_json::Value;
 
 use crate::screens::workspace::Workspace;
 use crate::ui::anim::{self, Motion};
+use crate::ui::components::bulk_edit::{BulkEvent, COVER_ID};
 use crate::ui::components::command_palette::PaletteEvent;
 use crate::ui::components::context_menu::{self, MenuEvent, SubmenuLoad};
 use crate::ui::components::dialog::DialogEvent;
@@ -96,6 +97,8 @@ pub enum Action {
     OpenPersonas,
     /// Bulk edit toggle.
     BulkEdit,
+    /// The bulk edit bar or its settings dialog.
+    Bulk(BulkEvent),
     /// Update call to action.
     ApplyUpdate,
     /// A platform tab.
@@ -255,7 +258,6 @@ pub struct Navigation {
     pub active_tab: String,
     pub show_settings: bool,
     pub show_personas: bool,
-    pub bulk_edit: bool,
 }
 
 impl Navigation {
@@ -304,6 +306,12 @@ pub struct Booted {
     pub detected_platforms: Vec<String>,
     /// `createPersonaController`.
     pub personas: accshift_app::actions::personas::PersonaController,
+    /// `createBulkEditController`: the mode, its selection and the bar.
+    pub bulk: accshift_app::bulk_edit::BulkEdit,
+    /// Bumped each time a bar step mounts (`{#if step}`): its entrance
+    /// animation starts over.
+    pub bulk_mount: u64,
+    bulk_key: Option<accshift_app::bulk_edit::BarStep>,
     /// `handleAppMounted` ran.
     secure_mounted: bool,
     /// The settings panel was open last frame (`handleSettingsClosed`).
@@ -701,6 +709,9 @@ impl AppModel {
             user_platforms: Some(user_platforms),
             detected_platforms: detected,
             personas: persona_controller,
+            bulk: Default::default(),
+            bulk_mount: 0,
+            bulk_key: None,
             secure_mounted: false,
             secure_in_settings: false,
         });
@@ -806,9 +817,14 @@ impl AppModel {
             let (_, effects) = self.onboarding.tick(&self.jobs, now, &tab);
             self.apply_effects(&ctx, effects);
         }
+        self.tick_bulk_edit();
         if let Some(b) = self.booted.as_mut() {
             // The tour's fake accounts replace the grid while it runs.
             b.accounts.tour = self.onboarding.mock_grid(b.locale);
+            b.accounts.bulk_selection = b
+                .bulk
+                .is_open()
+                .then(|| b.bulk.selected_ids().iter().cloned().collect());
             let grid_hidden = b.nav.show_settings || b.nav.show_personas;
             let expanded = b.stores.settings().account_display.expanded_folders;
             b.accounts.update(
@@ -833,6 +849,7 @@ impl AppModel {
         self.track_card_focus(&ctx);
         self.dispatch_keys(&ctx);
         self.mount_dialogs();
+        self.track_bulk_paint(&ctx);
         let actions = shell::draw(self, ui, now);
         self.apply(&ctx, actions, now);
         // Boot marks for the startup bench.
@@ -859,6 +876,13 @@ impl AppModel {
         }
         self.mount_dialogs();
         if let Some(b) = self.booted.as_mut() {
+            // The `setTimeout(0)` that drops an unclaimed click swallow.
+            b.bulk.end_frame();
+            let step = b.bulk.bar().map(|bar| bar.step());
+            if step != b.bulk_key {
+                b.bulk_key = step;
+                b.bulk_mount += 1;
+            }
             let key = b.nav.panel_key();
             if key != b.panel.0 {
                 b.panel = (key, now);
@@ -884,6 +908,15 @@ impl AppModel {
                 if let Some(b) = self.booted.as_mut() {
                     let tab = b.nav.active_tab.clone();
                     b.accounts.refresh(&self.jobs, &mut b.stores, &tab);
+                }
+            }
+            // `handleWorkspaceAccountSwitch` in bulk edit: the click toggles
+            // the account, unless it ends a paint drag.
+            Action::AccountSwitch(id) if self.booted.as_ref().is_some_and(|b| b.bulk.is_open()) => {
+                if let Some(b) = self.booted.as_mut() {
+                    if !b.bulk.paint_capture_click() {
+                        b.bulk.toggle_account(&id);
+                    }
                 }
             }
             // The add-flow, updater, selection and switch ports own these.
@@ -990,16 +1023,18 @@ impl AppModel {
                 if let Some(b) = self.booted.as_mut() {
                     if b.stores.settings().personas_enabled {
                         b.nav.show_settings = false;
-                        b.nav.bulk_edit = false;
+                        b.bulk.close();
                         b.nav.show_personas = true;
                     }
                 }
             }
             Action::BulkEdit => {
                 if let Some(b) = self.booted.as_mut() {
-                    b.nav.bulk_edit = !b.nav.bulk_edit;
+                    let def = b.accounts.registry.definition(&b.nav.active_tab);
+                    b.bulk.toggle(def);
                 }
             }
+            Action::Bulk(event) => self.apply_bulk(ctx, event),
             Action::TabChange(tab) => {
                 let Some(b) = self.booted.as_mut() else {
                     return;
@@ -1012,7 +1047,7 @@ impl AppModel {
                     b.nav.show_settings = false;
                     return;
                 }
-                b.nav.bulk_edit = false;
+                b.bulk.close();
                 b.nav.show_settings = false;
                 b.nav.active_tab = tab.clone();
                 b.accounts.change_tab(&self.jobs, &mut b.stores, &tab);
@@ -1036,12 +1071,16 @@ impl AppModel {
         if self.dialogs.context_menu().is_some() && context_menu::contains(ctx, at) {
             return;
         }
-        let Some(b) = self.booted.as_ref() else {
+        let Some(b) = self.booted.as_mut() else {
             return;
         };
-        if b.nav.bulk_edit && matches!(target, MenuTarget::Account(_)) {
-            // Bulk edit toggles the account instead: the bulk edit port.
-            return;
+        if b.bulk.is_open() {
+            if let MenuTarget::Account(account) = &target {
+                // `handleWorkspaceAccountContextMenu`: the right click
+                // toggles the account instead.
+                b.bulk.toggle_account(&account.id);
+                return;
+            }
         }
         match target {
             MenuTarget::Account(account) => {
@@ -1325,6 +1364,11 @@ impl AppModel {
                     let toast = app_shell::copy_result_toast(&label.resolve(locale), true);
                     self.toasts.push(toast, Instant::now());
                 }
+                AppEffect::CopyBulkUrls(urls) => {
+                    ctx.copy_text(urls.join("\n"));
+                    let toast = card_actions::bulk_urls_copied_toast(urls.len(), true);
+                    self.toasts.push(toast, Instant::now());
+                }
                 AppEffect::RemoveAccount(account_id) => {
                     if let Some(b) = self.booted.as_mut() {
                         b.accounts
@@ -1475,3 +1519,127 @@ fn os_prefers_reduced_motion() -> bool {
 
 #[cfg(test)]
 mod tests;
+
+impl AppModel {
+    /// One frame of the bulk edit jobs: the games load and the apply. A
+    /// finished apply closes the mode and toasts (`handleBulkEditResult`).
+    fn tick_bulk_edit(&mut self) {
+        let Some(b) = self.booted.as_mut() else {
+            return;
+        };
+        if let Some(result) = b.bulk.poll() {
+            let result = accshift_app::platforms::PlatformBulkEditResult {
+                succeeded: result.succeeded as usize,
+                failed: result.failed.into_iter().map(|f| f.steam_id).collect(),
+            };
+            let toast = accshift_app::actions::dialogs::bulk_edit_result_toast(&result);
+            self.toasts.push(toast, Instant::now());
+        }
+    }
+
+    /// The paint gesture (`handlePaintMouseDown`, the document's `mousemove`
+    /// and `mouseup`): a primary press on an account card arms it, a move
+    /// paints the card under the pointer, the release ends it. The card is
+    /// read from the boxes the last frame drew, like `elementFromPoint`; the
+    /// bar and its popover cover the cards under them.
+    fn track_bulk_paint(&mut self, ctx: &Context) {
+        let Some(b) = self.booted.as_mut() else {
+            return;
+        };
+        if !b.bulk.is_open() {
+            return;
+        }
+        let cover: Vec<Rect> = ctx
+            .data(|d| d.get_temp(egui::Id::new(COVER_ID)))
+            .unwrap_or_default();
+        let hit = ctx.viewport(|vp| vp.hits.click.map(|w| w.id));
+        let ws = &b.workspace;
+        let card_at = |pos: Pos2| -> Option<String> {
+            if cover.iter().any(|r| r.contains(pos)) {
+                return None;
+            }
+            ws.cards
+                .iter()
+                .rev()
+                .find(|(item, r)| item.kind == ItemKind::Account && r.contains(pos))
+                .map(|(item, _)| item.id.clone())
+        };
+        let events = ctx.input(|i| i.events.clone());
+        for event in events {
+            match event {
+                Event::PointerButton {
+                    pos,
+                    button,
+                    pressed: true,
+                    ..
+                } => {
+                    // `onmousedown` of the grid wrapper: the press must land
+                    // on the workspace.
+                    let on_workspace = hit.is_some_and(|id| ws.owns(id));
+                    let card = on_workspace.then(|| card_at(pos)).flatten();
+                    b.bulk.paint_mouse_down(
+                        button == egui::PointerButton::Primary,
+                        card.as_deref(),
+                        (pos.x, pos.y),
+                    );
+                }
+                Event::PointerMoved(pos) => {
+                    b.bulk
+                        .paint_mouse_move((pos.x, pos.y), card_at(pos).as_deref());
+                }
+                Event::PointerButton { pressed: false, .. } => b.bulk.paint_mouse_up(),
+                _ => {}
+            }
+        }
+    }
+
+    /// What the bar and its dialog reported.
+    fn apply_bulk(&mut self, ctx: &Context, event: BulkEvent) {
+        let Some(b) = self.booted.as_mut() else {
+            return;
+        };
+        match event {
+            BulkEvent::SelectAll => {
+                let visible = b.accounts.lists.visible_account_ids.clone();
+                b.bulk.select_all(&visible);
+            }
+            BulkEvent::DeselectAll => b.bulk.deselect_all(),
+            BulkEvent::CopyUrls => {
+                let urls = accshift_app::bulk_edit::BulkEditBar::copy_urls(b.bulk.selected_ids());
+                let effects = card_actions::copy_bulk_edit_urls(&urls);
+                self.apply_effects(ctx, effects);
+            }
+            BulkEvent::Color(color) => {
+                let Some(color) = b.bulk.bar_mut().map(|bar| bar.apply_color(&color)) else {
+                    return;
+                };
+                let ids = b.bulk.selected_ids().to_vec();
+                let effects = card_actions::apply_bulk_edit_card_color(&mut b.stores, &ids, &color);
+                self.apply_effects(ctx, effects);
+            }
+            BulkEvent::Close => b.bulk.close(),
+            BulkEvent::Next => b.bulk.go_to_settings(&self.jobs),
+            BulkEvent::Apply => b.bulk.apply(&self.jobs),
+            BulkEvent::Escape => b.bulk.escape(),
+            event => {
+                let Some(bar) = b.bulk.bar_mut() else {
+                    return;
+                };
+                match event {
+                    BulkEvent::ToggleColorMenu => bar.toggle_color_menu(),
+                    BulkEvent::Back => bar.back(),
+                    BulkEvent::CycleNewsPopup => bar.news_popup = bar.news_popup.cycle(),
+                    BulkEvent::CycleDoNotDisturb => {
+                        bar.do_not_disturb = bar.do_not_disturb.cycle();
+                    }
+                    BulkEvent::Game(app_id) => bar.selected_game_id = app_id,
+                    BulkEvent::LaunchInput(value) => bar.launch_option_input = value,
+                    BulkEvent::AddLaunchOption => bar.add_launch_option(),
+                    BulkEvent::RemoveLaunchOption(app_id) => bar.remove_launch_option(&app_id),
+                    BulkEvent::PointerDown(inside) => bar.pointer_down(inside),
+                    _ => {}
+                }
+            }
+        }
+    }
+}

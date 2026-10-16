@@ -12,7 +12,7 @@
 //! the tab shows accounts, `triggerCs2BridgeCheck` after a switch) and keeps
 //! each card's CS2 section and username badge in [`Cs2Cards`].
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -171,6 +171,9 @@ pub struct Accounts {
     pub cs2: Cs2Cards,
     /// `onboarding.mockActive`: the tour's mock accounts replace the grid.
     pub tour: Option<Vec<PlatformAccount>>,
+    /// `bulkEditSelectedIds` while the bulk edit mode is open: the cards
+    /// turn accent when selected and switch on one click.
+    pub bulk_selection: Option<BTreeSet<String>>,
 }
 
 impl Accounts {
@@ -234,6 +237,7 @@ impl Accounts {
             avatars: AvatarTextures::new(policy),
             cs2: Cs2Cards::default(),
             tour: None,
+            bulk_selection: None,
         };
         accounts
             .navigation
@@ -424,7 +428,7 @@ impl Accounts {
             adapter: adapter.as_deref(),
             active_tab: tab,
             pending_setup_account: None,
-            bulk_selection: None,
+            bulk_selection: self.bulk_selection.as_ref(),
             drag_item: None,
             collapsed_sections: self.pipeline.collapsed_sections(),
         };

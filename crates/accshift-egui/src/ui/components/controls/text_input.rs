@@ -57,18 +57,20 @@ impl FieldStyle {
         self.line + 2.0 * self.padding.y + 2.0 * snap::border_width(self.border, ppp)
     }
 
-    /// Where the text line goes inside `rect`.
+    /// Where the text line goes inside `rect`. A field stretched past its
+    /// own height (a flex row) centres its inner editor the way
+    /// `LayoutTextControlSingleLine` does, in device LayoutUnits:
+    /// `top -= diff / 2 + LayoutMod(diff, 2)`, `diff` the editor's height
+    /// less the content box's (a 0.5 px surplus moves it down 0.75 px).
     fn line_rect(&self, rect: Rect, ppp: f32) -> Rect {
         let b = snap::border_width(self.border, ppp);
+        let free = snap::layout_unit((rect.height() - self.height(ppp)).max(0.0) * ppp);
+        let diff = -free;
+        let shift = -(diff / 2.0 + diff % 2.0) / ppp;
+        let top = rect.top() + b + self.padding.y + shift;
         Rect::from_min_max(
-            pos2(
-                rect.left() + b + self.padding.x,
-                rect.top() + b + self.padding.y,
-            ),
-            pos2(
-                rect.right() - b - self.padding.x,
-                rect.top() + b + self.padding.y + self.line,
-            ),
+            pos2(rect.left() + b + self.padding.x, top),
+            pos2(rect.right() - b - self.padding.x, top + self.line),
         )
     }
 }

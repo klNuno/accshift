@@ -35,6 +35,7 @@ use crate::screens::workspace::{self, WorkspaceInput};
 use crate::screens::{personas, settings};
 use crate::ui::anim::{self, Animation, Fill, Motion, Timing, Transition};
 use crate::ui::backdrop_filter::Mark;
+use crate::ui::components::bulk_edit::{self, BulkEvent, BulkProps};
 use crate::ui::components::command_palette::{self, PaletteProps};
 use crate::ui::components::context_menu::{self, ContextMenuProps};
 use crate::ui::components::dialog::{self, DialogProps};
@@ -44,6 +45,8 @@ use crate::ui::components::title_bar::{self, TitleBarProps};
 use crate::ui::components::toast::{self, ToastProps};
 use crate::ui::paint::BoxStyle;
 use accshift_app::actions::dialogs::MenuInput;
+use accshift_app::actions::keyboard::KeyScope;
+use accshift_app::bulk_edit::BarStep;
 
 /// `appEntrance 240ms cubic-bezier(0.22, 1, 0.36, 1) forwards`.
 const APP_ENTRANCE: Animation =
@@ -193,7 +196,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
             && !nav.show_settings
             && !nav.show_personas
             && active_usable,
-        bulk_edit_active: nav.bulk_edit,
+        bulk_edit_active: booted.bulk.is_open(),
         show_settings: nav.show_settings,
         update_cta: None,
         maximized,
@@ -241,6 +244,12 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         .flatten();
     // `commandRegistry.getCommands()` while the palette is mounted.
     let palette_commands = app.palette.is_some().then(|| app.palette_commands());
+    let bulk_step = app
+        .booted
+        .as_ref()
+        .and_then(|b| b.bulk.bar().map(|bar| bar.step()));
+    // The bar's window `keydown` while it owns the keyboard.
+    let bulk_escape = bulk_step.is_some() && app.key_scope() == KeyScope::BulkEdit;
     let settings_panel = &mut app.settings_panel;
     let personas_panel = &mut app.personas.panel;
     let focus_visible = app.focus_visible;
@@ -264,6 +273,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
     // panel: the wheel lands on its overlay, never on the content under it.
     let modal = palette.is_some()
         || tour.is_some()
+        || bulk_step == Some(BarStep::Settings)
         || (dialogs.input_dialog().is_some() && input_mount.is_some())
         || (dialogs.confirm_dialog().is_some() && confirm_mount.is_some())
         || settings_panel
@@ -305,6 +315,8 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         detected_platforms,
         personas: persona_ctl,
         registry: theme_registry,
+        bulk,
+        bulk_mount,
         ..
     }) = app.booted.as_mut()
     else {
@@ -376,6 +388,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                     focus_visible,
                     dark: theme.theme.color_scheme == ColorScheme::Dark,
                     glass: theme.theme.glass,
+                    bulk_edit: bulk.is_open(),
                     now,
                 };
                 actions.extend(layer(ui, panel, o, rise, |ui| {
@@ -408,6 +421,32 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
             // `.inactivity-frost` (`--z-frost`), above the panel and the
             // title bar.
             secure_overlays::frost(ui, stage, obscured, &vars);
+            // `BulkEditBar` (`--z-sticky`): the bar under the toasts, its
+            // settings dialog with the other dialogs.
+            let accent_fg = theme
+                .resolved
+                .eval_color("var(--accent-fg)")
+                .map(crate::app::vars::rgba)
+                .unwrap_or(vars.fg);
+            let current_account = accounts.loading.loader.current_account_id();
+            let bulk_props = bulk.bar().map(|bar| BulkProps {
+                vars: &vars,
+                locale: *locale,
+                viewport: window,
+                bar,
+                selected: bulk.selected_ids().len(),
+                active_selected: bulk.active_account_selected(current_account),
+                accent_fg,
+                focus_visible,
+                dark: theme.theme.color_scheme == ColorScheme::Dark,
+                mount: *bulk_mount,
+            });
+            if let Some(props) = bulk_props
+                .as_ref()
+                .filter(|_| bulk_step == Some(BarStep::Select))
+            {
+                actions.extend(bulk_edit::bar(ui, props).into_iter().map(Action::Bulk));
+            }
             // `.toast-container`, fixed to the frame (its transform makes it
             // the containing block), above the panel.
             let props = ToastProps {
@@ -492,6 +531,15 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                         .into_iter()
                         .map(|event| Action::ConfirmDialog(mount, event)),
                 );
+            }
+            if let Some(props) = bulk_props
+                .as_ref()
+                .filter(|_| bulk_step == Some(BarStep::Settings))
+            {
+                actions.extend(bulk_edit::settings(ui, props).into_iter().map(Action::Bulk));
+            }
+            if bulk_escape && bulk_edit::escape_pressed(ui) {
+                actions.push(Action::Bulk(BulkEvent::Escape));
             }
             // `<ContextMenu>`, above the dialogs (`--z-menu`).
             if let Some(menu) = dialogs.context_menu() {
