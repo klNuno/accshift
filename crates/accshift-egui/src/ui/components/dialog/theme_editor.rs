@@ -38,13 +38,14 @@
 //! panel too), Tab cycles inside the dialog. A click on the overlay
 //! cancels. Nothing takes focus at mount.
 //!
-//! Chromium draws the colour input's picker and the selects' lists in
-//! popup windows no capture includes; their stand-ins here are egui's.
+//! The colour input opens Windows' own colour dialog, as Chromium does
+//! ([`window::color`]). Chromium draws the selects' lists in popup windows
+//! no capture includes; their stand-ins here are egui's.
 
 use std::ops::Range;
 
 use accshift_theme::{ColorScheme, ThemeRegistry, TokenGroup, TokenKey, TokenKind};
-use egui::{Area, Event, Order, Pos2, Vec2};
+use egui::{Event, Pos2, Vec2};
 
 use super::*;
 use crate::app::theme_editor::{self as model, ThemeEditor, ThemeEditorEvent};
@@ -56,6 +57,7 @@ use crate::ui::components::controls::select::{self, SelectProps};
 use crate::ui::components::controls::text_input::{settings_style, FieldStyle};
 use crate::ui::components::controls::{paint_ua_focus_ring, scroll, FocusCtx};
 use crate::ui::text::{TextTransform, MONO_STACK};
+use crate::window;
 
 /// The root id of the dialog, `.with(mount)`.
 pub const THEME_EDITOR_ID: &str = "accshift-theme-editor";
@@ -751,37 +753,27 @@ fn color_input(ui: &mut Ui, rect: Rect, id: Id, hex: &str, props: &DialogProps) 
     if focused && props.focus_visible {
         paint_ua_focus_ring(ui.painter(), boxed, v.radius_sm, 1.0, props.dark);
     }
-    // The picker: egui's stand-in for Chromium's popup.
-    let open_key = id.with("open");
-    let mut open = ctx.data(|d| d.get_temp::<bool>(open_key).unwrap_or(false));
-    if response.clicked() {
-        open = !open;
-    }
+    // The picker: Windows' colour dialog, one at a time; OK writes the
+    // colour (`input`, then `change`), Cancel leaves it.
+    let open_key = id.with("chooser");
+    let chooser = ctx.data(|d| d.get_temp::<window::color::Chooser>(open_key));
     let mut picked = None;
-    if open {
-        let mut c = colour.to_color32();
-        let area = Area::new(id.with("picker"))
-            .order(Order::Foreground)
-            .fixed_pos(pos2(boxed.left(), boxed.bottom() + 4.0))
-            .show(&ctx, |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    if egui::widgets::color_picker::color_picker_color32(
-                        ui,
-                        &mut c,
-                        egui::widgets::color_picker::Alpha::Opaque,
-                    ) {
-                        picked = Some(format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b()));
-                    }
-                })
-            });
-        let clicked_away = ctx.input(|i| i.pointer.any_pressed())
-            && !area.response.contains_pointer()
-            && !response.contains_pointer();
-        if clicked_away || ctx.input(|i| i.key_pressed(Key::Escape)) {
-            open = false;
+    match chooser.as_ref().map(window::color::Chooser::poll) {
+        Some(window::color::Chosen::Waiting) => {}
+        Some(chosen) => {
+            if let window::color::Chosen::Picked([r, g, b]) = chosen {
+                picked = Some(format!("#{r:02x}{g:02x}{b:02x}"));
+            }
+            ctx.data_mut(|d| d.remove::<window::color::Chooser>(open_key));
         }
+        None if response.clicked() => {
+            let c = colour.to_color32();
+            if let Some(open) = window::color::Chooser::open(&ctx, [c.r(), c.g(), c.b()]) {
+                ctx.data_mut(|d| d.insert_temp(open_key, open));
+            }
+        }
+        None => {}
     }
-    ctx.data_mut(|d| d.insert_temp(open_key, open));
     picked
 }
 

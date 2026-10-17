@@ -3,10 +3,12 @@
 //! `linear-gradient` squares at `calc(100% - 18px)` and `calc(100% - 13px)`.
 //!
 //! Closed, ArrowUp and ArrowDown change the value in place (Chromium on
-//! Windows); Space, Enter, Alt+ArrowDown or a click open the list. Chromium
-//! draws that list in a separate popup window, which no capture includes:
-//! its look here is the closest egui stand-in (`select option { background:
-//! var(--bg-solid); color: var(--fg) }`), not a measured one.
+//! Windows); Space, Enter, Alt+ArrowDown or a click open the list. The list
+//! is WebView2's popup as measured at 100 %: 4 px under the field and as
+//! wide, a 1 px `#616161` border, 24 px rows on `--bg-solid`, the text 10 px
+//! in, the highlighted row (hovered or picked) in the scheme's own grey. No
+//! shadow, no rounding; a second click on the field or the window losing
+//! focus closes it.
 
 use egui::accesskit::Role;
 use egui::{
@@ -21,8 +23,12 @@ use crate::ui::paint::{Border, BoxStyle, Corners};
 use crate::ui::snap;
 use crate::ui::text::{self, LineHeight, TextStyle};
 
-/// One popup row: an 18 px line and 1 px padding above and below.
-const ROW: f32 = 20.0;
+/// One popup row: the 18 px line 3 px down.
+const ROW: f32 = 24.0;
+/// From the field's border box to the list's top border.
+const GAP: f32 = 4.0;
+/// The list's border.
+const LIST_BORDER: Rgba = Rgba::new(97.0, 97.0, 97.0, 1.0);
 
 pub struct SelectProps<'a> {
     /// The option labels, in order.
@@ -320,6 +326,10 @@ pub fn select(ui: &mut Ui, rect: Rect, id: Id, props: &SelectProps) -> SelectEve
             open = None;
         }
     }
+    // The popup closes with the window's activation.
+    if !ctx.input(|i| i.viewport().focused.unwrap_or(true)) {
+        open = None;
+    }
 
     match open {
         Some(hi) => {
@@ -384,9 +394,18 @@ pub fn select(ui: &mut Ui, rect: Rect, id: Id, props: &SelectProps) -> SelectEve
     if let Some(hi) = open {
         events.open = true;
         let list = Rect::from_min_size(
-            pos2(rect.left(), rect.bottom()),
+            pos2(rect.left(), rect.bottom() + GAP),
             vec2(rect.width(), ROW * n as f32 + 2.0),
         );
+        // The highlight and its text: Chromium's list colours for the scheme.
+        let (highlight, highlight_fg) = if v.dark {
+            (
+                Color32::from_rgb(0xc3, 0xc3, 0xc3),
+                Color32::from_rgb(0x10, 0x10, 0x10),
+            )
+        } else {
+            (Color32::from_rgb(0x76, 0x76, 0x76), Color32::WHITE)
+        };
         ctx.data_mut(|d| d.insert_temp(id.with("popup-rect"), list));
         let mut picked = None;
         Area::new(id.with("popup"))
@@ -397,7 +416,7 @@ pub fn select(ui: &mut Ui, rect: Rect, id: Id, props: &SelectProps) -> SelectEve
                 let painter = ui.painter();
                 BoxStyle {
                     background: v.bg_solid,
-                    border: Border::all(snap::border_width(1.0, ppp), v.border),
+                    border: Border::all(snap::border_width(1.0, ppp), LIST_BORDER),
                     ..BoxStyle::default()
                 }
                 .paint(painter, snap::rect(list, ppp));
@@ -424,15 +443,17 @@ pub fn select(ui: &mut Ui, rect: Rect, id: Id, props: &SelectProps) -> SelectEve
                     let highlighted = i == hi;
                     if highlighted {
                         ui.painter()
-                            .rect_filled(snap::rect(row, ppp), 0.0, v.accent.to_color32());
+                            .rect_filled(snap::rect(row, ppp), 0.0, highlight);
                     }
                     let text_rect = Rect::from_min_size(
-                        pos2(row.left() + 4.0, row.top() + 1.0),
-                        vec2(row.width() - 8.0, 18.0),
+                        pos2(row.left() + 10.0, row.top() + 3.0),
+                        vec2(row.width() - 20.0, 18.0),
                     );
                     // `GrayText` for a disabled option.
                     let font = if off(i) {
                         style(v).color(v.fg_subtle.to_color32())
+                    } else if highlighted {
+                        style(v).color(highlight_fg)
                     } else {
                         style(v)
                     };

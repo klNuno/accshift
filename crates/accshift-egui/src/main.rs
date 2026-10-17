@@ -261,6 +261,7 @@ fn main() {
                 let hwnd = hwnd(handle).map_or(0, |h| h as isize);
                 #[cfg(not(windows))]
                 let hwnd = 0;
+                window::color::set_owner(hwnd);
                 let shell = Shell::new(
                     Screen::App(Box::new(AppModel::real(
                         ctx,

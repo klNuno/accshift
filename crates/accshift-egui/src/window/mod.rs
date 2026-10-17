@@ -7,6 +7,7 @@
 //!
 //! Scenes and the bench keep their own cloaked window and never come here.
 
+pub mod color;
 #[cfg(windows)]
 pub mod frame;
 pub mod placement;
