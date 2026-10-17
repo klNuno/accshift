@@ -99,7 +99,8 @@ pub fn maximize_hover() -> bool {
 /// The window side of a normal run.
 pub struct Host {
     backend: Arc<RealBackend>,
-    /// The window's `HWND`, 0 off Windows.
+    /// The window's `HWND`.
+    #[cfg(windows)]
     hwnd: isize,
     started: Instant,
     shown: bool,
@@ -114,8 +115,11 @@ pub struct Host {
 
 impl Host {
     pub fn new(backend: Arc<RealBackend>, hwnd: isize) -> Self {
+        #[cfg(not(windows))]
+        let _ = hwnd;
         Self {
             backend,
+            #[cfg(windows)]
             hwnd,
             started: Instant::now(),
             shown: false,

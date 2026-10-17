@@ -19,7 +19,7 @@ startup-bench = []
 # Renderer, pick one. `software`: egui meshes rasterized on the CPU and blitted
 # with softbuffer (GDI on Windows), no GPU driver loaded. `glow`: eframe on
 # OpenGL, the first version of the spike.
-software = ["dep:egui-winit", "dep:softbuffer", "dep:egui_software_backend"]
+software = ["dep:egui-winit", "dep:softbuffer", "dep:egui_software_backend", "dep:winit"]
 glow = ["dep:eframe"]
 default = ["software"]
 
@@ -75,6 +75,23 @@ image-webp = "0.2"
 
 [target.'cfg(not(windows))'.dependencies]
 egui = { version = "0.36", features = ["default_fonts"] }
+
+# Linux: the X11 and Wayland backends `default-features = false` drops above,
+# with libxcb and the Wayland client opened at run time, as by default.
+[target.'cfg(target_os = "linux")'.dependencies]
+egui-winit = { version = "0.36", optional = true, default-features = false, features = [
+  "x11",
+  "wayland",
+] }
+winit = { version = "0.30", optional = true, default-features = false, features = [
+  "wayland-dlopen",
+] }
+softbuffer = { version = "0.4", optional = true, default-features = false, features = [
+  "x11",
+  "x11-dlopen",
+  "wayland",
+  "wayland-dlopen",
+] }
 
 [target.'cfg(windows)'.dependencies]
 # The OS acrylic behind a transparent window: what Glass Dark uses in Tauri.
