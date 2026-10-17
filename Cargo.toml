@@ -21,7 +21,13 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 tauri = "2.11.5"
 tauri-plugin-process = "2.3.1"
-tauri-plugin-updater = "2.10.1"
+# No `zip` feature: it only unpacks v1 updater archives (`.nsis.zip`,
+# `.AppImage.tar.gz`), and `createUpdaterArtifacts: true` ships the signed
+# setup and AppImage themselves (macOS keeps its own tar and flate2).
+tauri-plugin-updater = { version = "2.10.1", default-features = false, features = [
+  "rustls-tls",
+  "system-proxy",
+] }
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 # Dev-only agent bridge, kept out of every release build by the optional
