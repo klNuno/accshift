@@ -24,14 +24,14 @@ pub struct BulkEditRequest {
     pub launch_options: Vec<LaunchOptionEdit>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BulkEditFailure {
     pub steam_id: String,
     pub error: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BulkEditResult {
     pub succeeded: u32,

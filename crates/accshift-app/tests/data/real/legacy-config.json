@@ -1,0 +1,10 @@
+{
+  "riot": {
+    "profiles": [
+      { "id": "riot-fixture-1", "label": "Main" },
+      { "id": "riot-fixture-2", "label": "Smurf" }
+    ]
+  },
+  "window_width": 1180,
+  "window_height": 760
+}

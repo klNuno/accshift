@@ -1,0 +1,74 @@
+{
+  "id": "settings-roblox-glass-dark-100",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [87, 18]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "click": [93, 315]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "roblox"
+    },
+    {
+      "click": [353, 242]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "health-off"
+    },
+    {
+      "click": [640, 209]
+    },
+    {
+      "text": "abc"
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "cookie"
+    },
+    {
+      "move": [789, 209]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "hover-add"
+    }
+  ]
+}

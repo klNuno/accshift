@@ -1,0 +1,98 @@
+{
+  "id": "workspace-light-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "light",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "root"
+    },
+    {
+      "move": [95, 152]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "hover-folder"
+    },
+    {
+      "move": [783, 60]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "hover-grid"
+    },
+    {
+      "move": [815, 60]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "hover-list"
+    },
+    {
+      "click": [95, 152]
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "shot": "smurfs"
+    },
+    {
+      "move": [95, 152]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "hover-back"
+    },
+    {
+      "click": [95, 152]
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "click": [639, 60]
+    },
+    {
+      "text": "ra"
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "shot": "search"
+    }
+  ]
+}

@@ -1,0 +1,1677 @@
+{
+  "format": 1,
+  "scenario": "demo",
+  "now": 1791000000,
+  "spec": {
+    "label": "README recording dataset (frozen)",
+    "runtimeOs": "windows",
+    "switchDelayMs": 900,
+    "steamPath": "C:\\Program Files (x86)\\Steam",
+    "hasSteamApiKey": true,
+    "currentSteamAccount": "76561198000000001",
+    "currentRiotProfile": "riot-1",
+    "currentRobloxAccount": "1000000001"
+  },
+  "commands": {
+    "cs2_bridge_get_settings": [
+      {
+        "args": {},
+        "result": {
+          "enabled": false,
+          "url": "",
+          "apiKey": ""
+        }
+      }
+    ],
+    "descriptor_install_file": [
+      {
+        "args": {},
+        "result": {
+          "dir": "C:\\Users\\player\\AppData\\Roaming\\accshift\\platforms",
+          "loaded": [],
+          "skipped": [],
+          "rejected": []
+        }
+      }
+    ],
+    "descriptor_preview_file": [
+      {
+        "args": {},
+        "result": {
+          "source": "C:\\Users\\player\\Downloads\\acme.json",
+          "descriptor": {
+            "id": "acme",
+            "schemaVersion": 1,
+            "name": "Acme Launcher",
+            "shortName": "Acme",
+            "os": {
+              "windows": {
+                "roots": {
+                  "files": ["${APPDATA}/Acme Launcher"]
+                },
+                "detect": {
+                  "executableResolves": true
+                },
+                "executable": {
+                  "fileName": "AcmeLauncher.exe",
+                  "candidates": [
+                    {
+                      "kind": "path",
+                      "template": "${ProgramFiles}/Acme/AcmeLauncher.exe"
+                    }
+                  ]
+                },
+                "identity": {
+                  "source": {
+                    "kind": "synthetic"
+                  },
+                  "format": {
+                    "charset": "alphanumeric",
+                    "maxLength": 64
+                  },
+                  "current": "config"
+                },
+                "state": {
+                  "files": [
+                    {
+                      "live": "${APPDATA}/Acme Launcher/session.json",
+                      "snapshot": "session.json",
+                      "snapshotMarker": true
+                    }
+                  ]
+                },
+                "close": {
+                  "processes": ["AcmeLauncher.exe"]
+                },
+                "launch": {}
+              }
+            }
+          },
+          "fileName": "acme.json",
+          "replaces": false,
+          "blocked": "",
+          "plan": {
+            "platformId": "acme",
+            "operation": "switch",
+            "accountId": "preview",
+            "applied": false,
+            "roots": ["C:\\Users\\player\\AppData\\Roaming\\Acme Launcher"],
+            "steps": [
+              {
+                "action": "close",
+                "kind": "process",
+                "target": "AcmeLauncher.exe"
+              },
+              {
+                "action": "capture",
+                "kind": "file",
+                "target": "C:\\Users\\player\\AppData\\Roaming\\Acme Launcher\\session.json",
+                "snapshot": "acme\\current\\session.json"
+              },
+              {
+                "action": "delete",
+                "kind": "directory",
+                "target": "C:\\Users\\player\\AppData\\Roaming\\Acme Launcher\\cache",
+                "note": "skipped: not there"
+              },
+              {
+                "action": "restore",
+                "kind": "file",
+                "target": "C:\\Users\\player\\AppData\\Roaming\\Acme Launcher\\session.json",
+                "snapshot": "acme\\preview\\session.json"
+              },
+              {
+                "action": "launch",
+                "kind": "executable",
+                "target": "C:\\Program Files\\Acme\\AcmeLauncher.exe"
+              }
+            ],
+            "warnings": ["No snapshot for this account yet: add it through setup first."]
+          },
+          "planProblem": ""
+        }
+      }
+    ],
+    "descriptor_remove": [
+      {
+        "args": {},
+        "result": {
+          "dir": "C:\\Users\\player\\AppData\\Roaming\\accshift\\platforms",
+          "loaded": [],
+          "skipped": [],
+          "rejected": []
+        }
+      }
+    ],
+    "descriptor_select_file": [
+      {
+        "args": {},
+        "result": "C:\\Users\\player\\Downloads\\acme.json"
+      }
+    ],
+    "detect_streaming_software": [
+      {
+        "args": {},
+        "result": false
+      }
+    ],
+    "get_boot_payload": [
+      {
+        "args": {},
+        "result": {
+          "migration": "skipped",
+          "runtimeOs": "windows",
+          "storageSnapshot": {
+            "manifest": {
+              "schemaVersion": 1,
+              "stores": {}
+            },
+            "stores": {
+              "client.settings": {
+                "language": "en",
+                "animations": "on",
+                "streamerMode": "off",
+                "inactivityBlurSeconds": 0,
+                "pinEnabled": false,
+                "themeId": "glass-dark",
+                "enabledPlatforms": ["steam", "riot", "roblox"]
+              },
+              "client.folders": {
+                "version": 1,
+                "folders": [
+                  {
+                    "id": "demo-folder-smurfs",
+                    "name": "Smurfs",
+                    "parentId": null,
+                    "platform": "steam"
+                  }
+                ],
+                "itemOrder": {
+                  "root:steam": [
+                    {
+                      "type": "account",
+                      "id": "76561198000000001"
+                    },
+                    {
+                      "type": "account",
+                      "id": "76561198000000002"
+                    },
+                    {
+                      "type": "account",
+                      "id": "76561198000000003"
+                    },
+                    {
+                      "type": "account",
+                      "id": "76561198000000004"
+                    },
+                    {
+                      "type": "account",
+                      "id": "76561198000000005"
+                    },
+                    {
+                      "type": "account",
+                      "id": "76561198000000006"
+                    },
+                    {
+                      "type": "account",
+                      "id": "76561198000000007"
+                    },
+                    {
+                      "type": "account",
+                      "id": "76561198000000008"
+                    },
+                    {
+                      "type": "account",
+                      "id": "76561198000000009"
+                    },
+                    {
+                      "type": "account",
+                      "id": "76561198000000010"
+                    },
+                    {
+                      "type": "account",
+                      "id": "76561198000000011"
+                    },
+                    {
+                      "type": "account",
+                      "id": "76561198000000012"
+                    },
+                    {
+                      "type": "account",
+                      "id": "76561198000000013"
+                    },
+                    {
+                      "type": "folder",
+                      "id": "demo-folder-smurfs"
+                    }
+                  ],
+                  "demo-folder-smurfs": [
+                    {
+                      "type": "account",
+                      "id": "76561198000000014"
+                    },
+                    {
+                      "type": "account",
+                      "id": "76561198000000015"
+                    },
+                    {
+                      "type": "account",
+                      "id": "76561198000000016"
+                    },
+                    {
+                      "type": "account",
+                      "id": "76561198000000017"
+                    }
+                  ]
+                }
+              },
+              "client.personas": [],
+              "client.account-card-notes": {},
+              "client.account-card-colors": {
+                "76561198000000001": "#8b5cf6",
+                "76561198000000005": "#f97316",
+                "76561198000000009": "#ec4899"
+              },
+              "client.account-default-game": {},
+              "client.folder-card-colors": {},
+              "client.view-mode": "grid",
+              "cache.steam.profiles": {
+                "76561198000000001": {
+                  "url": "crates/accshift-egui/parity/avatars/1.svg",
+                  "displayName": "main",
+                  "timestamp": 1791000000000
+                },
+                "76561198000000002": {
+                  "url": "crates/accshift-egui/parity/avatars/2.svg",
+                  "displayName": "bro's account",
+                  "timestamp": 1791000000000
+                },
+                "76561198000000003": {
+                  "url": "crates/accshift-egui/parity/avatars/3.svg",
+                  "displayName": "alt",
+                  "timestamp": 1791000000000
+                },
+                "76561198000000004": {
+                  "url": "crates/accshift-egui/parity/avatars/4.svg",
+                  "displayName": "trading",
+                  "timestamp": 1791000000000
+                },
+                "76561198000000005": {
+                  "url": "crates/accshift-egui/parity/avatars/5.svg",
+                  "displayName": "faceit",
+                  "timestamp": 1791000000000
+                },
+                "76561198000000006": {
+                  "url": "crates/accshift-egui/parity/avatars/6.svg",
+                  "displayName": "ranked grind",
+                  "timestamp": 1791000000000
+                },
+                "76561198000000007": {
+                  "url": "crates/accshift-egui/parity/avatars/7.svg",
+                  "displayName": "chill",
+                  "timestamp": 1791000000000
+                },
+                "76561198000000008": {
+                  "url": "crates/accshift-egui/parity/avatars/8.svg",
+                  "displayName": "lan party",
+                  "timestamp": 1791000000000
+                },
+                "76561198000000009": {
+                  "url": "crates/accshift-egui/parity/avatars/9.svg",
+                  "displayName": "streams",
+                  "timestamp": 1791000000000
+                },
+                "76561198000000010": {
+                  "url": "crates/accshift-egui/parity/avatars/10.svg",
+                  "displayName": "esea",
+                  "timestamp": 1791000000000
+                },
+                "76561198000000011": {
+                  "url": "crates/accshift-egui/parity/avatars/11.svg",
+                  "displayName": "tournaments",
+                  "timestamp": 1791000000000
+                },
+                "76561198000000012": {
+                  "url": "crates/accshift-egui/parity/avatars/12.svg",
+                  "displayName": "family",
+                  "timestamp": 1791000000000
+                },
+                "76561198000000013": {
+                  "url": "crates/accshift-egui/parity/avatars/13.svg",
+                  "displayName": "practice",
+                  "timestamp": 1791000000000
+                },
+                "76561198000000014": {
+                  "url": "crates/accshift-egui/parity/avatars/14.svg",
+                  "displayName": "smurf 1",
+                  "timestamp": 1791000000000
+                },
+                "76561198000000015": {
+                  "url": "crates/accshift-egui/parity/avatars/15.svg",
+                  "displayName": "smurf 2",
+                  "timestamp": 1791000000000
+                },
+                "76561198000000016": {
+                  "url": "crates/accshift-egui/parity/avatars/16.svg",
+                  "displayName": "smurf 3",
+                  "timestamp": 1791000000000
+                },
+                "76561198000000017": {
+                  "url": "crates/accshift-egui/parity/avatars/17.svg",
+                  "displayName": "smurf 4",
+                  "timestamp": 1791000000000
+                }
+              },
+              "cache.roblox.profiles": {
+                "1000000001": {
+                  "url": "crates/accshift-egui/parity/avatars/18.svg",
+                  "timestamp": 1791000000000
+                },
+                "1000000002": {
+                  "url": "crates/accshift-egui/parity/avatars/19.svg",
+                  "timestamp": 1791000000000
+                },
+                "1000000003": {
+                  "url": "crates/accshift-egui/parity/avatars/20.svg",
+                  "timestamp": 1791000000000
+                },
+                "1000000004": {
+                  "url": "crates/accshift-egui/parity/avatars/21.svg",
+                  "timestamp": 1791000000000
+                }
+              },
+              "cache.steam.ban-check-state": {},
+              "cache.steam.ban-info-cache": {}
+            }
+          },
+          "customThemes": [],
+          "userPlatforms": {
+            "dir": "C:\\Users\\player\\AppData\\Roaming\\accshift\\platforms",
+            "loaded": [],
+            "skipped": [],
+            "rejected": []
+          }
+        }
+      }
+    ],
+    "get_desktop_wallpaper": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "get_runtime_os": [
+      {
+        "args": {},
+        "result": "windows"
+      }
+    ],
+    "get_storage_manifest": [
+      {
+        "args": {},
+        "result": {
+          "schemaVersion": 1,
+          "stores": {}
+        }
+      }
+    ],
+    "list_custom_themes": [
+      {
+        "args": {},
+        "result": []
+      }
+    ],
+    "load_client_storage_snapshot": [
+      {
+        "args": {},
+        "result": {
+          "manifest": {
+            "schemaVersion": 1,
+            "stores": {}
+          },
+          "stores": {
+            "client.settings": {
+              "language": "en",
+              "animations": "on",
+              "streamerMode": "off",
+              "inactivityBlurSeconds": 0,
+              "pinEnabled": false,
+              "themeId": "glass-dark",
+              "enabledPlatforms": ["steam", "riot", "roblox"]
+            },
+            "client.folders": {
+              "version": 1,
+              "folders": [
+                {
+                  "id": "demo-folder-smurfs",
+                  "name": "Smurfs",
+                  "parentId": null,
+                  "platform": "steam"
+                }
+              ],
+              "itemOrder": {
+                "root:steam": [
+                  {
+                    "type": "account",
+                    "id": "76561198000000001"
+                  },
+                  {
+                    "type": "account",
+                    "id": "76561198000000002"
+                  },
+                  {
+                    "type": "account",
+                    "id": "76561198000000003"
+                  },
+                  {
+                    "type": "account",
+                    "id": "76561198000000004"
+                  },
+                  {
+                    "type": "account",
+                    "id": "76561198000000005"
+                  },
+                  {
+                    "type": "account",
+                    "id": "76561198000000006"
+                  },
+                  {
+                    "type": "account",
+                    "id": "76561198000000007"
+                  },
+                  {
+                    "type": "account",
+                    "id": "76561198000000008"
+                  },
+                  {
+                    "type": "account",
+                    "id": "76561198000000009"
+                  },
+                  {
+                    "type": "account",
+                    "id": "76561198000000010"
+                  },
+                  {
+                    "type": "account",
+                    "id": "76561198000000011"
+                  },
+                  {
+                    "type": "account",
+                    "id": "76561198000000012"
+                  },
+                  {
+                    "type": "account",
+                    "id": "76561198000000013"
+                  },
+                  {
+                    "type": "folder",
+                    "id": "demo-folder-smurfs"
+                  }
+                ],
+                "demo-folder-smurfs": [
+                  {
+                    "type": "account",
+                    "id": "76561198000000014"
+                  },
+                  {
+                    "type": "account",
+                    "id": "76561198000000015"
+                  },
+                  {
+                    "type": "account",
+                    "id": "76561198000000016"
+                  },
+                  {
+                    "type": "account",
+                    "id": "76561198000000017"
+                  }
+                ]
+              }
+            },
+            "client.personas": [],
+            "client.account-card-notes": {},
+            "client.account-card-colors": {
+              "76561198000000001": "#8b5cf6",
+              "76561198000000005": "#f97316",
+              "76561198000000009": "#ec4899"
+            },
+            "client.account-default-game": {},
+            "client.folder-card-colors": {},
+            "client.view-mode": "grid",
+            "cache.steam.profiles": {
+              "76561198000000001": {
+                "url": "crates/accshift-egui/parity/avatars/1.svg",
+                "displayName": "main",
+                "timestamp": 1791000000000
+              },
+              "76561198000000002": {
+                "url": "crates/accshift-egui/parity/avatars/2.svg",
+                "displayName": "bro's account",
+                "timestamp": 1791000000000
+              },
+              "76561198000000003": {
+                "url": "crates/accshift-egui/parity/avatars/3.svg",
+                "displayName": "alt",
+                "timestamp": 1791000000000
+              },
+              "76561198000000004": {
+                "url": "crates/accshift-egui/parity/avatars/4.svg",
+                "displayName": "trading",
+                "timestamp": 1791000000000
+              },
+              "76561198000000005": {
+                "url": "crates/accshift-egui/parity/avatars/5.svg",
+                "displayName": "faceit",
+                "timestamp": 1791000000000
+              },
+              "76561198000000006": {
+                "url": "crates/accshift-egui/parity/avatars/6.svg",
+                "displayName": "ranked grind",
+                "timestamp": 1791000000000
+              },
+              "76561198000000007": {
+                "url": "crates/accshift-egui/parity/avatars/7.svg",
+                "displayName": "chill",
+                "timestamp": 1791000000000
+              },
+              "76561198000000008": {
+                "url": "crates/accshift-egui/parity/avatars/8.svg",
+                "displayName": "lan party",
+                "timestamp": 1791000000000
+              },
+              "76561198000000009": {
+                "url": "crates/accshift-egui/parity/avatars/9.svg",
+                "displayName": "streams",
+                "timestamp": 1791000000000
+              },
+              "76561198000000010": {
+                "url": "crates/accshift-egui/parity/avatars/10.svg",
+                "displayName": "esea",
+                "timestamp": 1791000000000
+              },
+              "76561198000000011": {
+                "url": "crates/accshift-egui/parity/avatars/11.svg",
+                "displayName": "tournaments",
+                "timestamp": 1791000000000
+              },
+              "76561198000000012": {
+                "url": "crates/accshift-egui/parity/avatars/12.svg",
+                "displayName": "family",
+                "timestamp": 1791000000000
+              },
+              "76561198000000013": {
+                "url": "crates/accshift-egui/parity/avatars/13.svg",
+                "displayName": "practice",
+                "timestamp": 1791000000000
+              },
+              "76561198000000014": {
+                "url": "crates/accshift-egui/parity/avatars/14.svg",
+                "displayName": "smurf 1",
+                "timestamp": 1791000000000
+              },
+              "76561198000000015": {
+                "url": "crates/accshift-egui/parity/avatars/15.svg",
+                "displayName": "smurf 2",
+                "timestamp": 1791000000000
+              },
+              "76561198000000016": {
+                "url": "crates/accshift-egui/parity/avatars/16.svg",
+                "displayName": "smurf 3",
+                "timestamp": 1791000000000
+              },
+              "76561198000000017": {
+                "url": "crates/accshift-egui/parity/avatars/17.svg",
+                "displayName": "smurf 4",
+                "timestamp": 1791000000000
+              }
+            },
+            "cache.roblox.profiles": {
+              "1000000001": {
+                "url": "crates/accshift-egui/parity/avatars/18.svg",
+                "timestamp": 1791000000000
+              },
+              "1000000002": {
+                "url": "crates/accshift-egui/parity/avatars/19.svg",
+                "timestamp": 1791000000000
+              },
+              "1000000003": {
+                "url": "crates/accshift-egui/parity/avatars/20.svg",
+                "timestamp": 1791000000000
+              },
+              "1000000004": {
+                "url": "crates/accshift-egui/parity/avatars/21.svg",
+                "timestamp": 1791000000000
+              }
+            },
+            "cache.steam.ban-check-state": {},
+            "cache.steam.ban-info-cache": {}
+          }
+        }
+      }
+    ],
+    "migrate_legacy_config": [
+      {
+        "args": {},
+        "result": "skipped"
+      }
+    ],
+    "open_descriptors_folder": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "open_logs_folder": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "open_url": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "platform_detect_installed": [
+      {
+        "args": {},
+        "result": ["steam", "riot", "roblox"]
+      }
+    ],
+    "platform_dry_run": [
+      {
+        "args": {
+          "platformId": "steam",
+          "accountId": "76561198000000001"
+        },
+        "result": {
+          "platformId": "steam",
+          "operation": "switch",
+          "accountId": "76561198000000001",
+          "applied": false,
+          "roots": [],
+          "steps": [],
+          "warnings": []
+        }
+      }
+    ],
+    "platform_get_accounts": [
+      {
+        "args": {
+          "platformId": "steam"
+        },
+        "result": [
+          {
+            "steam_id": "76561198000000001",
+            "account_name": "",
+            "persona_name": "main",
+            "last_login_at": 1790992800
+          },
+          {
+            "steam_id": "76561198000000002",
+            "account_name": "",
+            "persona_name": "bro's account",
+            "last_login_at": 1790740800
+          },
+          {
+            "steam_id": "76561198000000003",
+            "account_name": "",
+            "persona_name": "alt",
+            "last_login_at": 1790222400
+          },
+          {
+            "steam_id": "76561198000000004",
+            "account_name": "",
+            "persona_name": "trading",
+            "last_login_at": 1789185600
+          },
+          {
+            "steam_id": "76561198000000005",
+            "account_name": "",
+            "persona_name": "faceit",
+            "last_login_at": 1790996400
+          },
+          {
+            "steam_id": "76561198000000006",
+            "account_name": "",
+            "persona_name": "ranked grind",
+            "last_login_at": 1790568000
+          },
+          {
+            "steam_id": "76561198000000007",
+            "account_name": "",
+            "persona_name": "chill",
+            "last_login_at": 1789790400
+          },
+          {
+            "steam_id": "76561198000000008",
+            "account_name": "",
+            "persona_name": "lan party",
+            "last_login_at": 1787544000
+          },
+          {
+            "steam_id": "76561198000000009",
+            "account_name": "",
+            "persona_name": "streams",
+            "last_login_at": 1790985600
+          },
+          {
+            "steam_id": "76561198000000010",
+            "account_name": "",
+            "persona_name": "esea",
+            "last_login_at": 1790308800
+          },
+          {
+            "steam_id": "76561198000000011",
+            "account_name": "",
+            "persona_name": "tournaments",
+            "last_login_at": 1785816000
+          },
+          {
+            "steam_id": "76561198000000012",
+            "account_name": "",
+            "persona_name": "family",
+            "last_login_at": 1790827200
+          },
+          {
+            "steam_id": "76561198000000013",
+            "account_name": "",
+            "persona_name": "practice",
+            "last_login_at": 1790978400
+          },
+          {
+            "steam_id": "76561198000000014",
+            "account_name": "",
+            "persona_name": "smurf 1",
+            "last_login_at": 1789963200
+          },
+          {
+            "steam_id": "76561198000000015",
+            "account_name": "",
+            "persona_name": "smurf 2",
+            "last_login_at": 1788667200
+          },
+          {
+            "steam_id": "76561198000000016",
+            "account_name": "",
+            "persona_name": "smurf 3",
+            "last_login_at": 1788148800
+          },
+          {
+            "steam_id": "76561198000000017",
+            "account_name": "",
+            "persona_name": "smurf 4",
+            "last_login_at": null
+          }
+        ]
+      },
+      {
+        "args": {
+          "platformId": "riot"
+        },
+        "result": [
+          {
+            "id": "riot-1",
+            "label": "main",
+            "snapshot_state": "ready",
+            "last_used_at": 1790996400000
+          },
+          {
+            "id": "riot-2",
+            "label": "smurf",
+            "snapshot_state": "ready",
+            "last_used_at": 1790481600000
+          },
+          {
+            "id": "riot-3",
+            "label": "duo account",
+            "snapshot_state": "ready",
+            "last_used_at": 1789358400000
+          }
+        ]
+      },
+      {
+        "args": {
+          "platformId": "roblox"
+        },
+        "result": [
+          {
+            "userId": "1000000001",
+            "username": "Builderman_42",
+            "displayName": "builder",
+            "lastLoginAt": 1790992800000
+          },
+          {
+            "userId": "1000000002",
+            "username": "obby_speedrun",
+            "displayName": "obby runs",
+            "lastLoginAt": 1790740800000
+          },
+          {
+            "userId": "1000000003",
+            "username": "tycoon_alt",
+            "displayName": "tycoon alt",
+            "lastLoginAt": 1790049600000
+          },
+          {
+            "userId": "1000000004",
+            "username": "blox_trader",
+            "displayName": "trading",
+            "lastLoginAt": 1788840000000
+          }
+        ]
+      }
+    ],
+    "platform_get_current_account": [
+      {
+        "args": {
+          "platformId": "steam"
+        },
+        "result": "76561198000000001"
+      },
+      {
+        "args": {
+          "platformId": "riot"
+        },
+        "result": "riot-1"
+      },
+      {
+        "args": {
+          "platformId": "roblox"
+        },
+        "result": "1000000001"
+      }
+    ],
+    "platform_get_path": [
+      {
+        "args": {},
+        "result": "C:\\Program Files (x86)\\Steam"
+      }
+    ],
+    "platform_get_startup_snapshot": [
+      {
+        "args": {
+          "platformId": "steam"
+        },
+        "result": {
+          "accounts": [
+            {
+              "steam_id": "76561198000000001",
+              "account_name": "",
+              "persona_name": "main",
+              "last_login_at": 1790992800
+            },
+            {
+              "steam_id": "76561198000000002",
+              "account_name": "",
+              "persona_name": "bro's account",
+              "last_login_at": 1790740800
+            },
+            {
+              "steam_id": "76561198000000003",
+              "account_name": "",
+              "persona_name": "alt",
+              "last_login_at": 1790222400
+            },
+            {
+              "steam_id": "76561198000000004",
+              "account_name": "",
+              "persona_name": "trading",
+              "last_login_at": 1789185600
+            },
+            {
+              "steam_id": "76561198000000005",
+              "account_name": "",
+              "persona_name": "faceit",
+              "last_login_at": 1790996400
+            },
+            {
+              "steam_id": "76561198000000006",
+              "account_name": "",
+              "persona_name": "ranked grind",
+              "last_login_at": 1790568000
+            },
+            {
+              "steam_id": "76561198000000007",
+              "account_name": "",
+              "persona_name": "chill",
+              "last_login_at": 1789790400
+            },
+            {
+              "steam_id": "76561198000000008",
+              "account_name": "",
+              "persona_name": "lan party",
+              "last_login_at": 1787544000
+            },
+            {
+              "steam_id": "76561198000000009",
+              "account_name": "",
+              "persona_name": "streams",
+              "last_login_at": 1790985600
+            },
+            {
+              "steam_id": "76561198000000010",
+              "account_name": "",
+              "persona_name": "esea",
+              "last_login_at": 1790308800
+            },
+            {
+              "steam_id": "76561198000000011",
+              "account_name": "",
+              "persona_name": "tournaments",
+              "last_login_at": 1785816000
+            },
+            {
+              "steam_id": "76561198000000012",
+              "account_name": "",
+              "persona_name": "family",
+              "last_login_at": 1790827200
+            },
+            {
+              "steam_id": "76561198000000013",
+              "account_name": "",
+              "persona_name": "practice",
+              "last_login_at": 1790978400
+            },
+            {
+              "steam_id": "76561198000000014",
+              "account_name": "",
+              "persona_name": "smurf 1",
+              "last_login_at": 1789963200
+            },
+            {
+              "steam_id": "76561198000000015",
+              "account_name": "",
+              "persona_name": "smurf 2",
+              "last_login_at": 1788667200
+            },
+            {
+              "steam_id": "76561198000000016",
+              "account_name": "",
+              "persona_name": "smurf 3",
+              "last_login_at": 1788148800
+            },
+            {
+              "steam_id": "76561198000000017",
+              "account_name": "",
+              "persona_name": "smurf 4",
+              "last_login_at": null
+            }
+          ],
+          "currentAccount": "76561198000000001"
+        }
+      },
+      {
+        "args": {
+          "platformId": "riot"
+        },
+        "result": {
+          "profiles": [
+            {
+              "id": "riot-1",
+              "label": "main",
+              "snapshot_state": "ready",
+              "last_used_at": 1790996400000
+            },
+            {
+              "id": "riot-2",
+              "label": "smurf",
+              "snapshot_state": "ready",
+              "last_used_at": 1790481600000
+            },
+            {
+              "id": "riot-3",
+              "label": "duo account",
+              "snapshot_state": "ready",
+              "last_used_at": 1789358400000
+            }
+          ],
+          "currentProfile": "riot-1"
+        }
+      },
+      {
+        "args": {
+          "platformId": "roblox"
+        },
+        "result": {
+          "accounts": [
+            {
+              "userId": "1000000001",
+              "username": "Builderman_42",
+              "displayName": "builder",
+              "lastLoginAt": 1790992800000
+            },
+            {
+              "userId": "1000000002",
+              "username": "obby_speedrun",
+              "displayName": "obby runs",
+              "lastLoginAt": 1790740800000
+            },
+            {
+              "userId": "1000000003",
+              "username": "tycoon_alt",
+              "displayName": "tycoon alt",
+              "lastLoginAt": 1790049600000
+            },
+            {
+              "userId": "1000000004",
+              "username": "blox_trader",
+              "displayName": "trading",
+              "lastLoginAt": 1788840000000
+            }
+          ],
+          "currentAccount": "1000000001"
+        }
+      }
+    ],
+    "platform_set_account_label": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "reload_user_platforms": [
+      {
+        "args": {},
+        "result": {
+          "dir": "C:\\Users\\player\\AppData\\Roaming\\accshift\\platforms",
+          "loaded": [],
+          "skipped": [],
+          "rejected": []
+        }
+      }
+    ],
+    "roblox_check_sessions": [
+      {
+        "args": {},
+        "result": []
+      }
+    ],
+    "roblox_get_profile_info": [
+      {
+        "args": {
+          "userId": "1000000001"
+        },
+        "result": {
+          "avatarUrl": "crates/accshift-egui/parity/avatars/18.svg"
+        }
+      },
+      {
+        "args": {
+          "userId": "1000000002"
+        },
+        "result": {
+          "avatarUrl": "crates/accshift-egui/parity/avatars/19.svg"
+        }
+      },
+      {
+        "args": {
+          "userId": "1000000003"
+        },
+        "result": {
+          "avatarUrl": "crates/accshift-egui/parity/avatars/20.svg"
+        }
+      },
+      {
+        "args": {
+          "userId": "1000000004"
+        },
+        "result": {
+          "avatarUrl": "crates/accshift-egui/parity/avatars/21.svg"
+        }
+      }
+    ],
+    "save_client_storage_store": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "steam_get_account_games": [
+      {
+        "args": {},
+        "result": []
+      }
+    ],
+    "steam_get_copyable_games": [
+      {
+        "args": {},
+        "result": []
+      }
+    ],
+    "steam_get_player_bans": [
+      {
+        "args": {
+          "steamIds": [
+            "76561198000000001",
+            "76561198000000002",
+            "76561198000000003",
+            "76561198000000004",
+            "76561198000000005",
+            "76561198000000006",
+            "76561198000000007",
+            "76561198000000008",
+            "76561198000000009",
+            "76561198000000010",
+            "76561198000000011",
+            "76561198000000012",
+            "76561198000000013",
+            "76561198000000014",
+            "76561198000000015",
+            "76561198000000016",
+            "76561198000000017"
+          ]
+        },
+        "result": [
+          {
+            "steam_id": "76561198000000001",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198000000002",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198000000003",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198000000004",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198000000005",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198000000006",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198000000007",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198000000008",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198000000009",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198000000010",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198000000011",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198000000012",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198000000013",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198000000014",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198000000015",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198000000016",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          },
+          {
+            "steam_id": "76561198000000017",
+            "community_banned": false,
+            "vac_banned": false,
+            "number_of_vac_bans": 0,
+            "days_since_last_ban": 0,
+            "number_of_game_bans": 0,
+            "economy_ban": "none"
+          }
+        ]
+      }
+    ],
+    "steam_get_profile_info": [
+      {
+        "args": {
+          "accountId": "76561198000000001"
+        },
+        "result": {
+          "avatar_url": "crates/accshift-egui/parity/avatars/1.svg",
+          "display_name": "main",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198000000002"
+        },
+        "result": {
+          "avatar_url": "crates/accshift-egui/parity/avatars/2.svg",
+          "display_name": "bro's account",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198000000003"
+        },
+        "result": {
+          "avatar_url": "crates/accshift-egui/parity/avatars/3.svg",
+          "display_name": "alt",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198000000004"
+        },
+        "result": {
+          "avatar_url": "crates/accshift-egui/parity/avatars/4.svg",
+          "display_name": "trading",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198000000005"
+        },
+        "result": {
+          "avatar_url": "crates/accshift-egui/parity/avatars/5.svg",
+          "display_name": "faceit",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198000000006"
+        },
+        "result": {
+          "avatar_url": "crates/accshift-egui/parity/avatars/6.svg",
+          "display_name": "ranked grind",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198000000007"
+        },
+        "result": {
+          "avatar_url": "crates/accshift-egui/parity/avatars/7.svg",
+          "display_name": "chill",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198000000008"
+        },
+        "result": {
+          "avatar_url": "crates/accshift-egui/parity/avatars/8.svg",
+          "display_name": "lan party",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198000000009"
+        },
+        "result": {
+          "avatar_url": "crates/accshift-egui/parity/avatars/9.svg",
+          "display_name": "streams",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198000000010"
+        },
+        "result": {
+          "avatar_url": "crates/accshift-egui/parity/avatars/10.svg",
+          "display_name": "esea",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198000000011"
+        },
+        "result": {
+          "avatar_url": "crates/accshift-egui/parity/avatars/11.svg",
+          "display_name": "tournaments",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198000000012"
+        },
+        "result": {
+          "avatar_url": "crates/accshift-egui/parity/avatars/12.svg",
+          "display_name": "family",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198000000013"
+        },
+        "result": {
+          "avatar_url": "crates/accshift-egui/parity/avatars/13.svg",
+          "display_name": "practice",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198000000014"
+        },
+        "result": {
+          "avatar_url": "crates/accshift-egui/parity/avatars/14.svg",
+          "display_name": "smurf 1",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198000000015"
+        },
+        "result": {
+          "avatar_url": "crates/accshift-egui/parity/avatars/15.svg",
+          "display_name": "smurf 2",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198000000016"
+        },
+        "result": {
+          "avatar_url": "crates/accshift-egui/parity/avatars/16.svg",
+          "display_name": "smurf 3",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      },
+      {
+        "args": {
+          "accountId": "76561198000000017"
+        },
+        "result": {
+          "avatar_url": "crates/accshift-egui/parity/avatars/17.svg",
+          "display_name": "smurf 4",
+          "vac_banned": false,
+          "trade_ban_state": "none"
+        }
+      }
+    ],
+    "steam_get_profile_infos": [
+      {
+        "args": {
+          "accountIds": [
+            "76561198000000001",
+            "76561198000000002",
+            "76561198000000003",
+            "76561198000000004",
+            "76561198000000005",
+            "76561198000000006",
+            "76561198000000007",
+            "76561198000000008",
+            "76561198000000009",
+            "76561198000000010",
+            "76561198000000011",
+            "76561198000000012",
+            "76561198000000013",
+            "76561198000000014",
+            "76561198000000015",
+            "76561198000000016",
+            "76561198000000017"
+          ]
+        },
+        "result": {
+          "76561198000000001": {
+            "avatar_url": "crates/accshift-egui/parity/avatars/1.svg",
+            "display_name": "main",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198000000002": {
+            "avatar_url": "crates/accshift-egui/parity/avatars/2.svg",
+            "display_name": "bro's account",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198000000003": {
+            "avatar_url": "crates/accshift-egui/parity/avatars/3.svg",
+            "display_name": "alt",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198000000004": {
+            "avatar_url": "crates/accshift-egui/parity/avatars/4.svg",
+            "display_name": "trading",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198000000005": {
+            "avatar_url": "crates/accshift-egui/parity/avatars/5.svg",
+            "display_name": "faceit",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198000000006": {
+            "avatar_url": "crates/accshift-egui/parity/avatars/6.svg",
+            "display_name": "ranked grind",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198000000007": {
+            "avatar_url": "crates/accshift-egui/parity/avatars/7.svg",
+            "display_name": "chill",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198000000008": {
+            "avatar_url": "crates/accshift-egui/parity/avatars/8.svg",
+            "display_name": "lan party",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198000000009": {
+            "avatar_url": "crates/accshift-egui/parity/avatars/9.svg",
+            "display_name": "streams",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198000000010": {
+            "avatar_url": "crates/accshift-egui/parity/avatars/10.svg",
+            "display_name": "esea",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198000000011": {
+            "avatar_url": "crates/accshift-egui/parity/avatars/11.svg",
+            "display_name": "tournaments",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198000000012": {
+            "avatar_url": "crates/accshift-egui/parity/avatars/12.svg",
+            "display_name": "family",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198000000013": {
+            "avatar_url": "crates/accshift-egui/parity/avatars/13.svg",
+            "display_name": "practice",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198000000014": {
+            "avatar_url": "crates/accshift-egui/parity/avatars/14.svg",
+            "display_name": "smurf 1",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198000000015": {
+            "avatar_url": "crates/accshift-egui/parity/avatars/15.svg",
+            "display_name": "smurf 2",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198000000016": {
+            "avatar_url": "crates/accshift-egui/parity/avatars/16.svg",
+            "display_name": "smurf 3",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          },
+          "76561198000000017": {
+            "avatar_url": "crates/accshift-egui/parity/avatars/17.svg",
+            "display_name": "smurf 4",
+            "vac_banned": false,
+            "trade_ban_state": "none"
+          }
+        }
+      }
+    ],
+    "steam_has_api_key": [
+      {
+        "args": {},
+        "result": true
+      }
+    ],
+    "steam_open_api_key_page": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "steam_open_userdata": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "telemetry_get_state": [
+      {
+        "args": {},
+        "result": {
+          "mode_a_enabled": false,
+          "mode_b_enabled": false,
+          "install_id_set": false,
+          "forget_pending": false,
+          "onboarding_completed": true
+        }
+      }
+    ]
+  },
+  "skipped": {
+    "pin_lock": "PIN session state",
+    "pin_unlock": "PIN session state, reads the live settings store",
+    "platform_switch_account": "changes the current account after switchDelayMs; modelled from spec"
+  }
+}

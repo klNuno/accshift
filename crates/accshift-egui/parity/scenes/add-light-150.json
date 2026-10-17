@@ -1,0 +1,115 @@
+{
+  "id": "add-light-150",
+  "scenario": "dev",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "light",
+  "locale": "en",
+  "setup": [
+    {
+      "setupId": "setup-1",
+      "state": "waiting_for_client",
+      "accountId": "",
+      "accountDisplayName": "",
+      "errorMessage": ""
+    },
+    {
+      "setupId": "setup-1",
+      "state": "waiting_for_login",
+      "accountId": "",
+      "accountDisplayName": "",
+      "errorMessage": ""
+    },
+    {
+      "setupId": "setup-1",
+      "state": "waiting_for_login",
+      "accountId": "",
+      "accountDisplayName": "new_player",
+      "errorMessage": ""
+    },
+    {
+      "setupId": "setup-1",
+      "state": "failed",
+      "accountId": "",
+      "accountDisplayName": "",
+      "errorMessage": "Steam closed before the sign in finished."
+    }
+  ],
+  "seed": {
+    "SETTINGS": {
+      "viewMode": "grid",
+      "animations": "off",
+      "accountDisplay": {
+        "showUsernames": true,
+        "showCardNotesInline": false
+      }
+    }
+  },
+  "steps": [
+    {
+      "wait": 800
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "click": [55, 18]
+    },
+    {
+      "move": [430, 400]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "shot": "client"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "shot": "login"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "shot": "detected"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "shot": "failed"
+    },
+    {
+      "dom": "failed",
+      "select": ".card, .chip, .section-link, .extension-surface, .details"
+    },
+    {
+      "move": [175, 358]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "close-hover"
+    },
+    {
+      "click": [175, 358]
+    },
+    {
+      "wait": 800
+    },
+    {
+      "shot": "closed"
+    }
+  ]
+}

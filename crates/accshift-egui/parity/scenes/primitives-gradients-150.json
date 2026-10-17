@@ -1,0 +1,21 @@
+{
+  "id": "primitives-gradients-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 480,
+    "height": 240,
+    "scale": 1.5
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "html": "../fragments/gradients.html",
+  "steps": [
+    {
+      "wait": 300
+    },
+    {
+      "shot": "frame"
+    }
+  ]
+}

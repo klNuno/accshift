@@ -5,63 +5,48 @@ checks CI enforces, and what is expected of a pull request.
 
 ## Prerequisites
 
-- Node.js 22 (the version CI uses).
-- pnpm 10.32.1. It is pinned by `packageManager` in `package.json`, so
-  `corepack enable` gives you the right version automatically.
 - A stable Rust toolchain with the `rustfmt` and `clippy` components.
-- Tauri 2 system dependencies for your OS. Follow
-  [tauri.app/start/prerequisites](https://tauri.app/start/prerequisites/).
+- Node.js 22 and pnpm 10.32.1, only to build installers (the Tauri bundler) and
+  to work on the telemetry worker. pnpm is pinned by `packageManager` in
+  `package.json`, so `corepack enable` gives you the right version.
 
 On Ubuntu, the packages CI installs are:
 
 ```bash
-sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
-  libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev libssl-dev pkg-config
+sudo apt-get install -y libdbus-1-dev libgtk-3-dev libxkbcommon-dev pkg-config
 ```
 
 ## Getting started
 
 ```bash
-pnpm install
-pnpm tauri dev
+cargo run -p accshift-egui
 ```
 
-`pnpm tauri build` produces a release bundle for your platform.
+`node crates/accshift-egui/bundle/bundle.mjs --build` builds the installers for
+your platform after `pnpm install`.
 
 ## Checks
 
-CI runs the `validate` job on Windows, Ubuntu and macOS. Every step must pass on
+CI runs the `rust` job on Windows, Ubuntu and macOS. Every step must pass on
 all three. Run the equivalents locally before opening a pull request:
 
 ```bash
-pnpm exec vp check              # Vite+ check
-pnpm run check:frontend         # svelte-check
-pnpm exec vp test               # frontend tests
-pnpm exec vp build              # frontend build
-pnpm run fmt:check              # cargo fmt --all --check
-pnpm run clippy                 # cargo clippy --workspace -- -D warnings
-pnpm run check:rust             # cargo check --workspace
-pnpm run test:rust              # cargo test --workspace
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
 ```
 
-`pnpm run check` chains the Vite+ check, `check:frontend` and `check:rust` in one
-command. `pnpm gates` runs `check`, the frontend and worker tests, the worker
-typecheck, `fmt:check`, `clippy` and `test:rust`, then prints each exit code;
-`pnpm gates clippy rust` runs only the named gates. It needs
-`server/node_modules` installed. The frontend build is not part of it.
+`node scripts/gates.mjs` runs those three and the worker typecheck and tests,
+then prints each exit code; `node scripts/gates.mjs clippy rust` runs only the
+named gates. It needs `server/node_modules` installed.
 
-Two details that are easy to miss locally:
+The telemetry worker in `server/` is a separate pnpm package:
 
-- The Rust check, test and clippy scripts run `scripts/stage-cli.mjs` first.
-  It stages the gitignored CLI sidecar and builds it if missing. Direct
-  `cargo check`, `cargo test` or `cargo clippy` commands do not run this step;
-  run `node scripts/stage-cli.mjs` first on a fresh checkout.
-- The telemetry worker in `server/` is a separate pnpm package and is
-  typechecked on its own:
-  ```bash
-  pnpm --dir server install --frozen-lockfile
-  pnpm --dir server exec tsc --noEmit
-  ```
+```bash
+pnpm --dir server install --frozen-lockfile
+pnpm --dir server exec tsc --noEmit
+pnpm --dir server exec vitest run
+```
 
 `cargo audit --file Cargo.lock` runs on Ubuntu only. If your change touches
 dependencies, run it locally too.
@@ -70,9 +55,10 @@ dependencies, run it locally too.
 
 See the "Project Structure" section of the [README](../README.md#project-structure).
 
-The Cargo workspace has three members: `src-tauri` (the Tauri GUI wrapper),
-`crates/accshift-core` (platform logic, config, storage, OS primitives) and
-`crates/accshift-cli` (the CLI binary).
+The Cargo workspace has five members: `crates/accshift-core` (platform logic,
+config, storage, OS primitives), `crates/accshift-cli` (the CLI binary),
+`crates/accshift-app` (the UI-free app logic), `crates/accshift-theme` (the
+theme engine) and `crates/accshift-egui` (the GUI).
 
 The CLI and GUI both sit on top of `crates/accshift-core`, so a platform change
 usually touches both surfaces. When you add or modify a platform, check that the

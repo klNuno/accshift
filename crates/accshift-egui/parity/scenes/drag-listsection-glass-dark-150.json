@@ -1,0 +1,173 @@
+{
+  "id": "drag-listsection-glass-dark-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "seed": {
+    "FOLDERS": {
+      "version": 1,
+      "folders": [
+        {
+          "id": "demo-folder-smurfs",
+          "name": "Smurfs",
+          "parentId": null,
+          "platform": "steam"
+        },
+        {
+          "id": "w1a-ranked",
+          "name": "Ranked",
+          "parentId": null,
+          "platform": "steam"
+        }
+      ],
+      "itemOrder": {
+        "root:steam": [
+          {
+            "type": "folder",
+            "id": "demo-folder-smurfs"
+          },
+          {
+            "type": "folder",
+            "id": "w1a-ranked"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000001"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000002"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000003"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000004"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000005"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000006"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000007"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000008"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000009"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000010"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000011"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000012"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000013"
+          }
+        ],
+        "demo-folder-smurfs": [
+          {
+            "type": "account",
+            "id": "76561198000000014"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000015"
+          }
+        ],
+        "w1a-ranked": [
+          {
+            "type": "account",
+            "id": "76561198000000016"
+          },
+          {
+            "type": "account",
+            "id": "76561198000000017"
+          }
+        ]
+      }
+    },
+    "SETTINGS": {
+      "accountDisplay": {
+        "expandedFolders": true
+      }
+    }
+  },
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [816, 60]
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "down": [300, 100]
+    },
+    {
+      "wait": 250
+    },
+    {
+      "move": [315, 105]
+    },
+    {
+      "wait": 450
+    },
+    {
+      "shot": "lifted"
+    },
+    {
+      "move": [300, 300]
+    },
+    {
+      "wait": 450
+    },
+    {
+      "shot": "preview"
+    },
+    {
+      "up": [300, 300]
+    },
+    {
+      "wait": 450
+    },
+    {
+      "shot": "dropped"
+    }
+  ]
+}

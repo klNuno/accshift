@@ -1,0 +1,22 @@
+{
+  "id": "glyph-check-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 400,
+    "height": 130,
+    "scale": 1.5
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "html": "../fragments/glyph-check.html",
+  "probe": true,
+  "steps": [
+    {
+      "wait": 300
+    },
+    {
+      "shot": "frame"
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "id": "list-light-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "light",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [816, 60]
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "shot": "list"
+    },
+    {
+      "dom": "list",
+      "select": ".list-wrapper, .list-wrapper *"
+    },
+    {
+      "move": [300, 207]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "hover"
+    },
+    {
+      "click": [300, 159]
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "selected"
+    },
+    {
+      "dom": "selected",
+      "select": ".preview-panel, .preview-panel *"
+    },
+    {
+      "click": [300, 111]
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "shot": "folder"
+    }
+  ]
+}

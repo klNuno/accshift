@@ -1,0 +1,183 @@
+//! Boot marks for `.agents/perf/bench-egui.ps1`: one JSON line per event in
+//! `%TEMP%\accshift-egui-bench\<pid>.jsonl`, epoch milliseconds.
+//!
+//! Active in a `startup-bench` build, or with `ACCSHIFT_EGUI_MARKS=1`.
+
+use std::fs::{File, OpenOptions};
+use std::io::Write;
+use std::sync::{Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// The harness greps the exe for this string and refuses to launch a build
+/// without it: only a bench build keeps its window off screen.
+pub const MARKER: &str = "accshift-egui-startup-bench-build";
+
+static SINK: OnceLock<Option<Mutex<File>>> = OnceLock::new();
+
+pub fn enabled() -> bool {
+    cfg!(feature = "startup-bench") || std::env::var_os("ACCSHIFT_EGUI_MARKS").is_some()
+}
+
+fn sink() -> &'static Option<Mutex<File>> {
+    SINK.get_or_init(|| {
+        if !enabled() {
+            return None;
+        }
+        let dir = std::env::temp_dir().join("accshift-egui-bench");
+        std::fs::create_dir_all(&dir).ok()?;
+        let path = dir.join(format!("{}.jsonl", std::process::id()));
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .ok()
+            .map(Mutex::new)
+    })
+}
+
+pub fn now_ms() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64() * 1000.0)
+        .unwrap_or_default()
+}
+
+pub fn mark(event: &str) {
+    mark_with(event, "");
+}
+
+pub fn mark_with(event: &str, extra: &str) {
+    let Some(sink) = sink() else { return };
+    let ts = now_ms();
+    let heap = heap::fields();
+    let line = if extra.is_empty() {
+        format!("{{\"event\":\"{event}\",\"tsMs\":{ts:.3}{heap}}}\n")
+    } else {
+        format!("{{\"event\":\"{event}\",\"tsMs\":{ts:.3},{extra}{heap}}}\n")
+    };
+    if let Ok(mut f) = sink.lock() {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
+/// A bench build counts the Rust heap: every mark carries the bytes live
+/// (`heap`) and the most ever live (`heapPeak`), so a memory figure of the
+/// harness splits into the Rust heap and the rest (DirectWrite, the window
+/// surface, DLLs). Blocks of 1 MiB or more are listed too (`big`: bytes,
+/// negative when freed, since the previous mark), so a peak names its
+/// buffers by their sizes.
+#[cfg(feature = "startup-bench")]
+mod heap {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering::Relaxed};
+
+    static LIVE: AtomicUsize = AtomicUsize::new(0);
+    static PEAK: AtomicUsize = AtomicUsize::new(0);
+
+    const BIG: usize = 1 << 20;
+    const SLOTS: usize = 1024;
+    static BIG_LOG: [AtomicIsize; SLOTS] = [const { AtomicIsize::new(0) }; SLOTS];
+    static BIG_LEN: AtomicUsize = AtomicUsize::new(0);
+    static BIG_READ: AtomicUsize = AtomicUsize::new(0);
+
+    fn big(bytes: isize) {
+        if bytes.unsigned_abs() >= BIG {
+            let slot = BIG_LEN.fetch_add(1, Relaxed);
+            if slot < SLOTS {
+                BIG_LOG[slot].store(bytes, Relaxed);
+            }
+        }
+    }
+
+    struct Counting;
+
+    fn grow(n: usize) {
+        let now = LIVE.fetch_add(n, Relaxed) + n;
+        PEAK.fetch_max(now, Relaxed);
+    }
+
+    // SAFETY: every call is forwarded to `System` unchanged; the counters
+    // only observe sizes.
+    unsafe impl GlobalAlloc for Counting {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let p = unsafe { System.alloc(layout) };
+            if !p.is_null() {
+                grow(layout.size());
+                big(layout.size() as isize);
+            }
+            p
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            let p = unsafe { System.alloc_zeroed(layout) };
+            if !p.is_null() {
+                grow(layout.size());
+                big(layout.size() as isize);
+            }
+            p
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            unsafe { System.dealloc(ptr, layout) };
+            LIVE.fetch_sub(layout.size(), Relaxed);
+            big(-(layout.size() as isize));
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            let p = unsafe { System.realloc(ptr, layout, new_size) };
+            if !p.is_null() {
+                big(-(layout.size() as isize));
+                big(new_size as isize);
+                if new_size >= layout.size() {
+                    grow(new_size - layout.size());
+                } else {
+                    LIVE.fetch_sub(layout.size() - new_size, Relaxed);
+                }
+            }
+            p
+        }
+    }
+
+    #[global_allocator]
+    static ALLOC: Counting = Counting;
+
+    pub fn fields() -> String {
+        let mut out = format!(
+            ",\"heap\":{},\"heapPeak\":{}",
+            LIVE.load(Relaxed),
+            PEAK.load(Relaxed)
+        );
+        let end = BIG_LEN.load(Relaxed).min(SLOTS);
+        let start = BIG_READ.swap(end, Relaxed).min(end);
+        if start < end {
+            let sizes: Vec<String> = BIG_LOG[start..end]
+                .iter()
+                .map(|slot| slot.load(Relaxed).to_string())
+                .collect();
+            out.push_str(&format!(",\"big\":[{}]", sizes.join(",")));
+        }
+        out
+    }
+}
+
+#[cfg(not(feature = "startup-bench"))]
+mod heap {
+    pub fn fields() -> &'static str {
+        ""
+    }
+}
+
+/// `ACCSHIFT_EGUI_BENCH_SHOT=<file.png>` in a bench run: the first frame
+/// that is `ready`, saved there.
+const SHOT: &str = "ACCSHIFT_EGUI_BENCH_SHOT";
+
+pub fn request_shot(ctx: &egui::Context) {
+    let Some(path) = std::env::var_os(SHOT).filter(|_| enabled()) else {
+        return;
+    };
+    ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
+        egui::ScreenshotCallback::new(move |image| {
+            let _ = crate::harness::write_png(std::path::Path::new(&path), &image);
+        }),
+    ));
+}

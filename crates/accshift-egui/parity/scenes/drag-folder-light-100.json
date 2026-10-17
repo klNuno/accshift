@@ -1,0 +1,80 @@
+{
+  "id": "drag-folder-light-100",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "light",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "down": [425, 150]
+    },
+    {
+      "wait": 250
+    },
+    {
+      "move": [410, 150]
+    },
+    {
+      "move": [95, 150]
+    },
+    {
+      "wait": 350
+    },
+    {
+      "shot": "over"
+    },
+    {
+      "up": [95, 150]
+    },
+    {
+      "wait": 450
+    },
+    {
+      "shot": "moved"
+    },
+    {
+      "click": [95, 150]
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "inside"
+    },
+    {
+      "down": [205, 150]
+    },
+    {
+      "wait": 250
+    },
+    {
+      "move": [190, 150]
+    },
+    {
+      "move": [95, 150]
+    },
+    {
+      "wait": 350
+    },
+    {
+      "shot": "back-over"
+    },
+    {
+      "up": [95, 150]
+    },
+    {
+      "wait": 450
+    },
+    {
+      "shot": "back"
+    }
+  ]
+}

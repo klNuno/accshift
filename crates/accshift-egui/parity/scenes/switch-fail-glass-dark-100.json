@@ -1,0 +1,51 @@
+{
+  "id": "switch-fail-glass-dark-100",
+  "scenario": "dev",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "fail": {
+    "platform_switch_account": "Steam is running as administrator"
+  },
+  "seed": {
+    "SETTINGS": {
+      "viewMode": "grid",
+      "animations": "off",
+      "accountDisplay": {
+        "showUsernames": true,
+        "showCardNotesInline": false
+      }
+    }
+  },
+  "steps": [
+    {
+      "wait": 800
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "click": [205, 150]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "click": [205, 150]
+    },
+    {
+      "wait": 800
+    },
+    {
+      "shot": "failed"
+    }
+  ]
+}

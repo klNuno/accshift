@@ -1,0 +1,108 @@
+# Parity scenes
+
+Every screen of the egui app was compared, pixel by pixel, with the same screen of the Tauri app on WebView2. The reference side (`ref.mjs`, a capture build of the Tauri app, `snap/measure.mjs`, the mock data export) left with the Tauri app; what it measured stays here:
+
+- `scenes/*.json`, the scenes, played by the egui runner for regression shots;
+- `data/*.json`, the mock data the scenes run on, and `avatars/`, the mock avatars it points to;
+- `fragments/*.html`, the static CSS boxes of the `primitives-*` scenes;
+- `diff.mjs`, the pixel diff of two shot folders (Node 22+ and ffmpeg on `PATH`);
+- the rules below, measured on WebView2, which the egui painter follows.
+
+Mentions of `ref.mjs` below describe how the reference side played a scene.
+
+## Run it
+
+```sh
+cargo run --release -p accshift-egui -- --scene crates/accshift-egui/parity/scenes/*.json --out <dir>
+node crates/accshift-egui/parity/diff.mjs --batch <before dir> <after dir> --out <report dir>
+```
+
+## Scene format
+
+`scenes/<id>.json`, the contract between `ref.mjs` and the egui runner (`accshift-egui --scene`):
+
+```json
+{
+  "id": "main-grid",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": { "width": 860, "height": 440, "scale": 1.5 },
+  "theme": "glass-dark",
+  "locale": "en",
+  "seed": { "SETTINGS": { "viewMode": "grid" } },
+  "steps": [
+    { "wait": 600 },
+    { "move": [425, 220] },
+    { "click": [315, 133] },
+    { "dblclick": [260, 17] },
+    { "rclick": [315, 133] },
+    { "key": "Ctrl+K" },
+    { "text": "ra" },
+    { "scroll": [430, 300, -120] },
+    { "shot": "hover", "alias": "egui-0-hover" }
+  ]
+}
+```
+
+- Coordinates are CSS pixels of the viewport (1 CSS px = 1 egui point). Output: `<out>/<id>/<shot>.png`, viewport times scale.
+- `scenario` names a file of `data/`; `os` sets the mock's runtime OS.
+- `streaming` (optional, `true`) makes `detect_streaming_software` report streaming software running (`__mock.streaming`), so a scene seeded with `streamerMode: "auto"` reaches the streamer overlay.
+- `cs2` (optional, an array of `Cs2BridgeAccount` rows) enables the CS2 bridge and answers `cs2_bridge_fetch` and `cs2_bridge_check` with these rows (`__mock.cs2`), so Steam cards show the CS2 badge and section.
+- `fail` (optional, an object) maps commands to the error message they fail with (`__mock.fail`), on both sides: `{ "platform_switch_account": "..." }` makes every switch fail.
+- `setup` (optional, an array of setup statuses with `setupId`, `state`, `accountId`, `accountDisplayName` and `errorMessage`) is the add-account setup the mock runs on both sides: `platform_begin_setup` answers the first status, each `platform_get_setup_status` the next one, the last one repeating, and `platform_cancel_setup` succeeds.
+- `clipboard` (optional, a string) is the text the clipboard holds: `ref.mjs` makes `navigator.clipboard.readText` answer it, the egui runner answers the app's paste request with it. A scene never reads the machine's clipboard; an empty string reads as a clipboard with no text.
+- `theme` and `locale` patch `client.settings` (`themeId`, `language`). A `seed` key is a store id (`client.view-mode`) or the suffix of its `CLIENT_STORE_` constant in `src/lib/storage/storeIds.ts` (`SETTINGS`); an object value is merged over the scenario's own store, anything else replaces it. A seeded string under `crates/accshift-egui/parity/avatars/` (a `cache.steam.profiles` URL) is the file there: `ref.mjs` turns it into a same-origin URL, egui reads the file.
+- `down` presses the primary button at a point and holds it; every `move` until the next `up` (which moves there, then releases) reports the held button, so a scene can drag (the bulk edit paint gesture).
+- `key` takes `Ctrl`, `Shift`, `Alt` and `Meta` prefixes joined with `+`, then a character or a key name (`Enter`, `Escape`, `Backspace`, `Tab`, `Delete`, `Home`, `End`, arrow keys, `Space`, `ContextMenu`). egui has no context menu key: the egui side sends it as `CONTEXT_MENU_KEY` (F35), as the software runner does for the real key. `text` types character by character. `scroll` is `[x, y, deltaY]`, with an optional fourth item naming the modifiers held (`"Ctrl"`, joined with `+`). A synthetic Ctrl+wheel from CDP does not reach the app's zoom handler in WebView2, so the `zoom-*` scenes zoom with `Ctrl+=` and `Ctrl+-`.
+- A shot waits for nothing: put a `wait` before it, long enough for transitions to end.
+- `html` (optional) names a fragment file, relative to the scene file. `ref.mjs` replaces the page body with it once the scene has settled; the egui runner draws the same file with `ui::paint` instead of the app. The `primitives-*` scenes use `fragments/*.html` this way to calibrate the CSS box painter at 1, 1.25 and 1.5 pixels per point. Only absolutely positioned `<div>`s and `<p>`s with inline `style` are drawn on the egui side: a `<div>` is a box (`ui::paint`), a `<p>` one line of text (`ui::text`). The `typography-*` scenes calibrate `ui::text` with every text style of the app.
+- `probe` (optional, with `html`): `ref.mjs` also measures every `<p>` of the fragment and writes `<out>/<id>/probe.json` (computed font values, line box, text box, baseline in CSS px, and the faces `CSS.getPlatformFontsForNode` reports). The ignored test `screens::primitives::tests::text_matches_webview2_probe` compares `ui::text` against it: `ACCSHIFT_TEXT_PROBE=<ref out dir> cargo test --release -- --ignored probe`.
+- `dom` is a step, `{ "dom": "<name>", "select": "<selector list>" }`: `ref.mjs` writes `<out>/<id>/<name>.dom.json`, every matching element with its border box in CSS px, its focus, `:focus-visible` and `:hover` state, and the computed values listed in `DOM_PROPS`. The egui runner skips it.
+- `deeplink` is a step, `{ "deeplink": "accshift://switch/<platform>/<account>" }`: the URL a second launch hands over. `ref.mjs` emits the deep-link plugin's `deep-link://new-url` event with it through the event plugin; the egui runner gives it to the app's deep link controller.
+- `alias` on a shot is optional: the file name, without extension, of the same shot in an older capture set (the spike's `--capture` PAMs). `diff.mjs --batch` uses it when `<egui dir>/<id>/<shot>` does not exist.
+
+Before each scene, the page is reloaded into its mock state, and runs once every image is decoded and no avatar is blurred.
+
+## What both sides must reproduce
+
+- Clock: `Date.now()` and an argument-less `new Date()` start at the mock's `NOW` (1_791_000_000 s) when the document starts, and advance with `performance.now()`.
+- Glass themes: a transparent window has nothing behind it, so the page paints a stand-in desktop as the `html` background, the one of the README recorder (`WALLPAPER` in `.agents/scripts/record-demo.mjs`). The desktop is the viewport plus 36 CSS px on each side, with the window at 36,36; the page sees it shifted by -36,-36. `src/backdrop.rs` draws the same thing. Layers, top first:
+  - `radial-gradient(48% 62% at 16% 20%, rgba(109,40,217,.42), transparent 72%)`
+  - `radial-gradient(46% 60% at 86% 84%, rgba(29,78,216,.40), transparent 72%)`
+  - `radial-gradient(34% 44% at 72% 10%, rgba(190,24,93,.22), transparent 72%)`
+  - `radial-gradient(38% 48% at 28% 96%, rgba(8,145,178,.22), transparent 72%)`
+  - `linear-gradient(160deg, #10121f, #0a0c16)`
+- `prefers-reduced-motion` is emulated as `no-preference`; the mock forces `animations: "on"` anyway.
+- UI zoom (`uiScalePercent` seeded in `SETTINGS`): `.app-stage` is scaled from its top left, its width divided by the zoom and its height the window's (it is `flex: 1`). The stage rastered during the boot entrance is drawn bilinearly scaled until the zoom changes; with no entrance, or after a change, it is rastered sharp at its final size. `src/zoom.rs` reproduces both. The `zoom-*` scenes cover 90, 110 and 125 at 1 and 1.5 and the shortcuts; a shortcut leaves Chromium's hover on the element under the pointer before the change, so those scenes park the pointer on the title bar.
+
+## Diff metrics
+
+Both images are decoded to RGBA by ffmpeg (PNG or PAM) and composited over black. Per shot: mean absolute error over RGB (0 to 255), PSNR over RGB in dB (99 when identical), percent of pixels whose largest channel delta exceeds 8 and 24, the worst 16x16 tile with its mean error, a heat map (`<shot>-heat.png`, largest channel delta times 4 on a black, red, yellow, white ramp) and a side-by-side (`<shot>-side.png`, reference on top). Batch mode writes `report.json` and `report.md`, one row per shot.
+
+`--region x,y,w,h` limits every number and both images to one rectangle, in CSS px of the viewport. Batch mode scales it by each scene's `viewport.scale` (read from `scenes/<scene>.json`, a scene without a file is skipped), a single pair by `--scale <s>` (default 1); edges are rounded, so `0,0,860,36` is 54 device rows at 1.5. The worst tile is reported in image pixels of the full frame. The title bar alone: `node parity/diff.mjs --batch <ref> <egui> --out <dir> --region 0,0,860,36`.
+
+`ref.mjs` rewrites `<out>/manifest.json` with the scenes of the current run only: capturing more scenes into an existing reference folder drops the earlier ones from the manifest. Use a fresh folder per run, or delete the manifest so `diff.mjs` pairs every PNG it finds.
+
+## Device-pixel snapping
+
+Where WebView2 puts a box at a real device scale factor is measured, not assumed: `snap/measure.mjs` renders a fragment of 25 cases (backgrounds, borders, radii, shadows, translations, `will-change`, flex centring, SVG roots, `img`, `opacity`) at six fractional CSS offsets, in the real app at each scale, and reads the painted edges from the frame.
+
+It writes `cases.json` (layout rect and painted edges per case, offset and scale), `report.md`, one `frame.png` per scale and `titlebar.json` (the title bar's boxes on the `demo` scenario). `--dsf emulate` measures the CDP emulation instead, which is what the references were before 2026-10-12. Same safety as `ref.mjs`.
+
+The rules below come from `measure.mjs` at 1, 1.25, 1.5 and 1.75. Boxes, borders, shadows, `img`, SVG roots, `opacity` and flex centring match on all 24 samples per case; the translated cases match up to the 2-decimal rounding of `cases.json`, and `shadow-rounded` is read across the corner arc, so its scan is not an edge. `src/ui/snap.rs` implements the rules, and `ui::paint` and the components use them. Layout runs in device px with 1/64 px units, so a position is `css * scale` quantized to 1/64 before any rounding.
+
+| Case                                                                                                | Rule                                                                                                                                                |
+| --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Background, rounded box, `box-shadow` base, `img`, inline `svg` root, `opacity`, flex-centred child | Each edge rounded half up on its own: `round(x)` to `round(x + w)` (`snap::rect`).                                                                  |
+| `border-width`                                                                                      | Floored to whole device px, 1 minimum when non-zero: 1 CSS px is 1 device px at 1.25, 1.5 and 1.75, 2 CSS px is 2, 3 and 3 (`snap::border_device`). |
+| `box-shadow`                                                                                        | The snapped border box plus `offset * scale`, blurred; a 4 px offset is whole at every scale tested.                                                |
+| `transform: translate()`, `will-change: transform`, running animation                               | The untransformed box snapped, then the translation added exactly: a fractional translation paints anti-aliased edges (`snap::translated`).         |
+| `will-change: transform` without translation                                                        | Origin rounded, size rounded from the origin.                                                                                                       |
+| Contents of a scroll container with real overflow (the title bar `.tabs`, whose tooltips overflow)  | Composited: the whole offset, translation included, rounded (`snap::composited`). Measured on the title bar at 1.25, 1.5 and 1.75.                  |
+| Flex centring                                                                                       | Free space halved in 1/64 px units, then the child snapped as a box (`snap::centre`).                                                               |
+
+Ban warnings only reach the first scene of each scale: in the same app run, later scenes show no ban outline and no warning section, though each scene reloads the page on a fresh mock. The cause is still open. Capture a scene that shows bans alone (`ref.mjs <scene> --out <fresh folder>`); the `cardext-*` scenes need it.
+
+## Mock data
+
+`data/<scenario>.json`, format 1: `spec` (label, runtime OS, switch delay, Steam path, API key flag, current account per platform), `commands` (per command, a list of `{ args, result }` or `{ args, error }`), `skipped` (commands with state that are modelled from `spec` instead: the switch and the PIN session). Platform commands are called once per platform id, per-account commands once per account. Avatar URLs are repo-relative paths under `crates/accshift-egui/parity/avatars/`, cache timestamps are exactly `NOW * 1000`. 

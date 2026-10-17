@@ -1,6 +1,6 @@
 use crate::context::AppContext;
 use crate::fs_utils;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -52,14 +52,14 @@ pub const TARGET_DISCORD_SNAPSHOTS: &str = "platform.discord.snapshots";
 
 const DEV_SCOPE_DIR: &str = "dev";
 
-#[derive(Debug, Serialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct StorageManifest {
     pub schema_version: u32,
     pub stores: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Serialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientStorageSnapshot {
     pub manifest: StorageManifest,

@@ -1,0 +1,110 @@
+{
+  "id": "settings-platforms-fr-light-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "light",
+  "locale": "fr",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [87, 18]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "click": [93, 141]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "platforms"
+    },
+    {
+      "move": [350, 238]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "hover-chip"
+    },
+    {
+      "click": [350, 292]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "shot": "toggled"
+    },
+    {
+      "click": [400, 124]
+    },
+    {
+      "text": "ub"
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "search"
+    },
+    {
+      "text": "zz"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "no-results"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "click": [700, 380]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "scroll": [350, 300, 600]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "scrolled"
+    }
+  ]
+}

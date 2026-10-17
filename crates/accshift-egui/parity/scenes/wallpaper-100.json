@@ -1,0 +1,50 @@
+{
+  "id": "wallpaper-100",
+  "scenario": "dev",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "liquid-glass",
+  "locale": "en",
+  "seed": {
+    "SETTINGS": {
+      "viewMode": "grid",
+      "animations": "off",
+      "accountDisplay": {
+        "showUsernames": true,
+        "showCardNotesInline": false
+      }
+    }
+  },
+  "steps": [
+    {
+      "wait": 800
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "shot": "grid"
+    },
+    {
+      "move": [645, 150]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "hover"
+    }
+  ],
+  "wallpaper": {
+    "image": "wallpaper.png",
+    "rect": [0, 0, 1920, 1080],
+    "window": [300, 200]
+  }
+}

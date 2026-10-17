@@ -1,0 +1,126 @@
+[package]
+name = "accshift-egui"
+description = "The accshift desktop app, drawn with egui"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[features]
+# Bench build: the window is never shown, boot marks go to
+# %TEMP%\accshift-egui-bench\<pid>.jsonl. The harness refuses any exe that
+# lacks the marker string, so a bench run can never pop a window.
+startup-bench = []
+# Renderer, pick one. `software`: egui meshes rasterized on the CPU and blitted
+# with softbuffer (GDI on Windows), no GPU driver loaded. `glow`: eframe on
+# OpenGL, the first version of the spike.
+software = ["dep:egui-winit", "dep:softbuffer", "dep:egui_software_backend", "dep:winit"]
+glow = ["dep:eframe"]
+default = ["software"]
+
+[dependencies]
+accshift-core = { path = "../accshift-core" }
+# The UI-free app logic (backend trait, mock, real backend, stores, i18n) and
+# the theme engine the Svelte frontend applies.
+accshift-app = { path = "../accshift-app" }
+accshift-theme = { path = "../accshift-theme" }
+# Same backend choice as spotifast for the `glow` path: glow keeps the binary
+# and the tree small, wgpu buys nothing for a 2D grid.
+eframe = { version = "0.37", optional = true, default-features = false, features = [
+  "accesskit",
+  "glow",
+  "default_fonts",
+] }
+# The software path: the window and input layer eframe uses (egui-winit
+# re-exports winit and accesskit_winit), a CPU rasterizer, a GDI blit.
+egui-winit = { version = "0.37", optional = true, default-features = false, features = [
+  "accesskit",
+  "clipboard",
+  "links",
+] }
+softbuffer = { version = "0.4", optional = true, default-features = false }
+egui_software_backend = { path = "vendor/egui_software_backend", optional = true, features = [
+  "rayon",
+] }
+# No bundled fonts on Windows: the app draws with Segoe UI read from the
+# system, and the 1.2 MB of egui's defaults cost startup time (a bigger exe
+# reaches `main` later, see build.rs). Other OSes keep them as the only fonts.
+egui = { version = "0.37", default-features = false }
+egui_extras = { version = "0.37", default-features = false, features = ["svg"] }
+# The same resvg egui_extras rasterizes with, for its options type.
+resvg = { version = "0.45", default-features = false }
+raw-window-handle = "0.6"
+# Face metrics (ascent, descent, line gap, weights) for the CSS line box: the
+# same skrifa epaint draws glyphs with.
+skrifa = "0.44"
+# System font files mapped instead of read: file-backed pages the OS shares
+# with its file cache, loaded as glyphs need them, outside private memory (a
+# CJK face is 12 to 35 MB).
+memmap2 = "0.9"
+# Scene runner only (`--scene`): scene files in, PNG shots out. Neither is
+# touched on the normal startup path.
+serde_json = "1"
+png = "0.18"
+# Steam's CDN serves avatars as JPEG; the same image build accshift-app
+# already links (zune-jpeg underneath). A persona's custom image is any of
+# these, re-encoded as a JPEG cover; png and image-webp are linked already.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp"] }
+# The persona image picker (`<input type="file">`) and its data URL: the
+# versions accshift-app already builds.
+rfd = "0.17"
+base64 = "0.23"
+# The onboarding's two looping clips, shipped as animated WebP.
+image-webp = "0.2"
+
+[target.'cfg(not(windows))'.dependencies]
+egui = { version = "0.37", features = ["default_fonts"] }
+
+# Linux: the X11 and Wayland backends `default-features = false` drops above,
+# with libxcb and the Wayland client opened at run time, as by default.
+[target.'cfg(target_os = "linux")'.dependencies]
+egui-winit = { version = "0.37", optional = true, default-features = false, features = [
+  "x11",
+  "wayland",
+] }
+winit = { version = "0.30", optional = true, default-features = false, features = [
+  "wayland-dlopen",
+] }
+softbuffer = { version = "0.4", optional = true, default-features = false, features = [
+  "x11",
+  "x11-dlopen",
+  "wayland",
+  "wayland-dlopen",
+] }
+
+[target.'cfg(windows)'.dependencies]
+# The OS acrylic behind a transparent window: what Glass Dark uses in Tauri.
+window-vibrancy = "0.8"
+# DWM cloak for the bench build: the window exists and renders, but is never
+# composited on screen. UI Automation: warmed up off the UI thread at start.
+# The main window's frame (window/frame.rs): tao's insets, hit test and
+# minimum size, the monitors and their DPI, the auto-hidden taskbar.
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Registry",
+  "Win32_UI_Accessibility",
+  "Win32_UI_Controls_Dialogs",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+# DirectWrite glyph coverage (ui::text::dwrite): COM interfaces, which
+# windows-sys does not bind. Same version accesskit_windows and sysinfo
+# already pull in, so no second binding version.
+windows = { version = "0.62", default-features = false, features = [
+  "Win32_Foundation",
+  "Win32_Graphics_DirectWrite",
+] }
+
+# build.rs: the Windows resources tauri-build gives `accshift-gui.exe`, built
+# by the same crate from the same tauri.conf.json.
+[build-dependencies]
+serde_json = "1"
+tauri-winres = "0.3"

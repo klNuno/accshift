@@ -1,0 +1,40 @@
+{
+  "id": "onboarding-light-150",
+  "scenario": "demo",
+  "os": "windows",
+  "onboarding": true,
+  "viewport": {
+    "width": 1000,
+    "height": 680,
+    "scale": 1.5
+  },
+  "theme": "light",
+  "locale": "en",
+  "steps": [
+    { "wait": 1500 },
+    { "dom": "welcome", "select": ".modal, .modal *" },
+    { "shot": "welcome" },
+    { "click": [677, 472] },
+    { "move": [950, 400] },
+    { "wait": 800 },
+    { "dom": "feature-1", "select": ".modal, .modal *, .spotlight" },
+    { "shot": "feature-1" },
+    { "click": [700, 621] },
+    { "move": [950, 400] },
+    { "wait": 700 },
+    { "shot": "feature-2" },
+    { "click": [700, 621] },
+    { "move": [950, 400] },
+    { "wait": 700 },
+    { "shot": "feature-3" },
+    { "click": [700, 621] },
+    { "move": [950, 400] },
+    { "wait": 700 },
+    { "shot": "feature-4" },
+    { "click": [700, 621] },
+    { "move": [950, 400] },
+    { "wait": 1000 },
+    { "dom": "deal", "select": ".modal, .modal *" },
+    { "shot": "deal" }
+  ]
+}

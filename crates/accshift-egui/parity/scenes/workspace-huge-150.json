@@ -1,0 +1,38 @@
+{
+  "id": "workspace-huge-150",
+  "scenario": "huge",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 800
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "top"
+    },
+    {
+      "scroll": [430, 260, 1942]
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 900
+    },
+    {
+      "shot": "half"
+    }
+  ]
+}

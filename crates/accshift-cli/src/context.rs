@@ -8,7 +8,7 @@ use accshift_core::AppContext;
 use directories::BaseDirs;
 use std::path::PathBuf;
 
-/// Must match `identifier` in `src-tauri/tauri.conf.json`.
+/// Must match `identifier` in `crates/accshift-egui/tauri.conf.json`.
 const BUNDLE_IDENTIFIER: &str = "com.accshift.desktop";
 
 pub struct CliAppContext {

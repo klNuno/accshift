@@ -1,0 +1,68 @@
+{
+  "id": "menukey-light-100",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.0
+  },
+  "theme": "light",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "ArrowRight"
+    },
+    {
+      "wait": 250
+    },
+    {
+      "key": "ContextMenu"
+    },
+    {
+      "wait": 350
+    },
+    {
+      "shot": "roving"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 250
+    },
+    {
+      "click": [315, 150]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "ContextMenu"
+    },
+    {
+      "wait": 350
+    },
+    {
+      "shot": "clicked"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 250
+    },
+    {
+      "shot": "closed"
+    }
+  ]
+}

@@ -1,0 +1,185 @@
+{
+  "id": "bulk-edit-light-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "light",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [119, 17]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "dom": "bar",
+      "select": ".bar, .bar *"
+    },
+    {
+      "shot": "open"
+    },
+    {
+      "click": [205, 150]
+    },
+    {
+      "click": [315, 150]
+    },
+    {
+      "click": [205, 296]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "selected"
+    },
+    {
+      "move": [48, 417]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "hover-tool"
+    },
+    {
+      "click": [818, 417]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "dom": "dialog",
+      "select": ".overlay, .overlay *"
+    },
+    {
+      "shot": "settings"
+    },
+    {
+      "click": [590, 134]
+    },
+    {
+      "click": [590, 175]
+    },
+    {
+      "click": [590, 175]
+    },
+    {
+      "click": [525, 238]
+    },
+    {
+      "text": "-novid"
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "tri"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "down": [425, 150]
+    },
+    {
+      "move": [480, 152]
+    },
+    {
+      "move": [535, 150]
+    },
+    {
+      "move": [645, 150]
+    },
+    {
+      "up": [645, 150]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "painted"
+    },
+    {
+      "click": [291, 417]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "dom": "popover",
+      "select": ".color-popover, .color-popover *"
+    },
+    {
+      "shot": "colors"
+    },
+    {
+      "move": [345, 381]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "hover-swatch"
+    },
+    {
+      "click": [345, 381]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "color-applied"
+    },
+    {
+      "click": [127, 417]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "deselected"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "closed"
+    }
+  ]
+}

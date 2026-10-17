@@ -1,0 +1,109 @@
+[package]
+name = "accshift-app"
+description = "UI-free logic of the accshift egui port: the backend trait, its mock and the job runner"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+accshift-core = { path = "../accshift-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The crate Tauri's path resolver calls (dirs 6 in tauri 2.11), so
+# `EguiAppContext` lands on the very same folders as the Tauri app. dirs 7
+# only moves Windows' `preference_dir`, unused here.
+dirs = "7"
+# The shared HTTP client the Tauri app keeps in its state. Same spec as the
+# root workspace so features unify with accshift-core's.
+reqwest = { version = "0.13", default-features = false, features = [
+  "rustls-no-provider",
+  "json",
+  "blocking",
+] }
+# `descriptor_select_file`.
+rfd = "0.17"
+# The async half of the Steam, CS2 bridge and Roblox commands (Tauri runs them
+# on its tokio runtime). Same minor as the root workspace.
+tokio = { version = "1.53", features = ["rt-multi-thread"] }
+# `legacy_web_storage`: the WebKit origin folder name (SHA-256). Same major
+# as accshift-core, so nothing new is built.
+sha2 = "0.11"
+# `time`: the local time zone with its DST rules, as WebView2 formats dates.
+# Default features: `tz-system` reads the Windows zone id and maps it to
+# IANA, `tzdb-bundle-platform` embeds the tzdb on Windows (no network, no
+# installed database) and reads /usr/share/zoneinfo elsewhere. Same version
+# as the root workspace lock.
+jiff = "0.2.35"
+# `lifecycle::updater`: the port of tauri-plugin-updater 2.11, on the crates
+# the plugin builds with: minisign-verify for the `.sig`, semver for
+# the version compare, base64 for the key and signature strings, time for the
+# RFC 3339 `pub_date`, url and percent-encoding for the endpoint templating,
+# infer and tempfile for the downloaded installer.
+minisign-verify = "0.3"
+semver = "1"
+base64 = "0.23"
+time = { version = "0.3", features = ["parsing", "formatting"] }
+url = { version = "2", features = ["serde"] }
+percent-encoding = "2"
+infer = "0.22"
+tempfile = "3"
+# `lifecycle::deep_link`: `dunce::simplified` of the canonical exe path, as
+# tauri-utils resolves it before the plugin writes `"<exe>" "%1"`.
+dunce = "1"
+
+[target.'cfg(windows)'.dependencies]
+# `get_desktop_wallpaper`: the Progman capture of
+# src-tauri/src/commands/backdrop.rs, on windows-sys rather than the windows
+# crate (accshift-core already builds windows-sys 0.61).
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Security",
+  "Win32_Storage_Xps",
+  "Win32_System_DataExchange",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Threading",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+# `lifecycle::deep_link`: the HKCU scheme registration, on the crate
+# tauri-plugin-deep-link 2.4 writes it with.
+windows-registry = "0.100"
+# `legacy_web_storage`: reads the WebView2 localStorage LevelDB of v0.x
+# installs. Pure Rust, Snappy blocks and the `.log` replay included. No `fs`
+# feature: the files are copied into its in-memory env, never opened on disk.
+rusty-leveldb = { version = "4", default-features = false }
+
+[target.'cfg(not(windows))'.dependencies]
+# `legacy_web_storage`: the WebKit localStorage sqlite of WebKitGTK and
+# WKWebView. Same spec as the root workspace.
+rusqlite = { version = "0.40", features = ["bundled"] }
+# `lifecycle::updater`: the `.tar.gz` bundles of AppImage and macOS.
+flate2 = "1"
+tar = "0.4"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# `lifecycle::single_instance`: the D-Bus name tauri-plugin-single-instance
+# 2.4 owns on Linux. Major 5, the one accesskit_unix (egui) and
+# secret-service (keyring) link: zbus 6 drops the blocking API and would be a
+# second D-Bus stack in the binary.
+zbus = "5.9"
+# `lifecycle::deep_link`: the `.desktop` handler file the plugin merges.
+rust-ini = "0.21"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# `lifecycle::updater`: the admin prompt of the macOS install fallback.
+osakit = { version = "0.3", features = ["full"] }
+# `lifecycle::process`: the `CFBundleExecutable` a relaunch starts, as
+# Tauri's `restart_macos_app` reads it.
+plist = "1"
+
+[dev-dependencies]
+# Signs the updater fixtures with a key generated in the test, as the
+# `tauri signer` command does (tauri-cli signs with this crate).
+minisign = "0.10"
+# The WebKit fixtures are built and read on every OS, Windows included
+# (tests/legacy_web_storage.rs compiles src/legacy_web_storage/webkit_sqlite.rs
+# by path), without growing the Windows app.
+rusqlite = { version = "0.40", features = ["bundled"] }

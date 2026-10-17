@@ -1,0 +1,143 @@
+{
+  "id": "theme-editor-light-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "light",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [87, 18]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "click": [566, 376]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "open"
+    },
+    {
+      "click": [560, 306]
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "text": "40 60 90"
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "edited"
+    },
+    {
+      "text": "x"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "invalid"
+    },
+    {
+      "click": [747, 306]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "reset"
+    },
+    {
+      "click": [650, 215]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "glass"
+    },
+    {
+      "scroll": [430, 220, 300]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "tokens"
+    },
+    {
+      "scroll": [430, 220, 4000]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "bottom"
+    },
+    {
+      "click": [400, 230]
+    },
+    {
+      "text": ".a{}"
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "css"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "closed"
+    }
+  ]
+}

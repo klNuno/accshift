@@ -72,7 +72,7 @@ pub(super) static RIOT_LOCAL_CLIENT: OnceLock<reqwest::Client> = OnceLock::new()
 
 pub(super) fn riot_local_client() -> &'static reqwest::Client {
     RIOT_LOCAL_CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
+        crate::http::client_builder()
             .danger_accept_invalid_certs(true)
             .connect_timeout(Duration::from_secs(2))
             .timeout(Duration::from_secs(5))

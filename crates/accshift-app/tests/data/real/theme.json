@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 2,
+  "id": "egui-fixture-theme",
+  "name": "Fixture Violet",
+  "author": "accshift tests",
+  "version": "1.0.0",
+  "colorScheme": "dark",
+  "extends": "dark",
+  "tokens": {
+    "accent": "#a78bfa",
+    "background": "#0f0d17"
+  }
+}

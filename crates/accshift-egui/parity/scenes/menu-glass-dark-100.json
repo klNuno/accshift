@@ -1,0 +1,135 @@
+{
+  "id": "menu-glass-dark-100",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "rclick": [205, 152]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "account"
+    },
+    {
+      "dom": "account",
+      "select": ".context-menu, .context-menu *"
+    },
+    {
+      "move": [260, 161]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "account-hover"
+    },
+    {
+      "move": [260, 191]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "loader"
+    },
+    {
+      "dom": "loader",
+      "select": ".context-menu, .context-menu *"
+    },
+    {
+      "move": [260, 230]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "submenu"
+    },
+    {
+      "dom": "submenu",
+      "select": ".context-menu, .context-menu *"
+    },
+    {
+      "key": "ArrowDown"
+    },
+    {
+      "key": "ArrowDown"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "keys"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "rclick": [95, 152]
+    },
+    {
+      "move": [165, 223]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "folder"
+    },
+    {
+      "dom": "folder",
+      "select": ".context-menu, .context-menu *"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "rclick": [430, 400]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "background"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "rclick": [755, 298]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "clamped"
+    }
+  ]
+}

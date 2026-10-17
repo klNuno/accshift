@@ -1,0 +1,31 @@
+{
+  "id": "zoom-90-glass-dark-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "seed": {
+    "SETTINGS": {
+      "uiScalePercent": 90
+    }
+  },
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "grid"
+    }
+  ]
+}

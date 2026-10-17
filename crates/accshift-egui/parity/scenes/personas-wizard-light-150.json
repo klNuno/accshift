@@ -1,0 +1,189 @@
+{
+  "id": "personas-wizard-light-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "light",
+  "locale": "en",
+  "seed": {
+    "PERSONAS": [
+      {
+        "id": "persona-main",
+        "name": "Main",
+        "color": "",
+        "assignments": [
+          {
+            "platformId": "steam",
+            "accountId": "76561198100000001"
+          },
+          {
+            "platformId": "riot",
+            "accountId": "riot-1"
+          },
+          {
+            "platformId": "roblox",
+            "accountId": "1000000001"
+          }
+        ]
+      },
+      {
+        "id": "persona-smurfs",
+        "name": "Smurfs",
+        "color": "#8b5cf6",
+        "assignments": [
+          {
+            "platformId": "steam",
+            "accountId": "76561198100000002"
+          },
+          {
+            "platformId": "riot",
+            "accountId": "riot-2"
+          }
+        ]
+      },
+      {
+        "id": "persona-duo",
+        "name": "Duo nights",
+        "color": "",
+        "assignments": [
+          {
+            "platformId": "riot",
+            "accountId": "riot-3"
+          }
+        ]
+      },
+      {
+        "id": "persona-all",
+        "name": "Everything at once, with a long name",
+        "color": "#f97316",
+        "assignments": [
+          {
+            "platformId": "steam",
+            "accountId": "76561198100000004"
+          },
+          {
+            "platformId": "riot",
+            "accountId": "riot-2"
+          },
+          {
+            "platformId": "roblox",
+            "accountId": "1000000003"
+          },
+          {
+            "platformId": "epic",
+            "accountId": "epic-1"
+          }
+        ]
+      }
+    ]
+  },
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [379, 18]
+    },
+    {
+      "move": [600, 380]
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "click": [762, 144]
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "new"
+    },
+    {
+      "text": "Duo"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "named"
+    },
+    {
+      "click": [99, 229]
+    },
+    {
+      "move": [600, 400]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "picker"
+    },
+    {
+      "click": [120, 205]
+    },
+    {
+      "move": [600, 400]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "picked"
+    },
+    {
+      "click": [38, 92]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "armed"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "rclick": [250, 120]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [282, 138]
+    },
+    {
+      "move": [600, 400]
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "edit"
+    },
+    {
+      "click": [264, 229]
+    },
+    {
+      "move": [600, 400]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "picker-assigned"
+    },
+    {
+      "dom": "picker-assigned",
+      "select": ".wizard, .wizard *"
+    }
+  ]
+}

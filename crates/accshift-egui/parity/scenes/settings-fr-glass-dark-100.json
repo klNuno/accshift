@@ -1,0 +1,41 @@
+{
+  "id": "settings-fr-glass-dark-100",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "fr",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [87, 18]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "shot": "general"
+    },
+    {
+      "click": [93, 176]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "privacy"
+    }
+  ]
+}

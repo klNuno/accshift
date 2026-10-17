@@ -1,0 +1,56 @@
+{
+  "id": "egui-fixture",
+  "schemaVersion": 1,
+  "name": "Fixture Launcher",
+  "shortName": "Fixture",
+  "os": {
+    "windows": {
+      "roots": { "files": ["${LIVE}"] },
+      "detect": { "pathExists": ["${LIVE}/never-here"] },
+      "identity": {
+        "source": { "kind": "synthetic" },
+        "format": { "charset": "alphanumeric", "maxLength": 64 },
+        "current": "config"
+      },
+      "state": {
+        "files": [
+          { "live": "${LIVE}/session.json", "snapshot": "session.json", "snapshotMarker": true }
+        ]
+      },
+      "close": { "processes": ["nothing-here.exe"] },
+      "setup": { "missingSnapshotHint": "Add this account through setup first." }
+    },
+    "linux": {
+      "roots": { "files": ["${LIVE}"] },
+      "detect": { "pathExists": ["${LIVE}/never-here"] },
+      "identity": {
+        "source": { "kind": "synthetic" },
+        "format": { "charset": "alphanumeric", "maxLength": 64 },
+        "current": "config"
+      },
+      "state": {
+        "files": [
+          { "live": "${LIVE}/session.json", "snapshot": "session.json", "snapshotMarker": true }
+        ]
+      },
+      "close": { "processes": ["nothing-here"] },
+      "setup": { "missingSnapshotHint": "Add this account through setup first." }
+    },
+    "macos": {
+      "roots": { "files": ["${LIVE}"] },
+      "detect": { "pathExists": ["${LIVE}/never-here"] },
+      "identity": {
+        "source": { "kind": "synthetic" },
+        "format": { "charset": "alphanumeric", "maxLength": 64 },
+        "current": "config"
+      },
+      "state": {
+        "files": [
+          { "live": "${LIVE}/session.json", "snapshot": "session.json", "snapshotMarker": true }
+        ]
+      },
+      "close": { "processes": ["nothing-here"] },
+      "setup": { "missingSnapshotHint": "Add this account through setup first." }
+    }
+  }
+}

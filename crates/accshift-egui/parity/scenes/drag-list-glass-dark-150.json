@@ -1,0 +1,74 @@
+{
+  "id": "drag-list-glass-dark-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [816, 60]
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "down": [300, 207]
+    },
+    {
+      "wait": 250
+    },
+    {
+      "move": [310, 220]
+    },
+    {
+      "wait": 350
+    },
+    {
+      "shot": "lifted"
+    },
+    {
+      "move": [310, 303]
+    },
+    {
+      "wait": 450
+    },
+    {
+      "shot": "preview"
+    },
+    {
+      "move": [310, 111]
+    },
+    {
+      "wait": 450
+    },
+    {
+      "shot": "over"
+    },
+    {
+      "up": [310, 111]
+    },
+    {
+      "wait": 450
+    },
+    {
+      "shot": "moved"
+    }
+  ]
+}

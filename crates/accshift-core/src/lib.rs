@@ -3,6 +3,7 @@ pub mod context;
 pub mod diagnostics;
 pub mod error;
 pub mod fs_utils;
+pub mod http;
 pub mod lock;
 pub mod logging;
 pub mod os;

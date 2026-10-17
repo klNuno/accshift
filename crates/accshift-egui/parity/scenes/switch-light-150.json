@@ -1,0 +1,57 @@
+{
+  "id": "switch-light-150",
+  "scenario": "slow",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "light",
+  "locale": "en",
+  "seed": {
+    "SETTINGS": {
+      "viewMode": "grid",
+      "animations": "off",
+      "accountDisplay": {
+        "showUsernames": true,
+        "showCardNotesInline": false
+      }
+    }
+  },
+  "steps": [
+    {
+      "wait": 800
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "click": [645, 150]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "armed"
+    },
+    {
+      "click": [645, 150]
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "switching"
+    },
+    {
+      "wait": 4600
+    },
+    {
+      "shot": "switched"
+    }
+  ]
+}

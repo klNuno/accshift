@@ -1,0 +1,15 @@
+{
+  "platformIds": [
+    "steam",
+    "riot",
+    "battle-net",
+    "ubisoft",
+    "roblox",
+    "epic",
+    "gog",
+    "jagex",
+    "discord"
+  ],
+  "themeIds": ["dark", "light", "midnight", "glass-dark", "glass-light", "liquid-glass"],
+  "preferredLanguages": ["fr-FR"]
+}

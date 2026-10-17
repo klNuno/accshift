@@ -9,8 +9,7 @@
   <a href="https://github.com/klNuno/accshift/releases"><img src="https://img.shields.io/github/downloads/klNuno/accshift/total?color=8b5cf6" alt="Downloads" /></a>
   <a href="#supported-platforms"><img src="https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-0078D6" alt="Windows, macOS and Linux" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/github/license/klNuno/accshift?color=0078D6" alt="License" /></a>
-  <a href="https://tauri.app/"><img src="https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white" alt="Tauri 2" /></a>
-  <a href="https://svelte.dev/"><img src="https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white" alt="Svelte 5" /></a>
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-egui-DEA584?logo=rust&logoColor=white" alt="Rust and egui" /></a>
 </p>
 
 <p align="center">
@@ -168,9 +167,8 @@ and the server in [`server/`](./server), both readable in a sitting.
 ## Building from source
 
 ```bash
-pnpm install
-pnpm tauri dev     # run the app with hot reload
-pnpm tauri build   # installers for your OS
+cargo run -p accshift-egui                              # run the app
+pnpm install && node crates/accshift-egui/bundle/bundle.mjs --build   # installers for your OS
 ```
 
 Setup, coding standards and how to propose a new platform are in the
@@ -181,30 +179,23 @@ Setup, coding standards and how to propose a new platform are in the
 <summary>Project structure</summary>
 
 ```text
-src/lib/                          # Svelte frontend (GUI)
-  app/                            # app lifecycle, dialogs, navigation
-  features/folders notifications settings
-  platforms/                      # per-platform UI adapters
-  shared/components contextMenu platform ...
-  storage/                        # client storage layer
-
 crates/
   accshift-core/                  # platform logic, config, storage, OS
     src/
       platforms/steam riot ...    # hand-written platforms
       platforms/descriptor/       # JSON-described platforms and their engine
       os/windows linux macos      # per-OS primitives (sysinfo/open/keyring)
-      context.rs                  # AppContext trait (replaces tauri::AppHandle)
+      context.rs                  # AppContext trait (the app's folders)
       lock.rs                     # fs4 exclusive lock
       runtime.rs                  # tokio block_on helper
       config storage logging themes
   accshift-cli/                   # CLI binary (list, switch, platforms)
-
-src-tauri/                        # Tauri GUI thin wrapper
-  src/lib.rs commands.rs app_runtime.rs tauri_context.rs
-  src/launcher.rs                 # Windows exe: starts WebView2, loads the app DLL
-
-vendor/wry/                       # wry with an early WebView2 start (Windows)
+  accshift-app/                   # UI-free app logic: backend, stores, i18n, updater
+  accshift-theme/                 # theme engine: tokens, CSS variables
+  accshift-egui/                  # the GUI (accshift-gui), drawn with egui
+    src/screens ui app window     # screens, widgets, app state, native window
+    tauri.conf.json bundle/       # installer config, packed by the Tauri bundler
+    parity/                       # UI scenes and mock data for regression shots
 ```
 
 </details>

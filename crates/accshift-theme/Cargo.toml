@@ -1,0 +1,12 @@
+[package]
+name = "accshift-theme"
+description = "The accshift theme engine (tokens, schema, surface opacities, CSS variables) as plain Rust"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# preserve_order: object keys keep file order, which is what JSON.stringify
+# does and what a byte-for-byte theme export needs.
+serde_json = { version = "1", features = ["preserve_order"] }
