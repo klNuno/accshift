@@ -17,6 +17,7 @@ use egui::accesskit::Role;
 use egui::{pos2, vec2, Event, Id, Key, Rect, Sense, Ui, Vec2, WidgetInfo};
 
 use super::editing::{self, Editor, Rules};
+use super::field_menu;
 
 use super::{take_focus, T120};
 use crate::app::vars::Vars;
@@ -254,6 +255,9 @@ pub fn text_input(
         // `cursor: auto` over an editable box.
         ctx.set_cursor_icon(egui::CursorIcon::Text);
     }
+    if props.enabled {
+        field_menu::on_response(&ctx, id, &response);
+    }
     let was_focused = ctx.data(|d| d.get_temp::<bool>(id.with("had-focus")).unwrap_or(false));
     let focused = props.enabled && take_focus(ui, &response);
     if focused {
@@ -295,7 +299,8 @@ pub fn text_input(
             ed.select_all(value);
         }
         let before = ed.view(&ctx, value, rules.secret, &font, text_rect, caret_w, true);
-        let input: Vec<Event> = ui.input(|i| i.events.clone());
+        let mut input: Vec<Event> = ui.input(|i| i.events.clone());
+        input.extend(field_menu::take_event(&ctx, id));
         let (caret, anchor) = (ed.caret, ed.anchor);
         let edited = ed.edit(ui, &response, value, &rules, &before, &input);
         events.changed = edited.changed;

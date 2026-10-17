@@ -53,6 +53,7 @@ use crate::ui::components::controls::button::{
     self as panel_button, ButtonProps, ButtonStyle, Transitions,
 };
 use crate::ui::components::controls::editing::{self, Editor, Rows, Rules};
+use crate::ui::components::controls::field_menu;
 use crate::ui::components::controls::select::{self, SelectProps};
 use crate::ui::components::controls::text_input::{settings_style, FieldStyle};
 use crate::ui::components::controls::{paint_ua_focus_ring, scroll, FocusCtx};
@@ -798,6 +799,7 @@ fn css_field(
         .interact(boxed, id, Sense::click_and_drag())
         .on_hover_cursor(egui::CursorIcon::Text);
     let focused = take_focus(ui, &response);
+    field_menu::on_response(&ctx, id, &response);
     let b = snap::border_width(1.0, ppp);
     let viewport = Rect::from_min_max(
         pos2(rect.left() + b, rect.top() + b),
@@ -825,7 +827,8 @@ fn css_field(
         let rows = before.rows.paging(viewport.height(), ppp);
         let caret = (ed.caret, ed.anchor, ed.upstream);
         ed.area_pointer(ui, &response, text, &rules, &rows);
-        let events: Vec<Event> = ui.input(|i| i.events.clone());
+        let mut events: Vec<Event> = ui.input(|i| i.events.clone());
+        events.extend(field_menu::take_event(&ctx, id));
         let out = ed.area_keys(&ctx, text, &events, &rules, &rows);
         changed = out.changed;
         page = out.page;

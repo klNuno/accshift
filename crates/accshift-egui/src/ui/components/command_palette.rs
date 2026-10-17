@@ -41,6 +41,7 @@ use crate::theme::Rgba;
 use crate::ui::anim::{self, Animation, Keyframes, Timing};
 use crate::ui::backdrop_filter::Mark;
 use crate::ui::components::controls::editing::{self, Editor, Rules};
+use crate::ui::components::controls::field_menu;
 use crate::ui::components::controls::scroll::{self, nearest};
 use crate::ui::paint::{Border, BoxShadow, BoxStyle, Corners};
 use crate::ui::snap;
@@ -286,7 +287,8 @@ fn edit(ui: &Ui, view: &mut PaletteView, input: Id) -> bool {
     let ctx = ui.ctx();
     let mut next = view.model.query().to_string();
     let mut ed = Editor::load(ctx, input, &next);
-    let events: Vec<Event> = ui.input(|i| i.events.clone());
+    let mut events: Vec<Event> = ui.input(|i| i.events.clone());
+    events.extend(field_menu::take_event(ctx, input));
     let caret = (ed.caret, ed.anchor);
     ed.keys(ctx, &mut next, &events, &Rules::text());
     let moved = (ed.caret, ed.anchor) != caret;
@@ -535,6 +537,7 @@ fn paint_field(
     if response.is_pointer_button_down_on() {
         response.request_focus();
     }
+    field_menu::on_response(&ctx, id, &response);
     // `border-bottom: 1px solid var(--border)`.
     let bottom = Rect::from_min_max(pos2(rect.left(), rect.bottom() - rule), rect.max);
     ui.painter()

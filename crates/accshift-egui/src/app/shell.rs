@@ -592,7 +592,26 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
             if bulk_escape && bulk_edit::escape_pressed(ui) {
                 actions.push(Action::Bulk(BulkEvent::Escape));
             }
-            // `<ContextMenu>`, above the dialogs (`--z-menu`).
+            // `<CommandPalette>`, after `AppDialogs`.
+            if let (Some(state), Some(cmds)) = (palette.as_mut(), palette_commands.as_ref()) {
+                let props = PaletteProps {
+                    vars: &vars,
+                    locale: *locale,
+                    viewport: window,
+                    commands: &cmds.commands,
+                    accents: &cmds.accents,
+                    mount: state.mount,
+                    now,
+                };
+                let mount = state.mount;
+                actions.extend(
+                    command_palette::command_palette(ui, &props, &mut state.view)
+                        .into_iter()
+                        .map(|event| Action::Palette(mount, event)),
+                );
+            }
+            // `<ContextMenu>`, above the dialogs (`--z-menu`) and the palette,
+            // whose field opens it too.
             if let Some(menu) = dialogs.context_menu() {
                 let adapter = accounts.registry.adapter(&nav.active_tab);
                 let items = dialogs.context_menu_items(&MenuInput {
@@ -617,24 +636,6 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                     context_menu::context_menu(ui, &props)
                         .into_iter()
                         .map(|event| Action::Menu(open_id, event)),
-                );
-            }
-            // `<CommandPalette>`, after `AppDialogs`.
-            if let (Some(state), Some(cmds)) = (palette.as_mut(), palette_commands.as_ref()) {
-                let props = PaletteProps {
-                    vars: &vars,
-                    locale: *locale,
-                    viewport: window,
-                    commands: &cmds.commands,
-                    accents: &cmds.accents,
-                    mount: state.mount,
-                    now,
-                };
-                let mount = state.mount;
-                actions.extend(
-                    command_palette::command_palette(ui, &props, &mut state.view)
-                        .into_iter()
-                        .map(|event| Action::Palette(mount, event)),
                 );
             }
         });

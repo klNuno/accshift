@@ -1,6 +1,7 @@
 //! The TS i18n tests (`src/lib/i18n/{index,messages}.test.ts`) against the
 //! embedded dictionaries, plus the export check: every key of the TS message
-//! files must be in the JSON `tools/i18n.dump.ts` wrote.
+//! files must be in the JSON `tools/i18n.dump.ts` wrote. The JSON may hold
+//! more: the egui app's own strings.
 
 use accshift_app::i18n::{
     boot_locale, detect_preferred_locale, dictionary, format_template, is_locale, normalize_locale,
@@ -281,7 +282,6 @@ fn every_ts_key_is_in_the_exported_json() {
             locale.code(),
             locale.code()
         );
-        assert_eq!(declared.len(), exported.len(), "{}", locale.code());
         counts.push(format!("{} {}", locale.code(), exported.len()));
     }
     eprintln!("i18n keys: {}", counts.join(", "));

@@ -84,6 +84,7 @@ use crate::ui::anim::{self, Motion};
 use crate::ui::components::bulk_edit::{BulkEvent, COVER_ID};
 use crate::ui::components::command_palette::PaletteEvent;
 use crate::ui::components::context_menu::{self, MenuEvent, SubmenuLoad};
+use crate::ui::components::controls::field_menu;
 use crate::ui::components::dialog::DialogEvent;
 use crate::ui::components::secure_overlays::{PinEvent, StreamerEvent};
 use crate::ui::components::toast::ToastEvent;
@@ -1018,6 +1019,13 @@ impl AppModel {
         self.track_bulk_paint(&ctx);
         let actions = shell::draw(self, ui, now);
         self.apply(&ctx, actions, now);
+        // A right click on a text field: its edit menu.
+        if let Some((at, items)) = field_menu::take_request(&ctx) {
+            self.dialogs.open_custom_context_menu(at.x, at.y, items);
+            self.menu_open_id += 1;
+            self.forget_menu(&ctx);
+            ctx.request_repaint();
+        }
         // Boot marks for the startup bench.
         match self.frames {
             0 => {
@@ -1722,7 +1730,9 @@ impl AppModel {
                     self.settle_deep_link_confirm(ctx, ticket, allowed);
                 }
                 AppEffect::CustomMenu(id) => {
-                    self.apply_persona_menu(ctx, &id);
+                    if !field_menu::run(ctx, &id) {
+                        self.apply_persona_menu(ctx, &id);
+                    }
                 }
                 AppEffect::AddFlowCancel => {
                     if let Some(b) = self.booted.as_mut() {
