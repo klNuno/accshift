@@ -9,21 +9,22 @@ publish = false
 accshift-core = { path = "../accshift-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# The crate Tauri's path resolver calls (tauri 2.11 depends on dirs 6), so
-# `EguiAppContext` lands on the very same folders as the Tauri app.
-dirs = "6"
+# The crate Tauri's path resolver calls (dirs 6 in tauri 2.11), so
+# `EguiAppContext` lands on the very same folders as the Tauri app. dirs 7
+# only moves Windows' `preference_dir`, unused here.
+dirs = "7"
 # The shared HTTP client the Tauri app keeps in its state. Same spec as the
 # root workspace so features unify with accshift-core's.
-reqwest = { version = "0.12", default-features = false, features = [
-  "rustls-tls",
+reqwest = { version = "0.13", default-features = false, features = [
+  "rustls-no-provider",
   "json",
   "blocking",
 ] }
 # `descriptor_select_file`.
 rfd = "0.17"
 # The async half of the Steam, CS2 bridge and Roblox commands (Tauri runs them
-# on its tokio runtime). Same minor as the root workspace pin.
-tokio = { version = "1.47", features = ["rt-multi-thread"] }
+# on its tokio runtime). Same minor as the root workspace.
+tokio = { version = "1.53", features = ["rt-multi-thread"] }
 # `legacy_web_storage`: the WebKit origin folder name (SHA-256). Same major
 # as accshift-core, so nothing new is built.
 sha2 = "0.11"
@@ -33,18 +34,18 @@ sha2 = "0.11"
 # installed database) and reads /usr/share/zoneinfo elsewhere. Same version
 # as the root workspace lock.
 jiff = "0.2.35"
-# `lifecycle::updater`: the port of tauri-plugin-updater 2.11. Same crates and
-# majors the plugin builds with: minisign-verify for the `.sig`, semver for
+# `lifecycle::updater`: the port of tauri-plugin-updater 2.11, on the crates
+# the plugin builds with: minisign-verify for the `.sig`, semver for
 # the version compare, base64 for the key and signature strings, time for the
 # RFC 3339 `pub_date`, url and percent-encoding for the endpoint templating,
 # infer and tempfile for the downloaded installer.
-minisign-verify = "0.2"
+minisign-verify = "0.3"
 semver = "1"
 base64 = "0.23"
 time = { version = "0.3", features = ["parsing", "formatting"] }
 url = { version = "2", features = ["serde"] }
 percent-encoding = "2"
-infer = "0.19"
+infer = "0.22"
 tempfile = "3"
 # `lifecycle::deep_link`: `dunce::simplified` of the canonical exe path, as
 # tauri-utils resolves it before the plugin writes `"<exe>" "%1"`.
@@ -68,7 +69,7 @@ windows-sys = { version = "0.61", features = [
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 # `lifecycle::deep_link`: the HKCU scheme registration, on the crate
 # tauri-plugin-deep-link 2.4 writes it with.
-windows-registry = "0.5"
+windows-registry = "0.100"
 # `legacy_web_storage`: reads the WebView2 localStorage LevelDB of v0.x
 # installs. Pure Rust, Snappy blocks and the `.log` replay included. No `fs`
 # feature: the files are copied into its in-memory env, never opened on disk.
@@ -84,8 +85,8 @@ tar = "0.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # `lifecycle::single_instance`: the D-Bus name tauri-plugin-single-instance
-# 2.4 owns on Linux, same major.
-zbus = "5.9"
+# 2.4 owns on Linux.
+zbus = "6"
 # `lifecycle::deep_link`: the `.desktop` handler file the plugin merges.
 rust-ini = "0.21"
 

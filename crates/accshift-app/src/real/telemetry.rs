@@ -111,7 +111,7 @@ impl Telemetry {
             .clone()
             .ok_or_else(|| NO_ENDPOINT.to_string())?;
         let ua = telemetry::user_agent(app_version());
-        let client = reqwest::blocking::Client::builder()
+        let client = accshift_core::http::blocking_client_builder()
             .user_agent(ua.clone())
             .build()
             .map_err(|e| format!("client: {e}"))?;
@@ -448,7 +448,7 @@ pub(super) fn complete_onboarding(
             }
             let version = app_version();
             let ua = telemetry::user_agent(version);
-            let client = match reqwest::blocking::Client::builder()
+            let client = match accshift_core::http::blocking_client_builder()
                 .user_agent(ua.clone())
                 .build()
             {

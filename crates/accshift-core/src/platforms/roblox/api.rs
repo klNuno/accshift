@@ -37,7 +37,7 @@ pub(super) struct ThumbnailResponse {
 pub(super) fn blocking_client() -> Result<&'static reqwest::blocking::Client, String> {
     static CLIENT: OnceLock<Result<reqwest::blocking::Client, String>> = OnceLock::new();
     let result = CLIENT.get_or_init(|| {
-        reqwest::blocking::Client::builder()
+        crate::http::blocking_client_builder()
             .timeout(std::time::Duration::from_secs(10))
             .connect_timeout(std::time::Duration::from_secs(5))
             .build()

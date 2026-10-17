@@ -31,7 +31,7 @@ impl BootState {
 /// connect. The Tauri app exits when it cannot build one; here the caller
 /// gets the error.
 pub(super) fn build_http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+    accshift_core::http::client_builder()
         .timeout(Duration::from_secs(10))
         .connect_timeout(Duration::from_secs(5))
         .build()

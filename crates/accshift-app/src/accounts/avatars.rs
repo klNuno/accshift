@@ -486,7 +486,7 @@ pub struct HttpAvatarClient {
 
 impl HttpAvatarClient {
     pub fn new() -> Result<Self, String> {
-        reqwest::blocking::Client::builder()
+        accshift_core::http::blocking_client_builder()
             .timeout(Duration::from_secs(15))
             .build()
             .map(|client| Self { client })

@@ -234,7 +234,7 @@ fn run(
     dropped: Arc<AtomicU64>,
     sending: Arc<Mutex<()>>,
 ) {
-    let http = match reqwest::blocking::Client::builder()
+    let http = match crate::http::blocking_client_builder()
         .user_agent(client::user_agent(&ctx.app_version))
         .timeout(Duration::from_secs(10))
         // Without an explicit connect timeout, a TCP connect behind a
@@ -536,7 +536,7 @@ mod tests {
         // Snapshot events are documented as Mode B only (events.rs). Under
         // Mode A they must be dropped rather than sent, even though Mode A
         // itself is enabled and would otherwise flush fine.
-        let http = reqwest::blocking::Client::new();
+        let http = crate::http::blocking_client_builder().build().unwrap();
         let ctx = test_ctx();
         let consent = Arc::new(Mutex::new(ConsentState {
             mode_a: true,
@@ -579,7 +579,7 @@ mod tests {
 
     #[test]
     fn a_mode_b_flush_drops_events_recorded_before_that_consent() {
-        let http = reqwest::blocking::Client::new();
+        let http = crate::http::blocking_client_builder().build().unwrap();
         let consent = Arc::new(Mutex::new(ConsentState {
             mode_a: true,
             mode_b: true,
@@ -607,7 +607,7 @@ mod tests {
 
     #[test]
     fn flush_without_consent_drops_and_never_pings() {
-        let http = reqwest::blocking::Client::new();
+        let http = crate::http::blocking_client_builder().build().unwrap();
         let consent = Arc::new(Mutex::new(ConsentState::default()));
         let dropped = Arc::new(AtomicU64::new(0));
         let mut state = WorkerState {
@@ -635,7 +635,7 @@ mod tests {
 
     #[test]
     fn a_failed_flush_keeps_the_batch_for_the_next_attempt() {
-        let http = reqwest::blocking::Client::builder()
+        let http = crate::http::blocking_client_builder()
             .timeout(Duration::from_millis(200))
             .connect_timeout(Duration::from_millis(200))
             .build()

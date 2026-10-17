@@ -18,10 +18,17 @@ authors = ["meetsu"]
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = [
-  "rustls-tls",
+reqwest = { version = "0.13", default-features = false, features = [
+  "rustls-no-provider",
   "json",
   "blocking",
+] }
+# The crypto provider of reqwest's rustls, installed by accshift-core's http
+# module: ring, as reqwest 0.12's `rustls-tls` had.
+rustls = { version = "0.23", default-features = false, features = [
+  "ring",
+  "std",
+  "tls12",
 ] }
 thiserror = "2"
 rusqlite = { version = "0.40", features = ["bundled"] }
@@ -35,7 +42,7 @@ windows-sys = { version = "0.61", features = [
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
-tokio = { version = "=1.47", features = ["rt", "rt-multi-thread", "macros"] }
+tokio = { version = "1.53", features = ["rt", "rt-multi-thread", "macros"] }
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 # ShellExecuteExW instead of a powershell.exe child per link or folder open.
 open = { version = "5", features = ["shellexecute-on-windows"] }
@@ -44,11 +51,7 @@ clap = { version = "4", features = ["derive"] }
 directories = "6"
 is-terminal = "0.4"
 unicode-width = "0.2"
-keyring = { version = "3", default-features = false, features = [
-  "apple-native",
-  "sync-secret-service",
-  "crypto-rust",
-] }
+keyring = "4"
 pbkdf2 = "0.13"
 sha2 = "0.11"
 zeroize = "1"

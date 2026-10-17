@@ -500,7 +500,7 @@ impl Updater {
     }
 
     fn client(&self) -> UpdaterResult<reqwest::blocking::Client> {
-        reqwest::blocking::Client::builder()
+        accshift_core::http::blocking_client_builder()
             .user_agent(UPDATER_USER_AGENT)
             .timeout(self.config.timeout)
             .build()
@@ -815,7 +815,7 @@ impl Update {
         on_download_finish: impl FnOnce(),
     ) -> UpdaterResult<Vec<u8>> {
         let headers = headers_with_accept(&self.headers, "application/octet-stream")?;
-        let client = reqwest::blocking::Client::builder()
+        let client = accshift_core::http::blocking_client_builder()
             .user_agent(UPDATER_USER_AGENT)
             .timeout(self.timeout)
             .build()

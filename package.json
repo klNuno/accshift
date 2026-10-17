@@ -8,7 +8,7 @@
     "gates": "node scripts/gates.mjs"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.12.1"
+    "@tauri-apps/cli": "^2.12.3"
   },
   "packageManager": "pnpm@10.32.1"
 }

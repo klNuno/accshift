@@ -627,7 +627,7 @@ mod tests {
     }
 
     fn client() -> reqwest::Client {
-        reqwest::Client::builder()
+        crate::http::client_builder()
             .timeout(Duration::from_secs(3))
             .build()
             .unwrap()
