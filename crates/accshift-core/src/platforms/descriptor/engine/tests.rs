@@ -1,3 +1,4 @@
+#[cfg(windows)]
 use super::super::schema::RegistryHive;
 use super::*;
 use std::sync::Arc;
