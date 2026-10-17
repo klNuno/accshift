@@ -118,6 +118,49 @@ fn needs_read_cost() {
     println!("needs_read: {per_call:?} per call (12 stores, debug build)");
 }
 
+// ------------------------------------------------------------- boot step
+
+/// The app folders under a scratch folder.
+struct Dirs(PathBuf);
+
+impl accshift_core::AppContext for Dirs {
+    fn app_config_dir(&self) -> Result<PathBuf, String> {
+        Ok(self.0.join("config"))
+    }
+    fn app_data_dir(&self) -> Result<PathBuf, String> {
+        Ok(self.0.join("data"))
+    }
+    fn app_local_data_dir(&self) -> Result<PathBuf, String> {
+        Ok(self.0.join("local"))
+    }
+    fn app_cache_dir(&self) -> Result<PathBuf, String> {
+        Ok(self.0.join("cache"))
+    }
+}
+
+#[test]
+fn the_boot_step_reads_while_a_store_is_missing_on_disk() {
+    let scratch = Scratch::new("boot");
+    let dirs = Dirs(scratch.0.clone());
+    let mut reads = 0;
+    let mut step = || {
+        legacy_web_storage::read_for_boot_with(&dirs, || {
+            reads += 1;
+            LegacyRead {
+                storage: map(&[("accshift_settings", SETTINGS)]),
+                notes: Vec::new(),
+            }
+        })
+    };
+    let first = step().expect("no store on disk yet");
+    assert_eq!(first.storage, map(&[("accshift_settings", SETTINGS)]));
+    for id in CLIENT_STORE_IDS {
+        accshift_core::storage::save_client_store(&dirs, id, &json!({})).unwrap();
+    }
+    assert!(step().is_none());
+    assert_eq!(reads, 1);
+}
+
 // ---------------------------------------------------------- WebKit (sqlite)
 
 /// An `ItemTable` the way WebKit writes it: text keys, UTF-16LE blob values.
@@ -477,6 +520,22 @@ mod chromium {
                 &format!("{{\"blob\":\"{}\"}}", "a".repeat(4000)),
             ),
         ])
+    }
+
+    /// Writes [`build_fixture`] where the egui probe looks for a v0.x
+    /// profile (`window/probe.rs`):
+    /// `ACCSHIFT_LEGACY_FIXTURE=<probe dir>/webview cargo test --test
+    /// legacy_web_storage -- --ignored write_legacy_fixture_for_the_probe`.
+    #[test]
+    #[ignore]
+    fn write_legacy_fixture_for_the_probe() {
+        let root = std::env::var_os("ACCSHIFT_LEGACY_FIXTURE")
+            .map(PathBuf::from)
+            .expect("ACCSHIFT_LEGACY_FIXTURE=<probe dir>/webview");
+        build_fixture(&legacy_web_storage::webview2_leveldb_dir(
+            &root,
+            BUNDLE_IDENTIFIER,
+        ));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use accshift_app::legacy_web_storage;
 use accshift_app::lifecycle::single_instance::{self, Launch, SingleInstance};
 use accshift_app::real::{RealBackend, BUNDLE_IDENTIFIER};
 use accshift_core::config;
@@ -137,6 +138,9 @@ fn main() {
         });
     }
 
+    // The probe's stand-in for the user's local app data, where a v0.x
+    // install left its WebView2 profile (window/probe.rs).
+    let legacy_root = probe.as_ref().map(|dir| dir.join("webview"));
     // A normal run: the backend on the user's app folders, and the window
     // where Tauri's opens (`build_main_window`).
     let real = (!hidden).then(|| {
@@ -154,9 +158,22 @@ fn main() {
     });
     // The log rotation, "App setup started" and the panic hook, on a thread
     // while the window builds, joined before anything else logs (`setup`).
+    // The `localStorage` of a v0.x install is read first, before the hook: a
+    // corrupt LevelDB panics inside the reader, which catches it, and the
+    // hook would report it.
     let session = real.as_ref().map(|backend| {
         let backend = Arc::clone(backend);
-        std::thread::spawn(move || backend.begin_session())
+        std::thread::spawn(move || {
+            let ctx = backend.context().as_ref();
+            let legacy = match legacy_root {
+                Some(root) => legacy_web_storage::read_for_boot_with(ctx, || {
+                    legacy_web_storage::read_in(&root, BUNDLE_IDENTIFIER)
+                }),
+                None => legacy_web_storage::read_for_boot(ctx, BUNDLE_IDENTIFIER),
+            };
+            backend.begin_session();
+            legacy
+        })
     });
     let saved = real
         .as_ref()
@@ -223,8 +240,16 @@ fn main() {
         match real {
             // The real app folders, through accshift-core.
             Some(backend) => {
-                if let Some(session) = session {
-                    let _ = session.join();
+                let legacy = session.and_then(|s| s.join().ok()).flatten();
+                if let Some(read) = &legacy {
+                    // Places and key names, never a value.
+                    let _ = accshift_core::logging::append_app_log(
+                        backend.context(),
+                        "info",
+                        "storage.legacy",
+                        "Read the legacy web storage",
+                        Some(&read.notes.join("; ")),
+                    );
                 }
                 // The rest of `setup`, in its order. The probe's folders
                 // are a scratch copy: no telemetry from it, and the keyring
@@ -237,7 +262,11 @@ fn main() {
                 #[cfg(not(windows))]
                 let hwnd = 0;
                 let shell = Shell::new(
-                    Screen::App(Box::new(AppModel::real(ctx, Arc::clone(&backend)))),
+                    Screen::App(Box::new(AppModel::real(
+                        ctx,
+                        Arc::clone(&backend),
+                        legacy.map(|read| read.storage),
+                    ))),
                     scenes,
                 );
                 if !probing {

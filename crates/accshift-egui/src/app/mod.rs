@@ -67,7 +67,7 @@ use accshift_app::platforms::PlatformAccount;
 use accshift_app::real::RealBackend;
 use accshift_app::secure::screen::SecureScreen;
 use accshift_app::settings::AnimationsMode;
-use accshift_app::storage::{self, StoreId};
+use accshift_app::storage::{self, LegacyLocalStorage, StoreId};
 use accshift_app::stores::{ClientStores, StoreContext, ViewMode};
 use accshift_app::streamer::StreamerModeController;
 use accshift_app::text::Text;
@@ -402,6 +402,9 @@ pub struct AppModel {
     jobs: Jobs,
     clock: Clock,
     boot_job: Option<Pending<BootResult>>,
+    /// The `localStorage` of a v0.x install, read before the log session
+    /// began (main.rs), for `initializeClientStorage`.
+    legacy: Option<LegacyLocalStorage>,
     boot_error: Option<String>,
     booted: Option<Booted>,
     saves: Vec<(StoreId, Pending<BackendResult<Option<String>>>)>,
@@ -514,9 +517,14 @@ impl AppModel {
 
     /// A normal run on the user's real app folders, the backend shared with
     /// the window ([`crate::window::Host`]).
-    pub fn real(ctx: &Context, backend: Arc<RealBackend>) -> AppModel {
+    pub fn real(
+        ctx: &Context,
+        backend: Arc<RealBackend>,
+        legacy: Option<LegacyLocalStorage>,
+    ) -> AppModel {
         let backend: Arc<dyn Backend> = backend;
         let mut model = AppModel::with_backend(ctx, backend, None, Clock::wall());
+        model.legacy = legacy;
         model.os_reduced_motion = os_prefers_reduced_motion();
         model.updates = updates::Updates::real(Instant::now());
         model
@@ -542,6 +550,7 @@ impl AppModel {
             jobs,
             clock,
             boot_job,
+            legacy: None,
             boot_error: None,
             booted: None,
             saves: Vec::new(),
@@ -692,11 +701,11 @@ impl AppModel {
             setup.patch_stores(&mut payload.storage_snapshot.stores);
         }
         let runtime_os = RuntimeOs::parse(&payload.runtime_os);
+        let legacy = self.legacy.take();
         let (storage, report) = storage::initialize(
             self.backend.as_ref(),
             Some(payload.storage_snapshot),
-            // The WebView2 localStorage of a v0.x install: a later job.
-            None,
+            legacy.as_ref(),
             self.mock.is_some(),
         );
         let user_platforms = payload.user_platforms.clone();

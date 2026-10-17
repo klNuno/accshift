@@ -5,7 +5,10 @@
 //! nothing on screen. A thread prints where the frame put it and when boot
 //! showed it, moves it (the debounced geometry save), then closes it (the
 //! close sequence). Run it twice: the second launch opens where the first
-//! one closed.
+//! one closed. `<dir>/webview` stands for the user's local app data, where a
+//! v0.x install left its WebView2 `localStorage`: an empty scratch folder
+//! has none, and `write_legacy_fixture_for_the_probe` in accshift-app's
+//! tests writes one there.
 
 use super::frame;
 use accshift_core::{AppContext, AppCtx};

@@ -52,6 +52,7 @@ mod webkit_sqlite;
 
 use crate::storage::{LegacyLocalStorage, CLIENT_STORE_IDS, LEGACY_LOCAL_STORAGE_KEYS};
 use crate::types::ClientStorageSnapshot;
+use accshift_core::AppContext;
 use std::path::{Path, PathBuf};
 
 /// What [`read`] found. `storage` only ever holds the 12 legacy keys.
@@ -86,6 +87,24 @@ pub fn needs_read(snapshot: &ClientStorageSnapshot) -> bool {
     CLIENT_STORE_IDS
         .iter()
         .any(|id| snapshot.stores.get(*id).is_none_or(|value| value.is_null()))
+}
+
+/// The boot's `LegacyStorageRead` step ([`crate::lifecycle::BootStep`]):
+/// [`read`] when the stores under `ctx` need it. It runs before the log
+/// session begins, so the snapshot is loaded without the log line of
+/// `load_client_storage_snapshot`; a snapshot that cannot be read gives
+/// `None`, as [`crate::storage::initialize`] would migrate nothing then.
+pub fn read_for_boot(ctx: &dyn AppContext, identifier: &str) -> Option<LegacyRead> {
+    read_for_boot_with(ctx, || read(identifier))
+}
+
+/// [`read_for_boot`] with the reader given.
+pub fn read_for_boot_with(
+    ctx: &dyn AppContext,
+    read: impl FnOnce() -> LegacyRead,
+) -> Option<LegacyRead> {
+    let snapshot = accshift_core::storage::load_client_storage_snapshot(ctx).ok()?;
+    needs_read(&snapshot).then(read)
 }
 
 /// Reads the legacy `localStorage` of the app `identifier` (the Tauri bundle
