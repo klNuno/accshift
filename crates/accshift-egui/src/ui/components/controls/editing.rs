@@ -135,6 +135,9 @@ pub struct Edited {
     pub changed: bool,
     pub enter: bool,
     pub escape: bool,
+    /// PageUp or PageDown moved the caret without Shift: Chromium scrolls
+    /// its line to the top (`CursorAlignOnScroll::kAlways`).
+    pub page: bool,
 }
 
 /// The value as laid out this frame.
@@ -481,6 +484,11 @@ impl Editor {
                             self.row_edge(rows, *key == Key::End, m.shift);
                             continue;
                         }
+                        Key::PageUp | Key::PageDown if !m.command => {
+                            let up = *key == Key::PageUp;
+                            out.page |= self.page(value, rows, up, m.shift) && !m.shift;
+                            continue;
+                        }
                         _ => {}
                     }
                 }
@@ -519,6 +527,43 @@ impl Editor {
         self.upstream = up;
         self.goal_x = Some(goal);
         self.step = None;
+    }
+
+    /// PageUp or PageDown (`ModifyWithPageGranularity`): row by row at the
+    /// kept x while the caret moves at most [`Rows::paging`]; reaching the
+    /// first or last row goes on to the start or the end. With no row in
+    /// reach nothing moves, and it returns false.
+    fn page(&mut self, value: &str, rows: &Rows, up: bool, extend: bool) -> bool {
+        let n = value.chars().count();
+        let sel = self.selection();
+        let from = match (extend, sel.is_empty(), up) {
+            (false, false, true) => sel.start,
+            (false, false, false) => sel.end,
+            _ => self.caret,
+        };
+        let (row, x) = rows.locate(from, self.upstream && from == self.caret);
+        let goal = self.goal_x.unwrap_or(x);
+        let last = rows.len() - 1;
+        let reach = ((rows.page + 1e-3) / rows.height).floor().max(0.0) as usize;
+        let (to, upstream) = if up && reach >= row {
+            (0, false)
+        } else if !up && row + reach >= last {
+            (n, false)
+        } else if reach == 0 {
+            return false;
+        } else if up {
+            rows.at(row - reach, goal)
+        } else {
+            rows.at(row + reach, goal)
+        };
+        self.caret = to.min(n);
+        if !extend {
+            self.anchor = self.caret;
+        }
+        self.upstream = upstream;
+        self.goal_x = Some(goal);
+        self.step = None;
+        true
     }
 
     /// Home or End in a `<textarea>`: the start or the end of the caret's
@@ -827,6 +872,8 @@ pub struct Rows {
     top: f32,
     /// The line box's height, in points.
     height: f32,
+    /// How far PageUp and PageDown move the caret, in points.
+    page: f32,
     /// The composition, in the laid out text: hits inside it go to its
     /// start, after it they move back by its length.
     preedit: Range<usize>,
@@ -884,8 +931,17 @@ impl Rows {
             rows,
             top: origin.y,
             height,
+            page: 0.0,
             preedit,
         }
+    }
+
+    /// PageUp and PageDown move by 87.5 % of the `scrollport` height (in
+    /// points), cut to whole device pixels as Blink's
+    /// `VerticalScrollDistance`.
+    pub fn paging(mut self, scrollport: f32, ppp: f32) -> Rows {
+        self.page = ((scrollport * ppp).trunc() * 0.875).trunc() / ppp;
+        self
     }
 
     pub fn len(&self) -> usize {
@@ -1267,6 +1323,13 @@ mod tests {
         assert_eq!((ed.caret, ed.anchor), (3, 3));
     }
 
+    /// The word modifier: Ctrl, Option on macOS.
+    const WORD: Modifiers = if cfg!(target_os = "macos") {
+        Modifiers::ALT
+    } else {
+        Modifiers::CTRL
+    };
+
     #[test]
     fn the_caret_moves_inserts_and_deletes_in_the_middle() {
         let rules = Rules::text();
@@ -1277,10 +1340,7 @@ mod tests {
         type_keys(
             &mut ed,
             &mut value,
-            &[
-                key(Key::ArrowLeft, Modifiers::CTRL),
-                key(Key::ArrowLeft, none),
-            ],
+            &[key(Key::ArrowLeft, WORD), key(Key::ArrowLeft, none)],
             &rules,
         );
         assert_eq!(ed.caret, 5);
@@ -1289,12 +1349,7 @@ mod tests {
         type_keys(&mut ed, &mut value, &[key(Key::Delete, none)], &rules);
         assert_eq!(value, "hello,world");
         // The comma is a word of its own.
-        type_keys(
-            &mut ed,
-            &mut value,
-            &[key(Key::Backspace, Modifiers::CTRL)],
-            &rules,
-        );
+        type_keys(&mut ed, &mut value, &[key(Key::Backspace, WORD)], &rules);
         assert_eq!(value, "helloworld");
         assert_eq!(ed.caret, 5);
         // Shift+End selects to the end; typing replaces it.
@@ -1408,6 +1463,7 @@ mod tests {
             rows: vec![row(0, 4, false), row(4, 3, true), row(8, 2, false)],
             top: 0.0,
             height: 16.0,
+            page: 0.0,
             preedit: 0..0,
         }
     }
@@ -1455,6 +1511,66 @@ mod tests {
             &rows,
         );
         assert_eq!(ed.caret, 10);
+    }
+
+    #[test]
+    fn a_textarea_pages_by_whole_rows() {
+        // Ten rows "ab\n" of 16 points; a 40 point page reaches two rows.
+        let mut value = "ab\n".repeat(9) + "ab";
+        let row = |i: usize| Row {
+            start: i * 3,
+            xs: vec![0.0, 10.0, 20.0],
+            newline: i < 9,
+        };
+        let rows = Rows {
+            rows: (0..10).map(row).collect(),
+            top: 0.0,
+            height: 16.0,
+            page: 0.0,
+            preedit: 0..0,
+        }
+        .paging(46.0, 1.0);
+        assert_eq!(rows.page, 40.0);
+        let ctx = Context::default();
+        let rules = Rules::area(100);
+        let mut ed = Editor::default();
+        ed.sync(&value);
+        ed.caret = 1;
+        ed.anchor = 1;
+        let down = key(Key::PageDown, Modifiers::NONE);
+        let out = ed.area_keys(&ctx, &mut value, std::slice::from_ref(&down), &rules, &rows);
+        assert!(out.page && !out.changed);
+        assert_eq!((ed.caret, ed.anchor), (7, 7));
+        // Shift extends and does not align the line.
+        let out = ed.area_keys(
+            &ctx,
+            &mut value,
+            &[key(Key::PageDown, Modifiers::SHIFT)],
+            &rules,
+            &rows,
+        );
+        assert!(!out.page);
+        assert_eq!((ed.anchor, ed.caret), (7, 13));
+        // From row 8 the last row is in reach: the end.
+        ed.caret = 25;
+        ed.anchor = 25;
+        ed.goal_x = None;
+        ed.area_keys(&ctx, &mut value, std::slice::from_ref(&down), &rules, &rows);
+        assert_eq!(ed.caret, 29);
+        let up = key(Key::PageUp, Modifiers::NONE);
+        ed.area_keys(&ctx, &mut value, std::slice::from_ref(&up), &rules, &rows);
+        // The column from before the end comes back.
+        assert_eq!(ed.caret, 22);
+        ed.area_keys(
+            &ctx,
+            &mut value,
+            &[up.clone(), up.clone(), up.clone()],
+            &rules,
+            &rows,
+        );
+        assert_eq!(ed.caret, 4);
+        ed.area_keys(&ctx, &mut value, std::slice::from_ref(&up), &rules, &rows);
+        assert_eq!(ed.caret, 0);
     }
 
     #[test]

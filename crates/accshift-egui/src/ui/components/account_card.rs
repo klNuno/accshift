@@ -739,7 +739,17 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
         ..BoxStyle::default()
     }
     .paint_transformed(&painter, avatar, avatar_transform);
-    let radius = Corners::all(v.avatar_radius * transform.scale);
+    // A lifted picture keeps the fractional `translateY` its frame paints
+    // at; under a scaled card it starts from whole device pixels.
+    let (frame, frame_transform, radius) = if transform.scale == 1.0 {
+        (avatar, avatar_transform, Corners::all(v.avatar_radius))
+    } else {
+        (
+            snap::rect(mapped, ppp),
+            Transform::NONE,
+            Corners::all(v.avatar_radius * transform.scale),
+        )
+    };
     let mut fallback_deferred = false;
     match &props.avatar {
         AvatarContent::Picture(picture) => {
@@ -748,7 +758,7 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
                 paint_picture(
                     &painter,
                     picture,
-                    snap::rect(mapped, ppp),
+                    (frame, frame_transform),
                     zoom,
                     radius,
                     reveal,
@@ -1071,7 +1081,7 @@ fn placeholder_in(ctx: &Context, id: Id, v: &Vars) -> f32 {
 fn paint_picture(
     painter: &egui::Painter,
     picture: &AvatarPicture,
-    rect: Rect,
+    (rect, transform): (Rect, Transform),
     zoom: f32,
     radius: Corners,
     reveal: f32,
@@ -1086,29 +1096,32 @@ fn paint_picture(
         Some(blurred) if blur > 0.0 => {
             if blur < 1.0 {
                 let uv = cover_uv(picture.size, zoom);
-                paint::paint_image(
+                paint::paint_image_transformed(
                     painter,
                     picture.texture,
                     rect,
+                    transform,
                     uv,
                     radius,
                     tint(reveal * (1.0 - blur), 1.0),
                 );
             }
-            paint::paint_image(
+            paint::paint_image_transformed(
                 painter,
                 blurred,
                 rect,
+                transform,
                 cover_uv([1, 1], zoom),
                 radius,
                 tint(reveal * blur, 1.0),
             );
         }
         _ => {
-            paint::paint_image(
+            paint::paint_image_transformed(
                 painter,
                 picture.texture,
                 rect,
+                transform,
                 cover_uv(picture.size, zoom),
                 radius,
                 tint(reveal, 1.0 - 0.5 * blur),

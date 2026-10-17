@@ -816,6 +816,7 @@ fn css_field(
     let mut ed = Editor::load(&ctx, id, text);
     let mut changed = false;
     let mut moved = false;
+    let mut page = false;
     if focused {
         ui.memory_mut(|m| {
             m.set_focus_lock_filter(
@@ -829,13 +830,14 @@ fn css_field(
             )
         });
         let before = css_layout(&ctx, text, &ed, s, viewport, *scroll_top, true);
+        let rows = before.rows.paging(viewport.height(), ppp);
         let caret = (ed.caret, ed.anchor, ed.upstream);
-        ed.area_pointer(ui, &response, text, &rules, &before.rows);
+        ed.area_pointer(ui, &response, text, &rules, &rows);
         let events: Vec<Event> = ui.input(|i| i.events.clone());
-        changed = ed
-            .area_keys(&ctx, text, &events, &rules, &before.rows)
-            .changed;
-        moved = changed || (ed.caret, ed.anchor, ed.upstream) != caret;
+        let out = ed.area_keys(&ctx, text, &events, &rules, &rows);
+        changed = out.changed;
+        page = out.page;
+        moved = changed || page || (ed.caret, ed.anchor, ed.upstream) != caret;
         if moved {
             // Chromium restarts the blink on every caret move.
             let now = ui.input(|i| i.time);
@@ -851,10 +853,10 @@ fn css_field(
     let (lead, height) = s.mono.fragment(&ctx).unwrap_or((0.0, line));
     if moved {
         // `RevealSelection`: the caret into the scrollport, to the nearest
-        // edge.
+        // edge, or to the top after a page move.
         let (row, _) = laid.rows.locate(laid.caret, ed.upstream);
         let y = CSS_PAD + row as f32 * line + lead;
-        let mut top = *scroll_top;
+        let mut top = if page { y } else { *scroll_top };
         if y + height > top + viewport.height() {
             top = y + height - viewport.height();
         }

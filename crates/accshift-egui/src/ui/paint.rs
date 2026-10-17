@@ -1391,8 +1391,22 @@ pub fn paint_image(
     radius: Corners,
     tint: Color32,
 ) {
+    paint_image_transformed(painter, texture, rect, Transform::NONE, uv, radius, tint);
+}
+
+/// [`paint_image`] under `transform`, placed as [`BoxStyle::paint_transformed`]
+/// places a box.
+pub fn paint_image_transformed(
+    painter: &Painter,
+    texture: TextureId,
+    rect: Rect,
+    transform: Transform,
+    uv: Rect,
+    radius: Corners,
+    tint: Color32,
+) {
     let ppp = painter.ctx().pixels_per_point();
-    let geo = BoxGeometry::new(rect, Transform::NONE, radius, &Border::NONE, ppp);
+    let geo = BoxGeometry::new(rect, transform, radius, &Border::NONE, ppp);
     let bb = geo.border_box;
     let origin = vec2(bb.x0, bb.y0);
     let extent = vec2(bb.width(), bb.height()).max(Vec2::splat(1e-3));
