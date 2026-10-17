@@ -299,7 +299,7 @@ pub enum Motion {
 }
 
 fn motion_id() -> Id {
-    Id::new("accshift::anim::motion")
+    Id::unique("accshift::anim::motion")
 }
 
 pub fn set_motion(ctx: &Context, motion: Motion) {
@@ -892,7 +892,7 @@ mod tests {
     fn reduced_motion_disables_everything() {
         let ctx = Context::default();
         set_motion(&ctx, Motion::Reduced);
-        let id = Id::new("t");
+        let id = Id::unique("t");
         let spec = Transition::new(1.0, Timing::EASE);
         assert_eq!(transition(&ctx, id, 0.0f32, &spec), 0.0);
         assert_eq!(transition(&ctx, id, 1.0f32, &spec), 1.0);

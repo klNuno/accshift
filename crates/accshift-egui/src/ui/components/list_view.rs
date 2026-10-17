@@ -1048,7 +1048,7 @@ fn list_row(
     let response = ui
         .interact(painted, id, Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     ctx.accesskit_node_builder(id, |node| node.set_role(Role::Button));
     let RowLook {
         selected,
@@ -1800,7 +1800,7 @@ fn preview_panel(
     let response = ui
         .interact(painted, id.with("switch"), Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
     let brightness = if response.is_pointer_button_down_on() {
         0.9
     } else if response.hovered() {
@@ -1864,7 +1864,7 @@ fn scrollbar(
         pos2(track.left(), track.top() + top),
         vec2(SCROLLBAR, thumb_h),
     );
-    let response = ui.interact(thumb, Id::new("accshift-list-scrollbar"), Sense::drag());
+    let response = ui.interact(thumb, Id::unique("accshift-list-scrollbar"), Sense::drag());
     if response.drag_started() {
         if let Some(p) = response.interact_pointer_pos() {
             state.thumb_drag = Some((p.y, state.scroll));
@@ -1903,7 +1903,7 @@ mod tests {
 
     impl ListHost for Fake {
         fn mount(&mut self, key: &str) -> Id {
-            Id::new(key)
+            Id::unique(key)
         }
 
         fn avatar(&mut self, _: &str, _: &AccountCardItem, _: u32, _: bool) -> AvatarContent {
@@ -2124,6 +2124,7 @@ mod tests {
                 delta: vec2(0.0, -10_000.0),
                 modifiers: Modifiers::NONE,
                 phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Wheel,
             },
         ]);
         assert_eq!(bench.state.scroll, 566.0);

@@ -35,8 +35,8 @@
 use accshift_app::i18n::{translate, Locale};
 use egui::emath::TSTransform;
 use egui::{
-    pos2, vec2, Context, Id, PointerButton, Pos2, Rect, Sense, Ui, UiBuilder, Vec2, WidgetInfo,
-    WidgetType,
+    pos2, vec2, Context, Id, PointerButton, Pos2, Rect, Role, Sense, Ui, UiBuilder, Vec2,
+    WidgetInfo,
 };
 
 use super::controls::button::{self, ButtonProps, ButtonStyle, Transitions};
@@ -95,7 +95,7 @@ const WIN_BUTTON: f32 = 36.0;
 pub fn frost(ui: &Ui, rect: Rect, visible: bool, v: &Vars) {
     let ctx = ui.ctx();
     let spec = if visible { &T_FROST_IN } else { &T_FROST_OUT };
-    let opacity = anim::transition_bool(ctx, Id::new("inactivity-frost"), visible, spec);
+    let opacity = anim::transition_bool(ctx, Id::unique("inactivity-frost"), visible, spec);
     if opacity <= 0.0 {
         return;
     }
@@ -265,7 +265,7 @@ pub fn afk_overlay(ui: &Ui, stage: Rect, props: &AfkProps) {
     let ctx = ui.ctx();
     let ppp = ctx.pixels_per_point();
     let v = props.vars;
-    let id = Id::new("afk");
+    let id = Id::unique("afk");
     let overlay = anim::transition_bool(ctx, id.with("overlay"), props.visible, &T_AFK);
     let reveal = if props.visible {
         T_AFK.with_delay(props.reveal_delay)
@@ -382,7 +382,7 @@ fn win_buttons(
         let label = translate(locale, key);
         let hovered = live && {
             let response = layer.interact(r, bid, Sense::click());
-            response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, &label));
+            response.widget_info(|| WidgetInfo::labeled(Role::Button, true, &label));
             if response.clicked() {
                 clicked = Some(which);
             }
@@ -478,7 +478,7 @@ pub fn streamer_overlay(ui: &mut Ui, stage: Rect, props: &StreamerProps) -> Vec<
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
     let v = props.vars;
-    let id = Id::new("streamer");
+    let id = Id::unique("streamer");
     let mut events = Vec::new();
     let opacity = anim::transition_bool(&ctx, id.with("visible"), props.active, &T_STREAMER);
     let wave_t = wave_clock(&ctx, id.with("wave"), props.active && props.motion, 0.0);
@@ -608,7 +608,7 @@ pub enum PinEvent {
 
 /// The field's id: the screen focuses it.
 pub fn pin_input_id() -> Id {
-    Id::new("pin-lock").with("input")
+    Id::unique("pin-lock").with("input")
 }
 
 /// `.pin-input`: 16 px centred, letter-spacing 0.22em, padding 9 10, a
@@ -639,7 +639,7 @@ pub fn pin_overlay(ui: &mut Ui, window: Rect, props: &PinProps) -> Vec<PinEvent>
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
     let v = props.vars;
-    let id = Id::new("pin-lock");
+    let id = Id::unique("pin-lock");
     let mut events = Vec::new();
     let leaving = anim::transition_bool(&ctx, id.with("unlocking"), props.unlocking, &T_UNLOCK);
     let opacity = 1.0 - leaving;

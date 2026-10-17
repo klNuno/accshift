@@ -1,22 +1,40 @@
 //! Everything related to text, fonts, text layout, cursors etc.
 
 pub mod cursor;
-mod font;
+// accshift patch: the per-face rasterizer hook.
+mod face_rasterizer;
+mod face_store;
+mod family;
+mod font_data;
+mod font_definitions;
+mod font_face;
+mod font_id;
+mod font_provider;
+mod font_tweak;
 mod fonts;
+mod galley_cache;
+mod glyph_atlas;
+mod glyph_rasterizer;
 mod index;
+mod styled_metrics;
 mod text_layout;
 mod text_layout_types;
+mod unicode;
 
 pub use {
-    // accshift patch: the glyph rasterizer hook.
-    font::{GlyphImage, GlyphRasterizer, GlyphRasterizerRef, GlyphRequest},
-    fonts::{
-        FontData, FontDefinitions, FontFamily, FontId, FontInsert, FontPriority, FontTweak,
-        FontVariationAxis, Fonts, FontsImpl, FontsView, HintingTarget, InsertFontFamily,
-        SmoothHinting,
+    // accshift patch: the per-face rasterizer hook.
+    face_rasterizer::{FaceGlyphImage, FaceGlyphRequest, FaceRasterizer, FaceRasterizerRef},
+    font_data::{Blob, FontData, FontVariationAxis},
+    font_definitions::{FontDefinitions, FontInsert, FontPriority, InsertFontFamily},
+    font_id::{FontFamily, FontId},
+    font_provider::{FallbackRequest, FontProvider},
+    font_tweak::{FontTweak, HintingTarget, SmoothHinting},
+    fonts::{Fonts, FontsView, MAX_GLYPH_SIZE, MissingGlyphPolicy, ViewportKey},
+    glyph_rasterizer::{
+        GlyphBitmap, GlyphRasterizer, GlyphRasterizerRequest, RasterizedGlyph,
+        has_emoji_presentation,
     },
     index::{ByteIndex, ByteRange, ByteRangeExt, CharIndex, CharRange, CharRangeExt},
-    text_layout::*,
     text_layout_types::*,
 };
 

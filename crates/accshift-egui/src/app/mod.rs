@@ -1042,7 +1042,6 @@ impl AppModel {
             crate::bench::request_shot(&ctx);
             self.ready_marked = true;
         }
-        crate::bench::save_shot(&ctx);
     }
 
     /// Applies what the frame's components asked for.
@@ -1922,7 +1921,7 @@ impl AppModel {
             return;
         }
         let cover: Vec<Rect> = ctx
-            .data(|d| d.get_temp(egui::Id::new(COVER_ID)))
+            .data(|d| d.get_temp(egui::Id::unique(COVER_ID)))
             .unwrap_or_default();
         let hit = ctx.viewport(|vp| vp.hits.click.map(|w| w.id));
         let ws = &b.workspace;

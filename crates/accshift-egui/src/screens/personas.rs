@@ -204,7 +204,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, mut input: PersonasInput) -> Vec<Action> {
     scroll::scroll(
         ui,
         rect,
-        Id::new("personas-scroll"),
+        Id::unique("personas-scroll"),
         &mut offset,
         lay.content_h(),
         v,
@@ -262,7 +262,7 @@ fn persona_card(
     let v = input.vars;
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
-    let id = Id::new(("persona-card", persona.id.as_str()));
+    let id = Id::unique(("persona-card", persona.id.as_str()));
     let rect = snap::rect(layout, ppp);
     let response = ui.interact(
         rect,
@@ -278,9 +278,8 @@ fn persona_card(
     } else {
         response.on_hover_cursor(egui::CursorIcon::PointingHand)
     };
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, !disabled, &persona.name)
-    });
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, !disabled, &persona.name));
     ctx.accesskit_node_builder(id, |node| node.set_role(Role::Button));
     let hovered = response.hovered() && !disabled;
 
@@ -569,13 +568,13 @@ pub(super) fn paint_cover(
 fn new_card(ui: &mut Ui, layout: Rect, v: &Vars, locale: Locale) -> bool {
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
-    let id = Id::new("persona-new-card");
+    let id = Id::unique("persona-new-card");
     let rect = snap::rect(layout, ppp);
     let label = translate(locale, "personas.create");
     let response = ui
         .interact(rect, id, Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
     ctx.accesskit_node_builder(id, |node| node.set_role(Role::Button));
     let hovered = response.hovered();
     let fg = if hovered { v.fg } else { v.fg_muted };

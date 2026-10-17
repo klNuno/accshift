@@ -3,7 +3,7 @@
 //! WebView2 draws text with Skia, and Skia rasterizes glyphs on Windows with
 //! DirectWrite (`SkScalerContext_DW`). This module ports that glyph path for
 //! the configuration Chromium uses here, and hands the coverage to epaint's
-//! atlas through the vendored `GlyphRasterizer` hook. Sources: Skia at
+//! atlas through the vendored `FaceRasterizer` hook. Sources: Skia at
 //! `2466dcf3937437e217e7f284afe0e1aae15891ce`, the `skia_revision` of
 //! Chromium 154.0.8037.99 (WebView2 154); line numbers below are in
 //! `src/ports/SkScalerContext_win_dw.cpp` unless another file is named.
@@ -38,7 +38,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
-use egui::epaint::text::{GlyphImage, GlyphRasterizer, GlyphRasterizerRef, GlyphRequest};
+use egui::epaint::text::{FaceGlyphImage, FaceGlyphRequest, FaceRasterizer, FaceRasterizerRef};
 use skrifa::raw::TableProvider as _;
 use windows::core::{Interface as _, HSTRING};
 use windows::Win32::Foundation::RECT;
@@ -386,7 +386,7 @@ impl Glyphs {
     fn analyze(
         &self,
         face: &IDWriteFontFace,
-        request: &GlyphRequest,
+        request: &FaceGlyphRequest,
         mode: Mode,
         rendering: DWRITE_RENDERING_MODE,
         texture: DWRITE_TEXTURE_TYPE,
@@ -440,8 +440,8 @@ impl Glyphs {
     }
 }
 
-impl GlyphRasterizer for Glyphs {
-    fn rasterize(&self, request: &GlyphRequest) -> Option<GlyphImage> {
+impl FaceRasterizer for Glyphs {
+    fn rasterize(&self, request: &FaceGlyphRequest) -> Option<FaceGlyphImage> {
         let face = self.face()?;
         let mode = Mode::for_size(&self.tables, request.ppem);
         // 396-404: with `kGenA8FromLCD_Flag` the mask is the ClearType 3x1
@@ -489,7 +489,7 @@ impl GlyphRasterizer for Glyphs {
             // `GrayscaleToA8` (1978-1995).
             bits
         };
-        Some(GlyphImage {
+        Some(FaceGlyphImage {
             left: bounds.left,
             top: bounds.top,
             width,
@@ -537,7 +537,7 @@ pub fn enabled() -> bool {
 
 /// The DirectWrite rasterizer of a face, or `None` when the face cannot be
 /// read. The DirectWrite face itself is opened on the first glyph.
-pub fn rasterizer(choice: &Choice, data: &[u8]) -> Option<GlyphRasterizerRef> {
+pub fn rasterizer(choice: &Choice, data: &[u8]) -> Option<FaceRasterizerRef> {
     if !enabled() {
         return None;
     }
@@ -547,7 +547,7 @@ pub fn rasterizer(choice: &Choice, data: &[u8]) -> Option<GlyphRasterizerRef> {
         Source::File(path) => FaceId::File(path.clone(), index, wght_bits),
         Source::Bundled(_, bytes) => FaceId::Bundled(bytes.as_ptr() as usize, index, wght_bits),
     };
-    Some(GlyphRasterizerRef(Arc::new(Glyphs {
+    Some(FaceRasterizerRef(Arc::new(Glyphs {
         id,
         source: choice.entry.source.clone(),
         index,
@@ -687,7 +687,7 @@ mod tests {
         use skrifa::MetadataProvider as _;
         let gid = font.charmap().map('H').unwrap().to_u32() as u16;
         let image =
-            r.0.rasterize(&GlyphRequest {
+            r.0.rasterize(&FaceGlyphRequest {
                 glyph_id: gid,
                 ppem: 13.0,
                 x_offset: 0.0,

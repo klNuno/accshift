@@ -11,7 +11,7 @@
 //! free width (`flex: 1; min-width: 0`).
 
 use egui::accesskit::Role;
-use egui::{pos2, vec2, Id, Rect, Sense, Ui, WidgetInfo, WidgetType};
+use egui::{pos2, vec2, Id, Rect, Sense, Ui, WidgetInfo};
 
 use crate::app::vars::Vars;
 use crate::theme::Rgba;
@@ -149,9 +149,9 @@ pub fn breadcrumb(ui: &mut Ui, rect: Rect, props: &BreadcrumbProps) -> Option<Op
             let crumb = props.path[index - 1];
             (crumb.name, Some(crumb.id.to_string()))
         };
-        let id = Id::new(("breadcrumb", index));
+        let id = Id::unique(("breadcrumb", index));
         let response = ui.interact(placed.rect, id, Sense::click());
-        response.widget_info(|| WidgetInfo::selected(WidgetType::Button, true, current, name));
+        response.widget_info(|| WidgetInfo::selected(Role::Button, true, current, name));
         ctx.accesskit_node_builder(id, |node| node.set_role(Role::Button));
         let hovered = response.hovered();
         let response = if current {

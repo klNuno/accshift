@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use egui::accesskit::Role;
-use egui::{pos2, vec2, Id, Pos2, Rect, Sense, Ui, WidgetInfo, WidgetType};
+use egui::{pos2, vec2, Id, Pos2, Rect, Sense, Ui, WidgetInfo};
 
 use super::icon;
 use crate::app::vars::Vars;
@@ -129,9 +129,8 @@ pub fn section_header(
 
     let response = ui.interact(rect, props.id, Sense::click());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    response.widget_info(|| {
-        WidgetInfo::selected(WidgetType::Button, true, !props.collapsed, props.label)
-    });
+    response
+        .widget_info(|| WidgetInfo::selected(Role::Button, true, !props.collapsed, props.label));
     ctx.accesskit_node_builder(props.id, |node| {
         node.set_role(Role::Button);
         node.set_expanded(!props.collapsed);
@@ -307,7 +306,7 @@ mod tests {
         ));
         let mut props = SectionHeaderProps {
             vars: &vars,
-            id: Id::new("h"),
+            id: Id::unique("h"),
             folder: Some("f"),
             label: "Smurfs",
             count: 3,

@@ -11,9 +11,7 @@
 //! focus closes it.
 
 use egui::accesskit::Role;
-use egui::{
-    pos2, vec2, Area, Color32, Id, Key, Order, Pos2, Rect, Sense, Ui, Vec2, WidgetInfo, WidgetType,
-};
+use egui::{pos2, vec2, Area, Color32, Id, Key, Order, Pos2, Rect, Sense, Ui, Vec2, WidgetInfo};
 
 use super::{take_focus, T120};
 use crate::app::vars::Vars;
@@ -247,7 +245,7 @@ pub fn select(ui: &mut Ui, rect: Rect, id: Id, props: &SelectProps) -> SelectEve
         .get(props.selected)
         .cloned()
         .unwrap_or_default();
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, true, props.label));
+    response.widget_info(|| WidgetInfo::labeled(Role::ComboBox, true, props.label));
     ctx.accesskit_node_builder(id, |node| {
         node.set_role(Role::ComboBox);
         node.set_label(props.label);

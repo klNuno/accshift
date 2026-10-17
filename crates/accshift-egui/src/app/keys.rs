@@ -332,7 +332,7 @@ impl AppModel {
             unavailable,
             active_tab: b.nav.active_tab.clone(),
             has_input_dialog: self.dialogs.input_dialog().is_some(),
-            search_focused: ctx.memory(|m| m.has_focus(Id::new(SEARCH_ID))),
+            search_focused: ctx.memory(|m| m.has_focus(Id::unique(SEARCH_ID))),
             bulk_edit_allowed: active.is_some_and(|p| p.bulk_edit && p.supports(os))
                 && !b.nav.show_settings,
             actions: Vec::new(),
@@ -546,8 +546,8 @@ impl AppModel {
                 }
             }
             KeyAction::ClearCardFocus => self.clear_card_focus(),
-            KeyAction::BlurSearch => ctx.memory_mut(|m| m.surrender_focus(Id::new(SEARCH_ID))),
-            KeyAction::FocusSearch => ctx.memory_mut(|m| m.request_focus(Id::new(SEARCH_ID))),
+            KeyAction::BlurSearch => ctx.memory_mut(|m| m.surrender_focus(Id::unique(SEARCH_ID))),
+            KeyAction::FocusSearch => ctx.memory_mut(|m| m.request_focus(Id::unique(SEARCH_ID))),
             // The settings panel has no search field yet.
             KeyAction::FocusSettingsSearch => self.focus_platform_search(),
             KeyAction::AddAccount => self.apply_one(ctx, Action::AddAccount),

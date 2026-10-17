@@ -35,7 +35,7 @@ struct Cache(Arc<std::sync::Mutex<HashMap<Key, TextureHandle>>>);
 
 fn cache(ctx: &Context) -> Cache {
     ctx.data_mut(|d| {
-        d.get_temp_mut_or_default::<Cache>(Id::new("accshift::icon-cache"))
+        d.get_temp_mut_or_default::<Cache>(Id::unique("accshift::icon-cache"))
             .clone()
     })
 }

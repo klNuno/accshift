@@ -153,7 +153,7 @@ pub(crate) fn frame(
     let rect = snap::rect(rect, ppp);
     let response = ui.interact(rect, id, Sense::click());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     ctx.accesskit_node_builder(id, |node| node.set_role(Role::Button));
     let hovered = super::css_hovered(&response);
     let pressed = super::held(&response);

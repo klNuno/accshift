@@ -182,7 +182,7 @@ struct State {
 }
 
 fn state_id() -> Id {
-    Id::new("accshift::context-menu")
+    Id::unique("accshift::context-menu")
 }
 
 /// Whether `pos` falls on the open menu or its submenu (as last drawn).
@@ -857,7 +857,7 @@ pub fn context_menu(ui: &mut Ui, props: &ContextMenuProps) -> Vec<MenuEvent> {
             ..State::default()
         });
     let mut events = Vec::new();
-    let base = Id::new(("accshift::context-menu", props.open_id));
+    let base = Id::unique(("accshift::context-menu", props.open_id));
     let menu_id = base.with("menu");
 
     // The switch timer.

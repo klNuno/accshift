@@ -11,8 +11,8 @@ const ASKED: &str = "accshift-clipboard/asked";
 
 /// Asks for the clipboard's text; it comes back as an `Event::Paste`.
 pub fn request_text(ctx: &Context) {
-    if ctx.data(|d| d.get_temp::<String>(Id::new(STAGED)).is_some()) {
-        ctx.data_mut(|d| d.insert_temp(Id::new(ASKED), true));
+    if ctx.data(|d| d.get_temp::<String>(Id::unique(STAGED)).is_some()) {
+        ctx.data_mut(|d| d.insert_temp(Id::unique(ASKED), true));
     } else {
         ctx.send_viewport_cmd(ViewportCommand::RequestPaste);
     }
@@ -32,8 +32,8 @@ pub fn pasted(ctx: &Context) -> Option<String> {
 /// answer to a request made last frame.
 pub fn stage(ctx: &Context, text: &str, events: &mut Vec<Event>) {
     let asked = ctx.data_mut(|d| {
-        d.insert_temp(Id::new(STAGED), text.to_owned());
-        d.remove_temp::<bool>(Id::new(ASKED)).unwrap_or(false)
+        d.insert_temp(Id::unique(STAGED), text.to_owned());
+        d.remove_temp::<bool>(Id::unique(ASKED)).unwrap_or(false)
     });
     if asked && !text.is_empty() {
         events.push(Event::Paste(text.to_owned()));

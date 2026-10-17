@@ -509,7 +509,7 @@ pub fn descriptor_preview_dialog(
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
     let v = props.vars;
-    let id = Id::new(PREVIEW_ID).with(props.mount);
+    let id = Id::unique(PREVIEW_ID).with(props.mount);
     let preview = state.preview;
     let styles = Styles::new(v);
     let title = i18n::translate(props.locale, "descriptor.previewTitle");

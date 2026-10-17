@@ -30,7 +30,7 @@ pub fn ua_ring(ui: &Ui, rect: Rect, radius: f32, vars: &Vars) {
 
 /// Where the focused text field's id is kept between frames.
 fn text_field_key() -> egui::Id {
-    egui::Id::new("focused-text-field")
+    egui::Id::unique("focused-text-field")
 }
 
 /// A text field calls this while it holds focus, so the keyboard

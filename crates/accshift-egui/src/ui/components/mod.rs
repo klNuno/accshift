@@ -52,7 +52,7 @@ pub fn context_click_pos(ui: &egui::Ui) -> Option<egui::Pos2> {
 }
 
 fn click_eaten_id() -> egui::Id {
-    egui::Id::new("drag-eats-click")
+    egui::Id::unique("drag-eats-click")
 }
 
 /// `handleCaptureClick`: the drag manager swallows the click a drag release
@@ -81,7 +81,7 @@ pub fn drag_ghost(
     opacity: f32,
     add: impl FnOnce(&mut egui::Ui, egui::Rect),
 ) {
-    let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("drag-ghost"));
+    let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("drag-ghost"));
     let r = r.translate(snap_offset(ctx, r.min));
     let t = egui::emath::TSTransform::new(r.center().to_vec2() * (1.0 - scale), scale);
     egui::Area::new(layer.id)
@@ -182,7 +182,7 @@ pub fn shape_count(ctx: &egui::Context, layer: egui::LayerId) -> usize {
 }
 
 fn held_id() -> egui::Id {
-    egui::Id::new("css-active")
+    egui::Id::unique("css-active")
 }
 
 /// `:active`: the widget the primary button went down on stays pressed
@@ -215,7 +215,7 @@ pub fn track_held(ctx: &egui::Context) {
 }
 
 fn dropped_id() -> egui::Id {
-    egui::Id::new("css-active-dropped")
+    egui::Id::unique("css-active-dropped")
 }
 
 /// The DOM moved the pressed node: nothing matches `:active` until the

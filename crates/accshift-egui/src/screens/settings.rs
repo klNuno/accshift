@@ -29,7 +29,7 @@ use accshift_app::i18n::{translate, translate_with, Locale, TranslationValue, LA
 use accshift_app::settings::{AnimationsMode, StreamerMode};
 use accshift_theme::{is_built_in_theme, AppTheme, ColorScheme, TokenKey};
 use egui::accesskit::Role;
-use egui::{pos2, vec2, Context, Id, Key, Rect, Sense, Ui, WidgetInfo, WidgetType};
+use egui::{pos2, vec2, Context, Id, Key, Rect, Sense, Ui, WidgetInfo};
 
 use crate::app::platforms::{PlatformDef, RuntimeOs};
 use crate::app::settings_panel::{
@@ -946,7 +946,7 @@ pub fn draw(
         view,
         locale,
         focus,
-        scope: Id::new("settings"),
+        scope: Id::unique("settings"),
     };
     let cards = match (active.as_str(), platform) {
         ("general", _) => general_cards(c.panel, view, locale),
@@ -994,7 +994,7 @@ pub fn draw(
     scroll::scroll(
         ui,
         viewport,
-        Id::new("settings-scroll"),
+        Id::unique("settings-scroll"),
         &mut offset,
         content_h + 8.0,
         v,
@@ -1021,9 +1021,9 @@ fn nav_item(
     narrow: bool,
 ) -> bool {
     let label = tr(locale, &tab.label_key);
-    let id = Id::new(("settings-tab", tab.id.as_str()));
+    let id = Id::unique(("settings-tab", tab.id.as_str()));
     let response = ui.interact(rect, id, Sense::click());
-    response.widget_info(|| WidgetInfo::selected(WidgetType::Button, true, active, &label));
+    response.widget_info(|| WidgetInfo::selected(Role::Button, true, active, &label));
     ui.ctx().accesskit_node_builder(id, |node| {
         node.set_role(Role::Tab);
         node.set_selected(active);
@@ -1128,9 +1128,9 @@ fn footer_button(
     focus: FocusCtx,
     narrow: bool,
 ) -> bool {
-    let id = Id::new(("settings-footer", tab.id.as_str()));
+    let id = Id::unique(("settings-footer", tab.id.as_str()));
     let response = ui.interact(rect, id, Sense::click());
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, aria));
+    response.widget_info(|| WidgetInfo::labeled(Role::Button, true, aria));
     let focused = take_focus(ui, &response);
     let hovered = response.hovered();
     let (bg, fg) = if hovered {
@@ -1172,9 +1172,9 @@ fn footer_button(
 }
 
 fn close_button(ui: &mut Ui, rect: Rect, label: &str, v: &Vars, focus: FocusCtx) -> bool {
-    let id = Id::new("settings-close");
+    let id = Id::unique("settings-close");
     let response = ui.interact(rect, id, Sense::click());
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, label));
+    response.widget_info(|| WidgetInfo::labeled(Role::Button, true, label));
     let focused = take_focus(ui, &response);
     let hovered = response.hovered();
     let ppp = ui.ctx().pixels_per_point();
@@ -1576,7 +1576,7 @@ fn theme_grid(ui: &mut Ui, r: Rect, id: Id, c: &Ctx) -> Vec<SettingsAction> {
         let sid = id.with(("swatch", theme.id.as_str()));
         let response = ui.interact(rect, sid, Sense::click());
         let selected = c.panel.draft.theme_id == theme.id;
-        response.widget_info(|| WidgetInfo::selected(WidgetType::Button, true, selected, &name));
+        response.widget_info(|| WidgetInfo::selected(Role::Button, true, selected, &name));
         let focused = take_focus(ui, &response);
         let hovered = response.hovered();
         let s = swatch(theme);

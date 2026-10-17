@@ -9,7 +9,7 @@
 //! Each lists the colours its `transition` eases; the others switch at once.
 
 use egui::accesskit::Role;
-use egui::{pos2, vec2, Context, Id, Rect, Sense, Stroke, Ui, Vec2, WidgetInfo, WidgetType};
+use egui::{pos2, vec2, Context, Id, Rect, Sense, Stroke, Ui, Vec2, WidgetInfo};
 
 use super::{focus_ring, take_focus, FocusCtx, T120, WHITE};
 use crate::app::vars::Vars;
@@ -214,7 +214,7 @@ pub fn button(ui: &mut Ui, rect: Rect, id: Id, props: &ButtonProps) -> bool {
         },
     );
     let name = props.aria_label.unwrap_or(props.label);
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, props.enabled, name));
+    response.widget_info(|| WidgetInfo::labeled(Role::Button, props.enabled, name));
     ctx.accesskit_node_builder(id, |node| node.set_role(Role::Button));
     let focused = props.enabled && take_focus(ui, &response);
     let hovered = props.enabled && response.hovered();
@@ -288,7 +288,7 @@ mod tests {
             ),
         ));
         let ctx = Context::default();
-        let id = Id::new("button");
+        let id = Id::unique("button");
         let frame = |style: &ButtonStyle, time: f64, hovered: bool| {
             let mut out = None;
             let input = RawInput {

@@ -22,7 +22,7 @@
 
 use accshift_app::actions::toasts::{ToastEntry, ToastType};
 use accshift_app::i18n::{translate, Locale};
-use egui::{pos2, vec2, Id, Rect, Sense, Ui, WidgetInfo, WidgetType};
+use egui::{pos2, vec2, Id, Rect, Role, Sense, Ui, WidgetInfo};
 
 use crate::app::vars::Vars;
 use crate::icons;
@@ -235,7 +235,7 @@ pub fn toast_stack(ui: &mut Ui, viewport: Rect, props: &ToastProps) -> Vec<Toast
     let ctx = ui.ctx().clone();
     let v = props.vars;
     let now = props.now;
-    let id = Id::new("accshift::toast-stack");
+    let id = Id::unique("accshift::toast-stack");
     let mut stack: Stack = ctx.data_mut(|d| d.get_temp(id)).unwrap_or_default();
 
     // `{#each toasts as toast (toast.id)}`.
@@ -383,7 +383,7 @@ fn paint_toast(
 ) -> Vec<ToastEvent> {
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
-    let wid = Id::new(("accshift::toast", item.id));
+    let wid = Id::unique(("accshift::toast", item.id));
     let mut events = Vec::new();
     let mut painter = ui.painter().clone();
     painter.multiply_opacity(alpha);
@@ -395,7 +395,7 @@ fn paint_toast(
             item.hovered = hovered;
             events.push(ToastEvent::Hover(item.id, hovered));
         }
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &item.message));
+        response.widget_info(|| WidgetInfo::labeled(Role::Label, true, &item.message));
         ctx.accesskit_node_builder(wid, |node| {
             node.set_role(egui::accesskit::Role::Status);
             node.set_label(item.message.as_str());
@@ -442,7 +442,7 @@ fn paint_toast(
         } else {
             let response = ui.interact(snap::rect(r, ppp), aid, Sense::click());
             let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-            response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, &label));
+            response.widget_info(|| WidgetInfo::labeled(Role::Button, true, &label));
             if response.clicked() {
                 events.push(ToastEvent::Action(item.id));
             }
@@ -475,7 +475,7 @@ fn paint_toast(
     } else {
         let response = ui.interact(snap::rect(close, ppp), cid, Sense::click());
         let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, dismiss));
+        response.widget_info(|| WidgetInfo::labeled(Role::Button, true, dismiss));
         if response.clicked() {
             events.push(ToastEvent::Close(item.id));
         }

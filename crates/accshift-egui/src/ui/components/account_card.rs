@@ -38,7 +38,7 @@ use egui::accesskit::Role;
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
 use egui::{
     pos2, vec2, Color32, Context, Id, Key, Pos2, Rect, Sense, Shape, TextureId, Ui, Vec2,
-    WidgetInfo, WidgetType,
+    WidgetInfo,
 };
 
 use accshift_app::actions::avatar_fallback::avatar_initials;
@@ -436,9 +436,7 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
     let disabled = item.pending_setup;
     let response = ui.interact(rect, id, Sense::click());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    response.widget_info(|| {
-        WidgetInfo::selected(WidgetType::Button, !disabled, item.active, &item.name)
-    });
+    response.widget_info(|| WidgetInfo::selected(Role::Button, !disabled, item.active, &item.name));
     ctx.accesskit_node_builder(id, |node| node.set_role(Role::Button));
 
     let mut st = state(&ctx, id);

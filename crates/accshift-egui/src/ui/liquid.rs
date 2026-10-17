@@ -253,7 +253,7 @@ struct State {
 
 fn state(ctx: &Context) -> Arc<Mutex<State>> {
     ctx.data_mut(|d| {
-        d.get_temp_mut_or_default::<Arc<Mutex<State>>>(Id::new("accshift::liquid"))
+        d.get_temp_mut_or_default::<Arc<Mutex<State>>>(Id::unique("accshift::liquid"))
             .clone()
     })
 }

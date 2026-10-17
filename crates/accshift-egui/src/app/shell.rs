@@ -650,7 +650,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
     // `.app-shell.obscured`.
     let k = anim::transition_bool(
         &ctx,
-        egui::Id::new("app-shell/obscured"),
+        egui::Id::unique("app-shell/obscured"),
         obscured || streaming,
         &OBSCURE,
     );
@@ -798,7 +798,10 @@ fn blur_range(
                 };
             let offset = vec2(angle.cos(), angle.sin()) * radius * ring;
             let alpha = 1.0 / (k as f32 + 1.0);
-            for ClippedShape { clip_rect, shape } in &shapes {
+            for ClippedShape {
+                clip_rect, shape, ..
+            } in &shapes
+            {
                 let mut shape = shape.clone();
                 shape.translate(offset);
                 epaint::shape_transform::adjust_colors(&mut shape, move |c| {

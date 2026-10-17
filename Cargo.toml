@@ -57,9 +57,9 @@ sha2 = "0.11"
 zeroize = "1"
 
 # epaint with one patch: a font can supply its glyph coverage
-# (FontData::rasterizer), so ui::text rasterizes with DirectWrite like
+# (FontData::face_rasterizer), so ui::text rasterizes with DirectWrite like
 # WebView2. See the header of crates/accshift-egui/vendor/epaint/Cargo.toml
-# and its src/text/font.rs.
+# and its src/text/face_rasterizer.rs.
 [patch.crates-io]
 epaint = { path = "crates/accshift-egui/vendor/epaint" }
 

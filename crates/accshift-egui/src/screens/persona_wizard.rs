@@ -290,7 +290,14 @@ pub fn draw(
     }
     let total = content_h(width);
     let mut offset = input.panel.scroll;
-    scroll::scroll(ui, rect, Id::new("personas-scroll"), &mut offset, total, v);
+    scroll::scroll(
+        ui,
+        rect,
+        Id::unique("personas-scroll"),
+        &mut offset,
+        total,
+        v,
+    );
     input.panel.scroll = offset;
 
     // `page-entrance`: from the first frame the wizard shows.
@@ -340,7 +347,7 @@ fn contents(
     let back = icon_button(
         ui,
         at(head.back),
-        Id::new(("persona-wizard", "back")),
+        Id::unique(("persona-wizard", "back")),
         &translate(locale, "common.back"),
         icons::BACK,
         16.0,
@@ -364,7 +371,7 @@ fn contents(
     );
 
     // The name field: a new persona's takes the focus on mount.
-    let name_id = Id::new(("persona-wizard", "name"));
+    let name_id = Id::unique(("persona-wizard", "name"));
     if wizard.focus_name {
         wizard.focus_name = false;
         ui.memory_mut(|m| m.request_focus(name_id));
@@ -437,7 +444,7 @@ fn icon_button(
     let response = ui
         .interact(rect, id, Sense::click())
         .on_hover_cursor(CursorIcon::PointingHand);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     ctx.accesskit_node_builder(id, |node| node.set_role(Role::Button));
     let hovered = response.hovered();
     let (bg, fg) = match (armed, hovered) {
@@ -469,12 +476,12 @@ fn icon_button(
 fn mini_button(ui: &mut Ui, layout: Rect, key: &str, label: &str, v: &Vars) -> bool {
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
-    let id = Id::new(("persona-wizard", key));
+    let id = Id::unique(("persona-wizard", key));
     let rect = snap::rect(layout, ppp);
     let response = ui
         .interact(rect, id, Sense::click())
         .on_hover_cursor(CursorIcon::PointingHand);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     ctx.accesskit_node_builder(id, |node| node.set_role(Role::Button));
     let hovered = response.hovered();
     let pick = |on: Rgba, off: Rgba| if hovered { on } else { off };
@@ -517,7 +524,7 @@ fn finish_button(ui: &mut Ui, layout: Rect, enabled: bool, input: &PersonasInput
     let v = input.vars;
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
-    let id = Id::new(("persona-wizard", "finish"));
+    let id = Id::unique(("persona-wizard", "finish"));
     let rect = snap::rect(layout, ppp);
     let label = translate(input.locale, "personas.finish");
     let response = ui.interact(
@@ -534,7 +541,7 @@ fn finish_button(ui: &mut Ui, layout: Rect, enabled: bool, input: &PersonasInput
     } else {
         CursorIcon::NotAllowed
     });
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &label));
     ctx.accesskit_node_builder(id, |node| node.set_role(Role::Button));
     let opacity = anim::transition(
         &ctx,
@@ -643,14 +650,13 @@ fn platform_grid(
             grid + vec2(left, row as f32 * (card_h + GRID_GAP)),
             vec2(col, card_h),
         );
-        let id = Id::new(("persona-wizard-platform", platform.id.as_str()));
+        let id = Id::unique(("persona-wizard-platform", platform.id.as_str()));
         let rect = snap::rect(layout, ppp);
         let response = ui
             .interact(rect, id, Sense::click())
             .on_hover_cursor(CursorIcon::PointingHand);
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &platform.name)
-        });
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &platform.name));
         ctx.accesskit_node_builder(id, |node| node.set_role(Role::Button));
         let hovered = response.hovered();
         let assigned = wizard.is_valid_assignment(input.panel, &platform.id);
@@ -837,7 +843,7 @@ fn picker(
         let button = icon_button(
             ui,
             Rect::from_min_size(top + vec2(width - UNASSIGN, 0.0), Vec2::splat(UNASSIGN)),
-            Id::new(("persona-wizard", "unassign")),
+            Id::unique(("persona-wizard", "unassign")),
             &label,
             icons::UNASSIGN,
             14.0,
@@ -884,14 +890,13 @@ fn picker(
         for (column, account) in row.iter().enumerate() {
             let (left, col) = tracks[column];
             let layout = Rect::from_min_size(pos2(list.x + left, y), vec2(col, card_h));
-            let id = Id::new(("persona-wizard-account", platform_id, account.id.as_str()));
+            let id = Id::unique(("persona-wizard-account", platform_id, account.id.as_str()));
             let rect = snap::rect(layout, ppp);
             let name = account_name(account).to_string();
             let response = ui
                 .interact(rect, id, Sense::click())
                 .on_hover_cursor(CursorIcon::PointingHand);
-            response
-                .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name));
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
             ctx.accesskit_node_builder(id, |node| node.set_role(Role::Button));
             let is_selected = selected == account.id;
             let border = if is_selected {

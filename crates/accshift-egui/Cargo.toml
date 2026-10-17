@@ -25,14 +25,14 @@ accshift-app = { path = "../accshift-app" }
 accshift-theme = { path = "../accshift-theme" }
 # Same backend choice as spotifast for the `glow` path: glow keeps the binary
 # and the tree small, wgpu buys nothing for a 2D grid.
-eframe = { version = "0.36", optional = true, default-features = false, features = [
+eframe = { version = "0.37", optional = true, default-features = false, features = [
   "accesskit",
   "glow",
   "default_fonts",
 ] }
 # The software path: the window and input layer eframe uses (egui-winit
 # re-exports winit and accesskit_winit), a CPU rasterizer, a GDI blit.
-egui-winit = { version = "0.36", optional = true, default-features = false, features = [
+egui-winit = { version = "0.37", optional = true, default-features = false, features = [
   "accesskit",
   "clipboard",
   "links",
@@ -44,8 +44,8 @@ egui_software_backend = { path = "vendor/egui_software_backend", optional = true
 # No bundled fonts on Windows: the app draws with Segoe UI read from the
 # system, and the 1.2 MB of egui's defaults cost startup time (a bigger exe
 # reaches `main` later, see build.rs). Other OSes keep them as the only fonts.
-egui = { version = "0.36", default-features = false }
-egui_extras = { version = "0.36", default-features = false, features = ["svg"] }
+egui = { version = "0.37", default-features = false }
+egui_extras = { version = "0.37", default-features = false, features = ["svg"] }
 # The same resvg egui_extras rasterizes with, for its options type.
 resvg = { version = "0.45", default-features = false }
 raw-window-handle = "0.6"
@@ -68,12 +68,12 @@ base64 = "0.23"
 image-webp = "0.2"
 
 [target.'cfg(not(windows))'.dependencies]
-egui = { version = "0.36", features = ["default_fonts"] }
+egui = { version = "0.37", features = ["default_fonts"] }
 
 # Linux: the X11 and Wayland backends `default-features = false` drops above,
 # with libxcb and the Wayland client opened at run time, as by default.
 [target.'cfg(target_os = "linux")'.dependencies]
-egui-winit = { version = "0.36", optional = true, default-features = false, features = [
+egui-winit = { version = "0.37", optional = true, default-features = false, features = [
   "x11",
   "wayland",
 ] }

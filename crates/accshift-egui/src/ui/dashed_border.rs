@@ -376,7 +376,7 @@ pub fn paint(
     let r = radius * ppp;
     let key: Key = (w, h, (r * 64.0).round() as u32, (bw * 64.0) as u32);
     let cache = ctx.data_mut(|d| {
-        d.get_temp_mut_or_default::<Cache>(Id::new("accshift::dashed-border"))
+        d.get_temp_mut_or_default::<Cache>(Id::unique("accshift::dashed-border"))
             .clone()
     });
     let texture = {

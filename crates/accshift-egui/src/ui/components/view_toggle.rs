@@ -6,7 +6,7 @@
 //! `--fg`. `transition: all 100ms` (CSS default `ease`).
 
 use egui::accesskit::Role;
-use egui::{pos2, vec2, Id, Rect, Sense, Ui, WidgetInfo, WidgetType};
+use egui::{pos2, vec2, Id, Rect, Sense, Ui, WidgetInfo};
 
 use accshift_app::i18n::{translate, Locale};
 use accshift_app::stores::ViewMode;
@@ -63,11 +63,11 @@ pub fn view_toggle(ui: &mut Ui, rect: Rect, props: &ViewToggleProps) -> Option<V
             ),
             vec2(BUTTON_W, inner_h),
         );
-        let id = Id::new(("view-toggle", index));
+        let id = Id::unique(("view-toggle", index));
         let label = translate(props.locale, key);
         let active = props.mode == mode;
         let response = ui.interact(r, id, Sense::click());
-        response.widget_info(|| WidgetInfo::selected(WidgetType::Button, true, active, &label));
+        response.widget_info(|| WidgetInfo::selected(Role::Button, true, active, &label));
         ui.ctx()
             .accesskit_node_builder(id, |node| node.set_role(Role::Button));
         let hovered = response.hovered();

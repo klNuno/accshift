@@ -3,7 +3,7 @@
 //! the right.
 
 use egui::accesskit::{Role, Toggled};
-use egui::{pos2, vec2, Context, Id, Rect, Sense, Ui, WidgetInfo, WidgetType};
+use egui::{pos2, vec2, Context, Id, Rect, Sense, Ui, WidgetInfo};
 
 use super::{focus_ring, take_focus, FocusCtx, T120, WHITE};
 use crate::app::vars::Vars;
@@ -139,9 +139,8 @@ pub fn toggle(ui: &mut Ui, rect: Rect, id: Id, props: &ToggleProps) -> bool {
             Sense::hover()
         },
     );
-    response.widget_info(|| {
-        WidgetInfo::selected(WidgetType::Checkbox, active, props.enabled, props.label)
-    });
+    response
+        .widget_info(|| WidgetInfo::selected(Role::CheckBox, active, props.enabled, props.label));
     ctx.accesskit_node_builder(id, |node| {
         node.set_role(Role::Switch);
         node.set_toggled(if props.enabled {

@@ -15,7 +15,7 @@
 
 use accshift_app::i18n::{translate, Locale};
 use egui::accesskit::{Role, Toggled};
-use egui::{pos2, vec2, Context, Id, Rect, Sense, Ui, WidgetInfo, WidgetType};
+use egui::{pos2, vec2, Context, Id, Rect, Sense, Ui, WidgetInfo};
 
 use super::{CardSpec, Control, Ctx, Item as CardItem, View};
 use crate::app::settings_panel::{SettingFlag, SettingsAction, SettingsPanel};
@@ -31,7 +31,7 @@ use crate::ui::text::{self, LineHeight, TextStyle, MONO_STACK};
 
 /// The search field's id, for mod+f (`focusPlatformSearch`).
 pub fn search_id() -> Id {
-    Id::new("settings-platform-search")
+    Id::unique("settings-platform-search")
 }
 
 /// `.platforms { gap: 8px }`.
@@ -736,9 +736,8 @@ fn platform_chip(ui: &mut Ui, rect: Rect, id: Id, c: &Ctx, chip: &Chip) -> bool 
             Sense::hover()
         },
     );
-    response.widget_info(|| {
-        WidgetInfo::selected(WidgetType::Checkbox, active, chip.enabled, &chip.label)
-    });
+    response
+        .widget_info(|| WidgetInfo::selected(Role::CheckBox, active, chip.enabled, &chip.label));
     ctx.accesskit_node_builder(id, |node| {
         node.set_role(Role::Switch);
         node.set_toggled(if chip.enabled {

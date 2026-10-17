@@ -222,7 +222,7 @@ fn button(
         Sense::hover()
     };
     let response = ui.interact(boxed, id, sense);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     let focused = enabled && take_focus(ui, &response);
     let opacity = if enabled { 1.0 } else { 0.5 };
     let (bg, fg, border, opacity) = if eased {
@@ -352,7 +352,7 @@ pub fn bar(ui: &mut Ui, props: &BulkProps) -> Vec<BulkEvent> {
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
     let v = props.vars;
-    let id = Id::new(BULK_ID).with(("bar", props.mount));
+    let id = Id::unique(BULK_ID).with(("bar", props.mount));
     let bw = snap::border_width(v.border_px(), ppp);
     let locale = props.locale;
     let mut events = Vec::new();
@@ -433,7 +433,7 @@ pub fn bar(ui: &mut Ui, props: &BulkProps) -> Vec<BulkEvent> {
     if menu_open {
         cover.push(pop_rect);
     }
-    ctx.data_mut(|d| d.insert_temp(Id::new(COVER_ID), cover));
+    ctx.data_mut(|d| d.insert_temp(Id::unique(COVER_ID), cover));
 
     // `handleWindowPointerDown`: the colour wrap is the button and the
     // popover.
@@ -564,7 +564,7 @@ fn popover(ui: &mut Ui, rect: Rect, id: Id, props: &BulkProps) -> Vec<BulkEvent>
         let name = color_label_key(preset.id)
             .map(|key| t(props.locale, key))
             .unwrap_or_default();
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name));
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
         let focused = take_focus(ui, &response);
         // `:hover, :focus-visible`: a 1 px ring of `--fg` at 35 %.
         let ring = response.hovered() || (focused && props.focus_visible);
@@ -675,10 +675,10 @@ pub fn settings(ui: &mut Ui, props: &BulkProps) -> Vec<BulkEvent> {
     let v = props.vars;
     let locale = props.locale;
     let bar = props.bar;
-    let id = Id::new(BULK_ID).with(("settings", props.mount));
+    let id = Id::unique(BULK_ID).with(("settings", props.mount));
     let bw = snap::border_width(v.border_px(), ppp);
     let mut events = Vec::new();
-    ctx.data_mut(|d| d.remove::<Vec<Rect>>(Id::new(COVER_ID)));
+    ctx.data_mut(|d| d.remove::<Vec<Rect>>(Id::unique(COVER_ID)));
 
     // The column, top to bottom.
     let width = DIALOG_W.min(crate::zoom::viewport(&ctx).x - 24.0);

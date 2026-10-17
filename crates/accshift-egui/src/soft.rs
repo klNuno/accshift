@@ -285,16 +285,14 @@ impl Runner {
 
         for action in live.actions.drain(..) {
             let event = match action {
-                egui_winit::ActionRequested::Screenshot(user_data) => {
-                    let Some(image) = screenshot.clone() else {
-                        continue;
-                    };
-                    egui::Event::Screenshot {
-                        viewport_id: ViewportId::ROOT,
-                        user_data,
-                        image,
+                egui_winit::ActionRequested::Screenshot(callback) => {
+                    if let Some(image) = screenshot.clone() {
+                        callback.complete(image);
                     }
+                    continue;
                 }
+                // Nothing here sends `RequestPaintWhileHidden`.
+                egui_winit::ActionRequested::PaintWhileHidden => continue,
                 egui_winit::ActionRequested::Cut => egui::Event::Cut,
                 egui_winit::ActionRequested::Copy => egui::Event::Copy,
                 egui_winit::ActionRequested::Paste => match live.state.clipboard_text() {

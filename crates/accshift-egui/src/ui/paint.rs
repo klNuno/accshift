@@ -740,7 +740,7 @@ pub(crate) fn cached_texture(
     make: impl FnOnce() -> ColorImage,
 ) -> TextureId {
     let cache = ctx.data_mut(|d| {
-        d.get_temp_mut_or_default::<SharedCache>(Id::new("accshift::paint::textures"))
+        d.get_temp_mut_or_default::<SharedCache>(Id::unique("accshift::paint::textures"))
             .clone()
     });
     let frame = ctx.cumulative_frame_nr();
@@ -1594,7 +1594,7 @@ pub fn paint_clipped(painter: &Painter, rect: Rect, radius: Corners, shapes: Vec
     let clip_rect = painter.clip_rect();
     let clipped: Vec<ClippedShape> = shapes
         .into_iter()
-        .map(|shape| ClippedShape { clip_rect, shape })
+        .map(|shape| ClippedShape::new(clip_rect, shape))
         .collect();
     let clipper = RRectClipper::new(rr);
     for prim in ctx.tessellate(clipped, ppp) {

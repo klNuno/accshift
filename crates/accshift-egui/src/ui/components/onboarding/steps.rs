@@ -670,8 +670,7 @@ impl Features {
                 "onboarding.features.step",
                 &[("step", TranslationValue::Num((i + 1) as f64))],
             );
-            response
-                .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name));
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
             let focused = take_focus(ui, &response);
             let bg = anim::transition(
                 &ctx,
@@ -708,7 +707,7 @@ impl Features {
 }
 
 fn props_measure_id(props: &OnboardingProps) -> Id {
-    Id::new(super::ONBOARDING_ID)
+    Id::unique(super::ONBOARDING_ID)
         .with(props.view.mount)
         .with("measure")
 }
@@ -1160,9 +1159,7 @@ impl Deal {
                 Sense::hover()
             },
         );
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &row.label)
-        });
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &row.label));
         let focused = enabled && take_focus(ui, &response);
         let hovered = enabled && response.hovered();
 
@@ -1332,8 +1329,7 @@ impl Deal {
             },
         );
         let (label, body, body_h, _) = &self.refuse;
-        response
-            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
         let focused = enabled && take_focus(ui, &response);
         let hovered = enabled && response.hovered();
         let color = anim::transition(

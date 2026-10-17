@@ -119,7 +119,7 @@ impl Shell {
 
     pub fn frame(&mut self, ui: &mut egui::Ui) {
         if let Some(run) = &mut self.scenes {
-            run.collect(ui.ctx());
+            run.collect();
             if let Some(scene) = run.take_build() {
                 // The new app publishes its own UI zoom once booted.
                 zoom::clear_ui(ui.ctx());

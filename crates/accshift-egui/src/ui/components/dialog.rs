@@ -191,8 +191,7 @@ fn button(
         Sense::hover()
     };
     let response = ui.interact(boxed, b.id, sense);
-    response
-        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, b.enabled, b.label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, b.enabled, b.label));
     let focused = b.enabled && take_focus(ui, &response);
     let hovered = b.enabled && response.hovered();
     let target = look(hovered);
@@ -495,7 +494,7 @@ pub fn confirm_dialog(
 ) -> Vec<DialogEvent> {
     let ctx = ui.ctx().clone();
     let v = props.vars;
-    let id = Id::new(CONFIRM_ID).with(props.mount);
+    let id = Id::unique(CONFIRM_ID).with(props.mount);
     let title = state.title.resolve(props.locale);
     let message = state.message.resolve(props.locale);
     let cancel_label = i18n::translate(props.locale, "common.cancel");
@@ -590,7 +589,7 @@ pub fn input_dialog(
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
     let v = props.vars;
-    let id = Id::new(INPUT_ID).with(props.mount);
+    let id = Id::unique(INPUT_ID).with(props.mount);
     let title = state.title.resolve(props.locale);
     let placeholder = state.placeholder.resolve(props.locale);
     let cancel_label = i18n::translate(props.locale, "common.cancel");

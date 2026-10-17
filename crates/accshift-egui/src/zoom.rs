@@ -25,23 +25,23 @@ const UPSCALE: &str = "accshift-zoom/upscale";
 
 /// The factor the window itself needs, before the UI zoom.
 pub fn set_base(ctx: &Context, base: f32) {
-    ctx.data_mut(|d| d.insert_temp(Id::new(BASE), base));
+    ctx.data_mut(|d| d.insert_temp(Id::unique(BASE), base));
 }
 
 /// The app's `uiZoomFactor`, every frame once it has settings, and
 /// whether the stage keeps the raster of the boot entrance.
 pub fn set_ui(ctx: &Context, zoom: f32, upscale: bool) {
     ctx.data_mut(|d| {
-        d.insert_temp(Id::new(UI), zoom);
-        d.insert_temp(Id::new(UPSCALE), upscale);
+        d.insert_temp(Id::unique(UI), zoom);
+        d.insert_temp(Id::unique(UPSCALE), upscale);
     });
 }
 
 /// Forgets the UI zoom: a new app has not published one yet.
 pub fn clear_ui(ctx: &Context) {
     ctx.data_mut(|d| {
-        d.remove_temp::<f32>(Id::new(UI));
-        d.remove_temp::<bool>(Id::new(UPSCALE));
+        d.remove_temp::<f32>(Id::unique(UI));
+        d.remove_temp::<bool>(Id::unique(UPSCALE));
     });
 }
 
@@ -50,25 +50,26 @@ pub fn clear_ui(ctx: &Context) {
 pub fn upscaled(ctx: &Context) -> bool {
     cfg!(feature = "software")
         && ctx
-            .data(|d| d.get_temp::<bool>(Id::new(UPSCALE)))
+            .data(|d| d.get_temp::<bool>(Id::unique(UPSCALE)))
             .unwrap_or(false)
 }
 
 fn base(ctx: &Context) -> f32 {
-    ctx.data(|d| d.get_temp::<f32>(Id::new(BASE)))
+    ctx.data(|d| d.get_temp::<f32>(Id::unique(BASE)))
         .unwrap_or(1.0)
 }
 
 /// The published UI zoom, 1 when none is.
 pub fn ui(ctx: &Context) -> f32 {
-    ctx.data(|d| d.get_temp::<f32>(Id::new(UI))).unwrap_or(1.0)
+    ctx.data(|d| d.get_temp::<f32>(Id::unique(UI)))
+        .unwrap_or(1.0)
 }
 
 /// Before a software frame: `stage` is the zoom the runner scales the
 /// frame by, 1 when egui's zoom factor carries it.
 pub fn begin_frame(ctx: &Context, stage: f32) {
     let zoom = stage * ctx.zoom_factor() / base(ctx);
-    ctx.data_mut(|d| d.insert_temp(Id::new(FRAME), zoom));
+    ctx.data_mut(|d| d.insert_temp(Id::unique(FRAME), zoom));
 }
 
 /// The zoom this frame lays out at: the screen is the window divided by
@@ -77,7 +78,7 @@ pub fn frame(ctx: &Context) -> f32 {
     if cfg!(feature = "glow") {
         ctx.zoom_factor() / base(ctx)
     } else {
-        ctx.data(|d| d.get_temp::<f32>(Id::new(FRAME)))
+        ctx.data(|d| d.get_temp::<f32>(Id::unique(FRAME)))
             .unwrap_or(1.0)
     }
 }
@@ -105,7 +106,7 @@ pub fn stage_rect(ctx: &Context, screen: egui::Rect) -> egui::Rect {
 /// itself, egui keeps the base factor.
 pub fn apply(ctx: &Context) {
     let base = base(ctx);
-    let Some(ui) = ctx.data(|d| d.get_temp::<f32>(Id::new(UI))) else {
+    let Some(ui) = ctx.data(|d| d.get_temp::<f32>(Id::unique(UI))) else {
         return;
     };
     let want = if upscaled(ctx) { base } else { base * ui };

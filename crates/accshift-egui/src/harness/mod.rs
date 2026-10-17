@@ -14,6 +14,7 @@
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use egui::{
@@ -447,6 +448,7 @@ fn expand(steps: &[Step]) -> Result<VecDeque<Op>, String> {
                     unit: MouseWheelUnit::Point,
                     delta: vec2(0.0, -dy),
                     phase: TouchPhase::Move,
+                    source: egui::MouseWheelSource::Wheel,
                     modifiers: *held,
                 }));
             }
@@ -482,6 +484,8 @@ pub struct SceneRun {
     wake_at: f64,
     clock: Instant,
     pending_shot: Option<String>,
+    /// Where the screenshot callback of `pending_shot` leaves the frame.
+    shot: Arc<Mutex<Option<Arc<egui::ColorImage>>>>,
     build: Option<Scene>,
     /// `deeplink` URLs for the app, taken by the shell.
     links: Vec<String>,
@@ -498,6 +502,7 @@ impl SceneRun {
             wake_at: 0.0,
             clock: Instant::now(),
             pending_shot: None,
+            shot: Arc::default(),
             build: None,
             links: Vec::new(),
         }
@@ -681,7 +686,13 @@ impl SceneRun {
                     }
                 }
                 Op::Shot(name) => {
-                    ctx.send_viewport_cmd(ViewportCommand::Screenshot(Default::default()));
+                    let (slot, ctx2) = (Arc::clone(&self.shot), ctx.clone());
+                    ctx.send_viewport_cmd(ViewportCommand::Screenshot(
+                        egui::ScreenshotCallback::new(move |image| {
+                            *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(image);
+                            ctx2.request_repaint();
+                        }),
+                    ));
                     self.pending_shot = Some(name);
                     return;
                 }
@@ -694,16 +705,11 @@ impl SceneRun {
     }
 
     /// Write the screenshot that arrived this frame, if any.
-    pub fn collect(&mut self, ctx: &egui::Context) {
+    pub fn collect(&mut self) {
         let Some(name) = self.pending_shot.clone() else {
             return;
         };
-        let image = ctx.input(|i| {
-            i.raw.events.iter().find_map(|e| match e {
-                Event::Screenshot { image, .. } => Some(image.clone()),
-                _ => None,
-            })
-        });
+        let image = self.shot.lock().unwrap_or_else(|e| e.into_inner()).take();
         let Some(image) = image else { return };
         self.pending_shot = None;
         let Some(scene) = self.scenes.get(self.index) else {

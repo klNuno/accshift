@@ -50,7 +50,7 @@ pub fn paint(ctx: &Context, painter: &Painter, rect: Rect, dark: bool) {
     if px == 0 {
         return;
     }
-    let key = Id::new(("search-cancel", dark, px));
+    let key = Id::unique(("search-cancel", dark, px));
     let texture = ctx.data_mut(|d| d.get_temp::<TextureHandle>(key));
     let texture = match texture {
         Some(t) => t,

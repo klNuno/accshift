@@ -105,7 +105,7 @@ impl AppModel {
             return;
         };
         let cover: Vec<Rect> = ctx
-            .data(|d| d.get_temp(Id::new(COVER_ID)))
+            .data(|d| d.get_temp(Id::unique(COVER_ID)))
             .unwrap_or_default();
         let hit = ctx.viewport(|vp| vp.hits.click.map(|w| w.id));
         let tab = b.nav.active_tab.clone();
@@ -153,7 +153,7 @@ impl AppModel {
                             item,
                             rect,
                             anchor: pos,
-                            id: Id::new(("drag-ghost", ctx.cumulative_frame_nr())),
+                            id: Id::unique(("drag-ghost", ctx.cumulative_frame_nr())),
                         });
                     }
                 }

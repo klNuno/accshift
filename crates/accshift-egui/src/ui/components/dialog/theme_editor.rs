@@ -483,8 +483,7 @@ fn checkbox(ui: &mut Ui, rect: Rect, id: Id, checked: &mut bool, props: &DialogP
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
     let response = ui.interact(rect, id, Sense::click());
-    response
-        .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *checked, ""));
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, *checked, ""));
     let focused = take_focus(ui, &response);
     let keyed = focused && ui.input(|i| i.key_pressed(Key::Space));
     if response.clicked() || keyed {
@@ -1122,7 +1121,7 @@ pub fn theme_editor_dialog(
     let ppp = ctx.pixels_per_point();
     let v = props.vars;
     let locale = props.locale;
-    let id = Id::new(THEME_EDITOR_ID).with(editor.mount);
+    let id = Id::unique(THEME_EDITOR_ID).with(editor.mount);
     let s = Styles::new(v);
     let m = view_model(editor, registry, locale, v);
     let title = i18n::translate(locale, "themeEditor.title");

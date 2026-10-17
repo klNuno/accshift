@@ -64,22 +64,12 @@ pub fn mark_with(event: &str, extra: &str) {
 const SHOT: &str = "ACCSHIFT_EGUI_BENCH_SHOT";
 
 pub fn request_shot(ctx: &egui::Context) {
-    if enabled() && std::env::var_os(SHOT).is_some() {
-        ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
-    }
-}
-
-pub fn save_shot(ctx: &egui::Context) {
     let Some(path) = std::env::var_os(SHOT).filter(|_| enabled()) else {
         return;
     };
-    let image = ctx.input(|i| {
-        i.events.iter().find_map(|e| match e {
-            egui::Event::Screenshot { image, .. } => Some(image.clone()),
-            _ => None,
-        })
-    });
-    if let Some(image) = image {
-        let _ = crate::harness::write_png(std::path::Path::new(&path), &image);
-    }
+    ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
+        egui::ScreenshotCallback::new(move |image| {
+            let _ = crate::harness::write_png(std::path::Path::new(&path), &image);
+        }),
+    ));
 }

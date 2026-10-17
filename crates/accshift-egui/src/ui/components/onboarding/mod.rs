@@ -80,7 +80,7 @@ pub struct TourTargets {
 }
 
 fn targets_id() -> Id {
-    Id::new("accshift::tour-targets")
+    Id::unique("accshift::tour-targets")
 }
 
 /// Forgets last frame's targets; the title bar and the grid record theirs
@@ -194,7 +194,7 @@ pub fn onboarding(ui: &mut Ui, props: &OnboardingProps) -> Vec<OnboardingEvent> 
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
     let view = props.view;
-    let root = Id::new(ONBOARDING_ID).with(view.mount);
+    let root = Id::unique(ONBOARDING_ID).with(view.mount);
     let mut events = Vec::new();
 
     // `measureCurrent`.
@@ -701,7 +701,7 @@ fn button(
         Sense::hover()
     };
     let response = ui.interact(snap::rect(rect, ppp), id, sense);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     let focused = enabled && take_focus(ui, &response);
     let hovered = enabled && response.hovered();
     let (color, border_color, background) = match kind {

@@ -20,7 +20,7 @@
 use egui::accesskit::Role;
 use egui::{
     pos2, vec2, Color32, FontId, Id, LayerId, Order, PointerButton, Rect, Response, Sense, Ui,
-    WidgetInfo, WidgetType,
+    WidgetInfo,
 };
 
 use accshift_app::i18n::{translate, Locale};
@@ -124,7 +124,7 @@ pub fn title_bar(ui: &mut Ui, rect: Rect, props: &TitleBarProps) -> Vec<Action> 
 
     // The bar itself: mousedown outside a button drags the window, a double
     // click toggles maximize. Registered first so every button sits on top.
-    let bar = ui.interact(rect, Id::new("titlebar"), Sense::click_and_drag());
+    let bar = ui.interact(rect, Id::unique("titlebar"), Sense::click_and_drag());
     if bar.drag_started_by(PointerButton::Primary) {
         actions.push(Action::StartDrag);
     }
@@ -265,7 +265,7 @@ pub fn title_bar(ui: &mut Ui, rect: Rect, props: &TitleBarProps) -> Vec<Action> 
 /// Chromium focuses a button on mousedown; any other press blurs it. The
 /// focused button stays in egui memory under this id.
 fn focus_id() -> Id {
-    Id::new("titlebar::focused")
+    Id::unique("titlebar::focused")
 }
 
 fn focused(ui: &Ui) -> Option<Id> {
@@ -307,7 +307,7 @@ fn action_button(
     props: &TitleBarProps,
 ) -> bool {
     let v = props.vars;
-    let id = Id::new(("titlebar::btn", label));
+    let id = Id::unique(("titlebar::btn", label));
     let response = ui.interact(
         rect,
         id,
@@ -317,7 +317,7 @@ fn action_button(
             Sense::hover()
         },
     );
-    response.widget_info(|| WidgetInfo::selected(WidgetType::Button, enabled, active_mode, label));
+    response.widget_info(|| WidgetInfo::selected(Role::Button, enabled, active_mode, label));
     let has_focus = track_focus(ui, &response, enabled);
     let hovered = enabled && response.hovered();
     let pressed = enabled && response.is_pointer_button_down_on();
@@ -364,9 +364,9 @@ fn caption_button(
     props: &TitleBarProps,
 ) -> (bool, Response) {
     let v = props.vars;
-    let id = Id::new(("titlebar::caption", index));
+    let id = Id::unique(("titlebar::caption", index));
     let response = ui.interact(rect, id, Sense::click());
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, label));
+    response.widget_info(|| WidgetInfo::labeled(Role::Button, true, label));
     let has_focus = track_focus(ui, &response, true);
     let hovered = response.hovered() || (index == 1 && props.snap_hover);
     let pressed = response.is_pointer_button_down_on();
@@ -450,7 +450,7 @@ fn tabs(ui: &mut Ui, bar: Rect, content_h: f32, props: &TitleBarProps, actions: 
     let v = props.vars;
     for (index, tab) in list.iter().enumerate() {
         let rect = Rect::from_min_size(pos2(x0 + index as f32 * 34.0, y), vec2(32.0, 28.0));
-        let id = Id::new(("titlebar::tab", tab.key));
+        let id = Id::unique(("titlebar::tab", tab.key));
         let enabled = !tab.unavailable;
         let response = ui.interact(
             rect,
@@ -461,9 +461,7 @@ fn tabs(ui: &mut Ui, bar: Rect, content_h: f32, props: &TitleBarProps, actions: 
                 Sense::hover()
             },
         );
-        response.widget_info(|| {
-            WidgetInfo::selected(WidgetType::SelectableLabel, enabled, tab.active, &tab.name)
-        });
+        response.widget_info(|| WidgetInfo::selected(Role::Button, enabled, tab.active, &tab.name));
         ctx.accesskit_node_builder(id, |node| {
             node.set_role(Role::Tab);
             node.set_selected(tab.active);
@@ -543,7 +541,7 @@ fn tabs(ui: &mut Ui, bar: Rect, content_h: f32, props: &TitleBarProps, actions: 
 /// draws none, and neither does this until the CSS changes.
 fn tooltip(ui: &Ui, tab: Rect, strip: Rect, label: &str, shown: bool, props: &TitleBarProps) {
     let ctx = ui.ctx();
-    let id = Id::new(("titlebar::tooltip", label));
+    let id = Id::unique(("titlebar::tooltip", label));
     let spec = if shown { TOOLTIP_IN } else { T120 };
     let opacity = anim::transition(ctx, id, if shown { 1.0f32 } else { 0.0 }, &spec);
     if opacity <= 0.0 {
@@ -566,7 +564,10 @@ fn tooltip(ui: &Ui, tab: Rect, strip: Rect, label: &str, shown: bool, props: &Ti
         size,
     );
     let mut painter = ctx
-        .layer_painter(LayerId::new(Order::Foreground, Id::new("titlebar::tips")))
+        .layer_painter(LayerId::new(
+            Order::Foreground,
+            Id::unique("titlebar::tips"),
+        ))
         .with_clip_rect(strip);
     painter.multiply_opacity(opacity);
     BoxStyle {
@@ -628,7 +629,7 @@ fn update_width(ui: &Ui, label: &str) -> f32 {
 /// `.update-btn`: pill, 24 px high, 11px 600.
 fn update_button(ui: &mut Ui, rect: Rect, cta: &UpdateCta, props: &TitleBarProps) -> bool {
     let v = props.vars;
-    let id = Id::new("titlebar::update");
+    let id = Id::unique("titlebar::update");
     let enabled = !cta.disabled;
     let response = ui.interact(
         rect,
@@ -639,7 +640,7 @@ fn update_button(ui: &mut Ui, rect: Rect, cta: &UpdateCta, props: &TitleBarProps
             Sense::hover()
         },
     );
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, cta.label));
+    response.widget_info(|| WidgetInfo::labeled(Role::Button, enabled, cta.label));
     let hovered = enabled && response.hovered();
     let ctx = ui.ctx().clone();
     let bg = if hovered {

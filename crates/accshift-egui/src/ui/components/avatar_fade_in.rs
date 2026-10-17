@@ -53,9 +53,9 @@ mod tests {
     fn cached_pictures_show_at_once_late_ones_fade() {
         let v = vars();
         let ctx = Context::default();
-        let id = Id::new("card");
+        let id = Id::unique("card");
         assert_eq!(at(&ctx, 0.0, |c| avatar_opacity(c, id, true, &v)), 1.0);
-        let late = Id::new("late");
+        let late = Id::unique("late");
         assert_eq!(at(&ctx, 0.0, |c| avatar_opacity(c, late, false, &v)), 0.0);
         let mid = at(&ctx, 0.1, |c| avatar_opacity(c, late, true, &v));
         assert!(mid < 0.05, "starts the fade at the decode: {mid}");

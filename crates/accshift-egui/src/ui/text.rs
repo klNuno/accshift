@@ -424,7 +424,7 @@ impl TextLayout {
 }
 
 fn transform_id() -> egui::Id {
-    egui::Id::new("text-transform")
+    egui::Id::unique("text-transform")
 }
 
 /// The CSS transform text is painted under, set by
@@ -934,7 +934,7 @@ type SharedBook = Arc<Mutex<Book>>;
 
 fn book(ctx: &Context) -> SharedBook {
     ctx.data_mut(|d| {
-        d.get_temp_mut_or_insert_with(Id::new("accshift.ui.text.book"), || {
+        d.get_temp_mut_or_insert_with(Id::unique("accshift.ui.text.book"), || {
             Arc::new(Mutex::new(Book {
                 cjk: false,
                 fallbacks: HashMap::new(),
@@ -1009,7 +1009,7 @@ impl Book {
         // draws the outline itself when DirectWrite cannot.
         #[cfg(windows)]
         if let Some(rasterizer) = dwrite::rasterizer(choice, data) {
-            font = font.rasterizer(rasterizer);
+            font = font.face_rasterizer(rasterizer);
         }
         self.faces.insert(key.clone(), Arc::new(font));
         self.dirty = true;

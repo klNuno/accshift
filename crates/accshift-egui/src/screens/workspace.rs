@@ -39,7 +39,7 @@ use accshift_app::jobs::Jobs;
 use accshift_app::stores::{ClientStores, ViewMode};
 use accshift_theme::ResolvedTheme;
 use egui::layers::ShapeIdx;
-use egui::{pos2, vec2, Context, Event, Id, Key, LayerId, Rect, Sense, Ui, WidgetInfo, WidgetType};
+use egui::{pos2, vec2, Context, Event, Id, Key, LayerId, Rect, Role, Sense, Ui, WidgetInfo};
 
 use crate::app::accounts::Accounts;
 use crate::app::avatars::AvatarTexture;
@@ -358,7 +358,7 @@ impl Workspace {
     pub fn owns(&self, id: Id) -> bool {
         self.mounts
             .iter()
-            .any(|(key, (generation, _))| Id::new(("ws-card", key.as_str(), *generation)) == id)
+            .any(|(key, (generation, _))| Id::unique(("ws-card", key.as_str(), *generation)) == id)
     }
 
     /// The card `item` on screen, as `getBoundingClientRect` reads it.
@@ -395,7 +395,7 @@ impl Workspace {
                 self.generation
             }
         };
-        Id::new(("ws-card", key, generation))
+        Id::unique(("ws-card", key, generation))
     }
 
     /// `getAvatarGradientStyle(seed)`: background colour and gradient.
@@ -556,7 +556,7 @@ pub enum Moved {
 }
 
 fn moved_id() -> Id {
-    Id::new("ws-moved")
+    Id::unique("ws-moved")
 }
 
 /// Mounts `nodes` anew at the next draw.
@@ -609,7 +609,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
         ctx.data_mut(|d| {
             for m in &moved {
                 if let Moved::Section(id) = m {
-                    let sid = Id::new(("section-dragged", id));
+                    let sid = Id::unique(("section-dragged", id));
                     d.remove::<crate::ui::anim::TransitionState<f32>>(sid.with("o"));
                     d.remove::<crate::ui::anim::TransitionState<f32>>(sid.with("s"));
                 }
@@ -1085,7 +1085,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
             if on {
                 ghost_section = Some(prefix.clone());
             }
-            let sid = Id::new(("section-dragged", &f.id));
+            let sid = Id::unique(("section-dragged", &f.id));
             let opacity = crate::ui::anim::transition(
                 &ctx,
                 sid.with("o"),
@@ -1726,7 +1726,7 @@ fn account_avatar(
 /// Senses a card that is not painted, so Tab still walks it.
 fn sense_only(ui: &mut Ui, rect: Rect, id: Id, label: &str) {
     let response = ui.interact(rect, id, Sense::click());
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, label));
+    response.widget_info(|| WidgetInfo::labeled(Role::Button, true, label));
     ui.ctx()
         .accesskit_node_builder(id, |node| node.set_role(egui::accesskit::Role::Button));
 }
@@ -2219,7 +2219,7 @@ fn search_field(
     let ppp = ctx.pixels_per_point();
     let layout = rect;
     let rect = snap::rect(rect, ppp);
-    let id = Id::new(crate::app::keys::SEARCH_ID);
+    let id = Id::unique(crate::app::keys::SEARCH_ID);
     // Dragging selects.
     let response = ui.interact(rect, id, Sense::click_and_drag());
     let response = response.on_hover_cursor(egui::CursorIcon::Text);
@@ -2391,7 +2391,7 @@ fn scrollbar(
         pos2(track.left(), track.top() + top),
         vec2(SCROLLBAR, thumb_h),
     );
-    let id = Id::new("workspace-scrollbar");
+    let id = Id::unique("workspace-scrollbar");
     let response = ui.interact(thumb, id, Sense::drag());
     if response.drag_started() {
         if let Some(p) = response.interact_pointer_pos() {
@@ -2749,7 +2749,7 @@ mod scene_tests {
         let mut run = Run::new("workspace-glass-dark-100", 1.0);
         run.settle();
         run.click(pos2(639.0, 60.0));
-        let id = egui::Id::new(crate::app::keys::SEARCH_ID);
+        let id = egui::Id::unique(crate::app::keys::SEARCH_ID);
         let field = run.ctx.read_response(id).unwrap().rect;
         // The text starts after the 1 px border and the 10 px padding.
         let at = |dx: f32| pos2(field.left() + 11.0 + dx, field.center().y);
@@ -2834,6 +2834,7 @@ mod scene_tests {
             unit: egui::MouseWheelUnit::Point,
             delta: vec2(0.0, -4000.0),
             phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
             modifiers: Modifiers::NONE,
         });
         wait(&mut run, 400);
@@ -2939,6 +2940,7 @@ mod scene_tests {
             unit: egui::MouseWheelUnit::Point,
             delta: vec2(0.0, -1942.0),
             phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
             modifiers: Modifiers::NONE,
         });
         run.frame();
@@ -3179,7 +3181,7 @@ mod scene_tests {
             panic!("no input dialog")
         };
         assert_eq!(value.as_deref(), Some(""));
-        let ids = Id::new(dialog::INPUT_ID).with(mount);
+        let ids = Id::unique(dialog::INPUT_ID).with(mount);
         assert_eq!(focused(&run), Some(ids.with("input")));
         run.send(Event::Text("Ranked".into()));
         run.frame();
@@ -3225,7 +3227,7 @@ mod scene_tests {
         let (_, true, (_, Some(mount))) = app(&run) else {
             panic!("no confirm dialog")
         };
-        let ids = Id::new(dialog::CONFIRM_ID).with(mount);
+        let ids = Id::unique(dialog::CONFIRM_ID).with(mount);
         assert_eq!(focused(&run), Some(ids.with("cancel")));
         run.key(Key::Enter);
         run.settle();
@@ -3234,7 +3236,7 @@ mod scene_tests {
         delete(&mut run);
         tab(&mut run, false);
         let mount = app(&run).2 .1.unwrap();
-        let ids = Id::new(dialog::CONFIRM_ID).with(mount);
+        let ids = Id::unique(dialog::CONFIRM_ID).with(mount);
         assert_eq!(focused(&run), Some(ids.with("confirm")));
         run.key(Key::Enter);
         run.settle();
@@ -3348,6 +3350,7 @@ mod scene_tests {
                     unit: egui::MouseWheelUnit::Point,
                     delta: vec2(0.0, -dy),
                     phase: egui::TouchPhase::Move,
+                    source: egui::MouseWheelSource::Wheel,
                     modifiers: Modifiers::NONE,
                 });
                 let started = Instant::now();
@@ -3603,7 +3606,7 @@ mod scene_tests {
         assert_eq!(view_mode(&run), ViewMode::Grid);
 
         // Ctrl+F focuses the search; Escape clears and blurs it.
-        let search = egui::Id::new(crate::app::keys::SEARCH_ID);
+        let search = egui::Id::unique(crate::app::keys::SEARCH_ID);
         chord(&mut run, Key::F, ctrl);
         assert!(run.ctx.memory(|m| m.has_focus(search)));
         run.send(Event::Text("zz".into()));

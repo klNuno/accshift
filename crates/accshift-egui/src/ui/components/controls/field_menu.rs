@@ -22,7 +22,7 @@ const PENDING: &str = "accshift-field-menu/pending";
 pub fn on_response(ctx: &Context, id: Id, response: &egui::Response) {
     if response.secondary_clicked() {
         if let Some(at) = response.interact_pointer_pos() {
-            ctx.data_mut(|d| d.insert_temp(Id::new(REQUEST), (id, at)));
+            ctx.data_mut(|d| d.insert_temp(Id::unique(REQUEST), (id, at)));
         }
     }
 }
@@ -31,7 +31,7 @@ pub fn on_response(ctx: &Context, id: Id, response: &egui::Response) {
 /// its entries.
 pub fn take_request(ctx: &Context) -> Option<(Pos2, Vec<AppMenuEntry>)> {
     let (id, at) = ctx.data_mut(|d| take::<(Id, Pos2)>(d, REQUEST))?;
-    ctx.data_mut(|d| d.insert_temp(Id::new(TARGET), id));
+    ctx.data_mut(|d| d.insert_temp(Id::unique(TARGET), id));
     let entry = |what: &str, key: &str| {
         AppMenuEntry::item(
             format!("{PREFIX}{what}"),
@@ -56,7 +56,7 @@ pub fn run(ctx: &Context, id: &str) -> bool {
     let Some(what) = id.strip_prefix(PREFIX) else {
         return false;
     };
-    let Some(target) = ctx.data(|d| d.get_temp::<Id>(Id::new(TARGET))) else {
+    let Some(target) = ctx.data(|d| d.get_temp::<Id>(Id::unique(TARGET))) else {
         return true;
     };
     let event = match what {
@@ -76,7 +76,7 @@ pub fn run(ctx: &Context, id: &str) -> bool {
     if what == "paste" {
         clipboard::request_text(ctx);
     }
-    ctx.data_mut(|d| d.insert_temp(Id::new(PENDING), (target, event)));
+    ctx.data_mut(|d| d.insert_temp(Id::unique(PENDING), (target, event)));
     // The press on the menu may have taken focus from the field.
     ctx.memory_mut(|m| m.request_focus(target));
     ctx.request_repaint();
@@ -85,7 +85,7 @@ pub fn run(ctx: &Context, id: &str) -> bool {
 
 /// The focused field `id`, before editing: the event an entry left for it.
 pub fn take_event(ctx: &Context, id: Id) -> Option<Event> {
-    let pending = ctx.data(|d| d.get_temp::<(Id, Option<Event>)>(Id::new(PENDING)))?;
+    let pending = ctx.data(|d| d.get_temp::<(Id, Option<Event>)>(Id::unique(PENDING)))?;
     if pending.0 != id {
         return None;
     }
@@ -95,7 +95,7 @@ pub fn take_event(ctx: &Context, id: Id) -> Option<Event> {
 
 /// `remove_temp` for a type with no `Default`.
 fn take<T: 'static + Clone + Send + Sync>(d: &mut egui::util::IdTypeMap, key: &str) -> Option<T> {
-    let value = d.get_temp::<T>(Id::new(key));
-    d.remove::<T>(Id::new(key));
+    let value = d.get_temp::<T>(Id::unique(key));
+    d.remove::<T>(Id::unique(key));
     value
 }

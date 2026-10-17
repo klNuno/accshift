@@ -745,7 +745,7 @@ mod tests {
         }];
         let surface = Surface {
             vars: &v,
-            id: Id::new("card"),
+            id: Id::unique("card"),
             sections: &sections,
             clickable: &[],
             locale: Locale::En,

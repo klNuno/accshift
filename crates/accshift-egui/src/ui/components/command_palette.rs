@@ -75,7 +75,7 @@ const EMPTY_PAD: f32 = 22.0;
 
 /// The field's widget id for a mount.
 pub fn input_id(mount: u64) -> Id {
-    Id::new(PALETTE_ID).with(mount).with("input")
+    Id::unique(PALETTE_ID).with(mount).with("input")
 }
 
 /// What the palette keeps between frames.
@@ -309,7 +309,7 @@ pub fn command_palette(
     let ppp = ctx.pixels_per_point();
     let v = props.vars;
     let f = fonts(v);
-    let id = Id::new(PALETTE_ID).with(props.mount);
+    let id = Id::unique(PALETTE_ID).with(props.mount);
     let input = input_id(props.mount);
     let mut events = Vec::new();
 
