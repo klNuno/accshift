@@ -98,15 +98,32 @@ fn draw_rect_impl<const vert_col_vary: bool, const vert_uvs_vary: bool, const al
         if use_nearest_sampling && no_texture_wrap_or_overflow {
             // Can just directly blend the texture over the dst buffer, no need to sample with uv
             let min_uv = [ts_min.x as i32, ts_min.y as i32];
+            // A coverage texture's span, expanded in runs of 64 texels, a
+            // multiple of every SIMD width: each pixel takes the same path as
+            // in an RGBA span.
+            let mut texels = [[0u8; 4]; 64];
             for (tex_row, y) in (min_uv[1]..).zip(min_y..max_y) {
                 let tex_row_start = tex_row as usize * texture.width;
                 let tex_start = tex_row_start + min_uv[0] as usize;
                 let tex_end = tex_start + max_x - min_x;
 
                 let dst = &mut buffer.get_mut_span(min_x, max_x, y);
-                let src = &texture.data[tex_start..tex_end];
-
-                simd_impl.egui_blend_u8_slice_tinted(src, draw.const_vert_color_u8x4, dst);
+                if texture.coverage.is_empty() {
+                    let src = &texture.data[tex_start..tex_end];
+                    simd_impl.egui_blend_u8_slice_tinted(src, draw.const_vert_color_u8x4, dst);
+                } else {
+                    let src = &texture.coverage[tex_start..tex_end];
+                    for (src, dst) in src.chunks(64).zip(dst.chunks_mut(64)) {
+                        for (texel, &v) in texels.iter_mut().zip(src) {
+                            *texel = [v, v, v, v];
+                        }
+                        simd_impl.egui_blend_u8_slice_tinted(
+                            &texels[..src.len()],
+                            draw.const_vert_color_u8x4,
+                            dst,
+                        );
+                    }
+                }
             }
         } else {
             // There's overflow or can't use nearest. So we need to do full sample.

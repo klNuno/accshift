@@ -240,6 +240,24 @@ struct Backdrop {
 type FilterKey = (usize, usize, [u32; 3], Option<usize>);
 
 impl EguiSoftwareRender {
+    /// Bytes the renderer holds between frames: the primitive cache (its
+    /// count, its bytes, how many of its buffers reach 1 MiB), the
+    /// textures' bytes and the backdrop buffers' bytes.
+    pub fn held_bytes(&self) -> [usize; 5] {
+        let sizes = self.cached_primitives.values().map(|p| p.buffer.len() * 4);
+        let big = sizes.clone().filter(|&b| b >= 1 << 20).count();
+        let textures = self.textures.values().map(EguiTexture::bytes).sum();
+        let b = &self.backdrop;
+        let backdrop = (b.out.capacity() + b.blurred.capacity() + b.filtered.capacity()) * 4;
+        [
+            self.cached_primitives.len(),
+            sizes.sum(),
+            big,
+            textures,
+            backdrop,
+        ]
+    }
+
     /// # Arguments
     /// * `output_field_order` - egui textures and vertex colors will be swizzled before rendering to match the desired
     ///   output buffer order.
@@ -304,7 +322,7 @@ impl EguiSoftwareRender {
         }
         let [w, h] = atlas.size;
         let rows = h * (1 + atlas.slots.len());
-        let texture = EguiTexture::from_data(atlas.stacked(), [w, rows], atlas.options);
+        let texture = EguiTexture::from_coverage(atlas.stacked(), [w, rows], atlas.options);
         self.textures.insert(egui::TextureId::default(), texture);
     }
 
@@ -498,6 +516,15 @@ impl EguiSoftwareRender {
         }
         self.backdrop.force_full = was_shown && !self.backdrop.active;
         self.backdrop.shown = self.backdrop.active;
+        if !self.backdrop.active {
+            // Three frames' worth of pixels that only a layer or a filter
+            // reads: the next one rebuilds them.
+            self.backdrop.out = Vec::new();
+            self.backdrop.blurred = Vec::new();
+            self.backdrop.filtered = Vec::new();
+            self.backdrop.key = None;
+            self.backdrop.filter_key = None;
+        }
 
         self.free_textures(textures_delta);
     }
@@ -664,16 +691,19 @@ impl EguiSoftwareRender {
         let bits = [sigma.to_bits(), saturate.to_bits(), scale.to_bits()];
         let key = (width, height, bits, root);
         if canvas_changed || self.backdrop.filter_key != Some(key) {
-            let (mut under, element) = match root {
-                Some(r) => (
-                    self.composite_where(|z| z < r),
-                    self.composite_where(|z| z > r),
-                ),
-                None => (vec![[0u8; 4]; width * height], self.canvas.data.clone()),
+            let filtered = match root {
+                Some(r) => {
+                    let element = self.composite_where(|z| z > r);
+                    let mut under = self.composite_where(|z| z < r);
+                    let filtered =
+                        backdrop::filter(&element, width, height, sigma, saturate, scale);
+                    backdrop::land(&mut under, &filtered, 1.0);
+                    under
+                }
+                // Landing on transparent at full opacity is the layer itself.
+                None => backdrop::filter(&self.canvas.data, width, height, sigma, saturate, scale),
             };
-            let filtered = backdrop::filter(&element, width, height, sigma, saturate, scale);
-            backdrop::land(&mut under, &filtered, 1.0);
-            self.backdrop.filtered = under;
+            self.backdrop.filtered = filtered;
             self.backdrop.filter_key = Some(key);
         }
         let mut out = core::mem::take(&mut self.backdrop.out);
@@ -1403,15 +1433,12 @@ impl EguiSoftwareRender {
             if *id == egui::TextureId::default()
                 && let Some(atlas) = &mut self.glyph_atlas
             {
-                let order = self.output_field_order;
-                let texel = |i: usize| match order {
-                    ColorFieldOrder::Rgba => pixels[i].to_array(),
-                    ColorFieldOrder::Bgra => swizzle_rgba_bgra(pixels[i].to_array()),
-                };
+                // Premultiplied white: the channel order changes nothing.
+                let texel = |i: usize| GlyphAtlas::coverage_of(pixels[i].to_array());
                 match delta.pos {
                     Some(pos) if atlas.size[0] > 0 => {
                         if let Some(texture) = self.textures.get_mut(id) {
-                            atlas.write_region(&mut texture.data, pos, size, texel);
+                            atlas.write_region(&mut texture.coverage, pos, size, texel);
                         }
                     }
                     _ => {
@@ -1419,8 +1446,11 @@ impl EguiSoftwareRender {
                         atlas.size = size;
                         atlas.options = delta.options;
                         let rows = size[1] * (1 + atlas.slots.len());
-                        let texture =
-                            EguiTexture::from_data(atlas.stacked(), [size[0], rows], delta.options);
+                        let texture = EguiTexture::from_coverage(
+                            atlas.stacked(),
+                            [size[0], rows],
+                            delta.options,
+                        );
                         self.textures.insert(*id, texture);
                     }
                 }

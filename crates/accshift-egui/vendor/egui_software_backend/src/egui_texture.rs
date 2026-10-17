@@ -7,7 +7,11 @@ use crate::{
 };
 
 pub struct EguiTexture {
+    /// RGBA texels, empty when `coverage` holds them.
     pub data: Vec<[u8; 4]>,
+    /// Premultiplied white texels, one coverage byte each (the font atlas):
+    /// texel `i` is `[coverage[i]; 4]`. Empty for an RGBA texture.
+    pub coverage: Vec<u8>,
     // Common case: The default egui texture has the top-left corner pixel fully white.
     // https://github.com/emilk/egui/blob/c97c065a575ec6e657bb42872890a00d0fb391c1/crates/epaint/src/lib.rs#L92
     pub uv_zero_val: [u8; 4],
@@ -39,6 +43,7 @@ impl EguiTexture {
         let uv_zero_val = data[0];
         EguiTexture {
             data,
+            coverage: Vec::new(),
             width_extent: size[0] as i32 - 1,
             height_extent: size[1] as i32 - 1,
             width: size[0],
@@ -49,18 +54,38 @@ impl EguiTexture {
         }
     }
 
-    /// A texture from texels already in the output channel order.
-    pub fn from_data(data: Vec<[u8; 4]>, size: [usize; 2], options: TextureOptions) -> EguiTexture {
-        let uv_zero_val = data[0];
+    /// A texture of premultiplied white texels, given as their coverage.
+    pub fn from_coverage(
+        coverage: Vec<u8>,
+        size: [usize; 2],
+        options: TextureOptions,
+    ) -> EguiTexture {
+        let v = coverage[0];
         EguiTexture {
-            data,
+            data: Vec::new(),
+            coverage,
             width_extent: size[0] as i32 - 1,
             height_extent: size[1] as i32 - 1,
             width: size[0],
             height: size[1],
             fsize: vec2(size[0] as f32, size[1] as f32),
             options,
-            uv_zero_val,
+            uv_zero_val: [v, v, v, v],
+        }
+    }
+
+    /// Bytes held by the texels.
+    pub fn bytes(&self) -> usize {
+        self.data.len() * 4 + self.coverage.len()
+    }
+
+    #[inline(always)]
+    fn texel(&self, i: usize) -> [u8; 4] {
+        if self.coverage.is_empty() {
+            self.data[i]
+        } else {
+            let v = self.coverage[i];
+            [v, v, v, v]
         }
     }
 
@@ -70,7 +95,7 @@ impl EguiTexture {
         let ss_y = ((uv.y * self.fsize.y) as i32)
             .max(0)
             .min(self.height_extent);
-        self.data[ss_x as usize + ss_y as usize * self.width]
+        self.texel(ss_x as usize + ss_y as usize * self.width)
     }
 
     pub fn sample_bilinear(&self, uv: Vec2) -> [u8; 4] {
@@ -108,26 +133,41 @@ impl EguiTexture {
         let x1c = x1.max(0).min(self.width_extent);
         let y1c = y1.max(0).min(self.height_extent);
 
-        let c00 = self.data[(x0c as usize) + (y0c as usize) * self.width];
-
-        if self.options.magnification == TextureFilter::Nearest || (fx == 0.0 && fy == 0.0) {
-            // if these are 0 the px at 0,0 will have full influence. Equivalent to nearest sampling.
-            return c00;
-        }
-
-        let c10 = self.data[(x1c as usize) + (y0c as usize) * self.width];
-        let c01 = self.data[(x0c as usize) + (y1c as usize) * self.width];
-        let c11 = self.data[(x1c as usize) + (y1c as usize) * self.width];
-
-        let v00 = u8x4_to_vec4(&c00);
-        let v10 = u8x4_to_vec4(&c10);
-        let v01 = u8x4_to_vec4(&c01);
-        let v11 = u8x4_to_vec4(&c11);
+        let i00 = (x0c as usize) + (y0c as usize) * self.width;
+        let i10 = (x1c as usize) + (y0c as usize) * self.width;
+        let i01 = (x0c as usize) + (y1c as usize) * self.width;
+        let i11 = (x1c as usize) + (y1c as usize) * self.width;
+        // if these are 0 the px at 0,0 will have full influence. Equivalent to nearest sampling.
+        let nearest =
+            self.options.magnification == TextureFilter::Nearest || (fx == 0.0 && fy == 0.0);
 
         let w00 = (1.0 - fx) * (1.0 - fy);
         let w10 = fx * (1.0 - fy);
         let w01 = (1.0 - fx) * fy;
         let w11 = fx * fy;
+
+        if !self.coverage.is_empty() {
+            // The RGBA arithmetic below on one channel: the four are equal.
+            let c = &self.coverage;
+            if nearest {
+                let v = c[i00];
+                return [v, v, v, v];
+            }
+            let at = |i: usize| c[i] as f32 / 255.0;
+            let s = at(i00) * w00 + at(i01) * w01 + at(i10) * w10 + at(i11) * w11;
+            let v = (s.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+            return [v, v, v, v];
+        }
+
+        let c00 = self.data[i00];
+        if nearest {
+            return c00;
+        }
+
+        let v00 = u8x4_to_vec4(&c00);
+        let v10 = u8x4_to_vec4(&self.data[i10]);
+        let v01 = u8x4_to_vec4(&self.data[i01]);
+        let v11 = u8x4_to_vec4(&self.data[i11]);
 
         vec4_to_u8x4(&(v00 * w00 + v01 * w01 + v10 * w10 + v11 * w11))
     }

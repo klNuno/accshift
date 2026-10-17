@@ -271,7 +271,7 @@ impl Runner {
             bench::mark_with(
                 "frame",
                 &format!(
-                    "\"px\":[{},{}],\"damaged\":{},\"ui\":{:.3},\"tessellate\":{:.3},\"raster\":{:.3},\"present\":{:.3}",
+                    "\"px\":[{},{}],\"damaged\":{},\"ui\":{:.3},\"tessellate\":{:.3},\"raster\":{:.3},\"present\":{:.3},\"held\":{:?}",
                     size.width,
                     size.height,
                     damaged_px,
@@ -279,6 +279,7 @@ impl Runner {
                     ms(ui_done, tessellated),
                     ms(tessellated, rasterized),
                     ms(rasterized, done),
+                    live.render.held_bytes(),
                 ),
             );
         }

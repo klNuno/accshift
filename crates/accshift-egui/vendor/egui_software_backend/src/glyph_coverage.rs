@@ -12,6 +12,10 @@
 //! The tables themselves come from the caller (`with_glyph_coverage`), so the
 //! backend knows nothing about gamma: it only classifies a vertex colour the
 //! way Skia does for an A8 mask and applies the table of that class.
+//!
+//! Every texel of the atlas is premultiplied white (epaint is built without
+//! `color_fonts`), so the atlas and its copies keep one coverage byte a
+//! texel, a quarter of RGBA; sampling expands it back to the same texel.
 
 use alloc::vec::Vec;
 use egui::{Color32, Mesh, TextureOptions};
@@ -51,8 +55,8 @@ pub fn is_glyph_uv(uv: egui::Pos2) -> bool {
 /// The untouched font atlas and its per-class copies.
 pub(crate) struct GlyphAtlas {
     pub tables: CoverageTables,
-    /// The atlas as egui sent it, already in the output channel order.
-    pub raw: Vec<[u8; 4]>,
+    /// The atlas as egui sent it, as coverage.
+    pub raw: Vec<u8>,
     pub size: [usize; 2],
     pub options: TextureOptions,
     /// Class drawn by each copy, in stacking order (copy `i` sits at rows
@@ -74,21 +78,25 @@ impl GlyphAtlas {
         }
     }
 
-    /// Glyph texels are premultiplied white: every channel equals the
-    /// coverage, so the table maps all four.
+    /// The coverage of an atlas texel, premultiplied white: every channel
+    /// equals it.
     #[inline]
-    fn apply(table: &[u8; 256], px: [u8; 4]) -> [u8; 4] {
-        let v = table[px[3] as usize];
-        [v, v, v, v]
+    pub fn coverage_of(px: [u8; 4]) -> u8 {
+        debug_assert!(
+            px[0] == px[3] && px[1] == px[3] && px[2] == px[3],
+            "a font atlas texel that is not premultiplied white: {px:?}"
+        );
+        px[3]
     }
 
-    /// The whole stacked texture: the raw atlas, then one copy per slot.
-    pub fn stacked(&self) -> Vec<[u8; 4]> {
+    /// The whole stacked texture, as coverage: the raw atlas, then one copy
+    /// per slot.
+    pub fn stacked(&self) -> Vec<u8> {
         let mut data = Vec::with_capacity(self.raw.len() * (1 + self.slots.len()));
         data.extend_from_slice(&self.raw);
         for &class in &self.slots {
             let table = &self.tables[class as usize];
-            data.extend(self.raw.iter().map(|&px| Self::apply(table, px)));
+            data.extend(self.raw.iter().map(|&v| table[v as usize]));
         }
         data
     }
@@ -96,21 +104,20 @@ impl GlyphAtlas {
     /// Writes a region of the raw atlas and of every copy into `stacked`.
     pub fn write_region(
         &mut self,
-        stacked: &mut [[u8; 4]],
+        stacked: &mut [u8],
         pos: [usize; 2],
         size: [usize; 2],
-        src: impl Fn(usize) -> [u8; 4],
+        src: impl Fn(usize) -> u8,
     ) {
         let [w, h] = self.size;
         for y in 0..size[1] {
             for x in 0..size[0] {
-                let px = src(x + y * size[0]);
+                let v = src(x + y * size[0]);
                 let at = (x + pos[0]) + (y + pos[1]) * w;
-                self.raw[at] = px;
-                stacked[at] = px;
+                self.raw[at] = v;
+                stacked[at] = v;
                 for (slot, &class) in self.slots.iter().enumerate() {
-                    stacked[at + (slot + 1) * w * h] =
-                        Self::apply(&self.tables[class as usize], px);
+                    stacked[at + (slot + 1) * w * h] = self.tables[class as usize][v as usize];
                 }
             }
         }

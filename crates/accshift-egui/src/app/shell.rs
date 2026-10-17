@@ -20,7 +20,8 @@
 //! `.app-shell.obscured` (the secure screen or streamer mode:
 //! `filter: blur(10px) saturate(82%)`,
 //! `transform: scale(1.01)`, 320 ms ease-out) is a [`Mark::Filter`] after
-//! the shell's shapes: the software renderer filters them as one layer.
+//! the shell's shapes: the software renderer filters them as one layer. The
+//! entrance's blur joins the same filter.
 //!
 //! Before the boot payload lands the frame is `opacity: 0`: nothing but the
 //! stand-in desktop of a scene run is drawn.
@@ -644,9 +645,11 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         ctx.input_mut(|i| i.events = events);
     }
     let end = next_idx(&ctx, layer_id);
-    if motion == Motion::Full && frame.blur > 0.25 {
-        blur_range(&ctx, layer_id, start, end, frame.blur);
-    }
+    let entrance_blur = if motion == Motion::Full && frame.blur > 0.25 {
+        frame.blur
+    } else {
+        0.0
+    };
     // `.app-shell.obscured`.
     let k = anim::transition_bool(
         &ctx,
@@ -654,17 +657,24 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         obscured || streaming,
         &OBSCURE,
     );
-    if k > 0.0 {
-        if cfg!(feature = "glow") {
-            blur_range(&ctx, layer_id, start, end, 10.0 * k);
-        } else {
-            Mark::Filter {
-                sigma: 10.0 * k * ctx.pixels_per_point(),
-                saturate: 1.0 - 0.18 * k,
-                scale: 1.0 + 0.01 * k,
-            }
-            .paint(ui.painter(), window);
+    if cfg!(feature = "glow") {
+        if entrance_blur > 0.0 {
+            blur_range(&ctx, layer_id, start, end, entrance_blur);
         }
+        if k > 0.0 {
+            blur_range(&ctx, layer_id, start, end, 10.0 * k);
+        }
+    } else if entrance_blur > 0.0 || k > 0.0 {
+        // One filter for both: the shell's blur then the frame's is one
+        // gaussian. The entrance as copies of the frame held 13 times its
+        // primitives in the renderer's cache.
+        let sigma = (entrance_blur * entrance_blur + 100.0 * k * k).sqrt();
+        Mark::Filter {
+            sigma: sigma * ctx.pixels_per_point(),
+            saturate: 1.0 - 0.18 * k,
+            scale: 1.0 + 0.01 * k,
+        }
+        .paint(ui.painter(), window);
     }
     // `TelemetryOnboarding`: in `.app-frame`, after `.app-shell` (out of its
     // obscured filter), before the screen overlays.

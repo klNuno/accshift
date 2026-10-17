@@ -148,17 +148,17 @@ pub fn blur(src: &[[u8; 4]], width: usize, height: usize, sigma: f32) -> Vec<[u8
         return src.to_vec();
     }
     let mut sigma = sigma;
-    let mut img = src.to_vec();
+    let mut halved = None;
     let (mut w, mut h) = (width, height);
     while sigma > MAX_SIGMA && w > 1 && h > 1 {
         let (nw, nh) = (w.div_ceil(2), h.div_ceil(2));
-        img = halve(&img, w, h, nw, nh);
+        halved = Some(halve(halved.as_deref().unwrap_or(src), w, h, nw, nh));
         sigma *= nw as f32 / w as f32;
         w = nw;
         h = nh;
     }
     let kernel = kernel(sigma);
-    img = convolve_rows(&img, w, h, &kernel);
+    let mut img = convolve_rows(halved.as_deref().unwrap_or(src), w, h, &kernel);
     img = convolve_columns(&img, w, h, &kernel);
     if (w, h) != (width, height) {
         img = upscale(&img, w, h, width, height);
@@ -178,6 +178,11 @@ pub fn filter(
     scale: f32,
 ) -> Vec<[u8; 4]> {
     assert_eq!(src.len(), width * height);
+    if src.iter().all(|p| p[3] == 0) {
+        // Premultiplied: nothing to blur, saturate or scale. The app's
+        // entrance starts at opacity 0 under its widest blur.
+        return vec![[0u8; 4]; width * height];
+    }
     let mut img = if sigma > 0.0 && width > 0 && height > 0 {
         // Transparent margins wider than the kernel at every scale.
         let pad = (3.0 * sigma) as usize + 4;
@@ -236,24 +241,24 @@ fn scale_about_centre(img: &[[u8; 4]], w: usize, h: usize, k: f32) -> Vec<[u8; 4
         }
     };
     let mut out = vec![[0u8; 4]; w * h];
-    for y in 0..h {
+    for_rows(&mut out, w, |y, row| {
         let fy = (y as f32 + 0.5 - cy) / k + cy - 0.5;
         let y0 = fy.floor();
         let ty = fy - y0;
-        for x in 0..w {
+        for (x, px) in row.iter_mut().enumerate() {
             let fx = (x as f32 + 0.5 - cx) / k + cx - 0.5;
             let x0 = fx.floor();
             let tx = fx - x0;
             let (x0, y0) = (x0 as isize, y0 as isize);
             let (a, b) = (at(x0, y0), at(x0 + 1, y0));
             let (c, d) = (at(x0, y0 + 1), at(x0 + 1, y0 + 1));
-            out[y * w + x] = core::array::from_fn(|i| {
+            *px = core::array::from_fn(|i| {
                 let top = a[i] * (1.0 - tx) + b[i] * tx;
                 let bottom = c[i] * (1.0 - tx) + d[i] * tx;
                 round(top * (1.0 - ty) + bottom * ty)
             });
         }
-    }
+    });
     out
 }
 
@@ -296,9 +301,9 @@ fn round(v: f32) -> u8 {
 /// row and column clamped.
 fn halve(src: &[[u8; 4]], w: usize, h: usize, nw: usize, nh: usize) -> Vec<[u8; 4]> {
     let mut out = vec![[0u8; 4]; nw * nh];
-    for y in 0..nh {
+    for_rows(&mut out, nw, |y, row| {
         let (y0, y1) = ((2 * y).min(h - 1), (2 * y + 1).min(h - 1));
-        for x in 0..nw {
+        for (x, out) in row.iter_mut().enumerate() {
             let (x0, x1) = ((2 * x).min(w - 1), (2 * x + 1).min(w - 1));
             let px = [
                 src[y0 * w + x0],
@@ -311,9 +316,9 @@ fn halve(src: &[[u8; 4]], w: usize, h: usize, nw: usize, nh: usize) -> Vec<[u8; 
                 let sum: u32 = px.iter().map(|p| p[c] as u32).sum();
                 *slot = ((sum + 2) / 4) as u8;
             }
-            out[y * nw + x] = o;
+            *out = o;
         }
-    }
+    });
     out
 }
 
@@ -386,6 +391,15 @@ fn convolve_column_row(
 
 fn convolve_columns(src: &[[u8; 4]], w: usize, h: usize, kernel: &[f32]) -> Vec<[u8; 4]> {
     let mut out = vec![[0u8; 4]; w * h];
+    for_rows(&mut out, w, |y, dst| {
+        convolve_column_row(src, w, h, y, kernel, dst)
+    });
+    out
+}
+
+/// Fills `out`, `w` pixels a row, a row per call of `row`: on the rayon
+/// pool when the renderer has one.
+fn for_rows(out: &mut [[u8; 4]], w: usize, row: impl Fn(usize, &mut [[u8; 4]]) + Send + Sync) {
     #[cfg(feature = "rayon")]
     {
         use rayon::{
@@ -394,13 +408,12 @@ fn convolve_columns(src: &[[u8; 4]], w: usize, h: usize, kernel: &[f32]) -> Vec<
         };
         out.par_chunks_mut(w)
             .enumerate()
-            .for_each(|(y, dst)| convolve_column_row(src, w, h, y, kernel, dst));
+            .for_each(|(y, dst)| row(y, dst));
     }
     #[cfg(not(feature = "rayon"))]
     for (y, dst) in out.chunks_mut(w).enumerate() {
-        convolve_column_row(src, w, h, y, kernel, dst);
+        row(y, dst);
     }
-    out
 }
 
 /// Bilinear sampling back to the full size, edges clamped.
@@ -414,11 +427,11 @@ fn upscale(src: &[[u8; 4]], w: usize, h: usize, dw: usize, dh: usize) -> Vec<[u8
             (x0, (x0 + 1).min(w - 1), f - x0 as f32)
         })
         .collect();
-    for y in 0..dh {
+    for_rows(&mut out, dw, |y, row| {
         let f = ((y as f32 + 0.5) * sy - 0.5).max(0.0);
         let y0 = (f as usize).min(h - 1);
         let (y1, ty) = ((y0 + 1).min(h - 1), f - y0 as f32);
-        for (x, &(x0, x1, tx)) in cols.iter().enumerate() {
+        for (px, &(x0, x1, tx)) in row.iter_mut().zip(&cols) {
             let p = |xx: usize, yy: usize| src[yy * w + xx];
             let mut o = [0u8; 4];
             for (c, slot) in o.iter_mut().enumerate() {
@@ -426,9 +439,9 @@ fn upscale(src: &[[u8; 4]], w: usize, h: usize, dw: usize, dh: usize) -> Vec<[u8
                 let bottom = p(x0, y1)[c] as f32 * (1.0 - tx) + p(x1, y1)[c] as f32 * tx;
                 *slot = round(top * (1.0 - ty) + bottom * ty);
             }
-            out[y * dw + x] = o;
+            *px = o;
         }
-    }
+    });
     out
 }
 
@@ -504,6 +517,12 @@ mod tests {
                     .all(|p| *p == [40, 80, 120, 200])
             );
         }
+    }
+
+    #[test]
+    fn a_transparent_element_filters_to_transparent() {
+        let src = vec![[0u8; 4]; 31 * 17];
+        assert_eq!(filter(&src, 31, 17, 8.0, 0.82, 1.01), src);
     }
 
     #[test]
