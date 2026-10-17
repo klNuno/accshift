@@ -122,6 +122,8 @@ const applyMock = (scene) => `
   if (scene.streaming) overrides.streaming = true;
   if (scene.cs2) overrides.cs2 = scene.cs2;
   if (scene.onboarding) overrides.onboarding = true;
+  if (scene.fail) overrides.failures = scene.fail;
+  if (scene.setup) overrides.setup = scene.setup;
   localStorage.setItem("accshift.mock.overrides", JSON.stringify(overrides));
   return Object.keys(stores);
 })()
@@ -205,6 +207,42 @@ function pngSize(buf) {
   return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
 }
 
+// The window the user sees is focused; the capture window never is, and the
+// app pauses what it only does in the foreground (the visible priming of
+// profiles and bans). The page side gets a focus event once settled
+// (runScene); `getCurrentWindow().isFocused()` asks Tauri about the real
+// window, and a late answer would undo that event. Its IPC request, a POST to
+// `ipc.localhost`, gets `true` with the headers Tauri's own answer carries
+// (Tauri falls back to postMessage for good on a failed fetch). The CORS
+// preflight still reaches Tauri.
+// Returns how many it answered so far.
+const FOCUSED_CMD = "plugin%3Awindow%7Cis_focused";
+async function answerFocused(page) {
+  let answered = 0;
+  page.on("Fetch.requestPaused", ({ requestId, request }) => {
+    if (request.method === "POST") answered++;
+    const reply =
+      request.method === "POST"
+        ? page.send("Fetch.fulfillRequest", {
+            requestId,
+            responseCode: 200,
+            responseHeaders: [
+              { name: "Content-Type", value: "application/json" },
+              { name: "Tauri-Response", value: "ok" },
+              { name: "Access-Control-Allow-Origin", value: "*" },
+              { name: "Access-Control-Expose-Headers", value: "Tauri-Response" },
+            ],
+            body: Buffer.from("true").toString("base64"),
+          })
+        : page.send("Fetch.continueRequest", { requestId });
+    reply.catch((err) => console.error(`is_focused interception: ${err.message}`));
+  });
+  await page.send("Fetch.enable", {
+    patterns: [{ urlPattern: `*${FOCUSED_CMD}*`, requestStage: "Request" }],
+  });
+  return () => answered;
+}
+
 async function runScene(page, scene, outDir, manifest) {
   const { send, js } = page;
   const vp = scene.viewport;
@@ -246,6 +284,13 @@ async function runScene(page, scene, outDir, manifest) {
   }
   if (!settled) console.error(`${scene.id}: page never settled, shooting anyway`);
   else console.log(`${scene.id}: settled after ${Date.now() - started} ms`);
+  // The window the user sees is focused; the capture window never is, and the
+  // app pauses what it only does in the foreground (the visible priming of
+  // profiles and bans, `isGridHidden`): only a startup race let the first
+  // scene of a run prime. Its focus handler runs once the boot query that
+  // found the window unfocused has answered; `answerFocused` keeps later
+  // queries from undoing it.
+  await js('window.dispatchEvent(new FocusEvent("focus")), true');
   if (typeof scene.clipboard === "string") {
     // `navigator.clipboard.readText` answers with the scene's text, never the
     // machine's clipboard.
@@ -531,6 +576,7 @@ async function main() {
       const { send } = app.page;
       await send("Page.enable");
       await send("Runtime.enable");
+      const focusedAnswers = await answerFocused(app.page);
       await send("Emulation.setEmulatedMedia", {
         features: [{ name: "prefers-reduced-motion", value: "no-preference" }],
       });
@@ -538,6 +584,7 @@ async function main() {
       for (const scene of scenes.filter((s) => s.viewport.scale === scale)) {
         await runScene(app.page, scene, out, manifest);
       }
+      console.log(`is_focused at ${scale}x: ${focusedAnswers()} answered as focused`);
       await app.close();
       app = null;
     }

@@ -254,8 +254,10 @@ export async function connect(wsUrl) {
   });
   let seq = 0;
   const pending = new Map();
+  const listeners = new Map();
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
+    if (msg.method) for (const fn of listeners.get(msg.method) ?? []) fn(msg.params);
     if (msg.id && pending.has(msg.id)) {
       const { res, rej } = pending.get(msg.id);
       pending.delete(msg.id);
@@ -296,7 +298,9 @@ export async function connect(wsUrl) {
     }
     return r.result.value;
   };
-  return { send, js, call, close: () => ws.close() };
+  // `fn` gets the params of every `method` event.
+  const on = (method, fn) => listeners.set(method, [...(listeners.get(method) ?? []), fn]);
+  return { send, js, call, on, close: () => ws.close() };
 }
 
 /**
