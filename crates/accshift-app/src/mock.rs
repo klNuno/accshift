@@ -53,7 +53,7 @@ pub const SCENARIO_FORMAT: u64 = 1;
 pub const FROZEN_SCENARIO: &str = "demo";
 
 /// Where avatar paths in the scenario data point, relative to the repo root.
-pub const AVATAR_DIR: &str = "src/lib/mock/avatars/";
+pub const AVATAR_DIR: &str = "crates/accshift-egui/parity/avatars/";
 
 /// Scenario files, relative to the repo root.
 pub const DATA_DIR: &str = "crates/accshift-egui/parity/data";

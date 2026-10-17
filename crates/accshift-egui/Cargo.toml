@@ -1,15 +1,9 @@
 [package]
 name = "accshift-egui"
-description = "Spike: the accshift main screen in egui, to compare with the Tauri shell"
-version = "0.0.0"
-edition = "2021"
+description = "The accshift desktop app, drawn with egui"
+version.workspace = true
+edition.workspace = true
 publish = false
-
-# Standalone on purpose: the root workspace runs `cargo clippy --workspace` and
-# `cargo test --workspace` in CI on three OSes, and a spike has no business
-# adding eframe, glow, winit and a vendored rasterizer to that build. The root `Cargo.toml` excludes
-# this folder.
-[workspace]
 
 [features]
 # Bench build: the window is never shown, boot marks go to
@@ -126,46 +120,3 @@ windows = { version = "0.62", default-features = false, features = [
 [build-dependencies]
 serde_json = "1"
 tauri-winres = "0.3"
-
-# epaint with one patch: a font can supply its glyph coverage
-# (FontData::rasterizer), so ui::text rasterizes with DirectWrite like
-# WebView2. See the header of vendor/epaint/Cargo.toml and
-# vendor/epaint/src/text/font.rs.
-[patch.crates-io]
-epaint = { path = "vendor/epaint" }
-
-# The root workspace profile, except the size: a smaller exe reaches `main`
-# sooner (build.rs), so everything is built for size but the per-frame hot
-# path below.
-[profile.release]
-panic = "abort"
-codegen-units = 1
-lto = "fat"
-opt-level = "s"
-strip = true
-
-[profile.release.package.egui_software_backend]
-opt-level = 3
-
-[profile.release.package.epaint]
-opt-level = 3
-
-# Avatar SVG raster and blur, off the UI thread but on the way to `ready`.
-[profile.release.package.accshift-egui]
-opt-level = 3
-
-[profile.release.package.resvg]
-opt-level = 3
-
-[profile.release.package.tiny-skia]
-opt-level = 3
-
-[profile.release.package.tiny-skia-path]
-opt-level = 3
-
-# The `windows` bindings crate alone needs about 2 GB of RAM at opt-level 2
-# with one codegen unit. Fat LTO optimizes its bitcode again at the final link,
-# so building it unoptimized changes the compile peak, not the binary.
-[profile.release.package.windows]
-opt-level = 0
-codegen-units = 16

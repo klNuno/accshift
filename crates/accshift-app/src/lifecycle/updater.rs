@@ -1,5 +1,5 @@
 //! The port of `tauri-plugin-updater` 2.11.0, the version the Tauri app
-//! builds (Cargo.lock), with the settings of `src-tauri/tauri.conf.json`.
+//! builds (Cargo.lock), with the settings of `crates/accshift-egui/tauri.conf.json`.
 //!
 //! Same contract on the wire and on disk: the same `latest.json` shapes
 //! (`platforms` map or a single `url` and `signature`), the same target keys
@@ -44,11 +44,11 @@ pub const PUBKEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6ID
 /// `plugins.updater.endpoints` of tauri.conf.json.
 pub const ENDPOINTS: &[&str] =
     &["https://github.com/klNuno/accshift/releases/latest/download/latest.json"];
-/// `version` of tauri.conf.json, the `current_version` the check compares
-/// against (Tauri reads it from the config, not from Cargo).
-pub const APP_VERSION: &str = "1.0.5";
+/// The `current_version` the check compares against: the workspace version,
+/// which `version` of crates/accshift-egui/tauri.conf.json repeats.
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// `productName`: `package_info().name`, the prefix of the installer temp
-/// folder. tauri.linux.conf.json overrides it.
+/// folder. crates/accshift-egui/tauri.linux.conf.json overrides it.
 #[cfg(target_os = "linux")]
 pub const PRODUCT_NAME: &str = "accshift";
 #[cfg(not(target_os = "linux"))]

@@ -259,37 +259,37 @@
               "client.view-mode": "grid",
               "cache.steam.profiles": {
                 "76561198100000001": {
-                  "url": "src/lib/mock/avatars/1.svg",
+                  "url": "crates/accshift-egui/parity/avatars/1.svg",
                   "displayName": "main",
                   "timestamp": 1791000000000
                 },
                 "76561198100000003": {
-                  "url": "src/lib/mock/avatars/3.svg",
+                  "url": "crates/accshift-egui/parity/avatars/3.svg",
                   "displayName": "vac banned",
                   "timestamp": 1791000000000
                 },
                 "76561198100000004": {
-                  "url": "src/lib/mock/avatars/4.svg",
+                  "url": "crates/accshift-egui/parity/avatars/4.svg",
                   "displayName": "trade banned",
                   "timestamp": 1791000000000
                 },
                 "76561198100000005": {
-                  "url": "src/lib/mock/avatars/5.svg",
+                  "url": "crates/accshift-egui/parity/avatars/5.svg",
                   "displayName": "a persona name long enough to overflow every card layout",
                   "timestamp": 1791000000000
                 },
                 "76561198100000006": {
-                  "url": "src/lib/mock/avatars/6.svg",
+                  "url": "crates/accshift-egui/parity/avatars/6.svg",
                   "displayName": "never logged in",
                   "timestamp": 1791000000000
                 },
                 "76561198100000007": {
-                  "url": "src/lib/mock/avatars/7.svg",
+                  "url": "crates/accshift-egui/parity/avatars/7.svg",
                   "displayName": "nested account",
                   "timestamp": 1791000000000
                 },
                 "76561198100000008": {
-                  "url": "src/lib/mock/avatars/2.svg",
+                  "url": "crates/accshift-egui/parity/avatars/2.svg",
                   "displayName": "deeply nested",
                   "timestamp": 1791000000000
                 }
@@ -437,37 +437,37 @@
             "client.view-mode": "grid",
             "cache.steam.profiles": {
               "76561198100000001": {
-                "url": "src/lib/mock/avatars/1.svg",
+                "url": "crates/accshift-egui/parity/avatars/1.svg",
                 "displayName": "main",
                 "timestamp": 1791000000000
               },
               "76561198100000003": {
-                "url": "src/lib/mock/avatars/3.svg",
+                "url": "crates/accshift-egui/parity/avatars/3.svg",
                 "displayName": "vac banned",
                 "timestamp": 1791000000000
               },
               "76561198100000004": {
-                "url": "src/lib/mock/avatars/4.svg",
+                "url": "crates/accshift-egui/parity/avatars/4.svg",
                 "displayName": "trade banned",
                 "timestamp": 1791000000000
               },
               "76561198100000005": {
-                "url": "src/lib/mock/avatars/5.svg",
+                "url": "crates/accshift-egui/parity/avatars/5.svg",
                 "displayName": "a persona name long enough to overflow every card layout",
                 "timestamp": 1791000000000
               },
               "76561198100000006": {
-                "url": "src/lib/mock/avatars/6.svg",
+                "url": "crates/accshift-egui/parity/avatars/6.svg",
                 "displayName": "never logged in",
                 "timestamp": 1791000000000
               },
               "76561198100000007": {
-                "url": "src/lib/mock/avatars/7.svg",
+                "url": "crates/accshift-egui/parity/avatars/7.svg",
                 "displayName": "nested account",
                 "timestamp": 1791000000000
               },
               "76561198100000008": {
-                "url": "src/lib/mock/avatars/2.svg",
+                "url": "crates/accshift-egui/parity/avatars/2.svg",
                 "displayName": "deeply nested",
                 "timestamp": 1791000000000
               }
@@ -887,7 +887,7 @@
           "accountId": "76561198100000001"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/1.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/1.svg",
           "display_name": "main",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -909,7 +909,7 @@
           "accountId": "76561198100000003"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/3.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/3.svg",
           "display_name": "vac banned",
           "vac_banned": true,
           "trade_ban_state": "none"
@@ -920,7 +920,7 @@
           "accountId": "76561198100000004"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/4.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/4.svg",
           "display_name": "trade banned",
           "vac_banned": false,
           "trade_ban_state": "banned"
@@ -931,7 +931,7 @@
           "accountId": "76561198100000005"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/5.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/5.svg",
           "display_name": "a persona name long enough to overflow every card layout",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -942,7 +942,7 @@
           "accountId": "76561198100000006"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/6.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/6.svg",
           "display_name": "never logged in",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -953,7 +953,7 @@
           "accountId": "76561198100000007"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/7.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/7.svg",
           "display_name": "nested account",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -964,7 +964,7 @@
           "accountId": "76561198100000008"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/2.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/2.svg",
           "display_name": "deeply nested",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -987,7 +987,7 @@
         },
         "result": {
           "76561198100000001": {
-            "avatar_url": "src/lib/mock/avatars/1.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/1.svg",
             "display_name": "main",
             "vac_banned": false,
             "trade_ban_state": "none"
@@ -999,37 +999,37 @@
             "trade_ban_state": "none"
           },
           "76561198100000003": {
-            "avatar_url": "src/lib/mock/avatars/3.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/3.svg",
             "display_name": "vac banned",
             "vac_banned": true,
             "trade_ban_state": "none"
           },
           "76561198100000004": {
-            "avatar_url": "src/lib/mock/avatars/4.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/4.svg",
             "display_name": "trade banned",
             "vac_banned": false,
             "trade_ban_state": "banned"
           },
           "76561198100000005": {
-            "avatar_url": "src/lib/mock/avatars/5.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/5.svg",
             "display_name": "a persona name long enough to overflow every card layout",
             "vac_banned": false,
             "trade_ban_state": "none"
           },
           "76561198100000006": {
-            "avatar_url": "src/lib/mock/avatars/6.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/6.svg",
             "display_name": "never logged in",
             "vac_banned": false,
             "trade_ban_state": "none"
           },
           "76561198100000007": {
-            "avatar_url": "src/lib/mock/avatars/7.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/7.svg",
             "display_name": "nested account",
             "vac_banned": false,
             "trade_ban_state": "none"
           },
           "76561198100000008": {
-            "avatar_url": "src/lib/mock/avatars/2.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/2.svg",
             "display_name": "deeply nested",
             "vac_banned": false,
             "trade_ban_state": "none"

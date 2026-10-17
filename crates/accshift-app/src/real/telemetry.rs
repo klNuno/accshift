@@ -38,36 +38,10 @@ pub const SURFACE: &str = "gui";
 /// endpoint ([`RealBackend::with_context`]): nothing leaves the machine.
 pub const NO_ENDPOINT: &str = "telemetry_endpoint_unset";
 
-/// The app version the Tauri app reports (`env!("CARGO_PKG_VERSION")` of
-/// `src-tauri`, which inherits `[workspace.package] version` from the root
-/// `Cargo.toml`). Read from that same file at compile time, so a version
-/// bump moves both apps together; `accshift-app` itself stays `0.0.0`
-/// while it is outside the root workspace.
+/// The app version, the workspace's: the one the Tauri app reported and
+/// `tauri.conf.json` carries.
 pub fn app_version() -> &'static str {
-    static VERSION: OnceLock<String> = OnceLock::new();
-    VERSION.get_or_init(|| workspace_version(include_str!("../../../../Cargo.toml")))
-}
-
-fn workspace_version(manifest: &str) -> String {
-    let mut in_package = false;
-    for line in manifest.lines() {
-        let line = line.trim();
-        if line.starts_with('[') {
-            in_package = line == "[workspace.package]";
-            continue;
-        }
-        if !in_package {
-            continue;
-        }
-        if let Some(value) = line
-            .strip_prefix("version")
-            .map(str::trim_start)
-            .and_then(|rest| rest.strip_prefix('='))
-        {
-            return value.trim().trim_matches('"').to_string();
-        }
-    }
-    panic!("the root Cargo.toml has no [workspace.package] version")
+    env!("CARGO_PKG_VERSION")
 }
 
 /// `TelemetryState` (telemetry_runtime.rs lines 11-16), minus `app_start`,
@@ -557,14 +531,6 @@ mod tests {
 
     const OLD_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
     const NEW_ID: &str = "797f20fe-94de-4e89-98a2-ae3a3273ad1e";
-
-    #[test]
-    fn the_workspace_version_is_read_from_its_section_only() {
-        let manifest = "[package]\nversion = \"9.9.9\"\n[workspace.package]\nedition = \"2021\"\nversion = \"1.2.3\"\n";
-        assert_eq!(workspace_version(manifest), "1.2.3");
-        assert!(!app_version().is_empty());
-        assert_ne!(app_version(), "0.0.0");
-    }
 
     #[test]
     fn opt_out_stages_the_id_once_and_forget_keeps_a_new_opt_in() {

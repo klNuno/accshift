@@ -61,11 +61,15 @@ fn expected() -> Expected {
 }
 
 #[test]
-fn the_identifier_is_the_tauri_one() {
+fn the_identifier_and_version_are_the_bundled_ones() {
     assert_eq!(BUNDLE_IDENTIFIER, ID);
-    let conf = include_str!("../../../src-tauri/tauri.conf.json");
+    let conf = include_str!("../../accshift-egui/tauri.conf.json");
     let conf: serde_json::Value = serde_json::from_str(conf).unwrap();
     assert_eq!(conf["identifier"], ID);
+    assert_eq!(
+        conf["version"],
+        accshift_app::lifecycle::updater::APP_VERSION
+    );
 }
 
 #[test]

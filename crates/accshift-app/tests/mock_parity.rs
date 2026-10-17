@@ -419,6 +419,12 @@ fn jobs_deliver_off_thread_and_wake() {
     assert_eq!(os.poll(), Poll::Gone);
     // The pool survives a panicking call.
     assert!(jobs.run(|b| b.steam_has_api_key()).wait().unwrap().unwrap());
+    // A job wakes the UI right after it sends its result, so the last wake
+    // can land just after `wait` returns.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while wakes.load(Ordering::SeqCst) < 3 && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
     assert!(wakes.load(Ordering::SeqCst) >= 3);
 }
 

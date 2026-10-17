@@ -1,6 +1,6 @@
-//! Round trip against the TypeScript stores: every fixture of
-//! `tests/data/stores/roundtrip.json` (written by `tools/stores.dump.ts`) is
-//! a stored value, an operation and what the TS store saved after it. The
+//! Round trip against the former TypeScript stores: every fixture of
+//! `tests/data/stores/roundtrip.json` is a stored value, an operation and
+//! what the TS store saved after it. The
 //! Rust store loads the same value, runs the same operation and must save the
 //! same JSON, byte for byte once serialized the way the backend writes it.
 
@@ -112,6 +112,22 @@ fn run(stores: &mut ClientStores, op: &Value) {
     }
 }
 
+/// `value` with every object's keys sorted. Key order is not part of the
+/// contract: the stores write their maps from `BTreeMap`s, where the TS wrote
+/// insertion order, and serde_json keeps the fixture's order only when another
+/// crate of the build turns on `preserve_order` (accshift-theme does).
+fn sorted(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let sorted: BTreeMap<&String, Value> =
+                map.iter().map(|(k, v)| (k, sorted(v))).collect();
+            Value::Object(sorted.into_iter().map(|(k, v)| (k.clone(), v)).collect())
+        }
+        Value::Array(items) => Value::Array(items.iter().map(sorted).collect()),
+        other => other.clone(),
+    }
+}
+
 #[test]
 fn every_fixture_saves_what_the_ts_store_saved() {
     let fixtures = data("roundtrip.json");
@@ -140,8 +156,8 @@ fn every_fixture_saves_what_the_ts_store_saved() {
             (false, Some(save)) => failures.push(format!("{name}: wrote {}", save.value)),
             (true, None) => failures.push(format!("{name}: wrote nothing")),
             (true, Some(save)) => {
-                let expected = serde_json::to_string_pretty(&fixture["expected"]).unwrap();
-                let actual = serde_json::to_string_pretty(&save.value).unwrap();
+                let expected = serde_json::to_string_pretty(&sorted(&fixture["expected"])).unwrap();
+                let actual = serde_json::to_string_pretty(&sorted(&save.value)).unwrap();
                 if expected != actual {
                     failures.push(format!("{name}:\n expected {expected}\n actual   {actual}"));
                 }

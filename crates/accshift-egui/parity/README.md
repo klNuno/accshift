@@ -1,40 +1,21 @@
-# Parity bench
+# Parity scenes
 
-Every screen of the egui port is compared, pixel by pixel, with the same screen of the Tauri app. This folder holds the reference side and the comparison:
+Every screen of the egui app was compared, pixel by pixel, with the same screen of the Tauri app on WebView2. The reference side (`ref.mjs`, a capture build of the Tauri app, `snap/measure.mjs`, the mock data export) left with the Tauri app; what it measured stays here:
 
-- `ref.mjs` renders scenes in the real Tauri app (WebView2) on the mock frontend and writes one PNG per shot.
-- `diff.mjs` compares reference frames with egui frames and writes a report.
-- `dump-data.mjs` exports the mock's command results to `data/<scenario>.json`, so the egui side runs on the same data.
-- `harness.mjs` is the shared plumbing: vite dev server, app launch, CDP client, window and data-dir checks.
-- `scenes/*.json` are the scenes, `fragments/*.html` the static CSS boxes of the `primitives-*` scenes, `data/*.json` the dumped mock data.
+- `scenes/*.json`, the scenes, played by the egui runner for regression shots;
+- `data/*.json`, the mock data the scenes run on, and `avatars/`, the mock avatars it points to;
+- `fragments/*.html`, the static CSS boxes of the `primitives-*` scenes;
+- `diff.mjs`, the pixel diff of two shot folders (Node 22+ and ffmpeg on `PATH`);
+- the rules below, measured on WebView2, which the egui painter follows.
 
-Node 22+ and ffmpeg on `PATH`. No npm dependency.
+Mentions of `ref.mjs` below describe how the reference side played a scene.
 
 ## Run it
 
 ```sh
-cargo build -p accshift-gui --features parity-capture
-node crates/accshift-egui/parity/ref.mjs crates/accshift-egui/parity/scenes/*.json --out <ref dir>
-node crates/accshift-egui/parity/diff.mjs --batch <ref dir> <egui dir> --out <report dir>
-node crates/accshift-egui/parity/dump-data.mjs            # every scenario, or name some
+cargo run --release -p accshift-egui -- --scene crates/accshift-egui/parity/scenes/*.json --out <dir>
+node crates/accshift-egui/parity/diff.mjs --batch <before dir> <after dir> --out <report dir>
 ```
-
-`ref.mjs` options: `--exe <path>` (default: the debug `accshift-gui` of the cargo target dir), `--scratch <dir>` (default `<out>/.scratch`), `--window hidden|cloak`. It exits non-zero if a shot has the wrong size, if the window was ever seen, or if anything changed in the real app directories or the `accshift://` registration.
-
-## The reference app
-
-A debug `accshift-gui` built with the `parity-capture` feature. That build:
-
-- carries the marker string `accshift-parity-capture-build`; the harness refuses any binary without it, and copies the binary into the scratch folder before launching it;
-- never shows its main window (with `--window cloak`: shown without activation as a tool window at -32000,-32000, DWM-cloaked), and prints a `parity-window` line with `IsWindowVisible`, the cloak state, foreground state and window rect every 250 ms; `ref.mjs` turns those into `hidden=true|false`;
-- refuses to start without `ACCSHIFT_PARITY_DIR`, and puts every app directory and the WebView2 profile under it;
-- registers no single-instance plugin, never rewrites `accshift://`, skips the startup snapshot upgrade and keyring sweep, and runs telemetry with no consent, so nothing is sent.
-
-The frontend comes from `vite dev` on port 1420 (the `devUrl` compiled into the debug app) with `VITE_MOCK=dev`, the non-frozen mock, so each scene picks its own scenario. CDP is opened on a free port through `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`, which also turns off Chromium's native occlusion tracking so the unseen window keeps painting.
-
-The app sees itself as the focused foreground window, as the user's does: once the page settles, `ref.mjs` dispatches a window `focus` event, and it answers Tauri's `is_focused` IPC request (a POST to `ipc.localhost`, intercepted over CDP `Fetch`) with `true`, so a late native answer cannot pause the foreground-only work again (profile and ban priming). Each run logs how many it answered. The egui runner marks its window focused the same way.
-
-The scale is real: `ref.mjs` launches the app once per scene scale with `--force-device-scale-factor=<scale>` in the same arguments (`launchApp({ scale })` in `harness.mjs`), which is what a Windows display at that scaling gives, and sets only the viewport size, in CSS px, through `Emulation.setDeviceMetricsOverride` (`deviceScaleFactor: 0`). It refuses a scene whose `devicePixelRatio` differs from its scale. The CDP emulated factor is not used: it lays the page out at the window's own factor and scales the frame, so a 1px border stays 1.5 device px at 150 % and boxes snap to whole CSS px, where a real 150 % display lays out in device pixels (border floored to 1 device px, edges snapped to the device grid). References taken before 2026-10-12 used the emulation and are wrong at 1.25 and 1.5. Two runs at 1.5 give identical frames for the title bar and primitives scenes and 103 to 112 dB on `spike-main`.
 
 ## Scene format
 
@@ -64,13 +45,13 @@ The scale is real: `ref.mjs` launches the app once per scene scale with `--force
 ```
 
 - Coordinates are CSS pixels of the viewport (1 CSS px = 1 egui point). Output: `<out>/<id>/<shot>.png`, viewport times scale.
-- `scenario` is a key of `SCENARIOS` in `src/lib/mock/scenarios.ts`; `os` sets the mock's runtime OS.
+- `scenario` names a file of `data/`; `os` sets the mock's runtime OS.
 - `streaming` (optional, `true`) makes `detect_streaming_software` report streaming software running (`__mock.streaming`), so a scene seeded with `streamerMode: "auto"` reaches the streamer overlay.
 - `cs2` (optional, an array of `Cs2BridgeAccount` rows) enables the CS2 bridge and answers `cs2_bridge_fetch` and `cs2_bridge_check` with these rows (`__mock.cs2`), so Steam cards show the CS2 badge and section.
 - `fail` (optional, an object) maps commands to the error message they fail with (`__mock.fail`), on both sides: `{ "platform_switch_account": "..." }` makes every switch fail.
 - `setup` (optional, an array of setup statuses with `setupId`, `state`, `accountId`, `accountDisplayName` and `errorMessage`) is the add-account setup the mock runs on both sides: `platform_begin_setup` answers the first status, each `platform_get_setup_status` the next one, the last one repeating, and `platform_cancel_setup` succeeds.
 - `clipboard` (optional, a string) is the text the clipboard holds: `ref.mjs` makes `navigator.clipboard.readText` answer it, the egui runner answers the app's paste request with it. A scene never reads the machine's clipboard; an empty string reads as a clipboard with no text.
-- `theme` and `locale` patch `client.settings` (`themeId`, `language`). A `seed` key is a store id (`client.view-mode`) or the suffix of its `CLIENT_STORE_` constant in `src/lib/storage/storeIds.ts` (`SETTINGS`); an object value is merged over the scenario's own store, anything else replaces it. A seeded string under `src/lib/mock/avatars/` (a `cache.steam.profiles` URL) is the file there: `ref.mjs` turns it into a same-origin URL, egui reads the file.
+- `theme` and `locale` patch `client.settings` (`themeId`, `language`). A `seed` key is a store id (`client.view-mode`) or the suffix of its `CLIENT_STORE_` constant in `src/lib/storage/storeIds.ts` (`SETTINGS`); an object value is merged over the scenario's own store, anything else replaces it. A seeded string under `crates/accshift-egui/parity/avatars/` (a `cache.steam.profiles` URL) is the file there: `ref.mjs` turns it into a same-origin URL, egui reads the file.
 - `down` presses the primary button at a point and holds it; every `move` until the next `up` (which moves there, then releases) reports the held button, so a scene can drag (the bulk edit paint gesture).
 - `key` takes `Ctrl`, `Shift`, `Alt` and `Meta` prefixes joined with `+`, then a character or a key name (`Enter`, `Escape`, `Backspace`, `Tab`, `Delete`, `Home`, `End`, arrow keys, `Space`, `ContextMenu`). egui has no context menu key: the egui side sends it as `CONTEXT_MENU_KEY` (F35), as the software runner does for the real key. `text` types character by character. `scroll` is `[x, y, deltaY]`, with an optional fourth item naming the modifiers held (`"Ctrl"`, joined with `+`). A synthetic Ctrl+wheel from CDP does not reach the app's zoom handler in WebView2, so the `zoom-*` scenes zoom with `Ctrl+=` and `Ctrl+-`.
 - A shot waits for nothing: put a `wait` before it, long enough for transitions to end.
@@ -106,10 +87,6 @@ Both images are decoded to RGBA by ffmpeg (PNG or PAM) and composited over black
 
 Where WebView2 puts a box at a real device scale factor is measured, not assumed: `snap/measure.mjs` renders a fragment of 25 cases (backgrounds, borders, radii, shadows, translations, `will-change`, flex centring, SVG roots, `img`, `opacity`) at six fractional CSS offsets, in the real app at each scale, and reads the painted edges from the frame.
 
-```sh
-node crates/accshift-egui/parity/snap/measure.mjs --out <dir> --exe <parity-capture accshift-gui> --scales 1,1.25,1.5,1.75
-```
-
 It writes `cases.json` (layout rect and painted edges per case, offset and scale), `report.md`, one `frame.png` per scale and `titlebar.json` (the title bar's boxes on the `demo` scenario). `--dsf emulate` measures the CDP emulation instead, which is what the references were before 2026-10-12. Same safety as `ref.mjs`.
 
 The rules below come from `measure.mjs` at 1, 1.25, 1.5 and 1.75. Boxes, borders, shadows, `img`, SVG roots, `opacity` and flex centring match on all 24 samples per case; the translated cases match up to the 2-decimal rounding of `cases.json`, and `shadow-rounded` is read across the corner arc, so its scan is not an edge. `src/ui/snap.rs` implements the rules, and `ui::paint` and the components use them. Layout runs in device px with 1/64 px units, so a position is `css * scale` quantized to 1/64 before any rounding.
@@ -128,4 +105,4 @@ Ban warnings only reach the first scene of each scale: in the same app run, late
 
 ## Mock data
 
-`data/<scenario>.json`, format 1: `spec` (label, runtime OS, switch delay, Steam path, API key flag, current account per platform), `commands` (per command, a list of `{ args, result }` or `{ args, error }`), `skipped` (commands with state that are modelled from `spec` instead: the switch and the PIN session). Platform commands are called once per platform id, per-account commands once per account. Avatar URLs are repo-relative paths under `src/lib/mock/avatars/`, cache timestamps are exactly `NOW * 1000`. The full description sits at the top of `dump-data.mjs`.
+`data/<scenario>.json`, format 1: `spec` (label, runtime OS, switch delay, Steam path, API key flag, current account per platform), `commands` (per command, a list of `{ args, result }` or `{ args, error }`), `skipped` (commands with state that are modelled from `spec` instead: the switch and the PIN session). Platform commands are called once per platform id, per-account commands once per account. Avatar URLs are repo-relative paths under `crates/accshift-egui/parity/avatars/`, cache timestamps are exactly `NOW * 1000`. 

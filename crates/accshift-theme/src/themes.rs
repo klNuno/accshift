@@ -121,8 +121,8 @@ const LIQUID_GLASS_TOKENS: [(TokenKey, &str); 11] = [
     (TokenKey::AfkText, "#f4f6f9"),
 ];
 
-const MIDNIGHT_JSON: &str = include_str!("../../../src/lib/theme/builtin/midnight.json");
-const GLASS_DARK_JSON: &str = include_str!("../../../src/lib/theme/builtin/glass-dark.json");
+const MIDNIGHT_JSON: &str = include_str!("../themes/midnight.json");
+const GLASS_DARK_JSON: &str = include_str!("../themes/glass-dark.json");
 
 fn token_map(pairs: &[(TokenKey, &str)]) -> BTreeMap<TokenKey, String> {
     pairs

@@ -201,7 +201,7 @@ fn entries_expire_by_duration_or_by_session_when_the_duration_is_zero() {
 
 #[test]
 fn the_url_policy_keeps_files_to_the_mock() {
-    let file = "src/lib/mock/avatars/1.svg";
+    let file = "crates/accshift-egui/parity/avatars/1.svg";
     let strict = ProfileCache::<RobloxProfileInfo>::new(config(1, false), UrlPolicy::HttpOnly);
     let mut storage = ClientStorage::new();
     strict.set_cached_profile(&mut storage, "a", file, None, 0.0);
@@ -239,7 +239,10 @@ fn avatar_sources_follow_the_policy() {
         AvatarSource::Unsupported
     );
     assert_eq!(
-        avatar_source("src/lib/mock/avatars/2.svg", UrlPolicy::HttpOnly),
+        avatar_source(
+            "crates/accshift-egui/parity/avatars/2.svg",
+            UrlPolicy::HttpOnly
+        ),
         AvatarSource::Unsupported
     );
     assert_eq!(
@@ -264,7 +267,7 @@ fn avatar_sources_follow_the_policy() {
 #[test]
 fn images_hand_over_files_at_once_and_download_urls_once() {
     let mut images = AvatarImages::new(UrlPolicy::HttpOrFile);
-    let file = "src/lib/mock/avatars/3.svg";
+    let file = "crates/accshift-egui/parity/avatars/3.svg";
     assert_eq!(
         images.request(file),
         AvatarFetch::Ready(AvatarImage::File {

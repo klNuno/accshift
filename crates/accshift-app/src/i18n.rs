@@ -1,9 +1,7 @@
 //! The i18n runtime, ported from `src/lib/i18n/{index,dictionaries.svelte}.ts`
 //! and the boot locale choice of `src/main.ts` / `src/lib/app/bootLocale.ts`.
 //!
-//! The dictionaries are `i18n/<locale>.json`, written from
-//! `src/lib/i18n/messages*.ts` by `tools/i18n.dump.ts` and embedded here. A
-//! key missing from a locale falls back to English, then to the key itself,
+//! The dictionaries are `i18n/<locale>.json`, embedded here. A key missing from a locale falls back to English, then to the key itself,
 //! like `translate`.
 
 use crate::js;

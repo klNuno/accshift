@@ -1,4 +1,4 @@
-//! A small CSS value resolver: the `:root` variables of `src/app.css`, the
+//! A small CSS value resolver: the `:root` variables of `root.css`, the
 //! ones a theme writes on `<html>`, and a theme's own `:root` overrides,
 //! resolved into concrete colours, lengths and numbers.
 //!
@@ -13,7 +13,7 @@ use crate::color::{parse_color_tokens, Rgba};
 use crate::js::js_trim;
 use crate::themes::ThemeApplication;
 
-const APP_CSS: &str = include_str!("../../../src/app.css");
+const APP_CSS: &str = include_str!("root.css");
 
 /// Root font size: nothing in the app changes the browser default.
 pub const ROOT_FONT_SIZE_PX: f64 = 16.0;
@@ -621,7 +621,7 @@ fn at_rule_name(prelude: &str) -> String {
         .to_owned()
 }
 
-/// The `:root` custom properties of `src/app.css`, parsed once.
+/// The `:root` custom properties of `root.css`, parsed once.
 pub fn app_root_properties() -> &'static [CustomProperty] {
     static ROOT: OnceLock<Vec<CustomProperty>> = OnceLock::new();
     ROOT.get_or_init(|| parse_root_custom_properties(APP_CSS).0)

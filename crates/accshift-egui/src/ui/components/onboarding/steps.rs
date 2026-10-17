@@ -19,7 +19,7 @@ use crate::ui::text::{self, LineHeight, TextAlign, TextStyle};
 use crate::ui::text_shadow::{self, TextShadow};
 
 /// `public/logo.svg`.
-const LOGO: &[u8] = include_bytes!("../../../../../../public/logo.svg");
+const LOGO: &[u8] = include_bytes!("../../../../assets/logo.svg");
 
 /// `stepIn` and `featureSwap`, 220 ms.
 const STEP_IN: Animation = Animation::new(0.22, Timing::EASE_OUT);

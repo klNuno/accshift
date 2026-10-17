@@ -1,5 +1,5 @@
-//! Compares the Rust engine with what the real TypeScript wrote on `<html>`
-//! for every case in `tests/data` (see `tools/variables.dump.ts`).
+//! Compares the Rust engine with what the former TypeScript engine wrote on
+//! `<html>` for every case in `tests/data`.
 
 use std::fs;
 use std::path::PathBuf;

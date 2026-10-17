@@ -1,10 +1,10 @@
-; NSIS installer hooks of the egui build (bundle/tauri.conf.json).
+; NSIS installer hooks (tauri.conf.json).
 ;
-; The Tauri build's hooks without the app DLL: the egui accshift-gui.exe is
-; the whole app. An install over v1.0.x removes the DLL that version left
-; beside the exe; the user PATH integration is the same (path.nsh).
+; accshift-gui.exe is the whole app. An install over v1.0.x removes the DLL
+; the Tauri versions left beside the exe; path.nsh adds the CLI to the user
+; PATH.
 
-!include "${__FILEDIR__}\..\..\..\src-tauri\windows\path.nsh"
+!include "${__FILEDIR__}\path.nsh"
 
 !macro NSIS_HOOK_POSTINSTALL
   ; Runs once the installer has closed any running Accshift, so the old DLL

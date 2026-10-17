@@ -22,7 +22,7 @@ The `.app` bundles the CLI inside `Contents/MacOS`. Symlink it onto your `PATH`,
 for example into `/usr/local/bin`. A standalone
 `accshift-cli_<version>_macos_aarch64` binary is also on Releases.
 
-Building from source (`pnpm tauri build`) produces the binary at
+Building from source (`cargo build --release -p accshift-cli`) produces the binary at
 `<target-directory>/release/accshift`, or `accshift.exe` on Windows. The target
 directory defaults to `target/`; Cargo configuration or `CARGO_TARGET_DIR` can
 override it.

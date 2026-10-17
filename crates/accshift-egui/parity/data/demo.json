@@ -277,106 +277,106 @@
               "client.view-mode": "grid",
               "cache.steam.profiles": {
                 "76561198000000001": {
-                  "url": "src/lib/mock/avatars/1.svg",
+                  "url": "crates/accshift-egui/parity/avatars/1.svg",
                   "displayName": "main",
                   "timestamp": 1791000000000
                 },
                 "76561198000000002": {
-                  "url": "src/lib/mock/avatars/2.svg",
+                  "url": "crates/accshift-egui/parity/avatars/2.svg",
                   "displayName": "bro's account",
                   "timestamp": 1791000000000
                 },
                 "76561198000000003": {
-                  "url": "src/lib/mock/avatars/3.svg",
+                  "url": "crates/accshift-egui/parity/avatars/3.svg",
                   "displayName": "alt",
                   "timestamp": 1791000000000
                 },
                 "76561198000000004": {
-                  "url": "src/lib/mock/avatars/4.svg",
+                  "url": "crates/accshift-egui/parity/avatars/4.svg",
                   "displayName": "trading",
                   "timestamp": 1791000000000
                 },
                 "76561198000000005": {
-                  "url": "src/lib/mock/avatars/5.svg",
+                  "url": "crates/accshift-egui/parity/avatars/5.svg",
                   "displayName": "faceit",
                   "timestamp": 1791000000000
                 },
                 "76561198000000006": {
-                  "url": "src/lib/mock/avatars/6.svg",
+                  "url": "crates/accshift-egui/parity/avatars/6.svg",
                   "displayName": "ranked grind",
                   "timestamp": 1791000000000
                 },
                 "76561198000000007": {
-                  "url": "src/lib/mock/avatars/7.svg",
+                  "url": "crates/accshift-egui/parity/avatars/7.svg",
                   "displayName": "chill",
                   "timestamp": 1791000000000
                 },
                 "76561198000000008": {
-                  "url": "src/lib/mock/avatars/8.svg",
+                  "url": "crates/accshift-egui/parity/avatars/8.svg",
                   "displayName": "lan party",
                   "timestamp": 1791000000000
                 },
                 "76561198000000009": {
-                  "url": "src/lib/mock/avatars/9.svg",
+                  "url": "crates/accshift-egui/parity/avatars/9.svg",
                   "displayName": "streams",
                   "timestamp": 1791000000000
                 },
                 "76561198000000010": {
-                  "url": "src/lib/mock/avatars/10.svg",
+                  "url": "crates/accshift-egui/parity/avatars/10.svg",
                   "displayName": "esea",
                   "timestamp": 1791000000000
                 },
                 "76561198000000011": {
-                  "url": "src/lib/mock/avatars/11.svg",
+                  "url": "crates/accshift-egui/parity/avatars/11.svg",
                   "displayName": "tournaments",
                   "timestamp": 1791000000000
                 },
                 "76561198000000012": {
-                  "url": "src/lib/mock/avatars/12.svg",
+                  "url": "crates/accshift-egui/parity/avatars/12.svg",
                   "displayName": "family",
                   "timestamp": 1791000000000
                 },
                 "76561198000000013": {
-                  "url": "src/lib/mock/avatars/13.svg",
+                  "url": "crates/accshift-egui/parity/avatars/13.svg",
                   "displayName": "practice",
                   "timestamp": 1791000000000
                 },
                 "76561198000000014": {
-                  "url": "src/lib/mock/avatars/14.svg",
+                  "url": "crates/accshift-egui/parity/avatars/14.svg",
                   "displayName": "smurf 1",
                   "timestamp": 1791000000000
                 },
                 "76561198000000015": {
-                  "url": "src/lib/mock/avatars/15.svg",
+                  "url": "crates/accshift-egui/parity/avatars/15.svg",
                   "displayName": "smurf 2",
                   "timestamp": 1791000000000
                 },
                 "76561198000000016": {
-                  "url": "src/lib/mock/avatars/16.svg",
+                  "url": "crates/accshift-egui/parity/avatars/16.svg",
                   "displayName": "smurf 3",
                   "timestamp": 1791000000000
                 },
                 "76561198000000017": {
-                  "url": "src/lib/mock/avatars/17.svg",
+                  "url": "crates/accshift-egui/parity/avatars/17.svg",
                   "displayName": "smurf 4",
                   "timestamp": 1791000000000
                 }
               },
               "cache.roblox.profiles": {
                 "1000000001": {
-                  "url": "src/lib/mock/avatars/18.svg",
+                  "url": "crates/accshift-egui/parity/avatars/18.svg",
                   "timestamp": 1791000000000
                 },
                 "1000000002": {
-                  "url": "src/lib/mock/avatars/19.svg",
+                  "url": "crates/accshift-egui/parity/avatars/19.svg",
                   "timestamp": 1791000000000
                 },
                 "1000000003": {
-                  "url": "src/lib/mock/avatars/20.svg",
+                  "url": "crates/accshift-egui/parity/avatars/20.svg",
                   "timestamp": 1791000000000
                 },
                 "1000000004": {
-                  "url": "src/lib/mock/avatars/21.svg",
+                  "url": "crates/accshift-egui/parity/avatars/21.svg",
                   "timestamp": 1791000000000
                 }
               },
@@ -540,106 +540,106 @@
             "client.view-mode": "grid",
             "cache.steam.profiles": {
               "76561198000000001": {
-                "url": "src/lib/mock/avatars/1.svg",
+                "url": "crates/accshift-egui/parity/avatars/1.svg",
                 "displayName": "main",
                 "timestamp": 1791000000000
               },
               "76561198000000002": {
-                "url": "src/lib/mock/avatars/2.svg",
+                "url": "crates/accshift-egui/parity/avatars/2.svg",
                 "displayName": "bro's account",
                 "timestamp": 1791000000000
               },
               "76561198000000003": {
-                "url": "src/lib/mock/avatars/3.svg",
+                "url": "crates/accshift-egui/parity/avatars/3.svg",
                 "displayName": "alt",
                 "timestamp": 1791000000000
               },
               "76561198000000004": {
-                "url": "src/lib/mock/avatars/4.svg",
+                "url": "crates/accshift-egui/parity/avatars/4.svg",
                 "displayName": "trading",
                 "timestamp": 1791000000000
               },
               "76561198000000005": {
-                "url": "src/lib/mock/avatars/5.svg",
+                "url": "crates/accshift-egui/parity/avatars/5.svg",
                 "displayName": "faceit",
                 "timestamp": 1791000000000
               },
               "76561198000000006": {
-                "url": "src/lib/mock/avatars/6.svg",
+                "url": "crates/accshift-egui/parity/avatars/6.svg",
                 "displayName": "ranked grind",
                 "timestamp": 1791000000000
               },
               "76561198000000007": {
-                "url": "src/lib/mock/avatars/7.svg",
+                "url": "crates/accshift-egui/parity/avatars/7.svg",
                 "displayName": "chill",
                 "timestamp": 1791000000000
               },
               "76561198000000008": {
-                "url": "src/lib/mock/avatars/8.svg",
+                "url": "crates/accshift-egui/parity/avatars/8.svg",
                 "displayName": "lan party",
                 "timestamp": 1791000000000
               },
               "76561198000000009": {
-                "url": "src/lib/mock/avatars/9.svg",
+                "url": "crates/accshift-egui/parity/avatars/9.svg",
                 "displayName": "streams",
                 "timestamp": 1791000000000
               },
               "76561198000000010": {
-                "url": "src/lib/mock/avatars/10.svg",
+                "url": "crates/accshift-egui/parity/avatars/10.svg",
                 "displayName": "esea",
                 "timestamp": 1791000000000
               },
               "76561198000000011": {
-                "url": "src/lib/mock/avatars/11.svg",
+                "url": "crates/accshift-egui/parity/avatars/11.svg",
                 "displayName": "tournaments",
                 "timestamp": 1791000000000
               },
               "76561198000000012": {
-                "url": "src/lib/mock/avatars/12.svg",
+                "url": "crates/accshift-egui/parity/avatars/12.svg",
                 "displayName": "family",
                 "timestamp": 1791000000000
               },
               "76561198000000013": {
-                "url": "src/lib/mock/avatars/13.svg",
+                "url": "crates/accshift-egui/parity/avatars/13.svg",
                 "displayName": "practice",
                 "timestamp": 1791000000000
               },
               "76561198000000014": {
-                "url": "src/lib/mock/avatars/14.svg",
+                "url": "crates/accshift-egui/parity/avatars/14.svg",
                 "displayName": "smurf 1",
                 "timestamp": 1791000000000
               },
               "76561198000000015": {
-                "url": "src/lib/mock/avatars/15.svg",
+                "url": "crates/accshift-egui/parity/avatars/15.svg",
                 "displayName": "smurf 2",
                 "timestamp": 1791000000000
               },
               "76561198000000016": {
-                "url": "src/lib/mock/avatars/16.svg",
+                "url": "crates/accshift-egui/parity/avatars/16.svg",
                 "displayName": "smurf 3",
                 "timestamp": 1791000000000
               },
               "76561198000000017": {
-                "url": "src/lib/mock/avatars/17.svg",
+                "url": "crates/accshift-egui/parity/avatars/17.svg",
                 "displayName": "smurf 4",
                 "timestamp": 1791000000000
               }
             },
             "cache.roblox.profiles": {
               "1000000001": {
-                "url": "src/lib/mock/avatars/18.svg",
+                "url": "crates/accshift-egui/parity/avatars/18.svg",
                 "timestamp": 1791000000000
               },
               "1000000002": {
-                "url": "src/lib/mock/avatars/19.svg",
+                "url": "crates/accshift-egui/parity/avatars/19.svg",
                 "timestamp": 1791000000000
               },
               "1000000003": {
-                "url": "src/lib/mock/avatars/20.svg",
+                "url": "crates/accshift-egui/parity/avatars/20.svg",
                 "timestamp": 1791000000000
               },
               "1000000004": {
-                "url": "src/lib/mock/avatars/21.svg",
+                "url": "crates/accshift-egui/parity/avatars/21.svg",
                 "timestamp": 1791000000000
               }
             },
@@ -1094,7 +1094,7 @@
           "userId": "1000000001"
         },
         "result": {
-          "avatarUrl": "src/lib/mock/avatars/18.svg"
+          "avatarUrl": "crates/accshift-egui/parity/avatars/18.svg"
         }
       },
       {
@@ -1102,7 +1102,7 @@
           "userId": "1000000002"
         },
         "result": {
-          "avatarUrl": "src/lib/mock/avatars/19.svg"
+          "avatarUrl": "crates/accshift-egui/parity/avatars/19.svg"
         }
       },
       {
@@ -1110,7 +1110,7 @@
           "userId": "1000000003"
         },
         "result": {
-          "avatarUrl": "src/lib/mock/avatars/20.svg"
+          "avatarUrl": "crates/accshift-egui/parity/avatars/20.svg"
         }
       },
       {
@@ -1118,7 +1118,7 @@
           "userId": "1000000004"
         },
         "result": {
-          "avatarUrl": "src/lib/mock/avatars/21.svg"
+          "avatarUrl": "crates/accshift-egui/parity/avatars/21.svg"
         }
       }
     ],
@@ -1326,7 +1326,7 @@
           "accountId": "76561198000000001"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/1.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/1.svg",
           "display_name": "main",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -1337,7 +1337,7 @@
           "accountId": "76561198000000002"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/2.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/2.svg",
           "display_name": "bro's account",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -1348,7 +1348,7 @@
           "accountId": "76561198000000003"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/3.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/3.svg",
           "display_name": "alt",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -1359,7 +1359,7 @@
           "accountId": "76561198000000004"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/4.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/4.svg",
           "display_name": "trading",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -1370,7 +1370,7 @@
           "accountId": "76561198000000005"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/5.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/5.svg",
           "display_name": "faceit",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -1381,7 +1381,7 @@
           "accountId": "76561198000000006"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/6.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/6.svg",
           "display_name": "ranked grind",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -1392,7 +1392,7 @@
           "accountId": "76561198000000007"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/7.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/7.svg",
           "display_name": "chill",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -1403,7 +1403,7 @@
           "accountId": "76561198000000008"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/8.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/8.svg",
           "display_name": "lan party",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -1414,7 +1414,7 @@
           "accountId": "76561198000000009"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/9.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/9.svg",
           "display_name": "streams",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -1425,7 +1425,7 @@
           "accountId": "76561198000000010"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/10.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/10.svg",
           "display_name": "esea",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -1436,7 +1436,7 @@
           "accountId": "76561198000000011"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/11.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/11.svg",
           "display_name": "tournaments",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -1447,7 +1447,7 @@
           "accountId": "76561198000000012"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/12.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/12.svg",
           "display_name": "family",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -1458,7 +1458,7 @@
           "accountId": "76561198000000013"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/13.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/13.svg",
           "display_name": "practice",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -1469,7 +1469,7 @@
           "accountId": "76561198000000014"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/14.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/14.svg",
           "display_name": "smurf 1",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -1480,7 +1480,7 @@
           "accountId": "76561198000000015"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/15.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/15.svg",
           "display_name": "smurf 2",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -1491,7 +1491,7 @@
           "accountId": "76561198000000016"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/16.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/16.svg",
           "display_name": "smurf 3",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -1502,7 +1502,7 @@
           "accountId": "76561198000000017"
         },
         "result": {
-          "avatar_url": "src/lib/mock/avatars/17.svg",
+          "avatar_url": "crates/accshift-egui/parity/avatars/17.svg",
           "display_name": "smurf 4",
           "vac_banned": false,
           "trade_ban_state": "none"
@@ -1534,103 +1534,103 @@
         },
         "result": {
           "76561198000000001": {
-            "avatar_url": "src/lib/mock/avatars/1.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/1.svg",
             "display_name": "main",
             "vac_banned": false,
             "trade_ban_state": "none"
           },
           "76561198000000002": {
-            "avatar_url": "src/lib/mock/avatars/2.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/2.svg",
             "display_name": "bro's account",
             "vac_banned": false,
             "trade_ban_state": "none"
           },
           "76561198000000003": {
-            "avatar_url": "src/lib/mock/avatars/3.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/3.svg",
             "display_name": "alt",
             "vac_banned": false,
             "trade_ban_state": "none"
           },
           "76561198000000004": {
-            "avatar_url": "src/lib/mock/avatars/4.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/4.svg",
             "display_name": "trading",
             "vac_banned": false,
             "trade_ban_state": "none"
           },
           "76561198000000005": {
-            "avatar_url": "src/lib/mock/avatars/5.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/5.svg",
             "display_name": "faceit",
             "vac_banned": false,
             "trade_ban_state": "none"
           },
           "76561198000000006": {
-            "avatar_url": "src/lib/mock/avatars/6.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/6.svg",
             "display_name": "ranked grind",
             "vac_banned": false,
             "trade_ban_state": "none"
           },
           "76561198000000007": {
-            "avatar_url": "src/lib/mock/avatars/7.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/7.svg",
             "display_name": "chill",
             "vac_banned": false,
             "trade_ban_state": "none"
           },
           "76561198000000008": {
-            "avatar_url": "src/lib/mock/avatars/8.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/8.svg",
             "display_name": "lan party",
             "vac_banned": false,
             "trade_ban_state": "none"
           },
           "76561198000000009": {
-            "avatar_url": "src/lib/mock/avatars/9.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/9.svg",
             "display_name": "streams",
             "vac_banned": false,
             "trade_ban_state": "none"
           },
           "76561198000000010": {
-            "avatar_url": "src/lib/mock/avatars/10.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/10.svg",
             "display_name": "esea",
             "vac_banned": false,
             "trade_ban_state": "none"
           },
           "76561198000000011": {
-            "avatar_url": "src/lib/mock/avatars/11.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/11.svg",
             "display_name": "tournaments",
             "vac_banned": false,
             "trade_ban_state": "none"
           },
           "76561198000000012": {
-            "avatar_url": "src/lib/mock/avatars/12.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/12.svg",
             "display_name": "family",
             "vac_banned": false,
             "trade_ban_state": "none"
           },
           "76561198000000013": {
-            "avatar_url": "src/lib/mock/avatars/13.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/13.svg",
             "display_name": "practice",
             "vac_banned": false,
             "trade_ban_state": "none"
           },
           "76561198000000014": {
-            "avatar_url": "src/lib/mock/avatars/14.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/14.svg",
             "display_name": "smurf 1",
             "vac_banned": false,
             "trade_ban_state": "none"
           },
           "76561198000000015": {
-            "avatar_url": "src/lib/mock/avatars/15.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/15.svg",
             "display_name": "smurf 2",
             "vac_banned": false,
             "trade_ban_state": "none"
           },
           "76561198000000016": {
-            "avatar_url": "src/lib/mock/avatars/16.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/16.svg",
             "display_name": "smurf 3",
             "vac_banned": false,
             "trade_ban_state": "none"
           },
           "76561198000000017": {
-            "avatar_url": "src/lib/mock/avatars/17.svg",
+            "avatar_url": "crates/accshift-egui/parity/avatars/17.svg",
             "display_name": "smurf 4",
             "vac_banned": false,
             "trade_ban_state": "none"

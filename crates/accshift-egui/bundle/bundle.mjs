@@ -1,19 +1,20 @@
-// Builds the Windows installer of the egui app with the Tauri bundler and the
-// same src-tauri/tauri.conf.json as the Tauri build: same product name,
-// identifier, install dir, registry keys, shortcuts and updater artifacts, so
-// installing it over v1.0.x is an ordinary update.
+// Builds the installers of the app with the Tauri bundler (the Tauri CLI
+// alone, no Tauri runtime) and ../tauri.conf.json: same product name,
+// identifier, install dir, registry keys, shortcuts and updater artifacts as
+// the v1.0.x Tauri builds, so installing over one is an ordinary update.
 //
-// The bundler packs `<target>/<triple>/release/accshift-gui.exe` when given a
-// target triple, `<target>` being the root workspace's. The egui binary is
-// copied there under that name: a plain build of the Tauri app writes
-// `<target>/release`, so its accshift-gui.exe is never replaced, even in a
-// target dir both share. bundle/tauri.conf.json drops the WebView2
-// bootstrapper and swaps the installer hooks.
+//   node crates/accshift-egui/bundle/bundle.mjs [--build] [--bundles <list>] [--no-updater]
 //
-//   node crates/accshift-egui/bundle/bundle.mjs [--exe <accshift-egui.exe>] [--no-updater]
+// --build first builds the GUI and the CLI in release, with --locked.
+// Without it both must already be built for the host. --bundles defaults to
+// the installers of the host OS: nsis on Windows, appimage,deb,rpm on Linux,
+// app,dmg on macOS. --no-updater skips the updater artifacts, which need
+// TAURI_SIGNING_PRIVATE_KEY.
 //
-// --exe defaults to the release build of this crate. --no-updater skips the
-// updater artifacts, which need TAURI_SIGNING_PRIVATE_KEY.
+// The bundler packs `<target>/<triple>/release/accshift-gui[.exe]` when given
+// a target triple: the egui binary is copied there under the name the
+// installers and the updater know. The CLI goes next to it (`externalBin`)
+// from `binaries/accshift-<triple>[.exe]`.
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -24,10 +25,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const crate = join(here, "..");
 const root = join(crate, "..", "..");
 
-if (process.platform !== "win32") {
-  throw new Error("only the Windows installer is wired so far");
-}
-
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);
 const option = (name) => {
@@ -35,33 +32,54 @@ const option = (name) => {
   return at >= 0 ? args[at + 1] : undefined;
 };
 
-// This crate is a workspace of its own, so it builds into its own target dir
-// unless CARGO_TARGET_DIR or a cargo config sends both to one place. Ask cargo
-// for each, like scripts/stage-cli.mjs does for the root workspace.
-function targetDirectory(cwd) {
+const DEFAULT_BUNDLES = { win32: "nsis", linux: "appimage,deb,rpm", darwin: "app,dmg" };
+const bundles = option("--bundles") ?? DEFAULT_BUNDLES[process.platform];
+if (!bundles) throw new Error(`no installer for ${process.platform}`);
+
+function hostTriple() {
+  const out = execFileSync("rustc", ["-vV"], { encoding: "utf8" });
+  const match = out.match(/^host: (\S+)$/m);
+  if (!match) throw new Error("could not parse the host triple from `rustc -vV`");
+  return match[1];
+}
+
+// `<root>/target` is only the default: CARGO_TARGET_DIR or a cargo config
+// can move it.
+function targetDirectory() {
   const out = execFileSync("cargo", ["metadata", "--format-version", "1", "--no-deps"], {
     encoding: "utf8",
-    cwd,
+    cwd: root,
     maxBuffer: 32 * 1024 * 1024,
   });
   return JSON.parse(out).target_directory;
 }
 
-const triple = "x86_64-pc-windows-msvc";
-const exe = option("--exe") ?? join(targetDirectory(crate), "release", "accshift-egui.exe");
-const release = join(targetDirectory(root), triple, "release");
+if (flag("--build")) {
+  execFileSync(
+    "cargo",
+    ["build", "--release", "--locked", "-p", "accshift-egui", "-p", "accshift-cli"],
+    { cwd: root, stdio: "inherit" },
+  );
+}
+
+const triple = hostTriple();
+const ext = process.platform === "win32" ? ".exe" : "";
+const target = targetDirectory();
+const built = join(target, "release");
+
+const release = join(target, triple, "release");
 mkdirSync(release, { recursive: true });
-copyFileSync(exe, join(release, "accshift-gui.exe"));
-console.log(`staged GUI: ${exe} -> ${join(release, "accshift-gui.exe")}`);
+const gui = join(release, `accshift-gui${ext}`);
+copyFileSync(join(built, `accshift-egui${ext}`), gui);
+console.log(`staged GUI: ${gui}`);
 
-// The CLI sidecar (`externalBin`), from the root workspace's release build.
-execFileSync(process.execPath, [join(root, "scripts", "stage-cli.mjs")], {
-  cwd: root,
-  stdio: "inherit",
-  env: { ...process.env, TAURI_ENV_TARGET_TRIPLE: triple },
-});
+const binaries = join(crate, "binaries");
+mkdirSync(binaries, { recursive: true });
+const cli = join(binaries, `accshift-${triple}${ext}`);
+copyFileSync(join(built, `accshift${ext}`), cli);
+console.log(`staged CLI: ${cli}`);
 
-const configs = [join(here, "tauri.conf.json")];
+const configs = [];
 if (flag("--no-updater")) {
   configs.push(JSON.stringify({ bundle: { createUpdaterArtifacts: false } }));
 }
@@ -73,13 +91,16 @@ execFileSync(
     tauri,
     "bundle",
     "--bundles",
-    "nsis",
+    bundles,
     "--target",
     triple,
     ...configs.flatMap((config) => ["--config", config]),
   ],
-  { cwd: root, stdio: "inherit" },
+  // The folder holding tauri.conf.json, found without a walk from the root.
+  { cwd: root, stdio: "inherit", env: { ...process.env, TAURI_APP_PATH: crate } },
 );
 
-const out = join(release, "bundle", "nsis");
-for (const name of readdirSync(out)) console.log(`installer: ${join(out, name)}`);
+const out = join(release, "bundle");
+for (const kind of readdirSync(out)) {
+  for (const name of readdirSync(join(out, kind))) console.log(`bundle: ${join(out, kind, name)}`);
+}

@@ -1,7 +1,6 @@
-//! The TS i18n tests (`src/lib/i18n/{index,messages}.test.ts`) against the
-//! embedded dictionaries, plus the export check: every key of the TS message
-//! files must be in the JSON `tools/i18n.dump.ts` wrote. The JSON may hold
-//! more: the egui app's own strings.
+//! The i18n tests of the former TS frontend
+//! (`src/lib/i18n/{index,messages}.test.ts`) against the embedded
+//! dictionaries.
 
 use accshift_app::i18n::{
     boot_locale, detect_preferred_locale, dictionary, format_template, is_locale, normalize_locale,
@@ -9,7 +8,6 @@ use accshift_app::i18n::{
 };
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
-use std::path::Path;
 
 // ------------------------------------------------------------ isLocale, normalizeLocale
 
@@ -231,58 +229,4 @@ fn no_locale_has_an_empty_string() {
             );
         }
     }
-}
-
-// ------------------------------------------------------------ export check
-
-fn ts_file(locale: Locale) -> &'static str {
-    match locale {
-        Locale::En => "messages.ts",
-        Locale::Es => "messages.es.ts",
-        Locale::Fr => "messages.fr.ts",
-        Locale::Pt => "messages.pt.ts",
-        Locale::PtBr => "messages.pt-br.ts",
-        Locale::Ru => "messages.ru.ts",
-        Locale::Zh => "messages.zh.ts",
-    }
-}
-
-/// The keys a TS message file declares: every entry line is two spaces, a
-/// quoted key and a colon.
-fn ts_keys(source: &str) -> BTreeSet<String> {
-    source
-        .lines()
-        .filter_map(|line| line.strip_prefix("  \""))
-        .filter_map(|rest| rest.split_once("\":"))
-        .map(|(key, _)| key.to_string())
-        .collect()
-}
-
-#[test]
-fn every_ts_key_is_in_the_exported_json() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/lib/i18n");
-    let mut counts = Vec::new();
-    for locale in LOCALES {
-        let path = dir.join(ts_file(locale));
-        let source = std::fs::read_to_string(&path).expect("TS message file");
-        let declared = ts_keys(&source);
-        assert!(
-            !declared.is_empty(),
-            "no key parsed from {}",
-            path.display()
-        );
-        let exported = keys(locale);
-        let missing: Vec<&String> = declared
-            .iter()
-            .filter(|key| !exported.contains(key.as_str()))
-            .collect();
-        assert!(
-            missing.is_empty(),
-            "{}: keys missing from i18n/{}.json, rerun tools/i18n.dump.ts: {missing:?}",
-            locale.code(),
-            locale.code()
-        );
-        counts.push(format!("{} {}", locale.code(), exported.len()));
-    }
-    eprintln!("i18n keys: {}", counts.join(", "));
 }

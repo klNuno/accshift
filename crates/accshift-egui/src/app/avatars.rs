@@ -379,8 +379,7 @@ mod tests {
 
     #[test]
     fn mock_svg_rasterizes_at_the_device_size() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../src/lib/mock/avatars/1.svg");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("parity/avatars/1.svg");
         let image = AvatarImage::File {
             key: "1".into(),
             path: root,
@@ -417,8 +416,8 @@ mod tests {
 
     #[test]
     fn jpeg_decodes_and_covers_the_box() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../src/lib/mock/avatars/photo.jpg");
+        let root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("parity/avatars/photo.jpg");
         let image = AvatarImage::File {
             key: "photo".into(),
             path: root,

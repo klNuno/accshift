@@ -1,6 +1,6 @@
 //! Payloads the backend answers with that `accshift-core` does not define,
-//! because they are built in `src-tauri`. Each one serializes to the JSON the
-//! webview receives from the matching command today.
+//! because the Tauri app built them itself. Each one serializes to the JSON
+//! its webview received from the matching command.
 //!
 //! Payloads `accshift-core` already defines are re-exported here so callers
 //! have one place to import from.

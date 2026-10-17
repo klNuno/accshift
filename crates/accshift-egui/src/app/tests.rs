@@ -164,7 +164,7 @@ fn seeded_avatar_paths_resolve_like_the_scenarios() {
     let setup = MockSetup {
         seed: Some(serde_json::json!({
             "cache.steam.profiles": {
-                "1": { "url": "src/lib/mock/avatars/photo.jpg", "timestamp": 1 },
+                "1": { "url": "crates/accshift-egui/parity/avatars/photo.jpg", "timestamp": 1 },
             },
         })),
         repo_root: Some(root.clone()),
@@ -178,9 +178,9 @@ fn seeded_avatar_paths_resolve_like_the_scenarios() {
     setup.patch_stores(&mut stores);
     let cache = &stores["cache.steam.profiles"];
     let photo = root
-        .join("src")
-        .join("lib")
-        .join("mock")
+        .join("crates")
+        .join("accshift-egui")
+        .join("parity")
         .join("avatars")
         .join("photo.jpg");
     assert_eq!(cache["1"]["url"], photo.to_string_lossy().as_ref());

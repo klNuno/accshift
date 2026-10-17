@@ -390,12 +390,14 @@ mod tests {
 
     #[test]
     fn temporary_window_reverts_on_its_own() {
-        let mut config = LevelConfig::default();
-        config.temporary = Some(TemporaryDebug {
-            level: Level::Trace,
-            modules: vec![],
-            until_ms: 1_000,
-        });
+        let config = LevelConfig {
+            temporary: Some(TemporaryDebug {
+                level: Level::Trace,
+                modules: vec![],
+                until_ms: 1_000,
+            }),
+            ..LevelConfig::default()
+        };
 
         assert_eq!(config.effective_for("platform", 999), Level::Trace);
         // One millisecond past the deadline the normal level is back, with no
@@ -406,12 +408,14 @@ mod tests {
 
     #[test]
     fn temporary_window_can_target_one_module() {
-        let mut config = LevelConfig::default();
-        config.temporary = Some(TemporaryDebug {
-            level: Level::Debug,
-            modules: vec!["platform.riot".into()],
-            until_ms: 1_000,
-        });
+        let config = LevelConfig {
+            temporary: Some(TemporaryDebug {
+                level: Level::Debug,
+                modules: vec!["platform.riot".into()],
+                until_ms: 1_000,
+            }),
+            ..LevelConfig::default()
+        };
 
         assert_eq!(config.effective_for("platform.riot", 0), Level::Debug);
         assert_eq!(config.effective_for("platform.steam", 0), Level::Info);

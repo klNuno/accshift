@@ -23,7 +23,12 @@ fn main() {
         println!("cargo:rustc-link-arg-bins=/DELAYLOAD:{dll}");
     }
     println!("cargo:rustc-link-arg-bins=delayimp.lib");
-    static_vcruntime();
+    // Release only, as `tauri build` did: the stub library's search path
+    // reaches every link of the build, the doctests of the other workspace
+    // crates included, which then lose the C++ frame handler.
+    if std::env::var("PROFILE").as_deref() == Ok("release") {
+        static_vcruntime();
+    }
     resources();
 }
 
@@ -64,16 +69,16 @@ fn static_vcruntime() {
     }
 }
 
-/// tauri-build's resource file, from the same tauri.conf.json: the icon as
-/// resource 32512, the version info and the Common Controls 6 manifest.
+/// The resource file tauri-build gave the Tauri app, from the tauri.conf.json
+/// the installer is bundled with: the icon as resource 32512, the version
+/// info and the Common Controls 6 manifest.
 fn resources() {
-    let tauri = std::path::Path::new("../../src-tauri");
-    let conf_path = tauri.join("tauri.conf.json");
-    let icon = tauri.join("icons").join("icon.ico");
+    let conf_path = std::path::Path::new("tauri.conf.json");
+    let icon = std::path::Path::new("icons").join("icon.ico");
     println!("cargo:rerun-if-changed={}", conf_path.display());
     println!("cargo:rerun-if-changed={}", icon.display());
     let conf: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&conf_path).expect("tauri.conf.json"))
+        serde_json::from_str(&std::fs::read_to_string(conf_path).expect("tauri.conf.json"))
             .expect("tauri.conf.json");
     let text = |key: &str| conf[key].as_str().expect(key).to_string();
     let (version, product, identifier) = (text("version"), text("productName"), text("identifier"));
