@@ -120,9 +120,19 @@ impl AppModel {
     /// closed.
     pub(super) fn run_palette(&mut self, ctx: &Context, action: PaletteAction) {
         match action {
-            // `addFlow.cancelIfConflicting` then the switch: both later ports.
+            // `addFlow.cancelIfConflicting` then the switch, bulk edit or
+            // not.
             PaletteAction::SwitchToAccount(account) => {
-                self.apply_one(ctx, Action::AccountSwitch(account.id))
+                if let Some(b) = self.booted.as_mut() {
+                    let tab = b.nav.active_tab.clone();
+                    b.accounts.cancel_add_flow_if_conflicting(
+                        &self.jobs,
+                        &tab,
+                        &tab,
+                        Some(&account.id),
+                    );
+                }
+                self.switch_account(&account)
             }
             PaletteAction::AddAccount => self.apply_one(ctx, Action::AddAccount),
             PaletteAction::RefreshAccounts => self.apply_one(ctx, Action::Refresh),

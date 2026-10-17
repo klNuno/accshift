@@ -183,6 +183,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
     let nav = booted.nav.clone();
     let active_def = booted.platforms.iter().find(|p| p.id == nav.active_tab);
     let active_usable = active_def.is_some_and(|p| p.supports(os));
+    let adapter_loading = booted.accounts.loading.adapter_loading();
     let props = TitleBarProps {
         vars: &vars,
         locale: booted.locale,
@@ -193,8 +194,12 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         active_tab: &nav.active_tab,
         enabled_platforms: &enabled,
         unavailable: &unavailable,
-        can_refresh: active_usable && !nav.show_personas,
-        can_add_account: active_usable && !nav.show_personas,
+        can_refresh: active_usable && !adapter_loading && !nav.show_personas,
+        can_add_account: active_usable
+            && !adapter_loading
+            && !booted.accounts.loading.loader.adding()
+            && !booted.accounts.add_flow.is_active()
+            && !nav.show_personas,
         show_bulk_edit: active_def.is_some_and(|p| p.bulk_edit)
             && !nav.show_settings
             && !nav.show_personas

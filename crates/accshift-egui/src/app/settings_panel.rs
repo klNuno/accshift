@@ -963,6 +963,8 @@ impl AppModel {
             return;
         };
         b.nav.show_personas = false;
+        let tab = b.nav.active_tab.clone();
+        b.accounts.cancel_add_flow(&self.jobs, &tab);
         b.bulk.close();
         b.nav.show_settings = true;
         self.settings_panel = Some(SettingsPanel::open(

@@ -51,7 +51,7 @@ use accshift_app::platforms::warnings::WarningTone;
 use accshift_app::time::{format_relative_time_compact, TimeContext};
 
 use super::avatar_fade_in;
-use super::card_extension::{self, Surface};
+use super::card_extension::{self, ChipHit, Surface};
 use super::folder_card::{entrance, map_rect};
 use super::icon;
 use crate::app::vars::Vars;
@@ -152,6 +152,12 @@ pub struct AccountCardProps<'a> {
     pub extension: &'a [CardSection],
     /// `disableExtension`: bulk edit or a drag in progress.
     pub extension_disabled: bool,
+    /// `forceExtensionOpen`: the add flow's setup card stays expanded.
+    pub extension_forced: bool,
+    /// `disableHoverExtension`: another card's setup is open on the tab.
+    pub extension_hover_disabled: bool,
+    /// The extension's chips that have an `onClick`, as `(section, chip)`.
+    pub clickable_chips: &'a [(usize, usize)],
     /// `html[data-glass="1"]`.
     pub glass: bool,
     /// `[data-kb-focus]`: the card the arrow keys moved to.
@@ -179,6 +185,9 @@ pub struct CardOutput {
     pub surface: Option<std::ops::Range<usize>>,
     /// `.card-shell.extension-visible`: the card paints over every other.
     pub raised: bool,
+    /// The clickable chips the extension showed, for the workspace to sense
+    /// over every card.
+    pub chips: Vec<ChipHit>,
 }
 
 /// What the card reports.
@@ -214,6 +223,11 @@ struct State {
     blurring: bool,
     /// `panelSide === "left"`, picked on hover.
     opens_left: bool,
+    /// The extension was forced open last frame.
+    forced: bool,
+    /// The clickable chips it showed last frame: inside `.card-shell`, they
+    /// keep the card hovered.
+    chips: Vec<Id>,
 }
 
 fn state(ctx: &Context, id: Id) -> State {
@@ -301,7 +315,10 @@ struct Meta {
 impl Meta {
     fn new(ctx: &Context, v: &Vars, item: &AccountCardItem, badge: bool) -> Self {
         let note = item.note.trim();
-        let has_username = item.show_username && !item.username.trim().is_empty();
+        // `isPendingSetupAccount(account.id) ? false : showUsernames`, and
+        // the same for the last login.
+        let has_username =
+            item.show_username && !item.pending_setup && !item.username.trim().is_empty();
         let row = has_username || badge;
         let ppp = ctx.pixels_per_point();
         Self {
@@ -313,7 +330,7 @@ impl Meta {
             }),
             badge,
             note: item.show_note_inline && !note.is_empty(),
-            last_login: item.show_last_login,
+            last_login: item.show_last_login && !item.pending_setup,
         }
     }
 
@@ -373,9 +390,15 @@ fn content_height(v: &Vars, lines: &Lines, meta: &Meta) -> f32 {
     h + pad
 }
 
-/// `stepMarquee` over time: to the end, pause, back, pause.
-fn marquee_offset(elapsed: f64, shift: f32) -> f32 {
-    let d = (f64::from(shift) / f64::from(MARQUEE_SPEED) * 1000.0).round() / 1000.0;
+/// `stepMarquee` over time: to the end, pause, back, pause. Reduced motion
+/// cuts each move to the 0.01 ms transition of `html[data-motion="reduced"]`:
+/// the name jumps, the pauses stay.
+fn marquee_offset(elapsed: f64, shift: f32, reduced: bool) -> f32 {
+    let d = if reduced {
+        1e-5
+    } else {
+        (f64::from(shift) / f64::from(MARQUEE_SPEED) * 1000.0).round() / 1000.0
+    };
     if d <= 0.0 || elapsed <= 0.0 {
         return 0.0;
     }
@@ -408,16 +431,10 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
     // on its pixel-snapped edges.
     let layout = Rect::from_min_size(rect.min, vec2(rect.width(), card_h));
     let rect = snap::rect(layout, ppp);
+    // `interactionDisabled`: the card still takes its clicks and right
+    // clicks, so none reaches the workspace, and does nothing with them.
     let disabled = item.pending_setup;
-    let response = ui.interact(
-        rect,
-        id,
-        if disabled {
-            Sense::hover()
-        } else {
-            Sense::click()
-        },
-    );
+    let response = ui.interact(rect, id, Sense::click());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     response.widget_info(|| {
         WidgetInfo::selected(WidgetType::Button, !disabled, item.active, &item.name)
@@ -425,7 +442,11 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
     ctx.accesskit_node_builder(id, |node| node.set_role(Role::Button));
 
     let mut st = state(&ctx, id);
-    let hovered = super::css_hovered(&response);
+    let hovered = super::css_hovered(&response)
+        || st
+            .chips
+            .iter()
+            .any(|chip| ctx.read_response(*chip).is_some_and(|r| r.hovered()));
     let pressed = super::held(&response);
     let active = item.active;
     let dragged = item.dragged;
@@ -490,14 +511,20 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
         st.overflowing = false;
     }
     let has_extension = has_card_extension_content(props.extension);
-    if hovered && !st.hovered && has_extension {
+    // `updatePanelSide` on hover, and once the panel is forced open.
+    let forced = props.extension_forced && has_extension;
+    if has_extension && ((hovered && !st.hovered) || (forced && !st.forced)) {
         // `innerWidth - rect.right` in window px: the stage's zoom included,
         // the panel's own width not.
         let zoom = crate::zoom::frame(&ctx);
         st.opens_left =
             !card_extension::opens_right(ctx.content_rect().width() * zoom, rect.right() * zoom);
     }
-    let extension_visible = has_extension && !dragged && !props.extension_disabled && hovered;
+    st.forced = forced;
+    let extension_visible = has_extension
+        && !dragged
+        && !props.extension_disabled
+        && (props.extension_forced || (!props.extension_hover_disabled && hovered));
     if hovered && !st.hovered {
         let overflow = match &st.measured {
             Some((_, px)) => *px,
@@ -514,8 +541,16 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
     let marquee = hovered && st.overflowing;
     let shift = st.measured.as_ref().map_or(0.0, |(_, px)| *px);
     let offset = if marquee {
-        ctx.request_repaint();
-        marquee_offset(now - st.marquee_from, shift)
+        let reduced = anim::motion(&ctx) == anim::Motion::Reduced;
+        let elapsed = now - st.marquee_from;
+        if reduced && elapsed > 0.0 {
+            // The name only moves when a pause ends.
+            let left = MARQUEE_PAUSE - elapsed.rem_euclid(MARQUEE_PAUSE);
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(left));
+        } else {
+            ctx.request_repaint();
+        }
+        marquee_offset(elapsed, shift, reduced)
     } else {
         0.0
     };
@@ -608,17 +643,19 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
 
     // The extension surface, under the face.
     let mut surface = None;
+    let mut chips = Vec::new();
     if has_extension {
         let layer = ui.layer_id();
         let next = || ctx.graphics(|g| g.get(layer).map_or(0, |l| l.next_idx().0));
         let start = next();
-        let shown = card_extension::paint(
+        let painted = card_extension::paint(
             ui,
             layout,
             &Surface {
                 vars: v,
                 id,
                 sections: props.extension,
+                clickable: props.clickable_chips,
                 locale: props.locale,
                 card_color: props.card_color,
                 active,
@@ -629,10 +666,12 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
                 glass: props.glass,
             },
         );
-        if shown {
+        if painted.shown {
             surface = Some(start..next());
         }
+        chips = painted.chips;
     }
+    st.chips = chips.iter().map(|hit| hit.id).collect();
 
     // Shadows: the active rings, else the hover shadow. Ring lists and the
     // drop shadow interpolate as lists, padded with transparent shadows.
@@ -1009,6 +1048,7 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
         events,
         surface,
         raised: extension_visible,
+        chips,
     }
 }
 
@@ -1088,8 +1128,9 @@ fn paint_loader(painter: &egui::Painter, centre: Pos2, turn: f32, fade: f32, v: 
     paint_ring_loader(painter, centre, LOADER, 2.0, turn, rest, top);
 }
 
-/// A spinner ring: `size` px across its content box, a `border` px border
-/// in `rest` with a `top` coloured top border, turned by `turn` (0 to 1).
+/// A spinner ring: `size` px across its border box (preflight's
+/// `box-sizing: border-box`), a `border` px border in `rest` with a `top`
+/// coloured top border, turned by `turn` (0 to 1).
 pub(crate) fn paint_ring_loader(
     painter: &egui::Painter,
     centre: Pos2,
@@ -1101,8 +1142,8 @@ pub(crate) fn paint_ring_loader(
 ) {
     let ppp = painter.ctx().pixels_per_point();
     let bw = snap::border_width(border, ppp);
-    let inner = size / 2.0;
-    let outer = inner + bw;
+    let outer = size / 2.0;
+    let inner = outer - bw;
     let rest = rest.to_color32();
     let top = top.to_color32();
     let aa = 0.5 / ppp;
@@ -1356,13 +1397,22 @@ mod tests {
     #[test]
     fn marquee_runs_to_the_end_pauses_and_comes_back() {
         // 42 px at 42 px/s: one second each way, two seconds of pause.
-        assert_eq!(marquee_offset(0.0, 42.0), 0.0);
-        assert!((marquee_offset(0.5, 42.0) + 21.0).abs() < 1e-4);
-        assert_eq!(marquee_offset(1.0, 42.0), -42.0);
-        assert_eq!(marquee_offset(2.9, 42.0), -42.0);
-        assert!((marquee_offset(3.5, 42.0) + 21.0).abs() < 1e-4);
-        assert_eq!(marquee_offset(5.0, 42.0), 0.0);
-        assert!((marquee_offset(6.5, 42.0) + 21.0).abs() < 1e-4);
+        assert_eq!(marquee_offset(0.0, 42.0, false), 0.0);
+        assert!((marquee_offset(0.5, 42.0, false) + 21.0).abs() < 1e-4);
+        assert_eq!(marquee_offset(1.0, 42.0, false), -42.0);
+        assert_eq!(marquee_offset(2.9, 42.0, false), -42.0);
+        assert!((marquee_offset(3.5, 42.0, false) + 21.0).abs() < 1e-4);
+        assert_eq!(marquee_offset(5.0, 42.0, false), 0.0);
+        assert!((marquee_offset(6.5, 42.0, false) + 21.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn reduced_marquee_jumps_and_keeps_the_pauses() {
+        assert_eq!(marquee_offset(0.0, 42.0, true), 0.0);
+        assert_eq!(marquee_offset(0.1, 42.0, true), -42.0);
+        assert_eq!(marquee_offset(1.9, 42.0, true), -42.0);
+        assert_eq!(marquee_offset(2.1, 42.0, true), 0.0);
+        assert_eq!(marquee_offset(4.1, 42.0, true), -42.0);
     }
 
     #[test]

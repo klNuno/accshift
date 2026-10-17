@@ -683,6 +683,8 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
         clock,
         cs2,
         drag,
+        add_flow,
+        setup,
         ..
     } = &mut *input.accounts;
     let grid_dragging = drag.is_dragging();
@@ -1035,6 +1037,20 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
     let layer = ui.layer_id();
     let cards_from = shape_count(&ctx, layer);
     let mut stacks = Vec::new();
+    let mut chip_hits = Vec::new();
+    // The add flow on this tab: `activePlatformAddSetupId` (the other cards
+    // keep their extension shut), the card `isForcedOpen` expands and its
+    // setup sections, which replace its own (`accountExtensionContentById`).
+    let setup_id = add_flow
+        .active_platform_setup_id(tab)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string);
+    let forced_id = setup_id
+        .clone()
+        .filter(|id| add_flow.is_forced_open(tab, id));
+    let setup_card = setup
+        .as_ref()
+        .map(|(account, extension)| (account.id.clone(), extension.clone()));
     let kb_focus = ws.kb_focus.clone();
     let kb = |id: &str| kb_focus.as_deref() == Some(id);
     let mut card_ids = HashMap::new();
@@ -1314,16 +1330,27 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                 // `createWarningExtensionSection`, `createNoteExtensionSection`,
                 // then the extra sections (Steam's CS2 bridge row).
                 let cs2 = cs2.card(&a.account.id).cloned();
-                let sections: Vec<_> = warning_section(a.warning.as_ref(), input.locale)
-                    .into_iter()
-                    .chain(note_section(&a.note, a.show_note_inline))
-                    .chain(cs2.iter().flat_map(|c| c.sections.iter().cloned()))
-                    .collect();
-                // `bulkEditMode ? null : getUsernameBadge(account.id)`.
+                let setup = setup_card
+                    .as_ref()
+                    .filter(|(id, _)| *id == a.account.id)
+                    .map(|(_, extension)| extension);
+                let sections: Vec<_> = match setup {
+                    Some(extension) => extension.sections.clone(),
+                    None => warning_section(a.warning.as_ref(), input.locale)
+                        .into_iter()
+                        .chain(note_section(&a.note, a.show_note_inline))
+                        .chain(cs2.iter().flat_map(|c| c.sections.iter().cloned()))
+                        .collect(),
+                };
+                let clickable: Vec<(usize, usize)> = setup
+                    .map(|extension| extension.chip_actions.iter().map(|(at, _)| *at).collect())
+                    .unwrap_or_default();
+                // `bulkEditMode || isPendingSetupAccount ? null :
+                // getUsernameBadge(account.id)`.
                 let badge = cs2
                     .as_ref()
                     .and_then(|c| c.badge.as_ref())
-                    .filter(|_| !a.single_click_switch);
+                    .filter(|_| !a.single_click_switch && !a.pending_setup);
                 let start = shape_count(&ctx, layer);
                 let out = account_card::account_card(
                     &mut child,
@@ -1340,6 +1367,11 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                         badge,
                         extension: &sections,
                         extension_disabled: a.single_click_switch || grid_dragging,
+                        extension_forced: !a.single_click_switch
+                            && forced_id.as_deref() == Some(a.account.id.as_str()),
+                        extension_hover_disabled: a.single_click_switch
+                            || setup_id.as_deref().is_some_and(|id| id != a.account.id),
+                        clickable_chips: &clickable,
                         glass: input.glass,
                         kb_focus: kb(&a.account.id),
                         grid_dragging,
@@ -1351,6 +1383,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                     surface: out.surface,
                     raised: out.raised,
                 });
+                chip_hits.extend(out.chips);
                 for event in out.events {
                     match event {
                         CardEvent::Activate => {
@@ -1372,6 +1405,16 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
         o.close(ui, clip);
     }
     restack(&ctx, layer, cards_from..shape_count(&ctx, layer), &stacks);
+    // `.chip.clickable { pointer-events: auto }`: sensed after every card,
+    // so a chip over a neighbour takes the click.
+    for hit in chip_hits {
+        let response = ui
+            .interact(hit.rect, hit.id, Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        if crate::ui::components::clicked(&response) {
+            actions.push(Action::SetupChip(hit.section, hit.chip));
+        }
+    }
     ws.card_ids = card_ids;
     if list_mode {
         ws.back = ws.list.back;
@@ -2021,6 +2064,9 @@ fn ghost_card(
                     badge,
                     extension: &[],
                     extension_disabled: true,
+                    extension_forced: false,
+                    extension_hover_disabled: false,
+                    clickable_chips: &[],
                     glass: input.glass,
                     kb_focus: false,
                     grid_dragging: false,

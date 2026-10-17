@@ -26,7 +26,15 @@
 //! The surface paints under the card face; the workspace lifts the card
 //! whose extension is visible over every other one (`--z-card-extension`)
 //! and keeps fading surfaces under every face (`--z-card-base`).
-//! Not ported yet: the link and clickable chip actions (CS2 sections).
+//! - `.chip.clickable`: `all: unset` drops the tone's background, border
+//!   and colour (the text inherits `--fg`); hover `brightness(1.2)`. The
+//!   surface reports their boxes and the workspace senses them over every
+//!   card, as `pointer-events: auto` lets them take clicks through the
+//!   panel's `pointer-events: none`.
+//!
+//! Not ported yet: the link's action (CS2 sections).
+
+use std::cell::RefCell;
 
 use egui::{pos2, vec2, Context, Id, Painter, Rect, Ui};
 
@@ -91,6 +99,8 @@ pub struct Surface<'a> {
     /// The card's id.
     pub id: Id,
     pub sections: &'a [CardSection],
+    /// The chips that have an `onClick`, as `(section, chip)`.
+    pub clickable: &'a [(usize, usize)],
     pub locale: Locale,
     pub card_color: Option<Rgba>,
     pub active: bool,
@@ -103,6 +113,25 @@ pub struct Surface<'a> {
     pub ban: Option<WarningTone>,
     /// `html[data-glass="1"]`.
     pub glass: bool,
+}
+
+/// A clickable chip on screen: what the workspace senses.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ChipHit {
+    pub id: Id,
+    pub rect: Rect,
+    pub section: usize,
+    pub chip: usize,
+}
+
+/// What [`paint`] drew.
+#[derive(Clone, Debug, Default)]
+pub struct Painted {
+    /// The surface painted (not fully faded out).
+    pub shown: bool,
+    /// Its clickable chips, while `.visible` (the hitbox is `inert`
+    /// otherwise).
+    pub chips: Vec<ChipHit>,
 }
 
 /// One `box-shadow` of the transitioned list.
@@ -157,7 +186,7 @@ fn shadow_targets(v: &Vars, s: &Surface) -> [Shadow; 3] {
 /// Paints the surface of the card laid out at `card` (its layout box, not
 /// snapped: the text inside sits on sub-pixel positions as in Blink) and
 /// returns whether anything showed.
-pub fn paint(ui: &Ui, card: Rect, s: &Surface) -> bool {
+pub fn paint(ui: &Ui, card: Rect, s: &Surface) -> Painted {
     let ctx = ui.ctx();
     let ppp = ctx.pixels_per_point();
     let v = s.vars;
@@ -197,7 +226,7 @@ pub fn paint(ui: &Ui, card: Rect, s: &Surface) -> bool {
     };
     let color = anim::transition(ctx, id.with("bg"), color, &T180);
     if opacity <= 0.0 {
-        return false;
+        return Painted::default();
     }
 
     let width = card.width() + DETAIL_WIDTH;
@@ -274,16 +303,23 @@ pub fn paint(ui: &Ui, card: Rect, s: &Surface) -> bool {
         .sections
         .iter()
         .enumerate()
-        .map(|(i, sec)| section(ctx, s, sec, i + 1 == s.sections.len(), w, None))
+        .map(|(i, sec)| section(ctx, s, i, sec, w, None))
         .collect();
     let total = heights.iter().sum::<f32>() + SECTION_GAP * heights.len().saturating_sub(1) as f32;
     let free = laid.height() - 2.0 * PAD_Y - total;
     // `justify-content: center`, halved in layout units (1/64 device px).
     let mut y = laid.top() + PAD_Y + (free * ppp * 32.0).trunc() / 64.0 / ppp;
     let x = details_left + PAD_LEFT;
+    let hits = RefCell::new(Vec::new());
     for (i, sec) in s.sections.iter().enumerate() {
-        let last = i + 1 == s.sections.len();
-        section(ctx, s, sec, last, w, Some((&content, pos2(x, y), &place)));
+        section(
+            ctx,
+            s,
+            i,
+            sec,
+            w,
+            Some((&content, pos2(x, y), &place, &hits)),
+        );
         y += heights[i] + SECTION_GAP;
     }
 
@@ -311,7 +347,14 @@ pub fn paint(ui: &Ui, card: Rect, s: &Surface) -> bool {
     if frost {
         Mark::End.paint(&painter, mapped);
     }
-    true
+    Painted {
+        shown: true,
+        chips: if s.visible {
+            hits.into_inner()
+        } else {
+            Vec::new()
+        },
+    }
 }
 
 /// `.section-title`.
@@ -337,6 +380,16 @@ fn chip_style(color: Rgba) -> TextStyle {
         .letter_spacing_em(0.02)
         .nowrap(false)
         .color(color.to_color32())
+}
+
+/// `filter: brightness(1.2)` on an opaque colour.
+fn brighter(c: Rgba) -> Rgba {
+    Rgba::new(
+        (c.r * 1.2).min(255.0),
+        (c.g * 1.2).min(255.0),
+        (c.b * 1.2).min(255.0),
+        c.a,
+    )
 }
 
 /// `.tone-*`: background, text and border.
@@ -390,17 +443,19 @@ fn text_height(ctx: &Context, text: &str, style: &TextStyle, width: f32) -> f32 
 
 type Place<'a> = &'a dyn Fn(Rect) -> Rect;
 
-/// Lays out one `.section` `w` wide and returns its height; with a painter,
-/// an origin and the surface's mapping, paints it there too.
+/// Lays out section `index` `w` wide and returns its height; with a
+/// painter, an origin and the surface's mapping, paints it there too and
+/// adds its clickable chips to the hits.
 fn section(
     ctx: &Context,
     s: &Surface,
+    index: usize,
     sec: &CardSection,
-    last: bool,
     w: f32,
-    paint: Option<(&Painter, egui::Pos2, Place)>,
+    paint: Option<(&Painter, egui::Pos2, Place, &RefCell<Vec<ChipHit>>)>,
 ) -> f32 {
     let v = s.vars;
+    let last = index + 1 == s.sections.len();
     let ppp = ctx.pixels_per_point();
     let origin = paint.as_ref().map_or(pos2(0.0, 0.0), |p| p.1);
     let mut y = 0.0;
@@ -412,7 +467,7 @@ fn section(
         parts += 1;
     };
     let draw_text = |text: &str, style: &TextStyle, at: egui::Pos2, width: f32| {
-        if let Some((painter, _, place)) = &paint {
+        if let Some((painter, _, place, _)) = &paint {
             let one = style.line_box(ctx).map_or(style.size, |l| l.height);
             text::paint(
                 painter,
@@ -444,7 +499,7 @@ fn section(
         let style = body_style(color);
         let indent = if sec.loading { DOT + PART_GAP } else { 0.0 };
         if sec.loading {
-            if let Some((painter, _, place)) = &paint {
+            if let Some((painter, _, place, _)) = &paint {
                 paint_dot(
                     painter,
                     ctx,
@@ -469,7 +524,7 @@ fn section(
         let at = origin + vec2(0.0, y);
         draw_text(&label, &style, at, w);
         let h = text_height(ctx, &label, &style, w);
-        if let Some((painter, _, place)) = &paint {
+        if let Some((painter, _, place, _)) = &paint {
             // `text-decoration: underline`, one device pixel under the
             // baseline of a single line.
             if let Some(line) = style.line_box(ctx) {
@@ -514,7 +569,7 @@ fn section(
         } else {
             w
         };
-        if let Some((painter, _, place)) = &paint {
+        if let Some((painter, _, place, _)) = &paint {
             let track = Rect::from_min_size(
                 origin + vec2(0.0, y + (h - TRACK) / 2.0),
                 vec2(track_w.max(0.0), TRACK),
@@ -552,9 +607,18 @@ fn section(
         let bw = snap::border_width(1.0, ppp);
         let mut x = 0.0;
         let mut row_top = y;
-        for chip in &sec.chips {
+        for (i, chip) in sec.chips.iter().enumerate() {
             let label = chip.text.resolve(s.locale);
-            let (bg, fg, border) = chip_colors(chip.tone);
+            let clickable = s.clickable.contains(&(index, i));
+            let chip_id = s.id.with(("extension-chip", index, i));
+            let (bg, fg, border, bw) = if clickable {
+                let hovered = ctx.read_response(chip_id).is_some_and(|r| r.hovered());
+                let fg = if hovered { brighter(v.fg) } else { v.fg };
+                (Rgba::TRANSPARENT, fg, Rgba::TRANSPARENT, 0.0)
+            } else {
+                let (bg, fg, border) = chip_colors(chip.tone);
+                (bg, fg, border, bw)
+            };
             let style = chip_style(fg);
             let text_w = ceil_unit(text::measure(ctx, &label, &style).unwrap_or(0.0), ppp);
             let cw = text_w + 2.0 * (CHIP_PAD + bw);
@@ -562,15 +626,25 @@ fn section(
                 x = 0.0;
                 row_top += CHIP_HEIGHT + CHIP_GAP;
             }
-            if let Some((painter, _, place)) = &paint {
+            if let Some((painter, _, place, hits)) = &paint {
                 let r = Rect::from_min_size(origin + vec2(x, row_top), vec2(cw, CHIP_HEIGHT));
-                BoxStyle {
-                    background: bg,
-                    radius: Corners::all(CHIP_HEIGHT / 2.0),
-                    border: Border::all(bw, border),
-                    ..BoxStyle::default()
+                let boxed = snap::rect(place(r), ppp);
+                if !clickable {
+                    BoxStyle {
+                        background: bg,
+                        radius: Corners::all(CHIP_HEIGHT / 2.0),
+                        border: Border::all(bw, border),
+                        ..BoxStyle::default()
+                    }
+                    .paint(painter, boxed);
+                } else {
+                    hits.borrow_mut().push(ChipHit {
+                        id: chip_id,
+                        rect: boxed,
+                        section: index,
+                        chip: i,
+                    });
                 }
-                .paint(painter, snap::rect(place(r), ppp));
                 // `align-items: center` in the content box.
                 let line = style.line_box(ctx).map_or(9.0, |l| l.height);
                 let inner = CHIP_HEIGHT - 2.0 * bw;
@@ -589,7 +663,7 @@ fn section(
     if !last {
         y += SECTION_PAD;
         let bw = snap::border_width(1.0, ppp);
-        if let Some((painter, _, place)) = &paint {
+        if let Some((painter, _, place, _)) = &paint {
             let r = Rect::from_min_size(origin + vec2(0.0, y), vec2(w, bw));
             painter.rect_filled(
                 snap::rect(place(r), ppp),
@@ -603,14 +677,19 @@ fn section(
 }
 
 /// `.status-dot`: `color-mix(c or --accent 52%, #fff)`, pulsing between
-/// `scale(.9)` at .72 and `scale(1.05)` at full opacity.
+/// `scale(.9)` at .72 and `scale(1.05)` at full opacity. Reduced motion ends
+/// the animation at once: the dot rests at its own `opacity: .9`.
 fn paint_dot(painter: &Painter, ctx: &Context, rect: Rect, s: &Surface) {
-    let now = ctx.input(|i| i.time);
-    let t = (now % PULSE) / PULSE;
-    let half = if t < 0.5 { t * 2.0 } else { 2.0 - t * 2.0 };
-    let p = Timing::EASE_IN_OUT.eval(half) as f32;
-    let scale = 0.9 + 0.15 * p;
-    let alpha = 0.72 + 0.28 * p;
+    let reduced = anim::motion(ctx) == anim::Motion::Reduced;
+    let (scale, alpha) = if reduced {
+        (1.0, 0.9)
+    } else {
+        let now = ctx.input(|i| i.time);
+        let t = (now % PULSE) / PULSE;
+        let half = if t < 0.5 { t * 2.0 } else { 2.0 - t * 2.0 };
+        let p = Timing::EASE_IN_OUT.eval(half) as f32;
+        (0.9 + 0.15 * p, 0.72 + 0.28 * p)
+    };
     let color = s.card_color.unwrap_or(s.vars.accent).mix(0.52, WHITE);
     let r = Rect::from_center_size(rect.center(), rect.size() * scale);
     painter.circle_filled(
@@ -618,7 +697,9 @@ fn paint_dot(painter: &Painter, ctx: &Context, rect: Rect, s: &Surface) {
         r.width() / 2.0,
         color.alpha(color.a * alpha).to_color32(),
     );
-    ctx.request_repaint();
+    if !reduced {
+        ctx.request_repaint();
+    }
 }
 
 #[cfg(test)]
@@ -666,6 +747,7 @@ mod tests {
             vars: &v,
             id: Id::new("card"),
             sections: &sections,
+            clickable: &[],
             locale: Locale::En,
             card_color: None,
             active: false,
@@ -684,7 +766,7 @@ mod tests {
             };
             let mut out = ctx.run_ui(input, |ui| {
                 let w = DETAIL_WIDTH - PAD_LEFT - PAD_RIGHT;
-                h = section(ui.ctx(), &surface, &sections[0], true, w, None);
+                h = section(ui.ctx(), &surface, 0, &sections[0], w, None);
             });
             out.textures_delta.clear();
         }

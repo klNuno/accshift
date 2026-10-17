@@ -23,7 +23,9 @@
 //! - [`MockBackend::set_cs2`] is `accshift.mock.overrides.cs2`: the CS2
 //!   bridge reads as enabled and answers with the rows given;
 //! - [`MockBackend::set_onboarding`] is `accshift.mock.overrides.onboarding`:
-//!   `telemetry_get_state` reports the first-run onboarding as never done.
+//!   `telemetry_get_state` reports the first-run onboarding as never done;
+//! - [`MockBackend::set_setup`] is `accshift.mock.overrides.setup`: an
+//!   add-account setup walking through the statuses given.
 //!
 //! Nothing here reaches Steam, the keyring, the registry or the disk outside
 //! the scenario file.
@@ -115,6 +117,9 @@ struct MockState {
     cs2: Option<Vec<Value>>,
     /// `overrides.onboarding`.
     onboarding: bool,
+    /// `overrides.setup`: the statuses, and the one last answered.
+    setup: Option<Vec<Value>>,
+    setup_step: usize,
 }
 
 /// See the module documentation.
@@ -195,6 +200,8 @@ impl MockBackend {
                 streaming: false,
                 cs2: None,
                 onboarding: false,
+                setup: None,
+                setup_step: 0,
             }),
             spec: file.spec,
         };
@@ -326,6 +333,16 @@ impl MockBackend {
         self.lock().onboarding = on;
     }
 
+    /// `accshift.mock.overrides.setup`: `platform_begin_setup` answers the
+    /// first status, each `platform_get_setup_status` the next one, the last
+    /// one repeating; `platform_cancel_setup` succeeds. `None` or an empty
+    /// list leaves them refused.
+    pub fn set_setup(&self, statuses: Option<Vec<Value>>) {
+        let mut state = self.lock();
+        state.setup = statuses.filter(|s| !s.is_empty());
+        state.setup_step = 0;
+    }
+
     /// `__mock.os(name)`: the OS `get_runtime_os` and the boot payload report.
     /// Returns false on the frozen scenario.
     pub fn set_runtime_os(&self, os: &str) -> bool {
@@ -400,7 +417,12 @@ impl MockBackend {
                 command,
                 "cs2_bridge_get_settings" | "cs2_bridge_fetch" | "cs2_bridge_check"
             );
-        let value = if self.is_mocked(command) || cs2 {
+        let setup = self.lock().setup.is_some()
+            && matches!(
+                command,
+                "platform_begin_setup" | "platform_get_setup_status" | "platform_cancel_setup"
+            );
+        let value = if self.is_mocked(command) || cs2 || setup {
             if latency_ms > 0 {
                 std::thread::sleep(Duration::from_millis(latency_ms));
             }
@@ -513,6 +535,20 @@ impl MockBackend {
                     .unwrap_or(Value::Null)
             }
             "cs2_bridge_get_settings" => cs2_settings_from_fixture(self.answer(command, args)?),
+            "platform_begin_setup" | "platform_get_setup_status" if self.lock().setup.is_some() => {
+                let mut state = self.lock();
+                let statuses = state.setup.clone().unwrap_or_default();
+                state.setup_step = if command == "platform_begin_setup" {
+                    0
+                } else {
+                    (state.setup_step + 1).min(statuses.len().saturating_sub(1))
+                };
+                statuses
+                    .get(state.setup_step)
+                    .cloned()
+                    .unwrap_or(Value::Null)
+            }
+            "platform_cancel_setup" if self.lock().setup.is_some() => Value::Null,
             _ => self.answer(command, args)?,
         };
         Ok(value)

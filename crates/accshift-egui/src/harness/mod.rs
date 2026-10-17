@@ -84,6 +84,10 @@ pub struct Scene {
     pub cs2: Option<Vec<serde_json::Value>>,
     /// `onboarding`: the first-run onboarding was never completed.
     pub onboarding: bool,
+    /// `fail`: commands that fail, with their error message.
+    pub fail: Vec<(String, String)>,
+    /// `setup`: the statuses an add-account setup walks through.
+    pub setup: Option<Vec<serde_json::Value>>,
     /// `clipboard`: the text `readText` answers with (empty by default).
     pub clipboard: String,
     /// The `html` fragment (resolved next to the scene file) and its text.
@@ -221,6 +225,16 @@ pub fn load(path: &Path) -> Result<Scene, String> {
             .get("onboarding")
             .and_then(|x| x.as_bool())
             .unwrap_or(false),
+        fail: v
+            .get("fail")
+            .and_then(|x| x.as_object())
+            .map(|o| {
+                o.iter()
+                    .filter_map(|(cmd, msg)| Some((cmd.clone(), msg.as_str()?.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        setup: v.get("setup").and_then(|x| x.as_array()).cloned(),
         clipboard: s("clipboard").unwrap_or_default(),
         html,
         steps,
@@ -447,8 +461,12 @@ impl SceneRun {
     /// readiness (avatars uploaded); nothing runs before it.
     pub fn feed(&mut self, ctx: &egui::Context, raw: &mut RawInput, ready: bool) {
         // The window is never activated; egui must still treat it as focused
-        // for text fields to take typed text.
+        // for text fields to take typed text, and the app as the foreground
+        // window the user sees (the reference focuses its page the same way).
         raw.focused = true;
+        if let Some(vp) = raw.viewports.get_mut(&egui::ViewportId::ROOT) {
+            vp.focused = Some(true);
+        }
         ctx.request_repaint();
         let now = self.clock.elapsed().as_secs_f64();
         match self.phase {

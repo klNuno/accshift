@@ -104,6 +104,8 @@ pub struct AccountCardItem {
     pub card_color: String,
     pub note: String,
     pub show_note_inline: bool,
+    /// `showUsernames` and `showLastLogin` as the list and the preview take
+    /// them; the grid card drops both on the pending setup card.
     pub show_username: bool,
     pub show_last_login: bool,
     pub last_login_at_sec: Option<f64>,
@@ -255,8 +257,8 @@ fn account_card(ctx: &CardContext<'_>, account: &PlatformAccount) -> AccountCard
         card_color,
         note,
         show_note_inline: !bulk && ctx.stores.settings().account_display.show_card_notes_inline,
-        show_username: !pending_setup && ctx.show_usernames(),
-        show_last_login: !pending_setup && ctx.show_last_login(),
+        show_username: ctx.show_usernames(),
+        show_last_login: ctx.show_last_login(),
         last_login_at_sec: account.last_login_at_sec,
         last_login_unknown_key: ctx.last_login_unknown_key(),
         active: !bulk && ctx.loader.current_account_id() == Some(account.id.as_str()),

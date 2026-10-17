@@ -11,6 +11,10 @@
 //! The Steam tab also runs the CS2 bridge queue (`loadCs2BridgeData` when
 //! the tab shows accounts, `triggerCs2BridgeCheck` after a switch) and keeps
 //! each card's CS2 section and username badge in [`Cs2Cards`].
+//!
+//! The add-account flow ([`PlatformAddFlow`]) starts from the loader's
+//! `AddFlowStarted`, polls its setup on the same frame tick and puts its
+//! pending card, forced open on the setup sections, in the lists.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -26,7 +30,11 @@ use accshift_app::display::{
     DisplayView, DragPreview, FolderNavigation, PipelineInput,
 };
 use accshift_app::drag::DragManager;
+use accshift_app::i18n::Locale;
 use accshift_app::jobs::Jobs;
+use accshift_app::platform_add_flow::{
+    AddFlowContext, AddFlowEvent, AddFlowView, PlatformAddFlow, SetupExtension,
+};
 use accshift_app::platforms::card::{CardSection, UsernameBadge};
 use accshift_app::platforms::descriptors::PlatformDescriptor;
 use accshift_app::platforms::steam::cs2::{cs2_extension_sections, cs2_username_badge};
@@ -179,6 +187,19 @@ pub struct Accounts {
     pub drag: DragManager,
     /// The keys of the dragged card's `{#each}` as last rendered.
     drag_order: Vec<String>,
+    /// `createPlatformAddFlowController`.
+    pub add_flow: PlatformAddFlow,
+    /// The pending setup card of this frame, and its setup sections.
+    pub setup: Option<(PlatformAccount, SetupExtension)>,
+}
+
+/// The add flow's view of the app on `tab`.
+fn add_flow_view<'a>(navigation: &'a FolderNavigation, tab: &'a str) -> AddFlowView<'a> {
+    AddFlowView {
+        active_tab: tab,
+        current_folder_id: navigation.current_folder_id(),
+        is_searching: navigation.is_searching(),
+    }
 }
 
 impl Accounts {
@@ -245,6 +266,8 @@ impl Accounts {
             bulk_selection: None,
             drag: DragManager::default(),
             drag_order: Vec::new(),
+            add_flow: PlatformAddFlow::new(),
+            setup: None,
         };
         accounts
             .navigation
@@ -253,14 +276,14 @@ impl Accounts {
         accounts
     }
 
-    /// `loadAccounts(options)` on `tab`.
-    pub fn load(
+    /// Runs a loading handler on `tab` with the last frame's visible ids.
+    fn with_loading<R>(
         &mut self,
         jobs: &Jobs,
         stores: &mut ClientStores,
         tab: &str,
-        options: LoadOptions,
-    ) {
+        run: impl FnOnce(&mut AccountLoading, &mut LoadingContext<'_>) -> R,
+    ) -> R {
         let visible = self.lists.visible_account_ids.clone();
         let mut ctx = LoadingContext {
             jobs,
@@ -273,7 +296,90 @@ impl Accounts {
             clock: &self.clock,
             now: Instant::now(),
         };
-        self.loading.load_accounts(&mut ctx, options);
+        run(&mut self.loading, &mut ctx)
+    }
+
+    /// `loadAccounts(options)` on `tab`.
+    pub fn load(
+        &mut self,
+        jobs: &Jobs,
+        stores: &mut ClientStores,
+        tab: &str,
+        options: LoadOptions,
+    ) {
+        self.with_loading(jobs, stores, tab, |loading, ctx| {
+            loading.load_accounts(ctx, options)
+        });
+    }
+
+    /// `handleAccountSwitch(account)` on `tab`: false when a persona switch
+    /// runs, a switch already runs or the tab has no adapter. The result
+    /// lands as [`LoadingEvent::SwitchFinished`] from [`Self::update`].
+    pub fn switch(
+        &mut self,
+        jobs: &Jobs,
+        stores: &mut ClientStores,
+        tab: &str,
+        account: &PlatformAccount,
+        persona_switching: bool,
+    ) -> bool {
+        self.with_loading(jobs, stores, tab, |loading, ctx| {
+            loading.handle_account_switch(ctx, account, persona_switching)
+        })
+    }
+
+    /// `handleAddAccountClick`: refused while the tab is unusable, an add
+    /// runs or a setup is open. A setup the platform starts lands as
+    /// `AddFlowStarted` from [`Self::update`].
+    pub fn add_account(&mut self, jobs: &Jobs, stores: &mut ClientStores, tab: &str) -> bool {
+        let active = self.add_flow.is_active();
+        self.with_loading(jobs, stores, tab, |loading, ctx| {
+            loading.handle_add_account_click(ctx, active)
+        })
+    }
+
+    /// Runs an add flow handler with the app's view of `tab`.
+    fn with_add_flow<R>(
+        &mut self,
+        jobs: &Jobs,
+        tab: &str,
+        now: Instant,
+        run: impl FnOnce(&mut PlatformAddFlow, &AddFlowContext<'_>) -> R,
+    ) -> R {
+        let ctx = AddFlowContext {
+            jobs,
+            registry: &self.registry,
+            view: add_flow_view(&self.navigation, tab),
+            caches: self.loading.caches(),
+            clock: &self.clock,
+            now,
+        };
+        run(&mut self.add_flow, &ctx)
+    }
+
+    /// `addFlow.cancel()`.
+    pub fn cancel_add_flow(&mut self, jobs: &Jobs, tab: &str) {
+        self.with_add_flow(jobs, tab, Instant::now(), |flow, ctx| flow.cancel(ctx));
+    }
+
+    /// `addFlow.cancelIfConflicting(platformId, accountId?)`.
+    pub fn cancel_add_flow_if_conflicting(
+        &mut self,
+        jobs: &Jobs,
+        tab: &str,
+        platform_id: &str,
+        account_id: Option<&str>,
+    ) {
+        self.with_add_flow(jobs, tab, Instant::now(), |flow, ctx| {
+            flow.cancel_if_conflicting(ctx, platform_id, account_id)
+        });
+    }
+
+    /// True when `account_id` is the pending setup card's.
+    pub fn is_pending_setup(&self, account_id: &str) -> bool {
+        self.setup
+            .as_ref()
+            .is_some_and(|(account, _)| account.id == account_id)
     }
 
     /// `handleTabChange` once the tab is known usable and different:
@@ -288,9 +394,12 @@ impl Accounts {
         self.pipeline.clear_collapsed_sections();
     }
 
-    /// `handleRefreshClick`'s load: the active tab again, not silent.
+    /// `handleRefreshClick`: the active tab again, not silent, with the
+    /// "refreshed" toast and the ban check.
     pub fn refresh(&mut self, jobs: &Jobs, stores: &mut ClientStores, tab: &str) {
-        self.load(jobs, stores, tab, load_options(false, false));
+        self.with_loading(jobs, stores, tab, |loading, ctx| {
+            loading.handle_refresh_click(ctx)
+        });
     }
 
     /// `navigateTo(folderId)` without history: the folder, its items.
@@ -356,7 +465,9 @@ impl Accounts {
     }
 
     /// One frame of the account side. `grid_hidden`: the workspace is not
-    /// drawn (settings or personas open), so nothing primes.
+    /// drawn (settings or personas open), so nothing primes. Returns the
+    /// loader events the app owns (toasts, the switch outcome and its
+    /// minimize) and the add flow's (its toasts, the account it added).
     #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
@@ -366,8 +477,9 @@ impl Accounts {
         tab: &str,
         expanded_folders: bool,
         grid_hidden: bool,
+        locale: Locale,
         now: Instant,
-    ) {
+    ) -> (Vec<LoadingEvent>, Vec<AddFlowEvent>) {
         let visible = std::mem::take(&mut self.lists.visible_account_ids);
         let events = {
             let mut lctx = LoadingContext {
@@ -385,15 +497,50 @@ impl Accounts {
         };
         self.lists.visible_account_ids = visible;
         let mut checks = Vec::new();
+        let mut rest = Vec::new();
         for event in events {
             match event {
-                LoadingEvent::AccountsLoaded { platform_id } if platform_id == tab => {
-                    self.navigation.refresh_current_items(stores, tab);
+                LoadingEvent::AccountsLoaded { platform_id } => {
+                    if platform_id == tab {
+                        self.navigation.refresh_current_items(stores, tab);
+                    }
                 }
                 LoadingEvent::Cs2Check { steam_id } => checks.push(steam_id),
-                _ => {}
+                LoadingEvent::AddFlowStarted {
+                    platform_id,
+                    status,
+                } => self.with_add_flow(jobs, tab, now, |flow, ctx| {
+                    flow.start(ctx, &platform_id, status)
+                }),
+                event => rest.push(event),
             }
         }
+        let mut added = Vec::new();
+        let flow_events = {
+            let ctx = AddFlowContext {
+                jobs,
+                registry: &self.registry,
+                view: add_flow_view(&self.navigation, tab),
+                caches: self.loading.caches(),
+                clock: &self.clock,
+                now,
+            };
+            self.add_flow.tick(&ctx, stores)
+        };
+        for event in flow_events {
+            match event {
+                AddFlowEvent::LoadAccounts(options) => self.load(jobs, stores, tab, options),
+                event => added.push(event),
+            }
+        }
+        let view = add_flow_view(&self.navigation, tab);
+        self.setup = self.add_flow.pending_setup_account(&view).map(|pending| {
+            let extension = self
+                .add_flow
+                .setup_extension_content(&pending.id, locale)
+                .unwrap_or_default();
+            (pending.to_account(locale), extension)
+        });
         self.cs2.update(
             jobs,
             &self.registry,
@@ -411,7 +558,7 @@ impl Accounts {
                 preview_index: self.drag.preview_index(),
             },
             accounts: self.loading.loader.accounts(),
-            pending_setup_account: None,
+            pending_setup_account: self.setup.as_ref().map(|(account, _)| account),
             expanded_folders,
             active_tab: tab,
             stores,
@@ -439,7 +586,7 @@ impl Accounts {
             platform: self.registry.definition(tab),
             adapter: adapter.as_deref(),
             active_tab: tab,
-            pending_setup_account: None,
+            pending_setup_account: self.setup.as_ref().map(|(account, _)| account),
             bulk_selection: self.bulk_selection.as_ref(),
             drag_item: self.drag.drag_item(),
             collapsed_sections: self.pipeline.collapsed_sections(),
@@ -453,10 +600,12 @@ impl Accounts {
         let deadlines = [
             self.loading.next_deadline(now),
             self.pipeline.next_deadline(),
+            self.add_flow.next_deadline(),
         ];
         if let Some(at) = deadlines.into_iter().flatten().min() {
             ctx.request_repaint_after(at.saturating_duration_since(now));
         }
+        (rest, added)
     }
 
     /// A preview reorder moving the dragged card's node takes `:active`
@@ -517,6 +666,7 @@ impl Accounts {
         !self.loading.loader.loading()
             && !self.loading.has_pending_work()
             && !self.cs2.queue.is_busy()
+            && !self.add_flow.is_busy()
             && self.pipeline.next_deadline().is_none()
     }
 }

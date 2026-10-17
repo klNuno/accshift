@@ -40,6 +40,8 @@ impl Screen {
             streaming: scene.streaming,
             cs2: scene.cs2.clone(),
             onboarding: scene.onboarding,
+            failures: scene.fail.clone(),
+            setup: scene.setup.clone(),
             data_dir,
             repo_root,
         };

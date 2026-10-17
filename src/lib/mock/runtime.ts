@@ -45,6 +45,9 @@ interface MockOverrides {
   cs2?: Cs2BridgeAccount[];
   /** `telemetry_get_state` reports the first-run onboarding as never done. */
   onboarding?: boolean;
+  /** An add-account setup: `platform_begin_setup` answers the first status,
+   * each `platform_get_setup_status` the next one, the last one repeating. */
+  setup?: Record<string, unknown>[];
 }
 
 function readOverrides(): MockOverrides {
@@ -101,6 +104,21 @@ if (overrides.onboarding) {
     ...((await telemetryState(args)) as object),
     onboarding_completed: false,
   });
+}
+
+// An add-account setup walking through the statuses given, no client touched.
+if (overrides.setup?.length) {
+  const statuses = overrides.setup;
+  let step = 0;
+  handlers.platform_begin_setup = () => {
+    step = 0;
+    return statuses[0];
+  };
+  handlers.platform_get_setup_status = () => {
+    step = Math.min(step + 1, statuses.length - 1);
+    return statuses[step];
+  };
+  handlers.platform_cancel_setup = () => null;
 }
 
 /** Live knobs: changing these takes effect on the next call, without a reload. */

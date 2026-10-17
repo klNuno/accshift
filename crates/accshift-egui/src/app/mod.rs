@@ -41,6 +41,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
+use accshift_app::accounts::LoadingEvent;
 use accshift_app::actions::dialogs::{
     finish_rename_account, rename_account_blocking, AppDialogs, AppMenuEntry, DialogContext,
 };
@@ -58,6 +59,7 @@ use accshift_app::menu::{
     ACCOUNT_CONTEXT_GROUP_ORDER,
 };
 use accshift_app::mock::{resolve_avatars, MockBackend};
+use accshift_app::platform_add_flow::{AddFlowEvent, SetupChipAction};
 use accshift_app::platforms::PlatformAccount;
 use accshift_app::real::RealBackend;
 use accshift_app::secure::screen::SecureScreen;
@@ -65,6 +67,7 @@ use accshift_app::settings::AnimationsMode;
 use accshift_app::storage::{self, StoreId};
 use accshift_app::stores::{ClientStores, StoreContext, ViewMode};
 use accshift_app::streamer::StreamerModeController;
+use accshift_app::text::Text;
 use accshift_app::types::BootPayload;
 use accshift_theme::{
     theme_application, window_backdrop, AppTheme, CustomThemePayload, ResolvedTheme,
@@ -125,9 +128,13 @@ pub enum Action {
     SetViewMode(ViewMode),
     /// A section header's chevron: its collapse key.
     ToggleSection(String),
-    /// A card click (`onAccountActivate`): selection and focus, a later port.
+    /// A card click (`onAccountActivate`): drops a setup of the tab unless
+    /// it is this card's.
     AccountActivate(String),
-    /// `onAccountSwitch`: the switch flow is a later port.
+    /// A clickable chip of the setup card's extension: section, chip.
+    SetupChip(usize, usize),
+    /// `onAccountSwitch`: a card's switch (double click or Enter on a card,
+    /// a click on a list row).
     AccountSwitch(String),
     /// A toast was hovered, dismissed or its action clicked.
     Toast(ToastEvent),
@@ -177,6 +184,10 @@ pub struct MockSetup {
     pub cs2: Option<Vec<Value>>,
     /// `overrides.onboarding`: the first-run onboarding was never completed.
     pub onboarding: bool,
+    /// `overrides.failures`: commands that fail, with their message.
+    pub failures: Vec<(String, String)>,
+    /// `overrides.setup`: the statuses of an add-account setup.
+    pub setup: Option<Vec<Value>>,
     /// `parity/data`.
     pub data_dir: PathBuf,
     /// The repo root, to resolve the mock avatar paths.
@@ -461,6 +472,10 @@ impl AppModel {
         mock.set_streaming(setup.streaming);
         mock.set_cs2(setup.cs2.clone());
         mock.set_onboarding(setup.onboarding);
+        mock.set_setup(setup.setup.clone());
+        for (command, message) in &setup.failures {
+            mock.fail(command, Some(message));
+        }
         let mock = Arc::new(mock);
         let clock = Clock::pinned(mock.now());
         let backend: Arc<dyn Backend> = mock.clone();
@@ -901,17 +916,30 @@ impl AppModel {
         crate::ui::components::track_held(&ctx);
         self.track_drag(&ctx);
         if let Some(b) = self.booted.as_mut() {
-            let grid_hidden = b.nav.show_settings || b.nav.show_personas;
+            // `isGridHidden`: priming waits for a grid the user can see, in
+            // the foreground window (`useWindowActivity`) and not behind the
+            // privacy screen.
+            let foreground = ctx.input(|i| {
+                let vp = i.viewport();
+                vp.focused.unwrap_or(true) && !vp.minimized.unwrap_or(false)
+            });
+            let grid_hidden = b.nav.show_settings
+                || b.nav.show_personas
+                || !foreground
+                || b.secure.render_suspended();
             let expanded = b.stores.settings().account_display.expanded_folders;
-            b.accounts.update(
+            let (events, flow_events) = b.accounts.update(
                 &ctx,
                 &self.jobs,
                 &mut b.stores,
                 &b.nav.active_tab,
                 expanded,
                 grid_hidden,
+                b.locale,
                 Instant::now(),
             );
+            self.apply_loading_events(&ctx, events);
+            self.apply_add_flow_events(&ctx, flow_events);
         }
         self.tick_personas(&ctx);
         // `Toast.svelte`'s `setTimeout`: expired toasts go before drawing,
@@ -997,19 +1025,70 @@ impl AppModel {
                     }
                 }
             }
-            // The add-flow, updater, selection and switch ports own these.
-            Action::AddAccount
-            | Action::ApplyUpdate
-            | Action::AccountActivate(_)
-            | Action::AccountSwitch(_) => {}
+            // `handleWorkspaceAccountSwitch`: a pending setup card does not
+            // switch; another card drops a setup of this tab first.
+            Action::AccountSwitch(id) => {
+                let Some(b) = self.booted.as_mut() else {
+                    return;
+                };
+                if b.accounts.is_pending_setup(&id) {
+                    return;
+                }
+                let tab = b.nav.active_tab.clone();
+                b.accounts
+                    .cancel_add_flow_if_conflicting(&self.jobs, &tab, &tab, Some(&id));
+                let account = b
+                    .accounts
+                    .loading
+                    .loader
+                    .accounts()
+                    .iter()
+                    .find(|a| a.id == id)
+                    .cloned();
+                if let Some(account) = account {
+                    self.switch_account(&account);
+                }
+            }
+            // `handleWorkspaceAccountActivate`.
+            Action::AccountActivate(id) => {
+                if let Some(b) = self.booted.as_mut() {
+                    if !b.bulk.is_open() {
+                        let tab = b.nav.active_tab.clone();
+                        b.accounts.cancel_add_flow_if_conflicting(
+                            &self.jobs,
+                            &tab,
+                            &tab,
+                            Some(&id),
+                        );
+                    }
+                }
+            }
+            // `handleAddAccountClick`.
+            Action::AddAccount => {
+                if let Some(b) = self.booted.as_mut() {
+                    let tab = b.nav.active_tab.clone();
+                    b.accounts.add_account(&self.jobs, &mut b.stores, &tab);
+                }
+            }
+            Action::SetupChip(section, chip) => self.apply_setup_chip(ctx, section, chip),
+            // The updater port owns this.
+            Action::ApplyUpdate => {}
             Action::NavigateToFolder(folder) => {
                 if let Some(b) = self.booted.as_mut() {
-                    b.accounts.navigate_to(&b.stores, &b.nav.active_tab, folder);
+                    let tab = b.nav.active_tab.clone();
+                    b.accounts
+                        .cancel_add_flow_if_conflicting(&self.jobs, &tab, &tab, None);
+                    b.accounts.navigate_to(&b.stores, &tab, folder);
                 }
             }
             Action::NavigateBack => {
                 if let Some(b) = self.booted.as_mut() {
-                    b.accounts.navigate_back(&b.stores, &b.nav.active_tab);
+                    let tab = b.nav.active_tab.clone();
+                    if b.accounts.navigation.current_folder_id().is_some() {
+                        b.accounts
+                            .cancel_add_flow_if_conflicting(&self.jobs, &tab, &tab, None);
+                    }
+                    b.accounts.navigate_back(&b.stores, &tab);
                 }
             }
             Action::SearchChanged(query) => {
@@ -1125,6 +1204,8 @@ impl AppModel {
                     b.nav.show_settings = false;
                     return;
                 }
+                let previous = b.nav.active_tab.clone();
+                b.accounts.cancel_add_flow(&self.jobs, &previous);
                 b.bulk.close();
                 b.nav.show_settings = false;
                 b.nav.active_tab = tab.clone();
@@ -1160,6 +1241,20 @@ impl AppModel {
                 return;
             }
         }
+        // The pending setup card has no menu; any other target drops a
+        // setup of this tab, unless it is the setup account itself.
+        let tab = b.nav.active_tab.clone();
+        let target_account = match &target {
+            MenuTarget::Account(account) if b.accounts.is_pending_setup(&account.id) => return,
+            MenuTarget::Account(account) => Some(account.id.clone()),
+            MenuTarget::Folder(_) | MenuTarget::Background => None,
+        };
+        b.accounts.cancel_add_flow_if_conflicting(
+            &self.jobs,
+            &tab,
+            &tab,
+            target_account.as_deref(),
+        );
         match target {
             MenuTarget::Account(account) => {
                 self.dialogs.open_account_context_menu(at.x, at.y, account)
@@ -1413,14 +1508,106 @@ impl AppModel {
         });
     }
 
-    /// The effects a menu command asked for. The switch, platform task,
-    /// dialog and add-flow ports own the ones left out.
+    /// `handleAccountSwitch(account)` on the active tab: refused while a
+    /// persona switch runs; the outcome comes back from the loader.
+    fn switch_account(&mut self, account: &PlatformAccount) {
+        let Some(b) = self.booted.as_mut() else {
+            return;
+        };
+        let persona_switching = b.personas.switching();
+        let tab = b.nav.active_tab.clone();
+        b.accounts
+            .switch(&self.jobs, &mut b.stores, &tab, account, persona_switching);
+    }
+
+    /// What `useAccountLoading` does with the loader's outcomes: its toasts,
+    /// and `minimize_window` after a successful switch when the setting asks.
+    /// The deep link and add flow ports own the switch outcome and the add
+    /// flow start.
+    fn apply_loading_events(&mut self, ctx: &Context, events: Vec<LoadingEvent>) {
+        for event in events {
+            match event {
+                LoadingEvent::Toast(toast) => {
+                    self.toasts.push(toast, Instant::now());
+                }
+                LoadingEvent::MinimizeWindow => self.apply_one(ctx, Action::Minimize),
+                LoadingEvent::SwitchFinished { .. }
+                | LoadingEvent::AddFlowStarted { .. }
+                | LoadingEvent::AccountsLoaded { .. }
+                | LoadingEvent::Cs2Check { .. } => {}
+            }
+        }
+    }
+
+    /// What the add flow asks of the app: its toasts, and the rename prompt
+    /// once a setup added an account (`onAccountAdded`).
+    fn apply_add_flow_events(&mut self, ctx: &Context, events: Vec<AddFlowEvent>) {
+        for event in events {
+            match event {
+                AddFlowEvent::Toast(toast) => {
+                    self.toasts.push(toast, Instant::now());
+                }
+                AddFlowEvent::AccountAdded {
+                    platform_id,
+                    account_id,
+                    display_name,
+                } => {
+                    if let Some(b) = self.booted.as_ref() {
+                        self.dialogs.prompt_rename_new_account(
+                            &b.accounts.registry,
+                            &platform_id,
+                            &account_id,
+                            display_name.as_deref(),
+                        );
+                    }
+                }
+                AddFlowEvent::LoadAccounts(options) => {
+                    self.apply_effects(ctx, vec![AppEffect::LoadAccounts(options)]);
+                }
+            }
+        }
+    }
+
+    /// A clickable chip of the setup card: Close cancels the setup, Roblox's
+    /// "Copy code" copies the quick login code.
+    fn apply_setup_chip(&mut self, ctx: &Context, section: usize, chip: usize) {
+        let Some(b) = self.booted.as_mut() else {
+            return;
+        };
+        let Some(action) = b
+            .accounts
+            .setup
+            .as_ref()
+            .and_then(|(_, extension)| extension.chip_action(section, chip))
+            .cloned()
+        else {
+            return;
+        };
+        match action {
+            SetupChipAction::Cancel => {
+                let tab = b.nav.active_tab.clone();
+                b.accounts.cancel_add_flow(&self.jobs, &tab);
+            }
+            SetupChipAction::CopyCode(code) => self.apply_effects(
+                ctx,
+                vec![AppEffect::CopyToClipboard {
+                    label: Text::raw(code.clone()),
+                    text: code,
+                }],
+            ),
+        }
+    }
+
+    /// The effects a menu command asked for. The platform task, dialog and
+    /// add-flow ports own the ones left out.
     fn apply_effects(&mut self, ctx: &Context, effects: Vec<AppEffect>) {
         for effect in effects {
             match effect {
                 AppEffect::Toast(toast) => {
                     self.toasts.push(toast, Instant::now());
                 }
+                AppEffect::RefreshAccounts => self.apply_one(ctx, Action::Refresh),
+                AppEffect::SwitchAccount(account) => self.switch_account(&account),
                 AppEffect::LoadAccounts(options) => {
                     if let Some(b) = self.booted.as_mut() {
                         let tab = b.nav.active_tab.clone();
@@ -1468,6 +1655,26 @@ impl AppModel {
                 }
                 AppEffect::CustomMenu(id) => {
                     self.apply_persona_menu(ctx, &id);
+                }
+                AppEffect::AddFlowCancel => {
+                    if let Some(b) = self.booted.as_mut() {
+                        let tab = b.nav.active_tab.clone();
+                        b.accounts.cancel_add_flow(&self.jobs, &tab);
+                    }
+                }
+                AppEffect::AddFlowCancelIfConflicting {
+                    platform_id,
+                    account_id,
+                } => {
+                    if let Some(b) = self.booted.as_mut() {
+                        let tab = b.nav.active_tab.clone();
+                        b.accounts.cancel_add_flow_if_conflicting(
+                            &self.jobs,
+                            &tab,
+                            &platform_id,
+                            account_id.as_deref(),
+                        );
+                    }
                 }
                 // `shell.setActiveTab`: the tab alone, no load (the tour).
                 AppEffect::SetActiveTab(tab) => {

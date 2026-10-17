@@ -302,6 +302,35 @@ fn the_cs2_override_enables_the_bridge() {
 }
 
 #[test]
+fn the_setup_override_walks_its_statuses() {
+    let mock = load("dev");
+    assert!(mock.platform_begin_setup("steam", &json!({})).is_err());
+    let status = |state: &str| {
+        json!({
+            "setupId": "setup-1", "state": state, "accountId": "",
+            "accountDisplayName": "", "errorMessage": "",
+        })
+    };
+    mock.set_setup(Some(vec![status("waiting_for_client"), status("failed")]));
+    let begun = mock.platform_begin_setup("steam", &json!({})).unwrap();
+    assert_eq!(
+        (begun.setup_id.as_str(), begun.state.as_str()),
+        ("setup-1", "waiting_for_client")
+    );
+    // Each poll answers the next status, the last one repeating.
+    for _ in 0..2 {
+        let polled = mock.platform_get_setup_status("steam", "setup-1").unwrap();
+        assert_eq!(polled.state, "failed");
+    }
+    // A new setup starts over.
+    let again = mock.platform_begin_setup("steam", &json!({})).unwrap();
+    assert_eq!(again.state, "waiting_for_client");
+    assert!(mock.platform_cancel_setup("steam", "setup-1").is_ok());
+    mock.set_setup(Some(Vec::new()));
+    assert!(mock.platform_begin_setup("steam", &json!({})).is_err());
+}
+
+#[test]
 fn the_demo_scenario_ignores_overrides() {
     let mock = load("demo");
     assert!(!mock.fail("get_runtime_os", Some("boom")));
