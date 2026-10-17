@@ -156,15 +156,21 @@ async function runCase(name, mode, opts, vals, watch) {
   const info = { case: name, mode };
   let closed = false;
   try {
-    const { js } = app.page;
+    const { js, call } = app.page;
     info.origin = await js("location.origin");
-    info.phase1Length = await js(
-      `(() => { const v = ${JSON.stringify(vals.phase1)}; for (const [k, x] of Object.entries(v)) localStorage.setItem(k, x); return Object.keys(v).filter((k) => localStorage.getItem(k) === v[k]).length; })()`,
-    );
+    info.phase1Length = await call((v) => {
+      for (const [k, x] of Object.entries(v)) localStorage.setItem(k, x);
+      return Object.keys(v).filter((k) => localStorage.getItem(k) === v[k]).length;
+    }, vals.phase1);
     await sleep(6000);
-    info.phase2Ok = await js(
-      `(() => { const p = ${JSON.stringify(vals.phase2)}; for (const [k, x] of Object.entries(p.set)) localStorage.setItem(k, x); for (const k of p.remove) localStorage.removeItem(k); return Object.entries(p.set).every(([k, x]) => localStorage.getItem(k) === x) && p.remove.every((k) => localStorage.getItem(k) === null); })()`,
-    );
+    info.phase2Ok = await call((p) => {
+      for (const [k, x] of Object.entries(p.set)) localStorage.setItem(k, x);
+      for (const k of p.remove) localStorage.removeItem(k);
+      return (
+        Object.entries(p.set).every(([k, x]) => localStorage.getItem(k) === x) &&
+        p.remove.every((k) => localStorage.getItem(k) === null)
+      );
+    }, vals.phase2);
     if (mode === "clean") {
       await sleep(2000);
       // The titlebar's close button (`TitleBar.svelte`, `close_window`):
