@@ -1,0 +1,54 @@
+{
+  "id": "deeplink-errors-light-150",
+  "scenario": "dev",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "light",
+  "locale": "en",
+  "seed": {
+    "SETTINGS": {
+      "viewMode": "grid",
+      "animations": "off",
+      "accountDisplay": {
+        "showUsernames": true,
+        "showCardNotesInline": false
+      }
+    }
+  },
+  "steps": [
+    {
+      "wait": 800
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "deeplink": "accshift://launch/steam/main"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "deeplink": "accshift://switch/acme/main"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "deeplink": "accshift://switch/steam/nobody"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "shot": "errors"
+    }
+  ]
+}

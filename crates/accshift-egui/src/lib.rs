@@ -56,11 +56,14 @@ impl Shell {
         self.window.as_mut().is_none_or(|host| host.take_show(now))
     }
 
-    /// boot.rs `install_window_event_handlers`, `Moved`.
-    pub fn window_moved(&self, geometry: Option<window::Geometry>) {
+    /// boot.rs `install_window_event_handlers`, `Moved`. True when the
+    /// frame must be painted again: the Liquid Glass wallpaper follows the
+    /// window (`onMoved` then `realign`).
+    pub fn window_moved(&self, geometry: Option<window::Geometry>) -> bool {
         if let Some(host) = &self.window {
             host.moved(geometry);
         }
+        matches!(&self.screen, Screen::App(app) if app.wallpaper_shown())
     }
 
     /// The close sequence of a normal run (`SHUTDOWN_ORDER`): the geometry
@@ -129,11 +132,39 @@ impl Shell {
                 }
             }
         }
+        let launched = self
+            .window
+            .as_ref()
+            .map(|host| host.second_launches(ui.ctx()))
+            .unwrap_or_default();
+        if let (false, Screen::App(app)) = (launched.is_empty(), &mut self.screen) {
+            app.open_urls(ui.ctx(), &launched);
+        }
+        if let (Some(run), Screen::App(app)) = (&mut self.scenes, &mut self.screen) {
+            let links = run.take_links();
+            if !links.is_empty() {
+                app.open_urls(ui.ctx(), &links);
+            }
+        }
         self.screen.ui(ui);
         if let (Some(host), Screen::App(app)) = (&mut self.window, &self.screen) {
             if let Some(backdrop) = app.window_backdrop() {
                 host.apply_backdrop(backdrop);
             }
+        }
+        // Snap Layouts: where the maximize button was drawn, in physical
+        // client pixels (`set_maximize_button_rect`).
+        #[cfg(windows)]
+        if let (Some(_), Screen::App(app)) = (&self.window, &self.screen) {
+            let scale = (ui.ctx().pixels_per_point() * self.stage_zoom(ui.ctx())) as f64;
+            window::frame::set_maximize_button(app.maximize_button_rect().map(|r| {
+                [
+                    r.min.x as f64 * scale,
+                    r.min.y as f64 * scale,
+                    r.width() as f64 * scale,
+                    r.height() as f64 * scale,
+                ]
+            }));
         }
         if let Some(host) = &self.window {
             // The failsafe's timer: a delayed repaint lasts one pass.

@@ -120,6 +120,8 @@ struct MockState {
     /// `overrides.setup`: the statuses, and the one last answered.
     setup: Option<Vec<Value>>,
     setup_step: usize,
+    /// `overrides.wallpaper`: what `get_desktop_wallpaper` answers.
+    wallpaper: Option<Value>,
 }
 
 /// See the module documentation.
@@ -202,6 +204,7 @@ impl MockBackend {
                 onboarding: false,
                 setup: None,
                 setup_step: 0,
+                wallpaper: None,
             }),
             spec: file.spec,
         };
@@ -341,6 +344,12 @@ impl MockBackend {
         let mut state = self.lock();
         state.setup = statuses.filter(|s| !s.is_empty());
         state.setup_step = 0;
+    }
+
+    /// `accshift.mock.overrides.wallpaper`: `get_desktop_wallpaper` answers
+    /// this snapshot instead of null.
+    pub fn set_wallpaper(&self, snapshot: Option<Value>) {
+        self.lock().wallpaper = snapshot;
     }
 
     /// `__mock.os(name)`: the OS `get_runtime_os` and the boot payload report.
@@ -549,6 +558,9 @@ impl MockBackend {
                     .unwrap_or(Value::Null)
             }
             "platform_cancel_setup" if self.lock().setup.is_some() => Value::Null,
+            "get_desktop_wallpaper" if self.lock().wallpaper.is_some() => {
+                self.lock().wallpaper.clone().unwrap_or(Value::Null)
+            }
             _ => self.answer(command, args)?,
         };
         Ok(value)

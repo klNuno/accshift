@@ -245,7 +245,20 @@ fn button(
         text::paint(&painter, text_rect, b.label, &font);
     });
     if focused && props.focus_visible {
-        auto_ring(ui.painter(), boxed, 4.0, props.dark, ppp);
+        // `FocusRingOffset`: a border of a device pixel or more gives the
+        // ring one device pixel inward, and the radii shrink with it.
+        let inset = if snap::border_width(b.border, ppp) * ppp >= 1.0 {
+            1.0 / ppp
+        } else {
+            0.0
+        };
+        auto_ring(
+            ui.painter(),
+            boxed.shrink(inset),
+            4.0 - inset,
+            props.dark,
+            ppp,
+        );
     }
     let keyed = focused && ui.input(|i| i.key_pressed(Key::Space));
     Pressed {

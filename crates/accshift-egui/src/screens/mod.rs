@@ -42,6 +42,10 @@ impl Screen {
             onboarding: scene.onboarding,
             failures: scene.fail.clone(),
             setup: scene.setup.clone(),
+            wallpaper: scene
+                .wallpaper
+                .as_ref()
+                .map(|w| (w.snapshot.clone(), w.window, scene.viewport.scale)),
             data_dir,
             repo_root,
         };

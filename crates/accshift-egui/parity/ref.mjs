@@ -45,6 +45,11 @@
 // - `html` (optional): a fragment file, relative to the scene file, that
 //   replaces the body once the scene has settled. The primitives scenes use it
 //   to photograph plain CSS boxes; the egui side draws the same file.
+// - `wallpaper` (optional): `{ image, rect, window }`, the desktop picture
+//   behind a Liquid Glass window. `get_desktop_wallpaper` answers the PNG next
+//   to the scene as its data URL with `rect` (physical px), and the window's
+//   `outerPosition` and `scaleFactor` answer `window` and the viewport's scale
+//   (see answerWindow).
 
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -124,6 +129,7 @@ const applyMock = (scene) => `
   if (scene.onboarding) overrides.onboarding = true;
   if (scene.fail) overrides.failures = scene.fail;
   if (scene.setup) overrides.setup = scene.setup;
+  if (scene.wallpaperSnapshot) overrides.wallpaper = scene.wallpaperSnapshot;
   localStorage.setItem("accshift.mock.overrides", JSON.stringify(overrides));
   return Object.keys(stores);
 })()
@@ -200,6 +206,19 @@ function loadScene(file) {
   // `html`: a fragment file next to the scene, injected in place of the body
   // once the app has settled (calibration of the egui painter).
   if (scene.html) scene.htmlSource = readFileSync(resolve(dirname(file), scene.html), "utf8");
+  if (scene.wallpaper) {
+    const { image, rect, window: outer } = scene.wallpaper;
+    const png = readFileSync(resolve(dirname(file), image));
+    const [x, y, width, height] = rect;
+    scene.wallpaperSnapshot = {
+      dataUrl: `data:image/png;base64,${png.toString("base64")}`,
+      x,
+      y,
+      width,
+      height,
+    };
+    scene.windowAnswers = { outer_position: { x: outer[0], y: outer[1] } };
+  }
   return scene;
 }
 
@@ -215,14 +234,31 @@ function pngSize(buf) {
 // `ipc.localhost`, gets `true` with the headers Tauri's own answer carries
 // (Tauri falls back to postMessage for good on a failed fetch). The CORS
 // preflight still reaches Tauri.
-// Returns how many it answered so far.
+// answerWindow: a wallpaper scene's window sits where the scene says, at its
+// viewport's scale: `outer_position` and `scale_factor` get the scene's
+// answers the same way while `page.windowAnswers` holds them (runScene sets
+// it), and reach Tauri otherwise.
+// Returns how many is_focused it answered so far.
 const FOCUSED_CMD = "plugin%3Awindow%7Cis_focused";
+const WINDOW_CMDS = ["outer_position", "scale_factor"];
 async function answerFocused(page) {
   let answered = 0;
   page.on("Fetch.requestPaused", ({ requestId, request }) => {
-    if (request.method === "POST") answered++;
+    const command = request.url.includes(FOCUSED_CMD)
+      ? "is_focused"
+      : WINDOW_CMDS.find((c) => request.url.includes(`plugin%3Awindow%7C${c}`));
+    const answers = page.windowAnswers;
+    const body =
+      request.method !== "POST"
+        ? undefined
+        : command === "is_focused"
+          ? true
+          : answers && Object.hasOwn(answers, command)
+            ? answers[command]
+            : undefined;
+    if (command === "is_focused" && body !== undefined) answered++;
     const reply =
-      request.method === "POST"
+      body !== undefined
         ? page.send("Fetch.fulfillRequest", {
             requestId,
             responseCode: 200,
@@ -232,13 +268,16 @@ async function answerFocused(page) {
               { name: "Access-Control-Allow-Origin", value: "*" },
               { name: "Access-Control-Expose-Headers", value: "Tauri-Response" },
             ],
-            body: Buffer.from("true").toString("base64"),
+            body: Buffer.from(JSON.stringify(body)).toString("base64"),
           })
         : page.send("Fetch.continueRequest", { requestId });
-    reply.catch((err) => console.error(`is_focused interception: ${err.message}`));
+    reply.catch((err) => console.error(`${command} interception: ${err.message}`));
   });
   await page.send("Fetch.enable", {
-    patterns: [{ urlPattern: `*${FOCUSED_CMD}*`, requestStage: "Request" }],
+    patterns: [FOCUSED_CMD, ...WINDOW_CMDS.map((c) => `plugin%3Awindow%7C${c}`)].map((cmd) => ({
+      urlPattern: `*${cmd}*`,
+      requestStage: "Request",
+    })),
   });
   return () => answered;
 }
@@ -246,6 +285,9 @@ async function answerFocused(page) {
 async function runScene(page, scene, outDir, manifest) {
   const { send, js } = page;
   const vp = scene.viewport;
+  page.windowAnswers = scene.windowAnswers
+    ? { ...scene.windowAnswers, scale_factor: vp.scale }
+    : null;
   // The viewport in CSS px; the scale is the app's real device scale factor
   // (launchApp `scale`), never the CDP emulated one: that one lays the page
   // out at the window's factor and scales the frame (see harness.mjs).
@@ -426,7 +468,19 @@ async function runScene(page, scene, outDir, manifest) {
         sizeOk: ok,
       });
     } else if ("dom" in step) await dumpDom(page, scene, outDir, step);
-    else console.error(`${scene.id}: unknown step ${JSON.stringify(step)}`);
+    else if ("deeplink" in step) {
+      // What the deep-link plugin emits for a second launch's URL: its
+      // `deep-link://new-url` event with the URLs as payload, through the
+      // event plugin, so the page's `onOpenUrl` gets it like a real one.
+      await page.call(
+        (url) =>
+          window.__TAURI_INTERNALS__.invoke("plugin:event|emit", {
+            event: "deep-link://new-url",
+            payload: [url],
+          }),
+        step.deeplink,
+      );
+    } else console.error(`${scene.id}: unknown step ${JSON.stringify(step)}`);
   }
   if (scene.probe) await probeText(page, scene, outDir);
   await send("Page.removeScriptToEvaluateOnNewDocument", { identifier: desk.identifier });

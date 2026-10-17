@@ -65,6 +65,8 @@ pub enum Step {
     Text(String),
     Scroll(Pos2, f32, Modifiers),
     Shot(String),
+    /// An `accshift://` URL delivered as a second launch would deliver it.
+    DeepLink(String),
 }
 
 #[derive(Clone, Debug)]
@@ -88,6 +90,8 @@ pub struct Scene {
     pub fail: Vec<(String, String)>,
     /// `setup`: the statuses an add-account setup walks through.
     pub setup: Option<Vec<serde_json::Value>>,
+    /// `wallpaper`: the desktop picture `get_desktop_wallpaper` answers.
+    pub wallpaper: Option<SceneWallpaper>,
     /// `clipboard`: the text `readText` answers with (empty by default).
     pub clipboard: String,
     /// The `html` fragment (resolved next to the scene file) and its text.
@@ -163,6 +167,9 @@ fn parse_step(v: &serde_json::Value) -> Result<Step, String> {
     if let Some(s) = o.get("shot") {
         return Ok(Step::Shot(s.as_str().ok_or_else(bad)?.to_owned()));
     }
+    if let Some(u) = o.get("deeplink") {
+        return Ok(Step::DeepLink(u.as_str().ok_or_else(bad)?.to_owned()));
+    }
     // `ref.mjs` dumps the reference DOM there; nothing to do on this side.
     if o.contains_key("dom") {
         return Ok(Step::Wait(0.0));
@@ -235,10 +242,69 @@ pub fn load(path: &Path) -> Result<Scene, String> {
             })
             .unwrap_or_default(),
         setup: v.get("setup").and_then(|x| x.as_array()).cloned(),
+        wallpaper: v
+            .get("wallpaper")
+            .map(|w| SceneWallpaper::parse(w, path))
+            .transpose()
+            .map_err(|e| format!("{}: {e}", path.display()))?,
         clipboard: s("clipboard").unwrap_or_default(),
         html,
         steps,
     })
+}
+
+/// A scene's `wallpaper`: `image` (a PNG next to the scene), its `rect` on
+/// the virtual screen and the window's outer position, physical px. The
+/// window's scale factor is the viewport's.
+#[derive(Clone, Debug)]
+pub struct SceneWallpaper {
+    /// The `WallpaperSnapshot` the mock answers, its data URL included.
+    pub snapshot: serde_json::Value,
+    pub window: [i32; 2],
+}
+
+impl SceneWallpaper {
+    fn parse(v: &serde_json::Value, scene: &Path) -> Result<Self, String> {
+        use base64::Engine as _;
+        let ints = |key: &str, n: usize| -> Result<Vec<i32>, String> {
+            let list: Vec<i32> = v
+                .get(key)
+                .and_then(|x| x.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(serde_json::Value::as_i64)
+                        .map(|x| x as i32)
+                        .collect()
+                })
+                .unwrap_or_default();
+            if list.len() == n {
+                Ok(list)
+            } else {
+                Err(format!("wallpaper: `{key}` needs {n} integers"))
+            }
+        };
+        let image = v
+            .get("image")
+            .and_then(|x| x.as_str())
+            .ok_or("wallpaper: `image` missing")?;
+        let file = scene.parent().unwrap_or(Path::new(".")).join(image);
+        let bytes = std::fs::read(&file).map_err(|e| format!("read {}: {e}", file.display()))?;
+        let rect = ints("rect", 4)?;
+        let window = ints("window", 2)?;
+        Ok(Self {
+            snapshot: serde_json::json!({
+                "dataUrl": format!(
+                    "data:image/png;base64,{}",
+                    base64::engine::general_purpose::STANDARD.encode(bytes)
+                ),
+                "x": rect[0],
+                "y": rect[1],
+                "width": rect[2],
+                "height": rect[3],
+            }),
+            window: [window[0], window[1]],
+        })
+    }
 }
 
 /// `Ctrl+Shift`: the held modifiers.
@@ -304,6 +370,7 @@ enum Op {
     Wait(f64),
     Event(Event),
     Shot(String),
+    DeepLink(String),
 }
 
 fn expand(steps: &[Step]) -> Result<VecDeque<Op>, String> {
@@ -384,6 +451,7 @@ fn expand(steps: &[Step]) -> Result<VecDeque<Op>, String> {
                 }));
             }
             Step::Shot(name) => ops.push_back(Op::Shot(name.clone())),
+            Step::DeepLink(url) => ops.push_back(Op::DeepLink(url.clone())),
         }
     }
     Ok(ops)
@@ -415,6 +483,8 @@ pub struct SceneRun {
     clock: Instant,
     pending_shot: Option<String>,
     build: Option<Scene>,
+    /// `deeplink` URLs for the app, taken by the shell.
+    links: Vec<String>,
 }
 
 impl SceneRun {
@@ -429,6 +499,7 @@ impl SceneRun {
             clock: Instant::now(),
             pending_shot: None,
             build: None,
+            links: Vec::new(),
         }
     }
 
@@ -439,6 +510,11 @@ impl SceneRun {
     /// A scene whose screen the shell must build now.
     pub fn take_build(&mut self) -> Option<Scene> {
         self.build.take()
+    }
+
+    /// The URLs the last `deeplink` steps delivered.
+    pub fn take_links(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.links)
     }
 
     /// The window is being sized for the next scene: its zoom factor is
@@ -608,6 +684,10 @@ impl SceneRun {
                     ctx.send_viewport_cmd(ViewportCommand::Screenshot(Default::default()));
                     self.pending_shot = Some(name);
                     return;
+                }
+                Op::DeepLink(url) => {
+                    self.links.push(url);
+                    ctx.request_repaint();
                 }
             }
         }

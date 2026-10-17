@@ -587,7 +587,9 @@ impl ApplicationHandler<UserEvent> for Runner {
             }
             WindowEvent::Moved(_) => {
                 if let Some(live) = &self.live {
-                    live.shell.window_moved(geometry(&live.window));
+                    if live.shell.window_moved(geometry(&live.window)) {
+                        self.ctx.request_repaint();
+                    }
                 }
             }
             WindowEvent::RedrawRequested => {

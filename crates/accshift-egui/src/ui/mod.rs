@@ -7,6 +7,7 @@ pub mod backdrop_filter;
 pub mod components;
 pub mod css;
 pub mod dashed_border;
+pub mod liquid;
 pub mod paint;
 pub mod resample;
 pub mod snap;

@@ -13,7 +13,9 @@
 //!   on the edge of an auto-hidden taskbar so it can still come up;
 //! - the minimum track size is tao's (`adjust_size` without the caption);
 //! - `set_keep_backdrop_active` (src-tauri `commands/backdrop.rs`): DWM
-//!   keeps a glass theme's acrylic on an inactive window.
+//!   keeps a glass theme's acrylic on an inactive window;
+//! - Snap Layouts (src-tauri `commands/window.rs`): the title bar's maximize
+//!   button answers `HTMAXBUTTON`, so Windows 11 opens its flyout there.
 //!
 //! winit gives an undecorated window no frame and no resize edges; this
 //! takes those messages before its window procedure.
@@ -25,7 +27,7 @@
 use super::placement::{self, Insets, Monitor, Rect};
 use accshift_core::config::{SavedWindow, MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH};
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, MonitorFromRect, ScreenToClient, HDC, HMONITOR,
@@ -36,16 +38,21 @@ use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_LOCAL_MACHINE, RRF
 use windows_sys::Win32::UI::HiDpi::{
     AdjustWindowRectExForDpi, GetDpiForWindow, GetSystemMetricsForDpi,
 };
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    TrackMouseEvent, TME_LEAVE, TME_NONCLIENT, TRACKMOUSEEVENT,
+};
 use windows_sys::Win32::UI::Shell::{
     SHAppBarMessage, ABE_BOTTOM, ABE_LEFT, ABE_RIGHT, ABE_TOP, ABM_GETAUTOHIDEBAR, APPBARDATA,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallWindowProcW, DefWindowProcW, GetClientRect, GetWindowLongW, GetWindowRect, IsZoomed,
-    SetWindowLongPtrW, SetWindowPos, GWLP_WNDPROC, GWL_EXSTYLE, GWL_STYLE, HTBOTTOM, HTBOTTOMLEFT,
-    HTBOTTOMRIGHT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, MINMAXINFO, MONITORINFOF_PRIMARY,
-    NCCALCSIZE_PARAMS, SM_CXFRAME, SM_CXPADDEDBORDER, SM_CXSIZEFRAME, SM_CYFRAME, SWP_FRAMECHANGED,
-    SWP_NOACTIVATE, SWP_NOZORDER, WM_GETMINMAXINFO, WM_NCACTIVATE, WM_NCCALCSIZE, WM_NCHITTEST,
-    WNDPROC, WS_CAPTION, WS_SIZEBOX,
+    PostMessageW, SetWindowLongPtrW, SetWindowPos, GWLP_WNDPROC, GWL_EXSTYLE, GWL_STYLE, HTBOTTOM,
+    HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCLIENT, HTLEFT, HTMAXBUTTON, HTRIGHT, HTTOP, HTTOPLEFT,
+    HTTOPRIGHT, MINMAXINFO, MONITORINFOF_PRIMARY, NCCALCSIZE_PARAMS, SC_MAXIMIZE, SC_RESTORE,
+    SM_CXFRAME, SM_CXPADDEDBORDER, SM_CXSIZEFRAME, SM_CYFRAME, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+    SWP_NOZORDER, WM_GETMINMAXINFO, WM_NCACTIVATE, WM_NCCALCSIZE, WM_NCHITTEST, WM_NCLBUTTONDBLCLK,
+    WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSELEAVE, WM_NCMOUSEMOVE, WM_NCRBUTTONDOWN,
+    WM_NCRBUTTONUP, WM_SYSCOMMAND, WNDPROC, WS_CAPTION, WS_SIZEBOX,
 };
 
 /// boot.rs `FIRST_WINDOWS_11_BUILD`.
@@ -55,6 +62,62 @@ const FIRST_WINDOWS_11_BUILD: u32 = 22000;
 static PREVIOUS: AtomicIsize = AtomicIsize::new(0);
 static SHADOW: AtomicBool = AtomicBool::new(false);
 static KEEP_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Snap Layouts: `snap_layouts::State` of src-tauri `commands/window.rs`.
+struct Snap {
+    /// The maximize button in physical client pixels, `[x, y, width,
+    /// height]`; `None` when it is not drawn.
+    rect: Option<[f64; 4]>,
+    hovering: bool,
+    pressed: bool,
+}
+
+static SNAP: Mutex<Snap> = Mutex::new(Snap {
+    rect: None,
+    hovering: false,
+    pressed: false,
+});
+/// Repaints the window when the hover changes: once Windows owns the
+/// button as non-client, egui sees no pointer over it.
+static SNAP_WAKE: OnceLock<egui::Context> = OnceLock::new();
+
+/// A poisoned lock means a panic inside the window procedure; three plain
+/// values with no invariant between them, so the state is recovered.
+fn snap() -> MutexGuard<'static, Snap> {
+    SNAP.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// `set_maximize_button_rect`, in physical client pixels.
+pub fn set_maximize_button(rect: Option<[f64; 4]>) {
+    let mut state = snap();
+    state.rect = rect;
+    if rect.is_none() {
+        state.hovering = false;
+        state.pressed = false;
+    }
+}
+
+/// The `titlebar:maximize-hover` state the title bar draws as hover.
+pub fn maximize_hover() -> bool {
+    snap().hovering
+}
+
+/// Where hover changes ask for a frame.
+pub fn wake_on_maximize_hover(ctx: &egui::Context) {
+    let _ = SNAP_WAKE.set(ctx.clone());
+}
+
+/// `hit_test_maximize` at scale 1: the rect is already physical. Left and
+/// top inclusive, right and bottom exclusive, as CSS.
+fn hit_test_maximize(point: (f64, f64), rect: [f64; 4]) -> bool {
+    let [x, y, width, height] = rect;
+    width > 0.0
+        && height > 0.0
+        && point.0 >= x
+        && point.0 < x + width
+        && point.1 >= y
+        && point.1 < y + height
+}
 
 /// `CurrentBuildNumber`, read once, as boot.rs reads it.
 fn windows_build() -> Option<u32> {
@@ -400,6 +463,80 @@ unsafe fn min_track_size(hwnd: HWND, lparam: LPARAM) {
     };
 }
 
+fn over_maximize_button(hwnd: HWND, lparam: LPARAM) -> bool {
+    let Some(rect) = snap().rect else {
+        return false;
+    };
+    // Fullscreen has no title bar to snap from.
+    if fullscreen(hwnd) {
+        return false;
+    }
+    let mut p = POINT {
+        x: (lparam & 0xffff) as u16 as i16 as i32,
+        y: ((lparam >> 16) & 0xffff) as u16 as i16 as i32,
+    };
+    // SAFETY: live HWND, POINT in and out.
+    if unsafe { ScreenToClient(hwnd, &mut p) } == 0 {
+        return false;
+    }
+    hit_test_maximize((p.x as f64, p.y as f64), rect)
+}
+
+/// The window covers its whole monitor; maximized stops at the work area.
+fn fullscreen(hwnd: HWND) -> bool {
+    let Some(window) = outer_rect(hwnd) else {
+        return false;
+    };
+    // SAFETY: live HWND.
+    let monitor = unsafe {
+        windows_sys::Win32::Graphics::Gdi::MonitorFromWindow(
+            hwnd,
+            windows_sys::Win32::Graphics::Gdi::MONITOR_DEFAULTTONEAREST,
+        )
+    };
+    monitor_info(monitor).is_some_and(|info| rect(info.rcMonitor) == window)
+}
+
+fn set_maximize_hover(hwnd: HWND, over: bool) {
+    {
+        let mut state = snap();
+        if state.hovering == over {
+            return;
+        }
+        state.hovering = over;
+        if !over {
+            state.pressed = false;
+        }
+    }
+    if over {
+        // Without it there is no WM_NCMOUSELEAVE when the pointer leaves
+        // over the window edge.
+        let mut track = TRACKMOUSEEVENT {
+            cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+            dwFlags: TME_LEAVE | TME_NONCLIENT,
+            hwndTrack: hwnd,
+            dwHoverTime: 0,
+        };
+        // SAFETY: a TRACKMOUSEEVENT with its size set, for a live HWND.
+        unsafe { TrackMouseEvent(&mut track) };
+    }
+    if let Some(ctx) = SNAP_WAKE.get() {
+        ctx.request_repaint();
+    }
+}
+
+/// What a real caption button sends, posted so the resize runs after this
+/// message returns.
+fn toggle_maximize(hwnd: HWND) {
+    let command = if maximized(hwnd) {
+        SC_RESTORE
+    } else {
+        SC_MAXIMIZE
+    };
+    // SAFETY: live HWND.
+    unsafe { PostMessageW(hwnd, WM_SYSCOMMAND, command as WPARAM, 0) };
+}
+
 unsafe extern "system" fn frame_proc(
     hwnd: HWND,
     msg: u32,
@@ -416,7 +553,35 @@ unsafe extern "system" fn frame_proc(
             if let Some(hit) = hit_test(hwnd, lparam) {
                 return hit as LRESULT;
             }
+            // Only the plain client area becomes the maximize button.
+            let below = call_previous(hwnd, msg, wparam, lparam);
+            if below == HTCLIENT as LRESULT && over_maximize_button(hwnd, lparam) {
+                return HTMAXBUTTON as LRESULT;
+            }
+            return below;
         }
+        WM_NCMOUSEMOVE => {
+            let over = wparam == HTMAXBUTTON as WPARAM;
+            set_maximize_hover(hwnd, over);
+            if over {
+                return 0;
+            }
+        }
+        WM_NCMOUSELEAVE => set_maximize_hover(hwnd, false),
+        // Swallowed: the default procedure would draw its own caption
+        // button over the title bar's and maximize on the way down.
+        WM_NCLBUTTONDOWN | WM_NCLBUTTONDBLCLK if wparam == HTMAXBUTTON as WPARAM => {
+            snap().pressed = true;
+            return 0;
+        }
+        WM_NCLBUTTONUP if wparam == HTMAXBUTTON as WPARAM => {
+            if std::mem::replace(&mut snap().pressed, false) {
+                toggle_maximize(hwnd);
+            }
+            return 0;
+        }
+        // No system menu over the button.
+        WM_NCRBUTTONDOWN | WM_NCRBUTTONUP if wparam == HTMAXBUTTON as WPARAM => return 0,
         WM_GETMINMAXINFO => {
             let result = call_previous(hwnd, msg, wparam, lparam);
             // SAFETY: the message's own parameters.
@@ -562,6 +727,15 @@ mod tests {
                 (info.ptMinTrackSize.x, info.ptMinTrackSize.y),
                 (r.right - r.left, r.bottom - r.top)
             );
+
+            // Snap Layouts: the reported button, and only there.
+            set_maximize_button(Some([300.0, 0.0, 46.0, 36.0]));
+            assert_eq!(hit(client.x + 323, client.y + 18), HTMAXBUTTON);
+            assert_eq!(hit(client.x + 299, client.y + 18), HTCLIENT);
+            assert_eq!(hit(client.x + 346, client.y + 18), HTCLIENT);
+            assert_eq!(hit(middle.0, middle.1), HTCLIENT);
+            set_maximize_button(None);
+            assert_eq!(hit(client.x + 323, client.y + 18), HTCLIENT);
 
             // Kept active: DefWindowProc gets "active" back.
             keep_backdrop_active(true);

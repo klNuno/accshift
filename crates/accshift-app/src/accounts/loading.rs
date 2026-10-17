@@ -199,6 +199,11 @@ impl AccountLoading {
         false
     }
 
+    /// An account load still to land (`loadAccounts` not settled yet).
+    pub fn loads_in_flight(&self) -> bool {
+        !self.loads.is_empty()
+    }
+
     /// Jobs or deferred work still to land.
     pub fn has_pending_work(&self) -> bool {
         !(self.loads.is_empty()

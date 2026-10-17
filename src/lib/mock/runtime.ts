@@ -48,6 +48,8 @@ interface MockOverrides {
   /** An add-account setup: `platform_begin_setup` answers the first status,
    * each `platform_get_setup_status` the next one, the last one repeating. */
   setup?: Record<string, unknown>[];
+  /** What `get_desktop_wallpaper` answers instead of null. */
+  wallpaper?: Record<string, unknown>;
 }
 
 function readOverrides(): MockOverrides {
@@ -119,6 +121,11 @@ if (overrides.setup?.length) {
     return statuses[step];
   };
   handlers.platform_cancel_setup = () => null;
+}
+// A desktop picture behind the Liquid Glass window.
+if (overrides.wallpaper) {
+  const snapshot = overrides.wallpaper;
+  handlers.get_desktop_wallpaper = () => snapshot;
 }
 
 /** Live knobs: changing these takes effect on the next call, without a reload. */

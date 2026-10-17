@@ -742,6 +742,16 @@ impl DeepLinkController {
         self.phase = Phase::AwaitSwitch(switch);
     }
 
+    /// `handleUrl`'s `catch`: the work the last action started threw (a
+    /// platform's account list failed to load). The link ends without a
+    /// toast and the queued one, if any, starts.
+    pub fn fail(&mut self, view: &DeepLinkView<'_>, now: Instant) -> Vec<DeepLinkAction> {
+        if self.is_busy() {
+            self.finish(now);
+        }
+        self.poll(view, now)
+    }
+
     /// The shell's answer to the last action. `view` is read after it.
     pub fn answer(
         &mut self,

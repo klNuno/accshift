@@ -23,6 +23,7 @@
 pub mod accounts;
 pub mod avatars;
 pub mod clock;
+mod deep_link;
 mod drag;
 pub(crate) mod keys;
 pub mod onboarding;
@@ -35,7 +36,9 @@ pub mod settings_panel;
 mod shell;
 pub mod theme_editor;
 mod ui_scale;
+mod updates;
 pub mod vars;
+mod wallpaper;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -188,6 +191,9 @@ pub struct MockSetup {
     pub failures: Vec<(String, String)>,
     /// `overrides.setup`: the statuses of an add-account setup.
     pub setup: Option<Vec<Value>>,
+    /// `overrides.wallpaper`, then the window's outer position and scale
+    /// factor `realign` reads (physical px).
+    pub wallpaper: Option<(Value, [i32; 2], f32)>,
     /// `parity/data`.
     pub data_dir: PathBuf,
     /// The repo root, to resolve the mock avatar paths.
@@ -250,6 +256,8 @@ struct ThemeKey {
     os: RuntimeOs,
     animations: AnimationsMode,
     custom_themes: usize,
+    /// A wallpaper snapshot is up (`liquidBackdrop.wallpaper !== null`).
+    wallpaper: bool,
 }
 
 /// The theme in effect.
@@ -450,6 +458,12 @@ pub struct AppModel {
     onboarding: onboarding::Onboarding,
     /// The persona switch confirm and the mounted personas panel.
     personas: personas::PersonasState,
+    /// `createDeepLinkController`, listening from mount.
+    deep_links: deep_link::DeepLinks,
+    /// `createAppUpdater` and its mount timer.
+    updates: updates::Updates,
+    /// `createLiquidBackdrop`.
+    liquid: wallpaper::Liquid,
 }
 
 impl AppModel {
@@ -473,6 +487,12 @@ impl AppModel {
         mock.set_cs2(setup.cs2.clone());
         mock.set_onboarding(setup.onboarding);
         mock.set_setup(setup.setup.clone());
+        mock.set_wallpaper(
+            setup
+                .wallpaper
+                .as_ref()
+                .map(|(snapshot, ..)| snapshot.clone()),
+        );
         for (command, message) in &setup.failures {
             mock.fail(command, Some(message));
         }
@@ -480,6 +500,9 @@ impl AppModel {
         let clock = Clock::pinned(mock.now());
         let backend: Arc<dyn Backend> = mock.clone();
         let mut model = AppModel::with_backend(ctx, backend, Some(mock), clock);
+        if let Some((_, window, scale)) = &setup.wallpaper {
+            model.liquid.pin_window(*window, *scale);
+        }
         model.setup = Some(setup);
         model.desktop = Some(ctx.load_texture(
             "desktop",
@@ -495,6 +518,7 @@ impl AppModel {
         let backend: Arc<dyn Backend> = backend;
         let mut model = AppModel::with_backend(ctx, backend, None, Clock::wall());
         model.os_reduced_motion = os_prefers_reduced_motion();
+        model.updates = updates::Updates::real(Instant::now());
         model
     }
 
@@ -537,7 +561,9 @@ impl AppModel {
             input_mount: None,
             confirm_mount: None,
             mounts: 0,
-            focus_visible: false,
+            // `last_focus_type` starts as none, not mouse: a script focus
+            // before any click shows its ring (a deep link's dialog).
+            focus_visible: true,
             last_time: 0.0,
             os_reduced_motion: false,
             pin_focus: false,
@@ -550,6 +576,9 @@ impl AppModel {
             card_focus_cards: None,
             onboarding: onboarding::Onboarding::default(),
             personas: personas::PersonasState::default(),
+            deep_links: deep_link::DeepLinks::started(),
+            updates: updates::Updates::off(),
+            liquid: wallpaper::Liquid::default(),
         }
     }
 
@@ -564,6 +593,12 @@ impl AppModel {
     #[cfg(test)]
     pub(crate) fn booted_mut(&mut self) -> Option<&mut Booted> {
         self.booted.as_mut()
+    }
+
+    /// A Liquid Glass wallpaper snapshot is up: the shell draws it aligned
+    /// to the screen.
+    pub fn wallpaper_shown(&self) -> bool {
+        self.liquid.present()
     }
 
     /// The OS backdrop the current theme (or its editor preview) asks for.
@@ -709,7 +744,13 @@ impl AppModel {
         let locale = stores.language();
         let secure = SecureScreen::new(stores.settings(), Instant::now());
         let streamer = StreamerModeController::new(stores.settings());
-        let theme = compute_theme(&registry, &stores, runtime_os, self.os_reduced_motion);
+        let theme = compute_theme(
+            &registry,
+            &stores,
+            runtime_os,
+            self.os_reduced_motion,
+            self.liquid.present(),
+        );
         anim::set_motion(ctx, theme.motion);
         let panel = (nav.panel_key(), now);
         let app_clock = match &self.mock {
@@ -767,9 +808,19 @@ impl AppModel {
             return;
         };
         b.stores.sync();
-        let key = theme_key(&b.stores, &b.registry, b.runtime_os);
+        // `liquidBackdropActive`: the snapshot comes and goes with it.
+        let liquid = b.theme.theme.liquid && b.runtime_os == RuntimeOs::Windows;
+        self.liquid.tick(ctx, &self.jobs, liquid, Instant::now());
+        let wallpaper = self.liquid.present();
+        let key = theme_key(&b.stores, &b.registry, b.runtime_os, wallpaper);
         if key != b.theme.key && b.theme_preview.is_none() {
-            b.theme = compute_theme(&b.registry, &b.stores, b.runtime_os, self.os_reduced_motion);
+            b.theme = compute_theme(
+                &b.registry,
+                &b.stores,
+                b.runtime_os,
+                self.os_reduced_motion,
+                wallpaper,
+            );
         }
         b.locale = b.stores.language();
         // Harness scenes clear egui memory: keep the motion flag in it.
@@ -942,6 +993,8 @@ impl AppModel {
             self.apply_add_flow_events(&ctx, flow_events);
         }
         self.tick_personas(&ctx);
+        self.tick_deep_links(&ctx);
+        self.tick_updates(&ctx);
         // `Toast.svelte`'s `setTimeout`: expired toasts go before drawing,
         // and the next expiry wakes the UI.
         let instant = Instant::now();
@@ -1071,8 +1124,7 @@ impl AppModel {
                 }
             }
             Action::SetupChip(section, chip) => self.apply_setup_chip(ctx, section, chip),
-            // The updater port owns this.
-            Action::ApplyUpdate => {}
+            Action::ApplyUpdate => self.apply_update(ctx),
             Action::NavigateToFolder(folder) => {
                 if let Some(b) = self.booted.as_mut() {
                     let tab = b.nav.active_tab.clone();
@@ -1509,21 +1561,22 @@ impl AppModel {
     }
 
     /// `handleAccountSwitch(account)` on the active tab: refused while a
-    /// persona switch runs; the outcome comes back from the loader.
-    fn switch_account(&mut self, account: &PlatformAccount) {
+    /// persona switch runs; the outcome comes back from the loader. False
+    /// when it did not start.
+    fn switch_account(&mut self, account: &PlatformAccount) -> bool {
         let Some(b) = self.booted.as_mut() else {
-            return;
+            return false;
         };
         let persona_switching = b.personas.switching();
         let tab = b.nav.active_tab.clone();
         b.accounts
-            .switch(&self.jobs, &mut b.stores, &tab, account, persona_switching);
+            .switch(&self.jobs, &mut b.stores, &tab, account, persona_switching)
     }
 
     /// What `useAccountLoading` does with the loader's outcomes: its toasts,
     /// and `minimize_window` after a successful switch when the setting asks.
-    /// The deep link and add flow ports own the switch outcome and the add
-    /// flow start.
+    /// A finished switch also answers the deep link that ran it;
+    /// `Accounts::update` starts the add flow from `AddFlowStarted` itself.
     fn apply_loading_events(&mut self, ctx: &Context, events: Vec<LoadingEvent>) {
         for event in events {
             match event {
@@ -1531,8 +1584,11 @@ impl AppModel {
                     self.toasts.push(toast, Instant::now());
                 }
                 LoadingEvent::MinimizeWindow => self.apply_one(ctx, Action::Minimize),
-                LoadingEvent::SwitchFinished { .. }
-                | LoadingEvent::AddFlowStarted { .. }
+                LoadingEvent::SwitchFinished {
+                    account_id,
+                    succeeded,
+                } => self.deep_link_switch_finished(ctx, &account_id, succeeded),
+                LoadingEvent::AddFlowStarted { .. }
                 | LoadingEvent::AccountsLoaded { .. }
                 | LoadingEvent::Cs2Check { .. } => {}
             }
@@ -1607,7 +1663,9 @@ impl AppModel {
                     self.toasts.push(toast, Instant::now());
                 }
                 AppEffect::RefreshAccounts => self.apply_one(ctx, Action::Refresh),
-                AppEffect::SwitchAccount(account) => self.switch_account(&account),
+                AppEffect::SwitchAccount(account) => {
+                    self.switch_account(&account);
+                }
                 AppEffect::LoadAccounts(options) => {
                     if let Some(b) = self.booted.as_mut() {
                         let tab = b.nav.active_tab.clone();
@@ -1652,6 +1710,7 @@ impl AppModel {
                 AppEffect::ConfirmSettled { ticket, allowed } => {
                     self.settle_descriptor_removal(ticket, allowed);
                     self.settle_persona_confirm(ticket, allowed);
+                    self.settle_deep_link_confirm(ctx, ticket, allowed);
                 }
                 AppEffect::CustomMenu(id) => {
                     self.apply_persona_menu(ctx, &id);
@@ -1696,7 +1755,12 @@ fn animations_mode(mode: AnimationsMode) -> accshift_theme::AnimationsMode {
     }
 }
 
-fn theme_key(stores: &ClientStores, registry: &ThemeRegistry, os: RuntimeOs) -> ThemeKey {
+fn theme_key(
+    stores: &ClientStores,
+    registry: &ThemeRegistry,
+    os: RuntimeOs,
+    wallpaper: bool,
+) -> ThemeKey {
     let settings = stores.settings();
     ThemeKey {
         theme_id: settings.theme_id.clone(),
@@ -1704,6 +1768,7 @@ fn theme_key(stores: &ClientStores, registry: &ThemeRegistry, os: RuntimeOs) -> 
         os,
         animations: settings.animations,
         custom_themes: registry.all_themes().len(),
+        wallpaper,
     }
 }
 
@@ -1714,8 +1779,9 @@ pub(super) fn compute_theme(
     stores: &ClientStores,
     os: RuntimeOs,
     os_reduced_motion: bool,
+    wallpaper: bool,
 ) -> ThemeState {
-    let key = theme_key(stores, registry, os);
+    let key = theme_key(stores, registry, os, wallpaper);
     let theme = registry.theme(Some(&key.theme_id));
     theme_state(key, theme, os_reduced_motion)
 }
@@ -1727,9 +1793,10 @@ pub(super) fn preview_theme(
     stores: &ClientStores,
     os: RuntimeOs,
     os_reduced_motion: bool,
+    wallpaper: bool,
     draft: &accshift_theme::ThemeDocument,
 ) -> ThemeState {
-    let key = theme_key(stores, registry, os);
+    let key = theme_key(stores, registry, os, wallpaper);
     let theme = registry.theme_from_document(draft);
     theme_state(key, theme, os_reduced_motion)
 }
@@ -1738,9 +1805,8 @@ fn theme_state(key: ThemeKey, theme: AppTheme, os_reduced_motion: bool) -> Theme
     let os = key.os;
     let liquid_backdrop_active = theme.liquid && os == RuntimeOs::Windows;
     // Linux compositors have no blur-behind; Liquid Glass waits for a
-    // wallpaper snapshot, which the window-shell job captures.
-    let wallpaper_ready = false;
-    let backdrop_available = os != RuntimeOs::Linux && (!liquid_backdrop_active || wallpaper_ready);
+    // wallpaper snapshot.
+    let backdrop_available = os != RuntimeOs::Linux && (!liquid_backdrop_active || key.wallpaper);
     let application = theme_application(&theme, key.opacity as f64, backdrop_available);
     let resolved = ResolvedTheme::new(&application);
     let vars = Vars {

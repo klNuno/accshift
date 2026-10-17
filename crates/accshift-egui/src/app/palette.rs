@@ -99,8 +99,7 @@ impl AppModel {
                 && usable
                 && !b.nav.show_settings,
             personas_enabled: settings.personas_enabled,
-            // The updater's call to action is a later port.
-            update_ready: false,
+            update_ready: self.updates.cta().is_some(),
             view_mode: b.stores.view_mode(),
             is_mac: os == RuntimeOs::Macos,
         });
@@ -132,7 +131,7 @@ impl AppModel {
                         Some(&account.id),
                     );
                 }
-                self.switch_account(&account)
+                self.switch_account(&account);
             }
             PaletteAction::AddAccount => self.apply_one(ctx, Action::AddAccount),
             PaletteAction::RefreshAccounts => self.apply_one(ctx, Action::Refresh),

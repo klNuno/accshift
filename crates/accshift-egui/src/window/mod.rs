@@ -2,7 +2,8 @@
 //! Tauri's: built hidden where the saved geometry puts it ([`placement`],
 //! [`frame`]), shown once boot completes or after the 5 s failsafe, its
 //! geometry saved 700 ms after the last move and once more on close, its
-//! OS backdrop following the theme (`applyWindowBackdrop`).
+//! OS backdrop following the theme (`applyWindowBackdrop`), and the second
+//! launches the single instance hands over ([`Host::second_launches`]).
 //!
 //! Scenes and the bench keep their own cloaked window and never come here.
 
@@ -13,6 +14,8 @@ pub mod placement;
 pub mod probe;
 
 use accshift_app::lifecycle::boot::{BOOT_FAILSAFE, BOOT_FAILSAFE_MESSAGE, BOOT_FAILSAFE_SOURCE};
+use accshift_app::lifecycle::deep_link;
+use accshift_app::lifecycle::single_instance::SingleInstance;
 use accshift_app::real::RealBackend;
 use accshift_core::config;
 use accshift_theme::WindowBackdrop;
@@ -84,6 +87,15 @@ fn save(backend: &RealBackend, g: Geometry) {
     );
 }
 
+/// The pointer is over the maximize button Windows owns for Snap Layouts:
+/// the title bar draws it hovered (`titlebar:maximize-hover`).
+pub fn maximize_hover() -> bool {
+    #[cfg(windows)]
+    return frame::maximize_hover();
+    #[cfg(not(windows))]
+    false
+}
+
 /// The window side of a normal run.
 pub struct Host {
     backend: Arc<RealBackend>,
@@ -95,6 +107,9 @@ pub struct Host {
     saver: Arc<Saver>,
     /// `appliedKey` of backdrop.ts.
     backdrop: Option<String>,
+    /// The single-instance service, held for the whole run: dropping it is
+    /// the plugin's `destroy`.
+    single: Option<SingleInstance>,
 }
 
 impl Host {
@@ -107,7 +122,73 @@ impl Host {
             focus: true,
             saver: Arc::default(),
             backdrop: None,
+            single: None,
         }
+    }
+
+    /// The service [`single_instance::acquire`] answered for this run.
+    ///
+    /// [`single_instance::acquire`]: accshift_app::lifecycle::single_instance::acquire
+    pub fn with_single_instance(mut self, single: Option<SingleInstance>) -> Self {
+        self.single = single;
+        self
+    }
+
+    /// The single-instance callback of src-tauri/src/lib.rs, built with the
+    /// plugin's `deep-link` feature, for each launch handed over since the
+    /// last frame. A lone `accshift://` argument goes to the deep-link
+    /// plugin first (`on_open_url`: the log line, the usage counter, the
+    /// window shown), then the callback logs the redirect and shows the
+    /// window, both only once boot completed. Returns the URLs for the
+    /// page's `onOpenUrl`.
+    pub fn second_launches(&self, ctx: &egui::Context) -> Vec<String> {
+        let Some(single) = &self.single else {
+            return Vec::new();
+        };
+        let mut urls = Vec::new();
+        while let Some(second) = single.try_recv() {
+            let completed = self.backend.boot_state().is_completed();
+            let launch = deep_link::second_launch(&second.args, completed);
+            if let Some(url) = launch.url {
+                let effects = deep_link::on_open_url(std::slice::from_ref(&url), completed);
+                self.log(
+                    "backend.deep-link",
+                    "Deep link received",
+                    Some(&effects.log_details),
+                );
+                if effects.track {
+                    self.backend.track_deep_link();
+                }
+                if effects.show_window {
+                    self.show_main_window(ctx);
+                }
+                urls.push(url.to_string());
+            }
+            self.log(launch.log_source, launch.log_message, None);
+            if launch.show_window {
+                self.show_main_window(ctx);
+            }
+        }
+        urls
+    }
+
+    /// `app_runtime::show_main_window`: show, then `set_focus`. The probe's
+    /// window is already up, cloaked, and never takes the focus.
+    fn show_main_window(&self, ctx: &egui::Context) {
+        if self.focus {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+    }
+
+    fn log(&self, source: &str, message: &str, details: Option<&str>) {
+        let _ = accshift_core::logging::append_app_log(
+            self.backend.context(),
+            "info",
+            source,
+            message,
+            details,
+        );
     }
 
     /// `applyWindowBackdrop`, when the theme's material changes: acrylic

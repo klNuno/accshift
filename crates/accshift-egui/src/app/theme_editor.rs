@@ -437,6 +437,7 @@ impl super::AppModel {
     /// comes back (`onDestroy`: `endThemePreview`).
     pub(super) fn tick_theme_editor(&mut self, now: std::time::Instant) {
         let reduced = self.os_reduced_motion;
+        let wallpaper = self.liquid.present();
         let Some(b) = self.booted.as_mut() else {
             return;
         };
@@ -446,7 +447,8 @@ impl super::AppModel {
             .and_then(|p| p.theme_editor.as_mut());
         let Some(editor) = editor else {
             if b.theme_preview.take().is_some() {
-                b.theme = super::compute_theme(&b.registry, &b.stores, b.runtime_os, reduced);
+                b.theme =
+                    super::compute_theme(&b.registry, &b.stores, b.runtime_os, reduced, wallpaper);
             }
             return;
         };
@@ -462,7 +464,7 @@ impl super::AppModel {
                 panel.draft.theme_id = document.id.clone();
             }
             let theme = b.registry.theme(Some(&document.id));
-            let key = super::theme_key(&b.stores, &b.registry, b.runtime_os);
+            let key = super::theme_key(&b.stores, &b.registry, b.runtime_os, wallpaper);
             b.theme = super::theme_state(key, theme, reduced);
             super::settings_panel::toast(
                 &mut self.toasts,
@@ -474,7 +476,14 @@ impl super::AppModel {
         }
         let draft = editor.draft();
         if b.theme_preview.as_ref() != Some(&draft) {
-            b.theme = super::preview_theme(&b.registry, &b.stores, b.runtime_os, reduced, &draft);
+            b.theme = super::preview_theme(
+                &b.registry,
+                &b.stores,
+                b.runtime_os,
+                reduced,
+                wallpaper,
+                &draft,
+            );
             b.theme_preview = Some(draft);
         }
     }

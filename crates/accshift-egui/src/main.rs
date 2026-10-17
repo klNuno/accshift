@@ -1,10 +1,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use accshift_app::real::RealBackend;
+use accshift_app::lifecycle::single_instance::{self, Launch, SingleInstance};
+use accshift_app::real::{RealBackend, BUNDLE_IDENTIFIER};
 use accshift_core::config;
 use accshift_egui::{bench, harness, window, AppModel, Screen, Shell};
 use raw_window_handle::HasWindowHandle;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+
+/// The probe's single-instance name: never the installed app's, so a probe
+/// neither forwards to it nor answers its launches.
+#[cfg(all(debug_assertions, windows))]
+const PROBE_IDENTIFIER: &str = "com.accshift.desktop-egui-probe";
 
 fn main() {
     let bench_build = cfg!(feature = "startup-bench");
@@ -70,6 +76,26 @@ fn main() {
     #[cfg(not(all(debug_assertions, windows)))]
     let probe: Option<std::path::PathBuf> = None;
     let probing = probe.is_some();
+
+    // The single-instance plugin, first as in src-tauri/src/lib.rs: a second
+    // launch hands its arguments to the running app and leaves. This
+    // launch's own `accshift://` URL is the deep-link plugin's `current`,
+    // which the page's listener never sees, so it is not read here.
+    let wake: Arc<OnceLock<egui::Context>> = Arc::default();
+    let single = if hidden {
+        None
+    } else {
+        #[cfg(all(debug_assertions, windows))]
+        let identifier = if probing {
+            PROBE_IDENTIFIER
+        } else {
+            BUNDLE_IDENTIFIER
+        };
+        #[cfg(not(all(debug_assertions, windows)))]
+        let identifier = BUNDLE_IDENTIFIER;
+        acquire_single_instance(identifier, Arc::clone(&wake))
+    };
+
     if hidden || probing {
         // Safety net: a hidden process never outlives its run by much.
         let budget = 60 + 30 * scene_files.len() as u64;
@@ -126,6 +152,12 @@ fn main() {
             }
         }
     });
+    // The log rotation, "App setup started" and the panic hook, on a thread
+    // while the window builds, joined before anything else logs (`setup`).
+    let session = real.as_ref().map(|backend| {
+        let backend = Arc::clone(backend);
+        std::thread::spawn(move || backend.begin_session())
+    });
     let saved = real
         .as_ref()
         .map(|backend| config::load_window(backend.context().as_ref()));
@@ -167,10 +199,12 @@ fn main() {
 
     // Shared by both runners once the window exists.
     let build = move |ctx: &egui::Context, handle: &dyn HasWindowHandle| {
+        let _ = wake.set(ctx.clone());
         #[cfg(windows)]
         {
             if let (Some(saved), Some(hwnd)) = (&saved, hwnd(handle)) {
                 window::frame::install(hwnd, saved);
+                window::frame::wake_on_maximize_hover(ctx);
                 #[cfg(debug_assertions)]
                 if probing {
                     window::probe::spawn(hwnd);
@@ -189,15 +223,32 @@ fn main() {
         match real {
             // The real app folders, through accshift-core.
             Some(backend) => {
+                if let Some(session) = session {
+                    let _ = session.join();
+                }
+                // The rest of `setup`, in its order. The probe's folders
+                // are a scratch copy: no telemetry from it, and the keyring
+                // sweep would read every real entry as an orphan.
+                if !probing {
+                    backend.start_telemetry();
+                }
                 #[cfg(windows)]
                 let hwnd = hwnd(handle).map_or(0, |h| h as isize);
                 #[cfg(not(windows))]
                 let hwnd = 0;
-                Shell::new(
+                let shell = Shell::new(
                     Screen::App(Box::new(AppModel::real(ctx, Arc::clone(&backend)))),
                     scenes,
+                );
+                if !probing {
+                    register_schemes(&backend);
+                    let _ = backend.spawn_maintenance();
+                }
+                shell.with_window(
+                    window::Host::new(backend, hwnd)
+                        .focus_on_show(!probing)
+                        .with_single_instance(single),
                 )
-                .with_window(window::Host::new(backend, hwnd).focus_on_show(!probing))
             }
             None => {
                 // Each scene builds its own screen once the window has its
@@ -247,6 +298,75 @@ fn main() {
     if scene_mode && harness::failures() > 0 {
         eprintln!("scene: {} failure(s)", harness::failures());
         std::process::exit(1);
+    }
+}
+
+/// [`single_instance::acquire`] on this launch's arguments; a second
+/// launch arriving later repaints the window through `wake` once it exists.
+fn acquire_single_instance(
+    identifier: &str,
+    wake: Arc<OnceLock<egui::Context>>,
+) -> Option<SingleInstance> {
+    let wake: single_instance::Wake = Arc::new(move || {
+        if let Some(ctx) = wake.get() {
+            ctx.request_repaint();
+        }
+    });
+    match single_instance::acquire(
+        identifier,
+        &single_instance::current_args(),
+        &single_instance::current_cwd(),
+        Some(wake),
+    ) {
+        Launch::Primary(single) => Some(single),
+        Launch::Forwarded => std::process::exit(0),
+        Launch::Alone(single) => single,
+    }
+}
+
+/// `wire_deep_links`: claim `accshift://` for this executable when the
+/// registry points elsewhere (Windows), rewrite the handler file (Linux).
+/// Only the shipped `accshift-gui` exe of a release build does it: any other
+/// exe would take the installed app's links.
+fn register_schemes(backend: &RealBackend) {
+    let stem = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.file_stem().map(|s| s.to_string_lossy().into_owned()));
+    if cfg!(debug_assertions) || stem.as_deref() != Some("accshift-gui") {
+        return;
+    }
+    #[cfg(windows)]
+    let failure = match accshift_app::lifecycle::deep_link::current_exe_for_registration() {
+        Ok(exe) => accshift_app::lifecycle::deep_link::wire_scheme_registration(
+            &mut accshift_app::lifecycle::deep_link::WindowsRegistry,
+            accshift_app::lifecycle::deep_link::SCHEMES,
+            BUNDLE_IDENTIFIER,
+            &exe,
+        )
+        .err()
+        .map(|failure| failure.details),
+        Err(err) => Some(err.to_string()),
+    };
+    #[cfg(target_os = "linux")]
+    let failure = accshift_app::lifecycle::deep_link::SCHEMES
+        .iter()
+        .find_map(|scheme| {
+            accshift_app::lifecycle::deep_link::register_linux(
+                scheme,
+                accshift_app::lifecycle::updater::PRODUCT_NAME,
+            )
+            .err()
+        });
+    #[cfg(not(any(windows, target_os = "linux")))]
+    let failure: Option<String> = None;
+    if let Some(details) = failure {
+        let _ = accshift_core::logging::append_app_log(
+            backend.context(),
+            "warn",
+            "backend.deep-link",
+            "Failed to register accshift:// scheme",
+            Some(&details),
+        );
     }
 }
 

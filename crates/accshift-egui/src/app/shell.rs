@@ -4,9 +4,11 @@
 //! .app-frame            appEntrance (fade, scale, rise, un-blur)
 //!   TitleBar            macOS only, above the stage, page-entrance
 //!   .app-stage          page-entrance, 50 ms late
-//!     .app-shell        var(--bg) and var(--bg-image)
+//!     .app-shell        var(--bg) and var(--bg-image); Liquid Glass adds
+//!                       its inset highlights and the rim lens
 //!       TitleBar        Windows and Linux, page-entrance
 //!       {#key panelKey} the panel, page-entrance on every switch
+//!       ::after         the Liquid Glass sheen
 //!       .inactivity-frost  over the panel while the screen is obscured
 //!       AppDialogs      the toast stack, the input and confirm dialogs,
 //!                       then the context menu
@@ -41,7 +43,7 @@ use crate::ui::components::context_menu::{self, ContextMenuProps};
 use crate::ui::components::dialog::{self, DialogProps};
 use crate::ui::components::onboarding::{self, OnboardingProps};
 use crate::ui::components::secure_overlays::{self, AfkProps, PinProps, StreamerProps};
-use crate::ui::components::title_bar::{self, TitleBarProps};
+use crate::ui::components::title_bar::{self, TitleBarProps, UpdateCta};
 use crate::ui::components::toast::{self, ToastProps};
 use crate::ui::paint::BoxStyle;
 use accshift_app::actions::dialogs::MenuInput;
@@ -184,6 +186,20 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
     let active_def = booted.platforms.iter().find(|p| p.id == nav.active_tab);
     let active_usable = active_def.is_some_and(|p| p.supports(os));
     let adapter_loading = booted.accounts.loading.adapter_loading();
+    let update_cta = app.updates.cta().map(|(label, title, disabled)| {
+        let switching = booted
+            .accounts
+            .loading
+            .loader
+            .switching_account_id()
+            .is_some()
+            || booted.personas.switching();
+        (
+            label.resolve(booted.locale),
+            title.resolve(booted.locale),
+            disabled || switching,
+        )
+    });
     let props = TitleBarProps {
         vars: &vars,
         locale: booted.locale,
@@ -206,9 +222,15 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
             && active_usable,
         bulk_edit_active: booted.bulk.is_open(),
         show_settings: nav.show_settings,
-        update_cta: None,
+        update_cta: update_cta
+            .as_ref()
+            .map(|(label, title, disabled)| UpdateCta {
+                label,
+                title,
+                disabled: *disabled,
+            }),
         maximized,
-        snap_hover: false,
+        snap_hover: crate::window::maximize_hover(),
         focus_visible: app.focus_visible,
     };
     let panel_since = booted.panel.1;
@@ -359,6 +381,20 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                 }
                 .paint(ui.painter(), stage);
             }
+            // `html[data-theme="liquid-glass"]`: the id itself, a theme
+            // extending it keeps the plain shell. `.liquid-backdrop` comes
+            // with any Liquid Glass theme once a wallpaper is up.
+            let liquid = theme.theme.id == "liquid-glass";
+            let wallpaper = app.liquid.backdrop(&ctx);
+            if liquid || wallpaper.is_some() {
+                crate::ui::liquid::paint_under(
+                    ui.painter(),
+                    stage,
+                    vars.bg,
+                    liquid,
+                    wallpaper.as_ref(),
+                );
+            }
             if mac_bar.is_none() {
                 let (bar, _) = stage.split_top_bottom_at_y(stage.top() + bar_h);
                 let (o, rise) = titlebar_style;
@@ -427,6 +463,11 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
             }
             if let Some(wheel) = wheel {
                 ctx.input_mut(|i| i.events.extend(wheel));
+            }
+            // `.app-shell::after` (`--z-sheen`), over the panel and the
+            // title bar.
+            if liquid {
+                crate::ui::liquid::paint_sheen(ui.painter(), stage);
             }
             // `.inactivity-frost` (`--z-frost`), above the panel and the
             // title bar.

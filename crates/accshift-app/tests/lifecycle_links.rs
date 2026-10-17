@@ -643,6 +643,30 @@ fn a_link_waits_for_boot_and_the_latest_one_queues() {
     );
 }
 
+#[test]
+fn a_failed_platform_load_ends_the_link_quietly_and_runs_the_queued_one() {
+    let app = App::new("riot");
+    let mut controller = started();
+    let now = Instant::now();
+    controller.on_urls(&["accshift://switch/steam/first"], now);
+    assert_eq!(
+        controller.poll(&app.view(), now),
+        vec![DeepLinkAction::LoadPlatformAccounts("steam".into())]
+    );
+    controller.on_urls(&["accshift://switch/riot/second"], now);
+    // `handleUrl`'s catch: no toast, the queued link starts on its tab.
+    let actions = controller.fail(&app.view(), now);
+    assert!(
+        matches!(&actions[..], [DeepLinkAction::LoadAccounts]),
+        "{actions:?}"
+    );
+    assert!(controller.is_busy());
+    // Nothing in flight: a stray failure changes nothing.
+    let mut idle = started();
+    assert!(idle.fail(&app.view(), now).is_empty());
+    assert!(!idle.is_busy());
+}
+
 // ---------------------------------------------------------------------------
 // Single instance
 
