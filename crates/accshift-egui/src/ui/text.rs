@@ -1064,7 +1064,7 @@ impl Book {
                     metrics = defaults
                         .font_data
                         .get(name)
-                        .and_then(|d| FaceMetrics::read(&d.font, d.index));
+                        .and_then(|d| FaceMetrics::read((*d.font).as_ref(), d.index));
                 }
                 keys.push(format!("egui:{name}"));
             }
