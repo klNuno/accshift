@@ -9,13 +9,14 @@
 //!   `border-radius: 4px`, `background: var(--bg-solid)`, 13 px,
 //!   `padding: 8px 10px`; focus turns the border `--bg-elevated`.
 //!
-//! Editing keeps the caret at the end of the value: typing appends,
-//! Backspace removes the last character. Enter commits, focus loss blurs.
-//! [`select_all`] (`input.select()`) highlights the whole value until the
-//! next key: typing then replaces it, Backspace clears it.
+//! Editing is Chromium's ([`super::editing`]): caret, selection, clipboard,
+//! undo, mouse and IME. Enter commits, focus loss blurs. [`select_all`]
+//! (`input.select()`) selects the whole value.
 
 use egui::accesskit::Role;
 use egui::{pos2, vec2, Event, Id, Key, Rect, Sense, Ui, Vec2, WidgetInfo};
+
+use super::editing::{self, Editor, Rules};
 
 use super::{take_focus, T120};
 use crate::app::vars::Vars;
@@ -155,8 +156,7 @@ fn paint_spin_button(painter: &egui::Painter, content: Rect, dark: bool) {
         (6.9, h - 1.0),
     ]);
 }
-/// `input.select()` on the field `id`: its whole value is selected until
-/// the next key.
+/// `input.select()` on the field `id`: its whole value is selected.
 pub fn select_all(ctx: &egui::Context, id: Id) {
     ctx.data_mut(|d| d.insert_temp(id.with("select-all"), true));
 }
@@ -209,10 +209,21 @@ pub struct TextInputEvents {
     pub focused: bool,
 }
 
-fn accepts(kind: InputKind, c: char) -> bool {
-    match kind {
-        InputKind::Number => c.is_ascii_digit() || matches!(c, '-' | '+' | '.' | 'e' | 'E'),
-        InputKind::Text | InputKind::Password | InputKind::Search => !c.is_control(),
+/// `type="number"`: Chromium accepts digits, sign, point and exponent.
+fn number_char(c: char) -> bool {
+    c.is_ascii_digit() || matches!(c, '-' | '+' | '.' | 'e' | 'E')
+}
+
+fn rules(props: &TextInputProps) -> Rules {
+    Rules {
+        accepts: if props.kind == InputKind::Number {
+            number_char
+        } else {
+            editing::printable
+        },
+        max_len: props.max_len,
+        secret: props.kind == InputKind::Password,
+        multiline: false,
     }
 }
 
@@ -233,11 +244,16 @@ pub fn text_input(
         rect,
         id,
         if props.enabled {
-            Sense::click()
+            // Dragging selects.
+            Sense::click_and_drag()
         } else {
             Sense::hover()
         },
     );
+    if props.enabled && response.hovered() {
+        // `cursor: auto` over an editable box.
+        ctx.set_cursor_icon(egui::CursorIcon::Text);
+    }
     let was_focused = ctx.data(|d| d.get_temp::<bool>(id.with("had-focus")).unwrap_or(false));
     let focused = props.enabled && take_focus(ui, &response);
     if focused {
@@ -260,85 +276,48 @@ pub fn text_input(
         blurred: was_focused && !focused,
         ..TextInputEvents::default()
     };
+    let rules = rules(props);
+    let caret_w = if st.caret_scaled { ppp.max(1.0) } else { 1.0 };
+    let mut text_rect = st.line_rect(rect, ppp);
+    if props.kind == InputKind::Search {
+        // The inner editor ends at the slot, its clip snapped like any box.
+        text_rect.max.x = snap::coord(text_rect.max.x - SEARCH_SLOT, ppp);
+    }
     let last_edit = id.with("edit-at");
-    let select_key = id.with("select-all");
-    let mut selected = focused
-        && !value.is_empty()
-        && ctx.data(|d| d.get_temp::<bool>(select_key).unwrap_or(false));
+    let mut ed = Editor::load(&ctx, id, value);
     if focused {
         let now = ui.input(|i| i.time);
         if !was_focused {
             ctx.data_mut(|d| d.insert_temp(last_edit, now));
+            ed.focus(value, ui.input(|i| i.key_pressed(Key::Tab)));
         }
+        if ctx.data_mut(|d| d.remove_temp::<bool>(id.with("select-all"))) == Some(true) {
+            ed.select_all(value);
+        }
+        let before = ed.view(&ctx, value, rules.secret, &font, text_rect, caret_w, true);
         let input: Vec<Event> = ui.input(|i| i.events.clone());
-        for event in input {
-            match event {
-                Event::Text(t) => {
-                    if selected && t.chars().any(|c| accepts(props.kind, c)) {
-                        value.clear();
-                        selected = false;
-                        events.changed = true;
-                    }
-                    for c in t.chars().filter(|c| accepts(props.kind, *c)) {
-                        if props.max_len.is_some_and(|m| value.chars().count() >= m) {
-                            break;
-                        }
-                        value.push(c);
-                        events.changed = true;
-                    }
-                }
-                Event::Key {
-                    key: Key::Backspace,
-                    pressed: true,
-                    ..
-                } => {
-                    if selected {
-                        value.clear();
-                        selected = false;
-                        events.changed = true;
-                    } else if value.pop().is_some() {
-                        events.changed = true;
-                    }
-                }
-                Event::Key {
-                    key: Key::ArrowLeft | Key::ArrowRight | Key::Home | Key::End | Key::Delete,
-                    pressed: true,
-                    ..
-                } => {
-                    if selected
-                        && matches!(
-                            event,
-                            Event::Key {
-                                key: Key::Delete,
-                                ..
-                            }
-                        )
-                    {
-                        value.clear();
-                        events.changed = true;
-                    }
-                    selected = false;
-                }
-                Event::Key {
-                    key: Key::Enter,
-                    pressed: true,
-                    ..
-                } => events.enter = true,
-                _ => {}
-            }
-        }
-        if events.changed {
+        let (caret, anchor) = (ed.caret, ed.anchor);
+        let edited = ed.edit(ui, &response, value, &rules, &before, &input);
+        events.changed = edited.changed;
+        events.enter = edited.enter;
+        if edited.changed || (ed.caret, ed.anchor) != (caret, anchor) {
+            // Chromium restarts the blink on every caret move.
             ctx.data_mut(|d| d.insert_temp(last_edit, now));
         }
+    } else if was_focused {
+        ed.blur();
     }
-    ctx.data_mut(|d| {
-        d.insert_temp(id.with("had-focus"), focused);
-        d.insert_temp(select_key, selected);
-    });
-    let shown: String = match props.kind {
-        InputKind::Password => "\u{2022}".repeat(value.chars().count()),
-        _ => value.clone(),
-    };
+    ctx.data_mut(|d| d.insert_temp(id.with("had-focus"), focused));
+    let view = ed.view(
+        &ctx,
+        value,
+        rules.secret,
+        &font,
+        text_rect,
+        caret_w,
+        focused,
+    );
+    let shown = view.shown.clone();
     response.widget_info(|| {
         WidgetInfo::text_edit(
             props.enabled,
@@ -378,64 +357,64 @@ pub fn text_input(
         ..BoxStyle::default()
     }
     .paint(ui.painter(), boxed);
-    let mut text_rect = st.line_rect(rect, ppp);
-    if props.kind == InputKind::Search {
-        // The inner editor ends at the slot, its clip snapped like any box.
-        text_rect.max.x = snap::coord(text_rect.max.x - SEARCH_SLOT, ppp);
-    }
     if props.kind == InputKind::Number && props.enabled && (focused || response.hovered()) {
         paint_spin_button(ui.painter(), text_rect, props.dark);
     }
     let painter = ui
         .painter()
         .with_clip_rect(text_rect.intersect(ui.clip_rect()));
-    // The text's width: the caret goes at its end.
-    let text_w = if shown.is_empty() {
+    if shown.is_empty() {
         if !props.placeholder.is_empty() {
             let placeholder = font.clone().color(st.placeholder.to_color32());
             text::paint(&painter, text_rect, props.placeholder, &placeholder);
         }
-        0.0
     } else {
-        if selected {
+        if let Some(sel) = view.selection_rect(text_rect).filter(|_| focused) {
             // `::selection { background: color-mix(--accent 45%, transparent) }`.
-            let w = text::measure(&ctx, &shown, &font).unwrap_or(0.0);
             painter.rect_filled(
-                snap::rect(
-                    Rect::from_min_size(text_rect.min, vec2(w, text_rect.height())),
-                    ppp,
-                ),
+                snap::rect(sel, ppp),
                 0.0,
                 v.accent.mix(0.45, Rgba::TRANSPARENT).to_color32(),
             );
         }
-        text::paint(&painter, text_rect, &shown, &font).map_or(0.0, |l| l.width)
-    };
-    if focused && !selected {
-        let now = ui.input(|i| i.time);
-        let since = now - ctx.data(|d| d.get_temp::<f64>(last_edit).unwrap_or(now));
-        let phase = (since / BLINK).floor() as i64;
-        if phase % 2 == 0 {
-            ui.painter().rect_filled(
-                caret_rect(st, text_rect, text_w, !shown.is_empty(), ppp),
-                0.0,
-                v.fg.to_color32(),
-            );
-        }
-        let next = BLINK * (phase + 1) as f64 - since;
-        ctx.request_repaint_after(std::time::Duration::from_secs_f64(next.max(0.01)));
+        text::paint(&painter, view.scrolled, &shown, &font);
+        view.paint_preedit(&painter, text_rect, v.fg.to_color32());
     }
+    if focused {
+        let caret = caret_rect(
+            st,
+            view.scrolled,
+            view.width(),
+            view.offsets[view.caret],
+            !shown.is_empty(),
+            ppp,
+        );
+        if !rules.secret {
+            editing::ime(&ctx, boxed, caret);
+        }
+        if view.selection.is_empty() {
+            let now = ui.input(|i| i.time);
+            let since = now - ctx.data(|d| d.get_temp::<f64>(last_edit).unwrap_or(now));
+            let phase = (since / BLINK).floor() as i64;
+            if phase % 2 == 0 {
+                painter.rect_filled(caret, 0.0, v.fg.to_color32());
+            }
+            let next = BLINK * (phase + 1) as f64 - since;
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(next.max(0.01)));
+        }
+    }
+    ed.store(&ctx, id, value);
     events
 }
 
-/// The caret after `text_w` (points) of text in the line box `line`:
-/// `caret_height` rounded to device pixels and centred. Its left edge is
-/// the text's end in `LayoutUnit`s (the width truncated to 1/64 device px,
-/// after half the free space under `text-align: center`);
-/// after text Blink moves it back half its width and rounds, on an empty
-/// line it stays on the floored end (measured at 1x and 1.5x: 645 empty,
-/// 659 after "12" ending at 660, 2 device px wide).
-fn caret_rect(st: &FieldStyle, line: Rect, text_w: f32, after_text: bool, ppp: f32) -> Rect {
+/// The caret `at` points into `text_w` points of text in the line box
+/// `line`: `caret_height` rounded to device pixels and centred. Its left
+/// edge is the offset in `LayoutUnit`s (truncated to 1/64 device px, after
+/// half the free space under `text-align: center`); in text Blink moves it
+/// back half its width and rounds, on an empty line it stays on the
+/// floored offset (measured at 1x and 1.5x: 645 empty, 659 after "12"
+/// ending at 660, 2 device px wide).
+fn caret_rect(st: &FieldStyle, line: Rect, text_w: f32, at: f32, in_text: bool, ppp: f32) -> Rect {
     let h = snap::round_device(st.caret_height * ppp);
     // The caret spans the text fragment, `h` (rounded ascent plus rounded
     // descent) below a half-leading LayoutNG floors to a whole pixel
@@ -447,6 +426,7 @@ fn caret_rect(st: &FieldStyle, line: Rect, text_w: f32, after_text: bool, ppp: f
     let caret = if st.caret_scaled { ppp.max(1.0) } else { 1.0 };
     let start = snap::layout_unit(line.left() * ppp);
     let text = (text_w * ppp * 64.0).floor() / 64.0;
+    let at = (at * ppp * 64.0).floor() / 64.0;
     let lead = if st.font.align == TextAlign::Center {
         let free = snap::layout_unit(line.right() * ppp) - start - text;
         ((free * 32.0).floor() / 64.0).max(0.0)
@@ -457,11 +437,11 @@ fn caret_rect(st: &FieldStyle, line: Rect, text_w: f32, after_text: bool, ppp: f
     // on the text's end and rounded to a whole pixel from the field's inner
     // editor (`ClampAndRound`), whose origin keeps its fraction; painting
     // then snaps both edges, so a 1.5 px caret is 1 or 2 device px.
-    let (left, right) = if after_text {
-        let x = start + ((lead + text - caret / 2.0).max(0.0) + 0.5).floor();
+    let (left, right) = if in_text {
+        let x = start + ((lead + at - caret / 2.0).max(0.0) + 0.5).floor();
         ((x + 0.5).floor(), (x + caret + 0.5).floor())
     } else {
-        let left = (start + lead + text).floor();
+        let left = (start + lead + at).floor();
         (left, (left + caret + 0.5).floor())
     };
     let w = (right - left).max(1.0);

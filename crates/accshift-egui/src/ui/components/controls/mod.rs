@@ -11,6 +11,7 @@
 
 pub mod button;
 pub mod card;
+pub mod editing;
 pub mod scroll;
 pub mod select;
 pub mod slider;

@@ -40,6 +40,7 @@ use crate::app::vars::Vars;
 use crate::theme::Rgba;
 use crate::ui::anim::{self, Animation, Keyframes, Timing};
 use crate::ui::backdrop_filter::Mark;
+use crate::ui::components::controls::editing::{self, Editor, Rules};
 use crate::ui::components::controls::scroll::{self, nearest};
 use crate::ui::paint::{Border, BoxShadow, BoxStyle, Corners};
 use crate::ui::snap;
@@ -279,27 +280,19 @@ fn field_keys(ui: &Ui, view: &mut PaletteView, count: usize) -> (bool, bool) {
     (moved, enter)
 }
 
-/// Typing into the field: text appends, Backspace removes the last
-/// character. Returns whether the query changed.
-fn edit(ui: &Ui, view: &mut PaletteView) -> bool {
+/// The field's keys ([`editing`]), before the list filters on the query.
+/// Returns whether the query or the caret changed.
+fn edit(ui: &Ui, view: &mut PaletteView, input: Id) -> bool {
+    let ctx = ui.ctx();
     let mut next = view.model.query().to_string();
-    ui.input(|i| {
-        for event in &i.events {
-            match event {
-                Event::Text(t) => next.push_str(t),
-                Event::Key {
-                    key: Key::Backspace,
-                    pressed: true,
-                    ..
-                } => {
-                    next.pop();
-                }
-                _ => {}
-            }
-        }
-    });
+    let mut ed = Editor::load(ctx, input, &next);
+    let events: Vec<Event> = ui.input(|i| i.events.clone());
+    let caret = (ed.caret, ed.anchor);
+    ed.keys(ctx, &mut next, &events, &Rules::text());
+    let moved = (ed.caret, ed.anchor) != caret;
+    ed.store(ctx, input, &next);
     if next == view.model.query() {
-        return false;
+        return moved;
     }
     view.model.set_query(next);
     true
@@ -328,7 +321,7 @@ pub fn command_palette(
     let focused = ctx.memory(|m| m.has_focus(input));
     if focused {
         crate::ui::components::focus::mark_text_field(&ctx, input);
-        if edit(ui, view) {
+        if edit(ui, view, input) {
             view.blink_from = props.now;
         }
     }
@@ -520,7 +513,7 @@ pub fn command_palette(
 fn paint_field(
     ui: &mut Ui,
     props: &PaletteProps,
-    view: &PaletteView,
+    view: &mut PaletteView,
     f: &Fonts,
     id: Id,
     rect: Rect,
@@ -531,14 +524,15 @@ fn paint_field(
     let ppp = ctx.pixels_per_point();
     let v = props.vars;
     let field = Rect::from_min_max(rect.min, pos2(rect.right(), rect.bottom() - rule));
+    // Dragging selects.
     let response = ui
-        .interact(snap::rect(field, ppp), id, Sense::click())
+        .interact(snap::rect(field, ppp), id, Sense::click_and_drag())
         .on_hover_cursor(egui::CursorIcon::Text);
     let placeholder = i18n::translate(props.locale, "palette.placeholder");
     response.widget_info(|| {
         egui::WidgetInfo::text_edit(true, view.model.query(), view.model.query(), &placeholder)
     });
-    if response.clicked() {
+    if response.is_pointer_button_down_on() {
         response.request_focus();
     }
     // `border-bottom: 1px solid var(--border)`.
@@ -556,43 +550,74 @@ fn paint_field(
             pos2(text_rect.left(), field.top()),
             pos2(text_rect.right(), field.bottom()),
         )));
-    let query = view.model.query();
+    let query = view.model.query().to_string();
+    let caret_w = ppp.max(1.0);
+    let mut ed = Editor::load(&ctx, id, &query);
+    if focused {
+        let before = ed.view(&ctx, &query, false, &f.input, text_rect, caret_w, true);
+        let caret = (ed.caret, ed.anchor);
+        ed.pointer(ui, &response, &query, &Rules::text(), &before);
+        if (ed.caret, ed.anchor) != caret {
+            view.blink_from = props.now;
+        }
+    } else {
+        ed.blur();
+    }
+    let shown = ed.view(&ctx, &query, false, &f.input, text_rect, caret_w, focused);
     if query.is_empty() {
         let style = f.input.clone().color(v.fg_subtle.to_color32());
         text::paint(&painter, text_rect, &placeholder, &style);
     } else {
+        if let Some(sel) = shown.selection_rect(text_rect).filter(|_| focused) {
+            // `::selection { background: color-mix(--accent 45%, transparent) }`.
+            painter.rect_filled(
+                snap::rect(sel, ppp),
+                0.0,
+                v.accent.mix(0.45, Rgba::TRANSPARENT).to_color32(),
+            );
+        }
         let style = f.input.clone().color(v.fg.to_color32());
-        text::paint(&painter, text_rect, query, &style);
+        text::paint(&painter, shown.scrolled, &shown.shown, &style);
+        shown.paint_preedit(&painter, text_rect, v.fg.to_color32());
     }
     if focused {
         let now = props.now;
-        let phase = ((now - view.blink_from) / CARET_BLINK).floor() as i64;
-        if phase % 2 == 0 {
-            let text_w = text::measure(&ctx, query, &f.input).unwrap_or(0.0);
-            let baseline = f.input.line_box(&ctx).map_or(line, |l| l.baseline);
-            let caret = caret_rect(text_rect, baseline, text_w, !query.is_empty(), ppp);
-            ui.painter().rect_filled(caret, 0.0, v.fg.to_color32());
+        let baseline = f.input.line_box(&ctx).map_or(line, |l| l.baseline);
+        let caret = caret_rect(
+            shown.scrolled,
+            baseline,
+            shown.offsets[shown.caret],
+            !query.is_empty(),
+            ppp,
+        );
+        editing::ime(&ctx, field, caret);
+        if shown.selection.is_empty() {
+            let phase = ((now - view.blink_from) / CARET_BLINK).floor() as i64;
+            if phase % 2 == 0 {
+                painter.rect_filled(caret, 0.0, v.fg.to_color32());
+            }
+            let next_flip = view.blink_from + (phase + 1) as f64 * CARET_BLINK;
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(
+                (next_flip - now).max(0.0),
+            ));
         }
-        let next_flip = view.blink_from + (phase + 1) as f64 * CARET_BLINK;
-        ctx.request_repaint_after(std::time::Duration::from_secs_f64(
-            (next_flip - now).max(0.0),
-        ));
     }
+    ed.store(&ctx, id, &query);
 }
 
 /// Blink's caret in the 14 px field: from the baseline up the ascent and
 /// down the descent of Segoe UI's win metrics (2210 and 514 per 2048), each
 /// rounded in device px (measured on WebView2: 19 px at 1x, 28 at 1.5x;
-/// the 13 px dialog field gives 17 and 26). Its left edge is the text's
-/// end in layout units, moved back half the caret's width and rounded
-/// after text, floored on an empty field; it is 1 CSS px wide.
-fn caret_rect(line: Rect, baseline: f32, text_w: f32, after_text: bool, ppp: f32) -> Rect {
+/// the 13 px dialog field gives 17 and 26). Its left edge is the caret's
+/// offset `at` in layout units, moved back half the caret's width and
+/// rounded in text, floored on an empty field; it is 1 CSS px wide.
+fn caret_rect(line: Rect, baseline: f32, at: f32, after_text: bool, ppp: f32) -> Rect {
     let size = 14.0 * ppp;
     let ascent = (size * 2210.0 / 2048.0).round();
     let descent = (size * 514.0 / 2048.0).round();
     let base = snap::round_device((line.top() + baseline) * ppp);
     let caret = ppp.max(1.0);
-    let end = snap::layout_unit(line.left() * ppp) + (text_w * ppp * 64.0).floor() / 64.0;
+    let end = snap::layout_unit(line.left() * ppp) + (at * ppp * 64.0).floor() / 64.0;
     let left = if after_text {
         (end - caret / 2.0 + 0.5).floor()
     } else {

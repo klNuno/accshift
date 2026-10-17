@@ -56,6 +56,7 @@ use crate::ui::components::avatar_fade_in;
 use crate::ui::components::back_card::{self, BackCardEvent, BackCardProps};
 use crate::ui::components::breadcrumb::{self, BreadcrumbProps, Crumb};
 use crate::ui::components::context_menu;
+use crate::ui::components::controls::editing::{self, Editor, Rules};
 use crate::ui::components::controls::scroll;
 use crate::ui::components::folder_card::{self, entrance, FolderCardEvent, FolderCardProps};
 use crate::ui::components::list_view::{self, ListEvent, ListHost, ListProps, ListState};
@@ -2219,14 +2220,15 @@ fn search_field(
     let layout = rect;
     let rect = snap::rect(rect, ppp);
     let id = Id::new(crate::app::keys::SEARCH_ID);
-    let response = ui.interact(rect, id, Sense::click());
+    // Dragging selects.
+    let response = ui.interact(rect, id, Sense::click_and_drag());
     let response = response.on_hover_cursor(egui::CursorIcon::Text);
     response.widget_info(|| WidgetInfo::text_edit(true, value, value, placeholder));
     ctx.accesskit_node_builder(id, |node| {
         node.set_role(egui::accesskit::Role::SearchInput);
         node.set_label(placeholder);
     });
-    if response.clicked() {
+    if response.is_pointer_button_down_on() {
         response.request_focus();
     }
     let bw = snap::border_width(1.0, ppp);
@@ -2245,42 +2247,60 @@ fn search_field(
     if focused {
         crate::ui::components::focus::mark_text_field(&ctx, id);
     }
-    if focused && !state.focused {
+    let gained = focused && !state.focused;
+    if gained {
         state.blink_from = now;
     }
+    let blurred = state.focused && !focused;
     state.focused = focused;
+
+    // The inner editor: 12 px on a `normal` line (the UA `font:` shorthand
+    // resets the inherited 1.5), centred in the content box in LayoutUnits,
+    // unsnapped (`padding: 0 10px` inside a 1 px border floored to device
+    // pixels). It ends at the clear button and its 1 px start margin, which
+    // keep their room while hidden.
+    let style = TextStyle::new(12.0, 400)
+        .line_height(LineHeight::Normal)
+        .nowrap(false);
+    let line = style.line_box(&ctx).map_or(16.0, |l| l.height);
+    let inset = bw + 10.0;
+    let top = layout.top() + bw + snap::centre(SEARCH_H - 2.0 * bw, line, ppp);
+    let text_rect = Rect::from_min_max(
+        pos2(layout.left() + inset, top),
+        pos2(layout.right() - inset, top + line),
+    );
+    let editor_rect = Rect::from_x_y_ranges(
+        text_rect.left()..=cancel_rect.left() - 1.0,
+        text_rect.y_range(),
+    );
 
     let mut next = if cleared {
         String::new()
     } else {
         value.to_string()
     };
+    let rules = Rules::text();
+    let caret_w = 1.0 * ppp;
+    let mut ed = Editor::load(&ctx, id, value);
     if focused {
-        ctx.input(|i| {
-            for event in &i.events {
-                match event {
-                    Event::Text(t) => next.push_str(t),
-                    Event::Key {
-                        key: Key::Backspace,
-                        pressed: true,
-                        ..
-                    } => {
-                        next.pop();
-                    }
-                    // `type="search"`: Escape clears the field.
-                    Event::Key {
-                        key: Key::Escape,
-                        pressed: true,
-                        ..
-                    } => next.clear(),
-                    _ => {}
-                }
-            }
-        });
-        if next != value {
+        if gained {
+            ed.focus(&next, ui.input(|i| i.key_pressed(Key::Tab)));
+        }
+        let before = ed.view(&ctx, &next, false, &style, editor_rect, caret_w, true);
+        let input: Vec<Event> = ui.input(|i| i.events.clone());
+        let (caret, anchor) = (ed.caret, ed.anchor);
+        let edited = ed.edit(ui, &response, &mut next, &rules, &before, &input);
+        // `type="search"`: Escape clears the field.
+        if edited.escape {
+            next.clear();
+        }
+        if next != value || (ed.caret, ed.anchor) != (caret, anchor) {
             state.blink_from = now;
         }
+    } else if blurred {
+        ed.blur();
     }
+    let view = ed.view(&ctx, &next, false, &style, editor_rect, caret_w, focused);
 
     let border = if focused {
         v.fg.mix(0.35, v.border)
@@ -2294,29 +2314,12 @@ fn search_field(
         ..BoxStyle::default()
     }
     .paint(ui.painter(), rect);
-    // The inner editor: 12 px on a `normal` line (the UA `font:` shorthand
-    // resets the inherited 1.5), centred in the content box in LayoutUnits,
-    // unsnapped (`padding: 0 10px` inside a 1 px border floored to device
-    // pixels).
-    let style = TextStyle::new(12.0, 400)
-        .line_height(LineHeight::Normal)
-        .nowrap(false);
-    let line = style.line_box(&ctx).map_or(16.0, |l| l.height);
-    let inset = bw + 10.0;
-    let top = layout.top() + bw + snap::centre(SEARCH_H - 2.0 * bw, line, ppp);
-    let text_rect = Rect::from_min_max(
-        pos2(layout.left() + inset, top),
-        pos2(layout.right() - inset, top + line),
-    );
-    // The editor ends at the clear button and its 1 px start margin, which
-    // keep their room while hidden.
     let mut painter = ui.painter().clone();
     painter.set_clip_rect(ui.clip_rect().intersect(Rect::from_min_max(
         pos2(text_rect.left(), rect.top()),
         pos2(cancel_rect.left() - 1.0, rect.bottom()),
     )));
-    let shown = next.as_str();
-    if shown.is_empty() {
+    if next.is_empty() {
         let color = v.fg_subtle.mix(0.55, Rgba::TRANSPARENT);
         text::paint(
             &painter,
@@ -2325,32 +2328,44 @@ fn search_field(
             &style.clone().color(color.to_color32()),
         );
     } else {
+        if let Some(sel) = view.selection_rect(text_rect).filter(|_| focused) {
+            // `::selection { background: color-mix(--accent 45%, transparent) }`.
+            painter.rect_filled(
+                snap::rect(sel, ppp),
+                0.0,
+                v.accent.mix(0.45, Rgba::TRANSPARENT).to_color32(),
+            );
+        }
         text::paint(
             &painter,
-            text_rect,
-            shown,
+            view.scrolled,
+            &view.shown,
             &style.clone().color(v.fg.to_color32()),
         );
+        view.paint_preedit(&painter, text_rect, v.fg.to_color32());
     }
     if !next.is_empty() && (focused || hovered) {
         search_cancel::paint(&ctx, ui.painter(), cancel_rect, dark);
     }
     if focused {
-        let phase = ((now - state.blink_from) / CARET_BLINK).floor() as i64;
-        if phase % 2 == 0 {
-            let x = text_rect.left() + text::measure(&ctx, shown, &style).unwrap_or(0.0);
-            let x = snap::coord(x, ppp);
-            let caret = Rect::from_min_max(
-                pos2(x, snap::coord(text_rect.top(), ppp)),
-                pos2(x + 1.0, snap::coord(text_rect.bottom(), ppp)),
-            );
-            painter.rect_filled(caret, 0.0, v.fg.to_color32());
+        let x = snap::coord(view.x(view.caret), ppp);
+        let caret = Rect::from_min_max(
+            pos2(x, snap::coord(text_rect.top(), ppp)),
+            pos2(x + 1.0, snap::coord(text_rect.bottom(), ppp)),
+        );
+        editing::ime(&ctx, rect, caret);
+        if view.selection.is_empty() {
+            let phase = ((now - state.blink_from) / CARET_BLINK).floor() as i64;
+            if phase % 2 == 0 {
+                painter.rect_filled(caret, 0.0, v.fg.to_color32());
+            }
+            let next_flip = state.blink_from + (phase + 1) as f64 * CARET_BLINK;
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(
+                (next_flip - now).max(0.0),
+            ));
         }
-        let next_flip = state.blink_from + (phase + 1) as f64 * CARET_BLINK;
-        ctx.request_repaint_after(std::time::Duration::from_secs_f64(
-            (next_flip - now).max(0.0),
-        ));
     }
+    ed.store(&ctx, id, &next);
     (next != value).then_some(next)
 }
 
@@ -2684,6 +2699,172 @@ mod scene_tests {
 
     fn only_cards(boxes: Vec<Box4>) -> Vec<Box4> {
         boxes.into_iter().filter(|b| b.4 == 136.0).collect()
+    }
+
+    /// The search field edits like an `<input>`: the caret moves, a paste
+    /// replaces the selection without its line break, cut and undo work.
+    #[test]
+    fn search_edits_like_an_input() {
+        let key = |key: Key, modifiers: Modifiers| Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let mut run = Run::new("workspace-glass-dark-100", 1.0);
+        run.settle();
+        run.click(pos2(639.0, 60.0));
+        run.send(Event::Text("rnked".into()));
+        run.frame();
+        run.send(key(Key::Home, Modifiers::NONE));
+        run.send(key(Key::ArrowRight, Modifiers::NONE));
+        run.frame();
+        run.send(Event::Text("a".into()));
+        run.frame();
+        run.settle();
+        assert_eq!(only_cards(run.boxes()), cards(&["ranked grind"], 84.0));
+        run.send(key(Key::A, Modifiers::COMMAND));
+        run.frame();
+        run.send(Event::Paste("trad\n".into()));
+        run.frame();
+        run.settle();
+        assert_eq!(only_cards(run.boxes()), cards(&["trading"], 84.0));
+        run.send(key(Key::A, Modifiers::COMMAND));
+        run.frame();
+        run.send(Event::Cut);
+        run.frame();
+        run.settle();
+        assert_eq!(only_cards(run.boxes()).len(), 14);
+        run.send(key(Key::Z, Modifiers::COMMAND));
+        run.frame();
+        run.settle();
+        assert_eq!(only_cards(run.boxes()), cards(&["trading"], 84.0));
+    }
+
+    /// The mouse places the caret, a double click takes the word and its
+    /// trailing space, a drag selects.
+    #[test]
+    fn search_follows_the_mouse() {
+        let mut run = Run::new("workspace-glass-dark-100", 1.0);
+        run.settle();
+        run.click(pos2(639.0, 60.0));
+        let id = egui::Id::new(crate::app::keys::SEARCH_ID);
+        let field = run.ctx.read_response(id).unwrap().rect;
+        // The text starts after the 1 px border and the 10 px padding.
+        let at = |dx: f32| pos2(field.left() + 11.0 + dx, field.center().y);
+        let query = |run: &Run| match &run.screen {
+            Screen::App(app) => app
+                .booted()
+                .unwrap()
+                .accounts
+                .navigation
+                .search_query()
+                .to_string(),
+            _ => panic!("not the app"),
+        };
+        let press = |run: &mut Run, pos: Pos2, pressed: bool| {
+            run.send(Event::PointerMoved(pos));
+            run.send(Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+            run.frame();
+        };
+
+        run.send(Event::Text("anked".into()));
+        run.frame();
+        run.key(Key::Home);
+        // Past the text's end: the caret goes to the end.
+        press(&mut run, at(80.0), true);
+        press(&mut run, at(80.0), false);
+        run.send(Event::Text("x".into()));
+        run.frame();
+        assert_eq!(query(&run), "ankedx");
+
+        // A drag from the end to the start selects everything.
+        press(&mut run, at(80.0), true);
+        run.send(Event::PointerMoved(at(0.0)));
+        run.frame();
+        press(&mut run, at(-4.0), false);
+        run.send(Event::Text("ranked grind".into()));
+        run.frame();
+        assert_eq!(query(&run), "ranked grind");
+
+        // A double click on "ranked" takes "ranked ".
+        std::thread::sleep(Duration::from_millis(600));
+        for pressed in [true, false, true, false] {
+            press(&mut run, at(8.0), pressed);
+        }
+        run.send(Event::Text("x".into()));
+        run.frame();
+        assert_eq!(query(&run), "xgrind");
+    }
+
+    /// The theme editor's custom CSS edits like a `<textarea>`: Enter
+    /// breaks the line, the arrows move by row, a paste keeps its lines.
+    #[test]
+    fn theme_css_edits_like_a_textarea() {
+        fn wait(run: &mut Run, ms: u64) {
+            let until = Instant::now() + Duration::from_millis(ms);
+            while Instant::now() < until {
+                run.frame();
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        let key = |key: Key| Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        // The steps of `theme-editor-glass-dark-100` up to its "css" shot.
+        let mut run = Run::new("theme-editor-glass-dark-100", 1.0);
+        run.settle();
+        wait(&mut run, 600);
+        run.click(pos2(87.0, 18.0));
+        wait(&mut run, 700);
+        run.click(pos2(566.0, 376.0));
+        wait(&mut run, 600);
+        run.send(Event::PointerMoved(pos2(430.0, 220.0)));
+        run.send(Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, -4000.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: Modifiers::NONE,
+        });
+        wait(&mut run, 400);
+        run.click(pos2(400.0, 230.0));
+        let css = |run: &Run| match &run.screen {
+            Screen::App(app) => app
+                .settings_panel()
+                .and_then(|p| p.theme_editor.as_ref())
+                .map(|e| e.css.clone())
+                .unwrap(),
+            _ => panic!("not the app"),
+        };
+        for event in [
+            Event::Text("a{}".into()),
+            key(Key::Enter),
+            Event::Text("bc{}".into()),
+            key(Key::ArrowLeft),
+            key(Key::ArrowUp),
+            Event::Text("X".into()),
+        ] {
+            run.send(event);
+            run.frame();
+        }
+        assert_eq!(css(&run), "a{}X\nbc{}");
+        run.send(key(Key::ArrowDown));
+        run.frame();
+        run.send(key(Key::End));
+        run.frame();
+        run.send(Event::Paste("\r\nd{}\r\n".into()));
+        run.frame();
+        assert_eq!(css(&run), "a{}X\nbc{}\nd{}\n");
     }
 
     /// Card order and positions equal the reference's DOM rects

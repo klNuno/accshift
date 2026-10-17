@@ -789,6 +789,42 @@ pub fn measure(ctx: &Context, text: &str, style: &TextStyle) -> Option<f32> {
     .map(|l| l.width)
 }
 
+/// The x of every character boundary of `text` as an inline box of this
+/// style, in CSS px from its start: the pen before each glyph, then the
+/// box's width.
+pub fn offsets(ctx: &Context, text: &str, style: &TextStyle) -> Option<Vec<f32>> {
+    let mut style = style.clone();
+    style.nowrap = true;
+    style.ellipsis = false;
+    style.align = TextAlign::Left;
+    let laid = layout_at(
+        ctx,
+        text,
+        &style,
+        Rect::from_min_size(Pos2::ZERO, vec2(f32::INFINITY, 0.0)),
+        None,
+    )?;
+    let glyphs: Vec<&egui::epaint::text::Glyph> = laid
+        .galley
+        .rows
+        .iter()
+        .flat_map(|r| r.row.glyphs.iter())
+        .collect();
+    let n = text.chars().count();
+    let mut out = Vec::with_capacity(n + 1);
+    if glyphs.len() == n {
+        let start = glyphs.first().map_or(0.0, |g| g.pos.x);
+        out.extend(glyphs.iter().map(|g| g.pos.x - start));
+    } else {
+        // Not one glyph per character: measure each prefix.
+        for (i, _) in text.char_indices() {
+            out.push(measure(ctx, &text[..i], &style)?);
+        }
+    }
+    out.push(laid.width);
+    Some(out)
+}
+
 /// Whether the faces of `style` are bound in the current frame.
 pub fn ready(ctx: &Context, style: &TextStyle) -> bool {
     resolve(
