@@ -51,6 +51,9 @@ url = { version = "2", features = ["serde"] }
 percent-encoding = "2"
 infer = "0.19"
 tempfile = "3"
+# `lifecycle::deep_link`: `dunce::simplified` of the canonical exe path, as
+# tauri-utils resolves it before the plugin writes `"<exe>" "%1"`.
+dunce = "1"
 
 [target.'cfg(windows)'.dependencies]
 # `get_desktop_wallpaper`: the Progman capture of
@@ -71,9 +74,6 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 # `lifecycle::deep_link`: the HKCU scheme registration, on the crate
 # tauri-plugin-deep-link 2.4 writes it with.
 windows-registry = "0.5"
-# `lifecycle::deep_link`: `dunce::simplified` of the canonical exe path, as
-# the plugin writes `"<exe>" "%1"`.
-dunce = "1"
 # `lifecycle::updater`: the updater zip of an NSIS or MSI bundle, as the
 # plugin's default `zip` feature reads it.
 zip = { version = "4", default-features = false }
