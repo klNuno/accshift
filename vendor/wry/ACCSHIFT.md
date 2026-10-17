@@ -9,3 +9,5 @@ Upstream wry 0.55.1 from crates.io (Apache-2.0 OR MIT, licenses alongside), wire
 ## Updating
 
 Tauri pins wry through `tauri-runtime-wry`. When it moves to another wry version, this patch stops applying (cargo warns `patch ... was not used`) and the launcher fails to build, since upstream has no `webview2_prestart`. To move along: copy the new upstream crate over this directory, drop `examples/`, the `[[example]]` and dev-dependency sections of `Cargo.toml`, and replay the three changes above.
+
+Dependabot leaves tauri minors alone for that reason (`.github/dependabot.yml`). The `@tauri-apps/api` and `@tauri-apps/plugin-*` npm packages move in the same change: `tauri build` stops on any whose major.minor differs from its Rust crate.
