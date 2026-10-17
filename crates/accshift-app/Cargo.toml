@@ -69,9 +69,6 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 # `lifecycle::deep_link`: the HKCU scheme registration, on the crate
 # tauri-plugin-deep-link 2.4 writes it with.
 windows-registry = "0.5"
-# `lifecycle::updater`: the updater zip of an NSIS or MSI bundle, as the
-# plugin's default `zip` feature reads it.
-zip = { version = "4", default-features = false }
 # `legacy_web_storage`: reads the WebView2 localStorage LevelDB of v0.x
 # installs. Pure Rust, Snappy blocks and the `.log` replay included. No `fs`
 # feature: the files are copied into its in-memory env, never opened on disk.

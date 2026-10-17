@@ -45,8 +45,6 @@ pub enum UpdaterError {
     Base64(String),
     /// error.rs line 60.
     SignatureUtf8(String),
-    /// Transparent `zip::result::ZipError` (Windows).
-    Extract(String),
     /// error.rs line 67.
     TempDirNotOnSameMountPoint,
     /// error.rs line 69.
@@ -73,8 +71,7 @@ impl fmt::Display for UpdaterError {
             | Self::UrlParse(text)
             | Self::Reqwest(text)
             | Self::Minisign(text)
-            | Self::Base64(text)
-            | Self::Extract(text) => f.write_str(text),
+            | Self::Base64(text) => f.write_str(text),
             Self::ReleaseNotFound => {
                 f.write_str("Could not fetch a valid release JSON from the remote")
             }

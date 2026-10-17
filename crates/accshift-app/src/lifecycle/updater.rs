@@ -966,13 +966,9 @@ impl Update {
         join_os(&args, " ")
     }
 
-    /// updater.rs lines 947-954: a zip of the installer, else the
-    /// installer itself.
+    /// updater.rs lines 947-954 without the plugin's `zip` feature, off in
+    /// the Tauri app too: the release feed serves the installer itself.
     pub fn extract(&self, bytes: &[u8]) -> UpdaterResult<WindowsUpdaterType> {
-        #[cfg(windows)]
-        if infer::archive::is_zip(bytes) {
-            return self.extract_zip(bytes);
-        }
         self.extract_exe(bytes)
     }
 
@@ -986,27 +982,6 @@ impl Update {
             ))
             .tempdir()?
             .keep())
-    }
-
-    /// updater.rs lines 966-986.
-    #[cfg(windows)]
-    fn extract_zip(&self, bytes: &[u8]) -> UpdaterResult<WindowsUpdaterType> {
-        let temp_dir = self.make_temp_dir()?;
-        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
-            .map_err(|e| UpdaterError::Extract(e.to_string()))?;
-        archive
-            .extract(&temp_dir)
-            .map_err(|e| UpdaterError::Extract(e.to_string()))?;
-        for entry in std::fs::read_dir(&temp_dir)? {
-            let path = entry?.path();
-            let ext = path.extension();
-            if ext == Some(OsStr::new("exe")) {
-                return Ok(WindowsUpdaterType::nsis(path, None));
-            } else if ext == Some(OsStr::new("msi")) {
-                return Ok(WindowsUpdaterType::msi(path, None));
-            }
-        }
-        Err(UpdaterError::BinaryNotFoundInArchive)
     }
 
     /// updater.rs lines 988-998.

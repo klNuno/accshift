@@ -949,29 +949,11 @@ fn the_windows_install_launches_the_nsis_setup_then_exits() {
     std::fs::remove_dir_all(folder).unwrap();
 }
 
-#[cfg(windows)]
 #[test]
-fn the_windows_install_takes_the_setup_out_of_a_zip() {
+fn a_zipped_setup_is_refused_as_without_the_plugins_zip_feature() {
     let update = offline_update("1.3.0", &["accshift.exe"], WindowsUpdateInstallMode::Quiet);
-    let mut zipped = std::io::Cursor::new(Vec::new());
-    {
-        let mut writer = zip::ZipWriter::new(&mut zipped);
-        let options = zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored);
-        writer
-            .start_file("Accshift_1.3.0_x64-setup.exe", options)
-            .unwrap();
-        writer.write_all(&fake_setup()).unwrap();
-        writer.finish().unwrap();
-    }
-    let host = RecordingHost::default();
-    update.install(zipped.get_ref(), &host).unwrap();
-    let (file, parameters, existed) = host.launched.lock().unwrap().take().unwrap();
-    let file = std::path::PathBuf::from(file);
-    assert!(existed);
-    assert_eq!(file.file_name().unwrap(), "Accshift_1.3.0_x64-setup.exe");
-    assert_eq!(parameters, "/S /UPDATE /R /ARGS");
-    std::fs::remove_dir_all(file.parent().unwrap()).unwrap();
+    let error = update.extract(b"PK\x03\x04\x14\x00\x00\x00").unwrap_err();
+    assert_eq!(error.to_string(), "invalid updater binary format");
 }
 
 #[test]
