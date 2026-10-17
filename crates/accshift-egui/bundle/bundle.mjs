@@ -4,10 +4,11 @@
 // installing it over v1.0.x is an ordinary update.
 //
 // The bundler packs `<target>/<triple>/release/accshift-gui.exe` when given a
-// target triple. The egui binary is copied there under that name: a plain
-// build of the Tauri app writes `<target>/release`, so its accshift-gui.exe is
-// never replaced, even in a target dir both share. bundle/tauri.conf.json
-// drops the WebView2 bootstrapper and swaps the installer hooks.
+// target triple, `<target>` being the root workspace's. The egui binary is
+// copied there under that name: a plain build of the Tauri app writes
+// `<target>/release`, so its accshift-gui.exe is never replaced, even in a
+// target dir both share. bundle/tauri.conf.json drops the WebView2
+// bootstrapper and swaps the installer hooks.
 //
 //   node crates/accshift-egui/bundle/bundle.mjs [--exe <accshift-egui.exe>] [--no-updater]
 //
@@ -34,22 +35,21 @@ const option = (name) => {
   return at >= 0 ? args[at + 1] : undefined;
 };
 
-// The crate is a workspace of its own: ask cargo where it writes, like
-// scripts/stage-cli.mjs does for the root workspace.
-function targetDirectory() {
-  if (process.env.CARGO_TARGET_DIR) return process.env.CARGO_TARGET_DIR;
+// This crate is a workspace of its own, so it builds into its own target dir
+// unless CARGO_TARGET_DIR or a cargo config sends both to one place. Ask cargo
+// for each, like scripts/stage-cli.mjs does for the root workspace.
+function targetDirectory(cwd) {
   const out = execFileSync("cargo", ["metadata", "--format-version", "1", "--no-deps"], {
     encoding: "utf8",
-    cwd: crate,
+    cwd,
     maxBuffer: 32 * 1024 * 1024,
   });
   return JSON.parse(out).target_directory;
 }
 
 const triple = "x86_64-pc-windows-msvc";
-const target = targetDirectory();
-const exe = option("--exe") ?? join(target, "release", "accshift-egui.exe");
-const release = join(target, triple, "release");
+const exe = option("--exe") ?? join(targetDirectory(crate), "release", "accshift-egui.exe");
+const release = join(targetDirectory(root), triple, "release");
 mkdirSync(release, { recursive: true });
 copyFileSync(exe, join(release, "accshift-gui.exe"));
 console.log(`staged GUI: ${exe} -> ${join(release, "accshift-gui.exe")}`);

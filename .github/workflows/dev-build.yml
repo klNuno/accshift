@@ -19,8 +19,7 @@ jobs:
           - os: windows-latest
             artifact_name: accshift-windows
             artifact_paths: |
-              target/release/bundle/nsis/*.exe
-              target/release/bundle/msi/*.msi
+              target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
           - os: ubuntu-latest
             artifact_name: accshift-linux
             artifact_paths: |
@@ -64,7 +63,17 @@ jobs:
       # No ACCSHIFT_TELEMETRY_URL: a dev build compiles in the inert fallback, so
       # test installs never reach the analytics dashboard. Only release.yml sets it.
       - name: Build Tauri bundles (unsigned, no updater artifacts)
+        if: matrix.os != 'windows-latest'
         run: vp exec tauri build -c '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      # Windows ships the egui app, packed by the Tauri bundler with the same
+      # tauri.conf.json (crates/accshift-egui/bundle/bundle.mjs).
+      - name: Build the egui installer (unsigned, no updater artifacts)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cargo build -p accshift-cli --release --locked
+          cargo build --release --locked --manifest-path crates/accshift-egui/Cargo.toml
+          node crates/accshift-egui/bundle/bundle.mjs --no-updater
 
       - name: Compress macOS .app bundle
         if: matrix.os == 'macos-latest'
