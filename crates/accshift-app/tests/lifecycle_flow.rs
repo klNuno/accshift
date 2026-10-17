@@ -128,11 +128,17 @@ fn boot_runs_every_step_in_the_documented_order() {
         "accshift://switch/steam/alice".into(),
     ]);
     assert_eq!(lifecycle.boot(&mut host), BootOutcome::Running);
+    // macOS gets the link from the OS, not the arguments.
+    let launch_url = if cfg!(any(windows, target_os = "linux")) {
+        "launch_url:accshift://switch/steam/alice"
+    } else {
+        "launch_url:"
+    };
     assert_eq!(
         host.calls,
         [
             "single_instance",
-            "launch_url:accshift://switch/steam/alice",
+            launch_url,
             "legacy_read",
             "storage_initialize",
             "theme",

@@ -1294,6 +1294,8 @@ fn text_field_device(x: f32, zero: f32, max_char: f32) -> f32 {
 mod tests {
     use super::*;
 
+    // The widths are Segoe UI's, a face only Windows ships.
+    #[cfg(windows)]
     #[test]
     fn tabular_nums_give_blinks_widths() {
         // Widths from a probe of `font-variant-numeric: tabular-nums` in
