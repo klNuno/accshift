@@ -951,7 +951,7 @@ fn book(ctx: &Context) -> SharedBook {
     })
 }
 
-/// Face file bytes, read once per process and kept for its lifetime (egui
+/// Face file bytes, mapped once per process and kept for its lifetime (egui
 /// holds them as long as the fonts live).
 fn bytes(source: &Source) -> Option<&'static [u8]> {
     type Files = Mutex<HashMap<PathBuf, Option<&'static [u8]>>>;
@@ -961,9 +961,22 @@ fn bytes(source: &Source) -> Option<&'static [u8]> {
         Source::File(path) => {
             let mut files = FILES.get_or_init(Default::default).lock().ok()?;
             *files.entry(path.clone()).or_insert_with(|| {
-                std::fs::read(path)
-                    .ok()
-                    .map(|b| &*Box::leak(b.into_boxed_slice()))
+                let file = std::fs::File::open(path).ok()?;
+                // SAFETY: the mapping is read only and lives as long as the
+                // process. A font file is not rewritten in place while it is
+                // in use: Windows refuses to truncate a mapped file, and font
+                // packages elsewhere replace files by rename, which leaves
+                // this mapping on the old one.
+                let map = unsafe { memmap2::Mmap::map(&file) }.ok()?;
+                crate::bench::mark_with(
+                    "font_file",
+                    &format!(
+                        "\"name\":{:?},\"bytes\":{}",
+                        path.file_name().unwrap_or_default().to_string_lossy(),
+                        map.len()
+                    ),
+                );
+                Some(&**Box::leak(Box::new(map)))
             })
         }
     }

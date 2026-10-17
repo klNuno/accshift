@@ -52,6 +52,10 @@ raw-window-handle = "0.6"
 # Face metrics (ascent, descent, line gap, weights) for the CSS line box: the
 # same skrifa epaint draws glyphs with.
 skrifa = "0.44"
+# System font files mapped instead of read: file-backed pages the OS shares
+# with its file cache, loaded as glyphs need them, outside private memory (a
+# CJK face is 12 to 35 MB).
+memmap2 = "0.9"
 # Scene runner only (`--scene`): scene files in, PNG shots out. Neither is
 # touched on the normal startup path.
 serde_json = "1"

@@ -124,6 +124,12 @@ pub trait Backend: Send + Sync {
     /// Boot milestones and first-run telemetry. The Tauri command also shows
     /// the window; the egui shell does that part itself.
     fn finish_boot(&self, source: &str, marks: Option<&Value>) -> BackendResult<()>;
+    /// Where downloaded avatars are kept between launches
+    /// ([`crate::accounts::avatars::AvatarDiskCache`]). `None` keeps them in
+    /// memory only: the mock, whose scenes must not depend on a past run.
+    fn avatar_cache_dir(&self) -> Option<std::path::PathBuf> {
+        None
+    }
 
     // ---------------------------------------------------------------- PIN
 

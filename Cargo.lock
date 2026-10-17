@@ -197,6 +197,7 @@ dependencies = [
  "egui_software_backend",
  "image",
  "image-webp",
+ "memmap2",
  "png 0.18.1",
  "raw-window-handle",
  "resvg",

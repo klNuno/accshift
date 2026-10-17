@@ -59,8 +59,9 @@ impl RealBackend {
     /// `boot::spawn_snapshot_upgrade` (boot.rs lines 747-858) and the Riot
     /// rollback sweep (lines 860-885): arms the keyring index, then on a
     /// background thread re-encrypts legacy plaintext snapshots, purges the
-    /// plaintext backups, sweeps Riot rollback copies and frees orphaned
-    /// keyring entries, each step under the cross-process write lock. Call
+    /// plaintext backups, sweeps Riot rollback copies, deletes the Tauri
+    /// app's WebView2 caches and frees orphaned keyring entries, each locked
+    /// step under the cross-process write lock. Call
     /// once after [`Self::begin_session`]. Touches the real keyring, so
     /// tests never call it.
     pub fn spawn_maintenance(&self) -> std::thread::JoinHandle<()> {
@@ -152,6 +153,8 @@ fn spawn_snapshot_upgrade(upgrade_ctx: AppCtx) -> std::thread::JoinHandle<()> {
             sweep_riot_rollback_copies(&upgrade_ctx);
         }
 
+        prune_webview_caches(&upgrade_ctx);
+
         let Some(_operation) = locked("keyring sweep") else {
             return;
         };
@@ -203,3 +206,32 @@ fn sweep_riot_rollback_copies(upgrade_ctx: &AppCtx) {
 
 #[cfg(not(windows))]
 fn sweep_riot_rollback_copies(_upgrade_ctx: &AppCtx) {}
+
+/// The Tauri app's WebView2 caches, dead weight since the egui app
+/// (`legacy_web_storage::prune_webview2_caches`).
+#[cfg(windows)]
+fn prune_webview_caches(upgrade_ctx: &AppCtx) {
+    use accshift_core::AppContext;
+    let Ok(local) = upgrade_ctx.app_local_data_dir() else {
+        return;
+    };
+    let (freed, failures) = crate::legacy_web_storage::prune_webview2_caches(&local);
+    if freed == 0 && failures.is_empty() {
+        return;
+    }
+    let _ = logging::append_app_log(
+        upgrade_ctx,
+        if failures.is_empty() { "info" } else { "warn" },
+        "backend.webview-cache-prune",
+        &format!(
+            "Deleted {:.1} MB of WebView2 cache left by the Tauri app",
+            freed as f64 / 1e6
+        ),
+        (!failures.is_empty())
+            .then(|| failures.join("; "))
+            .as_deref(),
+    );
+}
+
+#[cfg(not(windows))]
+fn prune_webview_caches(_upgrade_ctx: &AppCtx) {}

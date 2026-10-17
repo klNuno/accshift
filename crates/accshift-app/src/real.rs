@@ -241,6 +241,9 @@ impl Backend for RealBackend {
     fn finish_boot(&self, source: &str, marks: Option<&Value>) -> BackendResult<()> {
         app::finish_boot(self, source, marks)
     }
+    fn avatar_cache_dir(&self) -> Option<std::path::PathBuf> {
+        self.ctx.app_cache_dir().ok().map(|dir| dir.join("avatars"))
+    }
     fn pin_unlock(&self, code: &str) -> BackendResult<PinUnlockResult> {
         pin::unlock(self, code)
     }

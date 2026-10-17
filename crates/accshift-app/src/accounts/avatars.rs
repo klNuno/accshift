@@ -521,3 +521,154 @@ pub fn fetch_avatar_image(url: &str, http: &dyn AvatarHttp) -> Result<AvatarImag
         bytes: Arc::from(bytes),
     })
 }
+
+/// [`fetch_avatar_image`] through `cache`: the stored copy when there is
+/// one, else the download, stored for the next launch. `http` is only
+/// called on a miss.
+pub fn fetch_avatar_image_cached<H: AvatarHttp>(
+    url: &str,
+    http: impl FnOnce() -> Result<Arc<H>, String>,
+    cache: Option<&AvatarDiskCache>,
+) -> Result<AvatarImage, String> {
+    if let Some(bytes) = cache.and_then(|cache| cache.read(url)) {
+        return Ok(AvatarImage::Bytes {
+            key: url.to_string(),
+            bytes: Arc::from(bytes),
+        });
+    }
+    let image = fetch_avatar_image(url, http()?.as_ref())?;
+    if let (Some(cache), AvatarImage::Bytes { bytes, .. }) = (cache, &image) {
+        // A failed write only costs the next launch a download.
+        let _ = cache.write(url, bytes);
+    }
+    Ok(image)
+}
+
+/// Files [`AvatarDiskCache`] keeps; a write past it drops the oldest.
+pub const AVATAR_CACHE_MAX_FILES: usize = 512;
+
+/// How long a file from a host outside [`AVATAR_CACHE_STABLE_HOSTS`] serves
+/// before the URL is downloaded again.
+pub const AVATAR_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// CDNs whose avatar URLs name the picture by its hash (Steam's
+/// `<sha1>_full.jpg`, Roblox's `AvatarHeadshot-<hash>`): a new picture is a
+/// new URL, so a stored file never goes stale.
+pub const AVATAR_CACHE_STABLE_HOSTS: &[&str] =
+    &["steamstatic.com", "steamcdn-a.akamaihd.net", "rbxcdn.com"];
+
+/// Downloaded avatars on disk, so a launch draws them without the network
+/// (the Tauri app had WebView2's HTTP cache for this). One file per URL,
+/// named by the SHA-256 of the URL; it starts with the URL and a newline, so
+/// a read checks it has the right one. Only bytes that open like an image
+/// (JPEG, PNG, GIF, WebP) are stored.
+#[derive(Debug, Clone)]
+pub struct AvatarDiskCache {
+    dir: PathBuf,
+    max_files: usize,
+}
+
+impl AvatarDiskCache {
+    pub fn new(dir: PathBuf) -> Self {
+        Self {
+            dir,
+            max_files: AVATAR_CACHE_MAX_FILES,
+        }
+    }
+
+    /// Keeps at most `max_files` files instead of [`AVATAR_CACHE_MAX_FILES`].
+    pub fn with_max_files(self, max_files: usize) -> Self {
+        Self { max_files, ..self }
+    }
+
+    fn path(&self, url: &str) -> PathBuf {
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(url.as_bytes());
+        let name: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        self.dir.join(name)
+    }
+
+    /// The stored bytes of `url`, if fresh.
+    pub fn read(&self, url: &str) -> Option<Vec<u8>> {
+        let path = self.path(url);
+        if !stable_host(url) {
+            let age = std::fs::metadata(&path)
+                .ok()?
+                .modified()
+                .ok()?
+                .elapsed()
+                .ok()?;
+            if age > AVATAR_CACHE_TTL {
+                return None;
+            }
+        }
+        let data = std::fs::read(&path).ok()?;
+        let body = data.strip_prefix(url.as_bytes())?.strip_prefix(b"\n")?;
+        (body.len() <= MAX_AVATAR_BYTES && looks_like_image(body)).then(|| body.to_vec())
+    }
+
+    /// Stores `bytes` for `url` (written aside, then renamed over), then
+    /// trims the folder to its file budget.
+    pub fn write(&self, url: &str, bytes: &[u8]) -> Result<(), String> {
+        if !looks_like_image(bytes) {
+            return Err("not an image".to_string());
+        }
+        std::fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
+        let path = self.path(url);
+        let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
+        let mut data = Vec::with_capacity(url.len() + 1 + bytes.len());
+        data.extend_from_slice(url.as_bytes());
+        data.push(b'\n');
+        data.extend_from_slice(bytes);
+        std::fs::write(&tmp, &data)
+            .and_then(|()| std::fs::rename(&tmp, &path))
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&tmp);
+                e.to_string()
+            })?;
+        self.trim();
+        Ok(())
+    }
+
+    fn trim(&self) {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return;
+        };
+        let mut files: Vec<(std::time::SystemTime, PathBuf)> = entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let meta = entry.metadata().ok().filter(|meta| meta.is_file())?;
+                Some((meta.modified().ok()?, entry.path()))
+            })
+            .collect();
+        if files.len() <= self.max_files {
+            return;
+        }
+        files.sort();
+        for (_, path) in &files[..files.len() - self.max_files] {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+fn stable_host(url: &str) -> bool {
+    let Some(host) = reqwest::Url::parse(url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+    else {
+        return false;
+    };
+    AVATAR_CACHE_STABLE_HOSTS.iter().any(|stable| {
+        host == *stable
+            || host
+                .strip_suffix(stable)
+                .is_some_and(|rest| rest.ends_with('.'))
+    })
+}
+
+fn looks_like_image(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[0xFF, 0xD8, 0xFF])
+        || bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A])
+        || bytes.starts_with(b"GIF8")
+        || (bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP")
+}

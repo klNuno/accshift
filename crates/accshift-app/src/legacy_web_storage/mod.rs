@@ -149,6 +149,66 @@ pub fn webview2_leveldb_dir(data_local: &Path, identifier: &str) -> PathBuf {
         .join("leveldb")
 }
 
+/// The cache folders of the Tauri app's WebView2 user data folder: HTTP,
+/// code and shader caches, and the components WebView2 downloads. The egui
+/// app never loads WebView2, so they only hold disk space (90 MB on a
+/// months-old install); WebView2 rebuilds them if a Tauri build runs again.
+/// `Default/Local Storage`, which [`read`] needs, is not in the list.
+pub const WEBVIEW2_CACHE_DIRS: &[&str] = &[
+    "Default/Cache",
+    "Default/Code Cache",
+    "Default/GPUCache",
+    "Default/DawnGraphiteCache",
+    "Default/DawnWebGPUCache",
+    "Default/Service Worker/CacheStorage",
+    "Default/Service Worker/ScriptCache",
+    "GrShaderCache",
+    "GraphiteDawnCache",
+    "ShaderCache",
+    "Subresource Filter",
+    "component_crx_cache",
+    "extensions_crx_cache",
+    "Speech Recognition",
+    "hyphen-data",
+];
+
+/// Deletes [`WEBVIEW2_CACHE_DIRS`] under `<app_local_data>/EBWebView`, the
+/// app's local data folder (identifier included). Returns the bytes freed
+/// and one line per folder that could not go.
+pub fn prune_webview2_caches(app_local_data: &Path) -> (u64, Vec<String>) {
+    let root = app_local_data.join("EBWebView");
+    let mut freed = 0;
+    let mut failures = Vec::new();
+    for rel in WEBVIEW2_CACHE_DIRS {
+        let dir = rel
+            .split('/')
+            .fold(root.clone(), |dir, part| dir.join(part));
+        if !dir.is_dir() {
+            continue;
+        }
+        let size = dir_size(&dir);
+        match std::fs::remove_dir_all(&dir) {
+            Ok(()) => freed += size,
+            Err(error) => failures.push(format!("{}: {error}", dir.display())),
+        }
+    }
+    (freed, failures)
+}
+
+fn dir_size(dir: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| match entry.file_type() {
+            Ok(kind) if kind.is_dir() => dir_size(&entry.path()),
+            Ok(_) => entry.metadata().map_or(0, |meta| meta.len()),
+            Err(_) => 0,
+        })
+        .sum()
+}
+
 /// Reads each WebKit database that exists, newest layout first; a key found
 /// in an earlier one wins.
 #[cfg(not(windows))]

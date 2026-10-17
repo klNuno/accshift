@@ -108,20 +108,28 @@ impl Liquid {
         }
     }
 
-    /// `refreshWallpaper`; one at a time (`refreshInFlight`).
+    /// `refreshWallpaper`; one at a time (`refreshInFlight`). The same
+    /// picture as the last snapshot keeps its decoded image: a refresh with
+    /// no wallpaper change decodes nothing.
     fn fetch(&mut self, jobs: &Jobs) {
         if self.running.is_some() {
             return;
         }
-        self.running = Some(jobs.run(|backend| {
+        let current = self.snapshot.as_ref().map(|s| Arc::clone(&s.wallpaper));
+        self.running = Some(jobs.run(move |backend| {
             let snapshot = backend.get_desktop_wallpaper().ok().flatten()?;
             let mut hasher = DefaultHasher::new();
             snapshot.data_url.hash(&mut hasher);
-            Some(Snapshot {
-                wallpaper: Arc::new(Wallpaper {
-                    id: hasher.finish(),
+            let id = hasher.finish();
+            let wallpaper = match current.filter(|w| w.id == id) {
+                Some(same) => same,
+                None => Arc::new(Wallpaper {
+                    id,
                     image: decode(&snapshot.data_url)?,
                 }),
+            };
+            Some(Snapshot {
+                wallpaper,
                 rect: [snapshot.x, snapshot.y, snapshot.width, snapshot.height],
             })
         }));

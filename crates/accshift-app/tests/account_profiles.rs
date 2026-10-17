@@ -3,8 +3,8 @@
 //! files; the cases follow the TS behaviour.
 
 use accshift_app::accounts::avatars::{
-    avatar_source, fetch_avatar_image, AvatarFetch, AvatarHttp, AvatarImage, AvatarImages,
-    AvatarSource,
+    avatar_source, fetch_avatar_image, fetch_avatar_image_cached, AvatarDiskCache, AvatarFetch,
+    AvatarHttp, AvatarImage, AvatarImages, AvatarSource,
 };
 use accshift_app::accounts::profile_cache::{
     CacheConfig, CacheExpiry, ProfileCache, UrlPolicy, ROBLOX_PROFILE_CACHE,
@@ -292,4 +292,67 @@ fn images_hand_over_files_at_once_and_download_urls_once() {
     assert_eq!(images.request(broken), AvatarFetch::Failed);
     images.forget(broken);
     assert_eq!(images.request(broken), AvatarFetch::Start(broken.into()));
+}
+
+const JPEG: &[u8] = &[0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3];
+
+#[test]
+fn the_disk_cache_serves_what_it_stored_for_that_url_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = AvatarDiskCache::new(dir.path().join("avatars"));
+    let steam = "https://avatars.steamstatic.com/0123abcd_full.jpg";
+    let other = "https://cdn.example/a.jpg";
+    assert_eq!(cache.read(steam), None);
+    cache.write(steam, JPEG).unwrap();
+    cache.write(other, JPEG).unwrap();
+    assert_eq!(cache.read(steam).as_deref(), Some(JPEG));
+    // A host that may reuse its URLs serves while fresh.
+    assert_eq!(cache.read(other).as_deref(), Some(JPEG));
+    assert_eq!(
+        cache.read("https://avatars.steamstatic.com/ffff_full.jpg"),
+        None
+    );
+    // An HTML error page with a 200 is never stored.
+    assert!(cache.write(steam, b"<html>").is_err());
+    assert_eq!(cache.read(steam).as_deref(), Some(JPEG));
+}
+
+#[test]
+fn the_disk_cache_drops_its_oldest_files_past_its_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = AvatarDiskCache::new(dir.path().to_path_buf()).with_max_files(2);
+    for i in 0..3 {
+        cache
+            .write(
+                &format!("https://avatars.steamstatic.com/{i}_full.jpg"),
+                JPEG,
+            )
+            .unwrap();
+        // Distinct modification times on coarse file systems.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+    assert_eq!(
+        cache.read("https://avatars.steamstatic.com/0_full.jpg"),
+        None
+    );
+    assert!(cache
+        .read("https://avatars.steamstatic.com/2_full.jpg")
+        .is_some());
+}
+
+#[test]
+fn a_cached_fetch_downloads_once_and_reads_the_disk_after() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = AvatarDiskCache::new(dir.path().to_path_buf());
+    let calls = AtomicUsize::new(0);
+    let http = || {
+        calls.fetch_add(1, Ordering::SeqCst);
+        Ok(Arc::new(FakeHttp(Ok(JPEG.to_vec()))))
+    };
+    let first = fetch_avatar_image_cached(URL, http, Some(&cache)).unwrap();
+    let http = || -> Result<Arc<FakeHttp>, String> { panic!("served from disk") };
+    let second = fetch_avatar_image_cached(URL, http, Some(&cache)).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }

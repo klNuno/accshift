@@ -1,7 +1,8 @@
 //! The avatar texture cache of the workspace.
 //!
 //! M2's [`AvatarImages`] turns an avatar URL into an [`AvatarImage`] (a
-//! local file at once, an http download through the job pool). Here each
+//! local file at once, an http download through the job pool, read from
+//! [`AvatarDiskCache`] when a past launch stored it). Here each
 //! image is decoded off the UI thread through [`Jobs`] at the device size
 //! the card paints it, then uploaded on the UI thread, keyed by the image's
 //! stable key and that size. The card fades the picture in on its own
@@ -14,10 +15,11 @@
 
 use std::collections::HashMap;
 use std::io::Cursor;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use accshift_app::accounts::avatars::{
-    fetch_avatar_image, AvatarFetch, AvatarImage, AvatarImages, HttpAvatarClient,
+    fetch_avatar_image_cached, AvatarDiskCache, AvatarFetch, AvatarImage, AvatarImages,
+    HttpAvatarClient,
 };
 use accshift_app::accounts::profile_cache::UrlPolicy;
 use accshift_app::jobs::{Jobs, Pending, Poll};
@@ -46,7 +48,9 @@ enum Entry {
 /// URL to image (M2) and image to texture (here).
 pub struct AvatarTextures {
     images: AvatarImages,
-    http: Option<Arc<HttpAvatarClient>>,
+    /// Built by the first download that misses the disk cache, on the job
+    /// pool: a launch served from the cache never builds it.
+    http: Arc<OnceLock<Result<Arc<HttpAvatarClient>, String>>>,
     downloads: Vec<(String, Pending<Result<AvatarImage, String>>)>,
     textures: HashMap<(String, u32), Entry>,
     /// `blur(6px) brightness(.5)` copies, by image, box size and sigma.
@@ -57,7 +61,7 @@ impl AvatarTextures {
     pub fn new(policy: UrlPolicy) -> Self {
         Self {
             images: AvatarImages::new(policy),
-            http: None,
+            http: Arc::default(),
             downloads: Vec::new(),
             textures: HashMap::new(),
             blurred: HashMap::new(),
@@ -109,22 +113,16 @@ impl AvatarTextures {
             AvatarFetch::Waiting => return AvatarTexture::Pending,
             AvatarFetch::Failed => return AvatarTexture::Failed,
             AvatarFetch::Start(url) => {
-                let http = match &self.http {
-                    Some(http) => Arc::clone(http),
-                    None => match HttpAvatarClient::new() {
-                        Ok(client) => {
-                            let client = Arc::new(client);
-                            self.http = Some(Arc::clone(&client));
-                            client
-                        }
-                        Err(error) => {
-                            self.images.finish(&url, Err(error));
-                            return AvatarTexture::Failed;
-                        }
-                    },
-                };
+                let http = Arc::clone(&self.http);
                 let target = url.clone();
-                let pending = jobs.run(move |_| fetch_avatar_image(&target, http.as_ref()));
+                let pending = jobs.run(move |backend| {
+                    let cache = backend.avatar_cache_dir().map(AvatarDiskCache::new);
+                    let client = || {
+                        http.get_or_init(|| HttpAvatarClient::new().map(Arc::new))
+                            .clone()
+                    };
+                    fetch_avatar_image_cached(&target, client, cache.as_ref())
+                });
                 self.downloads.push((url, pending));
                 return AvatarTexture::Pending;
             }

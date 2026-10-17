@@ -49,13 +49,121 @@ pub fn mark(event: &str) {
 pub fn mark_with(event: &str, extra: &str) {
     let Some(sink) = sink() else { return };
     let ts = now_ms();
+    let heap = heap::fields();
     let line = if extra.is_empty() {
-        format!("{{\"event\":\"{event}\",\"tsMs\":{ts:.3}}}\n")
+        format!("{{\"event\":\"{event}\",\"tsMs\":{ts:.3}{heap}}}\n")
     } else {
-        format!("{{\"event\":\"{event}\",\"tsMs\":{ts:.3},{extra}}}\n")
+        format!("{{\"event\":\"{event}\",\"tsMs\":{ts:.3},{extra}{heap}}}\n")
     };
     if let Ok(mut f) = sink.lock() {
         let _ = f.write_all(line.as_bytes());
+    }
+}
+
+/// A bench build counts the Rust heap: every mark carries the bytes live
+/// (`heap`) and the most ever live (`heapPeak`), so a memory figure of the
+/// harness splits into the Rust heap and the rest (DirectWrite, the window
+/// surface, DLLs). Blocks of 1 MiB or more are listed too (`big`: bytes,
+/// negative when freed, since the previous mark), so a peak names its
+/// buffers by their sizes.
+#[cfg(feature = "startup-bench")]
+mod heap {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering::Relaxed};
+
+    static LIVE: AtomicUsize = AtomicUsize::new(0);
+    static PEAK: AtomicUsize = AtomicUsize::new(0);
+
+    const BIG: usize = 1 << 20;
+    const SLOTS: usize = 1024;
+    static BIG_LOG: [AtomicIsize; SLOTS] = [const { AtomicIsize::new(0) }; SLOTS];
+    static BIG_LEN: AtomicUsize = AtomicUsize::new(0);
+    static BIG_READ: AtomicUsize = AtomicUsize::new(0);
+
+    fn big(bytes: isize) {
+        if bytes.unsigned_abs() >= BIG {
+            let slot = BIG_LEN.fetch_add(1, Relaxed);
+            if slot < SLOTS {
+                BIG_LOG[slot].store(bytes, Relaxed);
+            }
+        }
+    }
+
+    struct Counting;
+
+    fn grow(n: usize) {
+        let now = LIVE.fetch_add(n, Relaxed) + n;
+        PEAK.fetch_max(now, Relaxed);
+    }
+
+    // SAFETY: every call is forwarded to `System` unchanged; the counters
+    // only observe sizes.
+    unsafe impl GlobalAlloc for Counting {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let p = unsafe { System.alloc(layout) };
+            if !p.is_null() {
+                grow(layout.size());
+                big(layout.size() as isize);
+            }
+            p
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            let p = unsafe { System.alloc_zeroed(layout) };
+            if !p.is_null() {
+                grow(layout.size());
+                big(layout.size() as isize);
+            }
+            p
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            unsafe { System.dealloc(ptr, layout) };
+            LIVE.fetch_sub(layout.size(), Relaxed);
+            big(-(layout.size() as isize));
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            let p = unsafe { System.realloc(ptr, layout, new_size) };
+            if !p.is_null() {
+                big(-(layout.size() as isize));
+                big(new_size as isize);
+                if new_size >= layout.size() {
+                    grow(new_size - layout.size());
+                } else {
+                    LIVE.fetch_sub(layout.size() - new_size, Relaxed);
+                }
+            }
+            p
+        }
+    }
+
+    #[global_allocator]
+    static ALLOC: Counting = Counting;
+
+    pub fn fields() -> String {
+        let mut out = format!(
+            ",\"heap\":{},\"heapPeak\":{}",
+            LIVE.load(Relaxed),
+            PEAK.load(Relaxed)
+        );
+        let end = BIG_LEN.load(Relaxed).min(SLOTS);
+        let start = BIG_READ.swap(end, Relaxed).min(end);
+        if start < end {
+            let sizes: Vec<String> = BIG_LOG[start..end]
+                .iter()
+                .map(|slot| slot.load(Relaxed).to_string())
+                .collect();
+            out.push_str(&format!(",\"big\":[{}]", sizes.join(",")));
+        }
+        out
+    }
+}
+
+#[cfg(not(feature = "startup-bench"))]
+mod heap {
+    pub fn fields() -> &'static str {
+        ""
     }
 }
 

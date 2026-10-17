@@ -924,3 +924,36 @@ mod chromium {
         assert_eq!(read.storage, phase1);
     }
 }
+
+// ------------------------------------------------------------------ WebView2 caches
+
+#[test]
+fn webview2_cache_prune_keeps_the_local_storage() {
+    let scratch = Scratch::new("prune");
+    let web = scratch.0.join("EBWebView");
+    let write = |rel: &str, len: usize| {
+        let path = web.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, vec![7u8; len]).unwrap();
+    };
+    write("Default/Code Cache/js/index", 1000);
+    write("Default/Code Cache/wasm/a", 24);
+    write("GrShaderCache/data_0", 500);
+    write("Default/Local Storage/leveldb/000003.log", 64);
+    write("Default/Preferences", 10);
+
+    let (freed, failures) = legacy_web_storage::prune_webview2_caches(&scratch.0);
+    assert_eq!((freed, failures), (1524, Vec::<String>::new()));
+    assert!(!web.join("Default").join("Code Cache").exists());
+    assert!(!web.join("GrShaderCache").exists());
+    assert!(web
+        .join("Default/Local Storage/leveldb/000003.log")
+        .is_file());
+    assert!(web.join("Default/Preferences").is_file());
+
+    // Nothing left to prune, and no EBWebView at all, are both no-ops.
+    let again = legacy_web_storage::prune_webview2_caches(&scratch.0);
+    assert_eq!(again, (0, Vec::new()));
+    let none = legacy_web_storage::prune_webview2_caches(&scratch.0.join("absent"));
+    assert_eq!(none, (0, Vec::new()));
+}
