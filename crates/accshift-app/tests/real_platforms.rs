@@ -12,7 +12,7 @@ use accshift_app::{Backend, COMMANDS};
 use accshift_core::pin::{hash_pin_code, PIN_LOCKED_MESSAGE};
 use accshift_core::storage::STORE_SETTINGS;
 use accshift_core::AppContext;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -558,10 +558,7 @@ fn riot_and_roblox_check_their_arguments_first() {
     );
     // No stored account: nothing to probe.
     assert!(real.roblox_check_sessions().unwrap().is_empty());
-    assert_eq!(
-        real.platform_get_accounts("roblox").unwrap(),
-        Value::Array(vec![])
-    );
+    assert_eq!(real.platform_get_accounts("roblox").unwrap(), json!([]));
 }
 
 #[cfg(not(windows))]

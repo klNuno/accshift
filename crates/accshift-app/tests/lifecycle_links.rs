@@ -4,14 +4,14 @@
 
 use accshift_app::lifecycle::deep_link::{
     decode_uri_component, deep_link_log_shape, find_account, handle_cli_arguments, is_registered,
-    on_open_url, parse_deep_link, register_all, registered_command, registration_entries,
+    on_open_url, parse_deep_link, registered_command, registration_entries,
     schemes_need_registration, second_launch, wire_scheme_registration, DeepLinkAction,
     DeepLinkAnswer, DeepLinkController, DeepLinkSwitchRequest, DeepLinkView, RegistryValue,
     SchemeRegistry, BOOT_TIMEOUT, SCHEMES,
 };
 use accshift_app::lifecycle::single_instance::{
     self, dbus_name_and_path, macos_socket_path, parse_windows_payload, windows_names,
-    windows_payload, Launch, SecondInstance,
+    windows_payload, Launch,
 };
 use accshift_app::platforms::{PlatformAccount, PlatformRegistry, RuntimeOs};
 use accshift_app::settings::{sanitize_settings, AppSettings};
@@ -309,7 +309,7 @@ fn registration_is_skipped_when_it_already_points_here() {
 #[cfg(windows)]
 #[test]
 fn the_windows_registry_round_trips_a_test_scheme() {
-    use accshift_app::lifecycle::deep_link::WindowsRegistry;
+    use accshift_app::lifecycle::deep_link::{register_all, WindowsRegistry};
     let scheme = format!("accshift-m5test-{}", std::process::id());
     assert_ne!(scheme, "accshift");
     let exe = "C:\\m5test\\accshift-m5test.exe";
@@ -720,6 +720,7 @@ fn the_windows_payload_round_trips() {
     assert_eq!(split, ["a", "b", "c"]);
 }
 
+#[cfg(any(windows, target_os = "macos"))]
 fn test_identifier(tag: &str) -> String {
     let id = format!("com.accshift.m5test.{tag}.{}", std::process::id());
     assert_ne!(id, "com.accshift.desktop");
@@ -729,6 +730,7 @@ fn test_identifier(tag: &str) -> String {
 #[cfg(any(windows, target_os = "macos"))]
 #[test]
 fn a_second_instance_forwards_its_arguments_to_the_first() {
+    use accshift_app::lifecycle::single_instance::SecondInstance;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
