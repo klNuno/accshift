@@ -739,7 +739,7 @@ impl SceneRun {
 }
 
 /// RGBA PNG, unpremultiplied like a browser screenshot.
-fn write_png(path: &Path, image: &egui::ColorImage) -> Result<(), String> {
+pub(crate) fn write_png(path: &Path, image: &egui::ColorImage) -> Result<(), String> {
     let [w, h] = image.size;
     let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
     let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), w as u32, h as u32);

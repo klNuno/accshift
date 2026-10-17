@@ -142,11 +142,21 @@ fn main() {
     // install left its WebView2 profile (window/probe.rs).
     let legacy_root = probe.as_ref().map(|dir| dir.join("webview"));
     // A normal run: the backend on the user's app folders, and the window
-    // where Tauri's opens (`build_main_window`).
-    let real = (!hidden).then(|| {
+    // where Tauri's opens (`build_main_window`). A bench build too, unseen,
+    // to time the real boot.
+    let real = (!scene_mode).then(|| {
         #[cfg(all(debug_assertions, windows))]
         if let Some(dir) = probe {
             return Arc::new(RealBackend::with_context(window::probe::context(dir)));
+        }
+        if bench_build {
+            // A bench run works on the copy of the app folders the harness
+            // made, so it never writes the user's (geometry, logs).
+            let Some(dir) = std::env::var_os("ACCSHIFT_EGUI_BENCH_DIR") else {
+                eprintln!("accshift: a bench build needs ACCSHIFT_EGUI_BENCH_DIR");
+                std::process::exit(2);
+            };
+            return Arc::new(RealBackend::with_context(Arc::new(BenchDirs(dir.into()))));
         }
         match RealBackend::new() {
             Ok(backend) => Arc::new(backend),
@@ -219,7 +229,8 @@ fn main() {
         let _ = wake.set(ctx.clone());
         #[cfg(windows)]
         {
-            if let (Some(saved), Some(hwnd)) = (&saved, hwnd(handle)) {
+            // A bench run's window stays off screen, at the saved size.
+            if let (Some(saved), Some(hwnd), false) = (&saved, hwnd(handle), hidden) {
                 window::frame::install(hwnd, saved);
                 window::frame::wake_on_maximize_hover(ctx);
                 #[cfg(debug_assertions)]
@@ -254,7 +265,10 @@ fn main() {
                 // The rest of `setup`, in its order. The probe's folders
                 // are a scratch copy: no telemetry from it, and the keyring
                 // sweep would read every real entry as an orphan.
-                if !probing {
+                // Neither does a bench run, nor does it register the scheme
+                // or run the maintenance.
+                let quiet = probing || bench_build;
+                if !quiet {
                     backend.start_telemetry();
                 }
                 #[cfg(windows)]
@@ -270,13 +284,13 @@ fn main() {
                     ))),
                     scenes,
                 );
-                if !probing {
+                if !quiet {
                     register_schemes(&backend);
                     let _ = backend.spawn_maintenance();
                 }
                 shell.with_window(
                     window::Host::new(backend, hwnd)
-                        .focus_on_show(!probing)
+                        .focus_on_show(!quiet)
                         .with_single_instance(single),
                 )
             }
@@ -405,6 +419,25 @@ fn hwnd(window: &dyn HasWindowHandle) -> Option<windows_sys::Win32::Foundation::
     match window.window_handle().ok()?.as_raw() {
         raw_window_handle::RawWindowHandle::Win32(h) => Some(h.hwnd.get() as _),
         _ => None,
+    }
+}
+
+/// A bench run's app folders: `config`, `data`, `local` and `cache` under
+/// the harness's copy.
+struct BenchDirs(std::path::PathBuf);
+
+impl accshift_core::AppContext for BenchDirs {
+    fn app_config_dir(&self) -> Result<std::path::PathBuf, String> {
+        Ok(self.0.join("config"))
+    }
+    fn app_data_dir(&self) -> Result<std::path::PathBuf, String> {
+        Ok(self.0.join("data"))
+    }
+    fn app_local_data_dir(&self) -> Result<std::path::PathBuf, String> {
+        Ok(self.0.join("local"))
+    }
+    fn app_cache_dir(&self) -> Result<std::path::PathBuf, String> {
+        Ok(self.0.join("cache"))
     }
 }
 

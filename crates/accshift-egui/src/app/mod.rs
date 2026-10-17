@@ -1039,8 +1039,10 @@ impl AppModel {
         self.frames += 1;
         if !self.ready_marked && self.ready() {
             crate::bench::mark("ready");
+            crate::bench::request_shot(&ctx);
             self.ready_marked = true;
         }
+        crate::bench::save_shot(&ctx);
     }
 
     /// Applies what the frame's components asked for.
