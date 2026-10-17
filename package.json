@@ -20,10 +20,10 @@
     "prepare": "vp config"
   },
   "dependencies": {
-    "@tauri-apps/api": "2.12.1",
-    "@tauri-apps/plugin-deep-link": "^2.6.1",
-    "@tauri-apps/plugin-process": "^2.4.0",
-    "@tauri-apps/plugin-updater": "^2.13.1"
+    "@tauri-apps/api": "2.11.1",
+    "@tauri-apps/plugin-deep-link": "~2.4.10",
+    "@tauri-apps/plugin-process": "~2.3.1",
+    "@tauri-apps/plugin-updater": "~2.11.0"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",

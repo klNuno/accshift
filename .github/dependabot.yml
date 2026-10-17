@@ -19,6 +19,14 @@ updates:
         update-types:
           - minor
           - patch
+    # `tauri build` refuses an @tauri-apps package whose major.minor differs
+    # from its Rust crate. The crates stay where vendor/wry pins tauri, so these
+    # move with them by hand (vendor/wry/ACCSHIFT.md).
+    ignore:
+      - dependency-name: "@tauri-apps/api"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "@tauri-apps/plugin-*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   # The telemetry worker has its own lockfile and is not a pnpm workspace
   # member, so the root npm entry above never sees it. Without this block its
@@ -59,6 +67,15 @@ updates:
         update-types:
           - minor
           - patch
+    # A new tauri minor pulls a wry the patch in vendor/wry does not apply to
+    # (vendor/wry/ACCSHIFT.md).
+    ignore:
+      - dependency-name: "tauri"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "tauri-*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "wry"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
