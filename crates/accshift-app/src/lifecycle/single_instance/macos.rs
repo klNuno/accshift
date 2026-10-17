@@ -51,14 +51,16 @@ fn notify_singleton(socket: &Path, args: &[String], cwd: &str) -> std::io::Resul
     Ok(())
 }
 
-/// macos.rs lines 95-133.
+/// macos.rs lines 95-133: the socket is bound before `acquire` returns, so
+/// a launch right after this one reaches it; only the accepts run on the
+/// thread.
 fn listen_for_other_instances(socket: PathBuf, notify: Notify) {
+    let Ok(listener) = UnixListener::bind(socket) else {
+        return;
+    };
     let _ = std::thread::Builder::new()
         .name("accshift-single-instance".into())
         .spawn(move || {
-            let Ok(listener) = UnixListener::bind(socket) else {
-                return;
-            };
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { continue };
                 let mut text = String::new();
