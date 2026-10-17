@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "windows": {
+      "webviewInstallMode": {
+        "type": "skip",
+        "silent": null
+      },
+      "nsis": {
+        "installerHooks": "../crates/accshift-egui/bundle/hooks.nsh"
+      }
+    }
+  }
+}

@@ -17,7 +17,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    IsWindowVisible, PostMessageW, SetWindowPos, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, WM_CLOSE,
+    IsWindowVisible, PostMessageW, SendMessageW, SetWindowPos, ICON_SMALL, SWP_NOACTIVATE,
+    SWP_NOSIZE, SWP_NOZORDER, WM_CLOSE, WM_GETICON,
 };
 
 /// The scratch folder, when the variable is set.
@@ -58,7 +59,7 @@ pub fn spawn(hwnd: HWND) {
         let inner = || frame::inner_size(hwnd).unwrap_or_default();
         let r = rect();
         eprintln!(
-            "probe: placed outer {},{} {}x{} inner {:?} dpi {} shadow {}",
+            "probe: placed outer {},{} {}x{} inner {:?} dpi {} shadow {} icon {}",
             r.left,
             r.top,
             r.width(),
@@ -66,6 +67,8 @@ pub fn spawn(hwnd: HWND) {
             inner(),
             frame::dpi(hwnd),
             frame::shadow(),
+            // SAFETY: a query on the live main window.
+            unsafe { SendMessageW(hwnd, WM_GETICON, ICON_SMALL as usize, 0) } != 0,
         );
         // SAFETY: a query on the live main window.
         while unsafe { IsWindowVisible(hwnd) } == 0 {

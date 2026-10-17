@@ -103,6 +103,12 @@ windows = { version = "0.62", default-features = false, features = [
   "Win32_Graphics_DirectWrite",
 ] }
 
+# build.rs: the Windows resources tauri-build gives `accshift-gui.exe`, built
+# by the same crate from the same tauri.conf.json.
+[build-dependencies]
+serde_json = "1"
+tauri-winres = "0.3"
+
 # epaint with one patch: a font can supply its glyph coverage
 # (FontData::rasterizer), so ui::text rasterizes with DirectWrite like
 # WebView2. See the header of vendor/epaint/Cargo.toml and

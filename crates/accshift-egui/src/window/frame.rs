@@ -33,6 +33,7 @@ use windows_sys::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, MonitorFromRect, ScreenToClient, HDC, HMONITOR,
     MONITORINFO, MONITOR_DEFAULTTONULL,
 };
+use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ};
 use windows_sys::Win32::UI::HiDpi::{
@@ -54,6 +55,33 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSELEAVE, WM_NCMOUSEMOVE, WM_NCRBUTTONDOWN,
     WM_NCRBUTTONUP, WM_SYSCOMMAND, WNDPROC, WS_CAPTION, WS_SIZEBOX,
 };
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    LoadImageW, SendMessageW, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, WM_SETICON,
+};
+
+/// The icon resource build.rs gives the exe, tauri-build's id.
+const ICON_RESOURCE: u16 = 32512;
+
+/// Tauri's default window icon: the first entry of icon.ico (256 px), set
+/// by tao's `set_window_icon` as the small icon only. The big icon stays
+/// unset and falls back to the exe's resource, as under Tauri.
+fn set_icon(hwnd: HWND) {
+    // SAFETY: this module's own icon resource, then a message to a window
+    // this thread owns. `MAKEINTRESOURCEW` is the id as a pointer.
+    unsafe {
+        let icon = LoadImageW(
+            GetModuleHandleW(std::ptr::null()),
+            ICON_RESOURCE as usize as *const u16,
+            IMAGE_ICON,
+            256,
+            256,
+            LR_DEFAULTCOLOR,
+        );
+        if !icon.is_null() {
+            SendMessageW(hwnd, WM_SETICON, ICON_SMALL as usize, icon as isize);
+        }
+    }
+}
 
 /// boot.rs `FIRST_WINDOWS_11_BUILD`.
 const FIRST_WINDOWS_11_BUILD: u32 = 22000;
@@ -304,6 +332,7 @@ fn set_outer(hwnd: HWND, r: Rect) {
 /// Puts the frame on `hwnd` (once), then moves the hidden window where
 /// Tauri's opens for `saved`.
 pub fn install(hwnd: HWND, saved: &SavedWindow) {
+    set_icon(hwnd);
     let shadow = shadow();
     SHADOW.store(shadow, Ordering::Relaxed);
     if PREVIOUS.load(Ordering::Relaxed) == 0 {
