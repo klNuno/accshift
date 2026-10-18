@@ -108,6 +108,16 @@ struct Layer {
     op: BackdropOp,
 }
 
+/// A job of [`EguiSoftwareRender::draw_jobs_direct`], ready to draw.
+struct DirectMesh {
+    /// The clip in device pixels.
+    clip: egui::Rect,
+    mesh: Mesh,
+    low_precision: bool,
+    min_y: f32,
+    max_y: f32,
+}
+
 /// The frame's top-level layers in paint order. A `Begin` inside a layer
 /// opens no layer of its own: it and its `End` are skipped.
 fn backdrop_layers(ops: &[(usize, BackdropOp)], len: usize) -> Vec<Layer> {
@@ -153,6 +163,21 @@ fn layer_span(
         return [0..width, 0..height];
     };
     mesh_span(clip.min, clip.max, jobs, pixels_per_point, width, height)
+}
+
+/// `src` (`width` x `height`) on `span` over transparent.
+fn copy_span(
+    src: &[[u8; 4]],
+    width: usize,
+    height: usize,
+    [columns, rows]: &[Range<usize>; 2],
+) -> Vec<[u8; 4]> {
+    let mut out = vec![[0u8; 4]; width * height];
+    for y in rows.clone() {
+        let row = y * width + columns.start..y * width + columns.end;
+        out[row.clone()].copy_from_slice(&src[row]);
+    }
+    out
 }
 
 /// The device-pixel columns and rows of the box `min..max` grown to every
@@ -568,6 +593,7 @@ impl EguiSoftwareRender {
                     saturate,
                     clip,
                 } => {
+                    let span = layer_span(clip, jobs, pixels_per_point, width, height);
                     let mut pixels = if n == 0 {
                         let key = (
                             width,
@@ -576,8 +602,10 @@ impl EguiSoftwareRender {
                             root,
                         );
                         if canvas_changed || self.backdrop.key != Some(key) {
+                            // A clipped backdrop reads its box only: the
+                            // root's tiles there are enough.
                             let source: Cow<[[u8; 4]]> = match root {
-                                Some(r) => Cow::Owned(self.composite_after(r)),
+                                Some(r) => Cow::Owned(self.composite_after_in(r, clip)),
                                 None => Cow::Borrowed(&self.canvas.data),
                             };
                             self.backdrop.blurred = backdrop::backdrop_of(
@@ -585,13 +613,14 @@ impl EguiSoftwareRender {
                             );
                             self.backdrop.key = Some(key);
                         }
-                        self.backdrop.blurred.clone()
+                        // Only the span lands: the rest of a fresh buffer
+                        // stays untouched zero pages.
+                        copy_span(&self.backdrop.blurred, width, height, &span)
                     } else {
                         let source = under.as_deref().unwrap_or(&out[..]);
                         backdrop::backdrop_of(source, width, height, clip, sigma, saturate)
                     };
                     self.draw_jobs_layered(&mut pixels, width, height, jobs, pixels_per_point);
-                    let span = layer_span(clip, jobs, pixels_per_point, width, height);
                     (pixels, opacity, span)
                 }
                 _ => continue,
@@ -721,6 +750,39 @@ impl EguiSoftwareRender {
     /// The cached primitives painted after `after`, over transparent.
     fn composite_after(&self, after: usize) -> Vec<[u8; 4]> {
         self.composite_where(|z| z > after)
+    }
+
+    /// [`Self::composite_after`] on the tiles under `clip` only, transparent
+    /// elsewhere (accshift patch: the full-frame composite ran on every
+    /// frame of a scroll under a hovered card's frosted panel).
+    fn composite_after_in(
+        &self,
+        after: usize,
+        clip: Option<backdrop::BackdropClip>,
+    ) -> Vec<[u8; 4]> {
+        let Some(clip) = clip else {
+            return self.composite_after(after);
+        };
+        let mut sorted: Vec<&CachedPrimitive> = self
+            .cached_primitives
+            .values()
+            .filter(|p| p.z_order > after)
+            .collect();
+        sorted.sort_unstable_by_key(|p| p.z_order);
+        let (width, height) = (self.canvas.width, self.canvas.height);
+        let mut data = vec![[0u8; 4]; width * height];
+        let mut buffer = BufferMutRef::new(&mut data, width, height);
+        let tiles = |lo: f32, hi: f32, n: usize| {
+            let lo = (lo.floor().max(0.0) as usize / TILE_SIZE).min(n);
+            let hi = (hi.ceil().max(0.0) as usize).div_ceil(TILE_SIZE).min(n);
+            lo..hi
+        };
+        for ty in tiles(clip.min[1], clip.max[1], self.tiles_dim[1]) {
+            for tx in tiles(clip.min[0], clip.max[0], self.tiles_dim[0]) {
+                update_canvas_tile(self.simd_impl, &sorted, &mut buffer, tx, ty, height, 0);
+            }
+        }
+        data
     }
 
     /// The cached primitives whose paint order passes `keep`, over
@@ -959,77 +1021,146 @@ impl EguiSoftwareRender {
     }
 
     /// Draws `paint_jobs` straight into `direct_draw_buffer`, callbacks
-    /// skipped.
+    /// skipped. With rayon, bands of rows draw in parallel, each taking every
+    /// job in order cut to its rows: what lands on a pixel is what one pass
+    /// would draw (accshift patch: a frame under a backdrop layer drew
+    /// everything after the layer on one thread, 3 to 5 ms).
     fn draw_jobs_direct(
         &mut self,
         direct_draw_buffer: &mut BufferMutRef,
         paint_jobs: &[egui::ClippedPrimitive],
         pixels_per_point: f32,
     ) {
-        for egui::ClippedPrimitive {
-            clip_rect,
-            primitive,
-        } in paint_jobs.iter()
-        {
-            let input_mesh = match primitive {
-                egui::epaint::Primitive::Mesh(input_mesh) => input_mesh,
-                egui::epaint::Primitive::Callback(_) => {
-                    #[cfg(feature = "log")]
-                    log::error!("egui::epaint::Primitive::Callback(PaintCallback) not supported");
-                    continue;
-                }
-            };
-
-            if input_mesh.vertices.is_empty() || input_mesh.indices.is_empty() {
-                continue;
-            }
-
-            let clip_rect = egui::Rect {
-                min: clip_rect.min * pixels_per_point,
-                max: clip_rect.max * pixels_per_point,
-            };
-
-            let mut mesh_min = egui::Vec2::splat(f32::MAX);
-            let mut mesh_max = egui::Vec2::splat(-f32::MAX);
-
-            let px_mesh =
-                self.prepare_px_mesh(pixels_per_point, input_mesh, &mut mesh_min, &mut mesh_max);
-
-            let mesh_size = mesh_max - mesh_min;
-            if mesh_size.x > 8192.0 || mesh_size.y > 8192.0 {
-                // TODO it occasionally tries to make giant buffers in the first couple frames initially for some reason.
-                continue;
-            }
-
-            let render_in_low_precision = mesh_size.x > 4096.0 || mesh_size.y > 4096.0;
-            if render_in_low_precision {
+        #[cfg(feature = "rayon")]
+        use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+        #[cfg(feature = "rayon")]
+        let jobs = paint_jobs.par_iter();
+        #[cfg(not(feature = "rayon"))]
+        let jobs = paint_jobs.iter();
+        let meshes: Vec<DirectMesh> = jobs
+            .filter_map(|job| self.direct_mesh(job, pixels_per_point))
+            .collect();
+        if meshes.is_empty() {
+            return;
+        }
+        let (simd_impl, textures) = (self.simd_impl, &self.textures);
+        let (opt, rects) = (self.allow_raster_opt, self.convert_tris_to_rects);
+        #[cfg_attr(
+            not(all(feature = "raster_stats", not(feature = "rayon"))),
+            allow(unused_mut)
+        )]
+        let mut draw = |buffer: &mut BufferMutRef, m: &DirectMesh, clip: &egui::Rect, dy: f32| {
+            if m.low_precision {
                 draw_egui_mesh::<2>(
-                    self.simd_impl,
-                    &self.textures,
-                    direct_draw_buffer,
-                    &clip_rect,
-                    &px_mesh,
-                    Vec2::ZERO,
-                    self.allow_raster_opt,
-                    self.convert_tris_to_rects,
+                    simd_impl,
+                    textures,
+                    buffer,
+                    clip,
+                    &m.mesh,
+                    vec2(0.0, dy),
+                    opt,
+                    rects,
                     #[cfg(all(feature = "raster_stats", not(feature = "rayon")))]
                     &mut self.stats,
                 );
             } else {
                 draw_egui_mesh::<8>(
-                    self.simd_impl,
-                    &self.textures,
-                    direct_draw_buffer,
-                    &clip_rect,
-                    &px_mesh,
-                    Vec2::ZERO,
-                    self.allow_raster_opt,
-                    self.convert_tris_to_rects,
+                    simd_impl,
+                    textures,
+                    buffer,
+                    clip,
+                    &m.mesh,
+                    vec2(0.0, dy),
+                    opt,
+                    rects,
                     #[cfg(all(feature = "raster_stats", not(feature = "rayon")))]
                     &mut self.stats,
                 );
             }
+        };
+        #[cfg(feature = "rayon")]
+        {
+            use rayon::{
+                iter::{IndexedParallelIterator, ParallelIterator},
+                slice::ParallelSliceMut,
+            };
+            let width = direct_draw_buffer.width;
+            let rows = direct_draw_buffer
+                .height
+                .div_ceil(rayon::current_num_threads() * 2)
+                .max(16);
+            direct_draw_buffer
+                .data
+                .par_chunks_mut(width * rows)
+                .enumerate()
+                .for_each(|(band, data)| {
+                    let height = data.len() / width;
+                    let y0 = (band * rows) as f32;
+                    let y1 = y0 + height as f32;
+                    let mut buffer = BufferMutRef::new(data, width, height);
+                    for m in &meshes {
+                        // Integer offsets: every vertex moves exactly, the
+                        // clip keeps its rounding (start truncated, end
+                        // ceiled) in the band's rows.
+                        if m.clip.max.y <= y0
+                            || m.clip.min.y >= y1
+                            || m.max_y < y0 - 1.0
+                            || m.min_y > y1 + 1.0
+                        {
+                            continue;
+                        }
+                        let clip = egui::Rect::from_min_max(
+                            Pos2::new(m.clip.min.x, m.clip.min.y.max(y0) - y0),
+                            Pos2::new(m.clip.max.x, m.clip.max.y.min(y1) - y0),
+                        );
+                        draw(&mut buffer, m, &clip, -y0);
+                    }
+                });
         }
+        #[cfg(not(feature = "rayon"))]
+        for m in &meshes {
+            draw(direct_draw_buffer, m, &m.clip, 0.0);
+        }
+    }
+
+    /// One job as [`draw_jobs_direct`] draws it: its mesh in device pixels,
+    /// None for a callback, an empty mesh or a runaway one.
+    fn direct_mesh(
+        &self,
+        job: &egui::ClippedPrimitive,
+        pixels_per_point: f32,
+    ) -> Option<DirectMesh> {
+        let egui::ClippedPrimitive {
+            clip_rect,
+            primitive,
+        } = job;
+        let egui::epaint::Primitive::Mesh(input_mesh) = primitive else {
+            #[cfg(feature = "log")]
+            log::error!("egui::epaint::Primitive::Callback(PaintCallback) not supported");
+            return None;
+        };
+        if input_mesh.vertices.is_empty() || input_mesh.indices.is_empty() {
+            return None;
+        }
+        let clip = egui::Rect {
+            min: clip_rect.min * pixels_per_point,
+            max: clip_rect.max * pixels_per_point,
+        };
+        let mut mesh_min = egui::Vec2::splat(f32::MAX);
+        let mut mesh_max = egui::Vec2::splat(-f32::MAX);
+        let mesh = self.prepare_px_mesh(pixels_per_point, input_mesh, &mut mesh_min, &mut mesh_max);
+        let mesh_size = mesh_max - mesh_min;
+        if mesh_size.x > 8192.0 || mesh_size.y > 8192.0 {
+            // TODO it occasionally tries to make giant buffers in the first couple frames initially for some reason.
+            return None;
+        }
+        Some(DirectMesh {
+            clip,
+            mesh,
+            low_precision: mesh_size.x > 4096.0 || mesh_size.y > 4096.0,
+            min_y: mesh_min.y,
+            max_y: mesh_max.y,
+        })
     }
 
     fn prepare_px_mesh(

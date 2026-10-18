@@ -20,9 +20,18 @@ struct CachedGalley {
     galley: Arc<Galley>,
 }
 
+/// accshift patch: frames a galley stays cached after its last use. Upstream
+/// evicts it the first frame it is not used, so a card the grid scrolled out
+/// of view (laid out, not painted) and back laid all its text out again,
+/// which made the first scroll and every return stutter.
+const KEEP_FRAMES: u32 = 600;
+
+/// accshift patch: past this many galleys, only those of the last frame stay.
+const MAX_GALLEYS: usize = 2048;
+
 /// Memoizes [`LayoutJob`] → [`Galley`], so that repeated layout of the same text is cheap.
 ///
-/// Entries not used during a frame are evicted in [`Self::flush_cache`].
+/// Entries not used for [`KEEP_FRAMES`] frames are evicted in [`Self::flush_cache`].
 #[derive(Default)]
 pub(super) struct GalleyCache {
     /// Frame counter used to do garbage collection on the cache
@@ -253,8 +262,13 @@ impl GalleyCache {
     /// Must be called once per frame to clear the [`Galley`] cache.
     pub fn flush_cache(&mut self) {
         let current_generation = self.generation;
+        let keep = if self.cache.len() > MAX_GALLEYS {
+            0
+        } else {
+            KEEP_FRAMES
+        };
         self.cache.retain(|_key, cached| {
-            cached.last_used == current_generation // only keep those that were used this frame
+            current_generation.wrapping_sub(cached.last_used) <= keep
         });
         self.generation = self.generation.wrapping_add(1);
     }
