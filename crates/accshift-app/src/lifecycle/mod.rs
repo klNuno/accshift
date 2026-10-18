@@ -13,12 +13,15 @@
 //! - [`deep_link`]: `tauri-plugin-deep-link` 2.4.10, `wire_deep_links`,
 //!   `deepLinkUrl.ts` and `useDeepLink`.
 //! - [`process`]: `tauri-plugin-process` 2.3.1 (`exit`, `relaunch`).
+//! - [`autostart`]: the `HKCU\...\Run` value for launch at sign-in into the
+//!   tray, new to the egui build.
 //! - [`app_shell`]: `useAppLifecycle` (shell init, external refresh).
 //! - [`boot`]: boot marks, boot locale, the log redaction, the telemetry
 //!   calls and the close request; [`ui_scale`]: `useUiScale` and the
 //!   backdrop decisions of `useThemeApplication`.
 
 pub mod app_shell;
+pub mod autostart;
 pub mod boot;
 pub mod deep_link;
 pub mod process;

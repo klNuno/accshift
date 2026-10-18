@@ -244,6 +244,17 @@ impl Backend for RealBackend {
     fn avatar_cache_dir(&self) -> Option<std::path::PathBuf> {
         self.ctx.app_cache_dir().ok().map(|dir| dir.join("avatars"))
     }
+    /// Only the shipped `accshift-gui` release exe writes the Run value, the
+    /// same guard the scheme registration uses: a debug or renamed build
+    /// would register a path the installed app never launches.
+    #[cfg(windows)]
+    fn set_autostart(&self, enabled: bool) -> BackendResult<()> {
+        use crate::lifecycle::autostart;
+        if !autostart::manages_current_exe() {
+            return Ok(());
+        }
+        autostart::apply(enabled).map_err(BackendError::new)
+    }
     fn pin_unlock(&self, code: &str) -> BackendResult<PinUnlockResult> {
         pin::unlock(self, code)
     }

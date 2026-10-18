@@ -13,6 +13,7 @@ pub mod frame;
 pub mod placement;
 #[cfg(all(debug_assertions, windows))]
 pub mod probe;
+pub mod tray;
 
 use accshift_app::lifecycle::boot::{BOOT_FAILSAFE, BOOT_FAILSAFE_MESSAGE, BOOT_FAILSAFE_SOURCE};
 use accshift_app::lifecycle::deep_link;
@@ -106,6 +107,10 @@ pub struct Host {
     started: Instant,
     shown: bool,
     focus: bool,
+    /// `--tray`: the window never auto-shows, it waits in the tray for the
+    /// user to open it. Boot still runs and marks [`Host::take_show`] done so
+    /// the failsafe repaint loop stops.
+    start_hidden: bool,
     saver: Arc<Saver>,
     /// `appliedKey` of backdrop.ts.
     backdrop: Option<String>,
@@ -125,6 +130,7 @@ impl Host {
             started: Instant::now(),
             shown: false,
             focus: true,
+            start_hidden: false,
             saver: Arc::default(),
             backdrop: None,
             single: None,
@@ -239,6 +245,17 @@ impl Host {
     pub fn focus_on_show(mut self, focus: bool) -> Self {
         self.focus = focus;
         self
+    }
+
+    /// `--tray`: start in the tray, the window hidden until the user opens it.
+    pub fn start_hidden(mut self, hidden: bool) -> Self {
+        self.start_hidden = hidden;
+        self
+    }
+
+    /// Whether the window should stay hidden on boot (the `--tray` launch).
+    pub fn starts_hidden(&self) -> bool {
+        self.start_hidden
     }
 
     pub fn focuses_on_show(&self) -> bool {

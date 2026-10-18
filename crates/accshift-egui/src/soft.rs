@@ -22,6 +22,7 @@ use winit::event_loop::{
 };
 use winit::window::{Window, WindowId};
 
+use crate::window::tray::{Tray, TrayAction};
 use crate::{bench, Shell};
 
 pub enum UserEvent {
@@ -33,6 +34,8 @@ pub enum UserEvent {
     AccessKit(accesskit_winit::Event),
     /// The vblank the last frame armed ([`crate::vblank`]).
     VBlank,
+    /// The tray icon was clicked or its menu chosen ([`crate::window::tray`]).
+    Tray(TrayAction),
 }
 
 impl From<accesskit_winit::Event> for UserEvent {
@@ -62,6 +65,7 @@ pub fn run(
         frame_interval: Duration::from_secs_f64(1.0 / 60.0),
         vblank: None,
         armed: false,
+        tray: None,
     };
     event_loop.run_app(&mut runner)
 }
@@ -111,6 +115,9 @@ struct Runner {
     vblank: Option<crate::vblank::Clock>,
     /// The last frame asked for the next one on the vblank.
     armed: bool,
+    /// The notification-area icon, created on a `--tray` launch or the first
+    /// close-to-tray, then kept for the rest of the run.
+    tray: Option<Tray>,
 }
 
 impl Runner {
@@ -275,13 +282,16 @@ impl Runner {
                 // present, since softbuffer validates the whole window.
                 live.shown = true;
                 live.script = bench::Script::from_env();
-                show_window(
-                    &live.window,
-                    live.shell
-                        .window
-                        .as_ref()
-                        .is_some_and(|h| h.focuses_on_show()),
-                );
+                // A `--tray` launch never reveals here: it waits in the tray.
+                if live.shell.auto_reveal() {
+                    show_window(
+                        &live.window,
+                        live.shell
+                            .window
+                            .as_ref()
+                            .is_some_and(|h| h.focuses_on_show()),
+                    );
+                }
             }
             buffer
                 .present_with_damage(&damage)
@@ -355,13 +365,15 @@ impl Runner {
         if show && !live.shown {
             // A zero-sized frame presented nothing; show anyway.
             live.shown = true;
-            show_window(
-                &live.window,
-                live.shell
-                    .window
-                    .as_ref()
-                    .is_some_and(|h| h.focuses_on_show()),
-            );
+            if live.shell.auto_reveal() {
+                show_window(
+                    &live.window,
+                    live.shell
+                        .window
+                        .as_ref()
+                        .is_some_and(|h| h.focuses_on_show()),
+                );
+            }
         }
         // An animation's next frame starts on the vblank that shows this one.
         self.armed = continuous && live.shown && self.vblank.as_ref().is_some_and(|c| c.arm());
@@ -371,8 +383,63 @@ impl Runner {
             .iter()
             .any(|e| matches!(e, ViewportEvent::Close))
         {
-            self.close(event_loop);
+            self.request_close(event_loop);
         }
+    }
+
+    /// Create the tray icon once, on a `--tray` launch or the first
+    /// close-to-tray. `None` from [`Tray::new`] leaves `self.tray` unset, and
+    /// the caller falls back to a normal close.
+    fn ensure_tray(&mut self) {
+        if self.tray.is_some() {
+            return;
+        }
+        let Some(live) = &self.live else { return };
+        if !live.shell.supports_tray() {
+            return;
+        }
+        let (open, quit, tip) = live.shell.tray_labels();
+        let proxy = self.proxy.clone();
+        self.tray = Tray::new(
+            &open,
+            &quit,
+            &tip,
+            Box::new(move |action| {
+                let _ = proxy.send_event(UserEvent::Tray(action));
+            }),
+        );
+    }
+
+    /// A close request (the button, Alt+F4, the title bar): hide to the tray
+    /// when the app asks for it and a tray exists, else run the close
+    /// sequence. Falling back to close keeps the app reachable if the tray
+    /// could not be created.
+    fn request_close(&mut self, event_loop: &ActiveEventLoop) {
+        let to_tray = self
+            .live
+            .as_ref()
+            .is_some_and(|live| live.shell.wants_close_to_tray());
+        if to_tray {
+            self.ensure_tray();
+            if self.tray.is_some() {
+                if let Some(live) = &self.live {
+                    live.window.set_visible(false);
+                }
+                return;
+            }
+        }
+        self.close(event_loop);
+    }
+
+    /// Show and focus the window again from the tray.
+    fn reveal(&mut self) {
+        if let Some(live) = &mut self.live {
+            live.window.set_visible(true);
+            live.window.focus_window();
+            live.shown = true;
+            live.full_present = true;
+        }
+        self.repaint_at(Instant::now());
     }
 
     /// The title bar's close button or the system's (Alt+F4, the taskbar):
@@ -609,10 +676,15 @@ impl ApplicationHandler<UserEvent> for Runner {
             shown: false,
             script: None,
         });
+        // A `--tray` launch needs the icon up front: the window never shows
+        // on its own, so the tray is the only way to reach the app.
+        if self.live.as_ref().is_some_and(|l| l.shell.starts_in_tray()) {
+            self.ensure_tray();
+        }
         self.paint(event_loop);
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
             UserEvent::Repaint { when, pass } => {
                 // eframe's guard against requests from a pass already painted.
@@ -642,13 +714,17 @@ impl ApplicationHandler<UserEvent> for Runner {
                     }
                 }
             }
+            UserEvent::Tray(action) => match action {
+                TrayAction::Open => self.reveal(),
+                TrayAction::Quit => self.close(event_loop),
+            },
         }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => {
-                self.close(event_loop);
+                self.request_close(event_loop);
                 return;
             }
             WindowEvent::Moved(_) => {

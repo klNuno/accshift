@@ -24,6 +24,8 @@
       "streamerMode": "off",
       "suspendGraphicsWhenMinimized": true,
       "minimizeOnAccountSwitch": false,
+      "startWithSystem": false,
+      "closeToTray": false,
       "dataRefresh": {
         "avatarCacheDays": 7,
         "banCheckDays": 7
@@ -363,6 +365,8 @@
       "streamerMode": "off",
       "suspendGraphicsWhenMinimized": true,
       "minimizeOnAccountSwitch": false,
+      "startWithSystem": false,
+      "closeToTray": false,
       "dataRefresh": {
         "avatarCacheDays": 7,
         "banCheckDays": 7
@@ -603,6 +607,8 @@
       "streamerMode": "off",
       "suspendGraphicsWhenMinimized": true,
       "minimizeOnAccountSwitch": false,
+      "startWithSystem": false,
+      "closeToTray": false,
       "dataRefresh": {
         "avatarCacheDays": 7,
         "banCheckDays": 7
@@ -693,6 +699,8 @@
       "streamerMode": "auto",
       "suspendGraphicsWhenMinimized": true,
       "minimizeOnAccountSwitch": false,
+      "startWithSystem": false,
+      "closeToTray": false,
       "dataRefresh": {
         "avatarCacheDays": 7,
         "banCheckDays": 7
@@ -838,6 +846,8 @@
       "streamerMode": "auto",
       "suspendGraphicsWhenMinimized": true,
       "minimizeOnAccountSwitch": false,
+      "startWithSystem": false,
+      "closeToTray": false,
       "dataRefresh": {
         "avatarCacheDays": 7,
         "banCheckDays": 7
@@ -878,6 +888,8 @@
       "streamerMode": "auto",
       "suspendGraphicsWhenMinimized": true,
       "minimizeOnAccountSwitch": false,
+      "startWithSystem": false,
+      "closeToTray": false,
       "dataRefresh": {
         "avatarCacheDays": 7,
         "banCheckDays": 7
@@ -937,6 +949,8 @@
       "streamerMode": "auto",
       "suspendGraphicsWhenMinimized": true,
       "minimizeOnAccountSwitch": false,
+      "startWithSystem": false,
+      "closeToTray": false,
       "dataRefresh": {
         "avatarCacheDays": 7,
         "banCheckDays": 7
@@ -996,6 +1010,8 @@
       "streamerMode": "auto",
       "suspendGraphicsWhenMinimized": true,
       "minimizeOnAccountSwitch": false,
+      "startWithSystem": false,
+      "closeToTray": false,
       "dataRefresh": {
         "avatarCacheDays": 7,
         "banCheckDays": 7
@@ -1053,6 +1069,8 @@
       "streamerMode": "auto",
       "suspendGraphicsWhenMinimized": true,
       "minimizeOnAccountSwitch": false,
+      "startWithSystem": false,
+      "closeToTray": false,
       "dataRefresh": {
         "avatarCacheDays": 7,
         "banCheckDays": 7
@@ -1112,6 +1130,8 @@
       "streamerMode": "auto",
       "suspendGraphicsWhenMinimized": true,
       "minimizeOnAccountSwitch": false,
+      "startWithSystem": false,
+      "closeToTray": false,
       "dataRefresh": {
         "avatarCacheDays": 7,
         "banCheckDays": 7
@@ -1182,6 +1202,8 @@
       "streamerMode": "auto",
       "suspendGraphicsWhenMinimized": true,
       "minimizeOnAccountSwitch": false,
+      "startWithSystem": false,
+      "closeToTray": false,
       "dataRefresh": {
         "avatarCacheDays": 30,
         "banCheckDays": 0
@@ -1234,6 +1256,8 @@
       "streamerMode": "off",
       "suspendGraphicsWhenMinimized": 0,
       "minimizeOnAccountSwitch": "yes",
+      "startWithSystem": false,
+      "closeToTray": false,
       "dataRefresh": {
         "avatarCacheDays": -3,
         "banCheckDays": [45]
@@ -1280,6 +1304,8 @@
       "streamerMode": "off",
       "suspendGraphicsWhenMinimized": true,
       "minimizeOnAccountSwitch": true,
+      "startWithSystem": false,
+      "closeToTray": false,
       "dataRefresh": {
         "avatarCacheDays": 0,
         "banCheckDays": 45
@@ -1340,6 +1366,8 @@
       "streamerMode": "auto",
       "suspendGraphicsWhenMinimized": true,
       "minimizeOnAccountSwitch": false,
+      "startWithSystem": false,
+      "closeToTray": false,
       "dataRefresh": {
         "avatarCacheDays": 7,
         "banCheckDays": 7
@@ -1400,6 +1428,8 @@
       "streamerMode": "auto",
       "suspendGraphicsWhenMinimized": true,
       "minimizeOnAccountSwitch": false,
+      "startWithSystem": false,
+      "closeToTray": false,
       "dataRefresh": {
         "avatarCacheDays": 7,
         "banCheckDays": 7
@@ -1460,6 +1490,8 @@
       "streamerMode": "auto",
       "suspendGraphicsWhenMinimized": true,
       "minimizeOnAccountSwitch": false,
+      "startWithSystem": false,
+      "closeToTray": false,
       "dataRefresh": {
         "avatarCacheDays": 7,
         "banCheckDays": 7
@@ -1525,6 +1557,8 @@
       "streamerMode": "auto",
       "suspendGraphicsWhenMinimized": true,
       "minimizeOnAccountSwitch": false,
+      "startWithSystem": false,
+      "closeToTray": false,
       "dataRefresh": {
         "avatarCacheDays": 7,
         "banCheckDays": 7
@@ -1595,6 +1629,8 @@
       "streamerMode": "auto",
       "suspendGraphicsWhenMinimized": true,
       "minimizeOnAccountSwitch": false,
+      "startWithSystem": false,
+      "closeToTray": false,
       "dataRefresh": {
         "avatarCacheDays": 0,
         "banCheckDays": 90

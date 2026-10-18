@@ -31,6 +31,8 @@ fn settings(edit: impl FnOnce(&mut Value)) -> AppSettings {
         "streamerMode": "auto",
         "suspendGraphicsWhenMinimized": true,
         "minimizeOnAccountSwitch": false,
+        "startWithSystem": false,
+        "closeToTray": false,
         "dataRefresh": { "avatarCacheDays": 7, "banCheckDays": 7 },
         "enabledPlatforms": ["steam", "riot"],
         "healthCheckPerPlatform": {},

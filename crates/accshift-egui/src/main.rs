@@ -36,6 +36,8 @@ fn main() {
         (files, out)
     };
     let scene_mode = !scene_files.is_empty();
+    // `--tray`: the autostart launch. The window starts hidden in the tray.
+    let tray_start = std::env::args().skip(1).any(|arg| arg == "--tray");
     let scenes = if scene_mode {
         let Some(out) = out_dir else {
             eprintln!("usage: accshift-egui --scene <scene.json>... --out <dir>");
@@ -299,6 +301,7 @@ fn main() {
                 shell.with_window(
                     window::Host::new(backend, hwnd)
                         .focus_on_show(!quiet)
+                        .start_hidden(tray_start && !quiet)
                         .with_single_instance(single),
                 )
             }

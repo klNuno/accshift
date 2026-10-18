@@ -81,6 +81,11 @@ pub struct AppSettings {
     pub streamer_mode: StreamerMode,
     pub suspend_graphics_when_minimized: bool,
     pub minimize_on_account_switch: bool,
+    /// Windows only: launch at sign-in, minimized to the tray
+    /// ([`crate::lifecycle::autostart`]).
+    pub start_with_system: bool,
+    /// Windows only: the close button hides to the tray instead of quitting.
+    pub close_to_tray: bool,
     pub data_refresh: DataRefreshSettings,
     pub enabled_platforms: Vec<String>,
     /// Per-platform opt-out for network account health checks.
@@ -300,6 +305,8 @@ pub fn sanitize_settings(value: &Value, ctx: &StoreContext) -> AppSettings {
         },
         suspend_graphics_when_minimized: js::not_false(field(raw, "suspendGraphicsWhenMinimized")),
         minimize_on_account_switch: js::truthy(field(raw, "minimizeOnAccountSwitch")),
+        start_with_system: js::truthy(field(raw, "startWithSystem")),
+        close_to_tray: js::truthy(field(raw, "closeToTray")),
         data_refresh: DataRefreshSettings {
             avatar_cache_days: js::clamp_int(
                 js::nullish_or(

@@ -50,6 +50,48 @@ impl Shell {
         self
     }
 
+    /// Whether the window reveals itself on boot. False for a `--tray`
+    /// launch: it waits in the tray until the user opens it. Scenes and the
+    /// bench have no host and always reveal (cloaked).
+    pub fn auto_reveal(&self) -> bool {
+        self.window
+            .as_ref()
+            .is_none_or(|host| !host.starts_hidden())
+    }
+
+    /// A normal run that owns a window (and therefore a possible tray).
+    pub fn supports_tray(&self) -> bool {
+        self.window.is_some()
+    }
+
+    /// A `--tray` launch: the tray icon must exist from the start so the
+    /// hidden app is reachable.
+    pub fn starts_in_tray(&self) -> bool {
+        self.window
+            .as_ref()
+            .is_some_and(|host| host.starts_hidden())
+    }
+
+    /// The close button hides to the tray instead of quitting: only a booted
+    /// normal run with `closeToTray` on.
+    pub fn wants_close_to_tray(&self) -> bool {
+        self.window.is_some() && matches!(&self.screen, Screen::App(app) if app.close_to_tray())
+    }
+
+    /// The tray menu labels and tooltip, in the app's locale.
+    pub fn tray_labels(&self) -> (String, String, String) {
+        use accshift_app::i18n::{translate, Locale};
+        let locale = match &self.screen {
+            Screen::App(app) => app.locale(),
+            _ => Locale::En,
+        };
+        (
+            translate(locale, "tray.open"),
+            translate(locale, "tray.quit"),
+            "Accshift".to_string(),
+        )
+    }
+
     /// Whether the hidden window shows with this frame: at once without a
     /// [`window::Host`] (scenes keep theirs cloaked), else when the host
     /// says so, once.

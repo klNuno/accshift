@@ -619,6 +619,19 @@ impl AppModel {
         self.booted.as_ref().map(|b| &b.theme.backdrop)
     }
 
+    /// `closeToTray`: the close button hides to the tray instead of quitting.
+    /// False until booted, so a close before boot quits normally.
+    pub fn close_to_tray(&self) -> bool {
+        self.booted
+            .as_ref()
+            .is_some_and(|b| b.stores.settings().close_to_tray)
+    }
+
+    /// The active UI locale, English until booted.
+    pub fn locale(&self) -> Locale {
+        self.booted.as_ref().map_or(Locale::En, |b| b.locale)
+    }
+
     pub fn boot_error(&self) -> Option<&str> {
         self.boot_error.as_deref()
     }

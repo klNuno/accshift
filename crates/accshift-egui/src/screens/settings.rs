@@ -271,7 +271,7 @@ fn general_cards(panel: &SettingsPanel, view: &View, l: Locale) -> Vec<CardSpec>
             },
         });
     }
-    vec![
+    let mut cards = vec![
         CardSpec {
             wide: false,
             items: vec![
@@ -382,7 +382,29 @@ fn general_cards(panel: &SettingsPanel, view: &View, l: Locale) -> Vec<CardSpec>
                 ),
             ],
         },
-    ]
+    ];
+    // Launch at sign-in and close-to-tray are Windows-only.
+    if view.runtime_os == RuntimeOs::Windows {
+        cards.push(CardSpec {
+            wide: false,
+            items: vec![
+                Item::Title(t("settings.system")),
+                toggle(
+                    "settings.startWithSystem",
+                    "settings.startWithSystemHint",
+                    d.start_with_system,
+                    SettingFlag::StartWithSystem,
+                ),
+                toggle(
+                    "settings.closeToTray",
+                    "settings.closeToTrayHint",
+                    d.close_to_tray,
+                    SettingFlag::CloseToTray,
+                ),
+            ],
+        });
+    }
+    cards
 }
 
 fn privacy_cards(panel: &SettingsPanel, l: Locale) -> Vec<CardSpec> {

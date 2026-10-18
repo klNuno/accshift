@@ -137,6 +137,10 @@ pub enum SettingFlag {
     ExpandedFolders,
     SuspendGraphicsWhenMinimized,
     MinimizeOnAccountSwitch,
+    /// `startWithSystem`: write or remove the Windows Run value on save.
+    StartWithSystem,
+    /// `closeToTray`: the close button hides to the tray.
+    CloseToTray,
     DeepLinks,
     Cli,
     /// `streamerMode`: `auto` when on, `off` when off.
@@ -1023,12 +1027,30 @@ impl AppModel {
         let previous: Value =
             serde_json::from_str(&panel.last_persisted_snapshot).unwrap_or(Value::Null);
         let draft = panel.draft.clone();
+        // `startWithSystem` is the one setting with an OS side effect: write
+        // or remove the Run value when it flips.
+        let autostart_change = {
+            let was = previous["settings"]["startWithSystem"]
+                .as_bool()
+                .unwrap_or(false);
+            (was != draft.start_with_system).then_some(draft.start_with_system)
+        };
         match merge_settings_draft(b.stores.settings(), &panel.persisted, &draft) {
             Ok(merged) => b.stores.save_settings(&merged),
             Err(_) => b.stores.save_settings(&draft),
         }
         panel.seen_store = b.stores.settings().clone();
         panel.persisted = draft;
+        if let Some(enabled) = autostart_change {
+            if self.backend.set_autostart(enabled).is_err() {
+                toast(
+                    &mut self.toasts,
+                    "settings.autostartFailed",
+                    ToastType::Error,
+                    now,
+                );
+            }
+        }
         if pin_committed {
             toast(
                 &mut self.toasts,
@@ -1542,6 +1564,8 @@ impl AppModel {
                         d.suspend_graphics_when_minimized ^= true;
                     }
                     SettingFlag::MinimizeOnAccountSwitch => d.minimize_on_account_switch ^= true,
+                    SettingFlag::StartWithSystem => d.start_with_system ^= true,
+                    SettingFlag::CloseToTray => d.close_to_tray ^= true,
                     SettingFlag::DeepLinks => d.deep_links_enabled ^= true,
                     SettingFlag::Personas => d.personas_enabled ^= true,
                     SettingFlag::Cli => d.cli_enabled ^= true,

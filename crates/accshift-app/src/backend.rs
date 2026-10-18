@@ -131,6 +131,14 @@ pub trait Backend: Send + Sync {
         None
     }
 
+    /// Launch at system startup, minimized to the tray
+    /// ([`crate::lifecycle::autostart`]). Windows only; the mock and other
+    /// platforms do nothing.
+    fn set_autostart(&self, enabled: bool) -> BackendResult<()> {
+        let _ = enabled;
+        Ok(())
+    }
+
     // ---------------------------------------------------------------- PIN
 
     fn pin_unlock(&self, code: &str) -> BackendResult<PinUnlockResult>;
