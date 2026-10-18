@@ -10,6 +10,7 @@ pub mod dashed_border;
 pub mod liquid;
 pub mod paint;
 pub mod resample;
+pub mod smooth_scroll;
 pub mod snap;
 pub mod text;
 pub mod text_shadow;

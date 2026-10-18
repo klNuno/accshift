@@ -99,6 +99,7 @@ window-vibrancy = "0.8"
 # The main window's frame (window/frame.rs): tao's insets, hit test and
 # minimum size, the monitors and their DPI, the auto-hidden taskbar.
 windows-sys = { version = "0.61", features = [
+  "Wdk_Graphics_Direct3D",
   "Win32_Foundation",
   "Win32_Graphics_Dwm",
   "Win32_Graphics_Gdi",

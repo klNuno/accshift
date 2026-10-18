@@ -166,7 +166,10 @@ fn shadow_targets(v: &Vars, s: &Surface) -> [Shadow; 3] {
     };
     let clear = Rgba::TRANSPARENT;
     match (s.visible, s.active, s.lift) {
-        (false, _, _) => [NO_SHADOW; 3],
+        // The hover shadow, transparent: showing or hiding the surface only
+        // fades it, so its blurred mask is made once instead of once per
+        // frame of a geometry transition.
+        (false, _, _) => [drop(18.0, 32.0, 0.0), NO_SHADOW, NO_SHADOW],
         (true, true, _) => {
             let (halo, band, w) = match s.card_color {
                 Some(c) => (

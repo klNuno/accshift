@@ -4,9 +4,10 @@
 //! the content overflows, and then takes 10 px from the content width.
 //!
 //! The wheel scrolls by its pixel delta (the CDP `mouseWheel` the reference
-//! harness sends); the thumb drags.
+//! harness sends), a mouse wheel notch eases there
+//! ([`crate::ui::smooth_scroll`]); the thumb drags.
 
-use egui::{pos2, vec2, Event, Id, MouseWheelUnit, Rect, Sense, Ui};
+use egui::{pos2, vec2, Id, Rect, Sense, Ui};
 
 use crate::app::vars::Vars;
 use crate::ui::paint::{BoxStyle, Corners};
@@ -53,23 +54,15 @@ pub fn scroll(
     let snapped =
         |len: f32| ((viewport.top() + len) * ppp).round() - (viewport.top() * ppp).round();
     let max = ((snapped(content) - snapped(viewport.height())) / ppp).max(0.0);
-    let over = ui.rect_contains_pointer(viewport);
-    if over {
-        let delta: f32 = ui.input(|i| {
-            i.events
-                .iter()
-                .map(|e| match e {
-                    Event::MouseWheel { unit, delta, .. } => match unit {
-                        MouseWheelUnit::Point => delta.y,
-                        MouseWheelUnit::Line => delta.y * LINE,
-                        MouseWheelUnit::Page => delta.y * viewport.height(),
-                    },
-                    _ => 0.0,
-                })
-                .sum()
+    let mut wheel = crate::ui::smooth_scroll::Wheel::default();
+    if ui.rect_contains_pointer(viewport) {
+        ui.input(|i| {
+            for event in &i.events {
+                wheel.add(event, LINE, viewport.height());
+            }
         });
-        *offset -= delta;
     }
+    crate::ui::smooth_scroll::apply(ui.ctx(), id, offset, wheel, max);
     *offset = offset.clamp(0.0, max);
     if !overflows(viewport.height(), content) {
         return *offset;

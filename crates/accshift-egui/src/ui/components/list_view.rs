@@ -490,30 +490,35 @@ pub fn list_view(
     let scrolls = max_scroll > 0.0;
     let row_w = panel.width() - 2.0 * PAD - if scrolls { SCROLLBAR } else { 0.0 };
 
-    // The wheel over the panel, applied at once like Chromium's.
+    // The wheel over the panel: a notch eases (`smooth_scroll`), a pixel
+    // delta applies at once like Chromium's.
     let target = panel.intersect(ui.clip_rect());
-    let dy: f32 = ctx.input(|i| {
+    let wheel = ctx.input(|i| {
         let mut at = state.pointer;
-        let mut dy = 0.0;
+        let mut wheel = crate::ui::smooth_scroll::Wheel::default();
         for event in &i.events {
             match event {
                 Event::PointerMoved(p) => at = Some(*p),
                 Event::PointerGone => at = None,
-                Event::MouseWheel { unit, delta, .. } if at.is_some_and(|p| target.contains(p)) => {
-                    dy += match unit {
-                        egui::MouseWheelUnit::Point => delta.y,
-                        egui::MouseWheelUnit::Line => delta.y * 100.0,
-                        egui::MouseWheelUnit::Page => delta.y * panel.height(),
-                    };
+                Event::MouseWheel { .. } if at.is_some_and(|p| target.contains(p)) => {
+                    wheel.add(event, 100.0, panel.height());
                 }
                 _ => {}
             }
         }
-        dy
+        wheel
     });
     state.pointer = ctx.input(|i| i.pointer.latest_pos());
     let scroll_before = state.scroll;
-    state.scroll = (state.scroll - dy).clamp(0.0, max_scroll).round();
+    let mut scroll = state.scroll;
+    crate::ui::smooth_scroll::apply(
+        &ctx,
+        Id::unique("list-view"),
+        &mut scroll,
+        wheel,
+        max_scroll,
+    );
+    state.scroll = scroll.clamp(0.0, max_scroll).round();
     // `syncDom`: the row the arrows moved to scrolls into view.
     let kb_target = places
         .iter()

@@ -13,6 +13,7 @@ pub mod screens;
 pub mod soft;
 pub mod theme;
 pub mod ui;
+pub mod vblank;
 pub mod window;
 pub mod zoom;
 

@@ -6,7 +6,8 @@
 //! image is decoded off the UI thread through [`Jobs`] at the device size
 //! the card paints it, then uploaded on the UI thread, keyed by the image's
 //! stable key and that size. The card fades the picture in on its own
-//! (`avatar_fade_in`).
+//! (`avatar_fade_in`), unless it was there when the card mounted: the
+//! pictures of the last session come decoded from [`super::avatar_pack`].
 //!
 //! Decoders: SVG (resvg, the mock's avatars), PNG, and JPEG (what Steam's
 //! CDN serves). A bitmap is cropped to its centred square (`object-fit:
@@ -18,12 +19,14 @@ use std::io::Cursor;
 use std::sync::{Arc, OnceLock};
 
 use accshift_app::accounts::avatars::{
-    fetch_avatar_image_cached, AvatarDiskCache, AvatarFetch, AvatarImage, AvatarImages,
-    HttpAvatarClient,
+    fetch_avatar_image_cached, stable_host, AvatarDiskCache, AvatarFetch, AvatarImage,
+    AvatarImages, HttpAvatarClient,
 };
 use accshift_app::accounts::profile_cache::UrlPolicy;
 use accshift_app::jobs::{Jobs, Pending, Poll};
 use egui::{Color32, ColorImage, Context, TextureHandle, TextureId, TextureOptions};
+
+use super::avatar_pack::{self, Pack};
 
 /// What a card can draw for an avatar URL this frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -55,21 +58,42 @@ pub struct AvatarTextures {
     textures: HashMap<(String, u32), Entry>,
     /// `blur(6px) brightness(.5)` copies, by image, box size and sigma.
     blurred: HashMap<(String, u32, u32), TextureHandle>,
+    pack: Pack,
+    /// The context of the last [`Self::poll`], to upload a packed picture
+    /// the frame a card asks for it.
+    ctx: Option<Context>,
+}
+
+/// Starts reading the pack of decoded pictures in the avatar disk cache
+/// `cache` on a thread, for the [`AvatarTextures::new`] of the same cache.
+pub fn prefetch_pack(cache: std::path::PathBuf) {
+    avatar_pack::prefetch(cache.join("decoded"));
 }
 
 impl AvatarTextures {
-    pub fn new(policy: UrlPolicy) -> Self {
+    /// `cache`: the avatar disk cache, whose `decoded` folder holds the
+    /// pack of decoded pictures (read here unless [`prefetch_pack`] started
+    /// it: a few MB).
+    pub fn new(policy: UrlPolicy, cache: Option<std::path::PathBuf>) -> Self {
+        let pack = Pack::read(cache.map(|dir| dir.join("decoded")));
+        crate::bench::mark_with("avatar_pack", &format!("\"entries\":{}", pack.len()));
         Self {
             images: AvatarImages::new(policy),
             http: Arc::default(),
             downloads: Vec::new(),
             textures: HashMap::new(),
             blurred: HashMap::new(),
+            pack,
+            ctx: None,
         }
     }
 
-    /// Lands finished downloads and decodes. Call once per frame.
-    pub fn poll(&mut self, ctx: &Context) {
+    /// Lands finished downloads and decodes, and stores the pack once a
+    /// decode it lacked landed and nothing runs. Call once per frame.
+    pub fn poll(&mut self, ctx: &Context, jobs: &Jobs) {
+        if self.ctx.is_none() {
+            self.ctx = Some(ctx.clone());
+        }
         let images = &mut self.images;
         self.downloads
             .retain_mut(|(url, pending)| match pending.poll() {
@@ -91,6 +115,7 @@ impl AvatarTextures {
                 Poll::Waiting => {}
                 Poll::Ready(Ok(image)) => {
                     let image = Arc::new(image);
+                    self.pack.dirty |= stable_host(key);
                     *entry = Entry::Ready(
                         ctx.load_texture(
                             format!("avatar-{key}-{px}"),
@@ -103,11 +128,53 @@ impl AvatarTextures {
                 Poll::Ready(Err(_)) | Poll::Gone => *entry = Entry::Failed,
             }
         }
+        if self.pack.dirty && !self.busy() {
+            let used = self
+                .textures
+                .iter()
+                .filter_map(|((key, px), entry)| match entry {
+                    Entry::Ready(_, image) if stable_host(key) => {
+                        Some((key.clone(), *px, Arc::clone(image)))
+                    }
+                    _ => None,
+                })
+                .collect();
+            if let Some((dir, entries)) = self.pack.take_write(used) {
+                drop(jobs.run(move |_| avatar_pack::write(&dir, &entries)));
+            }
+        }
+    }
+
+    /// The texture of `url` at `px` from the pack or an earlier upload. An
+    /// http image's key is its URL.
+    fn uploaded(&mut self, url: &str, px: u32) -> Option<AvatarTexture> {
+        let key = (url.to_string(), px);
+        if !self.textures.contains_key(&key) {
+            let image = self.pack.take(url, px)?;
+            let ctx = self.ctx.as_ref()?;
+            let texture = ctx.load_texture(
+                format!("avatar-{url}-{px}"),
+                (*image).clone(),
+                TextureOptions::LINEAR,
+            );
+            self.textures
+                .insert(key.clone(), Entry::Ready(texture, image));
+        }
+        match self.textures.get(&key)? {
+            Entry::Ready(texture, _) => Some(AvatarTexture::Ready {
+                texture: texture.id(),
+                size: texture.size(),
+            }),
+            _ => None,
+        }
     }
 
     /// The texture of `url` at `px` device pixels, starting its download or
     /// decode if needed.
     pub fn get(&mut self, jobs: &Jobs, url: &str, px: u32) -> AvatarTexture {
+        if let Some(texture) = self.uploaded(url, px) {
+            return texture;
+        }
         let image = match self.images.request(url) {
             AvatarFetch::Ready(image) => image,
             AvatarFetch::Waiting => return AvatarTexture::Pending,
@@ -147,10 +214,15 @@ impl AvatarTextures {
     /// px), once it is decoded. Made on the UI thread on first use: the box
     /// is small and the card wants it the frame it arms.
     pub fn blurred(&mut self, ctx: &Context, url: &str, px: u32, sigma: f32) -> Option<TextureId> {
-        let AvatarFetch::Ready(image) = self.images.request(url) else {
-            return None;
+        // A packed picture never went through `images`.
+        let key = if self.textures.contains_key(&(url.to_string(), px)) {
+            url.to_string()
+        } else {
+            let AvatarFetch::Ready(image) = self.images.request(url) else {
+                return None;
+            };
+            image.key().to_string()
         };
-        let key = image.key().to_string();
         let Some(Entry::Ready(_, pixels)) = self.textures.get(&(key.clone(), px)) else {
             return None;
         };

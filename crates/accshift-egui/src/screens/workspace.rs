@@ -586,6 +586,8 @@ impl Moved {
 
 /// Draws the workspace into `rect` (the panel slot below the title bar).
 pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) -> Vec<Action> {
+    let _span = crate::bench::span("ws");
+    let pre_span = crate::bench::span("ws_pre");
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
     let v = input.vars;
@@ -1066,6 +1068,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
     let mut open_section: Option<OpenSection> = None;
     let mut ghost_section: Option<String> = None;
     let mut section_avatars: HashMap<String, AvatarContent> = HashMap::new();
+    drop(pre_span);
     for p in &placed {
         if open_section
             .as_ref()
@@ -1207,6 +1210,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                 Node::Folder(f) => f.folder.name.clone(),
                 Node::Account(a) => a.name.clone(),
             };
+            let _sense = crate::bench::span("card_sense");
             sense_only(ui, screen, id, &label);
             if !matches!(p.node, Node::Header(_)) {
                 entrance(ui, id, v);
@@ -1353,6 +1357,8 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                     .and_then(|c| c.badge.as_ref())
                     .filter(|_| !a.single_click_switch && !a.pending_setup);
                 let start = shape_count(&ctx, layer);
+                let _paint = crate::bench::span("card_paint");
+                crate::bench::mark_once("cards");
                 let out = account_card::account_card(
                     &mut child,
                     screen,
@@ -1539,39 +1545,43 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
 
     // Scrolling: the wheel over the box, the thumb, and keyboard focus.
     let max_scroll = (content_h - viewport.height()).max(0.0);
-    // The wheel events themselves, not egui's smoothed delta: Chromium
-    // applies a point delta at once, at the pointer position of the event
-    // (a scene can move the pointer again in the same frame). A line is
-    // Windows' 100 px notch (3 lines of 100/3 px).
+    // The wheel events themselves, not egui's smoothed delta, at the pointer
+    // position of each event (a scene can move the pointer again in the
+    // same frame). A point delta applies at once like Chromium's, a notch
+    // eases (`smooth_scroll`). A line is Windows' 100 px notch (3 lines of
+    // 100/3 px).
     let page = viewport.height();
     let target = rect.intersect(ui.clip_rect());
     let on_menu = context_menu::hit_test(&ctx);
-    let dy: f32 = ctx.input(|i| {
+    let wheel = ctx.input(|i| {
         let mut at = ws.pointer;
-        let mut dy = 0.0;
+        let mut wheel = crate::ui::smooth_scroll::Wheel::default();
         for event in &i.events {
             match event {
                 Event::PointerMoved(p) => at = Some(*p),
                 Event::PointerGone => at = None,
                 // The menu is no descendant of `.content`: a wheel over it
                 // scrolls nothing here.
-                Event::MouseWheel { unit, delta, .. }
+                Event::MouseWheel { .. }
                     if at.is_some_and(|p| target.contains(p) && !on_menu(p)) =>
                 {
-                    dy += match unit {
-                        egui::MouseWheelUnit::Point => delta.y,
-                        egui::MouseWheelUnit::Line => delta.y * 100.0,
-                        egui::MouseWheelUnit::Page => delta.y * page,
-                    };
+                    wheel.add(event, 100.0, page);
                 }
                 _ => {}
             }
         }
-        dy
+        wheel
     });
     ws.pointer = ctx.input(|i| i.pointer.latest_pos());
-    if dy != 0.0 {
-        ws.scroll -= dy;
+    let before_wheel = ws.scroll;
+    crate::ui::smooth_scroll::apply(
+        &ctx,
+        Id::unique("workspace-scroll"),
+        &mut ws.scroll,
+        wheel,
+        max_scroll,
+    );
+    if ws.scroll != before_wheel {
         ws.scroll_revealed = false;
     }
     if focused_now != ws.focused {

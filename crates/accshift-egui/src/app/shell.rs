@@ -1,13 +1,13 @@
 //! The DOM of `App.svelte`, drawn in its order:
 //!
 //! ```text
-//! .app-frame            appEntrance (fade, scale, rise, un-blur)
-//!   TitleBar            macOS only, above the stage, page-entrance
-//!   .app-stage          page-entrance, 50 ms late
+//! .app-frame
+//!   TitleBar            macOS only, above the stage
+//!   .app-stage
 //!     .app-shell        var(--bg) and var(--bg-image); Liquid Glass adds
 //!                       its inset highlights and the rim lens
-//!       TitleBar        Windows and Linux, page-entrance
-//!       {#key panelKey} the panel, page-entrance on every switch
+//!       TitleBar        Windows and Linux
+//!       {#key panelKey} the panel
 //!       ::after         the Liquid Glass sheen
 //!       .inactivity-frost  over the panel while the screen is obscured
 //!       AppDialogs      the toast stack, the input and confirm dialogs,
@@ -20,11 +20,15 @@
 //! `.app-shell.obscured` (the secure screen or streamer mode:
 //! `filter: blur(10px) saturate(82%)`,
 //! `transform: scale(1.01)`, 320 ms ease-out) is a [`Mark::Filter`] after
-//! the shell's shapes: the software renderer filters them as one layer. The
-//! entrance's blur joins the same filter.
+//! the shell's shapes: the software renderer filters them as one layer.
 //!
-//! Before the boot payload lands the frame is `opacity: 0`: nothing but the
-//! stand-in desktop of a scene run is drawn.
+//! No entrance: the Svelte app faded the frame, the stage, the title bar and
+//! every new panel in from `opacity: 0` (270 ms at boot, 200 ms a switch),
+//! which covered WebView2's first paint and reads as loading here. The
+//! first frame after the boot payload is the final one.
+//!
+//! Before the boot payload lands nothing but the stand-in desktop of a scene
+//! run is drawn.
 
 use accshift_theme::ColorScheme;
 use egui::epaint::{self, ClippedShape};
@@ -36,7 +40,7 @@ use super::settings_panel::SettingsAction;
 use super::{Action, AppModel, Booted};
 use crate::screens::workspace::{self, WorkspaceInput};
 use crate::screens::{personas, settings};
-use crate::ui::anim::{self, Animation, Fill, Motion, Timing, Transition};
+use crate::ui::anim::{self, Timing, Transition};
 use crate::ui::backdrop_filter::Mark;
 use crate::ui::components::bulk_edit::{self, BulkEvent, BulkProps};
 use crate::ui::components::command_palette::{self, PaletteProps};
@@ -51,18 +55,6 @@ use accshift_app::actions::dialogs::MenuInput;
 use accshift_app::actions::keyboard::KeyScope;
 use accshift_app::bulk_edit::BarStep;
 
-/// `appEntrance 240ms cubic-bezier(0.22, 1, 0.36, 1) forwards`.
-const APP_ENTRANCE: Animation =
-    Animation::new(0.24, Timing::cubic_bezier(0.22, 1.0, 0.36, 1.0)).with_fill(Fill::Forwards);
-/// `.titlebar { animation: page-entrance 180ms ease-out backwards }`.
-const TITLEBAR_ENTRANCE: Animation =
-    Animation::new(0.18, Timing::EASE_OUT).with_fill(Fill::Backwards);
-/// `.app-stage { animation: page-entrance 220ms ease-out 50ms backwards }`.
-const STAGE_ENTRANCE: Animation = Animation::new(0.22, Timing::EASE_OUT)
-    .with_delay(0.05)
-    .with_fill(Fill::Backwards);
-/// The last step of the boot cascade ends here, seconds after `boot-ready`.
-pub const BOOT_CASCADE: f64 = 0.27;
 /// `.app-shell { transition: filter 320ms ease-out, transform 320ms ease-out }`.
 const OBSCURE: Transition = Transition::new(0.32, Timing::EASE_OUT);
 
@@ -93,51 +85,11 @@ struct PinView {
 /// Copies of the frame drawn to approximate `filter: blur()`.
 const BLUR_TAPS: usize = 12;
 
-/// `@keyframes appEntrance` at `local` seconds after boot.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct FrameStyle {
-    opacity: f32,
-    scale: f32,
-    rise: f32,
-    blur: f32,
-}
-
-fn frame_style(local: f64, motion: Motion) -> FrameStyle {
-    let p = match (motion, APP_ENTRANCE.progress(local)) {
-        (Motion::Reduced, _) | (_, None) => 1.0,
-        (Motion::Full, Some(p)) => APP_ENTRANCE.timing.eval(p) as f32,
-    };
-    FrameStyle {
-        opacity: p,
-        scale: 0.99 + 0.01 * p,
-        rise: 6.0 * (1.0 - p),
-        blur: 8.0 * (1.0 - p),
-    }
-}
-
-/// `@keyframes page-entrance` (opacity 0 to 1, translateY 4px to 0):
-/// `(opacity, rise)` at `local` seconds into `animation`.
-fn page_entrance(animation: &Animation, local: f64, motion: Motion) -> (f32, f32) {
-    match (motion, animation.progress(local)) {
-        (Motion::Reduced, _) | (_, None) => (1.0, 0.0),
-        (Motion::Full, Some(p)) => {
-            let e = animation.timing.eval(p) as f32;
-            (e, 4.0 * (1.0 - e))
-        }
-    }
-}
-
-/// A child of `ui` over `rect`, shifted down by `rise` and faded to
-/// `opacity`, like an element under `transform: translateY()` and `opacity`.
-fn layer<R>(ui: &mut Ui, rect: Rect, opacity: f32, rise: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
-    let transform = egui::emath::TSTransform::from_translation(vec2(0.0, rise));
-    ui.with_visual_transform(transform, |ui| {
-        let mut child = ui.new_child(UiBuilder::new().max_rect(rect));
-        child.set_clip_rect(rect.intersect(ui.clip_rect()));
-        child.multiply_opacity(opacity);
-        add(&mut child)
-    })
-    .inner
+/// A child of `ui` over `rect`, clipped to it.
+fn layer<R>(ui: &mut Ui, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let mut child = ui.new_child(UiBuilder::new().max_rect(rect));
+    child.set_clip_rect(rect.intersect(ui.clip_rect()));
+    add(&mut child)
 }
 
 pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
@@ -163,11 +115,6 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
     // The title bar and the grid record the tour's targets as they draw.
     onboarding::reset_targets(&ctx);
     let motion = booted.theme.motion;
-    let local = now - booted.boot_at;
-    if motion == Motion::Full && local < BOOT_CASCADE {
-        ctx.request_repaint();
-    }
-    let frame = frame_style(local, motion);
     let os = booted.runtime_os;
     let vars = booted.theme.vars.clone();
     let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
@@ -234,18 +181,9 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         snap_hover: crate::window::maximize_hover(),
         focus_visible: app.focus_visible,
     };
-    let panel_since = booted.panel.1;
     let show_workspace = !nav.show_settings && !nav.show_personas;
     let compatible_platforms = enabled.iter().filter(|p| p.supports(os)).count();
     let panel_key = nav.panel_key();
-
-    let titlebar_style = page_entrance(&TITLEBAR_ENTRANCE, local, motion);
-    let stage_style = page_entrance(&STAGE_ENTRANCE, local, motion);
-    let panel_entrance = Animation::new(vars.motion_page_entrance, Timing::EASE_OUT);
-    let panel_style = page_entrance(&panel_entrance, now - panel_since, motion);
-    if motion == Motion::Full && now - panel_since < panel_entrance.end_time() {
-        ctx.request_repaint();
-    }
 
     let bar_h = title_bar::height(os);
     let (mac_bar, stage) = if os == RuntimeOs::Macos {
@@ -258,13 +196,6 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
     let mut actions = Vec::new();
     let layer_id = ui.layer_id();
     let start = next_idx(&ctx, layer_id);
-    // `.app-frame`: scale about the centre, rise, fade. It holds the stage:
-    // its centre and rise are the window's.
-    let center = screen.center().to_vec2();
-    let frame_transform = egui::emath::TSTransform::new(
-        center * (1.0 - frame.scale) + vec2(0.0, frame.rise / crate::zoom::frame(&ctx)),
-        frame.scale,
-    );
     let jobs = &app.jobs;
     let settings_view = nav
         .show_settings
@@ -360,17 +291,15 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
     // gets no input.
     let held =
         (pin.is_some() || streaming).then(|| ctx.input_mut(|i| std::mem::take(&mut i.events)));
-    ui.with_visual_transform(frame_transform, |ui| {
+    {
+        // `.app-frame`, which holds the stage.
         let mut frame_ui = ui.new_child(UiBuilder::new().max_rect(window));
-        frame_ui.multiply_opacity(frame.opacity);
         if let Some(bar) = mac_bar {
-            let (o, rise) = titlebar_style;
-            actions.extend(layer(&mut frame_ui, bar, o, rise, |ui| {
+            actions.extend(layer(&mut frame_ui, bar, |ui| {
                 title_bar::title_bar(ui, bar, &props)
             }));
         }
-        let (stage_o, stage_rise) = stage_style;
-        layer(&mut frame_ui, stage, stage_o, stage_rise, |ui| {
+        layer(&mut frame_ui, stage, |ui| {
             // `background-color: var(--bg)`. A plain rect: `BoxStyle::paint`
             // on a square full-window box darkens a translucent fill as if
             // it were laid twice (reported to the foundation owner).
@@ -398,13 +327,9 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
             }
             if mac_bar.is_none() {
                 let (bar, _) = stage.split_top_bottom_at_y(stage.top() + bar_h);
-                let (o, rise) = titlebar_style;
-                actions.extend(layer(ui, bar, o, rise, |ui| {
-                    title_bar::title_bar(ui, bar, &props)
-                }));
+                actions.extend(layer(ui, bar, |ui| title_bar::title_bar(ui, bar, &props)));
             }
             // The panel slot, under the title bar.
-            let (o, rise) = panel_style;
             let panel = if mac_bar.is_none() {
                 Rect::from_min_max(pos2(stage.left(), stage.top() + bar_h), stage.max)
             } else {
@@ -438,12 +363,10 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                     bulk_edit: bulk.is_open(),
                     now,
                 };
-                actions.extend(layer(ui, panel, o, rise, |ui| {
-                    workspace::draw(ui, panel, ws, input)
-                }));
+                actions.extend(layer(ui, panel, |ui| workspace::draw(ui, panel, ws, input)));
             }
             if let (Some(view), Some(sp)) = (settings_view.as_ref(), settings_panel.as_mut()) {
-                actions.extend(layer(ui, panel, o, rise, |ui| {
+                actions.extend(layer(ui, panel, |ui| {
                     settings::draw(ui, panel, sp, view, focus_visible)
                 }));
             }
@@ -458,9 +381,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                     avatars: &mut accounts.avatars,
                     jobs,
                 };
-                actions.extend(layer(ui, panel, o, rise, |ui| {
-                    personas::draw(ui, panel, input)
-                }));
+                actions.extend(layer(ui, panel, |ui| personas::draw(ui, panel, input)));
             }
             if let Some(wheel) = wheel {
                 ctx.input_mut(|i| i.events.extend(wheel));
@@ -640,16 +561,11 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
                 );
             }
         });
-    });
+    }
     if let Some(events) = held {
         ctx.input_mut(|i| i.events = events);
     }
     let end = next_idx(&ctx, layer_id);
-    let entrance_blur = if motion == Motion::Full && frame.blur > 0.25 {
-        frame.blur
-    } else {
-        0.0
-    };
     // `.app-shell.obscured`.
     let k = anim::transition_bool(
         &ctx,
@@ -658,19 +574,12 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         &OBSCURE,
     );
     if cfg!(feature = "glow") {
-        if entrance_blur > 0.0 {
-            blur_range(&ctx, layer_id, start, end, entrance_blur);
-        }
         if k > 0.0 {
             blur_range(&ctx, layer_id, start, end, 10.0 * k);
         }
-    } else if entrance_blur > 0.0 || k > 0.0 {
-        // One filter for both: the shell's blur then the frame's is one
-        // gaussian. The entrance as copies of the frame held 13 times its
-        // primitives in the renderer's cache.
-        let sigma = (entrance_blur * entrance_blur + 100.0 * k * k).sqrt();
+    } else if k > 0.0 {
         Mark::Filter {
-            sigma: sigma * ctx.pixels_per_point(),
+            sigma: 10.0 * k * ctx.pixels_per_point(),
             saturate: 1.0 - 0.18 * k,
             scale: 1.0 + 0.01 * k,
         }
@@ -706,15 +615,12 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
             dark: theme.theme.color_scheme == ColorScheme::Dark,
             now,
         };
-        ui.with_visual_transform(frame_transform, |ui| {
-            let mut frame_ui = ui.new_child(UiBuilder::new().max_rect(screen));
-            frame_ui.multiply_opacity(frame.opacity);
-            actions.extend(
-                onboarding::onboarding(&mut frame_ui, &props)
-                    .into_iter()
-                    .map(Action::Onboarding),
-            );
-        });
+        let mut frame_ui = ui.new_child(UiBuilder::new().max_rect(screen));
+        actions.extend(
+            onboarding::onboarding(&mut frame_ui, &props)
+                .into_iter()
+                .map(Action::Onboarding),
+        );
     }
     // `AppScreenOverlays` and `StreamerModeOverlay` sit outside the stage:
     // the visible window, under a macOS title bar.
@@ -821,41 +727,4 @@ fn blur_range(
             }
         }
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn boot_cascade_matches_the_css() {
-        let start = frame_style(0.0, Motion::Full);
-        assert_eq!(start.opacity, 0.0);
-        assert_eq!(start.blur, 8.0);
-        assert!((start.scale - 0.99).abs() < 1e-6);
-        let end = frame_style(0.24, Motion::Full);
-        assert_eq!(
-            end,
-            FrameStyle {
-                opacity: 1.0,
-                scale: 1.0,
-                rise: 0.0,
-                blur: 0.0
-            }
-        );
-        assert_eq!(frame_style(0.0, Motion::Reduced).opacity, 1.0);
-        // The stage waits 50 ms at its first keyframe (fill backwards).
-        assert_eq!(
-            page_entrance(&STAGE_ENTRANCE, 0.02, Motion::Full),
-            (0.0, 4.0)
-        );
-        assert_eq!(
-            page_entrance(&STAGE_ENTRANCE, BOOT_CASCADE, Motion::Full),
-            (1.0, 0.0)
-        );
-        assert_eq!(
-            page_entrance(&TITLEBAR_ENTRANCE, 0.0, Motion::Reduced),
-            (1.0, 0.0)
-        );
-    }
 }

@@ -260,7 +260,7 @@ impl Accounts {
                 error: None,
                 body: DisplayBody::Loading,
             },
-            avatars: AvatarTextures::new(policy),
+            avatars: AvatarTextures::new(policy, jobs.backend().avatar_cache_dir()),
             cs2: Cs2Cards::default(),
             tour: None,
             bulk_selection: None,
@@ -596,7 +596,7 @@ impl Accounts {
             None => build_display_view(&card_ctx, &self.lists),
         };
         self.prev_view = std::mem::replace(&mut self.view, view);
-        self.avatars.poll(ctx);
+        self.avatars.poll(ctx, jobs);
         let deadlines = [
             self.loading.next_deadline(now),
             self.pipeline.next_deadline(),

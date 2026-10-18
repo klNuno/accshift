@@ -497,6 +497,7 @@ fn layout_at(
     rect: Rect,
     baselines: Option<&[f32]>,
 ) -> Option<TextLayout> {
+    let _span = crate::bench::span("text");
     let resolved = resolve(
         ctx,
         &style.family,

@@ -21,6 +21,7 @@
 //! `.app-frame { opacity: 0 }` before `boot-ready`.
 
 pub mod accounts;
+mod avatar_pack;
 pub mod avatars;
 pub mod clock;
 mod deep_link;
@@ -307,10 +308,8 @@ pub struct Booted {
     pub theme_preview: Option<accshift_theme::ThemeDocument>,
     pub locale: Locale,
     pub nav: Navigation,
-    /// `ctx.input().time` when `boot-ready` was set.
-    pub boot_at: f64,
-    /// `panelKey` and when it last changed (`{#key panelKey}` remount).
-    pub panel: (String, f64),
+    /// `panelKey`: a change remounts the panel (`{#key panelKey}`).
+    pub panel: String,
     pub init_error: Option<String>,
     /// Accounts, display pipeline, folder navigation, avatar textures.
     pub accounts: Accounts,
@@ -447,6 +446,9 @@ pub struct AppModel {
     /// Frames drawn, for the boot marks.
     frames: u64,
     ready_marked: bool,
+    /// Bench marks already written: the boot payload, the accounts, the
+    /// avatars (bits 0 to 2).
+    boot_marks: u8,
     /// `createKeyboardController` with the app's bindings.
     keyboard: KeyboardController,
     /// `paletteOpen`: the open command palette.
@@ -579,6 +581,7 @@ impl AppModel {
             pin_focus: false,
             frames: 0,
             ready_marked: false,
+            boot_marks: 0,
             keyboard: KeyboardController::default(),
             palette: None,
             card_focus_context: None,
@@ -664,7 +667,7 @@ impl AppModel {
             let result = job.wait().unwrap_or_else(|| {
                 Err(accshift_app::error::BackendError::new("boot job panicked"))
             });
-            self.finish_boot(ctx, result, 0.0);
+            self.finish_boot(ctx, result);
         }
         match (&self.booted, &self.boot_error) {
             (Some(_), _) => Ok(()),
@@ -673,13 +676,11 @@ impl AppModel {
         }
     }
 
-    /// Ready to be photographed: booted, the boot cascade over, the
-    /// accounts loaded, the panel's cards and avatars settled.
+    /// Ready to be photographed: booted, the accounts loaded, the panel's
+    /// cards and avatars settled.
     pub fn ready(&self) -> bool {
         self.booted.as_ref().is_some_and(|b| {
-            self.last_time - b.boot_at >= shell::BOOT_CASCADE
-                && self.last_time - b.panel.1 >= b.theme.vars.motion_page_entrance
-                && b.accounts.settled()
+            b.accounts.settled()
                 && !b.accounts.avatars.busy()
                 && b.workspace
                     .settled(&b.theme.vars, b.theme.motion, self.last_time)
@@ -687,7 +688,7 @@ impl AppModel {
         })
     }
 
-    fn finish_boot(&mut self, ctx: &Context, result: BootResult, now: f64) {
+    fn finish_boot(&mut self, ctx: &Context, result: BootResult) {
         let Boot {
             mut payload,
             detected,
@@ -762,7 +763,7 @@ impl AppModel {
             self.liquid.present(),
         );
         anim::set_motion(ctx, theme.motion);
-        let panel = (nav.panel_key(), now);
+        let panel = nav.panel_key();
         let app_clock = match &self.mock {
             Some(mock) => accshift_app::time::Clock::mock(mock.now()),
             None => accshift_app::time::Clock::system(),
@@ -786,7 +787,6 @@ impl AppModel {
             theme_preview: None,
             locale,
             nav,
-            boot_at: now,
             panel,
             init_error: report.load_error,
             accounts,
@@ -901,6 +901,7 @@ impl AppModel {
 
     /// One frame.
     pub fn frame(&mut self, ui: &mut Ui) {
+        let _span = crate::bench::span("app");
         let ctx = ui.ctx().clone();
         // Chromium moves focus on mousedown: a press outside the focused
         // element blurs it, and a click on a `<label>` then focuses its
@@ -918,7 +919,8 @@ impl AppModel {
                 Poll::Waiting => {}
                 Poll::Ready(result) => {
                     self.boot_job = None;
-                    self.finish_boot(&ctx, result, now);
+                    let _span = crate::bench::span("finish_boot");
+                    self.finish_boot(&ctx, result);
                 }
                 Poll::Gone => {
                     self.boot_job = None;
@@ -989,6 +991,7 @@ impl AppModel {
                 || !foreground
                 || b.secure.render_suspended();
             let expanded = b.stores.settings().account_display.expanded_folders;
+            let _span = crate::bench::span("accounts");
             let (events, flow_events) = b.accounts.update(
                 &ctx,
                 &self.jobs,
@@ -1017,8 +1020,11 @@ impl AppModel {
         self.dispatch_keys(&ctx);
         self.mount_dialogs();
         self.track_bulk_paint(&ctx);
-        let actions = shell::draw(self, ui, now);
-        self.apply(&ctx, actions, now);
+        let actions = {
+            let _span = crate::bench::span("shell");
+            shell::draw(self, ui, now)
+        };
+        self.apply(&ctx, actions);
         // A right click on a text field: its edit menu.
         if let Some((at, items)) = field_menu::take_request(&ctx) {
             self.dialogs.open_custom_context_menu(at.x, at.y, items);
@@ -1037,15 +1043,43 @@ impl AppModel {
             _ => {}
         }
         self.frames += 1;
+        if crate::bench::enabled() {
+            self.boot_marks();
+        }
         if !self.ready_marked && self.ready() {
             crate::bench::mark("ready");
             crate::bench::request_shot(&ctx);
             self.ready_marked = true;
+        } else if !self.ready_marked && cfg!(feature = "startup-bench") {
+            // A settle deadline (the last fade's end) asks for no frame of
+            // its own when nothing on screen moves: look again for the mark.
+            ctx.request_repaint_after(std::time::Duration::from_millis(8));
+        }
+    }
+
+    /// The boot's steps for the startup bench, each the first frame it holds.
+    fn boot_marks(&mut self) {
+        let Some(b) = self.booted.as_ref() else {
+            return;
+        };
+        let steps = [
+            ("boot_payload", true),
+            ("accounts", b.accounts.settled()),
+            (
+                "avatars",
+                b.accounts.settled() && !b.accounts.avatars.busy(),
+            ),
+        ];
+        for (bit, (name, done)) in steps.into_iter().enumerate() {
+            if done && self.boot_marks & (1 << bit) == 0 {
+                self.boot_marks |= 1 << bit;
+                crate::bench::mark(name);
+            }
         }
     }
 
     /// Applies what the frame's components asked for.
-    pub fn apply(&mut self, ctx: &Context, actions: Vec<Action>, now: f64) {
+    pub fn apply(&mut self, ctx: &Context, actions: Vec<Action>) {
         for action in actions {
             self.apply_one(ctx, action);
         }
@@ -1061,8 +1095,8 @@ impl AppModel {
                 b.bulk_mount += 1;
             }
             let key = b.nav.panel_key();
-            if key != b.panel.0 {
-                b.panel = (key, now);
+            if key != b.panel {
+                b.panel = key;
                 // `{#key panelKey}` remounts the workspace and its sections.
                 b.accounts.pipeline.clear_collapsed_sections();
             }

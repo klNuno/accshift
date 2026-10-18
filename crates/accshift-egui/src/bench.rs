@@ -181,3 +181,143 @@ pub fn request_shot(ctx: &egui::Context) {
         }),
     ));
 }
+
+/// `ACCSHIFT_EGUI_BENCH_SCRIPT=1` in a bench run: from 1.5 s after the
+/// first frame, twelve wheel notches down then up over the window centre,
+/// then Ctrl+, twice (the settings open, then close) and Ctrl+Tab then
+/// Ctrl+Shift+Tab (the next tab and back), each step a `script` mark.
+pub struct Script {
+    start: std::time::Instant,
+    step: usize,
+}
+
+enum Step {
+    Wheel(f32),
+    Key(egui::Key, egui::Modifiers),
+}
+
+fn script_step(i: usize) -> Option<(f64, &'static str, Step)> {
+    use egui::{Key, Modifiers};
+    let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
+    Some(match i {
+        0..=11 => (0.08 * i as f64, "wheel-down", Step::Wheel(-1.0)),
+        12..=23 => (1.5 + 0.08 * (i - 12) as f64, "wheel-up", Step::Wheel(1.0)),
+        24 => (3.0, "settings-open", Step::Key(Key::Comma, Modifiers::CTRL)),
+        25 => (
+            4.0,
+            "settings-close",
+            Step::Key(Key::Comma, Modifiers::CTRL),
+        ),
+        26 => (5.0, "next-tab", Step::Key(Key::Tab, Modifiers::CTRL)),
+        27 => (6.0, "prev-tab", Step::Key(Key::Tab, ctrl_shift)),
+        28 => (7.0, "end", Step::Wheel(0.0)),
+        _ => return None,
+    })
+}
+
+impl Script {
+    pub fn from_env() -> Option<Script> {
+        std::env::var_os("ACCSHIFT_EGUI_BENCH_SCRIPT")
+            .filter(|_| cfg!(feature = "startup-bench"))
+            .map(|_| Script {
+                start: std::time::Instant::now() + std::time::Duration::from_millis(1500),
+                step: 0,
+            })
+    }
+
+    /// The steps due by now, as this frame's input, and the wait until the
+    /// next one, for the frame to ask (egui drops a request made before the
+    /// pass).
+    pub fn feed(
+        &mut self,
+        raw: &mut egui::RawInput,
+        center: egui::Pos2,
+    ) -> Option<std::time::Duration> {
+        let now = std::time::Instant::now();
+        if now < self.start {
+            return Some(self.start - now);
+        }
+        let elapsed = (now - self.start).as_secs_f64();
+        while let Some((at, name, step)) = script_step(self.step) {
+            if at > elapsed {
+                return Some(std::time::Duration::from_secs_f64(at - elapsed));
+            }
+            self.step += 1;
+            mark_with("script", &format!("\"step\":\"{name}\""));
+            raw.events.push(egui::Event::PointerMoved(center));
+            match step {
+                Step::Wheel(dy) if dy != 0.0 => raw.events.push(egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Line,
+                    delta: egui::vec2(0.0, dy),
+                    phase: egui::TouchPhase::Move,
+                    source: egui::MouseWheelSource::Wheel,
+                    modifiers: egui::Modifiers::NONE,
+                }),
+                Step::Wheel(_) => {}
+                Step::Key(key, modifiers) => {
+                    raw.events.push(egui::Event::ModifiersChanged(modifiers));
+                    for pressed in [true, false] {
+                        raw.events.push(egui::Event::Key {
+                            key,
+                            physical_key: Some(key),
+                            pressed,
+                            repeat: false,
+                            modifiers,
+                        });
+                    }
+                    raw.events
+                        .push(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+                }
+            }
+        }
+        None
+    }
+}
+
+thread_local! {
+    static SPANS: std::cell::RefCell<Vec<(&'static str, f64)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Times its scope into the frame's `spans` (bench only).
+pub struct Span(Option<(&'static str, std::time::Instant)>);
+
+pub fn span(name: &'static str) -> Span {
+    Span(cfg!(feature = "startup-bench").then(|| (name, std::time::Instant::now())))
+}
+
+impl Drop for Span {
+    fn drop(&mut self) {
+        if let Some((name, start)) = self.0 {
+            let ms = start.elapsed().as_secs_f64() * 1000.0;
+            SPANS.with_borrow_mut(|spans| match spans.iter_mut().find(|(n, _)| *n == name) {
+                Some((_, total)) => *total += ms,
+                None => spans.push((name, ms)),
+            });
+        }
+    }
+}
+
+/// The frame's spans as a JSON object, cleared.
+pub fn take_spans() -> String {
+    SPANS.with_borrow_mut(|spans| {
+        let body: Vec<String> = spans
+            .drain(..)
+            .map(|(name, ms)| format!("\"{name}\":{ms:.3}"))
+            .collect();
+        format!("{{{}}}", body.join(","))
+    })
+}
+
+/// [`mark`] the first time only, for a step several places can reach.
+pub fn mark_once(event: &'static str) {
+    static SEEN: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+    if !enabled() {
+        return;
+    }
+    if let Ok(mut seen) = SEEN.lock() {
+        if !seen.contains(&event) {
+            seen.push(event);
+            mark(event);
+        }
+    }
+}

@@ -368,6 +368,17 @@ impl RRect {
         }
     }
 
+    /// Each edge on the nearest quarter pixel, the radii kept.
+    fn quarter(&self) -> RRect {
+        RRect::new(
+            quarter(self.x0),
+            quarter(self.y0),
+            quarter(self.x1),
+            quarter(self.y1),
+            self.r,
+        )
+    }
+
     /// Shadow spread: outset by `s` with the radius adjustment of CSS
     /// Backgrounds 3 (a radius smaller than the spread grows less), or inset
     /// by `-s`.
@@ -766,6 +777,11 @@ fn quantize(h: &mut DefaultHasher, values: &[f32]) {
     }
 }
 
+/// `v` on the nearest quarter pixel.
+fn quarter(v: f32) -> f32 {
+    (v * 4.0).round() / 4.0
+}
+
 fn hash_rrect(h: &mut DefaultHasher, rr: &RRect, origin: Vec2) {
     quantize(
         h,
@@ -1023,7 +1039,9 @@ fn paint_gradient(painter: &Painter, geo: &BoxGeometry, g: &Gradient, opacity: f
         return;
     }
     let pb = geo.padding_box;
-    let tile_origin = vec2(pb.x0 - x0, pb.y0 - y0);
+    // On a quarter pixel, as shadow masks: a box sliding by fractions keeps
+    // its texture.
+    let tile_origin = vec2(quarter(pb.x0 - x0), quarter(pb.y0 - y0));
     let tile = vec2(pb.width(), pb.height());
     let mut h = DefaultHasher::new();
     hash_gradient(&mut h, g);
@@ -1252,7 +1270,15 @@ fn paint_shadow_mask(
     color: Color32,
     ppp: f32,
 ) {
-    let (clip, shape) = (*clip, *shape);
+    // Blurred edges on quarter pixels: a box sliding by fractions (the
+    // hover lift, a scale transition) reuses a few masks instead of
+    // blurring a new one each frame; the shadow moves by 1/8 px at most.
+    // A sharp ring keeps its exact edges.
+    let (clip, shape) = if sigma > 0.0 {
+        (clip.quarter(), shape.quarter())
+    } else {
+        (*clip, *shape)
+    };
     let reach = if sigma > 0.0 {
         (3.0 * sigma).ceil() + 1.0
     } else {

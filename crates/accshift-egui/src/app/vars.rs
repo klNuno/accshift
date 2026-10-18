@@ -61,9 +61,9 @@ pub struct Vars {
     pub accent: Rgba,
     /// `--accent-text`.
     pub accent_text: Rgba,
-    /// `--motion-page-entrance`, seconds.
+    /// `--motion-page-entrance`, seconds: 0, see [`Vars::new`].
     pub motion_page_entrance: f64,
-    /// `--motion-card-entrance`, seconds.
+    /// `--motion-card-entrance`, seconds: 0, see [`Vars::new`].
     pub motion_card_entrance: f64,
     /// `--motion-avatar-fade`, seconds.
     pub motion_avatar_fade: f64,
@@ -147,8 +147,11 @@ impl Vars {
                 .unwrap_or_default(),
             accent: color("--accent"),
             accent_text: color("--accent-text"),
-            motion_page_entrance: seconds("--motion-page-entrance", 200.0),
-            motion_card_entrance: seconds("--motion-card-entrance", 260.0),
+            // No entrances: a panel, a list or a card that fades in from
+            // `opacity: 0` (200 and 260 ms in the theme) reads as loading.
+            // A 0 s animation does nothing, as in CSS.
+            motion_page_entrance: 0.0,
+            motion_card_entrance: 0.0,
             motion_avatar_fade: seconds("--motion-avatar-fade", 220.0),
             radius_sm: theme.length_px("--radius-sm").unwrap_or(4.0),
             radius_md: theme.length_px("--radius-md").unwrap_or(8.0),
@@ -225,8 +228,8 @@ mod tests {
         assert_eq!(v.bg_solid.a, 1.0);
         assert!(v.bg_image.is_empty());
         assert_eq!(v.border_px(), 1.0);
-        assert!((v.motion_page_entrance - 0.2).abs() < 1e-9);
-        assert!((v.motion_card_entrance - 0.26).abs() < 1e-9);
+        assert_eq!(v.motion_page_entrance, 0.0);
+        assert_eq!(v.motion_card_entrance, 0.0);
         assert!((v.motion_avatar_fade - 0.22).abs() < 1e-9);
         assert_eq!(v.grid_card_width(), 100.0);
         assert_eq!(v.grid_card_min_height(), 136.0);

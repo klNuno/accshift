@@ -31,6 +31,8 @@ pub enum UserEvent {
         pass: u64,
     },
     AccessKit(accesskit_winit::Event),
+    /// The vblank the last frame armed ([`crate::vblank`]).
+    VBlank,
 }
 
 impl From<accesskit_winit::Event> for UserEvent {
@@ -46,6 +48,7 @@ pub fn run(
     viewport: egui::ViewportBuilder,
     init: Init,
 ) -> Result<(), winit::error::EventLoopError> {
+    bench::mark("run");
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
     bench::mark("event_loop");
     let mut runner = Runner {
@@ -57,6 +60,8 @@ pub fn run(
         next_repaint: None,
         last_paint: None,
         frame_interval: Duration::from_secs_f64(1.0 / 60.0),
+        vblank: None,
+        armed: false,
     };
     event_loop.run_app(&mut runner)
 }
@@ -79,6 +84,8 @@ struct Live {
     /// The held modifiers, for the keys egui-winit drops.
     modifiers: egui::Modifiers,
     shown: bool,
+    /// The bench's scripted wheel and keys, from the first shown frame.
+    script: Option<bench::Script>,
 }
 
 impl Drop for Live {
@@ -95,16 +102,26 @@ struct Runner {
     init: Option<Init>,
     live: Option<Live>,
     next_repaint: Option<Instant>,
-    /// Frame pacing in place of vsync: a blit returns at once, so an egui
-    /// animation would otherwise repaint as fast as the CPU allows.
+    /// Frame pacing: a blit returns at once, so repaints would otherwise
+    /// run as fast as the CPU allows. While an animation runs the next frame
+    /// waits for the vblank instead, this timer at twice the interval only
+    /// covering a vblank that never comes.
     last_paint: Option<Instant>,
     frame_interval: Duration,
+    vblank: Option<crate::vblank::Clock>,
+    /// The last frame asked for the next one on the vblank.
+    armed: bool,
 }
 
 impl Runner {
     fn repaint_at(&mut self, when: Instant) {
+        let interval = if self.armed {
+            self.frame_interval * 2
+        } else {
+            self.frame_interval
+        };
         let when = match self.last_paint {
-            Some(last) => when.max(last + self.frame_interval),
+            Some(last) => when.max(last + interval),
             None => when,
         };
         self.next_repaint = Some(self.next_repaint.map_or(when, |t| t.min(when)));
@@ -124,13 +141,26 @@ impl Runner {
             live.stage_zoom = zoom;
             live.full_present = true;
         }
+        let script_due = live.script.as_mut().and_then(|script| {
+            let sf = live.window.scale_factor() as f32;
+            let size = live.window.inner_size();
+            script.feed(
+                &mut raw,
+                egui::pos2(size.width as f32, size.height as f32) / (2.0 * sf),
+            )
+        });
         live.shell.input_hook(&ctx, &mut raw, zoom);
 
         let started = Instant::now();
         self.last_paint = Some(started);
         let shell = &mut live.shell;
         crate::zoom::begin_frame(&ctx, zoom);
-        let mut out = ctx.run_ui(raw, |ui| shell.frame(ui));
+        let mut out = ctx.run_ui(raw, |ui| {
+            shell.frame(ui);
+            if let Some(due) = script_due {
+                ui.ctx().request_repaint_after(due);
+            }
+        });
         let ui_done = Instant::now();
         if let Some(ime) = &mut out.platform_output.ime {
             // Back from the stage's points to the window's.
@@ -147,11 +177,12 @@ impl Runner {
             ctx.request_repaint();
         }
         live.textures.append(out.textures_delta);
-        let commands = out
-            .viewport_output
-            .remove(&ViewportId::ROOT)
-            .map(|v| v.commands)
-            .unwrap_or_default();
+        let viewport_output = out.viewport_output.remove(&ViewportId::ROOT);
+        // An animation or a scroll asked for the next frame right away.
+        let continuous = viewport_output
+            .as_ref()
+            .is_some_and(|v| v.repaint_delay.is_zero());
+        let commands = viewport_output.map(|v| v.commands).unwrap_or_default();
         let prims = ctx.tessellate(out.shapes, out.pixels_per_point);
         let tessellated = Instant::now();
         let rasterized;
@@ -243,6 +274,7 @@ impl Runner {
                 // when it shows would be swallowed by the next damaged-tiles
                 // present, since softbuffer validates the whole window.
                 live.shown = true;
+                live.script = bench::Script::from_env();
                 show_window(
                     &live.window,
                     live.shell
@@ -268,10 +300,25 @@ impl Runner {
         if bench::enabled() {
             let ms = |a: Instant, b: Instant| (b - a).as_secs_f64() * 1000.0;
             let done = Instant::now();
+            // What asked for this frame, `file:line` of each request.
+            let why: Vec<String> = ctx
+                .repaint_causes()
+                .iter()
+                .take(4)
+                .map(|c| {
+                    format!(
+                        "{}:{}",
+                        c.file.rsplit(['/', '\\']).next().unwrap_or(""),
+                        c.line
+                    )
+                })
+                .collect();
             bench::mark_with(
                 "frame",
                 &format!(
-                    "\"px\":[{},{}],\"damaged\":{},\"ui\":{:.3},\"tessellate\":{:.3},\"raster\":{:.3},\"present\":{:.3},\"held\":{:?}",
+                    "\"spans\":{},\"why\":{:?},\"px\":[{},{}],\"damaged\":{},\"ui\":{:.3},\"tessellate\":{:.3},\"raster\":{:.3},\"present\":{:.3},\"held\":{:?}",
+                    bench::take_spans(),
+                    why.join(" "),
                     size.width,
                     size.height,
                     damaged_px,
@@ -316,6 +363,8 @@ impl Runner {
                     .is_some_and(|h| h.focuses_on_show()),
             );
         }
+        // An animation's next frame starts on the vblank that shows this one.
+        self.armed = continuous && live.shown && self.vblank.as_ref().is_some_and(|c| c.arm());
         if live
             .info
             .events
@@ -341,9 +390,11 @@ impl Runner {
 /// `show_main_window`: show, then `set_focus` for a normal run.
 fn show_window(window: &Window, focus: bool) {
     window.set_visible(true);
+    bench::mark("visible");
     if focus {
         window.focus_window();
     }
+    bench::mark("shown");
 }
 
 /// boot.rs `current_geometry` on the winit window: inner size and outer
@@ -367,18 +418,21 @@ fn geometry(window: &Window) -> Option<crate::window::Geometry> {
 /// stale or blank areas until the next full present.
 #[cfg(windows)]
 fn os_wants_full_paint(window: &Window) -> bool {
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    let Ok(handle) = window.window_handle() else {
-        return false;
-    };
-    let RawWindowHandle::Win32(h) = handle.as_raw() else {
+    let Some(hwnd) = hwnd(window) else {
         return false;
     };
     // SAFETY: live HWND owned by this runner; a null rect only asks whether
     // the update region is empty.
     unsafe {
-        windows_sys::Win32::Graphics::Gdi::GetUpdateRect(h.hwnd.get() as _, std::ptr::null_mut(), 0)
-            != 0
+        windows_sys::Win32::Graphics::Gdi::GetUpdateRect(hwnd as _, std::ptr::null_mut(), 0) != 0
+    }
+}
+
+fn hwnd(window: &Window) -> Option<isize> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    match window.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Win32(h) => Some(h.hwnd.get()),
+        _ => None,
     }
 }
 
@@ -477,6 +531,7 @@ fn context_menu_key(live: &mut Live, event: &WindowEvent) -> bool {
 impl ApplicationHandler<UserEvent> for Runner {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let Some(init) = self.init.take() else { return };
+        bench::mark("resumed");
 
         let builder = self.viewport.clone().with_visible(false);
         let window = match egui_winit::create_window(&self.ctx, event_loop, &builder) {
@@ -516,6 +571,12 @@ impl ApplicationHandler<UserEvent> for Runner {
             }
         });
 
+        self.vblank = hwnd(&window).and_then(|hwnd| {
+            let proxy = self.proxy.clone();
+            crate::vblank::Clock::new(hwnd, move || {
+                let _ = proxy.send_event(UserEvent::VBlank);
+            })
+        });
         // The monitor's refresh rate; the primary one while the window sits
         // off screen.
         if let Some(mhz) = window
@@ -546,6 +607,7 @@ impl ApplicationHandler<UserEvent> for Runner {
             stage: Vec::new(),
             modifiers: egui::Modifiers::NONE,
             shown: false,
+            script: None,
         });
         self.paint(event_loop);
     }
@@ -557,6 +619,11 @@ impl ApplicationHandler<UserEvent> for Runner {
                 let current = self.ctx.cumulative_pass_nr_for(ViewportId::ROOT);
                 if current == pass || current == pass + 1 {
                     self.repaint_at(when);
+                }
+            }
+            UserEvent::VBlank => {
+                if std::mem::take(&mut self.armed) && self.next_repaint.is_some() {
+                    self.next_repaint = Some(Instant::now());
                 }
             }
             UserEvent::AccessKit(event) => {

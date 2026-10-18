@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use accshift_app::backend::Backend as _;
 use accshift_app::legacy_web_storage;
 use accshift_app::lifecycle::single_instance::{self, Launch, SingleInstance};
 use accshift_app::real::{RealBackend, BUNDLE_IDENTIFIER};
@@ -96,6 +97,7 @@ fn main() {
         let identifier = BUNDLE_IDENTIFIER;
         acquire_single_instance(identifier, Arc::clone(&wake))
     };
+    bench::mark("single_instance");
 
     if hidden || probing {
         // Safety net: a hidden process never outlives its run by much.
@@ -166,6 +168,10 @@ fn main() {
             }
         }
     });
+    // The decoded avatars the first frame shows, read while the window builds.
+    if let Some(cache) = real.as_ref().and_then(|backend| backend.avatar_cache_dir()) {
+        accshift_egui::app::avatars::prefetch_pack(cache);
+    }
     // The log rotation, "App setup started" and the panic hook, on a thread
     // while the window builds, joined before anything else logs (`setup`).
     // The `localStorage` of a v0.x install is read first, before the hook: a
@@ -185,9 +191,11 @@ fn main() {
             legacy
         })
     });
+    bench::mark("backend");
     let saved = real
         .as_ref()
         .map(|backend| config::load_window(backend.context().as_ref()));
+    bench::mark("saved_window");
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Accshift")

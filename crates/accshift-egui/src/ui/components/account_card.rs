@@ -394,11 +394,7 @@ fn content_height(v: &Vars, lines: &Lines, meta: &Meta) -> f32 {
 /// cuts each move to the 0.01 ms transition of `html[data-motion="reduced"]`:
 /// the name jumps, the pauses stay.
 fn marquee_offset(elapsed: f64, shift: f32, reduced: bool) -> f32 {
-    let d = if reduced {
-        1e-5
-    } else {
-        (f64::from(shift) / f64::from(MARQUEE_SPEED) * 1000.0).round() / 1000.0
-    };
+    let d = marquee_move(shift, reduced);
     if d <= 0.0 || elapsed <= 0.0 {
         return 0.0;
     }
@@ -413,6 +409,32 @@ fn marquee_offset(elapsed: f64, shift: f32, reduced: bool) -> f32 {
         0.0
     };
     -shift * t as f32
+}
+
+/// Seconds one move of the marquee takes.
+fn marquee_move(shift: f32, reduced: bool) -> f64 {
+    if reduced {
+        1e-5
+    } else {
+        (f64::from(shift) / f64::from(MARQUEE_SPEED) * 1000.0).round() / 1000.0
+    }
+}
+
+/// While the marquee rests at an end, the seconds until it moves again.
+fn marquee_rest(elapsed: f64, shift: f32, reduced: bool) -> Option<f64> {
+    let d = marquee_move(shift, reduced);
+    if d <= 0.0 || elapsed <= 0.0 {
+        return None;
+    }
+    let cycle = 2.0 * (d + MARQUEE_PAUSE);
+    let m = elapsed % cycle;
+    if (d..d + MARQUEE_PAUSE).contains(&m) {
+        Some(d + MARQUEE_PAUSE - m)
+    } else if m >= 2.0 * d + MARQUEE_PAUSE {
+        Some(cycle - m)
+    } else {
+        None
+    }
 }
 
 /// Draws the card over `rect` (its layout box, top left and width; the
@@ -541,12 +563,10 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
     let offset = if marquee {
         let reduced = anim::motion(&ctx) == anim::Motion::Reduced;
         let elapsed = now - st.marquee_from;
-        if reduced && elapsed > 0.0 {
-            // The name only moves when a pause ends.
-            let left = MARQUEE_PAUSE - elapsed.rem_euclid(MARQUEE_PAUSE);
-            ctx.request_repaint_after(std::time::Duration::from_secs_f64(left));
-        } else {
-            ctx.request_repaint();
+        // The name rests at either end: no frame until it moves again.
+        match marquee_rest(elapsed, shift, reduced) {
+            Some(left) => ctx.request_repaint_after(std::time::Duration::from_secs_f64(left)),
+            None => ctx.request_repaint(),
         }
         marquee_offset(elapsed, shift, reduced)
     } else {
@@ -1424,6 +1444,16 @@ mod tests {
         assert_eq!(marquee_offset(1.9, 42.0, true), -42.0);
         assert_eq!(marquee_offset(2.1, 42.0, true), 0.0);
         assert_eq!(marquee_offset(4.1, 42.0, true), -42.0);
+    }
+
+    #[test]
+    fn the_marquee_asks_for_no_frame_while_it_rests() {
+        // One second each way, two seconds of pause at each end.
+        assert_eq!(marquee_rest(0.5, 42.0, false), None);
+        assert!((marquee_rest(1.5, 42.0, false).unwrap() - 1.5).abs() < 1e-9);
+        assert_eq!(marquee_rest(3.5, 42.0, false), None);
+        assert!((marquee_rest(5.25, 42.0, false).unwrap() - 0.75).abs() < 1e-9);
+        assert!((marquee_rest(1.0, 42.0, true).unwrap() - 1.00001).abs() < 1e-9);
     }
 
     #[test]

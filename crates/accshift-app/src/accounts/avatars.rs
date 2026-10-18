@@ -651,7 +651,9 @@ impl AvatarDiskCache {
     }
 }
 
-fn stable_host(url: &str) -> bool {
+/// Whether `url` is on one of [`AVATAR_CACHE_STABLE_HOSTS`]: its picture
+/// never changes.
+pub fn stable_host(url: &str) -> bool {
     let Some(host) = reqwest::Url::parse(url)
         .ok()
         .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
