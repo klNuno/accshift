@@ -16,8 +16,19 @@
 // installers and the updater know. The CLI goes next to it (`externalBin`)
 // from `binaries/accshift-<triple>[.exe]`.
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readdirSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -84,6 +95,51 @@ if (flag("--no-updater")) {
   configs.push(JSON.stringify({ bundle: { createUpdaterArtifacts: false } }));
 }
 
+// The bundler downloads linuxdeploy's AppRun into its tool cache with mode
+// 0770 and copies it into the AppDir as is, where linuxdeploy renames it
+// AppRun.wrapped. When the kernel mounts the image instead of FUSE (firejail
+// --appimage, the AppImage catalog test), a user other than root cannot run
+// it: "AppRun.wrapped: Permission denied". The bundler only downloads a
+// missing file, so a copy left there with mode 0755 is the one it packs.
+const appimage = process.platform === "linux" && bundles.split(",").includes("appimage");
+const toolsArch = /^arm.*hf$/.test(triple) ? "armhf" : triple.split("-")[0];
+
+async function seedAppRun() {
+  const cache = process.env.XDG_CACHE_HOME || join(homedir(), ".cache");
+  const apprun = join(cache, "tauri", `AppRun-${toolsArch}`);
+  if (!existsSync(apprun)) {
+    const url = `https://github.com/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-${toolsArch}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`could not download ${url}: HTTP ${response.status}`);
+    mkdirSync(dirname(apprun), { recursive: true });
+    writeFileSync(apprun, Buffer.from(await response.arrayBuffer()));
+  }
+  chmodSync(apprun, 0o755);
+  console.log(`seeded AppRun: ${apprun}`);
+}
+
+// Fails the build when the bundler stops packing the seeded copy (a new cache
+// path or file name): every user must be able to run the image's entry points.
+function checkAppImage(file) {
+  const dir = mkdtempSync(join(tmpdir(), "accshift-appimage-"));
+  try {
+    execFileSync(file, ["--appimage-extract", "AppRun*"], { cwd: dir, stdio: "ignore" });
+    for (const name of ["AppRun", "AppRun.wrapped"]) {
+      const path = join(dir, "squashfs-root", name);
+      if (!existsSync(path)) continue;
+      const mode = statSync(path).mode & 0o777;
+      if ((mode & 0o005) !== 0o005) {
+        throw new Error(`${file}: ${name} has mode ${mode.toString(8)}, other users cannot run it`);
+      }
+    }
+    console.log(`checked AppImage entry points: ${file}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+if (appimage) await seedAppRun();
+
 const tauri = createRequire(join(root, "package.json")).resolve("@tauri-apps/cli/tauri.js");
 execFileSync(
   process.execPath,
@@ -103,4 +159,11 @@ execFileSync(
 const out = join(release, "bundle");
 for (const kind of readdirSync(out)) {
   for (const name of readdirSync(join(out, kind))) console.log(`bundle: ${join(out, kind, name)}`);
+}
+
+if (appimage) {
+  const dir = join(out, "appimage");
+  for (const name of readdirSync(dir).filter((name) => name.endsWith(".AppImage"))) {
+    checkAppImage(join(dir, name));
+  }
 }
