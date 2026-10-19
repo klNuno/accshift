@@ -165,6 +165,19 @@ and the server in [`server/`](./server), both readable in a sitting.
 
 </details>
 
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/),
+certificate by [SignPath Foundation](https://signpath.org/).
+
+- Committers and reviewers: [klNuno](https://github.com/klNuno)
+- Approvers: [klNuno](https://github.com/klNuno)
+
+Signed files are built by the [release workflow](./.github/workflows/release.yml)
+from this repository, and every signing request is approved by hand. Privacy
+policy: [Privacy](#privacy) above, with every telemetry event listed in
+[docs/analytics.md](./docs/analytics.md).
+
 ## Building from source
 
 ```bash
