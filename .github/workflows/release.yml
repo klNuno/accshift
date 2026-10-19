@@ -11,6 +11,8 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
+    outputs:
+      signed: ${{ steps.windows_signed.outputs.signed }}
 
     steps:
       - name: Checkout
@@ -93,15 +95,112 @@ jobs:
             throw "ACCSHIFT_TELEMETRY_URL must be an HTTPS base URL without credentials, query, fragment, or trailing slash."
           }
 
+      - name: Build the GUI and the CLI
+        env:
+          ACCSHIFT_TELEMETRY_URL: ${{ vars.ACCSHIFT_TELEMETRY_URL }}
+        run: cargo build --release --locked -p accshift-egui -p accshift-cli
+
+      # Authenticode through SignPath (see "Code signing policy" in the README)
+      # once the SIGNPATH_ORGANIZATION_ID variable and the SIGNPATH_API_TOKEN
+      # secret exist; until then the release stays unsigned, as before. Each
+      # request waits for a manual approval in SignPath, the binaries first so
+      # the installer packs signed files, then the installer itself. The
+      # artifact configurations live in .signpath/artifact-configurations.
+      - name: Upload the binaries to sign
+        id: unsigned_binaries
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned-binaries
+          if-no-files-found: error
+          path: |
+            target/release/accshift-egui.exe
+            target/release/accshift.exe
+
+      - name: Sign the binaries
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: accshift
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: binaries
+          github-artifact-id: ${{ steps.unsigned_binaries.outputs.artifact-id }}
+          parameters: |
+            version: "${{ steps.release_tag.outputs.version }}"
+          wait-for-completion-timeout-in-seconds: 7200
+          output-artifact-directory: signed/binaries
+
+      - name: Use the signed binaries
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        shell: pwsh
+        run: |
+          foreach ($name in "accshift-egui.exe", "accshift.exe") {
+            $signed = "signed/binaries/$name"
+            if ((Get-AuthenticodeSignature $signed).Status -ne "Valid") {
+              throw "$signed has no valid signature"
+            }
+            Copy-Item $signed "target/release/$name" -Force
+          }
+
       # The Tauri bundler packs the egui app with crates/accshift-egui/tauri.conf.json,
       # the config of the v1.0.x Tauri builds, so an existing install updates
       # in place. It signs the installer for the updater.
       - name: Build the installer
         env:
-          ACCSHIFT_TELEMETRY_URL: ${{ vars.ACCSHIFT_TELEMETRY_URL }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: node crates/accshift-egui/bundle/bundle.mjs --build
+        run: node crates/accshift-egui/bundle/bundle.mjs
+
+      - name: Upload the installer to sign
+        id: unsigned_installer
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          archive: false
+          if-no-files-found: error
+          path: target/x86_64-pc-windows-msvc/release/bundle/nsis/Accshift_${{ steps.release_tag.outputs.version }}_x64-setup.exe
+
+      - name: Sign the installer
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: accshift
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: installer
+          github-artifact-id: ${{ steps.unsigned_installer.outputs.artifact-id }}
+          parameters: |
+            version: "${{ steps.release_tag.outputs.version }}"
+          wait-for-completion-timeout-in-seconds: 7200
+          skip-decompress: true
+          output-artifact-directory: signed/installer
+
+      # Authenticode changes the installer's bytes, so the updater signature
+      # the bundler wrote no longer matches: sign the signed file again.
+      - name: Use the signed installer
+        id: windows_signed
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $version = "${{ steps.release_tag.outputs.version }}"
+          $name = "Accshift_${version}_x64-setup.exe"
+          $signed = "signed/installer/$name"
+          if ((Get-AuthenticodeSignature $signed).Status -ne "Valid") {
+            throw "$signed has no valid signature"
+          }
+          $installer = "target/x86_64-pc-windows-msvc/release/bundle/nsis/$name"
+          Copy-Item $signed $installer -Force
+          Remove-Item "$installer.sig"
+          node node_modules/@tauri-apps/cli/tauri.js signer sign --app-version $version $installer
+          if ($LASTEXITCODE -ne 0) { throw "tauri signer sign failed" }
+          if (-not (Test-Path "$installer.sig")) { throw "no updater signature for $installer" }
+          "signed=true" >> $env:GITHUB_OUTPUT
 
       - name: Stage standalone CLI artifact
         shell: pwsh
@@ -530,6 +629,9 @@ jobs:
           cat SHA256SUMS.txt
 
       - name: Finalize release notes
+        env:
+          WINDOWS_SIGNED: ${{ needs.build-windows.outputs.signed }}
+          REPO: ${{ github.repository }}
         run: |
           cp artifacts/RELEASE_NOTES.md RELEASE_NOTES.md
           cat >> RELEASE_NOTES.md <<'EOF'
@@ -540,6 +642,14 @@ jobs:
           - **Linux**: install the `.deb` / `.rpm`, or `chmod +x` the `.AppImage` and run it.
           - **macOS** (Apple Silicon): the app is not yet notarized. After copying Accshift.app to Applications, clear the quarantine flag once: `xattr -cr /Applications/Accshift.app`.
           EOF
+          if [ "$WINDOWS_SIGNED" = "true" ]; then
+            cat >> RELEASE_NOTES.md <<EOF
+
+          ## Code signing policy
+
+          Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). The Windows installer and executables are signed; see the [code signing policy](https://github.com/$REPO#code-signing-policy).
+          EOF
+          fi
           cat RELEASE_NOTES.md
 
       - name: Create GitHub release

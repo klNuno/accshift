@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The GUI and the CLI, signed before the installer packs them. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" />
+  </parameters>
+  <zip-file>
+    <pe-file path="accshift-egui.exe" product-name="Accshift" product-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+    <pe-file path="accshift.exe" product-name="Accshift" product-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

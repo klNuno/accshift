@@ -156,6 +156,7 @@ dependencies = [
  "is-terminal",
  "serde",
  "serde_json",
+ "tauri-winres",
  "unicode-width",
 ]
 
