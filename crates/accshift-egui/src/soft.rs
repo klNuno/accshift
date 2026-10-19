@@ -66,12 +66,29 @@ pub fn run(
         vblank: None,
         armed: false,
         tray: None,
+        heal_due: Vec::new(),
     };
     event_loop.run_app(&mut runner)
 }
 
+/// When the full presents of [`Runner::heal`] run, after its signal.
+const HEAL_STEPS: [Duration; 5] = [
+    Duration::ZERO,
+    Duration::from_millis(150),
+    Duration::from_millis(500),
+    Duration::from_millis(1500),
+    Duration::from_millis(4000),
+];
+
+/// The shortest gap between the frames of a window hidden in the tray.
+/// They still run the app's jobs and timers, but nothing animates where no
+/// one looks, as a hidden WebView throttles its timers.
+const HIDDEN_FRAME_INTERVAL: Duration = Duration::from_millis(250);
+
 struct Live {
     window: Rc<Window>,
+    /// Kept for [`Runner::heal`], which builds the surface again.
+    context: softbuffer::Context<OwnedDisplayHandle>,
     surface: softbuffer::Surface<OwnedDisplayHandle, Rc<Window>>,
     state: egui_winit::State,
     info: ViewportInfo,
@@ -90,6 +107,14 @@ struct Live {
     shown: bool,
     /// The bench's scripted wheel and keys, from the first shown frame.
     script: Option<bench::Script>,
+}
+
+impl Live {
+    /// Hidden after it first showed: closed to the tray. Before that the
+    /// window waits for boot, and its frames must not wait.
+    fn hidden(&self) -> bool {
+        self.shown && self.window.is_visible() == Some(false)
+    }
 }
 
 impl Drop for Live {
@@ -118,11 +143,15 @@ struct Runner {
     /// The notification-area icon, created on a `--tray` launch or the first
     /// close-to-tray, then kept for the rest of the run.
     tray: Option<Tray>,
+    /// Full presents still owed by [`Self::heal`], soonest first.
+    heal_due: Vec<Instant>,
 }
 
 impl Runner {
     fn repaint_at(&mut self, when: Instant) {
-        let interval = if self.armed {
+        let interval = if self.live.as_ref().is_some_and(Live::hidden) {
+            HIDDEN_FRAME_INTERVAL
+        } else if self.armed {
             self.frame_interval * 2
         } else {
             self.frame_interval
@@ -136,6 +165,9 @@ impl Runner {
 
     fn paint(&mut self, event_loop: &ActiveEventLoop) {
         let ctx = self.ctx.clone();
+        let now = Instant::now();
+        let healing = self.heal_due.first().is_some_and(|due| *due <= now);
+        self.heal_due.retain(|due| *due > now);
         let Some(live) = &mut self.live else { return };
 
         egui_winit::update_viewport_info(&mut live.info, &ctx, &live.window, false);
@@ -199,14 +231,21 @@ impl Runner {
         // A normal run's window waits for boot (or the failsafe); a scene's
         // shows with its first frame, cloaked.
         let show = !live.shown && live.shell.take_show(Instant::now());
+        // Hidden in the tray, a frame only runs the UI, as when minimized.
+        let hidden = live.hidden();
         let mut screenshot = None;
-        if let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) {
+        if let (Some(w), Some(h), false) = (
+            NonZeroU32::new(size.width),
+            NonZeroU32::new(size.height),
+            hidden,
+        ) {
             live.surface.resize(w, h).expect("softbuffer resize");
             let mut buffer = live.surface.buffer_mut().expect("softbuffer buffer");
             // A buffer that still holds the last frame only needs the tiles
             // that changed; a new one (first frame, resize) or a repaint the
             // OS asked for gets everything.
             let full = std::mem::take(&mut live.full_present)
+                || healing
                 || show
                 || buffer.age() == 0
                 || os_wants_full_paint(&live.window);
@@ -243,6 +282,15 @@ impl Runner {
             } else {
                 let mut target = BufferMutRef::new(pixels, window_px[0], window_px[1]);
                 live.render.copy_canvas_to_buffer(&mut target, full)
+            };
+            // Windows may have invalidated the window while this frame
+            // rendered. The present validates all of it, so it carries all
+            // of it; checked last to leave no frame in between.
+            let tiles = if !full && !zoomed && os_wants_full_paint(&live.window) {
+                let mut target = BufferMutRef::new(pixels, window_px[0], window_px[1]);
+                live.render.copy_canvas_to_buffer(&mut target, true)
+            } else {
+                tiles
             };
             let damage: Vec<softbuffer::Rect> = tiles
                 .into_iter()
@@ -376,7 +424,8 @@ impl Runner {
             }
         }
         // An animation's next frame starts on the vblank that shows this one.
-        self.armed = continuous && live.shown && self.vblank.as_ref().is_some_and(|c| c.arm());
+        self.armed =
+            continuous && live.shown && !hidden && self.vblank.as_ref().is_some_and(|c| c.arm());
         if live
             .info
             .events
@@ -385,6 +434,30 @@ impl Runner {
         {
             self.request_close(event_loop);
         }
+        if let Some(&next) = self.heal_due.first() {
+            self.repaint_at(next);
+        }
+    }
+
+    /// The window's pixels may be gone ([`take_content_lost`], a reveal).
+    /// A present right away can land before DWM composes the window again
+    /// and be clipped to nothing; softbuffer then validates the window and
+    /// Windows asks for nothing more. So full presents follow over a few
+    /// seconds, through a new window DC: softbuffer keeps the one it took
+    /// when the surface was made.
+    fn heal(&mut self) {
+        let Some(live) = &mut self.live else { return };
+        // Before boot or hidden in the tray: the next show presents in full.
+        if !live.shown || live.window.is_visible() == Some(false) {
+            return;
+        }
+        if let Ok(surface) = softbuffer::Surface::new(&live.context, live.window.clone()) {
+            live.surface = surface;
+        }
+        live.full_present = true;
+        let now = Instant::now();
+        self.heal_due = HEAL_STEPS.iter().map(|step| now + *step).collect();
+        self.repaint_at(now);
     }
 
     /// Create the tray icon once, on a `--tray` launch or the first
@@ -437,9 +510,8 @@ impl Runner {
             live.window.set_visible(true);
             live.window.focus_window();
             live.shown = true;
-            live.full_present = true;
         }
-        self.repaint_at(Instant::now());
+        self.heal();
     }
 
     /// The title bar's close button or the system's (Alt+F4, the taskbar):
@@ -505,6 +577,17 @@ fn hwnd(window: &Window) -> Option<isize> {
 
 #[cfg(not(windows))]
 fn os_wants_full_paint(_window: &Window) -> bool {
+    false
+}
+
+/// [`crate::window::frame::take_content_lost`].
+#[cfg(windows)]
+fn take_content_lost() -> bool {
+    crate::window::frame::take_content_lost()
+}
+
+#[cfg(not(windows))]
+fn take_content_lost() -> bool {
     false
 }
 
@@ -660,6 +743,7 @@ impl ApplicationHandler<UserEvent> for Runner {
         egui_winit::update_viewport_info(&mut info, &self.ctx, &window, true);
         self.live = Some(Live {
             window,
+            context,
             surface,
             state,
             info,
@@ -734,6 +818,14 @@ impl ApplicationHandler<UserEvent> for Runner {
                     }
                 }
             }
+            // Back in front: put back any tile Windows dropped while the
+            // window was away, then egui gets the event.
+            WindowEvent::Focused(true) | WindowEvent::Occluded(false) => {
+                if let Some(live) = &mut self.live {
+                    live.full_present = true;
+                }
+                self.repaint_at(Instant::now());
+            }
             WindowEvent::RedrawRequested => {
                 // Only the OS asks for this (the runner paints directly), and
                 // it wants the whole client area back.
@@ -755,6 +847,9 @@ impl ApplicationHandler<UserEvent> for Runner {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if take_content_lost() {
+            self.heal();
+        }
         match self.next_repaint {
             Some(when) if when <= Instant::now() => {
                 self.next_repaint = None;

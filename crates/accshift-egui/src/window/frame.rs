@@ -15,7 +15,10 @@
 //! - `set_keep_backdrop_active` (src-tauri `commands/backdrop.rs`): DWM
 //!   keeps a glass theme's acrylic on an inactive window;
 //! - Snap Layouts (src-tauri `commands/window.rs`): the title bar's maximize
-//!   button answers `HTMAXBUTTON`, so Windows 11 opens its flyout there.
+//!   button answers `HTMAXBUTTON`, so Windows 11 opens its flyout there;
+//! - the screen coming back on, a display change or DWM restarting its
+//!   composition may drop the window's pixels: [`take_content_lost`] tells
+//!   the runner, which presents the whole frame again.
 //!
 //! winit gives an undecorated window no frame and no resize edges; this
 //! takes those messages before its window procedure.
@@ -28,6 +31,7 @@ use super::placement::{self, Insets, Monitor, Rect};
 use accshift_core::config::{SavedWindow, MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH};
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
+use windows_sys::core::GUID;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, MonitorFromRect, ScreenToClient, HDC, HMONITOR,
@@ -35,6 +39,7 @@ use windows_sys::Win32::Graphics::Gdi::{
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+use windows_sys::Win32::System::Power::{RegisterPowerSettingNotification, POWERBROADCAST_SETTING};
 use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ};
 use windows_sys::Win32::UI::HiDpi::{
     AdjustWindowRectExForDpi, GetDpiForWindow, GetSystemMetricsForDpi,
@@ -47,16 +52,21 @@ use windows_sys::Win32::UI::Shell::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallWindowProcW, DefWindowProcW, GetClientRect, GetWindowLongW, GetWindowRect, IsZoomed,
-    PostMessageW, SetWindowLongPtrW, SetWindowPos, GWLP_WNDPROC, GWL_EXSTYLE, GWL_STYLE, HTBOTTOM,
-    HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCLIENT, HTLEFT, HTMAXBUTTON, HTRIGHT, HTTOP, HTTOPLEFT,
-    HTTOPRIGHT, MINMAXINFO, MONITORINFOF_PRIMARY, NCCALCSIZE_PARAMS, SC_MAXIMIZE, SC_RESTORE,
-    SM_CXFRAME, SM_CXPADDEDBORDER, SM_CXSIZEFRAME, SM_CYFRAME, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-    SWP_NOZORDER, WM_GETMINMAXINFO, WM_NCACTIVATE, WM_NCCALCSIZE, WM_NCHITTEST, WM_NCLBUTTONDBLCLK,
-    WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSELEAVE, WM_NCMOUSEMOVE, WM_NCRBUTTONDOWN,
-    WM_NCRBUTTONUP, WM_SYSCOMMAND, WNDPROC, WS_CAPTION, WS_SIZEBOX,
+    PostMessageW, SetWindowLongPtrW, SetWindowPos, DEVICE_NOTIFY_WINDOW_HANDLE, GWLP_WNDPROC,
+    GWL_EXSTYLE, GWL_STYLE, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCLIENT, HTLEFT, HTMAXBUTTON,
+    HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, MINMAXINFO, MONITORINFOF_PRIMARY, NCCALCSIZE_PARAMS,
+    SC_MAXIMIZE, SC_RESTORE, SM_CXFRAME, SM_CXPADDEDBORDER, SM_CXSIZEFRAME, SM_CYFRAME,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER, WM_GETMINMAXINFO, WM_NCACTIVATE, WM_NCCALCSIZE,
+    WM_NCHITTEST, WM_NCLBUTTONDBLCLK, WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSELEAVE,
+    WM_NCMOUSEMOVE, WM_NCRBUTTONDOWN, WM_NCRBUTTONUP, WM_SYSCOMMAND, WNDPROC, WS_CAPTION,
+    WS_SIZEBOX,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     LoadImageW, SendMessageW, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, WM_SETICON,
+};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    PBT_APMRESUMEAUTOMATIC, PBT_POWERSETTINGCHANGE, WM_DISPLAYCHANGE, WM_DWMCOMPOSITIONCHANGED,
+    WM_POWERBROADCAST,
 };
 
 /// The icon resource build.rs gives the exe, tauri-build's id.
@@ -90,6 +100,13 @@ const FIRST_WINDOWS_11_BUILD: u32 = 22000;
 static PREVIOUS: AtomicIsize = AtomicIsize::new(0);
 static SHADOW: AtomicBool = AtomicBool::new(false);
 static KEEP_ACTIVE: AtomicBool = AtomicBool::new(false);
+/// Set by a message after which the window's pixels may be gone, taken by
+/// the runner ([`take_content_lost`]).
+static CONTENT_LOST: AtomicBool = AtomicBool::new(false);
+
+/// `GUID_CONSOLE_DISPLAY_STATE` (Win32_System_SystemServices, not worth a
+/// feature): the console display went off (0), on (1) or dimmed (2).
+const GUID_CONSOLE_DISPLAY_STATE: GUID = GUID::from_u128(0x6fe69556_704a_47a0_8f24_c28d936fda47);
 
 /// Snap Layouts: `snap_layouts::State` of src-tauri `commands/window.rs`.
 struct Snap {
@@ -342,6 +359,16 @@ pub fn install(hwnd: HWND, saved: &SavedWindow) {
         let previous =
             unsafe { SetWindowLongPtrW(hwnd, GWLP_WNDPROC, frame_proc as *const () as isize) };
         PREVIOUS.store(previous, Ordering::Relaxed);
+        // WM_POWERBROADCAST when the screen goes off and on. The handle
+        // lives as long as the window, and Windows drops it with the window.
+        // SAFETY: a window this thread owns and a static GUID.
+        unsafe {
+            RegisterPowerSettingNotification(
+                hwnd,
+                &GUID_CONSOLE_DISPLAY_STATE,
+                DEVICE_NOTIFY_WINDOW_HANDLE,
+            )
+        };
     }
     let monitors = monitors();
     let insets = |dpi| insets(dpi, shadow);
@@ -362,6 +389,38 @@ pub fn install(hwnd: HWND, saved: &SavedWindow) {
     let placed = placement::after_build(saved, outer_rect(hwnd).unwrap_or(target), &monitors);
     if Some(placed) != outer_rect(hwnd) {
         set_outer(hwnd, placed);
+    }
+}
+
+/// Whether a message since the last call may have dropped the window's
+/// pixels: the screen came back on, the system resumed, the display mode
+/// changed or DWM restarted its composition. Windows does not always ask
+/// for a repaint then, and softbuffer validates the whole window on each
+/// present, so the tiles a frame did not touch would stay blank.
+pub fn take_content_lost() -> bool {
+    CONTENT_LOST.swap(false, Ordering::Relaxed)
+}
+
+/// Whether `msg` may leave the window without its pixels.
+fn loses_content(msg: u32, wparam: WPARAM, lparam: LPARAM) -> bool {
+    match msg {
+        WM_DISPLAYCHANGE | WM_DWMCOMPOSITIONCHANGED => true,
+        WM_POWERBROADCAST => match wparam as u32 {
+            PBT_APMRESUMEAUTOMATIC => true,
+            PBT_POWERSETTINGCHANGE if lparam != 0 => {
+                // SAFETY: Windows passes a POWERBROADCAST_SETTING with this
+                // event, its data one DWORD for the display state.
+                let setting = unsafe { &*(lparam as *const POWERBROADCAST_SETTING) };
+                let guid = setting.PowerSetting;
+                let display = GUID_CONSOLE_DISPLAY_STATE;
+                (guid.data1, guid.data2, guid.data3, guid.data4)
+                    == (display.data1, display.data2, display.data3, display.data4)
+                    && setting.DataLength >= 1
+                    && setting.Data[0] == 1
+            }
+            _ => false,
+        },
+        _ => false,
     }
 }
 
@@ -572,6 +631,9 @@ unsafe extern "system" fn frame_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if loses_content(msg, wparam, lparam) {
+        CONTENT_LOST.store(true, Ordering::Relaxed);
+    }
     match msg {
         WM_NCCALCSIZE if wparam != 0 => {
             // SAFETY: the message's own parameters.
@@ -770,6 +832,34 @@ mod tests {
             keep_backdrop_active(true);
             assert_eq!(SendMessageW(hwnd, WM_NCACTIVATE, 0, 0), 1);
             keep_backdrop_active(false);
+
+            // The screen back on and a display change mark the pixels lost,
+            // once; the screen going off does not.
+            take_content_lost();
+            let setting = |state: u8| POWERBROADCAST_SETTING {
+                PowerSetting: GUID_CONSOLE_DISPLAY_STATE,
+                DataLength: 4,
+                Data: [state],
+            };
+            let off = setting(0);
+            SendMessageW(
+                hwnd,
+                WM_POWERBROADCAST,
+                PBT_POWERSETTINGCHANGE as WPARAM,
+                &off as *const POWERBROADCAST_SETTING as LPARAM,
+            );
+            assert!(!take_content_lost());
+            let on = setting(1);
+            SendMessageW(
+                hwnd,
+                WM_POWERBROADCAST,
+                PBT_POWERSETTINGCHANGE as WPARAM,
+                &on as *const POWERBROADCAST_SETTING as LPARAM,
+            );
+            assert!(take_content_lost());
+            assert!(!take_content_lost());
+            SendMessageW(hwnd, WM_DISPLAYCHANGE, 32, lparam(1920, 1080));
+            assert!(take_content_lost());
 
             DestroyWindow(hwnd);
         }
