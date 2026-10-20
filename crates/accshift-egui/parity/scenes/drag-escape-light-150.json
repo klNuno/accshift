@@ -1,0 +1,74 @@
+{
+  "id": "drag-escape-light-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "light",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "down": [535, 150]
+    },
+    {
+      "wait": 250
+    },
+    {
+      "move": [550, 160]
+    },
+    {
+      "move": [640, 300]
+    },
+    {
+      "wait": 450
+    },
+    {
+      "shot": "dragging"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 350
+    },
+    {
+      "shot": "cancelled"
+    },
+    {
+      "up": [640, 300]
+    },
+    {
+      "wait": 350
+    },
+    {
+      "down": [535, 150]
+    },
+    {
+      "wait": 250
+    },
+    {
+      "move": [545, 150]
+    },
+    {
+      "move": [535, 150]
+    },
+    {
+      "wait": 350
+    },
+    {
+      "up": [535, 150]
+    },
+    {
+      "wait": 450
+    },
+    {
+      "shot": "self-drop"
+    }
+  ]
+}

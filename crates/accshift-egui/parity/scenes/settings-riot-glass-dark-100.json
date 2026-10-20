@@ -1,0 +1,86 @@
+{
+  "id": "settings-riot-glass-dark-100",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [87, 18]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "click": [93, 280]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "riot"
+    },
+    {
+      "move": [776, 192]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "hover-choose"
+    },
+    {
+      "click": [353, 167]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "toggled"
+    },
+    {
+      "click": [700, 192]
+    },
+    {
+      "key": "End"
+    },
+    {
+      "text": "x"
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 900
+    },
+    {
+      "shot": "typing"
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "focus-choose"
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "id": "theme-import-invalid-glass-dark-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "clipboard": "{",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [87, 18]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "click": [668, 376]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "shot": "invalid"
+    }
+  ]
+}

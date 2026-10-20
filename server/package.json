@@ -5,13 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "test": "node ../node_modules/vitest/vitest.mjs run --root .. server/src",
+    "test": "vitest run",
     "deploy": "wrangler deploy",
     "tail": "wrangler tail"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260925.1",
+    "@cloudflare/workers-types": "^5.20261016.1",
     "typescript": "^7.0.2",
-    "wrangler": "^4.139.0"
+    "vitest": "5.0.5",
+    "wrangler": "^4.151.1"
   }
 }

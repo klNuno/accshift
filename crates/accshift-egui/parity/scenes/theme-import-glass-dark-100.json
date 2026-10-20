@@ -1,0 +1,39 @@
+{
+  "id": "theme-import-glass-dark-100",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "clipboard": "{\"schemaVersion\": 3, \"id\": \"ember\", \"name\": \"Ember\", \"colorScheme\": \"dark\", \"extends\": \"glass-dark\", \"tokens\": {\"accent\": \"#f97316\"}}",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [87, 18]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "click": [668, 376]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "shot": "imported"
+    }
+  ]
+}

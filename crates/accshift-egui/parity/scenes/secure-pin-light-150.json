@@ -1,0 +1,82 @@
+{
+  "id": "secure-pin-light-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "light",
+  "locale": "en",
+  "seed": {
+    "SETTINGS": {
+      "pinEnabled": true,
+      "pinHash": "000102030405060708090a0b0c0d0e0f:e19d9507e40b77fbb7503faedce7cb4ebf8c6820a8b746d9dfa9fcab899ec65d"
+    }
+  },
+  "steps": [
+    {
+      "wait": 900
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "text": "1"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "shot": "locked"
+    },
+    {
+      "dom": "locked",
+      "select": ".pin-lock-overlay, .pin-lock-overlay *"
+    },
+    {
+      "move": [842, 18]
+    },
+    {
+      "text": "1"
+    },
+    {
+      "key": "Backspace"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "shot": "close-hover"
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "text": "12"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "shot": "typing"
+    },
+    {
+      "text": "99"
+    },
+    {
+      "wait": 900
+    },
+    {
+      "shot": "wrong"
+    },
+    {
+      "dom": "wrong",
+      "select": ".pin-lock-overlay, .pin-lock-overlay *"
+    }
+  ]
+}

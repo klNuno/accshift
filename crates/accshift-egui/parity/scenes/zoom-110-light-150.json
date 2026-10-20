@@ -1,0 +1,43 @@
+{
+  "id": "zoom-110-light-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "light",
+  "locale": "en",
+  "seed": {
+    "SETTINGS": {
+      "uiScalePercent": 110
+    }
+  },
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "grid"
+    },
+    {
+      "click": [96, 20]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "shot": "settings"
+    }
+  ]
+}

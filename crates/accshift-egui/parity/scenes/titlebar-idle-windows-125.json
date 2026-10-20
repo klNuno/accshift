@@ -1,0 +1,9 @@
+{
+  "id": "titlebar-idle-windows-125",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": { "width": 860, "height": 440, "scale": 1.25 },
+  "theme": "glass-dark",
+  "locale": "en",
+  "steps": [{ "wait": 600 }, { "move": [250, 300] }, { "wait": 300 }, { "shot": "idle" }]
+}

@@ -1,0 +1,474 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use accshift_app::backend::Backend as _;
+use accshift_app::legacy_web_storage;
+use accshift_app::lifecycle::single_instance::{self, Launch, SingleInstance};
+use accshift_app::real::{RealBackend, BUNDLE_IDENTIFIER};
+use accshift_core::config;
+use accshift_egui::{bench, harness, window, AppModel, Screen, Shell};
+use raw_window_handle::HasWindowHandle;
+use std::sync::{Arc, OnceLock};
+
+/// The probe's single-instance name: never the installed app's, so a probe
+/// neither forwards to it nor answers its launches.
+#[cfg(all(debug_assertions, windows))]
+const PROBE_IDENTIFIER: &str = "com.accshift.desktop-egui-probe";
+
+fn main() {
+    let bench_build = cfg!(feature = "startup-bench");
+    // `--scene <scene.json>... --out <dir>`: replay parity scenes in a hidden
+    // window, see src/harness/mod.rs. Nothing is parsed before main otherwise.
+    let (scene_files, out_dir) = {
+        let mut files = Vec::new();
+        let mut out = None;
+        let mut args = std::env::args().skip(1);
+        let mut in_scenes = false;
+        while let Some(arg) = args.next() {
+            if arg == "--scene" {
+                in_scenes = true;
+            } else if arg == "--out" {
+                out = args.next().map(std::path::PathBuf::from);
+                in_scenes = false;
+            } else if in_scenes {
+                files.push(std::path::PathBuf::from(arg));
+            }
+        }
+        (files, out)
+    };
+    let scene_mode = !scene_files.is_empty();
+    // `--tray`: the autostart launch. The window starts hidden in the tray.
+    let tray_start = std::env::args().skip(1).any(|arg| arg == "--tray");
+    let scenes = if scene_mode {
+        let Some(out) = out_dir else {
+            eprintln!("usage: accshift-egui --scene <scene.json>... --out <dir>");
+            std::process::exit(2);
+        };
+        let mut loaded = Vec::new();
+        for file in &scene_files {
+            match harness::load(file) {
+                Ok(scene) => loaded.push(scene),
+                Err(err) => {
+                    eprintln!("scene: {err}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some((loaded, out))
+    } else {
+        None
+    };
+    let hidden = bench_build || scene_mode;
+    // Experiment knob for the boot breakdown: an opaque window without the
+    // acrylic, to price the transparent framebuffer.
+    let opaque = std::env::var_os("ACCSHIFT_EGUI_OPAQUE").is_some();
+    bench::mark_with(
+        "main",
+        &format!(
+            "\"build\":\"{}\",\"renderer\":\"{}\"",
+            if bench_build { bench::MARKER } else { "dev" },
+            if cfg!(feature = "glow") {
+                "glow"
+            } else {
+                "software"
+            },
+        ),
+    );
+    // Debug builds: the window shell on a scratch folder, unseen
+    // (window/probe.rs).
+    #[cfg(all(debug_assertions, windows))]
+    let probe = window::probe::dir();
+    #[cfg(not(all(debug_assertions, windows)))]
+    let probe: Option<std::path::PathBuf> = None;
+    let probing = probe.is_some();
+
+    // The single-instance plugin, first as in src-tauri/src/lib.rs: a second
+    // launch hands its arguments to the running app and leaves. This
+    // launch's own `accshift://` URL is the deep-link plugin's `current`,
+    // which the page's listener never sees, so it is not read here.
+    let wake: Arc<OnceLock<egui::Context>> = Arc::default();
+    let single = if hidden {
+        None
+    } else {
+        #[cfg(all(debug_assertions, windows))]
+        let identifier = if probing {
+            PROBE_IDENTIFIER
+        } else {
+            BUNDLE_IDENTIFIER
+        };
+        #[cfg(not(all(debug_assertions, windows)))]
+        let identifier = BUNDLE_IDENTIFIER;
+        acquire_single_instance(identifier, Arc::clone(&wake))
+    };
+    bench::mark("single_instance");
+
+    if hidden || probing {
+        // Safety net: a hidden process never outlives its run by much.
+        let budget = 60 + 30 * scene_files.len() as u64;
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(budget));
+            eprintln!("scene: still running after {budget} s, giving up");
+            std::process::exit(3);
+        });
+    }
+
+    // AccessKit initializes UI Automation on the UI thread before the window
+    // may show (about 4 ms here). Doing it first on another thread overlaps
+    // that with the event loop and window creation.
+    #[cfg(windows)]
+    std::thread::spawn(|| {
+        use windows_sys::Win32::UI::Accessibility::{
+            AutomationIdentifierType_Property, ControlType_Property_GUID, UiaLookupId,
+        };
+        // SAFETY: plain lookup of a built-in property id, the same call
+        // accesskit_windows makes to force UIA initialization.
+        unsafe {
+            UiaLookupId(
+                AutomationIdentifierType_Property,
+                &ControlType_Property_GUID,
+            )
+        };
+        bench::mark("uia_warm");
+    });
+
+    if bench_build {
+        // The core is called directly, no IPC: read the real Steam login
+        // list (read-only) off the UI thread, to time the link.
+        std::thread::spawn(|| {
+            let path = std::path::Path::new(r"C:\Program Files (x86)\Steam");
+            let count = accshift_core::platforms::steam::accounts::get_accounts(path)
+                .map(|accounts| accounts.len())
+                .unwrap_or(0);
+            bench::mark_with("core_accounts", &format!("\"count\":{count}"));
+        });
+    }
+
+    // The probe's stand-in for the user's local app data, where a v0.x
+    // install left its WebView2 profile (window/probe.rs).
+    let legacy_root = probe.as_ref().map(|dir| dir.join("webview"));
+    // A normal run: the backend on the user's app folders, and the window
+    // where Tauri's opens (`build_main_window`). A bench build too, unseen,
+    // to time the real boot.
+    let real = (!scene_mode).then(|| {
+        #[cfg(all(debug_assertions, windows))]
+        if let Some(dir) = probe {
+            return Arc::new(RealBackend::with_context(window::probe::context(dir)));
+        }
+        if bench_build {
+            // A bench run works on the copy of the app folders the harness
+            // made, so it never writes the user's (geometry, logs).
+            let Some(dir) = std::env::var_os("ACCSHIFT_EGUI_BENCH_DIR") else {
+                eprintln!("accshift: a bench build needs ACCSHIFT_EGUI_BENCH_DIR");
+                std::process::exit(2);
+            };
+            return Arc::new(RealBackend::with_context(Arc::new(BenchDirs(dir.into()))));
+        }
+        match RealBackend::new() {
+            Ok(backend) => Arc::new(backend),
+            Err(err) => {
+                eprintln!("accshift: {err}");
+                std::process::exit(1);
+            }
+        }
+    });
+    // The decoded avatars the first frame shows, read while the window builds.
+    if let Some(cache) = real.as_ref().and_then(|backend| backend.avatar_cache_dir()) {
+        accshift_egui::app::avatars::prefetch_pack(cache);
+    }
+    // The log rotation, "App setup started" and the panic hook, on a thread
+    // while the window builds, joined before anything else logs (`setup`).
+    // The `localStorage` of a v0.x install is read first, before the hook: a
+    // corrupt LevelDB panics inside the reader, which catches it, and the
+    // hook would report it.
+    let session = real.as_ref().map(|backend| {
+        let backend = Arc::clone(backend);
+        std::thread::spawn(move || {
+            let ctx = backend.context().as_ref();
+            let legacy = match legacy_root {
+                Some(root) => legacy_web_storage::read_for_boot_with(ctx, || {
+                    legacy_web_storage::read_in(&root, BUNDLE_IDENTIFIER)
+                }),
+                None => legacy_web_storage::read_for_boot(ctx, BUNDLE_IDENTIFIER),
+            };
+            backend.begin_session();
+            legacy
+        })
+    });
+    bench::mark("backend");
+    let saved = real
+        .as_ref()
+        .map(|backend| config::load_window(backend.context().as_ref()));
+    bench::mark("saved_window");
+
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("Accshift")
+        .with_app_id("accshift-egui")
+        .with_inner_size([860.0, 440.0])
+        .with_decorations(false)
+        .with_transparent(!opaque)
+        // No file drops in this app, and winit's drop target costs an
+        // `OleInitialize` on the UI thread before the window exists.
+        .with_drag_and_drop(false)
+        .with_resizable(true);
+    if let Some(saved) = &saved {
+        // The frame (window/frame.rs) moves and sizes it on Windows.
+        let (width, height) = saved
+            .size
+            .unwrap_or((config::DEFAULT_WINDOW_WIDTH, config::DEFAULT_WINDOW_HEIGHT));
+        viewport = viewport
+            .with_inner_size([width as f32, height as f32])
+            .with_min_inner_size([
+                config::MIN_WINDOW_WIDTH as f32,
+                config::MIN_WINDOW_HEIGHT as f32,
+            ]);
+    }
+    if hidden {
+        // Never activated, never in the taskbar, off every monitor, and
+        // cloaked below: both runners show the window after its first frame
+        // whatever the builder says, so this is what keeps it unseen.
+        viewport = viewport
+            .with_active(false)
+            .with_taskbar(false)
+            .with_position([-32000.0, -32000.0]);
+    } else if probing {
+        // On screen where the frame puts it, but cloaked below.
+        viewport = viewport.with_active(false).with_taskbar(false);
+    }
+
+    // Shared by both runners once the window exists.
+    let build = move |ctx: &egui::Context, handle: &dyn HasWindowHandle| {
+        let _ = wake.set(ctx.clone());
+        #[cfg(windows)]
+        {
+            // A bench run's window stays off screen, at the saved size.
+            if let (Some(saved), Some(hwnd), false) = (&saved, hwnd(handle), hidden) {
+                window::frame::install(hwnd, saved);
+                window::frame::wake_on_maximize_hover(ctx);
+                #[cfg(debug_assertions)]
+                if probing {
+                    window::probe::spawn(hwnd);
+                }
+            }
+            // A normal run's backdrop follows the theme (window::Host).
+            window_effects(handle, hidden || probing, !opaque && real.is_none());
+        }
+        #[cfg(not(windows))]
+        let _ = (handle, &saved);
+        bench::mark("app_created");
+        let scenes = scenes.map(|(scenes, out)| {
+            std::fs::create_dir_all(&out).ok();
+            harness::SceneRun::new(scenes, out)
+        });
+        match real {
+            // The real app folders, through accshift-core.
+            Some(backend) => {
+                let legacy = session.and_then(|s| s.join().ok()).flatten();
+                if let Some(read) = &legacy {
+                    // Places and key names, never a value.
+                    let _ = accshift_core::logging::append_app_log(
+                        backend.context(),
+                        "info",
+                        "storage.legacy",
+                        "Read the legacy web storage",
+                        Some(&read.notes.join("; ")),
+                    );
+                }
+                // The rest of `setup`, in its order. The probe's folders
+                // are a scratch copy: no telemetry from it, and the keyring
+                // sweep would read every real entry as an orphan.
+                // Neither does a bench run, nor does it register the scheme
+                // or run the maintenance.
+                let quiet = probing || bench_build;
+                if !quiet {
+                    backend.start_telemetry();
+                }
+                #[cfg(windows)]
+                let hwnd = hwnd(handle).map_or(0, |h| h as isize);
+                #[cfg(not(windows))]
+                let hwnd = 0;
+                window::color::set_owner(hwnd);
+                let shell = Shell::new(
+                    Screen::App(Box::new(AppModel::real(
+                        ctx,
+                        Arc::clone(&backend),
+                        legacy.map(|read| read.storage),
+                    ))),
+                    scenes,
+                );
+                if !quiet {
+                    register_schemes(&backend);
+                    let _ = backend.spawn_maintenance();
+                }
+                shell.with_window(
+                    window::Host::new(backend, hwnd)
+                        .focus_on_show(!quiet)
+                        .start_hidden(tray_start && !quiet)
+                        .with_single_instance(single),
+                )
+            }
+            None => {
+                // Each scene builds its own screen once the window has its
+                // size.
+                accshift_egui::screens::main_spike::install_fonts(ctx);
+                Shell::new(Screen::Blank, scenes)
+            }
+        }
+    };
+
+    #[cfg(feature = "software")]
+    let result = accshift_egui::soft::run(
+        viewport,
+        Box::new(
+            move |ctx: &egui::Context, window: &egui_winit::winit::window::Window| {
+                build(ctx, window)
+            },
+        ),
+    )
+    .map_err(|err| err.to_string());
+
+    #[cfg(feature = "glow")]
+    let result = {
+        let options = eframe::NativeOptions {
+            viewport,
+            persist_window: false,
+            // Experiment knob for the boot breakdown: does the first swap
+            // wait on the compositor?
+            glow_options: eframe::egui_glow::GlowConfiguration {
+                vsync: std::env::var_os("ACCSHIFT_EGUI_NO_VSYNC").is_none(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        eframe::run_native(
+            "accshift-egui",
+            options,
+            Box::new(move |cc| Ok(Box::new(build(&cc.egui_ctx, cc)))),
+        )
+        .map_err(|err| err.to_string())
+    };
+
+    if let Err(err) = result {
+        eprintln!("{err}");
+        std::process::exit(1);
+    }
+    if scene_mode && harness::failures() > 0 {
+        eprintln!("scene: {} failure(s)", harness::failures());
+        std::process::exit(1);
+    }
+}
+
+/// [`single_instance::acquire`] on this launch's arguments; a second
+/// launch arriving later repaints the window through `wake` once it exists.
+fn acquire_single_instance(
+    identifier: &str,
+    wake: Arc<OnceLock<egui::Context>>,
+) -> Option<SingleInstance> {
+    let wake: single_instance::Wake = Arc::new(move || {
+        if let Some(ctx) = wake.get() {
+            ctx.request_repaint();
+        }
+    });
+    match single_instance::acquire(
+        identifier,
+        &single_instance::current_args(),
+        &single_instance::current_cwd(),
+        Some(wake),
+    ) {
+        Launch::Primary(single) => Some(single),
+        Launch::Forwarded => std::process::exit(0),
+        Launch::Alone(single) => single,
+    }
+}
+
+/// `wire_deep_links`: claim `accshift://` for this executable when the
+/// registry points elsewhere (Windows), rewrite the handler file (Linux).
+/// Only the shipped `accshift-gui` exe of a release build does it: any other
+/// exe would take the installed app's links.
+fn register_schemes(backend: &RealBackend) {
+    let stem = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.file_stem().map(|s| s.to_string_lossy().into_owned()));
+    if cfg!(debug_assertions) || stem.as_deref() != Some("accshift-gui") {
+        return;
+    }
+    #[cfg(windows)]
+    let failure = match accshift_app::lifecycle::deep_link::current_exe_for_registration() {
+        Ok(exe) => accshift_app::lifecycle::deep_link::wire_scheme_registration(
+            &mut accshift_app::lifecycle::deep_link::WindowsRegistry,
+            accshift_app::lifecycle::deep_link::SCHEMES,
+            BUNDLE_IDENTIFIER,
+            &exe,
+        )
+        .err()
+        .map(|failure| failure.details),
+        Err(err) => Some(err.to_string()),
+    };
+    #[cfg(target_os = "linux")]
+    let failure = accshift_app::lifecycle::deep_link::SCHEMES
+        .iter()
+        .find_map(|scheme| {
+            accshift_app::lifecycle::deep_link::register_linux(
+                scheme,
+                accshift_app::lifecycle::updater::PRODUCT_NAME,
+            )
+            .err()
+        });
+    #[cfg(not(any(windows, target_os = "linux")))]
+    let failure: Option<String> = None;
+    if let Some(details) = failure {
+        let _ = accshift_core::logging::append_app_log(
+            backend.context(),
+            "warn",
+            "backend.deep-link",
+            "Failed to register accshift:// scheme",
+            Some(&details),
+        );
+    }
+}
+
+#[cfg(windows)]
+fn hwnd(window: &dyn HasWindowHandle) -> Option<windows_sys::Win32::Foundation::HWND> {
+    match window.window_handle().ok()?.as_raw() {
+        raw_window_handle::RawWindowHandle::Win32(h) => Some(h.hwnd.get() as _),
+        _ => None,
+    }
+}
+
+/// A bench run's app folders: `config`, `data`, `local` and `cache` under
+/// the harness's copy.
+struct BenchDirs(std::path::PathBuf);
+
+impl accshift_core::AppContext for BenchDirs {
+    fn app_config_dir(&self) -> Result<std::path::PathBuf, String> {
+        Ok(self.0.join("config"))
+    }
+    fn app_data_dir(&self) -> Result<std::path::PathBuf, String> {
+        Ok(self.0.join("data"))
+    }
+    fn app_local_data_dir(&self) -> Result<std::path::PathBuf, String> {
+        Ok(self.0.join("local"))
+    }
+    fn app_cache_dir(&self) -> Result<std::path::PathBuf, String> {
+        Ok(self.0.join("cache"))
+    }
+}
+
+#[cfg(windows)]
+fn window_effects(window: &dyn HasWindowHandle, cloak: bool, acrylic: bool) {
+    if let Some(hwnd) = hwnd(window).filter(|_| cloak) {
+        let on: i32 = 1;
+        // SAFETY: valid HWND owned by the runner, 4-byte BOOL attribute.
+        unsafe {
+            windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute(
+                hwnd,
+                windows_sys::Win32::Graphics::Dwm::DWMWA_CLOAK as u32,
+                &on as *const i32 as *const _,
+                4,
+            );
+        }
+    }
+    // Glass Dark's material in Tauri: acrylic with a heavy black tint
+    // (`ACRYLIC_TINTS` in src/lib/theme/backdrop.ts).
+    if acrylic {
+        let _ = window_vibrancy::apply_acrylic(window, Some((0, 0, 0, 150)));
+    }
+}

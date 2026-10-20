@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The NSIS installer, uploaded as a raw file. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" />
+  </parameters>
+  <pe-file path="Accshift_${version}_x64-setup.exe" product-name="Accshift" product-version="${version}">
+    <authenticode-sign />
+  </pe-file>
+</artifact-configuration>

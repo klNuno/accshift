@@ -1,7 +1,14 @@
 [workspace]
 resolver = "2"
-members = ["src-tauri", "crates/accshift-core", "crates/accshift-cli"]
-exclude = ["vendor"]
+members = [
+  "crates/accshift-core",
+  "crates/accshift-cli",
+  "crates/accshift-theme",
+  "crates/accshift-app",
+  "crates/accshift-egui",
+]
+# Patched copies of upstream crates, built as dependencies only.
+exclude = ["crates/accshift-egui/vendor"]
 
 [workspace.package]
 version = "1.0.5"
@@ -11,30 +18,21 @@ authors = ["meetsu"]
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = [
-  "rustls-tls",
+reqwest = { version = "0.13", default-features = false, features = [
+  "rustls-no-provider",
   "json",
   "blocking",
+] }
+# The crypto provider of reqwest's rustls, installed by accshift-core's http
+# module: ring, as reqwest 0.12's `rustls-tls` had.
+rustls = { version = "0.23", default-features = false, features = [
+  "ring",
+  "std",
+  "tls12",
 ] }
 thiserror = "2"
 rusqlite = { version = "0.40", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
-tauri = "2.11.5"
-tauri-plugin-process = "2.3.1"
-# No `zip` feature: it only unpacks v1 updater archives (`.nsis.zip`,
-# `.AppImage.tar.gz`), and `createUpdaterArtifacts: true` ships the signed
-# setup and AppImage themselves (macOS keeps its own tar and flate2).
-tauri-plugin-updater = { version = "2.10.1", default-features = false, features = [
-  "rustls-tls",
-  "system-proxy",
-] }
-tauri-plugin-deep-link = "2"
-tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
-# Dev-only agent bridge, kept out of every release build by the optional
-# `mcp-bridge` feature on accshift-gui. Version must stay in step with the
-# @hypothesi/tauri-mcp-server pinned in .mcp.json.
-tauri-plugin-mcp-bridge = "0.13.0"
-tauri-build = "2.5.6"
 winreg = "0.56"
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
@@ -44,8 +42,7 @@ windows-sys = { version = "0.61", features = [
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
-mimalloc = { version = "0.1", default-features = false }
-tokio = { version = "=1.47", features = ["rt", "rt-multi-thread", "macros"] }
+tokio = { version = "1.53", features = ["rt", "rt-multi-thread", "macros"] }
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 # ShellExecuteExW instead of a powershell.exe child per link or folder open.
 open = { version = "5", features = ["shellexecute-on-windows"] }
@@ -54,23 +51,51 @@ clap = { version = "4", features = ["derive"] }
 directories = "6"
 is-terminal = "0.4"
 unicode-width = "0.2"
-keyring = { version = "3", default-features = false, features = [
-  "apple-native",
-  "sync-secret-service",
-  "crypto-rust",
-] }
-base64 = "0.23"
+keyring = "4"
 pbkdf2 = "0.13"
 sha2 = "0.11"
 zeroize = "1"
 
+# epaint with one patch: a font can supply its glyph coverage
+# (FontData::face_rasterizer), so ui::text rasterizes with DirectWrite like
+# WebView2. See the header of crates/accshift-egui/vendor/epaint/Cargo.toml
+# and its src/text/face_rasterizer.rs.
+[patch.crates-io]
+epaint = { path = "crates/accshift-egui/vendor/epaint" }
+
+# Built for size: a smaller exe reaches `main` sooner (crates/accshift-egui
+# build.rs), except the per-frame hot path below.
 [profile.release]
-panic = "abort"
+# Corrupt legacy databases and failed background jobs recover through
+# catch_unwind. Keep that recovery enabled in the shipped binaries.
+panic = "unwind"
 codegen-units = 1
 lto = "fat"
-opt-level = 2
+opt-level = "s"
 strip = true
 
-# Starts WebView2 before the Windows app loads, see vendor/wry/ACCSHIFT.md.
-[patch.crates-io]
-wry = { path = "vendor/wry" }
+[profile.release.package.egui_software_backend]
+opt-level = 3
+
+[profile.release.package.epaint]
+opt-level = 3
+
+# Avatar SVG raster and blur, off the UI thread but on the way to `ready`.
+[profile.release.package.accshift-egui]
+opt-level = 3
+
+[profile.release.package.resvg]
+opt-level = 3
+
+[profile.release.package.tiny-skia]
+opt-level = 3
+
+[profile.release.package.tiny-skia-path]
+opt-level = 3
+
+# The `windows` bindings crate alone needs about 2 GB of RAM at opt-level 2
+# with one codegen unit. Fat LTO optimizes its bitcode again at the final link,
+# so building it unoptimized changes the compile peak, not the binary.
+[profile.release.package.windows]
+opt-level = 0
+codegen-units = 16

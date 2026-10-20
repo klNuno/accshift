@@ -14,11 +14,11 @@ use super::plan::DryRunPlan;
 use super::schema::{Descriptor, DescriptorError, Os};
 use super::user_dir;
 use crate::context::AppContext;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// A descriptor file judged without installing it.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DescriptorPreview {
     /// The file the user picked, as they picked it.

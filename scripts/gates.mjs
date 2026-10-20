@@ -1,8 +1,8 @@
 // Runs every pre-commit gate in one command and reports each exit code.
 //
-//   pnpm gates                 all gates
-//   pnpm gates rust worker     only the named gates
-//   pnpm gates --skip rust     all but the named gates
+//   node scripts/gates.mjs                 all gates
+//   node scripts/gates.mjs rust worker     only the named gates
+//   node scripts/gates.mjs --skip rust     all but the named gates
 //
 // Each gate runs to completion even after a failure, so one run shows every
 // broken gate. The process exits non-zero when any gate failed. Nothing is
@@ -20,12 +20,11 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const node = JSON.stringify(process.execPath);
 
 const GATES = [
-  { name: "check", cmd: "pnpm run check" },
-  { name: "vitest", cmd: `${node} node_modules/vitest/vitest.mjs run --maxWorkers=4` },
+  { name: "fmt", cmd: "cargo fmt --all --check" },
+  { name: "clippy", cmd: "cargo clippy --workspace --all-targets --locked -- -D warnings" },
+  { name: "rust", cmd: "cargo test --workspace --locked" },
   { name: "worker", cmd: `${node} node_modules/typescript/bin/tsc --noEmit`, cwd: "server" },
-  { name: "fmt", cmd: "pnpm run fmt:check" },
-  { name: "clippy", cmd: "pnpm run clippy" },
-  { name: "rust", cmd: "pnpm run test:rust" },
+  { name: "worker-test", cmd: `${node} node_modules/vitest/vitest.mjs run`, cwd: "server" },
 ];
 
 function select(argv) {
@@ -61,7 +60,7 @@ for (const gate of select(process.argv.slice(2))) {
 console.log("\n=== summary");
 for (const r of results) {
   console.log(
-    `${r.code === 0 ? "ok  " : "FAIL"} ${r.name.padEnd(7)} exit ${r.code} in ${r.seconds}s`,
+    `${r.code === 0 ? "ok  " : "FAIL"} ${r.name.padEnd(11)} exit ${r.code} in ${r.seconds}s`,
   );
 }
 process.exit(results.every((r) => r.code === 0) ? 0 : 1);

@@ -1,0 +1,162 @@
+/* The app's default design tokens: the :root custom properties a theme
+   overrides (css.rs). Formerly the :root block of the Svelte app.css. */
+
+:root {
+  /* CJK families close the stack: Inter and the usual UI faces carry Latin and
+     Cyrillic but no Han. Naming the Simplified Chinese faces is not cosmetic on
+     Linux, where fontconfig hands out Noto Sans CJK *JP* by default and renders
+     Chinese with Japanese glyph variants. Hiragino Sans GB covers the macOS
+     images that ship without PingFang. */
+  --font-stack-base:
+    system-ui, Avenir, Helvetica, Arial, "Microsoft YaHei UI", "PingFang SC", "Hiragino Sans GB",
+    "Noto Sans CJK SC", "Noto Sans SC", "Noto Sans SC Subset", sans-serif;
+  /* The theme's own font token is prepended to that stack (see themes.ts), so
+     a theme picks the Latin face and never has to know about the CJK tail. */
+  --font-ui: Inter, var(--font-stack-base);
+  /* Headings and window titles. Falls back to the interface font, so a theme
+     that names only one face still looks deliberate. */
+  --font-display: var(--font-ui);
+  --line-height: 1.5;
+  --letter-spacing: 0;
+  --font-smoothing: antialiased;
+  --font-smoothing-mac: grayscale;
+  font-family: var(--font-ui);
+  line-height: var(--line-height);
+  letter-spacing: var(--letter-spacing);
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: var(--font-smoothing);
+  -moz-osx-font-smoothing: var(--font-smoothing-mac);
+  color-scheme: dark;
+
+  --bg-rgb: 9 9 11;
+  --bg-opacity: 1;
+  --bg: rgb(var(--bg-rgb) / var(--bg-opacity));
+  --bg-solid: rgb(var(--bg-rgb));
+  --bg-card: #1c1c1f;
+  --bg-card-hover: #252528;
+  --bg-muted: #27272a;
+  --bg-elevated: #3f3f46;
+  --bg-overlay: #1c1c1f;
+  --fg: #fafafa;
+  --fg-muted: #a1a1aa;
+  --fg-subtle: #71717a;
+  --border: #27272a;
+  --danger: #dc2626;
+  --afk-text: #ffffff;
+
+  /* Theme contract, version 2. Every value here is the dark built-in, and is
+     overwritten on <html> by applyThemeToDocument as soon as a theme is
+     applied: these are what the app paints with before that lands, and what a
+     theme that omits a token silently falls back to. Each one is documented in
+     docs/theming.md. */
+  --accent: #2563eb;
+  --accent-fg: #ffffff;
+  /* The accent used as text or as a hairline icon rather than as a fill.
+     `--accent` is chosen to sit under `--accent-fg`, so on a card it lands
+     around 3:1 and fails small copy. Pulled toward the foreground it keeps
+     its hue and clears the contrast on a dark and on a light theme alike,
+     which a fixed light blue never did. */
+  --accent-text: color-mix(in srgb, var(--accent) 55%, var(--fg));
+  --success: #22c55e;
+  --warning: #eab308;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --elevation-low: 0 2px 8px rgb(0 0 0 / 0.18);
+  --elevation-medium: 0 8px 24px rgb(0 0 0 / 0.32);
+  --elevation-high: 0 18px 48px rgb(0 0 0 / 0.45);
+  --density-scale: 1;
+
+  /* Contract version 3: what a theme is made of rather than painted with.
+     These are the values the interface used to hardcode, so a theme written
+     before they existed keeps rendering exactly as it did. */
+  --bg-image: none;
+  --card-bg-image: none;
+  --border-width: 1px;
+  --border-style: solid;
+  --avatar-radius: var(--avatar-radius-default, 6px);
+  --focus-ring-style: solid;
+  --overlay-blur: 4px;
+  --label-transform: none;
+  --motion-scale: 1;
+
+  /* Stacking order, declared once. Every z-index in the app names a level
+     here, so what covers what is readable in one place instead of being
+     spread over a dozen components as bare numbers nobody can compare. The
+     values leave gaps: a new layer slots between two of them without
+     renumbering anything. Not a theme token, a theme has no say in this.
+
+     The two negative levels sit inside the shell's stacking context, under
+     every piece of app content: the Liquid Glass wallpaper and the rim lens
+     that refracts it. */
+  --z-wallpaper: -2;
+  --z-rim-lens: -1;
+
+  /* The five card levels are local. An account card shell isolates its own
+     stacking context, so they only ever compete with each other, except
+     --z-card-extension which lifts the hovered shell over its neighbours. */
+  --z-card-base: 1;
+  --z-card-face: 2;
+  --z-card-dragging: 8;
+  --z-card-active: 18;
+  --z-card-extension: 24;
+
+  /* Window chrome, in the window's own stacking context. */
+  --z-sheen: 30;
+  --z-frost: 40;
+  --z-sticky: 100;
+  --z-sticky-popover: 101;
+  --z-screen: 300;
+  --z-screen-top: 320;
+  --z-streamer: 400;
+  --z-lock: 500;
+  /* Above the lock and the away screen on purpose: an error raised while the
+     screen is locked has to stay readable, and a toast carries no account
+     data of its own. */
+  --z-toast: 600;
+  --z-dialog: 1100;
+  --z-menu: 1200;
+
+  /* The onboarding tour points at the interface, so it sits over all of it.
+     Its five layers keep their own order: click shield, dimmed backdrop,
+     spotlight cutout, docked card, then the cleared backdrop that stops the
+     card from being darkened. */
+  --z-tour-shield: 8990;
+  --z-tour-backdrop: 9000;
+  --z-tour-spotlight: 9001;
+  --z-tour-card: 9002;
+  --z-tour-clear: 9003;
+
+  /* The drag ghost is appended to <body> and follows the pointer, so it has
+     to clear everything it could be dragged over. Above the tour as well:
+     the tour's click shield makes that combination unreachable, and the
+     ghost has no business being clipped by a layer it can float across. */
+  --z-drag-ghost: 9999;
+
+  /* Card grid metrics, in terms of the shape tokens: density and the medium
+     radius are what a theme turns to reshape the account grid. */
+  --grid-card-width: calc(100px * var(--density-scale));
+  --grid-card-min-height: calc(136px * var(--density-scale));
+  --grid-card-padding: calc(8px * var(--density-scale));
+  --grid-card-radius: var(--radius-md);
+  --grid-card-avatar-size: calc(68px * var(--density-scale));
+
+  /* Motion tokens. Entrances fade in place (opacity + scale or a small
+     translateY). Never animate horizontal position: an element whose layout
+     settles after mount (centering transform, computed padding) combined
+     with a transform transition or FLIP reads as a ghost sideways slide.
+     Details in AGENTS.md, section "Animations". */
+  --motion-card-entrance: calc(260ms * var(--motion-scale));
+  --motion-page-entrance: calc(200ms * var(--motion-scale));
+  /* Avatars: an <img> stays transparent until its bytes are decoded, then
+     fades in. The defer delay is how long a still-unresolved avatar shows a
+     bare box before falling back to initials or a spinner, so a profile that
+     resolves quickly never flashes a placeholder. */
+  --motion-avatar-fade: calc(220ms * var(--motion-scale));
+  /* Not scaled: this one is a readability delay, not an animation. Stretching
+     it with a slow theme would leave a blank avatar box on screen for a
+     second, and a theme at scale 0 would flash the placeholder every time. */
+  --motion-avatar-defer: 380ms;
+}

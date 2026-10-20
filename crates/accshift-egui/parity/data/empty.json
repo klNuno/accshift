@@ -1,0 +1,469 @@
+{
+  "format": 1,
+  "scenario": "empty",
+  "now": 1791000000,
+  "spec": {
+    "label": "no account anywhere — empty states and first-run UI",
+    "runtimeOs": "windows",
+    "switchDelayMs": 900,
+    "steamPath": "",
+    "hasSteamApiKey": false,
+    "currentSteamAccount": "",
+    "currentRiotProfile": "",
+    "currentRobloxAccount": ""
+  },
+  "commands": {
+    "cs2_bridge_get_settings": [
+      {
+        "args": {},
+        "result": {
+          "enabled": false,
+          "url": "",
+          "apiKey": ""
+        }
+      }
+    ],
+    "descriptor_install_file": [
+      {
+        "args": {},
+        "result": {
+          "dir": "C:\\Users\\player\\AppData\\Roaming\\accshift\\platforms",
+          "loaded": [],
+          "skipped": [],
+          "rejected": []
+        }
+      }
+    ],
+    "descriptor_preview_file": [
+      {
+        "args": {},
+        "result": {
+          "source": "C:\\Users\\player\\Downloads\\acme.json",
+          "descriptor": {
+            "id": "acme",
+            "schemaVersion": 1,
+            "name": "Acme Launcher",
+            "shortName": "Acme",
+            "os": {
+              "windows": {
+                "roots": {
+                  "files": ["${APPDATA}/Acme Launcher"]
+                },
+                "detect": {
+                  "executableResolves": true
+                },
+                "executable": {
+                  "fileName": "AcmeLauncher.exe",
+                  "candidates": [
+                    {
+                      "kind": "path",
+                      "template": "${ProgramFiles}/Acme/AcmeLauncher.exe"
+                    }
+                  ]
+                },
+                "identity": {
+                  "source": {
+                    "kind": "synthetic"
+                  },
+                  "format": {
+                    "charset": "alphanumeric",
+                    "maxLength": 64
+                  },
+                  "current": "config"
+                },
+                "state": {
+                  "files": [
+                    {
+                      "live": "${APPDATA}/Acme Launcher/session.json",
+                      "snapshot": "session.json",
+                      "snapshotMarker": true
+                    }
+                  ]
+                },
+                "close": {
+                  "processes": ["AcmeLauncher.exe"]
+                },
+                "launch": {}
+              }
+            }
+          },
+          "fileName": "acme.json",
+          "replaces": false,
+          "blocked": "",
+          "plan": {
+            "platformId": "acme",
+            "operation": "switch",
+            "accountId": "preview",
+            "applied": false,
+            "roots": ["C:\\Users\\player\\AppData\\Roaming\\Acme Launcher"],
+            "steps": [
+              {
+                "action": "close",
+                "kind": "process",
+                "target": "AcmeLauncher.exe"
+              },
+              {
+                "action": "capture",
+                "kind": "file",
+                "target": "C:\\Users\\player\\AppData\\Roaming\\Acme Launcher\\session.json",
+                "snapshot": "acme\\current\\session.json"
+              },
+              {
+                "action": "delete",
+                "kind": "directory",
+                "target": "C:\\Users\\player\\AppData\\Roaming\\Acme Launcher\\cache",
+                "note": "skipped: not there"
+              },
+              {
+                "action": "restore",
+                "kind": "file",
+                "target": "C:\\Users\\player\\AppData\\Roaming\\Acme Launcher\\session.json",
+                "snapshot": "acme\\preview\\session.json"
+              },
+              {
+                "action": "launch",
+                "kind": "executable",
+                "target": "C:\\Program Files\\Acme\\AcmeLauncher.exe"
+              }
+            ],
+            "warnings": ["No snapshot for this account yet: add it through setup first."]
+          },
+          "planProblem": ""
+        }
+      }
+    ],
+    "descriptor_remove": [
+      {
+        "args": {},
+        "result": {
+          "dir": "C:\\Users\\player\\AppData\\Roaming\\accshift\\platforms",
+          "loaded": [],
+          "skipped": [],
+          "rejected": []
+        }
+      }
+    ],
+    "descriptor_select_file": [
+      {
+        "args": {},
+        "result": "C:\\Users\\player\\Downloads\\acme.json"
+      }
+    ],
+    "detect_streaming_software": [
+      {
+        "args": {},
+        "result": false
+      }
+    ],
+    "get_boot_payload": [
+      {
+        "args": {},
+        "result": {
+          "migration": "skipped",
+          "runtimeOs": "windows",
+          "storageSnapshot": {
+            "manifest": {
+              "schemaVersion": 1,
+              "stores": {}
+            },
+            "stores": {
+              "client.settings": {
+                "language": "en",
+                "animations": "on",
+                "streamerMode": "off",
+                "inactivityBlurSeconds": 0,
+                "pinEnabled": false,
+                "enabledPlatforms": ["steam"]
+              },
+              "client.folders": {
+                "version": 1,
+                "folders": [],
+                "itemOrder": {}
+              },
+              "client.personas": [],
+              "client.account-card-notes": {},
+              "client.account-card-colors": {},
+              "client.account-default-game": {},
+              "client.folder-card-colors": {},
+              "client.view-mode": "grid",
+              "cache.steam.profiles": {},
+              "cache.roblox.profiles": {},
+              "cache.steam.ban-check-state": {},
+              "cache.steam.ban-info-cache": {}
+            }
+          },
+          "customThemes": [],
+          "userPlatforms": {
+            "dir": "C:\\Users\\player\\AppData\\Roaming\\accshift\\platforms",
+            "loaded": [],
+            "skipped": [],
+            "rejected": []
+          }
+        }
+      }
+    ],
+    "get_desktop_wallpaper": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "get_runtime_os": [
+      {
+        "args": {},
+        "result": "windows"
+      }
+    ],
+    "get_storage_manifest": [
+      {
+        "args": {},
+        "result": {
+          "schemaVersion": 1,
+          "stores": {}
+        }
+      }
+    ],
+    "list_custom_themes": [
+      {
+        "args": {},
+        "result": []
+      }
+    ],
+    "load_client_storage_snapshot": [
+      {
+        "args": {},
+        "result": {
+          "manifest": {
+            "schemaVersion": 1,
+            "stores": {}
+          },
+          "stores": {
+            "client.settings": {
+              "language": "en",
+              "animations": "on",
+              "streamerMode": "off",
+              "inactivityBlurSeconds": 0,
+              "pinEnabled": false,
+              "enabledPlatforms": ["steam"]
+            },
+            "client.folders": {
+              "version": 1,
+              "folders": [],
+              "itemOrder": {}
+            },
+            "client.personas": [],
+            "client.account-card-notes": {},
+            "client.account-card-colors": {},
+            "client.account-default-game": {},
+            "client.folder-card-colors": {},
+            "client.view-mode": "grid",
+            "cache.steam.profiles": {},
+            "cache.roblox.profiles": {},
+            "cache.steam.ban-check-state": {},
+            "cache.steam.ban-info-cache": {}
+          }
+        }
+      }
+    ],
+    "migrate_legacy_config": [
+      {
+        "args": {},
+        "result": "skipped"
+      }
+    ],
+    "open_descriptors_folder": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "open_logs_folder": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "open_url": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "platform_detect_installed": [
+      {
+        "args": {},
+        "result": ["steam"]
+      }
+    ],
+    "platform_dry_run": [],
+    "platform_get_accounts": [
+      {
+        "args": {
+          "platformId": "steam"
+        },
+        "result": []
+      },
+      {
+        "args": {
+          "platformId": "riot"
+        },
+        "result": []
+      },
+      {
+        "args": {
+          "platformId": "roblox"
+        },
+        "result": []
+      }
+    ],
+    "platform_get_current_account": [
+      {
+        "args": {
+          "platformId": "steam"
+        },
+        "result": ""
+      },
+      {
+        "args": {
+          "platformId": "riot"
+        },
+        "result": ""
+      },
+      {
+        "args": {
+          "platformId": "roblox"
+        },
+        "result": ""
+      }
+    ],
+    "platform_get_path": [
+      {
+        "args": {},
+        "result": ""
+      }
+    ],
+    "platform_get_startup_snapshot": [
+      {
+        "args": {
+          "platformId": "steam"
+        },
+        "result": {
+          "accounts": [],
+          "currentAccount": ""
+        }
+      },
+      {
+        "args": {
+          "platformId": "riot"
+        },
+        "result": {
+          "profiles": [],
+          "currentProfile": ""
+        }
+      },
+      {
+        "args": {
+          "platformId": "roblox"
+        },
+        "result": {
+          "accounts": [],
+          "currentAccount": ""
+        }
+      }
+    ],
+    "platform_set_account_label": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "reload_user_platforms": [
+      {
+        "args": {},
+        "result": {
+          "dir": "C:\\Users\\player\\AppData\\Roaming\\accshift\\platforms",
+          "loaded": [],
+          "skipped": [],
+          "rejected": []
+        }
+      }
+    ],
+    "roblox_check_sessions": [
+      {
+        "args": {},
+        "result": []
+      }
+    ],
+    "roblox_get_profile_info": [],
+    "save_client_storage_store": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "steam_get_account_games": [
+      {
+        "args": {},
+        "result": []
+      }
+    ],
+    "steam_get_copyable_games": [
+      {
+        "args": {},
+        "result": []
+      }
+    ],
+    "steam_get_player_bans": [
+      {
+        "args": {
+          "steamIds": []
+        },
+        "result": []
+      }
+    ],
+    "steam_get_profile_info": [],
+    "steam_get_profile_infos": [
+      {
+        "args": {
+          "accountIds": []
+        },
+        "result": {}
+      }
+    ],
+    "steam_has_api_key": [
+      {
+        "args": {},
+        "result": false
+      }
+    ],
+    "steam_open_api_key_page": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "steam_open_userdata": [
+      {
+        "args": {},
+        "result": null
+      }
+    ],
+    "telemetry_get_state": [
+      {
+        "args": {},
+        "result": {
+          "mode_a_enabled": false,
+          "mode_b_enabled": false,
+          "install_id_set": false,
+          "forget_pending": false,
+          "onboarding_completed": true
+        }
+      }
+    ]
+  },
+  "skipped": {
+    "pin_lock": "PIN session state",
+    "pin_unlock": "PIN session state, reads the live settings store",
+    "platform_switch_account": "changes the current account after switchDelayMs; modelled from spec"
+  }
+}

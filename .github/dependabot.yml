@@ -59,6 +59,15 @@ updates:
         update-types:
           - minor
           - patch
+    # A new egui minor needs crates/accshift-egui/vendor/epaint and
+    # egui_software_backend moved to it by hand.
+    ignore:
+      - dependency-name: "egui*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "eframe"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "epaint"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /

@@ -35,7 +35,7 @@ In scope:
 - The exclusive file lock shared by the GUI and CLI on mutating operations.
 - The `accshift://` deep link handler and any input reaching it.
 - The updater and its signature verification.
-- The webview-reachable command surface and input validation on platform ids.
+- Input validation on platform ids and deep links (`accshift://`).
 - The optional CS2 stats bridge and the storage of its Bearer token.
 
 Out of scope:

@@ -1,0 +1,27 @@
+{
+  "id": "titlebar-tabs-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": { "width": 860, "height": 440, "scale": 1.5 },
+  "theme": "glass-dark",
+  "locale": "en",
+  "steps": [
+    { "wait": 600 },
+    { "click": [379, 18] },
+    { "move": [250, 18] },
+    { "wait": 700 },
+    { "shot": "personas" },
+    { "click": [413, 18] },
+    { "move": [250, 18] },
+    { "wait": 700 },
+    { "shot": "steam" },
+    { "click": [447, 18] },
+    { "move": [250, 18] },
+    { "wait": 700 },
+    { "shot": "riot" },
+    { "click": [481, 18] },
+    { "move": [250, 18] },
+    { "wait": 700 },
+    { "shot": "roblox" }
+  ]
+}

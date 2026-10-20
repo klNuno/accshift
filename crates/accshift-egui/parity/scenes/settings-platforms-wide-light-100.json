@@ -1,0 +1,38 @@
+{
+  "id": "settings-platforms-wide-light-100",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 1100,
+    "height": 600,
+    "scale": 1
+  },
+  "theme": "light",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [87, 18]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "click": [93, 141]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "platforms"
+    }
+  ]
+}

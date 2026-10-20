@@ -312,17 +312,17 @@ update.
 
 For contributors. Adding a token is a contract change, so it takes five steps:
 
-1. Bump `THEME_CONTRACT_VERSION` in `src/lib/theme/tokens.ts` and add the new
-   version to the list in this document.
-2. Add the field to `ThemeTokens` and its entry to `THEME_TOKEN_SPECS`, with
-   the `since` of the new version.
-3. Give both roots a value in `src/lib/theme/themes.ts`. The test suite fails
-   if either root is incomplete.
-4. Write the property in `applyThemeToDocument` and give it a fallback in
-   `src/app.css`, so a document rendered before the theme is applied still has
-   a value.
-5. Add the `themeToken.<key>` label to every dictionary in `src/lib/i18n`, and
-   its row to the token reference above.
+1. Bump `THEME_CONTRACT_VERSION` in `crates/accshift-theme/src/tokens.rs` and
+   add the new version to the list in this document.
+2. Add the key to `TokenKey` and `ThemeTokens` and its entry to
+   `THEME_TOKEN_SPECS`, with the `since` of the new version.
+3. Give both roots a value in `crates/accshift-theme/src/themes.rs`. The test
+   suite fails if either root is incomplete.
+4. Write the property in `theme_application` and give it a fallback in
+   `crates/accshift-theme/src/root.css`, so a theme that predates the token
+   still has a value.
+5. Add the `themeToken.<key>` label to every dictionary in
+   `crates/accshift-app/i18n`, and its row to the token reference above.
 
 A token whose value is a CSS keyword the author also types into the file, like
 `ridge` or `uppercase`, keeps that keyword in the editor dropdown untranslated:

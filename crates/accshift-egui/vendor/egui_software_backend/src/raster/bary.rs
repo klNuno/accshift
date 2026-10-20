@@ -1,0 +1,259 @@
+use core::ops::{Add, AddAssign, Mul, Sub};
+
+use egui::Vec2;
+
+use crate::math::i64vec2::{I64Vec2, i64vec2};
+
+// https://fgiesen.wordpress.com/2013/02/17/optimizing-sw-occlusion-culling-index/
+// https://jtsorlinis.github.io/rendering-tutorial/
+// https://www.cs.cornell.edu/courses/cs4620/2011fa/lectures/16rasterizationWeb.pdf
+
+/// ss for screen space (unit is screen pixel)
+/// sp for subpixel space (unit fraction of screen pixel)
+/// Here for reference for raster without using span.
+#[allow(unused)]
+pub fn raster_tri<const SUBPIX_BITS: i32>(
+    ss_bounds: [I64Vec2; 2],
+    ss_tri: &[Vec2; 3],
+    // ss_x, ss_y
+    mut raster: impl FnMut(i64, i64),
+) {
+    let Some((ss_min, ss_max, _sp_inv_area, mut stepper)) =
+        SingleStepper::from_ss_tri_backface_cull::<SUBPIX_BITS>(ss_bounds, ss_tri)
+    else {
+        return;
+    };
+
+    for ss_y in ss_min.y..ss_max.y {
+        stepper.row_start();
+        for ss_x in ss_min.x..ss_max.x {
+            if stepper.inside_tri_pos_area() {
+                raster(ss_x, ss_y);
+            }
+            stepper.col_step();
+        }
+        stepper.row_step();
+    }
+}
+
+#[inline(always)]
+pub fn is_top_left(a: &I64Vec2, b: &I64Vec2) -> bool {
+    let dy = b.y - a.y;
+    (dy > 0) || (dy == 0 && (b.x - a.x) < 0)
+}
+
+pub struct SingleStepper {
+    /// Edge subpixel barycentric steps. (edges are: 12, 20, 01)
+    pub step: [SingleStep; 3],
+    /// Edge subpixel space barycentric weights. Divide by subpixel area for barycentric factors.
+    pub sp_weight: [i64; 3],
+    /// Edge subpixel bias for watertightness. These are applied on SingleStepper::row_start(). If you're using
+    /// something else you'll need to apply them to sp_weight.
+    pub bias: [i8; 3],
+}
+
+impl SingleStepper {
+    /// For the given subpixel resolution, calculate the screen space bounds, subpixel inverse area, and subpixel Stepper.
+    /// returns: ss_min, ss_max, sp_inv_area, stepper
+    pub fn from_ss_tri_backface_cull<const SUBPIX_BITS: i32>(
+        ss_bounds: [I64Vec2; 2],
+        ss_tri: &[Vec2; 3],
+    ) -> Option<(I64Vec2, I64Vec2, f32, SingleStepper)> {
+        let subpix_bits = SUBPIX_BITS as u32;
+        let subpix: i64 = 1 << subpix_bits;
+        let subpix_half: i64 = subpix >> 1;
+        let fsubpix = subpix as f32;
+
+        let sp0 = I64Vec2::from_vec2(ss_tri[0] * fsubpix);
+        let sp1 = I64Vec2::from_vec2(ss_tri[1] * fsubpix);
+        let sp2 = I64Vec2::from_vec2(ss_tri[2] * fsubpix);
+
+        let sp_area = orient2d(&sp0, &sp1, &sp2);
+
+        if sp_area <= 0 {
+            return None;
+        }
+
+        let sp_min = sp0.min(sp1).min(sp2);
+        let sp_max = sp0.max(sp1).max(sp2);
+
+        let ss_min = ((sp_min - subpix_half) >> subpix_bits)
+            .max(ss_bounds[0])
+            .min(ss_bounds[1]);
+        let ss_max = ((sp_max + subpix_half) >> subpix_bits)
+            .max(ss_bounds[0])
+            .min(ss_bounds[1]);
+
+        let sp_min_p = ss_min * subpix + subpix_half;
+        let ss_size = ss_max - ss_min;
+
+        if ss_size.x <= 0 || ss_size.y <= 0 {
+            return None;
+        }
+
+        let sp_inv_area = 1.0 / (sp_area as f32);
+
+        let stepper = SingleStepper::new(&sp0, &sp1, &sp2, &sp_min_p, subpix);
+
+        Some((ss_min, ss_max, sp_inv_area, stepper))
+    }
+
+    pub fn new(
+        sp0: &I64Vec2,
+        sp1: &I64Vec2,
+        sp2: &I64Vec2,
+        sp_min_p: &I64Vec2,
+        subpix: i64,
+    ) -> Self {
+        SingleStepper {
+            step: [
+                SingleStep::new(sp1, sp2, sp_min_p, subpix),
+                SingleStep::new(sp2, sp0, sp_min_p, subpix),
+                SingleStep::new(sp0, sp1, sp_min_p, subpix),
+            ],
+            sp_weight: [0; 3],
+            bias: [
+                if is_top_left(sp1, sp2) { 0 } else { -1 },
+                if is_top_left(sp2, sp0) { 0 } else { -1 },
+                if is_top_left(sp0, sp1) { 0 } else { -1 },
+            ],
+        }
+    }
+
+    #[inline(always)]
+    /// Check if the current step of the stepper is inside the triangle.
+    pub fn inside_tri_pos_area(&self) -> bool {
+        // None w are negative
+        let m =
+            (self.sp_weight[0] as u64) | (self.sp_weight[1] as u64) | (self.sp_weight[2] as u64);
+        (m & 0x8000_0000_0000_0000) == 0
+    }
+
+    #[inline(always)]
+    /// Take one step along y to the next row.
+    pub fn row_step(&mut self) {
+        self.step[0].row += self.step[0].step.y;
+        self.step[1].row += self.step[1].step.y;
+        self.step[2].row += self.step[2].step.y;
+    }
+
+    #[inline(always)]
+    /// Take one step along x to the next column.
+    pub fn col_step(&mut self) {
+        self.sp_weight[0] += self.step[0].step.x;
+        self.sp_weight[1] += self.step[1].step.x;
+        self.sp_weight[2] += self.step[2].step.x;
+    }
+
+    #[inline(always)]
+    /// Initialize weights to the start of the current row and apply the bias.
+    pub fn row_start(&mut self) {
+        self.sp_weight[0] = self.step[0].row + self.bias[0] as i64;
+        self.sp_weight[1] = self.step[1].row + self.bias[1] as i64;
+        self.sp_weight[2] = self.step[2].row + self.bias[2] as i64;
+    }
+
+    /// Generate stepper for float attribute (like vertex UVs or vertex colors)
+    /// Depends on SingleStepper's initial state. Make sure to run before using SingleStepper::row_step() or
+    /// SingleStepper::col_step()
+    pub fn attr<T>(&self, attr: &[T; 3], sp_inv_area: f32) -> AttributeStepper<T>
+    where
+        T: Copy + Add<Output = T> + Sub<Output = T> + AddAssign + Mul<f32, Output = T>,
+    {
+        // Get attribute value of top left
+        let w0 = self.step[0].row;
+        let w1 = self.step[1].row;
+        let (b0, b1, b2) = subpixel_bary_to_factor(w0, w1, sp_inv_area);
+        let attr_tl = attr[0] * b0 + attr[1] * b1 + attr[2] * b2;
+
+        // Get attribute value of one x step right from top left
+        let w0sx = w0 + self.step[0].step.x;
+        let w1sx = w1 + self.step[1].step.x;
+        let (b0, b1, b2) = subpixel_bary_to_factor(w0sx, w1sx, sp_inv_area);
+        let attr_1x = attr[0] * b0 + attr[1] * b1 + attr[2] * b2;
+
+        // Get attribute value of one y step down from top left
+        let w0sy = w0 + self.step[0].step.y;
+        let w1sy = w1 + self.step[1].step.y;
+        let (b0, b1, b2) = subpixel_bary_to_factor(w0sy, w1sy, sp_inv_area);
+        let attr_1y = attr[0] * b0 + attr[1] * b1 + attr[2] * b2;
+
+        // Compute deltas
+        let step_x = attr_1x - attr_tl;
+        let step_y = attr_1y - attr_tl;
+
+        let row = attr_tl;
+
+        AttributeStepper {
+            step_x,
+            step_y,
+            row,
+            attr: attr_tl,
+        }
+    }
+}
+
+pub struct SingleStep {
+    pub step: I64Vec2,
+    pub row: i64,
+}
+
+impl SingleStep {
+    #[inline(always)]
+    pub fn new(sp0: &I64Vec2, sp1: &I64Vec2, sp_min_p: &I64Vec2, subpix: i64) -> Self {
+        let a = sp0.y - sp1.y;
+        let b = sp1.x - sp0.x;
+        let c = (sp0.x) * (sp1.y) - (sp0.y) * (sp1.x);
+
+        Self {
+            step: i64vec2(a * subpix, b * subpix),
+            row: a * sp_min_p.x + b * sp_min_p.y + c,
+        }
+    }
+}
+
+#[inline(always)]
+/// Returns twice the signed area of triangle abc
+pub fn orient2d(a: &I64Vec2, b: &I64Vec2, c: &I64Vec2) -> i64 {
+    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+}
+
+#[inline(always)]
+/// Convert subpixel space barycentric weights to barycentric factors (0..1)
+pub fn subpixel_bary_to_factor(sp_w0: i64, sp_w1: i64, inv_area: f32) -> (f32, f32, f32) {
+    let b0 = (sp_w0 as f32) * inv_area;
+    let b1 = (sp_w1 as f32) * inv_area;
+    let b2 = 1.0 - b0 - b1;
+    (b0, b1, b2)
+}
+
+#[derive(Default)]
+pub struct AttributeStepper<T>
+where
+    T: Copy + Add<Output = T> + Sub<Output = T> + AddAssign + Mul<f32, Output = T>,
+{
+    pub step_x: T,
+    pub step_y: T,
+    pub row: T,
+    pub attr: T,
+}
+
+impl<T> AttributeStepper<T>
+where
+    T: Copy + Add<Output = T> + Sub<Output = T> + AddAssign + Mul<f32, Output = T>,
+{
+    #[inline(always)]
+    pub fn row_step(&mut self) {
+        self.row += self.step_y;
+    }
+
+    #[inline(always)]
+    pub fn col_step(&mut self) {
+        self.attr += self.step_x;
+    }
+
+    #[inline(always)]
+    pub fn row_start(&mut self) {
+        self.attr = self.row;
+    }
+}

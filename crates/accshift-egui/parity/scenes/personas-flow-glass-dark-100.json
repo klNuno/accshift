@@ -1,0 +1,167 @@
+{
+  "id": "personas-flow-glass-dark-100",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "seed": {
+    "PERSONAS": [
+      {
+        "id": "persona-main",
+        "name": "Main",
+        "color": "",
+        "assignments": [
+          {
+            "platformId": "steam",
+            "accountId": "76561198100000001"
+          },
+          {
+            "platformId": "riot",
+            "accountId": "riot-1"
+          },
+          {
+            "platformId": "roblox",
+            "accountId": "1000000001"
+          }
+        ]
+      },
+      {
+        "id": "persona-smurfs",
+        "name": "Smurfs",
+        "color": "#8b5cf6",
+        "assignments": [
+          {
+            "platformId": "steam",
+            "accountId": "76561198100000002"
+          },
+          {
+            "platformId": "riot",
+            "accountId": "riot-2"
+          }
+        ]
+      },
+      {
+        "id": "persona-duo",
+        "name": "Duo nights",
+        "color": "",
+        "assignments": [
+          {
+            "platformId": "riot",
+            "accountId": "riot-3"
+          }
+        ]
+      },
+      {
+        "id": "persona-all",
+        "name": "Everything at once, with a long name",
+        "color": "#f97316",
+        "assignments": [
+          {
+            "platformId": "steam",
+            "accountId": "76561198100000004"
+          },
+          {
+            "platformId": "riot",
+            "accountId": "riot-2"
+          },
+          {
+            "platformId": "roblox",
+            "accountId": "1000000003"
+          },
+          {
+            "platformId": "epic",
+            "accountId": "epic-1"
+          }
+        ]
+      }
+    ]
+  },
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [379, 18]
+    },
+    {
+      "move": [600, 380]
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "rclick": [250, 120]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "menu"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [100, 120]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "switch-confirm"
+    },
+    {
+      "click": [563, 258]
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "shot": "switched"
+    },
+    {
+      "move": [600, 380]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "rclick": [250, 120]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [296, 200]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "recolored"
+    },
+    {
+      "rclick": [250, 120]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [282, 240]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "delete-confirm"
+    }
+  ]
+}

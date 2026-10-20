@@ -1,0 +1,77 @@
+{
+  "id": "settings-light-150",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "light",
+  "locale": "en",
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "click": [87, 18]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "shot": "general"
+    },
+    {
+      "click": [93, 176]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "privacy"
+    },
+    {
+      "move": [448, 267]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "hover-toggle"
+    },
+    {
+      "click": [350, 192]
+    },
+    {
+      "text": "45"
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "input-edit"
+    },
+    {
+      "click": [766, 167]
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "pin-setup"
+    }
+  ]
+}

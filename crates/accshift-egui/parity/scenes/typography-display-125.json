@@ -1,0 +1,22 @@
+{
+  "id": "typography-display-125",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.25
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "html": "../fragments/typography-display.html",
+  "probe": true,
+  "steps": [
+    {
+      "wait": 300
+    },
+    {
+      "shot": "frame"
+    }
+  ]
+}

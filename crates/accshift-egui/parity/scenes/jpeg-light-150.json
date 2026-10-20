@@ -1,0 +1,112 @@
+{
+  "id": "jpeg-light-150",
+  "scenario": "dev",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1.5
+  },
+  "theme": "light",
+  "locale": "en",
+  "seed": {
+    "SETTINGS": {
+      "viewMode": "grid",
+      "animations": "off",
+      "accountDisplay": {
+        "showUsernames": true,
+        "showCardNotesInline": false
+      }
+    },
+    "cache.steam.profiles": {
+      "76561198100000001": {
+        "url": "crates/accshift-egui/parity/avatars/photo.jpg",
+        "displayName": "main",
+        "timestamp": 4102444800000
+      },
+      "76561198100000003": {
+        "url": "crates/accshift-egui/parity/avatars/photo.jpg",
+        "displayName": "vac banned",
+        "timestamp": 4102444800000
+      },
+      "76561198100000004": {
+        "url": "crates/accshift-egui/parity/avatars/4.svg",
+        "displayName": "trade banned",
+        "timestamp": 4102444800000
+      },
+      "76561198100000005": {
+        "url": "crates/accshift-egui/parity/avatars/5.svg",
+        "displayName": "a persona name long enough to overflow every card layout",
+        "timestamp": 4102444800000
+      },
+      "76561198100000006": {
+        "url": "crates/accshift-egui/parity/avatars/6.svg",
+        "displayName": "never logged in",
+        "timestamp": 4102444800000
+      },
+      "76561198100000007": {
+        "url": "crates/accshift-egui/parity/avatars/7.svg",
+        "displayName": "nested account",
+        "timestamp": 4102444800000
+      },
+      "76561198100000008": {
+        "url": "crates/accshift-egui/parity/avatars/2.svg",
+        "displayName": "deeply nested",
+        "timestamp": 4102444800000
+      }
+    }
+  },
+  "steps": [
+    {
+      "wait": 800
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "shot": "root"
+    },
+    {
+      "move": [205, 150]
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "hover-main"
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "click": [816, 60]
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 700
+    },
+    {
+      "shot": "list"
+    },
+    {
+      "click": [300, 159]
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "selected"
+    }
+  ]
+}

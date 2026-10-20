@@ -1,0 +1,55 @@
+{
+  "id": "zoom-keys-glass-dark-100",
+  "scenario": "demo",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "seed": {
+    "SETTINGS": {
+      "uiScalePercent": 100
+    }
+  },
+  "steps": [
+    {
+      "wait": 600
+    },
+    {
+      "move": [430, 5]
+    },
+    {
+      "key": "Ctrl+="
+    },
+    {
+      "key": "Ctrl+="
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "ctrl-plus"
+    },
+    {
+      "key": "Ctrl+-"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "ctrl-minus"
+    },
+    {
+      "key": "Ctrl+0"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "reset"
+    }
+  ]
+}

@@ -1,0 +1,1961 @@
+//! The settings panel's state and its save flow, `Settings.svelte` and the
+//! state its General and Privacy tabs keep (`SettingsPrivacyTab.svelte`'s
+//! PIN and telemetry).
+//!
+//! The panel edits a draft of [`AppSettings`]. Every change of a tracked
+//! field queues a save 220 ms later (`queueSave`); the save normalises the
+//! draft, commits a typed PIN, merges the draft over the stored settings
+//! with [`merge_settings_draft`] (a field another writer changed meanwhile
+//! is kept), writes it through [`ClientStores::save_settings`], then pushes
+//! the API key and the platform paths and toasts `settings.saved` at most
+//! every 1.5 s. A change of the stored settings that the panel did not
+//! write is adopted into every field the user has not edited
+//! (`adoptExternalSettings`). Escape and the close button flush, then close.
+//!
+//! The Platforms tab (`SettingsPlatformsTab.svelte`) toggles platforms,
+//! picks the startup one and runs the descriptor folder calls one at a time
+//! ([`SettingsPanel::descriptor_busy`]). The per-platform tabs read and edit
+//! the same state ([`SettingsPanel::platform_paths`], the API key draft, the
+//! numeric inputs of the data refresh); they are drawn by a later port.
+
+use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
+
+use accshift_app::accounts::refresh::{
+    apply_refresh_job, run_refresh_job, RefreshJobResult, RefreshKind,
+};
+use accshift_app::actions::dialogs::{ConfirmConfig, ConfirmTicket};
+use accshift_app::actions::navigation::SettingsTabBar;
+use accshift_app::actions::toasts::{AddToastOptions, ToastQueue, ToastType};
+use accshift_app::actions::{load_options, AppEffect};
+use accshift_app::error::{BackendError, BackendResult};
+use accshift_app::i18n::{Locale, TranslationValue};
+use accshift_app::jobs::{Jobs, Pending, Poll};
+use accshift_app::platforms::descriptors::PlatformDescriptor;
+use accshift_app::platforms::path_error::platform_path_error_message;
+use accshift_app::secure::pin::{hash_pin_code, sanitize_pin_digits, unlock_pin_session};
+use accshift_app::settings::{
+    api_key_draft_after_successful_save, merge_settings_draft, AnimationsMode, AppSettings,
+    SteamShutdownMode, StreamerMode,
+};
+use accshift_app::stores::ClientStores;
+use accshift_app::text::Text;
+use accshift_app::types::{
+    Cs2BridgeSettings, Cs2BridgeTestResult, DescriptorPreview, RobloxAccount, TelemetryUiState,
+    UserPlatformReport,
+};
+use egui::Context;
+use serde_json::Value;
+
+use super::platforms::{self, PlatformDef, RuntimeOs};
+use super::theme_editor::{ThemeEditor, ThemeEditorEvent, ThemeImport};
+use super::{AppModel, Booted};
+
+/// `PIN_CODE_LENGTH`.
+pub const PIN_CODE_LENGTH: usize = 4;
+/// `queueSave`'s debounce.
+const SAVE_DEBOUNCE: Duration = Duration::from_millis(220);
+/// `SAVE_TOAST_COOLDOWN_MS`.
+const SAVE_TOAST_COOLDOWN: Duration = Duration::from_millis(1500);
+/// `WIKI_URL`.
+pub const WIKI_URL: &str = "https://github.com/klNuno/accshift/wiki";
+/// `INTEGRATIONS_WIKI_URL`.
+pub const INTEGRATIONS_WIKI_URL: &str = "https://github.com/klNuno/accshift/wiki/Settings";
+/// `TELEMETRY_DOC_URL`.
+pub const TELEMETRY_DOC_URL: &str =
+    "https://github.com/klNuno/accshift/blob/main/docs/analytics.md";
+/// `Cs2BridgeSettings.svelte`'s `WIKI_URL`.
+pub const CS2_WIKI_URL: &str = "https://github.com/klNuno/accshift/wiki/CS2-Bridge";
+
+/// `clampInt`: rounded and clamped, `fallback` for a non-finite value.
+pub fn clamp_int(value: Option<f64>, min: i64, max: i64, fallback: i64) -> i64 {
+    match value {
+        Some(v) if v.is_finite() => (v.round() as i64).clamp(min, max),
+        _ => fallback,
+    }
+}
+
+/// `Number(string)`: trimmed, empty is 0, anything unparsable is `NaN`.
+pub fn js_number(s: &str) -> Option<f64> {
+    let t = s.trim();
+    if t.is_empty() {
+        return Some(0.0);
+    }
+    if t.chars()
+        .any(|c| c.is_ascii_alphabetic() && c != 'e' && c != 'E')
+    {
+        return None;
+    }
+    t.parse::<f64>().ok()
+}
+
+/// `createNumericInput`: the text of a number field, committed on demand.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NumericInput {
+    pub input: String,
+    pub min: i64,
+    pub max: i64,
+}
+
+impl NumericInput {
+    pub fn new(value: i64, min: i64, max: i64) -> Self {
+        Self {
+            input: value.to_string(),
+            min,
+            max,
+        }
+    }
+
+    /// `commit`: the clamped value to store; `current` when the text is not
+    /// a number. The text shows the stored value afterwards.
+    pub fn commit(&mut self, current: i64) -> i64 {
+        let clamped = clamp_int(js_number(&self.input), self.min, self.max, current);
+        self.input = clamped.to_string();
+        clamped
+    }
+
+    /// `refresh`.
+    pub fn refresh(&mut self, value: i64) {
+        self.input = value.to_string();
+    }
+}
+
+/// The five number fields of the panel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NumericField {
+    UiScale,
+    BgOpacity,
+    AvatarCacheDays,
+    BanCheckDays,
+    InactivityBlur,
+}
+
+/// A boolean setting a toggle flips.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingFlag {
+    ShowCardNotesInline,
+    ExpandedFolders,
+    SuspendGraphicsWhenMinimized,
+    MinimizeOnAccountSwitch,
+    /// `startWithSystem`: write or remove the Windows Run value on save.
+    StartWithSystem,
+    /// `closeToTray`: the close button hides to the tray.
+    CloseToTray,
+    DeepLinks,
+    Cli,
+    /// `streamerMode`: `auto` when on, `off` when off.
+    StreamerMode,
+    /// `personasEnabled`, the Platforms tab's personas chip.
+    Personas,
+    /// `accountDisplay.showUsernames`, the Steam tab.
+    ShowUsernames,
+    /// `platformSettings.steam.runAsAdmin`.
+    SteamRunAsAdmin,
+    /// `platformSettings.steam.shutdownMode`: `force` when on.
+    SteamForceShutdown,
+}
+
+/// What the panel's components ask for.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SettingsAction {
+    /// The close button or Escape: flush, then close.
+    Close,
+    SelectTab(String),
+    OpenHelp,
+    OpenLogs,
+    OpenIntegrationsWiki,
+    OpenTelemetryDoc,
+    Toggle(SettingFlag),
+    Language(Locale),
+    Animations(AnimationsMode),
+    Theme(String),
+    /// A slider's or a field's text (`oninput`).
+    NumericInput(NumericField, String),
+    /// `commit`: blur, Enter, or a slider's `change`.
+    NumericCommit(NumericField),
+    /// The new PIN field (`pinCodeInput`).
+    PinInput(String),
+    /// The current PIN field of a guarded change.
+    CurrentPinInput(String),
+    TogglePin,
+    ReplayOnboarding,
+    ExportTheme,
+    /// "Import": a theme file from the clipboard.
+    ImportTheme,
+    /// "Customize" or "Edit": the theme editor on the selected theme.
+    CustomizeTheme,
+    /// The theme editor's buttons, Escape or a click on its overlay.
+    ThemeEditor(ThemeEditorEvent),
+    ToggleTelemetryA,
+    ToggleTelemetryB,
+    RetryTelemetryDeletion,
+    ExportTelemetry,
+    RetryTelemetryLoad,
+    /// The Platforms tab's search field (`platformSearch`).
+    PlatformSearch(String),
+    /// A platform chip: `togglePlatform`.
+    TogglePlatform(String),
+    /// The startup platform select.
+    DefaultPlatform(String),
+    /// "Add from a file": pick, then preview.
+    PickDescriptor,
+    ReloadDescriptors,
+    OpenDescriptorsFolder,
+    /// A loaded descriptor's remove button: asks first.
+    RemoveDescriptor {
+        id: String,
+        name: String,
+    },
+    /// The preview dialog's install button.
+    InstallDescriptor,
+    /// The preview dialog's cancel button or Escape.
+    CancelDescriptorPreview,
+    /// A platform tab's last login toggle
+    /// (`accountDisplay.showLastLoginPerPlatform[id]`).
+    ToggleLastLogin(String),
+    /// `healthCheckPerPlatform[id]`: off when `false`, on otherwise.
+    ToggleHealthCheck(String),
+    /// A platform tab's path field.
+    PlatformPath(String, String),
+    /// Its "Choose..." button: `choosePlatformPath`.
+    ChoosePlatformPath(String),
+    /// The Roblox tab's cookie field.
+    RobloxCookie(String),
+    /// Its add button: `handleAddByCookie`.
+    AddRobloxCookie,
+    /// The Steam launch options field.
+    SteamLaunchOptions(String),
+    /// The Steam Web API key field (`onApiKeyInput`).
+    ApiKeyInput(String),
+    /// "Clear key": `clearApiKey`.
+    ClearApiKey,
+    /// "Get key": `openSteamApiKeyPage`.
+    OpenSteamApiKeyPage,
+    /// A "Refresh now" button: `handleRefreshAvatarsNow` or
+    /// `handleRefreshBansNow`.
+    RefreshNow(RefreshKind),
+    /// The CS2 bridge toggle (`toggleEnabled`, once its settings are read).
+    Cs2Toggle,
+    /// The bridge link field, then its blur (`save(null)`).
+    Cs2Url(String),
+    Cs2UrlBlur,
+    /// "Test": `runTest`.
+    Cs2Test,
+    /// The token field, then its blur (`save(tokenInput)` when not blank).
+    Cs2Token(String),
+    Cs2TokenBlur,
+    /// "Clear token": `save("")`.
+    Cs2ClearToken,
+    /// The CS2 card's "?" button.
+    OpenCs2Wiki,
+}
+
+/// `Cs2BridgeSettings.svelte`'s `status`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Cs2Status {
+    #[default]
+    Unknown,
+    Testing,
+    Ok,
+    Fail,
+}
+
+/// `Cs2BridgeSettings.svelte`'s own state: it mounts with the Steam tab,
+/// reads the bridge settings, tests a configured link, and goes when the tab
+/// unmounts.
+#[derive(Default)]
+pub struct Cs2Form {
+    pub enabled: bool,
+    pub url: String,
+    pub token_input: String,
+    pub token_configured: bool,
+    /// The settings were read (or failed to): the toggle and blur saves
+    /// wait for it.
+    pub loaded: bool,
+    pub url_error: bool,
+    pub status: Cs2Status,
+    pub status_detail: String,
+    pub status_error: String,
+    load_job: Option<Pending<BackendResult<Cs2BridgeSettings>>>,
+    test_job: Option<Pending<BackendResult<Cs2BridgeTestResult>>>,
+    /// `save(token)` calls, with the token each sent.
+    save_jobs: Vec<(Pending<BackendResult<()>>, Option<String>)>,
+}
+
+impl Cs2Form {
+    /// The component's mount `$effect`.
+    fn mount(jobs: &Jobs) -> Cs2Form {
+        Cs2Form {
+            load_job: Some(jobs.run(|b| b.cs2_bridge_get_settings())),
+            ..Cs2Form::default()
+        }
+    }
+
+    /// `runTest`.
+    fn run_test(&mut self, jobs: &Jobs) {
+        if self.url.trim().is_empty() {
+            self.status = Cs2Status::Unknown;
+            self.status_detail.clear();
+            self.status_error.clear();
+            return;
+        }
+        self.status = Cs2Status::Testing;
+        self.status_error.clear();
+        self.test_job = Some(jobs.run(|b| b.cs2_bridge_test()));
+    }
+
+    /// `save(token)`.
+    fn save(&mut self, jobs: &Jobs, token: Option<String>) {
+        let (enabled, url, sent) = (self.enabled, self.url.trim().to_string(), token.clone());
+        let job = jobs.run(move |b| b.cs2_bridge_set_settings(enabled, &url, sent.as_deref()));
+        self.save_jobs.push((job, token));
+    }
+}
+
+/// A descriptor folder call of the Platforms tab (`runDescriptorTask`).
+#[derive(Clone, Debug, PartialEq)]
+enum DescriptorTask {
+    Reload,
+    Pick,
+    Install { name: String },
+    Remove { id: String, name: String },
+    OpenFolder,
+}
+
+/// What a descriptor folder call answered.
+enum DescriptorDone {
+    Report(UserPlatformReport),
+    /// The picked file and its preview (boxed, it dwarfs the rest); `None`
+    /// when the picker was cancelled.
+    Picked(Option<Box<(String, DescriptorPreview)>>),
+    Opened,
+}
+
+/// A platform path asked for when a chip enabled the platform, or picked
+/// with "Choose...".
+type PathJob = Pending<(String, BackendResult<String>)>;
+
+/// What a finished telemetry or link call does next.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Followup {
+    /// A failure toasts this key as an error.
+    ErrorToast(&'static str),
+    /// A failure toasts this key with the default type.
+    InfoToast(&'static str),
+    /// `clearApiKey`.
+    ClearApiKey,
+    /// `toggleModeA`: a failure reloads the state.
+    ModeA,
+    /// `toggleModeB`.
+    ModeB {
+        next: bool,
+    },
+    RetryForget,
+    Export,
+}
+
+/// The mount job's result: whether a Steam API key is stored, then each enabled platform's path.
+type HydrateResult = (bool, Vec<(String, String)>);
+
+/// A backend call queued by an action.
+type BackendCall =
+    Box<dyn FnOnce(&dyn accshift_app::backend::Backend) -> BackendResult<Value> + Send>;
+
+/// `SettingsPanel` state while it is open.
+pub struct SettingsPanel {
+    /// `settings`: the draft the controls edit.
+    pub draft: AppSettings,
+    /// `persistedSettings`: the draft as last written.
+    persisted: AppSettings,
+    /// The stored settings as the panel last saw them.
+    seen_store: AppSettings,
+    last_persisted_snapshot: String,
+    last_platform_snapshot: String,
+    last_tracked: String,
+    save_at: Option<Instant>,
+    last_saved_toast: Option<Instant>,
+    hydrated: bool,
+    hydrate_job: Option<Pending<HydrateResult>>,
+    pub tab_bar: SettingsTabBar,
+    pub ui_scale: NumericInput,
+    pub bg_opacity: NumericInput,
+    pub avatar_cache_days: NumericInput,
+    pub ban_check_days: NumericInput,
+    pub inactivity_blur: NumericInput,
+    pub pin_code_input: String,
+    pub pin_setup_pending: bool,
+    pub pin_change_authorized: bool,
+    pub current_pin_input: String,
+    pub current_pin_error: String,
+    current_pin_busy_until: Option<Instant>,
+    pub pin_disable_pending: bool,
+    pub telemetry: Option<TelemetryUiState>,
+    pub telemetry_error: bool,
+    telemetry_job: Option<Pending<BackendResult<TelemetryUiState>>>,
+    pub mode_b_busy: bool,
+    pub export_busy: bool,
+    calls: Vec<(Pending<BackendResult<Value>>, Followup)>,
+    pub api_key: String,
+    pub api_key_touched: bool,
+    pub api_key_configured: bool,
+    pub api_key_error: bool,
+    pub platform_paths: BTreeMap<String, String>,
+    pub platform_path_errors: BTreeMap<String, bool>,
+    path_jobs: Vec<PathJob>,
+    /// `platform_select_path` calls of the "Choose..." buttons.
+    pick_jobs: Vec<PathJob>,
+    /// `RobloxSettingsTab.svelte`'s own state, gone when the tab unmounts:
+    /// `cookieValue`, `isAdding`, `errorMessage`.
+    pub roblox_cookie: String,
+    pub roblox_adding: bool,
+    pub roblox_error: String,
+    roblox_job: Option<Pending<BackendResult<RobloxAccount>>>,
+    /// The Steam tab's CS2 bridge card, while the tab is mounted.
+    pub cs2: Option<Cs2Form>,
+    /// `avatarRefreshLoading` and `banRefreshLoading`: the runs in flight.
+    avatar_refresh: Option<Pending<RefreshJobResult>>,
+    ban_refresh: Option<Pending<RefreshJobResult>>,
+    /// `platformSearch` of the Platforms tab.
+    pub platform_search: String,
+    /// mod+f asked for the search field: focus it and select its text.
+    pub focus_platform_search: bool,
+    /// `userPlatforms`: what the backend last read in the descriptor
+    /// folder.
+    pub user_platforms: Option<UserPlatformReport>,
+    pub descriptor_busy: bool,
+    pub descriptor_notice: String,
+    pub descriptor_error: String,
+    descriptor_job: Option<(Pending<BackendResult<DescriptorDone>>, DescriptorTask)>,
+    /// The picked file the preview dialog shows.
+    pub descriptor_preview: Option<DescriptorPreview>,
+    /// Bumped each time the preview opens: its animations and focus restart.
+    pub preview_mount: u64,
+    /// The path the picker returned, held until the user decides.
+    preview_path: String,
+    /// The descriptor the removal confirm is about, and its ticket.
+    pending_removal: Option<(String, String, ConfirmTicket)>,
+    /// `editing`: the theme editor, open over the General tab.
+    pub theme_editor: Option<ThemeEditor>,
+    /// Bumped per open of the theme editor.
+    theme_editor_mount: u64,
+    /// `importFromClipboard` under way.
+    pub theme_import: Option<ThemeImport>,
+    /// `.settings-content`'s `scrollTop`.
+    pub scroll: f32,
+    /// Text for the clipboard once the frame has the context.
+    clipboard: Option<String>,
+}
+
+/// One tab of the sidebar.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TabDef {
+    pub id: String,
+    pub label_key: String,
+    /// `None` for the core tabs (their icon is drawn instead of a dot).
+    pub accent: Option<crate::theme::Rgba>,
+}
+
+/// `coreTabConfig` then `platformTabConfig` (shipped platforms with a
+/// settings tab, enabled, in registry order).
+pub fn visible_tabs(platforms: &[PlatformDef], enabled: &[String]) -> Vec<TabDef> {
+    let mut tabs: Vec<TabDef> = [
+        ("general", "settings.general"),
+        ("platforms", "settings.platforms"),
+        ("privacy", "settings.privacy"),
+    ]
+    .iter()
+    .map(|(id, key)| TabDef {
+        id: (*id).to_string(),
+        label_key: (*key).to_string(),
+        accent: None,
+    })
+    .collect();
+    for p in platforms {
+        let Some(key) = settings_tab_key(&p.id) else {
+            continue;
+        };
+        if p.user_provided || !enabled.contains(&p.id) {
+            continue;
+        }
+        tabs.push(TabDef {
+            id: format!("platform:{}", p.id),
+            label_key: key.to_string(),
+            accent: Some(p.accent),
+        });
+    }
+    tabs
+}
+
+/// `settingsTabKey` of the shipped registry.
+fn settings_tab_key(id: &str) -> Option<&'static str> {
+    Some(match id {
+        "steam" => "settings.steam",
+        "riot" => "settings.riot",
+        "battle-net" => "settings.battleNet",
+        "ubisoft" => "settings.ubisoft",
+        "roblox" => "settings.roblox",
+        "epic" => "settings.epic",
+        "gog" => "settings.gog",
+        "jagex" => "settings.jagex",
+        "discord" => "settings.discord",
+        _ => return None,
+    })
+}
+
+fn platform_snapshot(s: &AppSettings) -> String {
+    let mut enabled = s.enabled_platforms.clone();
+    enabled.sort();
+    serde_json::json!({ "enabledPlatforms": enabled, "defaultPlatformId": s.default_platform_id })
+        .to_string()
+}
+
+impl SettingsPanel {
+    /// `onMount`: the draft from the store, normalised, and the API key and
+    /// platform paths requested.
+    pub fn open(
+        stores: &ClientStores,
+        jobs: &Jobs,
+        platforms: &[PlatformDef],
+        os: RuntimeOs,
+        user_platforms: Option<UserPlatformReport>,
+    ) -> Self {
+        let mut draft = stores.settings().clone();
+        normalize(&mut draft, platforms, os);
+        let enabled = draft.enabled_platforms.clone();
+        let hydrate_job = Some(jobs.run(move |backend| {
+            let has_key = backend.steam_has_api_key().unwrap_or(false);
+            let paths = enabled
+                .iter()
+                .map(|id| {
+                    (
+                        id.clone(),
+                        backend.platform_get_path(id).unwrap_or_default(),
+                    )
+                })
+                .collect();
+            (has_key, paths)
+        }));
+        let mut panel = SettingsPanel {
+            ui_scale: NumericInput::new(draft.ui_scale_percent, 75, 150),
+            bg_opacity: NumericInput::new(draft.background_opacity, 0, 100),
+            avatar_cache_days: NumericInput::new(draft.data_refresh.avatar_cache_days, 0, 90),
+            ban_check_days: NumericInput::new(draft.data_refresh.ban_check_days, 0, 90),
+            inactivity_blur: NumericInput::new(draft.inactivity_blur_seconds, 0, 3600),
+            persisted: draft.clone(),
+            seen_store: stores.settings().clone(),
+            last_persisted_snapshot: String::new(),
+            last_platform_snapshot: platform_snapshot(&draft),
+            last_tracked: String::new(),
+            save_at: None,
+            last_saved_toast: None,
+            hydrated: false,
+            hydrate_job,
+            tab_bar: SettingsTabBar::new(),
+            pin_code_input: String::new(),
+            pin_setup_pending: false,
+            pin_change_authorized: false,
+            current_pin_input: String::new(),
+            current_pin_error: String::new(),
+            current_pin_busy_until: None,
+            pin_disable_pending: false,
+            telemetry: None,
+            telemetry_error: false,
+            telemetry_job: None,
+            mode_b_busy: false,
+            export_busy: false,
+            calls: Vec::new(),
+            api_key: String::new(),
+            api_key_touched: false,
+            api_key_configured: false,
+            api_key_error: false,
+            platform_paths: BTreeMap::new(),
+            platform_path_errors: BTreeMap::new(),
+            path_jobs: Vec::new(),
+            pick_jobs: Vec::new(),
+            roblox_cookie: String::new(),
+            roblox_adding: false,
+            roblox_error: String::new(),
+            roblox_job: None,
+            cs2: None,
+            avatar_refresh: None,
+            ban_refresh: None,
+            platform_search: String::new(),
+            focus_platform_search: false,
+            user_platforms,
+            descriptor_busy: false,
+            descriptor_notice: String::new(),
+            descriptor_error: String::new(),
+            descriptor_job: None,
+            descriptor_preview: None,
+            preview_mount: 0,
+            theme_editor: None,
+            theme_editor_mount: 0,
+            theme_import: None,
+            preview_path: String::new(),
+            pending_removal: None,
+            scroll: 0.0,
+            clipboard: None,
+            draft,
+        };
+        panel.last_tracked = panel.tracked();
+        panel
+    }
+
+    /// `pinGuarded`.
+    pub fn pin_guarded(&self) -> bool {
+        self.draft.pin_enabled && !self.pin_change_authorized
+    }
+
+    /// The PIN toggle's state.
+    pub fn pin_toggle_on(&self) -> bool {
+        (self.draft.pin_enabled || self.pin_setup_pending) && !self.pin_disable_pending
+    }
+
+    /// The current-PIN field is waiting out a failure.
+    /// `avatarRefreshLoading` or `banRefreshLoading`.
+    pub fn refresh_loading(&self, kind: RefreshKind) -> bool {
+        match kind {
+            RefreshKind::Avatars => self.avatar_refresh.is_some(),
+            RefreshKind::Bans => self.ban_refresh.is_some(),
+        }
+    }
+
+    /// The Steam tab is drawn: active, and its path read
+    /// (`platformId in platformPaths`).
+    fn steam_mounted(&self) -> bool {
+        self.tab_bar.active_tab() == "platform:steam" && self.platform_paths.contains_key("steam")
+    }
+
+    /// Polls the CS2 card's calls; true when a save asks the account cards
+    /// to reload the bridge (`invalidateCs2Bridge`, then `loadCs2BridgeData`
+    /// when it is on).
+    fn tick_cs2(&mut self, jobs: &Jobs, toasts: &mut ToastQueue, now: Instant) -> Option<bool> {
+        let locale = self.draft.language;
+        let form = self.cs2.as_mut()?;
+        if let Some(job) = &mut form.load_job {
+            let landed = match job.poll() {
+                Poll::Waiting => None,
+                Poll::Ready(result) => Some(result.ok()),
+                Poll::Gone => Some(None),
+            };
+            if let Some(settings) = landed {
+                form.load_job = None;
+                // Unavailable: the defaults stay, a save surfaces errors.
+                if let Some(settings) = settings {
+                    form.enabled = settings.enabled;
+                    form.url = settings.url;
+                    form.token_configured = settings.token_configured;
+                    if form.enabled && !form.url.is_empty() {
+                        form.run_test(jobs);
+                    }
+                }
+                form.loaded = true;
+            }
+        }
+        if let Some(job) = &mut form.test_job {
+            let landed = match job.poll() {
+                Poll::Waiting => None,
+                Poll::Ready(result) => Some(result),
+                Poll::Gone => Some(Err(BackendError::new("cancelled"))),
+            };
+            if let Some(result) = landed {
+                form.test_job = None;
+                let fail = accshift_app::i18n::translate(locale, "settings.cs2BridgeStatusFail");
+                match result {
+                    Ok(r) if r.ok => {
+                        form.status = Cs2Status::Ok;
+                        form.status_detail = accshift_app::i18n::translate_with(
+                            locale,
+                            "settings.cs2BridgeStatusOk",
+                            &[
+                                ("count", TranslationValue::Num(r.account_count as f64)),
+                                ("ms", TranslationValue::Num(r.latency_ms as f64)),
+                            ],
+                        );
+                        form.status_error.clear();
+                    }
+                    Ok(r) => {
+                        form.status = Cs2Status::Fail;
+                        form.status_detail = fail;
+                        form.status_error = r.error.unwrap_or_default();
+                    }
+                    Err(error) => {
+                        form.status = Cs2Status::Fail;
+                        form.status_detail = fail;
+                        form.status_error = error.message;
+                    }
+                }
+            }
+        }
+        let mut saved = Vec::new();
+        form.save_jobs.retain_mut(|(job, token)| match job.poll() {
+            Poll::Waiting => true,
+            Poll::Ready(result) => {
+                saved.push((result, token.take()));
+                false
+            }
+            Poll::Gone => false,
+        });
+        let mut reload = None;
+        for (result, token) in saved {
+            match result {
+                Ok(()) => {
+                    form.url_error = false;
+                    if let Some(token) = token {
+                        form.token_configured = !token.trim().is_empty();
+                        form.token_input.clear();
+                    }
+                    reload = Some(form.enabled);
+                    form.run_test(jobs);
+                }
+                Err(_) => {
+                    form.url_error = true;
+                    toast(
+                        toasts,
+                        "settings.cs2BridgeSaveFailed",
+                        ToastType::Error,
+                        now,
+                    );
+                }
+            }
+        }
+        reload
+    }
+
+    pub fn current_pin_busy(&self) -> bool {
+        self.current_pin_busy_until.is_some()
+    }
+
+    pub fn numeric(&self, field: NumericField) -> &NumericInput {
+        match field {
+            NumericField::UiScale => &self.ui_scale,
+            NumericField::BgOpacity => &self.bg_opacity,
+            NumericField::AvatarCacheDays => &self.avatar_cache_days,
+            NumericField::BanCheckDays => &self.ban_check_days,
+            NumericField::InactivityBlur => &self.inactivity_blur,
+        }
+    }
+
+    fn numeric_mut(&mut self, field: NumericField) -> (&mut NumericInput, &mut i64) {
+        let d = &mut self.draft;
+        match field {
+            NumericField::UiScale => (&mut self.ui_scale, &mut d.ui_scale_percent),
+            NumericField::BgOpacity => (&mut self.bg_opacity, &mut d.background_opacity),
+            NumericField::AvatarCacheDays => (
+                &mut self.avatar_cache_days,
+                &mut d.data_refresh.avatar_cache_days,
+            ),
+            NumericField::BanCheckDays => {
+                (&mut self.ban_check_days, &mut d.data_refresh.ban_check_days)
+            }
+            NumericField::InactivityBlur => {
+                (&mut self.inactivity_blur, &mut d.inactivity_blur_seconds)
+            }
+        }
+    }
+
+    /// The `$effect` dependencies of `queueSave`, as one string.
+    fn tracked(&self) -> String {
+        serde_json::json!({
+            "settings": self.draft.to_value(),
+            "pin": self.pin_code_input,
+            "apiKey": self.api_key,
+            "apiKeyConfigured": self.api_key_configured,
+            "apiKeyTouched": self.api_key_touched,
+            "paths": self.platform_paths,
+        })
+        .to_string()
+    }
+
+    /// `buildPersistSnapshot`.
+    fn persist_snapshot(&self, settings: &AppSettings) -> String {
+        let pending_api_key = if self.api_key_touched {
+            self.api_key.trim().to_string()
+        } else {
+            String::new()
+        };
+        let paths: BTreeMap<&String, &str> = self
+            .platform_paths
+            .iter()
+            .map(|(k, v)| (k, v.trim()))
+            .collect();
+        serde_json::json!({
+            "settings": settings.to_value(),
+            "pendingApiKey": pending_api_key,
+            "apiKeyConfigured": self.api_key_configured,
+            "platformPaths": paths,
+        })
+        .to_string()
+    }
+
+    fn refresh_numeric(&mut self) {
+        let d = &self.draft;
+        self.ui_scale.refresh(d.ui_scale_percent);
+        self.bg_opacity.refresh(d.background_opacity);
+        self.avatar_cache_days
+            .refresh(d.data_refresh.avatar_cache_days);
+        self.ban_check_days.refresh(d.data_refresh.ban_check_days);
+        self.inactivity_blur.refresh(d.inactivity_blur_seconds);
+    }
+
+    /// `commitPinCode`: true when a typed PIN was written into the draft.
+    fn commit_pin_code(&mut self) -> bool {
+        let sanitized = sanitize_pin_digits(&self.pin_code_input);
+        if !self.draft.pin_enabled && !self.pin_setup_pending {
+            return false;
+        }
+        if self.draft.pin_enabled && !self.pin_change_authorized {
+            return false;
+        }
+        if sanitized.len() != PIN_CODE_LENGTH {
+            return false;
+        }
+        let Some(hash) = hash_pin_code(&sanitized) else {
+            return false;
+        };
+        self.draft.pin_hash = hash;
+        self.draft.pin_enabled = true;
+        self.pin_setup_pending = false;
+        self.pin_change_authorized = true;
+        self.pin_code_input.clear();
+        true
+    }
+
+    /// `disablePin`.
+    fn disable_pin(&mut self) {
+        self.draft.pin_enabled = false;
+        self.pin_setup_pending = false;
+        self.draft.pin_hash.clear();
+        self.pin_code_input.clear();
+        self.pin_disable_pending = false;
+    }
+
+    /// The Privacy tab mounts: its local state starts over and the
+    /// telemetry state is fetched (`onMount(refreshTelemetry)`).
+    fn mount_privacy(&mut self, jobs: &Jobs) {
+        self.current_pin_input.clear();
+        self.current_pin_error.clear();
+        self.current_pin_busy_until = None;
+        self.pin_disable_pending = false;
+        self.telemetry = None;
+        self.telemetry_error = false;
+        self.mode_b_busy = false;
+        self.export_busy = false;
+        self.refresh_telemetry(jobs);
+    }
+
+    fn refresh_telemetry(&mut self, jobs: &Jobs) {
+        self.telemetry_job = Some(jobs.run(|backend| backend.telemetry_get_state()));
+    }
+
+    /// `runDescriptorTask`: one folder call at a time, the buttons disabled
+    /// meanwhile.
+    fn run_descriptor_task(
+        &mut self,
+        jobs: &Jobs,
+        task: DescriptorTask,
+        call: impl FnOnce(&dyn accshift_app::backend::Backend) -> BackendResult<DescriptorDone>
+            + Send
+            + 'static,
+    ) {
+        if self.descriptor_job.is_some() {
+            return;
+        }
+        self.descriptor_busy = true;
+        self.descriptor_error.clear();
+        self.descriptor_job = Some((jobs.run(call), task));
+    }
+
+    /// `togglePlatform`: the last selectable platform stays on; enabling one
+    /// asks for its path. Selectable (`isPlatformSelectable`) is known and
+    /// supported on this system.
+    fn toggle_platform(&mut self, jobs: &Jobs, defs: &[PlatformDef], os: RuntimeOs, id: &str) {
+        let enabled = &mut self.draft.enabled_platforms;
+        if enabled.iter().any(|p| p == id) {
+            let selectable: Vec<&String> = enabled
+                .iter()
+                .filter(|p| platforms::usable(defs, p, os))
+                .collect();
+            if selectable.len() <= 1 && selectable.iter().any(|p| *p == id) {
+                return;
+            }
+            enabled.retain(|p| p != id);
+            return;
+        }
+        if !platforms::usable(defs, id, os) {
+            return;
+        }
+        enabled.push(id.to_string());
+        if !self.platform_paths.contains_key(id) {
+            self.platform_paths.insert(id.to_string(), String::new());
+            let id = id.to_string();
+            self.path_jobs.push(jobs.run(move |backend| {
+                let path = backend.platform_get_path(&id);
+                (id, path)
+            }));
+        }
+    }
+}
+
+/// `applyReport`: the folder's descriptors become the user platforms of the
+/// tabs, the account registry and the stores.
+fn apply_report(b: &mut Booted, report: &UserPlatformReport) {
+    let loaded: Vec<Value> = report
+        .loaded
+        .iter()
+        .filter_map(|d| serde_json::to_value(d).ok())
+        .collect();
+    b.platforms = platforms::with_user(&loaded);
+    let descriptors: Vec<PlatformDescriptor> = loaded
+        .iter()
+        .filter_map(PlatformDescriptor::from_value)
+        .collect();
+    b.accounts.registry.register_user_platforms(&descriptors);
+    let mut ctx = b.stores.context().clone();
+    ctx.platform_ids = b.platforms.iter().map(|p| p.id.clone()).collect();
+    b.stores.set_context(ctx);
+    b.user_platforms = Some(report.clone());
+}
+
+/// `normalizeSettings`.
+pub fn normalize(s: &mut AppSettings, platforms: &[PlatformDef], os: RuntimeOs) {
+    let clamp = |v: i64, min, max, fallback| clamp_int(Some(v as f64), min, max, fallback);
+    s.background_opacity = clamp(s.background_opacity, 0, 100, 100);
+    s.ui_scale_percent = clamp(s.ui_scale_percent, 75, 150, 100);
+    s.data_refresh.avatar_cache_days = clamp(s.data_refresh.avatar_cache_days, 0, 90, 7);
+    s.data_refresh.ban_check_days = clamp(s.data_refresh.ban_check_days, 0, 90, 7);
+    s.inactivity_blur_seconds = clamp(s.inactivity_blur_seconds, 0, 3600, 60);
+    s.platform_settings.steam.launch_options =
+        s.platform_settings.steam.launch_options.trim().to_string();
+    if !s.pin_enabled {
+        s.pin_hash.clear();
+    }
+    // Every platform of the registry is `implemented`, user ones included.
+    if !platforms.iter().any(|p| p.id == s.default_platform_id) {
+        s.default_platform_id = "steam".to_string();
+    }
+    if s.enabled_platforms.is_empty() {
+        s.enabled_platforms = vec!["steam".to_string()];
+    }
+    if !s.enabled_platforms.contains(&s.default_platform_id) {
+        s.default_platform_id = s.enabled_platforms[0].clone();
+    }
+    let selectable: Vec<&String> = s
+        .enabled_platforms
+        .iter()
+        .filter(|id| platforms::usable(platforms, id, os))
+        .collect();
+    if let Some(first) = selectable.first() {
+        if !selectable.contains(&&s.default_platform_id) {
+            s.default_platform_id = (*first).clone();
+        }
+    }
+}
+
+pub(super) fn toast(toasts: &mut ToastQueue, key: &str, kind: ToastType, now: Instant) {
+    toasts.add(Text::key(key), AddToastOptions::kind(kind), now);
+}
+
+impl AppModel {
+    /// The settings toggle of the title bar: open (or flush and close).
+    pub(super) fn toggle_settings_panel(&mut self) {
+        if self.settings_panel.is_some() {
+            self.close_settings_panel();
+            return;
+        }
+        let Some(b) = self.booted.as_mut() else {
+            return;
+        };
+        b.nav.show_personas = false;
+        let tab = b.nav.active_tab.clone();
+        b.accounts.cancel_add_flow(&self.jobs, &tab);
+        b.bulk.close();
+        b.nav.show_settings = true;
+        self.settings_panel = Some(SettingsPanel::open(
+            &b.stores,
+            &self.jobs,
+            &b.platforms,
+            b.runtime_os,
+            b.user_platforms.clone(),
+        ));
+    }
+
+    /// `closePanel`: flush the pending save, then `onClose`.
+    pub(super) fn close_settings_panel(&mut self) {
+        self.flush_settings(Instant::now());
+        self.settings_panel = None;
+        if let Some(b) = self.booted.as_mut() {
+            b.nav.show_settings = false;
+        }
+    }
+
+    /// Something else closed the panel (a platform tab, personas): the
+    /// pending save still lands, like `onDestroy`'s final persist.
+    pub(super) fn settings_panel_hidden(&mut self) {
+        if self.booted.as_ref().is_some_and(|b| !b.nav.show_settings)
+            && self.settings_panel.is_some()
+        {
+            self.flush_settings(Instant::now());
+            self.settings_panel = None;
+        }
+    }
+
+    /// `flushSettingsNow`.
+    pub(super) fn flush_settings(&mut self, now: Instant) {
+        if let Some(p) = self.settings_panel.as_mut() {
+            p.save_at = None;
+        }
+        self.persist_settings(now);
+    }
+
+    /// `persistCurrentState`.
+    fn persist_settings(&mut self, now: Instant) {
+        let (Some(panel), Some(b)) = (self.settings_panel.as_mut(), self.booted.as_mut()) else {
+            return;
+        };
+        if !panel.hydrated {
+            return;
+        }
+        normalize(&mut panel.draft, &b.platforms, b.runtime_os);
+        let pin_committed = panel.commit_pin_code();
+        let snapshot = panel.persist_snapshot(&panel.draft);
+        if snapshot == panel.last_persisted_snapshot {
+            return;
+        }
+        let next_platforms = platform_snapshot(&panel.draft);
+        let platforms_changed = next_platforms != panel.last_platform_snapshot;
+        let previous: Value =
+            serde_json::from_str(&panel.last_persisted_snapshot).unwrap_or(Value::Null);
+        let draft = panel.draft.clone();
+        // `startWithSystem` is the one setting with an OS side effect: write
+        // or remove the Run value when it flips.
+        let autostart_change = {
+            let was = previous["settings"]["startWithSystem"]
+                .as_bool()
+                .unwrap_or(false);
+            (was != draft.start_with_system).then_some(draft.start_with_system)
+        };
+        match merge_settings_draft(b.stores.settings(), &panel.persisted, &draft) {
+            Ok(merged) => b.stores.save_settings(&merged),
+            Err(_) => b.stores.save_settings(&draft),
+        }
+        panel.seen_store = b.stores.settings().clone();
+        panel.persisted = draft;
+        if let Some(enabled) = autostart_change {
+            if self.backend.set_autostart(enabled).is_err() {
+                toast(
+                    &mut self.toasts,
+                    "settings.autostartFailed",
+                    ToastType::Error,
+                    now,
+                );
+            }
+        }
+        if pin_committed {
+            toast(
+                &mut self.toasts,
+                "settings.pinSaved",
+                ToastType::Success,
+                now,
+            );
+        }
+        // `saveApiKey`.
+        let mut api_key_saved = true;
+        if panel.api_key_touched {
+            let trimmed = panel.api_key.trim().to_string();
+            if trimmed.is_empty() {
+                panel.api_key_touched = false;
+            } else {
+                match self.backend.steam_set_api_key(&trimmed) {
+                    Ok(()) => {
+                        let next = api_key_draft_after_successful_save(&panel.api_key, &trimmed);
+                        panel.api_key_configured = true;
+                        panel.api_key = next.api_key;
+                        panel.api_key_touched = next.touched;
+                        panel.api_key_error = false;
+                    }
+                    Err(_) => {
+                        panel.api_key_error = true;
+                        api_key_saved = false;
+                        toast(
+                            &mut self.toasts,
+                            "settings.apiKeySaveFailed",
+                            ToastType::Error,
+                            now,
+                        );
+                    }
+                }
+            }
+        }
+        // `savePlatformPaths`.
+        let mut paths_saved = true;
+        let ids: Vec<String> = panel.platform_paths.keys().cloned().collect();
+        for id in ids {
+            let next = panel.platform_paths[&id].trim().to_string();
+            let prev = previous["platformPaths"][&id].as_str().unwrap_or("");
+            if prev == next {
+                continue;
+            }
+            match self.backend.platform_set_path(&id, &next) {
+                Ok(()) => {
+                    panel.platform_path_errors.insert(id, false);
+                }
+                Err(error) => {
+                    // A known code says what is wrong with the folder; the
+                    // rest falls back to naming the platform.
+                    let name = b
+                        .platforms
+                        .iter()
+                        .find(|p| p.id == id)
+                        .map_or_else(|| id.clone(), |p| p.name.clone());
+                    let text = platform_path_error_message(
+                        &error.message,
+                        Text::with(
+                            "settings.pathSaveFailed",
+                            [("platform", TranslationValue::Str(name))],
+                        ),
+                    );
+                    panel.platform_path_errors.insert(id, true);
+                    paths_saved = false;
+                    self.toasts
+                        .add(text, AddToastOptions::kind(ToastType::Error), now);
+                }
+            }
+        }
+        panel.last_platform_snapshot = next_platforms;
+        if platforms_changed {
+            // `onPlatformsChanged`: a tab that is no longer enabled falls
+            // back to the first one the settings allow.
+            let s = b.stores.settings();
+            if !s.enabled_platforms.contains(&b.nav.active_tab) {
+                b.nav.active_tab = platforms::initial_tab(
+                    &b.platforms,
+                    &s.enabled_platforms,
+                    &s.default_platform_id,
+                    b.runtime_os,
+                );
+            }
+        }
+        if !api_key_saved || !paths_saved {
+            return;
+        }
+        panel.last_persisted_snapshot = snapshot;
+        if panel
+            .last_saved_toast
+            .is_none_or(|at| now.duration_since(at) >= SAVE_TOAST_COOLDOWN)
+        {
+            toast(&mut self.toasts, "settings.saved", ToastType::Info, now);
+            panel.last_saved_toast = Some(now);
+        }
+    }
+
+    /// Once per frame while the panel is open: jobs, timers, the external
+    /// settings watch and the save debounce.
+    pub(super) fn tick_settings_panel(&mut self, ctx: &Context, now: Instant) {
+        self.settings_panel_hidden();
+        let jobs = &self.jobs;
+        let (Some(panel), Some(b)) = (self.settings_panel.as_mut(), self.booted.as_mut()) else {
+            return;
+        };
+        if let Some(job) = &mut panel.hydrate_job {
+            let landed = match job.poll() {
+                Poll::Waiting => None,
+                Poll::Ready(result) => Some(result),
+                Poll::Gone => Some((false, Vec::new())),
+            };
+            if let Some((has_key, paths)) = landed {
+                panel.hydrate_job = None;
+                panel.api_key_configured = has_key;
+                panel.platform_paths = paths.into_iter().collect();
+                let at_start = panel.persisted.clone();
+                panel.last_persisted_snapshot = panel.persist_snapshot(&at_start);
+                panel.last_platform_snapshot = platform_snapshot(&at_start);
+                panel.hydrated = true;
+            }
+        }
+        if let Some(job) = &mut panel.telemetry_job {
+            match job.poll() {
+                Poll::Waiting => {}
+                Poll::Ready(Ok(state)) => {
+                    panel.telemetry = Some(state);
+                    panel.telemetry_error = false;
+                    panel.telemetry_job = None;
+                }
+                Poll::Ready(Err(_)) | Poll::Gone => {
+                    panel.telemetry_error = true;
+                    panel.telemetry_job = None;
+                }
+            }
+        }
+        let mut refresh = false;
+        let mut finished = Vec::new();
+        panel.calls.retain_mut(|(job, followup)| match job.poll() {
+            Poll::Waiting => true,
+            Poll::Ready(result) => {
+                finished.push((*followup, result));
+                false
+            }
+            Poll::Gone => false,
+        });
+        for (followup, result) in finished {
+            match (followup, result) {
+                (Followup::ErrorToast(key), Err(_)) => {
+                    toast(&mut self.toasts, key, ToastType::Error, now);
+                }
+                (Followup::InfoToast(key), Err(_)) => {
+                    toast(&mut self.toasts, key, ToastType::Info, now);
+                }
+                (Followup::ClearApiKey, Ok(_)) => {
+                    panel.api_key_configured = false;
+                    panel.api_key.clear();
+                    panel.api_key_touched = false;
+                    panel.api_key_error = false;
+                    toast(
+                        &mut self.toasts,
+                        "settings.apiKeyCleared",
+                        ToastType::Info,
+                        now,
+                    );
+                }
+                (Followup::ClearApiKey, Err(_)) => {
+                    toast(
+                        &mut self.toasts,
+                        "settings.apiKeyClearFailed",
+                        ToastType::Error,
+                        now,
+                    );
+                }
+                (Followup::ModeA, Err(_)) => refresh = true,
+                (Followup::ModeB { next }, result) => {
+                    panel.mode_b_busy = false;
+                    refresh = true;
+                    if result.is_err() {
+                        let key = if next {
+                            "settings.telemetryEnableFailed"
+                        } else if panel.telemetry.as_ref().is_some_and(|t| !t.mode_b_enabled) {
+                            "settings.telemetryDeletePending"
+                        } else {
+                            "settings.telemetryDisableFailed"
+                        };
+                        toast(&mut self.toasts, key, ToastType::Info, now);
+                    }
+                }
+                (Followup::RetryForget, result) => {
+                    panel.mode_b_busy = false;
+                    refresh = true;
+                    let key = if result.is_ok() {
+                        "settings.telemetryDeleteCompleted"
+                    } else {
+                        "settings.telemetryDeleteRetryFailed"
+                    };
+                    toast(&mut self.toasts, key, ToastType::Info, now);
+                }
+                (Followup::Export, result) => {
+                    panel.export_busy = false;
+                    let key = match result {
+                        Ok(data) => {
+                            let text = serde_json::to_string_pretty(&data).unwrap_or_default();
+                            panel.clipboard = Some(text);
+                            "settings.telemetryExported"
+                        }
+                        Err(_) => "settings.telemetryExportFailed",
+                    };
+                    toast(&mut self.toasts, key, ToastType::Info, now);
+                }
+                _ => {}
+            }
+        }
+        if refresh {
+            panel.refresh_telemetry(jobs);
+        }
+        let mut paths = Vec::new();
+        panel.path_jobs.retain_mut(|job| match job.poll() {
+            Poll::Waiting => true,
+            Poll::Ready(done) => {
+                paths.push(done);
+                false
+            }
+            Poll::Gone => false,
+        });
+        for (id, path) in paths {
+            if let Ok(path) = path {
+                if panel.draft.enabled_platforms.contains(&id) {
+                    panel.platform_paths.insert(id, path);
+                }
+            }
+        }
+        // `choosePlatformPath`: only a real path replaces the field; a
+        // cancel or a failed dialog leaves it alone.
+        let mut picked = Vec::new();
+        panel.pick_jobs.retain_mut(|job| match job.poll() {
+            Poll::Waiting => true,
+            Poll::Ready(done) => {
+                picked.push(done);
+                false
+            }
+            Poll::Gone => false,
+        });
+        for (id, path) in picked {
+            if let Ok(path) = path {
+                let trimmed = path.trim();
+                if !trimmed.is_empty() {
+                    panel.platform_paths.insert(id, trimmed.to_string());
+                }
+            }
+        }
+        // `Cs2BridgeSettings` mounts with the Steam tab and loses its state
+        // when the tab goes.
+        if !panel.steam_mounted() {
+            panel.cs2 = None;
+        } else if panel.cs2.is_none() {
+            panel.cs2 = Some(Cs2Form::mount(jobs));
+        }
+        if let Some(enabled) = panel.tick_cs2(jobs, &mut self.toasts, now) {
+            if let Some(steam) = b.accounts.registry.adapter("steam") {
+                let mut state = steam.state();
+                state.cs2.invalidate();
+                if enabled {
+                    let now_ms = b.accounts.clock.now_ms();
+                    b.accounts.cs2.queue.load(&state.cs2, true, now_ms);
+                }
+            }
+        }
+        // The "Refresh now" runs: their cache writes and stores land here,
+        // then their toasts and the active tab's reload.
+        let mut effects = Vec::new();
+        for slot in [&mut panel.avatar_refresh, &mut panel.ban_refresh] {
+            let Some(job) = slot else {
+                continue;
+            };
+            match job.poll() {
+                Poll::Waiting => {}
+                Poll::Ready(result) => {
+                    *slot = None;
+                    let report =
+                        apply_refresh_job(result, &mut b.stores, b.accounts.loading.caches());
+                    effects.extend(report.toasts.into_iter().map(AppEffect::Toast));
+                    if let Some(options) = report.reload_active {
+                        effects.push(AppEffect::LoadAccounts(options));
+                    }
+                }
+                Poll::Gone => *slot = None,
+            }
+        }
+        let mut account_added = false;
+        if let Some(job) = &mut panel.roblox_job {
+            let landed = match job.poll() {
+                Poll::Waiting => None,
+                Poll::Ready(result) => Some(result),
+                Poll::Gone => Some(Err(BackendError::new("cancelled"))),
+            };
+            if let Some(result) = landed {
+                panel.roblox_job = None;
+                panel.roblox_adding = false;
+                match result {
+                    Ok(account) => {
+                        let _ = jobs.run(|b| b.telemetry_track_account_added("roblox"));
+                        panel.roblox_cookie.clear();
+                        let profile = if account.display_name.is_empty() {
+                            account.username
+                        } else {
+                            account.display_name
+                        };
+                        self.toasts.add(
+                            Text::with(
+                                "roblox.setupReadyWithProfile",
+                                [("profile", TranslationValue::Str(profile))],
+                            ),
+                            AddToastOptions::default(),
+                            now,
+                        );
+                        account_added = true;
+                    }
+                    Err(error) => panel.roblox_error = error.message,
+                }
+            }
+        }
+        let descriptor = panel.descriptor_job.as_mut().and_then(|(job, task)| {
+            let result = match job.poll() {
+                Poll::Waiting => return None,
+                Poll::Ready(result) => result,
+                Poll::Gone => Err(BackendError::new("cancelled")),
+            };
+            Some((task.clone(), result))
+        });
+        if let Some((task, result)) = descriptor {
+            panel.descriptor_job = None;
+            panel.descriptor_busy = false;
+            let locale = panel.draft.language;
+            let named = |key: &str, name: &str| {
+                accshift_app::i18n::translate_with(
+                    locale,
+                    key,
+                    &[("platform", TranslationValue::Str(name.to_string()))],
+                )
+            };
+            match result {
+                Err(error) => {
+                    panel.descriptor_notice.clear();
+                    panel.descriptor_error = error.message;
+                }
+                Ok(DescriptorDone::Report(report)) => {
+                    apply_report(b, &report);
+                    panel.user_platforms = Some(report);
+                    match task {
+                        DescriptorTask::Reload => panel.descriptor_notice.clear(),
+                        DescriptorTask::Install { name } => {
+                            panel.descriptor_notice = named("descriptor.installed", &name);
+                            panel.descriptor_preview = None;
+                        }
+                        DescriptorTask::Remove { id, name } => {
+                            panel.descriptor_notice = named("descriptor.removed", &name);
+                            // The platform stops existing, so it cannot
+                            // stay in the enabled set.
+                            panel.draft.enabled_platforms.retain(|p| *p != id);
+                        }
+                        DescriptorTask::Pick | DescriptorTask::OpenFolder => {}
+                    }
+                }
+                Ok(DescriptorDone::Picked(Some(picked))) => {
+                    let (path, preview) = *picked;
+                    panel.descriptor_notice.clear();
+                    panel.descriptor_preview = Some(preview);
+                    panel.preview_mount += 1;
+                    panel.preview_path = path;
+                }
+                Ok(DescriptorDone::Picked(None) | DescriptorDone::Opened) => {}
+            }
+        }
+        if let Some(text) = panel.clipboard.take() {
+            ctx.copy_text(text);
+        }
+        if panel
+            .current_pin_busy_until
+            .is_some_and(|until| now >= until)
+        {
+            panel.current_pin_busy_until = None;
+        }
+        // `adoptExternalSettings`.
+        if panel.hydrated && b.stores.settings() != &panel.seen_store {
+            let stored = b.stores.settings().clone();
+            panel.seen_store = stored.clone();
+            let draft = panel.draft.clone();
+            let was_saved = panel.persist_snapshot(&panel.draft) == panel.last_persisted_snapshot;
+            let next = merge_settings_draft(&stored, &panel.persisted, &draft).unwrap_or(draft);
+            panel.persisted = stored;
+            panel.draft = next;
+            panel.refresh_numeric();
+            if was_saved {
+                panel.last_persisted_snapshot = panel.persist_snapshot(&panel.draft);
+            }
+        }
+        // `$effect(... queueSave())`.
+        let tracked = panel.tracked();
+        if tracked != panel.last_tracked {
+            panel.last_tracked = tracked;
+            if panel.hydrated {
+                panel.save_at = Some(now + SAVE_DEBOUNCE);
+            }
+        }
+        // `ensureActiveVisible` on a tab list or language change.
+        let enabled = panel.draft.enabled_platforms.clone();
+        let ids: Vec<String> = visible_tabs(&b.platforms, &enabled)
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        if !ids.iter().any(|id| id == panel.tab_bar.active_tab()) {
+            panel.tab_bar.ensure_active_visible(&ids);
+        }
+        if panel.save_at.is_some_and(|at| now >= at) {
+            panel.save_at = None;
+            self.persist_settings(now);
+        }
+        if account_added {
+            // `onAccountAdded`: `loadAccounts(true)`.
+            effects.push(AppEffect::LoadAccounts(load_options(
+                true, false, false, false,
+            )));
+        }
+        if !effects.is_empty() {
+            self.apply_effects(ctx, effects);
+        }
+    }
+
+    /// When the panel next needs a frame without input.
+    pub fn settings_panel_deadline(&self) -> Option<Instant> {
+        let p = self.settings_panel.as_ref()?;
+        [p.save_at, p.current_pin_busy_until]
+            .into_iter()
+            .flatten()
+            .min()
+    }
+
+    /// Applies one [`SettingsAction`].
+    pub(super) fn apply_settings(&mut self, ctx: &Context, action: SettingsAction) {
+        let now = Instant::now();
+        if matches!(
+            action,
+            SettingsAction::Close | SettingsAction::ReplayOnboarding
+        ) {
+            // `await closePanel()`, then the replay opens the onboarding.
+            self.close_settings_panel();
+            if action == SettingsAction::ReplayOnboarding {
+                self.onboarding.open();
+            }
+            return;
+        }
+        let jobs = &self.jobs;
+        let Some(panel) = self.settings_panel.as_mut() else {
+            return;
+        };
+        let call = |panel: &mut SettingsPanel, followup: Followup, f: BackendCall| {
+            panel.calls.push((jobs.run(f), followup));
+        };
+        match action {
+            SettingsAction::Close | SettingsAction::ReplayOnboarding => {}
+            SettingsAction::SelectTab(id) => {
+                let was_privacy = panel.tab_bar.active_tab() == "privacy";
+                if panel.tab_bar.active_tab() == "platforms" && id != "platforms" {
+                    // The Svelte tab unmounts: its search and notices go.
+                    panel.platform_search.clear();
+                    panel.descriptor_notice.clear();
+                    panel.descriptor_error.clear();
+                }
+                if panel.tab_bar.active_tab() != id {
+                    // `ActivePlatformComponent` changes: the Roblox tab's
+                    // own state goes with it.
+                    panel.roblox_cookie.clear();
+                    panel.roblox_error.clear();
+                }
+                panel.tab_bar.select(&id);
+                panel.scroll = 0.0;
+                if id == "privacy" && !was_privacy {
+                    panel.mount_privacy(jobs);
+                }
+            }
+            SettingsAction::OpenHelp => call(
+                panel,
+                Followup::ErrorToast("settings.openHelpFailed"),
+                Box::new(|b| b.open_url(WIKI_URL).map(|()| Value::Null)),
+            ),
+            SettingsAction::OpenLogs => call(
+                panel,
+                Followup::ErrorToast("settings.openLogsFailed"),
+                Box::new(|b| b.open_logs_folder().map(|()| Value::Null)),
+            ),
+            SettingsAction::OpenIntegrationsWiki => call(
+                panel,
+                Followup::ErrorToast("settings.openHelpFailed"),
+                Box::new(|b| b.open_url(INTEGRATIONS_WIKI_URL).map(|()| Value::Null)),
+            ),
+            SettingsAction::OpenTelemetryDoc => call(
+                panel,
+                Followup::ErrorToast("settings.openHelpFailed"),
+                Box::new(|b| b.open_url(TELEMETRY_DOC_URL).map(|()| Value::Null)),
+            ),
+            SettingsAction::Toggle(flag) => {
+                let d = &mut panel.draft;
+                match flag {
+                    SettingFlag::ShowCardNotesInline => {
+                        d.account_display.show_card_notes_inline ^= true;
+                    }
+                    SettingFlag::ExpandedFolders => d.account_display.expanded_folders ^= true,
+                    SettingFlag::SuspendGraphicsWhenMinimized => {
+                        d.suspend_graphics_when_minimized ^= true;
+                    }
+                    SettingFlag::MinimizeOnAccountSwitch => d.minimize_on_account_switch ^= true,
+                    SettingFlag::StartWithSystem => d.start_with_system ^= true,
+                    SettingFlag::CloseToTray => d.close_to_tray ^= true,
+                    SettingFlag::DeepLinks => d.deep_links_enabled ^= true,
+                    SettingFlag::Personas => d.personas_enabled ^= true,
+                    SettingFlag::Cli => d.cli_enabled ^= true,
+                    SettingFlag::ShowUsernames => d.account_display.show_usernames ^= true,
+                    SettingFlag::SteamRunAsAdmin => d.platform_settings.steam.run_as_admin ^= true,
+                    SettingFlag::SteamForceShutdown => {
+                        let steam = &mut d.platform_settings.steam;
+                        steam.shutdown_mode = match steam.shutdown_mode {
+                            SteamShutdownMode::Force => SteamShutdownMode::Graceful,
+                            SteamShutdownMode::Graceful => SteamShutdownMode::Force,
+                        };
+                    }
+                    SettingFlag::StreamerMode => {
+                        d.streamer_mode = match d.streamer_mode {
+                            StreamerMode::Auto => StreamerMode::Off,
+                            StreamerMode::Off => StreamerMode::Auto,
+                        };
+                    }
+                }
+            }
+            SettingsAction::Language(locale) => panel.draft.language = locale,
+            SettingsAction::Animations(mode) => panel.draft.animations = mode,
+            SettingsAction::Theme(id) => panel.draft.theme_id = id,
+            SettingsAction::NumericInput(field, text) => panel.numeric_mut(field).0.input = text,
+            SettingsAction::NumericCommit(field) => {
+                let (input, value) = panel.numeric_mut(field);
+                *value = input.commit(*value);
+            }
+            SettingsAction::PinInput(text) => {
+                panel.pin_code_input = sanitize_pin_digits(&text)
+                    .chars()
+                    .take(PIN_CODE_LENGTH)
+                    .collect();
+            }
+            SettingsAction::CurrentPinInput(text) => {
+                panel.current_pin_input = sanitize_pin_digits(&text)
+                    .chars()
+                    .take(PIN_CODE_LENGTH)
+                    .collect();
+                if panel.current_pin_input.len() == PIN_CODE_LENGTH
+                    && panel.current_pin_busy_until.is_none()
+                {
+                    // `confirmCurrentPin`. The backend checks the code on
+                    // this thread: the PIN service answers locally.
+                    let code = std::mem::take(&mut panel.current_pin_input);
+                    panel.current_pin_error.clear();
+                    let check =
+                        unlock_pin_session(self.backend.as_ref(), &code, &panel.draft.pin_hash);
+                    match check.failure_wait() {
+                        None => {
+                            panel.pin_change_authorized = true;
+                            if panel.pin_disable_pending {
+                                panel.disable_pin();
+                            } else if let accshift_app::secure::pin::PinCheck::Match {
+                                rehashed: Some(hash),
+                            } = check
+                            {
+                                panel.draft.pin_hash = hash;
+                            }
+                        }
+                        Some(wait) => {
+                            let locale = self.booted.as_ref().map_or(Locale::En, |b| b.locale);
+                            panel.current_pin_error = if wait.too_many_attempts {
+                                accshift_app::i18n::translate_with(
+                                    locale,
+                                    "pin.tooManyAttempts",
+                                    &[(
+                                        "seconds",
+                                        TranslationValue::Num(wait.wait_ms.div_ceil(1000) as f64),
+                                    )],
+                                )
+                            } else {
+                                accshift_app::i18n::translate(locale, "pin.invalid")
+                            };
+                            panel.current_pin_busy_until =
+                                Some(now + Duration::from_millis(wait.wait_ms));
+                        }
+                    }
+                }
+            }
+            SettingsAction::TogglePin => {
+                if panel.pin_guarded() {
+                    panel.pin_disable_pending = !panel.pin_disable_pending;
+                } else if panel.draft.pin_enabled || panel.pin_setup_pending {
+                    panel.disable_pin();
+                } else {
+                    panel.pin_setup_pending = true;
+                }
+            }
+            SettingsAction::ExportTheme => {
+                if let Some(b) = self.booted.as_ref() {
+                    let theme = b.registry.theme(Some(&panel.draft.theme_id));
+                    ctx.copy_text(accshift_theme::export_theme_json(&theme));
+                    toast(
+                        &mut self.toasts,
+                        "settings.themeExportCopied",
+                        ToastType::Info,
+                        now,
+                    );
+                }
+            }
+            SettingsAction::ImportTheme => {
+                if panel.theme_import.is_none() {
+                    crate::clipboard::request_text(ctx);
+                    panel.theme_import = Some(ThemeImport::Reading(0));
+                }
+            }
+            SettingsAction::CustomizeTheme => {
+                if let Some(b) = self.booted.as_ref() {
+                    panel.theme_editor_mount += 1;
+                    panel.theme_editor = Some(ThemeEditor::start_from(
+                        &b.registry,
+                        &panel.draft.theme_id,
+                        b.locale,
+                        panel.draft.background_opacity as f64,
+                        panel.theme_editor_mount,
+                    ));
+                }
+            }
+            SettingsAction::ThemeEditor(event) => match event {
+                // `onCancel`: the tick puts the settings' theme back.
+                ThemeEditorEvent::Cancel => panel.theme_editor = None,
+                ThemeEditorEvent::Save => {
+                    if let (Some(editor), Some(b)) =
+                        (panel.theme_editor.as_mut(), self.booted.as_ref())
+                    {
+                        editor.save(&b.registry, jobs);
+                    }
+                }
+                // `navigator.clipboard.writeText`, no toast.
+                ThemeEditorEvent::Export => {
+                    if let Some(editor) = panel.theme_editor.as_ref() {
+                        panel.clipboard = Some(editor.export());
+                    }
+                }
+            },
+            SettingsAction::ToggleTelemetryA => {
+                if let Some(t) = panel.telemetry.as_mut() {
+                    let next = !t.mode_a_enabled;
+                    t.mode_a_enabled = next;
+                    call(
+                        panel,
+                        Followup::ModeA,
+                        Box::new(move |b| b.telemetry_set_mode_a(next).map(|()| Value::Null)),
+                    );
+                }
+            }
+            SettingsAction::ToggleTelemetryB => {
+                if let Some(t) = panel.telemetry.as_ref() {
+                    if !panel.mode_b_busy {
+                        let next = !t.mode_b_enabled;
+                        panel.mode_b_busy = true;
+                        call(
+                            panel,
+                            Followup::ModeB { next },
+                            Box::new(move |b| b.telemetry_set_mode_b(next).map(|()| Value::Null)),
+                        );
+                    }
+                }
+            }
+            SettingsAction::RetryTelemetryDeletion => {
+                if !panel.mode_b_busy {
+                    panel.mode_b_busy = true;
+                    call(
+                        panel,
+                        Followup::RetryForget,
+                        Box::new(|b| b.telemetry_retry_forget().map(|()| Value::Null)),
+                    );
+                }
+            }
+            SettingsAction::ExportTelemetry => {
+                if !panel.export_busy {
+                    panel.export_busy = true;
+                    call(panel, Followup::Export, Box::new(|b| b.telemetry_export()));
+                }
+            }
+            SettingsAction::RetryTelemetryLoad => panel.refresh_telemetry(jobs),
+            SettingsAction::PlatformSearch(text) => panel.platform_search = text,
+            SettingsAction::TogglePlatform(id) => {
+                if let Some(b) = self.booted.as_ref() {
+                    panel.toggle_platform(jobs, &b.platforms, b.runtime_os, &id);
+                }
+            }
+            SettingsAction::DefaultPlatform(id) => panel.draft.default_platform_id = id,
+            SettingsAction::ReloadDescriptors => {
+                panel.run_descriptor_task(jobs, DescriptorTask::Reload, |b| {
+                    b.reload_user_platforms().map(DescriptorDone::Report)
+                });
+            }
+            SettingsAction::PickDescriptor => {
+                panel.run_descriptor_task(jobs, DescriptorTask::Pick, |b| {
+                    // A cancelled or failed picker leaves everything alone.
+                    let Ok(path) = b.descriptor_select_file() else {
+                        return Ok(DescriptorDone::Picked(None));
+                    };
+                    if path.is_empty() {
+                        return Ok(DescriptorDone::Picked(None));
+                    }
+                    let preview = b.descriptor_preview_file(&path)?;
+                    Ok(DescriptorDone::Picked(Some(Box::new((path, preview)))))
+                });
+            }
+            SettingsAction::InstallDescriptor => {
+                if let Some(preview) = panel.descriptor_preview.as_ref() {
+                    let name = preview.descriptor.name.clone();
+                    let path = panel.preview_path.clone();
+                    panel.run_descriptor_task(jobs, DescriptorTask::Install { name }, move |b| {
+                        b.descriptor_install_file(&path).map(DescriptorDone::Report)
+                    });
+                }
+            }
+            SettingsAction::CancelDescriptorPreview => panel.descriptor_preview = None,
+            SettingsAction::OpenDescriptorsFolder => {
+                panel.run_descriptor_task(jobs, DescriptorTask::OpenFolder, |b| {
+                    b.open_descriptors_folder().map(|()| DescriptorDone::Opened)
+                });
+            }
+            SettingsAction::RemoveDescriptor { id, name } => {
+                let mut effects = Vec::new();
+                let ticket = self.dialogs.request_confirm(
+                    ConfirmConfig {
+                        title: Text::with(
+                            "descriptor.removeConfirmTitle",
+                            [("platform", TranslationValue::Str(name.clone()))],
+                        ),
+                        message: Text::key("descriptor.removeConfirmMessage"),
+                        confirm_label: Some(Text::key("descriptor.remove")),
+                        confirm_color: None,
+                    },
+                    &mut effects,
+                );
+                panel.pending_removal = Some((id, name, ticket));
+                self.apply_effects(ctx, effects);
+            }
+            SettingsAction::ToggleLastLogin(id) => {
+                let shown = &mut panel.draft.account_display.show_last_login_per_platform;
+                let next = !shown.get(&id).copied().unwrap_or(false);
+                shown.insert(id, next);
+            }
+            SettingsAction::ToggleHealthCheck(id) => {
+                let checks = &mut panel.draft.health_check_per_platform;
+                let next = checks.get(&id) == Some(&false);
+                checks.insert(id, next);
+            }
+            SettingsAction::PlatformPath(id, path) => {
+                panel.platform_paths.insert(id, path);
+            }
+            SettingsAction::ChoosePlatformPath(id) => {
+                panel.pick_jobs.push(jobs.run(move |b| {
+                    let path = b.platform_select_path(&id);
+                    (id, path)
+                }));
+            }
+            SettingsAction::RobloxCookie(text) => panel.roblox_cookie = text,
+            SettingsAction::AddRobloxCookie => {
+                let trimmed = panel.roblox_cookie.trim().to_string();
+                if trimmed.is_empty() || panel.roblox_adding {
+                    return;
+                }
+                panel.roblox_adding = true;
+                panel.roblox_error.clear();
+                panel.roblox_job = Some(jobs.run(move |b| {
+                    // The paste is the second door into adding a Roblox
+                    // account: it reports its own funnel start. The failure
+                    // half is reported by the backend command.
+                    let _ = b.telemetry_track_account_add_started("roblox");
+                    b.roblox_add_account_by_cookie(&trimmed)
+                }));
+            }
+            SettingsAction::SteamLaunchOptions(text) => {
+                panel.draft.platform_settings.steam.launch_options = text;
+            }
+            SettingsAction::ApiKeyInput(text) => {
+                panel.api_key = text;
+                panel.api_key_touched = true;
+            }
+            SettingsAction::ClearApiKey => call(
+                panel,
+                Followup::ClearApiKey,
+                Box::new(|b| b.steam_set_api_key("").map(|()| Value::Null)),
+            ),
+            SettingsAction::OpenSteamApiKeyPage => call(
+                panel,
+                Followup::InfoToast("settings.openApiKeyFailed"),
+                Box::new(|b| b.steam_open_api_key_page().map(|()| Value::Null)),
+            ),
+            SettingsAction::OpenCs2Wiki => call(
+                panel,
+                Followup::ErrorToast("settings.openHelpFailed"),
+                Box::new(|b| b.open_url(CS2_WIKI_URL).map(|()| Value::Null)),
+            ),
+            SettingsAction::RefreshNow(kind) => {
+                let Some(b) = self.booted.as_ref() else {
+                    return;
+                };
+                if panel.refresh_loading(kind) {
+                    return;
+                }
+                // `refreshAvatarsNow` / `refreshBansNow` read the stored
+                // settings and the stores as they are now; the run works on
+                // copies and hands its writes back to the tick.
+                let registry = b.accounts.registry.clone();
+                let caches = std::sync::Arc::clone(b.accounts.loading.caches());
+                let stores = b.stores.clone();
+                let settings = b.stores.settings().clone();
+                let tab = b.nav.active_tab.clone();
+                let clock = b.accounts.clock.clone();
+                let job = jobs.run(move |backend| {
+                    let now_ms = move || clock.now_ms();
+                    run_refresh_job(
+                        kind, &registry, &tab, backend, &caches, stores, &settings, &now_ms,
+                    )
+                });
+                match kind {
+                    RefreshKind::Avatars => panel.avatar_refresh = Some(job),
+                    RefreshKind::Bans => panel.ban_refresh = Some(job),
+                }
+            }
+            SettingsAction::Cs2Toggle => {
+                if let Some(form) = panel.cs2.as_mut().filter(|f| f.loaded) {
+                    form.enabled = !form.enabled;
+                    form.save(jobs, None);
+                }
+            }
+            SettingsAction::Cs2Url(text) => {
+                if let Some(form) = panel.cs2.as_mut() {
+                    form.url = text;
+                }
+            }
+            SettingsAction::Cs2UrlBlur => {
+                if let Some(form) = panel.cs2.as_mut().filter(|f| f.loaded) {
+                    form.save(jobs, None);
+                }
+            }
+            SettingsAction::Cs2Test => {
+                if let Some(form) = panel.cs2.as_mut() {
+                    form.run_test(jobs);
+                }
+            }
+            SettingsAction::Cs2Token(text) => {
+                if let Some(form) = panel.cs2.as_mut() {
+                    form.token_input = text;
+                }
+            }
+            SettingsAction::Cs2TokenBlur => {
+                if let Some(form) = panel
+                    .cs2
+                    .as_mut()
+                    .filter(|f| f.loaded && !f.token_input.trim().is_empty())
+                {
+                    let token = form.token_input.clone();
+                    form.save(jobs, Some(token));
+                }
+            }
+            SettingsAction::Cs2ClearToken => {
+                if let Some(form) = panel.cs2.as_mut() {
+                    form.save(jobs, Some(String::new()));
+                }
+            }
+        }
+    }
+
+    /// The removal confirm settled (`confirmRemoval`, or its cancel).
+    pub(super) fn settle_descriptor_removal(&mut self, ticket: ConfirmTicket, allowed: bool) {
+        let jobs = &self.jobs;
+        let Some(panel) = self.settings_panel.as_mut() else {
+            return;
+        };
+        let Some((id, name, _)) = panel
+            .pending_removal
+            .take_if(|(_, _, pending)| *pending == ticket)
+        else {
+            return;
+        };
+        if allowed {
+            let remove = id.clone();
+            panel.run_descriptor_task(jobs, DescriptorTask::Remove { id, name }, move |b| {
+                b.descriptor_remove(&remove).map(DescriptorDone::Report)
+            });
+        }
+    }
+
+    /// mod+f in the settings scope (`focusPlatformSearch`).
+    pub(super) fn focus_platform_search(&mut self) {
+        if let Some(panel) = self.settings_panel.as_mut() {
+            if panel.tab_bar.active_tab() != "platforms" {
+                panel.tab_bar.select("platforms");
+                panel.scroll = 0.0;
+            }
+            panel.focus_platform_search = true;
+        }
+    }
+}

@@ -1,0 +1,57 @@
+{
+  "id": "deeplink-glass-dark-100",
+  "scenario": "dev",
+  "os": "windows",
+  "viewport": {
+    "width": 860,
+    "height": 440,
+    "scale": 1
+  },
+  "theme": "glass-dark",
+  "locale": "en",
+  "seed": {
+    "SETTINGS": {
+      "viewMode": "grid",
+      "animations": "off",
+      "accountDisplay": {
+        "showUsernames": true,
+        "showCardNotesInline": false
+      }
+    }
+  },
+  "steps": [
+    {
+      "wait": 800
+    },
+    {
+      "move": [250, 18]
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "deeplink": "accshift://switch/steam/no_avatar_here"
+    },
+    {
+      "wait": 700
+    },
+    {
+      "shot": "confirm"
+    },
+    {
+      "click": [563, 258]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "switching"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "shot": "switched"
+    }
+  ]
+}
