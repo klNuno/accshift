@@ -11,6 +11,8 @@ use accshift_core::AppContext;
 
 use super::*;
 
+mod native_regressions;
+
 struct Scratch {
     root: PathBuf,
 }

@@ -262,18 +262,6 @@ pub fn text_input(
     let focused = props.enabled && take_focus(ui, &response);
     if focused {
         crate::ui::components::focus::mark_text_field(&ctx, id);
-        // Arrows, Tab and Escape stay with the field's own handling.
-        ui.memory_mut(|m| {
-            m.set_focus_lock_filter(
-                id,
-                egui::EventFilter {
-                    tab: false,
-                    horizontal_arrows: true,
-                    vertical_arrows: false,
-                    escape: false,
-                },
-            )
-        });
     }
     let mut events = TextInputEvents {
         focused,

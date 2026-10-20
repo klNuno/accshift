@@ -402,6 +402,26 @@ impl Accounts {
         });
     }
 
+    /// Re-seed visible avatars from the refreshed stores, without forcing
+    /// network profile requests on every focus event.
+    pub(super) fn prepare_visible_accounts(&mut self, stores: &ClientStores, tab: &str) {
+        let Some(adapter) = self.registry.adapter(tab) else {
+            return;
+        };
+        let caches = Arc::clone(self.loading.caches());
+        let hooks = accshift_app::accounts::loading::AdapterHooks {
+            adapter: &adapter,
+            stores,
+            caches: &caches,
+            expiry: caches.expiry(stores.cache_duration_ms(), self.clock.now_ms()),
+        };
+        self.loading.loader.prepare_visible_accounts(
+            Some(&self.lists.visible_account_ids),
+            false,
+            &hooks,
+        );
+    }
+
     /// `navigateTo(folderId)` without history: the folder, its items.
     pub fn navigate_to(&mut self, stores: &ClientStores, tab: &str, folder: Option<String>) {
         self.navigation.set_current_folder_id(folder);

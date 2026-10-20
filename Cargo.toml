@@ -66,7 +66,9 @@ epaint = { path = "crates/accshift-egui/vendor/epaint" }
 # Built for size: a smaller exe reaches `main` sooner (crates/accshift-egui
 # build.rs), except the per-frame hot path below.
 [profile.release]
-panic = "abort"
+# Corrupt legacy databases and failed background jobs recover through
+# catch_unwind. Keep that recovery enabled in the shipped binaries.
+panic = "unwind"
 codegen-units = 1
 lto = "fat"
 opt-level = "s"

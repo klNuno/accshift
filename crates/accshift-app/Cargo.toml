@@ -100,6 +100,9 @@ osakit = { version = "0.3", features = ["full"] }
 plist = "1"
 
 [dev-dependencies]
+# Exercise Chromium's legacy reader on every CI host, including the release
+# panic strategy checked by the legacy_storage_smoke example.
+rusty-leveldb = { version = "4", default-features = false }
 # Signs the updater fixtures with a key generated in the test, as the
 # `tauri signer` command does (tauri-cli signs with this crate).
 minisign = "0.10"

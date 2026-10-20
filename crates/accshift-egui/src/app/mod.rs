@@ -26,6 +26,7 @@ pub mod avatars;
 pub mod clock;
 mod deep_link;
 mod drag;
+mod external_refresh;
 pub(crate) mod keys;
 pub mod onboarding;
 mod palette;
@@ -408,6 +409,7 @@ pub struct AppModel {
     boot_error: Option<String>,
     booted: Option<Booted>,
     saves: Vec<(StoreId, Pending<BackendResult<Option<String>>>)>,
+    external_refresh: external_refresh::ExternalRefresh,
     /// `createUiScale`: the zoom shortcuts and the debounced save.
     ui_scale: accshift_app::lifecycle::ui_scale::UiScale,
     /// `uiScalePercent` changed by a shortcut, until it is saved.
@@ -557,6 +559,7 @@ impl AppModel {
             boot_error: None,
             booted: None,
             saves: Vec::new(),
+            external_refresh: Default::default(),
             ui_scale: Default::default(),
             ui_scale_live: None,
             stage_raster: ui_scale::StageRaster::Unknown,
@@ -941,6 +944,7 @@ impl AppModel {
                 }
             }
         }
+        self.tick_external_refresh(&ctx);
         self.sync_settings(&ctx);
         self.tick_ui_scale(&ctx, Instant::now());
         self.tick_secure(&ctx);

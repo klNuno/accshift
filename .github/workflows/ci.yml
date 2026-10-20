@@ -44,6 +44,12 @@ jobs:
       - name: Rust tests
         run: cargo test --workspace --locked
 
+      # The test harness always unwinds. Run the real Chromium reader as a
+      # binary too, so the release panic strategy cannot break recovery.
+      - name: Legacy migration release smoke
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo run --release --locked -p accshift-app --example legacy_storage_smoke
+
       - name: Cargo audit
         if: matrix.os == 'ubuntu-latest'
         run: |
