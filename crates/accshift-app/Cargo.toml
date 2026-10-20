@@ -88,7 +88,7 @@ tar = "0.4"
 # 2.4 owns on Linux. Major 5, the one accesskit_unix (egui) and
 # secret-service (keyring) link: zbus 6 drops the blocking API and would be a
 # second D-Bus stack in the binary.
-zbus = "5.9"
+zbus = "6.0"
 # `lifecycle::deep_link`: the `.desktop` handler file the plugin merges.
 rust-ini = "0.21"
 
