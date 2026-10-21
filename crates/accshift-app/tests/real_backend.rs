@@ -404,7 +404,11 @@ fn the_pin_session_locks_unlocks_and_guards_the_settings_store() {
         .unwrap_err();
     assert_eq!(error.message, PIN_LOCKED_MESSAGE);
 
-    let wrong = real.pin_unlock("0000").unwrap();
+    // A code of the wrong length fails before PBKDF2, which takes up to a
+    // second unoptimized on a slow runner: the retry right after it then
+    // always lands inside the one second wait, which counts from the start of
+    // the failed attempt.
+    let wrong = real.pin_unlock("00").unwrap();
     assert_eq!(wrong.status, "invalid");
     assert_eq!(wrong.retry_after_ms, 1000);
     let too_soon = real.pin_unlock("1234").unwrap();
