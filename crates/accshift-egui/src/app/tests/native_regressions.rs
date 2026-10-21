@@ -145,14 +145,18 @@ fn native_external_storage_on_restore_preserves_dirty_local_values() {
     let ctx = Context::default();
     let (mut app, _) = external_app(&ctx);
     frame(&mut app, &ctx, true, false);
+    // Restoration must work even if the viewport still reports focus.
+    frame(&mut app, &ctx, true, true);
+    frame(&mut app, &ctx, true, false);
+    // Typed once the manifest read is under way, so the write is still owed
+    // (120 ms debounce) when begin_refresh sees the manifest. Typed before
+    // the frames above, a slow runner finished the write first, and the
+    // mock answers a write with no fingerprint: it read as external.
     app.booted
         .as_mut()
         .unwrap()
         .stores
         .set_account_card_note("external", "local draft");
-    // Restoration must work even if the viewport still reports focus.
-    frame(&mut app, &ctx, true, true);
-    frame(&mut app, &ctx, true, false);
     pump_until(&mut app, &ctx, |a| {
         a.booted().unwrap().stores.view_mode() == ViewMode::List
     });
