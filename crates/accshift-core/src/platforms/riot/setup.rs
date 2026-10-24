@@ -225,7 +225,8 @@ pub(super) fn spawn_riot_setup_launch(
     client_path: PathBuf,
 ) {
     set_setup_launch(&profile_id, SetupLaunch::Running);
-    tokio::task::spawn_blocking(move || {
+    let failed_profile_id = profile_id.clone();
+    let spawned = crate::platforms::spawn_setup_launch(move || {
         run_riot_setup_launch(
             &app_handle,
             &profile_id,
@@ -238,6 +239,12 @@ pub(super) fn spawn_riot_setup_launch(
             },
         );
     });
+    if let Err(error) = spawned {
+        finish_setup_launch(
+            &failed_profile_id,
+            SetupLaunch::Failed(format!("Could not start the Riot account setup: {error}")),
+        );
+    }
 }
 
 pub(super) fn riot_setup_expired(last_touched_at: Option<u64>) -> bool {

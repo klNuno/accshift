@@ -240,3 +240,14 @@ fn require_service_returns_ok_for_known_platforms() {
 fn get_service_returns_none_for_unknown() {
     assert!(get_service("playstation").is_none());
 }
+
+// The egui shell calls `begin_setup` from a plain job thread, outside any
+// tokio runtime. A launch spawned with tokio panicked there ("there is no
+// reactor running") and took the app down on "add account".
+#[test]
+fn a_setup_launch_runs_outside_a_tokio_runtime() {
+    let (done, ran) = std::sync::mpsc::channel();
+    spawn_setup_launch(move || done.send(()).unwrap()).unwrap();
+    ran.recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the setup launch never ran");
+}
