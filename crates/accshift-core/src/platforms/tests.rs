@@ -240,3 +240,43 @@ fn require_service_returns_ok_for_known_platforms() {
 fn get_service_returns_none_for_unknown() {
     assert!(get_service("playstation").is_none());
 }
+
+// The egui shell calls `begin_setup` from a plain job thread, outside any
+// tokio runtime. A launch spawned with tokio panicked there ("there is no
+// reactor running") and took the app down on "add account".
+#[test]
+fn a_setup_launch_runs_outside_a_tokio_runtime() {
+    let (done, ran) = std::sync::mpsc::channel();
+    spawn_setup_launch(move || done.send(()).unwrap()).unwrap();
+    ran.recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the setup launch never ran");
+}
+
+// Calling the Steam or Riot setup itself would stop and relaunch the real
+// client, so the callers are held to the helper by their source instead.
+#[test]
+fn no_platform_code_spawns_on_the_tokio_blocking_pool() {
+    fn visit(dir: &std::path::Path, offenders: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                visit(&path, offenders);
+            } else if path.extension().is_some_and(|ext| ext == "rs")
+                && std::fs::read_to_string(&path)
+                    .unwrap()
+                    .contains(concat!("spawn_", "blocking("))
+            {
+                offenders.push(path.display().to_string());
+            }
+        }
+    }
+    let mut offenders = Vec::new();
+    visit(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/platforms"),
+        &mut offenders,
+    );
+    assert!(
+        offenders.is_empty(),
+        "use spawn_setup_launch, the egui shell runs no tokio runtime: {offenders:?}"
+    );
+}

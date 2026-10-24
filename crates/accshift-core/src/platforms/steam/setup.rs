@@ -60,7 +60,7 @@ pub fn begin_account_setup(
 
     let setup_id_for_job = setup_id.clone();
     let app_handle_for_job = app_handle.clone();
-    tokio::task::spawn_blocking(move || {
+    let spawned = crate::platforms::spawn_setup_launch(move || {
         run_steam_setup_launch(
             &app_handle_for_job,
             &setup_id_for_job,
@@ -74,6 +74,16 @@ pub fn begin_account_setup(
             },
         );
     });
+    if let Err(error) = spawned {
+        if let Ok(mut jobs) = steam_setup_jobs().lock() {
+            jobs.remove(&setup_id);
+        }
+        return Err(log_platform_failure(
+            &app_handle,
+            "steam.begin_account_setup",
+            PlatformError::other(format!("Could not start the Steam account setup: {error}")),
+        ));
+    }
 
     Ok(crate::platforms::make_setup_status(
         &setup_id,

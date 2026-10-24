@@ -135,6 +135,16 @@ pub(crate) fn now_unix_ms() -> u64 {
 pub(crate) const SETUP_LAUNCH_LOCK_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(30);
 
+/// Runs a setup launch on its own thread and returns at once. A plain thread,
+/// not tokio's blocking pool: the egui shell calls `begin_setup` from a job
+/// thread that runs no tokio runtime, where `spawn_blocking` panics.
+pub(crate) fn spawn_setup_launch(launch: impl FnOnce() + Send + 'static) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name("accshift-setup-launch".into())
+        .spawn(launch)
+        .map(drop)
+}
+
 pub(crate) fn setup_expired(last_touched_at: u64, ttl_ms: u64) -> bool {
     now_unix_ms().saturating_sub(last_touched_at) > ttl_ms
 }
