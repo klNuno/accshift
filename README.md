@@ -1,3 +1,5 @@
+<a href="https://mtsu.dev"><img align="right" src="https://mtsu.dev/press/mtsu-icon-1024.png" width="48" alt="MTSU"></a>
+
 <h1 align="center">
   <a href="https://github.com/klNuno/accshift/releases/latest">
     <img src="./.github/assets/social-card.png" alt="accshift: switch game accounts in one click. No passwords stored. Free and open source for Windows, macOS and Linux." width="100%" />
