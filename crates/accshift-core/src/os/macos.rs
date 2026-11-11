@@ -4,7 +4,9 @@ use std::process::{Command, Stdio};
 
 // Secrets live in the Keychain via `keyring`. Shared implementation in
 // os/secrets.rs.
-pub use super::secrets::{decrypt_bytes, decrypt_secret, encrypt_bytes, encrypt_secret};
+pub use super::secrets::{
+    decrypt_bytes, decrypt_secret, delete_bytes, delete_secret, encrypt_bytes, encrypt_secret,
+};
 
 fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)

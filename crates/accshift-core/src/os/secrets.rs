@@ -11,15 +11,6 @@ use crate::error::AppError;
 
 const SERVICE: &str = "com.accshift.desktop";
 
-// Only referenced by the fallback backend on genuinely unsupported targets;
-// dead on Linux/macOS where this module is compiled but that backend is not.
-#[allow(dead_code)]
-pub fn unsupported(feature: &str) -> AppError {
-    AppError::UnsupportedOperatingSystem(format!(
-        "{feature} is not supported on this operating system"
-    ))
-}
-
 pub fn secret_error(err: impl std::fmt::Display) -> AppError {
     AppError::ProcessStart(format!("keyring: {err}"))
 }

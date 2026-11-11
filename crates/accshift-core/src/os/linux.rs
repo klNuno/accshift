@@ -4,7 +4,9 @@ use std::process::Command;
 
 // Secrets: Secret Service (GNOME Keyring / KWallet) via the `keyring` crate.
 // Shared implementation in os/secrets.rs.
-pub use super::secrets::{decrypt_bytes, decrypt_secret, encrypt_bytes, encrypt_secret};
+pub use super::secrets::{
+    decrypt_bytes, decrypt_secret, delete_bytes, delete_secret, encrypt_bytes, encrypt_secret,
+};
 
 // ---------------------------------------------------------------------------
 // Steam discovery
