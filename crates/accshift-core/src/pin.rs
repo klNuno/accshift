@@ -495,10 +495,21 @@ impl PinSession {
     ) -> Result<(), PlatformError> {
         let stored = match read_pin_lock(ctx) {
             PinLock::On(hash) => PinLock::On(hash),
-            // No PIN to protect. An unreadable store is repaired by the write.
-            _ => {
+            // No PIN to protect.
+            PinLock::Off | PinLock::Misconfigured => {
                 self.state().decide(false);
                 return Ok(());
+            }
+            // Nobody can tell whether a PIN is set. A session that is already
+            // unlocked repairs the store with this write; any other one must
+            // not be marked unlocked by a read that failed (a file an
+            // antivirus held for a moment), or it could then drop the PIN.
+            PinLock::Unreadable(reason) => {
+                return if self.state().unlocked == Some(true) {
+                    Ok(())
+                } else {
+                    Err(unreadable_error(&reason))
+                };
             }
         };
         if self.state().decide(true) {

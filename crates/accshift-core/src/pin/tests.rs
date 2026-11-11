@@ -571,3 +571,33 @@ fn an_unreadable_store_fails_the_gate_closed() {
     assert_eq!(err.kind, PlatformErrorKind::Io);
     assert!(session.unlock(&tmp.ctx(), &code(1234)).is_err());
 }
+
+#[test]
+fn an_unreadable_store_never_unlocks_the_session() {
+    // Regression: a settings read that failed took the "no PIN" branch and
+    // marked the session unlocked for good.
+    let tmp = with_pin("session-unreadable", 1234);
+    let session = PinSession::new();
+    let ctx = tmp.ctx();
+    let path = client_store_path(&ctx, STORE_SETTINGS).unwrap();
+    let good = fs::read(&path).unwrap();
+    let current: Value = serde_json::from_slice(&good).unwrap();
+    let mut disabled = current.clone();
+    disabled["pinEnabled"] = Value::Bool(false);
+    disabled["pinHash"] = Value::String(String::new());
+
+    fs::write(&path, b"{ not json").unwrap();
+    assert!(matches!(read_pin_lock(&ctx), PinLock::Unreadable(_)));
+    assert!(session.check_settings_write(&ctx, &disabled).is_err());
+
+    // The store reads again: the session is still locked.
+    fs::write(&path, &good).unwrap();
+    assert_pin_locked(session.check_settings_write(&ctx, &disabled));
+
+    // An unlocked session may repair an unreadable store.
+    session.unlock(&ctx, &code(1234)).unwrap();
+    fs::write(&path, b"{ not json").unwrap();
+    session
+        .check_settings_write(&ctx, &current)
+        .expect("an unlocked session repairs the store");
+}
