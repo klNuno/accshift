@@ -60,10 +60,10 @@ fn main() {
     let probe: Option<std::path::PathBuf> = None;
     let probing = probe.is_some();
 
-    // The single-instance guard comes first: a second
-    // launch hands its arguments to the running app and leaves. This
-    // launch's own `accshift://` URL is the deep-link plugin's `current`,
-    // which the page's listener never sees, so it is not read here.
+    // The single-instance guard comes first: a second launch hands its
+    // arguments to the running app and leaves. This launch's own
+    // `accshift://` URL goes to the window host, which replays it once the
+    // app can take it.
     let wake: Arc<OnceLock<egui::Context>> = Arc::default();
     let single = if hidden {
         None
@@ -291,7 +291,8 @@ fn main() {
                     window::Host::new(backend, hwnd)
                         .focus_on_show(!quiet)
                         .start_hidden(tray_start && !quiet)
-                        .with_single_instance(single),
+                        .with_single_instance(single)
+                        .with_launch_args(&single_instance::current_args()),
                 )
             }
             None => {

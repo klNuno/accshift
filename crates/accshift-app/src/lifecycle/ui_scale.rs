@@ -129,8 +129,10 @@ pub fn liquid_backdrop_active(theme_uses_liquid_glass: bool, os: RuntimeOs) -> b
     theme_uses_liquid_glass && os == RuntimeOs::Windows
 }
 
-/// `backdropAvailable`: never on Linux; with Liquid Glass, only once a
-/// wallpaper snapshot exists.
+/// Whether the window has a blur behind it: only on Windows, where the
+/// shell applies the acrylic, and with Liquid Glass only once a wallpaper
+/// snapshot exists. Elsewhere a translucent theme would show the raw desktop
+/// through the window, so it draws opaque.
 pub fn backdrop_available(os: RuntimeOs, liquid_active: bool, wallpaper_present: bool) -> bool {
-    os != RuntimeOs::Linux && (!liquid_active || wallpaper_present)
+    os == RuntimeOs::Windows && (!liquid_active || wallpaper_present)
 }

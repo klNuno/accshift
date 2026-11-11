@@ -514,3 +514,44 @@ fn escape_in_the_theme_editor_keeps_settings_open() {
     frame(&mut app, &ctx, true, false);
     assert!(app.settings_panel.is_none(), "Escape closes Settings");
 }
+
+#[test]
+fn a_path_picker_that_cannot_open_says_why() {
+    let ctx = Context::default();
+    let (mut app, mock) = external_app(&ctx);
+    frame(&mut app, &ctx, true, false);
+    app.toggle_settings_panel();
+    frame(&mut app, &ctx, true, false);
+    let choose = || settings_panel::SettingsAction::ChoosePlatformPath("steam".into());
+    // The picker's own toasts: the backend's message, not a translation key.
+    let raised = |app: &AppModel| -> Vec<(Text, accshift_app::actions::toasts::ToastType)> {
+        let toasts = app.toasts().toasts().iter();
+        toasts
+            .filter(|toast| toast.text.key_str().is_none())
+            .map(|toast| (toast.text.clone(), toast.kind))
+            .collect()
+    };
+
+    // A cancel stays silent.
+    mock.fail("platform_select_path", Some("Dialog cancelled"));
+    app.apply_settings(&ctx, choose());
+    pump_until(&mut app, &ctx, |_| mock.seen("platform_select_path") == 1);
+    for _ in 0..20 {
+        frame(&mut app, &ctx, true, false);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert_eq!(raised(&app), [], "a cancel raises nothing");
+
+    // A dialog that could not open reports the backend's reason.
+    let why = "No file picker is available: install xdg-desktop-portal or zenity";
+    mock.fail("platform_select_path", Some(why));
+    app.apply_settings(&ctx, choose());
+    pump_until(&mut app, &ctx, |app| !raised(app).is_empty());
+    assert_eq!(
+        raised(&app),
+        [(
+            Text::raw(why),
+            accshift_app::actions::toasts::ToastType::Error
+        )]
+    );
+}

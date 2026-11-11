@@ -765,7 +765,7 @@ impl AppModel {
             &mut stores,
             &detected,
             &platform_registry,
-            accounts::app_os(runtime_os),
+            runtime_os,
         );
         if let Some(mock) = &self.mock {
             // The TS mock reads the live settings for its PIN gate.
@@ -1914,10 +1914,9 @@ pub(super) fn preview_theme(
 
 fn theme_state(key: ThemeKey, theme: AppTheme, os_reduced_motion: bool) -> ThemeState {
     let os = key.os;
-    let liquid_backdrop_active = theme.liquid && os == RuntimeOs::Windows;
-    // Linux compositors have no blur-behind; Liquid Glass waits for a
-    // wallpaper snapshot.
-    let backdrop_available = os != RuntimeOs::Linux && (!liquid_backdrop_active || key.wallpaper);
+    use accshift_app::lifecycle::ui_scale::{backdrop_available, liquid_backdrop_active};
+    let liquid_backdrop_active = liquid_backdrop_active(theme.liquid, os);
+    let backdrop_available = backdrop_available(os, liquid_backdrop_active, key.wallpaper);
     let application = theme_application(&theme, key.opacity as f64, backdrop_available);
     let resolved = ResolvedTheme::new(&application);
     let vars = Vars {

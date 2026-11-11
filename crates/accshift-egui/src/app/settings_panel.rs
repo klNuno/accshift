@@ -1284,8 +1284,8 @@ impl AppModel {
                 }
             }
         }
-        // `choosePlatformPath`: only a real path replaces the field; a
-        // cancel or a failed dialog leaves it alone.
+        // `choosePlatformPath`: only a real path replaces the field. A
+        // cancel leaves it alone; a dialog that could not open says why.
         let mut picked = Vec::new();
         panel.pick_jobs.retain_mut(|job| match job.poll() {
             Poll::Waiting => true,
@@ -1295,12 +1295,23 @@ impl AppModel {
             }
             Poll::Gone => false,
         });
+        let cancelled = accshift_core::error::AppError::Cancelled.to_string();
         for (id, path) in picked {
-            if let Ok(path) = path {
-                let trimmed = path.trim();
-                if !trimmed.is_empty() {
-                    panel.platform_paths.insert(id, trimmed.to_string());
+            match path {
+                Ok(path) => {
+                    let trimmed = path.trim();
+                    if !trimmed.is_empty() {
+                        panel.platform_paths.insert(id, trimmed.to_string());
+                    }
                 }
+                Err(error) if error.message != cancelled => {
+                    self.toasts.add(
+                        Text::raw(error.message),
+                        AddToastOptions::kind(ToastType::Error),
+                        now,
+                    );
+                }
+                Err(_) => {}
             }
         }
         // `Cs2BridgeSettings` mounts with the Steam tab and loses its state

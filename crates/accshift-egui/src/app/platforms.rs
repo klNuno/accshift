@@ -7,36 +7,7 @@ use serde_json::Value;
 
 use crate::theme::Rgba;
 
-/// `RuntimeOs` of `src/lib/shared/platform.ts`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum RuntimeOs {
-    Windows,
-    Linux,
-    Macos,
-    #[default]
-    Unknown,
-}
-
-impl RuntimeOs {
-    /// `get_runtime_os` answers `windows`, `linux` or `macos`.
-    pub fn parse(os: &str) -> RuntimeOs {
-        match os {
-            "windows" => RuntimeOs::Windows,
-            "linux" => RuntimeOs::Linux,
-            "macos" => RuntimeOs::Macos,
-            _ => RuntimeOs::Unknown,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            RuntimeOs::Windows => "windows",
-            RuntimeOs::Linux => "linux",
-            RuntimeOs::Macos => "macos",
-            RuntimeOs::Unknown => "unknown",
-        }
-    }
-}
+pub use accshift_app::platforms::RuntimeOs;
 
 /// One entry of `PLATFORM_DEFS`, the parts the shell reads.
 #[derive(Clone, Debug, PartialEq)]

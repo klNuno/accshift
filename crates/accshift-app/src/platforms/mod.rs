@@ -57,16 +57,24 @@ pub struct StartupSnapshot {
 }
 
 /// `RuntimeOs`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum RuntimeOs {
     Windows,
     Linux,
     Macos,
+    #[default]
     Unknown,
 }
 
 impl RuntimeOs {
+    /// `get_runtime_os` answers `windows`, `linux` or `macos`.
+    pub fn parse(os: &str) -> RuntimeOs {
+        to_runtime_os(Some(os))
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             RuntimeOs::Windows => "windows",

@@ -829,6 +829,8 @@ fn the_backdrop_decisions_match_use_theme_application() {
     assert!(!liquid_backdrop_active(true, RuntimeOs::Macos));
     assert!(!liquid_backdrop_active(false, RuntimeOs::Windows));
     assert!(!backdrop_available(RuntimeOs::Linux, false, true));
+    // No blur is applied on macOS either: the theme must draw opaque.
+    assert!(!backdrop_available(RuntimeOs::Macos, false, true));
     assert!(backdrop_available(RuntimeOs::Windows, false, false));
     assert!(!backdrop_available(RuntimeOs::Windows, true, false));
     assert!(backdrop_available(RuntimeOs::Windows, true, true));

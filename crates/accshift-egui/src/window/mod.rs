@@ -175,6 +175,8 @@ pub struct Host {
     /// The single-instance service, held for the whole run: dropping it is
     /// the plugin's `destroy`.
     single: Option<SingleInstance>,
+    /// This launch's own `accshift://` argument, until the app takes it.
+    launch_url: Option<String>,
 }
 
 impl Host {
@@ -192,7 +194,36 @@ impl Host {
             saver: Arc::default(),
             backdrop: None,
             single: None,
+            launch_url: None,
         }
+    }
+
+    /// The arguments this process started with. A lone `accshift://` one is
+    /// a link clicked while the app was closed: it is kept for
+    /// [`Self::take_launch_url`].
+    pub fn with_launch_args(mut self, args: &[String]) -> Self {
+        self.launch_url =
+            deep_link::handle_cli_arguments(args, deep_link::SCHEMES).map(|url| url.to_string());
+        self
+    }
+
+    /// The link this launch was started with, once: logged and counted like
+    /// one a second launch hands over. The window needs no showing, a normal
+    /// launch reveals itself.
+    pub fn take_launch_url(&mut self) -> Option<String> {
+        let url = self.launch_url.take()?;
+        if let Ok(parsed) = url.parse() {
+            let effects = deep_link::on_open_url(std::slice::from_ref(&parsed), false);
+            self.log(
+                "backend.deep-link",
+                "Deep link received",
+                Some(&effects.log_details),
+            );
+            if effects.track {
+                self.backend.track_deep_link();
+            }
+        }
+        Some(url)
     }
 
     /// The service [`single_instance::acquire`] answered for this run.

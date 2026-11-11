@@ -217,6 +217,12 @@ impl Shell {
         if let (false, Screen::App(app)) = (launched.is_empty(), &mut self.screen) {
             app.open_urls(ui.ctx(), &launched);
         }
+        // The link that started the app: the controller holds it until boot.
+        if let (Some(host), Screen::App(app)) = (&mut self.window, &mut self.screen) {
+            if let Some(url) = host.take_launch_url() {
+                app.open_urls(ui.ctx(), &[url]);
+            }
+        }
         if let (Some(run), Screen::App(app)) = (&mut self.scenes, &mut self.screen) {
             let links = run.take_links();
             if !links.is_empty() {
@@ -469,6 +475,29 @@ mod tests {
                 _ => panic!("a launch after close was handed to the closing app"),
             }
             drop(shell);
+        }
+
+        #[test]
+        fn a_link_that_started_the_app_is_handed_over_once() {
+            let dir = scratch("launch-url");
+            let host = |args: &[&str]| {
+                let backend = Arc::new(RealBackend::with_context(dir.clone()));
+                let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
+                Host::new(backend, 0).with_launch_args(&args)
+            };
+            // Windows and Linux hand the link as the one argument; macOS
+            // never does.
+            let expected = (cfg!(windows) || cfg!(target_os = "linux"))
+                .then(|| "accshift://switch/steam/main".to_string());
+            let mut linked = host(&["accshift-gui", "accshift://switch/steam/main"]);
+            assert_eq!(linked.take_launch_url(), expected);
+            assert_eq!(linked.take_launch_url(), None);
+            assert_eq!(host(&["accshift-gui"]).take_launch_url(), None);
+            assert_eq!(host(&["accshift-gui", "--tray"]).take_launch_url(), None);
+            assert_eq!(
+                host(&["accshift-gui", "https://example.com/"]).take_launch_url(),
+                None
+            );
         }
 
         #[test]

@@ -4,10 +4,9 @@
 //! with the app's own: the confirm dialog, the tab change, the loads and the
 //! switch.
 //!
-//! URLs arrive from a second launch and from the scenes' `deeplink` step,
-//! through [`AppModel::open_urls`]. The URL of a cold start is not replayed:
-//! `onOpenUrl` only listens for `deep-link://new-url`, which the plugin
-//! emits before the page listens.
+//! URLs arrive from the launch itself (a link clicked while the app was
+//! closed), from a second launch and from the scenes' `deeplink` step,
+//! through [`AppModel::open_urls`].
 //!
 //! The controller is polled once boot finished, since its view reads the
 //! stores; a link that comes earlier waits for it, as `waitUntil(isBootReady)`

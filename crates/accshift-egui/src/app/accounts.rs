@@ -47,16 +47,6 @@ use serde_json::Value;
 use super::avatars::AvatarTextures;
 use super::platforms::RuntimeOs;
 
-/// `RuntimeOs` of the egui shell in the app crate's type.
-pub fn app_os(os: RuntimeOs) -> app_platforms::RuntimeOs {
-    match os {
-        RuntimeOs::Windows => app_platforms::RuntimeOs::Windows,
-        RuntimeOs::Linux => app_platforms::RuntimeOs::Linux,
-        RuntimeOs::Macos => app_platforms::RuntimeOs::Macos,
-        RuntimeOs::Unknown => app_platforms::RuntimeOs::Unknown,
-    }
-}
-
 /// `loadAccounts(silent, showRefreshedToast, forceRefresh, checkBans,
 /// deferBackground)`.
 fn load_options(silent: bool, defer_background: bool) -> LoadOptions {
@@ -250,7 +240,7 @@ impl Accounts {
             pipeline: DisplayPipeline::new(),
             navigation: FolderNavigation::new(),
             clock,
-            runtime_os: app_os(runtime_os),
+            runtime_os,
             lists: DisplayLists::default(),
             view: DisplayView {
                 error: None,

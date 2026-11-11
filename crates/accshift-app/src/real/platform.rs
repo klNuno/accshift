@@ -148,9 +148,10 @@ pub(super) fn detect_installed(backend: &RealBackend) -> Vec<String> {
     .unwrap_or_default()
 }
 
-/// `platform_select_path`, platform.rs lines 211-219: the platform's own
-/// folder dialog (a `powershell.exe` child on Windows), blocking the calling
-/// job thread until the user answers.
+/// `platform_select_path`: the platform's own file or folder dialog (`rfd`,
+/// in process), blocking the calling job thread until the user answers. A
+/// cancel is `AppError::Cancelled`; any other error is a dialog that could
+/// not open.
 pub(super) fn select_path(platform_id: &str) -> BackendResult<String> {
     Ok(require_service(platform_id)?.select_path()?)
 }
