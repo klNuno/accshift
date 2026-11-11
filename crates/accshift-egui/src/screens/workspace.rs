@@ -186,7 +186,6 @@ const SECTION_DRAG: crate::ui::anim::Transition =
 /// its nodes' keys starting with `prefix`.
 struct OpenSection {
     prefix: String,
-    opacity: f32,
     /// Its [`crate::ui::components::snap_offset`]: its nodes lay out from
     /// there.
     snap: egui::Vec2,
@@ -198,9 +197,7 @@ impl OpenSection {
     /// Lands the group and scales its shapes. The scroll clip stays where
     /// it is, as the scroller's own.
     fn close(self, ui: &Ui, clip: Rect) {
-        if !cfg!(feature = "glow") {
-            Mark::End.paint(ui.painter(), clip);
-        }
+        Mark::End.paint(ui.painter(), clip);
         if let Some(scope) = self.scope {
             scope.end(ui.ctx(), Some(clip));
         }
@@ -1106,9 +1103,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                     .iter()
                     .find(|(folder, _)| folder.as_deref() == Some(f.id.as_str()))
                     .map_or(to_screen(p.rect), |(_, r)| to_screen(*r));
-                if !cfg!(feature = "glow") {
-                    Mark::Group { opacity }.paint(ui.painter(), clip);
-                }
+                Mark::Group { opacity }.paint(ui.painter(), clip);
                 let snap = if scale != 1.0 {
                     crate::ui::components::snap_offset(&ctx, section.min)
                 } else {
@@ -1116,7 +1111,6 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                 };
                 open_section = Some(OpenSection {
                     prefix,
-                    opacity,
                     snap,
                     scope: (scale != 1.0).then(|| {
                         TransformScope::begin(
@@ -1228,11 +1222,6 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
         };
         child.set_clip_rect(child_clip);
         child.multiply_opacity(p.opacity);
-        if cfg!(feature = "glow") {
-            if let Some(o) = &open_section {
-                child.multiply_opacity(o.opacity);
-            }
-        }
         match &p.node {
             Node::Back => {
                 for event in back_card::back_card(

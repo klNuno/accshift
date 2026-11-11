@@ -4,7 +4,7 @@ The accshift desktop app, drawn with [egui](https://github.com/emilk/egui) 0.36.
 
 ## Renderer
 
-Feature `software` (default): egui meshes rasterized on the CPU (`vendor/egui_software_backend`) and blitted with softbuffer, GDI on Windows. No GPU driver is loaded, and only the damaged tiles are redrawn. `vendor/epaint` adds one hook to epaint: a font can supply its own glyph coverage, so text is rasterized by DirectWrite on Windows. Feature `glow` is the older eframe on OpenGL path.
+Feature `software` (default): egui meshes rasterized on the CPU (`vendor/egui_software_backend`) and blitted with softbuffer, GDI on Windows. No GPU driver is loaded, and only the damaged tiles are redrawn. `vendor/epaint` adds one hook to epaint: a font can supply its own glyph coverage, so text is rasterized by DirectWrite on Windows.
 
 ## Run
 

@@ -106,12 +106,6 @@ impl Scene {
         let scenes = self.path.parent().unwrap_or(Path::new("."));
         scenes.parent().unwrap_or(Path::new(".")).join("data")
     }
-
-    /// The fragment's file stem: which test screen draws it.
-    pub fn fragment_name(&self) -> Option<String> {
-        let (path, _) = self.html.as_ref()?;
-        Some(path.file_stem()?.to_string_lossy().into_owned())
-    }
 }
 
 fn point(v: &serde_json::Value) -> Option<Pos2> {

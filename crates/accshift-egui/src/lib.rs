@@ -5,7 +5,6 @@ pub mod avatars;
 pub mod backdrop;
 pub mod bench;
 pub mod clipboard;
-pub mod data;
 pub mod harness;
 pub mod icons;
 pub mod screens;
@@ -20,10 +19,10 @@ pub mod zoom;
 pub use app::{Action, AppModel};
 pub use screens::Screen;
 
-#[cfg(all(feature = "software", feature = "glow"))]
-compile_error!("pick one renderer: `software` (default) or `glow` with --no-default-features");
+#[cfg(not(feature = "software"))]
+compile_error!("the `software` feature is the only renderer: keep the default features");
 
-/// What both runners drive: the current screen plus the optional scene run.
+/// What the runner drives: the current screen plus the optional scene run.
 /// The window is cleared to transparent so the OS backdrop shows through the
 /// theme's window fill, like the Tauri window.
 pub struct Shell {
@@ -262,8 +261,7 @@ impl Shell {
 
 /// The context menu key (`e.key == "ContextMenu"`). egui has no such key,
 /// so the software runner and the scenes send it as F35, which no Windows
-/// keyboard reports (winit stops at F24 there). eframe hands the app no
-/// window event, so the glow runner never sees it.
+/// keyboard reports (winit stops at F24 there).
 pub const CONTEXT_MENU_KEY: egui::Key = egui::Key::F35;
 
 /// Chromium dispatches input events one at a time; egui hands a frame its
@@ -316,21 +314,6 @@ pub fn sequence_input(held: &mut Vec<egui::Event>, events: &mut Vec<egui::Event>
     }
     *events = all;
     !held.is_empty()
-}
-
-#[cfg(feature = "glow")]
-impl eframe::App for Shell {
-    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        self.input_hook(ctx, raw_input, 1.0);
-    }
-
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.frame(ui);
-    }
-
-    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        [0.0, 0.0, 0.0, 0.0]
-    }
 }
 
 #[cfg(test)]

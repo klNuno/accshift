@@ -237,7 +237,7 @@ fn button(
     };
     // `opacity` fades the button as one group: a layer where the renderer
     // has layers, each shape where it has not.
-    let group = opacity < 1.0 && !cfg!(feature = "glow");
+    let group = opacity < 1.0;
     if group {
         Mark::Begin {
             sigma: 0.0,

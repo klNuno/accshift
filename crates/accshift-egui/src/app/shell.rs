@@ -31,9 +31,7 @@
 //! run is drawn. A boot that failed draws [`boot_error`] instead of the shell.
 
 use accshift_theme::ColorScheme;
-use egui::epaint::{self, ClippedShape};
-use egui::layers::ShapeIdx;
-use egui::{pos2, vec2, Color32, Rect, Ui, UiBuilder};
+use egui::{pos2, Color32, Rect, Ui, UiBuilder};
 
 use super::platforms::{PlatformDef, RuntimeOs};
 use super::settings_panel::SettingsAction;
@@ -82,9 +80,6 @@ struct PinView {
     unlocking: bool,
     code_len: usize,
 }
-
-/// Copies of the frame drawn to approximate `filter: blur()`.
-const BLUR_TAPS: usize = 12;
 
 /// A child of `ui` over `rect`, clipped to it.
 fn layer<R>(ui: &mut Ui, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> R {
@@ -205,8 +200,6 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
     };
 
     let mut actions = Vec::new();
-    let layer_id = ui.layer_id();
-    let start = next_idx(&ctx, layer_id);
     let jobs = &app.jobs;
     let settings_view = nav
         .show_settings
@@ -576,7 +569,6 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
     if let Some(events) = held {
         ctx.input_mut(|i| i.events = events);
     }
-    let end = next_idx(&ctx, layer_id);
     // `.app-shell.obscured`.
     let k = anim::transition_bool(
         &ctx,
@@ -584,11 +576,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         obscured || streaming,
         &OBSCURE,
     );
-    if cfg!(feature = "glow") {
-        if k > 0.0 {
-            blur_range(&ctx, layer_id, start, end, 10.0 * k);
-        }
-    } else if k > 0.0 {
+    if k > 0.0 {
         Mark::Filter {
             sigma: 10.0 * k * ctx.pixels_per_point(),
             saturate: 1.0 - 0.18 * k,
@@ -682,60 +670,4 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         );
     }
     actions
-}
-
-fn next_idx(ctx: &egui::Context, layer: egui::LayerId) -> ShapeIdx {
-    ctx.graphics(|g| g.get(layer).map_or(ShapeIdx(0), |l| l.next_idx()))
-}
-
-/// `filter: blur(<radius>px)` on the shapes painted in `start..end`,
-/// approximated by translated copies: copy `k` drawn at opacity `1/(k+1)`
-/// over the previous ones keeps every copy at the same weight.
-fn blur_range(
-    ctx: &egui::Context,
-    layer: egui::LayerId,
-    start: ShapeIdx,
-    end: ShapeIdx,
-    radius: f32,
-) {
-    let shapes: Vec<ClippedShape> = ctx.graphics(|g| {
-        g.get(layer)
-            .map(|list| {
-                list.all_entries()
-                    .skip(start.0)
-                    .take(end.0.saturating_sub(start.0))
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default()
-    });
-    if shapes.is_empty() {
-        return;
-    }
-    ctx.graphics_mut(|g| {
-        let list = g.entry(layer);
-        for k in 1..=BLUR_TAPS {
-            // Two rings: 0.6 and 1.4 sigma, six taps each, offset by 30 deg.
-            let ring = if k % 2 == 0 { 1.4 } else { 0.6 };
-            let angle = (k as f32) * std::f32::consts::TAU / 6.0
-                + if k % 2 == 0 {
-                    std::f32::consts::FRAC_PI_6
-                } else {
-                    0.0
-                };
-            let offset = vec2(angle.cos(), angle.sin()) * radius * ring;
-            let alpha = 1.0 / (k as f32 + 1.0);
-            for ClippedShape {
-                clip_rect, shape, ..
-            } in &shapes
-            {
-                let mut shape = shape.clone();
-                shape.translate(offset);
-                epaint::shape_transform::adjust_colors(&mut shape, move |c| {
-                    *c = c.gamma_multiply(alpha);
-                });
-                list.add(*clip_rect, shape);
-            }
-        }
-    });
 }

@@ -12,11 +12,9 @@ publish = false
 startup-bench = []
 # Developer switches kept out of the shipped binary: `ACCSHIFT_EGUI_MARKS`.
 harness = []
-# Renderer, pick one. `software`: egui meshes rasterized on the CPU and blitted
-# with softbuffer (GDI on Windows), no GPU driver loaded. `glow`: eframe on
-# OpenGL, the first version of the spike.
+# The renderer: egui meshes rasterized on the CPU and blitted with softbuffer
+# (GDI on Windows), no GPU driver loaded.
 software = ["dep:egui-winit", "dep:softbuffer", "dep:egui_software_backend", "dep:winit"]
-glow = ["dep:eframe"]
 default = ["software"]
 
 [dependencies]
@@ -25,15 +23,8 @@ accshift-core = { path = "../accshift-core" }
 # the theme engine the Svelte frontend applies.
 accshift-app = { path = "../accshift-app" }
 accshift-theme = { path = "../accshift-theme" }
-# Same backend choice as spotifast for the `glow` path: glow keeps the binary
-# and the tree small, wgpu buys nothing for a 2D grid.
-eframe = { version = "0.37", optional = true, default-features = false, features = [
-  "accesskit",
-  "glow",
-  "default_fonts",
-] }
-# The software path: the window and input layer eframe uses (egui-winit
-# re-exports winit and accesskit_winit), a CPU rasterizer, a GDI blit.
+# The window and input layer (egui-winit re-exports winit and
+# accesskit_winit), a CPU rasterizer, a GDI blit.
 egui-winit = { version = "0.37", optional = true, default-features = false, features = [
   "accesskit",
   "clipboard",

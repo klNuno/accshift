@@ -442,7 +442,7 @@ fn faded_button(
     props: &DialogProps,
 ) -> bool {
     let ppp = ui.ctx().pixels_per_point();
-    let group = !enabled && !cfg!(feature = "glow");
+    let group = !enabled;
     let painter = ui.painter().clone();
     if group {
         Mark::Begin {

@@ -1,6 +1,5 @@
 //! Screens: what fills the window.
 
-pub mod main_spike;
 pub mod persona_wizard;
 pub mod personas;
 pub mod primitives;

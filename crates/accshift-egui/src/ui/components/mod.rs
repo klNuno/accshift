@@ -94,7 +94,7 @@ pub fn drag_ghost(
         .show(ctx, |area| {
             let mut gui = area.new_child(egui::UiBuilder::new().max_rect(r));
             gui.set_clip_rect(egui::Rect::EVERYTHING);
-            let group = opacity < 1.0 && !cfg!(feature = "glow");
+            let group = opacity < 1.0;
             if group {
                 crate::ui::backdrop_filter::Mark::Group { opacity }.paint(gui.painter(), r);
             } else {

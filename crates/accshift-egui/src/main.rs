@@ -64,13 +64,8 @@ fn main() {
     bench::mark_with(
         "main",
         &format!(
-            "\"build\":\"{}\",\"renderer\":\"{}\"",
+            "\"build\":\"{}\",\"renderer\":\"software\"",
             if bench_build { bench::MARKER } else { "dev" },
-            if cfg!(feature = "glow") {
-                "glow"
-            } else {
-                "software"
-            },
         ),
     );
     // Debug builds: the window shell on a scratch folder, unseen
@@ -314,8 +309,9 @@ fn main() {
             }
             None => {
                 // Each scene builds its own screen once the window has its
-                // size.
-                accshift_egui::screens::main_spike::install_fonts(ctx);
+                // size. Fonts set mid-frame only apply a frame later: before
+                // the first one.
+                accshift_egui::ui::text::install(ctx, false);
                 Shell::new(Screen::Blank, scenes)
             }
         }
@@ -335,27 +331,6 @@ fn main() {
         ),
     )
     .map_err(|err| err.to_string());
-
-    #[cfg(feature = "glow")]
-    let result = {
-        let options = eframe::NativeOptions {
-            viewport,
-            persist_window: false,
-            // Experiment knob for the boot breakdown: does the first swap
-            // wait on the compositor?
-            glow_options: eframe::egui_glow::GlowConfiguration {
-                vsync: std::env::var_os("ACCSHIFT_EGUI_NO_VSYNC").is_none(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        eframe::run_native(
-            "accshift-egui",
-            options,
-            Box::new(move |cc| Ok(Box::new(build(&cc.egui_ctx, cc)))),
-        )
-        .map_err(|err| err.to_string())
-    };
 
     if let Err(err) = result {
         eprintln!("{err}");

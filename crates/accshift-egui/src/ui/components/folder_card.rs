@@ -241,7 +241,7 @@ pub(crate) fn frame(
     // where the renderer has them, each shape where it has not.
     // `animation` overrides `opacity` too: a dragged card moved by the
     // preview replays its entrance from 0 to 1, then drops back to .4.
-    let group = dragged && !entering && !cfg!(feature = "glow");
+    let group = dragged && !entering;
     if group {
         drag_group(ui, rect);
     }

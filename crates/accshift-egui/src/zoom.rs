@@ -75,12 +75,8 @@ pub fn begin_frame(ctx: &Context, stage: f32) {
 /// The zoom this frame lays out at: the screen is the window divided by
 /// it.
 pub fn frame(ctx: &Context) -> f32 {
-    if cfg!(feature = "glow") {
-        ctx.zoom_factor() / base(ctx)
-    } else {
-        ctx.data(|d| d.get_temp::<f32>(Id::unique(FRAME)))
-            .unwrap_or(1.0)
-    }
+    ctx.data(|d| d.get_temp::<f32>(Id::unique(FRAME)))
+        .unwrap_or(1.0)
 }
 
 /// `100vw` by `100vh` in the stage's points: the window's CSS size, which
