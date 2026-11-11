@@ -115,6 +115,7 @@ name = "accshift-app"
 version = "1.0.5"
 dependencies = [
  "accshift-core",
+ "accshift-theme",
  "base64 0.23.1",
  "dirs",
  "dunce",
@@ -152,7 +153,6 @@ version = "1.0.5"
 dependencies = [
  "accshift-core",
  "clap",
- "directories",
  "is-terminal",
  "serde",
  "serde_json",
@@ -164,6 +164,7 @@ dependencies = [
 name = "accshift-core"
 version = "1.0.5"
 dependencies = [
+ "dirs",
  "fs4",
  "keyring",
  "open",
@@ -1167,15 +1168,6 @@ dependencies = [
  "const-oid",
  "crypto-common 0.2.2",
  "ctutils",
-]
-
-[[package]]
-name = "directories"
-version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16f5094c54661b38d03bd7e50df373292118db60b585c08a411c6d840017fe7d"
-dependencies = [
- "dirs-sys",
 ]
 
 [[package]]

@@ -7,11 +7,12 @@ publish = false
 
 [dependencies]
 accshift-core = { path = "../accshift-core" }
+# `js`: the workspace's one copy of the JavaScript string and number rules.
+accshift-theme = { path = "../accshift-theme" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# The crate Tauri's path resolver calls (dirs 6 in tauri 2.11), so
-# `EguiAppContext` lands on the very same folders as the Tauri app. dirs 7
-# only moves Windows' `preference_dir`, unused here.
+# The OS folders of the legacy storage reader, the deep link handler and the
+# updater cache; the app folders come from `accshift_core::app_dirs`.
 dirs = "7"
 # The shared HTTP client the Tauri app keeps in its state. Same spec as the
 # root workspace so features unify with accshift-core's.

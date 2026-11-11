@@ -1,47 +1,14 @@
-//! `AppContext` implementation for the CLI.
-//!
-//! Directory layout must match the Tauri GUI's `AppHandle::path()` so that
-//! config, state and cache written by either side stay compatible. Tauri
-//! resolves `<dirs::xxx_dir()>/<bundle_identifier>`; we do the same.
+//! The CLI's `AppContext`: the folders of `accshift_core::app_dirs`, the same
+//! resolver the app uses, so both read the same stores and take the same lock.
 
+use accshift_core::app_dirs::AppDirs;
 use accshift_core::AppContext;
-use directories::BaseDirs;
-use std::path::PathBuf;
 
-/// Must match `identifier` in `crates/accshift-egui/tauri.conf.json`.
-const BUNDLE_IDENTIFIER: &str = "com.accshift.desktop";
-
-pub struct CliAppContext {
-    base: BaseDirs,
-    identifier: String,
-}
-
-impl CliAppContext {
-    pub fn new() -> Result<Self, String> {
-        let base = BaseDirs::new().ok_or_else(|| {
-            "Could not resolve base directories (no HOME or %APPDATA%?)".to_string()
-        })?;
-        Ok(Self {
-            base,
-            identifier: BUNDLE_IDENTIFIER.to_string(),
-        })
-    }
-}
-
-impl AppContext for CliAppContext {
-    fn app_config_dir(&self) -> Result<PathBuf, String> {
-        Ok(self.base.config_dir().join(&self.identifier))
-    }
-
-    fn app_data_dir(&self) -> Result<PathBuf, String> {
-        Ok(self.base.data_dir().join(&self.identifier))
-    }
-
-    fn app_local_data_dir(&self) -> Result<PathBuf, String> {
-        Ok(self.base.data_local_dir().join(&self.identifier))
-    }
-
-    fn app_cache_dir(&self) -> Result<PathBuf, String> {
-        Ok(self.base.cache_dir().join(&self.identifier))
-    }
+/// The app folders of the current user. Every command needs the config
+/// folder (settings, lock), so a run that cannot locate it stops here.
+pub fn resolve() -> Result<AppDirs, String> {
+    let dirs = AppDirs::from_os();
+    dirs.app_config_dir()
+        .map_err(|_| "Could not resolve base directories (no HOME or %APPDATA%?)".to_string())?;
+    Ok(dirs)
 }

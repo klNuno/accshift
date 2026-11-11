@@ -2,7 +2,7 @@
 //!
 //! Folders live in `<app_config_dir>/user/folders.json`, written by the GUI.
 //! The CLI reads the file read-only to let `list --folder <name>` filter
-//! accounts. Schema mirrors `src/lib/features/folders/store.ts`.
+//! accounts. Schema mirrors `accshift_app::folders::FolderStore`.
 
 use accshift_core::storage::{client_store_path, read_json_if_exists, STORE_FOLDERS};
 use accshift_core::AppContext;

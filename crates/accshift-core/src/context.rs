@@ -3,9 +3,8 @@ use std::sync::Arc;
 
 /// The app's directories, the only thing core needs from the front end.
 ///
-/// The GUI (`EguiAppContext` in `accshift-app`) and the CLI (`CliAppContext`)
-/// resolve the same per-user folders from the bundle identifier, so both read
-/// and write one tree.
+/// The app and the CLI both resolve it through [`crate::app_dirs::AppDirs`];
+/// tests point it at temp folders.
 pub trait AppContext: Send + Sync {
     fn app_config_dir(&self) -> Result<PathBuf, String>;
     fn app_data_dir(&self) -> Result<PathBuf, String>;

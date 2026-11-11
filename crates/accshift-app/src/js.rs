@@ -5,42 +5,11 @@
 
 use serde_json::Value;
 
-/// The characters `String.prototype.trim` strips: ECMAScript WhiteSpace plus
-/// LineTerminator. Not Rust's `char::is_whitespace`, which keeps U+FEFF and
-/// strips U+0085.
-pub fn is_js_whitespace(c: char) -> bool {
-    matches!(
-        c,
-        '\u{9}' | '\u{a}' | '\u{b}' | '\u{c}' | '\u{d}' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
-            ..='\u{200a}'
-                | '\u{2028}'
-                | '\u{2029}'
-                | '\u{202f}'
-                | '\u{205f}'
-                | '\u{3000}'
-                | '\u{feff}'
-    )
-}
-
-/// `value.trim()`.
-pub fn trim(value: &str) -> &str {
-    value.trim_matches(is_js_whitespace)
-}
-
-/// `value.length`: UTF-16 code units.
-pub fn utf16_len(value: &str) -> usize {
-    value.encode_utf16().count()
-}
+pub use accshift_theme::js::{is_js_whitespace, trim, utf16_len};
 
 /// `value.slice(0, max)`: the first `max` UTF-16 code units. A surrogate pair
 /// cut in half becomes U+FFFD, where JS would keep the lone surrogate.
-pub fn utf16_prefix(value: &str, max: usize) -> String {
-    if utf16_len(value) <= max {
-        return value.to_string();
-    }
-    let units: Vec<u16> = value.encode_utf16().take(max).collect();
-    String::from_utf16_lossy(&units)
-}
+pub use accshift_theme::js::utf16_prefix_lossy as utf16_prefix;
 
 /// `Boolean(value)`, `None` standing for `undefined`.
 pub fn truthy(value: Option<&Value>) -> bool {
@@ -208,19 +177,9 @@ pub fn clamp_int(value: Option<&Value>, min: i64, max: i64, fallback: i64) -> i6
     rounded as i64
 }
 
-/// `String(value)` for a number, as the i18n templates print one.
-pub fn number_to_string(value: f64) -> String {
-    if value.is_nan() {
-        return "NaN".to_string();
-    }
-    if value.is_infinite() {
-        return if value > 0.0 { "Infinity" } else { "-Infinity" }.to_string();
-    }
-    if value == value.trunc() && value.abs() < 1e21 {
-        return format!("{}", value as i128);
-    }
-    format!("{value}")
-}
+/// `String(value)` for a number as the i18n templates print one, never in
+/// exponent form.
+pub use accshift_theme::js::number_to_decimal_string as number_to_string;
 
 /// `/^\d+$/.test(value)`: ASCII digits only, at least one.
 pub fn is_ascii_digits(value: &str) -> bool {
@@ -302,6 +261,9 @@ mod tests {
         assert_eq!(trim("\u{feff} a \u{3000}"), "a");
         assert_eq!(trim("\u{85}a"), "\u{85}a");
         assert_eq!(utf16_prefix("abc", 2), "ab");
+        assert_eq!(utf16_prefix("a\u{1f600}", 2), "a\u{fffd}");
         assert_eq!(utf16_len("\u{1f600}"), 2);
+        assert_eq!(number_to_string(1e-7), "0.0000001");
+        assert_eq!(number_to_string(3.0), "3");
     }
 }

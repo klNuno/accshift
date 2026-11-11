@@ -19,11 +19,6 @@ impl AnimationsMode {
             _ => None,
         }
     }
-
-    /// Whether the OS reduced-motion setting must be watched (`system` only).
-    pub fn follows_os(self) -> bool {
-        self == AnimationsMode::System
-    }
 }
 
 /// `data-motion` on `<html>`.
@@ -75,7 +70,5 @@ mod tests {
             motion_attribute(AnimationsMode::System, false),
             MotionAttribute::Full
         );
-        assert!(AnimationsMode::System.follows_os());
-        assert!(!AnimationsMode::Off.follows_os());
     }
 }

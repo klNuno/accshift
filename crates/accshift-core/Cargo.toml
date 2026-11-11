@@ -27,6 +27,7 @@ sha2 = { workspace = true }
 # builds. Default features: the XDG portal, reached through a libdbus loaded at
 # run time, so Linux builds need no GTK.
 rfd = "0.17"
+dirs = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 winreg = { workspace = true }

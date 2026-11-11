@@ -1,3 +1,4 @@
+pub mod app_dirs;
 pub mod config;
 pub mod context;
 pub mod diagnostics;
