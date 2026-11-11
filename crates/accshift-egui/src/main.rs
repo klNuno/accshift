@@ -60,7 +60,7 @@ fn main() {
     let probe: Option<std::path::PathBuf> = None;
     let probing = probe.is_some();
 
-    // The single-instance plugin, first as in src-tauri/src/lib.rs: a second
+    // The single-instance guard comes first: a second
     // launch hands its arguments to the running app and leaves. This
     // launch's own `accshift://` URL is the deep-link plugin's `current`,
     // which the page's listener never sees, so it is not read here.
@@ -436,8 +436,7 @@ fn window_effects(window: &dyn HasWindowHandle, cloak: bool, acrylic: bool) {
             );
         }
     }
-    // Glass Dark's material in Tauri: acrylic with a heavy black tint
-    // (`ACRYLIC_TINTS` in src/lib/theme/backdrop.ts).
+    // Glass Dark's material: acrylic with a heavy black tint.
     if acrylic {
         let _ = window_vibrancy::apply_acrylic(window, Some((0, 0, 0, 150)));
     }

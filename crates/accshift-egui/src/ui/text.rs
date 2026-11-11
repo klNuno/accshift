@@ -1295,18 +1295,13 @@ pub fn ui_family(ctx: &Context, weight: u16) -> FontFamily {
 ///   vertical smoothing of each face's `gasp` table at the drawn size;
 /// - sub-pixel binning on: Skia positions glyphs on quarter pixels too (off:
 ///   -2.3 dB), CJK included when DirectWrite rasterizes;
-/// - with the software renderer the atlas keeps raw coverage and the backend
-///   applies [`coverage_tables`] (the sRGB curve of Chromium on Windows); glow gets
-///   a power curve close to it for white text.
+/// - the atlas keeps raw coverage and the renderer applies
+///   [`coverage_tables`] (the sRGB curve of Chromium on Windows).
 pub fn text_options() -> TextOptions {
     TextOptions {
         font_hinting: true,
         subpixel_binning: true,
-        color_transfer_function: if cfg!(feature = "software") {
-            egui::epaint::FontColorTransferFunction::Off
-        } else {
-            egui::epaint::FontColorTransferFunction::Gamma(1.0 / gamma::POWER_APPROX)
-        },
+        color_transfer_function: egui::epaint::FontColorTransferFunction::Off,
         ..TextOptions::default()
     }
 }

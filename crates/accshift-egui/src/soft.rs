@@ -1,10 +1,8 @@
-//! The software runner: what eframe does for this spike, minus OpenGL.
-//!
-//! Window and input go through egui-winit exactly as in eframe. egui's meshes
-//! are rasterized on the CPU by the vendored `egui_software_backend`, and the
-//! frame is blitted with softbuffer (a 32-bit DIB and `BitBlt` on Windows).
-//! No GPU driver is loaded: with glow, the NVIDIA OpenGL driver took about
-//! 300 ms before the first frame and most of the 100 MB working set.
+//! The runner: window and input through egui-winit, egui's meshes
+//! rasterized on the CPU by the vendored `egui_software_backend`, and the
+//! frame blitted with softbuffer (a 32-bit DIB and `BitBlt` on Windows).
+//! No GPU driver is loaded: an OpenGL driver took about 300 ms before the
+//! first frame and most of the 100 MB working set.
 
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -802,7 +800,6 @@ fn take_content_lost() -> bool {
     false
 }
 
-/// The frame as egui's glow painter returns it: premultiplied RGBA.
 /// The renderer's view of [`crate::ui::backdrop_filter::Mark`].
 fn backdrop_op(
     callback: &egui::PaintCallback,
@@ -1006,7 +1003,7 @@ impl ApplicationHandler<UserEvent> for Runner {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
             UserEvent::Repaint { when, pass } => {
-                // eframe's guard against requests from a pass already painted.
+                // Drops requests from a pass already painted.
                 let current = self.ctx.cumulative_pass_nr_for(ViewportId::ROOT);
                 if current == pass || current == pass + 1 {
                     self.repaint_at(when);
