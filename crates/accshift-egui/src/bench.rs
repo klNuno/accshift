@@ -184,9 +184,26 @@ pub fn request_shot(ctx: &egui::Context) {
     };
     ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
         egui::ScreenshotCallback::new(move |image| {
-            let _ = crate::harness::write_png(std::path::Path::new(&path), &image);
+            let _ = write_png(std::path::Path::new(&path), &image);
         }),
     ));
+}
+
+/// RGBA PNG, unpremultiplied like a browser screenshot: the bench shot and
+/// the scene runner's shots.
+pub(crate) fn write_png(path: &std::path::Path, image: &egui::ColorImage) -> Result<(), String> {
+    let [w, h] = image.size;
+    let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), w as u32, h as u32);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+    let data: Vec<u8> = image
+        .pixels
+        .iter()
+        .flat_map(|p| p.to_srgba_unmultiplied())
+        .collect();
+    writer.write_image_data(&data).map_err(|e| e.to_string())
 }
 
 /// `ACCSHIFT_EGUI_BENCH_SCRIPT=1` in a bench run: from 1.5 s after the

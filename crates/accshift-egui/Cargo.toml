@@ -10,7 +10,10 @@ publish = false
 # %TEMP%\accshift-egui-bench\<pid>.jsonl. The harness refuses any exe that
 # lacks the marker string, so a bench run can never pop a window.
 startup-bench = []
-# Developer switches kept out of the shipped binary: `ACCSHIFT_EGUI_MARKS`.
+# Developer tools kept out of the shipped binary: the `--scene` runner
+# (src/harness/) that drives the app on the mock backend, and
+# `ACCSHIFT_EGUI_MARKS`. The crate's own tests get the runner through
+# `cfg(test)`, without the flag.
 harness = []
 # The renderer: egui meshes rasterized on the CPU and blitted with softbuffer
 # (GDI on Windows), no GPU driver loaded.
@@ -49,8 +52,8 @@ skrifa = "0.44"
 # with its file cache, loaded as glyphs need them, outside private memory (a
 # CJK face is 12 to 35 MB).
 memmap2 = "0.9"
-# Scene runner only (`--scene`): scene files in, PNG shots out. Neither is
-# touched on the normal startup path.
+# Scene runner (`--scene`) and bench shot: scene files in, PNG shots out.
+# Neither is touched on the normal startup path.
 serde_json = "1"
 png = "0.18"
 # Steam's CDN serves avatars as JPEG; the same image build accshift-app

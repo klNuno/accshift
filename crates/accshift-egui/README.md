@@ -9,12 +9,13 @@ Feature `software` (default): egui meshes rasterized on the CPU (`vendor/egui_so
 ## Run
 
 ```sh
-cargo run -p accshift-egui                                      # the app, on the real data
-cargo run -p accshift-egui -- --scene parity/scenes/<id>.json --out <dir>   # scripted shots, hidden window, mock data
-node bundle/bundle.mjs --build [--no-updater]                   # installers for the host OS
+cargo run -p accshift-egui                        # the app, on the real data
+cargo run --release --locked --features harness -p accshift-egui -- --scene parity/scenes/<id>.json --out <dir>
+                                                  # scripted shots, hidden window, mock data
+node bundle/bundle.mjs --build [--no-updater]     # installers for the host OS
 ```
 
-`parity/README.md` describes the scene format. The scenes run on the mock data of `parity/data` and write one PNG per shot; `parity/diff.mjs` compares two sets of shots.
+`--scene` exists only with the `harness` feature: the shipped binary does not read it and has no scene runner. `parity/README.md` describes the scene format. The scenes run on the mock data of `parity/data` and write one PNG per shot; `parity/diff.mjs` compares two sets of shots.
 
 ## Startup and memory
 

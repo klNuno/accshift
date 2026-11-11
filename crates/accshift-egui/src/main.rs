@@ -17,24 +17,8 @@ const PROBE_IDENTIFIER: &str = "com.accshift.desktop-egui-probe";
 fn main() {
     let bench_build = cfg!(feature = "startup-bench");
     // `--scene <scene.json>... --out <dir>`: replay parity scenes in a hidden
-    // window, see src/harness/mod.rs. Nothing is parsed before main otherwise.
-    let (scene_files, out_dir) = {
-        let mut files = Vec::new();
-        let mut out = None;
-        let mut args = std::env::args().skip(1);
-        let mut in_scenes = false;
-        while let Some(arg) = args.next() {
-            if arg == "--scene" {
-                in_scenes = true;
-            } else if arg == "--out" {
-                out = args.next().map(std::path::PathBuf::from);
-                in_scenes = false;
-            } else if in_scenes {
-                files.push(std::path::PathBuf::from(arg));
-            }
-        }
-        (files, out)
-    };
+    // window, see src/harness/mod.rs. Only a `harness` build reads it.
+    let (scene_files, out_dir) = harness::scene_args(std::env::args().skip(1));
     let scene_mode = !scene_files.is_empty();
     // `--tray`: the autostart launch. The window starts hidden in the tray.
     let tray_start = std::env::args().skip(1).any(|arg| arg == "--tray");
