@@ -31,6 +31,7 @@ pub mod platform_icons;
 pub mod search_cancel;
 pub mod section_header;
 pub mod secure_overlays;
+pub(crate) mod shared;
 pub mod title_bar;
 pub mod toast;
 pub mod use_grid_layout;
