@@ -246,7 +246,8 @@ pub struct BanPlan {
     pub previously_checked: Vec<String>,
     pub force_refresh: bool,
     pub silent: bool,
-    /// Show the sticky `toast.banChecking` until [`finish`] returns.
+    /// A visible check: the loader keeps the sticky `toast.banChecking` up
+    /// until the fetch ends.
     pub checking_toast: bool,
 }
 

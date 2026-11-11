@@ -5,7 +5,6 @@
 //! assigned platform to the persona's account in one action.
 
 use crate::js;
-use crate::stores::StoreContext;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -70,7 +69,11 @@ impl Persona {
     }
 }
 
-fn sanitize_assignments(value: Option<&Value>, ctx: &StoreContext) -> Vec<PersonaAssignment> {
+/// Valid assignments, first of each platform. A platform this launch did
+/// not load (a user descriptor that failed to parse, a file moved) keeps its
+/// assignment: the switch skips it, and it works again once the platform is
+/// back.
+fn sanitize_assignments(value: Option<&Value>) -> Vec<PersonaAssignment> {
     let Some(Value::Array(items)) = value else {
         return Vec::new();
     };
@@ -87,10 +90,7 @@ fn sanitize_assignments(value: Option<&Value>, ctx: &StoreContext) -> Vec<Person
         ) else {
             continue;
         };
-        if !ctx.knows_platform(platform_id) || seen.contains(platform_id) {
-            continue;
-        }
-        if account_id.is_empty() {
+        if platform_id.is_empty() || seen.contains(platform_id) || account_id.is_empty() {
             continue;
         }
         seen.insert(platform_id.to_string());
@@ -106,7 +106,7 @@ fn is_persona_color(value: &str) -> bool {
     js::is_hex_color(value, &[6])
 }
 
-fn sanitize_persona(value: &Value, ctx: &StoreContext) -> Option<Persona> {
+fn sanitize_persona(value: &Value) -> Option<Persona> {
     let raw = js::as_record(Some(value))?;
     let id = js::as_str(raw.get("id")).filter(|id| !id.is_empty())?;
     let name = js::as_str(raw.get("name"))
@@ -128,19 +128,19 @@ fn sanitize_persona(value: &Value, ctx: &StoreContext) -> Option<Persona> {
         name,
         color,
         image,
-        assignments: sanitize_assignments(raw.get("assignments"), ctx),
+        assignments: sanitize_assignments(raw.get("assignments")),
     })
 }
 
 /// `sanitizeList`: valid personas, first of each id.
-pub fn sanitize_personas(value: &Value, ctx: &StoreContext) -> Vec<Persona> {
+pub fn sanitize_personas(value: &Value) -> Vec<Persona> {
     let Value::Array(items) = value else {
         return Vec::new();
     };
     let mut seen = BTreeSet::new();
     let mut result = Vec::new();
     for raw in items {
-        let Some(persona) = sanitize_persona(raw, ctx) else {
+        let Some(persona) = sanitize_persona(raw) else {
             continue;
         };
         if !seen.insert(persona.id.clone()) {

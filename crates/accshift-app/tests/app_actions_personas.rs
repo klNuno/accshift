@@ -182,6 +182,44 @@ fn a_pin_lock_after_a_landed_platform_reports_and_stops() {
 }
 
 #[test]
+fn keeps_the_assignment_of_a_platform_this_launch_did_not_load() {
+    // A user descriptor that failed to load is missing from the context.
+    let backend = support::scripted("demo");
+    let mut stores = stores_of(&backend);
+    let stored = serde_json::json!([{
+        "id": "p1",
+        "name": "Main",
+        "assignments": [
+            { "platformId": "steam", "accountId": "s1" },
+            { "platformId": "my-launcher", "accountId": "m1" },
+        ],
+    }]);
+    let loaded = accshift_app::personas::sanitize_personas(&stored);
+    assert_eq!(loaded[0].assignments.len(), 2);
+
+    // A later write of the list keeps it on disk.
+    let created = stores.create_persona(PersonaInput {
+        name: "Alt".into(),
+        assignments: loaded[0].assignments.clone(),
+        ..PersonaInput::default()
+    });
+    let kept = stores
+        .personas()
+        .iter()
+        .find(|persona| persona.id == created.id)
+        .expect("the persona is stored");
+    assert!(kept
+        .assignments
+        .iter()
+        .any(|assignment| assignment.platform_id == "my-launcher"));
+
+    // The switch leaves the unloaded platform out.
+    let steps = switch_steps(&PlatformRegistry::shipped(), &loaded[0]);
+    let platforms: Vec<&str> = steps.iter().map(|step| step.platform_id.as_str()).collect();
+    assert_eq!(platforms, ["steam"]);
+}
+
+#[test]
 fn refuses_to_start_while_an_account_switch_is_running() {
     let backend = Arc::new(support::scripted("demo"));
     let registry = PlatformRegistry::shipped();

@@ -39,11 +39,13 @@ pub struct SwitchStep {
     pub adapter: Option<Arc<PlatformAdapter>>,
 }
 
-/// The steps of a persona, in assignment order.
+/// The steps of a persona, in assignment order. A platform this launch did
+/// not load is left out; its stored assignment stays for when it is back.
 pub fn switch_steps(registry: &PlatformRegistry, persona: &Persona) -> Vec<SwitchStep> {
     persona
         .assignments
         .iter()
+        .filter(|assignment| registry.definition(&assignment.platform_id).is_some())
         .map(|assignment| SwitchStep {
             platform_id: assignment.platform_id.clone(),
             account_id: assignment.account_id.clone(),

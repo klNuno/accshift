@@ -3,13 +3,15 @@
 
 mod support;
 
+use accshift_app::accounts::ToastKind;
 use accshift_app::backend::Backend;
 use accshift_app::bulk_edit::{
-    titlebar_button_visible, toggle_allowed, BarStep, BulkEdit, BulkEditBar, TriState,
+    toggle_allowed, BarStep, BulkEdit, BulkEditBar, BulkEditOutcome, TriState,
 };
 use accshift_app::jobs::Jobs;
 use accshift_app::platforms::PlatformRegistry;
 use accshift_app::text::Text;
+use accshift_app::types::BulkEditResult;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -23,19 +25,28 @@ fn open_steam(bulk: &mut BulkEdit, registry: &PlatformRegistry) {
     assert!(bulk.is_open());
 }
 
-/// Polls until the bar has no job in flight; the apply result if one ended.
-fn settle(bulk: &mut BulkEdit) -> Option<accshift_app::types::BulkEditResult> {
+/// Polls until no job is in flight; every outcome reported on the way.
+fn settle_all(bulk: &mut BulkEdit) -> Vec<BulkEditOutcome> {
     let deadline = Instant::now() + Duration::from_secs(10);
+    let mut outcomes = Vec::new();
     loop {
-        if let Some(result) = bulk.poll() {
-            return Some(result);
-        }
+        outcomes.extend(bulk.poll());
         if !bulk.is_busy() {
-            return None;
+            return outcomes;
         }
         assert!(Instant::now() < deadline, "bulk edit job never finished");
         std::thread::sleep(Duration::from_millis(2));
     }
+}
+
+/// The apply result once the jobs settled, if an apply ended.
+fn settle(bulk: &mut BulkEdit) -> Option<BulkEditResult> {
+    settle_all(bulk)
+        .into_iter()
+        .find_map(|outcome| match outcome {
+            BulkEditOutcome::Applied(result) => Some(result),
+            BulkEditOutcome::GamesFailed(_) => None,
+        })
 }
 
 // ------------------------------------------------------------ selection
@@ -118,8 +129,6 @@ fn the_toggle_follows_the_tab_and_the_panels() {
     assert!(!toggle_allowed(steam, false, false));
     assert!(!toggle_allowed(steam, true, true));
     assert!(!toggle_allowed(registry.definition("riot"), true, false));
-    assert!(titlebar_button_visible(steam, true, false, false));
-    assert!(!titlebar_button_visible(steam, true, false, true));
 }
 
 // ------------------------------------------------------------ paint
@@ -315,4 +324,70 @@ fn a_backend_error_fails_every_account() {
     assert!(result.failed[0].error.contains("not available"));
     let logs = backend.calls("log_app_event").join("\n");
     assert!(logs.contains("Bulk edit failed"));
+}
+
+#[test]
+fn closing_the_mode_during_an_apply_still_reports_its_result() {
+    let backend = Arc::new(support::scripted("demo"));
+    let jobs = Jobs::new(backend.clone() as Arc<dyn Backend>, 1, || {});
+    let registry = PlatformRegistry::shipped();
+    let mut bulk = BulkEdit::new();
+    open_steam(&mut bulk, &registry);
+    bulk.toggle_account("76561198100000001");
+    bulk.toggle_account("76561198100000002");
+    backend.push(
+        "steam_bulk_edit",
+        Ok(json!({
+            "succeeded": 1,
+            "failed": [{ "steamId": "76561198100000002", "error": "locked" }],
+        })),
+    );
+    bulk.apply(&jobs);
+    // Escape, a tab change or Ctrl+E before the job ends.
+    bulk.close();
+    assert!(bulk.is_busy());
+    // The mode opened again is not closed by the old apply.
+    open_steam(&mut bulk, &registry);
+
+    let outcomes = settle_all(&mut bulk);
+    let [BulkEditOutcome::Applied(result)] = outcomes.as_slice() else {
+        panic!("expected one apply result, got {outcomes:?}");
+    };
+    assert_eq!(result.succeeded, 1);
+    let toast = outcomes[0].toast();
+    assert_eq!(
+        toast.text,
+        Text::with(
+            "bulkEdit.toastPartial",
+            [("succeeded", 1.0), ("failed", 1.0)]
+        )
+    );
+    assert!(bulk.is_open());
+    assert_eq!(backend.calls("steam_bulk_edit").len(), 1);
+}
+
+#[test]
+fn a_failed_games_load_is_reported() {
+    let backend = Arc::new(support::scripted("demo"));
+    let jobs = Jobs::new(backend.clone() as Arc<dyn Backend>, 1, || {});
+    let registry = PlatformRegistry::shipped();
+    let mut bulk = BulkEdit::new();
+    open_steam(&mut bulk, &registry);
+    bulk.toggle_account("76561198100000001");
+    backend.push("steam_get_account_games", Err("no API key"));
+    bulk.go_to_settings(&jobs);
+
+    let outcomes = settle_all(&mut bulk);
+    let [BulkEditOutcome::GamesFailed(error)] = outcomes.as_slice() else {
+        panic!("expected a games failure, got {outcomes:?}");
+    };
+    assert!(error.contains("no API key"), "{error}");
+    let toast = outcomes[0].toast();
+    assert_eq!(toast.kind, ToastKind::Error);
+    assert_eq!(
+        toast.text,
+        Text::with("bulkEdit.gamesLoadFailed", [("error", error.as_str())])
+    );
+    let bar = bulk.bar().expect("the mode stays open");
+    assert!(bar.games().is_empty() && !bar.games_loading());
 }

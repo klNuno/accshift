@@ -170,6 +170,8 @@ pub struct AccountLoading {
     deferred_background: Vec<BackgroundRefresh>,
     /// Refresh runs deferred to the next frame (`requestIdleCallback`).
     deferred_runs: Vec<RefreshTicket>,
+    /// The sticky `toast.banChecking` is up.
+    ban_checking_toast: bool,
 }
 
 impl AccountLoading {
@@ -187,6 +189,7 @@ impl AccountLoading {
             warnings: Vec::new(),
             deferred_background: Vec::new(),
             deferred_runs: Vec::new(),
+            ban_checking_toast: false,
         }
     }
 
@@ -386,6 +389,7 @@ impl AccountLoading {
         self.poll_adds(ctx, &mut events);
         self.poll_profiles(ctx);
         self.poll_warnings(ctx, &mut events);
+        self.sync_ban_checking_toast(&mut events);
         if let Some(request) = self.priming.poll(ctx.now) {
             if let Some(adapter) = ctx.adapter() {
                 let caches = Arc::clone(&self.caches);
@@ -761,6 +765,24 @@ impl AccountLoading {
             }
         }
         self.profiles.extend(waiting);
+    }
+
+    /// Keeps `toast.banChecking` up while a non-silent Steam ban check runs,
+    /// however the job ends.
+    fn sync_ban_checking_toast(&mut self, events: &mut Vec<LoadingEvent>) {
+        let checking = self.warnings.iter().any(
+            |(_, job)| matches!(job, WarningJob::SteamBans { plan, .. } if plan.checking_toast),
+        );
+        if checking == self.ban_checking_toast {
+            return;
+        }
+        self.ban_checking_toast = checking;
+        let text = Text::key("toast.banChecking");
+        events.push(if checking {
+            LoadingEvent::StickyToast(Toast::new(text, ToastKind::Default))
+        } else {
+            LoadingEvent::DismissToast(text)
+        });
     }
 
     fn poll_warnings(&mut self, ctx: &mut LoadingContext<'_>, events: &mut Vec<LoadingEvent>) {
