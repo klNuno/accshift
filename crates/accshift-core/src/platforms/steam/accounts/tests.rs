@@ -480,3 +480,49 @@ fn clearing_the_browser_cache_refuses_an_elevated_steam() {
     assert!(cache.exists());
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn library_paths_keep_an_escaped_quote_and_unescape_backslashes() {
+    let root = copy_test_root("libraryfolders");
+    let steamapps = root.join("steamapps");
+    fs::create_dir_all(&steamapps).unwrap();
+    let vdf = r#""libraryfolders"
+{
+	"0"
+	{
+		"path"		"D:\\Games \"SSD\"\\Steam"
+	}
+	"1"
+	{
+		"path"		"E:\\Steam"
+	}
+}
+"#;
+    fs::write(steamapps.join("libraryfolders.vdf"), vdf).unwrap();
+
+    let paths = super::load_library_paths(&root);
+
+    // A naive split on `"` cut the first path at its escaped quote.
+    assert!(
+        paths.contains(&PathBuf::from(r#"D:\Games "SSD"\Steam"#)),
+        "{paths:?}"
+    );
+    assert!(paths.contains(&PathBuf::from(r"E:\Steam")), "{paths:?}");
+    assert!(paths.contains(&root));
+    assert_eq!(paths.len(), 3, "{paths:?}");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn app_manifest_name_keeps_an_escaped_quote() {
+    let manifest = r#""AppState"
+{
+	"appid"		"730"
+	"name"		"The \"Quoted\" Game"
+}
+"#;
+    assert_eq!(
+        super::extract_appid_and_name(manifest),
+        (Some("730".into()), Some(r#"The "Quoted" Game"#.into()))
+    );
+}

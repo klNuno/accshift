@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 
 #[cfg(not(target_os = "windows"))]
 use super::vdf::vdf_set_nested_value;
-use super::vdf::{localconfig_path, parse_vdf, set_persona_state};
+use super::vdf::{
+    localconfig_path, parse_vdf, set_persona_state, vdf_brace_counts, vdf_tokenize_line,
+};
 use crate::error::AppError;
 use crate::fs_utils;
 use crate::os;
@@ -399,6 +401,16 @@ pub(crate) fn list_account_games(userdata_root: &Path) -> Result<HashSet<String>
     Ok(ids)
 }
 
+/// The `"key" "value"` pair a VDF line holds, if it starts with one.
+fn vdf_pair(line: &str) -> Option<(String, String)> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('"') {
+        return None;
+    }
+    let mut tokens = vdf_tokenize_line(trimmed).into_iter();
+    Some((tokens.next()?, tokens.next()?))
+}
+
 // Pulls "appid" and "name" out of an appmanifest in a single pass. Both keys
 // sit in the first handful of lines while the file goes on with hundreds of
 // InstalledDepots entries, so stop as soon as both are found.
@@ -406,23 +418,11 @@ fn extract_appid_and_name(content: &str) -> (Option<String>, Option<String>) {
     let mut app_id = None;
     let mut name = None;
 
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if !trimmed.starts_with('"') {
-            continue;
-        }
-        let mut parts = trimmed.split('"');
-        // Elements 1 and 3 of the split: the quoted key and its quoted value.
-        let Some(key) = parts.nth(1) else {
-            continue;
-        };
-        let Some(value) = parts.nth(1) else {
-            continue;
-        };
+    for (key, value) in content.lines().filter_map(vdf_pair) {
         if app_id.is_none() && key.eq_ignore_ascii_case("appid") {
-            app_id = Some(value.to_string());
+            app_id = Some(value);
         } else if name.is_none() && key.eq_ignore_ascii_case("name") {
-            name = Some(value.to_string());
+            name = Some(value);
         }
         if app_id.is_some() && name.is_some() {
             break;
@@ -432,10 +432,6 @@ fn extract_appid_and_name(content: &str) -> (Option<String>, Option<String>) {
     (app_id, name)
 }
 
-fn unescape_vdf_path(input: &str) -> String {
-    input.replace("\\\\", "\\")
-}
-
 fn load_library_paths(steam_path: &Path) -> Vec<PathBuf> {
     let mut paths = vec![steam_path.to_path_buf()];
     let libraryfolders_path = steam_path.join("steamapps").join("libraryfolders.vdf");
@@ -443,17 +439,10 @@ fn load_library_paths(steam_path: &Path) -> Vec<PathBuf> {
         return paths;
     };
 
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if !trimmed.starts_with('"') {
-            continue;
-        }
-        let parts: Vec<&str> = trimmed.split('"').collect();
-        if parts.len() >= 4 && parts[1].eq_ignore_ascii_case("path") {
-            let raw = parts[3].trim();
-            if !raw.is_empty() {
-                paths.push(PathBuf::from(unescape_vdf_path(raw)));
-            }
+    for (key, value) in content.lines().filter_map(vdf_pair) {
+        let raw = value.trim();
+        if key.eq_ignore_ascii_case("path") && !raw.is_empty() {
+            paths.push(PathBuf::from(raw));
         }
     }
 
@@ -570,34 +559,6 @@ fn parse_login_users(steam_path: &Path) -> Result<Vec<ParsedLoginUser>, AppError
     Ok(users)
 }
 
-/// Counts the net brace delta of a line, ignoring braces inside quoted
-/// strings. A double-quote toggles the in-string state; a backslash escapes
-/// the next char so an escaped quote does not close the string. Returns
-/// (opens, closes) so callers can reason about a line that both opens and
-/// closes a block.
-fn brace_counts(line: &str) -> (i32, i32) {
-    let mut opens = 0;
-    let mut closes = 0;
-    let mut in_string = false;
-    let mut escaped = false;
-
-    for ch in line.chars() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        match ch {
-            '\\' if in_string => escaped = true,
-            '"' => in_string = !in_string,
-            '{' if !in_string => opens += 1,
-            '}' if !in_string => closes += 1,
-            _ => {}
-        }
-    }
-
-    (opens, closes)
-}
-
 /// Removes the block for `steam_id` from a loginusers.vdf string.
 ///
 /// Brace accounting counts the real `{`/`}` on each line (skipping braces
@@ -620,8 +581,8 @@ fn remove_loginuser_entry(content: &str, steam_id: &str) -> (String, bool) {
     let mut removed = false;
 
     for line in content.lines() {
-        let trimmed = line.trim();
-        let (opens, closes) = brace_counts(line);
+        let (opens, closes) = vdf_brace_counts(line);
+        let (opens, closes) = (opens as i32, closes as i32);
 
         if skipping {
             // The block's own braces were already absorbed when the key line
@@ -650,8 +611,8 @@ fn remove_loginuser_entry(content: &str, steam_id: &str) -> (String, bool) {
         // A top-level account key sits at depth 1 (inside the root "users"
         // block). Match it before counting this line's braces so the key's
         // own inline `{` is attributed to the block being removed.
-        let parts: Vec<&str> = trimmed.split('"').collect();
-        let is_target = depth == 1 && parts.len() >= 2 && parts[1] == steam_id;
+        let is_target = depth == 1
+            && vdf_tokenize_line(line.trim()).first().map(String::as_str) == Some(steam_id);
 
         if is_target {
             removed = true;

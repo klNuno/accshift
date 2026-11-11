@@ -327,12 +327,8 @@ impl Backend for RealBackend {
     ) -> BackendResult<()> {
         steam::copy_game_settings(self, from_steam_id, to_steam_id, app_id)
     }
-    fn steam_get_copyable_games(
-        &self,
-        from_steam_id: &str,
-        to_steam_id: &str,
-    ) -> BackendResult<Vec<CopyableGame>> {
-        steam::copyable_games(self, from_steam_id, to_steam_id)
+    fn steam_get_copyable_games(&self, from_steam_id: &str) -> BackendResult<Vec<CopyableGame>> {
+        steam::copyable_games(self, from_steam_id)
     }
     fn steam_open_userdata(&self, steam_id: &str) -> BackendResult<()> {
         steam::open_userdata(self, steam_id)

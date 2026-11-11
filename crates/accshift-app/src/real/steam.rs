@@ -166,12 +166,10 @@ pub(super) fn copy_game_settings(
 pub(super) fn copyable_games(
     backend: &RealBackend,
     from_steam_id: &str,
-    to_steam_id: &str,
 ) -> BackendResult<Vec<CopyableGame>> {
     Ok(steam::get_copyable_games(
         backend.ctx.clone(),
         from_steam_id.to_string(),
-        to_steam_id.to_string(),
     )?)
 }
 

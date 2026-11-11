@@ -929,14 +929,10 @@ impl Backend for MockBackend {
             json!({ "fromSteamId": from_steam_id, "toSteamId": to_steam_id, "appId": app_id }),
         )
     }
-    fn steam_get_copyable_games(
-        &self,
-        from_steam_id: &str,
-        to_steam_id: &str,
-    ) -> BackendResult<Vec<CopyableGame>> {
+    fn steam_get_copyable_games(&self, from_steam_id: &str) -> BackendResult<Vec<CopyableGame>> {
         self.call(
             "steam_get_copyable_games",
-            json!({ "fromSteamId": from_steam_id, "toSteamId": to_steam_id }),
+            json!({ "fromSteamId": from_steam_id }),
         )
     }
     fn steam_open_userdata(&self, steam_id: &str) -> BackendResult<()> {

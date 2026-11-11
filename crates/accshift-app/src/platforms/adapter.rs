@@ -370,7 +370,7 @@ impl PlatformAdapter {
                 from_steam_id,
                 to_steam_id,
             } => {
-                let games = backend.steam_get_copyable_games(from_steam_id, to_steam_id)?;
+                let games = backend.steam_get_copyable_games(from_steam_id)?;
                 Ok(steam_menu::copyable_games_submenu(
                     from_steam_id,
                     to_steam_id,

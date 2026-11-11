@@ -144,11 +144,7 @@ pub trait Backend: Send + Sync {
         to_steam_id: &str,
         app_id: &str,
     ) -> BackendResult<()>;
-    fn steam_get_copyable_games(
-        &self,
-        from_steam_id: &str,
-        to_steam_id: &str,
-    ) -> BackendResult<Vec<CopyableGame>>;
+    fn steam_get_copyable_games(&self, from_steam_id: &str) -> BackendResult<Vec<CopyableGame>>;
     fn steam_open_userdata(&self, steam_id: &str) -> BackendResult<()>;
     fn steam_clear_browser_cache(&self) -> BackendResult<()>;
     fn steam_bulk_edit(&self, request: BulkEditRequest) -> BackendResult<BulkEditResult>;
