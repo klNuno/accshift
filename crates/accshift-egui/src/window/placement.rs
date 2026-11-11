@@ -255,6 +255,29 @@ pub fn after_build(saved: &SavedWindow, outer: Rect, monitors: &[Monitor]) -> Re
     outer
 }
 
+/// Off Windows, where no frame moves the window: the outer origin for
+/// `saved` on `monitors`, the window `outer` large (physical). The saved
+/// origin when a monitor shows it, else the window centred on the nearest
+/// monitor, or on the primary one when nothing was saved. `None` without
+/// monitors.
+pub fn origin(saved: &SavedWindow, monitors: &[Monitor], outer: (i32, i32)) -> Option<(i32, i32)> {
+    let primary = primary(monitors)?;
+    let (width, height) = outer;
+    let saved_origin = saved
+        .position
+        .and_then(|_| start(saved, monitors, &|_| Insets::default()))
+        .and_then(|start| start.origin);
+    let rect = match saved_origin {
+        Some((x, y)) => Rect::at(x, y, width, height),
+        None => {
+            let (x, y) = center_in(&primary.work, width, height);
+            Rect::at(x, y, width, height)
+        }
+    };
+    let placed = after_build(saved, rect, monitors);
+    Some((placed.left, placed.top))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,6 +320,46 @@ mod tests {
             position,
             physical_position: physical,
         }
+    }
+
+    #[test]
+    fn off_windows_the_saved_origin_is_restored() {
+        let monitors = [
+            monitor(0, 0, 1920, 1080, 96, true),
+            monitor(1920, 0, 2560, 1440, 96, false),
+        ];
+        let at = saved(Some((900.0, 500.0)), Some((2100.0, 200.0)), None);
+        assert_eq!(origin(&at, &monitors, (900, 500)), Some((2100, 200)));
+        // The physical origin of the saved scale wins, as on Windows.
+        let physical = saved(
+            Some((900.0, 500.0)),
+            Some((2100.0, 200.0)),
+            Some((2110, 210)),
+        );
+        assert_eq!(origin(&physical, &monitors, (900, 500)), Some((2110, 210)));
+    }
+
+    #[test]
+    fn off_windows_no_saved_origin_centres_on_the_primary() {
+        let monitors = [
+            monitor(-2560, 0, 2560, 1440, 96, false),
+            monitor(0, 0, 1920, 1080, 96, true),
+        ];
+        let fresh = saved(None, None, None);
+        // Work area 1920 x 1032.
+        assert_eq!(origin(&fresh, &monitors, (900, 500)), Some((510, 266)));
+        assert_eq!(origin(&fresh, &[], (900, 500)), None);
+    }
+
+    #[test]
+    fn off_windows_an_origin_no_monitor_shows_is_recentred() {
+        let monitors = [monitor(0, 0, 1920, 1080, 96, true)];
+        let gone = saved(
+            Some((900.0, 500.0)),
+            Some((5000.0, 200.0)),
+            Some((5000, 200)),
+        );
+        assert_eq!(origin(&gone, &monitors, (900, 500)), Some((510, 266)));
     }
 
     #[test]
