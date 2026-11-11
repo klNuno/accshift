@@ -207,13 +207,23 @@ pub struct Executable {
     /// binaries (`Binaries/Win64`, `Binaries/Win32`) need this and nothing else.
     #[serde(default)]
     pub relative_probes: Vec<String>,
-    /// Filter shown by the "select executable" dialog.
-    #[serde(default = "default_exe_filter")]
+    /// Filter shown by the "select executable" dialog, in the Windows
+    /// `Name|pattern` format. Empty picks [`Executable::picker_filter`]'s
+    /// default for the running OS.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub select_filter: String,
 }
 
-fn default_exe_filter() -> String {
-    "Executable files (*.exe)|*.exe|All files (*.*)|*.*".to_string()
+impl Executable {
+    /// The filter the "select executable" dialog opens with. Without one in
+    /// the descriptor, Windows lists `.exe` files first; elsewhere the dialog
+    /// is unfiltered, since Linux and macOS binaries carry no extension.
+    pub fn picker_filter(&self, windows: bool) -> &str {
+        match self.select_filter.as_str() {
+            "" if windows => "Executable files (*.exe)|*.exe|All files (*.*)|*.*",
+            filter => filter,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

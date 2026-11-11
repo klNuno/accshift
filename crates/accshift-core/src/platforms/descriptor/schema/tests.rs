@@ -469,3 +469,24 @@ fn a_live_path_or_cache_equal_to_a_root_is_refused() {
     })
     .unwrap();
 }
+
+// Regression: a profile without `selectFilter` opened the picker on `*.exe`
+// on every OS, so a Linux or macOS launcher binary could not be chosen.
+#[test]
+fn the_default_picker_filter_lists_exe_only_on_windows() {
+    let descriptor = Descriptor::parse("test", MINIMAL).unwrap();
+    let executable = descriptor.os[&Os::Windows].executable.as_ref().unwrap();
+    assert!(executable.picker_filter(true).contains("*.exe"));
+    assert_eq!(executable.picker_filter(false), "");
+}
+
+#[test]
+fn a_declared_picker_filter_wins_on_every_os() {
+    let descriptor = with_windows(|value| {
+        value["os"]["windows"]["executable"]["selectFilter"] = "Scripts|*.sh".into();
+    })
+    .unwrap();
+    let executable = descriptor.os[&Os::Windows].executable.as_ref().unwrap();
+    assert_eq!(executable.picker_filter(true), "Scripts|*.sh");
+    assert_eq!(executable.picker_filter(false), "Scripts|*.sh");
+}

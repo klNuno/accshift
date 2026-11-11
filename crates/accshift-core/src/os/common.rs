@@ -97,7 +97,7 @@ impl<'a> NameMatcher<'a> {
 
     fn matches(&self, process: &sysinfo::Process) -> bool {
         let name = process.name().to_string_lossy();
-        if name.eq_ignore_ascii_case(self.target) {
+        if name_matches(&name, self.target, cfg!(target_os = "linux")) {
             return true;
         }
         // CEF on macOS spawns "Steam Helper", "Steam Helper (GPU)", "Steam
@@ -110,6 +110,25 @@ impl<'a> NameMatcher<'a> {
         let name_lower = name.to_lowercase();
         name_lower.starts_with(prefix_lower.as_str()) && name_lower.ends_with(')')
     }
+}
+
+/// Longest process name the Linux kernel keeps (`TASK_COMM_LEN` minus the
+/// NUL); sysinfo reports that truncated name.
+const LINUX_COMM_LEN: usize = 15;
+
+/// Case-insensitive name comparison. On Linux a target longer than the kernel
+/// name is compared on its first 15 bytes, or `heroic-games-launcher` would
+/// never match the `heroic-games-la` the kernel reports.
+fn name_matches(name: &str, target: &str, truncated_names: bool) -> bool {
+    if name.eq_ignore_ascii_case(target) {
+        return true;
+    }
+    truncated_names
+        && target.len() > LINUX_COMM_LEN
+        && name.len() == LINUX_COMM_LEN
+        && name
+            .as_bytes()
+            .eq_ignore_ascii_case(&target.as_bytes()[..LINUX_COMM_LEN])
 }
 
 pub fn is_process_running(process_name: &str) -> bool {
@@ -325,7 +344,7 @@ pub fn wait_for_process_exit(process_name: &str, timeout_ms: u32) -> bool {
 
 /// Schemes the app legitimately opens: web links, mail, and the Steam /
 /// Roblox protocol handlers. Everything else (file://, raw paths, arbitrary
-/// protocol handlers) is rejected. This is reachable from the webview.
+/// protocol handlers) is rejected. Any UI action that opens a link reaches it.
 const ALLOWED_URL_SCHEMES: &[&str] = &["http", "https", "mailto", "steam", "roblox-player"];
 
 fn is_allowed_url(url: &str) -> bool {
@@ -354,7 +373,41 @@ pub fn open_folder(path: &Path) -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_allowed_url, is_streaming_process_name};
+    use super::{is_allowed_url, is_streaming_process_name, name_matches};
+
+    // Regression: a Linux profile naming a process longer than 15 bytes
+    // never matched, so the engine wrote session files under a running
+    // launcher.
+    #[test]
+    fn a_long_target_matches_the_truncated_linux_name() {
+        assert!(name_matches(
+            "heroic-games-la",
+            "heroic-games-launcher",
+            true
+        ));
+        assert!(name_matches(
+            "Heroic-Games-La",
+            "heroic-games-launcher",
+            true
+        ));
+        assert!(!name_matches(
+            "heroic-games-la",
+            "heroic-games-launcher",
+            false
+        ));
+        assert!(!name_matches(
+            "heroic-games-l",
+            "heroic-games-launcher",
+            true
+        ));
+        assert!(!name_matches("heroic-games-la", "heroic-games-la-x", false));
+    }
+
+    #[test]
+    fn short_targets_still_need_the_exact_name() {
+        assert!(name_matches("steam", "Steam", true));
+        assert!(!name_matches("steamwebhelper", "steam", true));
+    }
 
     #[test]
     fn detects_streaming_software_across_platforms() {

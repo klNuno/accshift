@@ -388,8 +388,14 @@ impl DescriptorService {
                     self.delete_snapshot(app, key);
                 }
             };
+            let had_snapshot = self.snapshot_root(app, &key).is_ok_and(|dir| dir.exists());
             if let Err(error) = self.save_snapshot(app, &key) {
-                reject(&key);
+                // A capture that stopped half way leaves the items before the
+                // failure: for an account with no earlier snapshot that is a
+                // partial session a later switch would restore.
+                if synthetic || !had_snapshot {
+                    self.delete_snapshot(app, &key);
+                }
                 self.relaunch_after_failure(app, &source);
                 return Err(error);
             }

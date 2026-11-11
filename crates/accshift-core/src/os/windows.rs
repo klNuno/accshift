@@ -480,48 +480,7 @@ pub fn launch_steam(
     }
 }
 
-// ---------------------------------------------------------------------------
-// File / folder pickers (shell-based dialogs)
-// ---------------------------------------------------------------------------
-
-pub fn select_folder(title: &str) -> Result<String, AppError> {
-    let output = hidden_command("powershell")
-        .env("ACCSHIFT_FOLDER_TITLE", title)
-        .args([
-            "-NoProfile",
-            "-Command",
-            "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $shell = New-Object -ComObject Shell.Application; $folder = $shell.BrowseForFolder(0, $env:ACCSHIFT_FOLDER_TITLE, 0, 0); if ($folder) { $folder.Self.Path }",
-        ])
-        .output()
-        .map_err(|e| AppError::FolderOpen(e.to_string()))?;
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() {
-        // No selection: the user cancelled the dialog. Signal cancel so the
-        // caller keeps any previously configured path instead of clearing it.
-        return Err(AppError::Cancelled);
-    }
-    Ok(path)
-}
-
-pub fn select_file(title: &str, filter: &str) -> Result<String, AppError> {
-    let output = hidden_command("powershell")
-        .env("ACCSHIFT_FILE_TITLE", title)
-        .env("ACCSHIFT_FILE_FILTER", filter)
-        .args([
-            "-NoProfile",
-            "-Command",
-            "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.OpenFileDialog; $dialog.Title = $env:ACCSHIFT_FILE_TITLE; $dialog.Filter = $env:ACCSHIFT_FILE_FILTER; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $dialog.FileName }",
-        ])
-        .output()
-        .map_err(|e| AppError::FolderOpen(e.to_string()))?;
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() {
-        // No selection: the user cancelled the dialog. Signal cancel so the
-        // caller keeps any previously configured path instead of clearing it.
-        return Err(AppError::Cancelled);
-    }
-    Ok(path)
-}
+pub use super::picker::{select_file, select_folder};
 
 #[cfg(test)]
 mod quoting_tests {

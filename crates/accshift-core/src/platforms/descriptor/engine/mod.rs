@@ -65,9 +65,9 @@ pub enum DescriptorOrigin {
     User(PathBuf),
 }
 
-/// One account as the frontend already expects it, for every descriptor-driven
-/// platform. The field names match what the hand-written modules serialized,
-/// so no adapter changes when a platform is converted.
+/// One account as accshift-app's `PlatformAccount` reads it, for every
+/// descriptor-driven platform. The field names match what the hand-written
+/// modules serialize, so no adapter changes when a platform is converted.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DescriptorAccount {
@@ -105,8 +105,9 @@ pub struct DescriptorService {
     descriptor: Descriptor,
     origin: DescriptorOrigin,
     jobs: SetupJobs<SetupJob>,
-    /// Overrides the environment templates resolve against. Used by tests and
-    /// by a dry run asked to reason about a machine other than this one.
+    /// Overrides the environment templates resolve against, so tests run
+    /// against a fabricated machine.
+    #[cfg(test)]
     env_override: Option<Vec<(String, String)>>,
     #[cfg(test)]
     probes: TestProbes,
@@ -139,6 +140,7 @@ impl DescriptorService {
             descriptor,
             origin,
             jobs: SetupJobs::new(label, DEFAULT_SETUP_TTL_MS),
+            #[cfg(test)]
             env_override: None,
             #[cfg(test)]
             probes: TestProbes::default(),
@@ -146,6 +148,7 @@ impl DescriptorService {
     }
 
     /// Resolves templates against `env` instead of this process's environment.
+    #[cfg(test)]
     pub fn with_environment<K: Into<String>, V: Into<String>>(
         mut self,
         env: impl IntoIterator<Item = (K, V)>,
@@ -180,10 +183,11 @@ impl DescriptorService {
     }
 
     fn base_resolver(&self) -> PathResolver {
-        match &self.env_override {
-            Some(env) => PathResolver::from_env(env.iter().map(|(k, v)| (k.clone(), v.clone()))),
-            None => PathResolver::from_process_env(),
+        #[cfg(test)]
+        if let Some(env) = &self.env_override {
+            return PathResolver::from_env(env.iter().map(|(k, v)| (k.clone(), v.clone())));
         }
+        PathResolver::from_process_env()
     }
 
     /// Builds the resolver and the sandbox for one operation.
@@ -467,9 +471,9 @@ impl PlatformService for DescriptorService {
             .ok_or_else(|| PlatformError::other("Path management not supported"))?;
         crate::os::select_file(
             &format!("Select {} executable", self.descriptor.name),
-            &executable.select_filter,
+            executable.picker_filter(cfg!(windows)),
         )
-        .map_err(|e| PlatformError::other(e.to_string()))
+        .map_err(PlatformError::from)
     }
 
     fn is_installed(&self, app: AppCtx) -> bool {
