@@ -292,10 +292,17 @@ pub fn install_files(
             )));
         }
     } else {
-        if extract_path.exists() {
-            std::fs::remove_dir_all(extract_path)?;
+        let backup = tmp_backup_dir.path().join("current_app");
+        if let Err(error) =
+            super::move_new_app_into_place(tmp_extract_dir.path(), extract_path, &backup)
+        {
+            // The backup could not go back either: keep its folder rather
+            // than let the drop delete the only copy of the app.
+            if backup.exists() {
+                let _ = tmp_backup_dir.keep();
+            }
+            return Err(error.into());
         }
-        std::fs::rename(tmp_extract_dir.path(), extract_path)?;
     }
 
     let _ = std::process::Command::new("touch")

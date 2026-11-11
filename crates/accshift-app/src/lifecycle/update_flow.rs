@@ -341,9 +341,25 @@ impl<P: PendingUpdate> AppUpdater<P> {
         }
     }
 
-    /// A `relaunch()` that came back with an error.
+    /// A `relaunch()` that came back with an error: no new process started
+    /// and this one stays open. The update is already on disk, so the user
+    /// restarts by hand; checking again would only download it once more.
     pub fn on_relaunch_failed(&mut self, error: String) -> Vec<UpdateOutput<P>> {
-        self.apply_failed(UpdateErrorCode::RelaunchFailed, error)
+        let outputs = vec![
+            UpdateOutput::Log {
+                level: LogLevel::Error,
+                message: format!("Failed to restart for update: {error}"),
+            },
+            UpdateOutput::Track {
+                stage: UpdateStage::Failed,
+                target_version: self.version_or_undefined(),
+                error_code: Some(UpdateErrorCode::RelaunchFailed),
+            },
+            UpdateOutput::Toast(Text::key("update.restartManually")),
+        ];
+        self.reset();
+        self.check_started = true;
+        outputs
     }
 
     /// The catch of `applyReadyUpdate`: track, reset, toast, check again.
@@ -399,7 +415,7 @@ pub fn run_command(
             updater.check().map_err(|e| e.to_string()),
         ))),
         UpdateCommand::Download(update) => Some(CommandResult::Downloaded(
-            update.download(|_, _| {}, || {}).map_err(|e| e.to_string()),
+            update.download().map_err(|e| e.to_string()),
         )),
         UpdateCommand::Install { update, bytes } => {
             let result = host

@@ -79,14 +79,68 @@ impl RealBackend {
 fn spawn_snapshot_upgrade(upgrade_ctx: AppCtx) -> std::thread::JoinHandle<()> {
     accshift_core::secrets::init(&upgrade_ctx);
     std::thread::spawn(move || {
-        let locked = |step: &str| match accshift_core::lock::acquire_for_write(
-            &upgrade_ctx,
-            Duration::from_secs(2),
-        ) {
+        let mut maintenance = SystemMaintenance {
+            ctx: upgrade_ctx,
+            failures: Vec::new(),
+            stats: Default::default(),
+        };
+        run_maintenance(
+            &mut maintenance,
+            accshift_core::snapshot_crypto::SNAPSHOT_PLATFORM_IDS,
+        );
+    })
+}
+
+/// The steps of the startup maintenance.
+trait Maintenance {
+    type Lock;
+    /// The cross-process write lock, or `None` (logged) on a timeout.
+    fn lock(&mut self, step: &str) -> Option<Self::Lock>;
+    fn upgrade(&mut self, platform_id: &str);
+    fn report_upgrade(&mut self);
+    fn purge_backups(&mut self);
+    fn sweep_rollbacks(&mut self);
+    fn prune_caches(&mut self);
+    fn keyring_gc(&mut self);
+}
+
+/// A lock that times out skips its own step only: the steps are
+/// independent and each one takes the lock again.
+fn run_maintenance<M: Maintenance>(maintenance: &mut M, platform_ids: &[&str]) {
+    for platform_id in platform_ids {
+        let Some(_operation) = maintenance.lock("snapshot upgrade") else {
+            continue;
+        };
+        maintenance.upgrade(platform_id);
+    }
+    maintenance.report_upgrade();
+    if let Some(_operation) = maintenance.lock("snapshot backup purge") {
+        maintenance.purge_backups();
+    }
+    if let Some(_operation) = maintenance.lock("rollback sweep") {
+        maintenance.sweep_rollbacks();
+    }
+    maintenance.prune_caches();
+    if let Some(_operation) = maintenance.lock("keyring sweep") {
+        maintenance.keyring_gc();
+    }
+}
+
+struct SystemMaintenance {
+    ctx: AppCtx,
+    failures: Vec<String>,
+    stats: accshift_core::snapshot_crypto::LegacyUpgradeStats,
+}
+
+impl Maintenance for SystemMaintenance {
+    type Lock = accshift_core::lock::WriteGuard;
+
+    fn lock(&mut self, step: &str) -> Option<Self::Lock> {
+        match accshift_core::lock::acquire_for_write(&self.ctx, Duration::from_secs(2)) {
             Ok(guard) => Some(guard),
             Err(error) => {
                 let _ = logging::append_app_log(
-                    &upgrade_ctx,
+                    &self.ctx,
                     "warn",
                     "backend.snapshot-upgrade",
                     &format!("Skipped {step} because the store could not be locked"),
@@ -94,78 +148,83 @@ fn spawn_snapshot_upgrade(upgrade_ctx: AppCtx) -> std::thread::JoinHandle<()> {
                 );
                 None
             }
-        };
-
-        let mut failures: Vec<String> = Vec::new();
-        let mut stats = accshift_core::snapshot_crypto::LegacyUpgradeStats::default();
-        for platform_id in accshift_core::snapshot_crypto::SNAPSHOT_PLATFORM_IDS {
-            let Some(_operation) = locked("snapshot upgrade") else {
-                return;
-            };
-            stats.merge(
-                accshift_core::snapshot_crypto::upgrade_legacy_plaintext_platform(
-                    &upgrade_ctx,
-                    platform_id,
-                    &mut |message, detail| failures.push(format!("{message} ({detail})")),
-                ),
-            );
         }
-        if stats.touched_anything() {
-            let level = if stats.failed > 0 { "warn" } else { "info" };
+    }
+
+    fn upgrade(&mut self, platform_id: &str) {
+        let failures = &mut self.failures;
+        self.stats.merge(
+            accshift_core::snapshot_crypto::upgrade_legacy_plaintext_platform(
+                &self.ctx,
+                platform_id,
+                &mut |message, detail| failures.push(format!("{message} ({detail})")),
+            ),
+        );
+    }
+
+    fn report_upgrade(&mut self) {
+        if !self.stats.touched_anything() {
+            return;
+        }
+        let level = if self.stats.failed > 0 {
+            "warn"
+        } else {
+            "info"
+        };
+        let _ = logging::append_app_log(
+            &self.ctx,
+            level,
+            "backend.snapshot-upgrade",
+            &format!(
+                "Re-encrypted {} legacy plaintext snapshot file(s), {} failed",
+                self.stats.upgraded, self.stats.failed
+            ),
+            (!self.failures.is_empty())
+                .then(|| self.failures.join("; "))
+                .as_deref(),
+        );
+    }
+
+    fn purge_backups(&mut self) {
+        let mut purge_failures: Vec<String> = Vec::new();
+        let purged = accshift_core::storage::purge_migrated_snapshot_backups(
+            &self.ctx,
+            &mut |message, detail| purge_failures.push(format!("{message} ({detail})")),
+        );
+        if purged > 0 || !purge_failures.is_empty() {
             let _ = logging::append_app_log(
-                &upgrade_ctx,
-                level,
+                &self.ctx,
+                if purge_failures.is_empty() {
+                    "info"
+                } else {
+                    "warn"
+                },
                 "backend.snapshot-upgrade",
-                &format!(
-                    "Re-encrypted {} legacy plaintext snapshot file(s), {} failed",
-                    stats.upgraded, stats.failed
-                ),
-                (!failures.is_empty())
-                    .then(|| failures.join("; "))
+                &format!("Deleted {purged} plaintext pre-migration snapshot backup(s)"),
+                (!purge_failures.is_empty())
+                    .then(|| purge_failures.join("; "))
                     .as_deref(),
             );
         }
+    }
 
-        if let Some(_operation) = locked("snapshot backup purge") {
-            let mut purge_failures: Vec<String> = Vec::new();
-            let purged = accshift_core::storage::purge_migrated_snapshot_backups(
-                &upgrade_ctx,
-                &mut |message, detail| purge_failures.push(format!("{message} ({detail})")),
-            );
-            if purged > 0 || !purge_failures.is_empty() {
-                let _ = logging::append_app_log(
-                    &upgrade_ctx,
-                    if purge_failures.is_empty() {
-                        "info"
-                    } else {
-                        "warn"
-                    },
-                    "backend.snapshot-upgrade",
-                    &format!("Deleted {purged} plaintext pre-migration snapshot backup(s)"),
-                    (!purge_failures.is_empty())
-                        .then(|| purge_failures.join("; "))
-                        .as_deref(),
-                );
-            }
-        }
+    fn sweep_rollbacks(&mut self) {
+        sweep_riot_rollback_copies(&self.ctx);
+    }
 
-        if let Some(_operation) = locked("rollback sweep") {
-            sweep_riot_rollback_copies(&upgrade_ctx);
-        }
+    fn prune_caches(&mut self) {
+        prune_webview_caches(&self.ctx);
+    }
 
-        prune_webview_caches(&upgrade_ctx);
-
-        let Some(_operation) = locked("keyring sweep") else {
-            return;
-        };
+    fn keyring_gc(&mut self) {
         let mut sweep_failures: Vec<String> = Vec::new();
-        let swept = accshift_core::secrets::gc(&upgrade_ctx, &mut |message, detail| {
+        let swept = accshift_core::secrets::gc(&self.ctx, &mut |message, detail| {
             sweep_failures.push(format!("{message} ({detail})"))
         });
         if swept.touched_anything() {
             let level = if swept.failed > 0 { "warn" } else { "info" };
             let _ = logging::append_app_log(
-                &upgrade_ctx,
+                &self.ctx,
                 level,
                 "backend.secrets-gc",
                 &format!(
@@ -177,7 +236,7 @@ fn spawn_snapshot_upgrade(upgrade_ctx: AppCtx) -> std::thread::JoinHandle<()> {
                     .as_deref(),
             );
         }
-    })
+    }
 }
 
 #[cfg(windows)]
@@ -235,3 +294,75 @@ fn prune_webview_caches(upgrade_ctx: &AppCtx) {
 
 #[cfg(not(windows))]
 fn prune_webview_caches(_upgrade_ctx: &AppCtx) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Records the steps; the locks whose index is in `busy` time out.
+    struct Recorder {
+        busy: Vec<usize>,
+        locks: usize,
+        steps: Vec<String>,
+    }
+
+    impl Maintenance for Recorder {
+        type Lock = ();
+
+        fn lock(&mut self, step: &str) -> Option<()> {
+            let index = self.locks;
+            self.locks += 1;
+            if self.busy.contains(&index) {
+                self.steps.push(format!("skipped {step}"));
+                return None;
+            }
+            Some(())
+        }
+
+        fn upgrade(&mut self, platform_id: &str) {
+            self.steps.push(format!("upgrade {platform_id}"));
+        }
+
+        fn report_upgrade(&mut self) {
+            self.steps.push("report".into());
+        }
+
+        fn purge_backups(&mut self) {
+            self.steps.push("purge".into());
+        }
+
+        fn sweep_rollbacks(&mut self) {
+            self.steps.push("rollbacks".into());
+        }
+
+        fn prune_caches(&mut self) {
+            self.steps.push("caches".into());
+        }
+
+        fn keyring_gc(&mut self) {
+            self.steps.push("keyring".into());
+        }
+    }
+
+    #[test]
+    fn a_busy_lock_skips_only_its_own_maintenance_step() {
+        let mut recorder = Recorder {
+            busy: vec![0, 3],
+            locks: 0,
+            steps: Vec::new(),
+        };
+        run_maintenance(&mut recorder, &["riot", "epic"]);
+        assert_eq!(
+            recorder.steps,
+            [
+                "skipped snapshot upgrade",
+                "upgrade epic",
+                "report",
+                "purge",
+                "skipped rollback sweep",
+                "caches",
+                "keyring",
+            ]
+        );
+    }
+}

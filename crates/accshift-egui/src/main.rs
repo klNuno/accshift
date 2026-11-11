@@ -99,6 +99,9 @@ fn main() {
         let identifier = BUNDLE_IDENTIFIER;
         acquire_single_instance(identifier, Arc::clone(&wake))
     };
+    if let Some(single) = &single {
+        accshift_app::lifecycle::process::set_instance_release(single.releaser());
+    }
     bench::mark("single_instance");
 
     if hidden || probing {

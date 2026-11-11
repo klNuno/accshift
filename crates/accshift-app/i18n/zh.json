@@ -17,6 +17,7 @@
   "update.readyToastVersion": "更新 {version} 已就绪",
   "update.readyToast": "更新已就绪",
   "update.restartFailed": "无法重启以应用更新",
+  "update.restartManually": "更新已安装。请重启 accshift 以完成。",
   "pin.lockedTitle": "应用已锁定",
   "pin.lockedPrompt": "输入 PIN 解锁",
   "pin.placeholder": "4 位 PIN",

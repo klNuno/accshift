@@ -17,6 +17,7 @@
   "update.readyToastVersion": "Обновление {version} готово",
   "update.readyToast": "Обновление готово",
   "update.restartFailed": "Не удалось перезапустить для установки обновления",
+  "update.restartManually": "Обновление установлено. Перезапустите accshift, чтобы завершить.",
   "pin.lockedTitle": "Приложение заблокировано",
   "pin.lockedPrompt": "Введите PIN для разблокировки",
   "pin.placeholder": "PIN из 4 цифр",
