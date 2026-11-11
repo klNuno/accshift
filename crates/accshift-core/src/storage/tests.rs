@@ -323,3 +323,79 @@ fn a_corrupt_store_with_a_valid_bak_is_served_not_reset() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn a_debug_build_leaves_the_release_build_data_in_place() {
+    // Regression: a debug build resolved its stores under `dev/` and moved
+    // the files it found at the un-scoped root, which belong to an installed
+    // release build, into it. The release build then booted as a fresh install.
+    // A release test build has no `dev/` scope, so there is nothing to keep
+    // apart from.
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    let root = unique_test_root("debug-keeps-release-data");
+    let ctx = TestCtx { root: root.clone() };
+    let release_files = [
+        root.join("user").join("settings.json"),
+        root.join("state").join("portable-config.json"),
+        root.join("state").join("local-config.json"),
+        root.join("config.json"),
+        root.join("steam").join("profiles.json"),
+        root.join("platforms").join("roblox").join("accounts.json"),
+        root.join("themes").join("mine.json"),
+        root.join("riot-profiles").join("snapshot.bin"),
+        root.join("platforms")
+            .join("riot")
+            .join("snapshots")
+            .join("snapshot.bin"),
+    ];
+    for file in &release_files {
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, b"release data").unwrap();
+    }
+
+    let snapshot = load_client_storage_snapshot(&ctx).unwrap();
+    portable_config_path(&ctx).unwrap();
+    local_config_path(&ctx).unwrap();
+    roblox_accounts_path(&ctx).unwrap();
+    let themes = themes_dir(&ctx).unwrap();
+    let riot = platform_snapshots_dir(&ctx, "riot").unwrap();
+    let legacy = legacy_config_path(&ctx).unwrap();
+
+    for file in &release_files {
+        assert_eq!(
+            fs::read(file).unwrap(),
+            b"release data",
+            "{} must stay where the release build reads it",
+            file.display()
+        );
+    }
+    let dev = root.join(DEV_SCOPE_DIR);
+    for path in [&themes, &riot, &legacy] {
+        assert!(path.starts_with(&dev), "{} is outside dev/", path.display());
+    }
+    assert!(snapshot.stores[STORE_SETTINGS].is_null());
+    assert!(!themes.exists() && !riot.exists());
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_moved_cache_store_migrates_inside_its_own_scope() {
+    let root = unique_test_root("cache-store-layout-move");
+    let ctx = TestCtx { root: root.clone() };
+    let old = app_cache_root(&ctx)
+        .unwrap()
+        .join("steam")
+        .join("profiles.json");
+    fs::create_dir_all(old.parent().unwrap()).unwrap();
+    fs::write(&old, b"{\"a\":1}").unwrap();
+
+    let current = client_store_path(&ctx, STORE_STEAM_PROFILE_CACHE).unwrap();
+
+    assert_eq!(fs::read(&current).unwrap(), b"{\"a\":1}");
+    assert!(!old.exists());
+
+    let _ = fs::remove_dir_all(&root);
+}

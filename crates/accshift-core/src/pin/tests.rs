@@ -200,10 +200,9 @@ fn hash_pin_code_produces_a_verifiable_pbkdf2_hash() {
 // -----------------------------------------------------------------------
 
 // The CLI and the GUI backend read the very file the GUI writes, so a hash
-// produced on either side must verify on the other. These literals also
-// appear in `src/lib/shared/pin.test.ts` ("CLI interoperability"): both
-// suites derive them independently, so a change to iterations, salt
-// length or hex casing on one side breaks the other's test too.
+// produced on either side must verify on the other. These literals were
+// derived outside this code, so a change to iterations, salt length or hex
+// casing fails here before it locks anyone out of a stored PIN.
 #[test]
 fn gui_cross_check_vector_verifies() {
     const SALT_HEX: &str = "000102030405060708090a0b0c0d0e0f";
@@ -420,7 +419,7 @@ fn a_session_starting_with_a_pin_is_locked_until_the_code_matches() {
     let session = PinSession::new();
     assert_pin_locked(session.ensure_unlocked(&tmp.ctx()));
 
-    let now = Instant::now();
+    let now = SystemTime::now();
     assert_eq!(
         session.unlock_at(&tmp.ctx(), &code(1111), now).unwrap(),
         UnlockOutcome::Invalid {
@@ -479,7 +478,7 @@ fn a_legacy_hash_unlocks_and_says_so() {
 fn wrong_codes_are_rate_limited_and_the_wait_grows() {
     let tmp = with_pin("session-rate", 1234);
     let session = PinSession::new();
-    let mut now = Instant::now();
+    let mut now = SystemTime::now();
     for failures in 1..=7u32 {
         let outcome = session.unlock_at(&tmp.ctx(), &code(1111), now).unwrap();
         assert_eq!(
@@ -600,4 +599,125 @@ fn an_unreadable_store_never_unlocks_the_session() {
     session
         .check_settings_write(&ctx, &current)
         .expect("an unlocked session repairs the store");
+}
+
+fn throttle_file(ctx: &TestCtx) -> PathBuf {
+    throttle_dir(ctx).unwrap().join(THROTTLE_FILE_NAME)
+}
+
+#[test]
+fn the_wrong_code_wait_survives_a_restart_and_binds_the_cli() {
+    // Regression: the wait lived in the session's memory, so a restart reset
+    // it and the CLI, which has no session, checked codes with no wait.
+    let tmp = with_pin("throttle-persisted", 1234);
+    let ctx = tmp.ctx();
+    let now = SystemTime::now();
+    let first = PinSession::new();
+    // Six wrong codes, each one sent once its wait is over.
+    let mut t = now;
+    for failures in 1..=6u32 {
+        assert_eq!(
+            first.unlock_at(&ctx, &code(1111), t).unwrap(),
+            UnlockOutcome::Invalid {
+                retry_after: failure_delay(failures)
+            }
+        );
+        t += failure_delay(failures);
+    }
+    let last_wait = failure_delay(6);
+    let just_failed = t - last_wait;
+
+    // A new process: a fresh session, then the CLI's entry point.
+    let restarted = PinSession::new();
+    assert_eq!(
+        restarted
+            .unlock_at(&ctx, &code(1234), just_failed + Duration::from_secs(1))
+            .unwrap(),
+        UnlockOutcome::RetryLater {
+            retry_after: last_wait - Duration::from_secs(1)
+        }
+    );
+    assert!(matches!(
+        verify_pin_throttled(
+            &ctx,
+            &code(1234),
+            &pbkdf2_hash_for(1234),
+            just_failed + Duration::from_secs(2)
+        )
+        .unwrap(),
+        ThrottledVerdict::RetryLater(_)
+    ));
+
+    // Once the wait is over the right code unlocks and clears the count.
+    assert_eq!(
+        restarted.unlock_at(&ctx, &code(1234), t).unwrap(),
+        UnlockOutcome::Unlocked { legacy: false }
+    );
+    assert_eq!(
+        read_throttle(&throttle_dir(&ctx).unwrap()),
+        Throttle::default()
+    );
+}
+
+#[test]
+fn a_missing_or_corrupt_throttle_file_is_no_lockout() {
+    let tmp = with_pin("throttle-corrupt", 1234);
+    let ctx = tmp.ctx();
+    let path = throttle_file(&ctx);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, b"{ not json").unwrap();
+    assert_eq!(
+        PinSession::new()
+            .unlock_at(&ctx, &code(1234), SystemTime::now())
+            .unwrap(),
+        UnlockOutcome::Unlocked { legacy: false }
+    );
+
+    fs::remove_file(&path).unwrap();
+    assert_eq!(
+        PinSession::new()
+            .unlock_at(&ctx, &code(1111), SystemTime::now())
+            .unwrap(),
+        UnlockOutcome::Invalid {
+            retry_after: BASE_FAILURE_DELAY
+        }
+    );
+}
+
+#[test]
+fn a_clock_set_backwards_neither_extends_nor_skips_the_wait() {
+    let tmp = with_pin("throttle-clock", 1234);
+    let ctx = tmp.ctx();
+    let wait = failure_delay(7);
+    let now = SystemTime::now();
+    // Seven wrong codes on record, the last one just now.
+    write_throttle(
+        &throttle_dir(&ctx).unwrap(),
+        &Throttle {
+            failures: 7,
+            next_attempt_at_ms: add_ms(unix_ms(now), wait),
+        },
+    );
+
+    // The clock goes back a day: the wait left is the configured one, not a
+    // day plus it, and it is still enforced.
+    let back = now - Duration::from_secs(24 * 3600);
+    let session = PinSession::new();
+    assert_eq!(
+        session.unlock_at(&ctx, &code(1234), back).unwrap(),
+        UnlockOutcome::RetryLater { retry_after: wait }
+    );
+    assert_eq!(
+        session
+            .unlock_at(&ctx, &code(1234), back + wait - Duration::from_millis(1))
+            .unwrap(),
+        UnlockOutcome::RetryLater {
+            retry_after: Duration::from_millis(1)
+        }
+    );
+    // The configured wait after the jump is the whole lockout.
+    assert_eq!(
+        session.unlock_at(&ctx, &code(1234), back + wait).unwrap(),
+        UnlockOutcome::Unlocked { legacy: false }
+    );
 }

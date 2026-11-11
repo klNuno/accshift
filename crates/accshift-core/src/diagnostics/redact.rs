@@ -1,13 +1,12 @@
 //! Redaction applied to everything that reaches the log file.
 //!
-//! Moved out of `logging.rs` when the structured event layer landed: the
-//! legacy facade and the new event pipeline must scrub identically, and the
-//! new pipeline needs a recursive walk over `fields` that the string-only
-//! entry point could not express.
+//! The legacy `append_app_log` facade and the structured event pipeline must
+//! scrub identically, and the event pipeline needs a recursive walk over
+//! `fields`, so both go through this module.
 //!
 //! The rule this module encodes: a log line never carries a token, a
-//! password, a cookie, a `.maFile` body, or a filesystem path that still
-//! contains the OS account name. What it cannot recognise by shape (Steam
+//! password, a cookie, a `.maFile` body, a SteamID64, or a filesystem path
+//! that still contains an OS account name. What it cannot recognise by shape (Steam
 //! login names, persona names) is kept out at the call sites instead, which
 //! is why nothing here tries to guess free-form words.
 
@@ -35,11 +34,11 @@ pub fn sanitize_value(value: &Value) -> Value {
 
 pub fn sanitize_log_text(value: &str) -> String {
     // Order matters: collapse emails first (they can contain digits/hex), then
-    // BattleTags, then UUID/PUUID. We deliberately do NOT try to redact Steam
-    // login names or persona names here: they're free-form words with no stable
-    // shape, so any heuristic broad enough to catch them would also redact
-    // ordinary log text (verbs, product names). Steam account identifiers stay
-    // out of the log layer and are handled at the call sites instead.
+    // BattleTags, then UUID/PUUID, and home folders before SteamID64s. We
+    // deliberately do NOT try to redact Steam login names or persona names
+    // here: they're free-form words with no stable shape, so any heuristic
+    // broad enough to catch them would also redact ordinary log text (verbs,
+    // product names). Those stay out of the log layer at the call sites.
     let mut sanitized = redact_email_like_tokens(value);
     sanitized = redact_battletags(&sanitized);
     sanitized = redact_uuid_like_tokens(&sanitized);
@@ -48,7 +47,89 @@ pub fn sanitize_log_text(value: &str) -> String {
         sanitized = replace_case_insensitive(&sanitized, &path, placeholder);
     }
 
-    redact_windows_user_dirs(&sanitized)
+    redact_steam_ids(&redact_unix_home_dirs(&redact_windows_user_dirs(
+        &sanitized,
+    )))
+}
+
+/// Replace the account name in any `/home/<name>` or `/Users/<name>` path the
+/// env scrub did not catch: another account's home, or a `HOME` that points
+/// elsewhere. `/Users/Shared` is a shared folder and stays readable.
+fn redact_unix_home_dirs(value: &str) -> String {
+    const PLACEHOLDER: &str = "<user>";
+    const ROOTS: [&str; 2] = ["/home/", "/Users/"];
+    // Unix account names have no spaces, so whitespace ends the name and the
+    // prose after a path stays readable.
+    let ends_name = |b: u8| {
+        matches!(b, b'/' | b'\\' | b'"' | b'\'' | b':' | b',' | b')') || b.is_ascii_whitespace()
+    };
+    let bytes = value.as_bytes();
+
+    let mut out = String::with_capacity(value.len());
+    let mut copied = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let Some(root) = ROOTS
+            .iter()
+            .find(|root| bytes[i..].starts_with(root.as_bytes()))
+        else {
+            i += 1;
+            continue;
+        };
+        // `example.com/home/page` is a URL, not a home. `/var/home` is where
+        // image-based Fedora keeps them.
+        let starts_path = i == 0
+            || !bytes[i - 1].is_ascii_alphanumeric() && bytes[i - 1] != b'.'
+            || value[..i].ends_with("/var");
+        let name_start = i + root.len();
+        if !starts_path {
+            i = name_start;
+            continue;
+        }
+        let mut name_end = name_start;
+        while name_end < bytes.len() && !ends_name(bytes[name_end]) {
+            name_end += 1;
+        }
+        // Stop bytes are ASCII, so both offsets sit on char boundaries.
+        let name = &value[name_start..name_end];
+        if !name.is_empty() && name != PLACEHOLDER && name != "Shared" {
+            out.push_str(&value[copied..name_start]);
+            out.push_str(PLACEHOLDER);
+            copied = name_end;
+        }
+        i = name_end.max(name_start);
+    }
+    out.push_str(&value[copied..]);
+    out
+}
+
+/// Replace SteamID64s: 17 digits in the individual-account range, which all
+/// start with `7656119`. A longer run of digits is some other number.
+fn redact_steam_ids(value: &str) -> String {
+    const PLACEHOLDER: &str = "<steamid>";
+    const PREFIX: &[u8] = b"7656119";
+    const LEN: usize = 17;
+    let bytes = value.as_bytes();
+
+    let mut out = String::with_capacity(value.len());
+    let mut copied = 0;
+    let mut i = 0;
+    while i + LEN <= bytes.len() {
+        let is_id = bytes[i..].starts_with(PREFIX)
+            && bytes[i..i + LEN].iter().all(u8::is_ascii_digit)
+            && (i == 0 || !bytes[i - 1].is_ascii_digit())
+            && bytes.get(i + LEN).is_none_or(|b| !b.is_ascii_digit());
+        if is_id {
+            out.push_str(&value[copied..i]);
+            out.push_str(PLACEHOLDER);
+            i += LEN;
+            copied = i;
+        } else {
+            i += 1;
+        }
+    }
+    out.push_str(&value[copied..]);
+    out
 }
 
 /// Replace the account name in any `X:\Users\<name>` path the env scrub did
@@ -734,6 +815,64 @@ mod tests {
             r"C:\Users\",
         ] {
             assert_eq!(redact_windows_user_dirs(text), text);
+        }
+    }
+
+    // Regression: only Windows profile paths were caught by shape, so a Linux
+    // or macOS path under another account, or with HOME pointing elsewhere,
+    // kept the account name.
+    #[test]
+    fn sanitize_log_text_hides_unix_home_names_outside_home() {
+        let _env = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = std::env::var("HOME").ok();
+        std::env::set_var("HOME", "/srv/unrelated-sentinel");
+
+        let result =
+            sanitize_log_text("read /home/alice/x and \"/Users/bob/y\" then /var/home/carol");
+
+        match previous {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        assert_eq!(
+            result,
+            "read /home/<user>/x and \"/Users/<user>/y\" then /var/home/<user>"
+        );
+    }
+
+    #[test]
+    fn redact_unix_home_dirs_keeps_shared_and_unrelated_paths() {
+        for kept in [
+            "/Users/Shared/accshift",
+            "https://example.com/home/page",
+            "/opt/accshift/homepage",
+            "/home/",
+        ] {
+            assert_eq!(redact_unix_home_dirs(kept), kept);
+        }
+        assert_eq!(
+            redact_unix_home_dirs("C:/Users/<user>/x"),
+            "C:/Users/<user>/x"
+        );
+    }
+
+    #[test]
+    fn steam_ids_are_redacted_by_shape() {
+        assert_eq!(
+            sanitize_log_text("switched to 76561198012345678, ok"),
+            "switched to <steamid>, ok"
+        );
+        assert_eq!(
+            sanitize_log_text("path userdata/76561198012345678/config"),
+            "path userdata/<steamid>/config"
+        );
+        // Not a SteamID64: wrong prefix, or part of a longer number.
+        for kept in [
+            "12345678901234567",
+            "765611980123456789",
+            "7656119801234567",
+        ] {
+            assert_eq!(sanitize_log_text(kept), kept);
         }
     }
 

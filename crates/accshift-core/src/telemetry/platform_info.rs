@@ -156,17 +156,47 @@ pub fn detect_locale() -> Option<String> {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn detect_locale() -> Option<String> {
+    // An app opened from Finder or the Dock gets no LANG: the user's choice
+    // lives in the global preferences.
+    posix_locale_from_env().or_else(|| {
+        let output = std::process::Command::new("/usr/bin/defaults")
+            .args(["read", "-g", "AppleLocale"])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .filter(|output| output.status.success())?;
+        parse_apple_locale(&String::from_utf8_lossy(&output.stdout))
+    })
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn detect_locale() -> Option<String> {
     posix_locale_from_env()
 }
 
-/// `LC_ALL` then `LANG`, stripped of the encoding suffix (`fr_FR.UTF-8`).
-/// The `C` locale means "unset" for our purposes and is reported as absent.
+/// `AppleLocale` as `defaults` prints it (`fr_FR`, or `en_US@rg=frzzzz` with a
+/// region override), without the `@` modifiers.
+#[cfg_attr(not(any(test, target_os = "macos")), allow(dead_code))]
+fn parse_apple_locale(output: &str) -> Option<String> {
+    let locale = output.trim().split('@').next().unwrap_or_default().trim();
+    (!locale.is_empty()).then(|| locale.to_string())
+}
+
+/// `LC_ALL`, `LC_MESSAGES` then `LANG`, the order POSIX gives them for message
+/// text, stripped of the encoding suffix (`fr_FR.UTF-8`).
 fn posix_locale_from_env() -> Option<String> {
-    std::env::var("LC_ALL")
-        .or_else(|_| std::env::var("LANG"))
-        .ok()
+    posix_locale_from(|name| std::env::var(name).ok())
+}
+
+/// The `C` locale means "unset" for our purposes and is reported as absent,
+/// and so is an empty variable, which POSIX says to skip.
+fn posix_locale_from(var: impl Fn(&str) -> Option<String>) -> Option<String> {
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .iter()
+        .find_map(|name| var(name).filter(|value| !value.is_empty()))
         .map(|v| v.split('.').next().unwrap_or(&v).to_string())
         .filter(|s| !s.is_empty() && s != "C" && s != "POSIX")
 }
@@ -180,6 +210,44 @@ mod tests {
         assert!(!detect_os().is_empty());
         assert!(!detect_arch().is_empty());
         assert!(!detect_os_version().is_empty());
+    }
+
+    // Regression: LC_MESSAGES was ignored, and on macOS a Finder launch has
+    // no POSIX variable at all, so no locale was found.
+    #[test]
+    fn posix_locale_reads_lc_messages_and_skips_empty_values() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| value.to_string())
+            }
+        };
+        assert_eq!(
+            posix_locale_from(env(&[
+                ("LC_ALL", ""),
+                ("LC_MESSAGES", "fr_FR.UTF-8"),
+                ("LANG", "en_US")
+            ])),
+            Some("fr_FR".to_string())
+        );
+        assert_eq!(
+            posix_locale_from(env(&[("LC_ALL", "de_DE"), ("LANG", "en_US")])),
+            Some("de_DE".to_string())
+        );
+        assert_eq!(posix_locale_from(env(&[("LANG", "C.UTF-8")])), None);
+        assert_eq!(posix_locale_from(env(&[])), None);
+    }
+
+    #[test]
+    fn apple_locale_drops_its_modifiers() {
+        assert_eq!(parse_apple_locale("fr_FR\n").as_deref(), Some("fr_FR"));
+        assert_eq!(
+            parse_apple_locale("en_US@rg=frzzzz\n").as_deref(),
+            Some("en_US")
+        );
+        assert_eq!(parse_apple_locale("  \n"), None);
     }
 
     #[test]

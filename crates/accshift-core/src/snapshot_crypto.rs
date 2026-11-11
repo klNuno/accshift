@@ -47,47 +47,33 @@ pub struct DirCopyOptions<'a> {
 /// elsewhere). The on-disk snapshot is never plaintext auth material.
 pub fn encrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
     let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
-    let encrypted = secrets::encrypt_bytes(&data)
-        .map_err(|e| format!("Could not encrypt {}: {e}", source.display()))?;
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-    }
-    let mut out = Vec::with_capacity(ENCRYPTED_HEADER.len() + encrypted.len());
-    out.extend_from_slice(ENCRYPTED_HEADER);
-    out.extend_from_slice(&encrypted);
-    fs::write(dest, &out).map_err(|e| format!("Could not write {}: {e}", dest.display()))
+    write_encrypted_bytes(dest, &data)
 }
 
 /// Copy a file, decrypting if it has the header (legacy plaintext files pass
 /// through unchanged).
+///
+/// A restore writes live launcher files with it, so the write is atomic: an
+/// interrupted restore leaves the launcher's previous file, never half of one.
 pub fn decrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
-    let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
-    let content = if data.starts_with(ENCRYPTED_HEADER) {
-        secrets::decrypt_bytes(&data[ENCRYPTED_HEADER.len()..])
-            .map_err(|e| format!("Could not decrypt {}: {e}", source.display()))?
-    } else {
-        data
-    };
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-    }
-    fs::write(dest, &content).map_err(|e| format!("Could not write {}: {e}", dest.display()))
+    let content = read_decrypted_bytes(source)?;
+    crate::storage::write_bytes_atomic(dest, &content)
 }
 
-/// Encrypt raw bytes and write them with the header (no temp plaintext on disk).
+/// Encrypt raw bytes and write them with the header (no temp plaintext on
+/// disk). The write is atomic, so a crash mid-capture never leaves a truncated
+/// snapshot that would fail to decrypt.
 pub fn write_encrypted_bytes(dest: &Path, data: &[u8]) -> Result<(), String> {
     let encrypted = secrets::encrypt_bytes(data)
         .map_err(|e| format!("Could not encrypt {}: {e}", dest.display()))?;
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-    }
     let mut out = Vec::with_capacity(ENCRYPTED_HEADER.len() + encrypted.len());
     out.extend_from_slice(ENCRYPTED_HEADER);
     out.extend_from_slice(&encrypted);
-    fs::write(dest, &out).map_err(|e| format!("Could not write {}: {e}", dest.display()))
+    crate::storage::write_bytes_atomic(dest, &out).inspect_err(|_| {
+        // On Linux and macOS the ciphertext is a keyring pointer: a token
+        // that never reached a file would leak its entry.
+        let _ = secrets::delete_bytes(&encrypted);
+    })
 }
 
 /// Read a snapshot file, decrypting it if it carries the header. Legacy
@@ -727,6 +713,46 @@ mod tests {
         decrypted_copy_file(&source, &dest).unwrap();
 
         assert_eq!(fs::read(&dest).unwrap().as_slice(), body);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Makes the atomic writer's temp file impossible to create next to
+    /// `path`, so the write fails before it could touch `path`.
+    fn block_temp_file(path: &Path) {
+        let mut name = path.file_name().unwrap().to_os_string();
+        name.push(format!(".{}.tmp", std::process::id()));
+        fs::create_dir_all(path.with_file_name(name)).unwrap();
+    }
+
+    #[test]
+    fn a_failed_restore_write_leaves_the_live_file_whole() {
+        // Regression: the restore wrote live launcher files in place, so an
+        // interrupted write left the launcher a truncated file.
+        let dir = scratch_dir("restore-atomic");
+        let source = dir.join("snapshot.dat");
+        let live = dir.join("live.dat");
+        fs::write(&source, b"restored session").unwrap();
+        fs::write(&live, b"current session").unwrap();
+        block_temp_file(&live);
+
+        assert!(decrypted_copy_file(&source, &live).is_err());
+
+        assert_eq!(fs::read(&live).unwrap(), b"current session");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_snapshot_write_keeps_the_previous_one_and_frees_its_secret() {
+        let dir = scratch_dir("capture-atomic");
+        let dest = dir.join("token.dat");
+        write_encrypted_bytes(&dest, b"first session").unwrap();
+        let entries = crate::secrets::backend::entry_count();
+        block_temp_file(&dest);
+
+        assert!(write_encrypted_bytes(&dest, b"second session").is_err());
+
+        assert_eq!(decrypted(&dest).as_deref(), Some(&b"first session"[..]));
+        assert_eq!(crate::secrets::backend::entry_count(), entries);
         let _ = fs::remove_dir_all(&dir);
     }
 

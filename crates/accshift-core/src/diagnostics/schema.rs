@@ -5,8 +5,8 @@
 //! reader that has never seen this codebase can therefore trust them, which is
 //! the whole point of publishing them.
 
+use super::catalog;
 use super::event::{Level, Outcome, SCHEMA_VERSION};
-use super::{catalog, event};
 use serde_json::{json, Value};
 use std::path::Path;
 
@@ -113,19 +113,20 @@ pub fn write_docs(docs_dir: &Path) -> Result<Vec<String>, String> {
     Ok(written)
 }
 
-/// A single record, described for whoever has to read one. Kept next to the
-/// schema so the example cannot drift from the shape it illustrates.
-pub fn example_record() -> String {
-    event::event(&catalog::OP_FINISHED)
-        .source("platform.steam")
-        .msg("Steam refused to exit")
-        .field("op", "platform.switch")
-        .field("platform", "steam")
-        .field("steps", 4u64)
+/// A record with every optional column set, so the schema test sees each
+/// column the writer can produce.
+#[cfg(test)]
+fn example_record() -> String {
+    super::event::event(&catalog::HEALTH_PATH_PERMISSION_DENIED)
+        .source("health")
+        .msg("the log directory is not writable")
+        .field("path", "/home/<user>")
+        .field("purpose", "application log")
+        .field("reason", "permission denied")
         .op("op-91c2ab77de10")
-        .dur_ms(4_211)
+        .dur_ms(12)
         .outcome(Outcome::Failure)
-        .err_kind("client_running")
+        .err_kind("permission_denied")
         .render()
 }
 
