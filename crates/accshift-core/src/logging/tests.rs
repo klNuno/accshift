@@ -330,3 +330,48 @@ fn the_announced_budget_matches_the_policy() {
         MAX_LOG_FILE_BYTES * (u64::from(ROTATED_FILES_KEPT) + 1)
     );
 }
+
+// Regression: a panic while another thread held the sink only reached
+// stderr, which a Windows-subsystem GUI does not have, so the crash record
+// was lost.
+#[test]
+fn a_panic_with_the_sink_held_lands_in_the_fallback_file() {
+    let ctx = TestCtx::ctx("logging-panic-fallback");
+    let log = log_file_path(&*ctx).expect("path");
+    let fallback = panic_fallback_path(&*ctx).expect("fallback path");
+
+    let held = sinks().lock().unwrap_or_else(|error| error.into_inner());
+    record_panic(&*ctx, "boom", "src/main.rs:1:1").expect("recorded");
+    drop(held);
+
+    assert!(read_lines(&log).is_empty());
+    let records = read_lines(&fallback);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["source"], "rust.panic");
+    assert_eq!(records[0]["message"], "boom");
+    assert_eq!(records[0]["details"], "src/main.rs:1:1");
+}
+
+#[test]
+fn a_panic_waits_out_a_writer_on_another_thread() {
+    let ctx = TestCtx::ctx("logging-panic-brief-hold");
+    let log = log_file_path(&*ctx).expect("path");
+
+    let (held_tx, held_rx) = std::sync::mpsc::channel();
+    let writer = std::thread::spawn(move || {
+        let held = sinks().lock().unwrap_or_else(|error| error.into_inner());
+        held_tx.send(()).unwrap();
+        std::thread::sleep(Duration::from_millis(30));
+        drop(held);
+    });
+    held_rx.recv().unwrap();
+    record_panic(&*ctx, "late", "src/lib.rs:2:2").expect("recorded");
+    writer.join().unwrap();
+
+    let messages: Vec<Value> = read_lines(&log)
+        .iter()
+        .map(|record| record["message"].clone())
+        .collect();
+    assert_eq!(messages, vec![Value::from("late")]);
+    assert!(!panic_fallback_path(&*ctx).unwrap().exists());
+}

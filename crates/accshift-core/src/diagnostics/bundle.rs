@@ -115,6 +115,12 @@ pub fn render(app_handle: &dyn AppContext, options: &Options) -> String {
         );
     }
 
+    if let Some(panics) = panic_fallback_tail(app_handle) {
+        out.push_str("## Panics recorded outside the log\n\n```jsonl\n");
+        out.push_str(&panics);
+        out.push_str("```\n\n");
+    }
+
     out.push_str("## Recent log\n\n");
     out.push_str(
         "JSONL, oldest first. The schema is in docs/log-schema.json, the codes in docs/log-catalog.json.\n\n",
@@ -146,6 +152,27 @@ pub fn render(app_handle: &dyn AppContext, options: &Options) -> String {
     }
 
     out
+}
+
+/// Last records of the panic fallback file, written while the log sink was
+/// busy. Each one is a full log line, redacted when it was written.
+fn panic_fallback_tail(app_handle: &dyn AppContext) -> Option<String> {
+    const KEPT: usize = 20;
+    let path = crate::logging::panic_fallback_path(app_handle).ok()?;
+    let text = std::fs::read_to_string(path).ok()?;
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+    let mut out = String::new();
+    for line in &lines[lines.len().saturating_sub(KEPT)..] {
+        out.push_str(line);
+        out.push('\n');
+    }
+    Some(out)
 }
 
 fn section(out: &mut String, title: &str, value: &Value) {
@@ -421,6 +448,20 @@ mod tests {
     fn allow_listed_values_are_still_redacted() {
         let summary = summarize_config_value(None, &json!({ "theme": "mine user@example.com" }));
         assert_eq!(summary["theme"], json!("mine <email>"));
+    }
+
+    #[test]
+    fn the_report_shows_panics_written_outside_the_log() {
+        let ctx = TestCtx::ctx("bundle-panic-fallback");
+        assert!(!render(&*ctx, &Options::default()).contains("## Panics recorded outside"));
+
+        let path = crate::logging::panic_fallback_path(&*ctx).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "{\"source\":\"rust.panic\",\"message\":\"boom\"}\n").unwrap();
+
+        let text = render(&*ctx, &Options::default());
+        assert!(text.contains("## Panics recorded outside the log"));
+        assert!(text.contains("\"message\":\"boom\""));
     }
 
     #[test]

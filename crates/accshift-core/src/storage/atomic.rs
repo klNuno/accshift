@@ -130,6 +130,12 @@ pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let tmp_path = unique_tmp_path(path);
     write_synced(&tmp_path, bytes)
         .map_err(|e| format!("Could not write temp file {}: {e}", tmp_path.display()))?;
+    // The rename replaces the file and with it its mode: keep a launcher's
+    // owner-only session file owner-only.
+    #[cfg(unix)]
+    if let Ok(meta) = fs::metadata(path) {
+        let _ = fs::set_permissions(&tmp_path, meta.permissions());
+    }
 
     let bak_path = backup_path(path);
     let mut rename_result = fs::rename(&tmp_path, path);
