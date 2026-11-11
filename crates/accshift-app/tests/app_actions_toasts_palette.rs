@@ -4,8 +4,8 @@
 
 use accshift_app::accounts::{Toast, ToastKind};
 use accshift_app::actions::palette::{
-    fold_text, fuzzy_score, fuzzy_score_all, palette_commands, run_command, CommandPalette,
-    FoldCache, PaletteAction, PaletteRow, PaletteSection, RegistryInput, EMPTY_QUERY_ACCOUNT_LIMIT,
+    fold_text, fuzzy_score_all, palette_commands, run_command, CommandPalette, FoldCache,
+    PaletteAction, PaletteRow, PaletteSection, RegistryInput, EMPTY_QUERY_ACCOUNT_LIMIT,
 };
 use accshift_app::actions::toasts::{
     resolve_toast_duration, AddToastOptions, DurationRequest, ToastAction, ToastQueue, ToastType,
@@ -235,6 +235,10 @@ fn registry_marks_the_current_account_active_once_through_the_badge_alone() {
         .find(|command| command.id == "action:add-account")
         .unwrap();
     assert!(add.hint.as_deref().unwrap().ends_with("+N"));
+}
+
+fn fuzzy_score(query: &str, text: &str) -> Option<i64> {
+    fuzzy_score_all(&mut FoldCache::default(), query, text, &[])
 }
 
 #[test]

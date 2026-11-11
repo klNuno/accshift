@@ -39,11 +39,13 @@ pub struct SwitchStep {
     pub adapter: Option<Arc<PlatformAdapter>>,
 }
 
-/// The steps of a persona, in assignment order.
+/// The steps of a persona, in assignment order. A platform this launch did
+/// not load is left out; its stored assignment stays for when it is back.
 pub fn switch_steps(registry: &PlatformRegistry, persona: &Persona) -> Vec<SwitchStep> {
     persona
         .assignments
         .iter()
+        .filter(|assignment| registry.definition(&assignment.platform_id).is_some())
         .map(|assignment| SwitchStep {
             platform_id: assignment.platform_id.clone(),
             account_id: assignment.account_id.clone(),
@@ -260,13 +262,6 @@ impl PersonaSwitch {
         effects.push(AppEffect::CloseBulkEdit);
         self.show_personas = true;
         effects
-    }
-
-    /// The `$effect` that closes the panel when the feature is turned off.
-    pub fn sync_enabled(&mut self, personas_enabled: bool) {
-        if !personas_enabled && self.show_personas {
-            self.show_personas = false;
-        }
     }
 
     /// `handleSwitchPersona`, first half: asks for confirmation (several game

@@ -9,7 +9,7 @@
 use super::{PathPlaceholder, PlatformRegistry, RuntimeOs};
 use crate::backend::Backend;
 use crate::error::BackendResult;
-use crate::types::{DescriptorPreview, DryRunPlan, UserPlatformReport};
+use crate::types::{DescriptorPreview, UserPlatformReport};
 use serde_json::Value;
 
 /// `PlatformDescriptor`: the part of a descriptor the UI reads.
@@ -221,13 +221,4 @@ pub fn remove_descriptor(
 /// `openDescriptorsFolder`.
 pub fn open_descriptors_folder(backend: &dyn Backend) -> BackendResult<()> {
     backend.open_descriptors_folder()
-}
-
-/// `dryRunSwitch`.
-pub fn dry_run_switch(
-    backend: &dyn Backend,
-    platform_id: &str,
-    account_id: &str,
-) -> BackendResult<DryRunPlan> {
-    backend.platform_dry_run(platform_id, account_id)
 }

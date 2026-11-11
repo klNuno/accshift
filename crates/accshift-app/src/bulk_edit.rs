@@ -8,15 +8,16 @@
 //! pending open token) has nothing left to guard. The paint gesture reads
 //! the card under the pointer from the UI instead of `elementFromPoint`.
 //!
-//! The toasts for the outcome (`handleBulkEditResult`), the clipboard write
-//! of the URLs and the card color write belong to the dialog and card-action
-//! modules: [`BulkEdit::poll`] hands the result over, [`BulkEditBar::copy_urls`]
-//! and [`BulkEditBar::apply_color`] the values.
+//! The clipboard write of the URLs and the card color write belong to the
+//! card-action module: [`BulkEditBar::copy_urls`] and
+//! [`BulkEditBar::apply_color`] hand the values over. [`BulkEdit::poll`]
+//! reports finished jobs with the toast each one needs.
 
+use crate::accounts::{Toast, ToastKind};
 use crate::error::BackendResult;
 use crate::jobs::{Jobs, Pending, Poll};
 use crate::platforms::steam::{api as steam_api, to_profile_url};
-use crate::platforms::PlatformDef;
+use crate::platforms::{PlatformBulkEditResult, PlatformDef};
 use crate::text::Text;
 use crate::types::{
     BulkEditFailure, BulkEditRequest, BulkEditResult, CopyableGame, LaunchOptionEdit,
@@ -36,16 +37,6 @@ pub fn toggle_allowed(
     def.is_some_and(|def| def.capabilities.bulk_edit) && active_tab_usable && !settings_open
 }
 
-/// `showBulkEdit` of the titlebar (App.svelte line 765).
-pub fn titlebar_button_visible(
-    def: Option<&PlatformDef>,
-    active_tab_usable: bool,
-    settings_open: bool,
-    personas_open: bool,
-) -> bool {
-    toggle_allowed(def, active_tab_usable, settings_open) && !personas_open
-}
-
 /// The paint gesture state (lines 30-41).
 #[derive(Debug, Clone, Default)]
 struct Paint {
@@ -57,6 +48,35 @@ struct Paint {
     start_id: Option<String>,
 }
 
+type ApplyJob = Pending<BackendResult<BulkEditResult>>;
+
+/// A bulk edit job that ended, as [`BulkEdit::poll`] reports it.
+#[derive(Debug)]
+pub enum BulkEditOutcome {
+    /// An apply ended: its result, or the error as one `all` failure.
+    Applied(BulkEditResult),
+    /// The games of the launch option picker could not be read.
+    GamesFailed(String),
+}
+
+impl BulkEditOutcome {
+    /// The toast the outcome shows.
+    pub fn toast(&self) -> Toast {
+        match self {
+            BulkEditOutcome::Applied(result) => {
+                crate::actions::dialogs::bulk_edit_result_toast(&PlatformBulkEditResult {
+                    succeeded: result.succeeded as usize,
+                    failed: result.failed.iter().map(|f| f.steam_id.clone()).collect(),
+                })
+            }
+            BulkEditOutcome::GamesFailed(error) => Toast::new(
+                Text::with("bulkEdit.gamesLoadFailed", [("error", error.as_str())]),
+                ToastKind::Error,
+            ),
+        }
+    }
+}
+
 /// `createBulkEditController`.
 #[derive(Debug, Default)]
 pub struct BulkEdit {
@@ -65,6 +85,9 @@ pub struct BulkEdit {
     /// `bulkEditSelectedIds`, in insertion order like a JS `Set`.
     selected: Vec<String>,
     bar: Option<BulkEditBar>,
+    /// Applies still writing after their bar closed: their result still
+    /// needs its toast.
+    detached: Vec<ApplyJob>,
     paint: Paint,
     eat_next_click: bool,
 }
@@ -152,10 +175,13 @@ impl BulkEdit {
         self.selected.clear();
     }
 
-    /// `closeBulkEdit` (lines 116-120): also on a tab change.
+    /// `closeBulkEdit` (lines 116-120): also on a tab change. An apply in
+    /// flight keeps running and [`Self::poll`] still reports it.
     pub fn close(&mut self) {
         self.platform_id = None;
-        self.bar = None;
+        if let Some(job) = self.bar.take().and_then(|mut bar| bar.apply_pending.take()) {
+            self.detached.push(job);
+        }
         self.selected.clear();
         self.paint = Paint::default();
     }
@@ -233,10 +259,6 @@ impl BulkEdit {
         self.eat_next_click = false;
     }
 
-    pub fn is_painting(&self) -> bool {
-        self.paint.active
-    }
-
     // ------------------------------------------------------------ bar jobs
 
     /// The bar's "Next": [`BulkEditBar::go_to_settings`] with the selection.
@@ -265,17 +287,35 @@ impl BulkEdit {
         }
     }
 
-    /// One frame: applies finished bar jobs. A finished apply closes the mode
-    /// (`onResult` then `onClose`) and hands the result over for the toast.
-    pub fn poll(&mut self) -> Option<BulkEditResult> {
-        let result = self.bar.as_mut()?.poll()?;
-        self.close();
-        Some(result)
+    /// One frame: what the finished jobs report, in order. A finished apply
+    /// of the open bar closes the mode (`onResult` then `onClose`); one that
+    /// outlived its bar leaves the mode as it is.
+    pub fn poll(&mut self) -> Vec<BulkEditOutcome> {
+        let mut outcomes = Vec::new();
+        let mut waiting = Vec::new();
+        for mut job in std::mem::take(&mut self.detached) {
+            match apply_poll(&mut job) {
+                Some(result) => outcomes.push(BulkEditOutcome::Applied(result)),
+                None => waiting.push(job),
+            }
+        }
+        self.detached = waiting;
+        if let Some(bar) = self.bar.as_mut() {
+            let from_bar = bar.poll();
+            if from_bar
+                .iter()
+                .any(|outcome| matches!(outcome, BulkEditOutcome::Applied(_)))
+            {
+                self.close();
+            }
+            outcomes.extend(from_bar);
+        }
+        outcomes
     }
 
-    /// A games load or an apply is in flight.
+    /// A games load or an apply is in flight, a detached apply included.
     pub fn is_busy(&self) -> bool {
-        self.bar.as_ref().is_some_and(BulkEditBar::is_busy)
+        !self.detached.is_empty() || self.bar.as_ref().is_some_and(BulkEditBar::is_busy)
     }
 }
 
@@ -353,7 +393,7 @@ pub struct BulkEditBar {
     pub selected_game_id: String,
     /// `bind:value` of the launch option field.
     pub launch_option_input: String,
-    apply_pending: Option<Pending<BackendResult<BulkEditResult>>>,
+    apply_pending: Option<ApplyJob>,
 }
 
 impl BulkEditBar {
@@ -532,28 +572,43 @@ impl BulkEditBar {
         true
     }
 
-    /// Applies finished jobs. `Some` once the apply ended: its result, or the
-    /// error as one `all` failure (line 135).
-    pub fn poll(&mut self) -> Option<BulkEditResult> {
+    /// Applies finished jobs: a failed games load, then the apply result.
+    pub fn poll(&mut self) -> Vec<BulkEditOutcome> {
+        let mut outcomes = Vec::new();
         if let Some(pending) = self.games_pending.as_mut() {
-            match pending.poll() {
-                Poll::Waiting => {}
-                Poll::Ready(result) => {
+            let failure = match pending.poll() {
+                Poll::Waiting => None,
+                Poll::Ready(Ok(games)) => {
+                    self.games = games;
                     self.games_pending = None;
-                    self.games = result.unwrap_or_default();
+                    None
                 }
-                Poll::Gone => self.games_pending = None,
+                Poll::Ready(Err(error)) => Some(error.message),
+                Poll::Gone => Some("games load stopped".to_string()),
+            };
+            if let Some(error) = failure {
+                self.games_pending = None;
+                outcomes.push(BulkEditOutcome::GamesFailed(error));
             }
         }
-        let pending = self.apply_pending.as_mut()?;
-        let result = match pending.poll() {
-            Poll::Waiting => return None,
-            Poll::Ready(Ok(result)) => result,
-            Poll::Ready(Err(error)) => failed_everywhere(error.message),
-            Poll::Gone => failed_everywhere("Bulk edit stopped".to_string()),
-        };
-        self.apply_pending = None;
-        Some(result)
+        if let Some(job) = self.apply_pending.as_mut() {
+            if let Some(result) = apply_poll(job) {
+                self.apply_pending = None;
+                outcomes.push(BulkEditOutcome::Applied(result));
+            }
+        }
+        outcomes
+    }
+}
+
+/// The apply result once its job ended, the error as one `all` failure
+/// (line 135).
+fn apply_poll(job: &mut ApplyJob) -> Option<BulkEditResult> {
+    match job.poll() {
+        Poll::Waiting => None,
+        Poll::Ready(Ok(result)) => Some(result),
+        Poll::Ready(Err(error)) => Some(failed_everywhere(error.message)),
+        Poll::Gone => Some(failed_everywhere("Bulk edit stopped".to_string())),
     }
 }
 

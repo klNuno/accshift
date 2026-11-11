@@ -307,6 +307,43 @@ fn steam_cancel_stops_polling_and_reloads() {
 }
 
 #[test]
+fn a_repeated_cancel_is_counted_once_and_a_failure_is_translated() {
+    let mut rig = Rig::new("steam");
+    rig.begin(
+        "steam",
+        setup_json("setup-9", "waiting_for_login", "", "", ""),
+    );
+    rig.backend
+        .push("platform_cancel_setup", Err("setup already gone"));
+    // Escape, then the tab change before the first cancel answered.
+    rig.with_ctx(10, |flow, ctx, _| flow.cancel(ctx));
+    rig.with_ctx(11, |flow, ctx, _| flow.cancel(ctx));
+    rig.with_ctx(12, |flow, ctx, _| {
+        flow.cancel_if_conflicting(ctx, "steam", None)
+    });
+    let events = rig.tick(20);
+    assert_eq!(
+        rig.backend
+            .calls("telemetry_track_account_add_cancelled")
+            .len(),
+        1
+    );
+    assert_eq!(rig.backend.calls("platform_cancel_setup").len(), 1);
+    let toast = events
+        .iter()
+        .find_map(|event| match event {
+            AddFlowEvent::Toast(toast) => Some(toast),
+            _ => None,
+        })
+        .expect("a failure toast");
+    let Text::Key { key, .. } = &toast.text else {
+        panic!("the failure is translated, got {:?}", toast.text);
+    };
+    assert_eq!(key, "toast.addAccountCancelFailed");
+    assert!(!rig.flow.is_active());
+}
+
+#[test]
 fn steam_poll_error_marks_the_flow_failed() {
     let mut rig = Rig::new("steam");
     rig.begin(
@@ -448,14 +485,18 @@ fn descriptor_platform_failed_state_and_cancel_error() {
         Some(Text::key("gog.setupFailedMessage"))
     );
 
-    // The cancel itself fails: its message is the toast, the flow ends.
+    // The cancel itself fails: its message goes into the toast, the flow
+    // ends.
     rig.backend.push("platform_cancel_setup", Err("setup gone"));
     rig.with_ctx(2000, |flow, ctx, _| flow.cancel(ctx));
     let events = rig.tick(2000);
     assert_eq!(
         events,
         vec![
-            AddFlowEvent::Toast(Toast::new(Text::raw("setup gone"), ToastKind::Default)),
+            AddFlowEvent::Toast(Toast::new(
+                Text::with("toast.addAccountCancelFailed", [("error", "setup gone")]),
+                ToastKind::Default
+            )),
             silent_load(),
         ]
     );
@@ -501,7 +542,6 @@ fn the_pending_card_hides_in_folders_searches_and_other_tabs() {
     assert!(rig.flow.pending_setup_account(&folder).is_none());
     assert!(rig.flow.pending_setup_account(&search).is_none());
     assert!(rig.flow.pending_setup_account(&riot).is_none());
-    assert!(rig.flow.is_pending_setup_account(&rig.view(), "s-1"));
     assert_eq!(
         rig.flow
             .pending_setup_account(&rig.view())

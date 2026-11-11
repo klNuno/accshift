@@ -659,11 +659,6 @@ impl ProfileCaches {
         }
     }
 
-    /// Whether `platform_id` has a cache here.
-    pub fn has_cache(platform_id: &str) -> bool {
-        matches!(platform_id, "steam" | "roblox")
-    }
-
     /// Replays a fetch's writes into the platform's store.
     pub fn apply_writes(
         &self,

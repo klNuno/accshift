@@ -313,10 +313,6 @@ impl AccountLoader {
         &self.avatars
     }
 
-    pub fn avatars_mut(&mut self) -> &mut AvatarStates {
-        &mut self.avatars
-    }
-
     pub fn warning_states(&self) -> &BTreeMap<String, WarningPresentation> {
         &self.warning_states
     }

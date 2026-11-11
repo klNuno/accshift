@@ -197,9 +197,24 @@ impl ToastQueue {
         self.add(toast.text, AddToastOptions::kind(toast.kind.into()), now)
     }
 
+    /// A toast that stays until [`Self::remove_text`] takes it down.
+    pub fn push_sticky(&mut self, toast: Toast, now: Instant) -> u64 {
+        let options = AddToastOptions {
+            kind: toast.kind.into(),
+            duration: DurationRequest::Sticky,
+            action: None,
+        };
+        self.add(toast.text, options, now)
+    }
+
     /// `removeToast`.
     pub fn remove(&mut self, id: u64) {
         self.toasts.retain(|toast| toast.id != id);
+    }
+
+    /// Removes the toast showing `text`, if it is still up.
+    pub fn remove_text(&mut self, text: &Text) {
+        self.toasts.retain(|toast| toast.text != *text);
     }
 
     /// `handleMouseEnter` / `handleMouseLeave`. Leaving with no time left
@@ -253,5 +268,18 @@ impl ToastQueue {
     /// The next countdown end, for the repaint.
     pub fn next_deadline(&self) -> Option<Instant> {
         self.toasts.iter().filter_map(ToastEntry::deadline).min()
+    }
+}
+
+/// The toast after a clipboard write: `toast.copied` with the label,
+/// `toast.copyFailed` when it failed.
+pub fn copy_result_toast(label: &str, write_ok: bool) -> Toast {
+    if write_ok {
+        Toast::new(
+            Text::with("toast.copied", [("label", label)]),
+            ToastKind::Success,
+        )
+    } else {
+        Toast::new(Text::key("toast.copyFailed"), ToastKind::Error)
     }
 }

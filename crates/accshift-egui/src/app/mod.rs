@@ -52,7 +52,7 @@ use accshift_app::actions::dialogs::{
 };
 use accshift_app::actions::keyboard::KeyboardController;
 use accshift_app::actions::toasts::AddToastOptions;
-use accshift_app::actions::{card_actions, load_options, shell as app_shell, AppEffect};
+use accshift_app::actions::{card_actions, load_options, toasts, AppEffect};
 use accshift_app::backend::Backend;
 use accshift_app::error::BackendResult;
 use accshift_app::folders::{FolderInfo, ItemKind};
@@ -1685,6 +1685,10 @@ impl AppModel {
                 LoadingEvent::Toast(toast) => {
                     self.toasts.push(toast, Instant::now());
                 }
+                LoadingEvent::StickyToast(toast) => {
+                    self.toasts.push_sticky(toast, Instant::now());
+                }
+                LoadingEvent::DismissToast(text) => self.toasts.remove_text(&text),
                 LoadingEvent::MinimizeWindow => self.apply_one(ctx, Action::Minimize),
                 LoadingEvent::SwitchFinished {
                     account_id,
@@ -1786,7 +1790,7 @@ impl AppModel {
                         continue;
                     };
                     ctx.copy_text(text);
-                    let toast = app_shell::copy_result_toast(&label.resolve(locale), true);
+                    let toast = toasts::copy_result_toast(&label.resolve(locale), true);
                     self.toasts.push(toast, Instant::now());
                 }
                 AppEffect::CopyBulkUrls(urls) => {
@@ -1983,13 +1987,8 @@ impl AppModel {
         let Some(b) = self.booted.as_mut() else {
             return;
         };
-        if let Some(result) = b.bulk.poll() {
-            let result = accshift_app::platforms::PlatformBulkEditResult {
-                succeeded: result.succeeded as usize,
-                failed: result.failed.into_iter().map(|f| f.steam_id).collect(),
-            };
-            let toast = accshift_app::actions::dialogs::bulk_edit_result_toast(&result);
-            self.toasts.push(toast, Instant::now());
+        for outcome in b.bulk.poll() {
+            self.toasts.push(outcome.toast(), Instant::now());
         }
     }
 

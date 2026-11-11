@@ -58,6 +58,11 @@ impl Toast {
 #[derive(Debug, Clone, PartialEq)]
 pub enum LoadingEvent {
     Toast(Toast),
+    /// A toast that stays until [`LoadingEvent::DismissToast`] with its text.
+    StickyToast(Toast),
+    /// Remove the sticky toast showing this text.
+    DismissToast(Text),
+
     /// A load of `platform_id` landed and its folder sync ran: refresh the
     /// navigation items and the grid padding (`onAfterLoad`).
     AccountsLoaded {

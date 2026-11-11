@@ -198,8 +198,6 @@ pub enum Direction {
 /// What a binding does: one variant per `run` closure of the TS table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyCommand {
-    /// `run: () => {}`: take the key, do nothing (WebView built-ins).
-    Swallow,
     /// `run: () => PASS`.
     Pass,
     /// Close the context menu, open the palette.
@@ -232,7 +230,7 @@ pub enum KeyCommand {
     ZoomIn,
     ZoomOut,
     ResetZoom,
-    /// `alt+arrowleft` in the app: up a folder when in one; taken either way.
+    /// `alt+arrowleft` in the app: up a folder when in one, PASS at the root.
     AltBack,
     /// `backspace`: up a folder, PASS at the root.
     BackspaceBack,
@@ -275,6 +273,9 @@ pub struct Binding {
     pub allow_in_input: bool,
     /// Skip the binding, modifier combos included, in a text field.
     pub skip_in_input: bool,
+    /// Skip the binding in a text field on macOS only, where Option+arrow
+    /// moves the caret by word.
+    pub skip_in_input_on_mac: bool,
     /// `preventDefault !== false`. Every binding of the app table keeps it.
     pub prevent_default: bool,
     pub command: KeyCommand,
@@ -287,6 +288,7 @@ impl Binding {
             scopes,
             allow_in_input: false,
             skip_in_input: false,
+            skip_in_input_on_mac: false,
             prevent_default: true,
             command,
         }
@@ -299,6 +301,11 @@ impl Binding {
 
     fn skip_input(mut self) -> Self {
         self.skip_in_input = true;
+        self
+    }
+
+    fn skip_input_on_mac(mut self) -> Self {
+        self.skip_in_input_on_mac = true;
         self
     }
 }
@@ -314,16 +321,6 @@ pub fn app_bindings() -> Vec<Binding> {
     let all = || Scopes::All;
     let card_nav = || only(&CARD_NAV_SCOPES);
     let mut table = vec![
-        // WebView built-ins that must never fire in a desktop shell.
-        Binding::new("mod+w", all(), C::Swallow),
-        Binding::new("mod+p", all(), C::Swallow),
-        Binding::new("f3", all(), C::Swallow).in_input(),
-        Binding::new("mod+g", all(), C::Swallow),
-        Binding::new("f7", all(), C::Swallow).in_input(),
-        Binding::new("mod+u", all(), C::Swallow),
-        Binding::new("mod+j", all(), C::Swallow),
-        Binding::new("alt+arrowright", all(), C::Swallow).in_input(),
-        Binding::new("alt+arrowleft", all(), C::Pass).in_input(),
         // Command palette.
         Binding::new(
             "mod+k",
@@ -350,13 +347,10 @@ pub fn app_bindings() -> Vec<Binding> {
         // App-level shortcuts.
         Binding::new("mod+f", only(&[S::App, S::BulkEdit]), C::FocusSearch),
         Binding::new("mod+f", only(&[S::Settings]), C::FocusSettingsSearch),
-        Binding::new("mod+f", all(), C::Swallow),
         Binding::new("mod+n", only(&[S::App]), C::AddAccount),
         Binding::new("mod+shift+n", only(&[S::App]), C::NewFolder),
         Binding::new("mod+r", only(&[S::App]), C::Refresh),
         Binding::new("f5", only(&[S::App]), C::Refresh).in_input(),
-        Binding::new("f5", all(), C::Swallow).in_input(),
-        Binding::new("mod+shift+r", all(), C::Swallow),
         Binding::new("mod+e", only(&[S::App, S::BulkEdit]), C::ToggleBulkEdit),
         Binding::new(
             "mod+,",
@@ -380,7 +374,7 @@ pub fn app_bindings() -> Vec<Binding> {
         Binding::new("mod+shift+plus", all(), C::ZoomIn),
         Binding::new("mod+minus", all(), C::ZoomOut),
         Binding::new("mod+digit0", all(), C::ResetZoom),
-        Binding::new("alt+arrowleft", only(&[S::App]), C::AltBack).in_input(),
+        Binding::new("alt+arrowleft", only(&[S::App]), C::AltBack).skip_input_on_mac(),
         Binding::new("backspace", only(&[S::App]), C::BackspaceBack),
         // Card focus navigation.
         Binding::new("arrowleft", card_nav(), C::CardMove(Direction::Left)),
@@ -513,7 +507,6 @@ pub fn run_command(command: KeyCommand, event: &KeyEvent, host: &mut dyn KeyHost
         KeyResult::Handled
     };
     match command {
-        C::Swallow => KeyResult::Handled,
         C::Pass => KeyResult::Pass,
         C::OpenPalette => {
             host.act(KeyAction::CloseContextMenu);
@@ -584,13 +577,7 @@ pub fn run_command(command: KeyCommand, event: &KeyEvent, host: &mut dyn KeyHost
         C::ZoomIn => act(host, KeyAction::ZoomIn),
         C::ZoomOut => act(host, KeyAction::ZoomOut),
         C::ResetZoom => act(host, KeyAction::ResetZoom),
-        C::AltBack => {
-            if host.in_folder() {
-                host.act(KeyAction::NavigateBack);
-            }
-            KeyResult::Handled
-        }
-        C::BackspaceBack => {
+        C::AltBack | C::BackspaceBack => {
             if !host.in_folder() {
                 return KeyResult::Pass;
             }
@@ -626,12 +613,6 @@ pub enum KeyOutcome {
     /// Binding `index` of the table took it. `consume` is the TS
     /// `preventDefault` plus `stopPropagation`.
     Handled { index: usize, consume: bool },
-}
-
-impl KeyOutcome {
-    pub fn is_handled(self) -> bool {
-        matches!(self, KeyOutcome::Handled { .. })
-    }
 }
 
 /// `createKeyboardController` without the listener.
@@ -683,7 +664,9 @@ impl KeyboardController {
             if event.editable_target && !has_modifier && !binding.allow_in_input {
                 continue;
             }
-            if event.editable_target && binding.skip_in_input {
+            if event.editable_target
+                && (binding.skip_in_input || (is_mac && binding.skip_in_input_on_mac))
+            {
                 continue;
             }
             if run_command(binding.command, event, host) == KeyResult::Pass {

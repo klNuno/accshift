@@ -399,10 +399,8 @@ impl ClientStores {
             }
             CLIENT_STORE_FOLDERS => self.folders = folders::load_folder_store(value),
             CLIENT_STORE_PERSONAS => {
-                self.personas = personas::sanitize_personas(
-                    value.unwrap_or(&Value::Array(Vec::new())),
-                    &self.ctx,
-                )
+                self.personas =
+                    personas::sanitize_personas(value.unwrap_or(&Value::Array(Vec::new())))
             }
             CLIENT_STORE_ACCOUNT_CARD_NOTES => self.account_card_notes.load(value),
             CLIENT_STORE_ACCOUNT_CARD_COLORS => self.account_card_colors.load(value),
@@ -622,7 +620,7 @@ impl ClientStores {
 
     fn persist_personas(&mut self, list: Vec<Persona>) {
         let value = personas::personas_to_value(&list);
-        let sanitized = personas::sanitize_personas(&value, &self.ctx);
+        let sanitized = personas::sanitize_personas(&value);
         let value = personas::personas_to_value(&sanitized);
         self.personas = sanitized;
         self.write(CLIENT_STORE_PERSONAS, value);

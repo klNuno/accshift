@@ -8,7 +8,6 @@
 
 use super::AppEffect;
 use crate::backend::Backend;
-use crate::folders::ItemRef;
 use crate::jobs::{Jobs, Pending, Poll};
 use crate::platforms::PlatformAccount;
 use crate::text::Text;
@@ -47,11 +46,6 @@ pub fn mock_accounts() -> Vec<MockAccount> {
             }
         })
         .collect()
-}
-
-/// `mockItems`.
-pub fn mock_items() -> Vec<ItemRef> {
-    MOCK_IDS.iter().map(|id| ItemRef::account(*id)).collect()
 }
 
 /// `createOnboardingTour`.

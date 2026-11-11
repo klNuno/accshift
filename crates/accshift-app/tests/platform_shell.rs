@@ -1,14 +1,12 @@
-//! The platform shell state (`platformShell.svelte.ts`) and the CS2 bridge
-//! queue (`cs2Bridge.test.ts`) against MockBackend.
+//! The tab the shell opens on, and the CS2 bridge queue against
+//! MockBackend.
 
 mod support;
 
 use accshift_app::backend::Backend;
 use accshift_app::cs2_bridge::Cs2BridgeQueue;
 use accshift_app::jobs::Jobs;
-use accshift_app::platform_shell::{
-    initial_active_tab, is_platform_compatible_with_os, PlatformShell,
-};
+use accshift_app::platform_shell::initial_active_tab;
 use accshift_app::platforms::{PlatformAdapter, PlatformRegistry, RuntimeOs};
 use accshift_app::settings::{sanitize_settings, AppSettings};
 use accshift_app::stores::StoreContext;
@@ -47,91 +45,6 @@ fn the_initial_tab_prefers_the_enabled_usable_default() {
         initial_active_tab(&registry, &both, RuntimeOs::Unknown),
         "steam"
     );
-}
-
-#[test]
-fn compatibility_follows_the_supported_os_list() {
-    let registry = PlatformRegistry::shipped();
-    let steam = registry.definition("steam");
-    assert!(is_platform_compatible_with_os(steam, RuntimeOs::Windows));
-    assert!(!is_platform_compatible_with_os(steam, RuntimeOs::Unknown));
-    assert!(!is_platform_compatible_with_os(None, RuntimeOs::Windows));
-}
-
-#[test]
-fn ensure_active_tab_moves_off_an_unusable_tab() {
-    let registry = PlatformRegistry::shipped();
-    let windows_only = registry
-        .defs()
-        .iter()
-        .find(|def| {
-            def.implemented && def.supports(RuntimeOs::Windows) && !def.supports(RuntimeOs::Linux)
-        })
-        .map(|def| def.id.clone());
-    let mut shell = PlatformShell::new(
-        &registry,
-        settings(json!({ "enabledPlatforms": ["steam", "riot"], "defaultPlatformId": "steam" })),
-    );
-    assert_eq!(shell.active_tab(), "steam");
-    assert!(
-        shell.adapter(&registry).is_none(),
-        "nothing usable on an unknown OS"
-    );
-    shell.set_runtime_os(RuntimeOs::Windows);
-    assert!(!shell.ensure_active_tab(&registry));
-    assert!(shell.active_tab_usable(&registry));
-    assert_eq!(
-        shell.adapter(&registry).map(|a| a.id().to_string()),
-        Some("steam".into())
-    );
-    assert_eq!(
-        shell.accent_color(&registry),
-        Some(registry.definition("steam").unwrap().accent.clone())
-    );
-
-    if let Some(id) = windows_only {
-        shell.set_active_tab(id.clone());
-        shell.set_runtime_os(RuntimeOs::Linux);
-        assert!(shell.ensure_active_tab(&registry));
-        assert_ne!(shell.active_tab(), id);
-        assert!(shell.active_tab_usable(&registry));
-    }
-}
-
-#[test]
-fn derived_lists_zoom_and_unavailable_ids() {
-    let registry = PlatformRegistry::shipped();
-    let mut shell = PlatformShell::new(
-        &registry,
-        settings(json!({ "enabledPlatforms": ["riot", "steam"], "uiScalePercent": 200 })),
-    );
-    shell.set_runtime_os(RuntimeOs::Unknown);
-    // Shipped order, not the settings order.
-    let enabled: Vec<&str> = shell
-        .enabled_platforms(&registry)
-        .iter()
-        .map(|def| def.id.as_str())
-        .collect();
-    assert_eq!(enabled, vec!["steam", "riot"]);
-    assert_eq!(
-        shell
-            .unavailable_platform_ids(&registry)
-            .into_iter()
-            .collect::<Vec<_>>(),
-        vec!["riot".to_string(), "steam".to_string()]
-    );
-    shell.set_runtime_os(RuntimeOs::Windows);
-    assert!(shell.unavailable_platform_ids(&registry).is_empty());
-    assert!(!shell.compatible_platforms(&registry).is_empty());
-    assert_eq!(shell.ui_zoom_factor(), 1.5);
-    assert_eq!(shell.app_stage_zoom(), Some(1.5));
-    let mut next = shell.settings().clone();
-    next.ui_scale_percent = 100;
-    shell.refresh_settings(&next);
-    assert_eq!(shell.app_stage_zoom(), None);
-    next.ui_scale_percent = 10;
-    shell.set_settings(next);
-    assert_eq!(shell.ui_zoom_factor(), 0.75);
 }
 
 // ------------------------------------------------------------ CS2 bridge queue

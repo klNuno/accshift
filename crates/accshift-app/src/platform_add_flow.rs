@@ -345,6 +345,11 @@ impl PlatformAddFlow {
             self.stop();
             return;
         };
+        // A repeat while the first cancel runs (Escape, then a tab change)
+        // is the same walk away: counted once.
+        if self.cancel.is_some() {
+            return;
+        }
         // Counted whether or not the adapter has anything to cancel: the
         // funnel measures the user walking away.
         track(ctx.jobs, &current.platform_id, |backend, id| {
@@ -354,9 +359,6 @@ impl PlatformAddFlow {
             self.stop();
             return;
         };
-        if self.cancel.is_some() {
-            return;
-        }
         self.clear_timer();
         let setup_id = current.status.setup_id.clone();
         self.cancel = Some((
@@ -395,10 +397,11 @@ impl PlatformAddFlow {
     ) {
         if let Err(BackendError { message, .. }) = result {
             self.events.push(AddFlowEvent::Toast(Toast::new(
-                Text::raw(message),
+                Text::with("toast.addAccountCancelFailed", [("error", message)]),
                 ToastKind::Default,
             )));
         }
+
         self.stop();
         if ctx.view.active_tab == entry.platform_id {
             self.events.push(AddFlowEvent::LoadAccounts(LoadOptions {
@@ -500,12 +503,6 @@ impl PlatformAddFlow {
             display_name,
             username,
         })
-    }
-
-    /// `isPendingSetupAccount` (lines 457-459).
-    pub fn is_pending_setup_account(&self, view: &AddFlowView<'_>, account_id: &str) -> bool {
-        self.pending_setup_account(view)
-            .is_some_and(|pending| pending.id == account_id)
     }
 
     /// `pendingSetupAccountId` (App.svelte line 687).
