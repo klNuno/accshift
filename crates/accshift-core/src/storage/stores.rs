@@ -1,4 +1,4 @@
-//! Client stores: the layout of each store id, and loading or saving the webview's stores.
+//! Client stores: the layout of each store id, and loading or saving them.
 
 #[allow(unused_imports)]
 use super::*;
@@ -11,27 +11,21 @@ pub(super) enum StoreRoot {
 }
 
 /// Where one client store's file lives, in the current layout and in the
-/// pre-scoping one it migrates from. A new store is one row here; the two
+/// older one it migrates from. A new store is one row here; the two
 /// resolvers below read the same row, so they cannot drift apart.
 pub(super) struct ClientStoreLayout {
     pub(super) id: &'static str,
     pub(super) root: StoreRoot,
     /// Path under the current root.
     pub(super) current: &'static [&'static str],
-    /// Path under the un-scoped root, for stores that predate the migration.
+    /// Older path under the same root, for stores that moved.
     pub(super) legacy: Option<&'static [&'static str]>,
 }
 
 pub(super) const CLIENT_STORES: &[ClientStoreLayout] = &[
     layout(STORE_SETTINGS, &["user", "settings.json"]),
     layout(STORE_FOLDERS, &["user", "folders.json"]),
-    // Personas landed after the migration, so there is no legacy copy to move.
-    ClientStoreLayout {
-        id: STORE_PERSONAS,
-        root: StoreRoot::Config,
-        current: &["user", "personas.json"],
-        legacy: None,
-    },
+    layout(STORE_PERSONAS, &["user", "personas.json"]),
     layout(
         STORE_ACCOUNT_CARD_NOTES,
         &["user", "account-card-notes.json"],
@@ -71,8 +65,7 @@ pub(super) const CLIENT_STORES: &[ClientStoreLayout] = &[
     ),
 ];
 
-/// Config store whose legacy path is the same relative path under the
-/// un-scoped config root.
+/// Config store that never moved.
 pub(super) const fn layout(
     id: &'static str,
     current: &'static [&'static str],
@@ -81,7 +74,7 @@ pub(super) const fn layout(
         id,
         root: StoreRoot::Config,
         current,
-        legacy: Some(current),
+        legacy: None,
     }
 }
 
