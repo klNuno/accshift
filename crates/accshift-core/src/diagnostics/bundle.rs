@@ -10,7 +10,7 @@
 //! secret fields, which a deny-list would not.
 
 use super::event::{now_unix_ms, Level};
-use super::{anomaly, catalog, event, health, levels, query, redact};
+use super::{catalog, event, health, levels, query, redact};
 use crate::context::AppContext;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
@@ -87,8 +87,6 @@ pub fn render(app_handle: &dyn AppContext, options: &Options) -> String {
 
     let health = health::startup_report(app_handle);
     section(&mut out, "Health invariants", &health.to_json());
-
-    section(&mut out, "Anomaly counters", &anomaly::to_json(app_handle));
 
     section(&mut out, "Log storage", &storage_summary(app_handle));
 
@@ -479,7 +477,6 @@ mod tests {
         for heading in [
             "## Environment",
             "## Health invariants",
-            "## Anomaly counters",
             "## Log storage",
             "## Log levels",
             "## Configuration (redacted)",

@@ -200,10 +200,9 @@ fn hash_pin_code_produces_a_verifiable_pbkdf2_hash() {
 // -----------------------------------------------------------------------
 
 // The CLI and the GUI backend read the very file the GUI writes, so a hash
-// produced on either side must verify on the other. These literals also
-// appear in `src/lib/shared/pin.test.ts` ("CLI interoperability"): both
-// suites derive them independently, so a change to iterations, salt
-// length or hex casing on one side breaks the other's test too.
+// produced on either side must verify on the other. These literals were
+// derived outside this code, so a change to iterations, salt length or hex
+// casing fails here before it locks anyone out of a stored PIN.
 #[test]
 fn gui_cross_check_vector_verifies() {
     const SALT_HEX: &str = "000102030405060708090a0b0c0d0e0f";

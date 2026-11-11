@@ -11,12 +11,21 @@ fn read_lines(path: &Path) -> Vec<Value> {
         .collect()
 }
 
+/// Serializes the tests that hold the process-global sink on purpose. One of
+/// them holds it for the whole panic wait, which would push a concurrent
+/// "waits out a brief hold" test past its deadline and into the fallback.
+fn sink_holder_guard() -> std::sync::MutexGuard<'static, ()> {
+    static HOLDERS: Mutex<()> = Mutex::new(());
+    HOLDERS.lock().unwrap_or_else(|error| error.into_inner())
+}
+
 // The panic hook runs on whatever thread panicked, which may be the thread
 // already inside `with_sink`. Holding the mutex here reproduces that
 // without a real panic: the hook path must report "not written" instead of
 // waiting on a mutex it would never get back.
 #[test]
 fn the_panic_hook_path_skips_a_held_sink() {
+    let _serial = sink_holder_guard();
     let ctx = TestCtx::ctx("logging-panic-hook-try-lock");
     let path = log_file_path(&*ctx).expect("path");
 
@@ -336,6 +345,7 @@ fn the_announced_budget_matches_the_policy() {
 // was lost.
 #[test]
 fn a_panic_with_the_sink_held_lands_in_the_fallback_file() {
+    let _serial = sink_holder_guard();
     let ctx = TestCtx::ctx("logging-panic-fallback");
     let log = log_file_path(&*ctx).expect("path");
     let fallback = panic_fallback_path(&*ctx).expect("fallback path");
@@ -354,6 +364,7 @@ fn a_panic_with_the_sink_held_lands_in_the_fallback_file() {
 
 #[test]
 fn a_panic_waits_out_a_writer_on_another_thread() {
+    let _serial = sink_holder_guard();
     let ctx = TestCtx::ctx("logging-panic-brief-hold");
     let log = log_file_path(&*ctx).expect("path");
 

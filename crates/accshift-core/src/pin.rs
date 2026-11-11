@@ -6,7 +6,7 @@
 //! reading those two keys, verifying a code, hashing a new one, and the
 //! per-process unlock state the GUI backend checks before every switch.
 //!
-//! The hash formats are the ones `src/lib/shared/pin.ts` writes:
+//! The hash formats are fixed by the settings files already on disk:
 //!   - A PIN is reduced to its digits and must be exactly 4 long.
 //!   - Current format: PBKDF2-HMAC-SHA256, 100_000 iterations, 16-byte salt,
 //!     32-byte output, stored as `salt_hex(32):hash_hex(64)`.
@@ -14,8 +14,8 @@
 //!     no salt. Accepted, and reported as such so the caller rewrites it as
 //!     PBKDF2 while the digits are still in hand.
 //!
-//! Crypto uses RustCrypto primitives. The unit tests pin this implementation
-//! against the GUI's known vectors, so the two cannot drift apart.
+//! Crypto uses RustCrypto primitives. The unit tests pin it to known vectors,
+//! so a hash any earlier version wrote keeps verifying.
 
 use crate::error::{PlatformError, PlatformErrorKind};
 use crate::storage::{client_store_path, read_json_if_exists, save_client_store, STORE_SETTINGS};
@@ -36,9 +36,9 @@ const HASH_BYTES: usize = 32;
 const SALT_BYTES: usize = 16;
 
 /// Message of the error every gated command returns while the session is
-/// locked. Errors reach the webview as their bare message, so this prefix is
-/// how the frontend tells a PIN refusal from any other failure
-/// (`isPinLockedError` in `src/lib/shared/pinSession.ts`).
+/// locked. Errors cross the backend as their bare message, so this prefix is
+/// how the GUI tells a PIN refusal from any other failure
+/// (`BackendError::is_pin_locked` in accshift-app).
 pub const PIN_LOCKED_MESSAGE: &str =
     "pin_locked: Accshift is locked. Enter the PIN to switch accounts.";
 
@@ -54,12 +54,12 @@ const MAX_FAILURE_DELAY: Duration = Duration::from_secs(300);
 // Settings: the two keys the lock lives in
 // ---------------------------------------------------------------------------
 
-/// The PIN fields of the GUI settings store, normalized the way
-/// `src/lib/features/settings/store.ts` normalizes them on load.
+/// The PIN fields of the GUI settings store, normalized on load so a file an
+/// earlier version wrote reads the same way today.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PinSettings {
-    /// `pinEnabled`, read with JavaScript truthiness like the GUI's
-    /// `Boolean(raw.pinEnabled)`.
+    /// `pinEnabled`, read with JavaScript truthiness: earlier versions wrote
+    /// the file under that rule, so a non-boolean value keeps its meaning.
     pub pin_enabled: bool,
     /// `pinHash`, trimmed and lowercased. Empty when absent or not a string.
     pub pin_hash: String,
@@ -143,8 +143,7 @@ pub fn read_pin_lock(ctx: &dyn AppContext) -> PinLock {
 // Hashing and verification
 // ---------------------------------------------------------------------------
 
-/// Keep only the leading digits, capped at the PIN length (mirrors
-/// `sanitizePinDigits` in pin.ts).
+/// Keep only the digits, capped at the PIN length.
 pub fn sanitize_pin_digits(value: &str) -> String {
     value
         .chars()
@@ -153,7 +152,7 @@ pub fn sanitize_pin_digits(value: &str) -> String {
         .collect()
 }
 
-/// True for a hash in either stored format (mirrors `isValidPinHash`).
+/// True for a hash in either stored format.
 pub fn is_valid_pin_hash(value: &str) -> bool {
     match value.split_once(':') {
         None => is_hex_len(value, HASH_BYTES * 2),
@@ -172,8 +171,7 @@ pub enum PinVerdict {
 }
 
 /// Verify a PIN attempt against a stored hash. Handles both the PBKDF2
-/// `salt:hash` form and the legacy plain SHA-256 form. Mirrors `verifyPinCode`
-/// in pin.ts.
+/// `salt:hash` form and the legacy plain SHA-256 form.
 pub fn verify_pin_code(attempt: &str, stored_hash: &str) -> PinVerdict {
     let normalized = sanitize_pin_digits(attempt);
     if normalized.len() != PIN_CODE_LENGTH {
@@ -210,7 +208,7 @@ pub fn verify_pin_code(attempt: &str, stored_hash: &str) -> PinVerdict {
     }
 }
 
-/// Hash a PIN the way `hashPinCode` in `src/lib/shared/pin.ts` does:
+/// Hash a PIN in the current stored format:
 /// PBKDF2-HMAC-SHA256, 100_000 iterations, 16-byte salt, written as
 /// `salt_hex:hash_hex`. `None` when the input holds fewer than 4 digits.
 pub fn hash_pin_code(pin: &str) -> Option<String> {

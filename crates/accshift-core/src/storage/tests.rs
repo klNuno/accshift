@@ -329,10 +329,11 @@ fn a_debug_build_leaves_the_release_build_data_in_place() {
     // Regression: a debug build resolved its stores under `dev/` and moved
     // the files it found at the un-scoped root, which belong to an installed
     // release build, into it. The release build then booted as a fresh install.
-    assert!(
-        cfg!(debug_assertions),
-        "tests run in the scoped debug layout"
-    );
+    // A release test build has no `dev/` scope, so there is nothing to keep
+    // apart from.
+    if !cfg!(debug_assertions) {
+        return;
+    }
     let root = unique_test_root("debug-keeps-release-data");
     let ctx = TestCtx { root: root.clone() };
     let release_files = [

@@ -145,43 +145,15 @@ event_catalog! {
         aliases: [],
     },
 
-    /// Where the milliseconds went between process start and the main window.
-    /// One line per launch, so a slow start can be diagnosed from a log bundle
-    /// instead of a profiler the user does not have.
-    STARTUP_PROFILE {
-        code: "app.startup.profile",
-        level: Info,
-        required: ["totalUs": Int],
-        optional: [
-            "preMainUs": Int,
-            "mainEntryTsMs": Int,
-            "httpClientUs": Int,
-            "pluginsUs": Int,
-            "logSessionUs": Int,
-            "panicHookUs": Int,
-            "windowSizeUs": Int,
-            "windowBuildUs": Int,
-            "autofillUs": Int,
-            "closeHandlerUs": Int,
-            "telemetryUs": Int,
-            "deepLinkUs": Int,
-            "threadsUs": Int,
-        ],
-        meaning: "Per-phase timings of this launch's startup path, in microseconds. totalUs runs from the first line of Rust to the window and excludes preMainUs, the process creation before it.",
-        action: "Compare phases across launches, and add preMainUs to totalUs for the whole launch. windowBuildUs is WebView2 and is mostly out of our hands; the rest is ours.",
-        aliases: [],
-    },
-
-    /// The webview half of the same story: `performance.now()` at each boot
-    /// milestone, sent in one payload so the numbers are not skewed by the
-    /// log queue the way individual frontend records are.
+    /// Boot milestones of the window, sent in one payload so the numbers are
+    /// not skewed by the log queue the way individual records would be.
     STARTUP_FRONTEND {
         code: "app.startup.frontend",
         level: Info,
         required: ["marks": Object],
         optional: ["trigger": Str],
-        meaning: "Frontend boot milestones, milliseconds since the page's time origin.",
-        action: "Read alongside app.startup.profile. Large gaps here are ours to fix; windowBuildUs is not.",
+        meaning: "Window boot milestones in milliseconds, one entry per mark the shell recorded.",
+        action: "Large gaps between marks are ours to fix: the native window and the renderer init both run in accshift.",
         aliases: [],
     },
 
@@ -207,54 +179,6 @@ event_catalog! {
         aliases: [],
     },
 
-    /// The sink could not write. Logged on the next successful write.
-    LOG_WRITE_FAILED {
-        code: "log.write.failed",
-        level: Error,
-        required: ["reason": Str],
-        optional: ["path": Str],
-        meaning: "A log record could not be written to disk and was dropped.",
-        action: "Check free space and write permissions on the log directory.",
-        aliases: [],
-    },
-
-    // -----------------------------------------------------------------------
-    // Operation tracing
-    // -----------------------------------------------------------------------
-
-    /// Opens an operation. Everything sharing its opId belongs to this attempt.
-    OP_STARTED {
-        code: "op.started",
-        level: Debug,
-        required: ["op": Str],
-        optional: ["platform": Str, "trigger": Str],
-        meaning: "A user-visible operation started and was assigned an opId.",
-        action: "None. Query by opId to replay the whole attempt.",
-        aliases: [],
-    },
-
-    /// One step inside an operation.
-    OP_STEP {
-        code: "op.step",
-        level: Debug,
-        required: ["op": Str, "step": Str],
-        optional: ["platform": Str, "detail": Str],
-        meaning: "An operation reached a named step.",
-        action: "None. The last step before a failure is where to start reading.",
-        aliases: [],
-    },
-
-    /// Closes an operation. Carries durMs and outcome.
-    OP_FINISHED {
-        code: "op.finished",
-        level: Info,
-        required: ["op": Str],
-        optional: ["platform": Str, "steps": Int, "detail": Str],
-        meaning: "An operation ended; durMs and outcome say how long it took and how it went.",
-        action: "On outcome=failure, read errKind then the steps sharing this opId.",
-        aliases: [],
-    },
-
     // -----------------------------------------------------------------------
     // Health invariants, one code per problem
     // -----------------------------------------------------------------------
@@ -276,26 +200,6 @@ event_catalog! {
         optional: ["platform": Str, "reason": Str],
         meaning: "A path exists but this process cannot write to it.",
         action: "Check the folder ACLs, an antivirus lock, or run the operation without elevation mismatch.",
-        aliases: [],
-    },
-
-    HEALTH_FILE_LOCKED {
-        code: "health.file.locked",
-        level: Warn,
-        required: ["path": Str],
-        optional: ["platform": Str, "holder": Str],
-        meaning: "A file the operation must rewrite is held by another process.",
-        action: "Close the launcher (or the other accshift instance) and retry.",
-        aliases: [],
-    },
-
-    HEALTH_LAUNCHER_RUNNING {
-        code: "health.launcher.running",
-        level: Warn,
-        required: ["platform": Str, "processes": StrList],
-        optional: [],
-        meaning: "The launcher is still alive when the operation needs it stopped.",
-        action: "Quit the launcher, or let the switch close it (graceful, then force).",
         aliases: [],
     },
 
@@ -336,50 +240,6 @@ event_catalog! {
         optional: ["platform": Str, "detail": Str],
         meaning: "An invariant was verified and holds.",
         action: "None. Visible at debug level so a clean preflight is provable, not assumed.",
-        aliases: [],
-    },
-
-    // -----------------------------------------------------------------------
-    // Anomaly counters: something still works, but not the way it should
-    // -----------------------------------------------------------------------
-
-    ANOMALY_PLATFORM_CONSECUTIVE_FAILURES {
-        code: "anomaly.platform.consecutive_failures",
-        level: Warn,
-        required: ["platform": Str, "failures": Int],
-        optional: ["op": Str],
-        meaning: "A platform failed several operations in a row.",
-        action: "Run the health checks for that platform; the launcher path or its config is likely stale.",
-        aliases: [],
-    },
-
-    ANOMALY_OPERATION_SLOW {
-        code: "anomaly.operation.slow",
-        level: Warn,
-        required: ["op": Str, "durMs": Int, "baselineMs": Int],
-        optional: ["platform": Str],
-        meaning: "An operation took far longer than its own rolling baseline.",
-        action: "Look for a locked file, an antivirus scan, or a launcher refusing to exit.",
-        aliases: [],
-    },
-
-    ANOMALY_SNAPSHOT_EMPTY {
-        code: "anomaly.snapshot.empty",
-        level: Warn,
-        required: ["platform": Str],
-        optional: ["path": Str],
-        meaning: "A session snapshot was captured but contains nothing.",
-        action: "The account was probably not signed in when captured; recapture it.",
-        aliases: [],
-    },
-
-    ANOMALY_RESTORE_NO_WRITE {
-        code: "anomaly.restore.no_write",
-        level: Error,
-        required: ["platform": Str],
-        optional: ["path": Str],
-        meaning: "A restore reported success without writing a single byte.",
-        action: "Treat the switch as failed: the target files were not replaced.",
         aliases: [],
     },
 
@@ -439,65 +299,6 @@ event_catalog! {
         optional: [],
         meaning: "An event was emitted with a missing or mistyped mandatory field.",
         action: "Fix the call site: the catalog entry lists what the code requires.",
-        aliases: [],
-    },
-
-    // -----------------------------------------------------------------------
-    // Platform vocabulary.
-    //
-    // Declared here so the platform layer adopts these codes instead of
-    // inventing its own spelling per module. The platform modules are being
-    // rewritten in parallel and are not instrumented yet; the codes exist so
-    // that migration is a call-site change and never a catalog change.
-    // -----------------------------------------------------------------------
-
-    PLATFORM_SWITCH_STARTED {
-        code: "platform.switch.started",
-        level: Info,
-        required: ["platform": Str],
-        optional: ["mode": Str],
-        meaning: "An account switch began for this platform.",
-        action: "None. Pairs with platform.switch.succeeded or .failed on the same opId.",
-        aliases: [],
-    },
-
-    PLATFORM_SWITCH_SUCCEEDED {
-        code: "platform.switch.succeeded",
-        level: Info,
-        required: ["platform": Str],
-        optional: ["mode": Str],
-        meaning: "The launcher was relaunched signed in as the requested account.",
-        action: "None.",
-        aliases: [],
-    },
-
-    PLATFORM_SWITCH_FAILED {
-        code: "platform.switch.failed",
-        level: Error,
-        required: ["platform": Str, "stage": Str],
-        optional: ["reason": Str],
-        meaning: "An account switch failed at a named stage.",
-        action: "Replay the opId: the preceding op.step and health.* records name the blocking condition.",
-        aliases: [],
-    },
-
-    PLATFORM_SNAPSHOT_CAPTURED {
-        code: "platform.snapshot.captured",
-        level: Info,
-        required: ["platform": Str, "entries": Int],
-        optional: [],
-        meaning: "A session snapshot was captured for an account.",
-        action: "None. entries=0 also raises anomaly.snapshot.empty.",
-        aliases: [],
-    },
-
-    PLATFORM_SNAPSHOT_RESTORED {
-        code: "platform.snapshot.restored",
-        level: Info,
-        required: ["platform": Str, "bytes": Int],
-        optional: [],
-        meaning: "A session snapshot was written back over the launcher's files.",
-        action: "None. bytes=0 also raises anomaly.restore.no_write.",
         aliases: [],
     },
 }
@@ -657,5 +458,98 @@ mod tests {
         let mut sorted = codes.clone();
         sorted.sort_unstable();
         assert_eq!(codes, sorted, "export must be stable across builds");
+    }
+
+    // The action is what a user reads in their own report. The app is a native
+    // egui window now, so advice about a webview sends them nowhere.
+    #[test]
+    fn no_entry_talks_about_a_webview_shell() {
+        for entry in CATALOG {
+            for text in [entry.meaning, entry.action] {
+                let lower = text.to_ascii_lowercase();
+                assert!(
+                    !lower.contains("webview") && !lower.contains("tauri"),
+                    "{} still describes the old shell: {text}",
+                    entry.code
+                );
+            }
+        }
+    }
+
+    /// Production sources of every crate in the workspace, with test modules
+    /// cut off: a code only a test emits is still a code no user will see.
+    fn production_sources() -> Vec<(std::path::PathBuf, String)> {
+        fn walk(dir: &std::path::Path, out: &mut Vec<(std::path::PathBuf, String)>) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if path.is_dir() {
+                    if name != "tests" && name != "vendor" {
+                        walk(&path, out);
+                    }
+                } else if name.ends_with(".rs") && name != "tests.rs" {
+                    let text = std::fs::read_to_string(&path).unwrap_or_default();
+                    let production = match text.find("#[cfg(test)]") {
+                        Some(cut) => text[..cut].to_string(),
+                        None => text,
+                    };
+                    out.push((path, production));
+                }
+            }
+        }
+        let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("crates dir")
+            .to_path_buf();
+        let mut out = Vec::new();
+        for krate in std::fs::read_dir(&crates).expect("list crates").flatten() {
+            walk(&krate.path().join("src"), &mut out);
+        }
+        out
+    }
+
+    fn mentions(text: &str, ident: &str) -> bool {
+        text.match_indices(ident).any(|(at, _)| {
+            let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+            let before = text[..at].chars().next_back().is_none_or(|c| !word(c));
+            let after = text[at + ident.len()..]
+                .chars()
+                .next()
+                .is_none_or(|c| !word(c));
+            before && after
+        })
+    }
+
+    // A declared code nothing emits ships a promise the log never keeps:
+    // the docs and the catalog advertise it, and a reader searches for it in
+    // vain.
+    #[test]
+    fn every_code_is_emitted_outside_tests() {
+        let declared: Vec<&str> = include_str!("catalog.rs")
+            .lines()
+            .filter_map(|line| {
+                let ident = line.strip_prefix("    ")?.strip_suffix(" {")?;
+                (!ident.is_empty()
+                    && ident
+                        .chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'))
+                .then_some(ident)
+            })
+            .collect();
+        assert_eq!(declared.len(), CATALOG.len(), "{declared:?}");
+
+        let sources = production_sources();
+        let catalog_file = std::path::Path::new("diagnostics").join("catalog.rs");
+        for ident in declared {
+            assert!(
+                sources
+                    .iter()
+                    .any(|(path, text)| !path.ends_with(&catalog_file) && mentions(text, ident)),
+                "{ident} is declared but never emitted outside tests"
+            );
+        }
     }
 }

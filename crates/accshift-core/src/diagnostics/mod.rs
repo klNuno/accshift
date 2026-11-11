@@ -9,28 +9,23 @@
 //! - [`event`] builds the versioned record and is the only writing path.
 //! - [`levels`] decides what is verbose enough to keep, per module, including
 //!   a temporary debug window that turns itself off.
-//! - [`ops`] gives one identifier to a whole user action, so a failure replays
-//!   as a sequence.
-//! - [`health`] checks the invariants that predict a failure before it happens.
-//! - [`anomaly`] counts what only means something over several runs.
+//! - [`health`] checks the app's own invariants (log directory, free space,
+//!   clock) for the startup report and `accshift diag check`.
 //! - [`query`] reads it all back with filters.
 //! - [`bundle`] packs one pasteable local file out of the lot.
 //! - [`redact`] scrubs everything above, with no opt-out.
 
-pub mod anomaly;
 pub mod bundle;
 pub mod catalog;
 pub mod event;
 pub mod health;
 pub mod levels;
-pub mod ops;
 pub mod query;
 pub mod redact;
 pub mod schema;
 
 pub use catalog::{lookup, EventCode, CATALOG};
 pub use event::{event, new_op_id, run_id, EventBuilder, Level, Outcome, SCHEMA_VERSION};
-pub use ops::{with_operation, Op};
 pub use redact::sanitize_log_text;
 
 use fs4::FileExt;
@@ -46,14 +41,14 @@ fn atomic_lock_path(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
-/// Write through a sibling temporary file and rename over the target.
+/// Replace `path` through [`crate::storage::write_bytes_atomic`], under an
+/// exclusive sidecar lock.
 ///
-/// The state files here (levels, anomaly counters) are read by another process
-/// while this one writes them. A partial write would be read as corrupt, and
-/// corrupt means the defaults come back, which silently loses whatever the
-/// user just set. The GUI and the CLI share the same `*.tmp` name, so the
-/// write and the rename sit under an exclusive sidecar lock, same shape as
-/// [`anomaly::with_state`].
+/// The levels file is read by another process while this one writes it, and
+/// a partial write would read as corrupt, which brings the defaults back and
+/// silently loses what the user just set. The storage writer names its
+/// temporary file after the process id, so two threads of one process would
+/// share it: the sidecar lock serializes them, and the GUI and the CLI too.
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
@@ -69,20 +64,11 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .truncate(false)
         .open(&lock_path)
         .map_err(|reason| format!("Could not open {}: {reason}", lock_path.display()))?;
-    // Best effort, same as the log sink and the anomaly counters: a lock that
-    // cannot be taken must not turn a settings write into a hard failure.
+    // Best effort, same as the log sink: a lock that cannot be taken must not
+    // turn a settings write into a hard failure.
     let locked = FileExt::lock(&lock_file).is_ok();
 
-    let temp = path.with_extension("tmp");
-    let outcome = fs::write(&temp, bytes)
-        .map_err(|reason| format!("Could not write {}: {reason}", temp.display()))
-        .and_then(|()| {
-            // Rename replaces the target on both platforms this ships on.
-            fs::rename(&temp, path).map_err(|reason| {
-                let _ = fs::remove_file(&temp);
-                format!("Could not replace {}: {reason}", path.display())
-            })
-        });
+    let outcome = crate::storage::write_bytes_atomic(path, bytes);
 
     if locked {
         let _ = FileExt::unlock(&lock_file);
@@ -158,18 +144,35 @@ pub(crate) mod test_support {
 mod tests {
     use super::*;
 
+    /// Names in `dir` besides the target and its sidecar lock: a temporary or
+    /// backup file left there would be a write that did not finish cleanly.
+    fn leftovers(dir: &Path) -> Vec<String> {
+        fs::read_dir(dir)
+            .expect("list")
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .filter(|name| name != "state.json" && name != "state.json.lock")
+            .collect()
+    }
+
     #[test]
     fn write_atomic_replaces_an_existing_file() {
         let dir = std::env::temp_dir()
             .join("accshift-diagnostics-tests")
             .join(format!("atomic-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
         let path = dir.join("state.json");
         write_atomic(&path, b"first").expect("first write");
         write_atomic(&path, b"second").expect("second write");
 
         assert_eq!(fs::read_to_string(&path).expect("read"), "second");
         assert!(
-            !path.with_extension("tmp").exists(),
+            leftovers(&dir).is_empty(),
             "the temporary file must not survive"
         );
         assert!(
@@ -183,6 +186,7 @@ mod tests {
         let dir = std::env::temp_dir()
             .join("accshift-diagnostics-tests")
             .join(format!("atomic-race-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
         let path = dir.join("state.json");
         let payloads: Vec<Vec<u8>> = (0..8)
             .map(|index| format!("payload-{index:02}-{}", "x".repeat(512)).into_bytes())
@@ -202,6 +206,6 @@ mod tests {
             payloads.iter().any(|payload| payload == &written),
             "the file must be one complete payload, not a mix"
         );
-        assert!(!path.with_extension("tmp").exists());
+        assert!(leftovers(&dir).is_empty());
     }
 }

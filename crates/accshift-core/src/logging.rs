@@ -286,10 +286,6 @@ fn shift_rotated_files(current: &Path) {
     }
 }
 
-pub fn log_lock_file_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    Ok(log_file_path(app_handle)?.with_file_name(LOG_LOCK_FILE_NAME))
-}
-
 // ---------------------------------------------------------------------------
 // Rotation and retention
 // ---------------------------------------------------------------------------
