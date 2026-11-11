@@ -34,6 +34,7 @@ use self::saved_accounts::*;
 use self::tag_cache::*;
 
 pub use self::setup::{begin_account_setup, cancel_account_setup, get_account_setup_status};
+use self::setup::{settle_owed_saved_accounts, with_owed_saved_accounts};
 
 // The Windows launcher runs as two processes; the macOS client is a single
 // Mach-O named `Battle.net`.
@@ -46,7 +47,6 @@ const BATTLE_NET_EXECUTABLE_CANDIDATES: &[&str] = &[
     "Battle.net\\Battle.net Launcher.exe",
     "Battle.net\\Battle.net.exe",
 ];
-#[cfg(windows)]
 const BATTLE_NET_EXECUTABLE_NAMES: &[&str] = &["Battle.net Launcher.exe", "Battle.net.exe"];
 const BATTLE_NET_SETUP_TTL_MS: u64 = 5 * 60 * 1000;
 
@@ -107,8 +107,9 @@ pub fn switch_account(app_handle: AppCtx, email: String) -> Result<(), String> {
     // one read above. A failed step after the quit still brings it back.
     kill_battle_net()?;
     let fresh = relaunch_if_err(&app_handle, read_saved_accounts())?;
-    let reordered = order_saved_accounts_for_switch(&fresh, &target);
+    let reordered = order_saved_accounts_for_switch(&with_owed_saved_accounts(fresh), &target);
     relaunch_if_err(&app_handle, write_saved_accounts(&app_handle, &reordered))?;
+    settle_owed_saved_accounts();
     relaunch_if_err(
         &app_handle,
         remember_account_usage(&app_handle, &target, false),
@@ -142,8 +143,9 @@ pub fn forget_account(app_handle: AppCtx, email: String) -> Result<(), String> {
     // leaves it closed, which is what a forget did before.
     kill_battle_net()?;
     let fresh = relaunch_if_err(&app_handle, read_saved_accounts())?;
-    let filtered = saved_accounts_without(&fresh, &target_email);
+    let filtered = saved_accounts_without(&with_owed_saved_accounts(fresh), &target_email);
     relaunch_if_err(&app_handle, write_saved_accounts(&app_handle, &filtered))?;
+    settle_owed_saved_accounts();
     relaunch_if_err(
         &app_handle,
         forget_account_metadata(&app_handle, &target_email),
@@ -171,8 +173,13 @@ pub fn get_battle_net_path(app_handle: AppCtx) -> Result<String, String> {
 }
 
 pub fn set_battle_net_path(app_handle: AppCtx, path: String) -> Result<(), String> {
+    let trimmed = path.trim().to_string();
+    // Empty clears the override and goes back to detection.
+    if !trimmed.is_empty() {
+        validate_battle_net_path(Path::new(&trimmed))?;
+    }
     config::update_config(&app_handle, |cfg| {
-        cfg.battle_net.path_override = path.trim().to_string();
+        cfg.battle_net.path_override = trimmed;
     })
 }
 

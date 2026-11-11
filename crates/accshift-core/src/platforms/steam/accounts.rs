@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 #[cfg(not(target_os = "windows"))]
 use super::vdf::vdf_set_nested_value;
-use super::vdf::{parse_vdf, read_persona_state, set_persona_state};
+use super::vdf::{localconfig_path, parse_vdf, set_persona_state};
 use crate::error::AppError;
 use crate::fs_utils;
 use crate::os;
@@ -213,11 +213,23 @@ fn switch_autologin_and_relaunch(
     launch_options: &str,
     extra_args: &[&str],
     force_kill: bool,
-    pre_launch: impl FnOnce(),
+    pre_launch: Option<impl FnOnce()>,
 ) -> Result<(), AppError> {
     let previous = os::get_auto_login_user()?;
 
     match stop_steam(steam_path, force_kill)? {
+        StopOutcome::NeedsElevation if run_as_admin && pre_launch.is_some() => {
+            // The elevated relaunch forwards to the still running client,
+            // which rewrites its Steam-owned files when it exits, so a
+            // pre_launch write (persona state) could only be lost. Refuse
+            // before changing anything rather than report a mode that was
+            // never applied.
+            return Err(AppError::FileRead(
+                "Steam runs as administrator and could not be closed, so the online or \
+                 invisible mode cannot be written. Close Steam, then switch again."
+                    .into(),
+            ));
+        }
         StopOutcome::NeedsElevation if run_as_admin => {
             // Windows-only path: elevated relaunch via UAC. The HKCU registry
             // write is user-scope, so writing now is safe (Steam does not own
@@ -229,11 +241,6 @@ fn switch_autologin_and_relaunch(
                 let _ = restore_auto_login_user(&previous);
                 return Err(e);
             }
-            // Deliberately no pre_launch() here: on this path we did not stop
-            // Steam ourselves (the elevated relaunch forwards to the still
-            // running client), so a Steam-owned write like persona state would
-            // just be overwritten when that client flushes on exit. Skipping it
-            // avoids corrupting localconfig.vdf for no effect.
             let mut args = parse_launch_options(launch_options);
             args.extend(extra_args.iter().map(|s| s.to_string()));
             return os::kill_and_relaunch_steam_elevated(steam_path, &args);
@@ -259,7 +266,9 @@ fn switch_autologin_and_relaunch(
         return Err(e);
     }
 
-    pre_launch();
+    if let Some(pre_launch) = pre_launch {
+        pre_launch();
+    }
 
     // Steam is single-instance: a steam.exe alive at this point (bootstrapper
     // re-exec during a graceful shutdown, updater respawn after the kill)
@@ -708,7 +717,7 @@ pub fn switch_account(
         launch_options,
         &[],
         force_kill,
-        || {},
+        None::<fn()>,
     )
 }
 
@@ -730,7 +739,7 @@ pub fn switch_account_and_launch_game(
         launch_options,
         &["-applaunch", app_id],
         force_kill,
-        || {},
+        None::<fn()>,
     )
 }
 
@@ -747,7 +756,7 @@ pub fn add_account(
         launch_options,
         &[],
         force_kill,
-        || {},
+        None::<fn()>,
     )
 }
 
@@ -808,15 +817,13 @@ pub fn switch_account_mode(
         _ => "1",
     };
 
-    // Snapshot the current persona state up front. pre_launch writes the new
-    // state before Steam is relaunched; if the relaunch then fails the switch
-    // is rolled back, and without this we would leave the account stuck in the
-    // requested mode the next time it is switched into.
-    let previous_state =
-        account_id.and_then(|id| read_persona_state(steam_path, id).ok().flatten());
-
+    // pre_launch writes the new state once Steam is down and keeps the
+    // content it replaced. If the relaunch then fails the switch is rolled
+    // back, and that content goes back too, or the account would sign in with
+    // the requested mode on its next successful switch.
     let mut persona_result: Result<(), AppError> = Ok(());
-    let mut persona_written = false;
+    let mut replaced: Option<String> = None;
+    let (result_slot, replaced_slot) = (&mut persona_result, &mut replaced);
     let switch_result = switch_autologin_and_relaunch(
         steam_path,
         Some(username),
@@ -824,22 +831,20 @@ pub fn switch_account_mode(
         launch_options,
         &[],
         force_kill,
-        || {
-            if let Some(account_id) = account_id {
-                persona_result = set_persona_state(steam_path, account_id, state);
-                persona_written = persona_result.is_ok();
+        account_id.map(|account_id| {
+            move || match set_persona_state(steam_path, account_id, state) {
+                Ok(previous) => *replaced_slot = Some(previous),
+                Err(e) => *result_slot = Err(e),
             }
-        },
+        }),
     );
 
     if let Err(e) = switch_result {
-        // The switch failed after the new persona state was written; revert it
-        // so a failed attempt does not silently flip the account into the
-        // requested mode on its next successful switch.
-        if persona_written {
-            if let (Some(id), Some(prev)) = (account_id, &previous_state) {
-                let _ = set_persona_state(steam_path, id, prev);
-            }
+        if let (Some(id), Some(previous)) = (account_id, &replaced) {
+            let _ = crate::storage::write_bytes_atomic(
+                &localconfig_path(steam_path, id),
+                previous.as_bytes(),
+            );
         }
         return Err(e);
     }

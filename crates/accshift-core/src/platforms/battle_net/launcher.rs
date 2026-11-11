@@ -21,6 +21,46 @@ pub(super) fn kill_battle_net() -> Result<(), String> {
     Ok(())
 }
 
+/// Accept only the launcher itself as the path override: one of its
+/// executables on Windows, its `.app` bundle on macOS.
+pub(super) fn validate_battle_net_path(path: &Path) -> Result<(), String> {
+    if cfg!(windows) {
+        validate_windows_launcher_path(path)
+    } else {
+        validate_macos_bundle_path(path)
+    }
+}
+
+pub(super) fn validate_windows_launcher_path(path: &Path) -> Result<(), String> {
+    let named_right = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            BATTLE_NET_EXECUTABLE_NAMES
+                .iter()
+                .any(|expected| name.eq_ignore_ascii_case(expected))
+        });
+    if path.is_file() && named_right {
+        Ok(())
+    } else {
+        Err("Battle.net path must be an existing Battle.net.exe or Battle.net Launcher.exe".into())
+    }
+}
+
+/// `open` launches the bundle, so the override has to be one: a folder whose
+/// name ends in `.app`.
+pub(super) fn validate_macos_bundle_path(path: &Path) -> Result<(), String> {
+    let is_bundle = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("app"));
+    if path.is_dir() && is_bundle {
+        Ok(())
+    } else {
+        Err("Battle.net path must be an existing Battle.net.app bundle".into())
+    }
+}
+
 #[cfg(windows)]
 pub(super) fn normalize_registry_path(raw: &str) -> String {
     let mut value = raw.trim().trim_matches('"').to_string();
@@ -204,7 +244,9 @@ pub(super) fn resolve_battle_net_executable(
     let cfg = config::load_config(app_handle);
     let override_path = cfg.battle_net.path_override.trim();
 
-    if !override_path.is_empty() {
+    // An override saved before it was validated is skipped like a missing one:
+    // any other existing file would be launched as the launcher.
+    if !override_path.is_empty() && validate_battle_net_path(Path::new(override_path)).is_ok() {
         candidates.push(PathBuf::from(override_path));
     }
 
@@ -260,7 +302,7 @@ pub(super) fn resolve_battle_net_executable(
     let override_path = cfg.battle_net.path_override.trim();
     if !override_path.is_empty() {
         let path = PathBuf::from(override_path);
-        if path.exists() {
+        if validate_battle_net_path(&path).is_ok() {
             return Ok(path);
         }
     }

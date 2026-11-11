@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Extract the quoted tokens from a single VDF line, honoring backslash escapes.
 ///
@@ -589,11 +589,30 @@ fn escape_vdf_string(value: &str) -> String {
     escaped
 }
 
+/// `friends.PersonaState` in localconfig.vdf, relative to its root section.
+pub(crate) const PERSONA_STATE_PATH: [&str; 2] = ["friends", "PersonaState"];
+
+/// An account's localconfig.vdf, where Steam keeps its persona state.
+pub(crate) fn localconfig_path(steam_path: &Path, account_id: u32) -> PathBuf {
+    steam_path
+        .join("userdata")
+        .join(account_id.to_string())
+        .join("config")
+        .join("localconfig.vdf")
+}
+
+/// Write `friends.PersonaState` into an account's localconfig.vdf, creating
+/// the key and its section when missing, and return the content it replaced
+/// so a failed switch can put it back.
+///
+/// An account that never changed its status has no PersonaState key; skipping
+/// the write there left the account signing in visible while the switch
+/// reported the requested mode as applied.
 pub fn set_persona_state(
     steam_path: &Path,
     account_id: u32,
     state: &str,
-) -> Result<(), crate::error::AppError> {
+) -> Result<String, crate::error::AppError> {
     use crate::error::AppError;
 
     if !["0", "1", "2", "3", "4", "5", "6", "7"].contains(&state) {
@@ -601,197 +620,28 @@ pub fn set_persona_state(
             "Invalid persona state: {state}"
         )));
     }
-    let config_path = steam_path
-        .join("userdata")
-        .join(account_id.to_string())
-        .join("config")
-        .join("localconfig.vdf");
+    let config_path = localconfig_path(steam_path, account_id);
 
-    let content = match fs::read_to_string(&config_path) {
-        Ok(content) => content,
-        // No localconfig yet (fresh account): nothing to edit.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => {
-            return Err(AppError::FileRead(format!(
-                "Could not read {}: {e}",
-                config_path.display()
-            )))
+    let content = fs::read_to_string(&config_path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            // Steam creates the file at the account's first sign-in on this
+            // machine. A file made up here would replace the settings Steam
+            // keeps for the account, so the mode is refused instead.
+            AppError::FileRead(
+                "Steam has no localconfig.vdf for this account yet, so the online or \
+                 invisible mode cannot be set. Sign in to the account in Steam once, then \
+                 switch again."
+                    .into(),
+            )
+        } else {
+            AppError::FileRead(format!("Could not read localconfig.vdf: {e}"))
         }
-    };
+    })?;
 
-    let result = set_persona_state_in_vdf(&content, state);
-
-    if let Some(result) = result {
-        crate::storage::write_bytes_atomic(&config_path, result.as_bytes())
-            .map_err(AppError::FileRead)?;
-    }
-    Ok(())
-}
-
-/// Read the current `friends.PersonaState` value from an account's
-/// localconfig.vdf, if present. Returns `Ok(None)` when the file or the key is
-/// absent. Uses the same structural targeting as [`set_persona_state`], so a
-/// caller can snapshot the value before a write and roll it back on failure.
-pub fn read_persona_state(
-    steam_path: &Path,
-    account_id: u32,
-) -> Result<Option<String>, crate::error::AppError> {
-    use crate::error::AppError;
-
-    let config_path = steam_path
-        .join("userdata")
-        .join(account_id.to_string())
-        .join("config")
-        .join("localconfig.vdf");
-
-    let content = match fs::read_to_string(&config_path) {
-        Ok(content) => content,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => {
-            return Err(AppError::FileRead(format!(
-                "Could not read {}: {e}",
-                config_path.display()
-            )))
-        }
-    };
-
-    Ok(persona_state_in_vdf(&content))
-}
-
-fn persona_state_in_vdf(content: &str) -> Option<String> {
-    let mut section_stack: Vec<String> = Vec::new();
-    let mut pending_section: Option<String> = None;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-
-        if trimmed == "{" {
-            section_stack.push(pending_section.take().unwrap_or_default());
-            continue;
-        }
-        if trimmed == "}" {
-            section_stack.pop();
-            pending_section = None;
-            continue;
-        }
-
-        let tokens = vdf_tokenize_line(trimmed);
-        let in_friends = section_stack.len() == 2
-            && section_stack[0].eq_ignore_ascii_case("UserLocalConfigStore")
-            && section_stack[1].eq_ignore_ascii_case("friends");
-
-        if in_friends && tokens.len() >= 2 && tokens[0].eq_ignore_ascii_case("PersonaState") {
-            return Some(tokens[1].clone());
-        }
-
-        if tokens.len() == 1 {
-            pending_section = Some(tokens[0].clone());
-        } else if tokens.len() >= 2 {
-            pending_section = None;
-        }
-    }
-
-    None
-}
-
-/// Rewrite the `PersonaState` key that lives directly under
-/// `UserLocalConfigStore` -> `friends`, returning the new file content.
-///
-/// Returns `None` if no such key exists, so the caller can skip the write.
-///
-/// Targeting is structural: we track the section path with the parser instead
-/// of matching the first line that merely contains `"PersonaState"`. A friend
-/// nickname, a custom category, or any other string elsewhere in the file that
-/// happens to contain `PersonaState` no longer corrupts the wrong line.
-fn set_persona_state_in_vdf(content: &str, state: &str) -> Option<String> {
-    // Section names walked so far, from the root section inward. The key we
-    // want is `friends.PersonaState` under the root `UserLocalConfigStore`.
-    let mut section_stack: Vec<String> = Vec::new();
-    // Token cached from the previous non-brace line: in VDF a subsection header
-    // is a bare `"name"` line followed by its own `{` on the next line.
-    let mut pending_section: Option<String> = None;
-
-    let mut result = String::new();
-    let mut found = false;
-    // Preserve the file's dominant line ending so a CRLF localconfig.vdf comes
-    // back CRLF rather than being silently rewritten to bare LF on every edit.
-    let newline = if content.contains("\r\n") {
-        "\r\n"
-    } else {
-        "\n"
-    };
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-
-        if trimmed == "{" {
-            // The previous header token opens a subsection here.
-            section_stack.push(pending_section.take().unwrap_or_default());
-            result.push_str(line);
-            result.push_str(newline);
-            continue;
-        }
-
-        if trimmed == "}" {
-            section_stack.pop();
-            pending_section = None;
-            result.push_str(line);
-            result.push_str(newline);
-            continue;
-        }
-
-        let tokens = vdf_tokenize_line(trimmed);
-
-        // Are we directly inside UserLocalConfigStore -> friends?
-        let in_friends = section_stack.len() == 2
-            && section_stack[0].eq_ignore_ascii_case("UserLocalConfigStore")
-            && section_stack[1].eq_ignore_ascii_case("friends");
-
-        if !found
-            && in_friends
-            && tokens.len() >= 2
-            && tokens[0].eq_ignore_ascii_case("PersonaState")
-        {
-            // Rewrite PersonaState's own value in place, preserving indentation
-            // and the key token exactly as written. Target the 2nd quoted token
-            // (the value) by its byte span rather than rfind('"'): if anything
-            // else is quoted later on the same physical line, rfind would splice
-            // into that trailing token and leave PersonaState untouched while
-            // corrupting unrelated data.
-            if let Some((open, close)) = nth_quoted_token_span(line, 1) {
-                let mut new_line = String::with_capacity(line.len());
-                new_line.push_str(&line[..=open]);
-                new_line.push_str(state);
-                new_line.push_str(&line[close..]);
-                result.push_str(&new_line);
-                result.push_str(newline);
-                found = true;
-                pending_section = None;
-                continue;
-            }
-        }
-
-        // Remember a bare header token so the next `{` knows its section name.
-        // A `"key" "value"` pair is not a section header, so it clears the
-        // pending header. A line with no tokens at all (a `//` comment or a
-        // blank line) is left untouched: clearing pending_section there would
-        // desync the section stack when a comment sits between a header and its
-        // opening brace, silently dropping the persona-state edit.
-        if tokens.len() == 1 {
-            pending_section = Some(tokens[0].clone());
-        } else if tokens.len() >= 2 {
-            pending_section = None;
-        }
-
-        result.push_str(line);
-        result.push_str(newline);
-    }
-
-    if found {
-        Some(result)
-    } else {
-        None
-    }
+    let updated = vdf_set_nested_value(&content, &PERSONA_STATE_PATH, state)?;
+    crate::storage::write_bytes_atomic(&config_path, updated.as_bytes())
+        .map_err(AppError::FileRead)?;
+    Ok(content)
 }
 
 #[cfg(test)]
