@@ -56,13 +56,6 @@ fn utf16(text: &str) -> Vec<u16> {
     text.encode_utf16().collect()
 }
 
-/// `fuzzyScore`: every query character in order in the text, consecutive
-/// matches and word starts scoring higher. `None` when it is not a
-/// subsequence.
-pub fn fuzzy_score(query: &str, text: &str) -> Option<i64> {
-    score_folded(&utf16(&fold_text(query)), &utf16(&fold_text(text)))
-}
-
 /// The folded targets, memoised like `foldCache` (cleared at 4096 entries).
 #[derive(Debug, Clone, Default)]
 pub struct FoldCache {

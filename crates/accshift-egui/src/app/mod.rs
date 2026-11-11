@@ -52,7 +52,7 @@ use accshift_app::actions::dialogs::{
 };
 use accshift_app::actions::keyboard::KeyboardController;
 use accshift_app::actions::toasts::AddToastOptions;
-use accshift_app::actions::{card_actions, load_options, shell as app_shell, AppEffect};
+use accshift_app::actions::{card_actions, load_options, toasts, AppEffect};
 use accshift_app::backend::Backend;
 use accshift_app::error::BackendResult;
 use accshift_app::folders::{FolderInfo, ItemKind};
@@ -1766,7 +1766,7 @@ impl AppModel {
                         continue;
                     };
                     ctx.copy_text(text);
-                    let toast = app_shell::copy_result_toast(&label.resolve(locale), true);
+                    let toast = toasts::copy_result_toast(&label.resolve(locale), true);
                     self.toasts.push(toast, Instant::now());
                 }
                 AppEffect::CopyBulkUrls(urls) => {

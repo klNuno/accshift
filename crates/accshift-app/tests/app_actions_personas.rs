@@ -301,8 +301,7 @@ fn opens_the_panel_after_closing_settings_and_bulk_edit() {
         vec![AppEffect::CloseSettingsPanel, AppEffect::CloseBulkEdit]
     );
     assert!(switch.show_personas);
-    switch.sync_enabled(false);
-    assert!(!switch.show_personas);
+    switch.show_personas = false;
     assert!(switch.open_personas(false, false).is_empty());
     assert!(!switch.show_personas);
 }

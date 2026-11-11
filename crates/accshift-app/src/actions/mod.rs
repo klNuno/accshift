@@ -19,16 +19,12 @@
 //!   filtering of `CommandPalette.svelte`.
 //! - [`dialogs::AppDialogs`] ports `app/useAppDialogs.svelte.ts`, the validation of
 //!   `InputDialog.svelte`.
-//! - [`card_actions`] ports `app/useCardActions.ts`.
-//! - [`navigation`] ports `app/useAppNavigation.svelte.ts` with the browser
-//!   history as a stack, `app/tabCycle.ts`, `app/useSettingsPanel.svelte.ts`,
-//!   `features/settings/useSettingsTabBar.svelte.ts`.
+//! - [`card_actions`] holds the bulk edit bar actions on the selected cards.
+//! - [`navigation`] holds the settings panel tab bar.
 //! - [`extension::ExtensionContent`] ports `app/useExtensionContent.svelte.ts`.
 //! - [`personas`] ports `app/usePersonas.svelte.ts`, `app/usePersonaSwitch.svelte.ts`.
 //! - [`onboarding::OnboardingTour`] ports `app/useOnboardingTour.svelte.ts`.
 //! - [`avatar_fallback`] ports `shared/avatarFallback.ts`.
-//! - [`shell`] ports the handlers `src/App.svelte` defines inline over several of
-//!   these.
 
 pub mod avatar_fallback;
 pub mod card_actions;
@@ -39,7 +35,6 @@ pub mod navigation;
 pub mod onboarding;
 pub mod palette;
 pub mod personas;
-pub mod shell;
 pub mod toasts;
 
 use crate::accounts::loader::LoadOptions;
@@ -79,8 +74,7 @@ pub enum AppEffect {
     AddAccount,
     /// `handleAccountSwitch(account)`.
     SwitchAccount(PlatformAccount),
-    /// `handleNavigateToFolder(folderId)`:
-    /// [`navigation::AppNavigation::navigate_to`] with history.
+    /// `handleNavigateToFolder(folderId)`.
     NavigateToFolder(Option<String>),
     /// `navigation.refreshCurrentItems()`.
     RefreshCurrentItems,
@@ -98,21 +92,19 @@ pub enum AppEffect {
     RefreshSettings,
     /// `secureScreen.handleSettingsClosed()`.
     SettingsClosed,
-    /// `appNavigation.closeSettingsPanel()`:
-    /// [`navigation::AppNavigation::close_settings_panel`].
+    /// `appNavigation.closeSettingsPanel()`.
     CloseSettingsPanel,
     /// `appNavigation.toggleSettingsPanel()`.
     ToggleSettingsPanel,
     /// `appNavigation.handleTabChange(tab)`.
     ChangeTab(String),
-    /// `handleNavigateBack`: [`navigation::AppNavigation::navigate_to_parent_folder`]
-    /// (its add flow cancel comes first in the list).
+    /// `handleNavigateBack` (its add flow cancel comes first in the list).
     NavigateToParentFolder,
     /// The removal of an account from the grid (`removeAccount` glue of
     /// App.svelte: loader, folder sync, items).
     RemoveAccount(String),
     /// `copyToClipboard(text, label)`: write it, then
-    /// [`shell::copy_result_toast`] with the label resolved.
+    /// [`toasts::copy_result_toast`] with the label resolved.
     CopyToClipboard { text: String, label: Text },
     /// Write several lines to the clipboard, then
     /// [`card_actions::bulk_urls_copied_toast`] (`copyBulkEditUrls`).

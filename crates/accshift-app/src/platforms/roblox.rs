@@ -154,10 +154,6 @@ impl RobloxSessions {
         self.dead.remove(user_id);
     }
 
-    pub fn is_expired(&self, user_id: &str) -> bool {
-        self.dead.contains(user_id)
-    }
-
     /// `getCachedRobloxWarningStates` (`toWarningMap`).
     pub fn warning_map(&self) -> WarningLoad {
         WarningLoad {

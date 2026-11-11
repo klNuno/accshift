@@ -7,7 +7,6 @@ use accshift_app::actions::keyboard::{
     KeyCommand, KeyEvent, KeyHost, KeyOutcome, KeyResult, KeyScope, KeyboardController, Scopes,
     CARD_NAV_SCOPES, LAYER_ORDER,
 };
-use accshift_app::actions::shell::{key_scope, ScopeFlags};
 use accshift_app::folders::ItemRef;
 use std::collections::BTreeSet;
 
@@ -734,38 +733,6 @@ fn key_scope_picks_the_topmost_layer_and_stops_reading_there() {
         ]
     );
     assert_eq!(LAYER_ORDER.len(), 8);
-}
-
-#[test]
-fn shell_key_scope_reads_the_app_state_like_app_svelte() {
-    assert_eq!(key_scope(&ScopeFlags::default()), KeyScope::App);
-    for locked in [
-        ScopeFlags {
-            pin_locked: true,
-            ..ScopeFlags::default()
-        },
-        ScopeFlags {
-            streamer_active: true,
-            palette_open: true,
-            ..ScopeFlags::default()
-        },
-        ScopeFlags {
-            render_suspended: true,
-            has_dialog: true,
-            ..ScopeFlags::default()
-        },
-    ] {
-        assert_eq!(key_scope(&locked), KeyScope::Locked);
-    }
-    assert_eq!(
-        key_scope(&ScopeFlags {
-            bulk_edit_mode: true,
-            settings_open: true,
-            personas_open: true,
-            ..ScopeFlags::default()
-        }),
-        KeyScope::BulkEdit
-    );
 }
 
 // Every binding of the table, in every scope, through the resolver.

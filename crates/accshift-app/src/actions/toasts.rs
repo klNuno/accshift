@@ -270,3 +270,16 @@ impl ToastQueue {
         self.toasts.iter().filter_map(ToastEntry::deadline).min()
     }
 }
+
+/// The toast after a clipboard write: `toast.copied` with the label,
+/// `toast.copyFailed` when it failed.
+pub fn copy_result_toast(label: &str, write_ok: bool) -> Toast {
+    if write_ok {
+        Toast::new(
+            Text::with("toast.copied", [("label", label)]),
+            ToastKind::Success,
+        )
+    } else {
+        Toast::new(Text::key("toast.copyFailed"), ToastKind::Error)
+    }
+}

@@ -542,7 +542,6 @@ fn the_pending_card_hides_in_folders_searches_and_other_tabs() {
     assert!(rig.flow.pending_setup_account(&folder).is_none());
     assert!(rig.flow.pending_setup_account(&search).is_none());
     assert!(rig.flow.pending_setup_account(&riot).is_none());
-    assert!(rig.flow.is_pending_setup_account(&rig.view(), "s-1"));
     assert_eq!(
         rig.flow
             .pending_setup_account(&rig.view())

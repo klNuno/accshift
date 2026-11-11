@@ -50,11 +50,6 @@ impl ForgetConfig {
             toast_params: Vec::new(),
         }
     }
-
-    pub fn toast_param(mut self, name: &str, value: impl Into<TranslationValue>) -> Self {
-        self.toast_params.push((name.to_string(), value.into()));
-        self
-    }
 }
 
 /// `(account.displayName || account.username || account.id).trim() || account.id`.

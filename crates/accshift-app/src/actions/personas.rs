@@ -264,13 +264,6 @@ impl PersonaSwitch {
         effects
     }
 
-    /// The `$effect` that closes the panel when the feature is turned off.
-    pub fn sync_enabled(&mut self, personas_enabled: bool) {
-        if !personas_enabled && self.show_personas {
-            self.show_personas = false;
-        }
-    }
-
     /// `handleSwitchPersona`, first half: asks for confirmation (several game
     /// clients relaunch). Nothing while any switch runs.
     pub fn handle_switch_persona(

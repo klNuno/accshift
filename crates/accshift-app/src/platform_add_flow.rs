@@ -505,12 +505,6 @@ impl PlatformAddFlow {
         })
     }
 
-    /// `isPendingSetupAccount` (lines 457-459).
-    pub fn is_pending_setup_account(&self, view: &AddFlowView<'_>, account_id: &str) -> bool {
-        self.pending_setup_account(view)
-            .is_some_and(|pending| pending.id == account_id)
-    }
-
     /// `pendingSetupAccountId` (App.svelte line 687).
     pub fn pending_setup_account_id(&self, view: &AddFlowView<'_>) -> Option<String> {
         self.pending_setup_account(view).map(|pending| pending.id)
