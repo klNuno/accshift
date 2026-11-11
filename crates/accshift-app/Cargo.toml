@@ -78,7 +78,7 @@ rusty-leveldb = { version = "4", default-features = false }
 [target.'cfg(not(windows))'.dependencies]
 # `legacy_web_storage`: the WebKit localStorage sqlite of WebKitGTK and
 # WKWebView. Same spec as the root workspace.
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.42", features = ["bundled"] }
 # `lifecycle::updater`: the `.tar.gz` bundles of AppImage and macOS.
 flate2 = "1"
 tar = "0.4"
@@ -109,4 +109,4 @@ minisign = "0.10"
 # The WebKit fixtures are built and read on every OS, Windows included
 # (tests/legacy_web_storage.rs compiles src/legacy_web_storage/webkit_sqlite.rs
 # by path), without growing the Windows app.
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.42", features = ["bundled"] }
