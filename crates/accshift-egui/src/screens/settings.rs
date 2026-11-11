@@ -224,6 +224,14 @@ fn hint_style(v: &Vars) -> TextStyle {
         .color(v.fg_subtle.to_color32())
 }
 
+/// An `accshift://` link reaches the app as a second launch's argument. macOS
+/// sends it as an Apple Event instead, which the app does not listen for, and
+/// the macOS bundle registers no scheme: no toggle for a link that cannot
+/// arrive.
+fn deep_links_reachable(os: RuntimeOs) -> bool {
+    os != RuntimeOs::Macos
+}
+
 fn general_cards(panel: &SettingsPanel, view: &View, l: Locale) -> Vec<CardSpec> {
     let d = &panel.draft;
     let t = |k: &str| tr(l, k);
@@ -271,6 +279,24 @@ fn general_cards(panel: &SettingsPanel, view: &View, l: Locale) -> Vec<CardSpec>
             },
         });
     }
+    let mut integrations = vec![Item::TitleRow(
+        t("settings.integrations"),
+        t("settings.help"),
+    )];
+    if deep_links_reachable(view.runtime_os) {
+        integrations.push(toggle(
+            "settings.deepLinks",
+            "settings.deepLinksHint",
+            d.deep_links_enabled,
+            SettingFlag::DeepLinks,
+        ));
+    }
+    integrations.push(toggle(
+        "settings.cliEnabled",
+        "settings.cliEnabledHint",
+        d.cli_enabled,
+        SettingFlag::Cli,
+    ));
     let mut cards = vec![
         CardSpec {
             wide: false,
@@ -366,21 +392,7 @@ fn general_cards(panel: &SettingsPanel, view: &View, l: Locale) -> Vec<CardSpec>
         },
         CardSpec {
             wide: false,
-            items: vec![
-                Item::TitleRow(t("settings.integrations"), t("settings.help")),
-                toggle(
-                    "settings.deepLinks",
-                    "settings.deepLinksHint",
-                    d.deep_links_enabled,
-                    SettingFlag::DeepLinks,
-                ),
-                toggle(
-                    "settings.cliEnabled",
-                    "settings.cliEnabledHint",
-                    d.cli_enabled,
-                    SettingFlag::Cli,
-                ),
-            ],
+            items: integrations,
         },
     ];
     // Launch at sign-in and close-to-tray are Windows-only.
@@ -1734,7 +1746,15 @@ pub fn t_with(locale: Locale, key: &str, params: &[(&str, TranslationValue)]) ->
 
 #[cfg(test)]
 mod tests {
-    use super::flex_equal;
+    use super::{deep_links_reachable, flex_equal};
+    use crate::app::platforms::RuntimeOs;
+
+    #[test]
+    fn macos_has_no_deep_link_toggle() {
+        assert!(deep_links_reachable(RuntimeOs::Windows));
+        assert!(deep_links_reachable(RuntimeOs::Linux));
+        assert!(!deep_links_reachable(RuntimeOs::Macos));
+    }
 
     #[test]
     fn flex_equal_shares_and_freezes_wide_items() {
