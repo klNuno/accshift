@@ -272,7 +272,8 @@ pub fn open_userdata(app_handle: AppCtx, steam_id: String) -> Result<(), Platfor
 }
 
 pub fn clear_integrated_browser_cache(app_handle: AppCtx) -> Result<(), PlatformError> {
-    accounts::clear_integrated_browser_cache().map_err(|e| {
+    let steam_path = resolve_steam_path(&app_handle)?;
+    accounts::clear_integrated_browser_cache(&steam_path).map_err(|e| {
         log_platform_failure(
             &app_handle,
             "steam.clear_integrated_browser_cache",

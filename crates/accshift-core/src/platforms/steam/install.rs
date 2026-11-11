@@ -39,14 +39,32 @@ pub const STEAM_PATH_NOT_A_DIRECTORY: &str = "steam_path_not_a_directory";
 pub const STEAM_PATH_NOT_STEAM: &str = "steam_path_not_steam";
 pub const STEAM_PATH_NEVER_SIGNED_IN: &str = "steam_path_never_signed_in";
 
+/// Files that show the Steam client lives in a folder on Linux, next to
+/// `os::steam_executable_name()`. The data folder ships the `steam.sh`
+/// launcher (what the launch runs) and the `ubuntu12_32/steam` binary, not a
+/// bare `steam` at its root.
+pub(super) const LINUX_STEAM_CLIENT_FILES: &[&str] = &["steam.sh", "ubuntu12_32/steam"];
+
+fn steam_client_files() -> Vec<&'static str> {
+    let mut files = vec![os::steam_executable_name()];
+    if cfg!(target_os = "linux") {
+        files.extend_from_slice(LINUX_STEAM_CLIENT_FILES);
+    }
+    files
+}
+
 pub fn classify_steam_folder(path: &Path) -> SteamFolder {
+    classify_steam_folder_with(path, &steam_client_files())
+}
+
+pub(super) fn classify_steam_folder_with(path: &Path, client_files: &[&str]) -> SteamFolder {
     if !path.is_dir() {
         return SteamFolder::NotADirectory;
     }
     if path.join("config").join("loginusers.vdf").is_file() {
         return SteamFolder::Usable;
     }
-    if path.join(os::steam_executable_name()).is_file() {
+    if client_files.iter().any(|file| path.join(file).is_file()) {
         return SteamFolder::NeverSignedIn;
     }
     SteamFolder::NotSteam

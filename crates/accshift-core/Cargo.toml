@@ -7,7 +7,10 @@ authors.workspace = true
 
 [dependencies]
 serde = { workspace = true }
-serde_json = { workspace = true }
+# preserve_order: launcher configs rewritten here (Battle.net.config) keep
+# their key order. The GUI already got it through accshift-theme; the CLI and
+# this crate's own tests did not.
+serde_json = { workspace = true, features = ["preserve_order"] }
 reqwest = { workspace = true }
 rustls = { workspace = true }
 thiserror = { workspace = true }

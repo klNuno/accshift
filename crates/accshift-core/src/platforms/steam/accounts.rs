@@ -875,8 +875,35 @@ pub fn copy_game_settings(
     to_steam_id: &str,
     app_id: &str,
 ) -> Result<(), AppError> {
+    copy_game_settings_with(
+        steam_path,
+        from_steam_id,
+        to_steam_id,
+        app_id,
+        is_steam_running,
+    )
+}
+
+/// `copy_game_settings` with the Steam probe injected, so the refusal can be
+/// tested without a real client.
+fn copy_game_settings_with(
+    steam_path: &Path,
+    from_steam_id: &str,
+    to_steam_id: &str,
+    app_id: &str,
+    steam_running: impl FnOnce() -> bool,
+) -> Result<(), AppError> {
     if !app_id.chars().all(|c| c.is_ascii_digit()) || app_id.is_empty() {
         return Err(AppError::FileRead("Invalid app id".into()));
+    }
+    // A running Steam rewrites userdata from memory and Steam Cloud on exit,
+    // so a copy made now would report success and then be undone.
+    if steam_running() {
+        return Err(AppError::FileRead(
+            "Steam is running and would overwrite the copied settings. Close Steam, then copy \
+             again."
+                .into(),
+        ));
     }
 
     let from_root = steam_user_data_path(steam_path, from_steam_id)?;
@@ -944,15 +971,46 @@ pub fn get_copyable_games(
     Ok(games)
 }
 
-pub fn clear_integrated_browser_cache() -> Result<(), AppError> {
-    kill_steam_client_processes()?;
+/// Delete Steam's web cache with Steam stopped the way a switch stops it
+/// (graceful first, so it is not killed mid-write of its VDFs), then start it
+/// again if it was running.
+pub fn clear_integrated_browser_cache(steam_path: &Path) -> Result<(), AppError> {
+    let steam_was_running = is_steam_running();
+    clear_integrated_browser_cache_with(
+        &os::steam_htmlcache_path()?,
+        || stop_steam(steam_path, false),
+        || {
+            if steam_was_running {
+                launch_steam(steam_path, false, "", &[])
+            } else {
+                Ok(())
+            }
+        },
+    )
+}
 
-    let htmlcache_path = os::steam_htmlcache_path()?;
-    if htmlcache_path.exists() {
-        fs::remove_dir_all(&htmlcache_path).map_err(|e| AppError::FileRead(e.to_string()))?;
+fn clear_integrated_browser_cache_with(
+    htmlcache_path: &Path,
+    stop: impl FnOnce() -> Result<StopOutcome, AppError>,
+    relaunch: impl FnOnce() -> Result<(), AppError>,
+) -> Result<(), AppError> {
+    let stopped = match stop()? {
+        StopOutcome::NeedsElevation => return Err(AppError::SteamElevated),
+        StopOutcome::NotRunning => false,
+        StopOutcome::Stopped => true,
+    };
+
+    let removed = if htmlcache_path.exists() {
+        fs::remove_dir_all(htmlcache_path).map_err(|e| AppError::FileRead(e.to_string()))
+    } else {
+        Ok(())
+    };
+    // Steam comes back even when the delete failed: the user asked for a
+    // cache clear, not for Steam to stay closed.
+    if stopped {
+        relaunch()?;
     }
-
-    Ok(())
+    removed
 }
 
 #[cfg(test)]

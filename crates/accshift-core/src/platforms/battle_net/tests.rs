@@ -5,7 +5,8 @@ use super::setup::{
 use super::{
     collect_unique_accounts, encode_saved_account_name, extract_saved_account_names,
     normalize_account_key, order_saved_accounts_for_switch, parse_saved_account_names,
-    saved_accounts_without, validate_macos_bundle_path, validate_windows_launcher_path,
+    saved_accounts_without, set_saved_account_names, validate_macos_bundle_path,
+    validate_windows_launcher_path,
 };
 #[cfg(windows)]
 use super::{normalize_registry_path, write_saved_accounts};
@@ -389,7 +390,10 @@ fn battle_net_path_override_must_name_the_launcher() {
 // process-wide static, so two tests on it would race.
 #[test]
 fn a_setup_that_ends_without_a_cancel_hands_its_saved_list_to_the_next_switch() {
-    let old = vec!["old-a@example.com".to_string(), "old-b@example.com".to_string()];
+    let old = vec![
+        "old-a@example.com".to_string(),
+        "old-b@example.com".to_string(),
+    ];
 
     // Ready: the launcher signed in the new account and only saved that one.
     owe_saved_accounts(&old);
@@ -426,7 +430,28 @@ fn a_setup_that_ends_without_a_cancel_hands_its_saved_list_to_the_next_switch() 
             &with_owed_saved_accounts(vec!["new@example.com".to_string()]),
             "gone@example.com"
         ),
-        vec!["new@example.com".to_string(), "old-c@example.com".to_string()]
+        vec![
+            "new@example.com".to_string(),
+            "old-c@example.com".to_string()
+        ]
     );
     settle_owed_saved_accounts();
+}
+
+#[test]
+fn writing_saved_names_keeps_the_key_order_of_the_config() {
+    let content = r#"{
+  "Zeta": {"b": 1, "a": 2},
+  "Client": {"Zoom": "1", "SavedAccountNames": "old@example.com", "Alpha": "2"},
+  "Alpha": true
+}"#;
+    let mut root: serde_json::Value = serde_json::from_str(content).unwrap();
+
+    set_saved_account_names(&mut root, &["new@example.com".to_string()]).unwrap();
+
+    let written = serde_json::to_string(&root).unwrap();
+    assert_eq!(
+        written,
+        r#"{"Zeta":{"b":1,"a":2},"Client":{"Zoom":"1","SavedAccountNames":"new@example.com","Alpha":"2"},"Alpha":true}"#
+    );
 }

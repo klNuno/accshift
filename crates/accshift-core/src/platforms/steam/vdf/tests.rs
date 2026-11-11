@@ -215,19 +215,20 @@ fn set_persona_state_creates_the_key_when_absent() {
 ";
     let out = set_persona_state_in_vdf(content, "7");
     assert!(
-        out.contains("	\"friends\"
+        out.contains(
+            "	\"friends\"
 	{
 		\"PersonaState\"		\"7\"
 	}
-"),
+"
+        ),
         "{out}"
     );
 }
 
 #[test]
 fn set_persona_state_rewrites_an_inline_brace_layout() {
-    let content =
-        "\"UserLocalConfigStore\" {
+    let content = "\"UserLocalConfigStore\" {
 	\"friends\" {
 		\"PersonaState\"		\"1\"
 	}
