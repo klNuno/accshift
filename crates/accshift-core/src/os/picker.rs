@@ -47,16 +47,17 @@ fn answer(picked: Option<PathBuf>) -> Result<String, AppError> {
 /// group would.
 fn filter_groups(filter: &str, windows: bool) -> Vec<FilterGroup> {
     let parts: Vec<&str> = filter.split('|').collect();
-    let groups: Vec<FilterGroup> = parts
-        .chunks_exact(2)
-        .filter_map(|pair| {
-            let extensions: Vec<String> = pair[1]
+    let (pairs, _) = parts.as_chunks::<2>();
+    let groups: Vec<FilterGroup> = pairs
+        .iter()
+        .filter_map(|[name, patterns]| {
+            let extensions: Vec<String> = patterns
                 .split(';')
                 .map(str::trim)
                 .filter(|pattern| !pattern.is_empty())
                 .map(extension_of)
                 .collect();
-            (!extensions.is_empty()).then(|| (pair[0].trim().to_string(), extensions))
+            (!extensions.is_empty()).then(|| (name.trim().to_string(), extensions))
         })
         .collect();
     let accepts_all = |group: &FilterGroup| group.1.iter().any(|ext| ext == "*");

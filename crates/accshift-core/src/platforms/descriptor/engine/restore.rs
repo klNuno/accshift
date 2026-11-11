@@ -43,7 +43,9 @@ pub(super) enum Undo {
     },
     Value {
         item: RegistryItem,
-        previous: Option<String>,
+        /// Raw, so an empty or non-string value is written back rather than
+        /// deleted.
+        previous: Option<reg::RawValue>,
     },
 }
 
@@ -66,7 +68,7 @@ impl Undo {
                 }
             }
             Undo::Value { item, previous } => match previous {
-                Some(value) => reg::write(item.root, &item.key, &item.value, &value),
+                Some(value) => reg::write_raw(item.root, &item.key, &item.value, &value),
                 None => {
                     reg::delete(item.root, &item.key, &item.value);
                     Ok(())
@@ -149,14 +151,14 @@ pub(super) fn apply_restore_step(
         RestoreStep::Value { item, data } => {
             journal.push(Undo::Value {
                 item: item.clone(),
-                previous: reg::read(item.root, &item.key, &item.value),
+                previous: reg::read_raw(item.root, &item.key, &item.value),
             });
             reg::write(item.root, &item.key, &item.value, data)
         }
         RestoreStep::RemoveValue { item } => {
             journal.push(Undo::Value {
                 item: item.clone(),
-                previous: reg::read(item.root, &item.key, &item.value),
+                previous: reg::read_raw(item.root, &item.key, &item.value),
             });
             reg::delete(item.root, &item.key, &item.value);
             Ok(())

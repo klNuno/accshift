@@ -70,13 +70,27 @@ pub fn load_embedded() -> (Vec<Descriptor>, Vec<DescriptorError>) {
 /// platform registry hands out `&'static dyn PlatformService` and they live as
 /// long as the process anyway.
 pub fn services() -> &'static [&'static DescriptorService] {
-    static SERVICES: OnceLock<Vec<&'static DescriptorService>> = OnceLock::new();
+    &embedded().0
+}
+
+/// Why each shipped descriptor that did not validate was dropped.
+fn embedded_rejections() -> &'static [String] {
+    &embedded().1
+}
+
+/// The shipped services, and the reasons the rejected descriptors were
+/// dropped.
+type Embedded = (Vec<&'static DescriptorService>, Vec<String>);
+
+fn embedded() -> &'static Embedded {
+    static SERVICES: OnceLock<Embedded> = OnceLock::new();
     SERVICES.get_or_init(|| {
         let (descriptors, errors) = load_embedded();
         // A shipped descriptor that does not validate is a build mistake, and
         // `embedded_descriptors_all_validate` catches it in CI. In a debug
         // build it is loud here too; in release the platform is dropped rather
-        // than taking the app down with it.
+        // than taking the app down with it, and the reason reaches the log
+        // through `log_embedded_rejections`.
         debug_assert!(
             errors.is_empty(),
             "shipped descriptor rejected: {}",
@@ -86,15 +100,30 @@ pub fn services() -> &'static [&'static DescriptorService] {
                 .collect::<Vec<_>>()
                 .join("; ")
         );
-        descriptors
+        let services = descriptors
             .into_iter()
             .filter(|descriptor| descriptor.current_profile().is_some())
             .map(|descriptor| {
                 let service = DescriptorService::new(descriptor, DescriptorOrigin::Embedded);
                 &*Box::leak(Box::new(service))
             })
-            .collect()
+            .collect();
+        (services, errors.iter().map(ToString::to_string).collect())
     })
+}
+
+/// Writes each dropped shipped descriptor to the app log, once per process.
+/// [`services`] runs with no context to log through, so the first load of the
+/// user's descriptors, which has one, reports for it.
+fn log_embedded_rejections(app: &dyn AppContext, rejections: &[String]) {
+    for rejection in rejections {
+        crate::platforms::log_platform_error(
+            app,
+            "descriptor.load_embedded",
+            "A shipped platform descriptor was rejected",
+            rejection.as_str(),
+        );
+    }
 }
 
 /// Where a user drops a descriptor of their own.
@@ -113,6 +142,9 @@ pub fn user_dir(app: &dyn AppContext) -> Result<PathBuf, String> {
 /// lists them can name the file and the field instead of showing one platform
 /// fewer than the user put there.
 pub fn load_user(app: &dyn AppContext) -> (Vec<(PathBuf, Descriptor)>, Vec<DescriptorError>) {
+    static LOGGED: std::sync::Once = std::sync::Once::new();
+    LOGGED.call_once(|| log_embedded_rejections(app, embedded_rejections()));
+
     let mut loaded = Vec::new();
     let mut errors = Vec::new();
 
@@ -387,6 +419,30 @@ mod tests {
         assert_eq!(
             profile.identity.format.invalid_message,
             "Invalid Ubisoft account UUID"
+        );
+    }
+
+    // Regression: a shipped descriptor rejected in a release build vanished
+    // with nothing in the log to explain the missing platform.
+    #[test]
+    fn a_rejected_shipped_descriptor_is_logged() {
+        let root = std::env::temp_dir().join(format!(
+            "accshift-embedded-rejection-{}",
+            std::process::id()
+        ));
+        let app = test_support::TempCtx { root: root.clone() };
+        log_embedded_rejections(&app, &["gog.json: identity.format: too long".to_string()]);
+        let log = std::fs::read_to_string(crate::logging::log_file_path(&app).unwrap()).unwrap();
+        assert!(log.contains("gog.json: identity.format: too long"), "{log}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn every_shipped_descriptor_is_accepted() {
+        assert!(
+            embedded_rejections().is_empty(),
+            "{:?}",
+            embedded_rejections()
         );
     }
 

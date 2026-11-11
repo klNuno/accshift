@@ -79,6 +79,19 @@ mod imp {
     pub fn delete(root: RegistryHive, key: &str, value: &str) {
         registry::delete_value(hive(root), key, value);
     }
+
+    pub fn read_raw(root: RegistryHive, key: &str, value: &str) -> Option<super::RawValue> {
+        registry::read_raw(hive(root), key, value).map(super::RawValue::Native)
+    }
+
+    pub fn write_raw(
+        root: RegistryHive,
+        key: &str,
+        value: &str,
+        data: &winreg::RegValue,
+    ) -> Result<(), String> {
+        registry::write_raw(hive(root), key, value, data)
+    }
 }
 
 #[cfg(not(windows))]
@@ -96,6 +109,10 @@ mod imp {
     }
 
     pub fn delete(_root: RegistryHive, _key: &str, _value: &str) {}
+
+    pub fn read_raw(_root: RegistryHive, _key: &str, _value: &str) -> Option<super::RawValue> {
+        None
+    }
 
     pub fn uninstall_entry(_display_name: &str, _value: &str) -> Option<String> {
         None
@@ -128,6 +145,39 @@ pub fn delete(root: RegistryHive, key: &str, value: &str) {
     imp::delete(root, key, value)
 }
 
+/// A value exactly as stored, so a rollback can put back what [`read`]
+/// hides: an empty string or a value that is not a string.
+pub enum RawValue {
+    #[cfg(windows)]
+    Native(winreg::RegValue<'static>),
+    #[cfg(test)]
+    Fake(String),
+}
+
+/// `None` when the value does not exist at all.
+pub fn read_raw(root: RegistryHive, key: &str, value: &str) -> Option<RawValue> {
+    #[cfg(test)]
+    if let Some(found) = fake::read_raw(root, key, value) {
+        return found.map(RawValue::Fake);
+    }
+    imp::read_raw(root, key, value)
+}
+
+/// Writes back a value [`read_raw`] returned, with its type.
+pub fn write_raw(
+    root: RegistryHive,
+    key: &str,
+    value: &str,
+    data: &RawValue,
+) -> Result<(), String> {
+    match data {
+        #[cfg(windows)]
+        RawValue::Native(data) => imp::write_raw(root, key, value, data),
+        #[cfg(test)]
+        RawValue::Fake(data) => write(root, key, value, data),
+    }
+}
+
 /// An in-memory registry for the current test thread, so engine tests can
 /// exercise registry steps without writing the real hive.
 #[cfg(test)]
@@ -140,6 +190,7 @@ pub(crate) mod fake {
     struct Hive {
         values: HashMap<String, String>,
         fail_writes: bool,
+        fail_writes_to: Option<String>,
     }
 
     thread_local! {
@@ -174,6 +225,23 @@ pub(crate) mod fake {
         });
     }
 
+    /// Fails the writes to one value name only, so a later restore step can
+    /// fail after an earlier one went through.
+    #[cfg(windows)]
+    pub fn fail_writes_to(value: &str) {
+        HIVE.with(|hive| {
+            if let Some(hive) = hive.borrow_mut().as_mut() {
+                hive.fail_writes_to = Some(value.to_string());
+            }
+        });
+    }
+
+    /// The value as stored, untrimmed.
+    #[cfg(windows)]
+    pub fn get(root: RegistryHive, key: &str, value: &str) -> Option<String> {
+        read_raw(root, key, value).flatten()
+    }
+
     fn name(root: RegistryHive, key: &str, value: &str) -> String {
         super::display(root, key, value)
     }
@@ -187,7 +255,17 @@ pub(crate) mod fake {
         });
     }
 
+    /// Same answer as the real `read`: trimmed, and an empty value reads as
+    /// missing.
     pub(super) fn read(root: RegistryHive, key: &str, value: &str) -> Option<Option<String>> {
+        read_raw(root, key, value).map(|found| {
+            found
+                .map(|data| data.trim().to_string())
+                .filter(|data| !data.is_empty())
+        })
+    }
+
+    pub(super) fn read_raw(root: RegistryHive, key: &str, value: &str) -> Option<Option<String>> {
         HIVE.with(|hive| {
             hive.borrow()
                 .as_ref()
@@ -203,7 +281,7 @@ pub(crate) mod fake {
     ) -> Option<Result<(), String>> {
         HIVE.with(|hive| {
             hive.borrow_mut().as_mut().map(|hive| {
-                if hive.fail_writes {
+                if hive.fail_writes || hive.fail_writes_to.as_deref() == Some(value) {
                     return Err(format!("Could not write registry value {key}\\{value}"));
                 }
                 hive.values.insert(name(root, key, value), data.to_string());

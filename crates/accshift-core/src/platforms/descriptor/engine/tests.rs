@@ -1635,6 +1635,53 @@ fn a_registry_write_that_fails_fails_the_restore_and_undoes_the_files() {
     let _ = fs::remove_dir_all(&root);
 }
 
+// Regression: the undo read the old value as a trimmed string, so an empty
+// (or non-string) value came back as "missing" and the rollback deleted it.
+#[cfg(windows)]
+#[test]
+fn a_rollback_puts_back_an_empty_registry_value() {
+    let _config = config_guard();
+    let _registry = reg::fake::install();
+    let root = scratch("restore-empty-value");
+    let live = root.join("live");
+    let ctx = TempCtx { root: root.clone() };
+    let json = fixture(&live)
+        .replace(
+            r#""roots": { "files": ["#,
+            r#""roots": { "registry": [{ "root": "HKCU", "key": "Software\\AccshiftTest" }], "files": ["#,
+        )
+        .replace(
+            r#""state": {"#,
+            r#""state": {
+                "registryValues": [
+                  { "root": "HKCU", "key": "Software\\AccshiftTest", "value": "token", "snapshot": "registry_token.txt" },
+                  { "root": "HKCU", "key": "Software\\AccshiftTest", "value": "region", "snapshot": "registry_region.txt" }
+                ],"#,
+        );
+    let service = DescriptorService::new(
+        Descriptor::parse("test", &json).unwrap(),
+        DescriptorOrigin::Embedded,
+    );
+
+    seed_live_session(&live, b"account-one");
+    reg::fake::set(RegistryHive::CurrentUser, TEST_KEY, "token", "incoming");
+    reg::fake::set(RegistryHive::CurrentUser, TEST_KEY, "region", "eu");
+    service.save_snapshot(&ctx, "aaaa1111").unwrap();
+
+    seed_live_session(&live, b"account-two");
+    reg::fake::set(RegistryHive::CurrentUser, TEST_KEY, "token", "");
+    reg::fake::set(RegistryHive::CurrentUser, TEST_KEY, "region", "na");
+    reg::fake::fail_writes_to("region");
+    assert!(service.restore_snapshot(&ctx, "aaaa1111").is_err());
+
+    assert_eq!(
+        reg::fake::get(RegistryHive::CurrentUser, TEST_KEY, "token").as_deref(),
+        Some("")
+    );
+    assert_eq!(fs::read(live.join("session.json")).unwrap(), b"account-two");
+    let _ = fs::remove_dir_all(&root);
+}
+
 #[cfg(windows)]
 #[test]
 fn a_directory_that_cannot_be_restored_leaves_every_file_as_it_was() {
@@ -1798,6 +1845,61 @@ fn an_empty_capture_leaves_no_snapshot_for_the_id_it_minted() {
         .map(|entries| entries.flatten().map(|e| e.file_name()).collect())
         .unwrap_or_default();
     assert!(left.is_empty(), "{left:?}");
+    let _ = fs::remove_dir_all(&root);
+}
+
+// Regression: a capture failing half way kept the items it had already
+// written when the id was a real one, so a later switch restored a partial
+// session.
+#[cfg(windows)]
+#[test]
+fn a_failed_capture_leaves_no_partial_snapshot_for_a_new_real_id() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let _config = config_guard();
+    let _registry = reg::fake::install();
+    let root = scratch("setup-partial-capture");
+    let live = root.join("live");
+    let ctx = TempCtx { root: root.clone() };
+    let flag = live.display().to_string().replace('\\', "/") + "/flag";
+    let json = fixture(&live)
+        .replacen(
+            r#""source": { "kind": "synthetic" }"#,
+            r#""source": { "kind": "registry", "root": "HKCU", "key": "Software\\AccshiftTest", "value": "userId" }"#,
+            1,
+        )
+        .replacen(
+            r#""roots": { "files": ["#,
+            r#""roots": { "registry": [{ "root": "HKCU", "key": "Software\\AccshiftTest" }], "files": ["#,
+            1,
+        )
+        .replacen(
+            r#""setup": { "missingSnapshotHint""#,
+            &format!(
+                r#""setup": {{ "trigger": [{{ "kind": "pathNonEmpty", "path": "{flag}" }}], "missingSnapshotHint""#
+            ),
+            1,
+        );
+    let service = DescriptorService::new(
+        Descriptor::parse("test", &json).unwrap(),
+        DescriptorOrigin::Embedded,
+    );
+
+    let status = service.begin(&ctx).unwrap();
+    seed_live_session(&live, b"account-one");
+    fs::write(live.join("flag"), b"x").unwrap();
+    reg::fake::set(RegistryHive::CurrentUser, TEST_KEY, "userId", "12345");
+    // Held open with no sharing, as a launcher holds its session files: the
+    // directory capture fails after `session.json` was written.
+    let held = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(live.join("auth").join("nested").join("token.bin"))
+        .unwrap();
+
+    assert!(service.setup_status(&ctx, &status.setup_id).is_err());
+    drop(held);
+    assert!(!service.snapshot_root(&ctx, "12345").unwrap().exists());
     let _ = fs::remove_dir_all(&root);
 }
 
