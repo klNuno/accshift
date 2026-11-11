@@ -19,7 +19,7 @@ use crate::ui::anim;
 use crate::ui::components::account_card::AvatarContent;
 use crate::ui::components::dialog::auto_ring;
 use crate::ui::components::icon;
-use crate::ui::css;
+use crate::ui::components::shared;
 use crate::ui::paint::{Border, BoxStyle, Corners};
 use crate::ui::snap;
 use crate::ui::text::{self, LineHeight, TextAlign, TextStyle, TextTransform};
@@ -124,12 +124,11 @@ fn wrapped_height(ctx: &egui::Context, s: &str, style: &TextStyle, w: f32) -> Op
 /// A card colour tints the panel: a vertical gradient from 14 % of it over
 /// the card background to 8 % of it.
 fn paint_tint(painter: &Painter, rect: Rect, c: Rgba, v: &Vars, ppp: f32) {
-    let css_rgba = |c: Rgba| format!("rgba({}, {}, {}, {})", c.r, c.g, c.b, c.a);
-    let gradient = css::gradient(&format!(
-        "linear-gradient(180deg, {}, {})",
-        css_rgba(c.mix(0.14, v.bg_card)),
-        css_rgba(c.mix(0.08, Rgba::TRANSPARENT)),
-    ));
+    let gradient = shared::linear_gradient(
+        "180deg",
+        c.mix(0.14, v.bg_card),
+        c.mix(0.08, Rgba::TRANSPARENT),
+    );
     BoxStyle {
         images: gradient.into_iter().collect(),
         radius: Corners::new(0.0, RADIUS, RADIUS, 0.0),

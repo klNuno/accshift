@@ -20,10 +20,6 @@ pub(crate) fn ceil_unit(w: f32, ppp: f32) -> f32 {
 
 /// [`ceil_unit`] that lets a width within 1e-3 of a unit (in 1/64 device
 /// px) round down to it, so measuring noise does not add a unit.
-#[allow(
-    dead_code,
-    reason = "account_card.rs and card_extension.rs switch to it"
-)]
 pub(crate) fn ceil_unit_tolerant(w: f32, ppp: f32) -> f32 {
     (w * ppp * 64.0 - 1e-3).ceil() / 64.0 / ppp
 }
@@ -55,7 +51,6 @@ pub(crate) fn linear_gradient(direction: &str, from: Rgba, to: Rgba) -> Option<G
 /// The opacity of an avatar placeholder (initials or loader) fading in from
 /// its mount: 0 to 1 over the theme's avatar fade, ease-out, held at 0
 /// during the theme's avatar defer delay.
-#[allow(dead_code, reason = "account_card.rs and list_view.rs switch to it")]
 pub(crate) fn avatar_placeholder_in(ctx: &Context, id: Id, v: &Vars) -> f32 {
     anim::animate(
         ctx,
@@ -70,7 +65,6 @@ pub(crate) fn avatar_placeholder_in(ctx: &Context, id: Id, v: &Vars) -> f32 {
 
 /// The premultiplied tint that draws an avatar image at `alpha` with its
 /// colours scaled by `dim` (1 for full brightness).
-#[allow(dead_code, reason = "account_card.rs and list_view.rs switch to it")]
 pub(crate) fn image_tint(alpha: f32, dim: f32) -> Color32 {
     let a = (alpha * 255.0).round().clamp(0.0, 255.0) as u8;
     let g = (alpha * dim * 255.0).round().clamp(0.0, 255.0) as u8;

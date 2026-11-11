@@ -4,9 +4,10 @@
 use std::time::Duration;
 
 use super::input::Hover;
-use super::measure::{ceil_unit, name_style};
+use super::measure::name_style;
 use super::{Card, State};
 use crate::ui::anim;
+use crate::ui::components::shared::ceil_unit_tolerant;
 use crate::ui::text;
 
 /// The scroll speed in px per second.
@@ -31,7 +32,7 @@ pub(super) fn fit_name(card: &Card, st: &mut State, hover: Hover) -> NameFit {
     let ctx = &card.ctx;
     let item = card.item();
     let name_key = format!("{}|{}", item.name, item.username);
-    let width = ceil_unit(
+    let width = ceil_unit_tolerant(
         text::measure(ctx, &item.name, &name_style(card.v())).unwrap_or(0.0),
         card.ppp,
     );

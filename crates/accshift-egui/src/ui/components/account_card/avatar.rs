@@ -2,7 +2,7 @@
 //! overlay of an armed card and the active outline.
 
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
-use egui::{pos2, vec2, Color32, Painter, Pos2, Rect, Shape, Vec2};
+use egui::{pos2, vec2, Painter, Pos2, Rect, Shape, Vec2};
 
 use accshift_app::actions::avatar_fallback::avatar_initials;
 
@@ -11,9 +11,10 @@ use super::measure::line_box;
 use super::{confirm, AvatarContent, AvatarPicture, Card, Loader, State};
 use crate::app::vars::Vars;
 use crate::theme::Rgba;
-use crate::ui::anim::{self, Animation, Fill, Keyframes, Timing};
+use crate::ui::anim::{self, Animation, Keyframes, Timing};
 use crate::ui::components::avatar_fade_in;
 use crate::ui::components::folder_card::{map_rect, ring};
+use crate::ui::components::shared;
 use crate::ui::paint::{self, BoxStyle, Corners, Transform};
 use crate::ui::snap;
 use crate::ui::text::{self, LineHeight, TextAlign, TextStyle};
@@ -136,7 +137,7 @@ fn paint_content(card: &Card, painter: &Painter, avatar: &AvatarBox, look: &Look
             // never flashes a placeholder.
             deferred = card.item().avatar.pending;
             let fade = if deferred {
-                placeholder_in(ctx, id.with("fallback-in"), v)
+                shared::avatar_placeholder_in(ctx, id.with("fallback-in"), v)
             } else {
                 1.0
             };
@@ -222,7 +223,7 @@ fn paint_loaders(card: &Card, painter: &Painter, centre: Pos2, st: &mut State) {
         return;
     }
     let fade = if loader == Loader::Deferred {
-        placeholder_in(ctx, id.with("loader-in"), v)
+        shared::avatar_placeholder_in(ctx, id.with("loader-in"), v)
     } else {
         1.0
     };
@@ -237,20 +238,6 @@ fn paint_loaders(card: &Card, painter: &Painter, centre: Pos2, st: &mut State) {
     ctx.request_repaint();
 }
 
-/// The avatar placeholder's fade in: it waits the theme's avatar delay,
-/// transparent, then fades in over the avatar fade, from its mount.
-fn placeholder_in(ctx: &egui::Context, id: egui::Id, v: &Vars) -> f32 {
-    anim::animate(
-        ctx,
-        id,
-        &Keyframes::from_to(0.0f32, 1.0),
-        &Animation::new(v.motion_avatar_fade, Timing::EASE_OUT)
-            .with_delay(v.motion_avatar_defer)
-            .with_fill(Fill::Backwards),
-        1.0,
-    )
-}
-
 /// The picture: its fade in, its hover zoom and its filter, the blurred copy
 /// cross-faded over the 300 ms transition.
 fn paint_picture(
@@ -261,11 +248,7 @@ fn paint_picture(
     reveal: f32,
     blur: f32,
 ) {
-    let tint = |alpha: f32, dim: f32| {
-        let a = (alpha * 255.0).round().clamp(0.0, 255.0) as u8;
-        let g = (alpha * dim * 255.0).round().clamp(0.0, 255.0) as u8;
-        Color32::from_rgba_premultiplied(g, g, g, a)
-    };
+    let tint = shared::image_tint;
     match picture.blurred {
         Some(blurred) if blur > 0.0 => {
             if blur < 1.0 {

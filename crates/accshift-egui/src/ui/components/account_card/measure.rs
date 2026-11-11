@@ -6,6 +6,7 @@ use accshift_app::display::AccountCardItem;
 
 use crate::app::vars::Vars;
 use crate::theme::Rgba;
+use crate::ui::components::shared::ceil_unit_tolerant;
 use crate::ui::text::{self, LineBox, LineHeight, TextStyle};
 
 /// The gap between the avatar and the name.
@@ -98,7 +99,7 @@ impl Meta {
             username: has_username.then(|| {
                 let w = text::measure(ctx, &item.username, &meta_style(400, 10.0, v.fg_muted))
                     .unwrap_or(0.0);
-                ceil_unit(w, ppp)
+                ceil_unit_tolerant(w, ppp)
             }),
             badge,
             note: item.show_note_inline && !note.is_empty(),
@@ -138,12 +139,6 @@ impl Meta {
     }
 }
 
-/// A width rounded up to a layout unit (1/64 device px), as Blink sizes an
-/// inline box around its text.
-pub(super) fn ceil_unit(w: f32, ppp: f32) -> f32 {
-    (w * ppp * 64.0 - 1e-3).ceil() / 64.0 / ppp
-}
-
 /// The card's height for `item`: the min height, or its content when the
 /// meta lines need more.
 pub fn height(ctx: &Context, v: &Vars, item: &AccountCardItem, badge: bool) -> f32 {
@@ -167,7 +162,7 @@ mod tests {
 
     #[test]
     fn layout_units_round_up() {
-        assert_eq!(ceil_unit(28.65, 1.5), 2751.0 / 64.0 / 1.5);
-        assert_eq!(ceil_unit(10.0, 1.0), 10.0);
+        assert_eq!(ceil_unit_tolerant(28.65, 1.5), 2751.0 / 64.0 / 1.5);
+        assert_eq!(ceil_unit_tolerant(10.0, 1.0), 10.0);
     }
 }

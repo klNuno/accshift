@@ -2,14 +2,15 @@
 //! spinner, over the muted background.
 
 use accshift_app::display::AccountCardItem;
-use egui::{pos2, vec2, Color32, Id, Pos2, Rect, Ui};
+use egui::{pos2, vec2, Id, Pos2, Rect, Ui};
 
 use super::{ceil_unit, SPIN};
 use crate::app::vars::Vars;
 use crate::theme::Rgba;
-use crate::ui::anim::{self, Animation, Fill, Keyframes, Timing};
+use crate::ui::anim::{self, Animation, Keyframes, Timing};
 use crate::ui::components::account_card::{cover_uv, paint_ring_loader, AvatarContent};
 use crate::ui::components::avatar_fade_in;
+use crate::ui::components::shared;
 use crate::ui::paint::{self, BoxStyle, Corners};
 use crate::ui::snap;
 use crate::ui::text::{self, LineHeight, TextStyle};
@@ -33,21 +34,6 @@ impl AvatarSize {
         loader: 42.0,
         loader_border: 4.0,
     };
-}
-
-/// The placeholder's fade in, counted from its mount: hidden for the
-/// theme's avatar defer delay, then faded in over its avatar fade time,
-/// easing out.
-fn deferred(ui: &Ui, id: Id, v: &Vars) -> f32 {
-    anim::animate(
-        ui.ctx(),
-        id,
-        &Keyframes::from_to(0.0f32, 1.0),
-        &Animation::new(v.motion_avatar_fade, Timing::EASE_OUT)
-            .with_delay(v.motion_avatar_defer)
-            .with_fill(Fill::Backwards),
-        1.0,
-    )
 }
 
 /// A spinner of the given size, turning from its mount.
@@ -118,11 +104,6 @@ pub(super) fn paint_avatar(
     let reveal = avatar_fade_in::avatar_opacity(ctx, id.with("avatar"), revealed, v);
     match content {
         AvatarContent::Picture(picture) => {
-            let tint = |alpha: f32, dim: f32| {
-                let a8 = (alpha * 255.0).round().clamp(0.0, 255.0) as u8;
-                let g = (alpha * dim * 255.0).round().clamp(0.0, 255.0) as u8;
-                Color32::from_rgba_premultiplied(g, g, g, a8)
-            };
             let (texture, uv) = match (a.switching, picture.blurred) {
                 (true, Some(blurred)) => (blurred, cover_uv([1, 1], 1.0)),
                 _ => (picture.texture, cover_uv(picture.size, 1.0)),
@@ -134,7 +115,7 @@ pub(super) fn paint_avatar(
                 snapped,
                 box_uv(uv, rect, ppp),
                 radius,
-                tint(reveal, dim),
+                shared::image_tint(reveal, dim),
             );
             if a.switching {
                 loader(ui, id, rect.center(), size, 1.0, v);
@@ -146,7 +127,7 @@ pub(super) fn paint_avatar(
             gradient,
         } => {
             let fade = if a.avatar.pending {
-                deferred(ui, id.with("initials-in"), v)
+                shared::avatar_placeholder_in(ui.ctx(), id.with("initials-in"), v)
             } else {
                 1.0
             };
@@ -184,7 +165,7 @@ pub(super) fn paint_avatar(
             }
         }
         AvatarContent::Loading => {
-            let fade = deferred(ui, id.with("loader-in"), v);
+            let fade = shared::avatar_placeholder_in(ui.ctx(), id.with("loader-in"), v);
             loader(ui, id, rect.center(), size, fade, v);
         }
     }

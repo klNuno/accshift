@@ -24,6 +24,7 @@ use accshift_app::time::{format_relative_time_compact, TimeContext};
 use egui::{pos2, vec2, Id, Pos2, Rect, TextureId, Ui};
 
 use super::account_card::AvatarContent;
+use super::shared::ceil_unit;
 use crate::app::vars::Vars;
 use crate::theme::Rgba;
 use crate::ui::anim::{self, Timing, Transition};
@@ -184,11 +185,15 @@ fn last_login_color(v: &Vars) -> Rgba {
     v.fg_subtle.mix(0.4, v.fg)
 }
 
-// An account still in setup shows neither meta line, as on its grid card.
+/// Whether the row shows its second line. For an account still in setup that
+/// line is the setup status ("Sign in to the account you want to add"), which
+/// the grid shows in the card's side panel and the list shows nowhere else:
+/// it stays whatever the username setting says.
 fn has_username(a: &AccountCardItem) -> bool {
-    a.show_username && !a.pending_setup && !a.account.username.trim().is_empty()
+    (a.show_username || a.pending_setup) && !a.account.username.trim().is_empty()
 }
 
+/// An account still in setup has no last login to show.
 fn shows_last_login(a: &AccountCardItem) -> bool {
     a.show_last_login && !a.pending_setup
 }
@@ -197,10 +202,6 @@ fn shows_last_login(a: &AccountCardItem) -> bool {
 fn last_login_label(a: &AccountCardItem, time: &TimeContext) -> Option<String> {
     shows_last_login(a)
         .then(|| format_relative_time_compact(a.last_login_at_sec, time, a.last_login_unknown_key))
-}
-
-fn ceil_unit(w: f32, ppp: f32) -> f32 {
-    (w * ppp * 64.0).ceil() / 64.0 / ppp
 }
 
 /// The key a box mounts under.

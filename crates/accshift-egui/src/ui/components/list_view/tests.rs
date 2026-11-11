@@ -365,23 +365,30 @@ fn the_menu_keys_open_a_focused_rows_menu() {
     assert!(events.is_empty(), "{events:?}");
 }
 
-/// An account in setup shows no username or last login line, and a
-/// blank note no note block, like their grid cards.
+/// An account in setup keeps its status line even with usernames hidden
+/// (the list has no side panel to show it in), shows no last login line,
+/// and a blank note shows no note block.
 #[test]
-fn pending_setup_and_blank_notes_show_no_meta() {
+fn pending_setup_keeps_its_status_line_and_blank_notes_show_no_block() {
     let vars = Bench::new(Vec::new()).vars;
     let DisplayItem::Account(mut a) = account("a", true, false) else {
         unreachable!()
     };
-    a.show_username = true;
+    a.account.username = "Sign in to the Steam account you want to add.".into();
+    a.show_username = false;
     a.show_last_login = true;
     a.note = "  \n ".into();
     let name = 12.0 * vars.line_height;
-    assert_eq!(info_height(&vars, Some(&a)), name);
-    assert!(!has_username(&a) && !shows_last_login(&a));
+    assert!(has_username(&a), "the setup status line is hidden");
+    assert!(!shows_last_login(&a));
+    assert_eq!(info_height(&vars, Some(&a)), name + 12.0);
     assert_eq!(preview_note(&a), None);
+    a.account.username = " ".into();
+    assert_eq!(info_height(&vars, Some(&a)), name);
 
     a.pending_setup = false;
+    a.show_username = true;
+    a.account.username = "user".into();
     assert_eq!(info_height(&vars, Some(&a)), name + 24.0);
     a.note = " hi\n".into();
     assert_eq!(preview_note(&a), Some("hi"));
