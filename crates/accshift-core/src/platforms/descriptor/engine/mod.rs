@@ -28,8 +28,8 @@ use crate::platforms::{
     PlatformService, SetupStatus,
 };
 use crate::snapshot_crypto::{
-    self, decrypted_copy_file, delete_encrypted_file_secret, encrypted_copy_file, free_dir_secrets,
-    read_decrypted_bytes, write_encrypted_bytes, DirCopyOptions,
+    self, decrypted_copy_file, delete_encrypted_file_secret, free_dir_secrets,
+    read_decrypted_bytes, DirCopyOptions,
 };
 use crate::{AppContext, AppCtx};
 

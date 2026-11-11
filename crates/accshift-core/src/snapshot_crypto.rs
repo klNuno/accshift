@@ -114,6 +114,142 @@ pub fn delete_encrypted_file_secret(path: &Path) {
     }
 }
 
+/// Suffix of the sibling a capture is staged in before it replaces the
+/// previous one, and of the sibling the previous directory waits in during
+/// the swap. Both stay in the destination's directory: the renames never
+/// cross a filesystem.
+const CAPTURE_TMP_SUFFIX: &str = ".accshift-capture-tmp";
+const CAPTURE_OLD_SUFFIX: &str = ".accshift-capture-old";
+
+fn capture_sibling(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(suffix);
+    path.with_file_name(name)
+}
+
+fn discard_file(path: &Path) {
+    delete_encrypted_file_secret(path);
+    let _ = fs::remove_file(path);
+}
+
+fn discard_dir(dir: &Path) {
+    free_dir_secrets(dir);
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// `fs::rename`, retried a few times: on Windows an antivirus or indexer that
+/// holds a handle for a moment fails the first attempt with a sharing error.
+fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut attempts_left = 3;
+    loop {
+        match fs::rename(from, to) {
+            Err(_) if attempts_left > 0 => {
+                attempts_left -= 1;
+                std::thread::sleep(std::time::Duration::from_millis(40));
+            }
+            result => return result,
+        }
+    }
+}
+
+/// Replace `dest` with an encrypted copy of the file `source`.
+///
+/// The copy is staged next to `dest` and renamed over it, so a source that
+/// cannot be read (a launcher still holding it open), a full disk or a keyring
+/// that refuses the secret leaves the previous capture as it was, still
+/// decryptable. The previous capture's secret is freed only once the new file
+/// is in place.
+pub fn replace_encrypted_file(source: &Path, dest: &Path) -> Result<(), String> {
+    replace_file_with(dest, |staged| encrypted_copy_file(source, staged))
+}
+
+/// [`replace_encrypted_file`] for bytes that are not a file (a registry value).
+pub fn replace_encrypted_bytes(dest: &Path, data: &[u8]) -> Result<(), String> {
+    replace_file_with(dest, |staged| write_encrypted_bytes(staged, data))
+}
+
+fn replace_file_with(
+    dest: &Path,
+    stage: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let staged = capture_sibling(dest, CAPTURE_TMP_SUFFIX);
+    discard_file(&staged);
+    if let Err(error) = stage(&staged) {
+        discard_file(&staged);
+        return Err(error);
+    }
+    let previous = fs::read(dest).ok();
+    if let Err(error) = rename_with_retry(&staged, dest) {
+        discard_file(&staged);
+        return Err(format!("Could not replace {}: {error}", dest.display()));
+    }
+    if let Some(previous) = previous.filter(|data| data.starts_with(ENCRYPTED_HEADER)) {
+        let _ = secrets::delete_bytes(&previous[ENCRYPTED_HEADER.len()..]);
+    }
+    Ok(())
+}
+
+/// Replace the directory `dest` with an encrypted copy of the tree `source`.
+///
+/// Same guarantee as [`replace_encrypted_file`]: the tree is copied into a
+/// sibling first, and the previous capture is moved aside, then dropped, only
+/// once the whole copy succeeded. A missing `source` leaves no `dest`.
+pub fn replace_encrypted_dir(
+    source: &Path,
+    dest: &Path,
+    options: DirCopyOptions,
+) -> Result<(), String> {
+    replace_dir_with(dest, |staged| encrypted_copy_dir(source, staged, options))
+}
+
+fn replace_dir_with(
+    dest: &Path,
+    stage: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let staged = capture_sibling(dest, CAPTURE_TMP_SUFFIX);
+    let aside = capture_sibling(dest, CAPTURE_OLD_SUFFIX);
+    discard_dir(&staged);
+    if aside.exists() {
+        // A swap stopped between its two renames. Without a `dest`, the
+        // directory set aside is the only capture left: put it back.
+        if dest.exists() {
+            discard_dir(&aside);
+        } else {
+            let _ = rename_with_retry(&aside, dest);
+        }
+    }
+
+    if let Err(error) = stage(&staged) {
+        discard_dir(&staged);
+        return Err(error);
+    }
+    if !staged.exists() {
+        // Nothing live to capture.
+        discard_dir(dest);
+        return Ok(());
+    }
+
+    let had_previous = dest.exists();
+    if had_previous {
+        if let Err(error) = rename_with_retry(dest, &aside) {
+            discard_dir(&staged);
+            return Err(format!(
+                "Could not set the previous snapshot {} aside: {error}",
+                dest.display()
+            ));
+        }
+    }
+    if let Err(error) = rename_with_retry(&staged, dest) {
+        if had_previous {
+            let _ = rename_with_retry(&aside, dest);
+        }
+        discard_dir(&staged);
+        return Err(format!("Could not replace {}: {error}", dest.display()));
+    }
+    discard_dir(&aside);
+    Ok(())
+}
+
 /// Recursively copy a directory tree, encrypting every file. Missing sources
 /// are a no-op (the account may never have populated that directory).
 pub fn encrypted_copy_dir(
@@ -442,6 +578,135 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    /// What `path` decrypts to, or `None` when it is missing or its secret is gone.
+    fn decrypted(path: &Path) -> Option<Vec<u8>> {
+        read_decrypted_bytes(path).ok()
+    }
+
+    #[test]
+    fn a_failed_file_capture_keeps_the_previous_capture_decryptable() {
+        let dir = scratch_dir("replace-file-fail");
+        let live = dir.join("live.dat");
+        let dest = dir.join("snap").join("token.dat");
+        fs::write(&live, b"first session").unwrap();
+        replace_encrypted_file(&live, &dest).unwrap();
+        let entries = crate::secrets::backend::entry_count();
+
+        // The launcher still holds the file: the read fails.
+        let error = replace_encrypted_file(&dir.join("missing.dat"), &dest).unwrap_err();
+
+        assert!(error.contains("Could not read"), "{error}");
+        assert_eq!(decrypted(&dest).as_deref(), Some(&b"first session"[..]));
+        assert_eq!(crate::secrets::backend::entry_count(), entries);
+        assert!(!capture_sibling(&dest, CAPTURE_TMP_SUFFIX).exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_file_recapture_frees_the_previous_secret_after_the_swap() {
+        let dir = scratch_dir("replace-file-ok");
+        let live = dir.join("live.dat");
+        let dest = dir.join("token.dat");
+        let before = crate::secrets::backend::entry_count();
+        fs::write(&live, b"first session").unwrap();
+        replace_encrypted_file(&live, &dest).unwrap();
+        fs::write(&live, b"second session").unwrap();
+        replace_encrypted_file(&live, &dest).unwrap();
+
+        assert_eq!(decrypted(&dest).as_deref(), Some(&b"second session"[..]));
+        assert_eq!(crate::secrets::backend::entry_count(), before + 1);
+
+        replace_encrypted_bytes(&dest, b"a registry value").unwrap();
+        assert_eq!(decrypted(&dest).as_deref(), Some(&b"a registry value"[..]));
+        assert_eq!(crate::secrets::backend::entry_count(), before + 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_directory_capture_keeps_the_previous_capture_whole() {
+        let dir = scratch_dir("replace-dir-fail");
+        let live = dir.join("live");
+        let dest = dir.join("snap").join("session");
+        fs::create_dir_all(live.join("nested")).unwrap();
+        fs::write(live.join("a.dat"), b"alpha").unwrap();
+        fs::write(live.join("nested").join("b.dat"), b"beta").unwrap();
+        replace_encrypted_dir(&live, &dest, DirCopyOptions::default()).unwrap();
+        let entries = crate::secrets::backend::entry_count();
+
+        // The second capture copies one file, then hits one it cannot read.
+        let error = replace_dir_with(&dest, |staged| {
+            write_encrypted_bytes(&staged.join("a.dat"), b"alpha, rotated")?;
+            Err("Could not read b.dat: sharing violation".to_string())
+        })
+        .unwrap_err();
+
+        assert!(error.contains("sharing violation"), "{error}");
+        assert_eq!(
+            decrypted(&dest.join("a.dat")).as_deref(),
+            Some(&b"alpha"[..])
+        );
+        assert_eq!(
+            decrypted(&dest.join("nested").join("b.dat")).as_deref(),
+            Some(&b"beta"[..])
+        );
+        // The half capture is gone, with the secrets it created.
+        assert!(!capture_sibling(&dest, CAPTURE_TMP_SUFFIX).exists());
+        assert_eq!(crate::secrets::backend::entry_count(), entries);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_directory_recapture_replaces_the_tree_and_frees_the_old_secrets() {
+        let dir = scratch_dir("replace-dir-ok");
+        let live = dir.join("live");
+        let dest = dir.join("session");
+        let before = crate::secrets::backend::entry_count();
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("a.dat"), b"alpha").unwrap();
+        fs::write(live.join("gone.dat"), b"dropped by the launcher").unwrap();
+        replace_encrypted_dir(&live, &dest, DirCopyOptions::default()).unwrap();
+
+        fs::remove_file(live.join("gone.dat")).unwrap();
+        fs::write(live.join("a.dat"), b"alpha, rotated").unwrap();
+        replace_encrypted_dir(&live, &dest, DirCopyOptions::default()).unwrap();
+
+        assert_eq!(
+            decrypted(&dest.join("a.dat")).as_deref(),
+            Some(&b"alpha, rotated"[..])
+        );
+        assert!(!dest.join("gone.dat").exists());
+        assert!(!capture_sibling(&dest, CAPTURE_OLD_SUFFIX).exists());
+        assert_eq!(crate::secrets::backend::entry_count(), before + 1);
+
+        // A live directory that disappeared leaves no snapshot behind.
+        fs::remove_dir_all(&live).unwrap();
+        replace_encrypted_dir(&live, &dest, DirCopyOptions::default()).unwrap();
+        assert!(!dest.exists());
+        assert_eq!(crate::secrets::backend::entry_count(), before);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_swap_interrupted_between_its_renames_is_recovered() {
+        let dir = scratch_dir("replace-dir-recover");
+        let live = dir.join("live");
+        let dest = dir.join("session");
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("a.dat"), b"alpha").unwrap();
+        replace_encrypted_dir(&live, &dest, DirCopyOptions::default()).unwrap();
+        // The app died after moving the previous capture aside.
+        fs::rename(&dest, capture_sibling(&dest, CAPTURE_OLD_SUFFIX)).unwrap();
+
+        let error = replace_dir_with(&dest, |_| Err("still locked".to_string())).unwrap_err();
+
+        assert_eq!(error, "still locked");
+        assert_eq!(
+            decrypted(&dest.join("a.dat")).as_deref(),
+            Some(&b"alpha"[..])
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -53,6 +53,8 @@ pub use self::switch::switch_profile;
 
 const RIOT_CLIENT_PROCESS_NAMES: &[&str] = &[
     "RiotClientServices.exe",
+    // The client's window process since 2023, in `Riot Client/UX`.
+    "Riot Client.exe",
     "RiotClientUx.exe",
     "RiotClientUxRender.exe",
     "LeagueClient.exe",
@@ -60,7 +62,8 @@ const RIOT_CLIENT_PROCESS_NAMES: &[&str] = &[
     "LeagueClientUxRender.exe",
 ];
 
-const RIOT_GAME_PROCESS_NAMES: &[&str] = &["LeagueofLegends.exe", "VALORANT-Win64-Shipping.exe"];
+// The League game process has spaces in its name; the client processes do not.
+const RIOT_GAME_PROCESS_NAMES: &[&str] = &["League of Legends.exe", "VALORANT-Win64-Shipping.exe"];
 
 const KILL_RETRY_COUNT: usize = 4;
 const KILL_RETRY_DELAY_MS: u64 = 450;

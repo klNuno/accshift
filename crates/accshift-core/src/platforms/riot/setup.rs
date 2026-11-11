@@ -208,11 +208,11 @@ pub(super) fn clear_live_session_for_login(
 }
 
 pub(super) fn prepare_clean_riot_launch(install_dir: Option<&Path>) -> Result<(), String> {
-    graceful_riot_quit();
+    graceful_riot_quit()?;
     clear_live_riot_setup_state(install_dir)?;
     kill_riot_client_processes();
     thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
-    Ok(())
+    ensure_riot_client_closed()
 }
 
 /// Quit the client, clear its session and relaunch it on the login screen, in
@@ -425,10 +425,11 @@ pub(super) fn get_profile_setup_status_internal(
     }
     config::save_config(app_handle, cfg)?;
 
-    graceful_riot_quit();
-    if let Err(error) =
+    // A client that survived the quit still holds the rotated tokens in
+    // memory: capturing now would save a session the server already dropped.
+    if let Err(error) = graceful_riot_quit().and_then(|()| {
         capture_profile_into_snapshot(app_handle, cfg, profile_id, identity.as_ref())
-    {
+    }) {
         return Err(undo_failed_setup_capture(
             app_handle,
             cfg,
@@ -504,9 +505,10 @@ pub fn begin_profile_setup(app_handle: AppCtx) -> Result<RiotProfileSetupStatus,
             .is_some_and(|p| SETUP_BACKUP_STATES.contains(&p.snapshot_state.as_str()));
     if prev_needs_backup {
         let identity = detect_live_identity().ok();
-        graceful_riot_quit();
         // From here the client is closed: every failure relaunches it.
-        let saved = backup_before_setup(&app_handle, &mut cfg, &prev_id, install_dir, identity);
+        let saved = graceful_riot_quit().and_then(|()| {
+            backup_before_setup(&app_handle, &mut cfg, &prev_id, install_dir, identity)
+        });
         let started = saved.and_then(|()| start_setup_profile(&app_handle, &mut cfg, &client_path));
         if started.is_err() {
             if let Err(error) = launch_riot_client(&client_path) {

@@ -45,6 +45,24 @@ pub(super) fn ensure_no_riot_game_running(action: &str) -> Result<(), String> {
     ))
 }
 
+/// Fails when a client process outlived the quit. The session files are only
+/// safe to capture or replace once the client is gone: a live client keeps its
+/// tokens in memory and writes them back over a restored snapshot on exit, so
+/// the switch would report success while the old account stays signed in.
+pub(super) fn ensure_riot_client_closed() -> Result<(), String> {
+    client_closed_or_error(&running_process_names(RIOT_CLIENT_PROCESS_NAMES))
+}
+
+pub(super) fn client_closed_or_error(survivors: &[&str]) -> Result<(), String> {
+    if survivors.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "Riot Client is still running and could not be closed: {}",
+        survivors.join(", ")
+    ))
+}
+
 pub(super) fn kill_riot_client_processes() {
     for _ in 0..KILL_RETRY_COUNT {
         // Resolve what is actually running with one refresh, then kill only
@@ -83,13 +101,14 @@ pub(super) fn riot_local_client() -> &'static reqwest::Client {
 
 /// Request a graceful quit via the local API, which flushes in-memory tokens
 /// to disk before exiting. Falls back to force-kill if the API is unreachable
-/// or the process doesn't exit within the timeout.
-pub(super) fn graceful_riot_quit() {
+/// or the process doesn't exit within the timeout. An error means a client
+/// process survived both (an elevated or hung client).
+pub(super) fn graceful_riot_quit() -> Result<(), String> {
     let access = match read_riot_local_api_access() {
         Ok(a) => a,
         Err(_) => {
             kill_riot_client_processes();
-            return;
+            return ensure_riot_client_closed();
         }
     };
 
@@ -109,20 +128,21 @@ pub(super) fn graceful_riot_quit() {
 
     if !quit_ok {
         kill_riot_client_processes();
-        return;
+        return ensure_riot_client_closed();
     }
 
     // Wait for the process to exit (up to 8 seconds)
     for _ in 0..16 {
         if !is_any_process_running(RIOT_CLIENT_PROCESS_NAMES) {
             thread::sleep(std::time::Duration::from_millis(POST_KILL_SETTLE_MS));
-            return;
+            return Ok(());
         }
         thread::sleep(std::time::Duration::from_millis(500));
     }
 
     // Timed out, so force kill
     kill_riot_client_processes();
+    ensure_riot_client_closed()
 }
 
 pub(super) fn launch_riot_client(client_path: &Path) -> Result<(), String> {

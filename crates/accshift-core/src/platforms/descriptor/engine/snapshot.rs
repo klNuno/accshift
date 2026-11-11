@@ -18,8 +18,7 @@ impl DescriptorService {
             let live = runtime.spec_path(&item.live)?;
             let dest = cache_dir.join(&item.snapshot);
             if live.is_file() {
-                delete_encrypted_file_secret(&dest);
-                encrypted_copy_file(&live, &dest)?;
+                snapshot_crypto::replace_encrypted_file(&live, &dest)?;
             } else if item.clear_snapshot_when_source_missing {
                 // Nothing live to capture: drop the stale snapshot so a later
                 // restore cannot resurrect another account's file.
@@ -32,8 +31,9 @@ impl DescriptorService {
             let dest = cache_dir.join(&item.snapshot);
             match reg::read(item.root, &item.key, &item.value) {
                 Some(value) => {
-                    delete_encrypted_file_secret(&dest);
-                    if let Err(e) = write_encrypted_bytes(&dest, value.as_bytes()) {
+                    if let Err(e) =
+                        snapshot_crypto::replace_encrypted_bytes(&dest, value.as_bytes())
+                    {
                         // Non-fatal: the session files still carry the account,
                         // and failing the whole switch over one value would
                         // strand the user worse than the missing value does.
@@ -66,14 +66,12 @@ impl DescriptorService {
                 // session.
                 continue;
             }
-            // On Linux and macOS every encrypted file in there owns a keyring
-            // entry, and removing the directory is the only thing that still
-            // knows the entry ids. Free them first or they leak, one full
-            // capture's worth per switch.
-            free_dir_secrets(&dest);
-            let _ = fs::remove_dir_all(&dest);
+            // The previous capture is replaced only once the whole tree is
+            // copied: a file the launcher still holds open fails the capture
+            // and leaves the account's last good snapshot in place. Its
+            // keyring entries (Linux, macOS) are freed with it.
             let ignored: Vec<&str> = item.ignored_names.iter().map(String::as_str).collect();
-            snapshot_crypto::encrypted_copy_dir(
+            snapshot_crypto::replace_encrypted_dir(
                 &live,
                 &dest,
                 DirCopyOptions {
