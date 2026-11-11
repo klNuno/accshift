@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Runtime-agnostic surface that replaces `tauri::AppHandle` throughout core.
+/// The app's directories, the only thing core needs from the front end.
 ///
-/// The Tauri GUI implements this by delegating to `AppHandle::path()`. The CLI
-/// implements it by computing the same directories manually via `directories`.
+/// The GUI (`EguiAppContext` in `accshift-app`) and the CLI (`CliAppContext`)
+/// resolve the same per-user folders from the bundle identifier, so both read
+/// and write one tree.
 pub trait AppContext: Send + Sync {
     fn app_config_dir(&self) -> Result<PathBuf, String>;
     fn app_data_dir(&self) -> Result<PathBuf, String>;
@@ -14,7 +15,7 @@ pub trait AppContext: Send + Sync {
 
 /// Owned, thread-safe, cloneable handle to an `AppContext`. Used when a
 /// callee needs to move the context into a `spawn_blocking` closure or a
-/// long-lived structure (setup jobs, panic hook, etc).
+/// long-lived structure (setup jobs, the panic hook).
 ///
 /// Functions that only borrow take `&dyn AppContext`; callers with an
 /// `AppCtx` pass `&ctx` and Deref coercion turns it into `&dyn AppContext`.
