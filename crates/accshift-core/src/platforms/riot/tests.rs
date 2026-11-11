@@ -1,4 +1,4 @@
-use super::yaml_has_auth_tokens;
+use super::{validate_riot_client_path, yaml_has_auth_tokens};
 
 #[test]
 fn empty_private_and_sessions_are_not_ready() {
@@ -179,4 +179,26 @@ fn small_token_file_is_ready_despite_being_under_old_size_threshold() {
     let yaml = "private: tok\n";
     assert!(yaml.len() < 1000);
     assert!(yaml_has_auth_tokens(yaml));
+}
+
+#[test]
+fn riot_path_override_must_name_riot_client_services() {
+    let root = std::env::temp_dir().join(format!(
+        "accshift-riot-path-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let client = root.join("RiotClientServices.exe");
+    let other = root.join("LeagueClient.exe");
+    std::fs::write(&client, b"stub").unwrap();
+    std::fs::write(&other, b"stub").unwrap();
+
+    // The install folder: the switch would take its parent as install dir.
+    assert!(validate_riot_client_path(&root).is_err());
+    assert!(validate_riot_client_path(&other).is_err());
+    assert!(validate_riot_client_path(&root.join("missing.exe")).is_err());
+    assert!(validate_riot_client_path(&client).is_ok());
+    let _ = std::fs::remove_dir_all(&root);
 }

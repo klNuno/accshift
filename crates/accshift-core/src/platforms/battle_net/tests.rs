@@ -1,8 +1,12 @@
-use super::setup::merge_saved_after_setup;
+use super::setup::{
+    merge_saved_after_setup, owe_saved_accounts, purge_expired_battle_net_setup_jobs,
+    settle_owed_saved_accounts, with_owed_saved_accounts, BattleNetAccountSetupJob,
+};
 use super::{
     collect_unique_accounts, encode_saved_account_name, extract_saved_account_names,
     normalize_account_key, order_saved_accounts_for_switch, parse_saved_account_names,
-    saved_accounts_without,
+    saved_accounts_without, set_saved_account_names, validate_macos_bundle_path,
+    validate_windows_launcher_path,
 };
 #[cfg(windows)]
 use super::{normalize_registry_path, write_saved_accounts};
@@ -350,4 +354,104 @@ fn write_saved_accounts_succeeds_when_backup_copy_fails() {
     );
 
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn battle_net_path_override_must_name_the_launcher() {
+    let root = std::env::temp_dir().join(format!(
+        "accshift-battlenet-path-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let bundle = root.join("Battle.net.app");
+    std::fs::create_dir_all(&bundle).unwrap();
+    let exe = root.join("Battle.net.exe");
+    let launcher = root.join("Battle.net Launcher.exe");
+    let other = root.join("Overwatch.exe");
+    for file in [&exe, &launcher, &other] {
+        std::fs::write(file, b"stub").unwrap();
+    }
+
+    assert!(validate_windows_launcher_path(&exe).is_ok());
+    assert!(validate_windows_launcher_path(&launcher).is_ok());
+    assert!(validate_windows_launcher_path(&root).is_err());
+    assert!(validate_windows_launcher_path(&other).is_err());
+    assert!(validate_windows_launcher_path(&root.join("missing.exe")).is_err());
+
+    assert!(validate_macos_bundle_path(&bundle).is_ok());
+    // An existing file or a plain folder is not a bundle `open` can launch.
+    assert!(validate_macos_bundle_path(&exe).is_err());
+    assert!(validate_macos_bundle_path(&root).is_err());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// One test for both ways a setup ends without a cancel: the owed list is a
+// process-wide static, so two tests on it would race.
+#[test]
+fn a_setup_that_ends_without_a_cancel_hands_its_saved_list_to_the_next_switch() {
+    let old = vec![
+        "old-a@example.com".to_string(),
+        "old-b@example.com".to_string(),
+    ];
+
+    // Ready: the launcher signed in the new account and only saved that one.
+    owe_saved_accounts(&old);
+    let fresh = vec!["new@example.com".to_string()];
+    assert_eq!(
+        order_saved_accounts_for_switch(&with_owed_saved_accounts(fresh), "old-b@example.com"),
+        vec![
+            "old-b@example.com".to_string(),
+            "new@example.com".to_string(),
+            "old-a@example.com".to_string(),
+        ]
+    );
+    settle_owed_saved_accounts();
+    assert_eq!(
+        with_owed_saved_accounts(vec!["new@example.com".to_string()]),
+        vec!["new@example.com".to_string()],
+        "a settled list is not written twice"
+    );
+
+    // Expired: the purge owes the list instead of dropping it.
+    let mut jobs = std::collections::HashMap::new();
+    jobs.insert(
+        "stale".to_string(),
+        BattleNetAccountSetupJob {
+            known_account_keys: HashSet::new(),
+            previous_saved: vec!["old-c@example.com".to_string()],
+            last_touched_at: 0,
+        },
+    );
+    purge_expired_battle_net_setup_jobs(&mut jobs);
+    assert!(jobs.is_empty());
+    assert_eq!(
+        saved_accounts_without(
+            &with_owed_saved_accounts(vec!["new@example.com".to_string()]),
+            "gone@example.com"
+        ),
+        vec![
+            "new@example.com".to_string(),
+            "old-c@example.com".to_string()
+        ]
+    );
+    settle_owed_saved_accounts();
+}
+
+#[test]
+fn writing_saved_names_keeps_the_key_order_of_the_config() {
+    let content = r#"{
+  "Zeta": {"b": 1, "a": 2},
+  "Client": {"Zoom": "1", "SavedAccountNames": "old@example.com", "Alpha": "2"},
+  "Alpha": true
+}"#;
+    let mut root: serde_json::Value = serde_json::from_str(content).unwrap();
+
+    set_saved_account_names(&mut root, &["new@example.com".to_string()]).unwrap();
+
+    let written = serde_json::to_string(&root).unwrap();
+    assert_eq!(
+        written,
+        r#"{"Zeta":{"b":1,"a":2},"Client":{"Zoom":"1","SavedAccountNames":"new@example.com","Alpha":"2"},"Alpha":true}"#
+    );
 }

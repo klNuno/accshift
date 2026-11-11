@@ -263,8 +263,13 @@ pub fn get_riot_path(app_handle: AppCtx) -> Result<String, String> {
 }
 
 pub fn set_riot_path(app_handle: AppCtx, path: String) -> Result<(), String> {
+    let trimmed = path.trim().to_string();
+    // Empty clears the override and goes back to detection.
+    if !trimmed.is_empty() {
+        validate_riot_client_path(Path::new(&trimmed))?;
+    }
     config::update_config(&app_handle, |cfg| {
-        cfg.riot.path_override = path.trim().to_string();
+        cfg.riot.path_override = trimmed;
     })
 }
 

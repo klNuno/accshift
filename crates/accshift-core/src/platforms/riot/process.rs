@@ -83,9 +83,9 @@ pub(super) fn kill_riot_client_processes() {
 ///
 /// Built once and reused: a fresh client per call leaks a connection pool each
 /// time, and (worse) a client with no timeout lets a hung Riot Client socket
-/// block its `spawn_blocking` thread forever. The 1s setup-status poll then
-/// drains the blocking worker pool and the whole backend freezes. The connect
-/// and request timeouts bound every call so a stuck socket fails fast.
+/// block the calling job thread forever, one more on every 1 s setup-status
+/// poll. The connect and request timeouts bound every call so a stuck socket
+/// fails fast.
 pub(super) static RIOT_LOCAL_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 pub(super) fn riot_local_client() -> &'static reqwest::Client {

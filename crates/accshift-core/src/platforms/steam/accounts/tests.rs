@@ -1,6 +1,6 @@
 use super::{
-    copy_game_settings, forget_account_with, parse_launch_options, remove_loginuser_entry,
-    steam_id_to_account_id,
+    clear_integrated_browser_cache_with, copy_game_settings_with, forget_account_with,
+    parse_launch_options, remove_loginuser_entry, steam_id_to_account_id,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -264,7 +264,7 @@ fn copy_game_settings_creates_target_when_absent() {
     // Destination account dir exists but has no copy of app 730 yet.
     fs::create_dir_all(root.join("userdata").join("2")).unwrap();
 
-    copy_game_settings(&root, FROM_ID, TO_ID, "730").unwrap();
+    copy_game_settings_with(&root, FROM_ID, TO_ID, "730", || false).unwrap();
 
     let target = root.join("userdata").join("2").join("730");
     assert_eq!(
@@ -296,7 +296,7 @@ fn copy_game_settings_overwrites_existing_target() {
     fs::create_dir_all(&target).unwrap();
     fs::write(target.join("old.cfg"), b"old").unwrap();
 
-    copy_game_settings(&root, FROM_ID, TO_ID, "730").unwrap();
+    copy_game_settings_with(&root, FROM_ID, TO_ID, "730", || false).unwrap();
 
     // The new payload replaced the old one; the stale file is gone.
     assert_eq!(fs::read_to_string(target.join("new.cfg")).unwrap(), "new");
@@ -412,6 +412,71 @@ fn forget_account_refuses_an_elevated_steam_without_writing() {
 #[test]
 fn copy_game_settings_rejects_non_numeric_app_id() {
     let root = copy_test_root("badid");
-    assert!(copy_game_settings(&root, FROM_ID, TO_ID, "../evil").is_err());
+    assert!(copy_game_settings_with(&root, FROM_ID, TO_ID, "../evil", || false).is_err());
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn copy_game_settings_refuses_while_steam_runs() {
+    let root = copy_test_root("running");
+    let src = root.join("userdata").join("1").join("730");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("new.cfg"), b"new").unwrap();
+    let target = root.join("userdata").join("2").join("730");
+    fs::create_dir_all(&target).unwrap();
+    fs::write(target.join("old.cfg"), b"old").unwrap();
+
+    let result = copy_game_settings_with(&root, FROM_ID, TO_ID, "730", || true);
+
+    assert!(result.is_err());
+    assert!(target.join("old.cfg").exists());
+    assert!(!target.join("new.cfg").exists());
+    let _ = fs::remove_dir_all(&root);
+}
+
+// -----------------------------------------------------------------------
+// clear_integrated_browser_cache (stop like a switch, relaunch after)
+// -----------------------------------------------------------------------
+
+#[test]
+fn clearing_the_browser_cache_stops_steam_first_and_relaunches_it() {
+    let root = copy_test_root("htmlcache");
+    let cache = root.join("htmlcache");
+    fs::create_dir_all(&cache).unwrap();
+    fs::write(cache.join("entry"), b"x").unwrap();
+
+    let mut relaunched = false;
+    clear_integrated_browser_cache_with(
+        &cache,
+        || {
+            assert!(cache.exists(), "the cache went before Steam was stopped");
+            Ok(super::StopOutcome::Stopped)
+        },
+        || {
+            relaunched = true;
+            Ok(())
+        },
+    )
+    .unwrap();
+
+    assert!(!cache.exists());
+    assert!(relaunched);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn clearing_the_browser_cache_refuses_an_elevated_steam() {
+    let root = copy_test_root("htmlcache-elevated");
+    let cache = root.join("htmlcache");
+    fs::create_dir_all(&cache).unwrap();
+
+    let result = clear_integrated_browser_cache_with(
+        &cache,
+        || Ok(super::StopOutcome::NeedsElevation),
+        || panic!("Steam was never stopped, so it must not be relaunched"),
+    );
+
+    assert!(matches!(result, Err(crate::error::AppError::SteamElevated)));
+    assert!(cache.exists());
     let _ = fs::remove_dir_all(&root);
 }

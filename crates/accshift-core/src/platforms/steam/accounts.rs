@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 #[cfg(not(target_os = "windows"))]
 use super::vdf::vdf_set_nested_value;
-use super::vdf::{parse_vdf, read_persona_state, set_persona_state};
+use super::vdf::{localconfig_path, parse_vdf, set_persona_state};
 use crate::error::AppError;
 use crate::fs_utils;
 use crate::os;
@@ -213,11 +213,23 @@ fn switch_autologin_and_relaunch(
     launch_options: &str,
     extra_args: &[&str],
     force_kill: bool,
-    pre_launch: impl FnOnce(),
+    pre_launch: Option<impl FnOnce()>,
 ) -> Result<(), AppError> {
     let previous = os::get_auto_login_user()?;
 
     match stop_steam(steam_path, force_kill)? {
+        StopOutcome::NeedsElevation if run_as_admin && pre_launch.is_some() => {
+            // The elevated relaunch forwards to the still running client,
+            // which rewrites its Steam-owned files when it exits, so a
+            // pre_launch write (persona state) could only be lost. Refuse
+            // before changing anything rather than report a mode that was
+            // never applied.
+            return Err(AppError::FileRead(
+                "Steam runs as administrator and could not be closed, so the online or \
+                 invisible mode cannot be written. Close Steam, then switch again."
+                    .into(),
+            ));
+        }
         StopOutcome::NeedsElevation if run_as_admin => {
             // Windows-only path: elevated relaunch via UAC. The HKCU registry
             // write is user-scope, so writing now is safe (Steam does not own
@@ -229,11 +241,6 @@ fn switch_autologin_and_relaunch(
                 let _ = restore_auto_login_user(&previous);
                 return Err(e);
             }
-            // Deliberately no pre_launch() here: on this path we did not stop
-            // Steam ourselves (the elevated relaunch forwards to the still
-            // running client), so a Steam-owned write like persona state would
-            // just be overwritten when that client flushes on exit. Skipping it
-            // avoids corrupting localconfig.vdf for no effect.
             let mut args = parse_launch_options(launch_options);
             args.extend(extra_args.iter().map(|s| s.to_string()));
             return os::kill_and_relaunch_steam_elevated(steam_path, &args);
@@ -259,7 +266,9 @@ fn switch_autologin_and_relaunch(
         return Err(e);
     }
 
-    pre_launch();
+    if let Some(pre_launch) = pre_launch {
+        pre_launch();
+    }
 
     // Steam is single-instance: a steam.exe alive at this point (bootstrapper
     // re-exec during a graceful shutdown, updater respawn after the kill)
@@ -490,28 +499,28 @@ pub(crate) fn load_app_names(steam_path: &Path) -> HashMap<String, String> {
 }
 
 pub fn get_current_account_name(steam_path: &Path) -> Result<String, AppError> {
-    let users = parse_login_users(steam_path)?;
-    let mut fallback: Option<(u64, String)> = None;
+    Ok(current_account(&parse_login_users(steam_path)?))
+}
 
-    for user in users {
-        let account_name = user.account_name;
-        if account_name.is_empty() {
-            continue;
-        }
-
-        if user.is_most_recent {
-            return Ok(account_name);
-        }
-
-        let timestamp = user.last_login_at.unwrap_or(0);
-
-        match &fallback {
-            Some((prev_ts, _)) if *prev_ts >= timestamp => {}
-            _ => fallback = Some((timestamp, account_name)),
+/// The account Steam signs in: the `MostRecent` entry, else the one with the
+/// latest login. Entries with no account name never count.
+fn current_account(users: &[ParsedLoginUser]) -> String {
+    let named = || users.iter().filter(|user| !user.account_name.is_empty());
+    if let Some(user) = named().find(|user| user.is_most_recent) {
+        return user.account_name.clone();
+    }
+    let mut latest: Option<&ParsedLoginUser> = None;
+    for user in named() {
+        // Strictly later only: on a tie the first entry seen stays.
+        if latest
+            .is_none_or(|best| user.last_login_at.unwrap_or(0) > best.last_login_at.unwrap_or(0))
+        {
+            latest = Some(user);
         }
     }
-
-    Ok(fallback.map(|(_, name)| name).unwrap_or_default())
+    latest
+        .map(|user| user.account_name.clone())
+        .unwrap_or_default()
 }
 
 pub fn get_accounts(steam_path: &Path) -> Result<Vec<SteamAccount>, AppError> {
@@ -521,38 +530,19 @@ pub fn get_accounts(steam_path: &Path) -> Result<Vec<SteamAccount>, AppError> {
 
 pub fn get_accounts_snapshot(steam_path: &Path) -> Result<(Vec<SteamAccount>, String), AppError> {
     let users = parse_login_users(steam_path)?;
+    let current = current_account(&users);
 
-    let mut current_account = String::new();
-    let mut fallback: Option<(u64, String)> = None;
-    let mut accounts: Vec<SteamAccount> = Vec::with_capacity(users.len());
-
-    for user in users {
-        if !user.account_name.is_empty() {
-            if user.is_most_recent {
-                current_account = user.account_name.clone();
-            } else {
-                let timestamp = user.last_login_at.unwrap_or(0);
-                match &fallback {
-                    Some((prev_ts, _)) if *prev_ts >= timestamp => {}
-                    _ => fallback = Some((timestamp, user.account_name.clone())),
-                }
-            }
-        }
-
-        accounts.push(SteamAccount {
+    let mut accounts: Vec<SteamAccount> = users
+        .into_iter()
+        .map(|user| SteamAccount {
             steam_id: user.steam_id,
             account_name: user.account_name,
             persona_name: user.persona_name,
             last_login_at: user.last_login_at,
-        });
-    }
-
-    if current_account.is_empty() {
-        current_account = fallback.map(|(_, name)| name).unwrap_or_default();
-    }
-
+        })
+        .collect();
     accounts.sort_by(|a, b| a.account_name.cmp(&b.account_name));
-    Ok((accounts, current_account))
+    Ok((accounts, current))
 }
 
 fn parse_login_users(steam_path: &Path) -> Result<Vec<ParsedLoginUser>, AppError> {
@@ -708,7 +698,7 @@ pub fn switch_account(
         launch_options,
         &[],
         force_kill,
-        || {},
+        None::<fn()>,
     )
 }
 
@@ -730,7 +720,7 @@ pub fn switch_account_and_launch_game(
         launch_options,
         &["-applaunch", app_id],
         force_kill,
-        || {},
+        None::<fn()>,
     )
 }
 
@@ -747,7 +737,7 @@ pub fn add_account(
         launch_options,
         &[],
         force_kill,
-        || {},
+        None::<fn()>,
     )
 }
 
@@ -808,15 +798,13 @@ pub fn switch_account_mode(
         _ => "1",
     };
 
-    // Snapshot the current persona state up front. pre_launch writes the new
-    // state before Steam is relaunched; if the relaunch then fails the switch
-    // is rolled back, and without this we would leave the account stuck in the
-    // requested mode the next time it is switched into.
-    let previous_state =
-        account_id.and_then(|id| read_persona_state(steam_path, id).ok().flatten());
-
+    // pre_launch writes the new state once Steam is down and keeps the
+    // content it replaced. If the relaunch then fails the switch is rolled
+    // back, and that content goes back too, or the account would sign in with
+    // the requested mode on its next successful switch.
     let mut persona_result: Result<(), AppError> = Ok(());
-    let mut persona_written = false;
+    let mut replaced: Option<String> = None;
+    let (result_slot, replaced_slot) = (&mut persona_result, &mut replaced);
     let switch_result = switch_autologin_and_relaunch(
         steam_path,
         Some(username),
@@ -824,22 +812,20 @@ pub fn switch_account_mode(
         launch_options,
         &[],
         force_kill,
-        || {
-            if let Some(account_id) = account_id {
-                persona_result = set_persona_state(steam_path, account_id, state);
-                persona_written = persona_result.is_ok();
+        account_id.map(|account_id| {
+            move || match set_persona_state(steam_path, account_id, state) {
+                Ok(previous) => *replaced_slot = Some(previous),
+                Err(e) => *result_slot = Err(e),
             }
-        },
+        }),
     );
 
     if let Err(e) = switch_result {
-        // The switch failed after the new persona state was written; revert it
-        // so a failed attempt does not silently flip the account into the
-        // requested mode on its next successful switch.
-        if persona_written {
-            if let (Some(id), Some(prev)) = (account_id, &previous_state) {
-                let _ = set_persona_state(steam_path, id, prev);
-            }
+        if let (Some(id), Some(previous)) = (account_id, &replaced) {
+            let _ = crate::storage::write_bytes_atomic(
+                &localconfig_path(steam_path, id),
+                previous.as_bytes(),
+            );
         }
         return Err(e);
     }
@@ -870,8 +856,35 @@ pub fn copy_game_settings(
     to_steam_id: &str,
     app_id: &str,
 ) -> Result<(), AppError> {
+    copy_game_settings_with(
+        steam_path,
+        from_steam_id,
+        to_steam_id,
+        app_id,
+        is_steam_running,
+    )
+}
+
+/// `copy_game_settings` with the Steam probe injected, so the refusal can be
+/// tested without a real client.
+fn copy_game_settings_with(
+    steam_path: &Path,
+    from_steam_id: &str,
+    to_steam_id: &str,
+    app_id: &str,
+    steam_running: impl FnOnce() -> bool,
+) -> Result<(), AppError> {
     if !app_id.chars().all(|c| c.is_ascii_digit()) || app_id.is_empty() {
         return Err(AppError::FileRead("Invalid app id".into()));
+    }
+    // A running Steam rewrites userdata from memory and Steam Cloud on exit,
+    // so a copy made now would report success and then be undone.
+    if steam_running() {
+        return Err(AppError::FileRead(
+            "Steam is running and would overwrite the copied settings. Close Steam, then copy \
+             again."
+                .into(),
+        ));
     }
 
     let from_root = steam_user_data_path(steam_path, from_steam_id)?;
@@ -939,15 +952,46 @@ pub fn get_copyable_games(
     Ok(games)
 }
 
-pub fn clear_integrated_browser_cache() -> Result<(), AppError> {
-    kill_steam_client_processes()?;
+/// Delete Steam's web cache with Steam stopped the way a switch stops it
+/// (graceful first, so it is not killed mid-write of its VDFs), then start it
+/// again if it was running.
+pub fn clear_integrated_browser_cache(steam_path: &Path) -> Result<(), AppError> {
+    let steam_was_running = is_steam_running();
+    clear_integrated_browser_cache_with(
+        &os::steam_htmlcache_path()?,
+        || stop_steam(steam_path, false),
+        || {
+            if steam_was_running {
+                launch_steam(steam_path, false, "", &[])
+            } else {
+                Ok(())
+            }
+        },
+    )
+}
 
-    let htmlcache_path = os::steam_htmlcache_path()?;
-    if htmlcache_path.exists() {
-        fs::remove_dir_all(&htmlcache_path).map_err(|e| AppError::FileRead(e.to_string()))?;
+fn clear_integrated_browser_cache_with(
+    htmlcache_path: &Path,
+    stop: impl FnOnce() -> Result<StopOutcome, AppError>,
+    relaunch: impl FnOnce() -> Result<(), AppError>,
+) -> Result<(), AppError> {
+    let stopped = match stop()? {
+        StopOutcome::NeedsElevation => return Err(AppError::SteamElevated),
+        StopOutcome::NotRunning => false,
+        StopOutcome::Stopped => true,
+    };
+
+    let removed = if htmlcache_path.exists() {
+        fs::remove_dir_all(htmlcache_path).map_err(|e| AppError::FileRead(e.to_string()))
+    } else {
+        Ok(())
+    };
+    // Steam comes back even when the delete failed: the user asked for a
+    // cache clear, not for Steam to stay closed.
+    if stopped {
+        relaunch()?;
     }
-
-    Ok(())
+    removed
 }
 
 #[cfg(test)]

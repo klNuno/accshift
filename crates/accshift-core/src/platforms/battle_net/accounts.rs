@@ -82,10 +82,10 @@ pub(super) fn known_account_emails(app_handle: &dyn AppContext) -> Result<Vec<St
     Ok(known_account_emails_from(saved_accounts, &cfg))
 }
 
-/// Saved names to write after the launcher has quit. `fresh` is the list it
-/// flushed on exit. `target` is an account we already knew, placed first in
-/// the spelling we stored. Emails the flush added stay; emails it dropped
-/// are not copied back from the list we saw while the launcher was running.
+/// Saved names to write after the launcher has quit. `fresh` is the list read
+/// from disk after the quit. `target` is an account we already knew, placed
+/// first in the spelling we stored. Emails the launcher added stay; emails it
+/// dropped are not copied back from the list we saw while it was running.
 pub(super) fn order_saved_accounts_for_switch(fresh: &[String], target: &str) -> Vec<String> {
     let target_key = normalize_account_key(target);
     let mut ordered = Vec::with_capacity(fresh.len() + 1);
@@ -98,8 +98,8 @@ pub(super) fn order_saved_accounts_for_switch(fresh: &[String], target: &str) ->
     ordered
 }
 
-/// Saved names to write after a forget, taken from the exit flush with the
-/// forgotten account removed. Comparison ignores case and surrounding space.
+/// Saved names to write after a forget, taken from the list read after the
+/// quit with the forgotten account removed. Comparison ignores case and surrounding space.
 pub(super) fn saved_accounts_without(fresh: &[String], target: &str) -> Vec<String> {
     let target_key = normalize_account_key(target);
     fresh
@@ -119,7 +119,7 @@ pub(super) fn read_accounts(app_handle: &dyn AppContext) -> Result<Vec<BattleNet
 /// Listing is a read. It used to call `remember_account_usage` for the first
 /// saved account, which took the cross-process config lock and stamped
 /// `last_used_at` with "now" on every poll, so "last used" meant "last listed"
-/// and the frontend's sort order was noise. The only write left is registering
+/// and the UI's sort order was noise. The only write left is registering
 /// an email the launcher knows and our config does not, and it carries no
 /// timestamp: an account we have never seen used has no usage to report.
 pub(super) fn list_accounts_from_saved(

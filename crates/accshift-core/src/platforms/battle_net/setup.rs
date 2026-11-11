@@ -7,7 +7,8 @@ use super::*;
 pub(super) struct BattleNetAccountSetupJob {
     pub(super) known_account_keys: HashSet<String>,
     /// `SavedAccountNames` as the launcher left it before setup emptied it,
-    /// put back when the setup is cancelled.
+    /// put back when the setup is cancelled, and by the next switch or forget
+    /// when it ends any other way.
     pub(super) previous_saved: Vec<String>,
     pub(super) last_touched_at: u64,
 }
@@ -21,8 +22,45 @@ pub(super) fn purge_expired_battle_net_setup_jobs(
     jobs: &mut HashMap<String, BattleNetAccountSetupJob>,
 ) {
     jobs.retain(|_, job| {
-        !crate::platforms::setup_expired(job.last_touched_at, BATTLE_NET_SETUP_TTL_MS)
+        let expired = crate::platforms::setup_expired(job.last_touched_at, BATTLE_NET_SETUP_TTL_MS);
+        if expired {
+            owe_saved_accounts(&job.previous_saved);
+        }
+        !expired
     });
+}
+
+/// Saved names that setups emptied out of `SavedAccountNames` and that no
+/// cancel put back. A setup that ends with a sign-in leaves the launcher
+/// running on the new account; quitting it then to restore the list would
+/// undo what the user just did, so the next switch or forget, which quits the
+/// launcher anyway, writes them back.
+fn owed_saved_accounts() -> &'static Mutex<Vec<String>> {
+    static OWED: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+    OWED.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+pub(super) fn owe_saved_accounts(previous: &[String]) {
+    if let Ok(mut owed) = owed_saved_accounts().lock() {
+        let merged = merge_saved_after_setup(std::mem::take(&mut *owed), previous);
+        *owed = merged;
+    }
+}
+
+/// `fresh` with every owed name appended once, for a write that quit the
+/// launcher first.
+pub(super) fn with_owed_saved_accounts(fresh: Vec<String>) -> Vec<String> {
+    match owed_saved_accounts().lock() {
+        Ok(owed) => merge_saved_after_setup(fresh, &owed),
+        Err(_) => fresh,
+    }
+}
+
+/// Called once a list built by [`with_owed_saved_accounts`] is on disk.
+pub(super) fn settle_owed_saved_accounts() {
+    if let Ok(mut owed) = owed_saved_accounts().lock() {
+        owed.clear();
+    }
 }
 
 pub fn begin_account_setup(app_handle: AppCtx) -> Result<SetupStatus, String> {
@@ -41,7 +79,7 @@ pub fn begin_account_setup(app_handle: AppCtx) -> Result<SetupStatus, String> {
         .collect::<HashSet<_>>();
 
     kill_battle_net()?;
-    // Read once the launcher is down: it rewrites the list on exit.
+    // Read once the launcher is down: it saves the list while it runs.
     let previous_saved = read_saved_accounts().unwrap_or_default();
     write_saved_accounts(&app_handle, &[])?;
 
@@ -113,6 +151,7 @@ pub fn get_account_setup_status(
         if let Ok(mut jobs) = battle_net_setup_jobs().lock() {
             jobs.remove(&setup_id);
         }
+        owe_saved_accounts(&job.previous_saved);
         let _ = remember_account_usage(&app_handle, account, true);
         return Ok(crate::platforms::make_setup_status(
             &setup_id,
