@@ -199,18 +199,21 @@ fn main() {
         .map(|backend| config::load_window(backend.context().as_ref()));
     bench::mark("saved_window");
 
-    let mut viewport = egui::ViewportBuilder::default()
-        .with_title("Accshift")
-        .with_app_id("accshift-egui")
-        .with_inner_size([860.0, 440.0])
-        .with_decorations(false)
-        .with_transparent(!opaque)
-        // No file drops in this app, and winit's drop target costs an
-        // `OleInitialize` on the UI thread before the window exists.
-        .with_drag_and_drop(false)
-        .with_resizable(true);
+    let mut viewport = window::chrome(
+        egui::ViewportBuilder::default()
+            .with_title("Accshift")
+            .with_app_id("accshift-egui")
+            .with_inner_size([860.0, 440.0])
+            .with_transparent(!opaque)
+            // No file drops in this app, and winit's drop target costs an
+            // `OleInitialize` on the UI thread before the window exists.
+            .with_drag_and_drop(false)
+            .with_resizable(true),
+        cfg!(target_os = "macos"),
+    );
     if let Some(saved) = &saved {
-        // The frame (window/frame.rs) moves and sizes it on Windows.
+        // The frame (window/frame.rs) moves and sizes it on Windows,
+        // `window::restore_position` moves it elsewhere.
         let (width, height) = saved
             .size
             .unwrap_or((config::DEFAULT_WINDOW_WIDTH, config::DEFAULT_WINDOW_HEIGHT));
@@ -233,6 +236,10 @@ fn main() {
         // On screen where the frame puts it, but cloaked below.
         viewport = viewport.with_active(false).with_taskbar(false);
     }
+
+    // The saved origin, put back on the hidden window off Windows.
+    #[cfg(all(feature = "software", not(windows)))]
+    let restore = saved.filter(|_| !hidden);
 
     // Shared by both runners once the window exists.
     let build = move |ctx: &egui::Context, handle: &dyn HasWindowHandle| {
@@ -319,6 +326,10 @@ fn main() {
         viewport,
         Box::new(
             move |ctx: &egui::Context, window: &egui_winit::winit::window::Window| {
+                #[cfg(not(windows))]
+                if let Some(saved) = &restore {
+                    window::restore_position(window, saved);
+                }
                 build(ctx, window)
             },
         ),

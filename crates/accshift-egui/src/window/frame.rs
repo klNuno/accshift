@@ -62,7 +62,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WS_SIZEBOX,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    LoadImageW, SendMessageW, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, WM_SETICON,
+    LoadImageW, SendMessageW, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, WM_CLOSE, WM_ENDSESSION,
+    WM_SETICON,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     PBT_APMRESUMEAUTOMATIC, PBT_POWERSETTINGCHANGE, WM_DISPLAYCHANGE, WM_DWMCOMPOSITIONCHANGED,
@@ -103,6 +104,8 @@ static KEEP_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Set by a message after which the window's pixels may be gone, taken by
 /// the runner ([`take_content_lost`]).
 static CONTENT_LOST: AtomicBool = AtomicBool::new(false);
+/// `WM_ENDSESSION` arrived: see [`session_ending`].
+static SESSION_ENDING: AtomicBool = AtomicBool::new(false);
 
 /// `GUID_CONSOLE_DISPLAY_STATE` (Win32_System_SystemServices, not worth a
 /// feature): the console display went off (0), on (1) or dimmed (2).
@@ -401,6 +404,15 @@ pub fn take_content_lost() -> bool {
     CONTENT_LOST.swap(false, Ordering::Relaxed)
 }
 
+/// Windows is ending the session (log off, shut down, restart). winit sends
+/// no event for it, and the process may end as soon as `WM_ENDSESSION`
+/// returns, so the frame turns it into a close request first: the runner
+/// runs its close sequence inside it, and this flag keeps that close from
+/// hiding to the tray.
+pub fn session_ending() -> bool {
+    SESSION_ENDING.load(Ordering::Relaxed)
+}
+
 /// Whether `msg` may leave the window without its pixels.
 fn loses_content(msg: u32, wparam: WPARAM, lparam: LPARAM) -> bool {
     match msg {
@@ -673,6 +685,13 @@ unsafe extern "system" fn frame_proc(
         }
         // No system menu over the button.
         WM_NCRBUTTONDOWN | WM_NCRBUTTONUP if wparam == HTMAXBUTTON as WPARAM => return 0,
+        WM_ENDSESSION if wparam != 0 => {
+            SESSION_ENDING.store(true, Ordering::Relaxed);
+            // SAFETY: a window this thread owns; winit answers WM_CLOSE with
+            // `CloseRequested` before this returns.
+            unsafe { SendMessageW(hwnd, WM_CLOSE, 0, 0) };
+            return 0;
+        }
         WM_GETMINMAXINFO => {
             let result = call_previous(hwnd, msg, wparam, lparam);
             // SAFETY: the message's own parameters.
@@ -700,7 +719,7 @@ mod tests {
     use super::*;
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DestroyWindow, RegisterClassExW, SendMessageW, HTCLIENT, WNDCLASSEXW,
+        CreateWindowExW, IsWindow, RegisterClassExW, SendMessageW, HTCLIENT, WNDCLASSEXW,
         WS_CLIPSIBLINGS, WS_EX_APPWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
         WS_SYSMENU,
     };
@@ -861,7 +880,15 @@ mod tests {
             SendMessageW(hwnd, WM_DISPLAYCHANGE, 32, lparam(1920, 1080));
             assert!(take_content_lost());
 
-            DestroyWindow(hwnd);
+            // A cancelled end of session changes nothing; a real one raises
+            // the flag and closes the window (the default procedure
+            // destroys this one).
+            SendMessageW(hwnd, WM_ENDSESSION, 0, 0);
+            assert!(!session_ending());
+            assert_ne!(IsWindow(hwnd), 0);
+            assert_eq!(SendMessageW(hwnd, WM_ENDSESSION, 1, 0), 0);
+            assert!(session_ending());
+            assert_eq!(IsWindow(hwnd), 0);
         }
     }
 }
