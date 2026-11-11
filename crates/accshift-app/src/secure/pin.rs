@@ -51,15 +51,6 @@ pub fn verify_pin_code(code: &str, stored_hash: &str) -> PinVerification {
     }
 }
 
-/// `PIN_LOCKED_PREFIX` (pinSession.ts line 10): the start of the error every
-/// switch command returns while the backend session is locked.
-pub const PIN_LOCKED_PREFIX: &str = "pin_locked:";
-
-/// `isPinLockedError` (pinSession.ts lines 12-15) on an error message.
-pub fn is_pin_locked_message(message: &str) -> bool {
-    message.starts_with(PIN_LOCKED_PREFIX)
-}
-
 /// `isPinLockedError` on a backend error.
 pub fn is_pin_locked_error(error: &BackendError) -> bool {
     error.is_pin_locked()

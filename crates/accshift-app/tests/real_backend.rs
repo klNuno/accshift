@@ -3,13 +3,15 @@
 //! here opens a window, a dialog, a URL or a folder, and nothing reads or
 //! writes the real `%APPDATA%\com.accshift.desktop`.
 
-use accshift_app::dispatch::dispatch;
+mod dispatch;
+
 use accshift_app::real::{RealBackend, UI_DETAILS_MAX_BYTES, UI_LOG_CAP};
 use accshift_app::types::CustomTheme;
 use accshift_app::{Backend, BackendError};
 use accshift_core::pin::{hash_pin_code, PIN_LOCKED_MESSAGE};
 use accshift_core::storage::{STORE_FOLDERS, STORE_SETTINGS, STORE_VIEW_MODE};
 use accshift_core::AppContext;
+use dispatch::dispatch;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use accshift_app::accounts::{Toast, ToastKind};
-use accshift_app::lifecycle::boot::track_update;
+use accshift_app::lifecycle::boot::{track_update, truncate_log};
 use accshift_app::lifecycle::update_flow::{
     self, AppUpdater, ApplyHost, CommandResult, LogLevel, UpdateCommand, UpdateOutput,
 };
@@ -156,8 +156,7 @@ fn console_error(backend: &dyn accshift_app::backend::Backend, line: &str) {
         ),
         None => (line.to_string(), None),
     };
-    let message: String = message.chars().take(512).collect();
-    let details = details.map(|d| d.chars().take(16_384).collect::<String>());
+    let (message, details) = truncate_log(&message, details.as_deref());
     let _ = backend.log_app_event(
         "error",
         "frontend.console.error",

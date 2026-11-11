@@ -13,11 +13,6 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-/// main.ts: `finishBoot("load")` this long after `load` when `boot-ready`
-/// never came.
-pub const FINISH_BOOT_FALLBACK: Duration = Duration::from_millis(1500);
-/// main.ts: the boot log buffer is written at boot end or after this.
-pub const BOOT_LOG_FLUSH: Duration = Duration::from_millis(5000);
 /// boot.rs `spawn_boot_failsafe`: show the window anyway after this.
 pub const BOOT_FAILSAFE: Duration = Duration::from_millis(5000);
 /// The failsafe's warn line.
@@ -205,32 +200,6 @@ impl BootPayloadCache {
     pub fn get(&self) -> Option<&BootPayload> {
         self.payload.as_ref()
     }
-}
-
-/// telemetryClient.ts `trackAccountAddStarted`, fire and forget (the mock
-/// rejects every `telemetry_` call; the error is dropped, as TS).
-pub fn track_account_add_started(backend: &dyn Backend, platform_id: &str) {
-    let _ = backend.telemetry_track_account_add_started(platform_id);
-}
-
-/// telemetryClient.ts `trackAccountAddCancelled`.
-pub fn track_account_add_cancelled(backend: &dyn Backend, platform_id: &str) {
-    let _ = backend.telemetry_track_account_add_cancelled(platform_id);
-}
-
-/// telemetryClient.ts `trackAccountAdded`.
-pub fn track_account_added(backend: &dyn Backend, platform_id: &str) {
-    let _ = backend.telemetry_track_account_added(platform_id);
-}
-
-/// telemetryClient.ts `trackOperationFailed`.
-pub fn track_operation_failed(
-    backend: &dyn Backend,
-    operation: &str,
-    error_code: &str,
-    platform_id: Option<&str>,
-) {
-    let _ = backend.telemetry_track_operation_failed(operation, error_code, platform_id);
 }
 
 /// telemetryClient.ts `trackUpdate`, fire and forget.

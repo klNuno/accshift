@@ -26,11 +26,6 @@ impl BackendError {
         Self::new(format!("mock mode: {command} is not available"))
     }
 
-    /// What the real backend answers until its job fills a command in.
-    pub fn not_ported(command: &str) -> Self {
-        Self::new(format!("{command} is not ported to the egui backend yet"))
-    }
-
     /// True for the PIN refusal (`isPinLockedError` in the frontend).
     pub fn is_pin_locked(&self) -> bool {
         self.message.starts_with("pin_locked:")

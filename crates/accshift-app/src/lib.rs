@@ -3,10 +3,8 @@
 //! - [`backend::Backend`]: one blocking method per Tauri command the frontend
 //!   calls, with the same payloads ([`types`]) and error strings ([`error`]).
 //! - [`mock::MockBackend`]: the TS mock's data, for parity work.
-//! - [`real::RealBackend`]: the real backend on `accshift-core`, the commands
-//!   in [`real::PORTED`] filled, the others still "not ported".
+//! - [`real::RealBackend`]: the real backend on `accshift-core`.
 //! - [`jobs`]: runs calls off the UI thread and wakes the UI on each result.
-//! - [`dispatch`]: the same commands by name, with JSON arguments.
 //! - [`storage`]: the raw client stores, their saves and refreshes.
 //! - [`stores::ClientStores`]: every client store, typed ([`settings`],
 //!   [`folders`], [`personas`] and the small ones), over the storage.
@@ -30,7 +28,6 @@ pub mod actions;
 pub mod backend;
 pub mod bulk_edit;
 pub mod cs2_bridge;
-pub mod dispatch;
 pub mod display;
 pub mod drag;
 pub mod error;
@@ -56,5 +53,5 @@ pub mod text;
 pub mod time;
 pub mod types;
 
-pub use backend::{Backend, COMMANDS};
+pub use backend::Backend;
 pub use error::{BackendError, BackendResult};

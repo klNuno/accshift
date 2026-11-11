@@ -7,8 +7,8 @@ mod support;
 
 use accshift_app::accounts::{Toast, ToastKind};
 use accshift_app::lifecycle::app_shell::{
-    first_run_platforms, initial_load, migration_toast, plan_external_refresh, semver_core,
-    settings_snapshot, ExternalRefreshGate, InitialLoad, RefreshStep, SHELL_INIT_ORDER,
+    first_run_platforms, initial_load, migration_toast, plan_external_refresh, settings_snapshot,
+    ExternalRefreshGate, InitialLoad, RefreshStep,
 };
 use accshift_app::lifecycle::boot::{
     log_app_event, mask_value, redact_object, remember_boot_locale, serialize_log_value,
@@ -604,12 +604,6 @@ fn app_config_and_platform_stores_reload_the_accounts() {
 
 #[test]
 fn the_shell_init_helpers_match_the_ts() {
-    assert_eq!(semver_core("1.0.5"), "1.0.5");
-    assert_eq!(semver_core("v1.2.3-beta.1+build"), "1.2.3");
-    assert_eq!(semver_core("12.34.56.78"), "12.34.56");
-    assert_eq!(semver_core("dev"), "dev");
-    assert_eq!(semver_core("1.2"), "1.2");
-
     assert_eq!(
         migration_toast("migrated"),
         Some(Toast::new(
@@ -650,7 +644,6 @@ fn the_shell_init_helpers_match_the_ts() {
         initial_load(&registry, "steam", RuntimeOs::Unknown),
         InitialLoad::RefreshItems
     );
-    assert_eq!(SHELL_INIT_ORDER.len(), 10);
 
     let snapshot = settings_snapshot(&settings(json!({"enabledPlatforms": ["steam"]})));
     assert_eq!(snapshot.enabled_platforms, ["steam"]);
@@ -967,27 +960,4 @@ fn the_boot_payload_is_fetched_cached_and_fills_the_registry() {
     backend.push("get_boot_payload", Err("boom"));
     assert!(cache.fetch(&backend, &mut registry).is_err());
     assert!(cache.get().is_some());
-}
-
-#[test]
-fn the_other_telemetry_calls_are_fire_and_forget() {
-    use accshift_app::lifecycle::boot::{
-        track_account_add_cancelled, track_account_add_started, track_account_added,
-        track_operation_failed,
-    };
-    let backend = support::scripted("demo");
-    track_account_add_started(&backend, "steam");
-    track_account_add_cancelled(&backend, "steam");
-    track_account_added(&backend, "riot");
-    track_operation_failed(&backend, "switch", "timeout", Some("steam"));
-    assert_eq!(
-        backend.calls("telemetry_track_account_add_started").len(),
-        1
-    );
-    assert_eq!(
-        backend.calls("telemetry_track_account_add_cancelled").len(),
-        1
-    );
-    assert_eq!(backend.calls("telemetry_track_account_added").len(), 1);
-    assert_eq!(backend.calls("telemetry_track_operation_failed").len(), 1);
 }

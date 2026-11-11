@@ -1,11 +1,9 @@
-//! The security layer of the app: the PIN, the inactivity timer, the window
-//! activity state and the secure screen that combines them.
+//! The security layer of the app: the PIN, the inactivity timer and the
+//! secure screen that combines them.
 //!
 //! - [`pin`]: `pin.ts` and `pinSession.ts` over `accshift_core::pin`.
 //! - The inactivity timer of `useInactivityBlur.svelte.ts` is
 //!   [`InactivityBlur`].
-//! - The state machine of `useWindowActivity.svelte.ts` is
-//!   [`WindowActivity`].
 //! - [`SecureScreen`]: `useSecureScreen.svelte.ts` plus the logic of
 //!   `AppScreenOverlays.svelte`.
 //! - [`ScreenCover`]: what App.svelte hides behind the secure screen and the
@@ -14,11 +12,9 @@
 pub mod inactivity;
 pub mod pin;
 pub mod screen;
-pub mod window_activity;
 
 pub use inactivity::InactivityBlur;
 pub use screen::{SecureEvent, SecureInputs, SecureScreen, WindowView};
-pub use window_activity::WindowActivity;
 
 /// What the secure screen and streamer mode take away from the app, as
 /// App.svelte applies it.
