@@ -1,25 +1,27 @@
-//! `src/lib/features/folders/FolderCard.svelte`: a folder in the grid.
+//! A folder in the grid, and the card box it shares with the back card and
+//! the account card.
 //!
-//! The card box is shared with `BackCard.svelte` (same CSS, a `<button>`
-//! instead of a `div role="button"`): [`frame`] paints it and reports the
-//! state its children need.
+//! The back card draws the same box (as a button): [`frame`] paints it and
+//! reports the state its children need. The account card shares the pose
+//! ([`Pose`]), where the box sits this frame ([`Placement`]), the button
+//! sensing, the shadows and the outline painter.
 //!
-//! - `.card`: `--grid-card-width` by `--grid-card-min-height`, padding
-//!   `--grid-card-padding`, radius `--grid-card-radius`, transparent, a
-//!   transparent 1 px outline and an inset 1 px transparent shadow;
-//!   `card-entrance` on mount.
-//! - `:hover`: `--bg-card-hover`, outline `color-mix(--fg-subtle 45%,
-//!   transparent)`, `translateY(-2px)`, `0 12px 24px rgba(0,0,0,.18)`.
-//!   Background, transform and shadow transition 180 ms ease-out, the
-//!   outline colour 120 ms. The shadow switches between an inset and an
-//!   outer one, which CSS cannot interpolate, so it changes at once.
-//! - `:active`: `translateY(0) scale(.985)`.
-//! - `.icon-wrap`: 68 px, radius 6, `color-mix(--bg-muted 52%, transparent)`,
-//!   `--fg-muted`; on card hover `--bg-elevated`, `--fg`, `translateY(-1px)`.
-//! - `.name`: 12 px 500 `--fg`, nowrap with an ellipsis, the content width.
+//! - The box: the grid card width by its min height, the grid card
+//!   padding, a medium radius, transparent, a transparent 1 px outline; it
+//!   fades and scales in on mount.
+//! - Hover: the hover background, the outline in the subtle foreground at
+//!   45 %, 2 px up, a `0 12px 24px` shadow at 18 % black. Background,
+//!   transform and shadow ease over 180 ms, the outline colour over 120 ms.
+//!   The shadow switches between an inset and an outer one, which cannot be
+//!   interpolated, so it changes at once.
+//! - Press: back in place, scaled to 0.985.
+//! - The icon wrap: the avatar size, radius 6, the muted background at
+//!   52 %, the muted foreground; on hover the elevated background, the
+//!   foreground and 1 px up.
+//! - The name: 12 px 500, one line with an ellipsis, the content width.
 
 use egui::accesskit::Role;
-use egui::{pos2, vec2, Id, Pos2, Rect, Response, Sense, Ui};
+use egui::{pos2, vec2, Id, Pos2, Rect, Response, Sense, Ui, WidgetInfo};
 
 use super::icon;
 use crate::app::vars::Vars;
@@ -30,65 +32,297 @@ use crate::ui::paint::{BoxShadow, BoxStyle, Corners, Transform};
 use crate::ui::snap;
 use crate::ui::text::{self, LineHeight, TextAlign, TextStyle};
 
-/// `transition: background 180ms ease-out, transform 180ms ease-out`.
+/// Background, transform and shadow ease over 180 ms.
 const T180: Transition = Transition::new(0.18, Timing::EASE_OUT);
-/// `outline-color 120ms ease-out`.
+/// The outline colour eases over 120 ms.
 const T120: Transition = Transition::new(0.12, Timing::EASE_OUT);
-/// `.icon-wrap { transition: background 150ms }` (CSS default `ease`).
+/// The icon wrap's background eases over 150 ms.
 const T150_EASE: Transition = Transition::new(0.15, Timing::EASE);
-/// `.icon-wrap { transition: color 150ms ease-out }`.
+/// The icon's colour eases over 150 ms.
 const T150: Transition = Transition::new(0.15, Timing::EASE_OUT);
+
+/// The shadow of a hovered card: `0 12px 24px`, 18 % black.
+pub(crate) const HOVER_SHADOW: BoxShadow = BoxShadow {
+    offset: vec2(0.0, 12.0),
+    blur: 24.0,
+    spread: 0.0,
+    color: Rgba::new(0.0, 0.0, 0.0, 0.18),
+    inset: false,
+};
+
+/// The drag ghost's shadow, in place of the card's own: `0 8px 24px`, 50 %
+/// black.
+pub(crate) const GHOST_SHADOW: BoxShadow = BoxShadow {
+    offset: vec2(0.0, 8.0),
+    blur: 24.0,
+    spread: 0.0,
+    color: Rgba::new(0.0, 0.0, 0.0, 0.5),
+    inset: false,
+};
+
+/// A solid ring `spread` px wide around a box.
+pub(crate) fn ring(spread: f32, color: Rgba) -> BoxShadow {
+    BoxShadow {
+        offset: egui::Vec2::ZERO,
+        blur: 0.0,
+        spread,
+        color,
+        inset: false,
+    }
+}
 
 /// What the folder card reports.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FolderCardEvent {
-    /// Click, Enter or Space: `onOpen`.
+    /// Click, Enter or Space: open the folder.
     Open,
-    /// Right click at this point: `onContextMenu`.
+    /// Right click at this point: open the context menu.
     ContextMenu(Pos2),
 }
 
-/// `FolderCard.svelte`'s props, minus the callbacks.
+/// What the workspace hands a folder card.
 #[derive(Clone, Debug)]
 pub struct FolderCardProps<'a> {
     pub vars: &'a Vars,
-    /// Stable for one mount of the card: a new id replays `card-entrance`.
+    /// Stable for one mount of the card: a new id replays the entrance.
     pub id: Id,
     pub name: &'a str,
-    /// `cardColor` resolved, `None` for `""`.
+    /// The folder's colour, `None` when it has none.
     pub card_color: Option<Rgba>,
-    /// `accentColor`, for the drag-over state.
+    /// The accent colour, for the drag-over state.
     pub accent: Rgba,
     pub drag_over: bool,
     pub dragged: bool,
-    /// Keyboard focus is showing (`:focus-visible`).
+    /// Keyboard focus is showing.
     pub focus_visible: bool,
-    /// `[data-kb-focus]`: the card the arrow keys moved to.
+    /// The card the arrow keys moved to.
     pub kb_focus: bool,
-    /// `.is-dragging` on the grid: a hovered card stays in place.
+    /// A drag runs on the grid: a hovered card stays in place.
     pub grid_dragging: bool,
-    /// The drag ghost: its inline `box-shadow` replaces the card's.
+    /// The drag ghost: its own shadow replaces the card's.
     pub ghost: bool,
 }
 
-/// Which card [`frame`] paints and its state classes.
+/// Which card [`frame`] paints and its states.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct CardState {
-    /// `.custom-color` (folder cards only).
+    /// The card's own colour (folder cards only).
     pub custom: Option<Rgba>,
-    /// `--drag-accent`.
+    /// The accent colour of the drag-over state.
     pub accent: Rgba,
-    /// `.drag-over`.
+    /// A dragged item hovers this card.
     pub drag_over: bool,
-    /// `.dragging` (folder cards only).
+    /// The card itself is dragged (folder cards only).
     pub dragged: bool,
-    /// `.card[data-kb-focus]` (folder cards only): the arrow keys moved
-    /// here.
+    /// The arrow keys moved here (folder cards only).
     pub kb_focus: bool,
-    /// `.is-dragging` on the grid.
+    /// A drag runs on the grid.
     pub grid_dragging: bool,
     /// The drag ghost.
     pub ghost: bool,
+}
+
+impl CardState {
+    /// The box's background. A hovered custom colour beats the drag-over
+    /// tint, which beats the plain hover and the resting custom colour.
+    fn background(&self, hovered: bool, vars: &Vars) -> Rgba {
+        let transparent = Rgba::TRANSPARENT;
+        match (self.custom, hovered, self.drag_over) {
+            (Some(c), true, _) => c.mix(0.32, vars.bg_card_hover),
+            (_, _, true) => self.accent.mix(0.10, transparent),
+            (Some(c), false, false) => c.mix(0.24, transparent),
+            (None, true, false) => vars.bg_card_hover,
+            (None, false, false) => transparent,
+        }
+    }
+
+    /// The outline's colour: the arrow-key focus first, then the drag-over
+    /// accent, then the hover.
+    fn outline(&self, hovered: bool, vars: &Vars) -> Rgba {
+        let transparent = Rgba::TRANSPARENT;
+        if self.kb_focus {
+            vars.fg.mix(0.65, transparent)
+        } else if self.drag_over {
+            self.accent.mix(0.55, transparent)
+        } else if hovered {
+            vars.fg_subtle.mix(0.45, transparent)
+        } else {
+            transparent
+        }
+    }
+
+    /// Dragged beats pressed, which beats the hover lift; a hovered card
+    /// stays in place while another one is dragged.
+    fn pose(&self, hovered: bool, pressed: bool) -> Pose {
+        if self.dragged {
+            return Pose::DRAGGED;
+        }
+        if self.grid_dragging && hovered {
+            return Pose::REST;
+        }
+        if pressed {
+            Pose::PRESSED
+        } else if hovered {
+            Pose::LIFTED
+        } else {
+            Pose::REST
+        }
+    }
+
+    /// The box's shadows: the 1 px outline (drawn outside the border box,
+    /// its width snapped like a border), then the drag-over inset or the
+    /// hover shadow. The arrow-key focus draws its own wider outline.
+    fn shadows(&self, hovered: bool, outline: Rgba, ppp: f32) -> Vec<BoxShadow> {
+        if self.ghost {
+            return vec![GHOST_SHADOW];
+        }
+        let mut shadows = Vec::new();
+        if !self.kb_focus {
+            shadows.push(ring(snap::border_width(1.0, ppp), outline));
+        }
+        if self.drag_over {
+            shadows.push(BoxShadow {
+                offset: egui::Vec2::ZERO,
+                blur: 0.0,
+                spread: 1.0,
+                color: self.accent,
+                inset: true,
+            });
+        } else if hovered {
+            shadows.push(HOVER_SHADOW);
+        }
+        shadows
+    }
+}
+
+/// A card's vertical offset and scale, before the entrance overrides them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Pose {
+    pub ty: f32,
+    pub scale: f32,
+}
+
+impl Pose {
+    pub const REST: Pose = Pose::new(0.0, 1.0);
+    /// Hovered: 2 px up.
+    pub const LIFTED: Pose = Pose::new(-2.0, 1.0);
+    pub const PRESSED: Pose = Pose::new(0.0, 0.985);
+    pub const DRAGGED: Pose = Pose::new(0.0, 0.95);
+
+    const fn new(ty: f32, scale: f32) -> Self {
+        Self { ty, scale }
+    }
+
+    /// The pose eased toward `self` over 180 ms.
+    pub fn transition(self, ctx: &egui::Context, id: Id) -> Pose {
+        Pose {
+            ty: anim::transition(ctx, id.with("ty"), self.ty, &T180),
+            scale: anim::transition(ctx, id.with("scale"), self.scale, &T180),
+        }
+    }
+
+    /// Where the card box over `layout` sits this frame. The entrance
+    /// replaces the pose while it runs. A dragged card opens its fading
+    /// layer here; the caller closes it with [`Placement::end_group`].
+    pub fn place(self, ui: &Ui, id: Id, vars: &Vars, layout: Rect, dragged: bool) -> Placement {
+        let ctx = ui.ctx();
+        let (opacity, enter_scale) = entrance(ui, id, vars);
+        let entering = opacity < 1.0;
+        let transform = if entering {
+            Transform::scale(enter_scale)
+        } else {
+            Transform {
+                translate: vec2(0.0, self.ty),
+                scale: self.scale,
+            }
+        };
+        // A scaled box sits on whole device pixels and lays its content out
+        // from there.
+        let layout = if transform.scale != 1.0 {
+            layout.translate(super::snap_offset(ctx, layout.min))
+        } else {
+            layout
+        };
+        let rect = snap::rect(layout, ctx.pixels_per_point());
+        // A dragged card fades to 0.4 as one layer. While its entrance
+        // replays (the preview moved it), the entrance's opacity rules
+        // instead, from 0 to 1, then the layer drops it back to 0.4.
+        let group = dragged && !entering;
+        if group {
+            drag_group(ui, rect);
+        }
+        Placement {
+            layout,
+            rect,
+            transform,
+            opacity,
+            group,
+        }
+    }
+}
+
+/// Where a card box sits this frame.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Placement {
+    /// The box in layout units: the content lays out from it.
+    pub layout: Rect,
+    /// The untransformed border box, snapped to device pixels.
+    pub rect: Rect,
+    pub transform: Transform,
+    /// The entrance's opacity.
+    pub opacity: f32,
+    /// The dragged card's fading layer is open.
+    pub group: bool,
+}
+
+impl Placement {
+    /// The box before any pose: in place, opaque.
+    pub fn rest(layout: Rect, ppp: f32) -> Self {
+        Self {
+            layout,
+            rect: snap::rect(layout, ppp),
+            transform: Transform::NONE,
+            opacity: 1.0,
+            group: false,
+        }
+    }
+
+    /// A 2 px outline `offset` px outside the box, its radius grown by the
+    /// offset, under the card's transform.
+    pub fn paint_outline(&self, ui: &Ui, offset: f32, radius: f32, color: Rgba) {
+        let ppp = ui.ctx().pixels_per_point();
+        BoxStyle {
+            radius: Corners::all(radius + offset),
+            shadows: vec![ring(snap::border_width(2.0, ppp), color)],
+            opacity: self.opacity,
+            ..BoxStyle::default()
+        }
+        .paint_transformed(ui.painter(), self.rect.expand(offset), self.transform);
+    }
+
+    /// Closes the dragged card's layer opened by [`Pose::place`].
+    pub fn end_group(&self, ui: &Ui) {
+        if self.group {
+            crate::ui::backdrop_filter::Mark::End.paint(ui.painter(), self.rect);
+        }
+    }
+}
+
+/// Senses a card box as a button: a click target under the pointing hand,
+/// announced to AccessKit with `info`.
+pub(crate) fn sense_button(
+    ui: &mut Ui,
+    rect: Rect,
+    id: Id,
+    info: impl Fn() -> WidgetInfo,
+) -> Response {
+    let response = ui
+        .interact(rect, id, Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(info);
+    ui.ctx()
+        .accesskit_node_builder(id, |node| node.set_role(Role::Button));
+    response
 }
 
 /// The card box drawn, for its children.
@@ -99,16 +333,17 @@ pub(crate) struct Frame {
     /// The same box in layout units: the content lays out from it.
     pub layout: Rect,
     pub transform: Transform,
-    /// `.icon-wrap` hover progress (its own transitions applied).
+    /// The icon wrap's hover progress (its own transitions applied).
     pub icon_bg: Rgba,
     pub icon_fg: Rgba,
     pub icon_lift: f32,
     pub opacity: f32,
-    /// `.dragging` fades the card as one layer, closed by the caller.
+    /// A dragged card fades as one layer, closed by the caller.
     pub group: bool,
 }
 
-/// `card-entrance`: `(opacity, scale)` at this frame, `(1, 1)` once over.
+/// The entrance animation: `(opacity, scale)` at this frame, `(1, 1)` once
+/// over.
 pub(crate) fn entrance(ui: &Ui, id: Id, vars: &Vars) -> (f32, f32) {
     let p = anim::animate(
         ui.ctx(),
@@ -128,8 +363,8 @@ pub(crate) fn map_rect(card: Rect, transform: Transform, child: Rect) -> Rect {
     Rect::from_center_size(centre, child.size() * transform.scale)
 }
 
-/// Paints the `.card` box of a folder or back card over `rect` and senses
-/// it; `label` goes to AccessKit with the button role.
+/// Paints the box of a folder or back card over `rect` and senses it;
+/// `label` goes to AccessKit with the button role.
 pub(crate) fn frame(
     ui: &mut Ui,
     rect: Rect,
@@ -138,63 +373,20 @@ pub(crate) fn frame(
     state: CardState,
     vars: &Vars,
 ) -> Frame {
-    let CardState {
-        custom,
-        accent,
-        drag_over,
-        dragged,
-        kb_focus,
-        grid_dragging,
-        ghost,
-    } = state;
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
-    let layout = rect;
-    let rect = snap::rect(rect, ppp);
-    let response = ui.interact(rect, id, Sense::click());
-    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
-    ctx.accesskit_node_builder(id, |node| node.set_role(Role::Button));
+    let response = sense_button(ui, snap::rect(rect, ppp), id, || {
+        WidgetInfo::labeled(egui::Role::Button, true, label)
+    });
     let hovered = super::css_hovered(&response);
     let pressed = super::held(&response);
 
     let transparent = Rgba::TRANSPARENT;
-    // Later rules win at equal specificity: `.custom-color:hover` (0,3,0)
-    // beats `.drag-over` (0,2,0), which beats `:hover` and `.custom-color`.
-    let background = match (custom, hovered, drag_over) {
-        (Some(c), true, _) => c.mix(0.32, vars.bg_card_hover),
-        (_, _, true) => accent.mix(0.10, transparent),
-        (Some(c), false, false) => c.mix(0.24, transparent),
-        (None, true, false) => vars.bg_card_hover,
-        (None, false, false) => transparent,
-    };
-    // `.card[data-kb-focus]` comes last and wins over both.
-    let outline = if kb_focus {
-        vars.fg.mix(0.65, transparent)
-    } else if drag_over {
-        accent.mix(0.55, transparent)
-    } else if hovered {
-        vars.fg_subtle.mix(0.45, transparent)
-    } else {
-        transparent
-    };
-    // `.dragging` (folder only) comes last and wins over `:active`.
-    let (ty, scale) = if dragged {
-        (0.0, 0.95)
-    } else if grid_dragging && hovered {
-        // `.is-dragging .card:not(.dragging):hover { transform: none }`.
-        (0.0, 1.0)
-    } else if pressed {
-        (0.0, 0.985)
-    } else if hovered {
-        (-2.0, 1.0)
-    } else {
-        (0.0, 1.0)
-    };
+    let background = state.background(hovered, vars);
     let background = anim::transition(&ctx, id.with("bg"), background, &T180);
+    let outline = state.outline(hovered, vars);
     let outline = anim::transition(&ctx, id.with("outline"), outline, &T120);
-    let ty = anim::transition(&ctx, id.with("ty"), ty, &T180);
-    let scale = anim::transition(&ctx, id.with("scale"), scale, &T180);
+    let pose = state.pose(hovered, pressed).transition(&ctx, id);
     let icon_bg = anim::transition(
         &ctx,
         id.with("icon-bg"),
@@ -218,109 +410,31 @@ pub(crate) fn frame(
         &T180,
     );
 
-    // `animation` overrides `transform` while it runs.
-    let (enter_opacity, enter_scale) = entrance(ui, id, vars);
-    let entering = enter_opacity < 1.0;
-    let transform = if entering {
-        Transform::scale(enter_scale)
-    } else {
-        Transform {
-            translate: vec2(0.0, ty),
-            scale,
-        }
-    };
-    // A scaled box sits on whole device pixels and lays its content out
-    // from there.
-    let (layout, rect) = if transform.scale != 1.0 {
-        let layout = layout.translate(super::snap_offset(&ctx, layout.min));
-        (layout, snap::rect(layout, ppp))
-    } else {
-        (layout, rect)
-    };
-    // `.dragging { opacity: .4 }` fades the card as one group: a layer
-    // where the renderer has them, each shape where it has not.
-    // `animation` overrides `opacity` too: a dragged card moved by the
-    // preview replays its entrance from 0 to 1, then drops back to .4.
-    let group = dragged && !entering;
-    if group {
-        drag_group(ui, rect);
-    }
-    let opacity = enter_opacity
-        * if dragged && !group && !entering {
-            0.4
-        } else {
-            1.0
-        };
-
-    let mut shadows = Vec::new();
-    // The outline is drawn outside the border box, above the shadows; its
-    // width snaps like a border. Only its colour eases: the arrow-key
-    // focus widens it and moves it out at once.
-    if !kb_focus {
-        shadows.push(BoxShadow {
-            offset: egui::Vec2::ZERO,
-            blur: 0.0,
-            spread: snap::border_width(1.0, ppp),
-            color: outline,
-            inset: false,
-        });
-    }
-    if drag_over {
-        shadows.push(BoxShadow {
-            offset: egui::Vec2::ZERO,
-            blur: 0.0,
-            spread: 1.0,
-            color: accent,
-            inset: true,
-        });
-    } else if hovered {
-        shadows.push(BoxShadow {
-            offset: vec2(0.0, 12.0),
-            blur: 24.0,
-            spread: 0.0,
-            color: Rgba::new(0.0, 0.0, 0.0, 0.18),
-            inset: false,
-        });
-    }
-    if ghost {
-        shadows = vec![super::account_card::GHOST_SHADOW];
-    }
+    let place = pose.place(ui, id, vars, rect, state.dragged);
     BoxStyle {
         background,
         radius: Corners::all(vars.radius_md),
-        shadows,
-        opacity,
+        shadows: state.shadows(hovered, outline, ppp),
+        opacity: place.opacity,
         ..BoxStyle::default()
     }
-    .paint_transformed(ui.painter(), rect, transform);
-    if kb_focus {
-        // `outline: 2px; outline-offset: 2px`, its radius grown by the
-        // offset.
-        BoxStyle {
-            radius: Corners::all(vars.radius_md + 2.0),
-            shadows: vec![BoxShadow {
-                offset: egui::Vec2::ZERO,
-                blur: 0.0,
-                spread: snap::border_width(2.0, ppp),
-                color: outline,
-                inset: false,
-            }],
-            opacity,
-            ..BoxStyle::default()
-        }
-        .paint_transformed(ui.painter(), rect.expand(2.0), transform);
+    .paint_transformed(ui.painter(), place.rect, place.transform);
+    if state.kb_focus {
+        // Only the outline's colour eases: the arrow-key focus widens it
+        // and moves it 2 px out at once.
+        place.paint_outline(ui, 2.0, vars.radius_md, outline);
     }
 
     Frame {
         response,
-        rect,
-        layout,
-        transform,
+        rect: place.rect,
+        layout: place.layout,
+        transform: place.transform,
         icon_bg,
         icon_fg,
         icon_lift,
-        opacity,
-        group,
+        opacity: place.opacity,
+        group: place.group,
     }
 }
 
@@ -330,8 +444,8 @@ pub(crate) fn drag_group(ui: &Ui, rect: Rect) {
     crate::ui::backdrop_filter::Mark::Group { opacity: 0.4 }.paint(ui.painter(), rect);
 }
 
-/// The `.icon-wrap` box and the icon centred in it, under the card's
-/// transform. `svg_size` is the inline `<svg>` size.
+/// The icon wrap and the icon centred in it, under the card's transform.
+/// `svg_size` is the icon's own size.
 pub(crate) fn icon_wrap(ui: &Ui, f: &Frame, vars: &Vars, svg: &'static [u8], svg_size: f32) {
     let ppp = ui.ctx().pixels_per_point();
     let pad = vars.grid_card_padding();
@@ -386,7 +500,7 @@ pub(crate) fn icon_wrap(ui: &Ui, f: &Frame, vars: &Vars, svg: &'static [u8], svg
     );
 }
 
-/// The card's `.name` line under the icon: `rect` is the name box
+/// The card's name line under the icon: `rect` is the name box
 /// (untransformed), the text follows the card's translation.
 pub(crate) fn name(ui: &Ui, f: &Frame, rect: Rect, label: &str, style: &TextStyle) {
     let mut painter = ui.painter().clone();
@@ -426,7 +540,7 @@ pub(crate) fn name_rect(card: Rect, vars: &Vars, line: f32) -> Rect {
     )
 }
 
-/// `.name` of the folder card.
+/// The folder card's name: 12 px 500, one line with an ellipsis.
 fn name_style(vars: &Vars) -> TextStyle {
     TextStyle::new(12.0, 500)
         .line_height(LineHeight::Number(1.5))
