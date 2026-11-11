@@ -9,8 +9,6 @@
 //!   .preview-panel  200 px, --bg-card
 //!     .preview      column centred both ways, padding 24 16
 //! ```
-//!
-//! Not ported yet: the drag states.
 
 use std::collections::HashMap;
 
@@ -184,14 +182,26 @@ fn last_login_color(v: &Vars) -> Rgba {
     v.fg_subtle.mix(0.4, v.fg)
 }
 
+// An account still in setup shows neither meta line, as on its grid card.
 fn has_username(a: &AccountCardItem) -> bool {
-    a.show_username && !a.account.username.trim().is_empty()
+    a.show_username && !a.pending_setup && !a.account.username.trim().is_empty()
+}
+
+fn shows_last_login(a: &AccountCardItem) -> bool {
+    a.show_last_login && !a.pending_setup
+}
+
+/// The note the preview shows: a blank one shows no block, as on the card.
+fn preview_note(a: &AccountCardItem) -> Option<&str> {
+    Some(a.note.trim()).filter(|n| !n.is_empty())
 }
 
 /// `.info`'s height: the name, then the meta lines.
 fn info_height(v: &Vars, a: Option<&AccountCardItem>) -> f32 {
     let name = 12.0 * v.line_height;
-    let lines = a.map_or(0, |a| has_username(a) as usize + a.show_last_login as usize);
+    let lines = a.map_or(0, |a| {
+        has_username(a) as usize + shows_last_login(a) as usize
+    });
     name + lines as f32 * 12.0
 }
 
@@ -577,7 +587,7 @@ pub fn list_view(
         }
         let visible = row.intersects(clip) && clip.height() > 0.0;
         let label = match item {
-            DisplayItem::Back => "Back".to_string(),
+            DisplayItem::Back => translate(props.locale, "common.back"),
             DisplayItem::SectionHeader(h) => header_label(props.locale, h),
             DisplayItem::Folder(f) => f.folder.name.clone(),
             DisplayItem::Account(a) => a.name.clone(),
@@ -720,6 +730,9 @@ pub fn list_view(
             crate::ui::backdrop_filter::Mark::End.paint(child.painter(), row);
         }
     }
+    // The host's mount made each row the owner of its state; the rest of
+    // the list belongs to no row.
+    anim::release(&ctx);
 
     if let (Some(g), Some(at), None) = (&props.ghost, section_ghost, &ghost) {
         ghost_section(&ctx, g, &section_parts, at.min, state, props, host);
@@ -1108,7 +1121,11 @@ fn list_row(
     } else if visible && kb_focus {
         super::focus::card_ring(ui, painted, 6.0, v);
     }
-    let keys = focused && ctx.input(|i| i.key_pressed(Key::Enter) || i.key_pressed(Key::Space));
+    // Shift+F10 and the Menu key open the menu, as on a grid card.
+    let key_menu = focused
+        && ctx.input(|i| {
+            (i.modifiers.shift && i.key_pressed(Key::F10)) || i.key_pressed(crate::CONTEXT_MENU_KEY)
+        });
     let inset = vec2(bw + ROW_PAD_X, bw + ROW_PAD_Y);
     let content = Rect::from_min_max(rect.min + inset, rect.max - inset);
     let icon = Rect::from_min_size(
@@ -1121,11 +1138,15 @@ fn list_row(
     Row {
         content,
         icon,
-        clicked: super::clicked(&response) || keys,
+        clicked: super::clicked(&response),
         double_clicked: response.double_clicked(),
-        menu: response
-            .secondary_clicked()
-            .then(|| super::context_click_pos(ui).unwrap_or(rect.center())),
+        menu: if key_menu {
+            Some(rect.center())
+        } else {
+            response
+                .secondary_clicked()
+                .then(|| super::context_click_pos(ui).unwrap_or(rect.center()))
+        },
     }
 }
 
@@ -1208,7 +1229,7 @@ fn account_info(ui: &Ui, r: &Row, a: &AccountCardItem, look: RowLook, props: &Li
     let username = meta_style(10.0, 400, v.fg_muted);
     let meta = meta_style(10.0, 500, last_login_color(v));
     let show_username = has_username(a);
-    let last_login = a.show_last_login.then(|| {
+    let last_login = shows_last_login(a).then(|| {
         format_relative_time_compact(a.last_login_at_sec, props.time, a.last_login_unknown_key)
     });
     let width = |s: &str, style: &TextStyle| text::measure(ctx, s, style).unwrap_or(0.0);
@@ -1573,11 +1594,11 @@ fn preview_panel(
         .color(v.fg.to_color32());
     let name_h = lay(&a.name, &name_style, width).map_or(15.0 * v.line_height, |l| l.height);
     let show_username = has_username(a);
-    let meta_lines = show_username as usize + a.show_last_login as usize;
+    let meta_lines = show_username as usize + shows_last_login(a) as usize;
     let meta_line = 12.0 * 1.2;
     let username = meta_style(12.0, 400, v.fg_muted).align(TextAlign::Center);
     let meta = meta_style(12.0, 500, last_login_color(v)).align(TextAlign::Center);
-    let last_login = a.show_last_login.then(|| {
+    let last_login = shows_last_login(a).then(|| {
         format_relative_time_compact(a.last_login_at_sec, props.time, a.last_login_unknown_key)
     });
 
@@ -1631,12 +1652,11 @@ fn preview_panel(
         .line_height(LineHeight::Number(1.35))
         .color(v.fg.to_color32());
     let note_w = width - 20.0 - 2.0 * bw;
-    let has_note = !a.note.is_empty();
-    let note_text_h = if has_note {
-        lay(&a.note, &note_style, note_w).map_or(12.0 * 1.35, |l| l.height)
-    } else {
-        0.0
-    };
+    let note = preview_note(a);
+    let has_note = note.is_some();
+    let note_text_h = note.map_or(0.0, |n| {
+        lay(n, &note_style, note_w).map_or(12.0 * 1.35, |l| l.height)
+    });
     let label_h = 10.0 * v.line_height;
     let note_h = 16.0 + 2.0 * bw + label_h + 4.0 + note_text_h;
 
@@ -1757,7 +1777,7 @@ fn preview_panel(
         text::paint(
             &painter,
             Rect::from_min_size(pos2(left, top), vec2(note_w, note_text_h)),
-            &a.note,
+            note.unwrap_or_default(),
             &note_style,
         );
         y += note_h;
@@ -1847,8 +1867,7 @@ fn preview_panel(
     if focused && props.focus_visible {
         auto_ring(&painter, painted, 6.0, props.dark, ppp);
     }
-    let keys = focused && ctx.input(|i| i.key_pressed(Key::Enter) || i.key_pressed(Key::Space));
-    response.clicked() || keys
+    response.clicked()
 }
 
 /// The panel's `::-webkit-scrollbar` thumb, dragged like the content's.
@@ -1959,6 +1978,7 @@ mod tests {
         state: ListState,
         items: Vec<DisplayItem>,
         time: f64,
+        locale: Locale,
     }
 
     impl Bench {
@@ -1976,15 +1996,23 @@ mod tests {
                 state: ListState::default(),
                 items,
                 time: 0.0,
+                locale: Locale::En,
             }
         }
 
         fn frame(&mut self, events: Vec<Event>) -> Vec<ListEvent> {
+            self.frame_with(events, Modifiers::NONE)
+        }
+
+        fn frame_with(&mut self, events: Vec<Event>, modifiers: Modifiers) -> Vec<ListEvent> {
             self.time += 0.02;
             let input = RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 400.0))),
                 time: Some(self.time),
-                events,
+                events: [Event::ModifiersChanged(modifiers)]
+                    .into_iter()
+                    .chain(events)
+                    .collect(),
                 ..Default::default()
             };
             let time = TimeContext {
@@ -1994,7 +2022,7 @@ mod tests {
             };
             let props = ListProps {
                 vars: &self.vars,
-                locale: Locale::En,
+                locale: self.locale,
                 accent: self.vars.accent,
                 focus_visible: false,
                 dark: true,
@@ -2028,6 +2056,18 @@ mod tests {
             }
             out
         }
+    }
+
+    fn key(key: Key, modifiers: Modifiers) -> Vec<Event> {
+        [true, false]
+            .map(|pressed| Event::Key {
+                key,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers,
+            })
+            .to_vec()
     }
 
     /// The rows' centres: `.list-panel` padding 4, rows 46 tall, 2 apart.
@@ -2211,5 +2251,69 @@ mod tests {
             bench.frame(Vec::new());
         }
         assert_eq!(top_of(&bench, "c"), 151.0);
+    }
+
+    /// Shift+F10 and the Menu key open a focused row's menu, as they do a
+    /// grid card's.
+    #[test]
+    fn the_menu_keys_open_a_focused_rows_menu() {
+        let mut bench = Bench::new(vec![account("a", false, false), account("b", false, false)]);
+        bench.frame(Vec::new());
+        bench.frame(key(Key::Tab, Modifiers::NONE));
+        bench.frame(Vec::new());
+        let focused = bench.ctx.memory(|m| m.focused());
+        assert_eq!(focused, Some(Id::unique("list/a/a")));
+        for (k, modifiers) in [
+            (Key::F10, Modifiers::SHIFT),
+            (crate::CONTEXT_MENU_KEY, Modifiers::NONE),
+        ] {
+            let events = bench.frame_with(key(k, modifiers), modifiers);
+            assert!(
+                matches!(&events[..], [ListEvent::AccountMenu(a, _)] if a.id == "a"),
+                "{k:?}: {events:?}"
+            );
+        }
+        // Without focus the keys do nothing.
+        bench
+            .ctx
+            .memory_mut(|m| m.surrender_focus(Id::unique("list/a/a")));
+        bench.frame(Vec::new());
+        let events = bench.frame_with(key(Key::F10, Modifiers::SHIFT), Modifiers::SHIFT);
+        assert!(events.is_empty(), "{events:?}");
+    }
+
+    /// An account in setup shows no username or last login line, and a
+    /// blank note no note block, like their grid cards.
+    #[test]
+    fn pending_setup_and_blank_notes_show_no_meta() {
+        let vars = Bench::new(Vec::new()).vars;
+        let DisplayItem::Account(mut a) = account("a", true, false) else {
+            unreachable!()
+        };
+        a.show_username = true;
+        a.show_last_login = true;
+        a.note = "  \n ".into();
+        let name = 12.0 * vars.line_height;
+        assert_eq!(info_height(&vars, Some(&a)), name);
+        assert!(!has_username(&a) && !shows_last_login(&a));
+        assert_eq!(preview_note(&a), None);
+
+        a.pending_setup = false;
+        assert_eq!(info_height(&vars, Some(&a)), name + 24.0);
+        a.note = " hi\n".into();
+        assert_eq!(preview_note(&a), Some("hi"));
+    }
+
+    /// The back row's layout label follows the locale like its painted one.
+    #[test]
+    fn the_back_row_label_is_localized() {
+        let mut bench = Bench::new(vec![DisplayItem::Back, account("a", false, false)]);
+        bench.locale = Locale::Fr;
+        bench.frame(Vec::new());
+        assert_eq!(
+            bench.state.layout[0].0,
+            translate(Locale::Fr, "common.back")
+        );
+        assert_ne!(bench.state.layout[0].0, "Back");
     }
 }

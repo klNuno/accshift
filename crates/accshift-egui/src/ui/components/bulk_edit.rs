@@ -285,9 +285,8 @@ fn button(
         },
         focused,
     );
-    let keyed = focused && ui.input(|i| i.key_pressed(Key::Space) || i.key_pressed(Key::Enter));
     Pressed {
-        clicked: enabled && (response.clicked() || keyed),
+        clicked: enabled && response.clicked(),
     }
 }
 
@@ -601,8 +600,7 @@ fn popover(ui: &mut Ui, rect: Rect, id: Id, props: &BulkProps) -> Vec<BulkEvent>
             ..BoxStyle::default()
         }
         .paint(ui.painter(), snap::rect(fill, ppp));
-        let keyed = focused && ui.input(|i| i.key_pressed(Key::Space) || i.key_pressed(Key::Enter));
-        if response.clicked() || keyed {
+        if response.clicked() {
             events.push(BulkEvent::Color(preset.color.to_string()));
         }
     }

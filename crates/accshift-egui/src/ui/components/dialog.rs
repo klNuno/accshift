@@ -259,9 +259,8 @@ fn button(
             ppp,
         );
     }
-    let keyed = focused && ui.input(|i| i.key_pressed(Key::Space));
     Pressed {
-        clicked: b.enabled && (response.clicked() || keyed),
+        clicked: b.enabled && response.clicked(),
         focused,
     }
 }
