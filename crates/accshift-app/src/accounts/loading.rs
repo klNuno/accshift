@@ -623,7 +623,7 @@ impl AccountLoading {
                     .iter()
                     .map(|account| account.id.clone())
                     .collect();
-                ctx.stores.sync_accounts(&ids, &platform_id);
+                ctx.stores.sync_loaded_accounts(&ids, &platform_id);
                 events.push(LoadingEvent::AccountsLoaded { platform_id });
             }
             // Deferred or not, the background refresh reads the visible ids

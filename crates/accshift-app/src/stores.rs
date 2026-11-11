@@ -570,6 +570,16 @@ impl ClientStores {
         }
     }
 
+    /// [`Self::sync_accounts`] after an account load. A load that found no
+    /// account prunes nothing: the launcher's own list can be missing for a
+    /// moment (Steam rewriting `loginusers.vdf`, a drive not mounted yet), and
+    /// one such load must not drop every account out of its folder.
+    pub fn sync_loaded_accounts(&mut self, account_ids: &[String], platform: &str) {
+        if !account_ids.is_empty() {
+            self.sync_accounts(account_ids, platform);
+        }
+    }
+
     pub fn move_item(
         &mut self,
         item: &ItemRef,

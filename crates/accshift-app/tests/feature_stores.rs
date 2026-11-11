@@ -397,6 +397,30 @@ fn sends_an_account_back_to_the_root() {
     );
 }
 
+#[test]
+fn an_empty_account_load_keeps_the_folder_organisation() {
+    // Regression: Steam answers an empty list while `loginusers.vdf` is
+    // missing, and that load pruned every account out of its folder.
+    let mut stores = move_store();
+    stores.sync_loaded_accounts(&[], "steam");
+    assert_eq!(
+        stores.items_in_folder(Some("old"), "steam"),
+        [ItemRef::account("in-old")]
+    );
+    assert_eq!(
+        stores.items_in_folder(None, "steam"),
+        [ItemRef::folder("smurfs"), ItemRef::account("at-root")]
+    );
+
+    // A load that found accounts still drops the ones that are gone.
+    stores.sync_loaded_accounts(&["at-root".to_string()], "steam");
+    assert!(stores.items_in_folder(Some("old"), "steam").is_empty());
+    assert_eq!(
+        stores.items_in_folder(None, "steam"),
+        [ItemRef::folder("smurfs"), ItemRef::account("at-root")]
+    );
+}
+
 // ------------------------------------------------------------ personaAssignmentsForSave
 
 fn steam() -> PersonaAssignment {
