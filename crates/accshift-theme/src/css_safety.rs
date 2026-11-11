@@ -1,7 +1,7 @@
 //! Port of `src/lib/theme/cssSafety.ts`: the filter between a shared theme
 //! file and a network request.
 
-use crate::js::is_js_space;
+use crate::js::is_js_whitespace;
 
 /// Strips comments and resolves escapes the way the CSS tokenizer does, so
 /// `u/**/rl(`, `\75rl(` and `u\rl(` all read as `url(`.
@@ -173,7 +173,7 @@ impl Forbidden {
         match self.tail {
             None => true,
             Some(tail) => {
-                let rest = text[after..].trim_start_matches(is_js_space);
+                let rest = text[after..].trim_start_matches(is_js_whitespace);
                 starts_with_ci(rest.as_bytes(), tail)
             }
         }

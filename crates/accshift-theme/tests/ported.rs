@@ -663,7 +663,6 @@ mod themes {
             ..doc("my-liquid")
         });
         assert!(copy.liquid);
-        assert!(registry.uses_liquid_glass(&copy));
         let values = resolve_theme_surface_opacities(&copy, 50.0, true);
         assert!(values.is_liquid);
         assert_eq!(values.window_opacity, 0.18);

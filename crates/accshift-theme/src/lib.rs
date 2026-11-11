@@ -28,7 +28,7 @@ pub mod color;
 pub mod contrast;
 pub mod css;
 pub mod css_safety;
-mod js;
+pub mod js;
 pub mod motion;
 pub mod schema;
 pub mod themes;
@@ -41,7 +41,6 @@ pub use css::{
     Shadow, UnsupportedCss,
 };
 pub use css_safety::unsafe_css_construct;
-pub use js::js_number_to_string;
 pub use motion::{motion_attribute, AnimationsMode, MotionAttribute};
 pub use schema::{
     document_is_liquid_glass, duplicate_theme_document, parse_theme_json, parse_theme_value,

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use crate::color::{parse_color_tokens, Rgba};
-use crate::js::js_trim;
+use crate::js;
 use crate::themes::ThemeApplication;
 
 const APP_CSS: &str = include_str!("root.css");
@@ -635,7 +635,6 @@ pub fn app_root_properties() -> &'static [CustomProperty] {
 #[derive(Clone, Debug, Default)]
 pub struct ResolvedTheme {
     declared: HashMap<String, String>,
-    unsupported: Vec<UnsupportedCss>,
 }
 
 impl ResolvedTheme {
@@ -653,11 +652,10 @@ impl ResolvedTheme {
     /// `app.css`, then everything one theme application writes.
     pub fn new(application: &ThemeApplication) -> ResolvedTheme {
         let mut resolved = ResolvedTheme::root();
-        let (theme_properties, unsupported) = match &application.css {
-            Some(css) => parse_root_custom_properties(css),
-            None => (Vec::new(), Vec::new()),
+        let theme_properties = match &application.css {
+            Some(css) => parse_root_custom_properties(css).0,
+            None => Vec::new(),
         };
-        resolved.unsupported = unsupported;
         for property in theme_properties
             .iter()
             .filter(|property| !property.important)
@@ -678,24 +676,6 @@ impl ResolvedTheme {
                 .insert(property.name.clone(), property.value.clone());
         }
         resolved
-    }
-
-    /// A copy with more variables, the way a component sets its own
-    /// (`--card-custom-color`) on an element below `<html>`.
-    pub fn with_vars<'a>(
-        &self,
-        vars: impl IntoIterator<Item = (&'a str, &'a str)>,
-    ) -> ResolvedTheme {
-        let mut scoped = self.clone();
-        for (name, value) in vars {
-            scoped.declared.insert(name.to_owned(), value.to_owned());
-        }
-        scoped
-    }
-
-    /// What the theme's custom CSS holds that this resolver does not apply.
-    pub fn unsupported_css(&self) -> &[UnsupportedCss] {
-        &self.unsupported
     }
 
     /// The declared value, as written.
@@ -735,7 +715,7 @@ impl ResolvedTheme {
             };
             let value = match self.substitute_property(name, stack) {
                 Some(value) => value,
-                None => self.substitute_text(js_trim(fallback?), stack)?,
+                None => self.substitute_text(js::trim(fallback?), stack)?,
             };
             out.push_str(&value);
             rest = &rest[close + 1..];
@@ -784,22 +764,6 @@ impl ResolvedTheme {
         parse_color_tokens(&self.expression_tokens(expression)?)
     }
 
-    pub fn eval_length(&self, expression: &str) -> Option<Length> {
-        parse_length_tokens(&self.expression_tokens(expression)?)
-    }
-
-    pub fn eval_number(&self, expression: &str) -> Option<f32> {
-        number_from(&self.expression_tokens(expression)?)
-    }
-
-    pub fn eval_duration_ms(&self, expression: &str) -> Option<f32> {
-        duration_from(&self.expression_tokens(expression)?)
-    }
-
-    pub fn eval_shadow(&self, expression: &str) -> Option<Vec<Shadow>> {
-        parse_shadow_tokens(&self.expression_tokens(expression)?)
-    }
-
     /// Every declared name, in no particular order.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.declared.keys().map(String::as_str)
@@ -833,7 +797,13 @@ mod tests {
     use super::*;
 
     fn theme(vars: &[(&str, &str)]) -> ResolvedTheme {
-        ResolvedTheme::root().with_vars(vars.iter().copied())
+        let mut resolved = ResolvedTheme::root();
+        for (name, value) in vars {
+            resolved
+                .declared
+                .insert((*name).to_owned(), (*value).to_owned());
+        }
+        resolved
     }
 
     #[test]
@@ -874,30 +844,32 @@ mod tests {
 
     #[test]
     fn evaluates_calc_forms_the_css_uses() {
-        let resolved = theme(&[("--density-scale", "0.88"), ("--motion-scale", "0")]);
+        let resolved = theme(&[
+            ("--density-scale", "0.88"),
+            ("--motion-scale", "0"),
+            ("--edge", "calc(100% - 26px)"),
+            ("--wide", "calc(var(--grid-card-width) + 130px)"),
+            ("--viewport", "calc(100vw - 24px)"),
+            ("--rem", "1.5rem"),
+            ("--px-times-px", "calc(2px * 3px)"),
+            ("--px-plus-number", "calc(2px + 3)"),
+            ("--number", "calc((1 + 2) * 2)"),
+        ]);
         assert_eq!(resolved.length_px("--grid-card-padding"), Some(8.0 * 0.88));
         assert_eq!(resolved.duration_ms("--motion-page-entrance"), Some(0.0));
-        let edge = resolved.eval_length("calc(100% - 26px)").unwrap();
+        let edge = resolved.length("--edge").unwrap();
         assert_eq!(edge.resolve(16.0, 200.0, (0.0, 0.0)), 174.0);
+        assert_eq!(resolved.length_px("--wide"), Some(218.0));
         assert_eq!(
             resolved
-                .eval_length("calc(var(--grid-card-width) + 130px)")
-                .and_then(Length::as_px),
-            Some(218.0)
-        );
-        assert_eq!(
-            resolved
-                .eval_length("calc(100vw - 24px)")
+                .length("--viewport")
                 .map(|l| l.resolve(16.0, 0.0, (800.0, 600.0))),
             Some(776.0)
         );
-        assert_eq!(
-            resolved.eval_length("1.5rem").and_then(Length::as_px),
-            Some(24.0)
-        );
-        assert_eq!(resolved.eval_length("calc(2px * 3px)"), None);
-        assert_eq!(resolved.eval_length("calc(2px + 3)"), None);
-        assert_eq!(resolved.eval_number("calc((1 + 2) * 2)"), Some(6.0));
+        assert_eq!(resolved.length_px("--rem"), Some(24.0));
+        assert_eq!(resolved.length("--px-times-px"), None);
+        assert_eq!(resolved.length("--px-plus-number"), None);
+        assert_eq!(resolved.number("--number"), Some(6.0));
     }
 
     #[test]
@@ -931,13 +903,18 @@ mod tests {
             (0.0, 2.0, 8.0, 0.0)
         );
         assert_eq!(low[0].color, Some(Rgba::new(0.0, 0.0, 0.0, 0.18)));
-        let glaze = root
-            .eval_shadow("inset 0 1px 0 rgba(255, 255, 255, 0.34), inset 0 12px 24px -18px rgba(255, 255, 255, 0.4)")
-            .unwrap();
+        let custom = theme(&[
+            (
+                "--glaze",
+                "inset 0 1px 0 rgba(255, 255, 255, 0.34), inset 0 12px 24px -18px rgba(255, 255, 255, 0.4)",
+            ),
+            ("--flat", "none"),
+        ]);
+        let glaze = custom.shadow("--glaze").unwrap();
         assert_eq!(glaze.len(), 2);
         assert!(glaze[1].inset);
         assert_eq!(glaze[1].spread, -18.0);
-        assert_eq!(root.eval_shadow("none"), Some(Vec::new()));
+        assert_eq!(custom.shadow("--flat"), Some(Vec::new()));
     }
 
     #[test]

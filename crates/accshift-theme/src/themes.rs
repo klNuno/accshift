@@ -12,7 +12,7 @@ use std::sync::OnceLock;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::js::{js_number_to_string, js_trim};
+use crate::js::{self, number_to_string};
 use crate::schema::{
     document_is_liquid_glass, parse_theme_json, parse_theme_value, resolve_theme_tokens,
     serialize_theme_document, ColorScheme, RootTokens, ThemeDocument, ThemeParseResult,
@@ -383,11 +383,6 @@ impl ThemeRegistry {
         themes
     }
 
-    /// Whether `theme` is Liquid Glass or extends it.
-    pub fn uses_liquid_glass(&self, theme: &AppTheme) -> bool {
-        document_is_liquid_glass(&theme.document, |id| self.document(id))
-    }
-
     fn set_custom(&mut self, document: ThemeDocument) {
         match self
             .custom
@@ -632,7 +627,7 @@ pub fn resolve_theme_surface_opacities(
 
 /// `hexToRgbTriplet`: "r g b", or "0 0 0" for a malformed token.
 fn hex_to_rgb_triplet(color: &str) -> String {
-    let trimmed = js_trim(color);
+    let trimmed = js::trim(color);
     let hex = trimmed.strip_prefix('#').unwrap_or(trimmed);
     let normalized: String = if hex.chars().count() == 3 {
         hex.chars().flat_map(|c| [c, c]).collect()
@@ -681,7 +676,7 @@ pub fn theme_application(
         resolve_theme_surface_opacities(theme, background_opacity_percent, backdrop_available);
     let tokens = &theme.tokens;
     let t = |key: TokenKey| tokens.get(key).to_owned();
-    let n = js_number_to_string;
+    let n = number_to_string;
     let bg_rgb = tokens.get(TokenKey::BgRgb);
     let bg_card_rgb = hex_to_rgb_triplet(tokens.get(TokenKey::BgCard));
     let bg_card_hover_rgb = hex_to_rgb_triplet(tokens.get(TokenKey::BgCardHover));
@@ -802,7 +797,7 @@ pub fn theme_application(
         data_glass: if theme.glass { "1" } else { "0" },
         color_scheme: theme.color_scheme,
         vars,
-        css: theme.css.clone().filter(|css| !js_trim(css).is_empty()),
+        css: theme.css.clone().filter(|css| !js::trim(css).is_empty()),
         surfaces,
     }
 }

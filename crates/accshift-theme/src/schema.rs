@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 
 use crate::contrast::{blend, contrast_ratio, parse_color, round_ratio};
 use crate::css_safety::unsafe_css_construct;
-use crate::js::{js_trim, utf16_len, utf16_prefix};
+use crate::js::{self, utf16_len, utf16_prefix};
 use crate::tokens::{
     get_token_spec, is_essential_token, is_valid_token_value, ThemeTokens, TokenKey, TokenKind,
     THEME_CONTRACT_VERSION,
@@ -191,7 +191,7 @@ pub fn document_is_liquid_glass<'a>(
 
 fn read_string(value: Option<&Value>, max_length: usize) -> String {
     match value.and_then(Value::as_str) {
-        Some(text) => utf16_prefix(js_trim(text), max_length).to_owned(),
+        Some(text) => utf16_prefix(js::trim(text), max_length).to_owned(),
         None => String::new(),
     }
 }
@@ -205,7 +205,7 @@ fn read_tokens(raw: Option<&Value>) -> (BTreeMap<TokenKey, String>, Vec<String>)
     for (key, value) in object {
         match (TokenKey::from_name(key), value.as_str()) {
             (Some(token), Some(text)) if is_valid_token_value(key, text) => {
-                tokens.insert(token, js_trim(text).to_owned());
+                tokens.insert(token, js::trim(text).to_owned());
             }
             _ => rejected.push(key.clone()),
         }
@@ -268,7 +268,7 @@ pub fn parse_theme_value(raw: &Value) -> ThemeParseResult {
     let mut css = None;
     if let Some(text) = record.get("css").and_then(Value::as_str) {
         let text = utf16_prefix(text, MAX_THEME_CSS_LENGTH);
-        if !js_trim(text).is_empty() {
+        if !js::trim(text).is_empty() {
             rejected_css = unsafe_css_construct(text);
             if rejected_css.is_none() {
                 css = Some(text.to_owned());
@@ -325,7 +325,11 @@ pub fn serialize_theme_document(document: &ThemeDocument) -> String {
         ordered.insert("glass".into(), Value::Bool(true));
     }
     ordered.insert("tokens".into(), Value::Object(tokens));
-    if let Some(css) = document.css.as_ref().filter(|css| !js_trim(css).is_empty()) {
+    if let Some(css) = document
+        .css
+        .as_ref()
+        .filter(|css| !js::trim(css).is_empty())
+    {
         ordered.insert("css".into(), Value::String(css.clone()));
     }
     serde_json::to_string_pretty(&Value::Object(ordered)).unwrap_or_default()
@@ -565,7 +569,7 @@ pub fn validate_theme_document(
     }
 
     let css = document.css.as_deref().unwrap_or("");
-    if !js_trim(css).is_empty() {
+    if !js::trim(css).is_empty() {
         if let Some(construct) = unsafe_css_construct(css) {
             issues.push(ThemeIssue {
                 construct: Some(construct),
