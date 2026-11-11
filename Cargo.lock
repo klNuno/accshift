@@ -169,6 +169,7 @@ dependencies = [
  "open",
  "pbkdf2 0.13.0",
  "reqwest",
+ "rfd",
  "rusqlite",
  "rustls",
  "serde",

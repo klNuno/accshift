@@ -7,6 +7,8 @@ mod common;
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+mod picker;
 #[cfg(target_os = "windows")]
 pub mod registry;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

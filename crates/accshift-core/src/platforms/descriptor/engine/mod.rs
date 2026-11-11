@@ -467,9 +467,9 @@ impl PlatformService for DescriptorService {
             .ok_or_else(|| PlatformError::other("Path management not supported"))?;
         crate::os::select_file(
             &format!("Select {} executable", self.descriptor.name),
-            &executable.select_filter,
+            executable.picker_filter(cfg!(windows)),
         )
-        .map_err(|e| PlatformError::other(e.to_string()))
+        .map_err(PlatformError::from)
     }
 
     fn is_installed(&self, app: AppCtx) -> bool {
