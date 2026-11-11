@@ -207,6 +207,8 @@ pub enum CardEvent {
 struct State {
     /// `showConfirm`.
     confirm: bool,
+    /// The card had the keyboard focus last frame.
+    had_focus: bool,
     /// `isHovered`.
     hovered: bool,
     /// `lastOverflowName` and `cachedOverflowPx`.
@@ -236,7 +238,11 @@ fn state(ctx: &Context, id: Id) -> State {
 }
 
 fn set_state(ctx: &Context, id: Id, s: State) {
-    ctx.data_mut(|d| d.insert_temp(id.with("card-state"), s));
+    let key = id.with("card-state");
+    ctx.data_mut(|d| {
+        anim::own::<State>(d, key);
+        d.insert_temp(key, s);
+    });
 }
 
 /// Whether the card wants [`AvatarPicture::blurred`] this frame: armed,
@@ -485,14 +491,20 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
     {
         st.confirm = false;
     }
+    // Focus leaving the card disarms it too: Tab then Enter on another card
+    // arms that one, and only one card may wait for its second press.
+    let has_focus = response.has_focus();
+    if st.confirm && st.had_focus && !has_focus {
+        st.confirm = false;
+    }
     // A press focuses the card like any `<button>`: its keys then reach it.
     let keys = !disabled && super::controls::take_focus(ui, &response);
-    let key_click = keys && ctx.input(|i| i.key_pressed(Key::Enter) || i.key_pressed(Key::Space));
+    st.had_focus = has_focus || keys;
     let key_menu = keys
         && ctx.input(|i| {
             (i.modifiers.shift && i.key_pressed(Key::F10)) || i.key_pressed(crate::CONTEXT_MENU_KEY)
         });
-    if !disabled && !dragged && (super::clicked(&response) || key_click) {
+    if !disabled && !dragged && super::clicked(&response) {
         events.push(CardEvent::Activate);
         if item.single_click_switch {
             events.push(CardEvent::Switch);
@@ -1460,5 +1472,130 @@ mod tests {
     fn layout_units_round_up() {
         assert_eq!(ceil_unit(28.65, 1.5), 2751.0 / 64.0 / 1.5);
         assert_eq!(ceil_unit(10.0, 1.0), 10.0);
+    }
+
+    fn item(id: &str) -> AccountCardItem {
+        AccountCardItem {
+            account: accshift_app::platforms::PlatformAccount {
+                id: id.into(),
+                display_name: id.into(),
+                username: id.into(),
+                last_login_at_sec: None,
+            },
+            name: id.into(),
+            username: id.into(),
+            card_color: String::new(),
+            note: String::new(),
+            show_note_inline: false,
+            show_username: false,
+            show_last_login: false,
+            last_login_at_sec: None,
+            last_login_unknown_key: "time.unknown",
+            active: false,
+            switching: false,
+            avatar: accshift_app::display::AvatarView::default(),
+            warning: None,
+            dragged: false,
+            pending_setup: false,
+            single_click_switch: false,
+            bulk_selected: false,
+        }
+    }
+
+    /// Enter arms a card for its second press; Tab then Enter on another
+    /// card arms that one and disarms the first, so a later Enter back on
+    /// the first arms it again instead of switching.
+    #[test]
+    fn one_card_at_a_time_waits_for_its_second_press() {
+        let ctx = Context::default();
+        text::install(&ctx, false);
+        let vars = Vars::new(&accshift_theme::ResolvedTheme::new(
+            &accshift_theme::theme_application(
+                &accshift_theme::ThemeRegistry::new().theme(Some("glass-dark")),
+                100.0,
+                true,
+            ),
+        ));
+        let time = TimeContext {
+            now_ms: 0.0,
+            locale: Locale::En,
+            zone: accshift_app::time::TimeZone::UTC,
+        };
+        let cards = [item("a"), item("b")];
+        let ids = [Id::unique("card-a"), Id::unique("card-b")];
+        let mut clock = 0.0;
+        let mut frame = |key: Option<Key>| {
+            clock += 0.05;
+            let events = key
+                .map(|key| {
+                    [true, false]
+                        .map(|pressed| egui::Event::Key {
+                            key,
+                            physical_key: None,
+                            pressed,
+                            repeat: false,
+                            modifiers: egui::Modifiers::NONE,
+                        })
+                        .to_vec()
+                })
+                .unwrap_or_default();
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0))),
+                time: Some(clock),
+                events,
+                ..Default::default()
+            };
+            let mut out = Vec::new();
+            let mut full = ctx.run_ui(input, |ui| {
+                for (k, (item, id)) in cards.iter().zip(ids).enumerate() {
+                    let rect = Rect::from_min_size(
+                        pos2(10.0 + 110.0 * k as f32, 10.0),
+                        vec2(100.0, 136.0),
+                    );
+                    let props = AccountCardProps {
+                        vars: &vars,
+                        id,
+                        item,
+                        card_color: None,
+                        avatar: AvatarContent::Loading,
+                        focus_visible: true,
+                        locale: Locale::En,
+                        time: &time,
+                        badge: None,
+                        extension: &[],
+                        extension_disabled: true,
+                        extension_forced: false,
+                        extension_hover_disabled: false,
+                        clickable_chips: &[],
+                        glass: false,
+                        kb_focus: false,
+                        grid_dragging: false,
+                        ghost: false,
+                    };
+                    out.push(account_card(ui, rect, &props).events);
+                }
+            });
+            full.textures_delta.clear();
+            out
+        };
+        let armed = |k: usize| state(&ctx, ids[k]).confirm;
+
+        frame(None);
+        frame(Some(Key::Tab));
+        assert!(ctx.memory(|m| m.has_focus(ids[0])));
+        frame(Some(Key::Enter));
+        assert!(armed(0));
+
+        frame(Some(Key::Tab));
+        assert!(ctx.memory(|m| m.has_focus(ids[1])));
+        frame(Some(Key::Enter));
+        assert!(armed(1));
+        assert!(!armed(0), "the first card is still armed");
+
+        ctx.memory_mut(|m| m.request_focus(ids[0]));
+        frame(None);
+        let events = frame(Some(Key::Enter));
+        assert!(!events[0].contains(&CardEvent::Switch), "{:?}", events[0]);
+        assert!(armed(0));
     }
 }

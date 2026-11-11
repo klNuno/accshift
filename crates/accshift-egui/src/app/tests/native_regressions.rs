@@ -474,3 +474,43 @@ fn the_mouse_back_button_leaves_settings_then_the_folder() {
     mouse_back(&mut app, &ctx);
     assert_eq!(current(&app), None, "back leaves the folder");
 }
+
+fn press(app: &mut AppModel, ctx: &Context, key: egui::Key) {
+    let mut raw = input(true, false);
+    raw.events.push(egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    });
+    let mut output = ctx.run_ui(raw, |ui| app.frame(ui));
+    output.textures_delta.clear();
+}
+
+#[test]
+fn escape_in_the_theme_editor_keeps_settings_open() {
+    let ctx = Context::default();
+    let (mut app, _mock) = external_app(&ctx);
+    frame(&mut app, &ctx, true, false);
+    app.toggle_settings_panel();
+    frame(&mut app, &ctx, true, false);
+    app.apply_settings(&ctx, settings_panel::SettingsAction::CustomizeTheme);
+    frame(&mut app, &ctx, true, false);
+    let editor_open = |app: &AppModel| {
+        app.settings_panel
+            .as_ref()
+            .is_some_and(|p| p.theme_editor.is_some())
+    };
+    assert!(editor_open(&app), "the theme editor opened");
+
+    press(&mut app, &ctx, egui::Key::Escape);
+    frame(&mut app, &ctx, true, false);
+    assert!(app.settings_panel.is_some(), "Escape keeps Settings open");
+    assert!(!editor_open(&app), "Escape closes the theme editor");
+
+    // With nothing over it, Escape closes the panel itself.
+    press(&mut app, &ctx, egui::Key::Escape);
+    frame(&mut app, &ctx, true, false);
+    assert!(app.settings_panel.is_none(), "Escape closes Settings");
+}

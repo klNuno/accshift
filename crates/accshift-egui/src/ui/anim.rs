@@ -16,7 +16,15 @@
 //!
 //! Time is egui's `input.time` in seconds. Both entry points request a repaint
 //! only while something moves (or when a delay ends), never otherwise.
+//!
+//! [`own_from`] and [`forget`] tie the state written here to a mount: egui
+//! never drops temp data, and a remount takes a fresh id, so the mount's
+//! owner removes it when the mount goes away.
 
+use std::collections::{HashMap, HashSet};
+
+use egui::util::id_type_map::RawKey;
+use egui::util::IdTypeMap;
 use egui::{Color32, Context, Id, Pos2, Vec2};
 
 use crate::theme::Rgba;
@@ -310,6 +318,56 @@ pub fn motion(ctx: &Context) -> Motion {
     ctx.data(|d| d.get_temp(motion_id())).unwrap_or_default()
 }
 
+// ---------------------------------------------------------------- ownership
+
+/// The temp keys each mount wrote, and the mount writing now.
+#[derive(Clone, Default)]
+struct Owners {
+    current: Option<Id>,
+    keys: HashMap<Id, HashSet<RawKey>>,
+}
+
+fn owners_id() -> Id {
+    Id::unique("accshift::anim::owners")
+}
+
+/// Records the state first written from now on as `owner`'s, until
+/// [`release`] or the next `own_from`.
+pub fn own_from(ctx: &Context, owner: Id) {
+    ctx.data_mut(|d| d.get_temp_mut_or_default::<Owners>(owners_id()).current = Some(owner));
+}
+
+/// Stops recording: what follows belongs to no mount.
+pub fn release(ctx: &Context) {
+    ctx.data_mut(|d| d.get_temp_mut_or_default::<Owners>(owners_id()).current = None);
+}
+
+/// Records the temp value of type `T` at `id` as the current owner's, when
+/// it does not exist yet. Call it before the first `insert_temp`.
+pub fn own<T: 'static>(d: &mut IdTypeMap, id: Id) {
+    let key = RawKey::new::<T>(id);
+    if d.get_temp_raw(key).is_some() {
+        return;
+    }
+    let owners = d.get_temp_mut_or_default::<Owners>(owners_id());
+    if let Some(owner) = owners.current {
+        owners.keys.entry(owner).or_default().insert(key);
+    }
+}
+
+/// Removes the state `owner` wrote: its mount went away.
+pub fn forget(ctx: &Context, owner: Id) {
+    ctx.data_mut(|d| {
+        let owners = d.get_temp_mut_or_default::<Owners>(owners_id());
+        if owners.current == Some(owner) {
+            owners.current = None;
+        }
+        for key in owners.keys.remove(&owner).into_iter().flatten() {
+            d.remove_temp_raw(key);
+        }
+    });
+}
+
 fn now(ctx: &Context) -> f64 {
     ctx.input(|i| i.time)
 }
@@ -449,18 +507,26 @@ impl<T: Animatable> TransitionState<T> {
 pub fn transition<T: Animatable>(ctx: &Context, id: Id, target: T, spec: &Transition) -> T {
     let now = now(ctx);
     if motion(ctx) == Motion::Reduced {
-        ctx.data_mut(|d| d.insert_temp(id, TransitionState::settled(target.clone())));
+        ctx.data_mut(|d| {
+            own::<TransitionState<T>>(d, id);
+            d.insert_temp(id, TransitionState::settled(target.clone()));
+        });
         return target;
     }
-    let mut state = ctx
-        .data(|d| d.get_temp::<TransitionState<T>>(id))
-        .unwrap_or_else(|| TransitionState::settled(target.clone()));
+    let old = ctx.data(|d| d.get_temp::<TransitionState<T>>(id));
+    let first = old.is_none();
+    let mut state = old.unwrap_or_else(|| TransitionState::settled(target.clone()));
     state.retarget(target, spec, now);
     let value = state.value(now);
     if state.running(now) {
         request_frame_at(ctx, now, state.start_time);
     }
-    ctx.data_mut(|d| d.insert_temp(id, state));
+    ctx.data_mut(|d| {
+        if first {
+            own::<TransitionState<T>>(d, id);
+        }
+        d.insert_temp(id, state);
+    });
     value
 }
 
@@ -531,10 +597,6 @@ impl Animation {
 
     pub const fn with_iterations(self, iterations: f64) -> Self {
         Self { iterations, ..self }
-    }
-
-    pub const fn with_direction(self, direction: Direction) -> Self {
-        Self { direction, ..self }
     }
 
     pub fn infinite(self) -> Self {
@@ -675,7 +737,10 @@ impl<T: Animatable> Keyframes<T> {
 /// When the animation keyed by `id` started, recorded on its first call.
 fn animation_start(ctx: &Context, id: Id, now: f64) -> f64 {
     let key = id.with("accshift::anim::start");
-    ctx.data_mut(|d| *d.get_temp_mut_or_insert_with(key, || now))
+    ctx.data_mut(|d| {
+        own::<f64>(d, key);
+        *d.get_temp_mut_or_insert_with(key, || now)
+    })
 }
 
 /// Restart the animation keyed by `id` on its next call, like a remount.
@@ -862,10 +927,12 @@ mod tests {
         let both = anim.with_fill(Fill::Both);
         assert_eq!(at(&both, 0.2), 0.0);
         assert_eq!(at(&both, 2.0), 1.0);
-        let alt = Animation::new(1.0, Timing::LINEAR)
-            .with_iterations(2.0)
-            .with_direction(Direction::Alternate)
-            .with_fill(Fill::Forwards);
+        let alt = Animation {
+            direction: Direction::Alternate,
+            ..Animation::new(1.0, Timing::LINEAR)
+                .with_iterations(2.0)
+                .with_fill(Fill::Forwards)
+        };
         assert_eq!(at(&alt, 0.25), 0.25);
         assert_eq!(at(&alt, 1.25), 0.75);
         assert_eq!(at(&alt, 3.0), 0.0);

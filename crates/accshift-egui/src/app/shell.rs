@@ -378,7 +378,7 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
             }
             if let (Some(view), Some(sp)) = (settings_view.as_ref(), settings_panel.as_mut()) {
                 actions.extend(layer(ui, panel, |ui| {
-                    settings::draw(ui, panel, sp, view, focus_visible)
+                    settings::draw(ui, panel, sp, view, focus_visible, modal)
                 }));
             }
             if let Some(pp) = personas_panel.as_mut().filter(|_| nav.show_personas) {

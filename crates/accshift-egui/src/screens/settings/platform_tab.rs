@@ -169,18 +169,17 @@ fn path_tab_for(id: &str) -> Option<PathTab> {
     })
 }
 
-/// `resolvePathPlaceholder`: the system's own, else Windows, Linux, macOS.
+/// The system's own placeholder. Another system's path would mislead (a
+/// `C:\` path on Linux), so a system without one shows none; an unknown
+/// system takes the first given: Windows, Linux, then macOS.
 fn resolve_placeholder(placeholder: &[Option<&'static str>; 3], os: RuntimeOs) -> &'static str {
-    let own = match os {
+    match os {
         RuntimeOs::Windows => placeholder[0],
         RuntimeOs::Linux => placeholder[1],
         RuntimeOs::Macos => placeholder[2],
-        RuntimeOs::Unknown => None,
-    };
-    own.or(placeholder[0])
-        .or(placeholder[1])
-        .or(placeholder[2])
-        .unwrap_or("")
+        RuntimeOs::Unknown => placeholder.iter().flatten().next().copied(),
+    }
+    .unwrap_or("")
 }
 
 /// The last login toggle every platform tab opens with.
@@ -570,18 +569,19 @@ mod tests {
                 .as_str()
                 .unwrap();
             let tab = path_tab_for(id).unwrap();
-            for system in [RuntimeOs::Windows, RuntimeOs::Linux, RuntimeOs::Macos] {
-                assert_eq!(
-                    resolve_placeholder(&tab.placeholder, system),
-                    render_windows(template),
-                    "{id}"
-                );
+            assert_eq!(
+                resolve_placeholder(&tab.placeholder, RuntimeOs::Windows),
+                render_windows(template),
+                "{id}"
+            );
+            for system in [RuntimeOs::Linux, RuntimeOs::Macos] {
+                assert_eq!(resolve_placeholder(&tab.placeholder, system), "", "{id}");
             }
         }
     }
 
     #[test]
-    fn placeholders_fall_back_like_resolve_path_placeholder() {
+    fn placeholders_never_show_another_systems_path() {
         let battle = path_tab_for("battle-net").unwrap();
         assert_eq!(
             resolve_placeholder(&battle.placeholder, RuntimeOs::Macos),
@@ -589,8 +589,14 @@ mod tests {
         );
         assert_eq!(
             resolve_placeholder(&battle.placeholder, RuntimeOs::Linux),
+            ""
+        );
+        assert_eq!(
+            resolve_placeholder(&battle.placeholder, RuntimeOs::Unknown),
             "C:\\Program Files (x86)\\Battle.net\\Battle.net Launcher.exe"
         );
+        let riot = path_tab_for("riot").unwrap();
+        assert_eq!(resolve_placeholder(&riot.placeholder, RuntimeOs::Macos), "");
         assert!(path_tab_for("roblox").is_none());
         assert!(path_tab_for("steam").is_none());
     }

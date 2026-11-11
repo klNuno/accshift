@@ -34,9 +34,9 @@
 //! The dialog sits in `.settings-panel`, so its fields take the panel's
 //! `.field`, `.field-label` and `.text-input` rules.
 //!
-//! Keys: Escape cancels (and the settings panel's own Escape closes the
-//! panel too), Tab cycles inside the dialog. A click on the overlay
-//! cancels. Nothing takes focus at mount.
+//! Keys: Escape cancels and leaves the settings panel open, Tab cycles
+//! inside the dialog. A click on the overlay cancels. Nothing takes focus
+//! at mount.
 //!
 //! The colour input opens Windows' own colour dialog, as Chromium does
 //! ([`window::color`]). Chromium draws the selects' lists in popup windows

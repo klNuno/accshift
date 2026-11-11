@@ -162,6 +162,8 @@ struct State {
     open_id: u64,
     /// `hoveredSubmenuIndex`.
     submenu: Option<usize>,
+    /// The id of the entry at `submenu` when it opened.
+    submenu_entry: Option<String>,
     /// `submenuSwitchTimer`: when it fires and what it does.
     timer: Option<(f64, Switch)>,
     /// The element under the pointer last frame, outside the submenu.
@@ -547,7 +549,7 @@ fn draw_entries(ui: &mut Ui, f: &Frame, v: &Vars, locale: Locale, keyboard: bool
                 if response.hovered() {
                     out.over = Some(Over::Item(entry));
                 }
-                if response.clicked() {
+                if pointer_click(ui, &response) {
                     out.clicked = Some(t);
                 }
                 if ui.input(|i| i.pointer.primary_pressed()) && response.hovered() {
@@ -637,7 +639,7 @@ fn draw_entries(ui: &mut Ui, f: &Frame, v: &Vars, locale: Locale, keyboard: bool
                     if response.hovered() {
                         out.over = Some(Over::Swatch(entry, k));
                     }
-                    if response.clicked() {
+                    if pointer_click(ui, &response) {
                         out.clicked = Some(t);
                     }
                     if ui.input(|i| i.pointer.primary_pressed()) && response.hovered() {
@@ -774,6 +776,7 @@ fn open_submenu(st: &mut State, items: &[AppMenuEntry], index: usize, events: &m
     }
     let reopen = st.submenu == Some(index);
     st.submenu = Some(index);
+    st.submenu_entry = entry_id(&items[index]).map(str::to_string);
     if let (None, Some(loader), false) = (submenu, loader, reopen) {
         events.push(MenuEvent::Load(loader.clone()));
     }
@@ -782,7 +785,29 @@ fn open_submenu(st: &mut State, items: &[AppMenuEntry], index: usize, events: &m
 fn clear_submenu(st: &mut State) {
     st.timer = None;
     st.submenu = None;
+    st.submenu_entry = None;
     st.focus_submenu = None;
+}
+
+fn entry_id(entry: &AppMenuEntry) -> Option<&str> {
+    match entry {
+        AppMenuEntry::Item { id, .. } | AppMenuEntry::Swatches { id, .. } => Some(id),
+        AppMenuEntry::Separator => None,
+    }
+}
+
+/// The items come anew every frame: an update that drops or moves the open
+/// submenu's entry closes the submenu rather than show another entry's.
+fn drop_stale_submenu(st: &mut State, items: &[AppMenuEntry]) {
+    let Some(index) = st.submenu else {
+        return;
+    };
+    let same = items
+        .get(index)
+        .is_some_and(|e| has_submenu(e) && entry_id(e) == st.submenu_entry.as_deref());
+    if !same {
+        clear_submenu(st);
+    }
 }
 
 /// `scheduleSubmenuChange`: at once without a submenu, after 150 ms with one.
@@ -814,6 +839,13 @@ fn apply_switch(
 }
 
 /// A click on an entry of the menu (`submenu: false`) or of the submenu.
+/// A mouse or assistive click. egui also clicks a focused widget on Enter
+/// and Space, but the menu's key path already runs those.
+fn pointer_click(ui: &Ui, response: &egui::Response) -> bool {
+    response.clicked_by(egui::PointerButton::Primary)
+        || ui.input(|i| i.has_accesskit_action_request(response.id, egui::accesskit::Action::Click))
+}
+
 fn click(
     st: &mut State,
     entries: &[AppMenuEntry],
@@ -869,6 +901,7 @@ pub fn context_menu(ui: &mut Ui, props: &ContextMenuProps) -> Vec<MenuEvent> {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(at - now));
         }
     }
+    drop_stale_submenu(&mut st, props.items);
 
     let menu_targets = targets(props.items);
     if st.mount_focus {
@@ -1078,9 +1111,8 @@ pub fn context_menu(ui: &mut Ui, props: &ContextMenuProps) -> Vec<MenuEvent> {
 
     // The submenu.
     let mut submenu_rect = None;
-    if let Some(index) = st.submenu {
+    if let Some((index, entry)) = st.submenu.and_then(|i| props.items.get(i).map(|e| (i, e))) {
         let sub_id = base.with(("submenu", st.submenu));
-        let entry = &props.items[index.min(props.items.len().saturating_sub(1))];
         let content = submenu_content(entry, props.loads, props.locale);
         // `100vw - 8px` and `100vh - 8px`; the placement clamps to the
         // window in the stage's points (`innerWidth / scale`).
@@ -1285,5 +1317,140 @@ mod tests {
             &mut events,
         );
         assert_eq!(events, vec![MenuEvent::Close]);
+    }
+
+    fn vars() -> Vars {
+        Vars::new(&accshift_theme::ResolvedTheme::new(
+            &accshift_theme::theme_application(
+                &accshift_theme::ThemeRegistry::new().theme(Some("glass-dark")),
+                100.0,
+                true,
+            ),
+        ))
+    }
+
+    fn parent(id: &str) -> AppMenuEntry {
+        AppMenuEntry::Item {
+            id: id.into(),
+            label: Text::raw(id),
+            command: None,
+            submenu: Some(vec![item("child")]),
+            loader: None,
+        }
+    }
+
+    /// The items come anew every frame: when the open submenu's entry goes
+    /// or another takes its index, the submenu closes, and an empty menu
+    /// draws without a panic.
+    #[test]
+    fn a_submenu_whose_entry_went_closes() {
+        let ctx = Context::default();
+        let vars = vars();
+        let run = |items: &[AppMenuEntry]| {
+            let props = ContextMenuProps {
+                vars: &vars,
+                locale: Locale::En,
+                open_id: 7,
+                items,
+                at: pos2(10.0, 10.0),
+                viewport: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)),
+                keyboard: false,
+                loads: &[],
+                now: 0.0,
+            };
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                context_menu(ui, &props);
+            });
+            out.textures_delta.clear();
+        };
+        let submenu = || {
+            ctx.data(|d| d.get_temp::<State>(state_id()))
+                .unwrap()
+                .submenu
+        };
+        let open = |items: &[AppMenuEntry], index: usize| {
+            ctx.data_mut(|d| {
+                let mut st: State = d.get_temp(state_id()).unwrap();
+                open_submenu(&mut st, items, index, &mut Vec::new());
+                d.insert_temp(state_id(), st);
+            })
+        };
+
+        let full = vec![item("a"), item("b"), parent("c"), parent("d")];
+        run(&full);
+        open(&full, 2);
+        run(&full);
+        assert_eq!(submenu(), Some(2));
+
+        // "a" goes: "d" now sits at index 2.
+        let shifted = vec![item("b"), item("x"), parent("d")];
+        run(&shifted);
+        assert_eq!(submenu(), None);
+
+        open(&shifted, 2);
+        run(&[item("a")]);
+        assert_eq!(submenu(), None);
+        open(&shifted, 2);
+        run(&[]);
+        assert_eq!(submenu(), None);
+    }
+
+    /// egui also clicks a focused widget on Enter: the menu's key path is
+    /// the only one that may run the entry.
+    #[test]
+    fn enter_on_a_focused_item_activates_it_once() {
+        let ctx = Context::default();
+        let vars = vars();
+        let items = vec![item("a"), item("b")];
+        let props = ContextMenuProps {
+            vars: &vars,
+            locale: Locale::En,
+            open_id: 7,
+            items: &items,
+            at: pos2(10.0, 10.0),
+            viewport: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)),
+            keyboard: true,
+            loads: &[],
+            now: 0.0,
+        };
+        let run = |events: Vec<Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+                events,
+                ..Default::default()
+            };
+            let mut got = Vec::new();
+            let mut out = ctx.run_ui(input, |ui| {
+                got = context_menu(ui, &props);
+            });
+            out.textures_delta.clear();
+            got
+        };
+        run(Vec::new());
+        run(Vec::new());
+        let first = target_id(
+            Id::unique(("accshift::context-menu", 7_u64)).with("menu"),
+            Target {
+                entry: 0,
+                swatch: None,
+            },
+        );
+        assert_eq!(ctx.memory(|m| m.focused()), Some(first));
+        let got = run(vec![Event::Key {
+            key: Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        let runs = got
+            .iter()
+            .filter(|e| matches!(e, MenuEvent::Activate(_)))
+            .count();
+        assert_eq!(runs, 1);
     }
 }
