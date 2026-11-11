@@ -499,28 +499,28 @@ pub(crate) fn load_app_names(steam_path: &Path) -> HashMap<String, String> {
 }
 
 pub fn get_current_account_name(steam_path: &Path) -> Result<String, AppError> {
-    let users = parse_login_users(steam_path)?;
-    let mut fallback: Option<(u64, String)> = None;
+    Ok(current_account(&parse_login_users(steam_path)?))
+}
 
-    for user in users {
-        let account_name = user.account_name;
-        if account_name.is_empty() {
-            continue;
-        }
-
-        if user.is_most_recent {
-            return Ok(account_name);
-        }
-
-        let timestamp = user.last_login_at.unwrap_or(0);
-
-        match &fallback {
-            Some((prev_ts, _)) if *prev_ts >= timestamp => {}
-            _ => fallback = Some((timestamp, account_name)),
+/// The account Steam signs in: the `MostRecent` entry, else the one with the
+/// latest login. Entries with no account name never count.
+fn current_account(users: &[ParsedLoginUser]) -> String {
+    let named = || users.iter().filter(|user| !user.account_name.is_empty());
+    if let Some(user) = named().find(|user| user.is_most_recent) {
+        return user.account_name.clone();
+    }
+    let mut latest: Option<&ParsedLoginUser> = None;
+    for user in named() {
+        // Strictly later only: on a tie the first entry seen stays.
+        if latest
+            .is_none_or(|best| user.last_login_at.unwrap_or(0) > best.last_login_at.unwrap_or(0))
+        {
+            latest = Some(user);
         }
     }
-
-    Ok(fallback.map(|(_, name)| name).unwrap_or_default())
+    latest
+        .map(|user| user.account_name.clone())
+        .unwrap_or_default()
 }
 
 pub fn get_accounts(steam_path: &Path) -> Result<Vec<SteamAccount>, AppError> {
@@ -530,38 +530,19 @@ pub fn get_accounts(steam_path: &Path) -> Result<Vec<SteamAccount>, AppError> {
 
 pub fn get_accounts_snapshot(steam_path: &Path) -> Result<(Vec<SteamAccount>, String), AppError> {
     let users = parse_login_users(steam_path)?;
+    let current = current_account(&users);
 
-    let mut current_account = String::new();
-    let mut fallback: Option<(u64, String)> = None;
-    let mut accounts: Vec<SteamAccount> = Vec::with_capacity(users.len());
-
-    for user in users {
-        if !user.account_name.is_empty() {
-            if user.is_most_recent {
-                current_account = user.account_name.clone();
-            } else {
-                let timestamp = user.last_login_at.unwrap_or(0);
-                match &fallback {
-                    Some((prev_ts, _)) if *prev_ts >= timestamp => {}
-                    _ => fallback = Some((timestamp, user.account_name.clone())),
-                }
-            }
-        }
-
-        accounts.push(SteamAccount {
+    let mut accounts: Vec<SteamAccount> = users
+        .into_iter()
+        .map(|user| SteamAccount {
             steam_id: user.steam_id,
             account_name: user.account_name,
             persona_name: user.persona_name,
             last_login_at: user.last_login_at,
-        });
-    }
-
-    if current_account.is_empty() {
-        current_account = fallback.map(|(_, name)| name).unwrap_or_default();
-    }
-
+        })
+        .collect();
     accounts.sort_by(|a, b| a.account_name.cmp(&b.account_name));
-    Ok((accounts, current_account))
+    Ok((accounts, current))
 }
 
 fn parse_login_users(steam_path: &Path) -> Result<Vec<ParsedLoginUser>, AppError> {

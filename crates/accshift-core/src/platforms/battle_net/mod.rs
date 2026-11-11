@@ -102,9 +102,10 @@ pub fn switch_account(app_handle: AppCtx, email: String) -> Result<(), String> {
         return Err("Battle.net account not found".into());
     };
 
-    // Refuse an unknown target before quitting. Once the launcher is down it
-    // rewrites SavedAccountNames, so the list we write is that flush, not the
-    // one read above. A failed step after the quit still brings it back.
+    // Refuse an unknown target before quitting. The list is read again once
+    // the launcher is down: it saves SavedAccountNames while it runs (a
+    // sign-in, a removed account), so the copy read above can be stale. A
+    // failed step after the quit still brings the launcher back.
     kill_battle_net()?;
     let fresh = relaunch_if_err(&app_handle, read_saved_accounts())?;
     let reordered = order_saved_accounts_for_switch(&with_owed_saved_accounts(fresh), &target);
@@ -138,9 +139,9 @@ pub fn switch_account(app_handle: AppCtx, email: String) -> Result<(), String> {
 pub fn forget_account(app_handle: AppCtx, email: String) -> Result<(), String> {
     let target_email = validate_account_email(&email)?;
 
-    // Same exit flush as a switch: filter the list the launcher wrote on the
-    // way down. A failed write or metadata update relaunches it. Success
-    // leaves it closed, which is what a forget did before.
+    // Same as a switch: filter the list read once the launcher is down. A
+    // failed write or metadata update relaunches it. Success leaves it
+    // closed, which is what a forget did before.
     kill_battle_net()?;
     let fresh = relaunch_if_err(&app_handle, read_saved_accounts())?;
     let filtered = saved_accounts_without(&with_owed_saved_accounts(fresh), &target_email);

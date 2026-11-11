@@ -79,7 +79,7 @@ pub fn begin_account_setup(app_handle: AppCtx) -> Result<SetupStatus, String> {
         .collect::<HashSet<_>>();
 
     kill_battle_net()?;
-    // Read once the launcher is down: it rewrites the list on exit.
+    // Read once the launcher is down: it saves the list while it runs.
     let previous_saved = read_saved_accounts().unwrap_or_default();
     write_saved_accounts(&app_handle, &[])?;
 

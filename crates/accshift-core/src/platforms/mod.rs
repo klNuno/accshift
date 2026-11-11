@@ -11,9 +11,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Canonical platform identifiers.
 ///
 /// Single vocabulary shared by the service registry, the CLI and telemetry.
-/// Note the dash in `battle-net` (telemetry used to emit `battle_net` for
-/// account snapshots; it now uses these constants, see
-/// `emit_accounts_snapshots` in the Tauri commands).
+/// Note the dash in `battle-net`: telemetry account snapshots use these
+/// constants too (`emit_accounts_snapshots` in accshift-app).
 pub mod ids {
     pub const STEAM: &str = "steam";
     pub const RIOT: &str = "riot";
@@ -31,12 +30,12 @@ pub mod ids {
     ];
 }
 
-// Native clients for Battle.net, Epic, Riot, Ubisoft and Roblox don't exist
-// on Linux / macOS. We gate them to Windows to keep the non-Windows build
-// green; `get_service("riot")` etc. return None outside Windows, and the CLI
-// advertises `available: false` for those platforms via `accshift platforms`.
-// Battle.net has a real native macOS client, so it is available on Windows and
-// macOS (its config format is identical; only the paths and launcher differ).
+// Riot and Roblox have no native client on Linux or macOS, so their modules
+// only build on Windows; `get_service("riot")` returns None elsewhere and
+// `accshift platforms` reports them `available: false`. Battle.net has a
+// native macOS client with the same config format (only the paths and the
+// launcher differ), so it builds on Windows and macOS. Epic, Ubisoft and the
+// other descriptor platforms decide their OS support in their descriptor.
 #[cfg(any(windows, target_os = "macos"))]
 pub mod battle_net;
 /// Platforms described by a JSON descriptor and run by a single engine. GOG,
@@ -179,7 +178,7 @@ pub struct SetupStatus {
 /// Core trait that all platforms implement.
 ///
 /// Methods take `AppCtx` by value because several impls move the context
-/// into `spawn_blocking` closures. Helpers that only borrow take
+/// into a setup thread ([`spawn_setup_launch`]). Helpers that only borrow take
 /// `&dyn AppContext`. Callers with an `AppCtx` pass `&ctx` and let Deref
 /// coercion handle the rest.
 pub trait PlatformService: Send + Sync {
@@ -333,7 +332,7 @@ pub struct UserPlatformReport {
     /// The folder that was read, so a caller can say where to drop a file.
     pub dir: String,
     /// The descriptors now answering to [`get_service`], in load order. The
-    /// whole descriptor travels, not just the id: the frontend builds its
+    /// whole descriptor travels, not just the id: the UI builds its
     /// platform entry from it and so needs no second description of a platform
     /// this build was never compiled to know about.
     pub loaded: Vec<Descriptor>,

@@ -227,7 +227,7 @@ fn classify_steam_folder_rejects_a_missing_path_and_a_plain_file() {
     assert_eq!(classify_steam_folder(&file), SteamFolder::NotADirectory);
 }
 
-// The webview splits the message on the first '|' and translates the left
+// accshift-app's path_error splits the message on the first '|' and translates the left
 // half. Losing that shape would drop it back to matching English prose.
 #[test]
 fn coded_path_error_carries_the_code_then_the_english_fallback() {
