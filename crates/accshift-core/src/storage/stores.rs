@@ -152,6 +152,19 @@ pub fn save_client_store(
 pub fn load_client_storage_snapshot(
     app_handle: &dyn AppContext,
 ) -> Result<ClientStorageSnapshot, String> {
+    load_client_storage_snapshot_reporting(app_handle).map(|(snapshot, _)| snapshot)
+}
+
+/// [`load_client_storage_snapshot`], plus the ids of the user stores that
+/// were reset because their file could not be parsed, for the boot to tell
+/// the user.
+///
+/// Each store loads on its own. One bad file used to fail the whole snapshot,
+/// and with it the boot: a blank window on every launch until the user found
+/// and deleted the file by hand.
+pub fn load_client_storage_snapshot_reporting(
+    app_handle: &dyn AppContext,
+) -> Result<(ClientStorageSnapshot, Vec<String>), String> {
     // Path resolution stays sequential: client_store_path may migrate legacy
     // files. The reads themselves are independent small JSON files. Read
     // them in parallel so wall time is the slowest file, not the sum.
@@ -160,10 +173,11 @@ pub fn load_client_storage_snapshot(
         paths.push((store.id, client_store_path(app_handle, store.id)?));
     }
 
-    let results: Vec<Result<Option<Value>, String>> = std::thread::scope(|scope| {
-        let handles: Vec<_> = paths
+    let results: Vec<Result<StoreRead, String>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = CLIENT_STORES
             .iter()
-            .map(|(_, path)| scope.spawn(move || read_json_if_exists::<Value>(path)))
+            .zip(&paths)
+            .map(|(store, (_, path))| scope.spawn(move || read_store(store.root, path)))
             .collect();
         handles
             .into_iter()
@@ -176,11 +190,80 @@ pub fn load_client_storage_snapshot(
     });
 
     let mut stores = BTreeMap::new();
-    for ((store_id, _), value) in paths.iter().zip(results) {
-        stores.insert((*store_id).to_string(), value?.unwrap_or(Value::Null));
+    let mut recovered = Vec::new();
+    for ((store, (store_id, _)), read) in CLIENT_STORES.iter().zip(&paths).zip(results) {
+        let read = read?;
+        if let Some(reason) = &read.reset {
+            let _ = crate::logging::append_app_log(
+                app_handle,
+                "error",
+                "storage.store",
+                &format!("Store {store_id} could not be read and was reset"),
+                Some(reason),
+            );
+            if matches!(store.root, StoreRoot::Config) {
+                recovered.push((*store_id).to_string());
+            }
+        }
+        stores.insert((*store_id).to_string(), read.value);
     }
-    Ok(ClientStorageSnapshot {
-        stores,
-        manifest: build_storage_manifest_with_store_paths(app_handle, &paths)?,
-    })
+    Ok((
+        ClientStorageSnapshot {
+            stores,
+            manifest: build_storage_manifest_with_store_paths(app_handle, &paths)?,
+        },
+        recovered,
+    ))
+}
+
+/// One store as the snapshot serves it.
+struct StoreRead {
+    value: Value,
+    /// Why the store loads empty although its file exists.
+    reset: Option<String>,
+}
+
+/// Reads one store without letting it fail the others.
+///
+/// A file that cannot be parsed, with no valid `.bak`, is moved aside to
+/// `<stem>.corrupt` and the store loads empty: nothing can read it, and
+/// leaving it in place fails every later launch the same way. A read the OS
+/// refuses is retried (antivirus and indexers hold files for a moment), then
+/// a cache store loads empty while a user store still fails the load: its
+/// content may be good, and loading it empty would let the next save replace
+/// it.
+fn read_store(root: StoreRoot, path: &Path) -> Result<StoreRead, String> {
+    let mut read = read_json_classified::<Value>(path);
+    for delay_ms in [50, 100, 200] {
+        if !matches!(read, Err(JsonReadError::Unreadable(_))) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        read = read_json_classified::<Value>(path);
+    }
+    match read {
+        Ok(value) => Ok(StoreRead {
+            value: value.unwrap_or(Value::Null),
+            reset: None,
+        }),
+        Err(JsonReadError::Corrupt(reason)) => {
+            let aside = path.with_extension("corrupt");
+            let _ = fs::remove_file(&aside);
+            let reason = match fs::rename(path, &aside) {
+                Ok(()) => format!("{reason}; kept as {}", aside.display()),
+                Err(e) => format!("{reason}; could not move it aside: {e}"),
+            };
+            Ok(StoreRead {
+                value: Value::Null,
+                reset: Some(reason),
+            })
+        }
+        Err(JsonReadError::Unreadable(reason)) => match root {
+            StoreRoot::Cache => Ok(StoreRead {
+                value: Value::Null,
+                reset: Some(reason),
+            }),
+            StoreRoot::Config => Err(reason),
+        },
+    }
 }

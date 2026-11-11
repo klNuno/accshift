@@ -34,7 +34,8 @@ pub(super) fn migrate_legacy_config(c: &dyn AppContext) -> String {
 pub(super) fn boot_payload(c: &dyn AppContext) -> BackendResult<BootPayload> {
     // Migration must land before anything reads config or stores.
     let migration = migrate_legacy_config(c);
-    let storage_snapshot = storage::load_client_storage_snapshot(c).map_err(PlatformError::from)?;
+    let (storage_snapshot, recovered_stores) =
+        storage::load_client_storage_snapshot_reporting(c).map_err(PlatformError::from)?;
     // A missing themes dir is normal on a first run.
     let custom_themes = themes::list_custom_themes(c).unwrap_or_default();
     // A rejected descriptor is reported, never fatal.
@@ -43,6 +44,7 @@ pub(super) fn boot_payload(c: &dyn AppContext) -> BackendResult<BootPayload> {
         migration,
         runtime_os: runtime_os(),
         storage_snapshot,
+        recovered_stores,
         custom_themes,
         user_platforms,
     })

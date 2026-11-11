@@ -271,3 +271,55 @@ fn purge_migrated_snapshot_backups_removes_only_migrated_session_copies() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn one_corrupt_store_is_set_aside_and_the_others_still_load() {
+    // Regression: one unparsable store file failed the whole snapshot, and
+    // with it the boot, on every launch.
+    let root = unique_test_root("corrupt-store-boot");
+    let ctx = TestCtx { root: root.clone() };
+    let settings = client_store_path(&ctx, STORE_SETTINGS).unwrap();
+    let folders = client_store_path(&ctx, STORE_FOLDERS).unwrap();
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(&settings, b"{\"theme\":\"dark\"}").unwrap();
+    fs::write(&folders, b"{ not json").unwrap();
+
+    let (snapshot, recovered) = load_client_storage_snapshot_reporting(&ctx).unwrap();
+
+    assert_eq!(snapshot.stores[STORE_SETTINGS]["theme"], "dark");
+    assert!(snapshot.stores[STORE_FOLDERS].is_null());
+    assert_eq!(recovered, [STORE_FOLDERS]);
+    assert!(
+        !folders.exists(),
+        "the bad file must not fail the next boot"
+    );
+    assert_eq!(
+        fs::read(folders.with_extension("corrupt")).unwrap(),
+        b"{ not json",
+        "the user's bytes are kept for a manual repair"
+    );
+
+    // The next boot is clean.
+    let (_, recovered) = load_client_storage_snapshot_reporting(&ctx).unwrap();
+    assert!(recovered.is_empty());
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_corrupt_store_with_a_valid_bak_is_served_not_reset() {
+    let root = unique_test_root("corrupt-store-bak");
+    let ctx = TestCtx { root: root.clone() };
+    let folders = client_store_path(&ctx, STORE_FOLDERS).unwrap();
+    fs::create_dir_all(folders.parent().unwrap()).unwrap();
+    fs::write(&folders, b"{ not json").unwrap();
+    fs::write(folders.with_extension("bak"), b"{\"saved\":true}").unwrap();
+
+    let (snapshot, recovered) = load_client_storage_snapshot_reporting(&ctx).unwrap();
+
+    assert_eq!(snapshot.stores[STORE_FOLDERS]["saved"], true);
+    assert!(recovered.is_empty());
+    assert!(folders.exists(), "a read never moves a recoverable store");
+
+    let _ = fs::remove_dir_all(&root);
+}

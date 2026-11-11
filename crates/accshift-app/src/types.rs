@@ -33,6 +33,10 @@ pub struct BootPayload {
     pub migration: String,
     pub runtime_os: String,
     pub storage_snapshot: ClientStorageSnapshot,
+    /// Ids of the user stores whose file could not be parsed: each was moved
+    /// aside and loads empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recovered_stores: Vec<String>,
     pub custom_themes: Vec<CustomTheme>,
     pub user_platforms: UserPlatformReport,
 }

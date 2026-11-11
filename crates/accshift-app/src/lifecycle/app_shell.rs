@@ -67,6 +67,13 @@ pub fn migration_toast(migration_result: &str) -> Option<Toast> {
     }
 }
 
+/// The toast for stores the boot had to reset
+/// ([`crate::types::BootPayload::recovered_stores`]).
+pub fn stores_reset_toast(recovered_stores: &[String]) -> Option<Toast> {
+    (!recovered_stores.is_empty())
+        .then(|| Toast::new(Text::key("toast.storesReset"), ToastKind::Error))
+}
+
 /// `enableDetectedPlatformsOnFirstRun`, after `platform_detect_installed`
 /// answered (an error counts as an empty list). `None` when settings were
 /// already stored and nothing was asked.

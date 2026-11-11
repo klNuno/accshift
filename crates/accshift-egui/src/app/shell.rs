@@ -28,7 +28,7 @@
 //! first frame after the boot payload is the final one.
 //!
 //! Before the boot payload lands nothing but the stand-in desktop of a scene
-//! run is drawn.
+//! run is drawn. A boot that failed draws [`boot_error`] instead of the shell.
 
 use accshift_theme::ColorScheme;
 use egui::epaint::{self, ClippedShape};
@@ -42,6 +42,7 @@ use crate::screens::workspace::{self, WorkspaceInput};
 use crate::screens::{personas, settings};
 use crate::ui::anim::{self, Timing, Transition};
 use crate::ui::backdrop_filter::Mark;
+use crate::ui::components::boot_error::{self, BootErrorEvent};
 use crate::ui::components::bulk_edit::{self, BulkEvent, BulkProps};
 use crate::ui::components::command_palette::{self, PaletteProps};
 use crate::ui::components::context_menu::{self, ContextMenuProps};
@@ -109,7 +110,17 @@ pub(super) fn draw(app: &mut AppModel, ui: &mut Ui, now: f64) -> Vec<Action> {
         Mark::Root.paint(ui.painter(), screen);
     }
     let Some(booted) = app.booted.as_ref() else {
-        return Vec::new();
+        let Some(error) = app.boot_error.as_deref() else {
+            return Vec::new();
+        };
+        let locale = accshift_app::i18n::detect_preferred_locale(&super::preferred_languages());
+        return boot_error::boot_error(ui, screen, locale, error)
+            .into_iter()
+            .map(|event| match event {
+                BootErrorEvent::Close => Action::Close,
+                BootErrorEvent::StartDrag => Action::StartDrag,
+            })
+            .collect();
     };
     let ctx = ui.ctx().clone();
     // The title bar and the grid record the tour's targets as they draw.

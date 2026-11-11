@@ -14,6 +14,7 @@
 pub mod account_card;
 pub mod avatar_fade_in;
 pub mod back_card;
+pub mod boot_error;
 pub mod breadcrumb;
 pub mod bulk_edit;
 pub mod card_extension;

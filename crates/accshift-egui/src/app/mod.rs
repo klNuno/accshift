@@ -58,7 +58,9 @@ use accshift_app::error::BackendResult;
 use accshift_app::folders::{FolderInfo, ItemKind};
 use accshift_app::i18n::Locale;
 use accshift_app::jobs::{Jobs, Pending, Poll};
-use accshift_app::lifecycle::app_shell::first_run_platforms;
+use accshift_app::lifecycle::app_shell::{
+    first_run_platforms, migration_toast, stores_reset_toast,
+};
 use accshift_app::menu::{
     build_context_menu_items, PlatformTask, SubmenuLoader, TaskEffect, TaskOutcome,
     ACCOUNT_CONTEXT_GROUP_ORDER,
@@ -718,6 +720,10 @@ impl AppModel {
         if let Some(setup) = &self.setup {
             setup.patch_stores(&mut payload.storage_snapshot.stores);
         }
+        let boot_toasts = [
+            migration_toast(&payload.migration),
+            stores_reset_toast(&payload.recovered_stores),
+        ];
         let runtime_os = RuntimeOs::parse(&payload.runtime_os);
         let legacy = self.legacy.take();
         let (storage, report) = storage::initialize(
@@ -820,6 +826,9 @@ impl AppModel {
             secure_mounted: false,
             secure_in_settings: false,
         });
+        for toast in boot_toasts.into_iter().flatten() {
+            self.toasts.push(toast, Instant::now());
+        }
         // `finish_boot` (marks, the startup event); the real shell shows the
         // window here. Fire and forget.
         drop(self.jobs.run(|backend| backend.finish_boot("egui", None)));
@@ -1903,15 +1912,16 @@ fn theme_state(key: ThemeKey, theme: AppTheme, os_reduced_motion: bool) -> Theme
     }
 }
 
-/// `navigator.languages`, most preferred first: the OS UI language.
-fn preferred_languages() -> Vec<String> {
-    ["LC_ALL", "LC_MESSAGES", "LANG"]
+/// `navigator.languages`, most preferred first: the OS UI language. Windows
+/// has no `LANG` in a normal session, so the OS API answers there.
+pub(super) fn preferred_languages() -> Vec<String> {
+    let posix = ["LC_ALL", "LC_MESSAGES", "LANG"]
         .iter()
-        .find_map(|var| std::env::var(var).ok().filter(|v| !v.is_empty()))
-        .map(|v| {
-            // `fr_FR.UTF-8` reads as `fr-FR`.
-            vec![v.split('.').next().unwrap_or("").replace('_', "-")]
-        })
+        .find_map(|var| std::env::var(var).ok().filter(|v| !v.is_empty()));
+    posix
+        .or_else(accshift_core::telemetry::detect_locale)
+        // `fr_FR.UTF-8` reads as `fr-FR`.
+        .map(|v| vec![v.split('.').next().unwrap_or("").replace('_', "-")])
         .unwrap_or_default()
 }
 

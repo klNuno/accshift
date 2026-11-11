@@ -332,3 +332,49 @@ fn native_text_input_keeps_focus_for_vertical_arrows() {
         assert_eq!(value, "editable");
     }
 }
+
+#[test]
+fn a_boot_that_reset_a_store_or_failed_a_migration_says_so() {
+    let ctx = Context::default();
+    let (app, _) = external_app_with(&ctx, |fixture| {
+        let boot = &mut fixture["commands"]["get_boot_payload"][0]["result"];
+        boot["migration"] = json!("error:disk full");
+        boot["recoveredStores"] = json!(["client.folders"]);
+    });
+    let texts: Vec<Text> = app
+        .toasts()
+        .toasts()
+        .iter()
+        .map(|t| t.text.clone())
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            Text::key("toast.legacyConfigMigrationFailed"),
+            Text::key("toast.storesReset"),
+        ]
+    );
+}
+
+#[test]
+fn a_failed_boot_draws_its_error_instead_of_a_blank_window() {
+    let ctx = Context::default();
+    let mut fixture: Value =
+        serde_json::from_str(include_str!("../../../parity/data/empty.json")).unwrap();
+    fixture["commands"]["get_boot_payload"] =
+        json!([{ "args": {}, "error": "Could not read file settings.json: access denied" }]);
+    let mock = Arc::new(MockBackend::from_json(&fixture.to_string(), None).unwrap());
+    let mut app = AppModel::with_backend(&ctx, mock.clone(), Some(mock), Clock::wall());
+    let error = app.wait_boot(&ctx).unwrap_err();
+    assert!(error.contains("access denied"), "{error}");
+
+    // The first frames bind the fonts; the screen is there once they are.
+    let mut shapes = 0;
+    for _ in 0..4 {
+        let mut output = ctx.run_ui(input(true, false), |ui| app.frame(ui));
+        output.textures_delta.clear();
+        shapes = output.shapes.len();
+    }
+    // Background, three texts, the button and its label.
+    assert!(shapes >= 6, "boot error screen drew {shapes} shapes");
+}
