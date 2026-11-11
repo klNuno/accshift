@@ -660,7 +660,7 @@ pub fn account_card(ui: &mut Ui, rect: Rect, props: &AccountCardProps) -> CardOu
     // `.dragging { opacity: .4 }`: one layer, as the folder card's.
     // `animation` overrides `opacity` too: a dragged card moved by the
     // preview replays its entrance from 0 to 1, then drops back to .4.
-    let group = dragged && !entering && !cfg!(feature = "glow");
+    let group = dragged && !entering;
     if group {
         super::folder_card::drag_group(ui, rect);
     }

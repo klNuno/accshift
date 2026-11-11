@@ -251,7 +251,7 @@ pub fn paint(ui: &Ui, card: Rect, s: &Surface) -> Painted {
     let painter = ui.painter().clone();
     // A frosted surface is its own layer: what it holds paints opaque into
     // it, and the layer lands at the surface's opacity.
-    let frost = s.glass && s.visible && !cfg!(feature = "glow");
+    let frost = s.glass && s.visible;
     let inner = if frost { 1.0 } else { opacity };
     if frost {
         Mark::Begin {

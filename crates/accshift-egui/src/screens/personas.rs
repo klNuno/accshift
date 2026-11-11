@@ -302,7 +302,7 @@ fn persona_card(
     // `opacity: .6` fades the card as one group: a layer that lands at 0.6
     // where the renderer has layers, each shape at 0.6 where it has not.
     let faded = disabled && !busy;
-    let group = faded && !cfg!(feature = "glow");
+    let group = faded;
     if group {
         Mark::Begin {
             sigma: 0.0,

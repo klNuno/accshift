@@ -608,7 +608,7 @@ pub fn list_view(
             _ => (None, false),
         };
         // `.row.dragging { opacity: .4 }`: one layer, as the cards'.
-        let group = dragged && visible && !cfg!(feature = "glow");
+        let group = dragged && visible;
         if group {
             super::folder_card::drag_group(&child, row);
         } else if dragged {

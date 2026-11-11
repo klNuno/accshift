@@ -17,24 +17,8 @@ const PROBE_IDENTIFIER: &str = "com.accshift.desktop-egui-probe";
 fn main() {
     let bench_build = cfg!(feature = "startup-bench");
     // `--scene <scene.json>... --out <dir>`: replay parity scenes in a hidden
-    // window, see src/harness/mod.rs. Nothing is parsed before main otherwise.
-    let (scene_files, out_dir) = {
-        let mut files = Vec::new();
-        let mut out = None;
-        let mut args = std::env::args().skip(1);
-        let mut in_scenes = false;
-        while let Some(arg) = args.next() {
-            if arg == "--scene" {
-                in_scenes = true;
-            } else if arg == "--out" {
-                out = args.next().map(std::path::PathBuf::from);
-                in_scenes = false;
-            } else if in_scenes {
-                files.push(std::path::PathBuf::from(arg));
-            }
-        }
-        (files, out)
-    };
+    // window, see src/harness/mod.rs. Only a `harness` build reads it.
+    let (scene_files, out_dir) = harness::scene_args(std::env::args().skip(1));
     let scene_mode = !scene_files.is_empty();
     // `--tray`: the autostart launch. The window starts hidden in the tray.
     let tray_start = std::env::args().skip(1).any(|arg| arg == "--tray");
@@ -64,13 +48,8 @@ fn main() {
     bench::mark_with(
         "main",
         &format!(
-            "\"build\":\"{}\",\"renderer\":\"{}\"",
+            "\"build\":\"{}\",\"renderer\":\"software\"",
             if bench_build { bench::MARKER } else { "dev" },
-            if cfg!(feature = "glow") {
-                "glow"
-            } else {
-                "software"
-            },
         ),
     );
     // Debug builds: the window shell on a scratch folder, unseen
@@ -81,7 +60,7 @@ fn main() {
     let probe: Option<std::path::PathBuf> = None;
     let probing = probe.is_some();
 
-    // The single-instance plugin, first as in src-tauri/src/lib.rs: a second
+    // The single-instance guard comes first: a second
     // launch hands its arguments to the running app and leaves. This
     // launch's own `accshift://` URL is the deep-link plugin's `current`,
     // which the page's listener never sees, so it is not read here.
@@ -317,8 +296,9 @@ fn main() {
             }
             None => {
                 // Each scene builds its own screen once the window has its
-                // size.
-                accshift_egui::screens::main_spike::install_fonts(ctx);
+                // size. Fonts set mid-frame only apply a frame later: before
+                // the first one.
+                accshift_egui::ui::text::install(ctx, false);
                 Shell::new(Screen::Blank, scenes)
             }
         }
@@ -338,27 +318,6 @@ fn main() {
         ),
     )
     .map_err(|err| err.to_string());
-
-    #[cfg(feature = "glow")]
-    let result = {
-        let options = eframe::NativeOptions {
-            viewport,
-            persist_window: false,
-            // Experiment knob for the boot breakdown: does the first swap
-            // wait on the compositor?
-            glow_options: eframe::egui_glow::GlowConfiguration {
-                vsync: std::env::var_os("ACCSHIFT_EGUI_NO_VSYNC").is_none(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        eframe::run_native(
-            "accshift-egui",
-            options,
-            Box::new(move |cc| Ok(Box::new(build(&cc.egui_ctx, cc)))),
-        )
-        .map_err(|err| err.to_string())
-    };
 
     if let Err(err) = result {
         eprintln!("{err}");
@@ -480,8 +439,7 @@ fn window_effects(window: &dyn HasWindowHandle, cloak: bool, acrylic: bool) {
             );
         }
     }
-    // Glass Dark's material in Tauri: acrylic with a heavy black tint
-    // (`ACRYLIC_TINTS` in src/lib/theme/backdrop.ts).
+    // Glass Dark's material: acrylic with a heavy black tint.
     if acrylic {
         let _ = window_vibrancy::apply_acrylic(window, Some((0, 0, 0, 150)));
     }
