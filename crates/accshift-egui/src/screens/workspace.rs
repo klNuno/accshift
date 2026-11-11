@@ -23,8 +23,6 @@
 //! Cards are keyed like the Svelte `{#each ... (item.id)}` blocks: a key
 //! seen for the first time is a new mount, which restarts `card-entrance`
 //! and the avatar fade. A key that disappears for a frame is unmounted.
-//!
-//! The list view is not ported: `viewMode === "list"` draws a placeholder.
 
 use std::collections::{HashMap, HashSet};
 
@@ -231,6 +229,8 @@ pub struct Workspace {
     search: Search,
     /// Key to (mount generation, frame last seen).
     mounts: HashMap<String, (u64, u64)>,
+    /// The ids of `mounts`, for [`Workspace::owns`].
+    mount_ids: HashSet<Id>,
     generation: u64,
     last_frame: Option<u64>,
     /// When the latest card mounted.
@@ -249,8 +249,9 @@ pub struct Workspace {
     /// The last frame's boxes (cards, headers) with their labels, in layout
     /// px relative to the content box top left, unscrolled: the golden test
     /// reads them.
+    #[cfg(test)]
     pub layout: Vec<(String, Rect)>,
-    /// The scroll offset in layout px (`scrollTop`).
+    /// The scrollable height of the content in layout px (`scrollHeight`).
     pub content_height: f32,
     /// The system time zone, read once (relative and absolute dates).
     zone: Option<accshift_app::time::TimeZone>,
@@ -356,9 +357,7 @@ impl Workspace {
     /// Whether `id` is a box the workspace mounted (a card, a header, a
     /// list row): `wrapper.contains(target)` of the card focus.
     pub fn owns(&self, id: Id) -> bool {
-        self.mounts
-            .iter()
-            .any(|(key, (generation, _))| Id::unique(("ws-card", key.as_str(), *generation)) == id)
+        self.mount_ids.contains(&id)
     }
 
     /// The card `item` on screen, as `getBoundingClientRect` reads it.
@@ -392,10 +391,25 @@ impl Workspace {
                 self.last_mount = now;
                 self.mounts
                     .insert(key.to_string(), (self.generation, frame));
+                self.mount_ids.insert(mount_id(key, self.generation));
                 self.generation
             }
         };
-        Id::unique(("ws-card", key, generation))
+        mount_id(key, generation)
+    }
+
+    /// Drops the mounts `keep` refuses, with the temp state they wrote.
+    fn unmount(&mut self, ctx: &Context, mut keep: impl FnMut(&str, u64) -> bool) {
+        let ids = &mut self.mount_ids;
+        self.mounts.retain(|key, (generation, seen)| {
+            let kept = keep(key, *seen);
+            if !kept {
+                let id = mount_id(key, *generation);
+                ids.remove(&id);
+                crate::ui::anim::forget(ctx, id);
+            }
+            kept
+        });
     }
 
     /// `getAvatarGradientStyle(seed)`: background colour and gradient.
@@ -443,6 +457,7 @@ enum Node<'a> {
 
 impl Node<'_> {
     /// The card's name, as `DisplayItem::label` gives it.
+    #[cfg(test)]
     fn label(&self) -> String {
         match self {
             Node::Back => "Back".into(),
@@ -555,6 +570,11 @@ pub enum Moved {
     Card(ItemKind, String),
 }
 
+/// The id of the mount `key` in its `generation`: a remount is a fresh id.
+fn mount_id(key: &str, generation: u64) -> Id {
+    Id::unique(("ws-card", key, generation))
+}
+
 fn moved_id() -> Id {
     Id::unique("ws-moved")
 }
@@ -595,7 +615,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
     let frame = ctx.cumulative_frame_nr();
     if ws.last_frame.is_none_or(|last| last + 1 != frame) {
         // Not drawn last frame: everything unmounted.
-        ws.mounts.clear();
+        ws.unmount(&ctx, |_, _| false);
         ws.slides.clear();
         ws.collapsed.clear();
         ws.decoding.clear();
@@ -605,8 +625,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
         .data_mut(|d| d.remove_temp::<Vec<Moved>>(moved_id()))
         .unwrap_or_default();
     if !moved.is_empty() {
-        ws.mounts
-            .retain(|key, _| !moved.iter().any(|m| m.owns(key)));
+        ws.unmount(&ctx, |key, _| !moved.iter().any(|m| m.owns(key)));
         // An inserted `.section` has no style to transition from.
         ctx.data_mut(|d| {
             for m in &moved {
@@ -893,6 +912,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                             list_view::list_view(&mut child, r, &mut list, items, &props, &mut host)
                         })
                         .inner;
+                    crate::ui::anim::release(&ctx);
                     ws.list = list;
                     ws.cards = ws.list.cards.clone();
                     ws.cards_scroll = None;
@@ -1034,6 +1054,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
     let view_rect = Rect::from_min_size(pos2(0.0, scroll - PAD_TOP), viewport.size());
     let avatar_px = (v.grid_card_avatar_size() * ppp).round() as u32;
     ws.visible_decoding = 0;
+    #[cfg(test)]
     ws.layout.clear();
     let mut focused_rect = None;
     let focused_now = ctx.memory(|m| m.focused());
@@ -1070,6 +1091,8 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
     let mut section_avatars: HashMap<String, AvatarContent> = HashMap::new();
     drop(pre_span);
     for p in &placed {
+        // What the iteration writes before the mount is no card's.
+        crate::ui::anim::release(&ctx);
         if open_section
             .as_ref()
             .is_some_and(|o| !p.key.starts_with(&o.prefix))
@@ -1131,8 +1154,10 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
                 });
             }
         }
+        #[cfg(test)]
         ws.layout.push((p.node.label(), p.rect));
         let id = ws.mount(&p.key, frame, now);
+        crate::ui::anim::own_from(&ctx, id);
         match &p.node {
             Node::Folder(f) => {
                 card_ids.insert(ItemRef::folder(&f.folder.id), id);
@@ -1408,6 +1433,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
             }
         }
     }
+    crate::ui::anim::release(&ctx);
     if let Some(o) = open_section.take() {
         o.close(ui, clip);
     }
@@ -1539,7 +1565,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, ws: &mut Workspace, input: WorkspaceInput) 
         ctx.request_repaint();
     }
     // Unmount what was not drawn.
-    ws.mounts.retain(|_, (_, seen)| *seen == frame);
+    ws.unmount(&ctx, |_, seen| seen == frame);
     let mounted: HashSet<&String> = ws.mounts.keys().collect();
     ws.decoding.retain(|k| mounted.contains(k));
 
@@ -1638,7 +1664,10 @@ struct Host<'a> {
 impl ListHost for Host<'_> {
     fn mount(&mut self, key: &str) -> Id {
         let key = format!("{}{key}", self.prefix);
-        self.ws.mount(&key, self.frame, self.now)
+        let id = self.ws.mount(&key, self.frame, self.now);
+        // The row draws its state right after its mount.
+        crate::ui::anim::own_from(&self.ctx, id);
+        id
     }
 
     fn avatar(
@@ -3634,5 +3663,34 @@ mod scene_tests {
         run.key(Key::Escape);
         assert_eq!(query(&run), "");
         assert!(!run.ctx.memory(|m| m.has_focus(search)));
+    }
+
+    /// Every return to the workspace remounts its cards (200 here) or list
+    /// rows under fresh ids: the temp state the old mounts wrote goes with
+    /// them.
+    #[test]
+    fn remounts_drop_the_state_of_the_old_mounts() {
+        for scene in ["workspace-huge-100", "list-glass-dark-100"] {
+            let mut run = Run::new(scene, 1.0);
+            run.settle();
+            let remount = |run: &mut Run| {
+                // A frame without the workspace unmounts every card.
+                let input = run.input();
+                let mut out = run.ctx.run_ui(input, |_| {});
+                out.textures_delta.clear();
+                run.frame();
+                run.frame();
+            };
+            remount(&mut run);
+            let before = run.ctx.data(|d| d.len());
+            for _ in 0..10 {
+                remount(&mut run);
+            }
+            let after = run.ctx.data(|d| d.len());
+            assert!(
+                after <= before + 16,
+                "{scene}: temp data grew from {before} to {after} entries over 10 remounts"
+            );
+        }
     }
 }

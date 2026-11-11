@@ -25,7 +25,7 @@ mod platform_tab;
 mod platforms_tab;
 mod steam_tab;
 
-use accshift_app::i18n::{translate, translate_with, Locale, TranslationValue, LANGUAGE_OPTIONS};
+use accshift_app::i18n::{translate, Locale, LANGUAGE_OPTIONS};
 use accshift_app::settings::{AnimationsMode, StreamerMode};
 use accshift_theme::{is_built_in_theme, AppTheme, ColorScheme, TokenKey};
 use egui::accesskit::Role;
@@ -781,6 +781,7 @@ pub fn draw(
     panel: &mut SettingsPanel,
     view: &View,
     focus_visible: bool,
+    modal: bool,
 ) -> Vec<Action> {
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
@@ -1035,11 +1036,11 @@ pub fn draw(
     );
     panel.scroll = offset;
 
-    let escape = ui.input(|i| i.key_pressed(Key::Escape));
-    if escape {
+    // An overlay drawn after the panel (theme editor, descriptor preview,
+    // a dialog, the palette) owns Escape: it closes that overlay only.
+    if !modal && ui.input(|i| i.key_pressed(Key::Escape)) {
         out.push(SettingsAction::Close);
     }
-    let _ = anim::motion(&ctx);
     out.into_iter().map(Action::Settings).collect()
 }
 
@@ -1737,11 +1738,6 @@ fn theme_grid(ui: &mut Ui, r: Rect, id: Id, c: &Ctx) -> Vec<SettingsAction> {
         }
     }
     out
-}
-
-/// `t(key, params)` for callers outside the panel.
-pub fn t_with(locale: Locale, key: &str, params: &[(&str, TranslationValue)]) -> String {
-    translate_with(locale, key, params)
 }
 
 #[cfg(test)]
