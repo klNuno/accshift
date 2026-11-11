@@ -48,7 +48,7 @@ sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 open = { version = "5", features = ["shellexecute-on-windows"] }
 fs4 = { version = "1.1", features = ["sync"] }
 clap = { version = "4", features = ["derive"] }
-directories = "6"
+dirs = "7"
 is-terminal = "0.4"
 unicode-width = "0.2"
 keyring = "4"

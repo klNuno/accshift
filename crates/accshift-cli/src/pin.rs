@@ -5,7 +5,7 @@
 //! the hash formats and the verification live in `accshift_core::pin`, shared
 //! with the GUI backend; this module only prompts for the code on a terminal.
 
-use crate::context::CliAppContext;
+use crate::context;
 use crate::exit;
 use crate::output::{emit_err, Format};
 use accshift_core::pin::{upgrade_legacy_pin_hash, verify_pin_code, PinLock, PinVerdict};
@@ -62,7 +62,7 @@ pub fn enforce(format: Format, lock: PinLock) -> Result<PinLock, u8> {
             // operation lock does not treat the upgrade as a PIN change. A
             // hash that no longer verifies this PIN is left as the one we
             // checked, and that compare then refuses the switch.
-            let admitted = match CliAppContext::new() {
+            let admitted = match context::resolve() {
                 Ok(ctx) => match upgrade_legacy_pin_hash(&ctx, &attempt) {
                     Ok(()) => match accshift_core::pin::read_pin_lock(&ctx) {
                         PinLock::On(hash)
