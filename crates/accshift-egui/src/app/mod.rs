@@ -697,6 +697,10 @@ impl AppModel {
     /// Ready to be photographed: booted, the accounts loaded, the panel's
     /// cards and avatars settled.
     pub fn ready(&self) -> bool {
+        // The boot error screen is still: a scene can shoot it.
+        if self.boot_error.is_some() {
+            return true;
+        }
         self.booted.as_ref().is_some_and(|b| {
             b.accounts.settled()
                 && !b.accounts.avatars.busy()
