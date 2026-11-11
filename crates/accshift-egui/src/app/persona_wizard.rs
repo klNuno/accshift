@@ -246,17 +246,17 @@ impl PersonaWizard {
     }
 }
 
-/// The file picker of `accept="image/*"`: Chromium lists image files first
-/// and every file second. Blocks until the picker closes.
+/// What the "Image Files" filter offers: only what [`cover_from_bytes`]
+/// decodes with this build's `image` codecs, so a listed file never fails.
+const COVER_EXTENSIONS: &[&str] = &[
+    "bmp", "jpg", "jpeg", "jfif", "pjpeg", "pjp", "png", "webp", "ico",
+];
+
+/// The file picker of `accept="image/*"`: image files first and every file
+/// second. Blocks until the picker closes.
 fn pick_cover() -> ImagePick {
     let picked = rfd::FileDialog::new()
-        .add_filter(
-            "Image Files",
-            &[
-                "bmp", "jpg", "jpeg", "jfif", "pjpeg", "pjp", "png", "webp", "gif", "ico", "avif",
-                "svg", "tif", "tiff",
-            ],
-        )
+        .add_filter("Image Files", COVER_EXTENSIONS)
         .add_filter("All Files", &["*"])
         .pick_file();
     let Some(path) = picked else {
@@ -350,6 +350,27 @@ mod tests {
         let right = img.get_pixel(215, 128).0;
         assert!(left[0] > 200 && left[2] < 60, "{left:?}");
         assert!(right[2] > 200 && right[0] < 60, "{right:?}");
+    }
+
+    #[test]
+    fn every_extension_the_picker_offers_decodes() {
+        let img = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            4,
+            4,
+            image::Rgba([10, 200, 30, 255]),
+        ));
+        for ext in COVER_EXTENSIONS {
+            // JPEG's progressive aliases carry plain JPEG bytes.
+            let format = match *ext {
+                "pjpeg" | "pjp" => Some(image::ImageFormat::Jpeg),
+                other => image::ImageFormat::from_extension(other),
+            }
+            .unwrap_or_else(|| panic!("{ext}: no image format"));
+            let mut bytes = Vec::new();
+            img.write_to(&mut std::io::Cursor::new(&mut bytes), format)
+                .unwrap_or_else(|err| panic!("{ext}: no encoder for a sample: {err}"));
+            assert!(cover_from_bytes(&bytes).is_some(), "{ext}: not decoded");
+        }
     }
 
     #[test]

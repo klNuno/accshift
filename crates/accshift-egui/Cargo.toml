@@ -10,6 +10,8 @@ publish = false
 # %TEMP%\accshift-egui-bench\<pid>.jsonl. The harness refuses any exe that
 # lacks the marker string, so a bench run can never pop a window.
 startup-bench = []
+# Developer switches kept out of the shipped binary: `ACCSHIFT_EGUI_MARKS`.
+harness = []
 # Renderer, pick one. `software`: egui meshes rasterized on the CPU and blitted
 # with softbuffer (GDI on Windows), no GPU driver loaded. `glow`: eframe on
 # OpenGL, the first version of the spike.
@@ -63,7 +65,8 @@ png = "0.18"
 # Steam's CDN serves avatars as JPEG; the same image build accshift-app
 # already links (zune-jpeg underneath). A persona's custom image is any of
 # these, re-encoded as a JPEG cover; png and image-webp are linked already.
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp"] }
+# `ico` is the bmp and png decoders behind an ICO directory, no new crate.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp", "ico"] }
 # The persona image picker (`<input type="file">`) and its data URL: the
 # versions accshift-app already builds.
 rfd = "0.17"

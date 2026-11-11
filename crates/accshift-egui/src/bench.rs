@@ -1,7 +1,9 @@
 //! Boot marks for `.agents/perf/bench-egui.ps1`: one JSON line per event in
 //! `%TEMP%\accshift-egui-bench\<pid>.jsonl`, epoch milliseconds.
 //!
-//! Active in a `startup-bench` build, or with `ACCSHIFT_EGUI_MARKS=1`.
+//! Active in a `startup-bench` build, or with `ACCSHIFT_EGUI_MARKS=1` in a
+//! `harness` build. A release build has neither feature: no environment
+//! variable turns the marks, the frame log or the shot on there.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -15,7 +17,12 @@ pub const MARKER: &str = "accshift-egui-startup-bench-build";
 static SINK: OnceLock<Option<Mutex<File>>> = OnceLock::new();
 
 pub fn enabled() -> bool {
-    cfg!(feature = "startup-bench") || std::env::var_os("ACCSHIFT_EGUI_MARKS").is_some()
+    enabled_with(|| std::env::var_os("ACCSHIFT_EGUI_MARKS").is_some())
+}
+
+/// [`enabled`] with the environment read only where a feature allows it.
+fn enabled_with(marks_env: impl FnOnce() -> bool) -> bool {
+    cfg!(feature = "startup-bench") || (cfg!(feature = "harness") && marks_env())
 }
 
 fn sink() -> &'static Option<Mutex<File>> {
@@ -319,5 +326,23 @@ pub fn mark_once(event: &'static str) {
             seen.push(event);
             mark(event);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(not(any(feature = "startup-bench", feature = "harness")))]
+    #[test]
+    fn a_release_build_ignores_the_marks_variable() {
+        assert!(!enabled_with(|| true));
+    }
+
+    #[cfg(all(feature = "harness", not(feature = "startup-bench")))]
+    #[test]
+    fn a_harness_build_follows_the_marks_variable() {
+        assert!(enabled_with(|| true));
+        assert!(!enabled_with(|| false));
     }
 }

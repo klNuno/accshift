@@ -39,7 +39,8 @@
 //! cancels. Nothing takes focus at mount.
 //!
 //! The colour input opens Windows' own colour dialog, as Chromium does
-//! ([`window::color`]). Chromium draws the selects' lists in popup windows
+//! ([`window::color`]); elsewhere its swatch is a preview beside the hex
+//! field. Chromium draws the selects' lists in popup windows
 //! no capture includes; their stand-ins here are egui's.
 
 use std::ops::Range;
@@ -726,7 +727,11 @@ fn color_input(ui: &mut Ui, rect: Rect, id: Id, hex: &str, props: &DialogProps) 
     let ppp = ctx.pixels_per_point();
     let v = props.vars;
     let boxed = snap::rect(rect, ppp);
-    let response = ui.interact(boxed, id, Sense::click());
+    let response = ui.interact(
+        boxed,
+        id,
+        window::color::swatch_sense(window::color::AVAILABLE),
+    );
     let focused = take_focus(ui, &response);
     BoxStyle {
         background: Rgba::TRANSPARENT,
