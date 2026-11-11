@@ -4,9 +4,9 @@
 mod support;
 
 use accshift_app::secure::pin::{
-    hash_pin_code, is_pin_locked_error, is_pin_locked_message, is_valid_pin_hash, lock_pin_session,
-    sanitize_pin_digits, unlock_pin_session, verify_pin_code, PinCheck, PinFailureWait,
-    PinVerification, PIN_FAILURE_DELAY_MS,
+    hash_pin_code, is_pin_locked_error, is_valid_pin_hash, lock_pin_session, sanitize_pin_digits,
+    unlock_pin_session, verify_pin_code, PinCheck, PinFailureWait, PinVerification,
+    PIN_FAILURE_DELAY_MS,
 };
 use accshift_app::BackendError;
 use serde_json::json;
@@ -165,10 +165,11 @@ fn verifies_the_shared_vectors() {
 
 #[test]
 fn recognizes_the_backend_refusal() {
-    assert!(is_pin_locked_message(LOCKED));
     assert!(is_pin_locked_error(&BackendError::new(LOCKED)));
-    assert!(!is_pin_locked_message("Steam is not installed"));
-    assert!(!is_pin_locked_message(""));
+    assert!(!is_pin_locked_error(&BackendError::new(
+        "Steam is not installed"
+    )));
+    assert!(!is_pin_locked_error(&BackendError::new("")));
 }
 
 // ------------------------------------------------------------ unlockPinSession

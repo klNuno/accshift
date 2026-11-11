@@ -6,12 +6,14 @@
 //! call that would reach a server or a secret is stopped by its argument
 //! check first.
 
-use accshift_app::dispatch::dispatch;
-use accshift_app::real::{RealBackend, LOCK_TIMEOUT, PORTED};
-use accshift_app::{Backend, COMMANDS};
+mod dispatch;
+
+use accshift_app::real::{RealBackend, LOCK_TIMEOUT};
+use accshift_app::Backend;
 use accshift_core::pin::{hash_pin_code, PIN_LOCKED_MESSAGE};
 use accshift_core::storage::STORE_SETTINGS;
 use accshift_core::AppContext;
+use dispatch::dispatch;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
@@ -140,11 +142,7 @@ const CONTENDED: &str = "Another accshift instance is holding the lock";
 // ---------------------------------------------------------------- registry
 
 #[test]
-fn every_command_is_ported_and_dispatches_without_not_ported() {
-    assert_eq!(PORTED.len(), COMMANDS.len());
-    for command in COMMANDS {
-        assert!(PORTED.contains(command), "{command} is not in PORTED");
-    }
+fn cheap_commands_dispatch_without_not_ported() {
     // Cheap commands through dispatch: none answers "not ported".
     let (_scratch, real) = backend("dispatch");
     for (command, args) in [

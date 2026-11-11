@@ -23,7 +23,7 @@ mod macos;
 mod windows;
 
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// A second launch: its whole `argv` (executable first) and its working
 /// folder, as the plugin callback receives them.
@@ -75,19 +75,37 @@ impl std::fmt::Debug for Launch {
     }
 }
 
-/// The running single-instance service. Dropping it is the plugin's
-/// `destroy` (`RunEvent::Exit`): release the mutex and destroy the window,
-/// release the D-Bus name, or remove the socket.
+/// The running single-instance service. Dropping it, or running its
+/// [`Self::releaser`], is the plugin's `destroy` (`RunEvent::Exit`): release
+/// the mutex and destroy the window, release the D-Bus name, or remove the
+/// socket.
 pub struct SingleInstance {
     receiver: Receiver<SecondInstance>,
-    #[allow(dead_code)]
-    guard: Option<PlatformGuard>,
+    guard: Arc<Mutex<Option<PlatformGuard>>>,
 }
 
 impl SingleInstance {
+    fn new(receiver: Receiver<SecondInstance>, guard: PlatformGuard) -> Self {
+        Self {
+            receiver,
+            guard: Arc::new(Mutex::new(Some(guard))),
+        }
+    }
+
     /// The next second launch, if one arrived.
     pub fn try_recv(&self) -> Option<SecondInstance> {
         self.receiver.try_recv().ok()
+    }
+
+    /// Frees the guard from any thread while the service stays alive: the
+    /// update relaunch runs it before it starts the new process, since
+    /// `std::process::exit` never drops the service.
+    pub fn releaser(&self) -> impl FnOnce() + Send + 'static {
+        let guard = Arc::clone(&self.guard);
+        move || {
+            let taken = guard.lock().unwrap_or_else(PoisonError::into_inner).take();
+            drop(taken);
+        }
     }
 
     /// The channel itself (blocking waits in tests).
@@ -120,15 +138,11 @@ pub fn acquire(identifier: &str, args: &[String], cwd: &str, wake: Option<Wake>)
     let notify = Notify { sender, wake };
     let launch = platform_acquire(identifier, args, cwd, notify);
     match launch {
-        PlatformLaunch::Primary(guard) => Launch::Primary(SingleInstance {
-            receiver,
-            guard: Some(guard),
-        }),
+        PlatformLaunch::Primary(guard) => Launch::Primary(SingleInstance::new(receiver, guard)),
         PlatformLaunch::Forwarded => Launch::Forwarded,
-        PlatformLaunch::Alone(guard) => Launch::Alone(guard.map(|guard| SingleInstance {
-            receiver,
-            guard: Some(guard),
-        })),
+        PlatformLaunch::Alone(guard) => {
+            Launch::Alone(guard.map(|guard| SingleInstance::new(receiver, guard)))
+        }
     }
 }
 

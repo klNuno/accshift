@@ -7,8 +7,8 @@ mod support;
 
 use accshift_app::accounts::{Toast, ToastKind};
 use accshift_app::lifecycle::app_shell::{
-    first_run_platforms, initial_load, migration_toast, plan_external_refresh, semver_core,
-    settings_snapshot, ExternalRefreshGate, InitialLoad, RefreshStep, SHELL_INIT_ORDER,
+    first_run_platforms, initial_load, migration_toast, plan_external_refresh, settings_snapshot,
+    ExternalRefreshGate, InitialLoad, RefreshStep,
 };
 use accshift_app::lifecycle::boot::{
     log_app_event, mask_value, redact_object, remember_boot_locale, serialize_log_value,
@@ -431,40 +431,64 @@ fn a_failed_download_resets_and_tracks_the_version() {
 }
 
 #[test]
-fn a_failed_install_or_relaunch_toasts_and_checks_again() {
-    for relaunch in [false, true] {
-        let mut updater = AppUpdater::<FakeUpdate>::new(false);
-        updater.start();
-        updater.on_check_result(Ok(Some(FakeUpdate("1.2.0"))));
-        updater.on_download_result(Ok(Vec::new()));
-        updater.apply();
-        let outputs = if relaunch {
-            updater.on_install_result(Ok(()));
-            updater.on_relaunch_failed("spawn failed".into())
-        } else {
-            updater.on_install_result(Err("flush failed".into()))
-        };
-        let code = if relaunch {
-            "relaunch_failed"
-        } else {
-            "install_failed"
-        };
-        assert_eq!(
-            tracked(&outputs),
-            [(UpdateStage::Failed, Some("1.2.0".into()), Some(code))]
-        );
-        assert!(
-            matches!(&outputs[0], UpdateOutput::Log { level: LogLevel::Error, message } if message.starts_with("Failed to restart for update: "))
-        );
-        assert_eq!(
-            &outputs[2..],
-            [
-                UpdateOutput::Toast(Text::key("update.restartFailed")),
-                UpdateOutput::Run(UpdateCommand::Check),
-            ]
-        );
-        assert_eq!(updater.state(), UpdateState::Checking);
-    }
+fn a_failed_install_toasts_and_checks_again() {
+    let mut updater = AppUpdater::<FakeUpdate>::new(false);
+    updater.start();
+    updater.on_check_result(Ok(Some(FakeUpdate("1.2.0"))));
+    updater.on_download_result(Ok(Vec::new()));
+    updater.apply();
+    let outputs = updater.on_install_result(Err("flush failed".into()));
+    assert_eq!(
+        tracked(&outputs),
+        [(
+            UpdateStage::Failed,
+            Some("1.2.0".into()),
+            Some("install_failed")
+        )]
+    );
+    assert!(
+        matches!(&outputs[0], UpdateOutput::Log { level: LogLevel::Error, message } if message.starts_with("Failed to restart for update: "))
+    );
+    assert_eq!(
+        &outputs[2..],
+        [
+            UpdateOutput::Toast(Text::key("update.restartFailed")),
+            UpdateOutput::Run(UpdateCommand::Check),
+        ]
+    );
+    assert_eq!(updater.state(), UpdateState::Checking);
+}
+
+/// The update is already installed when the relaunch fails: the app stays
+/// open, asks for a manual restart and does not download it again.
+#[test]
+fn a_failed_relaunch_asks_for_a_manual_restart_without_checking_again() {
+    let mut updater = AppUpdater::<FakeUpdate>::new(false);
+    updater.start();
+    updater.on_check_result(Ok(Some(FakeUpdate("1.2.0"))));
+    updater.on_download_result(Ok(Vec::new()));
+    updater.apply();
+    updater.on_install_result(Ok(()));
+    let outputs = updater.on_relaunch_failed("spawn failed".into());
+    assert_eq!(
+        tracked(&outputs),
+        [(
+            UpdateStage::Failed,
+            Some("1.2.0".into()),
+            Some("relaunch_failed")
+        )]
+    );
+    assert!(
+        matches!(&outputs[0], UpdateOutput::Log { level: LogLevel::Error, message } if message == "Failed to restart for update: spawn failed")
+    );
+    assert_eq!(
+        &outputs[2..],
+        [UpdateOutput::Toast(Text::key("update.restartManually"))]
+    );
+    assert_eq!(updater.state(), UpdateState::Idle);
+    assert_eq!(updater.cta_label(), None);
+    assert!(updater.start().is_empty());
+    assert!(updater.apply().is_empty());
 }
 
 #[test]
@@ -580,12 +604,6 @@ fn app_config_and_platform_stores_reload_the_accounts() {
 
 #[test]
 fn the_shell_init_helpers_match_the_ts() {
-    assert_eq!(semver_core("1.0.5"), "1.0.5");
-    assert_eq!(semver_core("v1.2.3-beta.1+build"), "1.2.3");
-    assert_eq!(semver_core("12.34.56.78"), "12.34.56");
-    assert_eq!(semver_core("dev"), "dev");
-    assert_eq!(semver_core("1.2"), "1.2");
-
     assert_eq!(
         migration_toast("migrated"),
         Some(Toast::new(
@@ -626,7 +644,6 @@ fn the_shell_init_helpers_match_the_ts() {
         initial_load(&registry, "steam", RuntimeOs::Unknown),
         InitialLoad::RefreshItems
     );
-    assert_eq!(SHELL_INIT_ORDER.len(), 10);
 
     let snapshot = settings_snapshot(&settings(json!({"enabledPlatforms": ["steam"]})));
     assert_eq!(snapshot.enabled_platforms, ["steam"]);
@@ -848,34 +865,63 @@ impl ProcessControl for FakeProcess {
     }
 }
 
+/// The single-instance guard goes before the spawn (the new process must
+/// not forward its launch to this one), and nothing exits unless a new
+/// process started: a failed relaunch leaves the app open.
 #[test]
-fn relaunch_releases_spawns_with_the_same_arguments_then_exits() {
+fn relaunch_releases_the_instance_spawns_then_exits_and_never_exits_alone() {
     let control = FakeProcess::default();
-    let args: Vec<OsString> = vec!["accshift.exe".into(), "--flag".into(), "x y".into()];
-    let before = RefCell::new(false);
-    let error = process::restart(&control, Ok(PathBuf::from("app-binary")), &args, || {
-        *before.borrow_mut() = true
-    });
-    assert!(error.is_none());
-    assert!(*before.borrow());
+    let args: Vec<OsString> = vec!["--flag".into(), "x y".into()];
+    let calls = &control.calls;
+    let record = |step: &'static str| move || calls.borrow_mut().push(step.to_string());
+    process::restart(
+        &control,
+        Ok(PathBuf::from("app-binary")),
+        &args,
+        record("release"),
+        record("before_exit"),
+    )
+    .unwrap();
     assert_eq!(
         *control.calls.borrow(),
-        ["spawn:app-binary:--flag,x y", "exit:0"]
+        [
+            "release",
+            "spawn:app-binary:--flag,x y",
+            "before_exit",
+            "exit:0"
+        ]
     );
 
-    // A failed spawn is reported and the process still exits.
+    // A failed spawn is reported and the process stays.
     let failing = FakeProcess {
         fail_spawn: true,
         ..Default::default()
     };
-    let error = process::restart(&failing, Ok(PathBuf::from("app-binary")), &args, || {});
-    assert_eq!(error.unwrap().to_string(), "denied");
-    assert_eq!(failing.calls.borrow().last().unwrap(), "exit:0");
+    let error = process::restart(
+        &failing,
+        Ok(PathBuf::from("app-binary")),
+        &args,
+        || {},
+        || failing.calls.borrow_mut().push("before_exit".into()),
+    )
+    .unwrap_err();
+    assert_eq!(error.to_string(), "denied");
+    assert_eq!(*failing.calls.borrow(), ["spawn:app-binary:--flag,x y"]);
 
-    // No binary: no spawn, exit anyway.
+    // No binary: nothing is released, spawned or exited.
     let control = FakeProcess::default();
-    process::restart(&control, Err(std::io::Error::other("gone")), &args, || {});
-    assert_eq!(*control.calls.borrow(), ["exit:0"]);
+    let released = RefCell::new(false);
+    let error = process::restart(
+        &control,
+        Err(std::io::Error::other("gone")),
+        &args,
+        || *released.borrow_mut() = true,
+        || {},
+    )
+    .unwrap_err();
+    assert_eq!(error.to_string(), "gone");
+    assert!(control.calls.borrow().is_empty());
+    assert!(!*released.borrow());
 
     let control = FakeProcess::default();
     process::exit(&control, 3, || {});
@@ -914,27 +960,4 @@ fn the_boot_payload_is_fetched_cached_and_fills_the_registry() {
     backend.push("get_boot_payload", Err("boom"));
     assert!(cache.fetch(&backend, &mut registry).is_err());
     assert!(cache.get().is_some());
-}
-
-#[test]
-fn the_other_telemetry_calls_are_fire_and_forget() {
-    use accshift_app::lifecycle::boot::{
-        track_account_add_cancelled, track_account_add_started, track_account_added,
-        track_operation_failed,
-    };
-    let backend = support::scripted("demo");
-    track_account_add_started(&backend, "steam");
-    track_account_add_cancelled(&backend, "steam");
-    track_account_added(&backend, "riot");
-    track_operation_failed(&backend, "switch", "timeout", Some("steam"));
-    assert_eq!(
-        backend.calls("telemetry_track_account_add_started").len(),
-        1
-    );
-    assert_eq!(
-        backend.calls("telemetry_track_account_add_cancelled").len(),
-        1
-    );
-    assert_eq!(backend.calls("telemetry_track_account_added").len(), 1);
-    assert_eq!(backend.calls("telemetry_track_operation_failed").len(), 1);
 }

@@ -1,17 +1,15 @@
-//! Dynamic entry into a [`Backend`]: a command name and its arguments as the
-//! webview sends them (camelCase JSON), the result as the JSON it receives.
+//! Dynamic entry into a [`Backend`] for the tests: a command name and its
+//! arguments as camelCase JSON, the result as JSON. The app calls the typed
+//! methods; the parity tests walk every command by name.
 //!
-//! The UI calls the typed methods. This exists for the places that only have
-//! a name and a JSON object: the mock's parity tests, a scene harness, a debug
-//! bridge.
-//!
-//! Arguments are read leniently, like the TS mock handlers read theirs: a
-//! missing string is empty, a missing flag false, a missing number zero. The
-//! real Tauri command would reject the call instead.
+//! Arguments are read leniently: a missing string is empty, a missing flag
+//! false, a missing number zero.
 
-use crate::backend::Backend;
-use crate::error::{BackendError, BackendResult};
-use crate::types::{BulkEditRequest, CustomTheme, SettingsSnapshot};
+#![allow(dead_code)]
+
+use accshift_app::backend::Backend;
+use accshift_app::error::{BackendError, BackendResult};
+use accshift_app::types::{BulkEditRequest, CustomTheme, SettingsSnapshot};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
@@ -249,3 +247,83 @@ impl Args<'_> {
             .map_err(|e| BackendError::new(format!("invalid args: {e}")))
     }
 }
+
+/// Every command of [`Backend`], in trait order. The window commands
+/// (`minimize_window`, `toggle_maximize_window`, `close_window`,
+/// `set_maximize_button_rect`, `set_keep_backdrop_active`) are not in it,
+/// nor is `diagnostics`, which no frontend code calls.
+pub const COMMANDS: &[&str] = &[
+    "get_boot_payload",
+    "get_runtime_os",
+    "detect_streaming_software",
+    "migrate_legacy_config",
+    "load_client_storage_snapshot",
+    "save_client_storage_store",
+    "get_storage_manifest",
+    "log_app_event",
+    "finish_boot",
+    "pin_unlock",
+    "pin_lock",
+    "platform_get_accounts",
+    "platform_get_startup_snapshot",
+    "platform_get_current_account",
+    "platform_switch_account",
+    "platform_forget_account",
+    "platform_begin_setup",
+    "platform_get_setup_status",
+    "platform_cancel_setup",
+    "platform_get_path",
+    "platform_set_path",
+    "platform_select_path",
+    "platform_detect_installed",
+    "platform_set_account_label",
+    "platform_dry_run",
+    "reload_user_platforms",
+    "descriptor_select_file",
+    "descriptor_preview_file",
+    "descriptor_install_file",
+    "descriptor_remove",
+    "open_descriptors_folder",
+    "open_url",
+    "open_logs_folder",
+    "get_desktop_wallpaper",
+    "steam_set_api_key",
+    "steam_has_api_key",
+    "steam_open_api_key_page",
+    "steam_switch_account_and_launch_game",
+    "steam_get_profile_info",
+    "steam_get_profile_infos",
+    "steam_get_player_bans",
+    "steam_copy_game_settings",
+    "steam_get_copyable_games",
+    "steam_open_userdata",
+    "steam_clear_browser_cache",
+    "steam_bulk_edit",
+    "steam_get_account_games",
+    "cs2_bridge_get_settings",
+    "cs2_bridge_set_settings",
+    "cs2_bridge_fetch",
+    "cs2_bridge_check",
+    "cs2_bridge_test",
+    "riot_capture_profile",
+    "roblox_add_account_by_cookie",
+    "roblox_get_profile_info",
+    "roblox_check_sessions",
+    "list_custom_themes",
+    "save_custom_theme",
+    "delete_custom_theme",
+    "telemetry_get_state",
+    "telemetry_set_mode_a",
+    "telemetry_set_mode_b",
+    "telemetry_retry_forget",
+    "telemetry_complete_onboarding",
+    "telemetry_track_persona_switch",
+    "telemetry_track_account_added",
+    "telemetry_track_account_add_started",
+    "telemetry_track_account_add_cancelled",
+    "telemetry_track_operation_failed",
+    "telemetry_track_update",
+    "telemetry_track_settings_snapshot",
+    "telemetry_track_streamer_mode",
+    "telemetry_export",
+];

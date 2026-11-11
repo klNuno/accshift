@@ -10,11 +10,9 @@
 
 use super::inactivity::InactivityBlur;
 use super::pin::{
-    is_pin_locked_error, is_valid_pin_hash, lock_pin_session, sanitize_pin_digits,
-    unlock_pin_session, PinCheck, PIN_CODE_LENGTH,
+    is_valid_pin_hash, lock_pin_session, sanitize_pin_digits, unlock_pin_session, PinCheck,
+    PIN_CODE_LENGTH,
 };
-use super::window_activity::WindowActivity;
-use crate::error::BackendError;
 use crate::jobs::{Jobs, Pending, Poll};
 use crate::settings::AppSettings;
 use crate::stores::ClientStores;
@@ -39,18 +37,13 @@ pub struct WindowView {
     pub page_visible: bool,
 }
 
+/// A focused, visible window: the state before the shell reports one.
 impl Default for WindowView {
     fn default() -> Self {
-        Self::from(&WindowActivity::new())
-    }
-}
-
-impl From<&WindowActivity> for WindowView {
-    fn from(activity: &WindowActivity) -> Self {
         Self {
-            foreground: activity.is_foreground(),
-            minimized: activity.is_minimized(),
-            page_visible: activity.is_page_visible(),
+            foreground: true,
+            minimized: false,
+            page_visible: true,
         }
     }
 }
@@ -346,16 +339,6 @@ impl SecureScreen {
         }
     }
 
-    /// `handleAppDestroyed` (lines 278-293).
-    pub fn handle_app_destroyed(&mut self) {
-        self.afk_wave_stop_deadline = None;
-        self.retry_deadline = None;
-        if self.afk_listeners_attached {
-            self.blur.detach_listeners();
-        }
-        self.blur.stop();
-    }
-
     /// `handleSettingsClosed` (lines 253-259): the timer starts over.
     pub fn handle_settings_closed(&mut self, now: Instant) {
         self.blur.start(now, self.snap.inactivity_blur_seconds);
@@ -374,17 +357,6 @@ impl SecureScreen {
         }
         // The backend is locked already: no need to tell it.
         self.engage_lock(None);
-    }
-
-    /// `reportPinLockedError` (pinSession.ts lines 33-37) wired to this
-    /// screen: true when `error` was the PIN refusal, so the caller skips
-    /// its generic failure message.
-    pub fn report_backend_error(&mut self, error: &BackendError) -> bool {
-        if !is_pin_locked_error(error) {
-            return false;
-        }
-        self.handle_backend_locked();
-        true
     }
 
     // ------------------------------------------------------------ frame

@@ -17,6 +17,7 @@
   "update.readyToastVersion": "Update {version} ready",
   "update.readyToast": "Update ready",
   "update.restartFailed": "Could not restart to apply update",
+  "update.restartManually": "Update installed. Restart accshift to finish.",
   "pin.lockedTitle": "App Locked",
   "pin.lockedPrompt": "Enter PIN to unlock",
   "pin.placeholder": "4-digit PIN",

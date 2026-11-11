@@ -1,9 +1,6 @@
 //! The real backend: every command runs on `accshift-core` the way
 //! `src-tauri/src/commands` does, on the same app directories.
 //!
-//! Part 1 of the port filled boot, storage, themes, PIN, descriptors and
-//! utilities; part 2 filled platforms, Steam, the CS2 bridge, Riot, Roblox
-//! and telemetry. Every command of [`crate::COMMANDS`] is in [`PORTED`].
 //! The state the Tauri app keeps with `.manage(..)` (`BootState`,
 //! `PinSession`, the HTTP client, `TelemetryState`) lives in
 //! [`RealBackend`]. Window work (show, backdrop subclass, geometry, the boot
@@ -54,84 +51,6 @@ use std::time::Duration;
 /// Cross-process lock budget of every mutating command (`LOCK_TIMEOUT` in
 /// `src-tauri/src/commands/mod.rs`).
 pub const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
-
-/// The commands [`RealBackend`] runs for real: all of [`crate::COMMANDS`]
-/// since part 2.
-pub const PORTED: &[&str] = &[
-    "get_boot_payload",
-    "get_runtime_os",
-    "detect_streaming_software",
-    "migrate_legacy_config",
-    "load_client_storage_snapshot",
-    "save_client_storage_store",
-    "get_storage_manifest",
-    "log_app_event",
-    "finish_boot",
-    "pin_unlock",
-    "pin_lock",
-    "reload_user_platforms",
-    "descriptor_select_file",
-    "descriptor_preview_file",
-    "descriptor_install_file",
-    "descriptor_remove",
-    "open_descriptors_folder",
-    "open_url",
-    "open_logs_folder",
-    "get_desktop_wallpaper",
-    "list_custom_themes",
-    "save_custom_theme",
-    "delete_custom_theme",
-    "platform_get_accounts",
-    "platform_get_startup_snapshot",
-    "platform_get_current_account",
-    "platform_switch_account",
-    "platform_forget_account",
-    "platform_begin_setup",
-    "platform_get_setup_status",
-    "platform_cancel_setup",
-    "platform_get_path",
-    "platform_set_path",
-    "platform_select_path",
-    "platform_detect_installed",
-    "platform_set_account_label",
-    "platform_dry_run",
-    "steam_set_api_key",
-    "steam_has_api_key",
-    "steam_open_api_key_page",
-    "steam_switch_account_and_launch_game",
-    "steam_get_profile_info",
-    "steam_get_profile_infos",
-    "steam_get_player_bans",
-    "steam_copy_game_settings",
-    "steam_get_copyable_games",
-    "steam_open_userdata",
-    "steam_clear_browser_cache",
-    "steam_bulk_edit",
-    "steam_get_account_games",
-    "cs2_bridge_get_settings",
-    "cs2_bridge_set_settings",
-    "cs2_bridge_fetch",
-    "cs2_bridge_check",
-    "cs2_bridge_test",
-    "riot_capture_profile",
-    "roblox_add_account_by_cookie",
-    "roblox_get_profile_info",
-    "roblox_check_sessions",
-    "telemetry_get_state",
-    "telemetry_set_mode_a",
-    "telemetry_set_mode_b",
-    "telemetry_retry_forget",
-    "telemetry_complete_onboarding",
-    "telemetry_track_persona_switch",
-    "telemetry_track_account_added",
-    "telemetry_track_account_add_started",
-    "telemetry_track_account_add_cancelled",
-    "telemetry_track_operation_failed",
-    "telemetry_track_update",
-    "telemetry_track_settings_snapshot",
-    "telemetry_track_streamer_mode",
-    "telemetry_export",
-];
 
 /// See the module documentation. One per process: the PIN session, the boot
 /// state and the UI log cap are per instance.

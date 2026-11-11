@@ -17,6 +17,7 @@
   "update.readyToastVersion": "Mise à jour {version} prête",
   "update.readyToast": "Mise à jour prête",
   "update.restartFailed": "Impossible de redémarrer pour appliquer la mise à jour",
+  "update.restartManually": "Mise à jour installée. Redémarrez accshift pour terminer.",
   "pin.lockedTitle": "Application verrouillée",
   "pin.lockedPrompt": "Entre le PIN pour déverrouiller",
   "pin.placeholder": "PIN 4 chiffres",

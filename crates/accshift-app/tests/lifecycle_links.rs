@@ -775,6 +775,25 @@ fn a_second_instance_forwards_its_arguments_to_the_first() {
     }
 }
 
+/// The update relaunch frees the guard while the service still lives (the
+/// process exits without dropping it): the next launch must become the
+/// primary instead of forwarding to a process about to exit.
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn the_releaser_frees_the_name_before_the_service_drops() {
+    let identifier = test_identifier("release");
+    let first = match single_instance::acquire(&identifier, &["first.exe".into()], "", None) {
+        Launch::Primary(service) => service,
+        other => panic!("first launch: {other:?}"),
+    };
+    first.releaser()();
+    match single_instance::acquire(&identifier, &["relaunched.exe".into()], "", None) {
+        Launch::Primary(_) => {}
+        other => panic!("after release: {other:?}"),
+    }
+    drop(first);
+}
+
 /// The other process of [`a_second_process_reaches_the_first`]; it only runs
 /// when that test starts it.
 #[test]

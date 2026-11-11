@@ -17,39 +17,6 @@ use crate::storage::{
 use crate::text::Text;
 use crate::types::SettingsSnapshot;
 
-/// `semverCore`: the first `x.y.z` in the version, else the version.
-pub fn semver_core(version: &str) -> String {
-    let bytes = version.as_bytes();
-    for start in 0..bytes.len() {
-        if let Some(end) = match_triplet(bytes, start) {
-            return version[start..end].to_string();
-        }
-    }
-    version.to_string()
-}
-
-/// `\d+\.\d+\.\d+` anchored at `start`, greedy like the regex.
-fn match_triplet(bytes: &[u8], start: usize) -> Option<usize> {
-    let mut index = start;
-    for part in 0..3 {
-        let digits = bytes[index..]
-            .iter()
-            .take_while(|b| b.is_ascii_digit())
-            .count();
-        if digits == 0 {
-            return None;
-        }
-        index += digits;
-        if part < 2 {
-            if bytes.get(index) != Some(&b'.') {
-                return None;
-            }
-            index += 1;
-        }
-    }
-    Some(index)
-}
-
 /// The migration toast of `initializeAppShell`.
 pub fn migration_toast(migration_result: &str) -> Option<Toast> {
     if migration_result == "migrated" {
@@ -138,40 +105,6 @@ pub fn initial_load(registry: &PlatformRegistry, active_tab: &str, os: RuntimeOs
         InitialLoad::RefreshItems
     }
 }
-
-/// `initializeAppShell` in order, for the shell to run step by step.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ShellInitStep {
-    /// The migration toast, if any.
-    MigrationToast,
-    /// `applyCustomThemePayloads(boot.customThemes)`.
-    ApplyCustomThemes,
-    RefreshSettings,
-    /// `setAppVersion(semverCore(getVersion()))`.
-    SetAppVersion,
-    SetRuntimeOs,
-    /// [`first_run_platforms`], only without stored settings.
-    EnableDetectedPlatformsOnFirstRun,
-    /// `setActiveTab(initial_active_tab)` when it differs.
-    PickInitialTab,
-    MarkBootReady,
-    TrackSettingsSnapshot,
-    /// [`initial_load`].
-    InitialLoad,
-}
-
-pub const SHELL_INIT_ORDER: [ShellInitStep; 10] = [
-    ShellInitStep::MigrationToast,
-    ShellInitStep::ApplyCustomThemes,
-    ShellInitStep::RefreshSettings,
-    ShellInitStep::SetAppVersion,
-    ShellInitStep::SetRuntimeOs,
-    ShellInitStep::EnableDetectedPlatformsOnFirstRun,
-    ShellInitStep::PickInitialTab,
-    ShellInitStep::MarkBootReady,
-    ShellInitStep::TrackSettingsSnapshot,
-    ShellInitStep::InitialLoad,
-];
 
 /// `SETTINGS_TARGETS`.
 pub const SETTINGS_TARGETS: [&str; 2] = [CLIENT_STORE_SETTINGS, STORAGE_TARGET_CUSTOM_THEMES];

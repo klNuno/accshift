@@ -17,6 +17,7 @@
   "update.readyToastVersion": "Actualización {version} lista",
   "update.readyToast": "Actualización lista",
   "update.restartFailed": "No se pudo reiniciar para aplicar la actualización",
+  "update.restartManually": "Actualización instalada. Reinicia accshift para terminar.",
   "pin.lockedTitle": "Aplicación bloqueada",
   "pin.lockedPrompt": "Escribe el PIN para desbloquear",
   "pin.placeholder": "PIN de 4 dígitos",
