@@ -59,7 +59,7 @@ use accshift_app::folders::{FolderInfo, ItemKind};
 use accshift_app::i18n::Locale;
 use accshift_app::jobs::{Jobs, Pending, Poll};
 use accshift_app::lifecycle::app_shell::{
-    first_run_platforms, migration_toast, stores_reset_toast,
+    first_run_platforms, migration_toast, settings_snapshot, stores_reset_toast,
 };
 use accshift_app::menu::{
     build_context_menu_items, PlatformTask, SubmenuLoader, TaskEffect, TaskOutcome,
@@ -800,6 +800,13 @@ impl AppModel {
             self.mock.is_some(),
         );
         let persona_controller = personas::controller(&stores);
+        // One anonymous picture of the settings per launch. The telemetry
+        // queue drops it unless the user agreed to usage statistics.
+        let snapshot = settings_snapshot(stores.settings());
+        drop(
+            self.jobs
+                .run(move |backend| backend.telemetry_track_settings_snapshot(&snapshot)),
+        );
         self.booted = Some(Booted {
             runtime_os,
             stores,
@@ -902,12 +909,24 @@ impl AppModel {
         first_error.map_or(Ok(()), Err)
     }
 
-    /// Saves the stores asked for, through the job pool.
-    fn pump_saves(&mut self) {
+    /// Saves the stores asked for, through the job pool, and wakes the UI
+    /// for the next debounced write: without input nothing else draws a frame
+    /// at its deadline, and the change would wait for the next mouse move.
+    fn pump_saves(&mut self, ctx: &Context) {
+        let panel_deadline = self.settings_panel_deadline();
         let Some(b) = self.booted.as_mut() else {
             return;
         };
-        for save in b.stores.take_due_saves(Instant::now()) {
+        let now = Instant::now();
+        let next = [b.stores.next_save_due(), panel_deadline]
+            .into_iter()
+            .flatten()
+            .filter(|due| *due > now)
+            .min();
+        if let Some(due) = next {
+            ctx.request_repaint_after(due.saturating_duration_since(now));
+        }
+        for save in b.stores.take_due_saves(now) {
             let store_id = save.store_id;
             let pending = self
                 .jobs
@@ -961,7 +980,7 @@ impl AppModel {
         self.tick_settings_panel(&ctx, Instant::now());
         self.tick_theme_editor(Instant::now());
         self.tick_theme_import(&ctx, Instant::now());
-        self.pump_saves();
+        self.pump_saves(&ctx);
         // `had_keyboard_event`: a key without Ctrl, Alt or Meta sets it; a
         // press of any button that focuses an element clears it (mouse
         // focus), a press on nothing focusable (the background) leaves it.

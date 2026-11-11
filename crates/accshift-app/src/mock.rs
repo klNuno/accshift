@@ -122,6 +122,8 @@ struct MockState {
     setup_step: usize,
     /// `overrides.wallpaper`: what `get_desktop_wallpaper` answers.
     wallpaper: Option<Value>,
+    /// How many times each command was called, refused ones included.
+    seen: BTreeMap<String, usize>,
 }
 
 /// See the module documentation.
@@ -205,6 +207,7 @@ impl MockBackend {
                 setup: None,
                 setup_step: 0,
                 wallpaper: None,
+                seen: BTreeMap::new(),
             }),
             spec: file.spec,
         };
@@ -369,6 +372,12 @@ impl MockBackend {
         self.lock().pin_hash = pin_hash_of(settings);
     }
 
+    /// How many times `command` was called so far, whatever it answered: a
+    /// test's proof that the app sent something the mock refuses to fake.
+    pub fn seen(&self, command: &str) -> usize {
+        self.lock().seen.get(command).copied().unwrap_or(0)
+    }
+
     fn lock(&self) -> MutexGuard<'_, MockState> {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -415,7 +424,8 @@ impl MockBackend {
     /// `mockInvoke`: override, latency, handler; else the guard.
     fn call<T: DeserializeOwned>(&self, command: &str, args: Value) -> BackendResult<T> {
         let (failure, latency_ms) = {
-            let state = self.lock();
+            let mut state = self.lock();
+            *state.seen.entry(command.to_string()).or_default() += 1;
             (state.failures.get(command).cloned(), state.latency_ms)
         };
         if let Some(message) = failure {

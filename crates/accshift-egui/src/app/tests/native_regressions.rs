@@ -378,3 +378,50 @@ fn a_failed_boot_draws_its_error_instead_of_a_blank_window() {
     // Background, three texts, the button and its label.
     assert!(shapes >= 6, "boot error screen drew {shapes} shapes");
 }
+
+#[test]
+fn a_debounced_save_wakes_the_ui_at_its_deadline() {
+    // Regression: nothing asked for a frame when a debounced write fell due,
+    // so a change waited for the next input and was lost if the app ended.
+    let ctx = Context::default();
+    let (mut app, _) = external_app(&ctx);
+    pump_until(&mut app, &ctx, |a| {
+        a.booted().unwrap().stores.next_save_due().is_none()
+    });
+    // The idle app sleeps: nothing else would draw the frame of the write.
+    // A frame, and how long the app then sleeps without input.
+    let sleep_after_frame = |app: &mut AppModel| {
+        let mut output = ctx.run_ui(input(true, false), |ui| app.frame(ui));
+        output.textures_delta.clear();
+        output.viewport_output[&ViewportId::ROOT].repaint_delay
+    };
+    let settled = Instant::now() + std::time::Duration::from_secs(5);
+    while sleep_after_frame(&mut app) <= std::time::Duration::from_secs(1) {
+        assert!(Instant::now() < settled, "the idle app never settles");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    app.booted
+        .as_mut()
+        .unwrap()
+        .stores
+        .set_account_card_note("76561198000000001", "wake me");
+    let due = app.booted().unwrap().stores.next_save_due();
+    assert!(due.is_some(), "the note is a debounced write");
+
+    let delay = sleep_after_frame(&mut app);
+    assert!(
+        delay <= std::time::Duration::from_secs(1),
+        "no frame is scheduled for the write: {delay:?}"
+    );
+}
+
+#[test]
+fn a_boot_sends_the_settings_snapshot_once() {
+    // Regression: the event was ported and never sent.
+    let ctx = Context::default();
+    let (mut app, mock) = external_app(&ctx);
+    let sent = |mock: &MockBackend| mock.seen("telemetry_track_settings_snapshot");
+    pump_until(&mut app, &ctx, |_| sent(&mock) > 0);
+    frame(&mut app, &ctx, true, false);
+    assert_eq!(sent(&mock), 1);
+}
