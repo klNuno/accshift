@@ -16,7 +16,7 @@ use accshift_app::actions::keyboard::{
 use accshift_app::display::DisplayItem;
 use accshift_app::folders::{ItemKind, ItemRef};
 use accshift_app::stores::ViewMode;
-use egui::{Context, Event, Id, Key};
+use egui::{Context, Event, Id, Key, PointerButton};
 
 use super::platforms::RuntimeOs;
 use super::ui_scale::ZoomKey;
@@ -520,6 +520,34 @@ impl AppModel {
                 }
             }
         }
+    }
+
+    /// The mouse's back button, as a browser reads it: it leaves Settings or
+    /// Personas, else the current folder. A lock, a dialog, a menu, the
+    /// palette, the tour and bulk edit keep it for themselves and ignore it.
+    pub(super) fn dispatch_mouse_back(&mut self, ctx: &Context) {
+        let pressed = ctx.input(|i| {
+            i.events.iter().any(|event| {
+                matches!(
+                    event,
+                    Event::PointerButton {
+                        button: PointerButton::Extra1,
+                        pressed: true,
+                        ..
+                    }
+                )
+            })
+        });
+        if !pressed {
+            return;
+        }
+        match self.key_scope() {
+            KeyScope::Settings => self.close_settings_panel(),
+            KeyScope::Personas => self.apply_key(ctx, KeyAction::ClosePersonas),
+            KeyScope::App => self.apply(ctx, vec![Action::NavigateBack]),
+            _ => return,
+        }
+        ctx.request_repaint();
     }
 
     fn apply_key(&mut self, ctx: &Context, action: KeyAction) {

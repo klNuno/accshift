@@ -425,3 +425,52 @@ fn a_boot_sends_the_settings_snapshot_once() {
     frame(&mut app, &ctx, true, false);
     assert_eq!(sent(&mock), 1);
 }
+
+fn mouse_back(app: &mut AppModel, ctx: &Context) {
+    let mut raw = input(true, false);
+    raw.events.push(egui::Event::PointerButton {
+        pos: pos2(500.0, 400.0),
+        button: egui::PointerButton::Extra1,
+        pressed: true,
+        modifiers: Default::default(),
+    });
+    let mut output = ctx.run_ui(raw, |ui| app.frame(ui));
+    output.textures_delta.clear();
+}
+
+#[test]
+fn the_mouse_back_button_leaves_settings_then_the_folder() {
+    let ctx = Context::default();
+    let (mut app, _mock) = external_app(&ctx);
+    frame(&mut app, &ctx, true, false);
+    let folder = {
+        let b = app.booted.as_mut().unwrap();
+        let tab = b.nav.active_tab.clone();
+        let folder = b.stores.create_folder("Smurfs", None, &tab);
+        b.accounts
+            .navigate_to(&b.stores, &tab, Some(folder.id.clone()));
+        folder.id
+    };
+    let current = |app: &AppModel| {
+        let b = app.booted.as_ref().unwrap();
+        b.accounts
+            .navigation
+            .current_folder_id()
+            .map(str::to_string)
+    };
+
+    // Settings is open over the folder: back closes it and stays in the folder.
+    app.toggle_settings_panel();
+    mouse_back(&mut app, &ctx);
+    assert!(app.settings_panel.is_none(), "back closes Settings");
+    assert_eq!(current(&app), Some(folder.clone()));
+
+    // A dialog owns the pointer: back does nothing behind it.
+    app.dialogs.open_new_folder_dialog();
+    mouse_back(&mut app, &ctx);
+    assert_eq!(current(&app), Some(folder));
+    app.dialogs.close_input_dialog();
+
+    mouse_back(&mut app, &ctx);
+    assert_eq!(current(&app), None, "back leaves the folder");
+}

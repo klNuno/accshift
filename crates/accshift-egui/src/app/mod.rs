@@ -1063,6 +1063,7 @@ impl AppModel {
         // The window's `keydown` listener, before any component reads keys.
         self.track_card_focus(&ctx);
         self.dispatch_keys(&ctx);
+        self.dispatch_mouse_back(&ctx);
         self.mount_dialogs();
         self.track_bulk_paint(&ctx);
         let actions = {
