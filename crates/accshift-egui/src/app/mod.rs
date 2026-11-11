@@ -547,7 +547,10 @@ impl AppModel {
         let wake = ctx.clone();
         let jobs = Jobs::new(Arc::clone(&backend), 2, move || wake.request_repaint());
         let boot_job = Some(start_boot(&jobs));
-        crate::ui::text::install(ctx, false);
+        // A Chinese UI draws Han from its first frame: load those faces now
+        // rather than rebuild the fonts mid frame.
+        let zh = accshift_app::i18n::detect_preferred_locale(&preferred_languages()) == Locale::Zh;
+        crate::ui::text::install(ctx, zh);
         // Chromium hits exactly what is under the pointer: no 5 px slop.
         ctx.all_styles_mut(|style| style.interaction.interact_radius = 0.0);
         AppModel {
