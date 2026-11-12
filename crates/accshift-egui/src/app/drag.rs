@@ -315,7 +315,7 @@ mod tests {
     }
 
     #[test]
-    fn a_card_moved_forward_is_the_node_svelte_moves() {
+    fn a_card_moved_forward_is_the_one_that_moves() {
         assert!(each_moves(&keys("abcde"), &keys("acbde"), "b"));
         assert!(each_moves(&keys("abcde"), &keys("acdeb"), "b"));
     }

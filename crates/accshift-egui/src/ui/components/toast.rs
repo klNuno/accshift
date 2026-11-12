@@ -509,7 +509,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn svelte_cubic_out() {
+    fn cubic_out_eases_from_zero_to_one() {
         assert_eq!(cubic_out(0.0), 0.0);
         assert_eq!(cubic_out(1.0), 1.0);
         assert!((cubic_out(0.5) - 0.875).abs() < 1e-9);
