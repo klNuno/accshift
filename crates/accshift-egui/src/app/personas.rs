@@ -359,6 +359,7 @@ impl AppModel {
                 };
                 let effects = self.personas.switch.handle_switch_persona(
                     &mut self.dialogs,
+                    &b.accounts.registry,
                     &persona,
                     b.personas.switching(),
                     false,

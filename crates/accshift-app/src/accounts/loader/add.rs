@@ -12,19 +12,27 @@ impl AccountLoader {
         let platform_id = self.adapter_id.clone()?;
         self.adding = true;
         self.current_account.clear();
-        Some(AddTicket { platform_id })
+        Some(AddTicket {
+            platform_id,
+            epoch: self.add_epoch,
+        })
     }
 
     /// Lands an add. `platform_name` is the registry name for the "client
     /// missing" toast; `reload_after_add` is the adapter's flag.
     pub fn finish_add(
         &mut self,
-        _ticket: &AddTicket,
+        ticket: &AddTicket,
         result: Result<AddAccountResult, BackendError>,
         platform_name: &str,
         reload_after_add: bool,
         hooks: &dyn LoaderHooks,
     ) -> AddOutcome {
+        if ticket.epoch != self.add_epoch
+            || self.adapter_id.as_deref() != Some(ticket.platform_id.as_str())
+        {
+            return AddOutcome::Done;
+        }
         let result = match result {
             Ok(result) => result,
             Err(error) => {

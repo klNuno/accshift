@@ -117,6 +117,9 @@ pub fn color(s: &str) -> Option<Rgba> {
 
 /// The digits of `#rgb`, `#rgba`, `#rrggbb` or `#rrggbbaa`.
 fn hex_color(hex: &str) -> Option<Rgba> {
+    if !hex.is_ascii() {
+        return None;
+    }
     let digit = |i: usize| u8::from_str_radix(&hex[i..i + 1], 16).ok().map(|d| d * 17);
     let pair = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
     let (r, g, b, a) = match hex.len() {
@@ -494,6 +497,13 @@ mod tests {
         let c = color("rgb(0 0 0 / 0.32)").unwrap();
         assert!((c.a - 0.32).abs() < 1e-6);
         assert!((color("#00000080").unwrap().a - 128.0 / 255.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn non_ascii_hex_colours_are_rejected_without_panicking() {
+        for invalid in ["#中", "#éaa", "#中aaa", "#中aaaaa"] {
+            assert_eq!(color(invalid), None, "{invalid}");
+        }
     }
 
     #[test]

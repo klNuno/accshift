@@ -171,13 +171,20 @@ impl PersonaController {
         jobs: &Jobs,
         registry: &PlatformRegistry,
         settings: &AppSettings,
-        persona: Persona,
+        mut persona: Persona,
         account_switching: bool,
     ) -> bool {
         if self.switching.is_some() || account_switching {
             return false;
         }
         let steps = switch_steps(registry, &persona);
+        if steps.is_empty() {
+            return false;
+        }
+        // Only this switch's copy is filtered; the stored assignments stay.
+        persona
+            .assignments
+            .retain(|assignment| registry.definition(&assignment.platform_id).is_some());
         let settings = settings.clone();
         let pending =
             jobs.run(move |backend| switch_to_persona_blocking(backend, &steps, &settings));
@@ -266,12 +273,21 @@ impl PersonaSwitch {
     pub fn handle_switch_persona(
         &mut self,
         dialogs: &mut AppDialogs,
+        registry: &PlatformRegistry,
         persona: &Persona,
         personas_switching: bool,
         account_switching: bool,
     ) -> Vec<AppEffect> {
         let mut effects = Vec::new();
         if personas_switching || account_switching {
+            return effects;
+        }
+        let count = switch_steps(registry, persona).len();
+        if count == 0 {
+            effects.push(AppEffect::Toast(Toast::new(
+                Text::with("personas.switchFailed", [("name", persona.name.clone())]),
+                ToastKind::Error,
+            )));
             return effects;
         }
         let ticket = dialogs.request_confirm(
@@ -281,10 +297,7 @@ impl PersonaSwitch {
                     "personas.switchConfirmMessage",
                     [
                         ("name", TranslationValue::from(persona.name.clone())),
-                        (
-                            "count",
-                            TranslationValue::from(persona.assignments.len() as f64),
-                        ),
+                        ("count", TranslationValue::from(count as f64)),
                     ],
                 ),
                 confirm_label: Some(Text::key("personas.switchConfirmAction")),

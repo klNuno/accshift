@@ -123,6 +123,7 @@ pub struct SwitchOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddTicket {
     pub platform_id: String,
+    epoch: u64,
 }
 
 /// What [`AccountLoader::finish_add`] resolves to.
@@ -198,6 +199,7 @@ pub struct AccountLoader {
     current_account: String,
     loading: bool,
     adding: bool,
+    add_epoch: u64,
     switching: bool,
     switching_account_id: Option<String>,
     error: Option<String>,
@@ -409,7 +411,7 @@ impl AccountLoader {
         self.replace_warning_states(rest);
     }
 
-    /// Every load, run and switch in flight is dropped.
+    /// Invalidate loads, runs, adds and switches from the previous tab.
     pub fn clear_for_platform_change(&mut self) {
         self.latest_load_id += 1;
         self.bump_prime_run();
@@ -417,6 +419,9 @@ impl AccountLoader {
         self.set_accounts(Vec::new());
         self.current_account.clear();
         self.loading = true;
+        self.add_epoch += 1;
+        self.adding = false;
+        self.add_reload_load_id = None;
         self.error = None;
         self.switching = false;
         self.switching_account_id = None;
