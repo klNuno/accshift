@@ -267,7 +267,7 @@ mod tests {
     // PlatformError must therefore serialize as a plain JSON string (the
     // message), NOT as `{ kind, message }`.
     #[test]
-    fn platform_error_serializes_as_plain_string_for_the_webview() {
+    fn platform_error_serializes_as_plain_string() {
         let err = PlatformError::new(PlatformErrorKind::ClientRunning, "Steam is still running");
         let json = serde_json::to_string(&err).unwrap();
         assert_eq!(json, "\"Steam is still running\"");

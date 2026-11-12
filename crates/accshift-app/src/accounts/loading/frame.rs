@@ -176,6 +176,10 @@ impl AccountLoading {
                             .run(move |backend| steam_warnings::fetch(&job_plan, backend));
                         self.warnings
                             .push((ticket, WarningJob::SteamBans { plan, pending }));
+                        // Raised here and not at the end of the frame: a
+                        // fetch that ends before this frame polls it would
+                        // otherwise never show its toast.
+                        self.sync_ban_checking_toast(events);
                     }
                     None => {}
                 }
