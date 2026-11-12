@@ -1,4 +1,4 @@
-//! `src/lib/shared/components/ViewToggle.svelte`: grid or list.
+//! The view toggle: grid or list.
 //!
 //! `.view-toggle`: 30 px high, `--bg-muted`, radius 8, padding 2, gap 2.
 //! `.btn`: `padding: 0 8px` around a 14 px icon (30 px wide), full height
@@ -39,7 +39,7 @@ pub struct ViewToggleProps<'a> {
 }
 
 /// Draws the toggle with its border box at `rect` and returns the mode
-/// clicked this frame (`onChange`), if any.
+/// clicked this frame, if any.
 pub fn view_toggle(ui: &mut Ui, rect: Rect, props: &ViewToggleProps) -> Option<ViewMode> {
     let v = props.vars;
     let ppp = ui.ctx().pixels_per_point();

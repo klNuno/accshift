@@ -86,7 +86,8 @@ pub struct Scene {
     pub setup: Option<Vec<serde_json::Value>>,
     /// `wallpaper`: the desktop picture `get_desktop_wallpaper` answers.
     pub wallpaper: Option<SceneWallpaper>,
-    /// `clipboard`: the text `readText` answers with (empty by default).
+    /// `clipboard`: the text a clipboard read answers with (empty by
+    /// default).
     pub clipboard: String,
     /// The `html` fragment (resolved next to the scene file) and its text.
     pub html: Option<(PathBuf, String)>,
@@ -158,7 +159,7 @@ fn parse_step(v: &serde_json::Value) -> Result<Step, String> {
     if let Some(u) = o.get("deeplink") {
         return Ok(Step::DeepLink(u.as_str().ok_or_else(bad)?.to_owned()));
     }
-    // `ref.mjs` dumps the reference DOM there; nothing to do on this side.
+    // A step only the old reference side acted on: a no-op here.
     if o.contains_key("dom") {
         return Ok(Step::Wait(0.0));
     }

@@ -34,8 +34,8 @@ fn text_field_key() -> egui::Id {
 }
 
 /// A text field calls this while it holds focus, so the keyboard
-/// dispatcher reads `isEditableTarget` as the DOM does. The field also
-/// keeps the arrows and Escape: a DOM input moves its caret on the first
+/// dispatcher knows an editable field has focus. The field also
+/// keeps the arrows and Escape: a text input moves its caret on the first
 /// and keeps focus on the second, where egui would move or drop focus
 /// before anything reads the key. Tab still leaves it.
 pub fn mark_text_field(ctx: &egui::Context, id: egui::Id) {

@@ -1,5 +1,5 @@
-//! `PersonaWizard.svelte`'s markup and styles, in place of the personas grid
-//! inside `.personas-panel` (padding 18 22 24, its own scroll).
+//! The persona wizard, drawn in place of the personas grid inside the
+//! personas panel (padding 18 22 24, its own scroll).
 //!
 //! - `.wizard`: a column, gap 14, `page-entrance` (200 ms ease-out).
 //! - `.head`: a row, centred, gap 14: the back button (32 px, radius 8,
@@ -81,7 +81,7 @@ const AVATAR: f32 = 34.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Stay,
-    /// `onCancel`: the grid comes back.
+    /// Cancel: the grid comes back.
     Close,
     /// `save()` with a valid form.
     Save,
@@ -338,7 +338,7 @@ fn contents(
     let at = |r: Rect| r.translate(origin.to_vec2());
     let mut outcome = Outcome::Stay;
 
-    // Back: closes the picker, else `requestCancel`.
+    // Back: closes the picker, else asks to leave the wizard.
     let armed = wizard.picking.is_none() && wizard.armed(now);
     if let Some(at) = wizard.armed_at.filter(|_| armed) {
         let left = crate::app::persona_wizard::DISARM_AFTER - (now - at);

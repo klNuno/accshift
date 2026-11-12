@@ -1,9 +1,8 @@
-//! The mock clock of the reference app.
+//! The app clock, pinned for the mock scenes.
 //!
-//! The Tauri mock pins `Date.now()` and an argument-less `new Date()` to the
-//! scenario's `NOW` when the document starts, then lets them advance with
-//! `performance.now()` (`PIN_CLOCK` in `parity/harness.mjs`). The egui side
-//! does the same, so relative times ("2 days ago") read the same in both.
+//! A mock scenario pins the time to its `NOW` at start, then lets it advance
+//! with the monotonic clock, so relative times ("2 days ago") read the same
+//! on every run.
 
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 

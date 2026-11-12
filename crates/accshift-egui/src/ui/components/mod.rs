@@ -1,5 +1,4 @@
-//! One module per Svelte component, same name in snake_case
-//! (`TitleBar.svelte` is `title_bar.rs`).
+//! One module per UI component.
 //!
 //! A component is a plain function `fn x(ui, rect, &props) -> Vec<Action>`
 //! (or a struct with `show`): it reads its props and the [`Vars`], keeps its
@@ -56,7 +55,7 @@ fn click_eaten_id() -> egui::Id {
     egui::Id::unique("drag-eats-click")
 }
 
-/// `handleCaptureClick`: the drag manager swallows the click a drag release
+/// The drag manager swallows the click a drag release
 /// fires, before any card sees it. Set for the release's frame only.
 pub fn set_click_eaten(ctx: &egui::Context, eaten: bool) {
     ctx.data_mut(|d| d.insert_temp(click_eaten_id(), eaten));
@@ -71,7 +70,7 @@ pub fn clicked(response: &egui::Response) -> bool {
             .unwrap_or(false)
 }
 
-/// `ghostEl`: a click-through layer over everything at `r`, scaled about its
+/// The drag ghost: a click-through layer over everything at `r`, scaled about its
 /// centre, its contents faded to `opacity` as one group (a layer where the
 /// renderer has them, each shape where it has not). The cards under it keep
 /// the pointer.

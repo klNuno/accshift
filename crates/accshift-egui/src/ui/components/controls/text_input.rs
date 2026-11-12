@@ -5,7 +5,7 @@
 //!   `border-radius: 8px`, `background: var(--bg-input)`, 12 px `--fg`,
 //!   `padding: 9px 10px`, no outline; focus tints the border to
 //!   `color-mix(--fg-muted 55%, --border)`;
-//! - `.input` of `InputDialog.svelte`: `--border-width` in `--border`,
+//! - `.input` of the input dialog: `--border-width` in `--border`,
 //!   `border-radius: 4px`, `background: var(--bg-solid)`, 13 px,
 //!   `padding: 8px 10px`; focus turns the border `--bg-elevated`.
 //!
@@ -96,7 +96,7 @@ pub fn settings_style(v: &Vars) -> FieldStyle {
     }
 }
 
-/// `.input` of `InputDialog.svelte` (caret measured on WebView2: 17 px at
+/// `.input` of the input dialog (caret measured on WebView2: 17 px at
 /// 1x, 26 device px at 1.5x).
 pub fn dialog_style(v: &Vars) -> FieldStyle {
     FieldStyle {

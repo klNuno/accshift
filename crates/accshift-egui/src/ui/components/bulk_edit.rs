@@ -1,5 +1,5 @@
-//! `BulkEditBar.svelte` (Steam), drawn by `AppDialogs` after the confirm
-//! dialog. Two steps, each mounted fresh:
+//! The bulk edit bar (Steam), drawn after the confirm dialog. Two steps,
+//! each built fresh:
 //!
 //! ```text
 //! .bar          fixed bottom, --z-sticky, --bg-overlay, 1px top --border,
@@ -45,7 +45,7 @@ use crate::ui::text::{self, LineHeight, TextAlign, TextStyle};
 /// The root id; each step mounts under `.with((step, mount))`.
 pub const BULK_ID: &str = "accshift-bulk-edit";
 /// Where the bar and its popover were drawn, for the paint gesture's
-/// `elementFromPoint`: a point over them hits no card.
+/// hit test: a point over them hits no card.
 pub const COVER_ID: &str = "accshift-bulk-edit/cover";
 
 /// `slideUp 120ms ease-out`.
@@ -85,7 +85,7 @@ pub struct BulkProps<'a> {
     pub bar: &'a BulkEditBar,
     /// `selectedIds.size`.
     pub selected: usize,
-    /// `activeAccountSelected`: the warning shows.
+    /// The active account is selected: the warning shows.
     pub active_selected: bool,
     /// `--accent-fg`, Next's and Apply's text.
     pub accent_fg: Rgba,
@@ -104,7 +104,7 @@ pub enum BulkEvent {
     ToggleColorMenu,
     /// A swatch: the preset colour, empty for none.
     Color(String),
-    /// Cancel: `onClose`.
+    /// Cancel: the mode closes.
     Close,
     Next,
     /// Back, or a click on the overlay.
@@ -117,10 +117,10 @@ pub enum BulkEvent {
     LaunchInput(String),
     AddLaunchOption,
     RemoveLaunchOption(String),
-    /// A primary press anywhere (`handleWindowPointerDown`), and whether it
+    /// A primary press anywhere, and whether it
     /// landed in the colour wrap.
     PointerDown(bool),
-    /// Escape (`handleOverlayKeydown`).
+    /// Escape.
     Escape,
 }
 
@@ -434,7 +434,7 @@ pub fn bar(ui: &mut Ui, props: &BulkProps) -> Vec<BulkEvent> {
     }
     ctx.data_mut(|d| d.insert_temp(Id::unique(COVER_ID), cover));
 
-    // `handleWindowPointerDown`: the colour wrap is the button and the
+    // A press anywhere: the colour wrap is the button and the
     // popover.
     if let Some(pos) = ctx.input(|i| {
         i.pointer
@@ -446,7 +446,7 @@ pub fn bar(ui: &mut Ui, props: &BulkProps) -> Vec<BulkEvent> {
         events.push(BulkEvent::PointerDown(inside));
     }
 
-    // `slideUp`: from `translateY(100%)` and transparent.
+    // The bar slides up: from `translateY(100%)` and transparent.
     let ramp = Keyframes::from_to(0.0f32, 1.0);
     let k = anim::animate(&ctx, id.with("slide"), &ramp, &SLIDE_UP, 1.0);
     let transform = TSTransform::from_translation(vec2(0.0, bar_h * (1.0 - k)));

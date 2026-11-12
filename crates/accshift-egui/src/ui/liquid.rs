@@ -1,8 +1,7 @@
-//! The Liquid Glass glaze of `app.css` (`html[data-theme="liquid-glass"]`):
-//! the shell's inset highlights, the wallpaper layer of `.liquid-backdrop`,
-//! the rim lens of `.app-shell::before` and the sheen of `.app-shell::after`.
+//! The Liquid Glass glaze: the shell's inset highlights, the wallpaper
+//! layer, the rim lens and the sheen.
 //!
-//! The SVG filters of `App.svelte` run here on the CPU. The rim's
+//! Its SVG-style distortion filters run here on the CPU. The rim's
 //! `backdrop-filter: url(#lg-distortion) blur(2px) saturate(1.4)` reads what
 //! the shell painted under it (its fill, the inset highlights, the
 //! wallpaper layer): the filter's turbulence, blurred, displaces that
@@ -66,7 +65,7 @@ const MASK_END: f32 = 26.0;
 /// `.liquid-backdrop { inset: -40px }`.
 const BLEED: f32 = 40.0;
 
-/// One SVG filter of `App.svelte`: `feTurbulence` (fractal noise),
+/// One distortion filter: `feTurbulence` (fractal noise),
 /// `feGaussianBlur` on it, `feDisplacementMap` of the source by its red and
 /// green, then the CSS `blur()` (or the filter's own last blur) and
 /// `saturate()`. Lengths in CSS px.

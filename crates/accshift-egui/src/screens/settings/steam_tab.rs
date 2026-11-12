@@ -1,5 +1,4 @@
-//! The Steam tab: `SteamSettingsTab.svelte`, `SteamSettingsSection.svelte`
-//! and `Cs2BridgeSettings.svelte`.
+//! The Steam tab, with its CS2 bridge card.
 //!
 //! ```text
 //! .settings-grid
@@ -100,7 +99,7 @@ pub enum Item {
     },
 }
 
-/// `resolvePathPlaceholder` over the registry's Steam placeholders.
+/// The Steam folder placeholder for this system.
 fn path_placeholder(os: RuntimeOs) -> &'static str {
     match os {
         RuntimeOs::Linux => "~/.local/share/Steam",

@@ -1,13 +1,11 @@
-//! The updater: `createAppUpdater` (`useAppUpdater.svelte.ts`) wired the way
-//! `App.svelte` wires it. The check starts [`UPDATE_CHECK_DELAY`] after
-//! mount; a downloaded update puts "restart to update" in the title bar and
+//! The updater flow of `accshift-app` wired into the app. The check starts
+//! [`UPDATE_CHECK_DELAY`] after start; a downloaded update puts "restart to
+//! update" in the title bar and
 //! the command palette, and a click installs it.
 //!
 //! Each blocking half (check, download, install, relaunch) runs on a thread
-//! of its own, as the plugin's async commands ran beside the IPC lanes: a
-//! download must not hold one of the two job workers. Mock and scene runs
-//! never start the flow, as `import.meta.env.DEV` kept the dev server's
-//! page from it; neither does a debug build.
+//! of its own: a download must not hold one of the two job workers. Mock and
+//! scene runs never start the flow; neither does a debug build.
 
 use std::ffi::OsStr;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -35,7 +33,7 @@ pub(super) struct Updates {
     flow: AppUpdater<Update>,
     /// `UpdaterBuilder::build`; its error is what `check()` rejects with.
     updater: Result<Arc<Updater>, String>,
-    /// When the `setTimeout` of `onMount` fires.
+    /// When the first check is due.
     due: Option<Instant>,
     /// The command in flight. `None` from a relaunch that went through
     /// (the process is gone by then) or a command that needs no answer.
@@ -69,7 +67,8 @@ impl Updates {
         }
     }
 
-    /// `ctaLabel`, `ctaTitle` and `ctaDisabled`.
+    /// The title bar button: its label, its tooltip, and whether it is
+    /// disabled.
     pub(super) fn cta(&self) -> Option<(Text, Text, bool)> {
         self.flow
             .cta_label()
@@ -145,9 +144,9 @@ impl ApplyHost for Apply {
     }
 }
 
-/// `console.error(prefix, error)` through main.ts: the first argument is
-/// the message, the rest is serialized as an object of indices
-/// (`redactObject` on the array).
+/// Logs an updater error under `frontend.console.error`: the text before
+/// the first `": "` is the message, the rest goes in the details as an
+/// object of indices.
 fn console_error(backend: &dyn accshift_app::backend::Backend, line: &str) {
     let (message, details) = match line.split_once(": ") {
         Some((head, error)) => (
@@ -203,7 +202,7 @@ impl AppModel {
         }
     }
 
-    /// `handleApplyUpdate`: never while an account or persona switch runs,
+    /// Installs the update: never while an account or persona switch runs,
     /// a relaunch would cut it mid-step.
     pub(super) fn apply_update(&mut self, ctx: &Context) {
         let switching = self.booted.as_ref().is_some_and(|b| {
@@ -233,8 +232,7 @@ impl AppModel {
                     self.toasts
                         .push(Toast::new(text, ToastKind::Default), Instant::now());
                 }
-                // main.ts forwards `console.error` to the log, not
-                // `console.info`.
+                // Only errors reach the log.
                 UpdateOutput::Log { level, message } => {
                     if level == LogLevel::Error {
                         console_error(&*self.backend, &message);
@@ -246,8 +244,8 @@ impl AppModel {
         ctx.request_repaint();
     }
 
-    /// Hands `command` to a thread. An install runs `beforeRelaunch` here
-    /// first (`flushAppState`): its error fails the install as TS did.
+    /// Hands `command` to a thread. An install first flushes the app state
+    /// here: its error fails the install.
     fn run_update_command(&mut self, ctx: &Context, command: UpdateCommand<Update>) {
         if matches!(command, UpdateCommand::Install { .. }) {
             if let Err(error) = self.flush_app_state() {

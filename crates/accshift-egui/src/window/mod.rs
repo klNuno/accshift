@@ -1,8 +1,8 @@
-//! The main window of a normal run, driven as src-tauri/src/boot.rs drives
-//! Tauri's: built hidden where the saved geometry puts it ([`placement`],
+//! The main window of a normal run: built hidden where the saved geometry
+//! puts it ([`placement`],
 //! [`frame`]), shown once boot completes or after the 5 s failsafe, its
 //! geometry saved 700 ms after the last move and once more on close, its
-//! OS backdrop following the theme (`applyWindowBackdrop`), and the second
+//! OS backdrop following the theme, and the second
 //! launches the single instance hands over ([`Host::second_launches`]).
 //!
 //! Scenes and the bench keep their own cloaked window and never come here.
@@ -27,10 +27,10 @@ use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// boot.rs `GEOMETRY_SAVE_DEBOUNCE`.
+/// How long after the last move the geometry is saved.
 pub const GEOMETRY_SAVE_DEBOUNCE: Duration = Duration::from_millis(700);
 
-/// boot.rs `WindowGeometry`: the inner size and outer origin, logical.
+/// The window's inner size and outer origin, logical.
 /// The origin is `None` where the platform hides it (Wayland): the size is
 /// still saved and the stored origin kept.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -42,7 +42,7 @@ pub struct Geometry {
 }
 
 impl Geometry {
-    /// boot.rs `current_geometry`: nothing from a maximized window (it would
+    /// Nothing from a maximized window (it would
     /// store the screen as the restored size) or a minimized one (parked at
     /// -32000).
     pub fn read(
@@ -65,7 +65,7 @@ impl Geometry {
     }
 }
 
-/// boot.rs `PENDING_GEOMETRY` and `GEOMETRY_SAVER_RUNNING`.
+/// The geometry waiting to be saved, and whether a save thread runs.
 #[derive(Default)]
 struct Saver {
     pending: Mutex<Option<Geometry>>,
@@ -170,10 +170,10 @@ pub struct Host {
     /// the failsafe repaint loop stops.
     start_hidden: bool,
     saver: Arc<Saver>,
-    /// `appliedKey` of backdrop.ts.
+    /// The key of the backdrop last applied.
     backdrop: Option<String>,
     /// The single-instance service, held for the whole run: dropping it is
-    /// the plugin's `destroy`.
+    /// its release.
     single: Option<SingleInstance>,
     /// This launch's own `accshift://` argument, until the app takes it.
     launch_url: Option<String>,
@@ -234,13 +234,10 @@ impl Host {
         self
     }
 
-    /// The single-instance callback of src-tauri/src/lib.rs, built with the
-    /// plugin's `deep-link` feature, for each launch handed over since the
-    /// last frame. A lone `accshift://` argument goes to the deep-link
-    /// plugin first (`on_open_url`: the log line, the usage counter, the
-    /// window shown), then the callback logs the redirect and shows the
-    /// window, both only once boot completed. Returns the URLs for the
-    /// page's `onOpenUrl`.
+    /// Each launch handed over by the single instance since the last frame.
+    /// A lone `accshift://` argument is a deep link: the log line, the usage
+    /// counter, the window shown; then the redirect is logged and the window
+    /// shown, both only once boot completed. Returns the deep-link URLs.
     pub fn second_launches(&self, ctx: &egui::Context) -> Vec<String> {
         let Some(single) = &self.single else {
             return Vec::new();
@@ -291,10 +288,10 @@ impl Host {
         );
     }
 
-    /// `applyWindowBackdrop`, when the theme's material changes: acrylic
+    /// When the theme's material changes: acrylic
     /// (tinted for Glass Dark) for the glass themes, every effect cleared
     /// otherwise, Liquid Glass included; DWM kept drawing the acrylic of an
-    /// unfocused window (`set_keep_backdrop_active`).
+    /// unfocused window.
     pub fn apply_backdrop(&mut self, backdrop: &WindowBackdrop) {
         let key = backdrop.key();
         if self.backdrop.as_deref() == Some(key.as_str()) {
@@ -315,7 +312,7 @@ impl Host {
                     true
                 }
                 _ => {
-                    // tauri `clear_effects`.
+                    // Every effect cleared.
                     let _ = window_vibrancy::clear_blur(&window);
                     let _ = window_vibrancy::clear_acrylic(&window);
                     let _ = window_vibrancy::clear_mica(&window);
@@ -396,14 +393,14 @@ impl Host {
         self.shown
     }
 
-    /// boot.rs `geometry_save_allowed`: a window moved or closed before
+    /// A window moved or closed before
     /// boot completed never got its saved geometry, so saving would replace
     /// the real one with the default.
     fn save_allowed(&self) -> bool {
         self.backend.boot_state().is_completed()
     }
 
-    /// boot.rs `queue_window_geometry_save`, on every move: the last
+    /// On every move: the last
     /// geometry lands 700 ms after the moves stop, off the UI thread.
     pub fn moved(&self, geometry: Option<Geometry>) {
         if !self.save_allowed() {
@@ -439,7 +436,7 @@ impl Host {
         });
     }
 
-    /// boot.rs `spawn_window_geometry_save`, first step of the close: the
+    /// First step of the close: the
     /// save runs on its own thread (the config lock may wait 5 s on the
     /// CLI); the receiver says when it landed. `None`: nothing queued.
     pub fn start_close_save(&self, geometry: Option<Geometry>) -> Option<Receiver<()>> {

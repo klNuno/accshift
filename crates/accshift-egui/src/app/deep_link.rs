@@ -1,6 +1,5 @@
-//! Deep links: `createDeepLinkController` (`useDeepLink.svelte.ts`) wired
-//! the way `App.svelte` wires it. The controller is the one of
-//! `accshift-app` ([`DeepLinkController`]); this module answers its actions
+//! Deep links: the controller of `accshift-app` ([`DeepLinkController`])
+//! wired into the app. This module answers its actions
 //! with the app's own: the confirm dialog, the tab change, the loads and the
 //! switch.
 //!
@@ -9,8 +8,7 @@
 //! through [`AppModel::open_urls`].
 //!
 //! The controller is polled once boot finished, since its view reads the
-//! stores; a link that comes earlier waits for it, as `waitUntil(isBootReady)`
-//! does.
+//! stores; a link that comes earlier waits for it.
 
 use std::time::{Duration, Instant};
 
@@ -31,14 +29,14 @@ use super::{Action, AppModel};
 
 /// What the controller's last action waits for.
 enum Waiting {
-    /// `loadPlatformAccounts(platformId)`.
+    /// The accounts of one platform.
     PlatformAccounts(Pending<BackendResult<Vec<PlatformAccount>>>),
-    /// `loadAccounts(true)` on the visible tab: answered once no load is in
-    /// flight, whether it landed or failed (the TS promise settles either way).
+    /// A silent reload of the visible tab: answered once no load is in
+    /// flight, whether it landed or failed.
     Reload,
-    /// `confirmSwitch`: the confirm dialog's ticket.
+    /// The switch confirm: the confirm dialog's ticket.
     Confirm(ConfirmTicket),
-    /// `switchToAccount`: the switch of this account id.
+    /// The switch of this account id.
     Switch(String),
 }
 
@@ -50,7 +48,7 @@ pub(super) struct DeepLinks {
 }
 
 impl DeepLinks {
-    /// `deepLink.start()` from `onMount`.
+    /// The controller, started.
     pub(super) fn started() -> Self {
         let mut links = Self::default();
         links.controller.start();
@@ -74,12 +72,12 @@ fn account_label(account: &PlatformAccount) -> String {
 /// What the controller is answered with, or why it stops.
 enum Step {
     Answer(DeepLinkAnswer),
-    /// `handleUrl`'s `catch`: the work in flight threw.
+    /// The work in flight failed.
     Fail,
 }
 
 impl AppModel {
-    /// `onOpenUrl`'s handler: each URL goes to `handleUrl`.
+    /// Hands each URL to the controller.
     pub fn open_urls(&mut self, ctx: &Context, urls: &[String]) {
         self.deep_links.controller.on_urls(urls, Instant::now());
         ctx.request_repaint();
@@ -134,7 +132,7 @@ impl AppModel {
         }
     }
 
-    /// A settled confirm: `confirmSwitch`'s answer, when it asked.
+    /// A settled confirm: the switch confirm's answer, when it asked.
     pub(super) fn settle_deep_link_confirm(
         &mut self,
         ctx: &Context,
@@ -149,7 +147,7 @@ impl AppModel {
         self.step_deep_link(ctx, Step::Answer(DeepLinkAnswer::Confirmed(allowed)));
     }
 
-    /// A finished switch: `switchToAccount`'s answer, when it ran it.
+    /// A finished switch: the switch's answer, when it ran it.
     pub(super) fn deep_link_switch_finished(
         &mut self,
         ctx: &Context,
@@ -194,7 +192,8 @@ impl AppModel {
         run(&mut self.deep_links.controller, &view)
     }
 
-    /// The deps of `createDeepLinkController` in `App.svelte`.
+    /// Runs the controller's actions with the app's own dialogs, loads and
+    /// switch.
     fn apply_deep_link_actions(&mut self, ctx: &Context, actions: Vec<DeepLinkAction>) {
         for action in actions {
             match action {
@@ -212,7 +211,7 @@ impl AppModel {
                     });
                     match job {
                         Some(job) => self.deep_links.waiting = Some(Waiting::PlatformAccounts(job)),
-                        // `ensurePlatformLoaded` found no adapter: `[]`.
+                        // No adapter for the platform: no accounts.
                         None => self.step_deep_link(
                             ctx,
                             Step::Answer(DeepLinkAnswer::PlatformAccounts(Vec::new())),

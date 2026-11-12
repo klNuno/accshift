@@ -24,7 +24,7 @@ compile_error!("the `software` feature is the only renderer: keep the default fe
 
 /// What the runner drives: the current screen plus the optional scene run.
 /// The window is cleared to transparent so the OS backdrop shows through the
-/// theme's window fill, like the Tauri window.
+/// theme's window fill.
 pub struct Shell {
     pub screen: Screen,
     pub scenes: Option<harness::SceneRun>,
@@ -108,9 +108,8 @@ impl Shell {
         self.window.as_mut().is_none_or(|host| host.take_show(now))
     }
 
-    /// boot.rs `install_window_event_handlers`, `Moved`. True when the
-    /// frame must be painted again: the Liquid Glass wallpaper follows the
-    /// window (`onMoved` then `realign`).
+    /// The window moved. True when the frame must be painted again: the
+    /// Liquid Glass wallpaper follows the window.
     pub fn window_moved(&self, geometry: Option<window::Geometry>) -> bool {
         if let Some(host) = &self.window {
             host.moved(geometry);

@@ -1,9 +1,9 @@
-//! Where the main window opens, in physical pixels: `build_main_window`
-//! (src-tauri/src/boot.rs) through tauri-runtime-wry 2.11 `create_window`
-//! (`prevent_overflow_with_margin`, `center`) and tao 0.35 `init` (the
-//! target monitor, the frame around the client area), then the moves boot.rs
-//! makes on the hidden window (the saved physical origin, the recentring
-//! when no monitor shows it).
+//! Where the main window opens, in physical pixels: the start size and
+//! origin (kept inside the work area, centred when nothing is saved), the
+//! target monitor and the frame around the client area, then the moves made
+//! on the hidden window (the saved physical origin, the recentring when no
+//! monitor shows it). The rules are the ones the previous builds placed the
+//! window with, so an upgrade opens where it closed.
 //!
 //! Pure, so every branch is tested without a display; [`super::frame`]
 //! feeds it the monitors and applies the result.
@@ -12,7 +12,7 @@ use accshift_core::config::{
     SavedWindow, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH,
 };
 
-/// boot.rs `WORK_AREA_MARGIN`: room left between the start size and the
+/// Room left between the start size and the
 /// work area, so a window that barely fits does not read as maximized.
 pub const WORK_AREA_MARGIN: f64 = 32.0;
 
@@ -47,7 +47,7 @@ impl Rect {
         Self::at(x, y, self.width(), self.height())
     }
 
-    /// boot.rs `Rect::overlaps`: touching edges do not count.
+    /// Touching edges do not count.
     pub fn overlaps(&self, other: &Self) -> bool {
         self.left < other.right
             && self.right > other.left
@@ -82,14 +82,14 @@ pub struct Monitor {
 }
 
 impl Monitor {
-    /// tao `dpi_to_scale_factor`.
+    /// The monitor's scale factor, from its DPI.
     pub fn scale(&self) -> f64 {
         self.dpi as f64 / 96.0
     }
 }
 
-/// The hidden frame tao keeps around the client area of an undecorated
-/// window with a shadow (`calculate_insets_for_dpi`); all zero without it.
+/// The hidden frame kept around the client area of an undecorated window
+/// with a shadow; all zero without it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Insets {
     pub left: i32,
@@ -123,7 +123,7 @@ fn to_physical(value: f64, scale: f64) -> i32 {
     (value * scale).round() as i32
 }
 
-/// tauri-runtime-wry `find_monitor_for_position`: the first monitor whose
+/// The first monitor whose
 /// whole area holds the logical origin, read at that monitor's scale.
 fn monitor_for_position(monitors: &[Monitor], (x, y): (f64, f64)) -> Option<&Monitor> {
     monitors.iter().find(|m| {
@@ -136,7 +136,7 @@ fn primary(monitors: &[Monitor]) -> Option<&Monitor> {
     monitors.iter().find(|m| m.primary).or(monitors.first())
 }
 
-/// tauri-runtime-wry `calculate_window_center_position`.
+/// The origin that centres a `width` by `height` window in `work`.
 fn center_in(work: &Rect, width: i32, height: i32) -> (i32, i32) {
     (
         (work.width() - width) / 2 + work.left,
@@ -145,13 +145,13 @@ fn center_in(work: &Rect, width: i32, height: i32) -> (i32, i32) {
 }
 
 /// The outer rect the window is created with. `None` for the origin means
-/// tao's `CW_USEDEFAULT`: the system picks it, as it does for winit.
+/// `CW_USEDEFAULT`: the system picks it, as it does for winit.
 pub struct Start {
     pub origin: Option<(i32, i32)>,
     pub size: (i32, i32),
 }
 
-/// The builder and tao's `init`: start size and origin from the saved
+/// The start size and origin from the saved
 /// geometry (or the default size, centred on the primary monitor), shrunk
 /// to fit the work area less [`WORK_AREA_MARGIN`], plus the frame `insets`
 /// of the monitor the window lands on. `None` when no monitor is known.
@@ -167,8 +167,7 @@ pub fn start(
     let mut size = Size::Logical(width, height);
     let mut position = saved.position;
 
-    // tauri-runtime-wry `create_window`: no decorations, so the window's
-    // size is its inner size there.
+    // No decorations, so the window's size is its inner size here.
     let monitor = match position {
         Some(p) => monitor_for_position(monitors, p),
         None => Some(primary),
@@ -189,7 +188,7 @@ pub fn start(
         }
     }
 
-    // tao `init`: the first monitor holding the origin, the left frame
+    // The first monitor holding the origin, the left frame
     // allowed to hang off its left edge.
     let target = position.and_then(|(x, y)| {
         monitors.iter().find_map(|m| {
@@ -217,7 +216,7 @@ pub fn start(
     })
 }
 
-/// boot.rs `window_sits_on_a_monitor`: the window overlaps some work area.
+/// The window overlaps some work area.
 /// No monitors at all is no evidence against where it sits.
 pub fn sits_on_a_monitor(outer: &Rect, monitors: &[Monitor]) -> bool {
     monitors.is_empty() || monitors.iter().any(|m| outer.overlaps(&m.work))
@@ -237,7 +236,7 @@ fn nearest<'a>(outer: &Rect, monitors: &'a [Monitor]) -> Option<&'a Monitor> {
         .min_by_key(|m| outer.distance_squared(&m.rect))
 }
 
-/// What boot.rs does to the built, still hidden window: the saved
+/// The moves made on the built, still hidden window: the saved
 /// physical origin when the saved scale gave one, then the recentring on
 /// the nearest monitor (`WindowExt::center`, outer size) when no work area
 /// shows it.
@@ -282,7 +281,7 @@ pub fn origin(saved: &SavedWindow, monitors: &[Monitor], outer: (i32, i32)) -> O
 mod tests {
     use super::*;
 
-    /// tao on Windows 11 at `dpi`: SM_CXSIZEFRAME + SM_CXPADDEDBORDER is
+    /// The frame on Windows 11 at `dpi`: SM_CXSIZEFRAME + SM_CXPADDEDBORDER is
     /// 4 + 4 at 96 dpi, the top inset one pixel per 96 dpi.
     fn win11(dpi: u32) -> Insets {
         let frame = (8.0 * dpi as f64 / 96.0).round() as i32;

@@ -128,8 +128,7 @@ fn main() {
     // install left its WebView2 profile (window/probe.rs).
     let legacy_root = probe.as_ref().map(|dir| dir.join("webview"));
     // A normal run: the backend on the user's app folders, and the window
-    // where Tauri's opens (`build_main_window`). A bench build too, unseen,
-    // to time the real boot.
+    // at its saved place. A bench build too, unseen, to time the real boot.
     let real = (!scene_mode).then(|| {
         #[cfg(all(debug_assertions, windows))]
         if let Some(dir) = probe {
@@ -157,7 +156,7 @@ fn main() {
         accshift_egui::app::avatars::prefetch_pack(cache);
     }
     // The log rotation, "App setup started" and the panic hook, on a thread
-    // while the window builds, joined before anything else logs (`setup`).
+    // while the window builds, joined before anything else logs.
     // The `localStorage` of a v0.x install is read first, before the hook: a
     // corrupt LevelDB panics inside the reader, which catches it, and the
     // hook would report it.

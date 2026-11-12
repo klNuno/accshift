@@ -1,4 +1,4 @@
-//! `TelemetryOnboarding.svelte`: the first-run dialog and its feature tour,
+//! The telemetry onboarding: the first-run dialog and its feature tour,
 //! drawn above everything in the frame (`--z-tour-*`), outside the
 //! `.app-shell` the obscured filter blurs.
 //!
@@ -17,10 +17,9 @@
 //!     .step       welcome, features or deal ([`steps`])
 //! ```
 //!
-//! The tour measures its target with `getBoundingClientRect` after the step
-//! or feature changes (after Svelte's tick, then once more a frame later)
-//! and on resize: the rects the title bar and the grid recorded this frame
-//! ([`TourTargets`]) stand in for the DOM.
+//! The tour measures its target after the step or feature changes (on that
+//! frame, then once more a frame later) and on resize: the rects the title
+//! bar and the grid recorded this frame ([`TourTargets`]).
 
 mod clip;
 mod steps;
@@ -47,7 +46,7 @@ const WHITE: Rgba = Rgba::hex(0xffffff, 1.0);
 
 /// `cubic-bezier(0.22, 1, 0.36, 1)`, the modal's and the spotlight's curve.
 const OUT_QUINT: Timing = Timing::cubic_bezier(0.22, 1.0, 0.36, 1.0);
-/// `modalIn` and `dockIn`, 280 ms.
+/// The modal's entrance, centred or docked, 280 ms.
 const ENTER: Animation = Animation::new(0.28, OUT_QUINT);
 /// `.backdrop { animation: fadeIn 200ms ease-out }`.
 const FADE_IN: Animation = Animation::new(0.2, Timing::EASE_OUT);
@@ -67,8 +66,7 @@ const DOT: Transition = Transition::new(0.16, Timing::EASE_OUT);
 /// The root id; everything is `.with(mount)` below it.
 pub const ONBOARDING_ID: &str = "accshift-onboarding";
 
-/// Where the tour's targets were drawn this frame (`data-tour`), in window
-/// points as `getBoundingClientRect` reports them.
+/// Where the tour's targets were drawn this frame, in window points.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct TourTargets {
     /// `[data-tour="add-account"]`: the title bar plus.
@@ -89,7 +87,7 @@ pub fn reset_targets(ctx: &Context) {
     ctx.data_mut(|d| d.insert_temp(targets_id(), TourTargets::default()));
 }
 
-/// Records a target; the first call of a frame wins (`querySelector`).
+/// Records a target; the first call of a frame wins.
 pub fn record_target(ctx: &Context, f: impl FnOnce(&mut TourTargets)) {
     ctx.data_mut(|d| f(d.get_temp_mut_or_default::<TourTargets>(targets_id())));
 }
@@ -104,11 +102,11 @@ pub struct OnboardingProps<'a> {
     pub locale: Locale,
     /// The window: the backdrop covers it.
     pub viewport: Rect,
-    /// `titlebarH`: the click shield starts under it.
+    /// The title bar's height: the click shield starts under it.
     pub titlebar_h: f32,
-    /// `appVersion`.
+    /// The app version.
     pub version: &'a str,
-    /// `welcomePlatforms`, names.
+    /// The names of the platforms the welcome step lists.
     pub platforms: &'a [String],
     /// Detection found something: the label says so.
     pub detected: bool,
@@ -120,18 +118,18 @@ pub struct OnboardingProps<'a> {
     pub now: f64,
 }
 
-/// What `measureCurrent` last found.
+/// What the last measure of the tour's target found.
 #[derive(Clone, Default)]
 struct Measure {
     /// Step, feature, window size: a change measures again.
     key: Option<(Step, usize, [i32; 2])>,
     /// Measures taken since the key changed (two: the tick, the frame).
     taken: u8,
-    /// `spotlightRect`.
+    /// The spotlight's rect.
     spot: Option<Rect>,
-    /// `contextMenuPos`.
+    /// Where the mock context menu opens.
     menu_at: Option<Pos2>,
-    /// `spotlightMissing`.
+    /// The target was not drawn: no spotlight.
     missing: bool,
     /// Bumped each time the spotlight or the menu mounts.
     spot_mount: u64,
@@ -144,7 +142,7 @@ fn menu_size(ppp: f32) -> Vec2 {
     vec2(170.0, 145.0 + 2.0 * snap::border_width(1.0, ppp))
 }
 
-/// The menu's box at `ctxIn` progress `p`: `translateX(-6px) scale(.97)`
+/// The menu's box at entrance progress `p`: `translateX(-6px) scale(.97)`
 /// about its centre at the start.
 fn menu_rect(at: Pos2, p: f32, ppp: f32) -> Rect {
     let r = Rect::from_min_size(at, menu_size(ppp));
@@ -197,7 +195,7 @@ pub fn onboarding(ui: &mut Ui, props: &OnboardingProps) -> Vec<OnboardingEvent> 
     let root = Id::unique(ONBOARDING_ID).with(view.mount);
     let mut events = Vec::new();
 
-    // `measureCurrent`.
+    // Measure the tour's target.
     let m_id = root.with("measure");
     let mut m: Measure = ctx.data(|d| d.get_temp(m_id)).unwrap_or_default();
     let size = props.viewport.size();

@@ -1,8 +1,6 @@
-//! The card drag of `App.svelte`: the grid wrapper's `mousedown`, the
-//! document's `mousemove`, `scroll` and `mouseup` listeners and the frame's
-//! `updateDragAt`, read against the boxes the workspace drew last frame
-//! (`elementFromPoint` and `getBoundingClientRect` read the DOM before it
-//! re-renders too).
+//! The card drag: the press on the grid, then the pointer moves, the scroll
+//! and the release, hit-tested against the boxes the workspace drew last
+//! frame.
 
 use accshift_app::drag::{PointHit, PressedCard, SlotRect, Slots, StoreHost};
 use accshift_app::folders::{ItemKind, ItemRef};
@@ -66,7 +64,7 @@ fn point_hit(ctx: &Context, ws: &Workspace, cover: &[Rect], pos: Pos2) -> PointH
     }
 }
 
-/// `refreshSlotRects`: the section wrappers when a folder moves among
+/// The drop slots: the section wrappers when a folder moves among
 /// sections, else the grid's (or list's) cards of the dragged kind.
 fn slots(ws: &Workspace, item: &ItemRef) -> Slots {
     let rect = |r: &Rect| SlotRect {
@@ -123,7 +121,7 @@ impl AppModel {
                 } => {
                     let primary = button == PointerButton::Primary;
                     b.drag_held |= primary;
-                    // `handleWorkspaceMouseDown`: bulk edit paints instead
+                    // A press on the grid: bulk edit paints instead
                     // and a search keeps the order.
                     if b.bulk.is_open() || accounts.navigation.is_searching() {
                         continue;
@@ -181,7 +179,7 @@ impl AppModel {
             }
         }
         if accounts.drag.is_dragging() {
-            // `handleDocScroll`: the slots moved with the content.
+            // A scroll: the slots moved with the content.
             if ws.scroll() != b.drag_scroll {
                 b.drag_scroll = ws.scroll();
                 accounts.drag.scrolled();
@@ -203,8 +201,7 @@ impl AppModel {
     }
 }
 
-/// The effects' linked list of a keyed `{#each}`, by index into the old
-/// order.
+/// The linked list of a keyed list reconcile, by index into the old order.
 struct EachList {
     prev: Vec<Option<usize>>,
     next: Vec<Option<usize>>,
@@ -212,7 +209,7 @@ struct EachList {
 }
 
 impl EachList {
-    /// `link(state, a, b)`.
+    /// Links `a` to `b`, `None` being the list's head or end.
     fn link(&mut self, a: Option<usize>, b: Option<usize>) {
         match a {
             None => self.first = b,
@@ -224,10 +221,9 @@ impl EachList {
     }
 }
 
-/// Svelte 5's keyed `{#each}` reconcile (`reconcile` in `each.js`) over a
-/// reorder of the same keys: the keys whose node it moves. Chromium drops
-/// `:active` from a node it moves (`ActiveChainNodeDetached`) and restarts
-/// its CSS animations.
+/// The keys a keyed list reconcile moves when the same keys are reordered,
+/// walked the way Svelte 5's keyed each block walks them. A moved card loses
+/// its pressed state and replays its entrance animation.
 pub(super) fn each_moved(old: &[String], new: &[String]) -> Vec<String> {
     let n = old.len();
     let index = |k: &str| old.iter().position(|o| o == k);

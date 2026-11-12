@@ -1,4 +1,4 @@
-//! `CommandPalette.svelte`, mounted by `App.svelte` above `AppDialogs`:
+//! The command palette, drawn above the dialogs:
 //!
 //! ```text
 //! .palette-overlay   fixed, inset 0, flex, centred, top aligned,
@@ -83,7 +83,7 @@ pub fn input_id(mount: u64) -> Id {
 pub struct PaletteView {
     /// The query and the highlighted row.
     pub model: CommandPalette,
-    /// `.palette-list`'s `scrollTop`.
+    /// The list's scroll offset.
     scroll: f32,
     /// The field took focus at mount.
     focused_once: bool,
@@ -114,7 +114,7 @@ pub struct PaletteProps<'a> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PaletteEvent {
-    /// `onClose`.
+    /// The palette closes without running a command.
     Close,
     /// A command ran: the palette closes, then its action runs.
     Run(PaletteAction),

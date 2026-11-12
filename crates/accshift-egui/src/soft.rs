@@ -684,9 +684,8 @@ fn show_window(window: &Window, focus: bool) {
     bench::mark("shown");
 }
 
-/// boot.rs `current_geometry` on the winit window: inner size and outer
-/// origin, which the frame makes tao's. Wayland has no origin to give: the
-/// size goes alone.
+/// The winit window's geometry: inner size and outer origin. Wayland has no
+/// origin to give: the size goes alone.
 fn geometry(window: &Window) -> Option<crate::window::Geometry> {
     let outer = window.outer_position().ok();
     let inner = window.inner_size();
