@@ -1,6 +1,4 @@
-//! The add-account flow controller, ported from
-//! `src/lib/app/platformAddFlow.svelte.ts` with its App.svelte glue (lines
-//! 127-138, 687-690).
+//! The add-account flow controller.
 //!
 //! [`crate::accounts::loading::AccountLoading`] starts a setup and reports it
 //! as `LoadingEvent::AddFlowStarted`; this controller then polls it every
@@ -23,10 +21,10 @@ use crate::time::Clock;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// The `setTimeout` of `schedulePoll` (line 155).
+/// The wait between two status polls of a setup.
 pub const POLL_DELAY: Duration = Duration::from_millis(1500);
 
-/// The kinds of `getSetupKey` (lines 37-59).
+/// The texts a setup shows, each an i18n key per platform ([`setup_key`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetupKey {
     PendingLabel,
@@ -56,7 +54,7 @@ impl SetupKey {
     }
 }
 
-/// `getSetupKey`: `<prefix>.setup<Kind>`, battle-net under `battlenet`.
+/// The i18n key `<prefix>.setup<Kind>`, battle-net under `battlenet`.
 pub fn setup_key(platform_id: &str, kind: SetupKey) -> String {
     let prefix = match platform_id {
         "battle-net" => "battlenet",
@@ -65,15 +63,15 @@ pub fn setup_key(platform_id: &str, kind: SetupKey) -> String {
     format!("{prefix}.setup{}", kind.suffix())
 }
 
-/// `PlatformAddFlowEntry`.
+/// The setup in progress: its platform and last status.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddFlowEntry {
     pub platform_id: String,
     pub status: AddFlowStatus,
 }
 
-/// What the flow reads from the app (`getActiveTab`, `getCurrentFolderId`,
-/// `getIsSearching`).
+/// What the flow reads from the app: the active tab, the open folder and
+/// whether a search is on.
 #[derive(Debug, Clone, Copy)]
 pub struct AddFlowView<'a> {
     pub active_tab: &'a str,
@@ -86,8 +84,8 @@ pub struct AddFlowContext<'a> {
     pub jobs: &'a Jobs,
     pub registry: &'a PlatformRegistry,
     pub view: AddFlowView<'a>,
-    /// The profile caches the account loader uses, for the prime after an
-    /// add (`primeProfileAfterAdd`).
+    /// The profile caches the account loader uses, for the profile fetch
+    /// right after an add.
     pub caches: &'a Arc<ProfileCaches>,
     pub clock: &'a Clock,
     pub now: Instant,
@@ -96,12 +94,11 @@ pub struct AddFlowContext<'a> {
 /// What the app does in return.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AddFlowEvent {
-    /// `showToast(message)`.
+    /// Show a toast.
     Toast(Toast),
-    /// `loadAccounts(...)` on the active tab.
+    /// Reload the accounts of the active tab.
     LoadAccounts(LoadOptions),
-    /// `onAccountAdded`: App.svelte opens the rename prompt
-    /// (`dialogs.promptRenameNewAccount`, lines 135-137).
+    /// An account was added: the app opens the rename prompt.
     AccountAdded {
         platform_id: String,
         account_id: String,
@@ -109,8 +106,7 @@ pub enum AddFlowEvent {
     },
 }
 
-/// The pending card (`pendingSetupAccount`, lines 87-101). Texts resolve at
-/// draw time; [`PendingSetupAccount::to_account`] gives the card's account.
+/// The placeholder card of the setup. Texts resolve at draw time; [`PendingSetupAccount::to_account`] gives the card's account.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingSetupAccount {
     pub id: String,
@@ -129,21 +125,20 @@ impl PendingSetupAccount {
     }
 }
 
-/// What a chip of the setup card does (the TS `onClick`).
+/// What a chip of the setup card does when clicked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SetupChipAction {
     /// The red Close chip: [`PlatformAddFlow::cancel`].
     Cancel,
-    /// Roblox's "Copy code": put the quick login code on the clipboard
-    /// (`copyToClipboard(text, text)`, App.svelte line 133).
+    /// Roblox's "Copy code": put the quick login code on the clipboard.
     CopyCode(String),
 }
 
-/// `getSetupExtensionContent`: the sections and which chips act.
+/// The extension of the setup card: its sections and which chips act.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SetupExtension {
     pub sections: Vec<CardSection>,
-    /// `((section, chip), action)` for the chips that have an `onClick`.
+    /// `((section, chip), action)` for the chips that act on a click.
     pub chip_actions: Vec<((usize, usize), SetupChipAction)>,
 }
 
@@ -159,7 +154,8 @@ impl SetupExtension {
 
 type PrimeJob = Pending<(String, Vec<CacheWrite>)>;
 
-/// `createPlatformAddFlowController`.
+/// The flow: at most one setup at a time, its poll, its cancel and the
+/// profile fetches after an add.
 #[derive(Default)]
 pub struct PlatformAddFlow {
     flow: Option<AddFlowEntry>,
@@ -177,7 +173,7 @@ impl PlatformAddFlow {
         Self::default()
     }
 
-    /// `flow`.
+    /// The setup in progress.
     pub fn flow(&self) -> Option<&AddFlowEntry> {
         self.flow.as_ref()
     }
@@ -198,12 +194,12 @@ impl PlatformAddFlow {
         self.poll_deadline
     }
 
-    /// `clearTimer` (lines 109-113).
+    /// Stops the poll timer.
     pub fn clear_timer(&mut self) {
         self.poll_deadline = None;
     }
 
-    /// `stop` (lines 115-118).
+    /// Stops the timer and forgets the setup.
     pub fn stop(&mut self) {
         self.clear_timer();
         self.flow = None;
@@ -213,7 +209,7 @@ impl PlatformAddFlow {
         self.poll_deadline = Some(now + POLL_DELAY);
     }
 
-    /// `start` (lines 228-245): a setup the account loader just began.
+    /// A setup the account loader just began.
     pub fn start(&mut self, ctx: &AddFlowContext<'_>, platform_id: &str, status: AddFlowStatus) {
         self.flow = Some(AddFlowEntry {
             platform_id: platform_id.to_string(),
@@ -231,8 +227,7 @@ impl PlatformAddFlow {
         }
     }
 
-    /// `poll` (lines 158-194), up to the backend call: asks the adapter for
-    /// the setup's status now. Ends the flow when its platform has no
+    /// Asks the adapter for the setup's status now. Ends the flow when its platform has no
     /// adapter.
     pub fn poll_now(&mut self, ctx: &AddFlowContext<'_>) {
         self.clear_timer();
@@ -253,7 +248,7 @@ impl PlatformAddFlow {
         ));
     }
 
-    /// The end of `poll`.
+    /// The answer of a poll: the next status, or the failure.
     fn apply_poll(
         &mut self,
         ctx: &AddFlowContext<'_>,
@@ -284,7 +279,8 @@ impl PlatformAddFlow {
         }
     }
 
-    /// `handleReady` (lines 206-226).
+    /// The account is added: telemetry, the profile fetch, a reload of the
+    /// tab, the toast, then the rename prompt.
     fn handle_ready(
         &mut self,
         ctx: &AddFlowContext<'_>,
@@ -338,13 +334,18 @@ impl PlatformAddFlow {
         }
     }
 
-    /// `cancel` (lines 120-141), up to the backend call. The poll timer stops
-    /// at once, so no poll races the cancel.
+    /// Cancels the setup. The poll timer stops at once, so no poll races the
+    /// cancel.
     pub fn cancel(&mut self, ctx: &AddFlowContext<'_>) {
         let Some(current) = self.flow.clone() else {
             self.stop();
             return;
         };
+        // A repeat while the first cancel runs (Escape, then a tab change)
+        // is the same walk away: counted once.
+        if self.cancel.is_some() {
+            return;
+        }
         // Counted whether or not the adapter has anything to cancel: the
         // funnel measures the user walking away.
         track(ctx.jobs, &current.platform_id, |backend, id| {
@@ -354,9 +355,6 @@ impl PlatformAddFlow {
             self.stop();
             return;
         };
-        if self.cancel.is_some() {
-            return;
-        }
         self.clear_timer();
         let setup_id = current.status.setup_id.clone();
         self.cancel = Some((
@@ -366,8 +364,7 @@ impl PlatformAddFlow {
         ));
     }
 
-    /// `cancelIfConflicting` (lines 143-149): a switch, a back navigation or
-    /// a palette jump on the flow's platform drops it, unless the target is
+    /// A switch, a back navigation or a palette jump on the flow's platform drops it, unless the target is
     /// the setup account itself.
     pub fn cancel_if_conflicting(
         &mut self,
@@ -395,10 +392,11 @@ impl PlatformAddFlow {
     ) {
         if let Err(BackendError { message, .. }) = result {
             self.events.push(AddFlowEvent::Toast(Toast::new(
-                Text::raw(message),
+                Text::with("toast.addAccountCancelFailed", [("error", message)]),
                 ToastKind::Default,
             )));
         }
+
         self.stop();
         if ctx.view.active_tab == entry.platform_id {
             self.events.push(AddFlowEvent::LoadAccounts(LoadOptions {
@@ -467,8 +465,8 @@ impl PlatformAddFlow {
         Some(flow)
     }
 
-    /// `pendingSetupAccount` (lines 87-101): the placeholder card at the
-    /// root of the flow's tab, until the setup is ready.
+    /// The placeholder card at the root of the flow's tab, until the setup
+    /// is ready.
     pub fn pending_setup_account(&self, view: &AddFlowView<'_>) -> Option<PendingSetupAccount> {
         let flow = self.shown_on(view)?;
         if flow.status.state() == AddFlowState::Ready {
@@ -502,19 +500,12 @@ impl PlatformAddFlow {
         })
     }
 
-    /// `isPendingSetupAccount` (lines 457-459).
-    pub fn is_pending_setup_account(&self, view: &AddFlowView<'_>, account_id: &str) -> bool {
-        self.pending_setup_account(view)
-            .is_some_and(|pending| pending.id == account_id)
-    }
-
-    /// `pendingSetupAccountId` (App.svelte line 687).
+    /// The id of the placeholder card, when it shows.
     pub fn pending_setup_account_id(&self, view: &AddFlowView<'_>) -> Option<String> {
         self.pending_setup_account(view).map(|pending| pending.id)
     }
 
-    /// `activePlatformAddSetupId` (App.svelte lines 688-690): the setup id
-    /// when the flow belongs to the active tab.
+    /// The setup id when the flow belongs to the active tab.
     pub fn active_platform_setup_id(&self, active_tab: &str) -> Option<&str> {
         self.flow
             .as_ref()
@@ -522,7 +513,7 @@ impl PlatformAddFlow {
             .map(|flow| flow.status.setup_id.as_str())
     }
 
-    /// `isForcedOpen` (lines 448-455): the setup card stays expanded.
+    /// The setup card stays expanded until the setup is ready.
     pub fn is_forced_open(&self, active_tab: &str, account_id: &str) -> bool {
         self.flow.as_ref().is_some_and(|flow| {
             flow.platform_id == active_tab
@@ -531,7 +522,7 @@ impl PlatformAddFlow {
         })
     }
 
-    /// `getSetupExtensionContent` (lines 247-446). `locale` resolves the
+    /// The extension of the setup card `account_id`. `locale` resolves the
     /// plain `lines`, which the card model keeps as strings.
     pub fn setup_extension_content(
         &self,
@@ -547,7 +538,7 @@ impl PlatformAddFlow {
     }
 }
 
-/// The one line the card shows while nothing is detected (lines 104-107).
+/// The one line the card shows while nothing is detected.
 fn pending_username(entry: &AddFlowEntry) -> Text {
     if entry.status.state() == AddFlowState::Busy {
         Text::key("platform.setupBusy")
@@ -557,16 +548,16 @@ fn pending_username(entry: &AddFlowEntry) -> Text {
 }
 
 fn track(jobs: &Jobs, platform_id: &str, call: fn(&dyn crate::Backend, &str) -> BackendResult<()>) {
-    // Fire and forget (`telemetryClient.track`): the mock and an unconsented
-    // backend refuse, nobody cares.
+    // Fire and forget: the mock and an unconsented backend refuse, nobody
+    // cares.
     let id = platform_id.to_string();
     drop(jobs.run(move |backend| {
         let _ = call(backend, &id);
     }));
 }
 
-/// `reportAddFailure` (lines 202-204): the adapters report a message, not a
-/// typed kind, so the code is `other`.
+/// Counts a failed add. The adapters report a message, not a typed kind, so
+/// the code is `other`.
 fn report_add_failure(jobs: &Jobs, platform_id: &str) {
     let id = platform_id.to_string();
     drop(jobs.run(move |backend| {
@@ -597,7 +588,7 @@ fn failed_section(platform_id: &str, text: Text) -> CardSection {
     }
 }
 
-/// `createDetectedSection` (lines 61-72).
+/// The section naming the account the setup detected, `None` before.
 fn detected_section(platform_id: &str, display: &str) -> Option<CardSection> {
     if display.is_empty() {
         return None;
@@ -620,8 +611,8 @@ fn close_chip() -> CardChip {
     }
 }
 
-/// The failure section with the error lines and the Close chip
-/// (`{ ...(error ? { lines: [error] } : {}), chips: [closeChip] }`).
+/// The section under a failure: the error line when there is one, and the
+/// Close chip.
 fn close_section(error: &str) -> CardSection {
     CardSection {
         lines: if error.is_empty() {
@@ -630,6 +621,34 @@ fn close_section(error: &str) -> CardSection {
             vec![error.to_string()]
         },
         chips: vec![close_chip()],
+        ..CardSection::default()
+    }
+}
+
+/// The Roblox quick login section: the link, the Quick Login chip and,
+/// once the code is known, the chip that copies it.
+fn roblox_quick_login(
+    code: &str,
+    actions: &mut Vec<((usize, usize), SetupChipAction)>,
+) -> CardSection {
+    let mut chips = vec![CardChip {
+        text: Text::raw("Quick Login"),
+        tone: ChipTone::Green,
+    }];
+    if !code.is_empty() {
+        actions.push(((0, 1), SetupChipAction::CopyCode(code.to_string())));
+        chips.push(CardChip {
+            text: Text::key("roblox.copyCode"),
+            tone: ChipTone::Slate,
+        });
+    }
+    CardSection {
+        link: Some(CardLink {
+            label: Text::raw("roblox.com/quick-login"),
+            url: "https://www.roblox.com/crossdevicelogin/ConfirmCode".to_string(),
+        }),
+        chips,
+        loading: true,
         ..CardSection::default()
     }
 }
@@ -644,123 +663,82 @@ fn setup_extension(flow: &AddFlowEntry, locale: Locale) -> Option<SetupExtension
     );
     let error = crate::js::trim(flow.status.error_message.as_deref().unwrap_or_default());
     let detected = detected_section(platform, display);
-    let state = flow.status.state();
     let line = |key: &str| Text::key(key).resolve(locale);
     let mut actions = Vec::new();
 
-    // Before the per-platform branches: the cross-process lock is not a
-    // platform concern. Non-terminal, so the spinner stays on.
-    let sections: Vec<CardSection> = if state == AddFlowState::Busy {
-        std::iter::once(section_text(Text::key("platform.setupBusy"), true))
-            .chain(detected)
-            .collect()
-    } else {
-        match (platform, state) {
-            (_, AddFlowState::Ready) => return None,
-            ("riot", AddFlowState::WaitingForClient) => vec![
-                section_text(Text::key("riot.setupWaitingForClient"), true),
-                section_lines(vec![line("riot.setupStaySignedIn")]),
-            ],
-            ("riot", AddFlowState::Capturing) => {
-                std::iter::once(section_text(Text::key("riot.setupCapturing"), true))
-                    .chain(detected)
-                    .collect()
-            }
-            ("riot", AddFlowState::Failed) => {
-                actions.push(((1, 0), SetupChipAction::Cancel));
-                vec![
-                    failed_section(platform, Text::key("riot.setupFailedMessage")),
-                    close_section(error),
-                ]
-            }
-            ("riot", _) => {
-                let first = if error.is_empty() {
-                    section_text(Text::key("riot.setupWaitingForLogin"), true)
-                } else {
-                    section_text(Text::raw(error), false)
-                };
-                let second =
-                    detected.unwrap_or_else(|| section_lines(vec![line("riot.setupStaySignedIn")]));
-                vec![first, second]
-            }
-            ("roblox", AddFlowState::Failed) => {
-                actions.push(((1, 0), SetupChipAction::Cancel));
-                let text = if error.is_empty() {
-                    Text::key("roblox.setupFailedMessage")
-                } else {
-                    Text::raw(error)
-                };
-                vec![
-                    failed_section(platform, text),
-                    CardSection {
-                        chips: vec![close_chip()],
-                        ..CardSection::default()
-                    },
-                ]
-            }
-            ("roblox", _) => {
-                let mut chips = vec![CardChip {
-                    text: Text::raw("Quick Login"),
-                    tone: ChipTone::Green,
-                }];
-                if !display.is_empty() {
-                    actions.push(((0, 1), SetupChipAction::CopyCode(display.to_string())));
-                    chips.push(CardChip {
-                        text: Text::key("roblox.copyCode"),
-                        tone: ChipTone::Slate,
-                    });
-                }
-                vec![CardSection {
-                    link: Some(CardLink {
-                        label: Text::raw("roblox.com/quick-login"),
-                        url: "https://www.roblox.com/crossdevicelogin/ConfirmCode".to_string(),
-                    }),
-                    chips,
-                    loading: true,
-                    ..CardSection::default()
-                }]
-            }
-            ("battle-net", AddFlowState::WaitingForClient) => vec![section_text(
-                Text::key("battlenet.setupWaitingForClient"),
-                true,
-            )],
-            ("battle-net", AddFlowState::Failed) => {
-                actions.push(((1, 0), SetupChipAction::Cancel));
-                vec![
-                    failed_section(platform, Text::key("battlenet.setupFailedMessage")),
-                    close_section(error),
-                ]
-            }
-            ("battle-net", _) => std::iter::once(section_text(
-                Text::key("battlenet.setupWaitingForLogin"),
-                true,
-            ))
-            .chain(detected)
-            .chain(std::iter::once(section_lines(vec![line(
-                "battlenet.setupKeepMeLoggedIn",
-            )])))
-            .collect(),
-            (_, AddFlowState::WaitingForClient) => vec![section_text(
-                Text::key(setup_key(platform, SetupKey::WaitingForClient)),
-                true,
-            )],
-            (_, AddFlowState::Failed) => {
-                actions.push(((1, 0), SetupChipAction::Cancel));
-                vec![
-                    failed_section(
-                        platform,
-                        Text::key(setup_key(platform, SetupKey::FailedMessage)),
-                    ),
-                    close_section(error),
-                ]
-            }
-            _ => std::iter::once(section_text(
-                Text::key(setup_key(platform, SetupKey::WaitingForLogin)),
-                true,
-            ))
-            .chain(detected)
-            .collect(),
+    let sections: Vec<CardSection> = match (platform, flow.status.state()) {
+        // Before the per-platform arms: the cross-process lock is not a
+        // platform concern. Non-terminal, so the spinner stays on.
+        (_, AddFlowState::Busy) => {
+            std::iter::once(section_text(Text::key("platform.setupBusy"), true))
+                .chain(detected)
+                .collect()
         }
+        (_, AddFlowState::Ready) => return None,
+        ("roblox", AddFlowState::Failed) => {
+            actions.push(((1, 0), SetupChipAction::Cancel));
+            let text = if error.is_empty() {
+                Text::key("roblox.setupFailedMessage")
+            } else {
+                Text::raw(error)
+            };
+            vec![
+                failed_section(platform, text),
+                CardSection {
+                    chips: vec![close_chip()],
+                    ..CardSection::default()
+                },
+            ]
+        }
+        (_, AddFlowState::Failed) => {
+            actions.push(((1, 0), SetupChipAction::Cancel));
+            vec![
+                failed_section(
+                    platform,
+                    Text::key(setup_key(platform, SetupKey::FailedMessage)),
+                ),
+                close_section(error),
+            ]
+        }
+        ("riot", AddFlowState::WaitingForClient) => vec![
+            section_text(Text::key("riot.setupWaitingForClient"), true),
+            section_lines(vec![line("riot.setupStaySignedIn")]),
+        ],
+        ("riot", AddFlowState::Capturing) => {
+            std::iter::once(section_text(Text::key("riot.setupCapturing"), true))
+                .chain(detected)
+                .collect()
+        }
+        ("riot", _) => {
+            let first = if error.is_empty() {
+                section_text(Text::key("riot.setupWaitingForLogin"), true)
+            } else {
+                section_text(Text::raw(error), false)
+            };
+            let second =
+                detected.unwrap_or_else(|| section_lines(vec![line("riot.setupStaySignedIn")]));
+            vec![first, second]
+        }
+        ("roblox", _) => vec![roblox_quick_login(display, &mut actions)],
+        (_, AddFlowState::WaitingForClient) => vec![section_text(
+            Text::key(setup_key(platform, SetupKey::WaitingForClient)),
+            true,
+        )],
+        ("battle-net", _) => std::iter::once(section_text(
+            Text::key("battlenet.setupWaitingForLogin"),
+            true,
+        ))
+        .chain(detected)
+        .chain(std::iter::once(section_lines(vec![line(
+            "battlenet.setupKeepMeLoggedIn",
+        )])))
+        .collect(),
+        _ => std::iter::once(section_text(
+            Text::key(setup_key(platform, SetupKey::WaitingForLogin)),
+            true,
+        ))
+        .chain(detected)
+        .collect(),
     };
     Some(SetupExtension {
         sections,

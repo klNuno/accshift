@@ -1,9 +1,9 @@
-//! `src/lib/shared/avatarFadeIn.ts` with the avatar `<img>` rule of
-//! `AccountCard.svelte`: the picture starts at `opacity: 0` and is revealed
+//! The avatar fade-in of the account cards: the picture starts at
+//! `opacity: 0` and is revealed
 //! once its bytes are decoded (or failed), through `transition: opacity
 //! var(--motion-avatar-fade) ease-out`.
 //!
-//! A picture already decoded when the card mounts (`node.complete`) is
+//! A picture already decoded when the card mounts is
 //! revealed before the first style: no fade. One decoded later fades from 0.
 //! That is exactly a CSS transition whose first value is the state at mount,
 //! so each mount of a card needs its own id.

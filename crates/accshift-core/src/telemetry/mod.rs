@@ -4,8 +4,9 @@
 //! - **Mode A** (on after onboarding, opt-out in Settings): a local random UUID
 //!   is used only to deduplicate aggregate pings; usage events remain linked
 //!   only by a server-side daily hash. There is no on-disk event storage.
-//!   The onboarding screen no longer offers a refusal, so both of its answers
-//!   land here; switching it off is a deliberate action in Settings, Privacy.
+//!   The onboarding screen has three answers: Mode A alone (also what
+//!   skipping the tour gives), Mode A plus Mode B, or a refusal that turns
+//!   both off. Changing it later is a deliberate action in Settings, Privacy.
 //! - **Mode B** (explicit consent, opt-in): local UUIDv4 `install_id` that
 //!   enables retention metrics, cohorts, per-user feature distribution.
 //!

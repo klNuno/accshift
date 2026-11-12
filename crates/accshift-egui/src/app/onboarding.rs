@@ -1,7 +1,6 @@
-//! The first-run telemetry onboarding: `useOnboardingTour.svelte.ts` (the
-//! tour state of [`OnboardingTour`]) and the script half of
-//! `TelemetryOnboarding.svelte` (steps, the rejection timers, the consent
-//! save). `ui::components::onboarding` draws it.
+//! The first-run telemetry onboarding: the tour state ([`OnboardingTour`])
+//! and the dialog's state (steps, the rejection timers, the consent save).
+//! `ui::components::onboarding` draws it.
 
 use accshift_app::actions::onboarding::{mock_accounts, OnboardingTour};
 use accshift_app::actions::AppEffect;
@@ -12,17 +11,17 @@ use accshift_app::jobs::{Jobs, Pending, Poll};
 use accshift_app::platforms::PlatformAccount;
 use egui::Vec2;
 
-/// `REJECT_FADE_DELAY_MS`: the "enough" row fades the modal after this.
+/// Seconds after the "enough" row before the modal fades.
 pub const REJECT_FADE_DELAY: f64 = 1.2;
-/// `REJECT_TOTAL_MS`: then saves the choice.
+/// Seconds after the "enough" row before the choice is saved.
 pub const REJECT_TOTAL: f64 = 2.0;
-/// `TELEMETRY_DOC_URL`.
+/// The telemetry documentation "Learn more" opens.
 pub const TELEMETRY_DOC_URL: &str =
     "https://github.com/klNuno/accshift/blob/main/docs/analytics.md";
-/// `FEATURES.length`.
+/// How many features the tour shows.
 pub const FEATURE_COUNT: usize = 4;
 
-/// `Step`.
+/// The dialog's step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Step {
     Welcome,
@@ -33,52 +32,52 @@ pub enum Step {
 /// What the dialog reported.
 #[derive(Clone, Debug, PartialEq)]
 pub enum OnboardingEvent {
-    /// `handleSkip`.
+    /// Skip: saved as mode A on, mode B off.
     Skip,
-    /// `goFeatures` (Show me around, Back from the deal step).
+    /// To the features step (Show me around, Back from the deal step).
     GoFeatures,
-    /// `prevFeature`.
+    /// The previous feature, or back to the welcome step from the first.
     PrevFeature,
-    /// `nextFeature`.
+    /// The next feature, or on to the deal step from the last.
     NextFeature,
     /// A legend dot.
     Feature(usize),
-    /// `handleEnough`, with the clip's box (`gifSize`) when it was drawn.
+    /// The "enough" row, with the clip's box when it was drawn.
     Enough(Option<Vec2>),
-    /// `handleDeal`.
+    /// Accept the deal: modes A and B on.
     Deal,
-    /// `handleRefuse`.
+    /// Refuse: both modes off.
     Refuse,
-    /// `retryPersist`.
+    /// Save the pending choice again after a failure.
     Retry,
-    /// The persist error's "later": `onComplete` without a save.
+    /// The persist error's "later": close without a save.
     Later,
-    /// `openDoc`.
+    /// Open the telemetry documentation.
     LearnMore,
 }
 
-/// The dialog's `$state` while it is mounted.
+/// The dialog's state while it is open.
 pub struct OnboardingView {
     /// Bumped on every open: animations start over.
     pub mount: u64,
     pub step: Step,
-    /// `activeFeatureIdx`.
+    /// The feature the tour step shows.
     pub feature: usize,
     pub submitting: bool,
     pub rejecting: bool,
-    /// `fadingOut`.
+    /// The modal is fading out.
     pub fading: bool,
     pub persist_error: bool,
-    /// `pendingConsent`.
+    /// The choice being saved, kept for a retry.
     pending: Option<(bool, bool)>,
     /// When the "enough" row was pressed (`now` seconds): the two timers.
     reject_at: Option<f64>,
     save: Option<Pending<BackendResult<()>>>,
-    /// `gifSize`: the clip's box when "enough" was pressed.
+    /// The clip's box when "enough" was pressed.
     pub gif_size: Option<Vec2>,
-    /// `{#key rejecting}`: bumped each time `rejecting` flips.
+    /// Bumped each time `rejecting` flips: the clip starts over.
     pub clip_mount: u64,
-    /// Bumped on every step change: `{#if step}` mounts a new `.step`.
+    /// Bumped on every step change: the step's entry animation starts over.
     pub step_mount: u64,
     /// When the deal step was entered: its title's colour animation.
     pub deal_since: f64,
@@ -140,7 +139,7 @@ impl OnboardingView {
 pub enum Outcome {
     /// Nothing.
     None,
-    /// `onComplete`: the choice is saved, or put off.
+    /// The dialog is done: the choice is saved, or put off.
     Complete,
 }
 
@@ -153,12 +152,12 @@ pub struct Onboarding {
 }
 
 impl Onboarding {
-    /// `openIfNeverCompleted`, started.
+    /// Opens the dialog unless the onboarding was completed before.
     pub fn start(&mut self, jobs: &Jobs) {
         self.tour.start_open_if_never_completed(jobs);
     }
 
-    /// `openOnboarding` (the Privacy tab's replay).
+    /// Opens the dialog again (the Privacy tab's replay).
     pub fn open(&mut self) {
         self.tour.open_onboarding();
     }
@@ -212,7 +211,7 @@ impl Onboarding {
         (outcome, effects)
     }
 
-    /// `onComplete`: `onboarding.close()`.
+    /// Closes the dialog and the tour.
     pub fn close(&mut self, active_tab: &str) -> Vec<AppEffect> {
         self.view = None;
         self.tour.close(active_tab)
@@ -270,7 +269,7 @@ impl Onboarding {
                 drop(jobs.run(|backend: &dyn Backend| backend.open_url(TELEMETRY_DOC_URL)));
             }
         }
-        // `$effect(() => onTourActive(step === "features"))`.
+        // The mock grid is up exactly while the features step is.
         let features = view.step == Step::Features;
         if features != was_features {
             return self.tour.set_mock_active(features, active_tab);
@@ -278,12 +277,12 @@ impl Onboarding {
         Vec::new()
     }
 
-    /// `hideActions`: the title bar keeps its buttons only during the tour.
+    /// The title bar keeps its buttons only during the tour.
     pub fn hide_actions(&self) -> bool {
         self.tour.open() && !self.tour.mock_active()
     }
 
-    /// `onboarding.mockAccounts` while the tour's grid is up, the names
+    /// The tour's mock accounts while its grid is up, the names
     /// translated.
     pub fn mock_grid(&self, locale: Locale) -> Option<Vec<PlatformAccount>> {
         self.tour.mock_active().then(|| {

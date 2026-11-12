@@ -1,6 +1,5 @@
-//! The profile caches (`profileCache.ts`: retries, negative entries, fetches
-//! in flight, expiry) and the avatar image handoff. No TS test covers these
-//! files; the cases follow the TS behaviour.
+//! The profile caches (retries, negative entries, fetches in flight, expiry)
+//! and the avatar image handoff.
 
 use accshift_app::accounts::avatars::{
     avatar_source, fetch_avatar_image, fetch_avatar_image_cached, AvatarDiskCache, AvatarFetch,

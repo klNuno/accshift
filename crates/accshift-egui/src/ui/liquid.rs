@@ -1,8 +1,7 @@
-//! The Liquid Glass glaze of `app.css` (`html[data-theme="liquid-glass"]`):
-//! the shell's inset highlights, the wallpaper layer of `.liquid-backdrop`,
-//! the rim lens of `.app-shell::before` and the sheen of `.app-shell::after`.
+//! The Liquid Glass glaze: the shell's inset highlights, the wallpaper
+//! layer, the rim lens and the sheen.
 //!
-//! The SVG filters of `App.svelte` run here on the CPU. The rim's
+//! Its SVG-style distortion filters run here on the CPU. The rim's
 //! `backdrop-filter: url(#lg-distortion) blur(2px) saturate(1.4)` reads what
 //! the shell painted under it (its fill, the inset highlights, the
 //! wallpaper layer): the filter's turbulence, blurred, displaces that
@@ -35,7 +34,7 @@ use super::css;
 use super::paint::{blur_grid, cached_texture, to_color32, BoxStyle};
 use crate::theme::Rgba;
 
-/// `html[data-theme="liquid-glass"] .app-shell { box-shadow }`.
+/// The inset shadows of the shell under the liquid glass theme.
 const INSETS: &str = "inset 0 1px 0 rgba(255, 255, 255, 0.34), \
     inset 0 12px 24px -18px rgba(255, 255, 255, 0.4), \
     inset 1px 0 0 rgba(255, 255, 255, 0.13), \
@@ -66,7 +65,7 @@ const MASK_END: f32 = 26.0;
 /// `.liquid-backdrop { inset: -40px }`.
 const BLEED: f32 = 40.0;
 
-/// One SVG filter of `App.svelte`: `feTurbulence` (fractal noise),
+/// One distortion filter: `feTurbulence` (fractal noise),
 /// `feGaussianBlur` on it, `feDisplacementMap` of the source by its red and
 /// green, then the CSS `blur()` (or the filter's own last blur) and
 /// `saturate()`. Lengths in CSS px.

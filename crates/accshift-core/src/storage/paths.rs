@@ -4,45 +4,35 @@
 use super::*;
 
 pub fn app_config_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    Ok(scope_root(raw_app_config_root(app_handle)?))
+    Ok(scope_root(app_handle.app_config_dir()?))
 }
 
 pub fn app_data_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    Ok(scope_root(raw_app_data_root(app_handle)?))
+    Ok(scope_root(app_handle.app_data_dir()?))
 }
 
 pub fn app_local_data_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    Ok(scope_root(raw_app_local_data_root(app_handle)?))
+    Ok(scope_root(app_handle.app_local_data_dir()?))
 }
 
 pub fn app_cache_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    Ok(scope_root(raw_app_cache_root(app_handle)?))
+    Ok(scope_root(app_handle.app_cache_dir()?))
 }
 
 pub fn app_log_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    Ok(scope_root(raw_app_config_root(app_handle)?.join("logs")))
+    Ok(scope_root(app_handle.app_config_dir()?.join("logs")))
 }
 
+/// Root of the pre-layout data (the single config file and the old snapshot
+/// and theme folders). It is scoped like every other root: the un-scoped tree
+/// belongs to the installed release build, and a debug build that migrated
+/// from it would move that build's data into `dev/`.
 pub(super) fn legacy_app_data_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    raw_app_data_root(app_handle)
+    app_data_root(app_handle)
 }
 
-pub(super) fn raw_app_config_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    app_handle.app_config_dir()
-}
-
-pub(super) fn raw_app_data_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    app_handle.app_data_dir()
-}
-
-pub(super) fn raw_app_local_data_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    app_handle.app_local_data_dir()
-}
-
-pub(super) fn raw_app_cache_root(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    app_handle.app_cache_dir()
-}
-
+/// A debug build keeps all its data under `dev/`, apart from an installed
+/// release build's, and never reads or writes outside it.
 pub(super) fn scope_root(path: PathBuf) -> PathBuf {
     if cfg!(debug_assertions) {
         path.join(DEV_SCOPE_DIR)
@@ -52,25 +42,15 @@ pub(super) fn scope_root(path: PathBuf) -> PathBuf {
 }
 
 pub fn portable_config_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    let target = app_data_root(app_handle)?
+    Ok(app_data_root(app_handle)?
         .join("state")
-        .join("portable-config.json");
-    let scoped_legacy = raw_app_data_root(app_handle)?
-        .join("state")
-        .join("portable-config.json");
-    backup_and_migrate_file(app_handle, &scoped_legacy, &target)?;
-    Ok(target)
+        .join("portable-config.json"))
 }
 
 pub fn local_config_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    let target = app_local_data_root(app_handle)?
+    Ok(app_local_data_root(app_handle)?
         .join("state")
-        .join("local-config.json");
-    let scoped_legacy = raw_app_local_data_root(app_handle)?
-        .join("state")
-        .join("local-config.json");
-    backup_and_migrate_file(app_handle, &scoped_legacy, &target)?;
-    Ok(target)
+        .join("local-config.json"))
 }
 
 /// Where the list of OS keyring entry ids the app created lives. It sits in
@@ -99,23 +79,15 @@ pub fn legacy_config_path(app_handle: &dyn AppContext) -> Result<PathBuf, String
 }
 
 pub fn roblox_accounts_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    let target = app_local_data_root(app_handle)?
+    Ok(app_local_data_root(app_handle)?
         .join("platforms")
         .join("roblox")
-        .join("accounts.json");
-    let scoped_legacy = raw_app_local_data_root(app_handle)?
-        .join("platforms")
-        .join("roblox")
-        .join("accounts.json");
-    backup_and_migrate_file(app_handle, &scoped_legacy, &target)?;
-    Ok(target)
+        .join("accounts.json"))
 }
 
 pub fn themes_dir(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
     let target = app_config_root(app_handle)?.join("themes");
-    let scoped_legacy = raw_app_config_root(app_handle)?.join("themes");
     let old_legacy = legacy_app_data_root(app_handle)?.join("themes");
-    backup_and_migrate_dir(app_handle, &scoped_legacy, &target)?;
     backup_and_migrate_dir(app_handle, &old_legacy, &target)?;
     Ok(target)
 }
@@ -140,9 +112,7 @@ pub fn platform_snapshots_dir(
     platform_id: &str,
 ) -> Result<PathBuf, String> {
     let subpath = Path::new("platforms").join(platform_id).join("snapshots");
-    let target = app_local_data_root(app_handle)?.join(&subpath);
-    let scoped_legacy = raw_app_local_data_root(app_handle)?.join(&subpath);
-    backup_and_migrate_dir(app_handle, &scoped_legacy, &target)?;
+    let target = app_local_data_root(app_handle)?.join(subpath);
     if let Some(name) = old_legacy_snapshots_name(platform_id) {
         let old_legacy = legacy_app_data_root(app_handle)?.join(name);
         backup_and_migrate_dir(app_handle, &old_legacy, &target)?;

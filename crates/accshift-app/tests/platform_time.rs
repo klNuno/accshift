@@ -1,7 +1,7 @@
-//! `src/lib/shared/time.test.ts` ported, plus the absolute formats checked
-//! against what Node's `Intl.DateTimeFormat` prints in UTC, Europe/Paris,
+//! The relative and absolute time formats, the absolute ones checked against
+//! what Node's `Intl.DateTimeFormat` prints in UTC, Europe/Paris,
 //! America/New_York and Asia/Kolkata, on both sides of every DST change
-//! (`tests/data/platform/time_formats.json`, from `dump_time_formats.mjs`).
+//! (`tests/data/platform/time_formats.json`, recorded from Node).
 
 use accshift_app::i18n::Locale;
 use accshift_app::mock::NOW;
@@ -33,7 +33,7 @@ fn relative(timestamp: Option<f64>) -> String {
     format_relative_time(timestamp, &ctx(), UNKNOWN_KEY)
 }
 
-// ------------------------------------------------ formatRelativeTimeFromUnixSeconds
+// ------------------------------------------------ relative time
 
 #[test]
 fn relative_unknown_for_null() {
@@ -42,7 +42,7 @@ fn relative_unknown_for_null() {
 
 #[test]
 fn relative_unknown_for_undefined() {
-    // TS null and undefined are both `None` here.
+    // A missing stamp is `None`.
     assert_eq!(relative(None), "unknown");
 }
 
@@ -132,7 +132,7 @@ fn unit_guard_caller_unknown_wording() {
     );
 }
 
-// ------------------------------------------------ isUnixSeconds
+// ------------------------------------------------ Unix seconds
 
 #[test]
 fn is_unix_seconds_accepts_plausible() {
@@ -154,7 +154,7 @@ fn is_unix_seconds_rejects_bad_values() {
     assert!(!is_unix_seconds(Some(f64::NAN)));
 }
 
-// ------------------------------------------------ unixMsToSeconds
+// ------------------------------------------------ milliseconds to seconds
 
 #[test]
 fn unix_ms_to_seconds_floors() {
@@ -224,7 +224,7 @@ fn absolute_empty_for_non_seconds() {
     );
 }
 
-// ------------------------------------------------ Rust-only checks
+// ------------------------------------------------ other checks
 
 fn locale_of(code: &str) -> Locale {
     match code {

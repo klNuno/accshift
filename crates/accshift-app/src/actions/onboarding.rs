@@ -1,6 +1,6 @@
 //! The first-run telemetry onboarding and the fake account grid its feature
-//! tour draws over. Ported from `src/lib/app/useOnboardingTour.svelte.ts`
-//! (state and steps; the dialog itself is drawn by the egui crate).
+//! tour draws over (state and steps; the dialog itself is drawn by the egui
+//! crate).
 //!
 //! A new install has no accounts, which is when the tour needs cards to point
 //! at: three mock accounts replace the workspace for the duration and the
@@ -8,7 +8,6 @@
 
 use super::AppEffect;
 use crate::backend::Backend;
-use crate::folders::ItemRef;
 use crate::jobs::{Jobs, Pending, Poll};
 use crate::platforms::PlatformAccount;
 use crate::text::Text;
@@ -26,7 +25,7 @@ pub struct MockAccount {
     pub display_name: Text,
 }
 
-/// `mockAccounts`.
+/// The three fake accounts the tour shows.
 pub fn mock_accounts() -> Vec<MockAccount> {
     MOCK_IDS
         .iter()
@@ -49,12 +48,7 @@ pub fn mock_accounts() -> Vec<MockAccount> {
         .collect()
 }
 
-/// `mockItems`.
-pub fn mock_items() -> Vec<ItemRef> {
-    MOCK_IDS.iter().map(|id| ItemRef::account(*id)).collect()
-}
-
-/// `createOnboardingTour`.
+/// The onboarding dialog and its fake account grid.
 #[derive(Default)]
 pub struct OnboardingTour {
     open: bool,
@@ -77,7 +71,6 @@ impl OnboardingTour {
         self.mock_active
     }
 
-    /// `openOnboarding`.
     pub fn open_onboarding(&mut self) {
         self.open = true;
     }
@@ -103,7 +96,7 @@ impl OnboardingTour {
         effects
     }
 
-    /// `setMockActive`.
+    /// Shows or hides the fake accounts; switches to the tour tab and back.
     pub fn set_mock_active(&mut self, active: bool, active_tab: &str) -> Vec<AppEffect> {
         if active {
             self.activate_mock(active_tab)
@@ -112,14 +105,14 @@ impl OnboardingTour {
         }
     }
 
-    /// `close`.
+    /// Closes the dialog and brings the previous tab back.
     pub fn close(&mut self, active_tab: &str) -> Vec<AppEffect> {
         self.open = false;
         self.deactivate_mock(active_tab)
     }
 
-    /// `openIfNeverCompleted`, started: reads `telemetry_get_state` on the
-    /// pool. A failed read shows nothing.
+    /// Starts reading `telemetry_get_state` on the pool, to open the dialog
+    /// when onboarding never completed. A failed read shows nothing.
     pub fn start_open_if_never_completed(&mut self, jobs: &Jobs) {
         self.state_read = Some(jobs.run(|backend: &dyn Backend| {
             backend

@@ -39,3 +39,9 @@ fn unwrap_registry_cookie_roundtrips_write_format() {
     let written = format!("COOK::<{cookie}>");
     assert_eq!(unwrap_registry_cookie(&written), Some(cookie.to_string()));
 }
+
+#[test]
+fn a_switch_never_kills_roblox_studio() {
+    // Studio can hold unsaved work: only the game client is closed.
+    assert_eq!(ROBLOX_SWITCH_KILL_NAMES, ["RobloxPlayerBeta.exe"]);
+}

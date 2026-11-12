@@ -1,5 +1,4 @@
-//! One module per Svelte component, same name in snake_case
-//! (`TitleBar.svelte` is `title_bar.rs`).
+//! One module per UI component.
 //!
 //! A component is a plain function `fn x(ui, rect, &props) -> Vec<Action>`
 //! (or a struct with `show`): it reads its props and the [`Vars`], keeps its
@@ -14,6 +13,7 @@
 pub mod account_card;
 pub mod avatar_fade_in;
 pub mod back_card;
+pub mod boot_error;
 pub mod breadcrumb;
 pub mod bulk_edit;
 pub mod card_extension;
@@ -30,6 +30,7 @@ pub mod platform_icons;
 pub mod search_cancel;
 pub mod section_header;
 pub mod secure_overlays;
+pub(crate) mod shared;
 pub mod title_bar;
 pub mod toast;
 pub mod use_grid_layout;
@@ -55,7 +56,7 @@ fn click_eaten_id() -> egui::Id {
     egui::Id::unique("drag-eats-click")
 }
 
-/// `handleCaptureClick`: the drag manager swallows the click a drag release
+/// The drag manager swallows the click a drag release
 /// fires, before any card sees it. Set for the release's frame only.
 pub fn set_click_eaten(ctx: &egui::Context, eaten: bool) {
     ctx.data_mut(|d| d.insert_temp(click_eaten_id(), eaten));
@@ -70,7 +71,7 @@ pub fn clicked(response: &egui::Response) -> bool {
             .unwrap_or(false)
 }
 
-/// `ghostEl`: a click-through layer over everything at `r`, scaled about its
+/// The drag ghost: a click-through layer over everything at `r`, scaled about its
 /// centre, its contents faded to `opacity` as one group (a layer where the
 /// renderer has them, each shape where it has not). The cards under it keep
 /// the pointer.
@@ -93,7 +94,7 @@ pub fn drag_ghost(
         .show(ctx, |area| {
             let mut gui = area.new_child(egui::UiBuilder::new().max_rect(r));
             gui.set_clip_rect(egui::Rect::EVERYTHING);
-            let group = opacity < 1.0 && !cfg!(feature = "glow");
+            let group = opacity < 1.0;
             if group {
                 crate::ui::backdrop_filter::Mark::Group { opacity }.paint(gui.painter(), r);
             } else {

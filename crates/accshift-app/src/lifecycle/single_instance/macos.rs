@@ -1,14 +1,12 @@
-//! platform_impl/macos.rs of `tauri-plugin-single-instance` 2.4.4: a Unix
-//! socket in `/tmp`. Upstream listens on a tokio task; a plain thread here,
-//! same bytes.
+//! macOS: a Unix socket in `/tmp`, served by a plain thread.
 
 use super::{macos_socket_path, Notify, PlatformLaunch};
 use std::io::{BufWriter, ErrorKind, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 
-/// The socket. Dropping it is `destroy` (macos.rs lines 56-59): remove the
-/// file. The accept thread is left blocked, as upstream's task is.
+/// The socket. Dropping it removes the file. The accept thread is left
+/// blocked.
 pub struct Guard {
     socket: PathBuf,
 }
@@ -19,7 +17,7 @@ impl Drop for Guard {
     }
 }
 
-/// macos.rs lines 21-46.
+/// Serves the socket, or forwards the launch to the instance serving it.
 pub(super) fn acquire(
     identifier: &str,
     args: &[String],
@@ -40,7 +38,7 @@ pub(super) fn acquire(
     }
 }
 
-/// macos.rs lines 78-93: `cwd`, two NULs, the arguments joined by NUL.
+/// Sends a launch: `cwd`, two NULs, the arguments joined by NUL.
 fn notify_singleton(socket: &Path, args: &[String], cwd: &str) -> std::io::Result<()> {
     let stream = UnixStream::connect(socket)?;
     let mut writer = BufWriter::new(&stream);
@@ -51,7 +49,7 @@ fn notify_singleton(socket: &Path, args: &[String], cwd: &str) -> std::io::Resul
     Ok(())
 }
 
-/// macos.rs lines 95-133: the socket is bound before `acquire` returns, so
+/// The socket is bound before `acquire` returns, so
 /// a launch right after this one reaches it; only the accepts run on the
 /// thread.
 fn listen_for_other_instances(socket: PathBuf, notify: Notify) {

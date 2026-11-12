@@ -1,8 +1,9 @@
-//! The port of `tauri-plugin-single-instance` 2.4.4 (built with its
-//! `deep-link` feature and without `semver`, as the Tauri app builds it).
+//! One running app per identifier: a second launch hands its arguments to
+//! the first and exits.
 //!
-//! Same names on every OS, so a Tauri instance and an egui instance of the
-//! same identifier find each other: on Windows the named mutex
+//! The names are the ones `tauri-plugin-single-instance` 2.4.4 uses, so a
+//! running older install and this build find each other: on Windows the
+//! named mutex
 //! `{id}-sim` and the hidden message window of class `{id}-sic` titled
 //! `{id}-siw`, reached with `WM_COPYDATA` (`dwData` 1542, `"cwd|arg0|arg1\0"`);
 //! on Linux the D-Bus name `{id}.SingleInstance` at `/{id with . as /}/SingleInstance`
@@ -10,8 +11,7 @@
 //! on macOS the socket `/tmp/{id with . and - as _}_si.sock`, `cwd\0\0arg0\0arg1`.
 //!
 //! [`acquire`] never exits the process: it answers [`Launch::Forwarded`] and
-//! the caller exits (upstream calls `std::process::exit(0)` itself, after
-//! `cleanup_before_exit` on Windows and Linux). Second launches arrive on
+//! the caller exits. Second launches arrive on
 //! [`SingleInstance::try_recv`], from a thread; `wake` runs after each one
 //! (the egui shell passes `request_repaint`).
 
@@ -23,10 +23,10 @@ mod macos;
 mod windows;
 
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// A second launch: its whole `argv` (executable first) and its working
-/// folder, as the plugin callback receives them.
+/// folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecondInstance {
     pub args: Vec<String>,
@@ -57,11 +57,11 @@ pub enum Launch {
     Primary(SingleInstance),
     /// Another instance got this launch's arguments: exit with code 0.
     Forwarded,
-    /// Neither: run without single-instance protection, as upstream does
-    /// when the mutex exists but its window does not (Windows), the D-Bus
-    /// session refuses the name for another reason (Linux) or the socket
-    /// fails otherwise (macOS). The value keeps what upstream leaks for the
-    /// process lifetime (the Windows mutex handle).
+    /// Neither: run without single-instance protection, when the mutex
+    /// exists but its window does not (Windows), the D-Bus session refuses
+    /// the name for another reason (Linux) or the socket fails otherwise
+    /// (macOS). The value keeps what must stay open for the process
+    /// lifetime (the Windows mutex handle).
     Alone(Option<SingleInstance>),
 }
 
@@ -75,19 +75,71 @@ impl std::fmt::Debug for Launch {
     }
 }
 
-/// The running single-instance service. Dropping it is the plugin's
-/// `destroy` (`RunEvent::Exit`): release the mutex and destroy the window,
-/// release the D-Bus name, or remove the socket.
+/// The running single-instance service. Dropping it, or running its
+/// [`Self::releaser`], releases it on exit: the mutex and the window, the
+/// D-Bus name, or the socket.
 pub struct SingleInstance {
     receiver: Receiver<SecondInstance>,
-    #[allow(dead_code)]
-    guard: Option<PlatformGuard>,
+    guard: Arc<Mutex<Option<PlatformGuard>>>,
+    /// What [`Self::restorer`] needs to take the name again.
+    identifier: String,
+    notify: Notify,
 }
 
 impl SingleInstance {
+    fn new(
+        receiver: Receiver<SecondInstance>,
+        guard: PlatformGuard,
+        identifier: &str,
+        notify: Notify,
+    ) -> Self {
+        Self {
+            receiver,
+            guard: Arc::new(Mutex::new(Some(guard))),
+            identifier: identifier.to_string(),
+            notify,
+        }
+    }
+
     /// The next second launch, if one arrived.
     pub fn try_recv(&self) -> Option<SecondInstance> {
         self.receiver.try_recv().ok()
+    }
+
+    /// Frees the guard from any thread while the service stays alive: the
+    /// update relaunch runs it before it starts the new process, since
+    /// `std::process::exit` never drops the service.
+    pub fn releaser(&self) -> impl Fn() + Send + Sync + 'static {
+        let guard = Arc::clone(&self.guard);
+        move || {
+            let taken = guard.lock().unwrap_or_else(PoisonError::into_inner).take();
+            drop(taken);
+        }
+    }
+
+    /// Takes the name again after [`Self::releaser`] gave it up: the update
+    /// relaunch runs it when no new process started, or the app that stays
+    /// open would let the next launch start a second instance beside it.
+    /// Second launches keep arriving on the same channel. When another
+    /// instance took the name in between, that one keeps it.
+    pub fn restorer(&self) -> impl Fn() + Send + Sync + 'static {
+        let guard = Arc::clone(&self.guard);
+        let identifier = self.identifier.clone();
+        let notify = self.notify.clone();
+        move || {
+            let mut guard = guard.lock().unwrap_or_else(PoisonError::into_inner);
+            if guard.is_some() {
+                return;
+            }
+            // Only the executable goes along: a launch forwarded to an
+            // instance that took the name must not replay this one's link.
+            let args: Vec<String> = current_args().into_iter().take(1).collect();
+            if let PlatformLaunch::Primary(restored) =
+                platform_acquire(&identifier, &args, &current_cwd(), notify.clone())
+            {
+                *guard = Some(restored);
+            }
+        }
     }
 
     /// The channel itself (blocking waits in tests).
@@ -112,23 +164,18 @@ pub(crate) enum PlatformLaunch {
     Alone(Option<PlatformGuard>),
 }
 
-/// The plugin's `setup` for `identifier`, forwarding `args` and `cwd` when
+/// Becomes the instance for `identifier`, or forwards `args` and `cwd` when
 /// another instance runs. Tests pass their own identifier and arguments;
 /// the app passes [`current_args`] and [`current_cwd`].
 pub fn acquire(identifier: &str, args: &[String], cwd: &str, wake: Option<Wake>) -> Launch {
     let (sender, receiver) = mpsc::channel();
     let notify = Notify { sender, wake };
-    let launch = platform_acquire(identifier, args, cwd, notify);
+    let launch = platform_acquire(identifier, args, cwd, notify.clone());
+    let service = |guard| SingleInstance::new(receiver, guard, identifier, notify);
     match launch {
-        PlatformLaunch::Primary(guard) => Launch::Primary(SingleInstance {
-            receiver,
-            guard: Some(guard),
-        }),
+        PlatformLaunch::Primary(guard) => Launch::Primary(service(guard)),
         PlatformLaunch::Forwarded => Launch::Forwarded,
-        PlatformLaunch::Alone(guard) => Launch::Alone(guard.map(|guard| SingleInstance {
-            receiver,
-            guard: Some(guard),
-        })),
+        PlatformLaunch::Alone(guard) => Launch::Alone(guard.map(service)),
     }
 }
 
@@ -172,7 +219,7 @@ fn platform_acquire(
     PlatformLaunch::Alone(None)
 }
 
-/// `std::env::args()` as upstream forwards it, lossy instead of panicking
+/// This process's arguments, executable first, lossy instead of panicking
 /// on an argument that is not UTF-8.
 pub fn current_args() -> Vec<String> {
     std::env::args_os()
@@ -189,8 +236,8 @@ pub fn current_cwd() -> String {
         .to_string()
 }
 
-/// The Windows names, `{id}-sic`, `{id}-siw`, `{id}-sim`
-/// (platform_impl/windows.rs lines 65-67 without the `semver` suffix).
+/// The Windows names: window class `{id}-sic`, window title `{id}-siw` and
+/// mutex `{id}-sim`.
 pub fn windows_names(identifier: &str) -> (String, String, String) {
     (
         format!("{identifier}-sic"),
@@ -199,13 +246,12 @@ pub fn windows_names(identifier: &str) -> (String, String, String) {
     )
 }
 
-/// The `WM_COPYDATA` payload, `"{cwd}|{args joined by |}\0"`
-/// (platform_impl/windows.rs lines 76-82).
+/// The `WM_COPYDATA` payload, `"{cwd}|{args joined by |}\0"`.
 pub fn windows_payload(args: &[String], cwd: &str) -> String {
     format!("{cwd}|{}\0", args.join("|"))
 }
 
-/// The receiving split of that payload (lines 145-155): text up to the first
+/// The receiving split of that payload: text up to the first
 /// NUL, cut on `|`, the first piece is the cwd.
 pub fn parse_windows_payload(data: &[u8]) -> (String, Vec<String>) {
     let end = data.iter().position(|b| *b == 0).unwrap_or(data.len());
@@ -215,7 +261,7 @@ pub fn parse_windows_payload(data: &[u8]) -> (String, Vec<String>) {
     (cwd, pieces.map(str::to_string).collect())
 }
 
-/// The D-Bus name and object path (platform_impl/linux.rs lines 37-49).
+/// The D-Bus name and object path.
 pub fn dbus_name_and_path(identifier: &str) -> (String, String) {
     let name = format!("{identifier}.SingleInstance");
     let mut path = name.replace('.', "/").replace('-', "_");
@@ -225,7 +271,7 @@ pub fn dbus_name_and_path(identifier: &str) -> (String, String) {
     (name, path)
 }
 
-/// The macOS socket (platform_impl/macos.rs lines 61-72).
+/// The macOS socket path.
 pub fn macos_socket_path(identifier: &str) -> std::path::PathBuf {
     let identifier = identifier.replace(['.', '-'], "_");
     std::path::PathBuf::from(format!("/tmp/{identifier}_si.sock"))

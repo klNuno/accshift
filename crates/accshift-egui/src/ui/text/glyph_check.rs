@@ -2,7 +2,7 @@
 //! glyph of `parity/fragments/glyph-check.html` (Latin, Cyrillic and
 //! Han, regular and bold, 12 and 16 px), at scales 1 and 1.5, compared pixel
 //! by pixel inside its own bitmap box in the reference frame and the egui
-//! frame. Run after `parity/ref.mjs` and the egui runner captured the
+//! frame. Run against a WebView2 capture and an egui capture of the
 //! `glyph-check-*` scenes:
 //!
 //! `ACCSHIFT_GLYPH_REF=<ref dir> ACCSHIFT_GLYPH_EGUI=<egui dir> cargo test --release -- --ignored --nocapture glyph_level`

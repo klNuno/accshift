@@ -1,11 +1,11 @@
-//! The PIN lock. Port of `src-tauri/src/commands/pin.rs`.
+//! The PIN lock.
 
 use super::RealBackend;
 use crate::error::BackendResult;
 use crate::types::PinUnlockResult;
 use accshift_core::pin::UnlockOutcome;
 
-/// `impl From<UnlockOutcome> for PinUnlockResult`, pin.rs lines 25-51.
+/// The unlock answer the UI reads, from the core outcome.
 pub(super) fn unlock_result(outcome: UnlockOutcome) -> PinUnlockResult {
     let ms = |d: std::time::Duration| d.as_millis().min(u128::from(u64::MAX)) as u64;
     let (status, legacy, retry_after_ms) = match outcome {
@@ -21,13 +21,13 @@ pub(super) fn unlock_result(outcome: UnlockOutcome) -> PinUnlockResult {
     }
 }
 
-/// `pin_unlock`, pin.rs lines 53-68. PBKDF2 at 100k rounds: run it on the
+/// Backs `Backend::pin_unlock`. PBKDF2 at 100k rounds: run it on the
 /// job pool, never on the UI thread.
 pub(super) fn unlock(backend: &RealBackend, code: &str) -> BackendResult<PinUnlockResult> {
     Ok(unlock_result(backend.pin.unlock(&backend.ctx, code)?))
 }
 
-/// `pin_lock`, pin.rs lines 70-75.
+/// Backs `Backend::pin_lock`.
 pub(super) fn lock(backend: &RealBackend) {
     backend.pin.lock();
 }

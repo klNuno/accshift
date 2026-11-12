@@ -22,14 +22,12 @@ pub use self::migrate::migrate_legacy_config;
 #[cfg(test)]
 pub(crate) use self::store::config_io_test_mutex;
 pub use self::store::{load_config, save_config, update_config};
-pub use self::window::{
-    clamp_window_position, clamp_window_size, load_window, load_window_physical_position,
-    load_window_position, load_window_size, logical_from_physical, save_window_geometry,
-    save_window_size, SavedWindow,
-};
+#[cfg(test)]
+use self::window::{clamp_window_position, clamp_window_size};
+pub use self::window::{load_window, logical_from_physical, save_window_geometry, SavedWindow};
 
-// Every window measurement here is in LOGICAL pixels, which is what
-// `WebviewWindowBuilder::inner_size` and `::position` consume. Callers that
+// Every window measurement here is in LOGICAL pixels, which is what egui's
+// `ViewportBuilder::with_inner_size` and `::with_position` consume. Callers that
 // read a live window get physical pixels and must divide by the scale factor
 // first (see `logical_from_physical`), or the window grows by that factor at
 // every launch on a scaled display.

@@ -1,7 +1,9 @@
 //! Dry-run plans: what a switch or a setup would touch.
 
+use super::state_item::StateItem;
 #[allow(unused_imports)]
 use super::*;
+use crate::platforms::descriptor::schema::{DirItem, FileItem};
 
 impl DescriptorService {
     /// Describes the switch this descriptor would perform, writing nothing.
@@ -79,40 +81,11 @@ impl DescriptorService {
             Ok(runtime) => runtime,
             Err(e) => return plan.warn(e),
         };
-        for item in &runtime.profile.state.files {
-            if item.clear_on_setup {
-                match runtime.spec_path(&item.live) {
-                    Ok(live) => plan.simple_step(
-                        PlanAction::Delete,
-                        PlanTargetKind::File,
-                        live.display().to_string(),
-                        NOTE,
-                    ),
-                    Err(e) => plan.warn(e.to_string()),
-                }
-            }
-        }
-        for item in &runtime.profile.state.registry_values {
-            if item.clear_on_setup {
-                plan.simple_step(
-                    PlanAction::Delete,
-                    PlanTargetKind::RegistryValue,
-                    reg::display(item.root, &item.key, &item.value),
-                    NOTE,
-                );
-            }
-        }
-        for item in &runtime.profile.state.directories {
-            if item.clear_on_setup {
-                match runtime.spec_path(&item.live) {
-                    Ok(live) => plan.simple_step(
-                        PlanAction::Delete,
-                        PlanTargetKind::Directory,
-                        live.display().to_string(),
-                        NOTE,
-                    ),
-                    Err(e) => plan.warn(e.to_string()),
-                }
+        let state = &runtime.profile.state;
+        for item in StateItem::all(state).filter(|item| item.clear_on_setup()) {
+            match plan_target(&runtime, item) {
+                Ok(target) => plan.simple_step(PlanAction::Delete, item.plan_kind(), target, NOTE),
+                Err(e) => plan.warn(e.to_string()),
             }
         }
         for template in &runtime.profile.state.caches {
@@ -134,43 +107,21 @@ impl DescriptorService {
         plan: &mut DryRunPlan,
         cache_dir: &Path,
     ) {
-        for item in &runtime.profile.state.files {
-            match runtime.spec_path(&item.live) {
-                Ok(live) => plan.path_step(
-                    PlanAction::Capture,
-                    PlanTargetKind::File,
-                    &live,
-                    &cache_dir.join(&item.snapshot),
-                    if live.is_file() { "" } else { "not present" },
-                ),
-                Err(e) => plan.warn(e.to_string()),
-            }
-        }
-        for item in &runtime.profile.state.registry_values {
-            let present = reg::read(item.root, &item.key, &item.value).is_some();
+        for item in StateItem::all(&runtime.profile.state) {
+            let (target, note) = match capture_target(runtime, item) {
+                Ok(found) => found,
+                Err(e) => {
+                    plan.warn(e.to_string());
+                    continue;
+                }
+            };
             plan.push(PlanStep {
                 action: PlanAction::Capture,
-                kind: PlanTargetKind::RegistryValue,
-                target: reg::display(item.root, &item.key, &item.value),
-                snapshot: cache_dir.join(&item.snapshot).display().to_string(),
-                note: if present {
-                    String::new()
-                } else {
-                    "not set".into()
-                },
+                kind: item.plan_kind(),
+                target,
+                snapshot: cache_dir.join(item.snapshot()).display().to_string(),
+                note: note.into(),
             });
-        }
-        for item in &runtime.profile.state.directories {
-            match runtime.spec_path(&item.live) {
-                Ok(live) => plan.path_step(
-                    PlanAction::Capture,
-                    PlanTargetKind::Directory,
-                    &live,
-                    &cache_dir.join(&item.snapshot),
-                    if live.is_dir() { "" } else { "not present" },
-                ),
-                Err(e) => plan.warn(e.to_string()),
-            }
         }
     }
 
@@ -185,80 +136,26 @@ impl DescriptorService {
         // snapshot at all the switch stops before this point.
         const ABSENT: &str = "not in this account's snapshot";
         let held = cache_dir.exists();
-        for item in &runtime.profile.state.files {
-            let snapshot = cache_dir.join(&item.snapshot);
-            match runtime.spec_path(&item.live) {
-                Ok(live) if snapshot.exists() => plan.path_step(
-                    PlanAction::Restore,
-                    PlanTargetKind::File,
-                    &live,
-                    &snapshot,
-                    "",
-                ),
-                Ok(live) if held && item.clear_snapshot_when_source_missing => plan.simple_step(
-                    PlanAction::Delete,
-                    PlanTargetKind::File,
-                    live.display().to_string(),
-                    ABSENT,
-                ),
-                Ok(live) => plan.path_step(
-                    PlanAction::Restore,
-                    PlanTargetKind::File,
-                    &live,
-                    &snapshot,
-                    "no snapshot, skipped",
-                ),
-                Err(e) => plan.warn(e.to_string()),
-            }
-        }
-        for item in &runtime.profile.state.registry_values {
-            let snapshot = cache_dir.join(&item.snapshot);
-            let target = reg::display(item.root, &item.key, &item.value);
-            if held && !snapshot.exists() && item.clear_snapshot_when_source_missing {
-                plan.simple_step(
-                    PlanAction::Delete,
-                    PlanTargetKind::RegistryValue,
+        for item in StateItem::all(&runtime.profile.state) {
+            let snapshot = cache_dir.join(item.snapshot());
+            let target = match plan_target(runtime, item) {
+                Ok(target) => target,
+                Err(e) => {
+                    plan.warn(e.to_string());
+                    continue;
+                }
+            };
+            if snapshot.exists() {
+                plan.push(restore_step(item, target, &snapshot, ""));
+            } else if held && item.clear_snapshot_when_source_missing() {
+                plan.simple_step(PlanAction::Delete, item.plan_kind(), target, ABSENT);
+            } else {
+                plan.push(restore_step(
+                    item,
                     target,
-                    ABSENT,
-                );
-                continue;
-            }
-            plan.push(PlanStep {
-                action: PlanAction::Restore,
-                kind: PlanTargetKind::RegistryValue,
-                target,
-                snapshot: snapshot.display().to_string(),
-                note: if snapshot.exists() {
-                    String::new()
-                } else {
-                    "no snapshot, skipped".into()
-                },
-            });
-        }
-        for item in &runtime.profile.state.directories {
-            let snapshot = cache_dir.join(&item.snapshot);
-            match runtime.spec_path(&item.live) {
-                Ok(live) if snapshot.exists() => plan.path_step(
-                    PlanAction::Restore,
-                    PlanTargetKind::Directory,
-                    &live,
-                    &snapshot,
-                    "",
-                ),
-                Ok(live) if held && item.clear_snapshot_when_source_missing => plan.simple_step(
-                    PlanAction::Delete,
-                    PlanTargetKind::Directory,
-                    live.display().to_string(),
-                    ABSENT,
-                ),
-                Ok(live) => plan.path_step(
-                    PlanAction::Restore,
-                    PlanTargetKind::Directory,
-                    &live,
                     &snapshot,
                     "no snapshot, skipped",
-                ),
-                Err(e) => plan.warn(e.to_string()),
+                ));
             }
         }
         for template in &runtime.profile.state.caches {
@@ -272,5 +169,53 @@ impl DescriptorService {
                 Err(e) => plan.warn(e.to_string()),
             }
         }
+    }
+}
+
+/// What a plan step names for a state item: the live path of a file or a
+/// directory, the full name of a registry value.
+fn plan_target(runtime: &Runtime<'_>, item: StateItem<'_>) -> Result<String, PlatformError> {
+    match item {
+        StateItem::File(FileItem { live, .. }) | StateItem::Dir(DirItem { live, .. }) => {
+            Ok(runtime.spec_path(live)?.display().to_string())
+        }
+        StateItem::Value(value) => Ok(reg::display(value.root, &value.key, &value.value)),
+    }
+}
+
+/// A capture step's target and its note: empty when there is something live
+/// to capture, otherwise why there is not.
+fn capture_target(
+    runtime: &Runtime<'_>,
+    item: StateItem<'_>,
+) -> Result<(String, &'static str), PlatformError> {
+    let (live, present) = match item {
+        StateItem::File(file) => {
+            let live = runtime.spec_path(&file.live)?;
+            let present = live.is_file();
+            (live, present)
+        }
+        StateItem::Dir(dir) => {
+            let live = runtime.spec_path(&dir.live)?;
+            let present = live.is_dir();
+            (live, present)
+        }
+        StateItem::Value(value) => {
+            let present = reg::read(value.root, &value.key, &value.value).is_some();
+            let note = if present { "" } else { "not set" };
+            return Ok((reg::display(value.root, &value.key, &value.value), note));
+        }
+    };
+    let note = if present { "" } else { "not present" };
+    Ok((live.display().to_string(), note))
+}
+
+fn restore_step(item: StateItem<'_>, target: String, snapshot: &Path, note: &str) -> PlanStep {
+    PlanStep {
+        action: PlanAction::Restore,
+        kind: item.plan_kind(),
+        target,
+        snapshot: snapshot.display().to_string(),
+        note: note.into(),
     }
 }

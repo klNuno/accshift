@@ -1,4 +1,4 @@
-//! `DescriptorPreviewDialog.svelte`: what a descriptor file would add, before
+//! The descriptor preview dialog: what a descriptor file would add, before
 //! it adds it, on `BaseDialog` at `min(560px, 100vw - 24px)`.
 //!
 //! ```text
@@ -500,7 +500,7 @@ fn blocks_height(blocks: &[(f32, Block)]) -> f32 {
     blocks.iter().map(|(gap, b)| gap + b.height()).sum()
 }
 
-/// `DescriptorPreviewDialog.svelte` over the window.
+/// The descriptor preview dialog over the window.
 pub fn descriptor_preview_dialog(
     ui: &mut Ui,
     props: &DialogProps,

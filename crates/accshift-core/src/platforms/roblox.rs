@@ -30,7 +30,10 @@ pub use self::cookie::*;
 #[allow(unused_imports)]
 pub use self::setup::*;
 
-const ROBLOX_PROCESS_NAMES: &[&str] = &["RobloxPlayerBeta.exe", "RobloxStudioBeta.exe"];
+/// What a switch closes: the game client only. Roblox Studio is left alone, a
+/// hard kill would throw away unsaved work; it picks the new account up from
+/// the registry cookie the next time it starts.
+const ROBLOX_SWITCH_KILL_NAMES: &[&str] = &["RobloxPlayerBeta.exe"];
 const ROBLOX_AUTH_RESPONSE_MAX_BYTES: u64 = 1024 * 1024;
 
 // ---------------------------------------------------------------------------
@@ -133,7 +136,7 @@ pub fn switch_account(app_handle: &dyn AppContext, user_id: &str) -> Result<(), 
     // Get an auth ticket BEFORE killing: the API needs the cookie, not a running process
     let ticket = request_auth_ticket(&cookie)?;
 
-    kill_roblox();
+    kill_roblox_player();
     // Studio reads the session from the registry. The game launch below does
     // not need it, so a failure is reported and the switch goes on.
     if let Err(e) = write_cookie_to_registry(&cookie) {
@@ -150,7 +153,16 @@ pub fn switch_account(app_handle: &dyn AppContext, user_id: &str) -> Result<(), 
     if let Some(a) = accounts.iter_mut().find(|a| a.user_id == user_id) {
         a.last_used_at = Some(super::now_unix_ms());
     }
-    let _ = save_account_configs(app_handle, &accounts);
+    // `persist_rotated_cookie` reads the active account from `last_used_at`:
+    // a lost write must at least show in the log.
+    if let Err(e) = save_account_configs(app_handle, &accounts) {
+        log_platform_error(
+            app_handle,
+            "roblox.switch_account",
+            "Could not record the Roblox account as the active one",
+            &e,
+        );
+    }
 
     let launch_result = launch_roblox_with_ticket(&ticket);
 

@@ -1,8 +1,8 @@
-//! The folder store, ported from `src/lib/features/folders/{types,store}.ts`.
+//! The folder store.
 //!
-//! [`FolderStore`] is the store's JSON as a struct. Its methods are the TS
-//! functions; the mutating ones return whether the store has to be written,
-//! and [`crate::stores::ClientStores`] writes it.
+//! [`FolderStore`] is the store's JSON as a struct. Its mutating methods
+//! return whether the store has to be written, and
+//! [`crate::stores::ClientStores`] writes it.
 
 use crate::js;
 use serde::{Deserialize, Serialize};
@@ -80,7 +80,7 @@ pub struct FolderSection {
     pub account_items: Vec<ItemRef>,
 }
 
-/// `getRootKey`.
+/// The `itemOrder` key of a platform's root.
 pub fn root_key(platform: &str) -> String {
     format!("{ROOT_KEY_PREFIX}{platform}")
 }
@@ -140,7 +140,7 @@ fn sanitize_item_ref(value: &Value) -> Option<ItemRef> {
     Some(ItemRef { kind, id })
 }
 
-/// `sanitizeStore` then `migrateStore`. Drops folders missing an id, name or
+/// The store as read from disk, sanitized and migrated. Drops folders missing an id, name or
 /// platform, and every `itemOrder` bucket that is neither a platform root nor
 /// a live folder (a dead folder's bucket would keep its accounts forever).
 pub fn sanitize_folder_store(value: &Value) -> FolderStore {
@@ -178,12 +178,12 @@ pub fn sanitize_folder_store(value: &Value) -> FolderStore {
     }
 }
 
-/// `getStore` on a raw store value: `None` (missing) is the empty store.
+/// The store from its raw value: `None` (missing) is the empty store.
 pub fn load_folder_store(value: Option<&Value>) -> FolderStore {
     value.map(sanitize_folder_store).unwrap_or_default()
 }
 
-/// `generateId`: base-36 milliseconds plus four random base-36 characters.
+/// A new folder id: base-36 milliseconds plus four random base-36 characters.
 pub fn generate_folder_id() -> String {
     let millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -199,14 +199,14 @@ impl FolderStore {
         serde_json::to_value(self).unwrap_or(Value::Null)
     }
 
-    /// `getItemsInFolder`.
+    /// The items of a folder, or of the platform's root for `None`.
     pub fn items_in_folder(&self, folder_id: Option<&str>, platform: &str) -> &[ItemRef] {
         self.item_order
             .get(&bucket_key(folder_id, platform))
             .map_or(&[], Vec::as_slice)
     }
 
-    /// `getRootSections`: each root folder with its items, then the root's own
+    /// Each root folder with its items, then the root's own
     /// accounts.
     pub fn root_sections(&self, platform: &str) -> Vec<FolderSection> {
         let root_items = self.items_in_folder(None, platform);
@@ -248,7 +248,7 @@ impl FolderStore {
         sections
     }
 
-    /// `createFolder` with a given id (see [`generate_folder_id`]).
+    /// Creates a folder with a given id (see [`generate_folder_id`]).
     pub fn create_folder(
         &mut self,
         id: String,
@@ -271,12 +271,12 @@ impl FolderStore {
         folder
     }
 
-    /// `getFolder`.
+    /// The folder with this id.
     pub fn folder(&self, id: &str) -> Option<&FolderInfo> {
         self.folders.iter().find(|folder| folder.id == id)
     }
 
-    /// `listFolders`: every folder of one platform, in creation order.
+    /// Every folder of one platform, in creation order.
     pub fn list_folders(&self, platform: &str) -> Vec<&FolderInfo> {
         self.folders
             .iter()
@@ -284,7 +284,7 @@ impl FolderStore {
             .collect()
     }
 
-    /// `findItemFolderId`: the folder holding this item, `None` at the root.
+    /// The folder holding this item, `None` at the root.
     pub fn find_item_folder_id(&self, item: &ItemRef, platform: &str) -> Option<&str> {
         self.folders
             .iter()
@@ -297,13 +297,13 @@ impl FolderStore {
             .map(|folder| folder.id.as_str())
     }
 
-    /// `getFolderPath`: from the outermost folder down to `folder_id`.
+    /// The folders from the outermost folder down to `folder_id`.
     pub fn folder_path(&self, folder_id: Option<&str>) -> Vec<&FolderInfo> {
         let mut path = Vec::new();
         let mut seen = BTreeSet::new();
         let mut current = non_empty(folder_id);
         while let Some(id) = current {
-            // TS loops forever on a parent cycle; stop at the first repeat.
+            // A parent cycle would loop forever; stop at the first repeat.
             if !seen.insert(id) {
                 break;
             }
@@ -316,7 +316,7 @@ impl FolderStore {
         path
     }
 
-    /// `isFolderDescendant`: `folder_id` is `ancestor_id` or sits under it.
+    /// `folder_id` is `ancestor_id` or sits under it.
     pub fn is_folder_descendant(&self, folder_id: Option<&str>, ancestor_id: &str) -> bool {
         let mut seen = BTreeSet::new();
         let mut current = non_empty(folder_id);
@@ -334,7 +334,7 @@ impl FolderStore {
         false
     }
 
-    /// `syncAccounts`: new accounts join the root, gone ones leave every
+    /// New accounts join the root, gone ones leave every
     /// bucket of the platform. Returns whether anything changed.
     pub fn sync_accounts(&mut self, account_ids: &[String], platform: &str) -> bool {
         let root = root_key(platform);
@@ -380,9 +380,10 @@ impl FolderStore {
         changed
     }
 
-    /// `moveItem`. A folder never moves into its own subtree. `insert_index`
-    /// past the end appends, like `splice`. Returns whether the store changed
-    /// (always, once the move is allowed: TS saves even a no-op move).
+    /// Moves an item into a folder or a root. A folder never moves into its
+    /// own subtree. `insert_index` past the end appends. Returns whether the
+    /// store has to be written (always, once the move is allowed, even when
+    /// nothing moved).
     pub fn move_item(
         &mut self,
         item: &ItemRef,
@@ -412,7 +413,7 @@ impl FolderStore {
         true
     }
 
-    /// `reorderItems`: replaces one bucket.
+    /// Replaces one bucket.
     pub fn reorder_items(&mut self, folder_id: Option<&str>, platform: &str, items: Vec<ItemRef>) {
         self.item_order
             .insert(bucket_key(folder_id, platform), items);
@@ -456,7 +457,7 @@ impl FolderStore {
         }
     }
 
-    /// `deleteFolder`: the folder and its subtree go; their accounts take the
+    /// Deletes a folder: it and its subtree go; their accounts take the
     /// folder's place in its parent. Returns whether the folder existed.
     pub fn delete_folder(&mut self, folder_id: &str) -> bool {
         let Some(folder) = self.folder(folder_id).cloned() else {
@@ -489,7 +490,7 @@ impl FolderStore {
         true
     }
 
-    /// `renameFolder`. Returns whether the folder existed.
+    /// Renames a folder. Returns whether the folder existed.
     pub fn rename_folder(&mut self, folder_id: &str, new_name: &str) -> bool {
         match self
             .folders

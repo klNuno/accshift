@@ -44,6 +44,24 @@ fn minimal_descriptor_is_accepted() {
 }
 
 #[test]
+fn windows_roots_require_the_resolvers_install_dir_spelling() {
+    for name in ["INSTALLDIR", "InstallDir", "installDir"] {
+        let result = with_windows(|v| {
+            v["os"]["windows"]["roots"]["files"] = serde_json::json!([format!("${{{name}}}/Demo")]);
+            v["os"]["windows"]["state"]["files"][0]["live"] =
+                serde_json::json!(format!("${{{name}}}/Demo/session.json"));
+        });
+        if name == "installDir" {
+            assert!(result.is_ok());
+        } else {
+            let error = result.unwrap_err();
+            assert_eq!(error.field, "os.windows.roots.files[0]");
+            assert!(error.problem.contains(name), "{}", error.problem);
+        }
+    }
+}
+
+#[test]
 fn wrong_schema_version_names_the_field_and_the_expectation() {
     let err = with_windows(|v| v["schemaVersion"] = serde_json::json!(2)).unwrap_err();
     assert_eq!(err.field, "schemaVersion");
@@ -468,4 +486,25 @@ fn a_live_path_or_cache_equal_to_a_root_is_refused() {
         v["os"]["windows"]["state"]["caches"] = serde_json::json!(["${LOCALAPPDATA}/Demo/Cache"]);
     })
     .unwrap();
+}
+
+// Regression: a profile without `selectFilter` opened the picker on `*.exe`
+// on every OS, so a Linux or macOS launcher binary could not be chosen.
+#[test]
+fn the_default_picker_filter_lists_exe_only_on_windows() {
+    let descriptor = Descriptor::parse("test", MINIMAL).unwrap();
+    let executable = descriptor.os[&Os::Windows].executable.as_ref().unwrap();
+    assert!(executable.picker_filter(true).contains("*.exe"));
+    assert_eq!(executable.picker_filter(false), "");
+}
+
+#[test]
+fn a_declared_picker_filter_wins_on_every_os() {
+    let descriptor = with_windows(|value| {
+        value["os"]["windows"]["executable"]["selectFilter"] = "Scripts|*.sh".into();
+    })
+    .unwrap();
+    let executable = descriptor.os[&Os::Windows].executable.as_ref().unwrap();
+    assert_eq!(executable.picker_filter(true), "Scripts|*.sh");
+    assert_eq!(executable.picker_filter(false), "Scripts|*.sh");
 }

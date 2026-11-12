@@ -1,12 +1,12 @@
-//! Steam, ported from `src/lib/platforms/steam/*.ts` (the `.svelte` files
-//! and the profile cache are UI and M2 work).
+//! Steam.
 //!
-//! - [`api`] holds `steamApi.ts`, the calls with logic of their own.
-//! - [`warnings`] holds `warnings.ts`, ban warnings.
-//! - [`context_menu`] holds `contextMenu.ts`.
-//! - [`cs2`] holds `cs2CardContent.ts` and the data half of `cs2Bridge.svelte.ts`.
-//! - [`friend_code`] and [`settings_schema`] hold their TS namesakes.
-//! - here: `adapter.ts` mappings, `steamIdUtils.ts`, the toast wording.
+//! - [`api`]: the calls with logic of their own.
+//! - [`warnings`]: ban warnings.
+//! - [`context_menu`]: account menu entries.
+//! - [`cs2`]: CS2 card content and the CS2 bridge cache.
+//! - [`friend_code`]: CS2 friend codes.
+//! - [`settings_schema`]: the Steam settings schema.
+//! - here: account and profile mappings, SteamID helpers, the toast wording.
 
 pub mod api;
 pub mod context_menu;
@@ -20,13 +20,14 @@ use crate::text::Text;
 use crate::types::ProfileInfo;
 use serde_json::Value;
 
-/// `toProfileUrl`.
+/// The community profile URL of a SteamID64.
 pub fn to_profile_url(steam_id64: &str) -> String {
     format!("https://steamcommunity.com/profiles/{steam_id64}")
 }
 
-/// `toSteamAccount`. Steam is the one platform whose stamp is already Unix
-/// SECONDS (read out of `loginusers.vdf`), so it passes through.
+/// A Steam account payload as a platform account. Steam is the one platform
+/// whose stamp is already Unix SECONDS (read out of `loginusers.vdf`), so it
+/// passes through.
 pub fn to_steam_account(raw: &Value) -> PlatformAccount {
     let text = |name: &str| {
         raw.get(name)
@@ -42,7 +43,7 @@ pub fn to_steam_account(raw: &Value) -> PlatformAccount {
     }
 }
 
-/// `getAccounts().map(toSteamAccount)`.
+/// The Steam accounts of the backend's raw account list.
 pub fn to_steam_accounts(raw: &Value) -> Vec<PlatformAccount> {
     raw.as_array()
         .map(|list| list.iter().map(to_steam_account).collect())
@@ -64,9 +65,9 @@ pub fn to_steam_snapshot(raw: &Value) -> StartupSnapshot {
     }
 }
 
-/// `isSafeHttpUrl`: an absolute `http:` or `https:` URL with a host. `new
-/// URL()` is approximated: surrounding C0 controls and spaces are ignored,
-/// the scheme is case-insensitive and the host must be non-empty.
+/// An absolute `http:` or `https:` URL with a host: surrounding C0 controls
+/// and spaces are ignored, the scheme is case-insensitive and the host must
+/// be non-empty.
 pub fn is_safe_http_url(value: &str) -> bool {
     let trimmed = value.trim_matches(|c: char| c <= ' ');
     let Some((scheme, rest)) = trimmed.split_once(':') else {
@@ -86,8 +87,8 @@ pub fn is_safe_http_url(value: &str) -> bool {
     !host.is_empty()
 }
 
-/// `toPlatformProfileInfo`: `None` (no data, keep what is on screen) stays
-/// `None`; an unsafe or blank avatar URL becomes "no avatar".
+/// `None` (no data, keep what is on screen) stays `None`; an unsafe or blank
+/// avatar URL becomes "no avatar".
 pub fn to_platform_profile_info(profile: Option<&ProfileInfo>) -> Option<PlatformProfileInfo> {
     let profile = profile?;
     let avatar = crate::js::trim(profile.avatar_url.as_deref().unwrap_or_default());
@@ -98,10 +99,10 @@ pub fn to_platform_profile_info(profile: Option<&ProfileInfo>) -> Option<Platfor
     })
 }
 
-/// `getNoAccountsToastMessage`.
+/// The toast for a Steam tab with no accounts.
 pub const NO_ACCOUNTS_TOAST_KEY: &str = "toast.noSteamAccountsFound";
 
-/// `getSwitchErrorToastMessage`.
+/// The dedicated toast for a failed switch, `None` for the generic one.
 pub fn switch_error_toast(message: &str) -> Option<Text> {
     message
         .to_lowercase()
@@ -109,7 +110,7 @@ pub fn switch_error_toast(message: &str) -> Option<Text> {
         .then(|| Text::key("toast.steamElevated"))
 }
 
-/// `getLoadErrorToastMessage`.
+/// The dedicated toast for a failed account load, `None` for the generic one.
 pub fn load_error_toast(message: &str) -> Option<Text> {
     let normalized = crate::js::trim(message).to_lowercase();
     (normalized.contains("could not locate steam installation")

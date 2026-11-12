@@ -1,17 +1,15 @@
-//! The keyboard model: `shared/keyboard/controller.test.ts`,
-//! `app/keyboardBindings.test.ts` and `app/tabCycle.test.ts`, then every
-//! binding of the app table through the resolver in every scope.
+//! The keyboard model: the controller, the tab cycle and the bindings, then
+//! every binding of the app table through the resolver in every scope.
 
 use accshift_app::actions::keyboard::{
     app_bindings, current_key_scope, parse_combo, pick_cycled_tab, Binding, Direction, KeyAction,
     KeyCommand, KeyEvent, KeyHost, KeyOutcome, KeyResult, KeyScope, KeyboardController, Scopes,
     CARD_NAV_SCOPES, LAYER_ORDER,
 };
-use accshift_app::actions::shell::{key_scope, ScopeFlags};
 use accshift_app::folders::ItemRef;
 use std::collections::BTreeSet;
 
-/// A host that records every call, the TS `setup()` deps.
+/// A host that records every call.
 struct Host {
     folder: bool,
     active_tab: String,
@@ -139,7 +137,11 @@ impl Host {
 }
 
 fn press(keyboard: &KeyboardController, host: &mut Host, scope: KeyScope, event: KeyEvent) -> bool {
-    keyboard.handle(&event, scope, false, host).is_handled()
+    handled(keyboard.handle(&event, scope, false, host))
+}
+
+fn handled(outcome: KeyOutcome) -> bool {
+    matches!(outcome, KeyOutcome::Handled { .. })
 }
 
 fn key(k: &str) -> KeyEvent {
@@ -152,19 +154,20 @@ fn binding(combo: &str, scopes: Scopes, command: KeyCommand) -> Binding {
         scopes,
         allow_in_input: false,
         skip_in_input: false,
+        skip_in_input_on_mac: false,
         prevent_default: true,
         command,
     }
 }
 
-// controller.test.ts
+// The keyboard controller.
 
 #[test]
 fn controller_handles_and_consumes_a_binding_that_takes_the_key() {
     let keyboard = KeyboardController::new(vec![binding(
         "escape",
         Scopes::Only(vec![KeyScope::App]),
-        KeyCommand::Swallow,
+        KeyCommand::ClosePalette,
     )]);
     let outcome = keyboard.handle(&key("Escape"), KeyScope::App, false, &mut Host::default());
     assert_eq!(
@@ -278,24 +281,36 @@ fn controller_keeps_single_keys_out_of_text_fields_unless_allowed() {
 fn controller_reads_mod_as_cmd_on_macos_and_refuses_the_stray_modifier() {
     let keyboard = KeyboardController::new(vec![
         binding("mod+k", Scopes::All, KeyCommand::ClosePalette),
-        binding("escape", Scopes::All, KeyCommand::Swallow),
+        binding("escape", Scopes::All, KeyCommand::ClosePalette),
     ]);
     let mut host = Host::default();
-    assert!(keyboard
-        .handle(&key("k").meta(), KeyScope::App, true, &mut host)
-        .is_handled());
-    assert!(!keyboard
-        .handle(&key("k").ctrl(), KeyScope::App, true, &mut host)
-        .is_handled());
-    assert!(!keyboard
-        .handle(&key("Escape").ctrl(), KeyScope::App, true, &mut host)
-        .is_handled());
-    assert!(!keyboard
-        .handle(&key("Escape").meta(), KeyScope::App, false, &mut host)
-        .is_handled());
+    assert!(handled(keyboard.handle(
+        &key("k").meta(),
+        KeyScope::App,
+        true,
+        &mut host
+    )));
+    assert!(!handled(keyboard.handle(
+        &key("k").ctrl(),
+        KeyScope::App,
+        true,
+        &mut host
+    )));
+    assert!(!handled(keyboard.handle(
+        &key("Escape").ctrl(),
+        KeyScope::App,
+        true,
+        &mut host
+    )));
+    assert!(!handled(keyboard.handle(
+        &key("Escape").meta(),
+        KeyScope::App,
+        false,
+        &mut host
+    )));
 }
 
-// tabCycle.test.ts
+// The tab cycle.
 
 fn tabs() -> Vec<String> {
     vec!["steam".into(), "riot".into(), "epic".into()]
@@ -341,10 +356,10 @@ fn tab_cycle_returns_none_with_fewer_than_two_tabs() {
     assert_eq!(pick_cycled_tab(&[], "steam", -1), None);
 }
 
-// keyboardBindings.test.ts
+// The key bindings.
 
 #[test]
-fn bindings_swallow_the_webview_built_ins_in_every_scope() {
+fn bindings_leave_keys_without_an_action_to_the_widgets() {
     let keyboard = KeyboardController::default();
     let mut host = Host::default();
     for scope in [
@@ -353,13 +368,41 @@ fn bindings_swallow_the_webview_built_ins_in_every_scope() {
         KeyScope::Settings,
         KeyScope::App,
     ] {
-        assert!(press(&keyboard, &mut host, scope, key("w").ctrl()));
-        assert!(press(&keyboard, &mut host, scope, key("p").ctrl()));
-        assert!(press(&keyboard, &mut host, scope, key("F3")));
-        assert!(press(&keyboard, &mut host, scope, key("F5")));
-        assert!(press(&keyboard, &mut host, scope, key("f").ctrl()));
-        assert!(press(&keyboard, &mut host, scope, key("ArrowRight").alt()));
+        assert!(!press(&keyboard, &mut host, scope, key("w").ctrl()));
+        assert!(!press(&keyboard, &mut host, scope, key("p").ctrl()));
+        assert!(!press(&keyboard, &mut host, scope, key("F3")));
+        assert!(!press(&keyboard, &mut host, scope, key("F7").in_input()));
+        assert!(!press(&keyboard, &mut host, scope, key("r").ctrl().shift()));
+        assert!(!press(&keyboard, &mut host, scope, key("ArrowRight").alt()));
     }
+    assert!(!press(&keyboard, &mut host, KeyScope::Settings, key("F5")));
+    assert!(host.actions.is_empty());
+}
+
+#[test]
+fn option_arrows_reach_a_text_field_on_macos() {
+    let keyboard = KeyboardController::default();
+    let mut host = Host {
+        folder: true,
+        ..Host::default()
+    };
+    for key_name in ["ArrowLeft", "ArrowRight"] {
+        let event = key(key_name).alt().in_input();
+        assert_eq!(
+            keyboard.handle(&event, KeyScope::App, true, &mut host),
+            KeyOutcome::Unhandled,
+            "{key_name}"
+        );
+    }
+    assert!(host.actions.is_empty());
+    // Elsewhere word jumps use Ctrl: Alt+Left still leaves the folder.
+    assert!(handled(keyboard.handle(
+        &key("ArrowLeft").alt().in_input(),
+        KeyScope::App,
+        false,
+        &mut host
+    )));
+    assert_eq!(host.count(&KeyAction::NavigateBack), 1);
 }
 
 #[test]
@@ -527,8 +570,8 @@ fn bindings_map_the_app_shortcuts_to_their_actions() {
     assert!(press(&keyboard, &mut host, app, key("e").ctrl()));
     assert_eq!(host.count(&KeyAction::ToggleBulkEdit), 1);
 
-    // F5 refreshes only in the app scope; elsewhere it is only swallowed.
-    assert!(press(&keyboard, &mut host, KeyScope::Settings, key("F5")));
+    // F5 refreshes only in the app scope.
+    assert!(!press(&keyboard, &mut host, KeyScope::Settings, key("F5")));
     assert_eq!(host.count(&KeyAction::Refresh), 2);
 }
 
@@ -574,7 +617,7 @@ fn bindings_go_up_a_folder_on_backspace_and_alt_left_and_pass_at_the_root() {
     let mut host = Host::default();
     let app = KeyScope::App;
     assert!(!press(&keyboard, &mut host, app, key("Backspace")));
-    assert!(press(&keyboard, &mut host, app, key("ArrowLeft").alt()));
+    assert!(!press(&keyboard, &mut host, app, key("ArrowLeft").alt()));
     assert_eq!(host.count(&KeyAction::NavigateBack), 0);
 
     host.folder = true;
@@ -691,38 +734,6 @@ fn key_scope_picks_the_topmost_layer_and_stops_reading_there() {
     assert_eq!(LAYER_ORDER.len(), 8);
 }
 
-#[test]
-fn shell_key_scope_reads_the_app_state_like_app_svelte() {
-    assert_eq!(key_scope(&ScopeFlags::default()), KeyScope::App);
-    for locked in [
-        ScopeFlags {
-            pin_locked: true,
-            ..ScopeFlags::default()
-        },
-        ScopeFlags {
-            streamer_active: true,
-            palette_open: true,
-            ..ScopeFlags::default()
-        },
-        ScopeFlags {
-            render_suspended: true,
-            has_dialog: true,
-            ..ScopeFlags::default()
-        },
-    ] {
-        assert_eq!(key_scope(&locked), KeyScope::Locked);
-    }
-    assert_eq!(
-        key_scope(&ScopeFlags {
-            bulk_edit_mode: true,
-            settings_open: true,
-            personas_open: true,
-            ..ScopeFlags::default()
-        }),
-        KeyScope::BulkEdit
-    );
-}
-
 // Every binding of the table, in every scope, through the resolver.
 
 /// A key event that matches `combo` exactly.
@@ -749,7 +760,6 @@ fn expected_actions(command: KeyCommand) -> Option<Vec<KeyAction>> {
     use KeyAction as A;
     use KeyCommand as C;
     Some(match command {
-        C::Swallow => vec![],
         C::Pass => return None,
         C::OpenPalette => vec![A::CloseContextMenu, A::SetPaletteOpen(true)],
         C::ClosePalette => vec![A::SetPaletteOpen(false)],

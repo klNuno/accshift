@@ -1,7 +1,6 @@
-//! `src/lib/app/useAppLifecycle.svelte.ts`: what the shell does once the
-//! storage is read (`initializeAppShell`) and when another process changed
-//! the stores (`refreshExternalStorageState`), as ordered plans. The shell
-//! owns the state; these functions decide.
+//! What the shell does once the storage is read and when another process
+//! changed the stores, as ordered plans. The shell owns the state; these
+//! functions decide.
 
 use crate::accounts::loading::is_platform_usable;
 use crate::accounts::{Toast, ToastKind};
@@ -17,40 +16,7 @@ use crate::storage::{
 use crate::text::Text;
 use crate::types::SettingsSnapshot;
 
-/// `semverCore`: the first `x.y.z` in the version, else the version.
-pub fn semver_core(version: &str) -> String {
-    let bytes = version.as_bytes();
-    for start in 0..bytes.len() {
-        if let Some(end) = match_triplet(bytes, start) {
-            return version[start..end].to_string();
-        }
-    }
-    version.to_string()
-}
-
-/// `\d+\.\d+\.\d+` anchored at `start`, greedy like the regex.
-fn match_triplet(bytes: &[u8], start: usize) -> Option<usize> {
-    let mut index = start;
-    for part in 0..3 {
-        let digits = bytes[index..]
-            .iter()
-            .take_while(|b| b.is_ascii_digit())
-            .count();
-        if digits == 0 {
-            return None;
-        }
-        index += digits;
-        if part < 2 {
-            if bytes.get(index) != Some(&b'.') {
-                return None;
-            }
-            index += 1;
-        }
-    }
-    Some(index)
-}
-
-/// The migration toast of `initializeAppShell`.
+/// The toast that reports a storage migration at startup.
 pub fn migration_toast(migration_result: &str) -> Option<Toast> {
     if migration_result == "migrated" {
         Some(Toast::new(
@@ -67,14 +33,21 @@ pub fn migration_toast(migration_result: &str) -> Option<Toast> {
     }
 }
 
-/// `enableDetectedPlatformsOnFirstRun`, after `platform_detect_installed`
+/// The toast for stores the boot had to reset
+/// ([`crate::types::BootPayload::recovered_stores`]).
+pub fn stores_reset_toast(recovered_stores: &[String]) -> Option<Toast> {
+    (!recovered_stores.is_empty())
+        .then(|| Toast::new(Text::key("toast.storesReset"), ToastKind::Error))
+}
+
+/// First run: enable the detected platforms, after `platform_detect_installed`
 /// answered (an error counts as an empty list). `None` when settings were
 /// already stored and nothing was asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FirstRunPlatforms {
-    /// `setDetectedPlatforms(usable)`.
+    /// The usable detected platforms, shown as detected.
     pub detected: Vec<String>,
-    /// The settings to save then `refreshSettings`, when any is usable.
+    /// The settings to save before the settings refresh, when any is usable.
     pub enable: Option<(Vec<String>, String)>,
 }
 
@@ -95,7 +68,7 @@ pub fn first_run_platforms(
     }
 }
 
-/// The `trackSettingsSnapshot` payload of `initializeAppShell`.
+/// The settings telemetry payload sent at startup.
 pub fn settings_snapshot(settings: &AppSettings) -> SettingsSnapshot {
     let text = |value: serde_json::Result<serde_json::Value>| {
         value
@@ -115,12 +88,14 @@ pub fn settings_snapshot(settings: &AppSettings) -> SettingsSnapshot {
     }
 }
 
-/// The last step of `initializeAppShell`.
+/// The last step of the shell init.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InitialLoad {
-    /// `loadAccounts(false, false, false, false, true)`.
+    /// Load the active tab's accounts (no force, no warnings) and prime the
+    /// visible ones.
     LoadAccounts,
-    /// `navigation.refreshCurrentItems()` then `queueGridPadding()`.
+    /// The active tab is unusable: refresh the shown items, then the grid
+    /// padding.
     RefreshItems,
 }
 
@@ -132,48 +107,14 @@ pub fn initial_load(registry: &PlatformRegistry, active_tab: &str, os: RuntimeOs
     }
 }
 
-/// `initializeAppShell` in order, for the shell to run step by step.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ShellInitStep {
-    /// The migration toast, if any.
-    MigrationToast,
-    /// `applyCustomThemePayloads(boot.customThemes)`.
-    ApplyCustomThemes,
-    RefreshSettings,
-    /// `setAppVersion(semverCore(getVersion()))`.
-    SetAppVersion,
-    SetRuntimeOs,
-    /// [`first_run_platforms`], only without stored settings.
-    EnableDetectedPlatformsOnFirstRun,
-    /// `setActiveTab(initial_active_tab)` when it differs.
-    PickInitialTab,
-    MarkBootReady,
-    TrackSettingsSnapshot,
-    /// [`initial_load`].
-    InitialLoad,
-}
-
-pub const SHELL_INIT_ORDER: [ShellInitStep; 10] = [
-    ShellInitStep::MigrationToast,
-    ShellInitStep::ApplyCustomThemes,
-    ShellInitStep::RefreshSettings,
-    ShellInitStep::SetAppVersion,
-    ShellInitStep::SetRuntimeOs,
-    ShellInitStep::EnableDetectedPlatformsOnFirstRun,
-    ShellInitStep::PickInitialTab,
-    ShellInitStep::MarkBootReady,
-    ShellInitStep::TrackSettingsSnapshot,
-    ShellInitStep::InitialLoad,
-];
-
-/// `SETTINGS_TARGETS`.
+/// The stores whose change refreshes the settings.
 pub const SETTINGS_TARGETS: [&str; 2] = [CLIENT_STORE_SETTINGS, STORAGE_TARGET_CUSTOM_THEMES];
-/// `CARD_COLOR_TARGETS`.
+/// The stores whose change refreshes the card colours.
 pub const CARD_COLOR_TARGETS: [&str; 2] = [
     CLIENT_STORE_ACCOUNT_CARD_COLORS,
     CLIENT_STORE_FOLDER_CARD_COLORS,
 ];
-/// `GRID_TARGETS`.
+/// The stores whose change refreshes the grid.
 pub const GRID_TARGETS: [&str; 6] = [
     CLIENT_STORE_FOLDERS,
     CLIENT_STORE_ACCOUNT_CARD_NOTES,
@@ -182,29 +123,29 @@ pub const GRID_TARGETS: [&str; 6] = [
     CLIENT_STORE_VIEW_MODE,
     CLIENT_STORE_SETTINGS,
 ];
-/// `APP_CONFIG_TARGETS`.
+/// The app config files.
 pub const APP_CONFIG_TARGETS: [&str; 2] = [
     STORAGE_TARGET_APP_CONFIG_PORTABLE,
     STORAGE_TARGET_APP_CONFIG_LOCAL,
 ];
 
-/// One step of `refreshExternalStorageState`, in the order TS runs them.
+/// One step of the external refresh, in the order they run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RefreshStep {
-    /// `log_app_event(info, frontend.storage.refresh, "Detected external
-    /// storage changes", {changed, activeTab})`.
+    /// The info line "Detected external storage changes" from
+    /// `frontend.storage.refresh`, with the changed stores and the active tab.
     Log {
         details: String,
     },
     LoadCustomThemes,
     RefreshSettings,
-    /// `addFlow.cancel()` (only when a flow is open).
+    /// Cancel the add-account flow (only when one is open).
     CancelAddFlow,
     ResetVisiblePrimeState,
     ClearLoaderForPlatformChange,
     SetActiveTab(String),
     ClearCurrentFolder,
-    /// `replaceHistoryState({tab, folderId: null, showSettings: false})`.
+    /// Replace the history entry: this tab, no folder, settings closed.
     ReplaceHistory(String),
     SyncViewMode,
     BumpCardColorVersion,
@@ -213,18 +154,17 @@ pub enum RefreshStep {
     RefreshCurrentItems,
     PrepareVisibleAccounts,
     QueueGridPadding,
-    /// `loadAccounts(force, false, false, warnings, false)`; `loadAccounts(true)`
-    /// after a tab change has `warnings` false too.
+    /// Load the active tab's accounts; after a tab change `force` is true
+    /// and `warnings` false.
     LoadAccounts {
         force: bool,
         warnings: bool,
     },
 }
 
-/// `refreshExternalStorageState` after `refreshClientStorageIfChanged`
-/// answered `changed`. `settings` are the settings once refreshed (the
-/// stores already hold the new snapshot); `add_flow_open` is
-/// `addFlow.flow != null`.
+/// The external refresh, once the storage check answered `changed`.
+/// `settings` are the settings once refreshed (the stores already hold the
+/// new snapshot); `add_flow_open` is true while the add-account flow shows.
 pub fn plan_external_refresh(
     changed: &[String],
     settings: &AppSettings,
@@ -311,16 +251,15 @@ pub fn plan_external_refresh(
     steps
 }
 
-/// The `externalStorageRefreshInFlight` guard plus the focus and visibility
-/// handlers.
+/// One external refresh at a time, started by focus or visibility.
 #[derive(Debug, Default)]
 pub struct ExternalRefreshGate {
     in_flight: bool,
 }
 
 impl ExternalRefreshGate {
-    /// `handleWindowFocus`, or `handleVisibilityChange` with the window
-    /// visible: true when a refresh should start now.
+    /// The window got focus or became visible: true when a refresh should
+    /// start now.
     pub fn begin(&mut self) -> bool {
         if self.in_flight {
             return false;

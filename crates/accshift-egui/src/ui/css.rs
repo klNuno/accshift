@@ -105,28 +105,41 @@ fn angle(s: &str) -> Option<f32> {
 pub fn color(s: &str) -> Option<Rgba> {
     let s = s.trim();
     match s {
-        "transparent" => return Some(Rgba::TRANSPARENT),
-        "black" => return Some(Rgba::new(0.0, 0.0, 0.0, 1.0)),
-        "white" => return Some(Rgba::new(255.0, 255.0, 255.0, 1.0)),
-        _ => {}
+        "transparent" => Some(Rgba::TRANSPARENT),
+        "black" => Some(Rgba::new(0.0, 0.0, 0.0, 1.0)),
+        "white" => Some(Rgba::new(255.0, 255.0, 255.0, 1.0)),
+        _ => match s.strip_prefix('#') {
+            Some(hex) => hex_color(hex),
+            None => rgb_function(s),
+        },
     }
-    if let Some(hex) = s.strip_prefix('#') {
-        let digit = |i: usize| u8::from_str_radix(&hex[i..i + 1], 16).ok().map(|d| d * 17);
-        let pair = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
-        let (r, g, b, a) = match hex.len() {
-            3 => (digit(0)?, digit(1)?, digit(2)?, 255),
-            4 => (digit(0)?, digit(1)?, digit(2)?, digit(3)?),
-            6 => (pair(0)?, pair(2)?, pair(4)?, 255),
-            8 => (pair(0)?, pair(2)?, pair(4)?, pair(6)?),
-            _ => return None,
-        };
-        return Some(Rgba::new(
-            f32::from(r),
-            f32::from(g),
-            f32::from(b),
-            f32::from(a) / 255.0,
-        ));
+}
+
+/// The digits of `#rgb`, `#rgba`, `#rrggbb` or `#rrggbbaa`.
+fn hex_color(hex: &str) -> Option<Rgba> {
+    if !hex.is_ascii() {
+        return None;
     }
+    let digit = |i: usize| u8::from_str_radix(&hex[i..i + 1], 16).ok().map(|d| d * 17);
+    let pair = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
+    let (r, g, b, a) = match hex.len() {
+        3 => (digit(0)?, digit(1)?, digit(2)?, 255),
+        4 => (digit(0)?, digit(1)?, digit(2)?, digit(3)?),
+        6 => (pair(0)?, pair(2)?, pair(4)?, 255),
+        8 => (pair(0)?, pair(2)?, pair(4)?, pair(6)?),
+        _ => return None,
+    };
+    Some(Rgba::new(
+        f32::from(r),
+        f32::from(g),
+        f32::from(b),
+        f32::from(a) / 255.0,
+    ))
+}
+
+/// `rgb()` or `rgba()`, comma or space separated, the alpha after a comma
+/// or a slash.
+fn rgb_function(s: &str) -> Option<Rgba> {
     let inner = s
         .strip_prefix("rgba(")
         .or_else(|| s.strip_prefix("rgb("))?
@@ -309,30 +322,31 @@ fn radial_head(head: &str, g: &mut RadialGradient) -> Option<()> {
     }
     g.shape = shape.unwrap_or(RadialShape::Ellipse);
     if at < t.len() {
-        let pos = &t[at + 1..];
-        let kw = |w: &str| match w {
-            "left" | "top" => Some(Length::Percent(0.0)),
-            "center" => Some(Length::Percent(50.0)),
-            "right" | "bottom" => Some(Length::Percent(100.0)),
-            other => length(other),
-        };
-        g.center = match pos {
-            [one] => match *one {
-                "top" | "bottom" => (Length::Percent(50.0), kw(one)?),
-                _ => (kw(one)?, Length::Percent(50.0)),
-            },
-            [a, b] => {
-                // `top left` is allowed in either order.
-                if matches!(*a, "top" | "bottom") || matches!(*b, "left" | "right") {
-                    (kw(b)?, kw(a)?)
-                } else {
-                    (kw(a)?, kw(b)?)
-                }
-            }
-            _ => return None,
-        };
+        g.center = position_xy(&t[at + 1..])?;
     }
     Some(())
+}
+
+/// A `<position>` of one or two words: keywords or lengths, `(x, y)`.
+fn position_xy(pos: &[&str]) -> Option<(Length, Length)> {
+    let kw = |w: &str| match w {
+        "left" | "top" => Some(Length::Percent(0.0)),
+        "center" => Some(Length::Percent(50.0)),
+        "right" | "bottom" => Some(Length::Percent(100.0)),
+        other => length(other),
+    };
+    Some(match pos {
+        [one] => match *one {
+            "top" | "bottom" => (Length::Percent(50.0), kw(one)?),
+            _ => (kw(one)?, Length::Percent(50.0)),
+        },
+        // `top left` is allowed in either order.
+        [a, b] if matches!(*a, "top" | "bottom") || matches!(*b, "left" | "right") => {
+            (kw(b)?, kw(a)?)
+        }
+        [a, b] => (kw(a)?, kw(b)?),
+        _ => return None,
+    })
 }
 
 /// 1 to 4 values, CSS side order (top, right, bottom, left).
@@ -385,24 +399,7 @@ impl BoxStyle {
             };
             let value = value.trim().trim_end_matches("!important").trim();
             match prop.trim() {
-                "background" | "background-image" => {
-                    style.images.clear();
-                    for layer in split_top(value, ',') {
-                        let layer = layer.trim();
-                        if layer == "none" {
-                            continue;
-                        }
-                        // A layer is an image, and the last one may also
-                        // carry the colour: `linear-gradient(...) #3a3d4a`.
-                        for t in tokens(layer) {
-                            if let Some(g) = gradient(t) {
-                                style.images.push(g);
-                            } else {
-                                style.background = color(t)?;
-                            }
-                        }
-                    }
-                }
+                "background" | "background-image" => style.set_background_layers(value)?,
                 "background-color" => style.background = color(value)?,
                 "border-radius" => style.radius = radius(value)?,
                 "border" => {
@@ -410,19 +407,7 @@ impl BoxStyle {
                     style.border = Border::all(w, c);
                 }
                 "border-top" | "border-right" | "border-bottom" | "border-left" => {
-                    let (w, c) = border_side(value)?;
-                    let side = &prop.trim()["border-".len()..];
-                    let (width, col) = match side {
-                        "top" => (&mut style.border.width.top, &mut style.border.color.top),
-                        "right" => (&mut style.border.width.right, &mut style.border.color.right),
-                        "bottom" => (
-                            &mut style.border.width.bottom,
-                            &mut style.border.color.bottom,
-                        ),
-                        _ => (&mut style.border.width.left, &mut style.border.color.left),
-                    };
-                    *width = w;
-                    *col = c;
+                    style.set_border_side(&prop.trim()["border-".len()..], value)?;
                 }
                 "border-width" => {
                     let v: Option<Vec<f32>> = value.split_whitespace().map(px).collect();
@@ -440,6 +425,42 @@ impl BoxStyle {
             }
         }
         Some(style)
+    }
+
+    /// `background`: the image layers, and a colour the last layer may
+    /// carry (`linear-gradient(...) #3a3d4a`).
+    fn set_background_layers(&mut self, value: &str) -> Option<()> {
+        self.images.clear();
+        for layer in split_top(value, ',') {
+            let layer = layer.trim();
+            if layer == "none" {
+                continue;
+            }
+            for t in tokens(layer) {
+                if let Some(g) = gradient(t) {
+                    self.images.push(g);
+                } else {
+                    self.background = color(t)?;
+                }
+            }
+        }
+        Some(())
+    }
+
+    /// `border-top`, `border-right`, `border-bottom` or `border-left`, by
+    /// its `side` name.
+    fn set_border_side(&mut self, side: &str, value: &str) -> Option<()> {
+        let (w, c) = border_side(value)?;
+        let border = &mut self.border;
+        let (width, col) = match side {
+            "top" => (&mut border.width.top, &mut border.color.top),
+            "right" => (&mut border.width.right, &mut border.color.right),
+            "bottom" => (&mut border.width.bottom, &mut border.color.bottom),
+            _ => (&mut border.width.left, &mut border.color.left),
+        };
+        *width = w;
+        *col = c;
+        Some(())
     }
 }
 
@@ -476,6 +497,13 @@ mod tests {
         let c = color("rgb(0 0 0 / 0.32)").unwrap();
         assert!((c.a - 0.32).abs() < 1e-6);
         assert!((color("#00000080").unwrap().a - 128.0 / 255.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn non_ascii_hex_colours_are_rejected_without_panicking() {
+        for invalid in ["#中", "#éaa", "#中aaa", "#中aaaaa"] {
+            assert_eq!(color(invalid), None, "{invalid}");
+        }
     }
 
     #[test]

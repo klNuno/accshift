@@ -1,5 +1,5 @@
-//! The card extension: `.extension-surface` in `AccountCard.svelte` and the
-//! `CardExtensionPanel.svelte` it holds.
+//! The card extension: the surface beside an account card and the details
+//! panel it holds.
 //!
 //! - `.extension-hitbox`: the card's height, `--grid-card-width` plus
 //!   130 px wide, from the card's left edge (`.right`) or to its right edge
@@ -46,6 +46,7 @@ use crate::app::vars::Vars;
 use crate::theme::Rgba;
 use crate::ui::anim::{self, Timing, Transition};
 use crate::ui::backdrop_filter::Mark;
+use crate::ui::components::shared::ceil_unit_tolerant;
 use crate::ui::paint::{Border, BoxShadow, BoxStyle, Corners};
 use crate::ui::snap;
 use crate::ui::text::{self, LineHeight, TextStyle, TextTransform};
@@ -86,7 +87,7 @@ const WHITE: Rgba = Rgba::new(255.0, 255.0, 255.0, 1.0);
 /// `.section-link`.
 const LINK: Rgba = Rgba::new(147.0, 197.0, 253.0, 1.0);
 
-/// `updatePanelSide`: right while the window has room for the details and
+/// Right while the window has room for the details and
 /// their gap past the card's right edge.
 pub fn opens_right(window_width: f32, card_right: f32) -> bool {
     window_width - card_right >= DETAIL_WIDTH + VIEWPORT_GAP
@@ -99,7 +100,7 @@ pub struct Surface<'a> {
     /// The card's id.
     pub id: Id,
     pub sections: &'a [CardSection],
-    /// The chips that have an `onClick`, as `(section, chip)`.
+    /// The clickable chips, as `(section, chip)`.
     pub clickable: &'a [(usize, usize)],
     pub locale: Locale,
     pub card_color: Option<Rgba>,
@@ -111,7 +112,7 @@ pub struct Surface<'a> {
     /// `.right`: the details open past the card's right edge.
     pub right: bool,
     pub ban: Option<WarningTone>,
-    /// `html[data-glass="1"]`.
+    /// The applied theme is a glass one.
     pub glass: bool,
 }
 
@@ -251,7 +252,7 @@ pub fn paint(ui: &Ui, card: Rect, s: &Surface) -> Painted {
     let painter = ui.painter().clone();
     // A frosted surface is its own layer: what it holds paints opaque into
     // it, and the layer lands at the surface's opacity.
-    let frost = s.glass && s.visible && !cfg!(feature = "glow");
+    let frost = s.glass && s.visible;
     let inner = if frost { 1.0 } else { opacity };
     if frost {
         Mark::Begin {
@@ -426,12 +427,6 @@ fn chip_colors(tone: ChipTone) -> (Rgba, Rgba, Rgba) {
     }
 }
 
-/// A width rounded up to a layout unit (1/64 device px), as Blink sizes an
-/// inline box around its text.
-fn ceil_unit(w: f32, ppp: f32) -> f32 {
-    (w * ppp * 64.0 - 1e-3).ceil() / 64.0 / ppp
-}
-
 /// The height of `text` wrapped in `width`.
 fn text_height(ctx: &Context, text: &str, style: &TextStyle, width: f32) -> f32 {
     let one = style.line_box(ctx).map_or(style.size * 1.5, |l| l.height);
@@ -561,7 +556,7 @@ fn section(
             .color(v.fg_muted.to_color32());
         let (label_w, label_h) = match &progress.label {
             Some(l) => (
-                ceil_unit(text::measure(ctx, l, &label_style).unwrap_or(0.0), ppp),
+                ceil_unit_tolerant(text::measure(ctx, l, &label_style).unwrap_or(0.0), ppp),
                 label_style.line_box(ctx).map_or(13.5, |b| b.height),
             ),
             None => (0.0, 0.0),
@@ -623,7 +618,7 @@ fn section(
                 (bg, fg, border, bw)
             };
             let style = chip_style(fg);
-            let text_w = ceil_unit(text::measure(ctx, &label, &style).unwrap_or(0.0), ppp);
+            let text_w = ceil_unit_tolerant(text::measure(ctx, &label, &style).unwrap_or(0.0), ppp);
             let cw = text_w + 2.0 * (CHIP_PAD + bw);
             if x > 0.0 && x + cw > w {
                 x = 0.0;

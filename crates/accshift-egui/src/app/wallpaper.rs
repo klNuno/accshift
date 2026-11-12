@@ -1,5 +1,5 @@
-//! `createLiquidBackdrop` (`useLiquidBackdrop.svelte.ts`): the desktop
-//! picture a Liquid Glass window replicates on Windows, where DWM has no
+//! The Liquid Glass backdrop: the desktop picture a Liquid Glass window
+//! replicates on Windows, where DWM has no
 //! material that refracts what sits behind it. The snapshot is taken when
 //! the theme comes up, [`RESIZE_SETTLE`] after a resize or a scale change
 //! settles, and every [`REFRESH`]; the layer follows the window wherever it
@@ -47,7 +47,7 @@ impl Liquid {
         self.snapshot.is_some()
     }
 
-    /// The `$effect` of `isActive()`, run each frame.
+    /// Once per frame, with whether the Liquid Glass backdrop is active.
     pub(super) fn tick(&mut self, ctx: &Context, jobs: &Jobs, active: bool, now: Instant) {
         if !active {
             if self.active {
@@ -63,7 +63,7 @@ impl Liquid {
             self.next_refresh = Some(now + REFRESH);
             self.fetch(jobs);
         }
-        // `onResized` and `onScaleChanged`: the layer realigns at once (it
+        // A resize or a scale change: the layer realigns at once (it
         // reads the window each frame), the snapshot waits for the gesture
         // to settle.
         // Never inside `ctx.input`: a nested lock of the context.
@@ -108,7 +108,7 @@ impl Liquid {
         }
     }
 
-    /// `refreshWallpaper`; one at a time (`refreshInFlight`). The same
+    /// Fetches the wallpaper, one fetch at a time. The same
     /// picture as the last snapshot keeps its decoded image: a refresh with
     /// no wallpaper change decodes nothing.
     fn fetch(&mut self, jobs: &Jobs) {
@@ -135,8 +135,7 @@ impl Liquid {
         }));
     }
 
-    /// A scene's window, where the reference answers `outerPosition` and
-    /// `scaleFactor` with the same.
+    /// A scene's window: a fixed outer position and scale.
     pub(super) fn pin_window(&mut self, outer: [i32; 2], scale: f32) {
         self.pinned = Some((outer, scale));
     }

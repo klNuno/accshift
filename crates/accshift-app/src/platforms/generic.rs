@@ -1,11 +1,10 @@
-//! Platforms driven entirely by the shared `platform_*` commands, ported from
-//! `src/lib/platforms/genericAdapter.ts` and the adapters built on it:
-//! `battle-net`, `ubisoft`, `epic`, `gog`, `jagex`, `discord` (`*/adapter.ts`)
-//! and a platform from a user descriptor (`userAdapterLoader` in
-//! `registry.ts`).
+//! Platforms driven entirely by the shared `platform_*` commands:
+//! `battle-net`, `ubisoft`, `epic`, `gog`, `jagex`, `discord`, and any
+//! platform from a user descriptor.
 //!
-//! The TS factory takes closures (`toAccount`, `copyItems`, `maskSwitchLogId`,
-//! `forgetToastParams`); the closed set of them becomes [`GenericFlavor`].
+//! What differs between them (account mapping, copy entries, the masked
+//! switch log id, the forget toast parameters) is a closed set,
+//! [`GenericFlavor`].
 
 use super::PlatformAccount;
 use crate::i18n::TranslationValue;
@@ -13,20 +12,20 @@ use crate::menu::platform::CopyItemConfig;
 use crate::time::unix_ms_to_seconds;
 use serde_json::Value;
 
-/// The per-platform behaviour the TS closures carried.
+/// The per-platform behaviour of a generic platform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GenericFlavor {
-    /// `GenericRawAccount` (`accountId`, `label`, `lastUsedAt`), one
-    /// account-id copy entry.
+    /// `accountId`, `label`, `lastUsedAt` payloads; one account-id copy
+    /// entry.
     Default,
-    /// `BattleNetRawAccount`: email id, battle tag label, masked switch log,
-    /// username and email copy entries, `{ email }` forget toast, no labels.
+    /// Email id, battle tag label, masked switch log, username and email
+    /// copy entries, `{ email }` forget toast, no labels.
     BattleNet,
-    /// `UbisoftRawAccount`: uuid id, shortened uuid label, uuid copy entry.
+    /// Uuid id, shortened uuid label, uuid copy entry.
     Ubisoft,
 }
 
-/// `GenericAdapterConfig`.
+/// How a generic platform maps accounts and words its toasts.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericConfig {
     /// i18n key prefix (Battle.net keys use `battlenet`).
@@ -91,8 +90,8 @@ impl GenericConfig {
         })
     }
 
-    /// `userAdapterLoader`: the shared `platform.*` wording with the
-    /// descriptor's name filled in.
+    /// A user platform: the shared `platform.*` wording with the descriptor's
+    /// name filled in.
     pub fn user(name: &str) -> Self {
         Self {
             i18n_prefix: "platform".to_string(),
@@ -109,7 +108,7 @@ impl GenericConfig {
         format!("{}.{suffix}", self.i18n_prefix)
     }
 
-    /// `supportsAccountLabels !== false`.
+    /// Whether accounts can be renamed: all but Battle.net.
     pub fn supports_account_labels(&self) -> bool {
         self.flavor != GenericFlavor::BattleNet
     }
@@ -123,7 +122,7 @@ impl GenericConfig {
         }
     }
 
-    /// `copyItems(account)`, or the default account-id entry.
+    /// The copy menu entries of an account, or the default account-id entry.
     pub fn copy_items(&self, account: &PlatformAccount) -> Vec<CopyItemConfig> {
         match self.flavor {
             GenericFlavor::Default => vec![CopyItemConfig::new(
@@ -153,7 +152,7 @@ impl GenericConfig {
         }
     }
 
-    /// `forgetToastParams(display)`.
+    /// The parameters of the toast after forgetting an account.
     pub fn forget_toast_params(&self, display: &str) -> Vec<(String, TranslationValue)> {
         match self.flavor {
             GenericFlavor::BattleNet => vec![("email".to_string(), display.into())],
@@ -161,7 +160,8 @@ impl GenericConfig {
         }
     }
 
-    /// `maskSwitchLogId`, `None` when the flavor logs the id as is.
+    /// The account id as the switch log shows it, `None` when the flavor logs
+    /// the id as is.
     pub fn mask_switch_log_id(&self, account_id: &str) -> Option<String> {
         (self.flavor == GenericFlavor::BattleNet).then(|| mask_email(account_id))
     }
@@ -182,7 +182,7 @@ fn number_field(raw: &Value, name: &str) -> Option<f64> {
     raw.get(name).and_then(Value::as_f64)
 }
 
-/// `defaultToAccount` on a `GenericRawAccount`.
+/// An `accountId`, `label`, `lastUsedAt` payload as a platform account.
 pub fn default_to_account(raw: &Value) -> PlatformAccount {
     let id = str_field(raw, "accountId");
     let label = str_field(raw, "label");
@@ -194,7 +194,7 @@ pub fn default_to_account(raw: &Value) -> PlatformAccount {
     }
 }
 
-/// `getBattleNetDisplayName`: the email's local part.
+/// The email's local part.
 fn battle_net_display_name(email: &str) -> String {
     let trimmed = crate::js::trim(email);
     let candidate = crate::js::trim(trimmed.split('@').next().unwrap_or_default());
@@ -206,7 +206,7 @@ fn battle_net_display_name(email: &str) -> String {
     .to_string()
 }
 
-/// `toBattleNetAccount`: the battle tag name, else the email's local part.
+/// The battle tag name, else the email's local part.
 pub fn to_battle_net_account(raw: &Value) -> PlatformAccount {
     let email = str_field(raw, "email");
     let battle_tag = crate::js::trim(str_field(raw, "battleTag"));
@@ -224,8 +224,8 @@ pub fn to_battle_net_account(raw: &Value) -> PlatformAccount {
     }
 }
 
-/// `maskEmail`: the first three UTF-16 units of the local part, then an
-/// ellipsis, so raw emails stay out of log files.
+/// The first three UTF-16 units of the local part, then an ellipsis, so raw
+/// emails stay out of log files.
 pub fn mask_email(email: &str) -> String {
     let local: Vec<u16> = email
         .split('@')
@@ -237,7 +237,7 @@ pub fn mask_email(email: &str) -> String {
     format!("{kept}\u{2026}")
 }
 
-/// `toUbisoftAccount`: the label, else the uuid's first group.
+/// The label, else the uuid's first group.
 pub fn to_ubisoft_account(raw: &Value) -> PlatformAccount {
     let uuid = str_field(raw, "uuid");
     let label = crate::js::trim(str_field(raw, "label"));

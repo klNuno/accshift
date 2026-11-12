@@ -1,12 +1,11 @@
-//! `src/lib/app/useAppUpdater.svelte.ts` as a state machine: the background
-//! check, download and "restart to update" button.
+//! The update state machine: the background check, the download and the
+//! "restart to update" button.
 //!
 //! No async: each blocking half (check, download, install, relaunch) is an
 //! [`UpdateCommand`] the shell runs on a [`crate::jobs::Jobs`] thread
 //! ([`run_command`] does it with the real updater), then hands the result
-//! back to the matching `on_*` method. Every method answers the outputs in
-//! the order the TS code produced them: telemetry, toasts, log lines and the
-//! next command.
+//! back to the matching `on_*` method. Every method answers its outputs in
+//! order: telemetry, toasts, log lines and the next command.
 
 use super::updater::{InstallerHost, Update, Updater};
 use crate::text::Text;
@@ -65,8 +64,7 @@ const MANIFEST_INVALID: [&str; 10] = [
     "while parsing patch version number",
 ];
 
-/// `classifyUpdateCheckError`: sorts a failed check by its `Display` text.
-/// `None` is the TS `undefined`.
+/// Sorts a failed check by its `Display` text. `None`: no error text.
 pub fn classify_update_check_error(error: Option<&str>) -> UpdateErrorCode {
     let text = error.unwrap_or("undefined");
     if text.contains(TARGET_MISSING) {
@@ -82,7 +80,7 @@ pub fn classify_update_check_error(error: Option<&str>) -> UpdateErrorCode {
     UpdateErrorCode::CheckFailed
 }
 
-/// `trackUpdate` stages.
+/// The update telemetry stages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateStage {
     Available,
@@ -120,8 +118,8 @@ pub enum UpdateCommand<P> {
     Check,
     /// `update.download()`; answer with [`AppUpdater::on_download_result`].
     Download(P),
-    /// `beforeRelaunch` (flush the stores and settings), then
-    /// `update.install()`; answer with [`AppUpdater::on_install_result`].
+    /// Flush the stores and settings, then install; answer with
+    /// [`AppUpdater::on_install_result`].
     /// On Windows a real install exits the process here.
     Install { update: P, bytes: Vec<u8> },
     /// `relaunch()`; answer only on failure, with
@@ -138,7 +136,7 @@ pub enum LogLevel {
 /// What the flow asks of the shell, in order.
 #[derive(Debug, Clone, PartialEq)]
 pub enum UpdateOutput<P> {
-    /// `trackUpdate(stage, targetVersion, errorCode)`; `None` is `undefined`.
+    /// An update telemetry event.
     Track {
         stage: UpdateStage,
         target_version: Option<String>,
@@ -153,7 +151,7 @@ pub enum UpdateOutput<P> {
     Run(UpdateCommand<P>),
 }
 
-/// `createAppUpdater`.
+/// The update flow state.
 #[derive(Debug, Clone)]
 pub struct AppUpdater<P> {
     state: UpdateState,
@@ -187,7 +185,7 @@ impl<P: PendingUpdate> AppUpdater<P> {
         &self.version
     }
 
-    /// `ctaLabel`: the titlebar button text, only while ready or applying.
+    /// The titlebar button text, only while ready or applying.
     pub fn cta_label(&self) -> Option<Text> {
         match self.state {
             UpdateState::Ready => Some(Text::key("update.ctaAvailable")),
@@ -196,7 +194,7 @@ impl<P: PendingUpdate> AppUpdater<P> {
         }
     }
 
-    /// `ctaTitle`.
+    /// The titlebar button tooltip.
     pub fn cta_title(&self) -> Text {
         if self.version.is_empty() {
             Text::key("update.restartToApply")
@@ -208,13 +206,13 @@ impl<P: PendingUpdate> AppUpdater<P> {
         }
     }
 
-    /// `ctaDisabled`.
+    /// True while the titlebar button cannot be pressed.
     pub fn cta_disabled(&self) -> bool {
         self.state == UpdateState::Applying
     }
 
-    /// `startBackgroundUpdateFlow`, up to the `check()` call. App.svelte
-    /// calls it 3500 ms after mount ([`super::UPDATE_CHECK_DELAY`]).
+    /// Starts the background flow, up to the check. The shell calls it
+    /// [`super::UPDATE_CHECK_DELAY`] after the window opens.
     pub fn start(&mut self) -> Vec<UpdateOutput<P>> {
         if self.dev || self.check_started {
             return Vec::new();
@@ -278,7 +276,7 @@ impl<P: PendingUpdate> AppUpdater<P> {
         }
     }
 
-    /// The catch of `startBackgroundUpdateFlow`.
+    /// A failed check or download.
     fn flow_failed(&mut self, code: UpdateErrorCode, error: String) -> Vec<UpdateOutput<P>> {
         let log = if code == UpdateErrorCode::TargetMissing {
             UpdateOutput::Log {
@@ -312,7 +310,7 @@ impl<P: PendingUpdate> AppUpdater<P> {
         self.check_started = false;
     }
 
-    /// `applyReadyUpdate`, up to `install()`: only from `Ready`.
+    /// Applies the downloaded update, up to the install: only from `Ready`.
     pub fn apply(&mut self) -> Vec<UpdateOutput<P>> {
         if self.state != UpdateState::Ready {
             return Vec::new();
@@ -325,8 +323,8 @@ impl<P: PendingUpdate> AppUpdater<P> {
         vec![UpdateOutput::Run(UpdateCommand::Install { update, bytes })]
     }
 
-    /// The `beforeRelaunch` plus `install()` result. Success tracks
-    /// `applied` before the relaunch, as TS: there is no "after".
+    /// The result of the flush and the install. Success tracks `applied`
+    /// before the relaunch: there is no "after".
     pub fn on_install_result(&mut self, result: Result<(), String>) -> Vec<UpdateOutput<P>> {
         match result {
             Ok(()) => vec![
@@ -341,12 +339,28 @@ impl<P: PendingUpdate> AppUpdater<P> {
         }
     }
 
-    /// A `relaunch()` that came back with an error.
+    /// A `relaunch()` that came back with an error: no new process started
+    /// and this one stays open. The update is already on disk, so the user
+    /// restarts by hand; checking again would only download it once more.
     pub fn on_relaunch_failed(&mut self, error: String) -> Vec<UpdateOutput<P>> {
-        self.apply_failed(UpdateErrorCode::RelaunchFailed, error)
+        let outputs = vec![
+            UpdateOutput::Log {
+                level: LogLevel::Error,
+                message: format!("Failed to restart for update: {error}"),
+            },
+            UpdateOutput::Track {
+                stage: UpdateStage::Failed,
+                target_version: self.version_or_undefined(),
+                error_code: Some(UpdateErrorCode::RelaunchFailed),
+            },
+            UpdateOutput::Toast(Text::key("update.restartManually")),
+        ];
+        self.reset();
+        self.check_started = true;
+        outputs
     }
 
-    /// The catch of `applyReadyUpdate`: track, reset, toast, check again.
+    /// A failed apply: track, reset, toast, check again.
     fn apply_failed(&mut self, code: UpdateErrorCode, error: String) -> Vec<UpdateOutput<P>> {
         let mut outputs = vec![
             UpdateOutput::Log {
@@ -380,8 +394,8 @@ pub enum CommandResult {
 /// The side effects around an install: the flush before it and the
 /// relaunch after it.
 pub trait ApplyHost: InstallerHost {
-    /// `beforeRelaunch` (App.svelte `flushAppState`: the settings flush,
-    /// then the pending store saves; the first error wins).
+    /// The flush before an install: the settings, then the pending store
+    /// saves; the first error wins.
     fn before_relaunch(&self) -> Result<(), String>;
     /// `relaunch()`; the real one does not return.
     fn relaunch(&self) -> Result<(), String>;
@@ -399,7 +413,7 @@ pub fn run_command(
             updater.check().map_err(|e| e.to_string()),
         ))),
         UpdateCommand::Download(update) => Some(CommandResult::Downloaded(
-            update.download(|_, _| {}, || {}).map_err(|e| e.to_string()),
+            update.download().map_err(|e| e.to_string()),
         )),
         UpdateCommand::Install { update, bytes } => {
             let result = host

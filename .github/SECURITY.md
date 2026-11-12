@@ -93,8 +93,14 @@ the inactivity timeout when one is set. While it is locked, every command
 that switches an account is refused, and so is a settings write that would
 change or remove the PIN. Wrong codes are rate limited: after four of them,
 each further wrong code doubles the wait before the next attempt, up to five
-minutes. The count resets when the app restarts. Changing or turning off a PIN
-in Settings asks for the current one first.
+minutes. The count is kept on disk and shared with the CLI, so restarting the
+app does not reset it; a right code does. Changing or turning off a PIN in
+Settings asks for the current one first.
+
+The lock lives in the settings file and nowhere else. A settings file that no
+longer parses is reset at the next launch and keeps its PIN when the PIN fields
+are still readable in it. Someone who can delete or rewrite that file removes
+the PIN: that is code running as your OS user, out of scope above.
 
 It derives no key and encrypts nothing. Session material is protected by the OS
 backends listed above, which are bound to your OS user session and not to the

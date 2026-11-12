@@ -1,18 +1,16 @@
-//! The user's own platform descriptors, ported from
-//! `src/lib/platforms/descriptors.ts` and the descriptor half of
-//! `registry.ts` (`PlatformDescriptor`, `renderTemplate`, `placeholderFrom`).
+//! The user's own platform descriptors.
 //!
 //! Every call that changes the descriptor folder hands its fresh report to
-//! [`super::PlatformRegistry::register_user_platforms`] (`adopt`), so the tab
-//! list and the settings list never disagree with the folder.
+//! [`super::PlatformRegistry::register_user_platforms`] (through `adopt`), so
+//! the tab list and the settings list never disagree with the folder.
 
 use super::{PathPlaceholder, PlatformRegistry, RuntimeOs};
 use crate::backend::Backend;
 use crate::error::BackendResult;
-use crate::types::{DescriptorPreview, DryRunPlan, UserPlatformReport};
+use crate::types::{DescriptorPreview, UserPlatformReport};
 use serde_json::Value;
 
-/// `PlatformDescriptor`: the part of a descriptor the UI reads.
+/// The part of a descriptor the UI reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlatformDescriptor {
     pub id: String,
@@ -71,7 +69,7 @@ impl PlatformDescriptor {
         loaded.iter().filter_map(Self::from_core).collect()
     }
 
-    /// The systems, as `supportedOs`.
+    /// The systems the descriptor covers.
     pub fn supported_os(&self) -> Vec<RuntimeOs> {
         self.os
             .iter()
@@ -79,8 +77,8 @@ impl PlatformDescriptor {
             .collect()
     }
 
-    /// `placeholderFrom`: where the launcher usually lives, per system, from
-    /// the first place the descriptor says to look.
+    /// Where the launcher usually lives, per system, from the first place
+    /// the descriptor says to look.
     pub fn path_placeholder(&self) -> Option<PathPlaceholder> {
         let entries: Vec<(RuntimeOs, String)> = self
             .os
@@ -96,7 +94,7 @@ impl PlatformDescriptor {
     }
 }
 
-/// `profile.executable?.candidates?.find(kind === "path" && template)`.
+/// The template of the profile's first executable candidate of kind "path".
 fn first_path_template(profile: &Value) -> Option<String> {
     profile
         .get("executable")?
@@ -137,8 +135,8 @@ fn variable_at(rest: &str) -> Option<(&str, usize)> {
         .then(|| (&inner[..end], 2 + end + 1))
 }
 
-/// `renderTemplate`: `${LOCALAPPDATA}` is `%LOCALAPPDATA%` on Windows and
-/// `$LOCALAPPDATA` elsewhere, with the system's own separator.
+/// Renders a path template: `${LOCALAPPDATA}` is `%LOCALAPPDATA%` on Windows
+/// and `$LOCALAPPDATA` elsewhere, with the system's own separator.
 pub fn render_template(template: &str, os: RuntimeOs) -> String {
     let mut expanded = String::with_capacity(template.len());
     let mut index = 0;
@@ -167,7 +165,7 @@ pub fn render_template(template: &str, os: RuntimeOs) -> String {
     }
 }
 
-/// `adopt`: the report's descriptors become the user platforms.
+/// The report's descriptors become the user platforms.
 fn adopt(registry: &mut PlatformRegistry, report: UserPlatformReport) -> UserPlatformReport {
     let descriptors: Vec<PlatformDescriptor> = report
         .loaded
@@ -178,7 +176,7 @@ fn adopt(registry: &mut PlatformRegistry, report: UserPlatformReport) -> UserPla
     report
 }
 
-/// `reloadUserPlatforms`.
+/// Rescans the descriptor folder.
 pub fn reload_user_platforms(
     registry: &mut PlatformRegistry,
     backend: &dyn Backend,
@@ -186,13 +184,12 @@ pub fn reload_user_platforms(
     Ok(adopt(registry, backend.reload_user_platforms()?))
 }
 
-/// `selectDescriptorFile`: `None` when the user cancelled or the dialog
-/// failed, both of which mean "leave everything alone".
+/// Asks the user for a descriptor file. `None` when the user cancelled or the
+/// dialog failed, both of which mean "leave everything alone".
 pub fn select_descriptor_file(backend: &dyn Backend) -> Option<String> {
     backend.descriptor_select_file().ok()
 }
 
-/// `previewDescriptorFile`.
 pub fn preview_descriptor_file(
     backend: &dyn Backend,
     path: &str,
@@ -200,7 +197,6 @@ pub fn preview_descriptor_file(
     backend.descriptor_preview_file(path)
 }
 
-/// `installDescriptorFile`.
 pub fn install_descriptor_file(
     registry: &mut PlatformRegistry,
     backend: &dyn Backend,
@@ -209,7 +205,6 @@ pub fn install_descriptor_file(
     Ok(adopt(registry, backend.descriptor_install_file(path)?))
 }
 
-/// `removeDescriptor`.
 pub fn remove_descriptor(
     registry: &mut PlatformRegistry,
     backend: &dyn Backend,
@@ -218,16 +213,6 @@ pub fn remove_descriptor(
     Ok(adopt(registry, backend.descriptor_remove(platform_id)?))
 }
 
-/// `openDescriptorsFolder`.
 pub fn open_descriptors_folder(backend: &dyn Backend) -> BackendResult<()> {
     backend.open_descriptors_folder()
-}
-
-/// `dryRunSwitch`.
-pub fn dry_run_switch(
-    backend: &dyn Backend,
-    platform_id: &str,
-    account_id: &str,
-) -> BackendResult<DryRunPlan> {
-    backend.platform_dry_run(platform_id, account_id)
 }

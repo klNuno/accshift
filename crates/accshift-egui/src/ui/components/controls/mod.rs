@@ -1,13 +1,12 @@
 //! The form controls of the settings panel, shared with the platform tabs:
-//! `ToggleSetting.svelte`, the `.text-input` field (text, number, password),
+//! the toggle row, the `.text-input` field (text, number, password),
 //! the `.select-input` dropdown, the `.slider-input` range, the buttons of
 //! the General and Privacy tabs, the `.card` frame and its `h3`, and the
-//! WebKit scrollbar of `app.css`.
+//! app's scrollbar.
 //!
 //! Every control follows the component pattern: borrowed props, painted into
-//! the rect it is given, its outcome returned. Values come from the Svelte
-//! CSS and `src/app.css`; boxes snap through [`crate::ui::snap`] and text goes
-//! through [`crate::ui::text`].
+//! the rect it is given, its outcome returned. Boxes snap through
+//! [`crate::ui::snap`] and text goes through [`crate::ui::text`].
 
 pub mod button;
 pub mod card;

@@ -1,31 +1,31 @@
-//! The inactivity timer, ported from `src/lib/shared/useInactivityBlur.svelte.ts`.
+//! The inactivity timer.
 //!
-//! The TS version arms a `setTimeout` and listens to `mousemove`, `mousedown`
-//! and `keydown` on the document. Here the timer is a deadline the UI checks
-//! each frame ([`InactivityBlur::tick`], [`InactivityBlur::next_deadline`]),
-//! and the UI feeds the three input events while the listeners are
-//! attached. The threshold is passed in on every call, as TS reads
-//! `peekSettings().inactivityBlurSeconds` each time. Drawing the blur is UI.
+//! The timer is a deadline the UI checks each frame
+//! ([`InactivityBlur::tick`], [`InactivityBlur::next_deadline`]), and the UI
+//! feeds the pointer and key events while the listeners are attached. The
+//! threshold is passed in on every call, so a settings change applies at
+//! once. Drawing the blur is UI.
 
 use std::time::{Duration, Instant};
 
-/// `POINTER_ACTIVITY_THROTTLE_MS` (line 4).
+/// The shortest gap between two pointer events that reset the timer.
 pub const POINTER_ACTIVITY_THROTTLE: Duration = Duration::from_millis(200);
 
 fn threshold_of(seconds: i64) -> Option<Duration> {
     (seconds > 0).then(|| Duration::from_secs(seconds as u64))
 }
 
-/// `createInactivityBlur`.
+/// Blurs the app after a stretch without input.
 #[derive(Debug, Clone)]
 pub struct InactivityBlur {
     last_activity: Instant,
-    /// `None` is the TS `0`: the first pointer event always counts.
+    /// `None` before any: the first pointer event always counts.
     last_pointer_activity: Option<Instant>,
     blurred: bool,
-    /// The armed `blurTimeoutId`.
+    /// When the armed timer fires.
     deadline: Option<Instant>,
-    /// `attachListeners` ran and `detachListeners` did not since.
+    /// [`Self::attach_listeners`] ran and [`Self::detach_listeners`] did not
+    /// since.
     listening: bool,
 }
 
@@ -41,7 +41,7 @@ impl InactivityBlur {
         }
     }
 
-    /// `isBlurred`.
+    /// The app is blurred.
     pub fn is_blurred(&self) -> bool {
         self.blurred
     }
@@ -56,7 +56,7 @@ impl InactivityBlur {
         self.deadline
     }
 
-    /// `scheduleBlurCheck` (lines 18-41).
+    /// Arms the timer for `threshold_secs` from `now`.
     fn schedule(&mut self, now: Instant, threshold_secs: i64) {
         self.deadline = None;
         let Some(threshold) = threshold_of(threshold_secs) else {
@@ -67,7 +67,7 @@ impl InactivityBlur {
         self.deadline = Some(now + threshold.saturating_sub(elapsed));
     }
 
-    /// The timeout callback (lines 27-39). True when `is_blurred` changed.
+    /// The timeout callback. True when `is_blurred` changed.
     pub fn tick(&mut self, now: Instant, threshold_secs: i64) -> bool {
         match self.deadline {
             Some(deadline) if now >= deadline => {}
@@ -85,14 +85,14 @@ impl InactivityBlur {
         before != self.blurred
     }
 
-    /// `resetActivity` (lines 43-49).
+    /// Input happened: unblur and arm the timer again.
     pub fn reset_activity(&mut self, now: Instant, threshold_secs: i64) {
         self.last_activity = now;
         self.blurred = false;
         self.schedule(now, threshold_secs);
     }
 
-    /// `resetPointerActivity` (lines 51-58): at most one reset per 200 ms.
+    /// A pointer event: at most one reset per 200 ms.
     pub fn reset_pointer_activity(&mut self, now: Instant, threshold_secs: i64) {
         if let Some(last) = self.last_pointer_activity {
             if now.saturating_duration_since(last) < POINTER_ACTIVITY_THROTTLE {
@@ -103,7 +103,7 @@ impl InactivityBlur {
         self.reset_activity(now, threshold_secs);
     }
 
-    /// `start` (lines 60-70).
+    /// Starts over from `now`.
     pub fn start(&mut self, now: Instant, threshold_secs: i64) {
         self.stop();
         if threshold_secs == 0 {
@@ -115,17 +115,17 @@ impl InactivityBlur {
         self.schedule(now, threshold_secs);
     }
 
-    /// `stop` (lines 72-74): disarms the timer, keeps `is_blurred`.
+    /// `stop`: disarms the timer, keeps `is_blurred`.
     pub fn stop(&mut self) {
         self.deadline = None;
     }
 
-    /// `attachListeners` (lines 76-80).
+    /// The UI starts feeding input events.
     pub fn attach_listeners(&mut self) {
         self.listening = true;
     }
 
-    /// `detachListeners` (lines 82-86).
+    /// The UI stops feeding input events.
     pub fn detach_listeners(&mut self) {
         self.listening = false;
     }

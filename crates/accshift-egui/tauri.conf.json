@@ -45,11 +45,6 @@
         "displayLanguageSelector": false,
         "compression": "lzma",
         "installerHooks": "./bundle/hooks.nsh"
-      },
-      "wix": {
-        "language": "en-US",
-        "bannerPath": "icons/installer/wix-banner.bmp",
-        "dialogImagePath": "icons/installer/wix-dialog.bmp"
       }
     },
     "linux": {

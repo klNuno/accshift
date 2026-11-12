@@ -1,34 +1,25 @@
 //! What happens when the user acts: dialogs, card actions, navigation,
 //! personas, the command palette, the keyboard model and toasts.
 //!
-//! Ported from the orchestration composables of `src/lib/app/` and the
-//! feature stores they drive. Each TS composable becomes a state struct with
-//! methods. A method that reaches into something another module owns (the
-//! account loader, the add flow, bulk edit, the shell's active tab, the
-//! clipboard) does not call it: it returns [`AppEffect`]s, in the order TS
-//! performs those calls, and the egui `AppModel` applies them after the frame.
-//! What these modules own themselves (dialog state, the history stack, the
-//! toast queue, the stores they write) changes in place.
+//! Each concern is a state struct with methods. A method that reaches into
+//! something another module owns (the account loader, the add flow, bulk
+//! edit, the shell's active tab, the clipboard) does not call it: it returns
+//! [`AppEffect`]s, in call order, and the egui `AppModel` applies them after
+//! the frame. What these modules own themselves (dialog state, the history
+//! stack, the toast queue, the stores they write) changes in place.
 //!
-//! - [`toasts::ToastQueue`] ports `features/notifications/store.svelte.ts` and the
-//!   timer of `Toast.svelte`.
-//! - [`keyboard`] ports `shared/keyboard/{controller,types}.ts` and
-//!   `app/keyboardBindings.ts`: the binding table as data, combo parsing,
-//!   scope resolution and dispatch through a [`keyboard::KeyHost`].
-//! - [`palette`] ports `features/commandPalette/{fuzzy,registry}.ts` and the
-//!   filtering of `CommandPalette.svelte`.
-//! - [`dialogs::AppDialogs`] ports `app/useAppDialogs.svelte.ts`, the validation of
-//!   `InputDialog.svelte`.
-//! - [`card_actions`] ports `app/useCardActions.ts`.
-//! - [`navigation`] ports `app/useAppNavigation.svelte.ts` with the browser
-//!   history as a stack, `app/tabCycle.ts`, `app/useSettingsPanel.svelte.ts`,
-//!   `features/settings/useSettingsTabBar.svelte.ts`.
-//! - [`extension::ExtensionContent`] ports `app/useExtensionContent.svelte.ts`.
-//! - [`personas`] ports `app/usePersonas.svelte.ts`, `app/usePersonaSwitch.svelte.ts`.
-//! - [`onboarding::OnboardingTour`] ports `app/useOnboardingTour.svelte.ts`.
-//! - [`avatar_fallback`] ports `shared/avatarFallback.ts`.
-//! - [`shell`] ports the handlers `src/App.svelte` defines inline over several of
-//!   these.
+//! - [`toasts::ToastQueue`]: the toast queue and each toast's countdown.
+//! - [`keyboard`]: the binding table as data, combo parsing, scope
+//!   resolution and dispatch through a [`keyboard::KeyHost`].
+//! - [`palette`]: the command palette's fuzzy matching, registry and list.
+//! - [`dialogs::AppDialogs`]: the confirm and input dialogs, with the input
+//!   validation.
+//! - [`card_actions`] holds the bulk edit bar actions on the selected cards.
+//! - [`navigation`] holds the settings panel tab bar.
+//! - [`extension::ExtensionContent`]: the extension panel of each card.
+//! - [`personas`]: the saved personas and their switch.
+//! - [`onboarding::OnboardingTour`]: the first-run onboarding and its tour.
+//! - [`avatar_fallback`]: initials and gradient of a card without a picture.
 
 pub mod avatar_fallback;
 pub mod card_actions;
@@ -39,7 +30,6 @@ pub mod navigation;
 pub mod onboarding;
 pub mod palette;
 pub mod personas;
-pub mod shell;
 pub mod toasts;
 
 use crate::accounts::loader::LoadOptions;
@@ -49,8 +39,8 @@ use crate::platforms::PlatformAccount;
 use crate::stores::ViewMode;
 use crate::text::Text;
 
-/// `loadAccounts(silent, showRefreshedToast, forceRefresh, checkBans,
-/// deferBackground)` with the TS defaults (`deferBackground` true).
+/// The options of an account load (`silent`, `show_refreshed_toast`,
+/// `force_refresh`, `check_bans`), with background work deferred.
 pub fn load_options(
     silent: bool,
     show_refreshed_toast: bool,
@@ -66,64 +56,61 @@ pub fn load_options(
     }
 }
 
-/// One call into something another module owns, in the order TS makes it.
+/// One call into something another module owns, in call order.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppEffect {
-    /// `addToast` / `showToast`.
+    /// Show a toast.
     Toast(Toast),
-    /// `loadAccounts(...)` on the active tab.
+    /// Load the active tab's accounts with these options.
     LoadAccounts(LoadOptions),
-    /// `handleRefreshClick`.
+    /// Reload the active tab's accounts.
     RefreshAccounts,
-    /// `handleAddAccountClick`.
+    /// Start adding an account.
     AddAccount,
-    /// `handleAccountSwitch(account)`.
+    /// Switch to this account.
     SwitchAccount(PlatformAccount),
-    /// `handleNavigateToFolder(folderId)`:
-    /// [`navigation::AppNavigation::navigate_to`] with history.
+    /// Open this folder; `None` is the platform root.
     NavigateToFolder(Option<String>),
-    /// `navigation.refreshCurrentItems()`.
+    /// Reread the open folder's items from the stores.
     RefreshCurrentItems,
-    /// `loader.prepareVisibleAccounts()`.
+    /// Seed the avatars of the accounts on screen.
     PrepareVisibleAccounts,
-    /// `grid.queueCalculatePadding()`.
+    /// Recompute the grid padding on the next frame.
     QueueGridPadding,
-    /// `loader.clearForPlatformChange()`.
+    /// Drop every load, run and switch in flight before another platform
+    /// loads.
     ClearForPlatformChange,
-    /// `visiblePriming.reset()`.
+    /// Forget which visible accounts were already primed.
     ResetVisiblePrimeState,
-    /// `shell.setActiveTab(tab)`.
+    /// Make this tab the active one.
     SetActiveTab(String),
-    /// `shell.refreshSettings()`: re-read the settings store.
+    /// Re-read the settings store.
     RefreshSettings,
-    /// `secureScreen.handleSettingsClosed()`.
+    /// The settings panel closed: the secure screen's timer starts over.
     SettingsClosed,
-    /// `appNavigation.closeSettingsPanel()`:
-    /// [`navigation::AppNavigation::close_settings_panel`].
+    /// Close the settings panel.
     CloseSettingsPanel,
-    /// `appNavigation.toggleSettingsPanel()`.
+    /// Open or close the settings panel.
     ToggleSettingsPanel,
-    /// `appNavigation.handleTabChange(tab)`.
+    /// Go to this tab, with everything a tab change resets.
     ChangeTab(String),
-    /// `handleNavigateBack`: [`navigation::AppNavigation::navigate_to_parent_folder`]
-    /// (its add flow cancel comes first in the list).
+    /// Go to the parent folder (its add flow cancel comes first in the list).
     NavigateToParentFolder,
-    /// The removal of an account from the grid (`removeAccount` glue of
-    /// App.svelte: loader, folder sync, items).
+    /// Remove an account from the grid: loader, folder sync, items.
     RemoveAccount(String),
-    /// `copyToClipboard(text, label)`: write it, then
-    /// [`shell::copy_result_toast`] with the label resolved.
+    /// Write the text to the clipboard, then
+    /// [`toasts::copy_result_toast`] with the label resolved.
     CopyToClipboard { text: String, label: Text },
     /// Write several lines to the clipboard, then
-    /// [`card_actions::bulk_urls_copied_toast`] (`copyBulkEditUrls`).
+    /// [`card_actions::bulk_urls_copied_toast`].
     CopyBulkUrls(Vec<String>),
-    /// `cardColorVersion += 1`: card colours changed in the stores.
+    /// Card colours changed in the stores: bump their version.
     CardColorsChanged,
-    /// `cardNoteVersion += 1`: card notes changed in the stores.
+    /// Card notes changed in the stores: bump their version.
     CardNotesChanged,
     /// A menu task for `PlatformAdapter::run_task` on the job pool.
     RunPlatformTask(PlatformTask),
-    /// `adapter.setAccountLabel` then `loadAccounts(true)`, a
+    /// Set the account label, then reload silently, with a
     /// `toast.renameAccountFailed` on error: run
     /// [`dialogs::rename_account_blocking`] on the pool and hand the result to
     /// [`dialogs::finish_rename_account`].
@@ -132,46 +119,47 @@ pub enum AppEffect {
         account_id: String,
         label: String,
     },
-    /// A `requestConfirm` settled: route it to whoever holds the ticket.
+    /// A confirmation settled: route it to whoever holds the ticket.
     ConfirmSettled {
         ticket: dialogs::ConfirmTicket,
         allowed: bool,
     },
-    /// `addFlow.cancel()`.
+    /// Cancel the add flow.
     AddFlowCancel,
-    /// `addFlow.cancelIfConflicting(platformId, accountId?)`.
+    /// Cancel the add flow if it sets up this platform, unless it sets up
+    /// this very account.
     AddFlowCancelIfConflicting {
         platform_id: String,
         account_id: Option<String>,
     },
-    /// `bulkEdit.closeBulkEdit()`.
+    /// Leave bulk edit.
     CloseBulkEdit,
-    /// `bulkEdit.toggleBulkEdit()`.
+    /// Enter or leave bulk edit.
     ToggleBulkEdit,
-    /// `bulkEdit.toggleBulkEditAccount(id)`.
+    /// Select or unselect this account in bulk edit.
     BulkEditToggleAccount(String),
-    /// `bulkEdit.handlePaintMouseDown(event)`.
+    /// A press on a card in bulk edit: start a paint selection.
     BulkEditPaintStart,
-    /// `bulkEdit.bulkEditSelectAll()`.
+    /// Select every account in bulk edit.
     BulkEditSelectAll,
-    /// `bulkEdit.bulkEditDeselectAll()`.
+    /// Unselect every account in bulk edit.
     BulkEditDeselectAll,
-    /// `drag.handleGridMouseDown(event)`.
+    /// A press on the grid: a drag may start.
     DragGridMouseDown,
-    /// `uiScale.zoomIn()`.
+    /// Zoom the UI in one step.
     ZoomIn,
-    /// `uiScale.zoomOut()`.
+    /// Zoom the UI out one step.
     ZoomOut,
-    /// `uiScale.resetZoom()`.
+    /// Reset the UI zoom.
     ResetZoom,
-    /// `updates.applyReadyUpdate()`.
+    /// Install the downloaded update.
     ApplyUpdate,
     /// The view mode changed and was stored; the grid recomputes its padding
     /// when it is the grid.
     ViewModeChanged(ViewMode),
-    /// An entry of a caller-built menu (`openCustomContextMenu`, the persona
+    /// An entry of a caller-built menu (a custom context menu, the persona
     /// cards) was clicked: the id that caller gave it.
     CustomMenu(String),
-    /// `invoke("telemetry_track_persona_switch", ...)`, errors ignored.
+    /// Count a persona switch in telemetry, errors ignored.
     TrackPersonaSwitch { platforms: u64, succeeded: u64 },
 }

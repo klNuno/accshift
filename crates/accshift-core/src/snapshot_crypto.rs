@@ -47,47 +47,33 @@ pub struct DirCopyOptions<'a> {
 /// elsewhere). The on-disk snapshot is never plaintext auth material.
 pub fn encrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
     let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
-    let encrypted = secrets::encrypt_bytes(&data)
-        .map_err(|e| format!("Could not encrypt {}: {e}", source.display()))?;
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-    }
-    let mut out = Vec::with_capacity(ENCRYPTED_HEADER.len() + encrypted.len());
-    out.extend_from_slice(ENCRYPTED_HEADER);
-    out.extend_from_slice(&encrypted);
-    fs::write(dest, &out).map_err(|e| format!("Could not write {}: {e}", dest.display()))
+    write_encrypted_bytes(dest, &data)
 }
 
 /// Copy a file, decrypting if it has the header (legacy plaintext files pass
 /// through unchanged).
+///
+/// A restore writes live launcher files with it, so the write is atomic: an
+/// interrupted restore leaves the launcher's previous file, never half of one.
 pub fn decrypted_copy_file(source: &Path, dest: &Path) -> Result<(), String> {
-    let data = fs::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
-    let content = if data.starts_with(ENCRYPTED_HEADER) {
-        secrets::decrypt_bytes(&data[ENCRYPTED_HEADER.len()..])
-            .map_err(|e| format!("Could not decrypt {}: {e}", source.display()))?
-    } else {
-        data
-    };
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-    }
-    fs::write(dest, &content).map_err(|e| format!("Could not write {}: {e}", dest.display()))
+    let content = read_decrypted_bytes(source)?;
+    crate::storage::write_bytes_atomic(dest, &content)
 }
 
-/// Encrypt raw bytes and write them with the header (no temp plaintext on disk).
+/// Encrypt raw bytes and write them with the header (no temp plaintext on
+/// disk). The write is atomic, so a crash mid-capture never leaves a truncated
+/// snapshot that would fail to decrypt.
 pub fn write_encrypted_bytes(dest: &Path, data: &[u8]) -> Result<(), String> {
     let encrypted = secrets::encrypt_bytes(data)
         .map_err(|e| format!("Could not encrypt {}: {e}", dest.display()))?;
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-    }
     let mut out = Vec::with_capacity(ENCRYPTED_HEADER.len() + encrypted.len());
     out.extend_from_slice(ENCRYPTED_HEADER);
     out.extend_from_slice(&encrypted);
-    fs::write(dest, &out).map_err(|e| format!("Could not write {}: {e}", dest.display()))
+    crate::storage::write_bytes_atomic(dest, &out).inspect_err(|_| {
+        // On Linux and macOS the ciphertext is a keyring pointer: a token
+        // that never reached a file would leak its entry.
+        let _ = secrets::delete_bytes(&encrypted);
+    })
 }
 
 /// Read a snapshot file, decrypting it if it carries the header. Legacy
@@ -112,6 +98,142 @@ pub fn delete_encrypted_file_secret(path: &Path) {
     if data.starts_with(ENCRYPTED_HEADER) {
         let _ = secrets::delete_bytes(&data[ENCRYPTED_HEADER.len()..]);
     }
+}
+
+/// Suffix of the sibling a capture is staged in before it replaces the
+/// previous one, and of the sibling the previous directory waits in during
+/// the swap. Both stay in the destination's directory: the renames never
+/// cross a filesystem.
+const CAPTURE_TMP_SUFFIX: &str = ".accshift-capture-tmp";
+const CAPTURE_OLD_SUFFIX: &str = ".accshift-capture-old";
+
+fn capture_sibling(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(suffix);
+    path.with_file_name(name)
+}
+
+fn discard_file(path: &Path) {
+    delete_encrypted_file_secret(path);
+    let _ = fs::remove_file(path);
+}
+
+fn discard_dir(dir: &Path) {
+    free_dir_secrets(dir);
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// `fs::rename`, retried a few times: on Windows an antivirus or indexer that
+/// holds a handle for a moment fails the first attempt with a sharing error.
+fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut attempts_left = 3;
+    loop {
+        match fs::rename(from, to) {
+            Err(_) if attempts_left > 0 => {
+                attempts_left -= 1;
+                std::thread::sleep(std::time::Duration::from_millis(40));
+            }
+            result => return result,
+        }
+    }
+}
+
+/// Replace `dest` with an encrypted copy of the file `source`.
+///
+/// The copy is staged next to `dest` and renamed over it, so a source that
+/// cannot be read (a launcher still holding it open), a full disk or a keyring
+/// that refuses the secret leaves the previous capture as it was, still
+/// decryptable. The previous capture's secret is freed only once the new file
+/// is in place.
+pub fn replace_encrypted_file(source: &Path, dest: &Path) -> Result<(), String> {
+    replace_file_with(dest, |staged| encrypted_copy_file(source, staged))
+}
+
+/// [`replace_encrypted_file`] for bytes that are not a file (a registry value).
+pub fn replace_encrypted_bytes(dest: &Path, data: &[u8]) -> Result<(), String> {
+    replace_file_with(dest, |staged| write_encrypted_bytes(staged, data))
+}
+
+fn replace_file_with(
+    dest: &Path,
+    stage: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let staged = capture_sibling(dest, CAPTURE_TMP_SUFFIX);
+    discard_file(&staged);
+    if let Err(error) = stage(&staged) {
+        discard_file(&staged);
+        return Err(error);
+    }
+    let previous = fs::read(dest).ok();
+    if let Err(error) = rename_with_retry(&staged, dest) {
+        discard_file(&staged);
+        return Err(format!("Could not replace {}: {error}", dest.display()));
+    }
+    if let Some(previous) = previous.filter(|data| data.starts_with(ENCRYPTED_HEADER)) {
+        let _ = secrets::delete_bytes(&previous[ENCRYPTED_HEADER.len()..]);
+    }
+    Ok(())
+}
+
+/// Replace the directory `dest` with an encrypted copy of the tree `source`.
+///
+/// Same guarantee as [`replace_encrypted_file`]: the tree is copied into a
+/// sibling first, and the previous capture is moved aside, then dropped, only
+/// once the whole copy succeeded. A missing `source` leaves no `dest`.
+pub fn replace_encrypted_dir(
+    source: &Path,
+    dest: &Path,
+    options: DirCopyOptions,
+) -> Result<(), String> {
+    replace_dir_with(dest, |staged| encrypted_copy_dir(source, staged, options))
+}
+
+fn replace_dir_with(
+    dest: &Path,
+    stage: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let staged = capture_sibling(dest, CAPTURE_TMP_SUFFIX);
+    let aside = capture_sibling(dest, CAPTURE_OLD_SUFFIX);
+    discard_dir(&staged);
+    if aside.exists() {
+        // A swap stopped between its two renames. Without a `dest`, the
+        // directory set aside is the only capture left: put it back.
+        if dest.exists() {
+            discard_dir(&aside);
+        } else {
+            let _ = rename_with_retry(&aside, dest);
+        }
+    }
+
+    if let Err(error) = stage(&staged) {
+        discard_dir(&staged);
+        return Err(error);
+    }
+    if !staged.exists() {
+        // Nothing live to capture.
+        discard_dir(dest);
+        return Ok(());
+    }
+
+    let had_previous = dest.exists();
+    if had_previous {
+        if let Err(error) = rename_with_retry(dest, &aside) {
+            discard_dir(&staged);
+            return Err(format!(
+                "Could not set the previous snapshot {} aside: {error}",
+                dest.display()
+            ));
+        }
+    }
+    if let Err(error) = rename_with_retry(&staged, dest) {
+        if had_previous {
+            let _ = rename_with_retry(&aside, dest);
+        }
+        discard_dir(&staged);
+        return Err(format!("Could not replace {}: {error}", dest.display()));
+    }
+    discard_dir(&aside);
+    Ok(())
 }
 
 /// Recursively copy a directory tree, encrypting every file. Missing sources
@@ -429,181 +551,4 @@ pub fn upgrade_legacy_plaintext_platform(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn scratch_dir(tag: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "accshift-snapshot-crypto-test-{}-{}-{:?}",
-            tag,
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        root
-    }
-
-    #[test]
-    fn header_is_accs() {
-        assert_eq!(ENCRYPTED_HEADER, b"ACCS");
-    }
-
-    #[test]
-    fn decrypted_copy_passes_legacy_plaintext_through() {
-        // Snapshots written before encryption have no header: they must restore
-        // byte-for-byte without ever calling the OS decrypt backend.
-        let dir = scratch_dir("legacy-plaintext");
-        let source = dir.join("token.dat");
-        let dest = dir.join("restored.dat");
-        let body: &[u8] = b"legacy plaintext auth material";
-        fs::write(&source, body).unwrap();
-
-        decrypted_copy_file(&source, &dest).unwrap();
-
-        assert_eq!(fs::read(&dest).unwrap().as_slice(), body);
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn read_decrypted_bytes_passes_legacy_plaintext_through() {
-        let dir = scratch_dir("legacy-read");
-        let source = dir.join("value.txt");
-        fs::write(&source, b"plain-value").unwrap();
-        assert_eq!(read_decrypted_bytes(&source).unwrap(), b"plain-value");
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn dir_copy_recurses_and_skips_ignored_names_case_insensitively() {
-        // Uses decrypted_copy_dir over plaintext files so no OS crypto backend
-        // is touched; the traversal logic is what is under test.
-        let dir = scratch_dir("dir-ignored");
-        let source = dir.join("src");
-        let dest = dir.join("dst");
-        fs::create_dir_all(source.join("nested")).unwrap();
-        fs::write(source.join("keep.txt"), b"keep").unwrap();
-        fs::write(source.join("LockFile"), b"skip-me").unwrap();
-        fs::write(source.join("nested").join("lockfile"), b"skip-me-too").unwrap();
-        fs::write(source.join("nested").join("inner.txt"), b"inner").unwrap();
-
-        decrypted_copy_dir(
-            &source,
-            &dest,
-            DirCopyOptions {
-                ignored_names: &["lockfile"],
-                follow_symlinks: true,
-            },
-        )
-        .unwrap();
-
-        assert_eq!(fs::read(dest.join("keep.txt")).unwrap(), b"keep");
-        assert_eq!(
-            fs::read(dest.join("nested").join("inner.txt")).unwrap(),
-            b"inner"
-        );
-        assert!(!dest.join("LockFile").exists());
-        assert!(!dest.join("nested").join("lockfile").exists());
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn upgrade_skips_files_that_already_carry_the_header() {
-        // Idempotency is what lets the pass run on every launch without a
-        // "already migrated" flag. No OS crypto backend is touched here.
-        let dir = scratch_dir("upgrade-idempotent");
-        let path = dir.join("token.dat");
-        let mut body = ENCRYPTED_HEADER.to_vec();
-        body.extend_from_slice(b"already-encrypted-payload");
-        fs::write(&path, &body).unwrap();
-
-        assert!(!upgrade_legacy_plaintext_file(&path).unwrap());
-        assert_eq!(fs::read(&path).unwrap(), body);
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn upgrade_dir_reports_nothing_on_a_clean_store() {
-        let dir = scratch_dir("upgrade-clean");
-        let store = dir.join("snapshots").join("account");
-        fs::create_dir_all(&store).unwrap();
-        let mut body = ENCRYPTED_HEADER.to_vec();
-        body.extend_from_slice(b"payload");
-        fs::write(store.join("a.dat"), &body).unwrap();
-        fs::write(store.join("b.dat"), &body).unwrap();
-
-        let mut failures = Vec::new();
-        let stats = upgrade_legacy_plaintext_dir(&dir, &mut |message, detail| {
-            failures.push(format!("{message}: {detail}"))
-        });
-
-        assert_eq!(stats, LegacyUpgradeStats::default());
-        assert!(!stats.touched_anything());
-        assert!(failures.is_empty(), "{failures:?}");
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn upgrade_dir_missing_directory_is_silent() {
-        // A platform the user never captured has no snapshot directory. That is
-        // the common case, not an error worth logging.
-        let dir = scratch_dir("upgrade-missing");
-        let mut reports = Vec::new();
-        let stats = upgrade_legacy_plaintext_dir(&dir.join("nope"), &mut |m, d| {
-            reports.push(format!("{m}: {d}"))
-        });
-        assert_eq!(stats, LegacyUpgradeStats::default());
-        assert!(reports.is_empty(), "{reports:?}");
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn upgrade_dir_skips_its_own_leftover_temp_files() {
-        // An interrupted run can leave a staged temp file behind. It is already
-        // encrypted, and picking it up again would be pointless work.
-        let dir = scratch_dir("upgrade-tmp");
-        let staged = upgrade_tmp_path(&dir.join("token.dat"));
-        fs::write(&staged, b"plaintext-looking leftover").unwrap();
-
-        let mut reports = Vec::new();
-        let stats =
-            upgrade_legacy_plaintext_dir(&dir, &mut |m, d| reports.push(format!("{m}: {d}")));
-
-        assert_eq!(stats, LegacyUpgradeStats::default());
-        assert!(reports.is_empty(), "{reports:?}");
-        assert_eq!(fs::read(&staged).unwrap(), b"plaintext-looking leftover");
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn upgrade_tmp_path_stays_in_the_same_directory() {
-        // The rename that follows must not cross a filesystem boundary.
-        let target = Path::new("store").join("account").join("token.dat");
-        let tmp = upgrade_tmp_path(&target);
-        assert_eq!(tmp.parent(), target.parent());
-        assert!(tmp
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .contains(UPGRADE_TMP_INFIX));
-    }
-
-    #[test]
-    fn snapshot_platform_ids_cover_the_snapshot_platforms() {
-        // Steam and Battle.net do not use the snapshot mechanism, so a pass
-        // over them would be dead work.
-        assert_eq!(
-            SNAPSHOT_PLATFORM_IDS,
-            &["riot", "ubisoft", "epic", "gog", "jagex", "discord"]
-        );
-    }
-
-    #[test]
-    fn dir_copy_missing_source_is_noop() {
-        let dir = scratch_dir("dir-missing");
-        let dest = dir.join("dst");
-        decrypted_copy_dir(&dir.join("nope"), &dest, DirCopyOptions::default()).unwrap();
-        assert!(!dest.exists());
-        let _ = fs::remove_dir_all(&dir);
-    }
-}
+mod tests;

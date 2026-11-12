@@ -11,8 +11,7 @@
 //! default `2c - c²` transfer only approximates.
 //!
 //! The software backend applies one table per luminance class to the glyph
-//! texels (`egui_software_backend::glyph_coverage`); the glow renderer keeps
-//! egui's own transfer function.
+//! texels (`egui_software_backend::glyph_coverage`).
 
 /// Luminance classes, as in Skia's `SkTMaskGamma<3, 3, 3>`.
 pub const CLASSES: usize = 8;
@@ -37,10 +36,6 @@ pub const CHROMIUM: MaskGamma = MaskGamma {
     contrast: 1.0,
     gamma: 0.0,
 };
-
-/// The single power curve closest to [`CHROMIUM`] for white text, for
-/// renderers that take one gamma (glow).
-pub const POWER_APPROX: f32 = 2.2;
 
 /// Skia's `sk_t_scale255<3>`: a 3-bit class back to a 0..255 luminance.
 fn class_luminance(class: usize) -> u8 {

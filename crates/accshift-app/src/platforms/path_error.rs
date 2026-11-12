@@ -1,4 +1,4 @@
-//! A rejected launcher path, ported from `src/lib/shared/platformPathError.ts`.
+//! A rejected launcher path.
 //!
 //! `platform_set_path` rejects a folder with a machine-readable code, a `|`,
 //! then an English fallback (`coded_path_error` in
@@ -17,7 +17,7 @@ pub const PATH_ERROR_MESSAGE_KEYS: [(&str, &str); 3] = [
     ("steam_path_not_a_directory", "settings.pathNotADirectory"),
 ];
 
-/// `PlatformPathError`.
+/// A path rejection split into its code and its message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlatformPathError {
     /// The backend code, `None` when the rejection carried none.
@@ -34,7 +34,7 @@ fn is_code(value: &str) -> bool {
         && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
-/// `parsePlatformPathError` on the rejection's message.
+/// Splits a rejection message into its code and its English fallback.
 pub fn parse_platform_path_error(raw: &str) -> PlatformPathError {
     let Some(separator) = raw.find('|') else {
         return PlatformPathError {
@@ -55,8 +55,8 @@ pub fn parse_platform_path_error(raw: &str) -> PlatformPathError {
     }
 }
 
-/// `platformPathErrorMessage`: a known code becomes its translated message,
-/// anything else keeps the caller's generic wording.
+/// A known code becomes its translated message; anything else keeps the
+/// caller's generic wording.
 pub fn platform_path_error_message(raw: &str, generic_message: Text) -> Text {
     let parsed = parse_platform_path_error(raw);
     parsed

@@ -1,6 +1,5 @@
-//! The per-platform tabs: `PlatformPathSettingsTab.svelte` (Riot,
-//! Battle.net, Ubisoft, Epic, GOG, Jagex, Discord) and
-//! `RobloxSettingsTab.svelte`.
+//! The per-platform tabs: the path tabs (Riot, Battle.net, Ubisoft, Epic,
+//! GOG, Jagex, Discord) and the Roblox tab.
 //!
 //! ```text
 //! .settings-grid
@@ -11,8 +10,7 @@
 //!
 //! Inside the panel a `SettingsCard` keeps the panel's card box and only
 //! adds its accent ([`card::CardKind::Platform`]). The tab shows nothing
-//! until the panel has read the platform paths (`platformId in
-//! platformPaths`).
+//! until the panel has read the platform paths.
 
 use accshift_app::i18n::{translate, Locale};
 use egui::{pos2, vec2, Context, Id, Rect, Ui};
@@ -35,7 +33,7 @@ pub(super) const ERROR: Rgba = Rgba::hex(0xfca5a5, 1.0);
 
 /// The tab's own children of a card.
 pub enum Item {
-    /// `ToggleSetting.svelte`, in the platform's accent or the neutral one.
+    /// A toggle row, in the platform's accent or the neutral one.
     Toggle {
         label: String,
         description: String,
@@ -60,14 +58,13 @@ pub enum Item {
     Error(String),
 }
 
-/// What a path tab differs in: `PlatformPathSettingsTab`'s props and the
-/// registry's `pathLabelKey` and `pathPlaceholder`.
+/// What a path tab differs in: its labels and its path placeholders.
 struct PathTab {
     title_key: &'static str,
     last_login_key: &'static str,
     last_login_default: bool,
     path_label_key: &'static str,
-    /// `pathPlaceholder` per system: Windows, Linux, macOS.
+    /// The path placeholder per system: Windows, Linux, macOS.
     placeholder: [Option<&'static str>; 3],
 }
 
@@ -88,7 +85,7 @@ const fn path_tab(
 }
 
 /// The descriptor platforms' placeholder: the first `path` candidate of the
-/// shipped descriptor, rendered for Windows (`renderTemplate`), the only
+/// shipped descriptor, rendered for Windows, the only
 /// system they list.
 fn path_tab_for(id: &str) -> Option<PathTab> {
     Some(match id {
@@ -169,18 +166,17 @@ fn path_tab_for(id: &str) -> Option<PathTab> {
     })
 }
 
-/// `resolvePathPlaceholder`: the system's own, else Windows, Linux, macOS.
+/// The system's own placeholder. Another system's path would mislead (a
+/// `C:\` path on Linux), so a system without one shows none; an unknown
+/// system takes the first given: Windows, Linux, then macOS.
 fn resolve_placeholder(placeholder: &[Option<&'static str>; 3], os: RuntimeOs) -> &'static str {
-    let own = match os {
+    match os {
         RuntimeOs::Windows => placeholder[0],
         RuntimeOs::Linux => placeholder[1],
         RuntimeOs::Macos => placeholder[2],
-        RuntimeOs::Unknown => None,
-    };
-    own.or(placeholder[0])
-        .or(placeholder[1])
-        .or(placeholder[2])
-        .unwrap_or("")
+        RuntimeOs::Unknown => placeholder.iter().flatten().next().copied(),
+    }
+    .unwrap_or("")
 }
 
 /// The last login toggle every platform tab opens with.
@@ -507,7 +503,7 @@ pub(super) fn paint(ui: &mut Ui, r: Rect, id: Id, c: &Ctx, item: &Item) -> Vec<S
 mod tests {
     use super::*;
 
-    /// `renderTemplate` of `registry.ts`, Windows side.
+    /// A descriptor path template rendered for Windows.
     fn render_windows(template: &str) -> String {
         let mut out = String::new();
         let mut rest = template;
@@ -570,18 +566,19 @@ mod tests {
                 .as_str()
                 .unwrap();
             let tab = path_tab_for(id).unwrap();
-            for system in [RuntimeOs::Windows, RuntimeOs::Linux, RuntimeOs::Macos] {
-                assert_eq!(
-                    resolve_placeholder(&tab.placeholder, system),
-                    render_windows(template),
-                    "{id}"
-                );
+            assert_eq!(
+                resolve_placeholder(&tab.placeholder, RuntimeOs::Windows),
+                render_windows(template),
+                "{id}"
+            );
+            for system in [RuntimeOs::Linux, RuntimeOs::Macos] {
+                assert_eq!(resolve_placeholder(&tab.placeholder, system), "", "{id}");
             }
         }
     }
 
     #[test]
-    fn placeholders_fall_back_like_resolve_path_placeholder() {
+    fn placeholders_never_show_another_systems_path() {
         let battle = path_tab_for("battle-net").unwrap();
         assert_eq!(
             resolve_placeholder(&battle.placeholder, RuntimeOs::Macos),
@@ -589,8 +586,14 @@ mod tests {
         );
         assert_eq!(
             resolve_placeholder(&battle.placeholder, RuntimeOs::Linux),
+            ""
+        );
+        assert_eq!(
+            resolve_placeholder(&battle.placeholder, RuntimeOs::Unknown),
             "C:\\Program Files (x86)\\Battle.net\\Battle.net Launcher.exe"
         );
+        let riot = path_tab_for("riot").unwrap();
+        assert_eq!(resolve_placeholder(&riot.placeholder, RuntimeOs::Macos), "");
         assert!(path_tab_for("roblox").is_none());
         assert!(path_tab_for("steam").is_none());
     }

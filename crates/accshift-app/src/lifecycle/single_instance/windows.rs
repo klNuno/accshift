@@ -1,11 +1,9 @@
-//! platform_impl/windows.rs of `tauri-plugin-single-instance` 2.4.4.
+//! Windows: a named mutex and a hidden message window.
 //!
-//! Upstream creates the mutex and the message window on Tauri's main thread,
-//! whose event loop pumps the window's messages. The egui shell owns no
-//! Win32 loop it can lend, so here one dedicated thread creates the mutex
-//! (it must own it to release it), creates the same window and pumps it.
-//! Names, styles, the `WM_COPYDATA` payload and the release order on exit
-//! are upstream's.
+//! The egui shell owns no Win32 loop it can lend, so one dedicated thread
+//! creates the mutex (it must own it to release it), creates the window and
+//! pumps its messages. Names, styles, the `WM_COPYDATA` payload and the
+//! release order on exit match what older installs use.
 
 use super::{parse_windows_payload, windows_names, windows_payload, Notify, PlatformLaunch};
 use std::sync::mpsc;
@@ -24,11 +22,11 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_OVERLAPPED, WS_POPUP, WS_VISIBLE,
 };
 
-/// windows.rs line 41.
+/// The `dwData` tag of a forwarded launch.
 const WMCOPYDATA_SINGLE_INSTANCE_DATA: usize = 1542;
 
 /// Ours: asks the window thread to run `destroy` (release the mutex, then
-/// destroy the window, upstream's order).
+/// destroy the window, in that order).
 const WM_SINGLE_INSTANCE_DESTROY: u32 = WM_APP + 0x1542;
 
 struct UserData {
@@ -39,8 +37,7 @@ struct UserData {
 /// The running service: the window thread and its window.
 pub struct Guard {
     hwnd: isize,
-    /// A handle kept open for the run when upstream leaks it (mutex found,
-    /// window not found).
+    /// A handle kept open for the run (mutex found, window not found).
     leaked_mutex: isize,
     thread: Option<JoinHandle<()>>,
 }
@@ -109,7 +106,7 @@ pub(super) fn acquire(
     }
 }
 
-/// windows.rs lines 54-108 (`setup`), then the message loop.
+/// Takes the mutex or forwards the launch, then runs the message loop.
 fn run(
     class: String,
     window: String,
@@ -134,7 +131,7 @@ fn run(
                     lpData: bytes.as_ptr() as _,
                 };
                 SendMessageW(hwnd, WM_COPYDATA, 0, &cds as *const _ as LPARAM);
-                // Upstream exits right here, which closes the handle.
+                // The process exits next; close the handle now.
                 CloseHandle(hmutex);
                 let _ = answer.send(ThreadAnswer::Forwarded);
                 return;
@@ -165,7 +162,7 @@ fn run(
     }
 }
 
-/// windows.rs lines 119-130 (`destroy`), on the thread that owns the mutex.
+/// Releases the mutex and the window, on the thread that owns the mutex.
 unsafe fn destroy(hwnd: HWND) {
     let userdata = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut UserData;
     if !userdata.is_null() && !(*userdata).mutex.is_null() {
@@ -176,7 +173,7 @@ unsafe fn destroy(hwnd: HWND) {
     DestroyWindow(hwnd);
 }
 
-/// windows.rs lines 132-167, plus the destroy request and the end of the
+/// Receives forwarded launches, plus the destroy request and the end of the
 /// loop this thread runs.
 unsafe extern "system" fn single_instance_window_proc(
     hwnd: HWND,
@@ -225,8 +222,8 @@ unsafe extern "system" fn single_instance_window_proc(
     }
 }
 
-/// windows.rs lines 169-208: a 0x0 layered, transparent, non-activating
-/// tool window, restyled to `WS_VISIBLE | WS_POPUP` like upstream.
+/// A 0x0 layered, transparent, non-activating tool window, restyled to
+/// `WS_VISIBLE | WS_POPUP`.
 unsafe fn create_event_target_window(
     class_name: &[u16],
     window_name: &[u16],
@@ -246,7 +243,7 @@ unsafe fn create_event_target_window(
         lpszClassName: class_name.as_ptr(),
         hIconSm: std::ptr::null_mut(),
     };
-    // Upstream ignores the result too: a class left registered by an
+    // The result is ignored: a class left registered by an
     // earlier instance in the same process is reused.
     RegisterClassExW(&class);
     let hwnd = CreateWindowExW(

@@ -1,5 +1,5 @@
 /* The app's default design tokens: the :root custom properties a theme
-   overrides (css.rs). Formerly the :root block of the Svelte app.css. */
+   overrides (css.rs). */
 
 :root {
   /* CJK families close the stack: Inter and the usual UI faces carry Latin and

@@ -1,4 +1,4 @@
-//! `src/lib/features/folders/BackCard.svelte`: the first card inside a
+//! The back card: the first card inside a
 //! folder, back to the parent.
 //!
 //! Same `.card` box as the folder card ([`super::folder_card::frame`]), a
@@ -20,11 +20,11 @@ use crate::ui::text::{LineHeight, TextAlign, TextStyle};
 /// What the back card reports.
 #[derive(Clone, Debug, PartialEq)]
 pub enum BackCardEvent {
-    /// Click, Enter or Space: `onBack`.
+    /// Click, Enter or Space: back to the parent folder.
     Back,
 }
 
-/// `BackCard.svelte`'s props, minus the callback.
+/// What the back card shows.
 #[derive(Clone, Debug)]
 pub struct BackCardProps<'a> {
     pub vars: &'a Vars,

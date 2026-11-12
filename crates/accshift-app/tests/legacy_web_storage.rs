@@ -161,6 +161,37 @@ fn the_boot_step_reads_while_a_store_is_missing_on_disk() {
     assert_eq!(reads, 1);
 }
 
+/// A store the user never wrote stays missing for good: once a read found
+/// nothing for it, later boots do not read the WebView storage again.
+#[test]
+fn the_boot_step_reads_once_when_the_legacy_storage_has_nothing_more() {
+    let scratch = Scratch::new("once");
+    let dirs = Dirs(scratch.0.clone());
+    let mut reads = 0;
+    let mut step = |storage: LegacyLocalStorage| {
+        legacy_web_storage::read_for_boot_with(&dirs, || {
+            reads += 1;
+            LegacyRead {
+                storage,
+                notes: Vec::new(),
+            }
+        })
+    };
+    // The settings are still to migrate: the next boot reads again.
+    assert!(step(map(&[("accshift_settings", SETTINGS)])).is_some());
+    assert!(!scratch
+        .0
+        .join("data")
+        .join(legacy_web_storage::READ_MARKER)
+        .exists());
+    // This boot saved them; the other stores have nothing in the legacy storage.
+    accshift_core::storage::save_client_store(&dirs, CLIENT_STORE_SETTINGS, &json!({})).unwrap();
+    assert!(step(map(&[("accshift_settings", SETTINGS)])).is_some());
+    assert!(step(map(&[("accshift_settings", SETTINGS)])).is_none());
+    assert!(step(LegacyLocalStorage::new()).is_none());
+    assert_eq!(reads, 2);
+}
+
 // ---------------------------------------------------------- WebKit (sqlite)
 
 /// An `ItemTable` the way WebKit writes it: text keys, UTF-16LE blob values.
