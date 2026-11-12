@@ -1,5 +1,5 @@
 //! Generic platform commands: every platform's accounts, switch, setup,
-//! path and label. Port of `src-tauri/src/commands/platform.rs`.
+//! path and label.
 
 use super::runtime::{locked, locked_within, CANCEL_SETUP_LOCK_TIMEOUT};
 use super::{RealBackend, LOCK_TIMEOUT};
@@ -10,12 +10,12 @@ use accshift_core::platforms::{self, require_service};
 use accshift_core::telemetry::{self, Event};
 use serde_json::Value;
 
-/// `platform_get_accounts`, platform.rs lines 6-16.
+/// Backs `Backend::platform_get_accounts`.
 pub(super) fn get_accounts(backend: &RealBackend, platform_id: &str) -> BackendResult<Value> {
     Ok(require_service(platform_id)?.get_accounts(backend.ctx.clone())?)
 }
 
-/// `platform_get_startup_snapshot`, platform.rs lines 18-30.
+/// Backs `Backend::platform_get_startup_snapshot`.
 pub(super) fn get_startup_snapshot(
     backend: &RealBackend,
     platform_id: &str,
@@ -23,7 +23,7 @@ pub(super) fn get_startup_snapshot(
     Ok(require_service(platform_id)?.get_startup_snapshot(backend.ctx.clone())?)
 }
 
-/// `platform_get_current_account`, platform.rs lines 32-38.
+/// Backs `Backend::platform_get_current_account`.
 pub(super) fn get_current_account(
     backend: &RealBackend,
     platform_id: &str,
@@ -31,7 +31,7 @@ pub(super) fn get_current_account(
     Ok(require_service(platform_id)?.get_current_account(backend.ctx.clone())?)
 }
 
-/// `platform_switch_account`, platform.rs lines 40-78: the PIN check and the
+/// Backs `Backend::platform_switch_account`: the PIN check and the
 /// switch under the operation lock, on this thread, then `platform_switch`
 /// with the duration and the typed error family. An unknown platform fails
 /// before anything is recorded.
@@ -61,7 +61,7 @@ pub(super) fn switch_account(
     result.map_err(BackendError::from)
 }
 
-/// `platform_forget_account`, platform.rs lines 80-93.
+/// Backs `Backend::platform_forget_account`.
 pub(super) fn forget_account(
     backend: &RealBackend,
     platform_id: &str,
@@ -72,7 +72,7 @@ pub(super) fn forget_account(
     backend.track_operation("account_forget", Some(platform_id), result)
 }
 
-/// `platform_begin_setup`, platform.rs lines 95-115: under the operation
+/// Backs `Backend::platform_begin_setup`: under the operation
 /// lock, its failures recorded as `account_add`.
 pub(super) fn begin_setup(
     backend: &RealBackend,
@@ -85,7 +85,7 @@ pub(super) fn begin_setup(
 }
 
 /// The holding state a status poll answers while someone else holds the
-/// lock (platform.rs lines 125-153): `busy`, never an error, so the wizard
+/// lock: `busy`, never an error, so the wizard
 /// keeps its spinner and the next poll gets the real state.
 pub fn busy_status(setup_id: &str) -> SetupStatus {
     SetupStatus {
@@ -97,7 +97,7 @@ pub fn busy_status(setup_id: &str) -> SetupStatus {
     }
 }
 
-/// `platform_get_setup_status`, platform.rs lines 117-155.
+/// Backs `Backend::platform_get_setup_status`.
 pub(super) fn get_setup_status(
     backend: &RealBackend,
     platform_id: &str,
@@ -112,7 +112,7 @@ pub(super) fn get_setup_status(
     }
 }
 
-/// `platform_cancel_setup`, platform.rs lines 157-172: the 30 s budget.
+/// Backs `Backend::platform_cancel_setup`: the 30 s budget.
 pub(super) fn cancel_setup(
     backend: &RealBackend,
     platform_id: &str,
@@ -126,20 +126,19 @@ pub(super) fn cancel_setup(
     )?)
 }
 
-/// `platform_get_path`, platform.rs lines 174-180.
+/// Backs `Backend::platform_get_path`.
 pub(super) fn get_path(backend: &RealBackend, platform_id: &str) -> BackendResult<String> {
     Ok(require_service(platform_id)?.get_path(backend.ctx.clone())?)
 }
 
-/// `platform_set_path`, platform.rs lines 182-193: no operation lock, the
+/// Backs `Backend::platform_set_path`: no operation lock, the
 /// config write locks itself.
 pub(super) fn set_path(backend: &RealBackend, platform_id: &str, path: &str) -> BackendResult<()> {
     Ok(require_service(platform_id)?.set_path(backend.ctx.clone(), path)?)
 }
 
-/// `platform_detect_installed`, platform.rs lines 195-209: a probe that
-/// panics answers an empty list, like the Tauri command's
-/// `unwrap_or_default` on the join error.
+/// Backs `Backend::platform_detect_installed`: a probe that
+/// panics answers an empty list.
 pub(super) fn detect_installed(backend: &RealBackend) -> Vec<String> {
     let c = backend.ctx.clone();
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -156,7 +155,7 @@ pub(super) fn select_path(platform_id: &str) -> BackendResult<String> {
     Ok(require_service(platform_id)?.select_path()?)
 }
 
-/// `platform_set_account_label`, platform.rs lines 221-234.
+/// Backs `Backend::platform_set_account_label`.
 pub(super) fn set_account_label(
     backend: &RealBackend,
     platform_id: &str,
@@ -166,9 +165,7 @@ pub(super) fn set_account_label(
     Ok(require_service(platform_id)?.set_account_label(backend.ctx.clone(), account_id, label)?)
 }
 
-/// `platform_dry_run`, platform.rs lines 236-251. The Tauri command answers
-/// the plan as JSON; the trait types it as [`DryRunPlan`], which is what
-/// every implementation serializes.
+/// Backs `Backend::platform_dry_run`, typed as [`DryRunPlan`].
 pub(super) fn dry_run(
     backend: &RealBackend,
     platform_id: &str,

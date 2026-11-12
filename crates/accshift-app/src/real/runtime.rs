@@ -1,11 +1,10 @@
-//! What `src-tauri/src/commands/mod.rs` gives every command: the async
-//! runtime, the blocking pool and the cross-process operation lock.
+//! What every command runs on: the async runtime and the cross-process
+//! operation lock.
 //!
 //! The egui shell calls each backend method on a job thread (`crate::jobs`),
-//! so "on the blocking pool" is simply "on the calling thread" here. The
-//! commands that `.await` an `accshift-core` future (profiles, bans, the CS2
-//! bridge, Roblox) block that job thread on one process-wide tokio runtime,
-//! the role Tauri's async runtime plays.
+//! so work runs on the calling thread. The commands that `.await` an
+//! `accshift-core` future (profiles, bans, the CS2 bridge, Roblox) block
+//! that job thread on one process-wide tokio runtime.
 
 use accshift_core::error::PlatformError;
 use accshift_core::AppCtx;
@@ -13,8 +12,7 @@ use std::future::Future;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-/// Budget for cancelling a setup (`CANCEL_SETUP_LOCK_TIMEOUT`,
-/// commands/mod.rs lines 44-49): a detached Riot or Steam setup launch holds
+/// Budget for cancelling a setup: a detached Riot or Steam setup launch holds
 /// the lock for up to about 20 s, and a cancel waits it out.
 pub const CANCEL_SETUP_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -39,14 +37,13 @@ pub(super) fn block_on<F: Future>(future: F) -> F::Output {
         .block_on(future)
 }
 
-/// `run_locked_blocking_within`, commands/mod.rs lines 84-100: takes the
-/// cross-process exclusive lock (`accshift_core::lock`, the file
-/// `<local data>/state/.accshift.lock` the Tauri app and the CLI take) on
-/// this thread, runs `f`, releases it. The nested config writes `f` makes
-/// see the guard on their own thread and skip re-locking, which is why the
-/// lock and `f` share the thread, as in Tauri.
+/// Takes the cross-process exclusive lock (`accshift_core::lock`, the file
+/// `<local data>/state/.accshift.lock` the CLI and older installs also
+/// take) on this thread, runs `f`, releases it. The nested config writes `f`
+/// makes see the guard on their own thread and skip re-locking, which is
+/// why the lock and `f` share the thread.
 ///
-/// A second egui instance, a leftover Tauri process or the CLI holding the
+/// A second instance, an older install still running or the CLI holding the
 /// lock past `timeout` makes this fail with `LockContended`, "Another
 /// accshift instance is holding the lock".
 pub(super) fn locked_within<T>(
@@ -58,7 +55,7 @@ pub(super) fn locked_within<T>(
     f(c.clone())
 }
 
-/// `run_locked_blocking`, commands/mod.rs lines 72-82: the 2 s budget.
+/// [`locked_within`] with the 2 s budget.
 pub(super) fn locked<T>(
     c: &AppCtx,
     f: impl FnOnce(AppCtx) -> Result<T, PlatformError>,
