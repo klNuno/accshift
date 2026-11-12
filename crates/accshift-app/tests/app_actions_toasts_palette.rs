@@ -1,6 +1,5 @@
-//! Toasts and the command palette: `features/notifications/store.test.ts`,
-//! `features/commandPalette/registry.test.ts`, plus the queue timers and the
-//! palette filtering of `CommandPalette.svelte`.
+//! Toasts and the command palette: the toast queue and its timers, the
+//! command registry and the palette filtering.
 
 use accshift_app::accounts::{Toast, ToastKind};
 use accshift_app::actions::palette::{
@@ -18,7 +17,7 @@ use accshift_app::text::Text;
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
-// store.test.ts
+// The toast queue.
 
 #[test]
 fn toast_error_never_gets_a_timer() {
@@ -181,7 +180,7 @@ fn toast_action_runs_once_and_closes_the_toast() {
     assert_eq!(queue.activate_action(id), None);
 }
 
-// registry.test.ts and the palette view
+// The command registry and the palette view.
 
 fn account(id: &str, name: &str, username: &str) -> PlatformAccount {
     PlatformAccount {

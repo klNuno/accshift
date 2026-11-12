@@ -1,5 +1,5 @@
-//! `useBulkEdit.test.ts`, the logic of `BulkEditBar.svelte`, and one bulk
-//! edit on the demo accounts with a failure, against MockBackend.
+//! The bulk edit mode, the model of its bar, and one bulk edit on the demo
+//! accounts with a failure, against MockBackend.
 
 mod support;
 

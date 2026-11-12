@@ -1,5 +1,5 @@
-//! Personas: `app/usePersonas.test.ts` and `app/usePersonaSwitch.test.ts`,
-//! run on the mock backend through a scripted wrapper.
+//! Personas: the persona actions and the persona switch, run on the mock
+//! backend through a scripted wrapper.
 
 mod support;
 
@@ -51,7 +51,7 @@ fn stores_of(backend: &dyn Backend) -> ClientStores {
     ClientStores::new(storage, StoreContext::shipped())
 }
 
-// usePersonas.test.ts
+// The persona actions.
 
 #[test]
 fn switches_with_the_adapters_resolved_account() {
@@ -262,7 +262,7 @@ fn controller_keeps_its_list_in_step_with_the_store() {
     assert_eq!(controller.personas().len(), before);
 }
 
-// usePersonaSwitch.test.ts
+// The persona switch.
 
 #[test]
 fn offers_the_implemented_enabled_platforms_of_this_os_as_slots() {

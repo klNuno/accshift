@@ -98,7 +98,7 @@ pub fn dispatch(
             &a.str("launchOptions"),
             &a.str("shutdownMode"),
         )),
-        // The TS mock reads `accountId` and the frontend sends `steamId`.
+        // Scenario files record the id as `steamId` or as `accountId`.
         "steam_get_profile_info" => {
             json(b.steam_get_profile_info(&a.str_any(&["steamId", "accountId"])))
         }

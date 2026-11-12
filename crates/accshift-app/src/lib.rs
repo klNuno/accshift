@@ -1,14 +1,15 @@
-//! UI-free logic of the accshift egui port.
+//! UI-free logic of the accshift egui app.
 //!
-//! - [`backend::Backend`]: one blocking method per Tauri command the frontend
-//!   calls, with the same payloads ([`types`]) and error strings ([`error`]).
-//! - [`mock::MockBackend`]: the TS mock's data, for parity work.
+//! - [`backend::Backend`]: one blocking method per backend command, with its
+//!   payloads ([`types`]) and error strings ([`error`]).
+//! - [`mock::MockBackend`]: canned scenario data, for the parity bench and
+//!   the tests.
 //! - [`real::RealBackend`]: the real backend on `accshift-core`.
 //! - [`jobs`]: runs calls off the UI thread and wakes the UI on each result.
 //! - [`storage`]: the raw client stores, their saves and refreshes.
 //! - [`stores::ClientStores`]: every client store, typed ([`settings`],
 //!   [`folders`], [`personas`] and the small ones), over the storage.
-//! - [`i18n`]: the seven dictionaries and `translate`.
+//! - [`i18n`]: the seven dictionaries and the translate calls.
 //! - [`accounts`]: account loading per tab, profile caches, avatars, priming
 //!   and the settings refresh actions, driven through [`jobs`].
 //! - [`display`]: folder navigation, search and the flat list of cards a grid
@@ -21,7 +22,7 @@
 //!   [`cs2_bridge`]: the Steam bulk edit, the add-account flow, the platform
 //!   shell state and the CS2 bridge queue.
 //! - [`lifecycle`]: boot and shutdown order, the updater, single instance,
-//!   deep links and process control of the Tauri plugins.
+//!   deep links, autostart and process control.
 
 pub mod accounts;
 pub mod actions;

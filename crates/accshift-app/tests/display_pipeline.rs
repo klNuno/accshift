@@ -1,6 +1,6 @@
-//! `src/lib/app/useDisplayPipeline.test.ts`, ported, plus the search fold
-//! and the pipeline behaviour the TS deriveds carry (debounce, folder
-//! flattening, pending setup card).
+//! The display pipeline: search matching, the visible ids, the search fold
+//! and the derived behaviour (debounce, folder flattening, pending setup
+//! card).
 
 use accshift_app::display::{
     collect_visible_account_ids, fold_search_text, matches_search, section_collapse_key,
@@ -24,7 +24,7 @@ fn default_account() -> PlatformAccount {
     make_account("acc-1", "testuser", "Test User")
 }
 
-// ------------------------------------------------------------ matchesSearch
+// ------------------------------------------------------------ search matching
 
 #[test]
 fn matches_by_id() {
@@ -86,7 +86,7 @@ fn folds_like_nfd_without_combining_marks() {
     assert_eq!(fold_search_text("ß Ω"), "ß ω");
 }
 
-// ------------------------------------------------------------ collectVisibleAccountIds
+// ------------------------------------------------------------ visible account ids
 
 fn account(id: &str) -> ItemRef {
     ItemRef::account(id)

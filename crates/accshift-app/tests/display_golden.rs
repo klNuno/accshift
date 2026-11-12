@@ -1,5 +1,6 @@
 //! Golden display lists of the demo scenario on the Steam tab, against the
-//! Tauri reference captures (`spike-main`: hover, folder and search shots).
+//! reference captures of the `spike-main` scene (hover, folder and search
+//! shots).
 //! The accounts load through `AccountLoading` and the job pool over the
 //! mock, as the shell does.
 

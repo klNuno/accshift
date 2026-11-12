@@ -1,6 +1,5 @@
-//! `src/lib/app/useProfileRefresh.test.ts`, ported over a fake
-//! [`RefreshEnv`]: each fake adapter answers from closures and records the
-//! calls the TS mocks checked.
+//! The profile refresh over a fake [`RefreshEnv`]: each fake adapter answers
+//! from closures and records its calls.
 
 use accshift_app::accounts::loader::LoadOptions;
 use accshift_app::accounts::refresh::{refresh_avatars_now, refresh_bans_now, RefreshEnv};

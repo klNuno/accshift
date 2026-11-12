@@ -1,10 +1,9 @@
-//! Streamer mode, ported from `src/lib/app/useStreamerMode.svelte.ts` and the
-//! glue App.svelte keeps around it (lines 264-273, 719, 739).
+//! Streamer mode.
 //!
 //! With `streamerMode: "auto"`, the app polls `detect_streaming_software`
 //! and covers itself (the overlay is UI; what it hides is
-//! [`crate::secure::ScreenCover`]) while streaming software runs. The
-//! `setInterval` is a deadline checked each frame; the detection runs on
+//! [`crate::secure::ScreenCover`]) while streaming software runs. The poll
+//! interval is a deadline checked each frame; the detection runs on
 //! [`Jobs`].
 
 use crate::error::BackendResult;
@@ -13,24 +12,23 @@ use crate::settings::{AppSettings, StreamerMode};
 use crate::stores::ClientStores;
 use std::time::{Duration, Instant};
 
-/// `POLL_INTERVAL_MS` (line 15).
+/// How often a visible window checks for streaming software.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(4000);
 
-/// `HIDDEN_POLL_INTERVAL_MS` (line 19): a hidden window shows nothing a
-/// stream could capture, so it checks far less often.
+/// How often a hidden window checks: it shows nothing a stream could capture, so it checks far less often.
 pub const HIDDEN_POLL_INTERVAL: Duration = Duration::from_millis(30_000);
 
-/// `createStreamerModeController`.
+/// The detection loop and the overlay state.
 #[derive(Debug, Default)]
 pub struct StreamerModeController {
-    /// `getSettings().streamerMode === "auto"`, read by [`Self::sync_settings`].
+    /// The setting is `"auto"`, read by [`Self::sync_settings`].
     enabled: bool,
     streaming_detected: bool,
     /// "Disable for now": hides the overlay until no streaming software runs.
     dismissed_this_session: bool,
-    /// The `setInterval` is armed; its next tick.
+    /// The interval is armed; its next tick.
     next_tick: Option<Instant>,
-    /// The detection in flight (`polling`).
+    /// The detection in flight.
     polling: Option<Pending<BackendResult<bool>>>,
     last_poll_at: Option<Instant>,
 }
@@ -47,7 +45,7 @@ impl StreamerModeController {
         self.enabled = settings.streamer_mode == StreamerMode::Auto;
     }
 
-    /// `enabled`.
+    /// The setting asks for detection.
     pub fn enabled(&self) -> bool {
         self.enabled
     }
@@ -56,7 +54,7 @@ impl StreamerModeController {
         self.streaming_detected
     }
 
-    /// `active` (line 36): the overlay is up.
+    /// The overlay is up.
     pub fn active(&self) -> bool {
         self.enabled && self.streaming_detected && !self.dismissed_this_session
     }
@@ -76,7 +74,8 @@ impl StreamerModeController {
         self.next_tick
     }
 
-    /// `poll` (lines 38-58), up to the backend call.
+    /// Starts a detection, unless one is in flight. With the setting off,
+    /// forgets the last detection instead.
     fn poll(&mut self, jobs: &Jobs, now: Instant) {
         if !self.enabled {
             self.streaming_detected = false;
@@ -89,8 +88,7 @@ impl StreamerModeController {
         self.polling = Some(jobs.run(|backend| backend.detect_streaming_software()));
     }
 
-    /// The end of `poll`: applies the answer. A failure keeps the old state,
-    /// as the TS `console.error` does.
+    /// Applies the answer of a detection. A failure keeps the old state.
     fn apply(&mut self, jobs: &Jobs, result: BackendResult<bool>) {
         let Ok(detected) = result else {
             return;
@@ -106,9 +104,9 @@ impl StreamerModeController {
         }
     }
 
-    /// `start` (lines 60-67): polls now, then every [`POLL_INTERVAL`]. App.svelte
-    /// starts it once the first frame is out (`accshift:boot-ready`, line
-    /// 719), not during boot: the scan shares the backend with the snapshot.
+    /// Polls now, then every [`POLL_INTERVAL`]. The app starts it once the
+    /// first frame is out, not during boot: the scan shares the backend with
+    /// the snapshot.
     pub fn start(&mut self, jobs: &Jobs, now: Instant) {
         if self.next_tick.is_some() {
             return;
@@ -117,14 +115,15 @@ impl StreamerModeController {
         self.next_tick = Some(now + POLL_INTERVAL);
     }
 
-    /// `stop` (lines 69-74).
+    /// Disarms the interval.
     pub fn stop(&mut self) {
         self.next_tick = None;
     }
 
-    /// One frame: applies a finished detection, then runs the interval
-    /// callback (lines 63-66) when due. `hidden` is `isHidden()`: minimized
-    /// or page hidden (App.svelte line 266). True when `active` changed.
+    /// One frame: applies a finished detection, then polls when the interval
+    /// is due. `hidden` is true when the window is minimized or hidden; a
+    /// hidden window skips the poll when the last one is recent. True when
+    /// `active` changed.
     pub fn tick(&mut self, jobs: &Jobs, now: Instant, hidden: bool) -> bool {
         let before = self.active();
         if let Some(pending) = self.polling.as_mut() {
@@ -139,8 +138,8 @@ impl StreamerModeController {
         }
         if let Some(due) = self.next_tick {
             if now >= due {
-                // One callback per frame, however many intervals a stalled
-                // frame skipped, as a throttled browser timer does.
+                // One poll per frame, however many intervals a stalled frame
+                // skipped.
                 let mut next = due + POLL_INTERVAL;
                 while next <= now {
                     next += POLL_INTERVAL;
@@ -157,14 +156,13 @@ impl StreamerModeController {
         before != self.active()
     }
 
-    /// `dismiss` (lines 76-78): "Disable for now".
+    /// "Disable for now": hides the overlay until streaming stops.
     pub fn dismiss(&mut self) {
         self.dismissed_this_session = true;
     }
 
-    /// `disablePermanently` (lines 80-83) with App.svelte's `setStreamerMode`
-    /// (lines 267-272): saves `streamerMode: "off"` from the store's latest
-    /// settings. The shell refreshes its settings from the store after.
+    /// "Disable permanently": saves `streamerMode: "off"` over the store's
+    /// latest settings. The shell refreshes its settings from the store after.
     pub fn disable_permanently(&mut self, stores: &mut ClientStores) {
         self.dismissed_this_session = true;
         let mut latest = stores.settings().clone();

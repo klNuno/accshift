@@ -48,7 +48,7 @@ fn the_boot_and_close_timings_hold() {
 }
 
 // ---------------------------------------------------------------------------
-// Update flow (useAppUpdater.test.ts)
+// Update flow
 
 #[derive(Debug, Clone, PartialEq)]
 struct FakeUpdate(&'static str);
@@ -329,7 +329,7 @@ fn update_telemetry_reaches_the_backend() {
 }
 
 // ---------------------------------------------------------------------------
-// App shell (useAppLifecycle.test.ts)
+// App shell
 
 fn settings(patch: Value) -> AppSettings {
     sanitize_settings(&patch, &StoreContext::shipped())
@@ -377,7 +377,7 @@ fn unrelated_stores_leave_the_personas_alone() {
     );
 }
 
-/// The steps the TS test records as `calls`.
+/// The calls the refresh steps stand for, as plain names.
 fn recorded_calls(steps: &[RefreshStep]) -> Vec<String> {
     steps
         .iter()

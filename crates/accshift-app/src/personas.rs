@@ -1,5 +1,4 @@
-//! The persona store, ported from `src/lib/features/personas/{types,store,
-//! assignments}.ts`.
+//! The persona store and the assignment rules of the persona wizard.
 //!
 //! A persona is a named identity bundle: activating it switches every
 //! assigned platform to the persona's account in one action.
@@ -43,7 +42,7 @@ pub struct PersonaInput {
     pub assignments: Vec<PersonaAssignment>,
 }
 
-/// The fields `updatePersona` replaces; `None` keeps the current value.
+/// The fields an update replaces; `None` keeps the current value.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PersonaPatch {
     pub name: Option<String>,
@@ -132,7 +131,7 @@ fn sanitize_persona(value: &Value) -> Option<Persona> {
     })
 }
 
-/// `sanitizeList`: valid personas, first of each id.
+/// The stored personas: the valid ones, first of each id.
 pub fn sanitize_personas(value: &Value) -> Vec<Persona> {
     let Value::Array(items) = value else {
         return Vec::new();
@@ -156,7 +155,7 @@ pub fn personas_to_value(personas: &[Persona]) -> Value {
     serde_json::to_value(personas).unwrap_or(Value::Null)
 }
 
-/// `newId`: a random UUID v4, as `crypto.randomUUID` gives.
+/// A new persona id: a random UUID v4.
 pub fn generate_persona_id() -> String {
     let high = js::random_u64();
     let low = js::random_u64();
@@ -189,7 +188,7 @@ pub struct AssignmentsForSave<'a> {
     pub failed_platform_ids: &'a [String],
 }
 
-/// `personaAssignmentsForSave`: the assignments to write when a persona is
+/// The assignments to write when a persona is
 /// saved. A platform the wizard is not offering, or whose account read
 /// failed, keeps its stored assignment; one whose accounts loaded drops an id
 /// no longer listed. Stored order first, new picks after in wizard order.

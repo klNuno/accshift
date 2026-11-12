@@ -1,6 +1,5 @@
-//! `src/lib/shared/useAccountLoader.test.ts`, ported. The TS deferred
-//! promises become the begin and finish halves of each call, finished in the
-//! order the TS test resolves them.
+//! The account loader: each backend call is split into its begin and finish
+//! halves, so a test can finish them in any order it needs.
 
 use accshift_app::accounts::avatars::ProfileSource;
 use accshift_app::accounts::loader::{AccountLoader, AddOutcome, LoadOptions, LoaderHooks};
@@ -206,7 +205,7 @@ fn names_the_platform_the_accounts_came_from_not_the_one_active_at_the_end() {
     assert_eq!(outcome.after_load.as_deref(), Some("steam"));
 }
 
-// ------------------------------------------------------------ beyond the TS tests
+// ------------------------------------------------------------ failures
 
 #[test]
 fn a_failed_load_clears_the_list_and_keeps_the_error() {
