@@ -27,7 +27,7 @@ pub(super) struct NameFit {
 }
 
 /// Measures the name and runs the marquee. The overflow is measured when a
-/// hover starts and kept until the name or the username changes.
+/// hover starts and kept until the next hover or a name/username change.
 pub(super) fn fit_name(card: &Card, st: &mut State, hover: Hover) -> NameFit {
     let ctx = &card.ctx;
     let item = card.item();
@@ -45,14 +45,8 @@ pub(super) fn fit_name(card: &Card, st: &mut State, hover: Hover) -> NameFit {
         st.overflowing = false;
     }
     if hover.entered {
-        let overflow = match &st.measured {
-            Some((_, px)) => *px,
-            None => {
-                let px = (width.round() - card.content_w().round()).max(0.0);
-                st.measured = Some((name_key, px));
-                px
-            }
-        };
+        let overflow = (width.round() - card.content_w().round()).max(0.0);
+        st.measured = Some((name_key, overflow));
         st.overflowing = overflow > 2.0;
         st.marquee_from = ctx.input(|i| i.time);
     }
@@ -128,6 +122,107 @@ fn marquee_rest(elapsed: f64, shift: f32, reduced: bool) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_hover_remeasures_after_the_card_width_changes() {
+        use super::super::{AccountCardProps, AvatarContent};
+        use accshift_app::display::{AccountCardItem, AvatarView};
+        use accshift_app::i18n::Locale;
+        use accshift_app::platforms::PlatformAccount;
+        use accshift_app::time::{fixed_zone, Clock, TimeContext};
+        use egui::{vec2, Context, Id, Pos2, RawInput, Rect};
+
+        let ctx = Context::default();
+        text::install(&ctx, false);
+        let vars = crate::app::vars::Vars::new(&accshift_theme::ResolvedTheme::new(
+            &accshift_theme::theme_application(
+                &accshift_theme::ThemeRegistry::new().theme(Some("dark")),
+                100.0,
+                true,
+            ),
+        ));
+        let item = AccountCardItem {
+            account: PlatformAccount {
+                id: "test".into(),
+                display_name: "test".into(),
+                username: String::new(),
+                last_login_at_sec: None,
+            },
+            name: "A name that fits only on the wider card".into(),
+            username: String::new(),
+            card_color: String::new(),
+            note: String::new(),
+            show_note_inline: false,
+            show_username: false,
+            show_last_login: false,
+            last_login_at_sec: None,
+            last_login_unknown_key: "time.unknown",
+            active: false,
+            switching: false,
+            avatar: AvatarView::default(),
+            warning: None,
+            dragged: false,
+            pending_setup: false,
+            single_click_switch: false,
+            bulk_selected: false,
+        };
+        let time = TimeContext::new(&Clock::fixed(0.0), Locale::En, fixed_zone(0));
+        let props = AccountCardProps {
+            vars: &vars,
+            id: Id::unique("marquee-resize"),
+            item: &item,
+            card_color: None,
+            avatar: AvatarContent::Loading,
+            focus_visible: false,
+            locale: Locale::En,
+            time: &time,
+            badge: None,
+            extension: &[],
+            extension_disabled: true,
+            extension_forced: false,
+            extension_hover_disabled: false,
+            clickable_chips: &[],
+            glass: false,
+            kb_focus: false,
+            grid_dragging: false,
+            ghost: false,
+        };
+        let mut state = State::default();
+        let hover = Hover {
+            hovered: true,
+            entered: true,
+            pressed: false,
+            lift: false,
+        };
+        let mut output = ctx.run_ui(RawInput::default(), |_| {
+            let narrow = Card::measure(
+                &ctx,
+                &props,
+                Rect::from_min_size(Pos2::ZERO, vec2(90.0, 200.0)),
+            );
+            assert!(fit_name(&narrow, &mut state, hover).overflowing);
+            let wide = Card::measure(
+                &ctx,
+                &props,
+                Rect::from_min_size(Pos2::ZERO, vec2(600.0, 200.0)),
+            );
+            // While the same hover lasts, keep the measurement stable.
+            assert!(
+                fit_name(
+                    &wide,
+                    &mut state,
+                    Hover {
+                        entered: false,
+                        ..hover
+                    }
+                )
+                .overflowing
+            );
+            assert!(!fit_name(&wide, &mut state, hover).overflowing);
+            assert_eq!(state.measured.as_ref().unwrap().1, 0.0);
+        });
+        output.textures_delta.clear();
+    }
 
     #[test]
     fn marquee_runs_to_the_end_pauses_and_comes_back() {

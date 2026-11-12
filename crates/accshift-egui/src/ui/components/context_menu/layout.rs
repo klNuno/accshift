@@ -266,6 +266,7 @@ pub(super) fn place_menu(at: Vec2, size: Vec2, window: Vec2) -> Vec2 {
 /// `menu` (relative to the window) and a parent entry `anchor` px down: to
 /// the right of the menu when it fits, else to its left; level with the
 /// entry, moved up to fit above the window's bottom, never above its top.
+/// Overlap the menu when neither side fits inside the window.
 pub(super) fn place_submenu(menu: Vec2, size: Vec2, sub: Vec2, anchor: f32, window: Vec2) -> Vec2 {
     let menu_w = size.x.round().max(1.0);
     let scale = size.x / menu_w;
@@ -285,12 +286,29 @@ pub(super) fn place_submenu(menu: Vec2, size: Vec2, sub: Vec2, anchor: f32, wind
     if top < local_top + EDGE_GAP {
         top = local_top + EDGE_GAP;
     }
-    vec2(left, top)
+    vec2(
+        left.min(local_right - sub_w - EDGE_GAP)
+            .max(-menu.x / scale + EDGE_GAP),
+        top,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_submenu_stays_inside_the_minimum_window_even_when_it_must_overlap() {
+        for width in [220.0_f32, 220.4] {
+            let menu = vec2(176.0, 100.0);
+            let sub = vec2(240.0, 80.0);
+            let scale = width / width.round();
+            let off = place_submenu(menu, vec2(width, 200.0), sub, 4.0, vec2(400.0, 440.0));
+            let left = menu.x + off.x * scale;
+            assert!(left >= EDGE_GAP, "submenu left edge: {left}");
+            assert!(left + sub.x * scale <= 400.0 - EDGE_GAP);
+        }
+    }
 
     #[test]
     fn menus_clamp_with_whole_offset_sizes() {

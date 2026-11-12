@@ -123,11 +123,17 @@ pub fn normalize(s: &mut AppSettings, platforms: &[PlatformDef], os: RuntimeOs) 
     if !platforms.iter().any(|p| p.id == s.default_platform_id) {
         s.default_platform_id = "steam".to_string();
     }
-    if s.enabled_platforms.is_empty() {
-        s.enabled_platforms = vec!["steam".to_string()];
+    let known = |id: &String| platforms.iter().any(|p| p.id == *id);
+    if !s.enabled_platforms.iter().any(known) {
+        s.enabled_platforms.push("steam".to_string());
     }
     if !s.enabled_platforms.contains(&s.default_platform_id) {
-        s.default_platform_id = s.enabled_platforms[0].clone();
+        s.default_platform_id = s
+            .enabled_platforms
+            .iter()
+            .find(|id| known(id))
+            .cloned()
+            .unwrap_or_else(|| "steam".to_string());
     }
     let selectable: Vec<&String> = s
         .enabled_platforms
@@ -148,4 +154,30 @@ pub(super) fn platform_snapshot(s: &AppSettings) -> String {
     enabled.sort();
     serde_json::json!({ "enabledPlatforms": enabled, "defaultPlatformId": s.default_platform_id })
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stale_enabled_platforms_keep_their_preferences_but_cannot_be_the_default() {
+        let defs = platforms::shipped();
+        for (enabled, expected, saved) in [
+            (vec!["missing"], "steam", vec!["missing", "steam"]),
+            (vec!["missing", "riot"], "riot", vec!["missing", "riot"]),
+        ] {
+            let mut settings = AppSettings {
+                enabled_platforms: enabled.into_iter().map(String::from).collect(),
+                default_platform_id: "missing".into(),
+                ..accshift_app::settings::sanitize_settings(
+                    &serde_json::Value::Null,
+                    &accshift_app::stores::StoreContext::default(),
+                )
+            };
+            normalize(&mut settings, &defs, RuntimeOs::Windows);
+            assert_eq!(settings.default_platform_id, expected);
+            assert_eq!(settings.enabled_platforms, saved);
+        }
+    }
 }

@@ -158,7 +158,9 @@ impl Cs2Form {
             self.url_error = false;
             if let Some(token) = token {
                 self.token_configured = !token.trim().is_empty();
-                self.token_input.clear();
+                if self.token_input == token {
+                    self.token_input.clear();
+                }
             }
             reload = Some(self.enabled);
             self.run_test(jobs);
@@ -192,5 +194,48 @@ impl SettingsPanel {
         form.poll_load(jobs);
         form.poll_test(locale);
         form.poll_saves(jobs, toasts, now)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{mpsc, Arc};
+    use std::time::Duration;
+
+    #[test]
+    fn a_completed_token_save_keeps_a_newer_draft() {
+        for sent in ["saved token", ""] {
+            let backend = accshift_app::mock::MockBackend::from_json(
+                include_str!("../../../parity/data/empty.json"),
+                None,
+            )
+            .unwrap();
+            let (wake, woke) = mpsc::channel();
+            let jobs = Jobs::new(Arc::new(backend), 1, move || {
+                let _ = wake.send(());
+            });
+            let (release, delayed) = mpsc::channel();
+            let job = jobs.run(move |_| {
+                delayed.recv().unwrap();
+                Ok(())
+            });
+            let mut form = Cs2Form {
+                token_input: sent.into(),
+                save_jobs: vec![(job, Some(sent.into()))],
+                ..Cs2Form::default()
+            };
+            let mut toasts = ToastQueue::new();
+            assert_eq!(form.poll_saves(&jobs, &mut toasts, Instant::now()), None);
+            form.apply(&jobs, SettingsAction::Cs2Token("new draft".into()));
+            release.send(()).unwrap();
+            woke.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_eq!(
+                form.poll_saves(&jobs, &mut toasts, Instant::now()),
+                Some(false)
+            );
+            assert_eq!(form.token_input, "new draft");
+            assert_eq!(form.token_configured, !sent.is_empty());
+        }
     }
 }
