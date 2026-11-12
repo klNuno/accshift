@@ -3,13 +3,15 @@
 //! here opens a window, a dialog, a URL or a folder, and nothing reads or
 //! writes the real `%APPDATA%\com.accshift.desktop`.
 
-use accshift_app::dispatch::dispatch;
+mod dispatch;
+
 use accshift_app::real::{RealBackend, UI_DETAILS_MAX_BYTES, UI_LOG_CAP};
 use accshift_app::types::CustomTheme;
 use accshift_app::{Backend, BackendError};
 use accshift_core::pin::{hash_pin_code, PIN_LOCKED_MESSAGE};
 use accshift_core::storage::{STORE_FOLDERS, STORE_SETTINGS, STORE_VIEW_MODE};
 use accshift_core::AppContext;
+use dispatch::dispatch;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -115,7 +117,7 @@ fn a_saved_store_comes_back_in_the_snapshot_and_the_manifest() {
     let snapshot = real.load_client_storage_snapshot().unwrap();
     assert_eq!(snapshot.stores.get(STORE_VIEW_MODE), Some(&Value::Null));
 
-    // Same log lines as the Tauri commands.
+    // The save is logged.
     let log = app_log(&scratch);
     assert!(log.contains("Saved client storage store"), "{log}");
     assert!(log.contains("Loaded client storage snapshot"), "{log}");
@@ -385,7 +387,7 @@ fn without_a_pin_unlock_is_not_configured() {
 fn the_pin_session_locks_unlocks_and_guards_the_settings_store() {
     let (scratch, real) = backend("pin");
     // Saved through the backend: no PIN on disk yet, so the session decides
-    // "unlocked" on this first write, as in the Tauri app.
+    // "unlocked" on this first write.
     real.save_client_storage_store(STORE_SETTINGS, &settings_with_pin(true, "1234"))
         .unwrap();
     assert!(real.pin_session().ensure_unlocked(real.context()).is_ok());

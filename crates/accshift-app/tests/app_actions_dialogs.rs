@@ -1,7 +1,6 @@
 //! The app dialogs against the mock backend's demo scenario: every input
 //! and confirm dialog kind is opened, edited, validated, confirmed and
-//! cancelled, plus `app/useAppDialogs.test.ts` (confirm replacement) and the
-//! context menus.
+//! cancelled, plus confirm replacement and the context menus.
 
 mod support;
 
@@ -425,7 +424,7 @@ fn platform_confirm_runs_its_task_on_confirm_only() {
     assert_eq!(demo.confirm(), vec![AppEffect::RunPlatformTask(task)]);
 }
 
-// requestConfirm (useAppDialogs.test.ts).
+// Confirm requests.
 
 #[test]
 fn request_confirm_settles_false_when_another_confirm_replaces_it() {

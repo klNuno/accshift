@@ -1,12 +1,12 @@
-//! Port of `src/lib/theme/tokens.ts`: the token contract, its specs and the
+//! The token contract, its specs and the
 //! validation every theme value goes through.
 
 use std::fmt;
 use std::ops::Index;
 
-use crate::js::{is_js_space, js_trim, utf16_len};
+use crate::js::{self, is_js_whitespace, utf16_len};
 
-/// Version of the token contract, not of a theme file. See `tokens.ts`.
+/// Version of the token contract, not of a theme file.
 pub const THEME_CONTRACT_VERSION: u32 = 3;
 
 /// Number of tokens in contract version 3.
@@ -398,10 +398,6 @@ pub fn get_token_spec(key: &str) -> Option<&'static TokenSpec> {
     TokenKey::from_name(key).map(TokenKey::spec)
 }
 
-pub fn is_theme_token_key(key: &str) -> bool {
-    TokenKey::from_name(key).is_some()
-}
-
 /// Whether leaving this token unset is worth telling the author about: the
 /// colour kinds only.
 pub fn is_essential_token(key: &str) -> bool {
@@ -416,8 +412,8 @@ pub fn is_essential_token(key: &str) -> bool {
 const MAX_VALUE_LENGTH: usize = 200;
 const MAX_GRADIENT_LENGTH: usize = 400;
 
-/// Consumes `min..=max` ASCII digits; fails on more, as the anchored regexes
-/// of `tokens.ts` do at every place this is used.
+/// Consumes `min..=max` ASCII digits; fails on more, so a value with an
+/// extra digit is refused rather than read short.
 fn digits(text: &str, min: usize, max: usize) -> Option<&str> {
     let count = text.bytes().take_while(u8::is_ascii_digit).count();
     (min..=max).contains(&count).then(|| &text[count..])
@@ -463,9 +459,9 @@ fn is_rgb_function(value: &str) -> bool {
         return false;
     };
     !inner.is_empty()
-        && inner
-            .chars()
-            .all(|c| c.is_ascii_digit() || is_js_space(c) || matches!(c, '.' | ',' | '%' | '/'))
+        && inner.chars().all(|c| {
+            c.is_ascii_digit() || is_js_whitespace(c) || matches!(c, '.' | ',' | '%' | '/')
+        })
 }
 
 /// `^[a-zA-Z]{3,20}$`
@@ -476,7 +472,7 @@ fn is_color_keyword(value: &str) -> bool {
 /// The shadow and gradient charset: `[0-9a-zA-Z\s.,%#()/-]`.
 fn is_paint_char(c: char) -> bool {
     c.is_ascii_alphanumeric()
-        || is_js_space(c)
+        || is_js_whitespace(c)
         || matches!(c, '.' | ',' | '%' | '#' | '(' | ')' | '/' | '-')
 }
 
@@ -512,17 +508,17 @@ fn is_font_stack(value: &str) -> bool {
     value.chars().all(|c| {
         c.is_ascii_alphanumeric()
             || c == '_'
-            || is_js_space(c)
+            || is_js_whitespace(c)
             || matches!(c, '\'' | '"' | ',' | '-')
     })
 }
 
-/// Whether a raw value is usable for that token (`isValidTokenValue`).
+/// Whether a raw value is usable for that token.
 pub fn is_valid_token_value(key: &str, raw_value: &str) -> bool {
     let Some(spec) = get_token_spec(key) else {
         return false;
     };
-    let value = js_trim(raw_value);
+    let value = js::trim(raw_value);
     let max_length = if spec.kind == TokenKind::Gradient {
         MAX_GRADIENT_LENGTH
     } else {

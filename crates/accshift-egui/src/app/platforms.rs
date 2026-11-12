@@ -1,42 +1,12 @@
-//! What a platform looks like on screen: `PLATFORM_DEFS` of
-//! `src/lib/platforms/registry.ts`, the chrome table merged with the shipped
-//! descriptors (`crates/accshift-core/src/platforms/descriptor/descriptors/`)
+//! What a platform looks like on screen: the chrome table merged with the
+//! shipped descriptors (`crates/accshift-core/src/platforms/descriptor/descriptors/`)
 //! and the user's own descriptors from the boot payload.
 
 use serde_json::Value;
 
 use crate::theme::Rgba;
 
-/// `RuntimeOs` of `src/lib/shared/platform.ts`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum RuntimeOs {
-    Windows,
-    Linux,
-    Macos,
-    #[default]
-    Unknown,
-}
-
-impl RuntimeOs {
-    /// `get_runtime_os` answers `windows`, `linux` or `macos`.
-    pub fn parse(os: &str) -> RuntimeOs {
-        match os {
-            "windows" => RuntimeOs::Windows,
-            "linux" => RuntimeOs::Linux,
-            "macos" => RuntimeOs::Macos,
-            _ => RuntimeOs::Unknown,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            RuntimeOs::Windows => "windows",
-            RuntimeOs::Linux => "linux",
-            RuntimeOs::Macos => "macos",
-            RuntimeOs::Unknown => "unknown",
-        }
-    }
-}
+pub use accshift_app::platforms::RuntimeOs;
 
 /// One entry of `PLATFORM_DEFS`, the parts the shell reads.
 #[derive(Clone, Debug, PartialEq)]
@@ -93,8 +63,8 @@ pub fn shipped() -> Vec<PlatformDef> {
         .collect()
 }
 
-/// `registerUserPlatforms`: the shipped list plus every user descriptor
-/// (`UserPlatformReport.loaded`) whose id is not shipped.
+/// The shipped list plus every loaded user descriptor whose id is not
+/// shipped.
 pub fn with_user(descriptors: &[Value]) -> Vec<PlatformDef> {
     let mut defs = shipped();
     for descriptor in descriptors {
@@ -126,8 +96,8 @@ pub fn with_user(descriptors: &[Value]) -> Vec<PlatformDef> {
     defs
 }
 
-/// `accentFor`: `hsl(<hue> 62% 52%)` with the hue hashed from the id's UTF-16
-/// code units.
+/// A user platform's accent: `hsl(<hue> 62% 52%)` with the hue hashed from
+/// the id's UTF-16 code units.
 pub fn accent_for(id: &str) -> Rgba {
     let mut hue: u32 = 0;
     for unit in id.encode_utf16() {
@@ -136,7 +106,7 @@ pub fn accent_for(id: &str) -> Rgba {
     hsl(hue as f32, 0.62, 0.52)
 }
 
-/// CSS `hsl()` to sRGB (CSS Color 4 `hslToRgb`).
+/// CSS `hsl()` to sRGB (the CSS Color 4 formula).
 fn hsl(hue: f32, s: f32, l: f32) -> Rgba {
     let f = |n: f32| {
         let k = (n + hue / 30.0) % 12.0;
@@ -146,12 +116,13 @@ fn hsl(hue: f32, s: f32, l: f32) -> Rgba {
     Rgba::new(f(0.0) * 255.0, f(8.0) * 255.0, f(4.0) * 255.0, 1.0)
 }
 
-/// `isPlatformUsable`.
+/// The platform is known and supports this OS.
 pub fn usable(defs: &[PlatformDef], id: &str, os: RuntimeOs) -> bool {
     defs.iter().any(|def| def.id == id && def.supports(os))
 }
 
-/// `getInitialActiveTab`.
+/// The tab the app opens on: the default platform when enabled and usable,
+/// else the first usable enabled one, else the first this OS supports.
 pub fn initial_tab(
     defs: &[PlatformDef],
     enabled: &[String],

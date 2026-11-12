@@ -23,6 +23,7 @@ allow = [
   "0BSD",
   "Apache-2.0",
   "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
   "BSD-3-Clause",
   "BSL-1.0",
   "CC0-1.0",
@@ -30,6 +31,10 @@ allow = [
   "ISC",
   "MIT",
   "MPL-2.0",
+  # The fonts egui embeds (epaint_default_fonts): both allow commercial use
+  # and redistribution inside an application.
+  "OFL-1.1",
+  "Ubuntu-font-1.0",
   "Unicode-3.0",
   "Unlicense",
   "Zlib",
@@ -84,4 +89,11 @@ version = 2
 # checks are untouched.
 unmaintained = "all"
 yanked = "deny"
-ignore = []
+ignore = [
+  # zvariant, zvariant_derive and zbus_names were merged into zbus 6. They
+  # arrive through accesskit and keyring, which still build on zbus 5: drop
+  # these three once both have moved.
+  { id = "RUSTSEC-2026-0370", reason = "transitive, waits for accesskit and keyring on zbus 6" },
+  { id = "RUSTSEC-2026-0371", reason = "transitive, waits for accesskit and keyring on zbus 6" },
+  { id = "RUSTSEC-2026-0372", reason = "transitive, waits for accesskit and keyring on zbus 6" },
+]

@@ -1,7 +1,5 @@
 //! Personas: the saved list, the sequential switch over every assigned
-//! platform, the panel and the confirmed switch with its toast. Ported from
-//! `src/lib/app/usePersonas.svelte.ts` and
-//! `src/lib/app/usePersonaSwitch.svelte.ts`.
+//! platform, the panel and the confirmed switch with its toast.
 
 use super::dialogs::{AppDialogs, ConfirmConfig, ConfirmTicket};
 use super::AppEffect;
@@ -23,15 +21,14 @@ pub struct PersonaSwitchFailure {
     pub error: String,
 }
 
-/// `PersonaSwitchResult`.
+/// How a persona switch went, platform by platform.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PersonaSwitchResult {
     pub succeeded: Vec<String>,
     pub failed: Vec<PersonaSwitchFailure>,
 }
 
-/// One assignment with its adapter, resolved on the UI thread
-/// (`ensurePlatformLoaded`).
+/// One assignment with its adapter, resolved on the UI thread.
 #[derive(Clone)]
 pub struct SwitchStep {
     pub platform_id: String,
@@ -39,11 +36,13 @@ pub struct SwitchStep {
     pub adapter: Option<Arc<PlatformAdapter>>,
 }
 
-/// The steps of a persona, in assignment order.
+/// The steps of a persona, in assignment order. A platform this launch did
+/// not load is left out; its stored assignment stays for when it is back.
 pub fn switch_steps(registry: &PlatformRegistry, persona: &Persona) -> Vec<SwitchStep> {
     persona
         .assignments
         .iter()
+        .filter(|assignment| registry.definition(&assignment.platform_id).is_some())
         .map(|assignment| SwitchStep {
             platform_id: assignment.platform_id.clone(),
             account_id: assignment.account_id.clone(),
@@ -52,10 +51,10 @@ pub fn switch_steps(registry: &PlatformRegistry, persona: &Persona) -> Vec<Switc
         .collect()
 }
 
-/// The loop of `switchToPersona`, blocking, for the job pool: one platform at
-/// a time through its adapter (Steam switches by account name, not id). A
-/// failure does not stop the others; a PIN lock stops everything, and `None`
-/// when nothing had landed yet.
+/// The persona switch, blocking, for the job pool: one platform at a time
+/// through its adapter (Steam switches by account name, not id). A failure
+/// does not stop the others; a PIN lock stops everything, and `None` when
+/// nothing had landed yet.
 pub fn switch_to_persona_blocking(
     backend: &dyn Backend,
     steps: &[SwitchStep],
@@ -113,7 +112,7 @@ fn switch_one(
         .map_err(|error| error.message)
 }
 
-/// `createPersonaController`.
+/// The saved personas and the running switch.
 pub struct PersonaController {
     personas: Vec<Persona>,
     switching: Option<(Persona, Pending<Option<PersonaSwitchResult>>)>,
@@ -131,56 +130,61 @@ impl PersonaController {
         &self.personas
     }
 
-    /// `switchingPersonaId`.
+    /// The persona being switched to.
     pub fn switching_persona_id(&self) -> Option<&str> {
         self.switching
             .as_ref()
             .map(|(persona, _)| persona.id.as_str())
     }
 
-    /// `switching`: updates and regular switches wait for it.
+    /// Whether a persona switch runs: updates and regular switches wait for
+    /// it.
     pub fn switching(&self) -> bool {
         self.switching.is_some()
     }
 
-    /// `refresh`.
+    /// Rereads the list from the stores.
     pub fn refresh(&mut self, stores: &ClientStores) {
         self.personas = stores.personas().to_vec();
     }
 
-    /// `create`.
     pub fn create(&mut self, stores: &mut ClientStores, input: PersonaInput) -> Persona {
         let persona = stores.create_persona(input);
         self.refresh(stores);
         persona
     }
 
-    /// `update`.
     pub fn update(&mut self, stores: &mut ClientStores, id: &str, patch: &PersonaPatch) {
         stores.update_persona(id, patch);
         self.refresh(stores);
     }
 
-    /// `remove`.
     pub fn remove(&mut self, stores: &mut ClientStores, id: &str) {
         stores.delete_persona(id);
         self.refresh(stores);
     }
 
-    /// `switchToPersona`, started: false when a switch already runs or a
-    /// regular account switch holds the clients (`isBlocked`).
+    /// Starts a persona switch: false when a switch already runs or a regular
+    /// account switch holds the clients.
     pub fn start_switch(
         &mut self,
         jobs: &Jobs,
         registry: &PlatformRegistry,
         settings: &AppSettings,
-        persona: Persona,
+        mut persona: Persona,
         account_switching: bool,
     ) -> bool {
         if self.switching.is_some() || account_switching {
             return false;
         }
         let steps = switch_steps(registry, &persona);
+        if steps.is_empty() {
+            return false;
+        }
+        // Only this switch's copy is filtered; the stored assignments stay.
+        persona
+            .assignments
+            .retain(|assignment| registry.definition(&assignment.platform_id).is_some());
         let settings = settings.clone();
         let pending =
             jobs.run(move |backend| switch_to_persona_blocking(backend, &steps, &settings));
@@ -214,7 +218,8 @@ pub struct PersonaPlatform {
     pub accent: String,
 }
 
-/// `personaPlatforms`: implemented, usable on this OS and enabled.
+/// The platforms a persona can use: implemented, usable on this OS and
+/// enabled.
 pub fn persona_platforms(
     registry: &PlatformRegistry,
     os: RuntimeOs,
@@ -236,7 +241,7 @@ pub fn persona_platforms(
         .collect()
 }
 
-/// `createPersonaSwitch`: the panel and the confirmed switch.
+/// The personas panel and the confirmed switch.
 #[derive(Debug, Clone, Default)]
 pub struct PersonaSwitch {
     pub show_personas: bool,
@@ -248,7 +253,8 @@ impl PersonaSwitch {
         Self::default()
     }
 
-    /// `openPersonas`.
+    /// Opens the panel, closing settings and bulk edit; nothing when
+    /// personas are off.
     pub fn open_personas(&mut self, personas_enabled: bool, settings_open: bool) -> Vec<AppEffect> {
         if !personas_enabled {
             return Vec::new();
@@ -262,24 +268,26 @@ impl PersonaSwitch {
         effects
     }
 
-    /// The `$effect` that closes the panel when the feature is turned off.
-    pub fn sync_enabled(&mut self, personas_enabled: bool) {
-        if !personas_enabled && self.show_personas {
-            self.show_personas = false;
-        }
-    }
-
-    /// `handleSwitchPersona`, first half: asks for confirmation (several game
-    /// clients relaunch). Nothing while any switch runs.
+    /// Asks for confirmation (several game clients relaunch). Nothing while
+    /// any switch runs.
     pub fn handle_switch_persona(
         &mut self,
         dialogs: &mut AppDialogs,
+        registry: &PlatformRegistry,
         persona: &Persona,
         personas_switching: bool,
         account_switching: bool,
     ) -> Vec<AppEffect> {
         let mut effects = Vec::new();
         if personas_switching || account_switching {
+            return effects;
+        }
+        let count = switch_steps(registry, persona).len();
+        if count == 0 {
+            effects.push(AppEffect::Toast(Toast::new(
+                Text::with("personas.switchFailed", [("name", persona.name.clone())]),
+                ToastKind::Error,
+            )));
             return effects;
         }
         let ticket = dialogs.request_confirm(
@@ -289,10 +297,7 @@ impl PersonaSwitch {
                     "personas.switchConfirmMessage",
                     [
                         ("name", TranslationValue::from(persona.name.clone())),
-                        (
-                            "count",
-                            TranslationValue::from(persona.assignments.len() as f64),
-                        ),
+                        ("count", TranslationValue::from(count as f64)),
                     ],
                 ),
                 confirm_label: Some(Text::key("personas.switchConfirmAction")),
@@ -316,8 +321,8 @@ impl PersonaSwitch {
         allowed.then_some(persona)
     }
 
-    /// The end of `handleSwitchPersona`: the telemetry counters, then the
-    /// outcome toast (all landed, none, or which platforms failed).
+    /// The end of a switch: the telemetry counters, then the outcome toast
+    /// (all landed, none, or which platforms failed).
     pub fn finish_switch(
         persona: &Persona,
         result: Option<&PersonaSwitchResult>,

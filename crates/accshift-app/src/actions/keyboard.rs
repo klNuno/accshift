@@ -1,17 +1,15 @@
-//! The keyboard model, ported from `src/lib/shared/keyboard/{controller,types}.ts`
-//! and `src/lib/app/keyboardBindings.ts`.
+//! The keyboard model.
 //!
-//! The binding table is data: each entry names a [`KeyCommand`] instead of a
-//! closure. [`KeyboardController::handle`] walks it in order for a key event
-//! egui feeds in, with the current [`KeyScope`], and runs the first match
-//! through a [`KeyHost`] (the app). A command answers [`KeyResult::Pass`] for
-//! "not handled here" (the TS `PASS`): the next binding is tried and the event
-//! stays untouched. The DOM listener stays out.
+//! The binding table is data: each entry names a [`KeyCommand`].
+//! [`KeyboardController::handle`] walks it in order for a key event egui
+//! feeds in, with the current [`KeyScope`], and runs the first match through
+//! a [`KeyHost`] (the app). A command answers [`KeyResult::Pass`] for "not
+//! handled here": the next binding is tried and the event stays untouched.
 
 use crate::folders::ItemKind;
 use crate::folders::ItemRef;
 
-/// `KeyScope`: the layer that owns the keyboard.
+/// The layer that owns the keyboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum KeyScope {
     Locked,
@@ -53,7 +51,7 @@ impl KeyScope {
     }
 }
 
-/// The layers `createKeyScopeResolver` checks, topmost first. `App` is what
+/// The layers checked for the key scope, topmost first. `App` is what
 /// is left when none holds.
 pub const LAYER_ORDER: [KeyScope; 8] = [
     KeyScope::Locked,
@@ -66,7 +64,7 @@ pub const LAYER_ORDER: [KeyScope; 8] = [
     KeyScope::Personas,
 ];
 
-/// `currentKeyScope`: the first layer of [`LAYER_ORDER`] that is up. `is_up`
+/// The first layer of [`LAYER_ORDER`] that is up. `is_up`
 /// is asked in that order and no further than the first hit.
 pub fn current_key_scope(mut is_up: impl FnMut(KeyScope) -> bool) -> KeyScope {
     LAYER_ORDER
@@ -75,21 +73,21 @@ pub fn current_key_scope(mut is_up: impl FnMut(KeyScope) -> bool) -> KeyScope {
         .unwrap_or(KeyScope::App)
 }
 
-/// `CARD_NAV_SCOPES`: where the grid takes arrows and Enter.
+/// Where the grid takes arrows and Enter.
 pub const CARD_NAV_SCOPES: [KeyScope; 2] = [KeyScope::App, KeyScope::BulkEdit];
 
-/// `ParsedCombo`.
+/// A combo string split into its modifiers and key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedCombo {
     pub mod_key: bool,
     pub shift: bool,
     pub alt: bool,
-    /// Lowercased `e.key`, `digitN` for physical digits, `plus` / `minus`
+    /// The lowercased key name, `digitN` for physical digits, `plus` / `minus`
     /// for the zoom keys, `space`.
     pub key: String,
 }
 
-/// `parseCombo`.
+/// Splits a combo such as `mod+shift+n`.
 pub fn parse_combo(combo: &str) -> ParsedCombo {
     let lower = combo.to_lowercase();
     let parts: Vec<&str> = lower.split('+').collect();
@@ -102,8 +100,8 @@ pub fn parse_combo(combo: &str) -> ParsedCombo {
     }
 }
 
-/// A key press, as the DOM `KeyboardEvent` fields the controller reads.
-/// `key` and `code` use the DOM names (`"Escape"`, `"ArrowLeft"`, `"F2"`,
+/// A key press, with the fields the controller reads. `key` and `code` use
+/// the web `KeyboardEvent` names (`"Escape"`, `"ArrowLeft"`, `"F2"`,
 /// `" "`, `"n"` or `"N"`; `"Digit2"`, `"Equal"`, `"NumpadAdd"`, `"Minus"`).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct KeyEvent {
@@ -113,7 +111,7 @@ pub struct KeyEvent {
     pub meta: bool,
     pub shift: bool,
     pub alt: bool,
-    /// `isEditableTarget(e.target)`: focus is in a text field.
+    /// Focus is in a text field.
     pub editable_target: bool,
 }
 
@@ -156,7 +154,8 @@ impl KeyEvent {
     }
 }
 
-/// `eventMatchesKey`.
+/// Whether the event is the combo's key, by physical code for digits and
+/// the zoom keys.
 fn event_matches_key(event: &KeyEvent, key: &str) -> bool {
     if key.starts_with("digit") {
         return event.code.to_lowercase() == key;
@@ -169,7 +168,7 @@ fn event_matches_key(event: &KeyEvent, key: &str) -> bool {
     }
 }
 
-/// `comboMatches`: `mod` is Cmd on macOS and Ctrl elsewhere; the other one
+/// `mod` is Cmd on macOS and Ctrl elsewhere; the other one
 /// pressed alone spoils a modifier-free combo.
 pub fn combo_matches(event: &KeyEvent, combo: &ParsedCombo, is_mac: bool) -> bool {
     let mod_pressed = if is_mac { event.meta } else { event.ctrl };
@@ -195,23 +194,21 @@ pub enum Direction {
     Down,
 }
 
-/// What a binding does: one variant per `run` closure of the TS table.
+/// What a binding does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyCommand {
-    /// `run: () => {}`: take the key, do nothing (WebView built-ins).
-    Swallow,
-    /// `run: () => PASS`.
+    /// Always passes: the key goes on to later bindings, then the widgets.
     Pass,
     /// Close the context menu, open the palette.
     OpenPalette,
     ClosePalette,
-    /// A card drag in flight is cancelled, else PASS.
+    /// A card drag in flight is cancelled, else pass.
     EscapeCancelDrag,
     /// Close the input dialog if one is up, else the confirm dialog.
     EscapeCloseDialog,
     /// The persona wizard steps back, else the panel closes.
     EscapePersonas,
-    /// Clear and blur the search, else drop the card focus, else PASS.
+    /// Clear and blur the search, else drop the card focus, else pass.
     EscapeApp,
     /// Focus and select the grid search.
     FocusSearch,
@@ -225,18 +222,18 @@ pub enum KeyCommand {
     ToggleSettings,
     OpenPersonas,
     ToggleViewMode,
-    /// `cycleTab(1)` / `cycleTab(-1)`.
+    /// The next (1) or previous (-1) usable tab.
     CycleTab(i8),
     /// `mod+digitN`: the N-th enabled platform (0 based) unless unavailable.
     TabByIndex(usize),
     ZoomIn,
     ZoomOut,
     ResetZoom,
-    /// `alt+arrowleft` in the app: up a folder when in one; taken either way.
+    /// `alt+arrowleft` in the app: up a folder when in one, pass at the root.
     AltBack,
-    /// `backspace`: up a folder, PASS at the root.
+    /// `backspace`: up a folder, pass at the root.
     BackspaceBack,
-    /// Move the card focus, PASS when it cannot move.
+    /// Move the card focus, pass when it cannot move.
     CardMove(Direction),
     /// Enter: activate the focused card when the grid owns the key.
     CardActivate,
@@ -266,7 +263,7 @@ impl Scopes {
     }
 }
 
-/// `ShortcutBinding`.
+/// One shortcut: its combo, where it fires, and what it runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Binding {
     pub combo: String,
@@ -275,7 +272,11 @@ pub struct Binding {
     pub allow_in_input: bool,
     /// Skip the binding, modifier combos included, in a text field.
     pub skip_in_input: bool,
-    /// `preventDefault !== false`. Every binding of the app table keeps it.
+    /// Skip the binding in a text field on macOS only, where Option+arrow
+    /// moves the caret by word.
+    pub skip_in_input_on_mac: bool,
+    /// Whether a handled key is consumed. Every binding of the app table
+    /// keeps it.
     pub prevent_default: bool,
     pub command: KeyCommand,
 }
@@ -287,6 +288,7 @@ impl Binding {
             scopes,
             allow_in_input: false,
             skip_in_input: false,
+            skip_in_input_on_mac: false,
             prevent_default: true,
             command,
         }
@@ -301,29 +303,24 @@ impl Binding {
         self.skip_in_input = true;
         self
     }
+
+    fn skip_input_on_mac(mut self) -> Self {
+        self.skip_in_input_on_mac = true;
+        self
+    }
 }
 
 fn only(scopes: &[KeyScope]) -> Scopes {
     Scopes::Only(scopes.to_vec())
 }
 
-/// `createKeyboardBindings`: the whole table, in match order.
+/// The whole table, in match order.
 pub fn app_bindings() -> Vec<Binding> {
     use KeyCommand as C;
     use KeyScope as S;
     let all = || Scopes::All;
     let card_nav = || only(&CARD_NAV_SCOPES);
     let mut table = vec![
-        // WebView built-ins that must never fire in a desktop shell.
-        Binding::new("mod+w", all(), C::Swallow),
-        Binding::new("mod+p", all(), C::Swallow),
-        Binding::new("f3", all(), C::Swallow).in_input(),
-        Binding::new("mod+g", all(), C::Swallow),
-        Binding::new("f7", all(), C::Swallow).in_input(),
-        Binding::new("mod+u", all(), C::Swallow),
-        Binding::new("mod+j", all(), C::Swallow),
-        Binding::new("alt+arrowright", all(), C::Swallow).in_input(),
-        Binding::new("alt+arrowleft", all(), C::Pass).in_input(),
         // Command palette.
         Binding::new(
             "mod+k",
@@ -350,13 +347,10 @@ pub fn app_bindings() -> Vec<Binding> {
         // App-level shortcuts.
         Binding::new("mod+f", only(&[S::App, S::BulkEdit]), C::FocusSearch),
         Binding::new("mod+f", only(&[S::Settings]), C::FocusSettingsSearch),
-        Binding::new("mod+f", all(), C::Swallow),
         Binding::new("mod+n", only(&[S::App]), C::AddAccount),
         Binding::new("mod+shift+n", only(&[S::App]), C::NewFolder),
         Binding::new("mod+r", only(&[S::App]), C::Refresh),
         Binding::new("f5", only(&[S::App]), C::Refresh).in_input(),
-        Binding::new("f5", all(), C::Swallow).in_input(),
-        Binding::new("mod+shift+r", all(), C::Swallow),
         Binding::new("mod+e", only(&[S::App, S::BulkEdit]), C::ToggleBulkEdit),
         Binding::new(
             "mod+,",
@@ -380,7 +374,7 @@ pub fn app_bindings() -> Vec<Binding> {
         Binding::new("mod+shift+plus", all(), C::ZoomIn),
         Binding::new("mod+minus", all(), C::ZoomOut),
         Binding::new("mod+digit0", all(), C::ResetZoom),
-        Binding::new("alt+arrowleft", only(&[S::App]), C::AltBack).in_input(),
+        Binding::new("alt+arrowleft", only(&[S::App]), C::AltBack).skip_input_on_mac(),
         Binding::new("backspace", only(&[S::App]), C::BackspaceBack),
         // Card focus navigation.
         Binding::new("arrowleft", card_nav(), C::CardMove(Direction::Left)),
@@ -408,13 +402,13 @@ pub enum KeyAction {
     CloseInputDialog,
     CloseConfirmDialog,
     ClosePersonas,
-    /// `navigation.searchQuery = ""`.
+    /// Empty the grid search.
     ClearSearchQuery,
-    /// `active.blur()` on the search field.
+    /// Take the focus off the search field.
     BlurSearch,
-    /// `cardFocus.clear()`.
+    /// Drop the card focus.
     ClearCardFocus,
-    /// `searchInput.focus(); searchInput.select()`.
+    /// Focus and select the grid search.
     FocusSearch,
     FocusSettingsSearch,
     AddAccount,
@@ -428,43 +422,43 @@ pub enum KeyAction {
     ZoomIn,
     ZoomOut,
     ResetZoom,
-    /// `handleNavigateBack`.
+    /// Go up a folder.
     NavigateBack,
     ToggleBulkEditAccount(String),
     BulkEditSelectAll,
     BulkEditDeselectAll,
 }
 
-/// What the bindings read from and do to the app (`KeyboardBindingDeps`).
+/// What the bindings read from and do to the app.
 pub trait KeyHost {
-    /// `getCurrentFolderId() != null`.
+    /// Whether the grid shows a folder rather than the platform root.
     fn in_folder(&self) -> bool;
-    /// `getEnabledPlatforms()` ids, in tab order.
+    /// The enabled platforms' ids, in tab order.
     fn enabled_platform_ids(&self) -> Vec<String>;
-    /// `getUnavailablePlatformIds().has(id)`.
+    /// Whether the platform is unavailable on this machine.
     fn is_platform_unavailable(&self, platform_id: &str) -> bool;
     fn active_tab(&self) -> String;
     fn has_input_dialog(&self) -> bool;
-    /// `document.activeElement` is the grid search input.
+    /// Whether the grid search input has the focus.
     fn search_input_focused(&self) -> bool;
-    /// `cardFocus.focusedItem`.
+    /// The card holding the keyboard focus.
     fn focused_item(&self) -> Option<ItemRef>;
-    /// `cardFocus.ownsActivationKey(e.target)`: no other control holds real
+    /// No other control holds real
     /// focus.
     fn card_focus_owns_activation_key(&self, event: &KeyEvent) -> bool;
     fn is_bulk_edit_toggle_allowed(&self) -> bool;
 
-    /// `drag.cancelFromEscape()`: true when a drag was cancelled.
+    /// True when a drag was cancelled.
     fn cancel_drag_from_escape(&mut self) -> bool;
-    /// `personasPanel.handleEscape()`: true when the wizard took the key.
+    /// True when the persona wizard took the key.
     fn personas_panel_escape(&mut self) -> bool;
-    /// `cardFocus.move(direction)`: true when the focus moved.
+    /// True when the focus moved.
     fn card_focus_move(&mut self, direction: Direction) -> bool;
-    /// `cardActions.activateFocusedCard()`.
+    /// Activates the focused card; true when there was one.
     fn activate_focused_card(&mut self) -> bool;
-    /// `cardActions.renameFocusedCard()`.
+    /// Renames the focused card; true when there was one.
     fn rename_focused_card(&mut self) -> bool;
-    /// `cardActions.openFocusedCardContextMenu()`.
+    /// Opens the focused card's context menu; true when there was one.
     fn open_focused_card_context_menu(&mut self) -> bool;
 
     fn act(&mut self, action: KeyAction);
@@ -474,7 +468,7 @@ pub trait KeyHost {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyResult {
     Handled,
-    /// The TS `PASS`.
+    /// Not handled here: the next binding is tried.
     Pass,
 }
 
@@ -486,7 +480,7 @@ fn handled_if(taken: bool) -> KeyResult {
     }
 }
 
-/// `pickCycledTab`: the next tab for mod+tab / mod+shift+tab. Off the usable
+/// The next tab for mod+tab / mod+shift+tab. Off the usable
 /// list, forward enters at the first tab and backward at the last; `None`
 /// with fewer than two tabs.
 pub fn pick_cycled_tab(usable_ids: &[String], active_id: &str, direction: i8) -> Option<String> {
@@ -505,15 +499,10 @@ pub fn pick_cycled_tab(usable_ids: &[String], active_id: &str, direction: i8) ->
     Some(usable_ids[(index + step) % count].clone())
 }
 
-/// Runs one command against the host (the `run` closures of the TS table).
+/// Runs one command against the host.
 pub fn run_command(command: KeyCommand, event: &KeyEvent, host: &mut dyn KeyHost) -> KeyResult {
     use KeyCommand as C;
-    let act = |host: &mut dyn KeyHost, action| {
-        host.act(action);
-        KeyResult::Handled
-    };
     match command {
-        C::Swallow => KeyResult::Handled,
         C::Pass => KeyResult::Pass,
         C::OpenPalette => {
             host.act(KeyAction::CloseContextMenu);
@@ -522,11 +511,12 @@ pub fn run_command(command: KeyCommand, event: &KeyEvent, host: &mut dyn KeyHost
         C::ClosePalette => act(host, KeyAction::SetPaletteOpen(false)),
         C::EscapeCancelDrag => handled_if(host.cancel_drag_from_escape()),
         C::EscapeCloseDialog => {
-            if host.has_input_dialog() {
-                act(host, KeyAction::CloseInputDialog)
+            let close = if host.has_input_dialog() {
+                KeyAction::CloseInputDialog
             } else {
-                act(host, KeyAction::CloseConfirmDialog)
-            }
+                KeyAction::CloseConfirmDialog
+            };
+            act(host, close)
         }
         C::EscapePersonas => {
             if !host.personas_panel_escape() {
@@ -534,16 +524,7 @@ pub fn run_command(command: KeyCommand, event: &KeyEvent, host: &mut dyn KeyHost
             }
             KeyResult::Handled
         }
-        C::EscapeApp => {
-            if host.search_input_focused() {
-                host.act(KeyAction::ClearSearchQuery);
-                return act(host, KeyAction::BlurSearch);
-            }
-            if host.focused_item().is_some() {
-                return act(host, KeyAction::ClearCardFocus);
-            }
-            KeyResult::Pass
-        }
+        C::EscapeApp => escape_app(host),
         C::FocusSearch => act(host, KeyAction::FocusSearch),
         C::FocusSettingsSearch => act(host, KeyAction::FocusSettingsSearch),
         C::AddAccount => act(host, KeyAction::AddAccount),
@@ -562,35 +543,19 @@ pub fn run_command(command: KeyCommand, event: &KeyEvent, host: &mut dyn KeyHost
         C::OpenPersonas => act(host, KeyAction::OpenPersonas),
         C::ToggleViewMode => act(host, KeyAction::ToggleViewMode),
         C::CycleTab(direction) => {
-            let usable: Vec<String> = host
-                .enabled_platform_ids()
-                .into_iter()
-                .filter(|id| !host.is_platform_unavailable(id))
-                .collect();
-            if let Some(next) = pick_cycled_tab(&usable, &host.active_tab(), direction) {
-                host.act(KeyAction::ClosePersonas);
-                host.act(KeyAction::ChangeTab(next));
-            }
-            KeyResult::Handled
+            let usable = usable_platform_ids(host);
+            let next = pick_cycled_tab(&usable, &host.active_tab(), direction);
+            change_tab(host, next)
         }
         C::TabByIndex(index) => {
             let platform = host.enabled_platform_ids().get(index).cloned();
-            if let Some(id) = platform.filter(|id| !host.is_platform_unavailable(id)) {
-                host.act(KeyAction::ClosePersonas);
-                host.act(KeyAction::ChangeTab(id));
-            }
-            KeyResult::Handled
+            let usable = platform.filter(|id| !host.is_platform_unavailable(id));
+            change_tab(host, usable)
         }
         C::ZoomIn => act(host, KeyAction::ZoomIn),
         C::ZoomOut => act(host, KeyAction::ZoomOut),
         C::ResetZoom => act(host, KeyAction::ResetZoom),
-        C::AltBack => {
-            if host.in_folder() {
-                host.act(KeyAction::NavigateBack);
-            }
-            KeyResult::Handled
-        }
-        C::BackspaceBack => {
+        C::AltBack | C::BackspaceBack => {
             if !host.in_folder() {
                 return KeyResult::Pass;
             }
@@ -602,19 +567,60 @@ pub fn run_command(command: KeyCommand, event: &KeyEvent, host: &mut dyn KeyHost
         }
         C::RenameFocused => handled_if(host.rename_focused_card()),
         C::ContextMenuFocused => handled_if(host.open_focused_card_context_menu()),
-        C::BulkToggleFocused => {
-            if !host.card_focus_owns_activation_key(event) {
-                return KeyResult::Pass;
-            }
-            match host.focused_item() {
-                Some(item) if item.kind == ItemKind::Account => {
-                    act(host, KeyAction::ToggleBulkEditAccount(item.id))
-                }
-                _ => KeyResult::Pass,
-            }
-        }
+        C::BulkToggleFocused => toggle_focused_account(event, host),
         C::BulkSelectAll => act(host, KeyAction::BulkEditSelectAll),
         C::BulkDeselectAll => act(host, KeyAction::BulkEditDeselectAll),
+    }
+}
+
+/// Runs a plain action; the key is taken.
+fn act(host: &mut dyn KeyHost, action: KeyAction) -> KeyResult {
+    host.act(action);
+    KeyResult::Handled
+}
+
+/// Escape in the app: clear and blur the search, else drop the card focus,
+/// else pass.
+fn escape_app(host: &mut dyn KeyHost) -> KeyResult {
+    if host.search_input_focused() {
+        host.act(KeyAction::ClearSearchQuery);
+        return act(host, KeyAction::BlurSearch);
+    }
+    if host.focused_item().is_some() {
+        return act(host, KeyAction::ClearCardFocus);
+    }
+    KeyResult::Pass
+}
+
+/// The enabled platforms that are not unavailable, in tab order.
+fn usable_platform_ids(host: &dyn KeyHost) -> Vec<String> {
+    host.enabled_platform_ids()
+        .into_iter()
+        .filter(|id| !host.is_platform_unavailable(id))
+        .collect()
+}
+
+/// Closes personas and opens `tab` when there is one; the key is taken
+/// either way.
+fn change_tab(host: &mut dyn KeyHost, tab: Option<String>) -> KeyResult {
+    if let Some(tab) = tab {
+        host.act(KeyAction::ClosePersonas);
+        host.act(KeyAction::ChangeTab(tab));
+    }
+    KeyResult::Handled
+}
+
+/// Space in bulk edit toggles the focused card when it is an account and the
+/// grid owns the key.
+fn toggle_focused_account(event: &KeyEvent, host: &mut dyn KeyHost) -> KeyResult {
+    if !host.card_focus_owns_activation_key(event) {
+        return KeyResult::Pass;
+    }
+    match host.focused_item() {
+        Some(item) if item.kind == ItemKind::Account => {
+            act(host, KeyAction::ToggleBulkEditAccount(item.id))
+        }
+        _ => KeyResult::Pass,
     }
 }
 
@@ -623,18 +629,12 @@ pub fn run_command(command: KeyCommand, event: &KeyEvent, host: &mut dyn KeyHost
 pub enum KeyOutcome {
     /// No binding took it: let egui widgets see it.
     Unhandled,
-    /// Binding `index` of the table took it. `consume` is the TS
-    /// `preventDefault` plus `stopPropagation`.
+    /// Binding `index` of the table took it. `consume`: the key stops there
+    /// and its default action is suppressed.
     Handled { index: usize, consume: bool },
 }
 
-impl KeyOutcome {
-    pub fn is_handled(self) -> bool {
-        matches!(self, KeyOutcome::Handled { .. })
-    }
-}
-
-/// `createKeyboardController` without the listener.
+/// Runs key events through the binding table.
 #[derive(Debug, Clone)]
 pub struct KeyboardController {
     bindings: Vec<(Binding, ParsedCombo)>,
@@ -663,8 +663,8 @@ impl KeyboardController {
         self.bindings.iter().map(|(binding, _)| binding)
     }
 
-    /// `handleKeydown`: the first binding whose scope and combo match, that
-    /// the text-field rules allow, and that does not pass, takes the key.
+    /// The first binding whose scope and combo match, that the text-field
+    /// rules allow, and that does not pass, takes the key.
     pub fn handle(
         &self,
         event: &KeyEvent,
@@ -683,7 +683,9 @@ impl KeyboardController {
             if event.editable_target && !has_modifier && !binding.allow_in_input {
                 continue;
             }
-            if event.editable_target && binding.skip_in_input {
+            if event.editable_target
+                && (binding.skip_in_input || (is_mac && binding.skip_in_input_on_mac))
+            {
                 continue;
             }
             if run_command(binding.command, event, host) == KeyResult::Pass {

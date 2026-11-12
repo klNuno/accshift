@@ -1,183 +1,33 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
-
-/// Extract the quoted tokens from a single VDF line, honoring backslash escapes.
-///
-/// VDF quotes tokens with `"` and escapes `\"` and `\\` inside them. A naive
-/// `split('"')` breaks on escaped quotes and truncates values that contain
-/// them. This scanner walks the line character by character, collecting the
-/// content of each `"..."` token and unescaping `\"`, `\\`, `\n` and `\r`.
-///
-/// Returns the tokens in order. A `"key" "value"` line yields two entries.
-pub(crate) fn vdf_tokenize_line(line: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut chars = line.chars().peekable();
-
-    while let Some(&c) = chars.peek() {
-        if c == '"' {
-            chars.next(); // consume opening quote
-            let mut token = String::new();
-            while let Some(ch) = chars.next() {
-                if ch == '\\' {
-                    match chars.next() {
-                        Some('n') => token.push('\n'),
-                        Some('r') => token.push('\r'),
-                        Some('t') => token.push('\t'),
-                        Some('\\') => token.push('\\'),
-                        Some('"') => token.push('"'),
-                        // Unknown escape: keep the following char verbatim.
-                        Some(other) => token.push(other),
-                        None => break,
-                    }
-                } else if ch == '"' {
-                    break; // closing quote
-                } else {
-                    token.push(ch);
-                }
-            }
-            tokens.push(token);
-        } else {
-            chars.next();
-        }
-    }
-
-    tokens
-}
-
-/// Byte span (opening-quote index, closing-quote index) of the `n`-th (0-based)
-/// quoted token on the line, honoring backslash escapes the same way
-/// [`vdf_tokenize_line`] does. Used to rewrite a single token's value in place
-/// without a naive `rfind('"')`, which would lock onto a later quoted token if
-/// one follows on the same physical line.
-fn nth_quoted_token_span(line: &str, n: usize) -> Option<(usize, usize)> {
-    let mut idx = 0;
-    let mut chars = line.char_indices().peekable();
-
-    while let Some(&(i, c)) = chars.peek() {
-        if c == '"' {
-            let open = i;
-            chars.next(); // consume opening quote
-            let mut close = None;
-            while let Some((j, ch)) = chars.next() {
-                if ch == '\\' {
-                    chars.next(); // skip the escaped char
-                } else if ch == '"' {
-                    close = Some(j);
-                    break;
-                }
-            }
-            let close = close?;
-            if idx == n {
-                return Some((open, close));
-            }
-            idx += 1;
-        } else {
-            chars.next();
-        }
-    }
-
-    None
-}
-
-fn vdf_braces_outside_quotes(line: &str) -> (usize, usize) {
-    let mut opens = 0;
-    let mut closes = 0;
-    let mut in_quote = false;
-    let mut escaped = false;
-
-    for ch in line.chars() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if in_quote && ch == '\\' {
-            escaped = true;
-            continue;
-        }
-        if ch == '"' {
-            in_quote = !in_quote;
-            continue;
-        }
-        if in_quote {
-            continue;
-        }
-        match ch {
-            '{' => opens += 1,
-            '}' => closes += 1,
-            _ => {}
-        }
-    }
-
-    (opens, closes)
-}
-
-pub fn parse_vdf(content: &str) -> HashMap<String, HashMap<String, String>> {
-    let mut accounts: HashMap<String, HashMap<String, String>> = HashMap::new();
-    let mut current_id: Option<String> = None;
-    let mut current_account: HashMap<String, String> = HashMap::new();
-    let mut depth = 0;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-
-        let (opens, closes) = vdf_braces_outside_quotes(trimmed);
-        let tokens = vdf_tokenize_line(trimmed);
-
-        if tokens.len() >= 2 {
-            let key = &tokens[0];
-            let value = &tokens[1];
-
-            if depth == 2 && current_id.is_some() {
-                current_account.insert(key.to_lowercase(), value.clone());
-            }
-        } else if tokens.len() == 1 {
-            let key = &tokens[0];
-
-            if depth == 1 && !key.is_empty() && key.chars().all(|c| c.is_ascii_digit()) {
-                current_id = Some(key.clone());
-            }
-        }
-
-        for _ in 0..opens {
-            depth += 1;
-        }
-
-        for _ in 0..closes {
-            if depth == 0 {
-                continue;
-            }
-            depth -= 1;
-            if depth == 1 {
-                if let Some(id) = current_id.take() {
-                    accounts.insert(id, std::mem::take(&mut current_account));
-                } else {
-                    current_account.clear();
-                }
-            }
-        }
-    }
-
-    accounts
-}
+use std::iter::Peekable;
+use std::path::{Path, PathBuf};
+use std::str::CharIndices;
 
 /// A meaningful element of a VDF line: a quoted token, or a brace that opens or
 /// closes a section outside any quoted token.
 #[derive(Debug, Clone, PartialEq)]
 enum VdfItem {
-    Token(String),
+    /// The unescaped content of a `"..."` token, and the byte index of its
+    /// closing quote (`None` when the line ends inside the token).
+    Token {
+        text: String,
+        close: Option<usize>,
+    },
     Open,
     Close,
 }
 
 /// Scan a line into its items, in order, each paired with the byte index it
-/// starts at.
+/// starts at. This is the one VDF tokenizer: every reader and the writer go
+/// through it.
 ///
-/// This is what makes `"key" {` structure rather than noise. The old writer
-/// compared the trimmed line against `{` and `}`, so a file written with the
-/// brace on the header line was walked without ever entering the block and the
-/// write silently changed nothing. Scanning stops at a `//` comment outside
-/// quotes, so a brace inside a comment cannot desync the section stack.
+/// VDF quotes tokens with `"` and escapes `\"`, `\\`, `\n`, `\r` and `\t`
+/// inside them, so a token is read character by character rather than split
+/// on `"`, which would truncate a value holding an escaped quote. Braces count
+/// only outside quotes, which is what makes `"key" {` structure rather than
+/// noise. Scanning stops at a `//` comment outside quotes, so a brace or a
+/// token inside a comment cannot desync a reader.
 fn vdf_scan_line(line: &str) -> Vec<(usize, VdfItem)> {
     let mut items = Vec::new();
     let bytes = line.as_bytes();
@@ -187,26 +37,8 @@ fn vdf_scan_line(line: &str) -> Vec<(usize, VdfItem)> {
         match c {
             '"' => {
                 chars.next(); // consume opening quote
-                let mut token = String::new();
-                while let Some((_, ch)) = chars.next() {
-                    if ch == '\\' {
-                        match chars.next() {
-                            Some((_, 'n')) => token.push('\n'),
-                            Some((_, 'r')) => token.push('\r'),
-                            Some((_, 't')) => token.push('\t'),
-                            Some((_, '\\')) => token.push('\\'),
-                            Some((_, '"')) => token.push('"'),
-                            // Unknown escape: keep the following char verbatim.
-                            Some((_, other)) => token.push(other),
-                            None => break,
-                        }
-                    } else if ch == '"' {
-                        break; // closing quote
-                    } else {
-                        token.push(ch);
-                    }
-                }
-                items.push((i, VdfItem::Token(token)));
+                let (text, close) = vdf_read_token(&mut chars);
+                items.push((i, VdfItem::Token { text, close }));
             }
             '{' => {
                 items.push((i, VdfItem::Open));
@@ -224,6 +56,98 @@ fn vdf_scan_line(line: &str) -> Vec<(usize, VdfItem)> {
     }
 
     items
+}
+
+/// Read a quoted token's content up to its closing quote, unescaping as it
+/// goes. Returns the content and the closing quote's byte index.
+fn vdf_read_token(chars: &mut Peekable<CharIndices<'_>>) -> (String, Option<usize>) {
+    let mut token = String::new();
+    while let Some((j, ch)) = chars.next() {
+        match ch {
+            '\\' => match chars.next() {
+                Some((_, 'n')) => token.push('\n'),
+                Some((_, 'r')) => token.push('\r'),
+                Some((_, 't')) => token.push('\t'),
+                // `\\`, `\"` and any unknown escape keep the following char.
+                Some((_, other)) => token.push(other),
+                None => break,
+            },
+            '"' => return (token, Some(j)),
+            _ => token.push(ch),
+        }
+    }
+    (token, None)
+}
+
+/// The quoted tokens of a single VDF line, unescaped, in order. A
+/// `"key" "value"` line yields two entries.
+pub(crate) fn vdf_tokenize_line(line: &str) -> Vec<String> {
+    vdf_scan_line(line)
+        .into_iter()
+        .filter_map(|(_, item)| match item {
+            VdfItem::Token { text, .. } => Some(text),
+            _ => None,
+        })
+        .collect()
+}
+
+/// How many section braces a line opens and closes, braces inside quoted
+/// tokens left out.
+pub(crate) fn vdf_brace_counts(line: &str) -> (usize, usize) {
+    vdf_scan_line(line)
+        .iter()
+        .fold((0, 0), |(opens, closes), (_, item)| match item {
+            VdfItem::Open => (opens + 1, closes),
+            VdfItem::Close => (opens, closes + 1),
+            VdfItem::Token { .. } => (opens, closes),
+        })
+}
+
+pub fn parse_vdf(content: &str) -> HashMap<String, HashMap<String, String>> {
+    let mut accounts: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let mut current_id: Option<String> = None;
+    let mut current_account: HashMap<String, String> = HashMap::new();
+    let mut depth = 0;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        let (opens, closes) = vdf_brace_counts(trimmed);
+        let tokens = vdf_tokenize_line(trimmed);
+
+        if tokens.len() >= 2 {
+            let key = &tokens[0];
+            let value = &tokens[1];
+
+            if depth == 2 && current_id.is_some() {
+                current_account.insert(key.to_lowercase(), value.clone());
+            }
+        } else if tokens.len() == 1 {
+            let key = &tokens[0];
+
+            if depth == 1 && !key.is_empty() && key.chars().all(|c| c.is_ascii_digit()) {
+                current_id = Some(key.clone());
+            }
+        }
+
+        depth += opens;
+
+        for _ in 0..closes {
+            if depth == 0 {
+                continue;
+            }
+            depth -= 1;
+            if depth == 1 {
+                if let Some(id) = current_id.take() {
+                    accounts.insert(id, std::mem::take(&mut current_account));
+                } else {
+                    current_account.clear();
+                }
+            }
+        }
+    }
+
+    accounts
 }
 
 /// How many leading names of `sections` the open section stack has entered.
@@ -319,7 +243,7 @@ fn vdf_key_exists(content: &str, sections: &[&str], target_key: &str) -> bool {
         let mut pending: Vec<String> = Vec::new();
         for (_, item) in vdf_scan_line(line) {
             match item {
-                VdfItem::Token(token) => pending.push(token),
+                VdfItem::Token { text, .. } => pending.push(text),
                 VdfItem::Open => {
                     let name = vdf_take_section_name(&mut pending, &mut carried);
                     stack.push(name);
@@ -402,23 +326,30 @@ fn vdf_rewrite_pair(
     escaped_value: &str,
 ) -> String {
     let bare_pair = items.len() == 2
-        && matches!(items[0].1, VdfItem::Token(_))
-        && matches!(items[1].1, VdfItem::Token(_));
+        && matches!(items[0].1, VdfItem::Token { .. })
+        && matches!(items[1].1, VdfItem::Token { .. });
 
     if bare_pair {
         let leading: String = line.chars().take_while(|c| c.is_whitespace()).collect();
         return format!("{leading}\"{escaped_key}\"\t\t\"{escaped_value}\"");
     }
 
-    match nth_quoted_token_span(line, value_ordinal) {
-        Some((open, close)) => {
+    let value_span = items
+        .iter()
+        .filter_map(|(open, item)| match item {
+            VdfItem::Token { close, .. } => Some((*open, *close)),
+            _ => None,
+        })
+        .nth(value_ordinal);
+    match value_span {
+        Some((open, Some(close))) => {
             let mut new_line = String::with_capacity(line.len() + escaped_value.len());
             new_line.push_str(&line[..=open]);
             new_line.push_str(escaped_value);
             new_line.push_str(&line[close..]);
             new_line
         }
-        None => line.to_string(),
+        _ => line.to_string(),
     }
 }
 
@@ -485,11 +416,11 @@ pub fn vdf_set_nested_value(
 
         for (at, item) in &items {
             match item {
-                VdfItem::Token(token) => {
+                VdfItem::Token { text, .. } => {
                     if pending.is_empty() {
                         pending_first_ordinal = ordinal;
                     }
-                    pending.push(token.clone());
+                    pending.push(text.clone());
                     ordinal += 1;
                 }
                 VdfItem::Open => {
@@ -589,11 +520,30 @@ fn escape_vdf_string(value: &str) -> String {
     escaped
 }
 
+/// `friends.PersonaState` in localconfig.vdf, relative to its root section.
+pub(crate) const PERSONA_STATE_PATH: [&str; 2] = ["friends", "PersonaState"];
+
+/// An account's localconfig.vdf, where Steam keeps its persona state.
+pub(crate) fn localconfig_path(steam_path: &Path, account_id: u32) -> PathBuf {
+    steam_path
+        .join("userdata")
+        .join(account_id.to_string())
+        .join("config")
+        .join("localconfig.vdf")
+}
+
+/// Write `friends.PersonaState` into an account's localconfig.vdf, creating
+/// the key and its section when missing, and return the content it replaced
+/// so a failed switch can put it back.
+///
+/// An account that never changed its status has no PersonaState key; skipping
+/// the write there left the account signing in visible while the switch
+/// reported the requested mode as applied.
 pub fn set_persona_state(
     steam_path: &Path,
     account_id: u32,
     state: &str,
-) -> Result<(), crate::error::AppError> {
+) -> Result<String, crate::error::AppError> {
     use crate::error::AppError;
 
     if !["0", "1", "2", "3", "4", "5", "6", "7"].contains(&state) {
@@ -601,197 +551,28 @@ pub fn set_persona_state(
             "Invalid persona state: {state}"
         )));
     }
-    let config_path = steam_path
-        .join("userdata")
-        .join(account_id.to_string())
-        .join("config")
-        .join("localconfig.vdf");
+    let config_path = localconfig_path(steam_path, account_id);
 
-    let content = match fs::read_to_string(&config_path) {
-        Ok(content) => content,
-        // No localconfig yet (fresh account): nothing to edit.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => {
-            return Err(AppError::FileRead(format!(
-                "Could not read {}: {e}",
-                config_path.display()
-            )))
+    let content = fs::read_to_string(&config_path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            // Steam creates the file at the account's first sign-in on this
+            // machine. A file made up here would replace the settings Steam
+            // keeps for the account, so the mode is refused instead.
+            AppError::FileRead(
+                "Steam has no localconfig.vdf for this account yet, so the online or \
+                 invisible mode cannot be set. Sign in to the account in Steam once, then \
+                 switch again."
+                    .into(),
+            )
+        } else {
+            AppError::FileRead(format!("Could not read localconfig.vdf: {e}"))
         }
-    };
+    })?;
 
-    let result = set_persona_state_in_vdf(&content, state);
-
-    if let Some(result) = result {
-        crate::storage::write_bytes_atomic(&config_path, result.as_bytes())
-            .map_err(AppError::FileRead)?;
-    }
-    Ok(())
-}
-
-/// Read the current `friends.PersonaState` value from an account's
-/// localconfig.vdf, if present. Returns `Ok(None)` when the file or the key is
-/// absent. Uses the same structural targeting as [`set_persona_state`], so a
-/// caller can snapshot the value before a write and roll it back on failure.
-pub fn read_persona_state(
-    steam_path: &Path,
-    account_id: u32,
-) -> Result<Option<String>, crate::error::AppError> {
-    use crate::error::AppError;
-
-    let config_path = steam_path
-        .join("userdata")
-        .join(account_id.to_string())
-        .join("config")
-        .join("localconfig.vdf");
-
-    let content = match fs::read_to_string(&config_path) {
-        Ok(content) => content,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => {
-            return Err(AppError::FileRead(format!(
-                "Could not read {}: {e}",
-                config_path.display()
-            )))
-        }
-    };
-
-    Ok(persona_state_in_vdf(&content))
-}
-
-fn persona_state_in_vdf(content: &str) -> Option<String> {
-    let mut section_stack: Vec<String> = Vec::new();
-    let mut pending_section: Option<String> = None;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-
-        if trimmed == "{" {
-            section_stack.push(pending_section.take().unwrap_or_default());
-            continue;
-        }
-        if trimmed == "}" {
-            section_stack.pop();
-            pending_section = None;
-            continue;
-        }
-
-        let tokens = vdf_tokenize_line(trimmed);
-        let in_friends = section_stack.len() == 2
-            && section_stack[0].eq_ignore_ascii_case("UserLocalConfigStore")
-            && section_stack[1].eq_ignore_ascii_case("friends");
-
-        if in_friends && tokens.len() >= 2 && tokens[0].eq_ignore_ascii_case("PersonaState") {
-            return Some(tokens[1].clone());
-        }
-
-        if tokens.len() == 1 {
-            pending_section = Some(tokens[0].clone());
-        } else if tokens.len() >= 2 {
-            pending_section = None;
-        }
-    }
-
-    None
-}
-
-/// Rewrite the `PersonaState` key that lives directly under
-/// `UserLocalConfigStore` -> `friends`, returning the new file content.
-///
-/// Returns `None` if no such key exists, so the caller can skip the write.
-///
-/// Targeting is structural: we track the section path with the parser instead
-/// of matching the first line that merely contains `"PersonaState"`. A friend
-/// nickname, a custom category, or any other string elsewhere in the file that
-/// happens to contain `PersonaState` no longer corrupts the wrong line.
-fn set_persona_state_in_vdf(content: &str, state: &str) -> Option<String> {
-    // Section names walked so far, from the root section inward. The key we
-    // want is `friends.PersonaState` under the root `UserLocalConfigStore`.
-    let mut section_stack: Vec<String> = Vec::new();
-    // Token cached from the previous non-brace line: in VDF a subsection header
-    // is a bare `"name"` line followed by its own `{` on the next line.
-    let mut pending_section: Option<String> = None;
-
-    let mut result = String::new();
-    let mut found = false;
-    // Preserve the file's dominant line ending so a CRLF localconfig.vdf comes
-    // back CRLF rather than being silently rewritten to bare LF on every edit.
-    let newline = if content.contains("\r\n") {
-        "\r\n"
-    } else {
-        "\n"
-    };
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-
-        if trimmed == "{" {
-            // The previous header token opens a subsection here.
-            section_stack.push(pending_section.take().unwrap_or_default());
-            result.push_str(line);
-            result.push_str(newline);
-            continue;
-        }
-
-        if trimmed == "}" {
-            section_stack.pop();
-            pending_section = None;
-            result.push_str(line);
-            result.push_str(newline);
-            continue;
-        }
-
-        let tokens = vdf_tokenize_line(trimmed);
-
-        // Are we directly inside UserLocalConfigStore -> friends?
-        let in_friends = section_stack.len() == 2
-            && section_stack[0].eq_ignore_ascii_case("UserLocalConfigStore")
-            && section_stack[1].eq_ignore_ascii_case("friends");
-
-        if !found
-            && in_friends
-            && tokens.len() >= 2
-            && tokens[0].eq_ignore_ascii_case("PersonaState")
-        {
-            // Rewrite PersonaState's own value in place, preserving indentation
-            // and the key token exactly as written. Target the 2nd quoted token
-            // (the value) by its byte span rather than rfind('"'): if anything
-            // else is quoted later on the same physical line, rfind would splice
-            // into that trailing token and leave PersonaState untouched while
-            // corrupting unrelated data.
-            if let Some((open, close)) = nth_quoted_token_span(line, 1) {
-                let mut new_line = String::with_capacity(line.len());
-                new_line.push_str(&line[..=open]);
-                new_line.push_str(state);
-                new_line.push_str(&line[close..]);
-                result.push_str(&new_line);
-                result.push_str(newline);
-                found = true;
-                pending_section = None;
-                continue;
-            }
-        }
-
-        // Remember a bare header token so the next `{` knows its section name.
-        // A `"key" "value"` pair is not a section header, so it clears the
-        // pending header. A line with no tokens at all (a `//` comment or a
-        // blank line) is left untouched: clearing pending_section there would
-        // desync the section stack when a comment sits between a header and its
-        // opening brace, silently dropping the persona-state edit.
-        if tokens.len() == 1 {
-            pending_section = Some(tokens[0].clone());
-        } else if tokens.len() >= 2 {
-            pending_section = None;
-        }
-
-        result.push_str(line);
-        result.push_str(newline);
-    }
-
-    if found {
-        Some(result)
-    } else {
-        None
-    }
+    let updated = vdf_set_nested_value(&content, &PERSONA_STATE_PATH, state)?;
+    crate::storage::write_bytes_atomic(&config_path, updated.as_bytes())
+        .map_err(AppError::FileRead)?;
+    Ok(content)
 }
 
 #[cfg(test)]

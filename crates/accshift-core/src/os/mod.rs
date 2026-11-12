@@ -7,6 +7,8 @@ mod common;
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+mod picker;
 #[cfg(target_os = "windows")]
 pub mod registry;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -117,7 +119,7 @@ pub fn open_folder(path: &Path) -> Result<(), AppError> {
 }
 
 // ---------------------------------------------------------------------------
-// Platform-specific primitives (Windows-only for now)
+// Platform-specific primitives, one implementation per OS in `imp`
 // ---------------------------------------------------------------------------
 
 pub fn encrypt_secret(secret: &str) -> Result<String, AppError> {
@@ -139,48 +141,14 @@ pub fn decrypt_bytes(data: &[u8]) -> Result<Vec<u8>, AppError> {
 /// Remove the secret a `encrypt_secret` token refers to. On Linux/macOS this
 /// deletes the backing keyring entry (a missing entry is treated as success);
 /// on Windows the ciphertext is inline so there is nothing to remove.
-///
-/// The keyring backends (linux.rs / macos.rs) only re-export the
-/// encrypt/decrypt names, so the delete helpers are routed straight to
-/// `secrets`; Windows uses its inline no-op shim.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn delete_secret(token: &str) -> Result<(), AppError> {
-    secrets::delete_secret(token)
-}
-
-/// See [`delete_secret`].
-#[cfg(target_os = "windows")]
-pub fn delete_secret(token: &str) -> Result<(), AppError> {
-    windows::delete_secret(token)
-}
-
-/// See [`delete_secret`].
-#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-pub fn delete_secret(_token: &str) -> Result<(), AppError> {
-    Err(AppError::UnsupportedOperatingSystem(
-        "Secret storage is not supported on this operating system".to_string(),
-    ))
+    imp::delete_secret(token)
 }
 
 /// Remove the secret a `encrypt_bytes` token refers to. Same backend rules as
 /// [`delete_secret`].
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn delete_bytes(token: &[u8]) -> Result<(), AppError> {
-    secrets::delete_bytes(token)
-}
-
-/// See [`delete_bytes`].
-#[cfg(target_os = "windows")]
-pub fn delete_bytes(token: &[u8]) -> Result<(), AppError> {
-    windows::delete_bytes(token)
-}
-
-/// See [`delete_bytes`].
-#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-pub fn delete_bytes(_token: &[u8]) -> Result<(), AppError> {
-    Err(AppError::UnsupportedOperatingSystem(
-        "Secret storage is not supported on this operating system".to_string(),
-    ))
+    imp::delete_bytes(token)
 }
 
 pub fn steam_installation_path() -> Result<PathBuf, AppError> {

@@ -1,7 +1,9 @@
 //! Per-account snapshots: capture, restore staging and markers.
 
+use super::state_item::StateItem;
 #[allow(unused_imports)]
 use super::*;
+use crate::platforms::descriptor::schema::{DirItem, FileItem};
 
 impl DescriptorService {
     pub(super) fn save_snapshot(
@@ -14,76 +16,38 @@ impl DescriptorService {
         fs::create_dir_all(&cache_dir)
             .map_err(|e| format!("Could not create auth cache dir: {e}"))?;
 
-        for item in &runtime.profile.state.files {
-            let live = runtime.spec_path(&item.live)?;
-            let dest = cache_dir.join(&item.snapshot);
-            if live.is_file() {
-                delete_encrypted_file_secret(&dest);
-                encrypted_copy_file(&live, &dest)?;
-            } else if item.clear_snapshot_when_source_missing {
-                // Nothing live to capture: drop the stale snapshot so a later
-                // restore cannot resurrect another account's file.
-                delete_encrypted_file_secret(&dest);
-                let _ = fs::remove_file(&dest);
-            }
-        }
-
-        for item in &runtime.profile.state.registry_values {
-            let dest = cache_dir.join(&item.snapshot);
-            match reg::read(item.root, &item.key, &item.value) {
-                Some(value) => {
-                    delete_encrypted_file_secret(&dest);
-                    if let Err(e) = write_encrypted_bytes(&dest, value.as_bytes()) {
-                        // Non-fatal: the session files still carry the account,
-                        // and failing the whole switch over one value would
-                        // strand the user worse than the missing value does.
-                        log_platform_error(
-                            app,
-                            &format!("{}.save_snapshot", self.descriptor.id),
-                            "Could not encrypt registry value for snapshot",
-                            e,
-                        );
-                    }
+        for item in StateItem::all(&runtime.profile.state) {
+            let dest = cache_dir.join(item.snapshot());
+            match item {
+                StateItem::File(file) => {
+                    capture_file(&runtime.spec_path(&file.live)?, file, &dest)?
                 }
-                None if item.clear_snapshot_when_source_missing => {
-                    // Freeing the secret has to happen with the file, never
-                    // before deciding to keep it: a kept snapshot whose key is
-                    // gone can no longer be decrypted.
-                    delete_encrypted_file_secret(&dest);
-                    let _ = fs::remove_file(&dest);
-                }
-                None => {}
+                StateItem::Value(value) => self.capture_value(app, value, &dest),
+                StateItem::Dir(dir) => capture_dir(&runtime.spec_path(&dir.live)?, dir, &dest)?,
             }
-        }
-
-        for item in &runtime.profile.state.directories {
-            let live = runtime.spec_path(&item.live)?;
-            let dest = cache_dir.join(&item.snapshot);
-            if !live.is_dir() && !item.clear_snapshot_when_source_missing {
-                // The launcher has not written this directory yet. Copying
-                // nothing over the previous capture would leave the account
-                // with an empty snapshot, which restores as a signed-out
-                // session.
-                continue;
-            }
-            // On Linux and macOS every encrypted file in there owns a keyring
-            // entry, and removing the directory is the only thing that still
-            // knows the entry ids. Free them first or they leak, one full
-            // capture's worth per switch.
-            free_dir_secrets(&dest);
-            let _ = fs::remove_dir_all(&dest);
-            let ignored: Vec<&str> = item.ignored_names.iter().map(String::as_str).collect();
-            snapshot_crypto::encrypted_copy_dir(
-                &live,
-                &dest,
-                DirCopyOptions {
-                    ignored_names: &ignored,
-                    follow_symlinks: item.follow_symlinks,
-                },
-            )?;
         }
 
         Ok(())
+    }
+
+    /// Captures a registry value. A failure is logged, not returned: the
+    /// session files still carry the account, and failing the whole switch
+    /// over one value would strand the user worse than the missing value does.
+    fn capture_value(&self, app: &dyn AppContext, item: &RegistryItem, dest: &Path) {
+        match reg::read(item.root, &item.key, &item.value) {
+            Some(value) => {
+                if let Err(e) = snapshot_crypto::replace_encrypted_bytes(dest, value.as_bytes()) {
+                    log_platform_error(
+                        app,
+                        &format!("{}.save_snapshot", self.descriptor.id),
+                        "Could not encrypt registry value for snapshot",
+                        e,
+                    );
+                }
+            }
+            None if item.clear_snapshot_when_source_missing => drop_stale_snapshot(dest),
+            None => {}
+        }
     }
 
     /// The account's snapshot directory, or the error naming the way out when
@@ -160,73 +124,17 @@ impl DescriptorService {
         cache_dir: &Path,
         steps: &mut Vec<RestoreStep>,
     ) -> Result<(), String> {
-        let state = &runtime.profile.state;
-        for item in &state.files {
-            let source = cache_dir.join(&item.snapshot);
-            let live = runtime.spec_path(&item.live)?;
-            if !source.exists() {
-                if item.clear_snapshot_when_source_missing && live.exists() {
-                    steps.push(RestoreStep::RemoveFile { live });
+        for item in StateItem::all(&runtime.profile.state) {
+            let source = cache_dir.join(item.snapshot());
+            match item {
+                StateItem::File(file) => {
+                    stage_file(file, source, runtime.spec_path(&file.live)?, steps)?
                 }
-                continue;
-            }
-            if let Some(parent) = live.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
-            }
-            let staging = staging_path(&live);
-            let result = decrypted_copy_file(&source, &staging);
-            steps.push(RestoreStep::File {
-                staging,
-                live,
-                remove_live_first: item.remove_live_before_restore,
-            });
-            result?;
-        }
-
-        for item in &state.registry_values {
-            let source = cache_dir.join(&item.snapshot);
-            if !source.exists() {
-                if item.clear_snapshot_when_source_missing {
-                    steps.push(RestoreStep::RemoveValue { item: item.clone() });
+                StateItem::Value(value) => stage_value(value, &source, steps)?,
+                StateItem::Dir(dir) => {
+                    stage_dir(dir, source, runtime.spec_path(&dir.live)?, steps)?
                 }
-                continue;
             }
-            let bytes = read_decrypted_bytes(&source)?;
-            let data = String::from_utf8(bytes).map_err(|_| {
-                format!(
-                    "Snapshot of {} is not text",
-                    reg::display(item.root, &item.key, &item.value)
-                )
-            })?;
-            steps.push(RestoreStep::Value {
-                item: item.clone(),
-                data: data.trim().to_string(),
-            });
-        }
-
-        for item in &state.directories {
-            let source = cache_dir.join(&item.snapshot);
-            let live = runtime.spec_path(&item.live)?;
-            if !source.exists() {
-                if item.clear_snapshot_when_source_missing && live.exists() {
-                    steps.push(RestoreStep::RemoveDir { live });
-                }
-                continue;
-            }
-            let staging = staging_path(&live);
-            let _ = fs::remove_dir_all(&staging);
-            let ignored: Vec<&str> = item.ignored_names.iter().map(String::as_str).collect();
-            let result = snapshot_crypto::decrypted_copy_dir(
-                &source,
-                &staging,
-                DirCopyOptions {
-                    ignored_names: &ignored,
-                    follow_symlinks: item.follow_symlinks,
-                },
-            );
-            steps.push(RestoreStep::Dir { staging, live });
-            result?;
         }
         Ok(())
     }
@@ -282,15 +190,7 @@ impl DescriptorService {
     /// A descriptor declaring no marker never claims to hold a snapshot.
     pub(super) fn declares_snapshot_marker(&self) -> bool {
         self.profile()
-            .map(|profile| {
-                profile.state.files.iter().any(|i| i.snapshot_marker)
-                    || profile.state.directories.iter().any(|i| i.snapshot_marker)
-                    || profile
-                        .state
-                        .registry_values
-                        .iter()
-                        .any(|i| i.snapshot_marker)
-            })
+            .map(|profile| StateItem::all(&profile.state).any(StateItem::snapshot_marker))
             .unwrap_or(false)
     }
 
@@ -305,28 +205,9 @@ impl DescriptorService {
         let Ok(profile) = self.profile() else {
             return Vec::new();
         };
-        let files = profile
-            .state
-            .files
-            .iter()
-            .filter(|i| i.snapshot_marker)
-            .map(|i| &i.snapshot);
-        let dirs = profile
-            .state
-            .directories
-            .iter()
-            .filter(|i| i.snapshot_marker)
-            .map(|i| &i.snapshot);
-        let values = profile
-            .state
-            .registry_values
-            .iter()
-            .filter(|i| i.snapshot_marker)
-            .map(|i| &i.snapshot);
-        files
-            .chain(dirs)
-            .chain(values)
-            .map(|name| cache_dir.join(name))
+        StateItem::all(&profile.state)
+            .filter(|item| item.snapshot_marker())
+            .map(|item| cache_dir.join(item.snapshot()))
             .collect()
     }
 
@@ -335,21 +216,16 @@ impl DescriptorService {
     /// instead.
     pub(super) fn clear_live_state(&self, app: &dyn AppContext) -> Result<(), String> {
         let runtime = self.runtime(app)?;
-        for item in &runtime.profile.state.files {
-            if item.clear_on_setup {
-                let live = runtime.spec_path(&item.live)?;
-                let _ = fs::remove_file(&live);
-            }
-        }
-        for item in &runtime.profile.state.registry_values {
-            if item.clear_on_setup {
-                reg::delete(item.root, &item.key, &item.value);
-            }
-        }
-        for item in &runtime.profile.state.directories {
-            if item.clear_on_setup {
-                let live = runtime.spec_path(&item.live)?;
-                let _ = fs::remove_dir_all(&live);
+        let state = &runtime.profile.state;
+        for item in StateItem::all(state).filter(|item| item.clear_on_setup()) {
+            match item {
+                StateItem::File(file) => {
+                    let _ = fs::remove_file(runtime.spec_path(&file.live)?);
+                }
+                StateItem::Value(value) => reg::delete(value.root, &value.key, &value.value),
+                StateItem::Dir(dir) => {
+                    let _ = fs::remove_dir_all(runtime.spec_path(&dir.live)?);
+                }
             }
         }
         for template in &runtime.profile.state.caches {
@@ -369,14 +245,12 @@ impl DescriptorService {
         let Ok(cache_dir) = self.snapshot_root(app, account_id) else {
             return;
         };
-        for item in &profile.state.files {
-            delete_encrypted_file_secret(&cache_dir.join(&item.snapshot));
-        }
-        for item in &profile.state.registry_values {
-            delete_encrypted_file_secret(&cache_dir.join(&item.snapshot));
-        }
-        for item in &profile.state.directories {
-            free_dir_secrets(&cache_dir.join(&item.snapshot));
+        for item in StateItem::all(&profile.state) {
+            let snapshot = cache_dir.join(item.snapshot());
+            match item {
+                StateItem::Dir(_) => free_dir_secrets(&snapshot),
+                StateItem::File(_) | StateItem::Value(_) => delete_encrypted_file_secret(&snapshot),
+            }
         }
         let _ = fs::remove_dir_all(&cache_dir);
     }
@@ -483,4 +357,127 @@ impl DescriptorService {
             .iter()
             .all(|condition| self.condition_holds(&runtime, condition, ConditionInput::default()))
     }
+}
+
+/// Drops a snapshot whose live source is gone, so a later restore cannot
+/// resurrect another account's state. Its secret is freed with the file,
+/// never before deciding to drop it: a kept snapshot whose key is gone can no
+/// longer be decrypted.
+fn drop_stale_snapshot(dest: &Path) {
+    delete_encrypted_file_secret(dest);
+    let _ = fs::remove_file(dest);
+}
+
+fn capture_file(live: &Path, item: &FileItem, dest: &Path) -> Result<(), String> {
+    if live.is_file() {
+        snapshot_crypto::replace_encrypted_file(live, dest)?;
+    } else if item.clear_snapshot_when_source_missing {
+        drop_stale_snapshot(dest);
+    }
+    Ok(())
+}
+
+fn capture_dir(live: &Path, item: &DirItem, dest: &Path) -> Result<(), String> {
+    if !live.is_dir() && !item.clear_snapshot_when_source_missing {
+        // The launcher has not written this directory yet. Copying nothing
+        // over the previous capture would leave the account with an empty
+        // snapshot, which restores as a signed-out session.
+        return Ok(());
+    }
+    // The previous capture is replaced only once the whole tree is copied: a
+    // file the launcher still holds open fails the capture and leaves the
+    // account's last good snapshot in place. Its keyring entries (Linux,
+    // macOS) are freed with it.
+    let ignored: Vec<&str> = item.ignored_names.iter().map(String::as_str).collect();
+    snapshot_crypto::replace_encrypted_dir(
+        live,
+        dest,
+        DirCopyOptions {
+            ignored_names: &ignored,
+            follow_symlinks: item.follow_symlinks,
+        },
+    )
+}
+
+/// Decrypts a snapshot file next to its live location. A snapshot the
+/// account does not hold removes the live file when the capture would have
+/// dropped it.
+fn stage_file(
+    item: &FileItem,
+    source: PathBuf,
+    live: PathBuf,
+    steps: &mut Vec<RestoreStep>,
+) -> Result<(), String> {
+    if !source.exists() {
+        if item.clear_snapshot_when_source_missing && live.exists() {
+            steps.push(RestoreStep::RemoveFile { live });
+        }
+        return Ok(());
+    }
+    if let Some(parent) = live.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Could not create directory {}: {e}", parent.display()))?;
+    }
+    let staging = staging_path(&live);
+    let result = decrypted_copy_file(&source, &staging);
+    steps.push(RestoreStep::File {
+        staging,
+        live,
+        remove_live_first: item.remove_live_before_restore,
+    });
+    result
+}
+
+/// Decrypts a registry value snapshot into memory.
+fn stage_value(
+    item: &RegistryItem,
+    source: &Path,
+    steps: &mut Vec<RestoreStep>,
+) -> Result<(), String> {
+    if !source.exists() {
+        if item.clear_snapshot_when_source_missing {
+            steps.push(RestoreStep::RemoveValue { item: item.clone() });
+        }
+        return Ok(());
+    }
+    let bytes = read_decrypted_bytes(source)?;
+    let data = String::from_utf8(bytes).map_err(|_| {
+        format!(
+            "Snapshot of {} is not text",
+            reg::display(item.root, &item.key, &item.value)
+        )
+    })?;
+    steps.push(RestoreStep::Value {
+        item: item.clone(),
+        data: data.trim().to_string(),
+    });
+    Ok(())
+}
+
+/// Decrypts a snapshot directory next to its live location.
+fn stage_dir(
+    item: &DirItem,
+    source: PathBuf,
+    live: PathBuf,
+    steps: &mut Vec<RestoreStep>,
+) -> Result<(), String> {
+    if !source.exists() {
+        if item.clear_snapshot_when_source_missing && live.exists() {
+            steps.push(RestoreStep::RemoveDir { live });
+        }
+        return Ok(());
+    }
+    let staging = staging_path(&live);
+    let _ = fs::remove_dir_all(&staging);
+    let ignored: Vec<&str> = item.ignored_names.iter().map(String::as_str).collect();
+    let result = snapshot_crypto::decrypted_copy_dir(
+        &source,
+        &staging,
+        DirCopyOptions {
+            ignored_names: &ignored,
+            follow_symlinks: item.follow_symlinks,
+        },
+    );
+    steps.push(RestoreStep::Dir { staging, live });
+    result
 }

@@ -1,9 +1,9 @@
-//! The settings store, ported from `src/lib/features/settings/{types,store,
-//! settingsPatch,apiKeyDraft,onboardingConsent}.ts` and the Steam entry of
-//! `platformSettings` (`src/lib/platforms/steam/settingsSchema.ts`).
+//! The settings store: its typed shape, the Steam platform settings, the
+//! draft merge of the settings panel, the API key field and the onboarding
+//! consent.
 //!
-//! [`sanitize_settings`] is the TS `sanitizeSettings`: any JSON in, a full
-//! [`AppSettings`] out, with the same defaults, clamps and legacy keys.
+//! [`sanitize_settings`] takes any JSON and returns a full [`AppSettings`],
+//! with the defaults, clamps and legacy keys older installs wrote.
 
 use crate::i18n::{self, Locale};
 use crate::js;
@@ -64,7 +64,7 @@ pub struct SteamPlatformSettings {
 }
 
 /// The per-platform settings. Only Steam has a schema today; a platform with
-/// none has no entry, as in TS.
+/// none has no entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PlatformSettings {
     pub steam: SteamPlatformSettings,
@@ -114,11 +114,12 @@ const DEFAULT_ENABLED_PLATFORM: &str = "steam";
 const DEFAULT_PLATFORM_ID: &str = "steam";
 const LAUNCH_OPTIONS_MAX: usize = 256;
 
-/// `DEFAULTS.healthCheckPerPlatform`.
+/// The platforms with a network health check, and whether it is on by
+/// default.
 pub const HEALTH_CHECK_DEFAULTS: [(&str, bool); 1] = [("roblox", true)];
 
-/// `DEFAULTS.accountDisplay.showLastLoginPerPlatform`: what each platform
-/// shows for an id missing from storage. Any other platform shows `false`.
+/// Whether each platform shows the last login when storage has no entry
+/// for it. Any other platform shows `false`.
 pub const SHOW_LAST_LOGIN_DEFAULTS: [(&str, bool); 9] = [
     ("steam", false),
     ("riot", false),
@@ -138,8 +139,8 @@ const LEGACY_LAST_LOGIN_KEYS: [(&str, &str); 3] = [
     ("battle-net", "showBattleNetLastLogin"),
 ];
 
-/// `isValidPinHash` (`src/lib/shared/pin.ts`): `salt:hash` in hex (16 and 32
-/// bytes) or the legacy bare 32-byte hash.
+/// True for a stored PIN hash: `salt:hash` in hex (16 and 32 bytes) or the
+/// legacy bare 32-byte hash.
 pub fn is_valid_pin_hash(value: &str) -> bool {
     let hex = |part: &str, len: usize| {
         part.len() == len && part.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -170,8 +171,8 @@ fn has_field(record: Option<&Map<String, Value>>, key: &str) -> bool {
     record.is_some_and(|map| map.contains_key(key))
 }
 
-/// `steamSettingsSchema.sanitize`. Legacy flat keys (`steamRunAsAdmin`,
-/// `steamLaunchOptions`) still resolve.
+/// The Steam settings, every field present. Legacy flat keys
+/// (`steamRunAsAdmin`, `steamLaunchOptions`) still resolve.
 pub fn sanitize_steam_settings(
     raw: Option<&Value>,
     legacy_root: Option<&Map<String, Value>>,
@@ -238,51 +239,96 @@ fn sanitize_health_check(raw: Option<&Map<String, Value>>) -> BTreeMap<String, b
         .collect()
 }
 
-/// `sanitizeSettings`: every field present, every value in range.
-pub fn sanitize_settings(value: &Value, ctx: &StoreContext) -> AppSettings {
-    let raw = js::as_record(Some(value));
-    let raw_data_refresh = js::as_record(field(raw, "dataRefresh"));
-    let raw_platform_settings = js::as_record(field(raw, "platformSettings"));
-    let raw_account_display = js::as_record(field(raw, "accountDisplay"));
+/// A nested setting, or the flat key older installs kept at the root.
+fn nested_or_flat<'a>(
+    nested: Option<&'a Map<String, Value>>,
+    root: Option<&'a Map<String, Value>>,
+    key: &str,
+) -> Option<&'a Value> {
+    js::nullish_or(field(nested, key), field(root, key))
+}
 
-    let mut enabled_platforms: Vec<String> = Vec::new();
+/// The known platforms of `enabledPlatforms`, deduplicated, Steam when none
+/// is left.
+fn sanitize_enabled_platforms(raw: Option<&Map<String, Value>>, ctx: &StoreContext) -> Vec<String> {
+    let mut enabled: Vec<String> = Vec::new();
     if let Some(Value::Array(items)) = field(raw, "enabledPlatforms") {
         for item in items {
-            if let Value::String(id) = item {
-                if ctx.knows_platform(id) && !enabled_platforms.contains(id) {
-                    enabled_platforms.push(id.clone());
-                }
+            let Value::String(id) = item else {
+                continue;
+            };
+            if ctx.knows_platform(id) && !enabled.contains(id) {
+                enabled.push(id.clone());
             }
         }
     }
-    if enabled_platforms.is_empty() {
-        enabled_platforms.push(DEFAULT_ENABLED_PLATFORM.to_string());
+    if enabled.is_empty() {
+        enabled.push(DEFAULT_ENABLED_PLATFORM.to_string());
     }
-    let default_platform_raw =
-        js::as_str(field(raw, "defaultPlatformId")).unwrap_or(DEFAULT_PLATFORM_ID);
-    let default_platform_id = if enabled_platforms
-        .iter()
-        .any(|id| id == default_platform_raw)
-    {
-        default_platform_raw.to_string()
-    } else {
-        enabled_platforms[0].clone()
-    };
+    enabled
+}
 
-    let requested_pin = js::truthy(field(raw, "pinEnabled"));
-    let pin_hash = if requested_pin {
-        sanitize_pin_hash(field(raw, "pinHash"))
+/// The stored default platform when it is enabled, else the first enabled
+/// one.
+fn sanitize_default_platform(raw: Option<&Map<String, Value>>, enabled: &[String]) -> String {
+    let requested = js::as_str(field(raw, "defaultPlatformId")).unwrap_or(DEFAULT_PLATFORM_ID);
+    if enabled.iter().any(|id| id == requested) {
+        requested.to_string()
     } else {
-        String::new()
-    };
-    // An enabled flag without a usable hash protects nothing: setup again.
-    let pin_enabled = requested_pin && !pin_hash.is_empty();
+        enabled[0].clone()
+    }
+}
 
-    let theme_requested = match field(raw, "themeId") {
+/// `(pin_enabled, pin_hash)`. An enabled flag without a usable hash protects
+/// nothing: the PIN is off until it is set up again.
+fn sanitize_pin(raw: Option<&Map<String, Value>>) -> (bool, String) {
+    if !js::truthy(field(raw, "pinEnabled")) {
+        return (false, String::new());
+    }
+    let pin_hash = sanitize_pin_hash(field(raw, "pinHash"));
+    (!pin_hash.is_empty(), pin_hash)
+}
+
+/// The theme the settings ask for: `themeId`, else the light theme of the
+/// older `theme` key, else the default.
+fn requested_theme(raw: Option<&Map<String, Value>>) -> &str {
+    match field(raw, "themeId") {
         Some(Value::String(id)) => id.as_str(),
         _ if js::as_str(field(raw, "theme")) == Some("light") => "light",
         _ => DEFAULT_THEME_ID,
-    };
+    }
+}
+
+fn sanitize_data_refresh(raw: Option<&Map<String, Value>>) -> DataRefreshSettings {
+    let nested = js::as_record(field(raw, "dataRefresh"));
+    let days = |key| js::clamp_int(nested_or_flat(nested, raw, key), 0, 90, 7);
+    DataRefreshSettings {
+        avatar_cache_days: days("avatarCacheDays"),
+        ban_check_days: days("banCheckDays"),
+    }
+}
+
+fn sanitize_account_display(
+    raw: Option<&Map<String, Value>>,
+    ctx: &StoreContext,
+) -> AccountDisplaySettings {
+    let nested = js::as_record(field(raw, "accountDisplay"));
+    AccountDisplaySettings {
+        show_usernames: js::not_false(field(nested, "showUsernames"))
+            && js::not_false(field(raw, "showUsernames")),
+        show_last_login_per_platform: sanitize_show_last_login(nested, ctx),
+        show_card_notes_inline: js::truthy(nested_or_flat(nested, raw, "showCardNotesInline")),
+        expanded_folders: js::truthy(nested_or_flat(nested, raw, "expandedFolders")),
+    }
+}
+
+/// Every field present, every value in range.
+pub fn sanitize_settings(value: &Value, ctx: &StoreContext) -> AppSettings {
+    let raw = js::as_record(Some(value));
+    let raw_platform_settings = js::as_record(field(raw, "platformSettings"));
+    let enabled_platforms = sanitize_enabled_platforms(raw, ctx);
+    let default_platform_id = sanitize_default_platform(raw, &enabled_platforms);
+    let (pin_enabled, pin_hash) = sanitize_pin(raw);
 
     AppSettings {
         language: if has_field(raw, "language") {
@@ -290,7 +336,7 @@ pub fn sanitize_settings(value: &Value, ctx: &StoreContext) -> AppSettings {
         } else {
             i18n::detect_preferred_locale(&ctx.preferred_languages)
         },
-        theme_id: ctx.resolve_theme_id(theme_requested).to_string(),
+        theme_id: ctx.resolve_theme_id(requested_theme(raw)).to_string(),
         background_opacity: js::clamp_int(field(raw, "backgroundOpacity"), 0, 100, 100),
         ui_scale_percent: js::clamp_int(field(raw, "uiScalePercent"), 75, 150, 100),
         animations: match js::as_str(field(raw, "animations")) {
@@ -307,26 +353,7 @@ pub fn sanitize_settings(value: &Value, ctx: &StoreContext) -> AppSettings {
         minimize_on_account_switch: js::truthy(field(raw, "minimizeOnAccountSwitch")),
         start_with_system: js::truthy(field(raw, "startWithSystem")),
         close_to_tray: js::truthy(field(raw, "closeToTray")),
-        data_refresh: DataRefreshSettings {
-            avatar_cache_days: js::clamp_int(
-                js::nullish_or(
-                    field(raw_data_refresh, "avatarCacheDays"),
-                    field(raw, "avatarCacheDays"),
-                ),
-                0,
-                90,
-                7,
-            ),
-            ban_check_days: js::clamp_int(
-                js::nullish_or(
-                    field(raw_data_refresh, "banCheckDays"),
-                    field(raw, "banCheckDays"),
-                ),
-                0,
-                90,
-                7,
-            ),
-        },
+        data_refresh: sanitize_data_refresh(raw),
         enabled_platforms,
         health_check_per_platform: sanitize_health_check(raw),
         personas_enabled: js::not_false(field(raw, "personasEnabled")),
@@ -337,44 +364,32 @@ pub fn sanitize_settings(value: &Value, ctx: &StoreContext) -> AppSettings {
         platform_settings: PlatformSettings {
             steam: sanitize_steam_settings(field(raw_platform_settings, "steam"), raw),
         },
-        account_display: AccountDisplaySettings {
-            show_usernames: js::not_false(field(raw_account_display, "showUsernames"))
-                && js::not_false(field(raw, "showUsernames")),
-            show_last_login_per_platform: sanitize_show_last_login(raw_account_display, ctx),
-            show_card_notes_inline: js::truthy(js::nullish_or(
-                field(raw_account_display, "showCardNotesInline"),
-                field(raw, "showCardNotesInline"),
-            )),
-            expanded_folders: js::truthy(js::nullish_or(
-                field(raw_account_display, "expandedFolders"),
-                field(raw, "expandedFolders"),
-            )),
-        },
+        account_display: sanitize_account_display(raw, ctx),
         pin_enabled,
         pin_hash,
     }
 }
 
-/// `getCacheDuration`: how long a cached avatar stays fresh, in milliseconds
-/// (0 means never cache).
+/// How long a cached avatar stays fresh, in milliseconds (0 means never
+/// cache).
 pub fn cache_duration_ms(settings: &AppSettings) -> u64 {
     let days = settings.data_refresh.avatar_cache_days.max(0) as u64;
     days * 24 * 60 * 60 * 1000
 }
 
-// ------------------------------------------------------------ settingsPatch
+// ------------------------------------------------------------ settings drafts
 
 /// One setting that changed: where it sits and its new value (`None` when the
-/// key is gone, `undefined` in TS).
+/// key is gone).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettingsChange {
     pub path: Vec<String>,
     pub value: Option<Value>,
 }
 
-/// `diffSettings`: every leaf that differs between `before` and `after`.
-/// Objects are walked key by key (sorted, where TS takes `before`'s key order
-/// then `after`'s); lists and scalars are compared and replaced whole.
+/// Every leaf that differs between `before` and `after`. Objects are walked
+/// key by key, in sorted order; lists and scalars are compared and replaced
+/// whole.
 pub fn diff_settings(before: Option<&Value>, after: Option<&Value>) -> Vec<SettingsChange> {
     let mut out = Vec::new();
     diff_into(before, after, &mut Vec::new(), &mut out);
@@ -433,8 +448,8 @@ fn apply_change(target: &mut Map<String, Value>, change: &SettingsChange) {
     }
 }
 
-/// `mergeSettingsDraft` on JSON: `current` with only the leaves the user
-/// changed between `baseline` and `draft`.
+/// [`merge_settings_draft`] on JSON: `current` with only the leaves the
+/// user changed between `baseline` and `draft`.
 pub fn merge_settings_draft_value(current: &Value, baseline: &Value, draft: &Value) -> Value {
     let mut merged = match current {
         Value::Object(map) => map.clone(),
@@ -448,7 +463,7 @@ pub fn merge_settings_draft_value(current: &Value, baseline: &Value, draft: &Val
     Value::Object(merged)
 }
 
-/// `mergeSettingsDraft`: the settings to save from an open panel, so a field
+/// The settings to save from an open panel, so a field
 /// something else wrote meanwhile (zoom shortcut, streamer banner, a PIN hash
 /// upgraded on unlock) is not put back.
 pub fn merge_settings_draft(
@@ -461,7 +476,7 @@ pub fn merge_settings_draft(
     serde_json::from_value(merged)
 }
 
-// ------------------------------------------------------------ apiKeyDraft
+// ------------------------------------------------------------ API key field
 
 /// The API key field after a successful save.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -470,8 +485,8 @@ pub struct ApiKeyDraft {
     pub touched: bool,
 }
 
-/// `apiKeyDraftAfterSuccessfulSave`: clear the field only when it still holds
-/// the key just written; a replacement typed meanwhile stays dirty.
+/// The API key field after a save: cleared only when it still holds the key
+/// just written; a replacement typed meanwhile stays dirty.
 pub fn api_key_draft_after_successful_save(current: &str, saved: &str) -> ApiKeyDraft {
     if js::trim(current) == saved {
         ApiKeyDraft {
@@ -486,7 +501,7 @@ pub fn api_key_draft_after_successful_save(current: &str, saved: &str) -> ApiKey
     }
 }
 
-// ------------------------------------------------------------ onboardingConsent
+// ------------------------------------------------------------ onboarding consent
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OnboardingConsentOutcome {
@@ -494,8 +509,8 @@ pub enum OnboardingConsentOutcome {
     Failed,
 }
 
-/// `completeOnboardingConsent`: a failure stays in the dialog, so the caller
-/// shows it inline instead of a toast.
+/// Saves the onboarding consent. A failure stays in the dialog, so the
+/// caller shows it inline instead of a toast.
 pub fn complete_onboarding_consent<T, E: std::fmt::Display>(
     persist: impl FnOnce() -> Result<T, E>,
 ) -> OnboardingConsentOutcome {

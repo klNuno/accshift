@@ -7,7 +7,10 @@ authors.workspace = true
 
 [dependencies]
 serde = { workspace = true }
-serde_json = { workspace = true }
+# preserve_order: launcher configs rewritten here (Battle.net.config) keep
+# their key order. The GUI already got it through accshift-theme; the CLI and
+# this crate's own tests did not.
+serde_json = { workspace = true, features = ["preserve_order"] }
 reqwest = { workspace = true }
 rustls = { workspace = true }
 thiserror = { workspace = true }
@@ -20,6 +23,11 @@ fs4 = { workspace = true }
 zeroize = { workspace = true }
 pbkdf2 = { workspace = true }
 sha2 = { workspace = true }
+# `os::select_file` / `select_folder`: the dialog stack accshift-app already
+# builds. Default features: the XDG portal, reached through a libdbus loaded at
+# run time, so Linux builds need no GTK.
+rfd = "0.17"
+dirs = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 winreg = { workspace = true }

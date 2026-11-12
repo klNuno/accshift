@@ -1,5 +1,5 @@
-//! The stand-in desktop of `.agents/scripts/record-demo.mjs` (four soft
-//! radial blooms on a dark linear gradient). Only painted for offscreen
+//! The stand-in desktop of the demo recordings (four soft radial blooms
+//! on a dark linear gradient). Only painted for offscreen
 //! captures: the real window shows the OS acrylic instead.
 
 use egui::{Color32, ColorImage};

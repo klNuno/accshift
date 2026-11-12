@@ -200,10 +200,9 @@ fn hash_pin_code_produces_a_verifiable_pbkdf2_hash() {
 // -----------------------------------------------------------------------
 
 // The CLI and the GUI backend read the very file the GUI writes, so a hash
-// produced on either side must verify on the other. These literals also
-// appear in `src/lib/shared/pin.test.ts` ("CLI interoperability"): both
-// suites derive them independently, so a change to iterations, salt
-// length or hex casing on one side breaks the other's test too.
+// produced on either side must verify on the other. These literals were
+// derived outside this code, so a change to iterations, salt length or hex
+// casing fails here before it locks anyone out of a stored PIN.
 #[test]
 fn gui_cross_check_vector_verifies() {
     const SALT_HEX: &str = "000102030405060708090a0b0c0d0e0f";
@@ -420,7 +419,7 @@ fn a_session_starting_with_a_pin_is_locked_until_the_code_matches() {
     let session = PinSession::new();
     assert_pin_locked(session.ensure_unlocked(&tmp.ctx()));
 
-    let now = Instant::now();
+    let now = SystemTime::now();
     assert_eq!(
         session.unlock_at(&tmp.ctx(), &code(1111), now).unwrap(),
         UnlockOutcome::Invalid {
@@ -479,7 +478,7 @@ fn a_legacy_hash_unlocks_and_says_so() {
 fn wrong_codes_are_rate_limited_and_the_wait_grows() {
     let tmp = with_pin("session-rate", 1234);
     let session = PinSession::new();
-    let mut now = Instant::now();
+    let mut now = SystemTime::now();
     for failures in 1..=7u32 {
         let outcome = session.unlock_at(&tmp.ctx(), &code(1111), now).unwrap();
         assert_eq!(
@@ -570,4 +569,252 @@ fn an_unreadable_store_fails_the_gate_closed() {
     // Not the PIN-locked error: a lock screen could not clear it.
     assert_eq!(err.kind, PlatformErrorKind::Io);
     assert!(session.unlock(&tmp.ctx(), &code(1234)).is_err());
+}
+
+#[test]
+fn an_unreadable_store_never_unlocks_the_session() {
+    // Regression: a settings read that failed took the "no PIN" branch and
+    // marked the session unlocked for good.
+    let tmp = with_pin("session-unreadable", 1234);
+    let session = PinSession::new();
+    let ctx = tmp.ctx();
+    let path = client_store_path(&ctx, STORE_SETTINGS).unwrap();
+    let good = fs::read(&path).unwrap();
+    let current: Value = serde_json::from_slice(&good).unwrap();
+    let mut disabled = current.clone();
+    disabled["pinEnabled"] = Value::Bool(false);
+    disabled["pinHash"] = Value::String(String::new());
+
+    fs::write(&path, b"{ not json").unwrap();
+    assert!(matches!(read_pin_lock(&ctx), PinLock::Unreadable(_)));
+    assert!(session.check_settings_write(&ctx, &disabled).is_err());
+
+    // The store reads again: the session is still locked.
+    fs::write(&path, &good).unwrap();
+    assert_pin_locked(session.check_settings_write(&ctx, &disabled));
+
+    // An unlocked session may repair an unreadable store.
+    session.unlock(&ctx, &code(1234)).unwrap();
+    fs::write(&path, b"{ not json").unwrap();
+    session
+        .check_settings_write(&ctx, &current)
+        .expect("an unlocked session repairs the store");
+}
+
+fn throttle_file(ctx: &TestCtx) -> PathBuf {
+    throttle_dir(ctx).unwrap().join(THROTTLE_FILE_NAME)
+}
+
+#[test]
+fn the_wrong_code_wait_survives_a_restart_and_binds_the_cli() {
+    // Regression: the wait lived in the session's memory, so a restart reset
+    // it and the CLI, which has no session, checked codes with no wait.
+    let tmp = with_pin("throttle-persisted", 1234);
+    let ctx = tmp.ctx();
+    let now = SystemTime::now();
+    let first = PinSession::new();
+    // Six wrong codes, each one sent once its wait is over.
+    let mut t = now;
+    for failures in 1..=6u32 {
+        assert_eq!(
+            first.unlock_at(&ctx, &code(1111), t).unwrap(),
+            UnlockOutcome::Invalid {
+                retry_after: failure_delay(failures)
+            }
+        );
+        t += failure_delay(failures);
+    }
+    let last_wait = failure_delay(6);
+    let just_failed = t - last_wait;
+
+    // A new process: a fresh session, then the CLI's entry point.
+    let restarted = PinSession::new();
+    assert_eq!(
+        restarted
+            .unlock_at(&ctx, &code(1234), just_failed + Duration::from_secs(1))
+            .unwrap(),
+        UnlockOutcome::RetryLater {
+            retry_after: last_wait - Duration::from_secs(1)
+        }
+    );
+    assert!(matches!(
+        verify_pin_throttled(
+            &ctx,
+            &code(1234),
+            &pbkdf2_hash_for(1234),
+            just_failed + Duration::from_secs(2)
+        )
+        .unwrap(),
+        ThrottledVerdict::RetryLater(_)
+    ));
+
+    // Once the wait is over the right code unlocks and clears the count.
+    assert_eq!(
+        restarted.unlock_at(&ctx, &code(1234), t).unwrap(),
+        UnlockOutcome::Unlocked { legacy: false }
+    );
+    assert_eq!(
+        read_throttle(&throttle_dir(&ctx).unwrap()),
+        Throttle::default()
+    );
+}
+
+#[test]
+fn a_missing_or_corrupt_throttle_file_is_no_lockout() {
+    let tmp = with_pin("throttle-corrupt", 1234);
+    let ctx = tmp.ctx();
+    let path = throttle_file(&ctx);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, b"{ not json").unwrap();
+    assert_eq!(
+        PinSession::new()
+            .unlock_at(&ctx, &code(1234), SystemTime::now())
+            .unwrap(),
+        UnlockOutcome::Unlocked { legacy: false }
+    );
+
+    fs::remove_file(&path).unwrap();
+    assert_eq!(
+        PinSession::new()
+            .unlock_at(&ctx, &code(1111), SystemTime::now())
+            .unwrap(),
+        UnlockOutcome::Invalid {
+            retry_after: BASE_FAILURE_DELAY
+        }
+    );
+}
+
+#[test]
+fn a_clock_set_backwards_neither_extends_nor_skips_the_wait() {
+    let tmp = with_pin("throttle-clock", 1234);
+    let ctx = tmp.ctx();
+    let wait = failure_delay(7);
+    let now = SystemTime::now();
+    // Seven wrong codes on record, the last one just now.
+    write_throttle(
+        &throttle_dir(&ctx).unwrap(),
+        &Throttle {
+            failures: 7,
+            next_attempt_at_ms: add_ms(unix_ms(now), wait),
+        },
+    );
+
+    // The clock goes back a day: the wait left is the configured one, not a
+    // day plus it, and it is still enforced.
+    let back = now - Duration::from_secs(24 * 3600);
+    let session = PinSession::new();
+    assert_eq!(
+        session.unlock_at(&ctx, &code(1234), back).unwrap(),
+        UnlockOutcome::RetryLater { retry_after: wait }
+    );
+    assert_eq!(
+        session
+            .unlock_at(&ctx, &code(1234), back + wait - Duration::from_millis(1))
+            .unwrap(),
+        UnlockOutcome::RetryLater {
+            retry_after: Duration::from_millis(1)
+        }
+    );
+    // The configured wait after the jump is the whole lockout.
+    assert_eq!(
+        session.unlock_at(&ctx, &code(1234), back + wait).unwrap(),
+        UnlockOutcome::Unlocked { legacy: false }
+    );
+}
+
+#[test]
+fn an_attempt_being_checked_makes_a_parallel_one_wait() {
+    // Regression: the wait booked before the hash kept the old failure
+    // count, and a count of zero cancels any wait, so two first attempts
+    // sent together were both checked.
+    let tmp = with_pin("throttle-parallel", 1234);
+    let ctx = tmp.ctx();
+    let dir = throttle_dir(&ctx).unwrap();
+    let now = SystemTime::now();
+    // The first attempt, stopped where its hash would run.
+    assert!(matches!(
+        book_attempt(&dir, unix_ms(now)).unwrap(),
+        Booking::Booked(_)
+    ));
+    assert_eq!(
+        verify_pin_throttled(&ctx, &code(1111), &pbkdf2_hash_for(1234), now).unwrap(),
+        ThrottledVerdict::RetryLater(BASE_FAILURE_DELAY)
+    );
+}
+
+#[test]
+fn parallel_wrong_codes_count_once_each() {
+    let tmp = with_pin("throttle-count", 1234);
+    let ctx = tmp.ctx();
+    let dir = throttle_dir(&ctx).unwrap();
+    let now = SystemTime::now();
+    let hash = pbkdf2_hash_for(1234);
+    // Three wrong codes, each sent once the wait of the one before is over.
+    let mut t = now;
+    for failures in 1..=3u32 {
+        assert_eq!(
+            verify_pin_throttled(&ctx, &code(1111), &hash, t).unwrap(),
+            ThrottledVerdict::Checked {
+                verdict: PinVerdict::Rejected,
+                retry_after: failure_delay(failures),
+            }
+        );
+        assert_eq!(read_throttle(&dir).failures, failures);
+        t += failure_delay(failures);
+    }
+    // The right code clears the count it booked.
+    assert_eq!(
+        verify_pin_throttled(&ctx, &code(1234), &hash, t).unwrap(),
+        ThrottledVerdict::Checked {
+            verdict: PinVerdict::Accepted,
+            retry_after: Duration::ZERO,
+        }
+    );
+    assert_eq!(read_throttle(&dir), Throttle::default());
+}
+
+// -----------------------------------------------------------------------
+// The PIN a damaged settings file still shows
+// -----------------------------------------------------------------------
+
+#[test]
+fn a_damaged_settings_file_still_shows_its_pin() {
+    let hash = pbkdf2_hash_for(1234);
+    let lock = |text: String| salvage_pin_lock(text.as_bytes());
+    // Cut after the PIN fields.
+    assert_eq!(
+        lock(format!(
+            r#"{{"animations":true,"pinEnabled":true,"pinHash":"{hash}","themeId":"da"#
+        )),
+        Some(PinLock::On(hash.clone()))
+    );
+    // Edited by hand into invalid JSON, with other spacing and case.
+    assert_eq!(
+        lock(format!(
+            "{{\n  \"pinEnabled\" : true,\n  \"pinHash\" : \" {} \",\n  \"themeId\": dark,\n}}",
+            hash.to_uppercase()
+        )),
+        Some(PinLock::On(hash.clone()))
+    );
+    // The flag is cut off but the hash is whole: a hash is only stored
+    // while the PIN is on.
+    assert_eq!(
+        lock(format!(r#"garbage "pinHash":"{hash}""#)),
+        Some(PinLock::On(hash.clone()))
+    );
+    // Written as off: no lock, whatever the hash.
+    assert_eq!(
+        lock(format!(r#"{{"pinEnabled":false,"pinHash":"{hash}","x"#)),
+        Some(PinLock::Off)
+    );
+    // A cut hash verifies nothing, and a file without the fields tells
+    // nothing.
+    assert_eq!(lock(r#"{"pinEnabled":true,"pinHash":"abcd"#.into()), None);
+    assert_eq!(lock(r#"{"animations":true,"them"#.into()), None);
+    assert_eq!(salvage_pin_lock(&[0u8; 64]), None);
+    // A key quoted inside another value is not the field.
+    assert_eq!(
+        lock(format!(r#"{{"note":"\"pinHash\":\"{hash}\"","x"#)),
+        None
+    );
 }

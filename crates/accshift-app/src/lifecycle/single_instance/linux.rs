@@ -1,4 +1,4 @@
-//! platform_impl/linux.rs of `tauri-plugin-single-instance` 2.4.4: own the
+//! Linux: own the
 //! D-Bus name `{id}.SingleInstance`, or call `ExecuteCallback` on whoever
 //! owns it.
 
@@ -11,7 +11,7 @@ struct SingleInstanceDBus {
     notify: Notify,
 }
 
-/// linux.rs lines 17-27.
+/// The D-Bus object a second launch calls.
 #[interface(name = "org.SingleInstance.DBus")]
 impl SingleInstanceDBus {
     fn execute_callback(&mut self, argv: Vec<String>, cwd: String) {
@@ -19,8 +19,7 @@ impl SingleInstanceDBus {
     }
 }
 
-/// The connection that owns the name. Dropping it is `destroy`
-/// (linux.rs lines 103-113): release the name.
+/// The connection that owns the name. Dropping it releases the name.
 pub struct Guard {
     connection: Option<Connection>,
     name: String,
@@ -36,7 +35,7 @@ impl Drop for Guard {
     }
 }
 
-/// linux.rs lines 29-99.
+/// Owns the D-Bus name, or forwards the launch to its owner.
 pub(super) fn acquire(
     identifier: &str,
     args: &[String],
@@ -44,8 +43,7 @@ pub(super) fn acquire(
     notify: Notify,
 ) -> PlatformLaunch {
     let (dbus_name, dbus_path) = dbus_name_and_path(identifier);
-    // Upstream unwraps these three: no session bus panics the app. Here
-    // that case runs without single instance.
+    // Without a session bus the app runs without single instance.
     let built = zbus::blocking::connection::Builder::session()
         .and_then(|builder| builder.name(dbus_name.as_str()))
         .map(|builder| {

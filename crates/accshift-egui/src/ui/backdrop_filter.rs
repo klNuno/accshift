@@ -1,7 +1,6 @@
 //! `backdrop-filter: blur()`: marks in the shape stream that the software
 //! renderer turns into a blurred layer (`egui_software_backend::backdrop`
-//! has the model). The glow build adds no mark (egui_glow would warn on
-//! each one every frame): the layer's shapes draw as they are, unblurred.
+//! has the model).
 
 use std::sync::Arc;
 
@@ -44,9 +43,6 @@ pub enum Mark {
 impl Mark {
     /// Adds the mark to `painter`'s layer.
     pub fn paint(self, painter: &Painter, rect: Rect) {
-        if cfg!(feature = "glow") {
-            return;
-        }
         painter.add(Shape::Callback(PaintCallback {
             rect,
             callback: Arc::new(self),

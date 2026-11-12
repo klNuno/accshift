@@ -1,5 +1,5 @@
-//! Deep links (`deepLinkUrl.test.ts`, `useDeepLink.test.ts`, the boot.rs
-//! tests, the plugin's argument and registry handling) and the single
+//! Deep links (URL parsing, the controller, the boot handling, the argument
+//! and registry handling) and the single
 //! instance service, run with a test identifier only.
 
 use accshift_app::lifecycle::deep_link::{
@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use url::Url;
 
 // ---------------------------------------------------------------------------
-// parseDeepLink (deepLinkUrl.test.ts)
+// URL parsing
 
 fn parsed(url: &str) -> Option<(String, String)> {
     parse_deep_link(url).map(|r| (r.platform_id, r.account_ref))
@@ -343,7 +343,7 @@ fn the_windows_registry_round_trips_a_test_scheme() {
 }
 
 // ---------------------------------------------------------------------------
-// findAccount and the controller (useDeepLink.test.ts)
+// Account lookup and the controller
 
 fn account(id: &str, username: &str, display_name: &str) -> PlatformAccount {
     PlatformAccount {
@@ -378,8 +378,8 @@ fn settings(enabled: bool) -> AppSettings {
     )
 }
 
-/// The app as the controller sees it, answering each action like the TS
-/// mocks, and recording them.
+/// The app as the controller sees it, answering each action with canned
+/// values, and recording them.
 struct App {
     settings: AppSettings,
     registry: PlatformRegistry,
@@ -392,7 +392,8 @@ struct App {
     events: Vec<String>,
     boot_ready: bool,
     pin_locked: bool,
-    /// changeTab does not load the new tab (the TS "has not read it yet" case).
+    /// A tab change does not load the new tab (the "has not read it yet"
+    /// case).
     lazy_tab_load: bool,
 }
 
@@ -550,6 +551,74 @@ fn it_asks_before_it_changes_the_visible_tab() {
             "switch:account-1",
         ]
     );
+}
+
+#[test]
+fn a_tab_change_while_the_links_loader_is_busy_loads_its_platform() {
+    tab_change_during_lookup(true);
+}
+
+#[test]
+fn a_tab_change_while_the_link_reloads_loads_its_platform() {
+    tab_change_during_lookup(false);
+}
+
+fn tab_change_during_lookup(waiting_for_loader: bool) {
+    let mut app = App::new("steam");
+    app.visible.clear();
+    let mut controller = started();
+    let now = Instant::now();
+    controller.on_urls(&["accshift://switch/steam/alice"], now);
+    let initial = controller.poll(
+        &DeepLinkView {
+            loader_loading: waiting_for_loader,
+            ..app.view()
+        },
+        now,
+    );
+    if waiting_for_loader {
+        assert!(initial.is_empty());
+    } else {
+        assert_eq!(initial, [DeepLinkAction::LoadAccounts]);
+    }
+
+    app.active_tab = "riot".into();
+    app.visible = vec![account("riot-alice", "alice", "Riot Alice")];
+    let actions = if waiting_for_loader {
+        controller.poll(&app.view(), now)
+    } else {
+        controller.answer(DeepLinkAnswer::AccountsLoaded, &app.view(), now)
+    };
+    assert_eq!(
+        actions,
+        [DeepLinkAction::LoadPlatformAccounts("steam".into())]
+    );
+    let steam_accounts = app.loaded["steam"].clone();
+    let alice = steam_accounts[0].clone();
+    assert_eq!(
+        controller.answer(
+            DeepLinkAnswer::PlatformAccounts(steam_accounts.clone()),
+            &app.view(),
+            now,
+        ),
+        [DeepLinkAction::Confirm {
+            account: alice.clone(),
+            platform_name: "Steam".into(),
+        }]
+    );
+    assert_eq!(app.active_tab, "riot");
+    assert_eq!(
+        controller.answer(DeepLinkAnswer::Confirmed(true), &app.view(), now),
+        [DeepLinkAction::ChangeTab("steam".into())]
+    );
+    app.active_tab = "steam".into();
+    app.visible = steam_accounts;
+    assert_eq!(
+        controller.answer(DeepLinkAnswer::TabChanged, &app.view(), now),
+        [DeepLinkAction::Switch(alice)]
+    );
+    controller.answer(DeepLinkAnswer::Switched(true), &app.view(), now);
+    assert!(!controller.is_busy());
 }
 
 #[test]
@@ -773,6 +842,72 @@ fn a_second_instance_forwards_its_arguments_to_the_first() {
         Launch::Primary(_) => {}
         other => panic!("after release: {other:?}"),
     }
+}
+
+/// The update relaunch frees the guard while the service still lives (the
+/// process exits without dropping it): the next launch must become the
+/// primary instead of forwarding to a process about to exit.
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn the_releaser_frees_the_name_before_the_service_drops() {
+    let identifier = test_identifier("release");
+    let first = match single_instance::acquire(&identifier, &["first.exe".into()], "", None) {
+        Launch::Primary(service) => service,
+        other => panic!("first launch: {other:?}"),
+    };
+    first.releaser()();
+    match single_instance::acquire(&identifier, &["relaunched.exe".into()], "", None) {
+        Launch::Primary(_) => {}
+        other => panic!("after release: {other:?}"),
+    }
+    drop(first);
+}
+
+/// A relaunch that starts no process leaves the app open: it must still be
+/// the single instance, so the next launch is forwarded to it instead of
+/// opening a second app on the same data.
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn a_failed_relaunch_keeps_the_app_the_single_instance() {
+    use accshift_app::lifecycle::process::{self, ProcessControl};
+    use std::ffi::OsString;
+    use std::path::{Path, PathBuf};
+
+    struct NoSpawn;
+    impl ProcessControl for NoSpawn {
+        fn spawn(&self, _: &Path, _: &[OsString]) -> std::io::Result<()> {
+            Err(std::io::ErrorKind::NotFound.into())
+        }
+        fn exit(&self, _: i32) {
+            panic!("a failed relaunch must not exit");
+        }
+    }
+
+    let identifier = test_identifier("failed-relaunch");
+    let first = match single_instance::acquire(&identifier, &["first.exe".into()], "", None) {
+        Launch::Primary(service) => service,
+        other => panic!("first launch: {other:?}"),
+    };
+    process::restart(
+        &NoSpawn,
+        Ok(PathBuf::from("missing")),
+        &[],
+        first.releaser(),
+        first.restorer(),
+        || {},
+    )
+    .unwrap_err();
+
+    let second = ["second.exe".to_string(), "--flag".to_string()];
+    match single_instance::acquire(&identifier, &second, "", None) {
+        Launch::Forwarded => {}
+        other => panic!("launch after a failed relaunch: {other:?}"),
+    }
+    let received = first
+        .receiver()
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the second launch reaches the first service");
+    assert_eq!(received.args, second);
 }
 
 /// The other process of [`a_second_process_reaches_the_first`]; it only runs

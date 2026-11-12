@@ -153,6 +153,18 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: node crates/accshift-egui/bundle/bundle.mjs
 
+      # The installer must pack the signed executable byte for byte: a bundler
+      # that rewrites it (the bundle type marker) leaves an invalid signature
+      # that only shows on the user's machine.
+      - name: Check the packed executable is still signed
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        shell: pwsh
+        run: |
+          $packed = "target/x86_64-pc-windows-msvc/release/accshift-gui.exe"
+          if ((Get-AuthenticodeSignature $packed).Status -ne "Valid") {
+            throw "$packed lost its signature while bundling"
+          }
+
       - name: Upload the installer to sign
         id: unsigned_installer
         if: vars.SIGNPATH_ORGANIZATION_ID != ''
@@ -428,6 +440,7 @@ jobs:
             echo "CLI binary not found at $cli" >&2
             exit 1
           fi
+          mkdir -p target/release/bundle
           cp "$cli" "target/release/bundle/accshift-cli_${version}_linux_x86_64"
 
       - name: Upload Linux artifacts
@@ -493,6 +506,7 @@ jobs:
             echo "CLI binary not found at $cli" >&2
             exit 1
           fi
+          mkdir -p target/release/bundle
           cp "$cli" "target/release/bundle/accshift-cli_${version}_macos_aarch64"
 
       - name: Upload macOS artifacts
@@ -597,7 +611,7 @@ jobs:
           # The bundle a v2 updater expects per OS: the NSIS installer on
           # Windows, the AppImage on Linux (the .tar.gz wrapper is only
           # produced in v1-compatible mode), the .app tarball on macOS.
-          add_platform windows-x86_64 '*-setup.exe' '*.msi'
+          add_platform windows-x86_64 '*-setup.exe'
           add_platform linux-x86_64 '*.AppImage.tar.gz' '*.AppImage'
           add_platform darwin-aarch64 '*.app.tar.gz'
 
@@ -638,7 +652,7 @@ jobs:
 
           ## Install notes
 
-          - **Windows**: run the `.exe` (NSIS) or `.msi` installer.
+          - **Windows**: run the `-setup.exe` installer.
           - **Linux**: install the `.deb` / `.rpm`, or `chmod +x` the `.AppImage` and run it.
           - **macOS** (Apple Silicon): the app is not yet notarized. After copying Accshift.app to Applications, clear the quarantine flag once: `xattr -cr /Applications/Accshift.app`.
           EOF

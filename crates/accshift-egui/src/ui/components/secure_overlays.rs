@@ -1,35 +1,34 @@
-//! The secure screen: the `.inactivity-frost` of `App.svelte`, the AFK
-//! cover and the PIN lock of `AppScreenOverlays.svelte`, and the streamer
-//! mode overlay.
+//! The secure screen: the frost over an idle window, the AFK cover, the PIN
+//! lock and the streamer mode overlay.
 //!
 //! ```text
-//! .inactivity-frost    inset 0 in .app-shell, z 40: --bg 48% to 62%,
-//!                      top to bottom; opacity 620 ms ease-in-out in,
-//!                      220 ms ease-out out
-//! .inactive-overlay    inset 0 over the stage, z 300, opacity 900 ms
-//!   .accshift-text     centred, clamp(28px, min(13vw, 20vh), 170px), line
-//!                      height 1; opacity .92 after --afk-reveal-delay
-//!     WaveText         VT323 1.18em/700, line height .9, letter-spacing
-//!                      .03em, --afk-text at 35% with two glows; one
-//!                      inline-block per letter, `contain: paint`
-//! .afk-version-strip   bottom 18 px, z 320: 11 px/600, letter-spacing
-//!                      .08em, opacity .25 and 8 px up over 1200 ms after
-//!                      the same delay, gone at once
-//! .pin-lock-overlay    inset 0 over the stage, rgba(0, 0, 0, .35), the
-//!                      card centred both ways; opacity 240 ms ease-in-out
-//!                      while it unlocks
-//!   .overlay-win-btns  top right, two 36 px buttons
-//!   .pin-card          min(320px, 86vw), padding 18, radius 12, border 1
-//!                      --border, --bg-card, column gap 10,
-//!                      0 20px 40px rgba(0, 0, 0, .45)
-//! .streamer-overlay    StreamerModeOverlay.svelte, inset 0 over the stage,
-//!                      z 400, --bg at 72%, opacity 320 ms ease-in-out
-//!   .overlay-win-btns  as on the PIN lock
-//!   .streamer-panel    centred column, gap 18, padding 0 24
-//!     .streamer-title  clamp(26px, min(11vw, 16vh), 120px), line height 1,
-//!                      a WaveText
-//!     .streamer-actions  two .streamer-btn 10 px apart: 12 px/600,
-//!                      padding 9 16, border 1, radius 8
+//! frost            over the app shell: the background colour at 48% to
+//!                  62%, top to bottom; fades in over 620 ms ease-in-out,
+//!                  out over 220 ms ease-out
+//! AFK cover        over the stage, fades over 900 ms
+//!   wordmark       centred, clamp(28, min(13% of the width, 20% of the
+//!                  height), 170) px, line height 1; 0.92 opaque after the
+//!                  reveal delay
+//!     wave text    the pixel font at 1.18 times that, weight 700, line
+//!                  height 0.9, letter spacing 0.03em, the AFK text colour
+//!                  at 35% with two glows; one box per letter, clipped to it
+//! version strip    18 px from the bottom: 11 px, weight 600, letter
+//!                  spacing 0.08em; 0.25 opaque and 8 px up over 1200 ms
+//!                  after the same delay, gone at once
+//! PIN lock         over the stage, black at 35%, the card centred both
+//!                  ways; fades over 240 ms ease-in-out while it unlocks
+//!   caption        top right, two 36 px buttons
+//!   card           min(320 px, 86% of the width), padding 18, radius 12,
+//!                  a 1 px theme border, the card background, rows 10 px
+//!                  apart, a shadow 20 px down, 40 px blur, black at 45%
+//! streamer mode    over the stage, the background colour at 72%, fades
+//!                  over 320 ms ease-in-out
+//!   caption        as on the PIN lock
+//!   panel          a centred column, gap 18, 24 px side padding
+//!     title        clamp(26, min(11% of the width, 16% of the height), 120)
+//!                  px, line height 1, a wave text
+//!     actions      two buttons 10 px apart: 12 px, weight 600, padding
+//!                  9 16, 1 px border, radius 8
 //! ```
 
 use accshift_app::i18n::{translate, Locale};
@@ -43,55 +42,54 @@ use super::controls::button::{self, ButtonProps, ButtonStyle, Transitions};
 use super::controls::text_input::{self, FieldStyle, InputKind, TextInputProps};
 use super::controls::FocusCtx;
 use super::icon;
+use super::shared::{ceil_unit, linear_gradient};
 use crate::app::vars::Vars;
 use crate::icons;
 use crate::theme::Rgba;
 use crate::ui::anim::{self, Timing, Transition};
-use crate::ui::css;
 use crate::ui::paint::{Border, BoxShadow, BoxStyle, Corners};
 use crate::ui::snap;
 use crate::ui::text::{self, LineHeight, TextAlign, TextStyle, TextTransform, PIXEL_STACK};
 use crate::ui::text_shadow::{self, TextShadow};
 
-/// `.inactivity-frost.visible { transition: opacity 620ms ease-in-out }`.
+/// The frost fading in.
 const T_FROST_IN: Transition = Transition::new(0.62, Timing::EASE_IN_OUT);
-/// `.inactivity-frost { transition: opacity 220ms ease-out }`.
+/// The frost fading out.
 const T_FROST_OUT: Transition = Transition::new(0.22, Timing::EASE_OUT);
-/// `.pin-lock-overlay { transition: opacity 240ms ease-in-out }`, and the
-/// card's transform and opacity while it unlocks.
+/// The PIN lock fading out as it unlocks, its card sliding and shrinking.
 const T_UNLOCK: Transition = Transition::new(0.24, Timing::EASE_IN_OUT);
-/// `.overlay-win-btn { transition: background 120ms }`.
+/// A caption button's background on hover.
 const T_BUTTON: Transition = Transition::new(0.12, Timing::EASE);
-/// `.pin-input:focus { border-color: #eab308 }`.
+/// The PIN field's border while it has focus.
 const FOCUS: Rgba = Rgba::new(234.0, 179.0, 8.0, 1.0);
 
-/// `.inactive-overlay` and `.accshift-text { transition: opacity 900ms
-/// ease-in-out }`.
+/// The AFK cover and its wordmark fading.
 const T_AFK: Transition = Transition::new(0.9, Timing::EASE_IN_OUT);
-/// `.afk-version-strip.visible { transition: opacity 1200ms ease-in-out,
-/// transform 1200ms ease-in-out }`.
+/// The version strip fading in and rising.
 const T_STRIP: Transition = Transition::new(1.2, Timing::EASE_IN_OUT);
-/// `WaveText` defaults: 22 px, 0.3 turns a second, 0.7 rad per letter.
+/// The wave: 22 px high, 0.3 turns a second, 0.7 rad from one letter to
+/// the next.
 const WAVE_AMPLITUDE: f32 = 22.0;
 const WAVE_SPEED: f64 = 0.3;
 const WAVE_PHASE_STEP: f64 = 0.7;
 /// The AFK wordmark.
 const WORDMARK: &str = "ACCSHIFT";
 
-/// `.streamer-overlay { transition: opacity 320ms ease-in-out }`.
+/// The streamer overlay fading.
 const T_STREAMER: Transition = Transition::new(0.32, Timing::EASE_IN_OUT);
-/// `.streamer-panel` gap and side padding, `.streamer-actions` gap.
+/// The streamer panel's row gap and side padding, and the gap between its
+/// buttons.
 const PANEL_GAP: f32 = 18.0;
 const PANEL_PAD: f32 = 24.0;
 const ACTIONS_GAP: f32 = 10.0;
 
-/// `.pin-card` padding and gap.
+/// The PIN card's padding and row gap.
 const CARD_PAD: f32 = 18.0;
 const CARD_GAP: f32 = 10.0;
-/// `.overlay-win-btn`: 36 px square.
+/// A caption button's side.
 const WIN_BUTTON: f32 = 36.0;
 
-/// `.inactivity-frost` over `rect`, at its transitioned opacity.
+/// The frost over `rect`, at its transitioned opacity.
 pub fn frost(ui: &Ui, rect: Rect, visible: bool, v: &Vars) {
     let ctx = ui.ctx();
     let spec = if visible { &T_FROST_IN } else { &T_FROST_OUT };
@@ -99,12 +97,11 @@ pub fn frost(ui: &Ui, rect: Rect, visible: bool, v: &Vars) {
     if opacity <= 0.0 {
         return;
     }
-    let css_rgba = |c: Rgba| format!("rgba({}, {}, {}, {})", c.r, c.g, c.b, c.a);
-    let gradient = css::gradient(&format!(
-        "linear-gradient(to bottom, {}, {})",
-        css_rgba(v.bg.mix(0.48, Rgba::TRANSPARENT)),
-        css_rgba(v.bg.mix(0.62, Rgba::TRANSPARENT)),
-    ));
+    let gradient = linear_gradient(
+        "to bottom",
+        v.bg.mix(0.48, Rgba::TRANSPARENT),
+        v.bg.mix(0.62, Rgba::TRANSPARENT),
+    );
     BoxStyle {
         images: gradient.into_iter().collect(),
         opacity,
@@ -115,25 +112,20 @@ pub fn frost(ui: &Ui, rect: Rect, visible: bool, v: &Vars) {
 
 pub struct AfkProps<'a> {
     pub vars: &'a Vars,
-    /// `afkOverlayVisible`.
+    /// The AFK cover is up.
     pub visible: bool,
-    /// `afkWaveActive && !motionPaused`.
+    /// The wordmark may wave: the wave is on and motion is not paused.
     pub wave: bool,
-    /// `--afk-reveal-delay`, seconds.
+    /// Seconds before the wordmark and the version strip show.
     pub reveal_delay: f64,
-    /// `afkVersionLabel`.
+    /// The version strip's text, if any.
     pub version: Option<&'a str>,
 }
 
-/// `WaveText`'s `frame`: letter `i` at `t` seconds into the wave.
+/// How far letter `i` sits from its rest, `t` seconds into the wave.
 fn wave_offset(t: f64, i: usize) -> f32 {
     let omega = WAVE_SPEED * std::f64::consts::TAU;
     ((t * omega + i as f64 * WAVE_PHASE_STEP).sin() as f32) * WAVE_AMPLITUDE
-}
-
-/// A width as Blink sizes a shrink-to-fit box: rounded up to LayoutUnits.
-fn fit_width(w: f32, ppp: f32) -> f32 {
-    (w * ppp * 64.0).ceil() / 64.0 / ppp
 }
 
 /// Where an inline-block of line box `inner` sits in a line whose strut is
@@ -144,7 +136,7 @@ fn on_baseline(strut: text::LineBox, inner: text::LineBox) -> (f32, f32) {
     (above + below, above - inner.baseline)
 }
 
-/// `WaveText` in a parent of font size `size` and `line-height: 1`: one
+/// A waving text in a parent of font size `size` and line height 1: one
 /// inline-block per letter, all on the parent's baseline.
 struct WaveText {
     letters: Vec<String>,
@@ -169,14 +161,14 @@ impl WaveText {
             .letter_spacing_px(0.03 * wave_size)
             .transform(TextTransform::Uppercase)
             .nowrap(false);
-        // `{ch === " " ? "\u00A0" : ch}`.
+        // A space becomes a no-break space, so it keeps its width.
         let letters: Vec<String> = text
             .chars()
             .map(|c| if c == ' ' { '\u{a0}' } else { c }.to_string())
             .collect();
         let widths = letters
             .iter()
-            .map(|c| text::measure(ctx, c, &style).map(|w| fit_width(w, ppp)))
+            .map(|c| text::measure(ctx, c, &style).map(|w| ceil_unit(w, ppp)))
             .collect::<Option<Vec<f32>>>()?;
         let letter = style.line_box(ctx)?;
         let (height, inner_top) = on_baseline(strut.line_box(ctx)?, letter);
@@ -194,8 +186,8 @@ impl WaveText {
         self.widths.iter().sum()
     }
 
-    /// The letters from `at` (the parent line's top left), `--afk-text` at
-    /// 35% with two glows, each clipped to its letter (`contain: paint`).
+    /// The letters from `at` (the parent line's top left), the AFK text
+    /// colour at 35% with two glows, each clipped to its letter box.
     /// `space` is the origin of the nearest transformed ancestor; `wave_t`
     /// is [`wave_clock`], `None` at rest.
     fn paint(&self, ui: &Ui, space: Pos2, at: Pos2, wave_t: Option<f64>, afk: Rgba, opacity: f32) {
@@ -219,7 +211,7 @@ impl WaveText {
         let mut x = at.x;
         for (i, (letter, w)) in self.letters.iter().zip(&self.widths).enumerate() {
             let dy = wave_t.map_or(0.0, |t| wave_offset(t, i));
-            // `translate3d` makes each letter a composited layer, and Blink
+            // Each letter is a composited layer of its own, and Blink
             // rounds such a layer's paint offset to the device grid of its
             // transform space (measured on the streamer title: -0.5 to +0.5
             // device px against the bare position).
@@ -235,9 +227,9 @@ impl WaveText {
     }
 }
 
-/// `WaveText`'s clock: seconds since the wave started, `None` while the
-/// letters rest (inactive, reduced motion, or before `delay`, which the
-/// clock counts: `startMs = now - startDelayMs`).
+/// The wave's clock: seconds since the wave started, `None` while the
+/// letters rest (inactive, reduced motion, or before `delay`). The delay
+/// counts on the clock, so the letters start mid-swing.
 fn wave_clock(ctx: &Context, id: Id, active: bool, delay: f64) -> Option<f64> {
     let now = ctx.input(|i| i.time);
     let waving = active && anim::motion(ctx) == anim::Motion::Full;
@@ -260,7 +252,7 @@ fn wave_clock(ctx: &Context, id: Id, active: bool, delay: f64) -> Option<f64> {
     }
 }
 
-/// The AFK cover (`.inactive-overlay`) and the version strip over `stage`.
+/// The AFK cover and the version strip over `stage`.
 pub fn afk_overlay(ui: &Ui, stage: Rect, props: &AfkProps) {
     let ctx = ui.ctx();
     let ppp = ctx.pixels_per_point();
@@ -274,8 +266,8 @@ pub fn afk_overlay(ui: &Ui, stage: Rect, props: &AfkProps) {
     };
     let target = if props.visible { 0.92 } else { 0.0 };
     let text_opacity = anim::transition(ctx, id.with("text"), target, &reveal);
-    // `WaveText startDelayMs={revealDelay}`: the letters rest until the
-    // reveal, then ride a clock that started with the wave.
+    // The letters rest until the reveal, then ride a clock that started
+    // with the wave.
     let wave_t = wave_clock(ctx, id.with("wave"), props.wave, props.reveal_delay);
 
     let opacity = overlay * text_opacity;
@@ -285,15 +277,15 @@ pub fn afk_overlay(ui: &Ui, stage: Rect, props: &AfkProps) {
             .min(0.2 * viewport.height())
             .clamp(28.0, 170.0);
         if let Some(wave) = WaveText::new(ctx, WORDMARK, size) {
-            // `.accshift-text`: `left: 50%; top: 50%` then `translate(-50%,
-            // -50%)`, a transform space of its own.
+            // Centred on the stage by a transform: a transform space of its
+            // own.
             let at = stage.center() - vec2(wave.width(), wave.height) / 2.0;
             wave.paint(ui, at, at, wave_t, v.afk_text, opacity);
         }
     }
 
-    // `.afk-version-strip`: its transition only exists while visible, so
-    // it snaps away.
+    // The version strip fades in, but its fade only runs while it is
+    // visible: it vanishes at once.
     let strip_id = id.with("strip");
     let Some(version) = props.version else {
         ctx.data_mut(|d| d.insert_temp(strip_id, anim::TransitionState::settled(0.0f32)));
@@ -311,7 +303,7 @@ pub fn afk_overlay(ui: &Ui, stage: Rect, props: &AfkProps) {
     ) else {
         return;
     };
-    let w = fit_width(w, ppp);
+    let w = ceil_unit(w, ppp);
     let (height, inner_top) = on_baseline(strut_box, span_box);
     let top = stage.bottom() - 18.0 - height + inner_top + 8.0 * (1.0 - shown);
     let r = Rect::from_min_size(
@@ -339,14 +331,14 @@ pub fn afk_overlay(ui: &Ui, stage: Rect, props: &AfkProps) {
     }
 }
 
-/// A caption button of `.overlay-win-btns`.
+/// A caption button of the overlays.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Caption {
     Minimize,
     Close,
 }
 
-/// `.overlay-win-btns`: the overlay covers the title bar, so it brings
+/// The caption buttons' box: the overlay covers the title bar, so it brings
 /// its own minimize and close, 36 px each, top right.
 fn win_buttons_rect(window: Rect) -> Rect {
     Rect::from_min_max(
@@ -355,8 +347,25 @@ fn win_buttons_rect(window: Rect) -> Rect {
     )
 }
 
+/// Whether a primary drag started on the overlay's backdrop, away from the
+/// controls `on_control` names: the overlay covers the title bar, so its
+/// backdrop moves the window.
+fn backdrop_drag_started(
+    layer: &Ui,
+    rect: Rect,
+    id: Id,
+    on_control: impl Fn(Pos2) -> bool,
+) -> bool {
+    let back = layer.interact(rect, id, Sense::click_and_drag());
+    let on_backdrop = layer
+        .ctx()
+        .pointer_interact_pos()
+        .is_some_and(|p| !on_control(p));
+    back.drag_started_by(PointerButton::Primary) && on_backdrop
+}
+
 /// Draws the caption buttons; the one clicked, if any. `live` is false
-/// under `pointer-events: none`.
+/// while the overlay takes no pointer input.
 fn win_buttons(
     layer: &mut Ui,
     window: Rect,
@@ -397,7 +406,7 @@ fn win_buttons(
         layer
             .painter()
             .rect_filled(snap::rect(r, ppp), 0.0, bg.to_color32());
-        // `color: var(--fg-muted); opacity: .7`, `--fg` at full on hover.
+        // The muted foreground at 70%, the full foreground on hover.
         let fg = if hovered {
             v.fg
         } else {
@@ -419,11 +428,11 @@ fn win_buttons(
 pub struct StreamerProps<'a> {
     pub vars: &'a Vars,
     pub locale: Locale,
-    /// `streamerMode.active`.
+    /// Streamer mode is on.
     pub active: bool,
-    /// `!motionPaused`: the title may wave.
+    /// Motion is not paused: the title may wave.
     pub motion: bool,
-    /// `:focus-visible` for the buttons.
+    /// The buttons show their keyboard focus ring.
     pub focus_visible: bool,
 }
 
@@ -431,7 +440,7 @@ pub struct StreamerProps<'a> {
 pub enum StreamerEvent {
     /// "Disable": hidden until the stream ends.
     Dismiss,
-    /// "Disable permanently": `streamerMode: "off"`.
+    /// "Disable permanently": streamer mode turns off in the settings.
     DisablePermanently,
     Minimize,
     Close,
@@ -439,9 +448,9 @@ pub enum StreamerEvent {
     StartDrag,
 }
 
-/// `.streamer-btn`, or `.streamer-btn.subtle`: transparent, `--fg-muted`
-/// until hovered (its background stays transparent: `.subtle` comes after
-/// `:hover` at the same specificity).
+/// A streamer overlay button, or its subtle variant: transparent, in the
+/// muted foreground until hovered (its background stays transparent on
+/// hover too).
 fn streamer_button_style(v: &Vars, subtle: bool) -> ButtonStyle {
     ButtonStyle {
         font: TextStyle::new(12.0, 600).line_height(LineHeight::Px(18.0)),
@@ -464,7 +473,7 @@ fn streamer_button_style(v: &Vars, subtle: bool) -> ButtonStyle {
         color_hover: v.fg,
         underline_hover: false,
         disabled_opacity: 1.0,
-        // `border-color` and `background`: the subtle colour switches at once.
+        // Border and background fade; the subtle text colour switches at once.
         transitions: Transitions {
             background: true,
             border: true,
@@ -473,7 +482,7 @@ fn streamer_button_style(v: &Vars, subtle: bool) -> ButtonStyle {
     }
 }
 
-/// `StreamerModeOverlay` over `stage`. Always called: it fades out.
+/// The streamer overlay over `stage`. Always called: it fades out.
 pub fn streamer_overlay(ui: &mut Ui, stage: Rect, props: &StreamerProps) -> Vec<StreamerEvent> {
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
@@ -507,7 +516,7 @@ pub fn streamer_overlay(ui: &mut Ui, stage: Rect, props: &StreamerProps) -> Vec<
     let sizes = actions
         .each_ref()
         .map(|(label, style, _)| button::size(&ctx, label, style));
-    // `.streamer-panel`: a centred column, each child centred in it.
+    // The panel: a centred column, each child centred in it.
     let actions_w = sizes[0].x + ACTIONS_GAP + sizes[1].x;
     let actions_h = sizes[0].y.max(sizes[1].y);
     let content_w = title.width().max(actions_w);
@@ -528,15 +537,12 @@ pub fn streamer_overlay(ui: &mut Ui, stage: Rect, props: &StreamerProps) -> Vec<
 
     let mut layer = ui.new_child(UiBuilder::new().max_rect(stage));
     layer.multiply_opacity(opacity);
-    // `pointer-events: none` and `inert` while hidden.
+    // No pointer or keyboard input while hidden.
     let live = props.active;
     if live {
-        let back = layer.interact(stage, id, Sense::click_and_drag());
         let buttons = win_buttons_rect(stage);
-        let on_backdrop = ctx
-            .pointer_interact_pos()
-            .is_some_and(|p| !buttons.contains(p) && !rects.iter().any(|r| r.contains(p)));
-        if back.drag_started_by(PointerButton::Primary) && on_backdrop {
+        let on_control = |p: Pos2| buttons.contains(p) || rects.iter().any(|r| r.contains(p));
+        if backdrop_drag_started(&layer, stage, id, on_control) {
             events.push(StreamerEvent::StartDrag);
         }
     }
@@ -584,7 +590,7 @@ pub struct PinProps<'a> {
     pub vars: &'a Vars,
     pub locale: Locale,
     pub attempt: &'a str,
-    /// `pinError`, translated.
+    /// The last attempt's error, translated.
     pub error: Option<&'a str>,
     /// The field takes input (not unlocking, not waiting out a retry).
     pub input_enabled: bool,
@@ -611,8 +617,8 @@ pub fn pin_input_id() -> Id {
     Id::unique("pin-lock").with("input")
 }
 
-/// `.pin-input`: 16 px centred, letter-spacing 0.22em, padding 9 10, a
-/// 1 px `--border` turning yellow on focus, on `--bg`, radius 8.
+/// The PIN field: 16 px centred, letter spacing 0.22em, padding 9 10, a
+/// 1 px theme border turning yellow on focus, on the background, radius 8.
 fn input_style(v: &Vars) -> FieldStyle {
     FieldStyle {
         font: TextStyle::new(16.0, 400)
@@ -656,7 +662,7 @@ pub fn pin_overlay(ui: &mut Ui, window: Rect, props: &PinProps) -> Vec<PinEvent>
     let field = input_style(v);
     let field_h = field.height(ppp);
 
-    // `.pin-card`: its content stacks 10 px apart.
+    // The card: its content stacks 10 px apart.
     let card_w = 320f32.min(window.width() * 0.86);
     let mut content_h = 22.5 + CARD_GAP + 18.0 + CARD_GAP + field_h;
     if props.error.is_some() {
@@ -676,14 +682,11 @@ pub fn pin_overlay(ui: &mut Ui, window: Rect, props: &PinProps) -> Vec<PinEvent>
 
     let mut layer = ui.new_child(UiBuilder::new().max_rect(window));
     layer.multiply_opacity(opacity);
-    // `pointer-events: none` once it unlocks.
+    // No pointer input once it unlocks.
     let live = !props.unlocking;
     if live {
-        let back = layer.interact(window, id, Sense::click_and_drag());
-        let on_backdrop = ctx
-            .pointer_interact_pos()
-            .is_some_and(|p| !card.contains(p) && !buttons.contains(p));
-        if back.drag_started_by(PointerButton::Primary) && on_backdrop {
+        let on_control = |p: Pos2| card.contains(p) || buttons.contains(p);
+        if backdrop_drag_started(&layer, window, id, on_control) {
             events.push(PinEvent::StartDrag);
         }
     }
@@ -697,7 +700,7 @@ pub fn pin_overlay(ui: &mut Ui, window: Rect, props: &PinProps) -> Vec<PinEvent>
         None => {}
     }
 
-    // `.pin-card`, sliding 8 px down and shrinking to 0.98 as it fades.
+    // The card slides 8 px down and shrinks to 0.98 as it fades.
     let transform =
         TSTransform::from_translation(card.center().to_vec2() + vec2(0.0, 8.0 * leaving))
             * TSTransform::from_scaling(1.0 - 0.02 * leaving)
@@ -871,7 +874,7 @@ mod tests {
             bench.frame(text("45"), false),
             [PinEvent::Attempt("1234".into())]
         );
-        // `maxlength`: a full code takes nothing more.
+        // A full code takes nothing more.
         assert!(bench.frame(text("6"), false).is_empty());
     }
 
@@ -908,7 +911,7 @@ mod tests {
 
     #[test]
     fn the_wordmark_line_matches_the_measured_box() {
-        // glass-dark at 1x: `.accshift-text` 96.453 tall, `.wave-text` 3 px
+        // glass-dark at 1x: the wordmark's box 96.453 tall, its letters 3 px
         // below its top (strut: Segoe UI 88/88, baseline 80; letters: VT323
         // 103.84 on a 93.456 line, baseline 77).
         let strut = text::LineBox {
@@ -931,12 +934,13 @@ mod tests {
             baseline: 10.0,
         };
         assert_eq!(on_baseline(strut, span), (24.0, 8.0));
-        assert_eq!(fit_width(44.6512, 1.0), 44.65625);
+        assert_eq!(ceil_unit(44.6512, 1.0), 44.65625);
     }
 
     #[test]
     fn the_wave_starts_mid_swing_and_steps_per_letter() {
-        // `startMs = now - startDelayMs`: at the reveal the clock reads 2.5 s.
+        // The delay counts on the clock: after a 2.5 s delay, the reveal
+        // reads 2.5 s.
         assert!((wave_offset(2.5, 0) + 22.0).abs() < 1e-3);
         let expected = ((2.5 * 0.3 * std::f64::consts::TAU + 0.7).sin() * 22.0) as f32;
         assert!((wave_offset(2.5, 1) - expected).abs() < 1e-4);
@@ -1003,7 +1007,7 @@ mod tests {
         }
     }
 
-    // `streamer-glass-dark-100` DOM: "Disable" at 314.97..388.89, "Disable
+    // Measured on glass-dark at 100%: "Disable" at 314.97..388.89, "Disable
     // permanently" at 398.89..545, both 248.88..286.88.
     const DISABLE: Pos2 = pos2(351.0, 268.0);
     const PERMANENTLY: Pos2 = pos2(472.0, 268.0);
@@ -1049,7 +1053,7 @@ mod tests {
         bench.frame(Vec::new());
         assert!(bench.press(DISABLE, DISABLE).is_empty());
         assert!(bench.press(pos2(60.0, 380.0), pos2(80.0, 392.0)).is_empty());
-        // Fading out: still drawn, already `pointer-events: none`.
+        // Fading out: still drawn, already deaf to the pointer.
         bench.active = true;
         bench.frame(Vec::new());
         bench.active = false;

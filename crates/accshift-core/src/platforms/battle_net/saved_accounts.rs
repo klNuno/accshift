@@ -136,30 +136,7 @@ pub(super) fn write_saved_accounts(
         .map_err(|e| format!("Could not create Battle.net config directory: {e}"))?;
 
     let mut root = read_config_json(&config_path)?.unwrap_or_else(|| Value::Object(Map::new()));
-    if !root.is_object() {
-        root = Value::Object(Map::new());
-    }
-
-    let root_object = root
-        .as_object_mut()
-        .ok_or_else(|| "Battle.net config root is invalid".to_string())?;
-
-    let client_entry = root_object
-        .entry("Client".to_string())
-        .or_insert_with(|| Value::Object(Map::new()));
-    if !client_entry.is_object() {
-        *client_entry = Value::Object(Map::new());
-    }
-
-    let client = client_entry
-        .as_object_mut()
-        .ok_or_else(|| "Battle.net client config is invalid".to_string())?;
-    let serialized = accounts
-        .iter()
-        .map(|name| encode_saved_account_name(name))
-        .collect::<Vec<_>>()
-        .join(",");
-    client.insert("SavedAccountNames".to_string(), Value::String(serialized));
+    set_saved_account_names(&mut root, accounts)?;
 
     if config_path.exists() {
         let backup_path = config_path.with_extension("config.backup");
@@ -181,4 +158,34 @@ pub(super) fn write_saved_accounts(
             config_path.display()
         )
     })
+}
+
+/// Put `accounts` into `Client.SavedAccountNames`, creating what is missing.
+/// Every other key keeps its place: serde_json's `preserve_order` is on for
+/// this crate, so a switch does not reorder the whole file.
+pub(super) fn set_saved_account_names(root: &mut Value, accounts: &[String]) -> Result<(), String> {
+    if !root.is_object() {
+        *root = Value::Object(Map::new());
+    }
+    let root_object = root
+        .as_object_mut()
+        .ok_or_else(|| "Battle.net config root is invalid".to_string())?;
+
+    let client_entry = root_object
+        .entry("Client".to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if !client_entry.is_object() {
+        *client_entry = Value::Object(Map::new());
+    }
+
+    let client = client_entry
+        .as_object_mut()
+        .ok_or_else(|| "Battle.net client config is invalid".to_string())?;
+    let serialized = accounts
+        .iter()
+        .map(|name| encode_saved_account_name(name))
+        .collect::<Vec<_>>()
+        .join(",");
+    client.insert("SavedAccountNames".to_string(), Value::String(serialized));
+    Ok(())
 }

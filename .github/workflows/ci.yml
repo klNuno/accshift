@@ -51,11 +51,11 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: cargo run --release --locked -p accshift-app --example legacy_storage_smoke
 
-      - name: Cargo audit
+      # deny.toml: advisories (what cargo audit checked), licences, bans and
+      # sources, read from the lockfile.
+      - name: Cargo deny
         if: matrix.os == 'ubuntu-latest'
-        run: |
-          cargo install cargo-audit --quiet
-          cargo audit --file Cargo.lock
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
 
   # The telemetry worker (server/) is a plain pnpm package of its own.
   worker:

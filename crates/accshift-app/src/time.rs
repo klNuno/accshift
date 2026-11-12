@@ -1,15 +1,15 @@
-//! Timestamps the UI shows, ported from `src/lib/shared/time.ts`.
+//! Timestamps the UI shows.
 //!
 //! Every account carries Unix SECONDS ([`unix_ms_to_seconds`] converts the
 //! millisecond stamps most backends write). Formatting reads "now" from an
 //! injected [`Clock`] instead of the system time, so the parity bench can pin
-//! it on the mock's `NOW` like `Date.now` is pinned on the web side.
+//! it on the mock's `NOW`.
 //!
 //! The absolute formats reproduce what `Intl.DateTimeFormat` prints for the
 //! seven shipped locales with `{ year: "numeric", month: "short", day:
 //! "numeric" }` (plus `hour`/`minute: "2-digit"`), checked against Node's ICU
 //! by `tests/platform_time.rs`. `Intl` renders in the machine's time zone with
-//! its DST rules; so does this port, through a [`TimeZone`] the caller passes:
+//! its DST rules; so does this module, through a [`TimeZone`] the caller passes:
 //! [`system_zone`] in the app (jiff maps the Windows zone id to IANA and reads
 //! its embedded tzdb, no network and no installed database), a named or fixed
 //! zone in tests.
@@ -21,9 +21,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 pub use jiff::tz::TimeZone;
 
-/// The machine's time zone, DST rules included, as WebView2 sees it. UTC when
-/// the system zone cannot be read. jiff reads `TZ` first when it is set,
-/// which WebView2 ignores.
+/// The machine's time zone, DST rules included. UTC when the system zone
+/// cannot be read. jiff reads `TZ` first when it is set.
 pub fn system_zone() -> TimeZone {
     TimeZone::try_system().unwrap_or(TimeZone::UTC)
 }
@@ -115,12 +114,12 @@ impl TimeContext {
     }
 }
 
-/// `isUnixSeconds`: a finite, positive number small enough to be seconds.
+/// A finite, positive number small enough to be seconds.
 pub fn is_unix_seconds(timestamp: Option<f64>) -> bool {
     timestamp.is_some_and(|value| value.is_finite() && value > 0.0 && value <= MAX_UNIX_SECONDS)
 }
 
-/// `unixMsToSeconds`: Unix milliseconds to seconds, `None` for anything that
+/// Unix milliseconds to seconds, `None` for anything that
 /// is not a positive finite number.
 pub fn unix_ms_to_seconds(timestamp_ms: Option<f64>) -> Option<f64> {
     let value = timestamp_ms?;
@@ -217,7 +216,7 @@ fn time_part(locale: Locale, at: &Civil) -> String {
     }
 }
 
-/// `formatAbsoluteDateFromUnixSeconds`: the localized calendar day, empty when
+/// The localized calendar day, empty when
 /// the value is not usable Unix seconds.
 pub fn format_absolute_date(timestamp: Option<f64>, locale: Locale, zone: &TimeZone) -> String {
     timestamp
@@ -227,7 +226,7 @@ pub fn format_absolute_date(timestamp: Option<f64>, locale: Locale, zone: &TimeZ
         .unwrap_or_default()
 }
 
-/// `formatAbsoluteDateTimeFromUnixSeconds`: day and time for the tooltip
+/// Day and time for the tooltip
 /// behind a relative label, empty when the value is unusable.
 pub fn format_absolute_date_time(
     timestamp: Option<f64>,
@@ -248,7 +247,7 @@ pub fn format_absolute_date_time(
     )
 }
 
-/// `formatRelativeTimeFromUnixSeconds`. `unknown_key` is what a missing or
+/// "5 minutes ago" and the like. `unknown_key` is what a missing or
 /// unusable stamp reads as (`time.unknown` by default, Riot passes
 /// `time.neverConnected`).
 pub fn format_relative_time(
@@ -294,7 +293,7 @@ pub fn format_relative_time(
     i18n::translate_with(locale, key, &[("count", days.into())])
 }
 
-/// `formatRelativeTimeCompact`: the relative label inside `time.compactWrapper`.
+/// The relative label inside `time.compactWrapper`.
 pub fn format_relative_time_compact(
     timestamp: Option<f64>,
     ctx: &TimeContext,
@@ -304,8 +303,8 @@ pub fn format_relative_time_compact(
     i18n::translate_with(ctx.locale, "time.compactWrapper", &[("value", base.into())])
 }
 
-/// The default `unknownKey` of the TS formatters.
+/// The default `unknown_key` of the relative formatters.
 pub const UNKNOWN_KEY: &str = "time.unknown";
 
-/// The default locale of the TS formatters, for callers that have none.
+/// The default locale of the formatters, for callers that have none.
 pub const FALLBACK_LOCALE: Locale = DEFAULT_LOCALE;

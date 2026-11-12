@@ -580,6 +580,28 @@ fn a_setup_cancelled_before_its_launch_ran_is_left_alone() {
     let _ = fs::remove_dir_all(&root);
 }
 
+// -- A client that outlives the quit fails the operation ------------------
+
+#[test]
+fn a_client_that_survives_the_quit_is_an_error() {
+    assert_eq!(client_closed_or_error(&[]), Ok(()));
+    let error = client_closed_or_error(&["RiotClientServices.exe", "Riot Client.exe"])
+        .expect_err("a surviving client must fail the quit");
+    assert!(
+        error.contains("RiotClientServices.exe, Riot Client.exe"),
+        "{error}"
+    );
+}
+
+#[test]
+fn the_in_game_guard_names_the_real_game_processes() {
+    // "LeagueofLegends.exe" never matched: the guard let a switch kill the
+    // client in the middle of a match.
+    assert!(RIOT_GAME_PROCESS_NAMES.contains(&"League of Legends.exe"));
+    assert!(!RIOT_GAME_PROCESS_NAMES.contains(&"LeagueofLegends.exe"));
+    assert!(RIOT_CLIENT_PROCESS_NAMES.contains(&"Riot Client.exe"));
+}
+
 // -- B11: failures after the quit relaunch the client -------------------
 
 #[test]

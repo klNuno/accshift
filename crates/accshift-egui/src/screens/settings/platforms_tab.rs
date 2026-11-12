@@ -1,4 +1,4 @@
-//! `SettingsPlatformsTab.svelte`: the platform chips and their search, the
+//! The Platforms tab: the platform chips and their search, the
 //! startup card (default platform, personas) and the custom platforms card
 //! of the descriptor folder.
 //!
@@ -29,7 +29,7 @@ use crate::ui::paint::{Border, BoxStyle, Corners};
 use crate::ui::snap;
 use crate::ui::text::{self, LineHeight, TextStyle, MONO_STACK};
 
-/// The search field's id, for mod+f (`focusPlatformSearch`).
+/// The search field's id, for mod+f.
 pub fn search_id() -> Id {
     Id::unique("settings-platform-search")
 }
@@ -81,7 +81,7 @@ pub enum Item {
 
 /// `.platform-chip`: a `role="switch"` button.
 pub struct Chip {
-    /// The platform id (the `{#each}` key).
+    /// The platform id.
     pub key: String,
     pub label: String,
     /// `.platform-status`, empty for none.

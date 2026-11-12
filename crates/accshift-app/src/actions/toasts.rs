@@ -1,10 +1,9 @@
-//! The toast queue, ported from `src/lib/features/notifications/store.svelte.ts`
-//! plus the countdown of `src/lib/features/notifications/Toast.svelte`.
+//! The toast queue and the countdown of each toast.
 //!
-//! TS keeps the countdown in each toast component (`setTimeout`, paused while
-//! hovered, restarted when the store bumps `resetKey`). Here the queue owns
-//! it as a deadline per toast: the UI reports hovers, calls [`ToastQueue::tick`]
-//! each frame and repaints at [`ToastQueue::next_deadline`].
+//! The queue owns the countdown as a deadline per toast, paused while
+//! hovered and restarted when a duplicate refreshes it: the UI reports
+//! hovers, calls [`ToastQueue::tick`] each frame and repaints at
+//! [`ToastQueue::next_deadline`].
 
 use crate::accounts::{Toast, ToastKind};
 use crate::text::Text;
@@ -15,7 +14,7 @@ pub const MAX_TOASTS: usize = 5;
 /// `DEFAULT_DURATION_MS`.
 pub const DEFAULT_DURATION_MS: u64 = 3000;
 
-/// `ToastType`. TS has no "default" type: no `type` means `info`.
+/// The kind of a toast; `info` when none is given.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ToastType {
     #[default]
@@ -34,27 +33,27 @@ impl From<ToastKind> for ToastType {
     }
 }
 
-/// `AddToastOptions.durationMs`: left out, a number, or `null`.
+/// The duration asked for: left out, a number, or none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DurationRequest {
-    /// `undefined`: the default timer.
+    /// The default timer.
     #[default]
     Default,
     /// An explicit duration.
     Ms(u64),
-    /// `null`: until dismissed.
+    /// Until dismissed.
     Sticky,
 }
 
-/// `ToastAction`: a button on the toast. The TS closure becomes an id the
-/// app maps to what the button does.
+/// A button on the toast. Its id is what the app maps to what the button
+/// does.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToastAction {
     pub label: Text,
     pub id: String,
 }
 
-/// `AddToastOptions`.
+/// How to show a toast.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AddToastOptions {
     pub kind: ToastType,
@@ -71,8 +70,8 @@ impl AddToastOptions {
     }
 }
 
-/// `resolveToastDuration`: how long a toast stays, `None` meaning until the
-/// user dismisses it. An error never counts down, whatever was asked.
+/// How long a toast stays, `None` meaning until the user dismisses it. An
+/// error never counts down, whatever was asked.
 pub fn resolve_toast_duration(kind: ToastType, requested: DurationRequest) -> Option<u64> {
     if kind == ToastType::Error {
         return None;
@@ -84,7 +83,7 @@ pub fn resolve_toast_duration(kind: ToastType, requested: DurationRequest) -> Op
     }
 }
 
-/// The countdown state `Toast.svelte` keeps in its closure.
+/// The countdown of one toast.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct Countdown {
     remaining_ms: u64,
@@ -92,7 +91,7 @@ struct Countdown {
     hovered: bool,
 }
 
-/// `ToastMessage`.
+/// One toast on screen.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToastEntry {
     pub id: u64,
@@ -106,13 +105,12 @@ pub struct ToastEntry {
 }
 
 impl ToastEntry {
-    /// `hasDuration`: a positive duration. `0` never counts down, as in TS.
+    /// A positive duration. `0` never counts down.
     fn has_duration(&self) -> bool {
         self.duration_ms.is_some_and(|ms| ms > 0)
     }
 
-    /// The `$effect` on `resetKey` and `durationMs`: clear, then start again
-    /// unless hovered.
+    /// Clears the countdown, then starts it again unless hovered.
     fn restart(&mut self, now: Instant) {
         self.countdown.started_at = None;
         if !self.has_duration() {
@@ -148,7 +146,7 @@ impl ToastQueue {
         Self::default()
     }
 
-    /// `getToasts`, oldest first.
+    /// The toasts on screen, oldest first.
     pub fn toasts(&self) -> &[ToastEntry] {
         &self.toasts
     }
@@ -157,10 +155,10 @@ impl ToastQueue {
         self.toasts.iter().find(|toast| toast.id == id)
     }
 
-    /// `addToast`. The same text already on screen takes the new type,
+    /// Shows a toast. The same text already on screen takes the new type,
     /// duration and action (an absent action keeps the old one) and restarts
-    /// its countdown instead of stacking a duplicate. Beyond
-    /// [`MAX_TOASTS`] the oldest go.
+    /// its countdown instead of stacking a duplicate. Beyond [`MAX_TOASTS`]
+    /// the oldest go.
     pub fn add(&mut self, text: Text, options: AddToastOptions, now: Instant) -> u64 {
         let duration_ms = resolve_toast_duration(options.kind, options.duration);
         if let Some(existing) = self.toasts.iter_mut().find(|toast| toast.text == text) {
@@ -197,12 +195,27 @@ impl ToastQueue {
         self.add(toast.text, AddToastOptions::kind(toast.kind.into()), now)
     }
 
-    /// `removeToast`.
+    /// A toast that stays until [`Self::remove_text`] takes it down.
+    pub fn push_sticky(&mut self, toast: Toast, now: Instant) -> u64 {
+        let options = AddToastOptions {
+            kind: toast.kind.into(),
+            duration: DurationRequest::Sticky,
+            action: None,
+        };
+        self.add(toast.text, options, now)
+    }
+
+    /// Dismisses one toast.
     pub fn remove(&mut self, id: u64) {
         self.toasts.retain(|toast| toast.id != id);
     }
 
-    /// `handleMouseEnter` / `handleMouseLeave`. Leaving with no time left
+    /// Removes the toast showing `text`, if it is still up.
+    pub fn remove_text(&mut self, text: &Text) {
+        self.toasts.retain(|toast| toast.text != *text);
+    }
+
+    /// The pointer entered or left a toast. Leaving with no time left
     /// dismisses the toast; true when it did.
     pub fn set_hovered(&mut self, id: u64, hovered: bool, now: Instant) -> bool {
         let Some(toast) = self.toasts.iter_mut().find(|toast| toast.id == id) else {
@@ -228,7 +241,7 @@ impl ToastQueue {
         false
     }
 
-    /// `handleAction`: the action id to run; the toast goes either way.
+    /// The action id to run; the toast goes either way.
     pub fn activate_action(&mut self, id: u64) -> Option<String> {
         let action = self
             .get(id)
@@ -253,5 +266,18 @@ impl ToastQueue {
     /// The next countdown end, for the repaint.
     pub fn next_deadline(&self) -> Option<Instant> {
         self.toasts.iter().filter_map(ToastEntry::deadline).min()
+    }
+}
+
+/// The toast after a clipboard write: `toast.copied` with the label,
+/// `toast.copyFailed` when it failed.
+pub fn copy_result_toast(label: &str, write_ok: bool) -> Toast {
+    if write_ok {
+        Toast::new(
+            Text::with("toast.copied", [("label", label)]),
+            ToastKind::Success,
+        )
+    } else {
+        Toast::new(Text::key("toast.copyFailed"), ToastKind::Error)
     }
 }

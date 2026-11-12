@@ -23,36 +23,53 @@ pub enum SteamFolder {
     Usable,
 }
 
-/// English text for the "installed but never signed in" case. The webview
-/// shows a translated line keyed on [`STEAM_PATH_NEVER_SIGNED_IN`]; this is
-/// what any other caller (and an untranslated fallback) gets.
+/// English text for the "installed but never signed in" case. The settings
+/// panel shows a translated line keyed on [`STEAM_PATH_NEVER_SIGNED_IN`]; this
+/// is what any other caller (and an untranslated fallback) gets.
 pub(super) const NEVER_SIGNED_IN_MESSAGE: &str =
     "Steam found, sign in once so it creates its login history";
 
 /// Machine-readable codes for the folder-picker rejections.
 ///
-/// `PlatformError` serializes to the webview as its bare message string, so a
-/// code travels inside that message, ahead of a `|` and an English fallback
-/// (see [`coded_path_error`]). The frontend matches the code and translates
-/// it; it never matches English prose.
+/// A code travels inside the error message, ahead of a `|` and an English
+/// fallback (see [`coded_path_error`]). accshift-app's `path_error` matches the
+/// code and translates it; it never matches English prose.
 pub const STEAM_PATH_NOT_A_DIRECTORY: &str = "steam_path_not_a_directory";
 pub const STEAM_PATH_NOT_STEAM: &str = "steam_path_not_steam";
 pub const STEAM_PATH_NEVER_SIGNED_IN: &str = "steam_path_never_signed_in";
 
+/// Files that show the Steam client lives in a folder on Linux, next to
+/// `os::steam_executable_name()`. The data folder ships the `steam.sh`
+/// launcher (what the launch runs) and the `ubuntu12_32/steam` binary, not a
+/// bare `steam` at its root.
+pub(super) const LINUX_STEAM_CLIENT_FILES: &[&str] = &["steam.sh", "ubuntu12_32/steam"];
+
+fn steam_client_files() -> Vec<&'static str> {
+    let mut files = vec![os::steam_executable_name()];
+    if cfg!(target_os = "linux") {
+        files.extend_from_slice(LINUX_STEAM_CLIENT_FILES);
+    }
+    files
+}
+
 pub fn classify_steam_folder(path: &Path) -> SteamFolder {
+    classify_steam_folder_with(path, &steam_client_files())
+}
+
+pub(super) fn classify_steam_folder_with(path: &Path, client_files: &[&str]) -> SteamFolder {
     if !path.is_dir() {
         return SteamFolder::NotADirectory;
     }
     if path.join("config").join("loginusers.vdf").is_file() {
         return SteamFolder::Usable;
     }
-    if path.join(os::steam_executable_name()).is_file() {
+    if client_files.iter().any(|file| path.join(file).is_file()) {
         return SteamFolder::NeverSignedIn;
     }
     SteamFolder::NotSteam
 }
 
-/// `code|english fallback`, the format the webview parses.
+/// `code|english fallback`, the format accshift-app's `path_error` parses.
 pub(super) fn coded_path_error(code: &str, english: &str) -> PlatformError {
     PlatformError::new(
         PlatformErrorKind::ClientNotInstalled,
@@ -72,8 +89,8 @@ pub(super) fn resolve_steam_path(app_handle: &dyn AppContext) -> Result<PathBuf,
 
     match classify_steam_folder(&steam_path) {
         SteamFolder::Usable => Ok(steam_path),
-        // Plain prose, not a code: this one reaches a dozen commands whose
-        // rejections the webview shows verbatim.
+        // Plain prose, not a code: this one reaches a dozen operations whose
+        // errors the UI shows verbatim.
         SteamFolder::NeverSignedIn => Err(PlatformError::new(
             PlatformErrorKind::ClientNotInstalled,
             NEVER_SIGNED_IN_MESSAGE,

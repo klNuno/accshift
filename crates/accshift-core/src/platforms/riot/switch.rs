@@ -26,7 +26,20 @@ pub fn switch_profile(app_handle: AppCtx, profile_id: String) -> Result<(), Stri
     // backup captures rotated tokens rather than the stale pre-rotation ones.
     // Same quit-then-backup order as begin_profile_setup. This is the single
     // quit for the whole switch; the target snapshot is restored afterwards.
-    graceful_riot_quit();
+    // A client that could not be closed fails the switch here, before any
+    // session file is touched.
+    if let Err(error) = graceful_riot_quit() {
+        log_platform_error(
+            &app_handle,
+            "riot.switch_profile",
+            "Riot profile switch failed",
+            format!(
+                "error={error}; state={}",
+                build_riot_switch_details(&app_handle, Some(&target_id))
+            ),
+        );
+        return Err(error);
+    }
 
     // The client path is resolved once for the whole switch.
     let install_dir = client_path.parent();

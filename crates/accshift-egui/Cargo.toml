@@ -10,11 +10,14 @@ publish = false
 # %TEMP%\accshift-egui-bench\<pid>.jsonl. The harness refuses any exe that
 # lacks the marker string, so a bench run can never pop a window.
 startup-bench = []
-# Renderer, pick one. `software`: egui meshes rasterized on the CPU and blitted
-# with softbuffer (GDI on Windows), no GPU driver loaded. `glow`: eframe on
-# OpenGL, the first version of the spike.
+# Developer tools kept out of the shipped binary: the `--scene` runner
+# (src/harness/) that drives the app on the mock backend, and
+# `ACCSHIFT_EGUI_MARKS`. The crate's own tests get the runner through
+# `cfg(test)`, without the flag.
+harness = []
+# The renderer: egui meshes rasterized on the CPU and blitted with softbuffer
+# (GDI on Windows), no GPU driver loaded.
 software = ["dep:egui-winit", "dep:softbuffer", "dep:egui_software_backend", "dep:winit"]
-glow = ["dep:eframe"]
 default = ["software"]
 
 [dependencies]
@@ -23,15 +26,8 @@ accshift-core = { path = "../accshift-core" }
 # the theme engine the Svelte frontend applies.
 accshift-app = { path = "../accshift-app" }
 accshift-theme = { path = "../accshift-theme" }
-# Same backend choice as spotifast for the `glow` path: glow keeps the binary
-# and the tree small, wgpu buys nothing for a 2D grid.
-eframe = { version = "0.37", optional = true, default-features = false, features = [
-  "accesskit",
-  "glow",
-  "default_fonts",
-] }
-# The software path: the window and input layer eframe uses (egui-winit
-# re-exports winit and accesskit_winit), a CPU rasterizer, a GDI blit.
+# The window and input layer (egui-winit re-exports winit and
+# accesskit_winit), a CPU rasterizer, a GDI blit.
 egui-winit = { version = "0.37", optional = true, default-features = false, features = [
   "accesskit",
   "clipboard",
@@ -56,14 +52,15 @@ skrifa = "0.44"
 # with its file cache, loaded as glyphs need them, outside private memory (a
 # CJK face is 12 to 35 MB).
 memmap2 = "0.9"
-# Scene runner only (`--scene`): scene files in, PNG shots out. Neither is
-# touched on the normal startup path.
+# Scene runner (`--scene`) and bench shot: scene files in, PNG shots out.
+# Neither is touched on the normal startup path.
 serde_json = "1"
 png = "0.18"
 # Steam's CDN serves avatars as JPEG; the same image build accshift-app
 # already links (zune-jpeg underneath). A persona's custom image is any of
 # these, re-encoded as a JPEG cover; png and image-webp are linked already.
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp"] }
+# `ico` is the bmp and png decoders behind an ICO directory, no new crate.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp", "ico"] }
 # The persona image picker (`<input type="file">`) and its data URL: the
 # versions accshift-app already builds.
 rfd = "0.17"

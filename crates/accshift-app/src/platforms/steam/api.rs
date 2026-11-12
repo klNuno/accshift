@@ -1,8 +1,6 @@
-//! The Steam calls with logic of their own, ported from
-//! `src/lib/platforms/steam/steamApi.ts`: the launch config read from the
+//! The Steam calls with logic of their own: the launch config read from the
 //! settings, the switch variants and their logs, bulk edit logging and the
-//! `hasApiKey` memo. Plain pass-through calls go straight to
-//! [`crate::Backend`].
+//! API key memo. Plain pass-through calls go straight to [`crate::Backend`].
 
 use super::super::api::{log_app_event, PlatformApi};
 use super::super::AddFlowStatus;
@@ -12,7 +10,7 @@ use crate::settings::{SteamPlatformSettings, SteamShutdownMode};
 use crate::types::{BulkEditRequest, BulkEditResult};
 use serde_json::{json, Value};
 
-/// `getSteamLaunchConfig`.
+/// How Steam is launched after a switch, read from the settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SteamLaunchConfig {
     pub run_as_admin: bool,
@@ -48,7 +46,7 @@ impl SteamLaunchConfig {
     }
 }
 
-/// `switchAccount(username)`.
+/// Switches Steam to this account.
 pub fn switch_account(
     backend: &dyn Backend,
     username: &str,
@@ -65,8 +63,8 @@ pub fn switch_account(
     )
 }
 
-/// `switchAccountMode`: the generic switch with `mode` and `steamId` in the
-/// params, so the backend applies the persona mode.
+/// The generic switch with `mode` and `steamId` in the params, so the
+/// backend applies the persona mode.
 pub fn switch_account_mode(
     backend: &dyn Backend,
     username: &str,
@@ -92,7 +90,7 @@ pub fn switch_account_mode(
     )
 }
 
-/// `switchAccountAndLaunchGame`, logged before and after.
+/// Switches account and launches a game, logged before and after.
 pub fn switch_account_and_launch_game(
     backend: &dyn Backend,
     username: &str,
@@ -147,7 +145,7 @@ pub fn switch_account_and_launch_game(
     }
 }
 
-/// `beginAccountSetup`: the add flow takes the launch config too.
+/// Starts an add flow; it takes the launch config too.
 pub fn begin_account_setup(
     backend: &dyn Backend,
     cfg: &SteamLaunchConfig,
@@ -155,7 +153,7 @@ pub fn begin_account_setup(
     PlatformApi::new(backend, "steam").begin_setup(&cfg.params())
 }
 
-/// `bulkEdit`, logged before and after.
+/// Bulk edit, logged before and after.
 pub fn bulk_edit(backend: &dyn Backend, request: BulkEditRequest) -> BackendResult<BulkEditResult> {
     const SOURCE: &str = "frontend.steam.bulk_edit";
     let details = json!({
@@ -194,9 +192,9 @@ pub fn bulk_edit(backend: &dyn Backend, request: BulkEditRequest) -> BackendResu
     }
 }
 
-/// The `hasApiKey` memo. `steam_has_api_key` decrypts on every call, and the
-/// key only changes through `setApiKey`, so the answer is kept for the
-/// session. A read that started before a write must not store its answer
+/// The "has an API key" memo. `steam_has_api_key` decrypts on every call,
+/// and the key only changes through a write here, so the answer is kept for
+/// the session. A read that started before a write must not store its answer
 /// after it: the generation tells.
 #[derive(Debug, Clone, Default)]
 pub struct ApiKeyMemo {

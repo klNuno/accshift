@@ -348,86 +348,88 @@ impl DescriptorService {
                 .iter()
                 .all(|condition| self.condition_holds(&runtime, condition, input));
 
-        if triggered {
-            // A trigger only says the user got through the login screen. The
-            // launcher may still hold the session in memory, so it is closed
-            // and the conditions re-checked before anything is captured.
-            self.quit_and_wait();
-            let source = format!("{}.get_setup_status", self.descriptor.id);
-            // Every way back to waiting starts the launcher again: the user
-            // cannot finish signing in with it closed.
-            let keep_waiting = || {
-                self.relaunch_after_failure(app, &source);
-                make_setup_status(setup_id, "waiting_for_login", "", "", "")
-            };
-
-            let still_holds = setup
-                .confirm
-                .iter()
-                .all(|condition| self.condition_holds(&runtime, condition, input));
-            if !still_holds {
-                return Ok(keep_waiting());
-            }
-
-            let synthetic = matches!(runtime.profile.identity.source, IdentitySource::Synthetic);
-            let key = if synthetic {
-                generate_account_id()
+        if !triggered {
+            let status = if self.is_running() {
+                "waiting_for_login"
             } else {
-                match new_identity {
-                    Some(id) => id,
-                    // The confirm pass says a session exists but no id came
-                    // with it: keep waiting rather than store an unnamed one.
-                    None => return Ok(keep_waiting()),
-                }
+                "waiting_for_client"
             };
-
-            // An id we minted names nothing once its capture is rejected, and
-            // each poll mints a new one: its folder goes with the rejection.
-            let reject = |key: &str| {
-                if synthetic {
-                    self.delete_snapshot(app, key);
-                }
-            };
-            if let Err(error) = self.save_snapshot(app, &key) {
-                reject(&key);
-                self.relaunch_after_failure(app, &source);
-                return Err(error);
-            }
-            if self.declares_snapshot_marker() && !self.snapshot_has_content(app, &key) {
-                // The capture produced nothing worth restoring: the launcher
-                // was closed before it wrote the session. Keep waiting rather
-                // than hand back an account that restores to a login screen.
-                reject(&key);
-                return Ok(keep_waiting());
-            }
-            config_bridge::touch_account(app, &self.descriptor.id, &key, now_unix_ms())?;
-            if runtime.profile.identity.current == CurrentSource::Config {
-                config_bridge::set_current_account(app, &self.descriptor.id, &key)?;
-            }
-
-            self.jobs.remove(setup_id);
-
-            // A hook that read a name off the platform names the account with
-            // it, so the list never opens on a raw id. The id is checked first
-            // because a synthetic key belongs to no identity that was read.
-            let display_name = match found.filter(|found| found.id == key) {
-                Some(found) => self.seed_label(app, &found),
-                None if setup.display_name_from_id => key.clone(),
-                None => String::new(),
-            };
-            return Ok(make_setup_status(setup_id, "ready", key, display_name, ""));
+            return Ok(make_setup_status(setup_id, status, "", "", ""));
         }
 
-        if self.is_running() {
-            return Ok(make_setup_status(setup_id, "waiting_for_login", "", "", ""));
+        // A trigger only says the user got through the login screen. The
+        // launcher may still hold the session in memory, so it is closed
+        // and the conditions re-checked before anything is captured.
+        self.quit_and_wait();
+        let source = format!("{}.get_setup_status", self.descriptor.id);
+        // Every way back to waiting starts the launcher again: the user
+        // cannot finish signing in with it closed.
+        let keep_waiting = || {
+            self.relaunch_after_failure(app, &source);
+            make_setup_status(setup_id, "waiting_for_login", "", "", "")
+        };
+
+        let still_holds = setup
+            .confirm
+            .iter()
+            .all(|condition| self.condition_holds(&runtime, condition, input));
+        if !still_holds {
+            return Ok(keep_waiting());
         }
-        Ok(make_setup_status(
-            setup_id,
-            "waiting_for_client",
-            "",
-            "",
-            "",
-        ))
+
+        let synthetic = matches!(runtime.profile.identity.source, IdentitySource::Synthetic);
+        let key = if synthetic {
+            generate_account_id()
+        } else {
+            match new_identity {
+                Some(id) => id,
+                // The confirm pass says a session exists but no id came
+                // with it: keep waiting rather than store an unnamed one.
+                None => return Ok(keep_waiting()),
+            }
+        };
+
+        // An id we minted names nothing once its capture is rejected, and
+        // each poll mints a new one: its folder goes with the rejection.
+        let reject = |key: &str| {
+            if synthetic {
+                self.delete_snapshot(app, key);
+            }
+        };
+        let had_snapshot = self.snapshot_root(app, &key).is_ok_and(|dir| dir.exists());
+        if let Err(error) = self.save_snapshot(app, &key) {
+            // A capture that stopped half way leaves the items before the
+            // failure: for an account with no earlier snapshot that is a
+            // partial session a later switch would restore.
+            if synthetic || !had_snapshot {
+                self.delete_snapshot(app, &key);
+            }
+            self.relaunch_after_failure(app, &source);
+            return Err(error);
+        }
+        if self.declares_snapshot_marker() && !self.snapshot_has_content(app, &key) {
+            // The capture produced nothing worth restoring: the launcher
+            // was closed before it wrote the session. Keep waiting rather
+            // than hand back an account that restores to a login screen.
+            reject(&key);
+            return Ok(keep_waiting());
+        }
+        config_bridge::touch_account(app, &self.descriptor.id, &key, now_unix_ms())?;
+        if runtime.profile.identity.current == CurrentSource::Config {
+            config_bridge::set_current_account(app, &self.descriptor.id, &key)?;
+        }
+
+        self.jobs.remove(setup_id);
+
+        // A hook that read a name off the platform names the account with
+        // it, so the list never opens on a raw id. The id is checked first
+        // because a synthetic key belongs to no identity that was read.
+        let display_name = match found.filter(|found| found.id == key) {
+            Some(found) => self.seed_label(app, &found),
+            None if setup.display_name_from_id => key.clone(),
+            None => String::new(),
+        };
+        Ok(make_setup_status(setup_id, "ready", key, display_name, ""))
     }
 
     pub(super) fn condition_holds(

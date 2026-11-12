@@ -17,46 +17,12 @@ const PROBE_IDENTIFIER: &str = "com.accshift.desktop-egui-probe";
 fn main() {
     let bench_build = cfg!(feature = "startup-bench");
     // `--scene <scene.json>... --out <dir>`: replay parity scenes in a hidden
-    // window, see src/harness/mod.rs. Nothing is parsed before main otherwise.
-    let (scene_files, out_dir) = {
-        let mut files = Vec::new();
-        let mut out = None;
-        let mut args = std::env::args().skip(1);
-        let mut in_scenes = false;
-        while let Some(arg) = args.next() {
-            if arg == "--scene" {
-                in_scenes = true;
-            } else if arg == "--out" {
-                out = args.next().map(std::path::PathBuf::from);
-                in_scenes = false;
-            } else if in_scenes {
-                files.push(std::path::PathBuf::from(arg));
-            }
-        }
-        (files, out)
-    };
+    // window, see src/harness/mod.rs. Only a `harness` build reads it.
+    let (scene_files, out_dir) = harness::scene_args(std::env::args().skip(1));
     let scene_mode = !scene_files.is_empty();
     // `--tray`: the autostart launch. The window starts hidden in the tray.
     let tray_start = std::env::args().skip(1).any(|arg| arg == "--tray");
-    let scenes = if scene_mode {
-        let Some(out) = out_dir else {
-            eprintln!("usage: accshift-egui --scene <scene.json>... --out <dir>");
-            std::process::exit(2);
-        };
-        let mut loaded = Vec::new();
-        for file in &scene_files {
-            match harness::load(file) {
-                Ok(scene) => loaded.push(scene),
-                Err(err) => {
-                    eprintln!("scene: {err}");
-                    std::process::exit(2);
-                }
-            }
-        }
-        Some((loaded, out))
-    } else {
-        None
-    };
+    let scenes = scene_mode.then(|| load_scenes(&scene_files, out_dir));
     let hidden = bench_build || scene_mode;
     // Experiment knob for the boot breakdown: an opaque window without the
     // acrylic, to price the transparent framebuffer.
@@ -64,13 +30,8 @@ fn main() {
     bench::mark_with(
         "main",
         &format!(
-            "\"build\":\"{}\",\"renderer\":\"{}\"",
+            "\"build\":\"{}\",\"renderer\":\"software\"",
             if bench_build { bench::MARKER } else { "dev" },
-            if cfg!(feature = "glow") {
-                "glow"
-            } else {
-                "software"
-            },
         ),
     );
     // Debug builds: the window shell on a scratch folder, unseen
@@ -81,10 +42,10 @@ fn main() {
     let probe: Option<std::path::PathBuf> = None;
     let probing = probe.is_some();
 
-    // The single-instance plugin, first as in src-tauri/src/lib.rs: a second
-    // launch hands its arguments to the running app and leaves. This
-    // launch's own `accshift://` URL is the deep-link plugin's `current`,
-    // which the page's listener never sees, so it is not read here.
+    // The single-instance guard comes first: a second launch hands its
+    // arguments to the running app and leaves. This launch's own
+    // `accshift://` URL goes to the window host, which replays it once the
+    // app can take it.
     let wake: Arc<OnceLock<egui::Context>> = Arc::default();
     let single = if hidden {
         None
@@ -99,6 +60,9 @@ fn main() {
         let identifier = BUNDLE_IDENTIFIER;
         acquire_single_instance(identifier, Arc::clone(&wake))
     };
+    if let Some(single) = &single {
+        accshift_app::lifecycle::process::set_instance_hooks(single.releaser(), single.restorer());
+    }
     bench::mark("single_instance");
 
     if hidden || probing {
@@ -115,20 +79,7 @@ fn main() {
     // may show (about 4 ms here). Doing it first on another thread overlaps
     // that with the event loop and window creation.
     #[cfg(windows)]
-    std::thread::spawn(|| {
-        use windows_sys::Win32::UI::Accessibility::{
-            AutomationIdentifierType_Property, ControlType_Property_GUID, UiaLookupId,
-        };
-        // SAFETY: plain lookup of a built-in property id, the same call
-        // accesskit_windows makes to force UIA initialization.
-        unsafe {
-            UiaLookupId(
-                AutomationIdentifierType_Property,
-                &ControlType_Property_GUID,
-            )
-        };
-        bench::mark("uia_warm");
-    });
+    std::thread::spawn(warm_ui_automation);
 
     if bench_build {
         // The core is called directly, no IPC: read the real Steam login
@@ -146,8 +97,7 @@ fn main() {
     // install left its WebView2 profile (window/probe.rs).
     let legacy_root = probe.as_ref().map(|dir| dir.join("webview"));
     // A normal run: the backend on the user's app folders, and the window
-    // where Tauri's opens (`build_main_window`). A bench build too, unseen,
-    // to time the real boot.
+    // at its saved place. A bench build too, unseen, to time the real boot.
     let real = (!scene_mode).then(|| {
         #[cfg(all(debug_assertions, windows))]
         if let Some(dir) = probe {
@@ -175,7 +125,7 @@ fn main() {
         accshift_egui::app::avatars::prefetch_pack(cache);
     }
     // The log rotation, "App setup started" and the panic hook, on a thread
-    // while the window builds, joined before anything else logs (`setup`).
+    // while the window builds, joined before anything else logs.
     // The `localStorage` of a v0.x install is read first, before the hook: a
     // corrupt LevelDB panics inside the reader, which catches it, and the
     // hook would report it.
@@ -199,18 +149,21 @@ fn main() {
         .map(|backend| config::load_window(backend.context().as_ref()));
     bench::mark("saved_window");
 
-    let mut viewport = egui::ViewportBuilder::default()
-        .with_title("Accshift")
-        .with_app_id("accshift-egui")
-        .with_inner_size([860.0, 440.0])
-        .with_decorations(false)
-        .with_transparent(!opaque)
-        // No file drops in this app, and winit's drop target costs an
-        // `OleInitialize` on the UI thread before the window exists.
-        .with_drag_and_drop(false)
-        .with_resizable(true);
+    let mut viewport = window::chrome(
+        egui::ViewportBuilder::default()
+            .with_title("Accshift")
+            .with_app_id("accshift-egui")
+            .with_inner_size([860.0, 440.0])
+            .with_transparent(!opaque)
+            // No file drops in this app, and winit's drop target costs an
+            // `OleInitialize` on the UI thread before the window exists.
+            .with_drag_and_drop(false)
+            .with_resizable(true),
+        cfg!(target_os = "macos"),
+    );
     if let Some(saved) = &saved {
-        // The frame (window/frame.rs) moves and sizes it on Windows.
+        // The frame (window/frame.rs) moves and sizes it on Windows,
+        // `window::restore_position` moves it elsewhere.
         let (width, height) = saved
             .size
             .unwrap_or((config::DEFAULT_WINDOW_WIDTH, config::DEFAULT_WINDOW_HEIGHT));
@@ -233,6 +186,10 @@ fn main() {
         // On screen where the frame puts it, but cloaked below.
         viewport = viewport.with_active(false).with_taskbar(false);
     }
+
+    // The saved origin, put back on the hidden window off Windows.
+    #[cfg(all(feature = "software", not(windows)))]
+    let restore = saved.filter(|_| !hidden);
 
     // Shared by both runners once the window exists.
     let build = move |ctx: &egui::Context, handle: &dyn HasWindowHandle| {
@@ -302,13 +259,15 @@ fn main() {
                     window::Host::new(backend, hwnd)
                         .focus_on_show(!quiet)
                         .start_hidden(tray_start && !quiet)
-                        .with_single_instance(single),
+                        .with_single_instance(single)
+                        .with_launch_args(&single_instance::current_args()),
                 )
             }
             None => {
                 // Each scene builds its own screen once the window has its
-                // size.
-                accshift_egui::screens::main_spike::install_fonts(ctx);
+                // size. Fonts set mid-frame only apply a frame later: before
+                // the first one.
+                accshift_egui::ui::text::install(ctx, false);
                 Shell::new(Screen::Blank, scenes)
             }
         }
@@ -319,32 +278,15 @@ fn main() {
         viewport,
         Box::new(
             move |ctx: &egui::Context, window: &egui_winit::winit::window::Window| {
+                #[cfg(not(windows))]
+                if let Some(saved) = &restore {
+                    window::restore_position(window, saved);
+                }
                 build(ctx, window)
             },
         ),
     )
     .map_err(|err| err.to_string());
-
-    #[cfg(feature = "glow")]
-    let result = {
-        let options = eframe::NativeOptions {
-            viewport,
-            persist_window: false,
-            // Experiment knob for the boot breakdown: does the first swap
-            // wait on the compositor?
-            glow_options: eframe::egui_glow::GlowConfiguration {
-                vsync: std::env::var_os("ACCSHIFT_EGUI_NO_VSYNC").is_none(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        eframe::run_native(
-            "accshift-egui",
-            options,
-            Box::new(move |cc| Ok(Box::new(build(&cc.egui_ctx, cc)))),
-        )
-        .map_err(|err| err.to_string())
-    };
 
     if let Err(err) = result {
         eprintln!("{err}");
@@ -354,6 +296,47 @@ fn main() {
         eprintln!("scene: {} failure(s)", harness::failures());
         std::process::exit(1);
     }
+}
+
+/// The scenes of `--scene`, and the `--out` folder they render to. A
+/// missing `--out` or a scene that does not load ends the process.
+fn load_scenes(
+    files: &[std::path::PathBuf],
+    out_dir: Option<std::path::PathBuf>,
+) -> (Vec<harness::Scene>, std::path::PathBuf) {
+    let Some(out) = out_dir else {
+        eprintln!("usage: accshift-egui --scene <scene.json>... --out <dir>");
+        std::process::exit(2);
+    };
+    let mut loaded = Vec::new();
+    for file in files {
+        match harness::load(file) {
+            Ok(scene) => loaded.push(scene),
+            Err(err) => {
+                eprintln!("scene: {err}");
+                std::process::exit(2);
+            }
+        }
+    }
+    (loaded, out)
+}
+
+/// Initializes UI Automation, as AccessKit would on the UI thread before
+/// the window may show.
+#[cfg(windows)]
+fn warm_ui_automation() {
+    use windows_sys::Win32::UI::Accessibility::{
+        AutomationIdentifierType_Property, ControlType_Property_GUID, UiaLookupId,
+    };
+    // SAFETY: plain lookup of a built-in property id, the same call
+    // accesskit_windows makes to force UIA initialization.
+    unsafe {
+        UiaLookupId(
+            AutomationIdentifierType_Property,
+            &ControlType_Property_GUID,
+        )
+    };
+    bench::mark("uia_warm");
 }
 
 /// [`single_instance::acquire`] on this launch's arguments; a second
@@ -466,8 +449,7 @@ fn window_effects(window: &dyn HasWindowHandle, cloak: bool, acrylic: bool) {
             );
         }
     }
-    // Glass Dark's material in Tauri: acrylic with a heavy black tint
-    // (`ACRYLIC_TINTS` in src/lib/theme/backdrop.ts).
+    // Glass Dark's material: acrylic with a heavy black tint.
     if acrylic {
         let _ = window_vibrancy::apply_acrylic(window, Some((0, 0, 0, 150)));
     }
