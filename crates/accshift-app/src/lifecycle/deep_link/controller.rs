@@ -259,6 +259,13 @@ impl DeepLinkController {
                 self.phase = Phase::WaitBootForSwitch { request, since };
             }
             Phase::WaitLoader { switch, since } => {
+                if view.active_tab != switch.request.platform_id {
+                    actions.push(DeepLinkAction::LoadPlatformAccounts(
+                        switch.request.platform_id.clone(),
+                    ));
+                    self.phase = Phase::AwaitPlatformAccounts(switch);
+                    return;
+                }
                 if view.loader_busy(since, now) {
                     self.phase = Phase::WaitLoader { switch, since };
                     return;
@@ -418,7 +425,14 @@ impl DeepLinkController {
                 self.confirm_named(switch, &accounts, &mut actions, now);
             }
             (Phase::AwaitReload(switch), DeepLinkAnswer::AccountsLoaded) => {
-                self.confirm_named(switch, view.accounts, &mut actions, now);
+                if view.active_tab != switch.request.platform_id {
+                    actions.push(DeepLinkAction::LoadPlatformAccounts(
+                        switch.request.platform_id.clone(),
+                    ));
+                    self.phase = Phase::AwaitPlatformAccounts(switch);
+                } else {
+                    self.confirm_named(switch, view.accounts, &mut actions, now);
+                }
             }
             (Phase::AwaitConfirm(switch), DeepLinkAnswer::Confirmed(allowed)) => {
                 if allowed {

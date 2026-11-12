@@ -298,8 +298,6 @@ fn main() {
     }
 }
 
-/// [`single_instance::acquire`] on this launch's arguments; a second
-/// launch arriving later repaints the window through `wake` once it exists.
 /// The scenes of `--scene`, and the `--out` folder they render to. A
 /// missing `--out` or a scene that does not load ends the process.
 fn load_scenes(
@@ -341,6 +339,8 @@ fn warm_ui_automation() {
     bench::mark("uia_warm");
 }
 
+/// [`single_instance::acquire`] on this launch's arguments; a second
+/// launch arriving later repaints the window through `wake` once it exists.
 fn acquire_single_instance(
     identifier: &str,
     wake: Arc<OnceLock<egui::Context>>,

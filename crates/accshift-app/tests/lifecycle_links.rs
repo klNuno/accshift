@@ -554,6 +554,74 @@ fn it_asks_before_it_changes_the_visible_tab() {
 }
 
 #[test]
+fn a_tab_change_while_the_links_loader_is_busy_loads_its_platform() {
+    tab_change_during_lookup(true);
+}
+
+#[test]
+fn a_tab_change_while_the_link_reloads_loads_its_platform() {
+    tab_change_during_lookup(false);
+}
+
+fn tab_change_during_lookup(waiting_for_loader: bool) {
+    let mut app = App::new("steam");
+    app.visible.clear();
+    let mut controller = started();
+    let now = Instant::now();
+    controller.on_urls(&["accshift://switch/steam/alice"], now);
+    let initial = controller.poll(
+        &DeepLinkView {
+            loader_loading: waiting_for_loader,
+            ..app.view()
+        },
+        now,
+    );
+    if waiting_for_loader {
+        assert!(initial.is_empty());
+    } else {
+        assert_eq!(initial, [DeepLinkAction::LoadAccounts]);
+    }
+
+    app.active_tab = "riot".into();
+    app.visible = vec![account("riot-alice", "alice", "Riot Alice")];
+    let actions = if waiting_for_loader {
+        controller.poll(&app.view(), now)
+    } else {
+        controller.answer(DeepLinkAnswer::AccountsLoaded, &app.view(), now)
+    };
+    assert_eq!(
+        actions,
+        [DeepLinkAction::LoadPlatformAccounts("steam".into())]
+    );
+    let steam_accounts = app.loaded["steam"].clone();
+    let alice = steam_accounts[0].clone();
+    assert_eq!(
+        controller.answer(
+            DeepLinkAnswer::PlatformAccounts(steam_accounts.clone()),
+            &app.view(),
+            now,
+        ),
+        [DeepLinkAction::Confirm {
+            account: alice.clone(),
+            platform_name: "Steam".into(),
+        }]
+    );
+    assert_eq!(app.active_tab, "riot");
+    assert_eq!(
+        controller.answer(DeepLinkAnswer::Confirmed(true), &app.view(), now),
+        [DeepLinkAction::ChangeTab("steam".into())]
+    );
+    app.active_tab = "steam".into();
+    app.visible = steam_accounts;
+    assert_eq!(
+        controller.answer(DeepLinkAnswer::TabChanged, &app.view(), now),
+        [DeepLinkAction::Switch(alice)]
+    );
+    controller.answer(DeepLinkAnswer::Switched(true), &app.view(), now);
+    assert!(!controller.is_busy());
+}
+
+#[test]
 fn it_loads_the_new_tab_itself_when_the_tab_change_has_not_read_it_yet() {
     let mut app = App::new("riot");
     app.lazy_tab_load = true;
