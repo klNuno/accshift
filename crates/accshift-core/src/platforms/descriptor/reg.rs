@@ -170,11 +170,13 @@ pub fn write_raw(
     value: &str,
     data: &RawValue,
 ) -> Result<(), String> {
-    match data {
+    #[cfg(not(any(windows, test)))]
+    let _ = (root, key, value);
+    match *data {
         #[cfg(windows)]
-        RawValue::Native(data) => imp::write_raw(root, key, value, data),
+        RawValue::Native(ref data) => imp::write_raw(root, key, value, data),
         #[cfg(test)]
-        RawValue::Fake(data) => write(root, key, value, data),
+        RawValue::Fake(ref data) => write(root, key, value, data),
     }
 }
 
