@@ -44,27 +44,24 @@ pub(super) fn latest_opened_account_id_from_logs() -> Result<Option<u64>, String
             continue;
         };
 
-        for line in content.lines().rev() {
-            let needle = "Opened database at: ";
-            let Some(idx) = line.find(needle) else {
-                continue;
-            };
-            let db_path = line[idx + needle.len()..].trim();
-            let marker = "\\Account\\";
-            let Some(account_idx) = db_path.rfind(marker) else {
-                continue;
-            };
-            let suffix = &db_path[account_idx + marker.len()..];
-            let Some((account_id, _)) = suffix.split_once("\\account.db") else {
-                continue;
-            };
-            if let Ok(parsed) = account_id.trim().parse::<u64>() {
-                return Ok(Some(parsed));
-            }
+        if let Some(account_id) = content.lines().rev().find_map(opened_account_id) {
+            return Ok(Some(account_id));
         }
     }
 
     Ok(None)
+}
+
+/// The account id of a log line where the client opened an account database:
+/// `Opened database at: <...>\Account\<id>\account.db`.
+#[cfg(windows)]
+fn opened_account_id(line: &str) -> Option<u64> {
+    let needle = "Opened database at: ";
+    let db_path = line[line.find(needle)? + needle.len()..].trim();
+    let marker = "\\Account\\";
+    let suffix = &db_path[db_path.rfind(marker)? + marker.len()..];
+    let (account_id, _) = suffix.split_once("\\account.db")?;
+    account_id.trim().parse().ok()
 }
 
 // The battle tag is a cosmetic label enriched from the client's SQLite login

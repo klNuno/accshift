@@ -1,5 +1,5 @@
-//! Compares the Rust engine with what the former TypeScript engine wrote on
-//! `<html>` for every case in `tests/data`.
+//! Compares the engine with the values captured on `<html>` for every case
+//! in `tests/data`, before the app moved to egui.
 
 use std::fs;
 use std::path::PathBuf;

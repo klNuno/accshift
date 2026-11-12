@@ -1,15 +1,17 @@
-//! The accshift theme engine, ported from `src/lib/theme/*.ts` so the egui UI
-//! paints with exactly what the browser computes.
+//! The accshift theme engine: it turns a theme file into the colours, lengths
+//! and timings the egui UI paints with, following CSS rules so a theme reads
+//! the same as it did in earlier versions.
 //!
 //! - [`tokens`]: the token contract, specs and value validation.
 //! - [`schema`]: theme files: parse, validate, serialize, duplicate, resolve
 //!   through `extends`.
 //! - [`themes`]: built-in themes, the custom theme registry, surface
 //!   opacities and the CSS variables a theme writes on `<html>`.
-//! - [`css`]: those variables plus the `:root` of `src/app.css`, resolved into
+//! - [`css`]: those variables plus the `:root` block of `root.css`, resolved into
 //!   [`Rgba`] colours, [`Length`]s, numbers, durations and shadows.
-//! - [`contrast`], [`css_safety`], [`motion`], [`backdrop`]: the rest of the
-//!   TypeScript module, one file each.
+//! - [`contrast`], [`css_safety`], [`motion`], [`backdrop`]: the editor
+//!   contrast check, the safety filter of shared themes, the motion mode and
+//!   the window backdrop, one file each.
 //!
 //! ```
 //! use accshift_theme::{theme_application, ResolvedTheme, ThemeRegistry};

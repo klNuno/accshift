@@ -158,75 +158,58 @@ pub fn delete_bytes(_token: &[u8]) -> Result<(), AppError> {
     Ok(())
 }
 
+const BASE64_ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// Standard base64 with `=` padding. Each 3-byte chunk is read as the low 24
+/// bits of a word, then written as four 6-bit digits; a short last chunk
+/// writes one digit per byte plus one, and pads the rest.
 fn base64_encode(data: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-        out.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
-        out.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
-        if chunk.len() > 1 {
-            out.push(CHARS[((triple >> 6) & 0x3F) as usize] as char);
-        } else {
-            out.push('=');
-        }
-        if chunk.len() > 2 {
-            out.push(CHARS[(triple & 0x3F) as usize] as char);
-        } else {
-            out.push('=');
+        let mut word = [0u8; 4];
+        word[1..=chunk.len()].copy_from_slice(chunk);
+        let triple = u32::from_be_bytes(word);
+        for digit in 0..4 {
+            if digit <= chunk.len() {
+                let index = (triple >> (18 - 6 * digit)) & 0x3F;
+                out.push(BASE64_ALPHABET[index as usize] as char);
+            } else {
+                out.push('=');
+            }
         }
     }
     out
 }
 
+/// The inverse of [`base64_encode`]. Line breaks are ignored; one or two `=`
+/// are accepted at the end of the very last chunk only, and anything else that
+/// is not an alphabet digit is an error.
 fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
-    fn val(c: u8) -> Result<u32, ()> {
-        match c {
-            b'A'..=b'Z' => Ok((c - b'A') as u32),
-            b'a'..=b'z' => Ok((c - b'a' + 26) as u32),
-            b'0'..=b'9' => Ok((c - b'0' + 52) as u32),
-            b'+' => Ok(62),
-            b'/' => Ok(63),
-            _ => Err(()),
-        }
+    fn digit(c: u8) -> Result<u32, ()> {
+        let index = BASE64_ALPHABET.iter().position(|&d| d == c).ok_or(())?;
+        Ok(index as u32)
     }
-    let input = input.trim();
     let bytes: Vec<u8> = input
+        .trim()
         .bytes()
         .filter(|&b| b != b'\r' && b != b'\n')
         .collect();
     if !bytes.len().is_multiple_of(4) {
         return Err(());
     }
-    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
     let chunk_count = bytes.len() / 4;
+    let mut out = Vec::with_capacity(chunk_count * 3);
     for (idx, chunk) in bytes.chunks(4).enumerate() {
-        // Padding is only legal in the very last 4-byte chunk.
-        let is_last = idx + 1 == chunk_count;
-        if !is_last && (chunk[2] == b'=' || chunk[3] == b'=') {
+        let pad = chunk.iter().rev().take_while(|&&b| b == b'=').count();
+        if pad > 2 || (pad > 0 && idx + 1 != chunk_count) {
             return Err(());
         }
-        // Reject malformed padding like "AB=C": once a '=' appears at [2],
-        // [3] must also be '='. A bare '=' at [2] with a valid char at [3]
-        // is invalid base64.
-        if chunk[2] == b'=' && chunk[3] != b'=' {
-            return Err(());
+        let mut triple = 0u32;
+        for (at, &c) in chunk[..4 - pad].iter().enumerate() {
+            triple |= digit(c)? << (18 - 6 * at);
         }
-        let a = val(chunk[0])?;
-        let b = val(chunk[1])?;
-        let c = if chunk[2] == b'=' { 0 } else { val(chunk[2])? };
-        let d = if chunk[3] == b'=' { 0 } else { val(chunk[3])? };
-        let triple = (a << 18) | (b << 12) | (c << 6) | d;
-        out.push((triple >> 16) as u8);
-        if chunk[2] != b'=' {
-            out.push((triple >> 8) as u8);
-        }
-        if chunk[3] != b'=' {
-            out.push(triple as u8);
-        }
+        out.extend_from_slice(&triple.to_be_bytes()[1..4 - pad]);
     }
     Ok(out)
 }

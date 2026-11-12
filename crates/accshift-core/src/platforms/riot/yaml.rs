@@ -80,13 +80,8 @@ pub(super) fn yaml_has_auth_tokens(contents: &str) -> bool {
 
     fn is_empty_yaml_value(value: &str) -> bool {
         let value = normalized_yaml_value(value);
-        value.is_empty()
-            || value == "{}"
-            || value == "[]"
-            || value == "''"
-            || value == "\"\""
+        matches!(value, "" | "{}" | "[]" | "''" | "\"\"" | "~")
             || value.eq_ignore_ascii_case("null")
-            || value == "~"
     }
 
     #[derive(Default)]
@@ -94,6 +89,12 @@ pub(super) fn yaml_has_auth_tokens(contents: &str) -> bool {
         indent: usize,
         is_ssid: bool,
         has_value: bool,
+    }
+
+    impl CookieEntry {
+        fn holds_token(&self) -> bool {
+            self.is_ssid && self.has_value
+        }
     }
 
     fn update_cookie_entry(entry: &mut CookieEntry, line: &str) {
@@ -124,40 +125,32 @@ pub(super) fn yaml_has_auth_tokens(contents: &str) -> bool {
         let indent = line.len() - line.trim_start().len();
         let meaningful = !trimmed.is_empty() && !trimmed.starts_with('#');
 
-        if let Some(sessions_indent) = pending_sessions_indent {
-            if meaningful {
-                if indent > sessions_indent {
-                    has_sessions = true;
-                }
-                pending_sessions_indent = None;
+        if meaningful {
+            if let Some(sessions_indent) = pending_sessions_indent.take() {
+                has_sessions |= indent > sessions_indent;
             }
         }
 
         if let Some(after_dash) = trimmed.strip_prefix('-') {
-            if let Some(previous) = cookie_entry.take() {
-                has_token |= previous.is_ssid && previous.has_value;
-            }
+            has_token |= cookie_entry.take().is_some_and(|e| e.holds_token());
             let mut entry = CookieEntry {
                 indent,
                 ..Default::default()
             };
             update_cookie_entry(&mut entry, after_dash.trim());
             cookie_entry = Some(entry);
-        } else if let Some(entry) = cookie_entry.as_mut() {
-            if meaningful && indent <= entry.indent {
-                let previous = cookie_entry.take().expect("cookie entry exists");
-                has_token |= previous.is_ssid && previous.has_value;
-            } else if meaningful {
+        } else if let Some(entry) = cookie_entry.as_mut().filter(|_| meaningful) {
+            if indent > entry.indent {
                 update_cookie_entry(entry, trimmed);
+            } else {
+                has_token |= entry.holds_token();
+                cookie_entry = None;
             }
         }
-        if let Some(value) = value_for_key(trimmed, "private") {
-            // Riot writes `private` as an inline base64 blob; a reset file has it
-            // empty (`private: ''` / `private:`). Only a non-empty value counts.
-            if !is_empty_yaml_value(value) {
-                has_private = true;
-            }
-        }
+        // Riot writes `private` as an inline base64 blob; a reset file has it
+        // empty (`private: ''` / `private:`). Only a non-empty value counts.
+        has_private |=
+            value_for_key(trimmed, "private").is_some_and(|value| !is_empty_yaml_value(value));
         if let Some(value) = value_for_key(trimmed, "sessions") {
             let value = normalized_yaml_value(value);
             if value.is_empty() {
@@ -169,15 +162,13 @@ pub(super) fn yaml_has_auth_tokens(contents: &str) -> bool {
                 has_sessions = true;
             }
         }
-        for key in ["access_token", "refresh_token", "id_token"] {
-            if value_for_key(trimmed, key).is_some_and(|value| !is_empty_yaml_value(value)) {
-                has_token = true;
-            }
-        }
+        has_token |= ["access_token", "refresh_token", "id_token"]
+            .iter()
+            .any(|key| {
+                value_for_key(trimmed, key).is_some_and(|value| !is_empty_yaml_value(value))
+            });
     }
-    if let Some(entry) = cookie_entry {
-        has_token |= entry.is_ssid && entry.has_value;
-    }
+    has_token |= cookie_entry.is_some_and(|e| e.holds_token());
 
     has_private || has_sessions || has_token
 }
