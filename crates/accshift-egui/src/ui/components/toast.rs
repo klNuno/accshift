@@ -1,11 +1,10 @@
-//! `src/lib/features/notifications/Toast.svelte` in the `.toast-container`
-//! of `AppDialogs.svelte`: the stack in the bottom right corner.
+//! The toasts: the stack in the bottom right corner.
 //!
 //! The container is `position: fixed; bottom: 16px; right: 16px`, a column
 //! aligned to its end, each toast wrapped in a `div` with `in:fly` and
-//! `out:fly` (`y: 20`, 300 ms) and `animate:flip` (200 ms), all on Svelte's
-//! `cubicOut`. A toast leaving is fixed where it stood (Svelte's `fix()`)
-//! while the others slide to their new places.
+//! `out:fly` (`y: 20`, 300 ms) and `animate:flip` (200 ms), all on a cubic
+//! ease-out. A toast leaving is fixed where it stood while the others slide
+//! to their new places.
 //!
 //! `.toast`: `--bg-overlay` under `--card-bg-image`, `--radius-md`, the
 //! theme border, `--elevation-medium`, `margin-top: 8px`, at most
@@ -66,7 +65,7 @@ const T100: Transition = Transition::new(0.1, Timing::EASE);
 pub struct ToastProps<'a> {
     pub vars: &'a Vars,
     pub locale: Locale,
-    /// Oldest first, like `getToasts()`.
+    /// Oldest first.
     pub toasts: &'a [ToastEntry],
     pub motion: Motion,
     pub now: f64,
@@ -106,7 +105,7 @@ struct Stack {
     items: Vec<Item>,
 }
 
-/// Svelte's `cubicOut`.
+/// The cubic ease-out, `1 - (1 - t)^3`.
 fn cubic_out(t: f64) -> f64 {
     let f = t - 1.0;
     f * f * f + 1.0
@@ -238,7 +237,7 @@ pub fn toast_stack(ui: &mut Ui, viewport: Rect, props: &ToastProps) -> Vec<Toast
     let id = Id::unique("accshift::toast-stack");
     let mut stack: Stack = ctx.data_mut(|d| d.get_temp(id)).unwrap_or_default();
 
-    // `{#each toasts as toast (toast.id)}`.
+    // Each toast, keyed by its id.
     let mut changed = false;
     for entry in props.toasts {
         let message = entry.text.resolve(props.locale);

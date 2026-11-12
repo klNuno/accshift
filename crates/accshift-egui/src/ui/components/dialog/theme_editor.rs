@@ -1,4 +1,4 @@
-//! `ThemeEditor.svelte`: the theme document's fields, every token, the
+//! The theme editor: the theme document's fields, every token, the
 //! custom CSS and the issues, on `BaseDialog` at `min(720px, 92vw)`.
 //!
 //! ```text
@@ -188,7 +188,7 @@ struct Model {
     blocked: bool,
     base_ids: Vec<String>,
     base_labels: Vec<String>,
-    /// `saveError`: the alert line under the issues, in `--danger`.
+    /// The save failed: the alert line under the issues, in `--danger`.
     save_error: Option<(String, Rgba)>,
 }
 

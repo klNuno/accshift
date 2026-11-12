@@ -1,14 +1,11 @@
-//! `PersonaWizard.svelte`'s script: the create and edit form of a persona.
+//! The persona wizard's state: the create and edit form of a persona.
 //!
-//! Mounted fresh per open, as the `{#if editing}` block does: the fields
-//! start from the persona being edited (or empty), and a baseline of them
-//! tells a dirty form from an untouched one. Leaving a dirty form takes a
-//! second press within 3 s (`confirmingCancel`).
+//! Built fresh on every open: the fields start from the persona being edited
+//! (or empty), and a baseline of them tells a dirty form from an untouched
+//! one. Leaving a dirty form takes a second press within 3 s.
 //!
-//! The custom image goes through the system file picker on a job thread
-//! (`<input type="file" accept="image/*">`), then is cropped to a 256 px
-//! square cover and stored as a data URL, as `handleImageFile` does with a
-//! canvas.
+//! The custom image goes through the system file picker on a job thread,
+//! then is cropped to a 256 px square cover and stored as a data URL.
 
 use std::collections::BTreeMap;
 
@@ -19,10 +16,10 @@ use accshift_app::personas::{
 
 use super::personas::PersonasPanel;
 
-/// `cancelResetTimer`: the armed back button disarms after 3 s.
+/// The armed back button disarms after 3 s.
 pub const DISARM_AFTER: f64 = 3.0;
 
-/// The cover's side, px: `handleImageFile`'s canvas.
+/// The cover's side, px.
 const COVER_SIZE: u32 = 256;
 /// `toDataURL(type, 0.85)`.
 const COVER_QUALITY: u8 = 85;
@@ -47,12 +44,12 @@ pub struct PersonaWizard {
     pub selection: BTreeMap<String, String>,
     /// `picking`: the platform whose account is being picked.
     pub picking: Option<String>,
-    /// `confirmingCancel`: when the back button armed (ctx time).
+    /// When the back button armed (ctx time).
     pub armed_at: Option<f64>,
     baseline: (String, Option<String>, Vec<PersonaAssignment>),
     /// `page-entrance`'s start (ctx time), set on the first frame.
     pub opened_at: Option<f64>,
-    /// `onMount`: a new persona's name field takes the focus once.
+    /// A new persona's name field takes the focus once.
     pub focus_name: bool,
     image_job: Option<Pending<ImagePick>>,
 }
@@ -97,7 +94,7 @@ impl PersonaWizard {
         self.selection.get(platform_id).map_or("", String::as_str)
     }
 
-    /// `isValidAssignment`: a stored id is dropped only after a read that
+    /// A stored id is dropped only after a read that
     /// succeeded without it.
     pub fn is_valid_assignment(&self, panel: &PersonasPanel, platform_id: &str) -> bool {
         let id = self.selected(platform_id);
@@ -113,7 +110,7 @@ impl PersonaWizard {
             .is_some_and(|accounts| accounts.iter().any(|a| a.id == id))
     }
 
-    /// `assignedAccount`.
+    /// The account assigned on a platform, when it is still there.
     pub fn assigned_account<'a>(
         &self,
         panel: &'a PersonasPanel,
@@ -157,25 +154,25 @@ impl PersonaWizard {
         })
     }
 
-    /// `dirty`.
+    /// The form differs from what it opened with.
     pub fn dirty(&self, panel: &PersonasPanel) -> bool {
         (&self.name, &self.image, &self.assignments(panel))
             != (&self.baseline.0, &self.baseline.1, &self.baseline.2)
     }
 
-    /// `canSave`.
+    /// A name, at least one account, and every platform answered.
     pub fn can_save(&self, panel: &PersonasPanel) -> bool {
         !self.name.trim().is_empty()
             && !self.assignments(panel).is_empty()
             && !panel.accounts_loading
     }
 
-    /// `confirmingCancel`, with the 3 s timer applied at `now`.
+    /// The back button is armed, with the 3 s timer applied at `now`.
     pub fn armed(&self, now: f64) -> bool {
         self.armed_at.is_some_and(|at| now - at < DISARM_AFTER)
     }
 
-    /// `requestCancel`: true when the wizard closes; otherwise it arms.
+    /// The back button: true when the wizard closes; otherwise it arms.
     pub fn request_cancel(&mut self, panel: &PersonasPanel, now: f64) -> bool {
         if !self.dirty(panel) || self.armed(now) {
             return true;
@@ -184,7 +181,7 @@ impl PersonaWizard {
         false
     }
 
-    /// `handleEscape`: closes the picker, else steps out like the back
+    /// Escape: closes the picker, else steps out like the back
     /// button. True when the wizard closes.
     pub fn handle_escape(&mut self, panel: &PersonasPanel, now: f64) -> bool {
         if self.picking.take().is_some() {
@@ -193,7 +190,7 @@ impl PersonaWizard {
         self.request_cancel(panel, now)
     }
 
-    /// `pickAccount`.
+    /// Assigns an account to a platform and closes the picker.
     pub fn pick_account(&mut self, platform_id: &str, account_id: &str) {
         self.selection
             .insert(platform_id.to_string(), account_id.to_string());
@@ -271,9 +268,8 @@ fn pick_cover() -> ImagePick {
     }
 }
 
-/// `handleImageFile` past the decode: the image scaled to cover a 256 px
-/// square, centred, as a data URL. Chromium's canvas encodes WebP at 0.85;
-/// its JPEG fallback at the same quality is what this build writes.
+/// The decoded image scaled to cover a 256 px square, centred, as a JPEG
+/// data URL at quality 0.85.
 pub fn cover_from_bytes(bytes: &[u8]) -> Option<String> {
     use base64::Engine as _;
     use image::{imageops, GenericImageView, ImageReader};

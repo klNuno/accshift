@@ -1,20 +1,18 @@
-//! The main window's frame on Windows, as tao 0.35 draws Tauri's
-//! (`decorations(false)`, `transparent(true)` and the default shadow, which
-//! boot.rs turns off before Windows 11):
+//! The main window's frame on Windows: undecorated, transparent, with the
+//! default shadow, which is turned off before Windows 11:
 //!
 //! - with the shadow, the client area sits inside a hidden frame
 //!   (`calculate_insets_for_dpi`): resize borders left, right and bottom,
 //!   one pixel per 96 dpi on top, so DWM draws the shadow and rounds the
 //!   corners. The top resize band is the first `SM_CYFRAME` rows of the
-//!   client area (tao's `WM_NCHITTEST`);
+//!   client area;
 //! - without it, the whole window is client area and its edges resize
 //!   (`hit_test` over `SM_CXFRAME` and `SM_CYFRAME`);
 //! - maximized, the client area is the monitor's work area, a pixel short
 //!   on the edge of an auto-hidden taskbar so it can still come up;
-//! - the minimum track size is tao's (`adjust_size` without the caption);
-//! - `set_keep_backdrop_active` (src-tauri `commands/backdrop.rs`): DWM
-//!   keeps a glass theme's acrylic on an inactive window;
-//! - Snap Layouts (src-tauri `commands/window.rs`): the title bar's maximize
+//! - the minimum track size is the client minimum without the caption;
+//! - DWM keeps a glass theme's acrylic on an inactive window;
+//! - Snap Layouts: the title bar's maximize
 //!   button answers `HTMAXBUTTON`, so Windows 11 opens its flyout there;
 //! - the screen coming back on, a display change or DWM restarting its
 //!   composition may drop the window's pixels: [`take_content_lost`] tells
@@ -70,12 +68,11 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WM_POWERBROADCAST,
 };
 
-/// The icon resource build.rs gives the exe, tauri-build's id.
+/// The icon resource build.rs gives the exe.
 const ICON_RESOURCE: u16 = 32512;
 
-/// Tauri's default window icon: the first entry of icon.ico (256 px), set
-/// by tao's `set_window_icon` as the small icon only. The big icon stays
-/// unset and falls back to the exe's resource, as under Tauri.
+/// The window icon: the first entry of icon.ico (256 px), set as the small
+/// icon only. The big icon stays unset and falls back to the exe's resource.
 fn set_icon(hwnd: HWND) {
     // SAFETY: this module's own icon resource, then a message to a window
     // this thread owns. `MAKEINTRESOURCEW` is the id as a pointer.
@@ -94,7 +91,7 @@ fn set_icon(hwnd: HWND) {
     }
 }
 
-/// boot.rs `FIRST_WINDOWS_11_BUILD`.
+/// The first Windows build numbered as Windows 11.
 const FIRST_WINDOWS_11_BUILD: u32 = 22000;
 
 /// The window procedure the frame replaced (winit's, or a subclass over it).
@@ -111,7 +108,7 @@ static SESSION_ENDING: AtomicBool = AtomicBool::new(false);
 /// feature): the console display went off (0), on (1) or dimmed (2).
 const GUID_CONSOLE_DISPLAY_STATE: GUID = GUID::from_u128(0x6fe69556_704a_47a0_8f24_c28d936fda47);
 
-/// Snap Layouts: `snap_layouts::State` of src-tauri `commands/window.rs`.
+/// Snap Layouts: where the maximize button is and how it is hovered.
 struct Snap {
     /// The maximize button in physical client pixels, `[x, y, width,
     /// height]`; `None` when it is not drawn.
@@ -167,7 +164,7 @@ fn hit_test_maximize(point: (f64, f64), rect: [f64; 4]) -> bool {
         && point.1 < y + height
 }
 
-/// `CurrentBuildNumber`, read once, as boot.rs reads it.
+/// The registry's `CurrentBuildNumber`, read once.
 fn windows_build() -> Option<u32> {
     static BUILD: OnceLock<Option<u32>> = OnceLock::new();
     *BUILD.get_or_init(|| {
@@ -196,12 +193,13 @@ fn windows_build() -> Option<u32> {
     })
 }
 
-/// boot.rs `window_shadow_is_safe`: Windows 11, or a build it cannot read.
+/// The shadow is safe: Windows 11, or a build it cannot read.
 pub fn shadow() -> bool {
     windows_build().is_none_or(|build| build >= FIRST_WINDOWS_11_BUILD)
 }
 
-/// tao `calculate_insets_for_dpi`, nothing without the shadow.
+/// The hidden frame around the client area at `dpi`, nothing without the
+/// shadow.
 pub fn insets(dpi: u32, shadow: bool) -> Insets {
     if !shadow {
         return Insets::default();
@@ -254,7 +252,7 @@ fn monitor_info(monitor: HMONITOR) -> Option<MONITORINFO> {
 }
 
 /// `GetDpiForMonitor`'s effective DPI, loaded from shcore at first use like
-/// tao and winit do; 96 when it fails.
+/// winit does; 96 when it fails.
 fn monitor_dpi(monitor: HMONITOR) -> u32 {
     type GetDpiForMonitor = unsafe extern "system" fn(HMONITOR, i32, *mut u32, *mut u32) -> i32;
     static FUNC: OnceLock<Option<GetDpiForMonitor>> = OnceLock::new();
@@ -277,7 +275,7 @@ fn monitor_dpi(monitor: HMONITOR) -> u32 {
     }
 }
 
-/// Every display, in `EnumDisplayMonitors` order as tao lists them.
+/// Every display, in `EnumDisplayMonitors` order.
 pub fn monitors() -> Vec<Monitor> {
     unsafe extern "system" fn each(
         monitor: HMONITOR,
@@ -350,7 +348,7 @@ fn set_outer(hwnd: HWND, r: Rect) {
 }
 
 /// Puts the frame on `hwnd` (once), then moves the hidden window where
-/// Tauri's opens for `saved`.
+/// `saved` places it.
 pub fn install(hwnd: HWND, saved: &SavedWindow) {
     set_icon(hwnd);
     let shadow = shadow();
@@ -385,7 +383,7 @@ pub fn install(hwnd: HWND, saved: &SavedWindow) {
     let target = Rect::at(x, y, start.size.0, start.size.1);
     set_outer(hwnd, target);
     // A move onto a monitor of another DPI lets winit resize the window to
-    // keep its logical size: put tao's size back.
+    // keep its logical size: put the planned size back.
     if outer_rect(hwnd) != Some(target) {
         set_outer(hwnd, target);
     }
@@ -449,7 +447,7 @@ fn call_previous(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESUL
     }
 }
 
-/// tao's `has_edge`: an auto-hidden taskbar on that edge.
+/// An auto-hidden taskbar on that edge.
 fn autohide_taskbar(edge: u32) -> bool {
     let mut data = APPBARDATA {
         cbSize: std::mem::size_of::<APPBARDATA>() as u32,
@@ -497,7 +495,7 @@ unsafe fn nc_calc_size(hwnd: HWND, lparam: LPARAM) {
     }
 }
 
-/// tao's `WM_NCHITTEST` for an unmaximized resizable undecorated window.
+/// `WM_NCHITTEST` for an unmaximized resizable undecorated window.
 fn hit_test(hwnd: HWND, lparam: LPARAM) -> Option<u32> {
     if maximized(hwnd) {
         return None;
@@ -538,7 +536,7 @@ fn hit_test(hwnd: HWND, lparam: LPARAM) -> Option<u32> {
     }
 }
 
-/// tao's `WM_GETMINMAXINFO`: the builder's minimum at the window's scale,
+/// `WM_GETMINMAXINFO`: the builder's minimum at the window's scale,
 /// through `AdjustWindowRectExForDpi` without the caption and size box.
 unsafe fn min_track_size(hwnd: HWND, lparam: LPARAM) {
     let dpi = dpi(hwnd);
@@ -714,7 +712,7 @@ unsafe extern "system" fn frame_proc(
 #[cfg(test)]
 mod tests {
     //! One hidden window (never shown, never activated), the frame on it,
-    //! and the messages tao answers. One test: the frame keeps one window
+    //! and the messages it answers. One test: the frame keeps one window
     //! procedure per process.
     use super::*;
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -742,7 +740,7 @@ mod tests {
                 ..std::mem::zeroed()
             };
             RegisterClassExW(&wc);
-            // tao's styles for `decorations(false)`, resizable, hidden.
+            // The styles of an undecorated, resizable, hidden window.
             CreateWindowExW(
                 WS_EX_WINDOWEDGE | WS_EX_APPWINDOW,
                 class,

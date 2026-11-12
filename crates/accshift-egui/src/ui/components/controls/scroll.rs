@@ -1,10 +1,9 @@
-//! `overflow-y: auto` with the scrollbar of `app.css`: `::-webkit-scrollbar
-//! { width: 10px }`, a transparent track, the thumb in `--bg-muted` with a
+//! `overflow-y: auto` with the app's scrollbar: 10 px wide, a transparent
+//! track, the thumb in `--bg-muted` with a
 //! 3 px radius, `--bg-elevated` under the pointer. The bar only exists when
 //! the content overflows, and then takes 10 px from the content width.
 //!
-//! The wheel scrolls by its pixel delta (the CDP `mouseWheel` the reference
-//! harness sends), a mouse wheel notch eases there
+//! The wheel scrolls by its pixel delta, a mouse wheel notch eases there
 //! ([`crate::ui::smooth_scroll`]); the thumb drags.
 
 use egui::{pos2, vec2, Id, Rect, Sense, Ui};

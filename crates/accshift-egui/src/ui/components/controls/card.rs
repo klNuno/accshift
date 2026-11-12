@@ -1,5 +1,5 @@
-//! The `.card` of the settings panel (`Settings.svelte`, `.settings-panel
-//! :global(.card)`), its `h3` header, and the shared `SettingsCard.svelte`.
+//! The `.card` of the settings panel, its `h3` header, and the accented
+//! settings card.
 
 use egui::{pos2, Rect, Ui};
 
@@ -27,7 +27,7 @@ pub fn title_height(ppp: f32) -> f32 {
 /// the card's own rules for padding, background and border, so every card
 /// keeps the panel's box; a platform tab only adds its accent:
 ///
-/// - `SettingsCard.svelte` (`.card.accented`, sheet loaded after the panel's)
+/// - the accented card (`.card.accented`, its rules winning over the panel's)
 ///   wins the border colour, `color-mix(accent 32%, --border)`;
 /// - `.platform-display-card` of the Steam tab loses it;
 /// - both add `box-shadow: inset 0 0 0 1px color-mix(accent 12%, transparent)`,

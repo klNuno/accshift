@@ -17,6 +17,7 @@
 
 use std::ops::Range;
 
+use accshift_app::js::utf16_len;
 use egui::{Context, Event, Id, ImeEvent, Key, Modifiers, Pos2, Rect, Response, Ui};
 
 use crate::ui::text::{self, TextAlign, TextStyle};
@@ -108,7 +109,7 @@ pub struct Editor {
     pub anchor: usize,
     /// The IME composition, shown at the caret until it commits.
     pub preedit: String,
-    /// The inner editor's `scrollLeft`, in device px.
+    /// The inner editor's horizontal scroll, in device px.
     pub scroll: f32,
     /// In a `<textarea>`: the caret sits at the end of a wrapped row rather
     /// than at the start of the next one (upstream affinity).
@@ -1097,10 +1098,6 @@ fn byte(s: &str, chars: usize) -> usize {
 
 fn slice(s: &str, range: Range<usize>) -> &str {
     &s[byte(s, range.start)..byte(s, range.end)]
-}
-
-fn utf16_len(s: &str) -> usize {
-    s.chars().map(char::len_utf16).sum()
 }
 
 /// The longest prefix of `s` within `max` UTF-16 code units: never half a

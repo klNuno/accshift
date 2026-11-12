@@ -21,9 +21,9 @@ use crate::ui::text_shadow::{self, TextShadow};
 /// `public/logo.svg`.
 const LOGO: &[u8] = include_bytes!("../../../../assets/logo.svg");
 
-/// `stepIn` and `featureSwap`, 220 ms.
+/// A step's entrance and a feature's swap, 220 ms.
 const STEP_IN: Animation = Animation::new(0.22, Timing::EASE_OUT);
-/// `gifSwap`, 240 ms.
+/// The clip's swap, 240 ms.
 const GIF_SWAP: Animation = Animation::new(0.24, Timing::EASE_OUT);
 /// The deal title's colour, 10 s linear, `fill: forwards`.
 const DEAL_TITLE: f64 = 10.0;
@@ -229,7 +229,7 @@ impl StepLayout {
         }
     }
 
-    /// Draws the step with its `stepIn` entrance.
+    /// Draws the step with its entrance.
     #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &self,
@@ -576,7 +576,7 @@ impl Features {
         let ctx = ui.ctx().clone();
         let ppp = ctx.pixels_per_point();
         let v = props.vars;
-        // `featureSwap` on the row, at the step's mount only.
+        // The feature swap on the row, at the step's mount only.
         let p = anim::animate(
             &ctx,
             id.with("swap"),
@@ -1009,7 +1009,7 @@ impl Deal {
         }
         y += self.title_h + self.gap;
 
-        // The clip, remounted with each `rejecting` flip (`{#key}`).
+        // The clip, started over with each `rejecting` flip.
         if let Some((clip, size)) = self.gif {
             let gif_id = id.with(("gif", view.clip_mount));
             let p = anim::animate(
@@ -1024,7 +1024,8 @@ impl Deal {
             let start = ctx.data_mut(|d| *d.get_temp_mut_or_insert_with(start_id, || now));
             let ms = ((now - start) * 1000.0).max(0.0) as u64;
             let boxed = Rect::from_min_size(pos2(at.x + (width - size.x) / 2.0, y), size);
-            // `object-fit: contain` inside a box `gifSize` fixed.
+            // `object-fit: contain` inside the box fixed when "enough" was
+            // pressed.
             let natural = clip.size();
             let fit = (size.x / natural.x).min(size.y / natural.y);
             let drawn = Rect::from_center_size(boxed.center(), natural * fit);

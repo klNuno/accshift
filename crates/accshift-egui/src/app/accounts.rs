@@ -68,13 +68,12 @@ pub struct Cs2Card {
 }
 
 /// The CS2 content of the Steam tab's cards, rebuilt when the bridge cache
-/// changes (`getCs2BridgeVersion`). Empty on every other tab.
+/// version changes. Empty on every other tab.
 #[derive(Default)]
 pub struct Cs2Cards {
     pub queue: Cs2BridgeQueue,
-    /// The tab and account list version the load effect last ran for: it
-    /// reruns when either changes, as the `$effect` reading `activeTab` and
-    /// `loader.accounts`.
+    /// The tab and account list version the queue was last loaded for: it
+    /// loads again when either changes.
     effect: Option<(String, u64)>,
     /// The bridge version and account list version the map was built from.
     built: Option<(u64, u64)>,
@@ -160,7 +159,7 @@ pub struct Accounts {
     pub clock: Clock,
     pub runtime_os: app_platforms::RuntimeOs,
     /// The last computed lists (their `visible_account_ids` feed the next
-    /// poll, as the grid's `visibleRenderedAccountIds` does in TS).
+    /// poll).
     pub lists: DisplayLists,
     pub view: DisplayView,
     /// The view drawn last frame: a collapsing section slides its cards out
@@ -170,14 +169,14 @@ pub struct Accounts {
     pub cs2: Cs2Cards,
     /// `onboarding.mockActive`: the tour's mock accounts replace the grid.
     pub tour: Option<Vec<PlatformAccount>>,
-    /// `bulkEditSelectedIds` while the bulk edit mode is open: the cards
+    /// The selected ids while the bulk edit mode is open: the cards
     /// turn accent when selected and switch on one click.
     pub bulk_selection: Option<BTreeSet<String>>,
-    /// `createDragManager`: the card being pressed or dragged.
+    /// The card being pressed or dragged.
     pub drag: DragManager,
-    /// The keys of the dragged card's `{#each}` as last rendered.
+    /// The ids of the dragged card's list as last rendered.
     drag_order: Vec<String>,
-    /// `createPlatformAddFlowController`.
+    /// The add-account flow of the active platform.
     pub add_flow: PlatformAddFlow,
     /// The pending setup card of this frame, and its setup sections.
     pub setup: Option<(PlatformAccount, SetupExtension)>,
@@ -193,7 +192,7 @@ fn add_flow_view<'a>(navigation: &'a FolderNavigation, tab: &'a str) -> AddFlowV
 }
 
 impl Accounts {
-    /// The `removeAccount` glue of `App.svelte`: drop it from the loader,
+    /// Removes an account: drop it from the loader,
     /// sync the folders with the accounts left, refresh the items.
     pub fn remove_account(
         &mut self,
@@ -214,8 +213,7 @@ impl Accounts {
     }
 
     /// The boot wiring: the loader on the active tab over `registry` (see
-    /// [`platform_registry`]), and the first `loadAccounts(false, false,
-    /// false, false, true)` of `App.svelte`'s mount.
+    /// [`platform_registry`]), and the first load of the accounts.
     pub fn boot(
         jobs: &Jobs,
         stores: &mut ClientStores,
@@ -318,7 +316,7 @@ impl Accounts {
         })
     }
 
-    /// `handleAddAccountClick`: refused while the tab is unusable, an add
+    /// The add button: refused while the tab is unusable, an add
     /// runs or a setup is open. A setup the platform starts lands as
     /// `AddFlowStarted` from [`Self::update`].
     pub fn add_account(&mut self, jobs: &Jobs, stores: &mut ClientStores, tab: &str) -> bool {
@@ -372,7 +370,7 @@ impl Accounts {
             .is_some_and(|(account, _)| account.id == account_id)
     }
 
-    /// `handleTabChange` once the tab is known usable and different:
+    /// A tab change, once the tab is known usable and different:
     /// everything in flight dropped, the folder reset, the accounts loaded
     /// silently, the search cleared.
     pub fn change_tab(&mut self, jobs: &Jobs, stores: &mut ClientStores, tab: &str) {
@@ -384,7 +382,7 @@ impl Accounts {
         self.pipeline.clear_collapsed_sections();
     }
 
-    /// `handleRefreshClick`: the active tab again, not silent, with the
+    /// The refresh button: the active tab again, not silent, with the
     /// "refreshed" toast and the ban check.
     pub fn refresh(&mut self, jobs: &Jobs, stores: &mut ClientStores, tab: &str) {
         self.with_loading(jobs, stores, tab, |loading, ctx| {
@@ -418,7 +416,7 @@ impl Accounts {
         self.navigation.refresh_current_items(stores, tab);
     }
 
-    /// `navigateToParentFolder`: the parent folder, and the search cleared.
+    /// To the parent folder, and the search cleared.
     pub fn navigate_back(&mut self, stores: &ClientStores, tab: &str) {
         let Some(current) = self.navigation.current_folder_id().map(str::to_string) else {
             return;
@@ -431,7 +429,7 @@ impl Accounts {
         self.set_search("", Instant::now());
     }
 
-    /// `getItems` of `createCardFocus`: the cards in visual order, folders
+    /// The keyboard focus order: the cards in visual order, folders
     /// then accounts, the cards of a collapsed section left out.
     pub fn card_focus_items(&self) -> Vec<accshift_app::folders::ItemRef> {
         self.card_focus_iter().cloned().collect()
@@ -618,8 +616,8 @@ impl Accounts {
         (rest, added)
     }
 
-    /// A preview reorder moving the dragged card's node takes `:active`
-    /// off it, as Chromium does when Svelte moves the node, and every node
+    /// A preview reorder moving the dragged card takes its pressed state
+    /// off, as the browser did when the list moved the node, and every card
     /// it moves replays its entrance.
     fn track_drag_order(&mut self, ctx: &egui::Context) {
         // From the press on: the move that starts the drag can show the

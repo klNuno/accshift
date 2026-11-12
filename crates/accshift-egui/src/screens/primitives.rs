@@ -1,6 +1,6 @@
 //! Calibration screen for `ui::paint`: draws the boxes of an HTML fragment of
-//! `parity/fragments/`, the same file `parity/ref.mjs` injects into the Tauri
-//! page, so both sides paint identical CSS values.
+//! `parity/fragments/`, the CSS values the browser reference was captured
+//! from.
 //!
 //! The fragment format is deliberately narrow: `<style>` blocks are skipped
 //! (they only hold what both sides share: absolute positioning, border-box

@@ -1,5 +1,5 @@
-//! The card extension: `.extension-surface` in `AccountCard.svelte` and the
-//! `CardExtensionPanel.svelte` it holds.
+//! The card extension: the surface beside an account card and the details
+//! panel it holds.
 //!
 //! - `.extension-hitbox`: the card's height, `--grid-card-width` plus
 //!   130 px wide, from the card's left edge (`.right`) or to its right edge
@@ -86,7 +86,7 @@ const WHITE: Rgba = Rgba::new(255.0, 255.0, 255.0, 1.0);
 /// `.section-link`.
 const LINK: Rgba = Rgba::new(147.0, 197.0, 253.0, 1.0);
 
-/// `updatePanelSide`: right while the window has room for the details and
+/// Right while the window has room for the details and
 /// their gap past the card's right edge.
 pub fn opens_right(window_width: f32, card_right: f32) -> bool {
     window_width - card_right >= DETAIL_WIDTH + VIEWPORT_GAP
@@ -99,7 +99,7 @@ pub struct Surface<'a> {
     /// The card's id.
     pub id: Id,
     pub sections: &'a [CardSection],
-    /// The chips that have an `onClick`, as `(section, chip)`.
+    /// The clickable chips, as `(section, chip)`.
     pub clickable: &'a [(usize, usize)],
     pub locale: Locale,
     pub card_color: Option<Rgba>,

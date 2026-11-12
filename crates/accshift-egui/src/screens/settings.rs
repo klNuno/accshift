@@ -1,6 +1,5 @@
-//! `Settings.svelte`: the settings panel in the shell's panel slot, with its
-//! General and Privacy tabs (`SettingsGeneralTab.svelte`,
-//! `SettingsPrivacyTab.svelte`).
+//! The settings panel in the shell's panel slot, with its General and
+//! Privacy tabs.
 //!
 //! ```text
 //! .content                padding 10 16 16, a stable 10 px scrollbar gutter
@@ -123,7 +122,7 @@ fn tr(locale: Locale, key: &str) -> String {
     translate(locale, key)
 }
 
-/// One child of a card, in DOM order.
+/// One child of a card, in drawing order.
 enum Item {
     /// `<h3>`.
     Title(String),
@@ -189,7 +188,8 @@ enum Control {
         max: f64,
         step: f64,
         field: NumericField,
-        /// `bgOpacity` commits on every `input`; `uiScale` on `change`.
+        /// The background opacity commits on every move; the UI scale on
+        /// release.
         commit_on_input: bool,
     },
     Input {
@@ -684,16 +684,30 @@ fn item_height(ctx: &Context, c: &Ctx, item: &Item, width: f32) -> f32 {
     }
 }
 
-fn card_height(ctx: &Context, c: &Ctx, spec: &CardSpec, width: f32) -> f32 {
-    let inset = card::inset(ctx.pixels_per_point());
-    let inner = width - 2.0 * inset;
-    let items: f32 = spec
-        .items
-        .iter()
-        .map(|i| item_height(ctx, c, i, inner))
-        .sum();
-    let gaps: f32 = spec.items.iter().skip(1).map(gap_before).sum();
-    items + gaps + 2.0 * inset
+/// A card's items measured once per layout: the content width they were
+/// measured at and the height of each.
+struct CardItems {
+    inner: f32,
+    heights: Vec<f32>,
+}
+
+impl CardItems {
+    fn measure(ctx: &Context, c: &Ctx, spec: &CardSpec, width: f32) -> CardItems {
+        let inner = width - 2.0 * card::inset(ctx.pixels_per_point());
+        let heights = spec
+            .items
+            .iter()
+            .map(|i| item_height(ctx, c, i, inner))
+            .collect();
+        CardItems { inner, heights }
+    }
+
+    /// The card's height: its items, the gaps between them and the insets.
+    fn card_height(&self, ctx: &Context, spec: &CardSpec) -> f32 {
+        let items: f32 = self.heights.iter().sum();
+        let gaps: f32 = spec.items.iter().skip(1).map(gap_before).sum();
+        items + gaps + 2.0 * card::inset(ctx.pixels_per_point())
+    }
 }
 
 /// Grid placement: `(column, row)` of each card, columns spanned, row count.
@@ -722,6 +736,7 @@ fn place(cards: &[CardSpec], cols: usize, wide_spans: bool) -> Vec<(usize, usize
 
 struct GridLayout {
     rects: Vec<Rect>,
+    items: Vec<CardItems>,
     height: f32,
 }
 
@@ -740,13 +755,18 @@ fn grid_layout(
     let tracks = snap::fr_tracks(width, cols, GRID_GAP, ctx.pixels_per_point());
     let placed = place(cards, cols, c.view.viewport_width > 980.0);
     let rows = placed.iter().map(|p| p.1 + 1).max().unwrap_or(0);
-    let heights: Vec<f32> = cards
+    let items: Vec<CardItems> = cards
         .iter()
         .zip(&placed)
         .map(|(spec, (col, _, span))| {
             let (_, w) = snap::track_span(&tracks, *col, *span);
-            card_height(ctx, c, spec, w)
+            CardItems::measure(ctx, c, spec, w)
         })
+        .collect();
+    let heights: Vec<f32> = cards
+        .iter()
+        .zip(&items)
+        .map(|(spec, items)| items.card_height(ctx, spec))
         .collect();
     let mut row_h = vec![0.0f32; rows];
     for ((_, row, _), h) in placed.iter().zip(&heights) {
@@ -771,7 +791,11 @@ fn grid_layout(
     } else {
         row_h.iter().sum::<f32>() + GRID_GAP * (rows - 1) as f32
     };
-    GridLayout { rects, height }
+    GridLayout {
+        rects,
+        items,
+        height,
+    }
 }
 
 /// Draws the panel into the shell's panel slot.
@@ -1007,15 +1031,19 @@ pub fn draw(
     let mut content_ui = ui.new_child(egui::UiBuilder::new().max_rect(viewport));
     content_ui.set_clip_rect(viewport.intersect(ui.clip_rect()));
     let content_h = grid.height;
-    for (k, (spec, rect)) in cards.iter().zip(&grid.rects).enumerate() {
+    for (k, ((spec, rect), measured)) in cards.iter().zip(&grid.rects).zip(&grid.items).enumerate()
+    {
         card::paint_frame(&content_ui, *rect, v, kind);
         let inner = card::content(*rect, ppp);
+        // The layout's heights hold when the content width is the one they
+        // were measured at; a float rounding step apart, measure again.
+        let measured = (inner.width() == measured.inner).then_some(&measured.heights);
         let mut y = inner.top();
         for (i, item) in spec.items.iter().enumerate() {
             if i > 0 {
                 y += gap_before(item);
             }
-            let h = item_height(&ctx, &c, item, inner.width());
+            let h = measured.map_or_else(|| item_height(&ctx, &c, item, inner.width()), |m| m[i]);
             let r = Rect::from_min_size(pos2(inner.left(), y), vec2(inner.width(), h));
             // By card and item: two cards share a left edge when one spans
             // the row (telemetry under privacy), and an id clash leaves the
@@ -1505,7 +1533,7 @@ fn format_number(v: f64) -> String {
     }
 }
 
-/// `swatchStyle`: background layers, preview card, foreground and border of
+/// Background layers, preview card, foreground and border of
 /// a theme's swatch.
 struct Swatch {
     bg: Rgba,

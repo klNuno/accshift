@@ -69,8 +69,8 @@ fn static_vcruntime() {
     }
 }
 
-/// The resource file tauri-build gave the Tauri app, from the tauri.conf.json
-/// the installer is bundled with: the icon as resource 32512, the version
+/// The exe's resource file, from the tauri.conf.json the installer is
+/// bundled with: the icon as resource 32512, the version
 /// info and the Common Controls 6 manifest.
 fn resources() {
     let conf_path = std::path::Path::new("tauri.conf.json");
