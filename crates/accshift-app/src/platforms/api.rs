@@ -83,7 +83,7 @@ pub fn log_app_event(
     let _ = backend.log_app_event(level, source, message, details.as_deref());
 }
 
-/// `createPlatformApi(platformId)`.
+/// The backend calls of one platform.
 #[derive(Clone, Copy)]
 pub struct PlatformApi<'a> {
     backend: &'a dyn Backend,

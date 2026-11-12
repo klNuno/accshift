@@ -1,14 +1,13 @@
-//! The persisted profile caches, ported from `src/lib/shared/profileCache.ts`
-//! and the two caches built on it (`platforms/steam/profileCache.ts`,
-//! `platforms/roblox/profileCache.ts`).
+//! The persisted Steam and Roblox profile caches.
 //!
 //! The cache lives in a client store, which the UI thread owns, while fetches
 //! run on the job pool. So a fetch does not write the store: it returns the
-//! [`CacheWrite`]s TS would have made, in order, and the UI applies them with
+//! [`CacheWrite`]s to make, in order, and the UI applies them with
 //! [`ProfileCache::apply_writes`]. Reads ([`ProfileCache::cached_profile`])
-//! keep the TS revision memo. The in-flight map is shared between job threads
-//! ([`InFlight`]): a second request for an id already being fetched waits for
-//! that fetch instead of starting one, in both the unit and the batch path.
+//! keep a memo keyed on the store revision. The in-flight map is shared
+//! between job threads ([`InFlight`]): a second request for an id already
+//! being fetched waits for that fetch instead of starting one, in both the
+//! unit and the batch path.
 
 use crate::backend::Backend;
 use crate::error::BackendResult;
@@ -23,12 +22,10 @@ use std::time::Duration;
 /// Which avatar URLs a cache and the avatar images accept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum UrlPolicy {
-    /// `isSafeHttpUrl`: `http:` and `https:` only. The real backend.
+    /// `http:` and `https:` only. The real backend.
     #[default]
     HttpOnly,
-    /// Also local files. The mock: its avatars are files under
-    /// `src/lib/mock/avatars/`, where the Tauri mock served them from the
-    /// Vite dev server over `http:`.
+    /// Also local files. The mock: its avatars are files in the repository.
     HttpOrFile,
 }
 
@@ -48,7 +45,7 @@ impl UrlPolicy {
     }
 }
 
-/// `CacheEntry`. `url: None` is a negative entry: fetched, no avatar.
+/// One cached profile. `url: None` is a negative entry: fetched, no avatar.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CacheEntry {
     pub url: Option<String>,
@@ -82,7 +79,8 @@ pub struct CacheWrite {
     pub entry: CacheEntry,
 }
 
-/// `ProfileCacheOptions` minus the fetchers, which the call sites pass.
+/// How a cache retries and expires; the fetchers are passed by the call
+/// sites.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CacheConfig {
     pub store_id: StoreId,
@@ -94,9 +92,9 @@ pub struct CacheConfig {
     pub cache_negative_results: bool,
 }
 
-/// `platforms/steam/profileCache.ts`: four attempts 750 ms apart, then a
-/// negative entry (profile data can lag right after Steam writes
-/// `loginusers.vdf`; private profiles expose no avatar).
+/// Steam: four attempts 750 ms apart, then a negative entry (profile data
+/// can lag right after Steam writes `loginusers.vdf`; private profiles
+/// expose no avatar).
 pub const STEAM_PROFILE_CACHE: CacheConfig = CacheConfig {
     store_id: crate::storage::CLIENT_STORE_STEAM_PROFILE_CACHE,
     attempts: 4,
@@ -104,7 +102,7 @@ pub const STEAM_PROFILE_CACHE: CacheConfig = CacheConfig {
     cache_negative_results: true,
 };
 
-/// `platforms/roblox/profileCache.ts`: one attempt, no negative entries.
+/// Roblox: one attempt, no negative entries.
 pub const ROBLOX_PROFILE_CACHE: CacheConfig = CacheConfig {
     store_id: crate::storage::CLIENT_STORE_ROBLOX_PROFILE_CACHE,
     attempts: 1,
@@ -112,7 +110,7 @@ pub const ROBLOX_PROFILE_CACHE: CacheConfig = CacheConfig {
     cache_negative_results: false,
 };
 
-/// `getAvatarUrl` and `getDisplayName` of a cache.
+/// The avatar URL and display name of a fetched profile.
 pub trait CachedProfile: Clone + Send + 'static {
     fn avatar_url(&self) -> Option<&str>;
     fn display_name(&self) -> Option<&str> {
@@ -135,11 +133,12 @@ impl CachedProfile for RobloxProfileInfo {
     }
 }
 
-/// What expiry compares against: `cacheDurationProvider()` and the session
-/// start.
+/// What expiry compares against: the configured cache duration and the
+/// session start.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CacheExpiry {
-    /// `getCacheDuration()`; 0 expires every entry older than the session.
+    /// The configured cache duration; 0 expires every entry older than the
+    /// session.
     pub duration_ms: u64,
     /// `SESSION_START_MS`.
     pub session_start_ms: f64,
@@ -204,7 +203,7 @@ type Claimed<P> = Vec<(String, Arc<Slot<P>>)>;
 /// A batch fetcher: profiles keyed by id for a list of ids.
 pub type BatchFetcher<'a, P> = &'a dyn Fn(&[String]) -> BackendResult<BTreeMap<String, P>>;
 
-/// `inFlight`: the fetches running now, shared between job threads.
+/// The fetches running now, shared between job threads.
 #[derive(Debug)]
 pub struct InFlight<P> {
     slots: Mutex<HashMap<String, Arc<Slot<P>>>>,
@@ -267,12 +266,12 @@ pub struct Fetched<T> {
     pub writes: Vec<CacheWrite>,
 }
 
-/// `createProfileCache`.
+/// One persisted profile cache.
 #[derive(Debug)]
 pub struct ProfileCache<P> {
     config: CacheConfig,
     policy: UrlPolicy,
-    /// `cachedEntries` and `cachedRevision`.
+    /// The sanitized entries and the store revision they were read at.
     memo: Mutex<Option<(u64, BTreeMap<String, CacheEntry>)>>,
     in_flight: InFlight<P>,
 }
@@ -299,7 +298,7 @@ impl<P: CachedProfile> ProfileCache<P> {
         &self.in_flight
     }
 
-    /// `sanitizeEntry`.
+    /// A stored entry, `None` when it is malformed.
     fn sanitize_entry(&self, value: &Value) -> Option<CacheEntry> {
         let raw = value.as_object()?;
         let url = raw.get("url");
@@ -343,8 +342,7 @@ impl<P: CachedProfile> ProfileCache<P> {
         out
     }
 
-    /// `getCache`: the sanitized entries, rebuilt only when the store's
-    /// revision moved.
+    /// The sanitized entries, rebuilt only when the store's revision moved.
     pub fn entries(&self, storage: &ClientStorage) -> BTreeMap<String, CacheEntry> {
         let revision = storage.revision(self.config.store_id);
         let mut memo = lock(&self.memo);
@@ -371,7 +369,7 @@ impl<P: CachedProfile> ProfileCache<P> {
         self.entries(storage).get(account_id).cloned()
     }
 
-    /// `getCachedProfile`.
+    /// The cached profile of an account.
     pub fn cached_profile(
         &self,
         storage: &ClientStorage,
@@ -386,7 +384,7 @@ impl<P: CachedProfile> ProfileCache<P> {
         })
     }
 
-    /// `saveCache`.
+    /// Writes the entries back to the store.
     fn save(&self, storage: &mut ClientStorage, entries: BTreeMap<String, CacheEntry>) {
         let value = Value::Object(
             entries
@@ -398,7 +396,7 @@ impl<P: CachedProfile> ProfileCache<P> {
         *lock(&self.memo) = Some((storage.revision(self.config.store_id), entries));
     }
 
-    /// `setCachedProfile`: ignored for a URL the policy refuses.
+    /// Caches a profile; ignored for a URL the policy refuses.
     pub fn set_cached_profile(
         &self,
         storage: &mut ClientStorage,
@@ -471,7 +469,7 @@ impl<P: CachedProfile> ProfileCache<P> {
         }
     }
 
-    /// `fetchWithRetries`.
+    /// Fetches one profile, retrying as the config says.
     fn fetch_with_retries(
         &self,
         account_id: &str,
@@ -499,8 +497,8 @@ impl<P: CachedProfile> ProfileCache<P> {
         last
     }
 
-    /// `fetchProfile`: one account, deduplicated against every fetch in
-    /// flight. Blocks; run it on the job pool.
+    /// One account, deduplicated against every fetch in flight. Blocks; run
+    /// it on the job pool.
     pub fn fetch_profile(
         &self,
         account_id: &str,
@@ -523,7 +521,7 @@ impl<P: CachedProfile> ProfileCache<P> {
         Fetched { value, writes }
     }
 
-    /// `batchFetchWithRetries`: retries only the ids without a usable avatar.
+    /// Fetches a batch, retrying only the ids without a usable avatar.
     fn batch_fetch_with_retries(
         &self,
         account_ids: &[String],
@@ -567,7 +565,7 @@ impl<P: CachedProfile> ProfileCache<P> {
         results
     }
 
-    /// `fetchProfiles`: many accounts through `batch` when given, else one
+    /// Many accounts through `batch` when given, else one
     /// [`ProfileCache::fetch_profile`] per id. Ids already in flight are
     /// waited on, not fetched again. Blocks; run it on the job pool.
     pub fn fetch_profiles(
@@ -613,7 +611,7 @@ impl<P: CachedProfile> ProfileCache<P> {
 // ------------------------------------------------------------ the two caches
 
 /// The Steam and Roblox caches of a session, plus the platform profile
-/// mapping (`toPlatformProfileInfo`) under the same URL policy.
+/// mapping under the same URL policy.
 #[derive(Debug)]
 pub struct ProfileCaches {
     pub steam: ProfileCache<ProfileInfo>,
@@ -644,7 +642,8 @@ impl ProfileCaches {
         }
     }
 
-    /// `adapter.getCachedProfile(id)`: Steam and Roblox only.
+    /// The cached profile of an account, without a fetch: Steam and Roblox
+    /// only.
     pub fn cached_profile(
         &self,
         platform_id: &str,
@@ -673,7 +672,7 @@ impl ProfileCaches {
         }
     }
 
-    /// Steam's `toPlatformProfileInfo` under this policy.
+    /// Steam's profile mapping under this policy.
     pub fn steam_profile_info(&self, profile: Option<&ProfileInfo>) -> Option<PlatformProfileInfo> {
         let profile = profile?;
         let avatar = crate::js::trim(profile.avatar_url.as_deref().unwrap_or_default());
@@ -685,7 +684,7 @@ impl ProfileCaches {
         })
     }
 
-    /// Roblox's `getProfileInfo` mapping under this policy.
+    /// Roblox's profile mapping under this policy.
     pub fn roblox_profile_info(
         &self,
         info: Option<&RobloxProfileInfo>,
@@ -702,7 +701,7 @@ impl ProfileCaches {
         })
     }
 
-    /// `adapter.getProfileInfo(id)` through the caches: Steam and Roblox
+    /// The profile info of an account through the caches: Steam and Roblox
     /// fetch with their cache rules, Riot reads its profile cache, others
     /// have none. Blocks.
     pub fn profile_info(
@@ -742,8 +741,8 @@ impl ProfileCaches {
         }
     }
 
-    /// `adapter.getProfileInfos(ids)`: Steam's batch path. `None` for other
-    /// platforms (they have no batch fetcher). Blocks.
+    /// Steam's batch path. `None` for other platforms (they have no batch
+    /// fetcher). Blocks.
     pub fn steam_profile_infos(
         &self,
         backend: &dyn Backend,

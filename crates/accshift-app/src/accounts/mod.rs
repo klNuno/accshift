@@ -29,7 +29,7 @@ pub mod refresh;
 use crate::platforms::AddFlowStatus;
 use crate::text::Text;
 
-/// `addToast(..., { type })`.
+/// A toast's look: info, success, warning or error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ToastKind {
     /// No `type` given.
@@ -67,7 +67,7 @@ pub enum LoadingEvent {
     AccountsLoaded {
         platform_id: String,
     },
-    /// `addFlow.start(platformId, status)`.
+    /// The platform started its own setup: start the add flow.
     AddFlowStarted {
         platform_id: String,
         status: AddFlowStatus,

@@ -207,7 +207,7 @@ pub struct RegistryInput<'a> {
     pub current_folder_id: Option<&'a str>,
     pub bulk_edit_available: bool,
     pub personas_enabled: bool,
-    /// `getUpdateCtaLabel()` is non-empty.
+    /// An update is ready to install.
     pub update_ready: bool,
     pub view_mode: ViewMode,
     pub is_mac: bool,

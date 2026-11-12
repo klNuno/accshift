@@ -13,9 +13,8 @@ pub const VISIBLE_PRIME_DEBOUNCE: Duration = Duration::from_millis(120);
 /// `VISIBLE_PRIME_TTL_MS`: how long an account primed on screen stays primed.
 pub const VISIBLE_PRIME_TTL: Duration = Duration::from_secs(5 * 60);
 
-/// What the timer callback does: `prepareAccountIds(visible_ids)`, then
-/// `primeAccountIds(due_ids, true, false, true, true)` when `due_ids` is not
-/// empty.
+/// What the timer asks for: queue the visible ids, then prime the due ids
+/// when there are any.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrimeRequest {
     pub visible_ids: Vec<String>,

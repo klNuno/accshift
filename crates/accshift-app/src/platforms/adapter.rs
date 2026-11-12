@@ -1,8 +1,5 @@
-//! One platform's behaviour, ported from the `PlatformAdapter` interface of
-//! `src/lib/shared/platform.ts` and the adapters that implement it
-//! (`steam/adapter.ts`, `riot/adapter.ts`, `roblox/adapter.ts`,
-//! `genericAdapter.ts` and the six `*/adapter.ts` built on it), plus
-//! `addFlow.ts`.
+//! One platform's behaviour: account loads, switch, add flow, labels,
+//! context menu entries, profiles, warnings and toast wording.
 //!
 //! Why an enum and not a trait object: the set of adapters is closed (Steam,
 //! Riot, Roblox and the generic family, user descriptors included), each
@@ -13,9 +10,9 @@
 //! no new code: it is [`AdapterKind::Generic`] with [`GenericConfig::user`].
 //!
 //! Every method that talks to the backend takes `&dyn Backend` and blocks, so
-//! the shell runs it on the job pool. Session state the TS modules keep in
-//! module variables (ban checks, Roblox dead sessions, the Riot profile
-//! cache, the CS2 bridge rows) lives behind a mutex inside the adapter.
+//! the shell runs it on the job pool. Session state (ban checks, Roblox dead
+//! sessions, the Riot profile cache, the CS2 bridge rows) lives behind a
+//! mutex inside the adapter.
 
 use super::generic::GenericConfig;
 use super::riot::{self, RiotProfile, RiotProfileCache};
@@ -53,7 +50,7 @@ pub enum AdapterKind {
     Generic(GenericConfig),
 }
 
-/// The session state of the TS modules.
+/// The session state of a platform.
 #[derive(Debug, Default)]
 pub struct AdapterState {
     pub ban_session: BanSession,
@@ -63,19 +60,18 @@ pub struct AdapterState {
     pub roblox_sessions: RobloxSessions,
 }
 
-/// What the menu builders read from the UI (`PlatformContextMenuCallbacks`
-/// minus the actions, which are [`crate::menu::MenuCommand`]s now).
+/// What the menu builders read from the UI.
 #[derive(Debug, Clone, Copy)]
 pub struct MenuContext<'a> {
-    /// `getCurrentAccountId()`.
+    /// The account the client is signed in to.
     pub current_account_id: Option<&'a str>,
     /// Steam's default games live in the client stores.
     pub stores: &'a ClientStores,
-    /// The UI offers `openInputDialog` (rename).
+    /// The UI offers the input dialog (rename).
     pub input_dialog: bool,
 }
 
-/// `PlatformAdapter`.
+/// One platform's behaviour and session state.
 #[derive(Debug)]
 pub struct PlatformAdapter {
     id: String,
@@ -113,7 +109,7 @@ impl PlatformAdapter {
         Some(Self::new(id, kind))
     }
 
-    /// `userAdapterLoader`: a platform from the user's descriptor folder.
+    /// A platform from the user's descriptor folder.
     pub fn user(id: &str, name: &str) -> Self {
         Self::new(id, AdapterKind::Generic(GenericConfig::user(name)))
     }
@@ -138,17 +134,17 @@ impl PlatformAdapter {
         PlatformApi::new(backend, &self.id)
     }
 
-    /// `reloadAfterAdd`.
+    /// Whether the account list reloads once an add flow finishes.
     pub fn reload_after_add(&self) -> bool {
         matches!(&self.kind, AdapterKind::Generic(config) if config.reload_after_add)
     }
 
-    /// `setAccountLabel` exists.
+    /// Whether the platform can label accounts.
     pub fn supports_account_labels(&self) -> bool {
         matches!(&self.kind, AdapterKind::Generic(config) if config.supports_account_labels())
     }
 
-    /// Whether `getCachedWarningStates` / `loadWarningStates` exist.
+    /// Whether the platform has account warnings.
     pub fn has_warnings(&self) -> bool {
         matches!(self.kind, AdapterKind::Steam | AdapterKind::Roblox)
     }
@@ -193,22 +189,22 @@ impl PlatformAdapter {
         }
     }
 
-    /// `loadAccounts`.
+    /// The platform's accounts.
     pub fn load_accounts(&self, backend: &dyn Backend) -> BackendResult<Vec<PlatformAccount>> {
         Ok(self.to_accounts(&self.api(backend).get_accounts()?))
     }
 
-    /// `getCurrentAccount`.
+    /// The id of the account signed in now.
     pub fn current_account(&self, backend: &dyn Backend) -> BackendResult<String> {
         self.api(backend).get_current_account()
     }
 
-    /// `getStartupSnapshot`.
+    /// The accounts and the current one, read in one call at startup.
     pub fn startup_snapshot(&self, backend: &dyn Backend) -> BackendResult<StartupSnapshot> {
         Ok(self.to_snapshot(&self.api(backend).get_startup_snapshot()?))
     }
 
-    /// `switchAccount`. Steam reads its launch settings; Roblox keeps its
+    /// Switches account. Steam reads its launch settings; Roblox keeps its
     /// dead-session marks in step with the answer.
     pub fn switch_account(
         &self,
@@ -249,7 +245,7 @@ impl PlatformAdapter {
 
     // ------------------------------------------------------------ add flow
 
-    /// `addAccount` (`createPlatformAddFlowHandlers`).
+    /// Starts an add flow.
     pub fn add_account(
         &self,
         backend: &dyn Backend,
@@ -266,8 +262,8 @@ impl PlatformAdapter {
         })
     }
 
-    /// `pollAddFlow`. Roblox lifts a dead-session mark once a fresh cookie is
-    /// stored for the account.
+    /// Polls an add flow. Roblox lifts a dead-session mark once a fresh
+    /// cookie is stored for the account.
     pub fn poll_add_flow(
         &self,
         backend: &dyn Backend,
@@ -282,12 +278,12 @@ impl PlatformAdapter {
         Ok(status)
     }
 
-    /// `cancelAddFlow`.
+    /// Cancels an add flow.
     pub fn cancel_add_flow(&self, backend: &dyn Backend, setup_id: &str) -> BackendResult<()> {
         self.api(backend).cancel_setup(setup_id)
     }
 
-    /// `setAccountLabel`; an error for a platform without labels.
+    /// Sets an account's label; an error for a platform without labels.
     pub fn set_account_label(
         &self,
         backend: &dyn Backend,
@@ -305,7 +301,7 @@ impl PlatformAdapter {
 
     // ------------------------------------------------------------ menu
 
-    /// `getContextMenuActions`.
+    /// The platform's own context menu entries for an account.
     pub fn context_menu_actions(
         &self,
         account: &PlatformAccount,
@@ -352,7 +348,7 @@ impl PlatformAdapter {
         }
     }
 
-    /// Fills a `submenuLoader` submenu. Runs on the job pool; the UI groups
+    /// Fills a submenu loaded on open. Runs on the job pool; the UI groups
     /// the result with [`crate::menu::build_context_menu_items`].
     pub fn load_submenu(
         &self,
@@ -380,8 +376,8 @@ impl PlatformAdapter {
         }
     }
 
-    /// Runs a menu task as a safe action (`createSafeContextAction`): the
-    /// effects to apply, in TS order, a failure turned into a toast.
+    /// Runs a menu task as a safe action: the effects to apply, in order, a
+    /// failure turned into a toast.
     pub fn run_task(
         &self,
         task: &PlatformTask,
@@ -503,7 +499,7 @@ impl PlatformAdapter {
 
     // ------------------------------------------------------------ profiles
 
-    /// `getProfileInfo` without the M2 caches: Steam and Roblox ask the
+    /// A profile without the persisted caches: Steam and Roblox ask the
     /// backend, Riot reads its profile cache, generic platforms have none.
     pub fn profile_info(
         &self,
@@ -528,7 +524,7 @@ impl PlatformAdapter {
 
     // ------------------------------------------------------------ warnings
 
-    /// `getCachedWarningStates`.
+    /// The warnings known without a load.
     pub fn cached_warning_states(
         &self,
         stores: &ClientStores,
@@ -581,8 +577,8 @@ impl PlatformAdapter {
         steam_warnings::finish(ban_session, api_key, plan, fetched, stores)
     }
 
-    /// `loadWarningStates` in one blocking call: Steam bans or the Roblox
-    /// session probe. `None` for platforms without warnings.
+    /// A warning load in one blocking call: Steam bans or the Roblox session
+    /// probe. `None` for platforms without warnings.
     pub fn load_warning_states_blocking(
         &self,
         backend: &dyn Backend,
@@ -621,7 +617,7 @@ impl PlatformAdapter {
 
     // ------------------------------------------------------------ Steam key
 
-    /// `hasApiKey`, memoized for the session.
+    /// Whether Steam has an API key, memoized for the session.
     pub fn steam_has_api_key(&self, backend: &dyn Backend) -> BackendResult<bool> {
         let generation = {
             let state = self.state();
@@ -635,7 +631,7 @@ impl PlatformAdapter {
         Ok(value)
     }
 
-    /// `setApiKey`: stores the key and forgets the memo.
+    /// Stores the Steam API key and forgets the memo.
     pub fn steam_set_api_key(&self, backend: &dyn Backend, key: &str) -> BackendResult<()> {
         backend.steam_set_api_key(key)?;
         self.state().api_key.invalidate();
@@ -644,7 +640,7 @@ impl PlatformAdapter {
 
     // ------------------------------------------------------------ toasts
 
-    /// `getNoAccountsToastMessage`.
+    /// The toast for a tab with no accounts.
     pub fn no_accounts_toast(&self) -> Option<Text> {
         Some(match &self.kind {
             AdapterKind::Steam => Text::key(steam::NO_ACCOUNTS_TOAST_KEY),
@@ -657,7 +653,7 @@ impl PlatformAdapter {
         })
     }
 
-    /// `getNoAccountsHintMessage`.
+    /// The hint for a tab with no accounts.
     pub fn no_accounts_hint(&self) -> Option<Text> {
         match &self.kind {
             AdapterKind::Roblox => Some(Text::key(roblox::NO_ACCOUNTS_HINT_KEY)),
@@ -669,7 +665,7 @@ impl PlatformAdapter {
         }
     }
 
-    /// `getSwitchErrorToastMessage`.
+    /// The dedicated toast for a failed switch, `None` for the generic one.
     pub fn switch_error_toast(&self, message: &str) -> Option<Text> {
         match self.kind {
             AdapterKind::Steam => steam::switch_error_toast(message),
@@ -678,7 +674,8 @@ impl PlatformAdapter {
         }
     }
 
-    /// `getLoadErrorToastMessage`.
+    /// The dedicated toast for a failed account load, `None` for the generic
+    /// one.
     pub fn load_error_toast(&self, message: &str) -> Option<Text> {
         match self.kind {
             AdapterKind::Steam => steam::load_error_toast(message),

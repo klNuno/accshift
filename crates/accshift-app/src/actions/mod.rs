@@ -61,55 +61,56 @@ pub fn load_options(
 pub enum AppEffect {
     /// Show a toast.
     Toast(Toast),
-    /// `loadAccounts(...)` on the active tab.
+    /// Load the active tab's accounts with these options.
     LoadAccounts(LoadOptions),
     /// Reload the active tab's accounts.
     RefreshAccounts,
     /// Start adding an account.
     AddAccount,
-    /// `handleAccountSwitch(account)`.
+    /// Switch to this account.
     SwitchAccount(PlatformAccount),
-    /// `handleNavigateToFolder(folderId)`.
+    /// Open this folder; `None` is the platform root.
     NavigateToFolder(Option<String>),
-    /// `navigation.refreshCurrentItems()`.
+    /// Reread the open folder's items from the stores.
     RefreshCurrentItems,
-    /// `loader.prepareVisibleAccounts()`.
+    /// Seed the avatars of the accounts on screen.
     PrepareVisibleAccounts,
-    /// `grid.queueCalculatePadding()`.
+    /// Recompute the grid padding on the next frame.
     QueueGridPadding,
-    /// `loader.clearForPlatformChange()`.
+    /// Drop every load, run and switch in flight before another platform
+    /// loads.
     ClearForPlatformChange,
-    /// `visiblePriming.reset()`.
+    /// Forget which visible accounts were already primed.
     ResetVisiblePrimeState,
-    /// `shell.setActiveTab(tab)`.
+    /// Make this tab the active one.
     SetActiveTab(String),
-    /// `shell.refreshSettings()`: re-read the settings store.
+    /// Re-read the settings store.
     RefreshSettings,
-    /// `secureScreen.handleSettingsClosed()`.
+    /// The settings panel closed: the secure screen's timer starts over.
     SettingsClosed,
-    /// `appNavigation.closeSettingsPanel()`.
+    /// Close the settings panel.
     CloseSettingsPanel,
-    /// `appNavigation.toggleSettingsPanel()`.
+    /// Open or close the settings panel.
     ToggleSettingsPanel,
-    /// `appNavigation.handleTabChange(tab)`.
+    /// Go to this tab, with everything a tab change resets.
     ChangeTab(String),
     /// Go to the parent folder (its add flow cancel comes first in the list).
     NavigateToParentFolder,
     /// Remove an account from the grid: loader, folder sync, items.
     RemoveAccount(String),
-    /// `copyToClipboard(text, label)`: write it, then
+    /// Write the text to the clipboard, then
     /// [`toasts::copy_result_toast`] with the label resolved.
     CopyToClipboard { text: String, label: Text },
     /// Write several lines to the clipboard, then
     /// [`card_actions::bulk_urls_copied_toast`].
     CopyBulkUrls(Vec<String>),
-    /// `cardColorVersion += 1`: card colours changed in the stores.
+    /// Card colours changed in the stores: bump their version.
     CardColorsChanged,
-    /// `cardNoteVersion += 1`: card notes changed in the stores.
+    /// Card notes changed in the stores: bump their version.
     CardNotesChanged,
     /// A menu task for `PlatformAdapter::run_task` on the job pool.
     RunPlatformTask(PlatformTask),
-    /// `adapter.setAccountLabel` then `loadAccounts(true)`, a
+    /// Set the account label, then reload silently, with a
     /// `toast.renameAccountFailed` on error: run
     /// [`dialogs::rename_account_blocking`] on the pool and hand the result to
     /// [`dialogs::finish_rename_account`].
@@ -123,34 +124,35 @@ pub enum AppEffect {
         ticket: dialogs::ConfirmTicket,
         allowed: bool,
     },
-    /// `addFlow.cancel()`.
+    /// Cancel the add flow.
     AddFlowCancel,
-    /// `addFlow.cancelIfConflicting(platformId, accountId?)`.
+    /// Cancel the add flow if it sets up this platform, unless it sets up
+    /// this very account.
     AddFlowCancelIfConflicting {
         platform_id: String,
         account_id: Option<String>,
     },
-    /// `bulkEdit.closeBulkEdit()`.
+    /// Leave bulk edit.
     CloseBulkEdit,
-    /// `bulkEdit.toggleBulkEdit()`.
+    /// Enter or leave bulk edit.
     ToggleBulkEdit,
-    /// `bulkEdit.toggleBulkEditAccount(id)`.
+    /// Select or unselect this account in bulk edit.
     BulkEditToggleAccount(String),
-    /// `bulkEdit.handlePaintMouseDown(event)`.
+    /// A press on a card in bulk edit: start a paint selection.
     BulkEditPaintStart,
-    /// `bulkEdit.bulkEditSelectAll()`.
+    /// Select every account in bulk edit.
     BulkEditSelectAll,
-    /// `bulkEdit.bulkEditDeselectAll()`.
+    /// Unselect every account in bulk edit.
     BulkEditDeselectAll,
-    /// `drag.handleGridMouseDown(event)`.
+    /// A press on the grid: a drag may start.
     DragGridMouseDown,
-    /// `uiScale.zoomIn()`.
+    /// Zoom the UI in one step.
     ZoomIn,
-    /// `uiScale.zoomOut()`.
+    /// Zoom the UI out one step.
     ZoomOut,
-    /// `uiScale.resetZoom()`.
+    /// Reset the UI zoom.
     ResetZoom,
-    /// `updates.applyReadyUpdate()`.
+    /// Install the downloaded update.
     ApplyUpdate,
     /// The view mode changed and was stored; the grid recomputes its padding
     /// when it is the grid.

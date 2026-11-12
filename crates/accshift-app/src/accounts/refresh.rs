@@ -70,7 +70,7 @@ pub trait RefreshEnv {
         adapter: &Self::Adapter,
         account_id: &str,
     ) -> Result<Option<PlatformProfileInfo>, BackendError>;
-    /// `loadWarningStates(accounts, { forceRefresh, silent })`.
+    /// Loads the accounts' warnings, refetching or quietly as asked.
     fn load_warning_states(
         &mut self,
         adapter: &Self::Adapter,

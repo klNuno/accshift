@@ -42,7 +42,7 @@ pub trait ProfileSource {
     /// The platform's cached profile: `None` when the platform has no cache
     /// or no entry.
     fn cached_profile(&self, account_id: &str) -> Option<CachedPlatformProfile>;
-    /// `adapter.getProfileInfo` exists.
+    /// Whether the adapter fetches profiles.
     fn has_profile_info(&self) -> bool;
 }
 

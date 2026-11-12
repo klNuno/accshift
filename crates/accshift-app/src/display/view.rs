@@ -133,7 +133,7 @@ pub struct FolderCardItem {
 /// The label of a section header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SectionLabel {
-    /// `list.rootSection`.
+    /// The platform root.
     Root,
     Folder(FolderInfo),
 }

@@ -1,13 +1,5 @@
 //! The settings panel tab bar.
 
-/// One tab of the settings panel.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SettingsTabDef {
-    pub id: String,
-    pub label_key: String,
-    pub accent: String,
-}
-
 /// The selected settings tab.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsTabBar {

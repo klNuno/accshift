@@ -10,15 +10,15 @@ use crate::text::Text;
 /// One thing a finished task asks the UI to do.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TaskEffect {
-    /// `callbacks.showToast(text)`.
+    /// Show a toast.
     Toast(Text),
-    /// `callbacks.refreshAccounts()`.
+    /// Reload the accounts.
     RefreshAccounts,
-    /// `callbacks.removeAccount(id)`.
+    /// Remove the account from the grid.
     RemoveAccount(String),
-    /// `setDefaultGame(steamId, game)` on the client stores.
+    /// Store the account's default game in the client stores.
     SetDefaultGame { steam_id: String, game: DefaultGame },
-    /// `clearDefaultGame(steamId)` on the client stores.
+    /// Clear the account's default game in the client stores.
     ClearDefaultGame { steam_id: String },
     /// Bring the lock screen up.
     PinLocked,

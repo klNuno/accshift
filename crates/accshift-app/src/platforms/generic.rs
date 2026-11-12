@@ -108,7 +108,7 @@ impl GenericConfig {
         format!("{}.{suffix}", self.i18n_prefix)
     }
 
-    /// `supportsAccountLabels !== false`.
+    /// Whether accounts can be renamed: all but Battle.net.
     pub fn supports_account_labels(&self) -> bool {
         self.flavor != GenericFlavor::BattleNet
     }
@@ -122,7 +122,7 @@ impl GenericConfig {
         }
     }
 
-    /// `copyItems(account)`, or the default account-id entry.
+    /// The copy menu entries of an account, or the default account-id entry.
     pub fn copy_items(&self, account: &PlatformAccount) -> Vec<CopyItemConfig> {
         match self.flavor {
             GenericFlavor::Default => vec![CopyItemConfig::new(
@@ -152,7 +152,7 @@ impl GenericConfig {
         }
     }
 
-    /// `forgetToastParams(display)`.
+    /// The parameters of the toast after forgetting an account.
     pub fn forget_toast_params(&self, display: &str) -> Vec<(String, TranslationValue)> {
         match self.flavor {
             GenericFlavor::BattleNet => vec![("email".to_string(), display.into())],

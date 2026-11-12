@@ -67,7 +67,7 @@ pub struct AvatarGradient {
 }
 
 impl AvatarGradient {
-    /// The gradient as a CSS declaration, for parity checks.
+    /// The gradient as a CSS declaration: a readable form tests compare.
     pub fn css(&self) -> String {
         let AvatarGradient { hue, hue_fade } = *self;
         format!(
@@ -76,7 +76,7 @@ impl AvatarGradient {
     }
 }
 
-/// The hues of `getAvatarGradientStyle(seed)`.
+/// The two gradient hues of the fallback avatar for `seed`.
 pub fn avatar_gradient(seed: &str) -> AvatarGradient {
     let normalized = normalize_seed(if seed.is_empty() { "?" } else { seed });
     let base = bit_cycle_hash(&normalized, 33, 997, 17);

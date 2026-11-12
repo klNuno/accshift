@@ -94,7 +94,7 @@ impl PlatformDescriptor {
     }
 }
 
-/// `profile.executable?.candidates?.find(kind === "path" && template)`.
+/// The template of the profile's first executable candidate of kind "path".
 fn first_path_template(profile: &Value) -> Option<String> {
     profile
         .get("executable")?

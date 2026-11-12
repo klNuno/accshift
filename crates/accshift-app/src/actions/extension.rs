@@ -19,23 +19,23 @@ pub type CardExtension = Option<Arc<Vec<CardSection>>>;
 
 /// What the memo reads on each frame.
 pub struct ExtensionInputs<'a> {
-    /// `shell.locale`.
+    /// The UI language.
     pub locale: Locale,
-    /// `loader.warningStates`.
+    /// The loader's warning per account.
     pub warning_states: &'a BTreeMap<String, WarningPresentation>,
-    /// `display.visibleRenderedAccountIds`.
+    /// The account ids on screen, in display order.
     pub visible_ids: &'a [String],
-    /// `addFlow.getSetupExtensionContent(id)`, its sections.
+    /// The sections of the card an add flow is setting up.
     pub setup_content: &'a dyn Fn(&str) -> Option<Vec<CardSection>>,
-    /// `getAccountNote(id)`.
+    /// The account's card note.
     pub account_note: &'a dyn Fn(&str) -> String,
     /// Bumped whenever a card note changes.
     pub card_note_version: u64,
-    /// `settings.accountDisplay.showCardNotesInline`.
+    /// Whether card notes show on the card itself.
     pub show_card_notes_inline: bool,
-    /// `getExtraSections(id)`: Steam's CS2 sections, nothing elsewhere.
+    /// The platform's extra sections: Steam's CS2 sections, nothing elsewhere.
     pub extra_sections: &'a dyn Fn(&str) -> Vec<CardSection>,
-    /// `getCs2BridgeVersion()`.
+    /// Bumped whenever the extra sections' data changes.
     pub extra_sections_version: u64,
 }
 
@@ -47,7 +47,7 @@ struct SharedKey {
     extra_sections_version: u64,
 }
 
-/// `accountKey(id)`: the account's own inputs.
+/// The account's own inputs: when they change, its sections are rebuilt.
 #[derive(Debug, Clone, PartialEq)]
 struct AccountKey {
     tooltip: Option<Text>,

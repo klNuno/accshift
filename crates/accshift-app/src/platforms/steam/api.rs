@@ -46,7 +46,7 @@ impl SteamLaunchConfig {
     }
 }
 
-/// `switchAccount(username)`.
+/// Switches Steam to this account.
 pub fn switch_account(
     backend: &dyn Backend,
     username: &str,

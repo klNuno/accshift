@@ -114,11 +114,6 @@ impl AppDialogs {
         self.confirm_dialog.as_ref()
     }
 
-    /// An input or confirm dialog is up (the `dialog` key scope).
-    pub fn has_dialog(&self) -> bool {
-        self.input_dialog.is_some() || self.confirm_dialog.is_some()
-    }
-
     /// The ticket a confirm dialog answers, if one is pending.
     pub fn pending_confirm(&self) -> Option<ConfirmTicket> {
         self.pending_confirm

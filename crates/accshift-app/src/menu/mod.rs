@@ -30,9 +30,9 @@ pub const ACCOUNT_CONTEXT_GROUP_ORDER: [&str; 6] = [
 /// What clicking an entry asks for.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MenuCommand {
-    /// Close the menu and do nothing (`action: () => {}`).
+    /// Close the menu and do nothing.
     Close,
-    /// `copyToClipboard(value, label)`.
+    /// Copy the value to the clipboard; the label names it in the toast.
     Copy { value: String, label: Text },
     /// Ask for confirmation; on confirm, run the task as a safe action.
     Confirm(Box<ConfirmRequest>),
@@ -43,12 +43,12 @@ pub enum MenuCommand {
         account_id: String,
         folder_id: Option<String>,
     },
-    /// `openNoteEditor(initialNote)`.
+    /// Open the note editor on the account's current note.
     EditNote {
         account_id: String,
         initial_note: String,
     },
-    /// `setColor(color)`: a preset colour, `""` clears.
+    /// Set the card colour: a preset colour, `""` clears.
     SetCardColor { account_id: String, color: String },
     /// A safe action that talks to the backend.
     Task(PlatformTask),

@@ -43,7 +43,7 @@ pub fn to_steam_account(raw: &Value) -> PlatformAccount {
     }
 }
 
-/// `getAccounts().map(toSteamAccount)`.
+/// The Steam accounts of the backend's raw account list.
 pub fn to_steam_accounts(raw: &Value) -> Vec<PlatformAccount> {
     raw.as_array()
         .map(|list| list.iter().map(to_steam_account).collect())

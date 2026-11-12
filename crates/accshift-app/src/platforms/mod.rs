@@ -46,7 +46,7 @@ pub struct PlatformAccount {
     pub last_login_at_sec: Option<f64>,
 }
 
-/// `getStartupSnapshot()`: accounts and the current one in one call.
+/// The accounts and the current one, read in one call.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct StartupSnapshot {
     pub accounts: Vec<PlatformAccount>,
