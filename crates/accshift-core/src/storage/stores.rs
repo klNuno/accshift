@@ -170,7 +170,7 @@ pub fn load_client_storage_snapshot_reporting(
         let handles: Vec<_> = CLIENT_STORES
             .iter()
             .zip(&paths)
-            .map(|(store, (_, path))| scope.spawn(move || read_store(store.root, path)))
+            .map(|(store, (_, path))| scope.spawn(move || read_store(store, path)))
             .collect();
         handles
             .into_iter()
@@ -219,13 +219,13 @@ struct StoreRead {
 /// Reads one store without letting it fail the others.
 ///
 /// A file that cannot be parsed, with no valid `.bak`, is moved aside to
-/// `<stem>.corrupt` and the store loads empty: nothing can read it, and
-/// leaving it in place fails every later launch the same way. A read the OS
-/// refuses is retried (antivirus and indexers hold files for a moment), then
-/// a cache store loads empty while a user store still fails the load: its
-/// content may be good, and loading it empty would let the next save replace
-/// it.
-fn read_store(root: StoreRoot, path: &Path) -> Result<StoreRead, String> {
+/// `<stem>.corrupt` and the store loads empty, bar what [`kept_through_reset`]
+/// saves from it: nothing can read it, and leaving it in place fails every
+/// later launch the same way. A read the OS refuses is retried (antivirus and
+/// indexers hold files for a moment), then a cache store loads empty while a
+/// user store still fails the load: its content may be good, and loading it
+/// empty would let the next save replace it.
+fn read_store(store: &ClientStoreLayout, path: &Path) -> Result<StoreRead, String> {
     let mut read = read_json_classified::<Value>(path);
     for delay_ms in [50, 100, 200] {
         if !matches!(read, Err(JsonReadError::Unreadable(_))) {
@@ -240,23 +240,53 @@ fn read_store(root: StoreRoot, path: &Path) -> Result<StoreRead, String> {
             reset: None,
         }),
         Err(JsonReadError::Corrupt(reason)) => {
+            // Read before the file moves.
+            let kept = kept_through_reset(store.id, path);
             let aside = path.with_extension("corrupt");
             let _ = fs::remove_file(&aside);
-            let reason = match fs::rename(path, &aside) {
+            let mut reason = match fs::rename(path, &aside) {
                 Ok(()) => format!("{reason}; kept as {}", aside.display()),
                 Err(e) => format!("{reason}; could not move it aside: {e}"),
             };
+            if let Some(kept) = &kept {
+                if let Err(e) = write_json_atomic(path, kept) {
+                    reason = format!("{reason}; could not write the PIN lock back: {e}");
+                }
+            }
             Ok(StoreRead {
-                value: Value::Null,
+                value: kept.unwrap_or(Value::Null),
                 reset: Some(reason),
             })
         }
-        Err(JsonReadError::Unreadable(reason)) => match root {
+        Err(JsonReadError::Unreadable(reason)) => match store.root {
             StoreRoot::Cache => Ok(StoreRead {
                 value: Value::Null,
                 reset: Some(reason),
             }),
             StoreRoot::Config => Err(reason),
         },
+    }
+}
+
+/// What a store that is being reset starts again with. Only the settings
+/// store has such content: its PIN lock, which a damaged file must not turn
+/// off ([`crate::pin::salvage_pin_lock`]). The damaged file answers first,
+/// then its `.bak`.
+fn kept_through_reset(store_id: &str, path: &Path) -> Option<Value> {
+    if store_id != STORE_SETTINGS {
+        return None;
+    }
+    let lock = [path.to_path_buf(), backup_path(path)]
+        .iter()
+        .find_map(|file| {
+            let small = fs::metadata(file).is_ok_and(|meta| meta.len() <= MAX_JSON_STORE_BYTES);
+            let raw = small.then(|| fs::read(file).ok()).flatten()?;
+            crate::pin::salvage_pin_lock(&raw)
+        })?;
+    match lock {
+        crate::pin::PinLock::On(hash) => {
+            Some(serde_json::json!({ "pinEnabled": true, "pinHash": hash }))
+        }
+        _ => None,
     }
 }

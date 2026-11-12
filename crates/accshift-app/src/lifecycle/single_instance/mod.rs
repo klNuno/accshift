@@ -81,13 +81,23 @@ impl std::fmt::Debug for Launch {
 pub struct SingleInstance {
     receiver: Receiver<SecondInstance>,
     guard: Arc<Mutex<Option<PlatformGuard>>>,
+    /// What [`Self::restorer`] needs to take the name again.
+    identifier: String,
+    notify: Notify,
 }
 
 impl SingleInstance {
-    fn new(receiver: Receiver<SecondInstance>, guard: PlatformGuard) -> Self {
+    fn new(
+        receiver: Receiver<SecondInstance>,
+        guard: PlatformGuard,
+        identifier: &str,
+        notify: Notify,
+    ) -> Self {
         Self {
             receiver,
             guard: Arc::new(Mutex::new(Some(guard))),
+            identifier: identifier.to_string(),
+            notify,
         }
     }
 
@@ -99,11 +109,36 @@ impl SingleInstance {
     /// Frees the guard from any thread while the service stays alive: the
     /// update relaunch runs it before it starts the new process, since
     /// `std::process::exit` never drops the service.
-    pub fn releaser(&self) -> impl FnOnce() + Send + 'static {
+    pub fn releaser(&self) -> impl Fn() + Send + Sync + 'static {
         let guard = Arc::clone(&self.guard);
         move || {
             let taken = guard.lock().unwrap_or_else(PoisonError::into_inner).take();
             drop(taken);
+        }
+    }
+
+    /// Takes the name again after [`Self::releaser`] gave it up: the update
+    /// relaunch runs it when no new process started, or the app that stays
+    /// open would let the next launch start a second instance beside it.
+    /// Second launches keep arriving on the same channel. When another
+    /// instance took the name in between, that one keeps it.
+    pub fn restorer(&self) -> impl Fn() + Send + Sync + 'static {
+        let guard = Arc::clone(&self.guard);
+        let identifier = self.identifier.clone();
+        let notify = self.notify.clone();
+        move || {
+            let mut guard = guard.lock().unwrap_or_else(PoisonError::into_inner);
+            if guard.is_some() {
+                return;
+            }
+            // Only the executable goes along: a launch forwarded to an
+            // instance that took the name must not replay this one's link.
+            let args: Vec<String> = current_args().into_iter().take(1).collect();
+            if let PlatformLaunch::Primary(restored) =
+                platform_acquire(&identifier, &args, &current_cwd(), notify.clone())
+            {
+                *guard = Some(restored);
+            }
         }
     }
 
@@ -135,13 +170,12 @@ pub(crate) enum PlatformLaunch {
 pub fn acquire(identifier: &str, args: &[String], cwd: &str, wake: Option<Wake>) -> Launch {
     let (sender, receiver) = mpsc::channel();
     let notify = Notify { sender, wake };
-    let launch = platform_acquire(identifier, args, cwd, notify);
+    let launch = platform_acquire(identifier, args, cwd, notify.clone());
+    let service = |guard| SingleInstance::new(receiver, guard, identifier, notify);
     match launch {
-        PlatformLaunch::Primary(guard) => Launch::Primary(SingleInstance::new(receiver, guard)),
+        PlatformLaunch::Primary(guard) => Launch::Primary(service(guard)),
         PlatformLaunch::Forwarded => Launch::Forwarded,
-        PlatformLaunch::Alone(guard) => {
-            Launch::Alone(guard.map(|guard| SingleInstance::new(receiver, guard)))
-        }
+        PlatformLaunch::Alone(guard) => Launch::Alone(guard.map(service)),
     }
 }
 

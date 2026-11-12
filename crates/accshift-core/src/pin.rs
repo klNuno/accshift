@@ -139,6 +139,40 @@ pub fn read_pin_lock(ctx: &dyn AppContext) -> PinLock {
     }
 }
 
+/// The PIN lock a settings file that no longer parses still shows, read
+/// straight from its text: `On` when a whole hash is there and `pinEnabled`
+/// is not written as off, `Off` when `pinEnabled` is written as off, `None`
+/// when the text does not tell.
+///
+/// The boot resets such a file (`storage::load_client_storage_snapshot_reporting`)
+/// and keeps this lock in the new one, so a file edited by hand into invalid
+/// JSON, or cut after these fields, does not turn the PIN off. A file whose
+/// PIN fields are gone protects nothing any more, like a deleted one: the
+/// lock lives in that file and nowhere else.
+pub fn salvage_pin_lock(raw: &[u8]) -> Option<PinLock> {
+    let text = String::from_utf8_lossy(raw);
+    let enabled = raw_field(&text, "pinEnabled").and_then(|rest| {
+        let end = rest.find([',', '}', '\n', '\r']).unwrap_or(rest.len());
+        serde_json::from_str::<Value>(rest[..end].trim()).ok()
+    });
+    if enabled.is_some_and(|value| !js_truthy(&value)) {
+        return Some(PinLock::Off);
+    }
+    let (hash, _) = raw_field(&text, "pinHash")?
+        .strip_prefix('"')?
+        .split_once('"')?;
+    let hash = hash.trim().to_ascii_lowercase();
+    is_valid_pin_hash(&hash).then_some(PinLock::On(hash))
+}
+
+/// The text right after `"key":` in a JSON document that may be damaged.
+/// A key quoted inside a string value is escaped there, so it never matches.
+fn raw_field<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    let quoted = format!("\"{key}\"");
+    let after = &text[text.find(&quoted)? + quoted.len()..];
+    after.trim_start().strip_prefix(':').map(str::trim_start)
+}
+
 // ---------------------------------------------------------------------------
 // Hashing and verification
 // ---------------------------------------------------------------------------
@@ -494,6 +528,39 @@ pub enum ThrottledVerdict {
     RetryLater(Duration),
 }
 
+/// What [`book_attempt`] answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Booking {
+    /// The attempt may run; this is the throttle it left on disk.
+    Booked(Throttle),
+    /// Too soon after a wrong code.
+    Wait(Duration),
+}
+
+/// Admits one attempt at `now_ms`, or tells how long it must wait.
+fn book_attempt(dir: &Path, now_ms: u64) -> Result<Booking, PlatformError> {
+    let _lock = ThrottleLock::acquire(dir)?;
+    let stored = read_throttle(dir);
+    let wait = stored.wait_at(now_ms);
+    if !wait.is_zero() {
+        let clamped = stored.clamped(now_ms);
+        if clamped != stored {
+            write_throttle(dir, &clamped);
+        }
+        return Ok(Booking::Wait(wait));
+    }
+    // Count this attempt as a wrong code before checking it: the wait it
+    // would earn is on disk while its hash runs, so parallel attempts queue
+    // behind it instead of all running at once. A right code clears it.
+    let failures = stored.failures.saturating_add(1);
+    let booked = Throttle {
+        failures,
+        next_attempt_at_ms: add_ms(now_ms, failure_delay(failures)),
+    };
+    write_throttle(dir, &booked);
+    Ok(Booking::Booked(booked))
+}
+
 /// Verify `code` against `stored_hash` under the wrong-code throttle the GUI
 /// and the CLI share, and record the outcome. `now` is the wall clock.
 pub fn verify_pin_throttled(
@@ -503,43 +570,22 @@ pub fn verify_pin_throttled(
     now: SystemTime,
 ) -> Result<ThrottledVerdict, PlatformError> {
     let dir = throttle_dir(ctx)?;
-    let now_ms = unix_ms(now);
-    {
-        let _lock = ThrottleLock::acquire(&dir)?;
-        let stored = read_throttle(&dir);
-        let wait = stored.wait_at(now_ms);
-        if !wait.is_zero() {
-            let clamped = stored.clamped(now_ms);
-            if clamped != stored {
-                write_throttle(&dir, &clamped);
-            }
-            return Ok(ThrottledVerdict::RetryLater(wait));
-        }
-        // Book the wait this attempt earns if it fails before checking it, so
-        // parallel attempts queue behind it instead of all running at once.
-        let booked = Throttle {
-            failures: stored.failures,
-            next_attempt_at_ms: add_ms(now_ms, failure_delay(stored.failures.saturating_add(1))),
-        };
-        write_throttle(&dir, &booked);
-    }
+    let booked = match book_attempt(&dir, unix_ms(now))? {
+        Booking::Booked(booked) => booked,
+        Booking::Wait(wait) => return Ok(ThrottledVerdict::RetryLater(wait)),
+    };
     // PBKDF2 runs outside the lock: another process waits on the bookkeeping,
     // never on the hash.
     let verdict = verify_pin_code(code, stored_hash);
-    let _lock = ThrottleLock::acquire(&dir)?;
-    let (next, retry_after) = match verdict {
-        PinVerdict::Rejected => {
-            let failures = read_throttle(&dir).failures.saturating_add(1);
-            let retry_after = failure_delay(failures);
-            let next = Throttle {
-                failures,
-                next_attempt_at_ms: add_ms(now_ms, retry_after),
-            };
-            (next, retry_after)
+    let retry_after = match verdict {
+        // Already on disk, counted once.
+        PinVerdict::Rejected => failure_delay(booked.failures),
+        PinVerdict::Accepted | PinVerdict::AcceptedLegacy => {
+            let _lock = ThrottleLock::acquire(&dir)?;
+            write_throttle(&dir, &Throttle::default());
+            Duration::ZERO
         }
-        PinVerdict::Accepted | PinVerdict::AcceptedLegacy => (Throttle::default(), Duration::ZERO),
     };
-    write_throttle(&dir, &next);
     Ok(ThrottledVerdict::Checked {
         verdict,
         retry_after,

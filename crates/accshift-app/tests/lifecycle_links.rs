@@ -795,6 +795,53 @@ fn the_releaser_frees_the_name_before_the_service_drops() {
     drop(first);
 }
 
+/// A relaunch that starts no process leaves the app open: it must still be
+/// the single instance, so the next launch is forwarded to it instead of
+/// opening a second app on the same data.
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn a_failed_relaunch_keeps_the_app_the_single_instance() {
+    use accshift_app::lifecycle::process::{self, ProcessControl};
+    use std::ffi::OsString;
+    use std::path::{Path, PathBuf};
+
+    struct NoSpawn;
+    impl ProcessControl for NoSpawn {
+        fn spawn(&self, _: &Path, _: &[OsString]) -> std::io::Result<()> {
+            Err(std::io::ErrorKind::NotFound.into())
+        }
+        fn exit(&self, _: i32) {
+            panic!("a failed relaunch must not exit");
+        }
+    }
+
+    let identifier = test_identifier("failed-relaunch");
+    let first = match single_instance::acquire(&identifier, &["first.exe".into()], "", None) {
+        Launch::Primary(service) => service,
+        other => panic!("first launch: {other:?}"),
+    };
+    process::restart(
+        &NoSpawn,
+        Ok(PathBuf::from("missing")),
+        &[],
+        first.releaser(),
+        first.restorer(),
+        || {},
+    )
+    .unwrap_err();
+
+    let second = ["second.exe".to_string(), "--flag".to_string()];
+    match single_instance::acquire(&identifier, &second, "", None) {
+        Launch::Forwarded => {}
+        other => panic!("launch after a failed relaunch: {other:?}"),
+    }
+    let received = first
+        .receiver()
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the second launch reaches the first service");
+    assert_eq!(received.args, second);
+}
+
 /// The other process of [`a_second_process_reaches_the_first`]; it only runs
 /// when that test starts it.
 #[test]

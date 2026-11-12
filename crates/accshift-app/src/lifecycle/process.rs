@@ -3,7 +3,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock, PoisonError};
+use std::sync::OnceLock;
 
 use super::deep_link;
 
@@ -119,26 +119,39 @@ fn is_launch_only(arg: &OsStr) -> bool {
             .is_ok_and(|url| deep_link::SCHEMES.contains(&url.scheme()))
 }
 
-/// How the update relaunch frees the single-instance guard, set once the
-/// guard is acquired ([`set_instance_release`]).
-static INSTANCE_RELEASE: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
-
-/// Registers how to free this run's single-instance guard
-/// ([`super::single_instance::SingleInstance::releaser`]).
-pub fn set_instance_release(release: impl FnOnce() + Send + 'static) {
-    *INSTANCE_RELEASE
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner) = Some(Box::new(release));
+/// The two ways the update relaunch moves the single-instance guard.
+struct InstanceHooks {
+    release: Box<dyn Fn() + Send + Sync>,
+    restore: Box<dyn Fn() + Send + Sync>,
 }
 
-/// Frees the guard registered with [`set_instance_release`], if any.
+/// Set once the guard is acquired ([`set_instance_hooks`]).
+static INSTANCE_HOOKS: OnceLock<InstanceHooks> = OnceLock::new();
+
+/// Registers how to free this run's single-instance guard and how to take
+/// it back ([`super::single_instance::SingleInstance::releaser`] and
+/// [`super::single_instance::SingleInstance::restorer`]).
+pub fn set_instance_hooks(
+    release: impl Fn() + Send + Sync + 'static,
+    restore: impl Fn() + Send + Sync + 'static,
+) {
+    let _ = INSTANCE_HOOKS.set(InstanceHooks {
+        release: Box::new(release),
+        restore: Box::new(restore),
+    });
+}
+
+/// Frees the guard registered with [`set_instance_hooks`], if any.
 pub fn release_instance() {
-    let release = INSTANCE_RELEASE
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .take();
-    if let Some(release) = release {
-        release();
+    if let Some(hooks) = INSTANCE_HOOKS.get() {
+        (hooks.release)();
+    }
+}
+
+/// Takes the guard registered with [`set_instance_hooks`] back, if any.
+pub fn restore_instance() {
+    if let Some(hooks) = INSTANCE_HOOKS.get() {
+        (hooks.restore)();
     }
 }
 
@@ -146,17 +159,22 @@ pub fn release_instance() {
 /// single-instance guard goes first (`release_instance`): `exit` skips
 /// `Drop`, and a new process that still found it would hand its launch to
 /// this one and quit, leaving nothing running. Nothing exits when no new
-/// process started: the error comes back and the app stays open.
+/// process started: the guard is taken back (`restore_instance`), the error
+/// comes back and the app stays open as the single instance.
 pub fn restart(
     control: &dyn ProcessControl,
     binary: std::io::Result<PathBuf>,
     args: &[OsString],
     release_instance: impl FnOnce(),
+    restore_instance: impl FnOnce(),
     before_exit: impl FnOnce(),
 ) -> std::io::Result<()> {
     let program = relaunch_program(&binary?);
     release_instance();
-    control.spawn(&program, args)?;
+    if let Err(error) = control.spawn(&program, args) {
+        restore_instance();
+        return Err(error);
+    }
     before_exit();
     control.exit(0);
     Ok(())

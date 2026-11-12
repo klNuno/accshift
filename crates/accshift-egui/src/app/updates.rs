@@ -138,6 +138,7 @@ impl ApplyHost for Apply {
             process::current_binary(),
             &process::relaunch_args(&args),
             process::release_instance,
+            process::restore_instance,
             || self.installer.before_exit(),
         )
         .map_err(|error| error.to_string())

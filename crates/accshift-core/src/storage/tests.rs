@@ -307,6 +307,62 @@ fn one_corrupt_store_is_set_aside_and_the_others_still_load() {
 }
 
 #[test]
+fn a_reset_settings_store_keeps_its_pin_lock() {
+    // Regression: a settings file that no longer parses was moved aside and
+    // loaded empty, so the boot turned the PIN lock off without the PIN.
+    use crate::pin::{read_pin_lock, PinLock, PinSession};
+    let root = unique_test_root("corrupt-settings-pin");
+    let ctx = TestCtx { root: root.clone() };
+    let settings = client_store_path(&ctx, STORE_SETTINGS).unwrap();
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    let hash = format!("{}:{}", "ab".repeat(16), "cd".repeat(32));
+    let damaged = format!(r#"{{"pinEnabled":true,"pinHash":"{hash}","themeId":"da"#);
+    fs::write(&settings, &damaged).unwrap();
+
+    let (snapshot, recovered) = load_client_storage_snapshot_reporting(&ctx).unwrap();
+
+    assert_eq!(recovered, [STORE_SETTINGS]);
+    assert_eq!(
+        snapshot.stores[STORE_SETTINGS],
+        serde_json::json!({ "pinEnabled": true, "pinHash": hash })
+    );
+    assert_eq!(
+        fs::read(settings.with_extension("corrupt")).unwrap(),
+        damaged.as_bytes()
+    );
+    assert_eq!(read_pin_lock(&ctx), PinLock::On(hash.clone()));
+    assert!(PinSession::new().ensure_unlocked(&ctx).is_err());
+
+    // The next boot is clean and still locked.
+    let (_, recovered) = load_client_storage_snapshot_reporting(&ctx).unwrap();
+    assert!(recovered.is_empty());
+    assert_eq!(read_pin_lock(&ctx), PinLock::On(hash));
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_reset_settings_store_without_a_pin_loads_empty() {
+    let root = unique_test_root("corrupt-settings-no-pin");
+    let ctx = TestCtx { root: root.clone() };
+    let settings = client_store_path(&ctx, STORE_SETTINGS).unwrap();
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(
+        &settings,
+        br#"{"pinEnabled":false,"pinHash":"","themeId":"da"#,
+    )
+    .unwrap();
+
+    let (snapshot, recovered) = load_client_storage_snapshot_reporting(&ctx).unwrap();
+
+    assert_eq!(recovered, [STORE_SETTINGS]);
+    assert!(snapshot.stores[STORE_SETTINGS].is_null());
+    assert!(!settings.exists());
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn a_corrupt_store_with_a_valid_bak_is_served_not_reset() {
     let root = unique_test_root("corrupt-store-bak");
     let ctx = TestCtx { root: root.clone() };

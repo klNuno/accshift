@@ -721,3 +721,100 @@ fn a_clock_set_backwards_neither_extends_nor_skips_the_wait() {
         UnlockOutcome::Unlocked { legacy: false }
     );
 }
+
+#[test]
+fn an_attempt_being_checked_makes_a_parallel_one_wait() {
+    // Regression: the wait booked before the hash kept the old failure
+    // count, and a count of zero cancels any wait, so two first attempts
+    // sent together were both checked.
+    let tmp = with_pin("throttle-parallel", 1234);
+    let ctx = tmp.ctx();
+    let dir = throttle_dir(&ctx).unwrap();
+    let now = SystemTime::now();
+    // The first attempt, stopped where its hash would run.
+    assert!(matches!(
+        book_attempt(&dir, unix_ms(now)).unwrap(),
+        Booking::Booked(_)
+    ));
+    assert_eq!(
+        verify_pin_throttled(&ctx, &code(1111), &pbkdf2_hash_for(1234), now).unwrap(),
+        ThrottledVerdict::RetryLater(BASE_FAILURE_DELAY)
+    );
+}
+
+#[test]
+fn parallel_wrong_codes_count_once_each() {
+    let tmp = with_pin("throttle-count", 1234);
+    let ctx = tmp.ctx();
+    let dir = throttle_dir(&ctx).unwrap();
+    let now = SystemTime::now();
+    let hash = pbkdf2_hash_for(1234);
+    // Three wrong codes, each sent once the wait of the one before is over.
+    let mut t = now;
+    for failures in 1..=3u32 {
+        assert_eq!(
+            verify_pin_throttled(&ctx, &code(1111), &hash, t).unwrap(),
+            ThrottledVerdict::Checked {
+                verdict: PinVerdict::Rejected,
+                retry_after: failure_delay(failures),
+            }
+        );
+        assert_eq!(read_throttle(&dir).failures, failures);
+        t += failure_delay(failures);
+    }
+    // The right code clears the count it booked.
+    assert_eq!(
+        verify_pin_throttled(&ctx, &code(1234), &hash, t).unwrap(),
+        ThrottledVerdict::Checked {
+            verdict: PinVerdict::Accepted,
+            retry_after: Duration::ZERO,
+        }
+    );
+    assert_eq!(read_throttle(&dir), Throttle::default());
+}
+
+// -----------------------------------------------------------------------
+// The PIN a damaged settings file still shows
+// -----------------------------------------------------------------------
+
+#[test]
+fn a_damaged_settings_file_still_shows_its_pin() {
+    let hash = pbkdf2_hash_for(1234);
+    let lock = |text: String| salvage_pin_lock(text.as_bytes());
+    // Cut after the PIN fields.
+    assert_eq!(
+        lock(format!(
+            r#"{{"animations":true,"pinEnabled":true,"pinHash":"{hash}","themeId":"da"#
+        )),
+        Some(PinLock::On(hash.clone()))
+    );
+    // Edited by hand into invalid JSON, with other spacing and case.
+    assert_eq!(
+        lock(format!(
+            "{{\n  \"pinEnabled\" : true,\n  \"pinHash\" : \" {} \",\n  \"themeId\": dark,\n}}",
+            hash.to_uppercase()
+        )),
+        Some(PinLock::On(hash.clone()))
+    );
+    // The flag is cut off but the hash is whole: a hash is only stored
+    // while the PIN is on.
+    assert_eq!(
+        lock(format!(r#"garbage "pinHash":"{hash}""#)),
+        Some(PinLock::On(hash.clone()))
+    );
+    // Written as off: no lock, whatever the hash.
+    assert_eq!(
+        lock(format!(r#"{{"pinEnabled":false,"pinHash":"{hash}","x"#)),
+        Some(PinLock::Off)
+    );
+    // A cut hash verifies nothing, and a file without the fields tells
+    // nothing.
+    assert_eq!(lock(r#"{"pinEnabled":true,"pinHash":"abcd"#.into()), None);
+    assert_eq!(lock(r#"{"animations":true,"them"#.into()), None);
+    assert_eq!(salvage_pin_lock(&[0u8; 64]), None);
+    // A key quoted inside another value is not the field.
+    assert_eq!(
+        lock(format!(r#"{{"note":"\"pinHash\":\"{hash}\"","x"#)),
+        None
+    );
+}

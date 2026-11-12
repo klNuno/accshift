@@ -61,7 +61,7 @@ fn main() {
         acquire_single_instance(identifier, Arc::clone(&wake))
     };
     if let Some(single) = &single {
-        accshift_app::lifecycle::process::set_instance_release(single.releaser());
+        accshift_app::lifecycle::process::set_instance_hooks(single.releaser(), single.restorer());
     }
     bench::mark("single_instance");
 

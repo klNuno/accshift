@@ -667,6 +667,7 @@ fn relaunch_releases_the_instance_spawns_then_exits_and_never_exits_alone() {
         Ok(PathBuf::from("app-binary")),
         &args,
         record("release"),
+        record("restore"),
         record("before_exit"),
     )
     .unwrap();
@@ -680,21 +681,28 @@ fn relaunch_releases_the_instance_spawns_then_exits_and_never_exits_alone() {
         ]
     );
 
-    // A failed spawn is reported and the process stays.
+    // A failed spawn is reported, the guard is taken back and the process
+    // stays.
     let failing = FakeProcess {
         fail_spawn: true,
         ..Default::default()
     };
+    let calls = &failing.calls;
+    let record = |step: &'static str| move || calls.borrow_mut().push(step.to_string());
     let error = process::restart(
         &failing,
         Ok(PathBuf::from("app-binary")),
         &args,
-        || {},
-        || failing.calls.borrow_mut().push("before_exit".into()),
+        record("release"),
+        record("restore"),
+        record("before_exit"),
     )
     .unwrap_err();
     assert_eq!(error.to_string(), "denied");
-    assert_eq!(*failing.calls.borrow(), ["spawn:app-binary:--flag,x y"]);
+    assert_eq!(
+        *failing.calls.borrow(),
+        ["release", "spawn:app-binary:--flag,x y", "restore"]
+    );
 
     // No binary: nothing is released, spawned or exited.
     let control = FakeProcess::default();
@@ -704,6 +712,7 @@ fn relaunch_releases_the_instance_spawns_then_exits_and_never_exits_alone() {
         Err(std::io::Error::other("gone")),
         &args,
         || *released.borrow_mut() = true,
+        || {},
         || {},
     )
     .unwrap_err();
