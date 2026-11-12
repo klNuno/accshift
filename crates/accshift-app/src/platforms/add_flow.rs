@@ -1,11 +1,10 @@
-//! The add-account flow, ported from `src/lib/platforms/addFlow.ts`.
+//! The add-account flow.
 
 use super::AddFlowStatus;
 use crate::types::SetupStatus;
 
-/// `toPlatformAddFlowStatus`. The backend always sends every field; an empty
-/// one is falsy in TS and becomes `None` here, which is how every caller
-/// reads it (`status.accountId && ...`).
+/// The add-flow status of a setup. The backend always sends every field; an
+/// empty one becomes `None` here, which is how every caller reads it.
 pub fn to_add_flow_status(setup_id: &str, payload: &SetupStatus) -> AddFlowStatus {
     let optional = |value: &str| (!value.is_empty()).then(|| value.to_string());
     AddFlowStatus {

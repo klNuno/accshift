@@ -14,7 +14,6 @@ use accshift_core::platforms::steam::switch_params::{
     steam_switch_params, PersonaMode, ShutdownMode, SteamSwitchDefaults, SteamSwitchOverrides,
 };
 use clap::{Parser, Subcommand};
-use context::CliAppContext;
 use output::{emit_err, emit_json_ok, Format};
 use serde_json::{json, Value};
 use std::process::ExitCode;
@@ -157,13 +156,18 @@ enum CliGate {
 }
 
 fn resolve_cli_gate() -> CliGate {
-    match CliAppContext::new() {
+    match context::resolve() {
         Err(reason) => CliGate::Unavailable(reason),
-        Ok(ctx) => match settings::try_load(&ctx) {
-            Ok(stored) if stored.cli_enabled => CliGate::Allow,
-            Ok(_) => CliGate::Disabled,
-            Err(reason) => CliGate::Unavailable(reason),
-        },
+        Ok(ctx) => cli_gate_in(&ctx),
+    }
+}
+
+/// The toggle as stored under `ctx`'s config folder.
+fn cli_gate_in(ctx: &dyn accshift_core::AppContext) -> CliGate {
+    match settings::try_load(ctx) {
+        Ok(stored) if stored.cli_enabled => CliGate::Allow,
+        Ok(_) => CliGate::Disabled,
+        Err(reason) => CliGate::Unavailable(reason),
     }
 }
 
@@ -202,7 +206,7 @@ fn main() -> ExitCode {
 
     // Started before the command so a run that ends in an error still gets
     // reported, and dropped silently when consent is absent.
-    let reporter = CliAppContext::new()
+    let reporter = context::resolve()
         .ok()
         .map(|c| Arc::new(c) as accshift_core::AppCtx)
         .and_then(|ctx| telemetry::CliTelemetry::start(&ctx));
@@ -255,7 +259,7 @@ fn dispatch(format: Format, command: Command) -> u8 {
 }
 
 fn build_ctx(format: Format, command: &str) -> Result<accshift_core::AppCtx, u8> {
-    let ctx = CliAppContext::new()
+    let ctx = context::resolve()
         .map(|c| Arc::new(c) as accshift_core::AppCtx)
         .map_err(|e| {
             emit_err(format, command, "io", &e);
@@ -463,7 +467,7 @@ fn cmd_switch(
     // the same lock here so the CLI cannot bypass it. Prompt before taking the
     // lock so we never hold it while waiting on stdin, then compare the
     // admitted lock with the file once the lock is held.
-    let admitted = match pin::enforce(format, accshift_core::pin::read_pin_lock(&*ctx)) {
+    let admitted = match pin::enforce(&*ctx, format, accshift_core::pin::read_pin_lock(&*ctx)) {
         Ok(lock) => lock,
         Err(code) => return code,
     };

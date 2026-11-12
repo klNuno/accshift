@@ -23,6 +23,14 @@ pub fn decrypt_bytes(_data: &[u8]) -> Result<Vec<u8>, AppError> {
     Err(unsupported("Secret storage"))
 }
 
+pub fn delete_secret(_token: &str) -> Result<(), AppError> {
+    Err(unsupported("Secret storage"))
+}
+
+pub fn delete_bytes(_token: &[u8]) -> Result<(), AppError> {
+    Err(unsupported("Secret storage"))
+}
+
 pub fn steam_installation_path() -> Result<PathBuf, AppError> {
     Err(unsupported("Steam installation discovery"))
 }

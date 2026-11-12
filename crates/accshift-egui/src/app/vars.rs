@@ -80,8 +80,8 @@ pub struct Vars {
     pub motion_avatar_defer: f64,
     /// `--line-height` (unitless), the body's `line-height`.
     pub line_height: f32,
-    /// `color-scheme: dark` on the root (`app.css`, then the theme's
-    /// `colorScheme`): it picks the outer colour of the UA focus ring.
+    /// The theme's dark colour scheme: it picks the outer colour of the
+    /// focus ring.
     pub dark: bool,
     /// `--overlay-blur`, CSS px: the dialogs' `backdrop-filter: blur()`.
     pub overlay_blur: f32,

@@ -39,6 +39,7 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use switch_params::SteamSwitchParams;
 use uuid::Uuid;
 
 fn validate_steam_id(id: &str) -> Result<(), String> {
@@ -58,30 +59,28 @@ fn validate_username(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn is_force_kill(params: &Value) -> bool {
-    params
-        .get("shutdownMode")
-        .and_then(Value::as_str)
-        .map(|m| m == "force")
-        .unwrap_or(false)
-}
-
 pub struct SteamService;
 
 pub static STEAM_SERVICE: SteamService = SteamService;
 
-/// Callers pass the account state already read for their own use (registry
-/// autologin value and loginusers.vdf MostRecent, both formatted
-/// `<error:...>` on failure) so a switch doesn't re-read them once per log
-/// line.
+/// The switch a log line is about: where it runs, what it is called in the
+/// log and what the user asked for.
+struct SwitchRequest<'a> {
+    source: &'static str,
+    action: &'static str,
+    username: &'a str,
+    run_as_admin: bool,
+    launch_options: &'a str,
+}
+
+/// The switch details of a log line. Callers pass the account state already
+/// read for their own use (registry autologin value and loginusers.vdf
+/// MostRecent, both formatted `<error:...>` on failure) so a switch doesn't
+/// re-read them once per log line.
 fn build_switch_state_details(
     auto_login_user: &str,
     current_from_file: &str,
-    requested_username: Option<&str>,
-    steam_id: Option<&str>,
-    mode: Option<&str>,
-    run_as_admin: bool,
-    launch_options: &str,
+    request: &SwitchRequest<'_>,
 ) -> String {
     // Both booleans come from one process-table scan instead of one per name.
     let client_processes = [
@@ -91,19 +90,46 @@ fn build_switch_state_details(
     let running = os::running_process_names(&client_processes);
 
     use super::redact_id;
-    use super::redact_opt;
+    // `steamId` and `mode` stay in the line, always null, so its shape does
+    // not change for whoever reads the logs.
     serde_json::json!({
-        "requestedUsername": redact_opt(requested_username),
-        "steamId": redact_opt(steam_id),
-        "mode": mode,
-        "runAsAdmin": run_as_admin,
-        "launchOptionsConfigured": !launch_options.trim().is_empty(),
+        "requestedUsername": redact_id(request.username),
+        "steamId": null,
+        "mode": null,
+        "runAsAdmin": request.run_as_admin,
+        "launchOptionsConfigured": !request.launch_options.trim().is_empty(),
         "autoLoginUser": redact_id(auto_login_user),
         "currentAccountFromLoginusers": redact_id(current_from_file),
         "steamRunning": running.contains(&os::steam_process_name()),
         "steamWebHelperRunning": running.contains(&os::steam_web_helper_process_name()),
     })
     .to_string()
+}
+
+fn error_text(error: impl std::fmt::Display) -> String {
+    format!("<error:{error}>")
+}
+
+/// Log the state a switch starts from and return loginusers.vdf's current
+/// account, which the caller may still need.
+fn log_switch_requested(
+    app_handle: &dyn AppContext,
+    steam_path: &Path,
+    request: &SwitchRequest<'_>,
+) -> Result<String, crate::error::AppError> {
+    let current = accounts::get_current_account_name(steam_path);
+    let auto_login_user = os::get_auto_login_user().unwrap_or_else(error_text);
+    let current_from_file = match &current {
+        Ok(current) => current.clone(),
+        Err(e) => error_text(e),
+    };
+    log_platform_info(
+        app_handle,
+        request.source,
+        &format!("{} requested", request.action),
+        build_switch_state_details(&auto_login_user, &current_from_file, request),
+    );
+    current
 }
 
 pub fn get_accounts(app_handle: AppCtx) -> Result<Vec<SteamAccount>, PlatformError> {
@@ -164,30 +190,18 @@ pub fn switch_account_and_launch_game(
         return Err("Invalid app id".into());
     }
     let steam_path = resolve_steam_path(&app_handle)?;
-    // The pre-switch log line and the already_on_target check below both want
-    // loginusers.vdf's MostRecent entry, so it is read once and shared.
-    let current_result = accounts::get_current_account_name(&steam_path);
-    let auto_login_user = os::get_auto_login_user().unwrap_or_else(|e| format!("<error:{e}>"));
-    let current_from_file = match &current_result {
-        Ok(current) => current.clone(),
-        Err(e) => format!("<error:{e}>"),
+    let request = SwitchRequest {
+        source: "steam.switch_account_and_launch_game",
+        action: "Steam switch+launch",
+        username: &username,
+        run_as_admin,
+        launch_options: &launch_options,
     };
-    log_platform_info(
-        &app_handle,
-        "steam.switch_account_and_launch_game",
-        "Steam switch+launch requested",
-        build_switch_state_details(
-            &auto_login_user,
-            &current_from_file,
-            Some(&username),
-            None,
-            None,
-            run_as_admin,
-            &launch_options,
-        ),
-    );
+    // The already_on_target check below wants the same MostRecent entry the
+    // log line reports, so it is read once and shared.
+    let current_result = log_switch_requested(&app_handle, &steam_path, &request);
 
-    // The frontend routes every "run game as X" through this command; whether
+    // The UI routes every "run game as X" through this function; whether
     // a switch is actually needed is decided here, against live state, not
     // from cached UI state. loginusers.vdf's MostRecent is written by Steam
     // itself at login, so it tracks the real session more reliably than the
@@ -225,43 +239,44 @@ pub fn switch_account_and_launch_game(
         &launch_options,
         force_kill,
     );
+    log_switch_outcome(
+        &app_handle,
+        &steam_path,
+        &request,
+        result.map_err(Into::into),
+    )
+}
 
+/// Log how a switch ended, with the state it left, and return its result.
+/// One line per outcome: the error rides in the "failed" line's details.
+fn log_switch_outcome(
+    app_handle: &dyn AppContext,
+    steam_path: &Path,
+    request: &SwitchRequest<'_>,
+    result: Result<(), PlatformError>,
+) -> Result<(), PlatformError> {
     // The switch just changed exactly this state, so both values are re-read.
-    let post_auto_login_user = os::get_auto_login_user().unwrap_or_else(|e| format!("<error:{e}>"));
+    let post_auto_login_user = os::get_auto_login_user().unwrap_or_else(error_text);
     let post_current_from_file =
-        accounts::get_current_account_name(&steam_path).unwrap_or_else(|e| format!("<error:{e}>"));
-    let post_state = build_switch_state_details(
-        &post_auto_login_user,
-        &post_current_from_file,
-        Some(&username),
-        None,
-        None,
-        run_as_admin,
-        &launch_options,
-    );
+        accounts::get_current_account_name(steam_path).unwrap_or_else(error_text);
+    let post_state =
+        build_switch_state_details(&post_auto_login_user, &post_current_from_file, request);
 
     match &result {
         Ok(()) => log_platform_info(
-            &app_handle,
-            "steam.switch_account_and_launch_game",
-            "Steam switch+launch completed",
+            app_handle,
+            request.source,
+            &format!("{} completed", request.action),
             &post_state,
         ),
         Err(error) => log_platform_error(
-            &app_handle,
-            "steam.switch_account_and_launch_game",
-            "Steam switch+launch failed",
+            app_handle,
+            request.source,
+            &format!("{} failed", request.action),
             format!("error={error}; state={post_state}"),
         ),
     }
-
-    result.map_err(|e| {
-        log_platform_failure(
-            &app_handle,
-            "steam.switch_account_and_launch_game",
-            e.into(),
-        )
-    })
+    result
 }
 
 pub fn open_userdata(app_handle: AppCtx, steam_id: String) -> Result<(), PlatformError> {
@@ -272,7 +287,8 @@ pub fn open_userdata(app_handle: AppCtx, steam_id: String) -> Result<(), Platfor
 }
 
 pub fn clear_integrated_browser_cache(app_handle: AppCtx) -> Result<(), PlatformError> {
-    accounts::clear_integrated_browser_cache().map_err(|e| {
+    let steam_path = resolve_steam_path(&app_handle)?;
+    accounts::clear_integrated_browser_cache(&steam_path).map_err(|e| {
         log_platform_failure(
             &app_handle,
             "steam.clear_integrated_browser_cache",
@@ -297,10 +313,8 @@ pub fn copy_game_settings(
 pub fn get_copyable_games(
     app_handle: AppCtx,
     from_steam_id: String,
-    to_steam_id: String,
 ) -> Result<Vec<CopyableGame>, PlatformError> {
     validate_steam_id(&from_steam_id)?;
-    validate_steam_id(&to_steam_id)?;
     let steam_path = resolve_steam_path(&app_handle)?;
     accounts::get_copyable_games(&steam_path, &from_steam_id)
         .map_err(|e| log_platform_failure(&app_handle, "steam.get_copyable_games", e.into()))
@@ -371,9 +385,9 @@ pub async fn get_profile_info(
     Ok(profile::fetch_profile_info(&client, &steam_id).await)
 }
 
-/// Variante batch de [`get_profile_info`] : une map id -> profil pour tous
-/// les comptes en un appel. Avec cle API : GetPlayerSummaries (100 ids par
-/// requete) ; sans cle : fallback XML parallele cote Rust.
+/// Batch form of [`get_profile_info`]: an id -> profile map for every account
+/// in one call. With an API key: GetPlayerSummaries (100 ids per request);
+/// without one: the public XML fallback, fetched in parallel.
 pub async fn get_profile_infos(
     app_handle: AppCtx,
     steam_ids: Vec<String>,
@@ -393,7 +407,7 @@ pub async fn get_profile_infos(
         return Ok(HashMap::new());
     }
 
-    // Une cle illisible n'est pas bloquante : le fallback XML public couvre.
+    // An unreadable key does not block: the public XML fallback covers it.
     let api_key = match read_api_key(&app_handle) {
         Ok(value) => value.trim().to_string(),
         Err(e) => {
@@ -467,39 +481,23 @@ impl PlatformService for SteamService {
         params: Value,
     ) -> Result<(), PlatformError> {
         validate_username(account_id)?;
-        let run_as_admin = params
-            .get("runAsAdmin")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let launch_options = params
-            .get("launchOptions")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        let force_kill = is_force_kill(&params);
+        let params = SteamSwitchParams::from_value(params)?;
+        let run_as_admin = params.run_as_admin;
+        let launch_options = params.launch_options.as_str();
+        let force_kill = params.force_kill();
         let steam_path = resolve_steam_path(&app)?;
-
-        let auto_login_user = os::get_auto_login_user().unwrap_or_else(|e| format!("<error:{e}>"));
-        let current_from_file = accounts::get_current_account_name(&steam_path)
-            .unwrap_or_else(|e| format!("<error:{e}>"));
-        log_platform_info(
-            &app,
-            "steam.switch_account",
-            "Steam switch requested",
-            build_switch_state_details(
-                &auto_login_user,
-                &current_from_file,
-                Some(account_id),
-                None,
-                None,
-                run_as_admin,
-                &launch_options,
-            ),
-        );
+        let request = SwitchRequest {
+            source: "steam.switch_account",
+            action: "Steam switch",
+            username: account_id,
+            run_as_admin,
+            launch_options,
+        };
+        let _ = log_switch_requested(&app, &steam_path, &request);
 
         // Optional persona mode (CLI --invisible/--online, GUI context menu).
         // When absent the switch leaves the account's persona state untouched.
-        let mode = params.get("mode").and_then(Value::as_str).unwrap_or("");
+        let mode = params.mode.as_deref().unwrap_or("");
         if !mode.is_empty() && !["online", "invisible"].contains(&mode) {
             return Err("Invalid mode".into());
         }
@@ -509,7 +507,7 @@ impl PlatformService for SteamService {
                 &steam_path,
                 account_id,
                 run_as_admin,
-                &launch_options,
+                launch_options,
                 force_kill,
             )
         } else {
@@ -523,10 +521,9 @@ impl PlatformService for SteamService {
             // steam_id deterministically instead of the first match (which
             // would otherwise vary run to run).
             let steam_id = params
-                .get("steamId")
-                .and_then(Value::as_str)
+                .steam_id
+                .clone()
                 .filter(|id| validate_steam_id(id).is_ok())
-                .map(str::to_string)
                 .or_else(|| {
                     accounts::get_accounts_snapshot(&steam_path)
                         .ok()
@@ -545,44 +542,13 @@ impl PlatformService for SteamService {
                 &steam_id,
                 mode,
                 run_as_admin,
-                &launch_options,
+                launch_options,
                 force_kill,
             )
         }
-        .map_err(|e| log_platform_failure(&app, "steam.switch_account", e.into()));
+        .map_err(Into::into);
 
-        // The switch just changed exactly this state, so both values are
-        // re-read.
-        let post_auto_login_user =
-            os::get_auto_login_user().unwrap_or_else(|e| format!("<error:{e}>"));
-        let post_current_from_file = accounts::get_current_account_name(&steam_path)
-            .unwrap_or_else(|e| format!("<error:{e}>"));
-        let post_state = build_switch_state_details(
-            &post_auto_login_user,
-            &post_current_from_file,
-            Some(account_id),
-            None,
-            None,
-            run_as_admin,
-            &launch_options,
-        );
-
-        match &result {
-            Ok(()) => log_platform_info(
-                &app,
-                "steam.switch_account",
-                "Steam switch completed",
-                &post_state,
-            ),
-            Err(error) => log_platform_error(
-                &app,
-                "steam.switch_account",
-                "Steam switch failed",
-                format!("error={error}; state={post_state}"),
-            ),
-        }
-
-        result
+        log_switch_outcome(&app, &steam_path, &request, result)
     }
 
     fn forget_account(&self, app: AppCtx, account_id: &str) -> Result<(), PlatformError> {
@@ -593,17 +559,14 @@ impl PlatformService for SteamService {
     }
 
     fn begin_setup(&self, app: AppCtx, params: Value) -> Result<SetupStatus, PlatformError> {
-        let run_as_admin = params
-            .get("runAsAdmin")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let launch_options = params
-            .get("launchOptions")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        let force_kill = is_force_kill(&params);
-        begin_account_setup(app.clone(), run_as_admin, launch_options, force_kill)
+        let params = SteamSwitchParams::from_value(params)?;
+        let force_kill = params.force_kill();
+        begin_account_setup(
+            app.clone(),
+            params.run_as_admin,
+            params.launch_options,
+            force_kill,
+        )
     }
 
     fn get_setup_status(&self, app: AppCtx, setup_id: &str) -> Result<SetupStatus, PlatformError> {

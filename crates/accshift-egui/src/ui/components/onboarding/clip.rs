@@ -170,7 +170,7 @@ struct Slot(Arc<Mutex<Option<Player>>>);
 
 /// Draws `clip` into `rect` (points, its layout box), `ms` after it started
 /// playing, with `radius` corners, at `opacity`, scaled by `scale` about the
-/// rect centre (`gifSwap`). `id` keys the player: a new id is a new
+/// rect centre. `id` keys the player: a new id is a new
 /// `<video>` element, playing from the start.
 #[allow(clippy::too_many_arguments)]
 pub fn paint_clip(

@@ -1,11 +1,9 @@
-//! The keyboard: `createKeyboardController` with the app's binding table
-//! (`accshift_app::actions::keyboard`), fed with the frame's key presses
-//! before any component draws. The TS controller listens on `window`, so a
-//! field's own `keydown` handler runs first; here the table runs first, and
-//! the bindings that would reach a field (`enter`, arrows, plain letters)
-//! never match inside one, so the order does not show. A binding that takes
-//! a key removes it from the frame's input, as `preventDefault` plus
-//! `stopPropagation` keep it from the focused element.
+//! The keyboard: the binding table (`accshift_app::actions::keyboard`) fed
+//! with the frame's key presses before any widget draws. The table runs
+//! before a focused field reads keys, and the bindings that would reach a
+//! field (`enter`, arrows, plain letters) never match inside one, so the
+//! order does not show. A binding that takes a key removes it from the
+//! frame's input: the focused widget never sees it.
 
 use std::time::Instant;
 
@@ -14,9 +12,10 @@ use accshift_app::actions::keyboard::{
     current_key_scope, Direction, KeyAction, KeyEvent, KeyHost, KeyOutcome, KeyScope,
 };
 use accshift_app::display::DisplayItem;
-use accshift_app::folders::{ItemKind, ItemRef};
+use accshift_app::folders::{FolderInfo, ItemKind, ItemRef};
+use accshift_app::platforms::PlatformAccount;
 use accshift_app::stores::ViewMode;
-use egui::{Context, Event, Id, Key};
+use egui::{Context, Event, Id, Key, PointerButton};
 
 use super::platforms::RuntimeOs;
 use super::ui_scale::ZoomKey;
@@ -24,48 +23,53 @@ use super::{Action, AppModel, MenuTarget};
 use crate::ui::components::bulk_edit::BulkEvent;
 use crate::ui::components::focus;
 
-/// The search field's widget id (`searchInputRef`).
+/// The search field's widget id.
 pub const SEARCH_ID: &str = "workspace-search";
 
-/// DOM `key` and `code` for an egui key, `None` for one no binding reads.
-/// Letters follow Shift like `e.key`; `code` is the US position.
+/// The web `key` and `code` of the keys the bindings read by name. egui
+/// names the arrows "Left" and so on.
+const NAMED_KEYS: [(Key, &str, &str); 16] = [
+    (Key::Escape, "Escape", "Escape"),
+    (Key::Enter, "Enter", "Enter"),
+    (Key::Tab, "Tab", "Tab"),
+    (Key::Backspace, "Backspace", "Backspace"),
+    (Key::Delete, "Delete", "Delete"),
+    (Key::Home, "Home", "Home"),
+    (Key::End, "End", "End"),
+    (Key::ArrowLeft, "ArrowLeft", "ArrowLeft"),
+    (Key::ArrowRight, "ArrowRight", "ArrowRight"),
+    (Key::ArrowUp, "ArrowUp", "ArrowUp"),
+    (Key::ArrowDown, "ArrowDown", "ArrowDown"),
+    (Key::Space, " ", "Space"),
+    (Key::Plus, "+", "Equal"),
+    (Key::Equals, "=", "Equal"),
+    (Key::Minus, "-", "Minus"),
+    (Key::Comma, ",", "Comma"),
+];
+
+/// The web `key` and `code` for an egui key, `None` for one no binding
+/// reads. Letters follow Shift like `key`; `code` is the US position.
 fn dom_key(key: Key, shift: bool) -> Option<(String, String)> {
-    let named = |k: &str| Some((k.to_string(), k.to_string()));
+    let pair = |key: &str, code: &str| Some((key.to_string(), code.to_string()));
+    if let Some((_, dom, code)) = NAMED_KEYS.iter().find(|(named, ..)| *named == key) {
+        return pair(dom, code);
+    }
+    if key == crate::CONTEXT_MENU_KEY {
+        return pair("ContextMenu", "ContextMenu");
+    }
     let name = key.name();
-    match key {
-        Key::Escape
-        | Key::Enter
-        | Key::Tab
-        | Key::Backspace
-        | Key::Delete
-        | Key::Home
-        | Key::End => named(name),
-        // egui names them "Left" and so on.
-        Key::ArrowLeft => named("ArrowLeft"),
-        Key::ArrowRight => named("ArrowRight"),
-        Key::ArrowUp => named("ArrowUp"),
-        Key::ArrowDown => named("ArrowDown"),
-        Key::Space => Some((" ".into(), "Space".into())),
-        Key::Plus => Some(("+".into(), "Equal".into())),
-        Key::Equals => Some(("=".into(), "Equal".into())),
-        Key::Minus => Some(("-".into(), "Minus".into())),
-        Key::Comma => Some((",".into(), "Comma".into())),
-        k if k == crate::CONTEXT_MENU_KEY => named("ContextMenu"),
-        _ => {
-            if let Some(rest) = name.strip_prefix('F').filter(|r| r.parse::<u8>().is_ok()) {
-                return Some((format!("F{rest}"), format!("F{rest}")));
-            }
-            let mut chars = name.chars();
-            match (chars.next(), chars.next()) {
-                (Some(c), None) if c.is_ascii_alphabetic() => {
-                    let lower = c.to_ascii_lowercase();
-                    let shown = if shift { c.to_ascii_uppercase() } else { lower };
-                    Some((shown.to_string(), format!("Key{}", c.to_ascii_uppercase())))
-                }
-                (Some(c), None) if c.is_ascii_digit() => Some((c.to_string(), format!("Digit{c}"))),
-                _ => None,
-            }
+    if let Some(rest) = name.strip_prefix('F').filter(|r| r.parse::<u8>().is_ok()) {
+        return Some((format!("F{rest}"), format!("F{rest}")));
+    }
+    let mut chars = name.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) if c.is_ascii_alphabetic() => {
+            let lower = c.to_ascii_lowercase();
+            let shown = if shift { c.to_ascii_uppercase() } else { lower };
+            Some((shown.to_string(), format!("Key{}", c.to_ascii_uppercase())))
         }
+        (Some(c), None) if c.is_ascii_digit() => Some((c.to_string(), format!("Digit{c}"))),
+        _ => None,
     }
 }
 
@@ -110,32 +114,32 @@ struct Host {
     search_focused: bool,
     bulk_edit_allowed: bool,
     actions: Vec<KeyAction>,
-    /// `getItems()` of the card focus.
+    /// The cards the focus moves over, in order.
     items: Vec<ItemRef>,
-    /// `cardFocus.focusedId`, moved by the arrows.
+    /// The focused card, moved by the arrows.
     focused: Option<String>,
-    /// `measureColumns()`.
+    /// Cards per row (1 in the list view).
     columns: usize,
     /// No control other than a card holds real focus.
     owns_activation: bool,
-    /// Accounts the view renders (`renderedAccountMap`).
+    /// Accounts the view renders.
     rendered: Vec<String>,
-    /// Folders that exist (`getFolder`).
+    /// Folders that exist.
     folders: Vec<String>,
-    /// The active adapter labels accounts (`setAccountLabel`).
+    /// The active adapter labels accounts.
     can_label: bool,
-    /// The cards on screen (`findElement`).
+    /// The cards on screen.
     on_screen: Vec<ItemRef>,
-    /// The focus moved: `syncDom` scrolls it into view.
+    /// The focus moved: the focused card scrolls into view.
     moved: bool,
     cards: Vec<CardEffect>,
-    /// The personas panel shows its wizard (`editing`).
+    /// The personas panel shows its wizard.
     personas_editing: bool,
-    /// Escape went to the wizard (`personasPanelRef.handleEscape()`).
+    /// Escape went to the wizard.
     personas_escape: bool,
     /// A card is pressed or dragged.
     drag_in_flight: bool,
-    /// Escape cancelled it (`drag.cancelFromEscape()`).
+    /// Escape cancelled the drag.
     drag_escape: bool,
 }
 
@@ -188,14 +192,13 @@ impl KeyHost for Host {
         self.drag_escape = self.drag_in_flight;
         self.drag_in_flight
     }
-    /// `PersonasPanel.handleEscape`: the wizard steps back, the grid lets
-    /// the panel close.
+    /// The wizard steps back on Escape; the grid lets the panel close.
     fn personas_panel_escape(&mut self) -> bool {
         self.personas_escape = self.personas_editing;
         self.personas_editing
     }
-    /// `cardFocus.move`: the first card when none is focused, then by one
-    /// or by a row; past either end it stays.
+    /// The first card when none is focused, then by one or by a row; past
+    /// either end it stays.
     fn card_focus_move(&mut self, direction: Direction) -> bool {
         let Some(first) = self.items.first() else {
             return false;
@@ -224,7 +227,7 @@ impl KeyHost for Host {
         self.moved = true;
         true
     }
-    /// `activateFocusedCard`: a folder opens, an account switches.
+    /// A folder opens, an account switches.
     fn activate_focused_card(&mut self) -> bool {
         let Some(item) = self
             .focused_item()
@@ -235,7 +238,6 @@ impl KeyHost for Host {
         self.cards.push(CardEffect::Activate(item));
         true
     }
-    /// `renameFocusedCard`.
     fn rename_focused_card(&mut self) -> bool {
         let Some(item) = self
             .focused_item()
@@ -246,7 +248,7 @@ impl KeyHost for Host {
         self.cards.push(CardEffect::Rename(item));
         true
     }
-    /// `openFocusedCardContextMenu`: the menu opens at the card's centre.
+    /// The menu opens at the card's centre.
     fn open_focused_card_context_menu(&mut self) -> bool {
         let Some(item) = self
             .focused_item()
@@ -263,7 +265,7 @@ impl KeyHost for Host {
 }
 
 impl AppModel {
-    /// `createKeyScopeResolver`.
+    /// Which layer owns the keyboard now.
     pub(super) fn key_scope(&self) -> KeyScope {
         let Some(b) = self.booted.as_ref() else {
             return KeyScope::Locked;
@@ -362,8 +364,8 @@ impl AppModel {
     }
 
     /// Runs the frame's key presses through the binding table, one after
-    /// the other as `keydown` events: each sees what the previous one did.
-    /// Taken keys leave the frame's input.
+    /// the other: each sees what the previous one did. Taken keys leave the
+    /// frame's input.
     pub(super) fn dispatch_keys(&mut self, ctx: &Context) {
         let Some(os) = self.booted.as_ref().map(|b| b.runtime_os) else {
             return;
@@ -384,28 +386,7 @@ impl AppModel {
             {
                 taken[index] = consume;
             }
-            if host.moved {
-                if let Some(b) = self.booted.as_mut() {
-                    b.workspace.kb_focus = host.focused.clone();
-                    b.workspace.kb_reveal = true;
-                }
-                ctx.request_repaint();
-            }
-            if host.personas_escape {
-                self.wizard_escape(ctx);
-            }
-            if host.drag_escape {
-                if let Some(b) = self.booted.as_mut() {
-                    b.accounts.drag.cancel_from_escape();
-                }
-                ctx.request_repaint();
-            }
-            for action in host.actions {
-                self.apply_key(ctx, action);
-            }
-            for effect in host.cards {
-                self.apply_card_effect(ctx, effect);
-            }
+            self.apply_host(ctx, host);
         }
         if taken.iter().any(|t| *t) {
             ctx.input_mut(|i| {
@@ -418,7 +399,34 @@ impl AppModel {
         }
     }
 
-    /// `cardFocus.clear()`.
+    /// What one key's bindings asked for: the card focus moved, Escape
+    /// taken by the personas wizard or a card drag, then the key actions
+    /// and the focused card's effects.
+    fn apply_host(&mut self, ctx: &Context, host: Host) {
+        if host.moved {
+            if let Some(b) = self.booted.as_mut() {
+                b.workspace.kb_focus = host.focused.clone();
+                b.workspace.kb_reveal = true;
+            }
+            ctx.request_repaint();
+        }
+        if host.personas_escape {
+            self.wizard_escape(ctx);
+        }
+        if host.drag_escape {
+            if let Some(b) = self.booted.as_mut() {
+                b.accounts.drag.cancel_from_escape();
+            }
+            ctx.request_repaint();
+        }
+        for action in host.actions {
+            self.apply_key(ctx, action);
+        }
+        for effect in host.cards {
+            self.apply_card_effect(ctx, effect);
+        }
+    }
+
     fn clear_card_focus(&mut self) {
         if let Some(b) = self.booted.as_mut() {
             b.workspace.kb_focus = None;
@@ -426,10 +434,10 @@ impl AppModel {
         }
     }
 
-    /// What drops the card focus besides Escape, run before the keys: the
-    /// `$effect` on the tab, folder, query, view mode and settings panel,
-    /// a pointer press anywhere and real focus landing outside the grid
-    /// (both only in the scopes the grid takes keys in).
+    /// What drops the card focus besides Escape, run before the keys: a
+    /// change of tab, folder, query, view mode or settings panel, a pointer
+    /// press anywhere and real focus landing outside the grid (both only in
+    /// the scopes the grid takes keys in).
     pub(super) fn track_card_focus(&mut self, ctx: &Context) {
         let scope = self.key_scope();
         let Some(b) = self.booted.as_mut() else {
@@ -457,8 +465,8 @@ impl AppModel {
         if changed {
             ws.kb_focus = None;
         }
-        // The `$effect` on the rendered cards: `syncDom` scrolls the focused
-        // card back into view.
+        // The rendered cards changed: the focused card scrolls back into
+        // view.
         if cards_changed && ws.kb_focus.is_some() {
             ws.kb_reveal = true;
         }
@@ -476,17 +484,24 @@ impl AppModel {
         }
     }
 
+    /// The account the view renders as `id`.
+    fn rendered_account(&self, id: &str) -> Option<PlatformAccount> {
+        let b = self.booted.as_ref()?;
+        b.accounts.view.items().iter().find_map(|i| match i {
+            DisplayItem::Account(a) if a.account.id == id => Some(a.account.clone()),
+            _ => None,
+        })
+    }
+
+    fn stored_folder(&self, id: &str) -> Option<FolderInfo> {
+        let b = self.booted.as_ref()?;
+        b.stores.folders().folder(id).cloned()
+    }
+
     fn apply_card_effect(&mut self, ctx: &Context, effect: CardEffect) {
-        let Some(b) = self.booted.as_ref() else {
+        if self.booted.is_none() {
             return;
-        };
-        let account = |id: &str| {
-            b.accounts.view.items().iter().find_map(|i| match i {
-                DisplayItem::Account(a) if a.account.id == id => Some(a.account.clone()),
-                _ => None,
-            })
-        };
-        let folder = |id: &str| b.stores.folders().folder(id).cloned();
+        }
         match effect {
             CardEffect::Activate(item) => match item.kind {
                 ItemKind::Folder => self.apply_one(ctx, Action::NavigateToFolder(Some(item.id))),
@@ -495,31 +510,72 @@ impl AppModel {
                     self.apply_one(ctx, Action::AccountSwitch(item.id));
                 }
             },
-            CardEffect::Rename(item) => match item.kind {
-                ItemKind::Folder => {
-                    if let Some(folder) = folder(&item.id) {
-                        self.dialogs.open_rename_folder_dialog(&folder);
-                    }
-                }
-                ItemKind::Account => {
-                    if let Some(account) = account(&item.id) {
-                        let adapter = b.accounts.registry.adapter(&b.nav.active_tab);
-                        self.dialogs
-                            .open_rename_account_dialog(adapter.as_deref(), &account);
-                    }
-                }
-            },
+            CardEffect::Rename(item) => self.rename_card(&item),
             CardEffect::Menu(item) => {
-                let at = b.workspace.card_rect(&item).map(|r| r.center());
+                let at = self
+                    .booted
+                    .as_ref()
+                    .and_then(|b| b.workspace.card_rect(&item))
+                    .map(|r| r.center());
                 let target = match item.kind {
-                    ItemKind::Folder => folder(&item.id).map(MenuTarget::Folder),
-                    ItemKind::Account => account(&item.id).map(MenuTarget::Account),
+                    ItemKind::Folder => self.stored_folder(&item.id).map(MenuTarget::Folder),
+                    ItemKind::Account => self.rendered_account(&item.id).map(MenuTarget::Account),
                 };
                 if let (Some(target), Some(at)) = (target, at) {
                     self.apply_one(ctx, Action::ContextMenu(target, at));
                 }
             }
         }
+    }
+
+    /// Opens the rename dialog of a folder or an account card.
+    fn rename_card(&mut self, item: &ItemRef) {
+        match item.kind {
+            ItemKind::Folder => {
+                if let Some(folder) = self.stored_folder(&item.id) {
+                    self.dialogs.open_rename_folder_dialog(&folder);
+                }
+            }
+            ItemKind::Account => {
+                let Some(account) = self.rendered_account(&item.id) else {
+                    return;
+                };
+                let adapter = self
+                    .booted
+                    .as_ref()
+                    .and_then(|b| b.accounts.registry.adapter(&b.nav.active_tab));
+                self.dialogs
+                    .open_rename_account_dialog(adapter.as_deref(), &account);
+            }
+        }
+    }
+
+    /// The mouse's back button, as a browser reads it: it leaves Settings or
+    /// Personas, else the current folder. A lock, a dialog, a menu, the
+    /// palette, the tour and bulk edit keep it for themselves and ignore it.
+    pub(super) fn dispatch_mouse_back(&mut self, ctx: &Context) {
+        let pressed = ctx.input(|i| {
+            i.events.iter().any(|event| {
+                matches!(
+                    event,
+                    Event::PointerButton {
+                        button: PointerButton::Extra1,
+                        pressed: true,
+                        ..
+                    }
+                )
+            })
+        });
+        if !pressed {
+            return;
+        }
+        match self.key_scope() {
+            KeyScope::Settings => self.close_settings_panel(),
+            KeyScope::Personas => self.apply_key(ctx, KeyAction::ClosePersonas),
+            KeyScope::App => self.apply(ctx, vec![Action::NavigateBack]),
+            _ => return,
+        }
+        ctx.request_repaint();
     }
 
     fn apply_key(&mut self, ctx: &Context, action: KeyAction) {
@@ -556,13 +612,7 @@ impl AppModel {
             KeyAction::ToggleBulkEdit => self.apply_one(ctx, Action::BulkEdit),
             KeyAction::ToggleSettingsPanel => self.toggle_settings_panel(),
             KeyAction::OpenPersonas => self.apply_one(ctx, Action::OpenPersonas),
-            KeyAction::ToggleViewMode => {
-                let next = match self.booted.as_ref().map(|b| b.stores.view_mode()) {
-                    Some(ViewMode::Grid) => ViewMode::List,
-                    _ => ViewMode::Grid,
-                };
-                self.apply_one(ctx, Action::SetViewMode(next));
-            }
+            KeyAction::ToggleViewMode => self.toggle_view_mode(ctx),
             KeyAction::ChangeTab(tab) => self.apply_one(ctx, Action::TabChange(tab)),
             KeyAction::ZoomIn => self.zoom_key(ZoomKey::In, Instant::now()),
             KeyAction::ZoomOut => self.zoom_key(ZoomKey::Out, Instant::now()),
@@ -580,6 +630,15 @@ impl AppModel {
                 self.apply_one(ctx, Action::Bulk(BulkEvent::DeselectAll));
             }
         }
+    }
+
+    /// The grid view becomes the list view and back.
+    fn toggle_view_mode(&mut self, ctx: &Context) {
+        let next = match self.booted.as_ref().map(|b| b.stores.view_mode()) {
+            Some(ViewMode::Grid) => ViewMode::List,
+            _ => ViewMode::Grid,
+        };
+        self.apply_one(ctx, Action::SetViewMode(next));
     }
 }
 

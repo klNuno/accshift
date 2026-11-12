@@ -1,5 +1,4 @@
-//! Steam account menu entries, ported from
-//! `src/lib/platforms/steam/contextMenu.ts`.
+//! Steam account menu entries.
 
 use super::friend_code::encode_friend_code;
 use super::to_profile_url;
@@ -46,8 +45,8 @@ fn display_value(account: &PlatformAccount) -> String {
     }
 }
 
-/// `getSteamContextMenuItems`: launch entries, copies, data entries, forget.
-/// `default_game` is `getDefaultGame(account.id)`.
+/// Launch entries, copies, data entries, forget. `default_game` is the
+/// account's default game.
 pub fn steam_context_menu_actions(
     account: &PlatformAccount,
     current_account_id: Option<&str>,
@@ -204,8 +203,8 @@ pub fn steam_context_menu_actions(
     actions
 }
 
-/// The `submenuLoader` of the run entry, once the account's games are in.
-/// `remember` sets the picked game as the account's default before running.
+/// The run submenu, once the account's games are in. `remember` sets the
+/// picked game as the account's default before running.
 pub fn account_games_submenu(
     username: &str,
     steam_id: &str,
@@ -240,7 +239,7 @@ pub fn account_games_submenu(
         .collect()
 }
 
-/// The `submenuLoader` of "copy settings from", once the games are in.
+/// The "copy settings from" submenu, once the games are in.
 pub fn copyable_games_submenu(
     from_steam_id: &str,
     to_steam_id: &str,

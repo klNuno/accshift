@@ -8,28 +8,67 @@ use super::*;
 /// hostile.
 pub(super) const MAX_JSON_STORE_BYTES: u64 = 32 * 1024 * 1024;
 
+/// Why a JSON file could not be served.
+#[derive(Debug)]
+pub(super) enum JsonReadError {
+    /// The file is there but neither it nor its `.bak` is this JSON, or it is
+    /// over the size ceiling. Reading it again cannot help.
+    Corrupt(String),
+    /// The OS refused the read (locked, permissions, I/O). The content may be
+    /// perfectly good.
+    Unreadable(String),
+}
+
+impl JsonReadError {
+    pub(super) fn into_message(self) -> String {
+        match self {
+            JsonReadError::Corrupt(message) | JsonReadError::Unreadable(message) => message,
+        }
+    }
+}
+
 pub fn read_json_if_exists<T>(path: &Path) -> Result<Option<T>, String>
+where
+    T: DeserializeOwned,
+{
+    read_json_classified(path).map_err(JsonReadError::into_message)
+}
+
+/// [`read_json_if_exists`], telling a corrupt file from an unreadable one.
+pub(super) fn read_json_classified<T>(path: &Path) -> Result<Option<T>, JsonReadError>
 where
     T: DeserializeOwned,
 {
     if let Ok(meta) = fs::metadata(path) {
         if meta.len() > MAX_JSON_STORE_BYTES {
-            return Err(format!(
+            return Err(JsonReadError::Corrupt(format!(
                 "Refusing to read {}: file is {} bytes (limit {MAX_JSON_STORE_BYTES})",
                 path.display(),
                 meta.len()
-            ));
+            )));
         }
     }
-    let primary: Result<Option<T>, String> = match fs::read_to_string(path) {
+    let primary: Result<Option<T>, JsonReadError> = match fs::read_to_string(path) {
         Ok(data) => match serde_json::from_str::<T>(&data) {
             Ok(value) => return Ok(Some(value)),
-            Err(e) => Err(format!("Could not parse JSON {}: {e}", path.display())),
+            Err(e) => Err(JsonReadError::Corrupt(format!(
+                "Could not parse JSON {}: {e}",
+                path.display()
+            ))),
         },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        // Bytes that are not UTF-8 are not JSON either.
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => Err(JsonReadError::Corrupt(
+            format!("Could not parse JSON {}: {e}", path.display()),
+        )),
         // A locked or unreadable primary may be perfectly good: an older .bak
         // served here would be written back by the next save as a rollback.
-        Err(e) => return Err(format!("Could not read file {}: {e}", path.display())),
+        Err(e) => {
+            return Err(JsonReadError::Unreadable(format!(
+                "Could not read file {}: {e}",
+                path.display()
+            )))
+        }
     };
 
     // Primary file missing or corrupt: a write_bytes_atomic fallback that
@@ -91,6 +130,12 @@ pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let tmp_path = unique_tmp_path(path);
     write_synced(&tmp_path, bytes)
         .map_err(|e| format!("Could not write temp file {}: {e}", tmp_path.display()))?;
+    // The rename replaces the file and with it its mode: keep a launcher's
+    // owner-only session file owner-only.
+    #[cfg(unix)]
+    if let Ok(meta) = fs::metadata(path) {
+        let _ = fs::set_permissions(&tmp_path, meta.permissions());
+    }
 
     let bak_path = backup_path(path);
     let mut rename_result = fs::rename(&tmp_path, path);

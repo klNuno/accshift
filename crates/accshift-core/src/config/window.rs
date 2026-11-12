@@ -20,7 +20,7 @@ pub fn logical_from_physical(physical: f64, scale_factor: f64) -> f64 {
 /// collapsed by a runtime glitch), and anything past the maximum is a corrupt
 /// file: clamping it keeps the window reachable instead of opening it off
 /// screen or failing to open at all.
-pub fn clamp_window_size(width: f64, height: f64) -> Option<(f64, f64)> {
+pub(super) fn clamp_window_size(width: f64, height: f64) -> Option<(f64, f64)> {
     if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
         return None;
     }
@@ -35,7 +35,7 @@ pub fn clamp_window_size(width: f64, height: f64) -> Option<(f64, f64)> {
 
 /// The saved origin, or `None` when it is missing or nonsense. The caller still
 /// has to check it against the monitors actually attached today.
-pub fn clamp_window_position(x: f64, y: f64) -> Option<(f64, f64)> {
+pub(super) fn clamp_window_position(x: f64, y: f64) -> Option<(f64, f64)> {
     let sane = x.is_finite()
         && y.is_finite()
         && x.abs() <= MAX_WINDOW_ORIGIN
@@ -74,28 +74,8 @@ pub fn load_window(app_handle: &dyn AppContext) -> SavedWindow {
     }
 }
 
-pub fn load_window_size(app_handle: &dyn AppContext) -> Option<(f64, f64)> {
-    load_window(app_handle).size
-}
-
-pub fn load_window_position(app_handle: &dyn AppContext) -> Option<(f64, f64)> {
-    load_window(app_handle).position
-}
-
-pub fn load_window_physical_position(app_handle: &dyn AppContext) -> Option<(i32, i32)> {
-    load_window(app_handle).physical_position
-}
-
 pub(super) fn valid_scale(scale: f64) -> bool {
     scale.is_finite() && (0.5..=8.0).contains(&scale)
-}
-
-pub fn save_window_size(
-    app_handle: &dyn AppContext,
-    width: f64,
-    height: f64,
-) -> Result<(), String> {
-    save_window_geometry(app_handle, width, height, None, None)
 }
 
 /// Persist the window geometry, in logical pixels.

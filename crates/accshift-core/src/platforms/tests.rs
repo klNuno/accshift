@@ -206,7 +206,7 @@ fn require_service_returns_err_for_unknown_platform() {
     let result = require_service("nintendo");
     assert!(result.is_err());
     let err = result.err().unwrap();
-    // Message is what the webview toast shows, so it must stay this string.
+    // Message is what the error toast shows, so it must stay this string.
     assert_eq!(err.to_string(), "Unknown platform: nintendo");
     assert_eq!(err.kind, crate::error::PlatformErrorKind::Other);
 }

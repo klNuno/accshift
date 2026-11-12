@@ -33,7 +33,7 @@ pub struct CustomTheme {
     pub glass: Option<bool>,
     pub tokens: serde_json::Value,
     /// Raw CSS the theme carries. Stored verbatim: what it is allowed to
-    /// contain is decided where it is applied, in `src/lib/theme/schema.ts`.
+    /// contain is decided where it is applied, by the theme engine.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub css: Option<String>,
 }
@@ -168,7 +168,7 @@ mod tests {
     fn a_file_without_schema_version_reads_as_version_one() {
         // Every theme a user wrote before the contract was versioned looks
         // like this. It must keep loading, and be recognisable as old so the
-        // frontend can migrate it rather than treat its holes as deliberate.
+        // app can migrate it rather than treat its holes as deliberate.
         // r##"..."## because a hex colour puts `"#` inside the literal.
         let json = r##"{
             "id": "old",

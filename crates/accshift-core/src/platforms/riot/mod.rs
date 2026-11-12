@@ -53,6 +53,8 @@ pub use self::switch::switch_profile;
 
 const RIOT_CLIENT_PROCESS_NAMES: &[&str] = &[
     "RiotClientServices.exe",
+    // The client's window process since 2023, in `Riot Client/UX`.
+    "Riot Client.exe",
     "RiotClientUx.exe",
     "RiotClientUxRender.exe",
     "LeagueClient.exe",
@@ -60,7 +62,8 @@ const RIOT_CLIENT_PROCESS_NAMES: &[&str] = &[
     "LeagueClientUxRender.exe",
 ];
 
-const RIOT_GAME_PROCESS_NAMES: &[&str] = &["LeagueofLegends.exe", "VALORANT-Win64-Shipping.exe"];
+// The League game process has spaces in its name; the client processes do not.
+const RIOT_GAME_PROCESS_NAMES: &[&str] = &["League of Legends.exe", "VALORANT-Win64-Shipping.exe"];
 
 const KILL_RETRY_COUNT: usize = 4;
 const KILL_RETRY_DELAY_MS: u64 = 450;
@@ -260,8 +263,13 @@ pub fn get_riot_path(app_handle: AppCtx) -> Result<String, String> {
 }
 
 pub fn set_riot_path(app_handle: AppCtx, path: String) -> Result<(), String> {
+    let trimmed = path.trim().to_string();
+    // Empty clears the override and goes back to detection.
+    if !trimmed.is_empty() {
+        validate_riot_client_path(Path::new(&trimmed))?;
+    }
     config::update_config(&app_handle, |cfg| {
-        cfg.riot.path_override = path.trim().to_string();
+        cfg.riot.path_override = trimmed;
     })
 }
 

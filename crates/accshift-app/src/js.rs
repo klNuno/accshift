@@ -1,46 +1,15 @@
-//! The few JavaScript semantics the ported stores lean on, so a value the TS
-//! code normalized one way is normalized the same way here: `String.trim`,
-//! `String.slice` on UTF-16 units, `Number(value)`, `Math.round` and
-//! `Boolean(value)`.
+//! The few JavaScript semantics the stores keep, so a value the earlier
+//! JavaScript app wrote to disk is normalized the way it was then:
+//! `String.trim`, `String.slice` on UTF-16 units, `Number(value)`,
+//! `Math.round` and `Boolean(value)`.
 
 use serde_json::Value;
 
-/// The characters `String.prototype.trim` strips: ECMAScript WhiteSpace plus
-/// LineTerminator. Not Rust's `char::is_whitespace`, which keeps U+FEFF and
-/// strips U+0085.
-pub fn is_js_whitespace(c: char) -> bool {
-    matches!(
-        c,
-        '\u{9}' | '\u{a}' | '\u{b}' | '\u{c}' | '\u{d}' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
-            ..='\u{200a}'
-                | '\u{2028}'
-                | '\u{2029}'
-                | '\u{202f}'
-                | '\u{205f}'
-                | '\u{3000}'
-                | '\u{feff}'
-    )
-}
-
-/// `value.trim()`.
-pub fn trim(value: &str) -> &str {
-    value.trim_matches(is_js_whitespace)
-}
-
-/// `value.length`: UTF-16 code units.
-pub fn utf16_len(value: &str) -> usize {
-    value.encode_utf16().count()
-}
+pub use accshift_theme::js::{is_js_whitespace, trim, utf16_len};
 
 /// `value.slice(0, max)`: the first `max` UTF-16 code units. A surrogate pair
 /// cut in half becomes U+FFFD, where JS would keep the lone surrogate.
-pub fn utf16_prefix(value: &str, max: usize) -> String {
-    if utf16_len(value) <= max {
-        return value.to_string();
-    }
-    let units: Vec<u16> = value.encode_utf16().take(max).collect();
-    String::from_utf16_lossy(&units)
-}
+pub use accshift_theme::js::utf16_prefix_lossy as utf16_prefix;
 
 /// `Boolean(value)`, `None` standing for `undefined`.
 pub fn truthy(value: Option<&Value>) -> bool {
@@ -66,8 +35,7 @@ pub fn nullish_or<'a>(a: Option<&'a Value>, b: Option<&'a Value>) -> Option<&'a 
     }
 }
 
-/// `value` as a record, the way the stores' `asRecord` reads it: anything but
-/// a plain object is empty.
+/// `value` as a record: anything but a plain object is empty.
 pub fn as_record(value: Option<&Value>) -> Option<&serde_json::Map<String, Value>> {
     match value {
         Some(Value::Object(map)) => Some(map),
@@ -149,42 +117,42 @@ pub fn string_to_number(text: &str) -> f64 {
 
 /// `[+-] (digits [. digits?] | . digits) [(e|E) [+-] digits]`.
 fn is_decimal_literal(text: &str) -> bool {
-    let bytes = text.as_bytes();
-    let mut index = 0;
-    if matches!(bytes.first(), Some(b'+' | b'-')) {
-        index += 1;
-    }
-    let int_start = index;
-    while index < bytes.len() && bytes[index].is_ascii_digit() {
-        index += 1;
-    }
-    let int_digits = index - int_start;
+    let rest = without_sign(text.as_bytes());
+    let int_digits = digit_run(rest);
+    let mut rest = &rest[int_digits..];
     let mut frac_digits = 0;
-    if index < bytes.len() && bytes[index] == b'.' {
-        index += 1;
-        let frac_start = index;
-        while index < bytes.len() && bytes[index].is_ascii_digit() {
-            index += 1;
-        }
-        frac_digits = index - frac_start;
+    if let [b'.', fraction @ ..] = rest {
+        frac_digits = digit_run(fraction);
+        rest = &fraction[frac_digits..];
     }
     if int_digits == 0 && frac_digits == 0 {
         return false;
     }
-    if index < bytes.len() && matches!(bytes[index], b'e' | b'E') {
-        index += 1;
-        if matches!(bytes.get(index), Some(b'+' | b'-')) {
-            index += 1;
-        }
-        let exp_start = index;
-        while index < bytes.len() && bytes[index].is_ascii_digit() {
-            index += 1;
-        }
-        if index == exp_start {
+    if let [b'e' | b'E', exponent @ ..] = rest {
+        let exponent = without_sign(exponent);
+        let exp_digits = digit_run(exponent);
+        if exp_digits == 0 {
             return false;
         }
+        rest = &exponent[exp_digits..];
     }
-    index == bytes.len()
+    rest.is_empty()
+}
+
+/// `bytes` past one leading `+` or `-`.
+fn without_sign(bytes: &[u8]) -> &[u8] {
+    match bytes {
+        [b'+' | b'-', rest @ ..] => rest,
+        _ => bytes,
+    }
+}
+
+/// How many ASCII digits `bytes` starts with.
+fn digit_run(bytes: &[u8]) -> usize {
+    bytes
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count()
 }
 
 /// `Math.round`: nearest integer, halves toward positive infinity.
@@ -197,8 +165,8 @@ pub fn round(value: f64) -> f64 {
     }
 }
 
-/// The stores' `clampInt`: `Number(value)`, rounded and clamped, or
-/// `fallback` when it is not finite.
+/// `Number(value)`, rounded and clamped, or `fallback` when it is not
+/// finite.
 pub fn clamp_int(value: Option<&Value>, min: i64, max: i64, fallback: i64) -> i64 {
     let numeric = to_number(value);
     if !numeric.is_finite() {
@@ -208,19 +176,9 @@ pub fn clamp_int(value: Option<&Value>, min: i64, max: i64, fallback: i64) -> i6
     rounded as i64
 }
 
-/// `String(value)` for a number, as the i18n templates print one.
-pub fn number_to_string(value: f64) -> String {
-    if value.is_nan() {
-        return "NaN".to_string();
-    }
-    if value.is_infinite() {
-        return if value > 0.0 { "Infinity" } else { "-Infinity" }.to_string();
-    }
-    if value == value.trunc() && value.abs() < 1e21 {
-        return format!("{}", value as i128);
-    }
-    format!("{value}")
-}
+/// `String(value)` for a number as the i18n templates print one, never in
+/// exponent form.
+pub use accshift_theme::js::number_to_decimal_string as number_to_string;
 
 /// `/^\d+$/.test(value)`: ASCII digits only, at least one.
 pub fn is_ascii_digits(value: &str) -> bool {
@@ -235,8 +193,7 @@ pub fn is_hex_color(value: &str, lengths: &[usize]) -> bool {
 }
 
 /// A random 64-bit value from the standard library's per-process hasher keys
-/// and the clock, for ids that only need to be unique, as `Math.random` and
-/// `crypto.randomUUID` are used in the stores.
+/// and the clock, for ids that only need to be unique.
 pub fn random_u64() -> u64 {
     use std::collections::hash_map::RandomState;
     use std::hash::{BuildHasher, Hasher};
@@ -302,6 +259,9 @@ mod tests {
         assert_eq!(trim("\u{feff} a \u{3000}"), "a");
         assert_eq!(trim("\u{85}a"), "\u{85}a");
         assert_eq!(utf16_prefix("abc", 2), "ab");
+        assert_eq!(utf16_prefix("a\u{1f600}", 2), "a\u{fffd}");
         assert_eq!(utf16_len("\u{1f600}"), 2);
+        assert_eq!(number_to_string(1e-7), "0.0000001");
+        assert_eq!(number_to_string(3.0), "3");
     }
 }

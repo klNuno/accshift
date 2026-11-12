@@ -1,14 +1,13 @@
-//! Bridge vers un gestionnaire de comptes CS2 externe qui expose, par
-//! SteamID64, le niveau, l'XP dans le niveau (0..5000) et l'etat de la caisse
-//! hebdomadaire. L'utilisateur configure l'URL complete de l'endpoint (lien
-//! magique read-only ou endpoint maison), avec un Bearer optionnel pour les
-//! implementations qui en veulent un. Le contrat JSON est documente dans le
-//! wiki, n'importe quel serveur peut le servir.
+//! Bridge to an external CS2 account manager that serves, per SteamID64,
+//! the level, the XP within the level (0..5000) and the weekly case state.
+//! The user sets the full endpoint URL (a read-only magic link or a
+//! self-hosted endpoint), with an optional Bearer token for servers that want
+//! one. The JSON contract is documented in the wiki; any server can serve it.
 //!
-//! accshift n'interroge jamais la base entiere : il envoie les SteamID64 de
-//! SES comptes locaux et ne recoit que ces lignes-la (POST {url}/accounts, ou
-//! GET {url}?ids=... pour les serveurs sans POST). Les comptes inconnus de la
-//! source sont simplement absents de la reponse.
+//! accshift never queries the whole database: it sends the SteamID64s of ITS
+//! local accounts and only gets those rows back (POST {url}/accounts, or
+//! GET {url}?ids=... for servers without POST). Accounts the source does not
+//! know are simply absent from the response.
 
 use crate::config;
 use crate::os;
@@ -16,12 +15,12 @@ use crate::AppContext;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-/// Reponse plafond : la source gere ~500 comptes, 1 MB est deja tres large.
+/// Response cap: the source holds about 500 accounts, 1 MB is already ample.
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
-/// Le serveur de reference borne une demande a 300 ids ; au-dela on decoupe.
+/// The reference server caps a request at 300 ids; larger lists are split.
 const MAX_IDS_PER_REQUEST: usize = 300;
-/// Le serveur de reference attend jusqu'a 20 s qu'un check GC se termine.
-/// Cette limite par requete remplace le timeout global de 10 s du client.
+/// The reference server waits up to 20 s for a GC check to finish. This
+/// per-request limit replaces the client's global 10 s timeout.
 const CHECK_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -50,8 +49,8 @@ pub struct Cs2BridgeAccount {
     pub last_updated: Option<String>,
 }
 
-/// Resultat du bouton "tester" des settings : jamais d'erreur Tauri, l'echec
-/// est une donnee (dot rouge + message), pas une exception.
+/// Result of the settings "test" button: a failure is data (red dot plus
+/// message), never an error.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Cs2BridgeTestResult {
@@ -71,21 +70,21 @@ struct BridgeResponse {
     accounts: Vec<Cs2BridgeAccount>,
 }
 
-/// Corps du POST /check : le SteamID64 du compte que l'on vient de quitter.
+/// Body of POST /check: the SteamID64 of the account just left.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CheckRequest<'a> {
     steam_id: &'a str,
 }
 
-/// Corps du POST /accounts : les SteamID64 dont on veut l'etat.
+/// Body of POST /accounts: the SteamID64s whose state is wanted.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AccountsRequest<'a> {
     steam_ids: &'a [String],
 }
 
-/// Reponse du POST /check : la ligne fraiche du compte demande.
+/// Response of POST /check: the fresh row of the requested account.
 #[derive(Debug, Deserialize)]
 struct BridgeCheckResponse {
     account: Cs2BridgeAccount,
@@ -98,15 +97,15 @@ fn decrypt_token(encrypted: &str) -> Result<String, String> {
     os::decrypt_secret(encrypted).map_err(|e| e.to_string())
 }
 
-/// Un token enregistre reste attache a son serveur : il ne suit la nouvelle
-/// URL que si elle est la meme, a la normalisation pres.
+/// A saved token stays bound to its server: it only follows a new URL that
+/// is the same one once normalised.
 fn token_follows(previous_url: &str, next_url: &str) -> bool {
     normalize_url(previous_url).is_ok_and(|previous| previous == next_url)
 }
 
-/// Le token dechiffre, refuse s'il devait partir en clair sur Internet : http
-/// n'est admis avec un token que vers cette machine ou le reseau local, ou
-/// tournaient deja les bridges configures avant cette regle.
+/// The decrypted token, refused when it would travel in clear text over the
+/// Internet: with a token, http is only allowed to this machine or the local
+/// network, where bridges configured before this rule already ran.
 fn usable_token(raw_url: &str, encrypted: &str) -> Result<String, String> {
     let token = decrypt_token(encrypted)?;
     if !token.is_empty() && !url_protects_token(raw_url) {
@@ -136,7 +135,7 @@ fn url_protects_token(raw_url: &str) -> bool {
     })
 }
 
-/// Cette machine, un reseau prive (RFC 1918, IPv6 ULA) ou le lien local.
+/// This machine, a private network (RFC 1918, IPv6 ULA) or link-local.
 fn ip_is_local(ip: &std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
@@ -156,9 +155,9 @@ pub fn get_settings(app_handle: &dyn AppContext) -> Cs2BridgeSettings {
     }
 }
 
-/// `token`: `None` conserve le token existant, `Some("")` l'efface. Un token
-/// conserve ne suit pas un changement d'URL : il a ete donne pour l'ancien
-/// serveur, le nouveau ne le recoit jamais sans que l'utilisateur le redonne.
+/// `token`: `None` keeps the saved token, `Some("")` clears it. A kept token
+/// does not follow a URL change: it was given for the old server, and the new
+/// one never gets it unless the user enters it again.
 pub fn set_settings(
     app_handle: &dyn AppContext,
     enabled: bool,
@@ -189,9 +188,9 @@ pub fn set_settings(
     }
 }
 
-/// Vide autorise (bridge pas encore configure) ; sinon http(s) obligatoire.
-/// L'URL est utilisee telle quelle (elle peut porter un chemin + une cle de
-/// lien magique), on retire juste le slash final.
+/// Empty is allowed (bridge not configured yet); otherwise http(s) is
+/// required. The URL is used as is (it can carry a path plus a magic link
+/// key); only the trailing slash is removed.
 fn normalize_url(raw: &str) -> Result<String, String> {
     let trimmed = raw.trim().trim_end_matches('/');
     if trimmed.is_empty() {
@@ -204,9 +203,9 @@ fn normalize_url(raw: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
-/// SteamID64 des comptes presents sur cette machine. Steam introuvable ou
-/// `loginusers.vdf` illisible : liste vide, le bridge ne demande alors rien
-/// (et le bouton "tester" se contente de joindre le serveur).
+/// SteamID64s of the accounts on this machine. Steam not found or an
+/// unreadable `loginusers.vdf`: empty list, the bridge then asks for nothing
+/// (and the "test" button only reaches the server).
 fn local_steam_ids(app_handle: &dyn AppContext) -> Vec<String> {
     let Ok(steam_path) = super::resolve_steam_path(app_handle) else {
         return vec![];
@@ -226,14 +225,14 @@ pub async fn fetch_accounts(
     }
     let steam_ids = local_steam_ids(app_handle);
     if steam_ids.is_empty() {
-        // Aucun compte local a afficher : rien a demander au bridge.
+        // No local account to show: nothing to ask the bridge.
         return Ok(vec![]);
     }
     fetch_from(client, &cfg.url, &cfg.token_encrypted, &steam_ids).await
 }
 
-/// Fetch sans condition d'activation : le bouton "tester" des settings doit
-/// marcher avant que l'utilisateur active le toggle.
+/// Fetch with no enabled check: the settings "test" button must work before
+/// the user turns the toggle on.
 pub async fn test_connection(
     app_handle: &dyn AppContext,
     client: &reqwest::Client,
@@ -259,8 +258,9 @@ pub async fn test_connection(
     }
 }
 
-/// Demande l'etat des comptes fournis, par lots de `MAX_IDS_PER_REQUEST`. Une
-/// liste vide fait quand meme un aller-retour : c'est le test de connexion.
+/// Ask for the state of the given accounts, in batches of
+/// `MAX_IDS_PER_REQUEST`. An empty list still makes a round trip: that is the
+/// connection test.
 async fn fetch_from(
     client: &reqwest::Client,
     raw_url: &str,
@@ -282,8 +282,8 @@ async fn fetch_from(
     };
     for chunk in chunks {
         for account in fetch_chunk(client, raw_url, &token, chunk).await? {
-            // Un serveur qui ignorerait le filtre renverrait des comptes qui ne
-            // nous appartiennent pas : on ne garde que ce qu'on a demande.
+            // A server that ignored the filter would return accounts that are not
+            // ours: keep only what was asked for.
             if wanted.is_empty() || wanted.contains(account.steam_id.as_str()) {
                 accounts.push(account);
             }
@@ -292,8 +292,8 @@ async fn fetch_from(
     Ok(accounts)
 }
 
-/// POST {url}/accounts avec les ids ; repli sur GET {url}?ids=... quand le
-/// serveur ne connait pas la route (implementations tierces plus anciennes).
+/// POST {url}/accounts with the ids; falls back to GET {url}?ids=... when
+/// the server does not know the route (older third-party servers).
 async fn fetch_chunk(
     client: &reqwest::Client,
     raw_url: &str,
@@ -318,8 +318,8 @@ async fn fetch_chunk(
             | reqwest::StatusCode::NOT_IMPLEMENTED
     ) {
         if steam_ids.is_empty() {
-            // Rien a demander et pas de route POST : le serveur repond, c'est
-            // tout ce que le test avait besoin de savoir.
+            // Nothing to ask and no POST route: the server answers, which is all
+            // the test needed to know.
             return Ok(vec![]);
         }
         return fetch_filtered_get(client, raw_url, token, steam_ids).await;
@@ -356,8 +356,8 @@ async fn fetch_filtered_get(
     Ok(parsed.accounts)
 }
 
-/// Lit aussi les reponses chunked avec un plafond reel. `content_length()` est
-/// seulement un rejet rapide : son absence ne signifie jamais corps vide.
+/// Also reads chunked responses under a real cap. `content_length()` is only
+/// a fast reject: its absence never means an empty body.
 async fn read_limited_json<T: DeserializeOwned>(
     mut response: reqwest::Response,
     parse_context: &str,
@@ -385,9 +385,9 @@ async fn read_limited_json<T: DeserializeOwned>(
     serde_json::from_slice(&body).map_err(|e| format!("{parse_context}: {e}"))
 }
 
-/// Ajoute un segment de chemin a l'URL configuree en gardant sa query : le
-/// lien magique porte la cle dans le chemin, `{url}/accounts` et `{url}/check`
-/// restent donc sous la meme cle.
+/// Append a path segment to the configured URL, keeping its query: the magic
+/// link carries the key in the path, so `{url}/accounts` and `{url}/check`
+/// stay under the same key.
 fn sub_endpoint(raw_url: &str, segment: &str) -> Result<reqwest::Url, String> {
     let normalized = normalize_url(raw_url)?;
     if normalized.is_empty() {
@@ -425,8 +425,8 @@ fn ids_endpoint(raw_url: &str, ids: &str) -> Result<reqwest::Url, String> {
     Ok(endpoint)
 }
 
-/// Repli du check quand le serveur n'a pas de route /check : on relit juste ce
-/// compte-la par la commande de lecture.
+/// Check fallback when the server has no /check route: read just this
+/// account again through the read command.
 async fn fetch_fallback_account(
     client: &reqwest::Client,
     raw_url: &str,
@@ -442,11 +442,11 @@ async fn fetch_fallback_account(
         .ok_or_else(|| "Bridge fallback did not return the requested account".to_string())
 }
 
-/// Declenche un check a la demande d'UN compte cote serveur (POST {url}/check
-/// avec {steamId}), puis renvoie sa ligne fraiche. Best-effort, appele au
-/// switch de compte : renvoie None si le bridge est desactive. Erreur si l'URL
-/// n'est pas configuree ou si le serveur ne supporte pas /check (l'appelant
-/// l'avale silencieusement, la lecture periodique reste la source de secours).
+/// Trigger a server-side check of ONE account (POST {url}/check with
+/// {steamId}), then return its fresh row. Best effort, called on an account
+/// switch: returns None when the bridge is disabled. An error when the URL is
+/// not configured or the server does not support /check (the caller swallows
+/// it; the periodic read stays the fallback).
 pub async fn check_account(
     app_handle: &dyn AppContext,
     client: &reqwest::Client,
@@ -707,7 +707,7 @@ mod tests {
         server.join().unwrap();
         assert!(request.starts_with("POST /api/bridge/key/accounts HTTP/1.1"));
         assert!(request.contains(&format!(r#""steamIds":["{mine}"]"#)));
-        // Le compte d'un tiers renvoye en trop ne doit jamais entrer en cache.
+        // A third party's account returned on top must never enter the cache.
         assert_eq!(accounts.len(), 1);
         assert_eq!(accounts[0].steam_id, mine);
     }

@@ -13,7 +13,7 @@ Mentions of `ref.mjs` below describe how the reference side played a scene.
 ## Run it
 
 ```sh
-cargo run --release -p accshift-egui -- --scene crates/accshift-egui/parity/scenes/*.json --out <dir>
+cargo run --release --locked --features harness -p accshift-egui -- --scene crates/accshift-egui/parity/scenes/*.json --out <dir>
 node crates/accshift-egui/parity/diff.mjs --batch <before dir> <after dir> --out <report dir>
 ```
 

@@ -1,4 +1,4 @@
-//! `ToggleSetting.svelte`: a full-width `role="switch"` button, label and
+//! The settings toggle: a full-width `role="switch"` button, label and
 //! optional description on the left, the state word and a 36x20 switch on
 //! the right.
 

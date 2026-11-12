@@ -1,6 +1,5 @@
-//! `src/lib/shared/useAccountLoader.test.ts`, ported. The TS deferred
-//! promises become the begin and finish halves of each call, finished in the
-//! order the TS test resolves them.
+//! The account loader: each backend call is split into its begin and finish
+//! halves, so a test can finish them in any order it needs.
 
 use accshift_app::accounts::avatars::ProfileSource;
 use accshift_app::accounts::loader::{AccountLoader, AddOutcome, LoadOptions, LoaderHooks};
@@ -192,6 +191,105 @@ fn still_lets_a_newer_load_supersede_an_older_one() {
 // ------------------------------------------------------------ platform change
 
 #[test]
+fn changing_tabs_releases_both_phases_of_an_add() {
+    let steam = Hooks("steam");
+    let riot = Hooks("riot");
+    for waiting_for_reload in [false, true] {
+        let mut loader = AccountLoader::new(Some("steam".into()));
+        let add = loader.begin_add().unwrap();
+        let old_reload = if waiting_for_reload {
+            let AddOutcome::Reload(load) =
+                loader.finish_add(&add, Ok(AddAccountResult::default()), "Steam", true, &steam)
+            else {
+                panic!("expected the add's reload")
+            };
+            Some(load)
+        } else {
+            None
+        };
+        loader.set_adapter(Some("riot".into()));
+        loader.clear_for_platform_change();
+        assert!(!loader.adding(), "a new tab must be able to add");
+        let _new_add = loader.begin_add().expect("an add on the new tab starts");
+        if let Some(old_reload) = old_reload {
+            loader.finish_load(
+                &old_reload,
+                snapshot(vec![alice()], "alice"),
+                &riot,
+                None,
+                0.0,
+            );
+            assert!(loader.adding(), "the old reload cannot release the new add");
+        }
+    }
+}
+
+#[test]
+fn late_add_results_leave_the_new_tab_alone_and_returning_reloads_the_added_account() {
+    let steam = Hooks("steam");
+    let riot = Hooks("riot");
+    let setup = AddAccountResult {
+        setup_status: Some(AddFlowStatus {
+            setup_id: "old-setup".into(),
+            state: "waiting_for_login".into(),
+            account_id: None,
+            account_display_name: None,
+            error_message: None,
+        }),
+    };
+    for result in [
+        Ok(AddAccountResult::default()),
+        Ok(setup),
+        Err(BackendError::new("old error")),
+    ] {
+        let mut loader = AccountLoader::new(Some("steam".into()));
+        let add = loader.begin_add().unwrap();
+        loader.set_adapter(Some("riot".into()));
+        loader.clear_for_platform_change();
+        let riot_load = loader.begin_load(&riot, LoadOptions::default());
+        assert_eq!(
+            loader.finish_add(&add, result, "Steam", true, &steam),
+            AddOutcome::Done
+        );
+        assert_eq!(loader.error(), None);
+        assert!(
+            loader
+                .finish_load(&riot_load, snapshot(vec![bob()], "bob"), &riot, None, 0.0)
+                .applied
+        );
+        assert_eq!(loader.accounts(), [bob()]);
+
+        // The completed backend add is not cancelled: the next visit reads
+        // the saved list, including its new account, as a fresh snapshot.
+        loader.set_adapter(Some("steam".into()));
+        loader.clear_for_platform_change();
+        let returned = loader.begin_load(&steam, LoadOptions::default());
+        let added = account("new", "New account");
+        assert!(
+            loader
+                .finish_load(
+                    &returned,
+                    snapshot(vec![alice(), added.clone()], "new"),
+                    &steam,
+                    None,
+                    0.0
+                )
+                .applied
+        );
+        assert_eq!(loader.accounts(), [alice(), added]);
+        assert_eq!(loader.current_account(), "new");
+
+        // An even older add cannot complete an add from the new visit.
+        let _new_add = loader.begin_add().unwrap();
+        assert_eq!(
+            loader.finish_add(&add, Ok(AddAccountResult::default()), "Steam", true, &steam),
+            AddOutcome::Done
+        );
+        assert!(loader.adding());
+    }
+}
+
+#[test]
 fn names_the_platform_the_accounts_came_from_not_the_one_active_at_the_end() {
     // The tab moved to another platform while Steam's load ran: the folder
     // sync after the load must target Steam.
@@ -206,7 +304,7 @@ fn names_the_platform_the_accounts_came_from_not_the_one_active_at_the_end() {
     assert_eq!(outcome.after_load.as_deref(), Some("steam"));
 }
 
-// ------------------------------------------------------------ beyond the TS tests
+// ------------------------------------------------------------ failures
 
 #[test]
 fn a_failed_load_clears_the_list_and_keeps_the_error() {

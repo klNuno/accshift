@@ -110,7 +110,12 @@ are tried in order and the user's own path override always wins:
 
 `relativeProbes` covers launchers shipping per-architecture binaries
 (`Binaries/Win64`), and `selectFilter` is the filter of the "choose the
-executable" dialog.
+executable" dialog, in the Windows `Name|pattern|Name|pattern` format with
+`;` between patterns of one group (`Launchers|*.exe;*.bat|All files|*.*`).
+Without it, a `windows` profile lists `.exe` files first and other profiles
+open the dialog unfiltered, since Linux and macOS binaries have no extension.
+Off Windows, a group accepting every file (`*` or `*.*`) also leaves the dialog
+unfiltered.
 
 ### `identity`: what an account is
 

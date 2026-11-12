@@ -1,11 +1,11 @@
-//! Compares the Rust engine with what the former TypeScript engine wrote on
-//! `<html>` for every case in `tests/data`.
+//! Compares the engine with the values captured on `<html>` for every case
+//! in `tests/data`, before the app moved to egui.
 
 use std::fs;
 use std::path::PathBuf;
 
 use accshift_theme::{
-    theme_application, CustomThemePayload, ResolvedTheme, ThemeRegistry, TokenKey, UnsupportedCss,
+    theme_application, CustomThemePayload, ResolvedTheme, ThemeRegistry, TokenKey,
 };
 use serde_json::Value;
 
@@ -103,7 +103,6 @@ fn every_dumped_case_matches_the_typescript() {
 
     let mut cases = 0;
     let mut matched = 0;
-    let mut unsupported: Vec<UnsupportedCss> = Vec::new();
     for dump in &dumps {
         let id = dump.value["id"].as_str().unwrap();
         let theme = registry.theme(Some(id));
@@ -214,17 +213,9 @@ fn every_dumped_case_matches_the_typescript() {
             for name in SHADOW_VARS {
                 assert!(resolved.shadow(name).is_some(), "{label} shadow {name}");
             }
-            for item in resolved.unsupported_css() {
-                if !unsupported.contains(item) {
-                    unsupported.push(item.clone());
-                }
-            }
         }
     }
-    println!(
-        "dump: {matched} variables matched across {cases} cases, {} unsupported constructs: {unsupported:?}",
-        unsupported.len()
-    );
+    println!("dump: {matched} variables matched across {cases} cases");
     assert_eq!(cases, dumps.len() * 8);
 }
 
@@ -250,10 +241,6 @@ fn custom_css_overrides_follow_the_cascade() {
     assert_eq!(
         resolved.color("--border").map(|c| c.to_u8()),
         Some([102, 51, 153, 255])
-    );
-    assert_eq!(
-        resolved.unsupported_css(),
-        &[UnsupportedCss::Rule(".card".into())]
     );
 }
 

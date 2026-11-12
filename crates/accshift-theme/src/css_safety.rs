@@ -1,11 +1,18 @@
-//! Port of `src/lib/theme/cssSafety.ts`: the filter between a shared theme
-//! file and a network request.
+//! The filter between a shared theme file and a network request.
 
-use crate::js::is_js_space;
+use std::iter::Peekable;
+use std::str::Chars;
+
+use crate::js::is_js_whitespace;
 
 /// Strips comments and resolves escapes the way the CSS tokenizer does, so
 /// `u/**/rl(`, `\75rl(` and `u\rl(` all read as `url(`.
 fn normalize_css_for_safety(css: &str) -> String {
+    resolve_css_escapes(&strip_css_comments(css))
+}
+
+/// Drops every closed `/* */` comment. An unclosed one is kept as text.
+fn strip_css_comments(css: &str) -> String {
     let mut without_comments = String::with_capacity(css.len());
     let mut rest = css;
     while let Some(start) = rest.find("/*") {
@@ -16,39 +23,18 @@ fn normalize_css_for_safety(css: &str) -> String {
         rest = &rest[start + 2 + length + 2..];
     }
     without_comments.push_str(rest);
+    without_comments
+}
 
-    let mut out = String::with_capacity(without_comments.len());
-    let mut chars = without_comments.chars().peekable();
+fn resolve_css_escapes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         if c != '\\' {
             out.push(c);
             continue;
         }
-        let mut hex = String::new();
-        while hex.len() < 6 {
-            match chars.peek() {
-                Some(next) if next.is_ascii_hexdigit() => {
-                    hex.push(*next);
-                    chars.next();
-                }
-                _ => break,
-            }
-        }
-        if !hex.is_empty() {
-            // One whitespace after a hex escape belongs to the escape.
-            match chars.peek() {
-                Some('\r') => {
-                    chars.next();
-                    if chars.peek() == Some(&'\n') {
-                        chars.next();
-                    }
-                }
-                Some(' ' | '\t' | '\u{c}' | '\n') => {
-                    chars.next();
-                }
-                _ => {}
-            }
-            let code = u32::from_str_radix(&hex, 16).unwrap_or(0);
+        if let Some(code) = read_hex_escape(&mut chars) {
             if code != 0 && code <= 0x10ffff {
                 out.push(char::from_u32(code).unwrap_or('\u{fffd}'));
             }
@@ -56,17 +42,50 @@ fn normalize_css_for_safety(css: &str) -> String {
         }
         match chars.next() {
             // An escaped newline is dropped, `\r\n` included.
-            Some('\r') => {
-                if chars.peek() == Some(&'\n') {
-                    chars.next();
-                }
-            }
+            Some('\r') => skip_lf(&mut chars),
             Some('\n' | '\u{c}') => {}
             Some(other) => out.push(other),
             None => out.push('\\'),
         }
     }
     out
+}
+
+/// The code point of up to six hex digits after a backslash, consuming the one
+/// whitespace that ends them. `None`, consuming nothing, when no digit follows.
+fn read_hex_escape(chars: &mut Peekable<Chars<'_>>) -> Option<u32> {
+    let mut hex = String::new();
+    while hex.len() < 6 {
+        match chars.peek() {
+            Some(next) if next.is_ascii_hexdigit() => {
+                hex.push(*next);
+                chars.next();
+            }
+            _ => break,
+        }
+    }
+    if hex.is_empty() {
+        return None;
+    }
+    // One whitespace after a hex escape belongs to the escape.
+    match chars.peek() {
+        Some('\r') => {
+            chars.next();
+            skip_lf(chars);
+        }
+        Some(' ' | '\t' | '\u{c}' | '\n') => {
+            chars.next();
+        }
+        _ => {}
+    }
+    Some(u32::from_str_radix(&hex, 16).unwrap_or(0))
+}
+
+/// Consumes the `\n` of a `\r\n` pair whose `\r` was just read.
+fn skip_lf(chars: &mut Peekable<Chars<'_>>) {
+    if chars.peek() == Some(&'\n') {
+        chars.next();
+    }
 }
 
 fn is_word_byte(byte: u8) -> bool {
@@ -173,7 +192,7 @@ impl Forbidden {
         match self.tail {
             None => true,
             Some(tail) => {
-                let rest = text[after..].trim_start_matches(is_js_space);
+                let rest = text[after..].trim_start_matches(is_js_whitespace);
                 starts_with_ci(rest.as_bytes(), tail)
             }
         }

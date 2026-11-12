@@ -18,9 +18,11 @@ pub fn begin_account_setup(app_handle: &dyn AppContext) -> Result<SetupStatus, S
     .map_err(|e| format!("Quick Login create failed: {e}"))?;
 
     if !response.status().is_success() {
-        let status = response.status();
-        let text = response.text().unwrap_or_default();
-        return Err(format!("Quick Login create failed (HTTP {status}): {text}"));
+        // No response body in the error: it ends up in the log.
+        return Err(format!(
+            "Quick Login create failed (HTTP {})",
+            response.status()
+        ));
     }
 
     let login_data = response

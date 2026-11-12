@@ -61,11 +61,17 @@ impl PathResolver {
 
     fn lookup(&self, name: &str) -> Option<String> {
         if name == INSTALL_DIR {
+            // A binary at a drive or filesystem root trims to `C:` or ``:
+            // as a root that would hand the whole drive to the sandbox.
             return self
                 .install_dir
                 .as_ref()
+                .filter(|dir| has_folder(dir))
                 .map(|dir| dir.to_string_lossy().into_owned());
         }
+        // An empty variable counts as unset, as the XDG spec says for its
+        // own: expanding it would put the path at the filesystem root.
+        let set = |value: &&String| !value.trim().is_empty();
         // Windows environment variable names are case-insensitive, and
         // descriptors are written with the casing Microsoft documents
         // (`LOCALAPPDATA`, `ProgramFiles(x86)`). Falling back to a folded
@@ -73,13 +79,15 @@ impl PathResolver {
         // spelled differently.
         self.env
             .get(name)
-            .cloned()
+            .filter(set)
             .or_else(|| {
                 self.env
                     .iter()
-                    .find(|(key, _)| key.eq_ignore_ascii_case(name))
-                    .map(|(_, value)| value.clone())
+                    .filter(|(key, _)| key.eq_ignore_ascii_case(name))
+                    .map(|(_, value)| value)
+                    .find(set)
             })
+            .cloned()
             .or_else(|| self.xdg_default(name))
     }
 
@@ -132,6 +140,12 @@ impl PathResolver {
 
         Ok(PathBuf::from(normalise_separators(&out)))
     }
+}
+
+/// Whether `dir` names a folder below a drive or the filesystem root.
+fn has_folder(dir: &Path) -> bool {
+    dir.components()
+        .any(|component| matches!(component, Component::Normal(_)))
 }
 
 /// Uses the separator the running OS expects, so a descriptor can be written
@@ -350,6 +364,46 @@ mod tests {
         let with_dir = resolver().with_install_dir("C:\\Games\\Demo");
         let path = with_dir.resolve(&template("${installDir}/Config")).unwrap();
         assert!(path.ends_with("Config"));
+    }
+
+    // Regression: an exported but empty variable expanded to nothing, so
+    // `${XDG_CONFIG_HOME}/Demo` became `/Demo` instead of the XDG default.
+    #[test]
+    fn an_empty_variable_counts_as_unset() {
+        let resolver = PathResolver::from_env([("HOME", "/home/demo"), ("XDG_CONFIG_HOME", "")]);
+        let path = resolver
+            .resolve(&template("${XDG_CONFIG_HOME}/Demo"))
+            .unwrap();
+        assert_eq!(
+            path,
+            PathBuf::from(normalise_separators("/home/demo/.config/Demo"))
+        );
+
+        let resolver = PathResolver::from_env([("LOCALAPPDATA", " "), ("localappdata", "")]);
+        let err = resolver
+            .resolve(&template("${LOCALAPPDATA}/Demo"))
+            .unwrap_err();
+        assert_eq!(err.message, "LOCALAPPDATA is not available on this system");
+    }
+
+    #[test]
+    fn a_folded_lookup_skips_an_empty_spelling() {
+        let resolver =
+            PathResolver::from_env([("LocalAppData", ""), ("LOCALAPPDATA", "/data/local")]);
+        let path = resolver.resolve(&template("${localappdata}/Demo")).unwrap();
+        assert!(path.starts_with(normalise_separators("/data/local")));
+    }
+
+    // Regression: a launcher binary at a drive root gave `${installDir}` the
+    // whole drive, and the sandbox then accepted any path on it.
+    #[test]
+    fn an_install_dir_at_a_root_does_not_resolve() {
+        let root = if cfg!(windows) { "C:\\" } else { "/" };
+        let err = resolver()
+            .with_install_dir(root)
+            .resolve(&template("${installDir}/Config"))
+            .unwrap_err();
+        assert_eq!(err.message, "The install directory is not known yet");
     }
 
     #[test]

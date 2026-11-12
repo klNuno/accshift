@@ -1,6 +1,12 @@
 use super::{
-    escape_vdf_string, parse_vdf, set_persona_state_in_vdf, vdf_set_nested_value, vdf_tokenize_line,
+    escape_vdf_string, localconfig_path, parse_vdf, set_persona_state, vdf_set_nested_value,
+    vdf_tokenize_line, PERSONA_STATE_PATH,
 };
+
+/// The persona write as `set_persona_state` performs it, on a string.
+fn set_persona_state_in_vdf(content: &str, state: &str) -> String {
+    vdf_set_nested_value(content, &PERSONA_STATE_PATH, state).expect("persona state written")
+}
 
 #[test]
 fn parse_vdf_extracts_multiple_accounts() {
@@ -145,7 +151,7 @@ const LOCALCONFIG: &str = "\"UserLocalConfigStore\"\n\
 
 #[test]
 fn set_persona_state_targets_friends_section() {
-    let out = set_persona_state_in_vdf(LOCALCONFIG, "7").expect("should find PersonaState");
+    let out = set_persona_state_in_vdf(LOCALCONFIG, "7");
     // The direct friends.PersonaState changed to 7.
     assert!(out.contains("\t\t\"PersonaState\"\t\t\"7\"\n"));
     // The nested friend-block PersonaState (decoy) is untouched.
@@ -169,7 +175,7 @@ fn set_persona_state_ignores_decoy_outside_friends() {
 \t\t\"PersonaState\"\t\t\"1\"\n\
 \t}\n\
 }\n";
-    let out = set_persona_state_in_vdf(content, "0").expect("should find friends PersonaState");
+    let out = set_persona_state_in_vdf(content, "0");
     // WebStorage decoy untouched.
     assert!(out.contains("\t\t\"PersonaState\"\t\t\"decoy\"\n"));
     // friends PersonaState set to 0.
@@ -177,9 +183,109 @@ fn set_persona_state_ignores_decoy_outside_friends() {
 }
 
 #[test]
-fn set_persona_state_returns_none_when_absent() {
-    let content = "\"UserLocalConfigStore\"\n{\n\t\"friends\"\n\t{\n\t}\n}\n";
-    assert!(set_persona_state_in_vdf(content, "1").is_none());
+fn set_persona_state_creates_the_key_when_absent() {
+    // An account that never changed its status has no PersonaState. The old
+    // writer skipped the file and the account signed in visible.
+    let content = "\"UserLocalConfigStore\"
+{
+	\"friends\"
+	{
+	}
+}
+";
+    assert_eq!(
+        set_persona_state_in_vdf(content, "7"),
+        "\"UserLocalConfigStore\"
+{
+	\"friends\"
+	{
+		\"PersonaState\"		\"7\"
+	}
+}
+"
+    );
+
+    // No friends section at all: it is created under the root.
+    let content = "\"UserLocalConfigStore\"
+{
+	\"WebStorage\"
+	{
+	}
+}
+";
+    let out = set_persona_state_in_vdf(content, "7");
+    assert!(
+        out.contains(
+            "	\"friends\"
+	{
+		\"PersonaState\"		\"7\"
+	}
+"
+        ),
+        "{out}"
+    );
+}
+
+#[test]
+fn set_persona_state_rewrites_an_inline_brace_layout() {
+    let content = "\"UserLocalConfigStore\" {
+	\"friends\" {
+		\"PersonaState\"		\"1\"
+	}
+}
+";
+    assert_eq!(
+        set_persona_state_in_vdf(content, "7"),
+        "\"UserLocalConfigStore\" {
+	\"friends\" {
+		\"PersonaState\"		\"7\"
+	}
+}
+"
+    );
+}
+
+#[test]
+fn set_persona_state_writes_the_file_and_returns_what_it_replaced() {
+    let root = std::env::temp_dir().join(format!(
+        "accshift-persona-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let path = localconfig_path(&root, 42);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let before = "\"UserLocalConfigStore\"
+{
+	\"friends\"
+	{
+	}
+}
+";
+    std::fs::write(&path, before).unwrap();
+
+    let replaced = set_persona_state(&root, 42, "7").unwrap();
+
+    assert_eq!(replaced, before);
+    assert!(std::fs::read_to_string(&path)
+        .unwrap()
+        .contains("\"PersonaState\"		\"7\""));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn set_persona_state_fails_when_localconfig_is_missing() {
+    // Reporting success here would announce a mode that never applies.
+    let root = std::env::temp_dir().join(format!(
+        "accshift-persona-missing-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+
+    let err = set_persona_state(&root, 42, "7").expect_err("nothing to write into");
+    assert!(err.to_string().contains("localconfig.vdf"), "{err}");
+    assert!(!localconfig_path(&root, 42).exists());
 }
 
 // ── V4: existing-key replace branch (hit on every Linux/macOS switch) ──
@@ -216,7 +322,7 @@ fn set_persona_state_rewrites_only_its_own_value() {
 \t\t\"PersonaState\"\t\t\"1\"\t\t\"LastSeenState\"\t\t\"0\"\n\
 \t}\n\
 }\n";
-    let out = set_persona_state_in_vdf(content, "7").expect("should find PersonaState");
+    let out = set_persona_state_in_vdf(content, "7");
     assert!(out.contains("\"PersonaState\"\t\t\"7\""));
     // The unrelated trailing token is NOT corrupted.
     assert!(out.contains("\"LastSeenState\"\t\t\"0\""));
@@ -234,7 +340,7 @@ fn set_persona_state_survives_comment_before_brace() {
 \t\t\"PersonaState\"\t\t\"1\"\n\
 \t}\n\
 }\n";
-    let out = set_persona_state_in_vdf(content, "7").expect("comment must not drop the edit");
+    let out = set_persona_state_in_vdf(content, "7");
     assert!(out.contains("\"PersonaState\"\t\t\"7\""));
 }
 
@@ -243,7 +349,7 @@ fn set_persona_state_survives_comment_before_brace() {
 #[test]
 fn set_persona_state_preserves_crlf() {
     let content = "\"UserLocalConfigStore\"\r\n{\r\n\t\"friends\"\r\n\t{\r\n\t\t\"PersonaState\"\t\t\"1\"\r\n\t}\r\n}\r\n";
-    let out = set_persona_state_in_vdf(content, "7").expect("should find PersonaState");
+    let out = set_persona_state_in_vdf(content, "7");
     assert!(out.contains("\"PersonaState\"\t\t\"7\"\r\n"));
     assert!(
         !out.contains("\"7\"\n\t}"),

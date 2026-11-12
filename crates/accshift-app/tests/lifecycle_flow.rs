@@ -1,18 +1,17 @@
-//! The lifecycle state machines: boot and shutdown order (recorded by a
-//! fake host), the update flow (`useAppUpdater.test.ts`), the external
-//! refresh (`useAppLifecycle.test.ts`), the boot helpers, the UI scale and
-//! the process control (a fake never relaunches or exits).
+//! The lifecycle state machines: the boot and close timings, the update
+//! flow, the external refresh, the boot helpers, the UI scale and the
+//! process control (a fake never relaunches or exits).
 
 mod support;
 
 use accshift_app::accounts::{Toast, ToastKind};
 use accshift_app::lifecycle::app_shell::{
-    first_run_platforms, initial_load, migration_toast, plan_external_refresh, semver_core,
-    settings_snapshot, ExternalRefreshGate, InitialLoad, RefreshStep, SHELL_INIT_ORDER,
+    first_run_platforms, initial_load, migration_toast, plan_external_refresh, settings_snapshot,
+    ExternalRefreshGate, InitialLoad, RefreshStep,
 };
 use accshift_app::lifecycle::boot::{
-    log_app_event, mask_value, redact_object, remember_boot_locale, serialize_log_value,
-    track_update, truncate_log, BootMarks, CloseRequest, BOOT_FAILSAFE,
+    log_app_event, mask_value, redact_object, serialize_log_value, track_update, truncate_log,
+    BOOT_FAILSAFE,
 };
 use accshift_app::lifecycle::process::{self, ProcessControl};
 use accshift_app::lifecycle::ui_scale::{
@@ -23,10 +22,7 @@ use accshift_app::lifecycle::update_flow::{
     classify_update_check_error, AppUpdater, LogLevel, PendingUpdate, UpdateCommand,
     UpdateErrorCode, UpdateOutput, UpdateStage, UpdateState,
 };
-use accshift_app::lifecycle::{
-    BootOutcome, BootStep, Lifecycle, LifecycleHost, ShutdownStep, BOOT_ORDER, SHUTDOWN_ORDER,
-    UPDATE_CHECK_DELAY,
-};
+use accshift_app::lifecycle::{GEOMETRY_SAVE_WAIT, UPDATE_CHECK_DELAY};
 use accshift_app::platforms::{PlatformRegistry, RuntimeOs};
 use accshift_app::settings::{sanitize_settings, AppSettings};
 use accshift_app::storage::{
@@ -42,195 +38,17 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 // ---------------------------------------------------------------------------
-// Boot and shutdown order
-
-#[derive(Default)]
-struct RecordingHost {
-    calls: Vec<String>,
-    forwarded: bool,
-    flush_error: Option<String>,
-}
-
-impl LifecycleHost for RecordingHost {
-    fn acquire_single_instance(&mut self) -> bool {
-        self.calls.push("single_instance".into());
-        !self.forwarded
-    }
-    fn launch_url(&mut self, url: Option<url::Url>) {
-        self.calls.push(format!(
-            "launch_url:{}",
-            url.map(|u| u.to_string()).unwrap_or_default()
-        ));
-    }
-    fn read_legacy_storage(&mut self) {
-        self.calls.push("legacy_read".into());
-    }
-    fn initialize_storage(&mut self) {
-        self.calls.push("storage_initialize".into());
-    }
-    fn apply_theme(&mut self) {
-        self.calls.push("theme".into());
-    }
-    fn start_telemetry(&mut self) {
-        self.calls.push("telemetry_start".into());
-    }
-    fn begin_session(&mut self) {
-        self.calls.push("session_begin".into());
-    }
-    fn spawn_maintenance(&mut self) {
-        self.calls.push("maintenance".into());
-    }
-    fn register_schemes(&mut self) {
-        self.calls.push("schemes".into());
-    }
-    fn arm_boot_failsafe(&mut self, after: Duration) {
-        self.calls.push(format!("failsafe:{}", after.as_millis()));
-    }
-    fn schedule_update_check(&mut self, after: Duration) {
-        self.calls.push(format!("updater:{}", after.as_millis()));
-    }
-    fn start_geometry_save(&mut self) {
-        self.calls.push("geometry_start".into());
-    }
-    fn hide_window(&mut self) {
-        self.calls.push("hide".into());
-    }
-    fn end_telemetry_session(&mut self) {
-        self.calls.push("telemetry_end".into());
-    }
-    fn wait_geometry_save(&mut self, bound: Duration) {
-        self.calls
-            .push(format!("geometry_wait:{}", bound.as_secs()));
-    }
-    fn flush_saves(&mut self) -> Result<(), String> {
-        self.calls.push("flush".into());
-        match &self.flush_error {
-            Some(error) => Err(error.clone()),
-            None => Ok(()),
-        }
-    }
-    fn release_single_instance(&mut self) {
-        self.calls.push("single_instance_release".into());
-    }
-    fn exit(&mut self, code: i32) {
-        self.calls.push(format!("exit:{code}"));
-    }
-    fn log(&mut self, level: &str, source: &str, message: &str) {
-        self.calls.push(format!("log:{level}:{source}:{message}"));
-    }
-}
+// Boot and shutdown timings
 
 #[test]
-fn boot_runs_every_step_in_the_documented_order() {
-    let mut host = RecordingHost::default();
-    let mut lifecycle = Lifecycle::new(vec![
-        "accshift.exe".into(),
-        "accshift://switch/steam/alice".into(),
-    ]);
-    assert_eq!(lifecycle.boot(&mut host), BootOutcome::Running);
-    // macOS gets the link from the OS, not the arguments.
-    let launch_url = if cfg!(any(windows, target_os = "linux")) {
-        "launch_url:accshift://switch/steam/alice"
-    } else {
-        "launch_url:"
-    };
-    assert_eq!(
-        host.calls,
-        [
-            "single_instance",
-            launch_url,
-            "legacy_read",
-            "storage_initialize",
-            "theme",
-            "telemetry_start",
-            "session_begin",
-            "maintenance",
-            "schemes",
-            "failsafe:5000",
-            "updater:3500",
-        ]
-    );
-    assert_eq!(BOOT_ORDER.len(), 11);
-    assert_eq!(BOOT_ORDER[0], BootStep::SingleInstance);
-    assert_eq!(BOOT_ORDER[10], BootStep::UpdaterCheck);
+fn the_boot_and_close_timings_hold() {
     assert_eq!(UPDATE_CHECK_DELAY, Duration::from_millis(3500));
     assert_eq!(BOOT_FAILSAFE, Duration::from_millis(5000));
-
-    // Boot runs once.
-    host.calls.clear();
-    assert_eq!(lifecycle.boot(&mut host), BootOutcome::Running);
-    assert!(host.calls.is_empty());
-}
-
-#[test]
-fn a_forwarded_launch_exits_before_touching_anything() {
-    let mut host = RecordingHost {
-        forwarded: true,
-        ..Default::default()
-    };
-    let mut lifecycle = Lifecycle::new(vec!["accshift.exe".into()]);
-    assert_eq!(lifecycle.boot(&mut host), BootOutcome::Forwarded);
-    assert_eq!(host.calls, ["single_instance", "exit:0"]);
-}
-
-#[test]
-fn a_launch_without_a_link_has_no_launch_url() {
-    let mut host = RecordingHost::default();
-    // Two arguments: the plugin only reads a lone URL.
-    Lifecycle::new(vec![
-        "accshift.exe".into(),
-        "--minimized".into(),
-        "accshift://switch/steam/a".into(),
-    ])
-    .boot(&mut host);
-    assert_eq!(host.calls[1], "launch_url:");
-}
-
-#[test]
-fn shutdown_runs_once_in_the_documented_order() {
-    let mut host = RecordingHost::default();
-    let mut lifecycle = Lifecycle::new(vec!["accshift.exe".into()]);
-    assert!(!lifecycle.is_closing());
-    assert!(lifecycle.shutdown(&mut host));
-    assert_eq!(
-        host.calls,
-        [
-            "geometry_start",
-            "hide",
-            "telemetry_end",
-            "geometry_wait:5",
-            "flush",
-            "single_instance_release",
-            "exit:0",
-        ]
-    );
-    assert_eq!(SHUTDOWN_ORDER[0], ShutdownStep::StartGeometrySave);
-    assert!(lifecycle.is_closing());
-    host.calls.clear();
-    assert!(!lifecycle.shutdown(&mut host));
-    assert!(host.calls.is_empty());
-}
-
-#[test]
-fn a_failed_flush_is_logged_and_the_close_goes_on() {
-    let mut host = RecordingHost {
-        flush_error: Some("disk full".into()),
-        ..Default::default()
-    };
-    Lifecycle::new(Vec::new()).shutdown(&mut host);
-    assert_eq!(
-        &host.calls[4..],
-        [
-            "flush",
-            "log:error:frontend.app:Failed to flush pending saves on close: disk full",
-            "single_instance_release",
-            "exit:0",
-        ]
-    );
+    assert_eq!(GEOMETRY_SAVE_WAIT, Duration::from_secs(5));
 }
 
 // ---------------------------------------------------------------------------
-// Update flow (useAppUpdater.test.ts)
+// Update flow
 
 #[derive(Debug, Clone, PartialEq)]
 struct FakeUpdate(&'static str);
@@ -431,40 +249,64 @@ fn a_failed_download_resets_and_tracks_the_version() {
 }
 
 #[test]
-fn a_failed_install_or_relaunch_toasts_and_checks_again() {
-    for relaunch in [false, true] {
-        let mut updater = AppUpdater::<FakeUpdate>::new(false);
-        updater.start();
-        updater.on_check_result(Ok(Some(FakeUpdate("1.2.0"))));
-        updater.on_download_result(Ok(Vec::new()));
-        updater.apply();
-        let outputs = if relaunch {
-            updater.on_install_result(Ok(()));
-            updater.on_relaunch_failed("spawn failed".into())
-        } else {
-            updater.on_install_result(Err("flush failed".into()))
-        };
-        let code = if relaunch {
-            "relaunch_failed"
-        } else {
-            "install_failed"
-        };
-        assert_eq!(
-            tracked(&outputs),
-            [(UpdateStage::Failed, Some("1.2.0".into()), Some(code))]
-        );
-        assert!(
-            matches!(&outputs[0], UpdateOutput::Log { level: LogLevel::Error, message } if message.starts_with("Failed to restart for update: "))
-        );
-        assert_eq!(
-            &outputs[2..],
-            [
-                UpdateOutput::Toast(Text::key("update.restartFailed")),
-                UpdateOutput::Run(UpdateCommand::Check),
-            ]
-        );
-        assert_eq!(updater.state(), UpdateState::Checking);
-    }
+fn a_failed_install_toasts_and_checks_again() {
+    let mut updater = AppUpdater::<FakeUpdate>::new(false);
+    updater.start();
+    updater.on_check_result(Ok(Some(FakeUpdate("1.2.0"))));
+    updater.on_download_result(Ok(Vec::new()));
+    updater.apply();
+    let outputs = updater.on_install_result(Err("flush failed".into()));
+    assert_eq!(
+        tracked(&outputs),
+        [(
+            UpdateStage::Failed,
+            Some("1.2.0".into()),
+            Some("install_failed")
+        )]
+    );
+    assert!(
+        matches!(&outputs[0], UpdateOutput::Log { level: LogLevel::Error, message } if message.starts_with("Failed to restart for update: "))
+    );
+    assert_eq!(
+        &outputs[2..],
+        [
+            UpdateOutput::Toast(Text::key("update.restartFailed")),
+            UpdateOutput::Run(UpdateCommand::Check),
+        ]
+    );
+    assert_eq!(updater.state(), UpdateState::Checking);
+}
+
+/// The update is already installed when the relaunch fails: the app stays
+/// open, asks for a manual restart and does not download it again.
+#[test]
+fn a_failed_relaunch_asks_for_a_manual_restart_without_checking_again() {
+    let mut updater = AppUpdater::<FakeUpdate>::new(false);
+    updater.start();
+    updater.on_check_result(Ok(Some(FakeUpdate("1.2.0"))));
+    updater.on_download_result(Ok(Vec::new()));
+    updater.apply();
+    updater.on_install_result(Ok(()));
+    let outputs = updater.on_relaunch_failed("spawn failed".into());
+    assert_eq!(
+        tracked(&outputs),
+        [(
+            UpdateStage::Failed,
+            Some("1.2.0".into()),
+            Some("relaunch_failed")
+        )]
+    );
+    assert!(
+        matches!(&outputs[0], UpdateOutput::Log { level: LogLevel::Error, message } if message == "Failed to restart for update: spawn failed")
+    );
+    assert_eq!(
+        &outputs[2..],
+        [UpdateOutput::Toast(Text::key("update.restartManually"))]
+    );
+    assert_eq!(updater.state(), UpdateState::Idle);
+    assert_eq!(updater.cta_label(), None);
+    assert!(updater.start().is_empty());
+    assert!(updater.apply().is_empty());
 }
 
 #[test]
@@ -487,7 +329,7 @@ fn update_telemetry_reaches_the_backend() {
 }
 
 // ---------------------------------------------------------------------------
-// App shell (useAppLifecycle.test.ts)
+// App shell
 
 fn settings(patch: Value) -> AppSettings {
     sanitize_settings(&patch, &StoreContext::shipped())
@@ -535,7 +377,7 @@ fn unrelated_stores_leave_the_personas_alone() {
     );
 }
 
-/// The steps the TS test records as `calls`.
+/// The calls the refresh steps stand for, as plain names.
 fn recorded_calls(steps: &[RefreshStep]) -> Vec<String> {
     steps
         .iter()
@@ -580,12 +422,6 @@ fn app_config_and_platform_stores_reload_the_accounts() {
 
 #[test]
 fn the_shell_init_helpers_match_the_ts() {
-    assert_eq!(semver_core("1.0.5"), "1.0.5");
-    assert_eq!(semver_core("v1.2.3-beta.1+build"), "1.2.3");
-    assert_eq!(semver_core("12.34.56.78"), "12.34.56");
-    assert_eq!(semver_core("dev"), "dev");
-    assert_eq!(semver_core("1.2"), "1.2");
-
     assert_eq!(
         migration_toast("migrated"),
         Some(Toast::new(
@@ -626,7 +462,6 @@ fn the_shell_init_helpers_match_the_ts() {
         initial_load(&registry, "steam", RuntimeOs::Unknown),
         InitialLoad::RefreshItems
     );
-    assert_eq!(SHELL_INIT_ORDER.len(), 10);
 
     let snapshot = settings_snapshot(&settings(json!({"enabledPlatforms": ["steam"]})));
     assert_eq!(snapshot.enabled_platforms, ["steam"]);
@@ -643,30 +478,6 @@ fn the_shell_init_helpers_match_the_ts() {
 
 // ---------------------------------------------------------------------------
 // Boot helpers
-
-#[test]
-fn boot_marks_keep_the_first_write_and_round_to_a_tenth() {
-    let origin = Instant::now();
-    let mut marks = BootMarks::new(origin);
-    marks.mark("app-start", origin + Duration::from_micros(12_345));
-    marks.mark("app-start", origin + Duration::from_millis(50));
-    assert_eq!(marks.to_value(), json!({"app-start": 12.3}));
-    assert_eq!(
-        marks.since("app-start", origin + Duration::from_micros(22_345)),
-        Some(10.0)
-    );
-    assert_eq!(marks.since("missing", origin), None);
-}
-
-#[test]
-fn the_boot_locale_is_written_only_when_it_changed() {
-    assert_eq!(remember_boot_locale(Some("fr"), "fr"), None);
-    assert_eq!(
-        remember_boot_locale(Some("en"), "fr").as_deref(),
-        Some("fr")
-    );
-    assert_eq!(remember_boot_locale(None, "en").as_deref(), Some("en"));
-}
 
 #[test]
 fn log_details_are_redacted_as_app_logger() {
@@ -730,14 +541,6 @@ fn log_lines_are_capped_in_utf16_units() {
     assert_eq!(details.unwrap().len(), 16_384);
     let (short, none) = truncate_log("ok", None);
     assert_eq!((short.as_str(), none), ("ok", None));
-}
-
-#[test]
-fn the_close_request_runs_once() {
-    let mut close = CloseRequest::default();
-    assert!(close.request());
-    assert!(close.is_closing());
-    assert!(!close.request());
 }
 
 // ---------------------------------------------------------------------------
@@ -812,6 +615,8 @@ fn the_backdrop_decisions_match_use_theme_application() {
     assert!(!liquid_backdrop_active(true, RuntimeOs::Macos));
     assert!(!liquid_backdrop_active(false, RuntimeOs::Windows));
     assert!(!backdrop_available(RuntimeOs::Linux, false, true));
+    // No blur is applied on macOS either: the theme must draw opaque.
+    assert!(!backdrop_available(RuntimeOs::Macos, false, true));
     assert!(backdrop_available(RuntimeOs::Windows, false, false));
     assert!(!backdrop_available(RuntimeOs::Windows, true, false));
     assert!(backdrop_available(RuntimeOs::Windows, true, true));
@@ -848,34 +653,72 @@ impl ProcessControl for FakeProcess {
     }
 }
 
+/// The single-instance guard goes before the spawn (the new process must
+/// not forward its launch to this one), and nothing exits unless a new
+/// process started: a failed relaunch leaves the app open.
 #[test]
-fn relaunch_releases_spawns_with_the_same_arguments_then_exits() {
+fn relaunch_releases_the_instance_spawns_then_exits_and_never_exits_alone() {
     let control = FakeProcess::default();
-    let args: Vec<OsString> = vec!["accshift.exe".into(), "--flag".into(), "x y".into()];
-    let before = RefCell::new(false);
-    let error = process::restart(&control, Ok(PathBuf::from("app-binary")), &args, || {
-        *before.borrow_mut() = true
-    });
-    assert!(error.is_none());
-    assert!(*before.borrow());
+    let args: Vec<OsString> = vec!["--flag".into(), "x y".into()];
+    let calls = &control.calls;
+    let record = |step: &'static str| move || calls.borrow_mut().push(step.to_string());
+    process::restart(
+        &control,
+        Ok(PathBuf::from("app-binary")),
+        &args,
+        record("release"),
+        record("restore"),
+        record("before_exit"),
+    )
+    .unwrap();
     assert_eq!(
         *control.calls.borrow(),
-        ["spawn:app-binary:--flag,x y", "exit:0"]
+        [
+            "release",
+            "spawn:app-binary:--flag,x y",
+            "before_exit",
+            "exit:0"
+        ]
     );
 
-    // A failed spawn is reported and the process still exits.
+    // A failed spawn is reported, the guard is taken back and the process
+    // stays.
     let failing = FakeProcess {
         fail_spawn: true,
         ..Default::default()
     };
-    let error = process::restart(&failing, Ok(PathBuf::from("app-binary")), &args, || {});
-    assert_eq!(error.unwrap().to_string(), "denied");
-    assert_eq!(failing.calls.borrow().last().unwrap(), "exit:0");
+    let calls = &failing.calls;
+    let record = |step: &'static str| move || calls.borrow_mut().push(step.to_string());
+    let error = process::restart(
+        &failing,
+        Ok(PathBuf::from("app-binary")),
+        &args,
+        record("release"),
+        record("restore"),
+        record("before_exit"),
+    )
+    .unwrap_err();
+    assert_eq!(error.to_string(), "denied");
+    assert_eq!(
+        *failing.calls.borrow(),
+        ["release", "spawn:app-binary:--flag,x y", "restore"]
+    );
 
-    // No binary: no spawn, exit anyway.
+    // No binary: nothing is released, spawned or exited.
     let control = FakeProcess::default();
-    process::restart(&control, Err(std::io::Error::other("gone")), &args, || {});
-    assert_eq!(*control.calls.borrow(), ["exit:0"]);
+    let released = RefCell::new(false);
+    let error = process::restart(
+        &control,
+        Err(std::io::Error::other("gone")),
+        &args,
+        || *released.borrow_mut() = true,
+        || {},
+        || {},
+    )
+    .unwrap_err();
+    assert_eq!(error.to_string(), "gone");
+    assert!(control.calls.borrow().is_empty());
+    assert!(!*released.borrow());
 
     let control = FakeProcess::default();
     process::exit(&control, 3, || {});
@@ -885,56 +728,4 @@ fn relaunch_releases_spawns_with_the_same_arguments_then_exits() {
     let binary = process::current_binary().unwrap();
     assert!(binary.is_file());
     assert_eq!(process::relaunch_program(&binary), binary);
-}
-
-#[test]
-fn the_boot_payload_is_fetched_cached_and_fills_the_registry() {
-    use accshift_app::lifecycle::boot::BootPayloadCache;
-    let backend = support::scripted("demo");
-    let mut registry = PlatformRegistry::shipped();
-    let mut cache = BootPayloadCache::default();
-    assert!(cache.get().is_none());
-    let runtime_os = cache
-        .fetch(&backend, &mut registry)
-        .unwrap()
-        .runtime_os
-        .clone();
-    assert!(!runtime_os.is_empty());
-    assert_eq!(cache.get().unwrap().runtime_os, runtime_os);
-    assert_eq!(backend.calls("get_boot_payload").len(), 1);
-    // Every loaded user platform is in the registry afterwards.
-    for descriptor in &cache.get().unwrap().user_platforms.loaded {
-        let id = serde_json::to_value(descriptor).unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .to_string();
-        assert!(registry.definition(&id).is_some(), "{id}");
-    }
-    // A failing call keeps the earlier answer.
-    backend.push("get_boot_payload", Err("boom"));
-    assert!(cache.fetch(&backend, &mut registry).is_err());
-    assert!(cache.get().is_some());
-}
-
-#[test]
-fn the_other_telemetry_calls_are_fire_and_forget() {
-    use accshift_app::lifecycle::boot::{
-        track_account_add_cancelled, track_account_add_started, track_account_added,
-        track_operation_failed,
-    };
-    let backend = support::scripted("demo");
-    track_account_add_started(&backend, "steam");
-    track_account_add_cancelled(&backend, "steam");
-    track_account_added(&backend, "riot");
-    track_operation_failed(&backend, "switch", "timeout", Some("steam"));
-    assert_eq!(
-        backend.calls("telemetry_track_account_add_started").len(),
-        1
-    );
-    assert_eq!(
-        backend.calls("telemetry_track_account_add_cancelled").len(),
-        1
-    );
-    assert_eq!(backend.calls("telemetry_track_account_added").len(), 1);
-    assert_eq!(backend.calls("telemetry_track_operation_failed").len(), 1);
 }

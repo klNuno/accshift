@@ -1,17 +1,16 @@
-//! `src/lib/shared/pin.test.ts` and `pinSession.test.ts` against
-//! `accshift_app::secure::pin`.
+//! The PIN hashing and the PIN session of `accshift_app::secure::pin`.
 
 mod support;
 
 use accshift_app::secure::pin::{
-    hash_pin_code, is_pin_locked_error, is_pin_locked_message, is_valid_pin_hash, lock_pin_session,
-    sanitize_pin_digits, unlock_pin_session, verify_pin_code, PinCheck, PinFailureWait,
-    PinVerification, PIN_FAILURE_DELAY_MS,
+    hash_pin_code, is_pin_locked_error, is_valid_pin_hash, lock_pin_session, sanitize_pin_digits,
+    unlock_pin_session, verify_pin_code, PinCheck, PinFailureWait, PinVerification,
+    PIN_FAILURE_DELAY_MS,
 };
 use accshift_app::BackendError;
 use serde_json::json;
 
-// The cross-check vector of pin.test.ts: PIN 4321 under a fixed salt.
+// A cross-check vector: PIN 4321 under a fixed salt.
 const PBKDF2_HASH: &str =
     "000102030405060708090a0b0c0d0e0f:e19d9507e40b77fbb7503faedce7cb4ebf8c6820a8b746d9dfa9fcab899ec65d";
 // SHA-256 of the digits "1234", the legacy vector.
@@ -40,7 +39,7 @@ const fn verdict(matches: bool) -> PinVerification {
     }
 }
 
-// ------------------------------------------------------------ sanitizePinDigits
+// ------------------------------------------------------------ PIN digits
 
 #[test]
 fn sanitize_removes_non_digits() {
@@ -62,7 +61,7 @@ fn sanitize_handles_empty_string() {
     assert_eq!(sanitize_pin_digits(""), "");
 }
 
-// ------------------------------------------------------------ isValidPinHash
+// ------------------------------------------------------------ PIN hash shape
 
 #[test]
 fn valid_hash_accepts_pbkdf2_format() {
@@ -88,7 +87,7 @@ fn valid_hash_rejects_empty_string() {
     assert!(!is_valid_pin_hash(""));
 }
 
-// ------------------------------------------------------------ hashPinCode
+// ------------------------------------------------------------ hashing
 
 #[test]
 fn hash_returns_salt_and_hash_for_valid_pin() {
@@ -106,7 +105,7 @@ fn hash_generates_different_salts_each_call() {
     assert_ne!(hash("1234"), hash("1234"));
 }
 
-// ------------------------------------------------------------ verifyPinCode
+// ------------------------------------------------------------ verification
 
 #[test]
 fn verify_accepts_correct_pin_against_pbkdf2() {
@@ -165,13 +164,14 @@ fn verifies_the_shared_vectors() {
 
 #[test]
 fn recognizes_the_backend_refusal() {
-    assert!(is_pin_locked_message(LOCKED));
     assert!(is_pin_locked_error(&BackendError::new(LOCKED)));
-    assert!(!is_pin_locked_message("Steam is not installed"));
-    assert!(!is_pin_locked_message(""));
+    assert!(!is_pin_locked_error(&BackendError::new(
+        "Steam is not installed"
+    )));
+    assert!(!is_pin_locked_error(&BackendError::new("")));
 }
 
-// ------------------------------------------------------------ unlockPinSession
+// ------------------------------------------------------------ session unlock
 
 #[test]
 fn unlocks_through_the_backend() {
@@ -297,7 +297,7 @@ fn the_mock_answers_with_its_own_hash() {
     );
 }
 
-// ------------------------------------------------------------ lockPinSession
+// ------------------------------------------------------------ session lock
 
 #[test]
 fn locks_the_backend_and_swallows_a_failure() {
@@ -307,7 +307,7 @@ fn locks_the_backend_and_swallows_a_failure() {
     assert_eq!(backend.calls("pin_lock").len(), 1);
 }
 
-// ------------------------------------------------------------ pinFailureWait
+// ------------------------------------------------------------ failure wait
 
 #[test]
 fn keeps_the_local_pause_for_a_plain_wrong_code() {

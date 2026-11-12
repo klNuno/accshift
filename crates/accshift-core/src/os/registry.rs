@@ -6,7 +6,7 @@
 //! Steam's auto-login registry access lives in `os::windows`.
 
 use winreg::enums::KEY_WRITE;
-use winreg::{RegKey, HKEY};
+use winreg::{RegKey, RegValue, HKEY};
 
 pub use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
 
@@ -42,6 +42,31 @@ pub fn try_read_raw_string(
             "Could not read registry value {key_path}\\{value_name}: {e}"
         )),
     }
+}
+
+/// Read a value as stored, whatever its type, so it can be written back
+/// unchanged. `None` when the key or value is missing.
+pub fn read_raw(root: HKEY, key_path: &str, value_name: &str) -> Option<RegValue<'static>> {
+    RegKey::predef(root)
+        .open_subkey(key_path)
+        .ok()?
+        .get_raw_value(value_name)
+        .ok()
+}
+
+/// Create-or-open `key_path` and set `value_name` to a value read by
+/// [`read_raw`], keeping its type.
+pub fn write_raw(
+    root: HKEY,
+    key_path: &str,
+    value_name: &str,
+    data: &RegValue,
+) -> Result<(), String> {
+    let (key, _) = RegKey::predef(root)
+        .create_subkey(key_path)
+        .map_err(|e| format!("Could not open registry key {key_path}: {e}"))?;
+    key.set_raw_value(value_name, data)
+        .map_err(|e| format!("Could not write registry value {key_path}\\{value_name}: {e}"))
 }
 
 /// Create-or-open `key_path` and set `value_name` to `data`.

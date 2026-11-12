@@ -1,11 +1,10 @@
-//! The UI zoom (`uiZoomFactor`): `.app-stage` carries `transform:
-//! scale(zoom)` with its width divided by the zoom. How Chromium draws it
-//! depends on the raster of `.app-shell` (`will-change: transform`):
+//! The UI zoom: the app is scaled by the zoom, its width divided by it.
+//! How it is drawn depends on when the app was first rastered:
 //!
-//! - First rastered during the boot entrance (`appEntrance` scales the
-//!   frame), it is drawn at the window's own scale and kept: the
-//!   compositor scales that bitmap with a bilinear filter, so zoomed text
-//!   is soft. The software runner does the same: the app lays out in
+//! - First rastered during the boot entrance (which scales the frame), it
+//!   is drawn at the window's own scale and kept: that bitmap is scaled
+//!   with a bilinear filter, so zoomed text is soft, as in the browser
+//!   build. The software runner does this: the app lays out in
 //!   `width / zoom` points, renders at that size and the frame is
 //!   resampled to the window ([`resample`]).
 //! - With no entrance (reduced motion), or from the first zoom change on,
@@ -28,7 +27,7 @@ pub fn set_base(ctx: &Context, base: f32) {
     ctx.data_mut(|d| d.insert_temp(Id::unique(BASE), base));
 }
 
-/// The app's `uiZoomFactor`, every frame once it has settings, and
+/// The app's UI zoom, every frame once it has settings, and
 /// whether the stage keeps the raster of the boot entrance.
 pub fn set_ui(ctx: &Context, zoom: f32, upscale: bool) {
     ctx.data_mut(|d| {
@@ -75,12 +74,8 @@ pub fn begin_frame(ctx: &Context, stage: f32) {
 /// The zoom this frame lays out at: the screen is the window divided by
 /// it.
 pub fn frame(ctx: &Context) -> f32 {
-    if cfg!(feature = "glow") {
-        ctx.zoom_factor() / base(ctx)
-    } else {
-        ctx.data(|d| d.get_temp::<f32>(Id::unique(FRAME)))
-            .unwrap_or(1.0)
-    }
+    ctx.data(|d| d.get_temp::<f32>(Id::unique(FRAME)))
+        .unwrap_or(1.0)
 }
 
 /// `100vw` by `100vh` in the stage's points: the window's CSS size, which

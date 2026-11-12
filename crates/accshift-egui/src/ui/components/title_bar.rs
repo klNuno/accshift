@@ -1,4 +1,4 @@
-//! `src/lib/shared/components/TitleBar.svelte`: the custom title bar.
+//! The custom title bar.
 //!
 //! Every metric comes from the component's CSS. Tailwind's preflight makes
 //! every box `border-box`, so the bar is 36 px with its 1 px bottom border
@@ -56,7 +56,7 @@ const T120: Transition = Transition::new(0.12, Timing::EASE_OUT);
 /// `.tab-wrap:hover .tab-tooltip { transition-delay: 300ms }`.
 const TOOLTIP_IN: Transition = Transition::new(0.12, Timing::EASE_OUT).with_delay(0.3);
 
-/// The update call to action (`updateCtaLabel` and friends).
+/// The update call to action.
 #[derive(Clone, Debug)]
 pub struct UpdateCta<'a> {
     pub label: &'a str,
@@ -64,7 +64,7 @@ pub struct UpdateCta<'a> {
     pub disabled: bool,
 }
 
-/// `TitleBar.svelte`'s props, minus the callbacks: what a click means comes
+/// What the title bar shows: what a click means comes
 /// back as an [`Action`].
 #[derive(Clone, Debug)]
 pub struct TitleBarProps<'a> {
@@ -237,7 +237,7 @@ pub fn title_bar(ui: &mut Ui, rect: Rect, props: &TitleBarProps) -> Vec<Action> 
             }
             if index == 1 {
                 // Windows 11 Snap Layouts: the window must answer HTMAXBUTTON
-                // over this rect (`set_maximize_button_rect` in Tauri).
+                // over this rect.
                 actions.push(Action::SetMaximizeButtonRect(Some(response.rect)));
             }
         }

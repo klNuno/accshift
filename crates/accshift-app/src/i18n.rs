@@ -1,8 +1,8 @@
-//! The i18n runtime, ported from `src/lib/i18n/{index,dictionaries.svelte}.ts`
-//! and the boot locale choice of `src/main.ts` / `src/lib/app/bootLocale.ts`.
+//! The i18n runtime: the locales, the boot locale choice, the embedded
+//! dictionaries and the template formatter.
 //!
-//! The dictionaries are `i18n/<locale>.json`, embedded here. A key missing from a locale falls back to English, then to the key itself,
-//! like `translate`.
+//! The dictionaries are `i18n/<locale>.json`, embedded here. A key missing
+//! from a locale falls back to English, then to the key itself.
 
 use crate::js;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -120,28 +120,27 @@ impl Serialize for Locale {
 }
 
 impl<'de> Deserialize<'de> for Locale {
-    /// Lenient like `normalizeLocale`: anything unknown reads as English.
+    /// Lenient like [`normalize_locale`]: anything unknown reads as English.
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = Value::deserialize(deserializer)?;
         Ok(normalize_locale(Some(&value)))
     }
 }
 
-/// `isLocale`.
+/// True for the code of a supported locale.
 pub fn is_locale(value: Option<&Value>) -> bool {
     js::as_str(value).and_then(Locale::from_code).is_some()
 }
 
-/// `normalizeLocale`: the locale, or English for anything else.
+/// The locale of a code, or English for anything else.
 pub fn normalize_locale(value: Option<&Value>) -> Locale {
     js::as_str(value)
         .and_then(Locale::from_code)
         .unwrap_or(DEFAULT_LOCALE)
 }
 
-/// `detectPreferredLocale` over the OS's preferred languages, most preferred
-/// first (what `navigator.languages` then `navigator.language` list): the
-/// exact tag first, then its base subtag, so "pt-BR" is `pt-br` while
+/// The first supported locale among the OS's preferred languages, most
+/// preferred first: the exact tag first, then its base subtag, so "pt-BR" is `pt-br` while
 /// "pt-PT", "es-419" and "zh-CN" land on `pt`, `es` and `zh`.
 pub fn detect_preferred_locale<S: AsRef<str>>(candidates: &[S]) -> Locale {
     for raw in candidates {
@@ -161,10 +160,7 @@ pub fn detect_preferred_locale<S: AsRef<str>>(candidates: &[S]) -> Locale {
 }
 
 /// The locale the first frame renders in: the stored settings' language, or
-/// the OS's preferred one when no settings exist yet (`getSettings().language`
-/// at boot). The TS app also remembers it in `localStorage` so the next start
-/// prefetches that dictionary; every dictionary is embedded here, so that
-/// part has nothing to do.
+/// the OS's preferred one when no settings exist yet.
 pub fn boot_locale<S: AsRef<str>>(stored_settings: Option<&Value>, preferred: &[S]) -> Locale {
     let raw = js::as_record(stored_settings);
     match raw.and_then(|record| record.get("language").map(Some)) {
@@ -265,7 +261,7 @@ impl<T: Into<TranslationValue>> From<Option<T>> for TranslationValue {
 /// Named parameters for [`translate_with`].
 pub type TranslationParams<'a> = [(&'a str, TranslationValue)];
 
-/// `formatTemplate`: every `{word}` (ASCII word characters) becomes its
+/// Every `{word}` (ASCII word characters) of `template` becomes its
 /// parameter, or nothing when the parameter is absent or null. Without
 /// parameters the template is returned as is.
 pub fn format_template(template: &str, params: Option<&TranslationParams<'_>>) -> String {
@@ -307,12 +303,12 @@ fn lookup<'a>(dict: &'a Dictionary, key: &'a str) -> &'a str {
         .map_or(key, String::as_str)
 }
 
-/// `translate(locale, key)`.
+/// The text of `key` in `locale`.
 pub fn translate(locale: Locale, key: &str) -> String {
     template(locale, key).to_string()
 }
 
-/// `translate(locale, key, params)`.
+/// The text of `key` in `locale`, its placeholders filled from `params`.
 pub fn translate_with(locale: Locale, key: &str, params: &TranslationParams<'_>) -> String {
     format_template(template(locale, key), Some(params))
 }
@@ -321,8 +317,8 @@ pub fn translate_with(locale: Locale, key: &str, params: &TranslationParams<'_>)
 mod tests {
     use super::*;
 
-    /// TS mocks a French dictionary without "app.loading"; the lookup must
-    /// serve the real English string for it, not the key.
+    /// A French dictionary without "app.loading": the lookup must serve the
+    /// real English string for it, not the key.
     #[test]
     fn falls_back_to_en_for_a_key_missing_from_a_locale() {
         let mut fr = dictionary(Locale::Fr).clone();

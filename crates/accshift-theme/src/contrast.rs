@@ -1,10 +1,9 @@
-//! Port of `src/lib/theme/contrast.ts`: WCAG 2.1 contrast for the theme
-//! editor. Only the notations a theme token may hold are parsed.
+//! WCAG 2.1 contrast for the theme editor. Only the notations a theme token may hold are parsed.
 
-use crate::js::{is_js_space, js_parse_float, js_trim};
+use crate::js::{self, is_js_whitespace, parse_float};
 
-/// A colour with 0..=255 channels, unrounded (a blend can land between two
-/// integers, as in the TypeScript).
+/// A colour with 0..=255 channels, unrounded: a blend can land between two
+/// integers, and rounding it would shift the ratio the editor shows.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rgb {
     pub r: f64,
@@ -32,10 +31,10 @@ fn parse_hex6(hex: &str) -> Option<Rgb> {
     Some(Rgb::new(channel(0), channel(2), channel(4)))
 }
 
-/// `parseColor`: hex, `rgb()`/`rgba()`, an "r g b" triplet, `white` and
+/// Parses hex, `rgb()`/`rgba()`, an "r g b" triplet, `white` and
 /// `black`. Anything else is `None`, and the check is skipped.
 pub fn parse_color(value: &str) -> Option<Rgb> {
-    let raw = js_trim(value);
+    let raw = js::trim(value);
     if raw.is_empty() {
         return None;
     }
@@ -51,9 +50,9 @@ pub fn parse_color(value: &str) -> Option<Rgb> {
         .filter(|inner| !inner.is_empty() && !inner.contains(')'))
     {
         let parts: Vec<f64> = inner
-            .split(|c: char| is_js_space(c) || c == ',' || c == '/')
+            .split(|c: char| is_js_whitespace(c) || c == ',' || c == '/')
             .filter(|part| !part.is_empty())
-            .map(js_parse_float)
+            .map(parse_float)
             .collect();
         if parts.len() < 3 || parts[..3].iter().any(|part| part.is_nan()) {
             return None;
@@ -62,7 +61,7 @@ pub fn parse_color(value: &str) -> Option<Rgb> {
     }
 
     let triplet: Vec<&str> = raw
-        .split(is_js_space)
+        .split(is_js_whitespace)
         .filter(|part| !part.is_empty())
         .collect();
     let is_channel =

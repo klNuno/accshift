@@ -1,7 +1,9 @@
-//! Boot marks for `.agents/perf/bench-egui.ps1`: one JSON line per event in
+//! Boot marks for the startup benchmark: one JSON line per event in
 //! `%TEMP%\accshift-egui-bench\<pid>.jsonl`, epoch milliseconds.
 //!
-//! Active in a `startup-bench` build, or with `ACCSHIFT_EGUI_MARKS=1`.
+//! Active in a `startup-bench` build, or with `ACCSHIFT_EGUI_MARKS=1` in a
+//! `harness` build. A release build has neither feature: no environment
+//! variable turns the marks, the frame log or the shot on there.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -15,7 +17,12 @@ pub const MARKER: &str = "accshift-egui-startup-bench-build";
 static SINK: OnceLock<Option<Mutex<File>>> = OnceLock::new();
 
 pub fn enabled() -> bool {
-    cfg!(feature = "startup-bench") || std::env::var_os("ACCSHIFT_EGUI_MARKS").is_some()
+    enabled_with(|| std::env::var_os("ACCSHIFT_EGUI_MARKS").is_some())
+}
+
+/// [`enabled`] with the environment read only where a feature allows it.
+fn enabled_with(marks_env: impl FnOnce() -> bool) -> bool {
+    cfg!(feature = "startup-bench") || (cfg!(feature = "harness") && marks_env())
 }
 
 fn sink() -> &'static Option<Mutex<File>> {
@@ -177,9 +184,26 @@ pub fn request_shot(ctx: &egui::Context) {
     };
     ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
         egui::ScreenshotCallback::new(move |image| {
-            let _ = crate::harness::write_png(std::path::Path::new(&path), &image);
+            let _ = write_png(std::path::Path::new(&path), &image);
         }),
     ));
+}
+
+/// RGBA PNG, unpremultiplied like a browser screenshot: the bench shot and
+/// the scene runner's shots.
+pub(crate) fn write_png(path: &std::path::Path, image: &egui::ColorImage) -> Result<(), String> {
+    let [w, h] = image.size;
+    let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), w as u32, h as u32);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+    let data: Vec<u8> = image
+        .pixels
+        .iter()
+        .flat_map(|p| p.to_srgba_unmultiplied())
+        .collect();
+    writer.write_image_data(&data).map_err(|e| e.to_string())
 }
 
 /// `ACCSHIFT_EGUI_BENCH_SCRIPT=1` in a bench run: from 1.5 s after the
@@ -319,5 +343,23 @@ pub fn mark_once(event: &'static str) {
             seen.push(event);
             mark(event);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(not(any(feature = "startup-bench", feature = "harness")))]
+    #[test]
+    fn a_release_build_ignores_the_marks_variable() {
+        assert!(!enabled_with(|| true));
+    }
+
+    #[cfg(all(feature = "harness", not(feature = "startup-bench")))]
+    #[test]
+    fn a_harness_build_follows_the_marks_variable() {
+        assert!(enabled_with(|| true));
+        assert!(!enabled_with(|| false));
     }
 }

@@ -1,10 +1,9 @@
 # Logging and diagnostics
 
 The log is a diagnostic tool, not a stream of sentences. Every record carries a
-code from a closed catalog, a typed payload, the launch it belongs to and, for
-anything a user triggered, the operation it belongs to. That is what makes a
-failed attempt replayable from a single identifier instead of readable only by
-whoever wrote the message.
+code from a closed catalog, a typed payload and the launch it belongs to. That
+is what makes a failure searchable by code and by launch instead of readable
+only by whoever wrote the message.
 
 ## Where it lives
 
@@ -25,7 +24,7 @@ the installed app's log.
 | `app.1.log` to `app.4.log` | Rotated files, `app.1.log` being the most recent         |
 | `app.log.lock`             | Cross-process lock, plus the rotation generation counter |
 | `log-levels.json`          | Per-module levels and the temporary debug window         |
-| `anomalies.json`           | Failure streaks and duration baselines, across launches  |
+| `panic.log`                | Panics that could not reach `app.log`, capped at 256 KiB |
 | `diagnostic-report.md`     | Last report written by `accshift diag bundle`            |
 
 `app.previous.log` is the legacy name of the single rotated file. It is
@@ -47,15 +46,15 @@ The summary:
 | `runId`         | yes            | `run-<12 hex>`, one per process launch                |
 | `fields`        | yes            | Typed payload declared by the code                    |
 | `msg`           | no             | Human sentence. Never parse this, parse `fields`      |
-| `opId`          | no             | `op-<12 hex>`, shared by every record of one attempt  |
-| `durMs`         | no             | Duration, on the record that closes an operation      |
+| `opId`          | no             | `op-<12 hex>`, set when the call site passes one      |
+| `durMs`         | no             | Duration, when the call site measured one             |
 | `outcome`       | no             | `success`, `failure` or `cancelled`                   |
 | `errKind`       | no             | Error family, so failures group without parsing `msg` |
 
 One record, as it is actually written, on a single line:
 
 ```text
-{"schemaVersion":2,"tsMs":1770000000000,"level":"error","code":"platform.switch.failed","source":"platform.steam","runId":"run-4f2a1c9d0e77","opId":"op-91b3ce70aa42","durMs":1840,"outcome":"failure","errKind":"client_running","msg":"Steam refused to exit","fields":{"platform":"steam","step":"kill-launcher"}}
+{"schemaVersion":2,"tsMs":1770000000000,"level":"warn","code":"health.disk.low","source":"health","runId":"run-4f2a1c9d0e77","msg":"only 1048576 bytes free on C:\\, 33554432 needed","fields":{"path":"C:\\","availableBytes":1048576,"requiredBytes":33554432}}
 ```
 
 Field names never collide with columns: a catalog field called `level` or
@@ -91,7 +90,7 @@ Consequences worth knowing:
   `--code` filters and in `--explain`, which is what lets a log written by an
   older build stay queryable.
 
-`docs/log-catalog.json` is generated from the catalog and holds the 29 codes
+`docs/log-catalog.json` is generated from the catalog and holds the 15 codes
 with their meaning, their action and their fields. Regenerate it after touching
 the catalog:
 
@@ -106,42 +105,23 @@ formatter stays free to lay those files out as it likes.
 
 The families, in order of how often they matter:
 
-| Prefix                | What it covers                                          |
-| --------------------- | ------------------------------------------------------- |
-| `op.*`                | Operation opened, stepped, closed                       |
-| `platform.*`          | Switch and snapshot outcomes                            |
-| `health.*`            | Invariant results: paths, locks, launchers, disk, clock |
-| `anomaly.*`           | Patterns visible only across several runs               |
-| `log.*`               | Rotation, retention, write failures                     |
-| `diagnostics.*`       | Level changes, debug window, report written             |
-| `app.session.started` | One per launch, with the environment                    |
+| Prefix                 | What it covers                                     |
+| ---------------------- | -------------------------------------------------- |
+| `health.*`             | Invariant results: paths, JSON files, disk, clock  |
+| `log.*`                | Rotation and retention                             |
+| `diagnostics.*`        | Level changes, debug window, report written        |
+| `app.session.started`  | One per launch, with the environment               |
+| `app.startup.frontend` | Window boot marks, when the shell passes them      |
 
-## Operations
+A catalog test fails when a declared code has no emitter outside tests, so the
+catalog only lists what the log can actually contain.
 
-Anything a user triggers opens an operation. It gets an `opId`, every record
-below it carries that same id, and the closing record carries the duration and
-the outcome.
+## Operation ids
 
-```rust
-let op = ops::start(&ctx, "platform.switch").platform("steam").trigger("gui").begin();
-op.step("kill-launcher");
-op.event(&catalog::HEALTH_LAUNCHER_RUNNING)
-    .field("platform", "steam")
-    .emit(&*op.ctx());
-op.fail("client_running", "Steam refused to exit");
-```
-
-`with_operation` wraps a `Result`-returning body and closes the operation from
-its outcome, mapping the error to the `errKind` vocabulary. An operation
-dropped without an explicit verdict closes itself as `cancelled` with a message
-saying so, so an early return or a panic still leaves a closing line rather
-than a hole.
-
-The GUI's diagnostic check and report actions are traced end to end and return
-their `opId` in the answer, which is the intended pattern for a UI: show the
-error, quote the id, let the user paste it into
-`accshift diag logs --op <id>`. The account switch chain is not instrumented
-yet; that migration is deliberately separate from this layer.
+The record has an `opId` column and `accshift diag logs --op <id>` filters on
+it, for call sites that tie several records to one user action. No call site
+sets one today: the account switch chain is not instrumented, so a failed
+switch is found by level, time and source rather than by id.
 
 ## Levels
 
@@ -168,58 +148,24 @@ lives in `log-levels.json`, written by the commands above.
 
 ## Health invariants
 
-Invariants run before a risky action rather than after it fails. Each result is
-a code with an action attached, so a reader never has to look it up.
+Each invariant result is a code with an action attached, so a reader never has
+to look it up. `accshift diag check` and the diagnostic report run the same
+fixed set, against the log directory:
 
-| Check            | Code on failure                 | What it means                                |
-| ---------------- | ------------------------------- | -------------------------------------------- |
-| Path exists      | `health.path.missing`           | The configured directory or file is gone     |
-| Path writable    | `health.path.permission_denied` | It exists but a write probe fails            |
-| File unlocked    | `health.file.locked`            | Another process holds it                     |
-| Launcher stopped | `health.launcher.running`       | A process that must be closed is alive       |
-| Profile parses   | `health.profile.corrupt`        | A JSON file the action depends on is invalid |
-| Free space       | `health.disk.low`               | Less than the caller requires is available   |
-| Clock sane       | `health.clock.skew`             | System time moved backwards past tolerance   |
+| Check         | Code on failure                 | What it means                              |
+| ------------- | ------------------------------- | ------------------------------------------ |
+| Path writable | `health.path.permission_denied` | The log directory exists but a write fails |
+| Free space    | `health.disk.low`               | Less than 32 MiB is free on that volume    |
+| Clock sane    | `health.clock.skew`             | System time moved backwards past tolerance |
 
-A pass writes `health.check.passed` at `debug`, so a green run costs nothing at
-the default level but is there when the window is open.
+A pass writes `health.check.passed` at `debug` when `accshift diag check` runs,
+so a green run costs nothing at the default level but is there when the window
+is open.
 
-Callers describe what they need and let the report say what holds:
-
-```rust
-let report = health::Preflight::new()
-    .platform("steam")
-    .require_writable_path(&config_dir, "steam config")
-    .require_unlocked_file(&loginusers_vdf)
-    .require_stopped(&["steam.exe"])
-    .require_valid_json(&accounts_json)
-    .require_free_space(&config_dir, 8 * 1024 * 1024)
-    .run_and_emit(&ctx, Some(op.id()));
-if let Some(reason) = report.blocking_reason() {
-    return Err(reason);
-}
-```
-
-The startup report checks the log root is writable, that 32 MiB is free, and
-that the clock is sane.
-
-## Anomaly counters
-
-Some problems only exist across runs, so a few counters survive in
-`anomalies.json`:
-
-| Code                                    | Trigger                                         |
-| --------------------------------------- | ----------------------------------------------- |
-| `anomaly.platform.consecutive_failures` | 3 failures in a row on one platform             |
-| `anomaly.operation.slow`                | Far above this operation's own rolling baseline |
-| `anomaly.snapshot.empty`                | A snapshot captured nothing                     |
-| `anomaly.restore.no_write`              | A restore wrote nothing                         |
-
-The slow-operation baseline is a rolling mean and variance over successful runs
-only, so an early-aborting failure cannot drag the mean down and make everything
-else look slow. It needs 8 samples before it accuses anything, and it requires
-both 3 sigma and 1.5 times the mean, with a 750 ms floor, so a fast stable
-operation is never reported for a few extra milliseconds.
+`health::Preflight` can also require that a path exists
+(`health.path.missing`) or that a JSON file parses (`health.profile.corrupt`).
+Nothing declares those checks yet; adding one to `startup_report` is all it
+takes for `accshift diag check` to report it.
 
 ## Rotation, retention and disk budget
 
@@ -245,8 +191,11 @@ that is now named `app.1.log`.
 
 The redaction applies to messages and, recursively, to every string reachable
 from `fields`, including object keys. It removes email addresses, BattleTags,
-UUIDs and PUUIDs, and rewrites paths that contain the OS account name into a
-placeholder.
+UUIDs and PUUIDs, and SteamID64s (17 digits starting with `7656119`, written
+as `<steamid>`). It rewrites the account name in `C:\Users\<name>`,
+`/home/<name>` and `/Users/<name>` paths to `<user>`, whoever the account is,
+so another account's home or a moved `HOME` is covered too. `/Users/Shared`
+stays readable.
 
 A log record never contains a token, a password, a cookie, the contents of a
 `.maFile`, or a path still carrying an unredacted system user name. Identifiers
@@ -265,10 +214,10 @@ accshift diag logs                              # last 200 records
 accshift diag logs --op op-91b3ce70aa42         # one attempt, in order
 accshift diag logs --run run-4f2a1c9d0e77       # one launch
 accshift diag logs --level warn --since 6h
-accshift diag logs --code platform.switch.failed --code anomaly.operation.slow
+accshift diag logs --code health.disk.low --code health.clock.skew
 accshift diag logs --source platform --platform steam --contains vdf
 accshift diag logs --all --json > log.jsonl
-accshift diag explain platform.switch.failed
+accshift diag explain health.disk.low
 accshift diag check
 accshift diag bundle
 ```
@@ -280,9 +229,17 @@ to the `accshift.v1` JSON envelope; a terminal gets a table. Rotated files are
 searched too, oldest first, and the result reports how many lines were scanned
 and how many could not be parsed.
 
-The GUI exposes the same surface through one command, `diagnostics`, taking a
-tagged request (`logs`, `summary`, `explain`, `check`, `levels`, `setLevel`,
-`startTemporaryDebug`, `stopTemporaryDebug`, `bundle`, `schema`).
+The GUI has no diagnostics screen: the `accshift` CLI is the way in, and it
+reads the same files the GUI writes.
+
+## Panics
+
+A panic is written to `app.log` as a legacy record with source `rust.panic`.
+When the log is busy for more than 250 ms, for instance because the panicking
+thread was the one writing it, the same line goes to `panic.log` next to it
+instead, and only then, if that fails too, to stderr. The GUI has no console,
+so stderr alone would lose it. The diagnostic report shows the last 20 lines
+of `panic.log`.
 
 ## The diagnostic report
 
@@ -294,10 +251,10 @@ accshift diag bundle --no-config     # leave the configuration out entirely
 ```
 
 One file, pasteable, capped at 256 KiB, holding: app and OS version, the health
-invariants, the anomaly counters, log storage state, current levels, a redacted
-configuration summary, the codes present with what to do about each, and the
-recent log as JSONL. The log tail is the only section that gets cut, and the
-cut is announced in the file.
+invariants, log storage state, current levels, a redacted configuration
+summary, the codes present with what to do about each, the panics recorded
+outside the log, and the recent log as JSONL. The log tail is the only section
+that gets cut, and the cut is announced in the file.
 
 The configuration summary is deny-by-default: any key whose name suggests a
 secret becomes `<set>` or `<unset>`, booleans and numbers are kept, and a
@@ -309,21 +266,17 @@ decides it is safe, not the reverse.
 
 For an agent or a human working from a failure report:
 
-1. Get the `opId` from the user, or find the failure:
-   `accshift diag logs --level error --since 24h --json`.
-2. Replay the whole attempt in order: `accshift diag logs --op <id> --json`.
-   The last `op.step` before the failing record is where it broke, and
-   `errKind` on the closing record says which family it belongs to.
+1. Find the failure: `accshift diag logs --level error --since 24h --json`.
+2. Read the whole launch around it in order:
+   `accshift diag logs --run <runId> --json`.
 3. Ask what the code means and what to do:
    `accshift diag explain <code>` returns the meaning, the action and the
    declared fields.
 4. Check whether it is a state problem rather than a code problem:
    `accshift diag check` runs the invariants.
-5. Ask whether it repeats: `anomaly.*` codes in
-   `accshift diag logs --code anomaly.platform.consecutive_failures`.
-6. Need more detail: `accshift diag level --debug-for 15m --module <module>`,
+5. Need more detail: `accshift diag level --debug-for 15m --module <module>`,
    reproduce, read again. The window closes itself.
-7. Everything at once for a report: `accshift diag bundle --print`.
+6. Everything at once for a report: `accshift diag bundle --print`.
 
 Parse `fields`, never `msg`. Codes and field names are stable, message wording
 is not.

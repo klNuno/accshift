@@ -1,10 +1,10 @@
-//! Card extension content, ported from `src/lib/shared/cardExtension.ts`: the
-//! sections a card shows when it expands (the CS2 level and XP bar today).
+//! Card extension content: the sections a card shows when it expands (the
+//! CS2 level and XP bar today).
 
 use super::warnings::{WarningChip, WarningTone};
 use crate::text::Text;
 
-/// `CardExtensionChipTone`.
+/// The colour of a card chip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ChipTone {
     Red,
@@ -23,21 +23,21 @@ impl From<WarningTone> for ChipTone {
     }
 }
 
-/// `CardExtensionChip`. The TS `onClick` is a UI concern and stays there.
+/// A chip in a card section. Click handling is a UI concern.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CardChip {
     pub text: Text,
     pub tone: ChipTone,
 }
 
-/// `CardExtensionLink`.
+/// A link in a card section.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CardLink {
     pub label: Text,
     pub url: String,
 }
 
-/// `CardExtensionProgress`.
+/// A progress bar in a card section.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CardProgress {
     pub value: f64,
@@ -46,7 +46,7 @@ pub struct CardProgress {
     pub label: Option<String>,
 }
 
-/// `CardExtensionSection`.
+/// One expandable section of a card.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct CardSection {
     pub title: Option<Text>,
@@ -58,7 +58,7 @@ pub struct CardSection {
     pub loading: bool,
 }
 
-/// `AccountUsernameBadge`: the status icon next to the username.
+/// The status icon next to the username.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UsernameBadge {
     /// `Green` or `Slate`.
@@ -75,7 +75,7 @@ fn text_is_blank(text: &Option<Text>) -> bool {
     }
 }
 
-/// `hasCardExtensionContent`.
+/// Whether any section has something to show.
 pub fn has_card_extension_content(sections: &[CardSection]) -> bool {
     sections.iter().any(|section| {
         !text_is_blank(&section.title)
@@ -87,7 +87,7 @@ pub fn has_card_extension_content(sections: &[CardSection]) -> bool {
     })
 }
 
-/// `warningChipsToExtensionChips`.
+/// Turns account warning chips into card chips.
 pub fn warning_chips_to_extension_chips(chips: &[WarningChip]) -> Vec<CardChip> {
     chips
         .iter()
