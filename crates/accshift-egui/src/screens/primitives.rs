@@ -147,8 +147,8 @@ mod tests {
     }
 
     /// Every line of the typography fragments against WebView2: inline box
-    /// width and baseline, in device px. Run after `parity/ref.mjs` captured
-    /// the `typography-*` scenes (their `probe.json`):
+    /// width and baseline, in device px. Run against the `probe.json` files
+    /// of a WebView2 capture of the `typography-*` scenes:
     /// `ACCSHIFT_TEXT_PROBE=<ref out dir> cargo test --release -- --ignored --nocapture probe`.
     #[test]
     #[ignore = "needs the WebView2 probes of parity/ref.mjs and the system fonts"]

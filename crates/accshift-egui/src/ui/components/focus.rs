@@ -6,9 +6,8 @@ use egui::{CornerRadius, Rect, Stroke, StrokeKind, Ui};
 use crate::app::vars::Vars;
 use crate::theme::Rgba;
 
-/// `app.css` on cards (`[data-account-id]`, `[data-folder-id]`,
-/// `[data-back-card]`): `outline: 2px solid color-mix(--fg 65%,
-/// transparent); outline-offset: 2px`, following the radius.
+/// The focus ring of an account, folder or back card: a 2 px outline of
+/// `--fg` at 65 %, 2 px outside the card, following its radius.
 pub fn card_ring(ui: &Ui, rect: Rect, radius: f32, vars: &Vars) {
     ui.painter().rect_stroke(
         rect.expand(2.0),

@@ -373,7 +373,7 @@ fn expand(steps: &[Step]) -> Result<VecDeque<Op>, String> {
             modifiers: Modifiers::NONE,
         })
     };
-    // Same rhythm as ref.mjs: 40 ms between press and release.
+    // The reference captures' rhythm: 40 ms between press and release.
     let press = |ops: &mut VecDeque<Op>, p: Pos2, b: PointerButton| {
         ops.push_back(button(p, b, true));
         ops.push_back(Op::Wait(0.04));

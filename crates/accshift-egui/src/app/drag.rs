@@ -221,9 +221,12 @@ impl EachList {
     }
 }
 
-/// The keys a keyed list reconcile moves when the same keys are reordered,
-/// walked the way Svelte 5's keyed each block walks them. A moved card loses
-/// its pressed state and replays its entrance animation.
+/// The keys a keyed list reconcile moves when the same keys are reordered:
+/// it walks the new order against a linked list of the old one, moving a
+/// run of later items to the front when that is shorter, else each earlier
+/// item to the back. This is the order the cards were moved in before the
+/// rewrite, and a moved card loses its pressed state and replays its
+/// entrance animation.
 pub(super) fn each_moved(old: &[String], new: &[String]) -> Vec<String> {
     let n = old.len();
     let index = |k: &str| old.iter().position(|o| o == k);

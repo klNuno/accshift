@@ -3,7 +3,7 @@
 //! build has none of it: no switch, no runner, no mock screen; the stand-ins
 //! below keep the shell's calls compiling and do nothing.
 //!
-//! Replays the scene files shared with `parity/ref.mjs` (format in
+//! Replays the scene files of `parity/scenes` (format in
 //! `parity/README.md`). Each scene resizes the hidden window to its viewport
 //! and scale, builds its screen, waits until the screen is ready (every
 //! avatar uploaded), then injects its steps as egui raw input on the wall

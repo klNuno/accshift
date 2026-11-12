@@ -1,4 +1,4 @@
-//! Boot marks for `.agents/perf/bench-egui.ps1`: one JSON line per event in
+//! Boot marks for the startup benchmark: one JSON line per event in
 //! `%TEMP%\accshift-egui-bench\<pid>.jsonl`, epoch milliseconds.
 //!
 //! Active in a `startup-bench` build, or with `ACCSHIFT_EGUI_MARKS=1` in a

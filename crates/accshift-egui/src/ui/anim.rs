@@ -1,5 +1,5 @@
 //! CSS animation timing: timing functions, transitions and keyframe
-//! animations, with the motion preference of `.agents/rules/animations.md`.
+//! animations, with the user's motion preference.
 //!
 //! - [`Timing`] evaluates `ease`, `linear`, `ease-in`, `ease-out`,
 //!   `ease-in-out`, `cubic-bezier()` (solved like Chromium's `gfx::CubicBezier`)
@@ -10,9 +10,9 @@
 //! - [`animate`] plays [`Keyframes`] with an [`Animation`] (duration, delay,
 //!   iteration count, direction, fill mode), sampled through the Web
 //!   Animations timing model.
-//! - [`set_motion`] with [`Motion::Reduced`] is `html[data-motion="reduced"]`:
-//!   transitions jump to their target and keyframe animations show the
-//!   underlying value, as `animation: none` would.
+//! - [`set_motion`] with [`Motion::Reduced`] turns motion off: transitions
+//!   jump to their target and keyframe animations show the underlying value,
+//!   as `animation: none` would.
 //!
 //! Time is egui's `input.time` in seconds. Both entry points request a repaint
 //! only while something moves (or when a delay ends), never otherwise.
@@ -298,7 +298,8 @@ impl Animatable for Color32 {
 
 // ---------------------------------------------------------------- motion
 
-/// The `data-motion` attribute on `<html>`.
+/// Whether the app animates: [`Motion::Reduced`] when the user's
+/// preference (or the OS one it follows) turns animations off.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Motion {
     #[default]

@@ -112,7 +112,7 @@ pub struct Surface<'a> {
     /// `.right`: the details open past the card's right edge.
     pub right: bool,
     pub ban: Option<WarningTone>,
-    /// `html[data-glass="1"]`.
+    /// The applied theme is a glass one.
     pub glass: bool,
 }
 

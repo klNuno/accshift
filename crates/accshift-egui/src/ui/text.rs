@@ -16,8 +16,8 @@
 //!   software backend.
 //!
 //! Measured against WebView2 with `parity/fragments/typography*.html` and the
-//! `typography-*` scenes (the probe in `parity/ref.mjs` records the face, line
-//! box and baseline of every line).
+//! `typography-*` scenes (their probe records the face, line box and baseline
+//! of every line).
 
 #[cfg(windows)]
 pub mod dwrite;
@@ -43,7 +43,7 @@ use egui::{
 use crate::ui::css;
 use faces::{Catalog, Choice, FaceMetrics, Source};
 
-/// `--font-ui` of `src/app.css` with the built-in themes' `Inter` in front.
+/// The UI font stack, the built-in themes' `Inter` in front.
 pub const UI_STACK: &str = "Inter, system-ui, Avenir, Helvetica, Arial, \"Microsoft YaHei UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Noto Sans CJK SC\", \"Noto Sans SC\", \"Noto Sans SC Subset\", sans-serif";
 /// The monospace stack of the settings and the theme editor.
 pub const MONO_STACK: &str = "ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace";
@@ -970,7 +970,9 @@ fn fallback_kinds(text: &str) -> Vec<Fallback> {
     out
 }
 
-/// The ranges of the Han `@font-face` rules of `src/app.css`.
+/// The Han ranges: CJK radicals, symbols and strokes, the unified
+/// ideographs (and extension A), the compatibility ideographs and forms, and
+/// the half- and full-width forms.
 fn is_han(c: char) -> bool {
     matches!(c as u32,
         0x2E80..=0x2EFF | 0x3000..=0x303F | 0x31C0..=0x31EF | 0x3400..=0x4DBF
