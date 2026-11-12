@@ -1,4 +1,4 @@
-//! `src/lib/features/folders/Breadcrumb.svelte`: the platform name and the
+//! The breadcrumb: the platform name and the
 //! folder path, each a button.
 //!
 //! `.breadcrumb`: flex, `align-items: center`, `gap: 4px`, wraps,
@@ -45,7 +45,7 @@ pub struct BreadcrumbProps<'a> {
     pub vars: &'a Vars,
     pub platform_name: &'a str,
     pub path: &'a [Crumb<'a>],
-    /// `accentColor`: the active platform's accent.
+    /// The active platform's accent.
     pub accent: Rgba,
     pub focus_visible: bool,
 }
@@ -130,7 +130,7 @@ fn layout(ui: &Ui, props: &BreadcrumbProps, rect: Rect) -> Vec<Placed> {
 }
 
 /// Draws the breadcrumb with its box at `rect` (its height from
-/// [`height`]) and returns the folder clicked (`onNavigate`): `Some(None)`
+/// [`height`]) and returns the folder clicked: `Some(None)`
 /// for the platform root.
 pub fn breadcrumb(ui: &mut Ui, rect: Rect, props: &BreadcrumbProps) -> Option<Option<String>> {
     let v = props.vars;

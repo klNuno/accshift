@@ -1,5 +1,5 @@
-//! `registry.test.ts`, `descriptors.test.ts`, `genericAdapter.test.ts`,
-//! `battle-net/adapter.test.ts` and `ubisoft/adapter.test.ts` ported.
+//! The platform registry, the descriptors, the generic adapter and the
+//! Battle.net and Ubisoft adapters.
 
 mod support;
 
@@ -223,7 +223,7 @@ fn descriptors_rejection_reaches_caller() {
     assert_eq!(error.message, "acme.json: schemaVersion: expected 1");
 }
 
-// ------------------------------------------------ genericAdapter
+// ------------------------------------------------ generic adapter
 
 #[test]
 fn generic_converts_ms_to_seconds() {

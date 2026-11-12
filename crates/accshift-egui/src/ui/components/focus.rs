@@ -6,9 +6,8 @@ use egui::{CornerRadius, Rect, Stroke, StrokeKind, Ui};
 use crate::app::vars::Vars;
 use crate::theme::Rgba;
 
-/// `app.css` on cards (`[data-account-id]`, `[data-folder-id]`,
-/// `[data-back-card]`): `outline: 2px solid color-mix(--fg 65%,
-/// transparent); outline-offset: 2px`, following the radius.
+/// The focus ring of an account, folder or back card: a 2 px outline of
+/// `--fg` at 65 %, 2 px outside the card, following its radius.
 pub fn card_ring(ui: &Ui, rect: Rect, radius: f32, vars: &Vars) {
     ui.painter().rect_stroke(
         rect.expand(2.0),
@@ -34,8 +33,8 @@ fn text_field_key() -> egui::Id {
 }
 
 /// A text field calls this while it holds focus, so the keyboard
-/// dispatcher reads `isEditableTarget` as the DOM does. The field also
-/// keeps the arrows and Escape: a DOM input moves its caret on the first
+/// dispatcher knows an editable field has focus. The field also
+/// keeps the arrows and Escape: a text input moves its caret on the first
 /// and keeps focus on the second, where egui would move or drop focus
 /// before anything reads the key. Tab still leaves it.
 pub fn mark_text_field(ctx: &egui::Context, id: egui::Id) {

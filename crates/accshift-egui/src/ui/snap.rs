@@ -3,8 +3,8 @@
 //!
 //! Chromium lays out in device pixels (zoom for DSF) with `LayoutUnit`s of
 //! 1/64 px, then paints most boxes on whole device pixels. Every rule here
-//! was measured on WebView2 with `parity/snap/measure.mjs` (a white case on
-//! black at six fractional offsets and four scales); the rules table is in
+//! was measured on WebView2 (a white case on black at six fractional
+//! offsets and four scales); the rules table is in
 //! `parity/README.md`. A component computes its layout in CSS px (points),
 //! like the CSS, and lets this module decide where the pixels go:
 //!

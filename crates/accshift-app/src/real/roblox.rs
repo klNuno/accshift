@@ -1,11 +1,11 @@
-//! Roblox commands. Port of `src-tauri/src/commands/roblox.rs`: Windows
+//! Roblox commands: Windows
 //! only, the cookie write goes through the registry.
 
 use super::RealBackend;
 use crate::error::BackendResult;
 use crate::types::{RobloxAccount, RobloxProfileInfo};
 
-/// `roblox_add_account_by_cookie`, roblox.rs lines 6-34: the cookie is
+/// Backs `Backend::roblox_add_account_by_cookie`: the cookie is
 /// checked against Roblox unlocked, only the store write takes the
 /// operation lock; failures recorded as `account_add` on Roblox.
 #[cfg(windows)]
@@ -40,7 +40,7 @@ fn account(account: accshift_core::platforms::roblox::RobloxAccount) -> RobloxAc
     }
 }
 
-/// `roblox_get_profile_info`, roblox.rs lines 36-45.
+/// Backs `Backend::roblox_get_profile_info`.
 #[cfg(windows)]
 pub(super) fn profile_info(
     backend: &RealBackend,
@@ -54,7 +54,7 @@ pub(super) fn profile_info(
     })
 }
 
-/// `roblox_check_sessions`, roblox.rs lines 47-59: the user ids whose stored
+/// Backs `Backend::roblox_check_sessions`: the user ids whose stored
 /// session is dead, one blocking probe per account on this thread.
 #[cfg(windows)]
 pub(super) fn check_sessions(backend: &RealBackend) -> BackendResult<Vec<String>> {

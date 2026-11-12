@@ -1,9 +1,8 @@
-//! The operation queue of `src/lib/platforms/steam/cs2Bridge.svelte.ts`
-//! (`enqueueBridgeOperation`, `loadCs2BridgeData`'s in-flight dedup and
-//! `triggerCs2BridgeCheck`) and the App.svelte effect that loads the bridge
-//! when the Steam tab shows (lines 312-315).
+//! The CS2 bridge operation queue: loads (one in flight at most) and
+//! per-account checks, run one at a time, and the load when the Steam tab
+//! shows.
 //!
-//! The cache itself is M1's [`Cs2Bridge`], in the Steam adapter's state;
+//! The cache itself is [`Cs2Bridge`], in the Steam adapter's state;
 //! this queue only orders the backend calls on [`Jobs`] and applies their
 //! answers to that cache on the UI thread.
 
@@ -20,9 +19,9 @@ use std::sync::Arc;
 /// One queued bridge call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cs2Operation {
-    /// `loadCs2BridgeData`. The TTL was checked when it was queued.
+    /// Fetch every row. The TTL was checked when it was queued.
     Load,
-    /// `triggerCs2BridgeCheck(steamId)`.
+    /// Check one Steam account.
     Check(String),
 }
 
@@ -46,7 +45,7 @@ enum Running {
 pub struct Cs2BridgeQueue {
     queue: VecDeque<Cs2Operation>,
     running: Option<Running>,
-    /// `inFlight`: a load is queued or running.
+    /// A load is queued or running.
     load_in_flight: bool,
 }
 
@@ -60,8 +59,7 @@ impl Cs2BridgeQueue {
         self.running.is_some() || !self.queue.is_empty()
     }
 
-    /// `loadCs2BridgeData(force)` (lines 47-87): queues a load unless one is
-    /// already in flight or the cache is fresh. True when queued.
+    /// Queues a load unless one is already in flight or the cache is fresh. True when queued.
     pub fn load(&mut self, cache: &Cs2Bridge, force: bool, now_ms: f64) -> bool {
         if self.load_in_flight {
             return false;
@@ -74,14 +72,13 @@ impl Cs2BridgeQueue {
         true
     }
 
-    /// `triggerCs2BridgeCheck(steamId)` (lines 89-115): App.svelte reacts to
-    /// `LoadingEvent::Cs2Check` with this.
+    /// Queues a check of one account: the app's answer to
+    /// `LoadingEvent::Cs2Check`.
     pub fn check(&mut self, steam_id: impl Into<String>) {
         self.queue.push_back(Cs2Operation::Check(steam_id.into()));
     }
 
-    /// App.svelte lines 312-315: the bridge loads when the Steam tab shows
-    /// accounts. True when a load was queued.
+    /// The bridge loads when the Steam tab shows accounts. True when a load was queued.
     pub fn ensure_loaded(
         &mut self,
         cache: &Cs2Bridge,
@@ -135,8 +132,8 @@ impl Cs2BridgeQueue {
         let Some(next) = self.queue.pop_front() else {
             return;
         };
-        // The enabled flag is read when the call runs, as the TS closure
-        // reads `enabledKnown` inside the queued operation.
+        // The enabled flag is read when the call runs, not when it was
+        // queued: a load ahead of it may have just learned it.
         let plan = steam
             .state()
             .cs2
@@ -156,7 +153,7 @@ impl Cs2BridgeQueue {
     }
 }
 
-/// The backend half of `triggerCs2BridgeCheck`. Silent: on failure the
+/// The backend half of a check. Silent: on failure the
 /// periodic read stays the fallback.
 pub fn check(plan: Cs2LoadPlan, backend: &dyn Backend, steam_id: &str) -> Cs2CheckResult {
     let mut result = Cs2CheckResult {

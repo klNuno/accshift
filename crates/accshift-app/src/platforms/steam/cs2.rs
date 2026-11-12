@@ -1,5 +1,4 @@
-//! CS2 card content, ported from `src/lib/platforms/steam/cs2CardContent.ts`,
-//! and the data half of `cs2Bridge.svelte.ts` (the cached rows, the TTL and
+//! CS2 card content and the CS2 bridge cache (the cached rows, the TTL and
 //! the enabled flag; the settings form is UI work).
 
 use crate::backend::Backend;
@@ -22,7 +21,7 @@ fn case_chip(case_earned: bool) -> (ChipTone, Text) {
     }
 }
 
-/// `cs2ExtensionSections`: the level, XP bar and weekly-case chip. Empty until
+/// The CS2 card sections: the level, XP bar and weekly-case chip. Empty until
 /// the bridge has both a level and an XP reading.
 pub fn cs2_extension_sections(data: Option<&Cs2BridgeAccount>) -> Vec<CardSection> {
     let Some(data) = data else {
@@ -45,14 +44,13 @@ pub fn cs2_extension_sections(data: Option<&Cs2BridgeAccount>) -> Vec<CardSectio
     }]
 }
 
-/// `cs2UsernameBadge`: the weekly-case state next to the username.
+/// The CS2 badge: the weekly-case state next to the username.
 pub fn cs2_username_badge(data: Option<&Cs2BridgeAccount>) -> Option<UsernameBadge> {
     let (tone, label) = case_chip(data?.case_earned);
     Some(UsernameBadge { tone, label })
 }
 
-/// The bridge cache of `cs2Bridge.svelte.ts`. Loads are silent: on failure
-/// the card shows nothing.
+/// The CS2 bridge cache. Loads are silent: on failure the card shows nothing.
 #[derive(Debug, Clone, Default)]
 pub struct Cs2Bridge {
     data: BTreeMap<String, Cs2BridgeAccount>,
@@ -79,17 +77,17 @@ pub struct Cs2LoadResult {
 }
 
 impl Cs2Bridge {
-    /// `getCs2BridgeData`.
+    /// The bridge data of this Steam account.
     pub fn data(&self, steam_id: &str) -> Option<&Cs2BridgeAccount> {
         self.data.get(steam_id)
     }
 
-    /// `getCs2BridgeVersion`: bumps whenever the data changes.
+    /// Bumps whenever the data changes.
     pub fn version(&self) -> u64 {
         self.version
     }
 
-    /// `invalidateCs2Bridge`: after a settings change, refetch next time.
+    /// After a settings change, refetch next time.
     pub fn invalidate(&mut self) {
         self.enabled = None;
         self.last_fetch_at = 0.0;
@@ -97,8 +95,7 @@ impl Cs2Bridge {
         self.version += 1;
     }
 
-    /// `loadCs2BridgeData` up to the backend: `None` while the cache is
-    /// fresh.
+    /// Plans a load up to the backend: `None` while the cache is fresh.
     pub fn begin_load(&self, force: bool, now_ms: f64) -> Option<Cs2LoadPlan> {
         if !force
             && self.last_fetch_at > 0.0
@@ -174,13 +171,12 @@ impl Cs2Bridge {
         }
     }
 
-    /// Records the enabled flag a bridge check read from the settings
-    /// (`enabledKnown = true` in `triggerCs2BridgeCheck`).
+    /// Records the enabled flag a bridge check read from the settings.
     pub fn note_enabled(&mut self, enabled: bool) {
         self.enabled = Some(enabled);
     }
 
-    /// `triggerCs2BridgeCheck` result: merges a re-checked row.
+    /// A bridge check result: merges a re-checked row.
     pub fn apply_check(&mut self, account: Cs2BridgeAccount) {
         self.data.insert(account.steam_id.clone(), account);
         self.version += 1;

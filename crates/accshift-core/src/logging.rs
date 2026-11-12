@@ -23,9 +23,16 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock, TryLockError};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const LOG_FILE_NAME: &str = "app.log";
+/// Where a panic is recorded when the sink stays busy. A GUI built for the
+/// Windows subsystem has no stderr, so without this file the crash is lost.
+const PANIC_FALLBACK_FILE_NAME: &str = "panic.log";
+/// A crash loop must not fill the disk through the fallback file.
+const MAX_PANIC_FALLBACK_BYTES: u64 = 256 * 1024;
+/// How long the hook waits for another thread to finish its record.
+const PANIC_SINK_WAIT: Duration = Duration::from_millis(250);
 const LOG_LOCK_FILE_NAME: &str = "app.log.lock";
 /// Live file, taken aside before the numbered chain is touched.
 const ROTATING_LOG_FILE_NAME: &str = "app.log.rotating";
@@ -279,10 +286,6 @@ fn shift_rotated_files(current: &Path) {
     }
 }
 
-pub fn log_lock_file_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
-    Ok(log_file_path(app_handle)?.with_file_name(LOG_LOCK_FILE_NAME))
-}
-
 // ---------------------------------------------------------------------------
 // Rotation and retention
 // ---------------------------------------------------------------------------
@@ -512,7 +515,7 @@ pub fn append_app_log(
 
 /// [`append_app_log`] for a caller that must never block on the sink mutex.
 /// `Ok(false)` means the record was skipped; the caller is expected to have a
-/// fallback (the panic hook writes to stderr).
+/// fallback (the panic hook writes to [`panic_fallback_path`]).
 pub fn try_append_app_log(
     app_handle: &dyn AppContext,
     level: &str,
@@ -532,6 +535,47 @@ fn app_log_record(level: &str, source: &str, message: &str, details: Option<&str
         "details": details.map(|value| trim_text(&sanitize_log_text(value), MAX_DETAILS_BYTES)),
     })
     .to_string()
+}
+
+pub fn panic_fallback_path(app_handle: &dyn AppContext) -> Result<PathBuf, String> {
+    Ok(log_file_path(app_handle)?.with_file_name(PANIC_FALLBACK_FILE_NAME))
+}
+
+/// Record a panic in the log, or in [`panic_fallback_path`] when the sink
+/// stays held.
+///
+/// Never `append_app_log` here. A panic raised while the sink mutex is held
+/// reaches the hook on the thread that owns it, and waiting on a non-reentrant
+/// mutex the thread already holds deadlocks the process instead of crashing
+/// it. Another thread writing a line holds it too, but only for a moment: the
+/// short bounded retry covers that case, the fallback file the first.
+fn record_panic(app_handle: &dyn AppContext, payload: &str, location: &str) -> Result<(), String> {
+    let deadline = Instant::now() + PANIC_SINK_WAIT;
+    loop {
+        match try_append_app_log(app_handle, "error", "rust.panic", payload, Some(location)) {
+            Ok(true) => return Ok(()),
+            Ok(false) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            _ => break,
+        }
+    }
+    let path = panic_fallback_path(app_handle)?;
+    ensure_parent(&path)?;
+    if fs::metadata(&path).is_ok_and(|meta| meta.len() >= MAX_PANIC_FALLBACK_BYTES) {
+        return Err(format!("{} is full", path.display()));
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| format!("Could not open {}: {e}", path.display()))?;
+    writeln!(
+        file,
+        "{}",
+        app_log_record("error", "rust.panic", payload, Some(location))
+    )
+    .map_err(|e| format!("Could not write {}: {e}", path.display()))
 }
 
 pub fn install_panic_hook(app_handle: crate::AppCtx) {
@@ -557,20 +601,8 @@ pub fn install_panic_hook(app_handle: crate::AppCtx) {
             "unknown panic payload".to_string()
         };
 
-        // Never `append_app_log` here. A panic raised while the sink mutex is
-        // held reaches this hook on the thread that owns it, and waiting on a
-        // non-reentrant mutex the thread already holds deadlocks the process
-        // instead of crashing it. Skip the record and say so on stderr.
-        let logged = try_append_app_log(
-            &*app_handle,
-            "error",
-            "rust.panic",
-            &payload,
-            Some(&location),
-        )
-        .unwrap_or(false);
-        if !logged {
-            eprintln!("panic at {location}: {payload} (log sink unavailable)");
+        if let Err(error) = record_panic(&*app_handle, &payload, &location) {
+            eprintln!("panic at {location}: {payload} (not logged: {error})");
         }
 
         previous_hook(panic_info);

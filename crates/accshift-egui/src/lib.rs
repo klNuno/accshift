@@ -5,7 +5,6 @@ pub mod avatars;
 pub mod backdrop;
 pub mod bench;
 pub mod clipboard;
-pub mod data;
 pub mod harness;
 pub mod icons;
 pub mod screens;
@@ -20,12 +19,12 @@ pub mod zoom;
 pub use app::{Action, AppModel};
 pub use screens::Screen;
 
-#[cfg(all(feature = "software", feature = "glow"))]
-compile_error!("pick one renderer: `software` (default) or `glow` with --no-default-features");
+#[cfg(not(feature = "software"))]
+compile_error!("the `software` feature is the only renderer: keep the default features");
 
-/// What both runners drive: the current screen plus the optional scene run.
+/// What the runner drives: the current screen plus the optional scene run.
 /// The window is cleared to transparent so the OS backdrop shows through the
-/// theme's window fill, like the Tauri window.
+/// theme's window fill.
 pub struct Shell {
     pub screen: Screen,
     pub scenes: Option<harness::SceneRun>,
@@ -33,6 +32,8 @@ pub struct Shell {
     pub held: Vec<egui::Event>,
     /// The window of a normal run; scenes and the bench have none.
     pub window: Option<window::Host>,
+    /// [`Self::close`] ran: the close button and an OS quit both call it.
+    closed: bool,
 }
 
 impl Shell {
@@ -42,6 +43,7 @@ impl Shell {
             scenes,
             held: Vec::new(),
             window: None,
+            closed: false,
         }
     }
 
@@ -57,6 +59,13 @@ impl Shell {
         self.window
             .as_ref()
             .is_none_or(|host| !host.starts_hidden())
+    }
+
+    /// A `--tray` launch got no tray icon: the window reveals on boot.
+    pub fn no_tray(&mut self) {
+        if let Some(host) = &mut self.window {
+            host.no_tray();
+        }
     }
 
     /// A normal run that owns a window (and therefore a possible tray).
@@ -99,9 +108,8 @@ impl Shell {
         self.window.as_mut().is_none_or(|host| host.take_show(now))
     }
 
-    /// boot.rs `install_window_event_handlers`, `Moved`. True when the
-    /// frame must be painted again: the Liquid Glass wallpaper follows the
-    /// window (`onMoved` then `realign`).
+    /// The window moved. True when the frame must be painted again: the
+    /// Liquid Glass wallpaper follows the window.
     pub fn window_moved(&self, geometry: Option<window::Geometry>) -> bool {
         if let Some(host) = &self.window {
             host.moved(geometry);
@@ -109,11 +117,16 @@ impl Shell {
         matches!(&self.screen, Screen::App(app) if app.wallpaper_shown())
     }
 
-    /// The close sequence of a normal run (`SHUTDOWN_ORDER`): the geometry
+    /// The close sequence of a normal run: the geometry
     /// save starts, the window hides, the telemetry session ends, the save
-    /// gets its 5 s, then every write the UI still holds is flushed. The
-    /// runner exits after.
+    /// gets its 5 s, then every write the UI still holds is flushed and the
+    /// single instance is released. The runner exits after. Runs once: an
+    /// OS quit (macOS Cmd+Q, the session ending) calls it again on its way
+    /// out.
     pub fn close(&mut self, geometry: Option<window::Geometry>, hide: impl FnOnce()) {
+        if std::mem::replace(&mut self.closed, true) {
+            return;
+        }
         let Some(host) = &self.window else {
             return;
         };
@@ -133,6 +146,26 @@ impl Shell {
                     None,
                 );
             }
+        }
+        if let Some(host) = &mut self.window {
+            host.release_single_instance();
+        }
+    }
+
+    /// A window error the run survives (a frame the presenter dropped):
+    /// the app log of a normal run, stderr otherwise.
+    pub fn log_window_error(&self, message: &str, details: &str) {
+        match &self.window {
+            Some(host) => {
+                let _ = accshift_core::logging::append_app_log(
+                    host.backend().context(),
+                    "warn",
+                    "backend.window",
+                    message,
+                    Some(details),
+                );
+            }
+            None => eprintln!("{message}: {details}"),
         }
     }
 
@@ -183,6 +216,12 @@ impl Shell {
         if let (false, Screen::App(app)) = (launched.is_empty(), &mut self.screen) {
             app.open_urls(ui.ctx(), &launched);
         }
+        // The link that started the app: the controller holds it until boot.
+        if let (Some(host), Screen::App(app)) = (&mut self.window, &mut self.screen) {
+            if let Some(url) = host.take_launch_url() {
+                app.open_urls(ui.ctx(), &[url]);
+            }
+        }
         if let (Some(run), Screen::App(app)) = (&mut self.scenes, &mut self.screen) {
             let links = run.take_links();
             if !links.is_empty() {
@@ -227,8 +266,7 @@ impl Shell {
 
 /// The context menu key (`e.key == "ContextMenu"`). egui has no such key,
 /// so the software runner and the scenes send it as F35, which no Windows
-/// keyboard reports (winit stops at F24 there). eframe hands the app no
-/// window event, so the glow runner never sees it.
+/// keyboard reports (winit stops at F24 there).
 pub const CONTEXT_MENU_KEY: egui::Key = egui::Key::F35;
 
 /// Chromium dispatches input events one at a time; egui hands a frame its
@@ -283,21 +321,6 @@ pub fn sequence_input(held: &mut Vec<egui::Event>, events: &mut Vec<egui::Event>
     !held.is_empty()
 }
 
-#[cfg(feature = "glow")]
-impl eframe::App for Shell {
-    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        self.input_hook(ctx, raw_input, 1.0);
-    }
-
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.frame(ui);
-    }
-
-    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        [0.0, 0.0, 0.0, 0.0]
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use egui::{pos2, Event, Key, Modifiers, PointerButton};
@@ -349,5 +372,143 @@ mod tests {
         let mut events = vec![press(true), key(Key::A)];
         assert!(!sequence_input(&mut held, &mut events));
         assert_eq!(events.len(), 2);
+    }
+
+    /// [`super::Shell::close`] on a real backend over a scratch folder: no
+    /// telemetry endpoint, nothing of the user's read or written.
+    mod close {
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        use accshift_app::lifecycle::single_instance::{self, Launch, SingleInstance};
+        use accshift_app::real::RealBackend;
+        use accshift_core::{config, AppContext};
+
+        use crate::window::{Geometry, Host};
+        use crate::{Screen, Shell};
+
+        struct Scratch(PathBuf);
+
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        impl AppContext for Scratch {
+            fn app_config_dir(&self) -> Result<PathBuf, String> {
+                Ok(self.0.join("config"))
+            }
+            fn app_data_dir(&self) -> Result<PathBuf, String> {
+                Ok(self.0.join("config"))
+            }
+            fn app_local_data_dir(&self) -> Result<PathBuf, String> {
+                Ok(self.0.join("local"))
+            }
+            fn app_cache_dir(&self) -> Result<PathBuf, String> {
+                Ok(self.0.join("local"))
+            }
+        }
+
+        fn scratch(name: &str) -> Arc<Scratch> {
+            let root = std::env::temp_dir()
+                .join(format!("accshift-egui-shell-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(root.join("config")).unwrap();
+            Arc::new(Scratch(root))
+        }
+
+        fn shell(scratch: &Arc<Scratch>, single: Option<SingleInstance>) -> Shell {
+            let backend = Arc::new(RealBackend::with_context(scratch.clone()));
+            backend.boot_state().mark_completed();
+            Shell::new(Screen::Blank, None)
+                .with_window(Host::new(backend, 0).with_single_instance(single))
+        }
+
+        fn geometry(width: f64) -> Geometry {
+            Geometry {
+                width,
+                height: 600.0,
+                position: Some((40.0, 60.0)),
+                scale: 1.0,
+            }
+        }
+
+        #[test]
+        fn an_os_quit_after_the_close_button_keeps_the_first_close() {
+            let dir = scratch("once");
+            let mut shell = shell(&dir, None);
+            let mut hidden = 0;
+            shell.close(Some(geometry(1000.0)), || hidden += 1);
+            // `exiting` follows every close: it must not run the sequence
+            // again over what the first one saved.
+            shell.close(Some(geometry(1200.0)), || hidden += 1);
+            assert_eq!(hidden, 1);
+            let saved = config::load_window(dir.as_ref());
+            assert_eq!(saved.size, Some((1000.0, 600.0)));
+        }
+
+        #[test]
+        fn an_os_quit_alone_saves_the_geometry() {
+            let dir = scratch("quit");
+            let mut shell = shell(&dir, None);
+            shell.close(Some(geometry(1100.0)), || {});
+            assert_eq!(
+                config::load_window(dir.as_ref()).size,
+                Some((1100.0, 600.0))
+            );
+        }
+
+        #[test]
+        fn close_frees_the_single_instance_before_the_jobs_drain() {
+            let dir = scratch("single");
+            let id = format!("com.accshift.test-shell-close-{}", std::process::id());
+            let Launch::Primary(single) = single_instance::acquire(&id, &[], "", None) else {
+                panic!("the test identifier is free");
+            };
+            let mut shell = shell(&dir, Some(single));
+            shell.close(None, || {});
+            // The shell (and its jobs) still lives: a new launch is primary.
+            match single_instance::acquire(&id, &[], "", None) {
+                Launch::Primary(_) => {}
+                _ => panic!("a launch after close was handed to the closing app"),
+            }
+            drop(shell);
+        }
+
+        #[test]
+        fn a_link_that_started_the_app_is_handed_over_once() {
+            let dir = scratch("launch-url");
+            let host = |args: &[&str]| {
+                let backend = Arc::new(RealBackend::with_context(dir.clone()));
+                let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
+                Host::new(backend, 0).with_launch_args(&args)
+            };
+            // Windows and Linux hand the link as the one argument; macOS
+            // never does.
+            let expected = (cfg!(windows) || cfg!(target_os = "linux"))
+                .then(|| "accshift://switch/steam/main".to_string());
+            let mut linked = host(&["accshift-gui", "accshift://switch/steam/main"]);
+            assert_eq!(linked.take_launch_url(), expected);
+            assert_eq!(linked.take_launch_url(), None);
+            assert_eq!(host(&["accshift-gui"]).take_launch_url(), None);
+            assert_eq!(host(&["accshift-gui", "--tray"]).take_launch_url(), None);
+            assert_eq!(
+                host(&["accshift-gui", "https://example.com/"]).take_launch_url(),
+                None
+            );
+        }
+
+        #[test]
+        fn a_tray_start_without_a_tray_reveals_the_window() {
+            let dir = scratch("tray");
+            let backend = Arc::new(RealBackend::with_context(dir.clone()));
+            let mut shell = Shell::new(Screen::Blank, None)
+                .with_window(Host::new(backend, 0).start_hidden(true));
+            assert!(!shell.auto_reveal());
+            shell.no_tray();
+            assert!(shell.auto_reveal());
+            assert!(!shell.starts_in_tray());
+        }
     }
 }

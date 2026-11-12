@@ -1,5 +1,7 @@
 use super::*;
 use crate::diagnostics::Diag;
+use accshift_core::app_dirs::{AppDirs, BaseDirs};
+use accshift_core::storage::{client_store_path, STORE_SETTINGS};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -249,5 +251,79 @@ fn the_toggle_on_reaches_the_command() {
     assert!(
         tmp.entries() > 0,
         "dispatch never reached the command with the toggle on"
+    );
+}
+
+/// The CLI's folders over a temp root, through the shared resolver, with
+/// `json` as the stored settings.
+fn dirs_with_settings(tmp: &TempRoot, json: &str) -> AppDirs {
+    let root = Some(tmp.0.clone());
+    let ctx = AppDirs::new(BaseDirs {
+        config: root.clone(),
+        data: root.clone(),
+        local_data: root.clone(),
+        cache: root,
+    });
+    let path = client_store_path(&ctx, STORE_SETTINGS).expect("settings path");
+    fs::create_dir_all(path.parent().expect("settings parent")).expect("settings dir");
+    fs::write(&path, json).expect("write settings");
+    ctx
+}
+
+#[test]
+fn a_null_launch_options_value_keeps_the_cli_open() {
+    let tmp = TempRoot::new("null-launch-options");
+    let ctx = dirs_with_settings(
+        &tmp,
+        r#"{"cliEnabled":true,"platformSettings":{"steam":{"launchOptions":null}}}"#,
+    );
+    assert_eq!(cli_gate_in(&ctx), CliGate::Allow);
+}
+
+#[test]
+fn the_toggle_reads_like_the_app() {
+    // The app's rule: open unless `cliEnabled` is literally `false`.
+    for (json, want) in [
+        (r#"{"cliEnabled":"true"}"#, CliGate::Allow),
+        (r#"{"cliEnabled":"false"}"#, CliGate::Allow),
+        (r#"{"cliEnabled":0}"#, CliGate::Allow),
+        (r#"{"cliEnabled":null}"#, CliGate::Allow),
+        (
+            r#"{"platformSettings":{"steam":{"launchOptions":5}}}"#,
+            CliGate::Allow,
+        ),
+        (r#"{"platformSettings":[]}"#, CliGate::Allow),
+        ("[]", CliGate::Allow),
+        (r#"{"cliEnabled":false}"#, CliGate::Disabled),
+    ] {
+        let tmp = TempRoot::new("toggle");
+        let ctx = dirs_with_settings(&tmp, json);
+        assert_eq!(cli_gate_in(&ctx), want, "{json}");
+    }
+    // A file that is not JSON at all still refuses rather than opens.
+    let tmp = TempRoot::new("toggle-corrupt");
+    let ctx = dirs_with_settings(&tmp, r#"{"cliEnabled":fal"#);
+    assert!(matches!(cli_gate_in(&ctx), CliGate::Unavailable(_)));
+}
+
+#[test]
+fn the_cli_links_the_vc_runtime_like_the_gui() {
+    // Without it the standalone CLI needs VCRUNTIME140.dll, which the
+    // installer does not ship. Its body is a copy of the GUI's.
+    let body = |build_rs: &'static str| {
+        let start = build_rs
+            .find("fn static_vcruntime() {")
+            .expect("static_vcruntime in build.rs");
+        let len = build_rs[start..]
+            .find("\n}\n")
+            .expect("end of static_vcruntime");
+        &build_rs[start..start + len]
+    };
+    let cli = include_str!("../build.rs");
+    let gui = include_str!("../../accshift-egui/build.rs");
+    assert_eq!(body(cli), body(gui));
+    assert!(
+        cli.contains("        static_vcruntime();\n"),
+        "called by main"
     );
 }

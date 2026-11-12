@@ -1,9 +1,9 @@
-//! Steam ban warnings, ported from `src/lib/platforms/steam/warnings.ts`.
+//! Steam ban warnings.
 //!
-//! The TS loader reads the client stores, awaits the backend, then writes the
-//! stores back. Stores live on the UI thread and backend calls on the job
-//! pool, so the load is split in three: [`plan`] (UI thread, reads stores and
-//! the session state), [`fetch`] (job thread, the only backend calls) and
+//! A load reads the client stores, calls the backend, then writes the stores
+//! back. Stores live on the UI thread and backend calls on the job pool, so
+//! the load is split in three: [`plan`] (UI thread, reads stores and the
+//! session state), [`fetch`] (job thread, the only backend calls) and
 //! [`finish`] (UI thread, writes stores and the session state).
 //! [`load_blocking`] chains them for callers that may block.
 
@@ -25,7 +25,7 @@ pub const BAN_ERROR_TOAST_COOLDOWN_MS: f64 = 30_000.0;
 /// for this session, until a forced refresh.
 pub const BAN_OMISSIONS_BEFORE_SKIP: u32 = 2;
 
-/// The module state of `warnings.ts`: what this session already checked.
+/// What this session already checked.
 #[derive(Debug, Clone, Default)]
 pub struct BanSession {
     pub checked: BTreeSet<String>,
@@ -33,7 +33,8 @@ pub struct BanSession {
     pub last_error_toast_at: f64,
 }
 
-/// `BanCheckState`, the `cache.steam.ban-check-state` store.
+/// The `cache.steam.ban-check-state` store: when bans were last checked, and
+/// for which ids.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BanCheckState {
     pub last_success_at: f64,
@@ -47,7 +48,7 @@ fn unique(ids: impl IntoIterator<Item = String>) -> Vec<String> {
         .collect()
 }
 
-/// `readBanCheckState`.
+/// Reads the ban check state, `None` when absent or malformed.
 pub fn read_ban_check_state(stores: &ClientStores) -> Option<BanCheckState> {
     let raw = stores.storage().get(CLIENT_STORE_STEAM_BAN_CHECK_STATE)?;
     if !raw.is_object() && !raw.is_array() {
@@ -73,7 +74,7 @@ pub fn read_ban_check_state(stores: &ClientStores) -> Option<BanCheckState> {
     })
 }
 
-/// `isBanInfo`, then the parse.
+/// A cached ban entry, `None` when it is not one.
 fn ban_info(value: &Value) -> Option<BanInfo> {
     let object = value.as_object()?;
     let is_bool = |name: &str| object.get(name).is_some_and(Value::is_boolean);
@@ -92,7 +93,7 @@ fn ban_info(value: &Value) -> Option<BanInfo> {
     serde_json::from_value(value.clone()).ok()
 }
 
-/// `readBanInfoCache`: the valid entries of `cache.steam.ban-info-cache`.
+/// The valid entries of `cache.steam.ban-info-cache`.
 pub fn read_ban_info_cache(stores: &ClientStores) -> BTreeMap<String, BanInfo> {
     let Some(record) = stores
         .storage()
@@ -114,7 +115,7 @@ fn write_ban_info_cache(stores: &mut ClientStores, bans: &BTreeMap<String, BanIn
         .set(CLIENT_STORE_STEAM_BAN_INFO_CACHE, value);
 }
 
-/// `formatBanTooltip`: English lines, as TS has them.
+/// The tooltip lines, in English.
 pub fn format_ban_tooltip(info: &BanInfo) -> String {
     let mut lines = Vec::new();
     if info.community_banned {
@@ -137,8 +138,7 @@ pub fn format_ban_tooltip(info: &BanInfo) -> String {
     lines.join("\n")
 }
 
-/// `toSteamAccountWarningPresentation`. Every cached row gets one, chips or
-/// not, as in TS.
+/// The warning of one cached row. Every cached row gets one, chips or not.
 pub fn ban_presentation(info: &BanInfo) -> WarningPresentation {
     let mut chips = Vec::new();
     if info.community_banned {
@@ -189,19 +189,19 @@ pub fn ban_presentation(info: &BanInfo) -> WarningPresentation {
     }
 }
 
-/// `toWarningMap`.
+/// The ban map as a warning map.
 pub fn to_warning_map(bans: &BTreeMap<String, BanInfo>) -> BTreeMap<String, WarningPresentation> {
     bans.iter()
         .map(|(id, info)| (id.clone(), ban_presentation(info)))
         .collect()
 }
 
-/// `getCachedSteamWarningStates`.
+/// The warnings of the cached bans.
 pub fn cached_warning_states(stores: &ClientStores) -> BTreeMap<String, WarningPresentation> {
     to_warning_map(&read_ban_info_cache(stores))
 }
 
-/// The set `alreadyCheckedBanIds` answers with.
+/// The ids a load can skip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlreadyChecked {
     /// Nothing counts as checked: check everything.
@@ -212,9 +212,9 @@ pub enum AlreadyChecked {
     Cached,
 }
 
-/// `alreadyCheckedBanIds`: with no delay configured, whatever this session
-/// fetched; inside a delay window, the persisted set; a forced refresh or a
-/// lapsed window checks everything again.
+/// With no delay configured, whatever this session fetched; inside a delay
+/// window, the persisted set; a forced refresh or a lapsed window checks
+/// everything again.
 pub fn already_checked_ban_ids(
     force_refresh: bool,
     delay_days: i64,
@@ -246,7 +246,8 @@ pub struct BanPlan {
     pub previously_checked: Vec<String>,
     pub force_refresh: bool,
     pub silent: bool,
-    /// Show the sticky `toast.banChecking` until [`finish`] returns.
+    /// A visible check: the loader keeps the sticky `toast.banChecking` up
+    /// until the fetch ends.
     pub checking_toast: bool,
 }
 
@@ -261,7 +262,7 @@ pub enum BanStep {
 /// The backend half of a load.
 #[derive(Debug, Clone)]
 pub enum BanFetch {
-    /// `hasApiKey` failed.
+    /// The API key lookup failed.
     KeyLookupFailed(BackendError),
     /// Steam has no API key.
     NoApiKey { key_generation: Option<u64> },
@@ -272,7 +273,7 @@ pub enum BanFetch {
     },
 }
 
-/// `loadSteamWarningStates` up to the backend call.
+/// A warning load up to the backend call.
 pub fn plan(
     session: &BanSession,
     memo: &ApiKeyMemo,
@@ -363,7 +364,7 @@ pub fn fetch(plan: &BanPlan, backend: &dyn Backend) -> BanFetch {
     }
 }
 
-/// `showBanErrorToast`: at most once per cooldown, never on a silent load.
+/// The ban error toast: at most once per cooldown, never on a silent load.
 fn error_toast(session: &mut BanSession, plan: &BanPlan, toasts: &mut Vec<ToastRequest>) {
     if plan.silent || plan.now_ms - session.last_error_toast_at < BAN_ERROR_TOAST_COOLDOWN_MS {
         return;
@@ -375,8 +376,8 @@ fn error_toast(session: &mut BanSession, plan: &BanPlan, toasts: &mut Vec<ToastR
     session.last_error_toast_at = plan.now_ms;
 }
 
-/// `loadSteamWarningStates` after the backend call: session, memo and stores
-/// updated, the map and outcome returned.
+/// A warning load after the backend call: session, memo and stores updated,
+/// the map and outcome returned.
 pub fn finish(
     session: &mut BanSession,
     memo: &mut ApiKeyMemo,

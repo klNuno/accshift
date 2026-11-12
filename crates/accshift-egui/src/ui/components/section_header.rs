@@ -1,5 +1,4 @@
-//! `src/lib/shared/components/SectionHeader.svelte` (re-exported by
-//! `features/folders/SectionHeader.svelte`): the header of a section in the
+//! The header of a section in the
 //! expanded folders layout.
 //!
 //! `.section-header`: flex, `align-items: center`, `gap: 10px`, `padding:
@@ -55,11 +54,11 @@ const FOLDER_ICON: &[u8] = b"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\
 /// What the header reports.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SectionHeaderEvent {
-    /// Click: `onToggle`.
+    /// Click: the section folds or unfolds.
     Toggle,
     /// Double click on a folder header: `onNavigate(folder.id)`.
     Navigate(String),
-    /// Right click on a folder header: `onContextMenu`.
+    /// Right click on a folder header: its context menu.
     ContextMenu(Pos2),
 }
 
@@ -72,9 +71,9 @@ pub struct SectionHeaderProps<'a> {
     pub folder: Option<&'a str>,
     pub label: &'a str,
     pub count: usize,
-    /// `cardColor` resolved, `None` for `""`.
+    /// The card colour resolved, `None` for `""`.
     pub card_color: Option<Rgba>,
-    /// `accentColor`.
+    /// The active platform's accent.
     pub accent: Rgba,
     pub collapsed: bool,
     pub focus_visible: bool,

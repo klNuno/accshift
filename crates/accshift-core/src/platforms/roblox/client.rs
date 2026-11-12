@@ -175,8 +175,8 @@ pub(super) fn persist_rotated_cookie(
     true
 }
 
-pub(super) fn kill_roblox() {
-    crate::os::kill_processes(ROBLOX_PROCESS_NAMES);
+pub(super) fn kill_roblox_player() {
+    crate::os::kill_processes(ROBLOX_SWITCH_KILL_NAMES);
 }
 
 pub(super) fn request_auth_ticket(cookie: &str) -> Result<String, String> {
@@ -191,8 +191,8 @@ pub(super) fn request_auth_ticket(cookie: &str) -> Result<String, String> {
     .map_err(|e| format!("Could not request auth ticket: {e}"))?;
 
     if !response.status().is_success() {
-        // The webview matches this wording on HTTP 401 to flag the account's
-        // session as expired (roblox/adapter.ts). Keep it stable.
+        // accshift-app matches this wording on HTTP 401 to flag the account's
+        // session as expired (`platforms/roblox.rs`). Keep it stable.
         return Err(format!(
             "Auth ticket request failed (HTTP {})",
             response.status()

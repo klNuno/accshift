@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 
 const STEAM_BAN_IDS_PER_REQUEST: usize = 100;
 
-/// Taille max lue pour l'apercu d'erreur (16 KB). On ne garde que 160 chars au
-/// final, inutile (et risque d'OOM sur flux malveillant) de tout aspirer.
+/// Most bytes read for the error preview (16 KB). Only 160 chars are kept in
+/// the end; reading everything is useless (and an OOM risk on a hostile stream).
 const MAX_ERROR_PREVIEW_BODY: usize = 16 * 1024;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -50,10 +50,9 @@ pub async fn fetch_player_bans(
     }
 
     let mut all_players: Vec<BanInfo> = Vec::new();
-    // On garde la derniere erreur de chunk au lieu d'abandonner tout de suite :
-    // un echec sur un chunk tardif ne doit pas jeter les bans deja recuperes
-    // pour les chunks precedents. On ne remonte l'erreur que si aucun chunk
-    // n'a abouti.
+    // Keep the last chunk error instead of giving up at once: a failure on a
+    // late chunk must not throw away the bans already fetched for the earlier
+    // chunks. The error is only returned when no chunk succeeded.
     let mut last_error: Option<String> = None;
 
     for chunk in steam_ids.chunks(STEAM_BAN_IDS_PER_REQUEST) {
@@ -114,8 +113,8 @@ pub async fn fetch_player_bans(
         }));
     }
 
-    // On ne remonte l'erreur que si aucun chunk n'a produit de resultat :
-    // sinon on renvoie les bans deja recuperes plutot que de tout jeter.
+    // The error is only returned when no chunk produced a result; otherwise
+    // the bans already fetched are returned instead of dropping everything.
     if all_players.is_empty() {
         if let Some(e) = last_error {
             return Err(e);
@@ -125,10 +124,10 @@ pub async fn fetch_player_bans(
     Ok(all_players)
 }
 
-/// Lit le corps d'une reponse en accumulant les chunks avec un plafond dur.
-/// Stoppe en erreur si le `Content-Length` annonce, ou les octets recus,
-/// depassent `max`. Sert ici a borner l'apercu d'erreur : empeche l'OOM sur un
-/// flux malveillant/infini qui tiendrait dans le timeout HTTP.
+/// Read a response body chunk by chunk under a hard cap. Fails when the
+/// announced `Content-Length`, or the bytes received, exceed `max`. Used here
+/// to bound the error preview: it prevents an OOM on a hostile or endless
+/// stream that would fit within the HTTP timeout.
 async fn read_body_capped(response: reqwest::Response, max: usize) -> Result<String, ()> {
     if let Some(len) = response.content_length() {
         if len as usize > max {

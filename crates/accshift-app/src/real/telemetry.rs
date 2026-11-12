@@ -1,18 +1,16 @@
-//! Telemetry: the runtime of `src-tauri/src/telemetry_runtime.rs` and the
-//! commands of `src-tauri/src/commands/telemetry.rs`, plus the events other
-//! commands record (`track_operation`, the switch, the first boot).
+//! Telemetry: the event queue, the consent commands, plus the events other
+//! commands record (failed operations, the switch, the first boot).
 //!
-//! Same queue (`accshift_core::telemetry::Worker`), same consent states read
-//! from the same config, same events and properties, same `/forget`,
-//! `/export` and `/consent` calls. The endpoint is the build-time
+//! The queue is `accshift_core::telemetry::Worker`; consent is read from the
+//! config; the server calls are `/forget`, `/export` and `/consent`. The
+//! endpoint is the build-time
 //! `ACCSHIFT_TELEMETRY_URL` (`accshift_core::telemetry::TELEMETRY_URL`) for
 //! [`RealBackend::new`], none for [`RealBackend::with_context`], and whatever
 //! a test passes to [`RealBackend::with_telemetry_endpoint`].
 //!
-//! The queue starts when the shell calls [`RealBackend::start_telemetry`]
-//! (lib.rs lines 171-177 build it in `setup`, after the window). Before that,
-//! and for ever on a backend without an endpoint, every event is dropped, as
-//! the Tauri app drops them without consent.
+//! The queue starts when the shell calls [`RealBackend::start_telemetry`],
+//! after the window. Before that, and for ever on a backend without an
+//! endpoint, every event is dropped.
 
 use super::RealBackend;
 use crate::error::{BackendError, BackendResult};
@@ -27,25 +25,24 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 /// How long [`RealBackend::end_telemetry_session`] waits for the final flush
-/// (`SHUTDOWN_FLUSH_DEADLINE`, telemetry_runtime.rs lines 66-72).
+/// on close.
 pub const SHUTDOWN_FLUSH_DEADLINE: Duration = Duration::from_millis(2500);
 
-/// The `surface` property of every event: the egui app replaces the Tauri
-/// GUI, so it reports as the GUI.
+/// The `surface` property of every event: the desktop app reports as the
+/// GUI.
 pub const SURFACE: &str = "gui";
 
 /// The error of a telemetry network command on a backend that has no
 /// endpoint ([`RealBackend::with_context`]): nothing leaves the machine.
 pub const NO_ENDPOINT: &str = "telemetry_endpoint_unset";
 
-/// The app version, the workspace's: the one the Tauri app reported and
-/// `tauri.conf.json` carries.
+/// The app version, the workspace's, which `tauri.conf.json` repeats.
 pub fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-/// `TelemetryState` (telemetry_runtime.rs lines 11-16), minus `app_start`,
-/// which [`Telemetry`] keeps from the backend's construction.
+/// The running queue. The start time is not here: [`Telemetry`] keeps it
+/// from the backend's construction.
 struct Running {
     handle: Handle,
     worker: Mutex<Option<Worker>>,
@@ -79,7 +76,7 @@ impl Telemetry {
         }
     }
 
-    /// `refresh_consent_from_config`, telemetry_runtime.rs lines 74-80.
+    /// Reloads the consent from the config into the queue.
     fn refresh_consent(&self, c: &dyn AppContext) {
         if let Some(handle) = self.handle() {
             let cfg = config::load_config(c);
@@ -102,9 +99,8 @@ impl Telemetry {
             .min(u128::from(u64::MAX)) as u64
     }
 
-    /// The endpoint and the blocking client the Tauri commands build for each
-    /// `/forget`, `/export` and `/consent` call (commands/telemetry.rs lines
-    /// 100-104, 369-379, 402-406).
+    /// The endpoint and the blocking client of each `/forget`, `/export` and
+    /// `/consent` call.
     fn direct_client(&self) -> Result<(String, String, reqwest::blocking::Client), String> {
         let endpoint = self
             .endpoint
@@ -128,8 +124,7 @@ impl RealBackend {
         Self::build(ctx, Some(endpoint.trim_end_matches('/').to_string()))
     }
 
-    /// `TelemetryState::new`, telemetry_runtime.rs lines 18-48, with the
-    /// queue's default timings. Call once, from the shell's setup. False when
+    /// Starts the queue with its default timings. Call once, from the shell's setup. False when
     /// the backend has no endpoint or the queue already runs.
     pub fn start_telemetry(&self) -> bool {
         self.start_telemetry_with(QueueParams::default())
@@ -176,9 +171,8 @@ impl RealBackend {
         self.telemetry.running.get().is_some()
     }
 
-    /// The close handler's telemetry (boot.rs lines 613-622 and
-    /// `TelemetryState::shutdown`, telemetry_runtime.rs lines 50-62):
-    /// `session_ended` with the time since start, then the final flush,
+    /// The close telemetry: `session_ended` with the time since start, then
+    /// the final flush,
     /// bounded by [`SHUTDOWN_FLUSH_DEADLINE`]. Call after hiding the window.
     pub fn end_telemetry_session(&self) {
         let Some(running) = self.telemetry.running.get() else {
@@ -197,13 +191,13 @@ impl RealBackend {
         }
     }
 
-    /// The deep-link handler's counter (boot.rs lines 715-719): no URL, no
+    /// The deep-link handler's counter: no URL, no
     /// account id, the event only.
     pub fn track_deep_link(&self) {
         self.telemetry.track(Event::DeepLinkUsed);
     }
 
-    /// `track_operation`, commands/mod.rs lines 102-130: a failed result
+    /// Records a command's result: a failed one
     /// records `operation_failed` with its typed error family, then goes back
     /// unchanged. A success records nothing.
     pub(super) fn track_operation<T>(
@@ -222,8 +216,7 @@ impl RealBackend {
         result.map_err(BackendError::from)
     }
 
-    /// The telemetry half of `finish_boot` (commands/app.rs lines 153-167):
-    /// `first_run` once ever, `app_launched`, one `accounts_snapshot` per
+    /// The first boot telemetry: `first_run` once ever, `app_launched`, one `accounts_snapshot` per
     /// non-empty platform. Skipped entirely until the queue runs, so a
     /// backend that sends nothing does not mark the first run as reported
     /// (or read `loginusers.vdf` for nothing).
@@ -237,7 +230,7 @@ impl RealBackend {
         self.emit_accounts_snapshots();
     }
 
-    /// `emit_first_run_once`, commands/app.rs lines 172-191.
+    /// Sends `first_run` once ever, after onboarding and with a mode on.
     fn emit_first_run_once(&self) {
         let c = &*self.ctx;
         let cfg = config::load_config(c);
@@ -253,7 +246,7 @@ impl RealBackend {
         });
     }
 
-    /// `emit_accounts_snapshots`, commands/app.rs lines 193-241: Steam counted
+    /// One account count per platform: Steam counted
     /// from `loginusers.vdf` (zero when Steam is missing), the eight others
     /// from the config.
     fn emit_accounts_snapshots(&self) {
@@ -282,7 +275,7 @@ impl RealBackend {
         }
     }
 
-    /// `retry_pending_forgets`, commands/telemetry.rs lines 87-118.
+    /// Sends the `/forget` calls still pending.
     fn retry_pending_forgets(&self) -> Result<(), String> {
         let c = &*self.ctx;
         let pending = config::load_config(c).telemetry.pending_forget_install_ids;
@@ -303,7 +296,7 @@ impl RealBackend {
     }
 }
 
-/// `stage_mode_b_opt_out`, commands/telemetry.rs lines 41-55.
+/// Turns mode B off, clears the install id and queues it for a `/forget`.
 pub fn stage_mode_b_opt_out(cfg: &mut TelemetryConfig) {
     cfg.mode_b_enabled = false;
     let install_id = std::mem::take(&mut cfg.install_id);
@@ -317,13 +310,13 @@ pub fn stage_mode_b_opt_out(cfg: &mut TelemetryConfig) {
     }
 }
 
-/// `complete_mode_b_forget`, commands/telemetry.rs lines 57-60.
+/// Drops an install id from the pending forgets once its `/forget` worked.
 pub fn complete_mode_b_forget(cfg: &mut TelemetryConfig, install_id: &str) {
     cfg.pending_forget_install_ids
         .retain(|pending| pending != install_id);
 }
 
-/// `telemetry_install_ids`, commands/telemetry.rs lines 62-73: the active id
+/// The install ids to forget: the active id
 /// first, then the pending ones, each once.
 pub fn telemetry_install_ids(cfg: &TelemetryConfig) -> Vec<String> {
     let mut ids = Vec::with_capacity(1 + cfg.pending_forget_install_ids.len());
@@ -338,7 +331,7 @@ pub fn telemetry_install_ids(cfg: &TelemetryConfig) -> Vec<String> {
     ids
 }
 
-/// `process_pending_forgets`, commands/telemetry.rs lines 75-85: an id is
+/// Sends each pending `/forget`: an id is
 /// acknowledged locally only after its `/forget` succeeded, and the first
 /// failure stops the run.
 pub fn process_pending_forgets(
@@ -353,7 +346,7 @@ pub fn process_pending_forgets(
     Ok(())
 }
 
-/// `telemetry_get_state`, commands/telemetry.rs lines 21-39.
+/// Backs `Backend::telemetry_get_state`.
 pub(super) fn get_state(c: &dyn AppContext) -> TelemetryUiState {
     let cfg = config::load_config(c).telemetry;
     TelemetryUiState {
@@ -369,7 +362,7 @@ pub(super) fn get_state(c: &dyn AppContext) -> TelemetryUiState {
     }
 }
 
-/// `telemetry_set_mode_a`, commands/telemetry.rs lines 120-140.
+/// Backs `Backend::telemetry_set_mode_a`.
 pub(super) fn set_mode_a(backend: &RealBackend, enabled: bool) -> BackendResult<()> {
     let c = &*backend.ctx;
     config::update_config(c, |cfg| {
@@ -382,7 +375,7 @@ pub(super) fn set_mode_a(backend: &RealBackend, enabled: bool) -> BackendResult<
     Ok(())
 }
 
-/// `telemetry_set_mode_b`, commands/telemetry.rs lines 142-183. Off stages
+/// Backs `Backend::telemetry_set_mode_b`. Off stages
 /// the id in the deletion outbox, refreshes consent, then calls `/forget`;
 /// the id leaves the outbox only once the endpoint acknowledged it.
 pub(super) fn set_mode_b(backend: &RealBackend, enabled: bool) -> BackendResult<()> {
@@ -403,12 +396,12 @@ pub(super) fn set_mode_b(backend: &RealBackend, enabled: bool) -> BackendResult<
     }
 }
 
-/// `telemetry_retry_forget`, commands/telemetry.rs lines 185-190.
+/// Backs `Backend::telemetry_retry_forget`.
 pub(super) fn retry_forget(backend: &RealBackend) -> BackendResult<()> {
     Ok(backend.retry_pending_forgets()?)
 }
 
-/// `telemetry_complete_onboarding`, commands/telemetry.rs lines 320-387. The
+/// Backs `Backend::telemetry_complete_onboarding`. The
 /// aggregate `/consent` counter goes out on a thread of its own, refusal
 /// included, and never delays the answer.
 pub(super) fn complete_onboarding(
@@ -468,7 +461,7 @@ pub(super) fn complete_onboarding(
     Ok(())
 }
 
-/// `telemetry_export`, commands/telemetry.rs lines 389-419: one export per
+/// Backs `Backend::telemetry_export`: one export per
 /// install id, the bare export for one, `{ "installations": [..] }` for
 /// several.
 pub(super) fn export(backend: &RealBackend) -> BackendResult<Value> {
@@ -490,8 +483,8 @@ pub(super) fn export(backend: &RealBackend) -> BackendResult<Value> {
     }
 }
 
-/// `telemetry_track_update`, commands/telemetry.rs lines 255-280: an unknown
-/// stage is a frontend bug and records nothing.
+/// Backs `Backend::telemetry_track_update`: an unknown
+/// stage is a UI bug and records nothing.
 pub(super) fn update_event(
     stage: &str,
     target_version: Option<&str>,
@@ -511,7 +504,7 @@ pub(super) fn update_event(
     })
 }
 
-/// `telemetry_track_settings_snapshot`, commands/telemetry.rs lines 282-311.
+/// Backs `Backend::telemetry_track_settings_snapshot`.
 pub(super) fn settings_snapshot_event(snapshot: &SettingsSnapshot) -> Event {
     Event::SettingsSnapshot {
         ui_language: snapshot.ui_language.clone(),

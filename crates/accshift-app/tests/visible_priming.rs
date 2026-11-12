@@ -1,5 +1,4 @@
-//! `src/lib/app/useVisiblePriming.test.ts`, ported. The fake timers become
-//! instants passed to `poll`.
+//! Visible priming. Time is the instant passed to `poll`.
 
 use accshift_app::accounts::priming::{VisiblePriming, VISIBLE_PRIME_TTL};
 use std::time::{Duration, Instant};

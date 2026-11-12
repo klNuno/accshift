@@ -1,5 +1,4 @@
-//! The extension panel content of each visible account card, ported from
-//! `src/lib/app/useExtensionContent.svelte.ts`.
+//! The extension panel content of each visible account card.
 //!
 //! A card shows, in order: the add flow's setup content when the account is
 //! being set up (it replaces the rest), else a warnings section, a note
@@ -15,28 +14,28 @@ use crate::text::Text;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-/// `CardExtensionContent`: the sections of one card, `None` when it has none.
+/// The sections of one card, `None` when it has none.
 pub type CardExtension = Option<Arc<Vec<CardSection>>>;
 
 /// What the memo reads on each frame.
 pub struct ExtensionInputs<'a> {
-    /// `shell.locale`.
+    /// The UI language.
     pub locale: Locale,
-    /// `loader.warningStates`.
+    /// The loader's warning per account.
     pub warning_states: &'a BTreeMap<String, WarningPresentation>,
-    /// `display.visibleRenderedAccountIds`.
+    /// The account ids on screen, in display order.
     pub visible_ids: &'a [String],
-    /// `addFlow.getSetupExtensionContent(id)`, its sections.
+    /// The sections of the card an add flow is setting up.
     pub setup_content: &'a dyn Fn(&str) -> Option<Vec<CardSection>>,
-    /// `getAccountNote(id)`.
+    /// The account's card note.
     pub account_note: &'a dyn Fn(&str) -> String,
-    /// `cardNoteVersion`.
+    /// Bumped whenever a card note changes.
     pub card_note_version: u64,
-    /// `settings.accountDisplay.showCardNotesInline`.
+    /// Whether card notes show on the card itself.
     pub show_card_notes_inline: bool,
-    /// `getExtraSections(id)`: Steam's CS2 sections, nothing elsewhere.
+    /// The platform's extra sections: Steam's CS2 sections, nothing elsewhere.
     pub extra_sections: &'a dyn Fn(&str) -> Vec<CardSection>,
-    /// `getCs2BridgeVersion()`.
+    /// Bumped whenever the extra sections' data changes.
     pub extra_sections_version: u64,
 }
 
@@ -48,7 +47,7 @@ struct SharedKey {
     extra_sections_version: u64,
 }
 
-/// `accountKey(id)`: the account's own inputs.
+/// The account's own inputs: when they change, its sections are rebuilt.
 #[derive(Debug, Clone, PartialEq)]
 struct AccountKey {
     tooltip: Option<Text>,
@@ -63,7 +62,7 @@ struct Entry {
     content: CardExtension,
 }
 
-/// `createExtensionContentController`.
+/// The per-account memo of card extension content.
 #[derive(Debug, Clone, Default)]
 pub struct ExtensionContent {
     shared_key: Option<SharedKey>,
@@ -71,8 +70,8 @@ pub struct ExtensionContent {
     cache: Arc<HashMap<String, CardExtension>>,
 }
 
-/// `createWarningExtensionSection`: chips when the warning has any, else the
-/// tooltip lines joined with a bullet.
+/// The warning section: chips when the warning has any, else the tooltip
+/// lines joined with a bullet.
 pub fn warning_section(
     warning: Option<&WarningPresentation>,
     locale: Locale,
@@ -98,7 +97,7 @@ pub fn warning_section(
     })
 }
 
-/// `createNoteExtensionSection`.
+/// The note section, `None` for a blank note or when notes show inline.
 pub fn note_section(note: &str, show_inline: bool) -> Option<CardSection> {
     if show_inline {
         return None;
@@ -145,8 +144,8 @@ impl ExtensionContent {
         (!sections.is_empty()).then(|| Arc::new(sections))
     }
 
-    /// `accountExtensionContentById`: the same map `Arc` while nothing
-    /// changed, and the same entry `Arc` for every card whose inputs held.
+    /// The content of every card: the same map `Arc` while nothing changed,
+    /// and the same entry `Arc` for every card whose inputs held.
     pub fn content_by_id(
         &mut self,
         inputs: &ExtensionInputs<'_>,

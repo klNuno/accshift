@@ -1,4 +1,4 @@
-//! `useStreamerMode.test.ts` and streamer mode against MockBackend: on, off,
+//! The streamer mode controller, then streamer mode against MockBackend: on, off,
 //! dismissed, and what the cover takes away.
 
 mod support;

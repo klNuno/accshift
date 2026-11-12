@@ -6,10 +6,9 @@
 //! debug level, so a clean preflight is provable instead of assumed.
 //!
 //! Nothing here knows anything about a specific platform. A caller describes
-//! what its operation needs as a [`Preflight`], the runner turns that into
-//! results and events. That keeps the invariants usable while the platform
-//! layer is being rewritten, and keeps them honest afterwards: a new platform
-//! gets the checks for free by declaring its requirements.
+//! what it needs as a [`Preflight`] and the runner turns that into results and
+//! events. Today the only caller is [`startup_report`], which the diagnostic
+//! report and `accshift diag check` run.
 
 use super::event::now_unix_ms;
 use super::{catalog, event, query};
@@ -17,8 +16,6 @@ use crate::context::AppContext;
 use serde_json::{json, Map, Value};
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
-
-use fs4::{FileExt, TryLockError};
 
 /// A clock that moved backwards by less than this is ordinary drift and NTP
 /// resynchronisation, not something to warn a user about.
@@ -165,10 +162,6 @@ pub struct DiskRequirement {
 pub struct Preflight {
     pub platform: Option<String>,
     pub paths: Vec<RequiredPath>,
-    /// Files that must be rewritable right now, checked with a real lock.
-    pub unlocked_files: Vec<PathBuf>,
-    /// Launcher processes that must not be running.
-    pub stopped_processes: Vec<String>,
     /// Files that must still parse as JSON.
     pub valid_json: Vec<PathBuf>,
     pub disk: Option<DiskRequirement>,
@@ -208,17 +201,6 @@ impl Preflight {
         self
     }
 
-    pub fn require_unlocked_file(mut self, path: impl Into<PathBuf>) -> Self {
-        self.unlocked_files.push(path.into());
-        self
-    }
-
-    pub fn require_stopped(mut self, processes: &[&str]) -> Self {
-        self.stopped_processes
-            .extend(processes.iter().map(|name| (*name).to_string()));
-        self
-    }
-
     pub fn require_valid_json(mut self, path: impl Into<PathBuf>) -> Self {
         self.valid_json.push(path.into());
         self
@@ -245,14 +227,6 @@ impl Preflight {
         for required in &self.paths {
             report.results.push(check_path(required, platform));
         }
-        for path in &self.unlocked_files {
-            report.results.push(check_file_unlocked(path, platform));
-        }
-        if !self.stopped_processes.is_empty() {
-            report
-                .results
-                .push(check_processes_stopped(&self.stopped_processes, platform));
-        }
         for path in &self.valid_json {
             report.results.push(check_valid_json(path, platform));
         }
@@ -263,14 +237,6 @@ impl Preflight {
             report.results.push(check_clock_skew(app_handle));
         }
 
-        report
-    }
-
-    /// Run and log. `op_id` attaches every finding to a running operation, so
-    /// the preflight replays with the rest of the attempt.
-    pub fn run_and_emit(&self, app_handle: &dyn AppContext, op_id: Option<&str>) -> Report {
-        let report = self.run(app_handle);
-        emit(app_handle, &report, op_id, self.platform.as_deref());
         report
     }
 }
@@ -380,97 +346,6 @@ fn probe_writable(path: &Path) -> Result<(), String> {
             .map(|_| ())
             .map_err(|reason| reason.to_string())
     }
-}
-
-/// A file another process is holding is the single most common reason a switch
-/// half-succeeds: the snapshot is read, the write is refused, the launcher
-/// starts on the previous account.
-pub fn check_file_unlocked(path: &Path, platform: Option<&str>) -> CheckResult {
-    let base = with_platform(fields(&[("path", json!(display(path)))]), platform);
-
-    if !path.exists() {
-        // Not this check's problem: `require_path` is what reports a missing
-        // file, and reporting it twice would double every incident.
-        return CheckResult::pass(
-            "file.locked",
-            format!("{} does not exist yet", display(path)),
-        );
-    }
-
-    let file = match OpenOptions::new().read(true).write(true).open(path) {
-        Ok(file) => file,
-        Err(reason) => {
-            let mut held = base;
-            held.insert("holder".into(), json!(reason.to_string()));
-            return CheckResult::from_code(
-                "file.locked",
-                Status::Fail,
-                &catalog::HEALTH_FILE_LOCKED,
-                format!("{} cannot be opened for writing", display(path)),
-                held,
-            );
-        }
-    };
-
-    // fs4 maps "someone else holds it" to WouldBlock, and keeps Error for a
-    // real I/O failure. Reporting the second as contention would send a user
-    // hunting for a process that does not exist.
-    match FileExt::try_lock(&file) {
-        Ok(()) => {
-            let _ = FileExt::unlock(&file);
-            CheckResult::pass("file.locked", format!("{} is free", display(path)))
-        }
-        Err(TryLockError::WouldBlock) => CheckResult::from_code(
-            "file.locked",
-            Status::Fail,
-            &catalog::HEALTH_FILE_LOCKED,
-            format!("{} is locked by another process", display(path)),
-            base,
-        ),
-        Err(TryLockError::Error(reason)) => {
-            let mut held = base;
-            held.insert("holder".into(), json!(reason.to_string()));
-            CheckResult::from_code(
-                "file.locked",
-                Status::Warn,
-                &catalog::HEALTH_FILE_LOCKED,
-                format!("{} could not be tested for locks", display(path)),
-                held,
-            )
-        }
-    }
-}
-
-pub fn check_processes_stopped(processes: &[String], platform: Option<&str>) -> CheckResult {
-    let names: Vec<&str> = processes.iter().map(String::as_str).collect();
-    launcher_result(&crate::os::running_process_names(&names), platform)
-}
-
-/// Split from the process-table lookup so the verdict is testable without
-/// depending on what happens to be running on the machine.
-fn launcher_result(running: &[&str], platform: Option<&str>) -> CheckResult {
-    if running.is_empty() {
-        return CheckResult::pass("launcher.running", "no launcher process is running");
-    }
-
-    let mut found = fields(&[(
-        "processes",
-        json!(running.iter().map(|name| json!(name)).collect::<Vec<_>>()),
-    )]);
-    // This code makes the platform mandatory: without it the record cannot say
-    // whose launcher is in the way.
-    found.insert(
-        "platform".into(),
-        json!(platform.unwrap_or("unknown").to_string()),
-    );
-
-    CheckResult::from_code(
-        "launcher.running",
-        Status::Fail,
-        &catalog::HEALTH_LAUNCHER_RUNNING,
-        format!("still running: {}", running.join(", ")),
-        found,
-    )
 }
 
 pub fn check_valid_json(path: &Path, platform: Option<&str>) -> CheckResult {
@@ -668,35 +543,6 @@ mod tests {
     }
 
     #[test]
-    fn a_locked_file_is_detected() {
-        let ctx = TestCtx::new("health-locked");
-        let path = ctx.root().join("loginusers.vdf");
-        std::fs::write(&path, "{}").expect("seed");
-
-        let free = Preflight::new().require_unlocked_file(&path).run(&ctx);
-        assert!(free.ok(), "an untouched file must not look locked");
-
-        let holder = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&path)
-            .expect("open");
-        FileExt::lock(&holder).expect("lock");
-
-        let locked = Preflight::new()
-            .platform("steam")
-            .require_unlocked_file(&path)
-            .run(&ctx);
-        let _ = FileExt::unlock(&holder);
-
-        assert!(!locked.ok());
-        assert_eq!(
-            locked.failures().next().expect("failure").code,
-            Some("health.file.locked")
-        );
-    }
-
-    #[test]
     fn a_corrupt_profile_is_detected_and_names_the_reason() {
         let ctx = TestCtx::new("health-corrupt");
         let path = ctx.root().join("profile.json");
@@ -733,34 +579,6 @@ mod tests {
         assert_eq!(plenty.status, Status::Pass);
     }
 
-    #[test]
-    fn a_running_launcher_fails_and_names_the_platform() {
-        let result = launcher_result(&["steam.exe", "steamwebhelper.exe"], Some("steam"));
-
-        assert_eq!(result.status, Status::Fail);
-        assert_eq!(result.code, Some("health.launcher.running"));
-        assert_eq!(result.fields["platform"], json!("steam"));
-        assert_eq!(
-            result.fields["processes"],
-            json!(["steam.exe", "steamwebhelper.exe"])
-        );
-        // The code demands a platform, so a caller that forgot one still gets
-        // a valid record rather than a defect.
-        assert_eq!(
-            launcher_result(&["steam.exe"], None).fields["platform"],
-            json!("unknown")
-        );
-    }
-
-    #[test]
-    fn a_process_that_cannot_be_running_passes() {
-        let result = check_processes_stopped(
-            &["accshift-no-such-process-9c1f.exe".to_string()],
-            Some("steam"),
-        );
-        assert_eq!(result.status, Status::Pass);
-    }
-
     // The findings have to reach the log with the operation attached, or the
     // preflight is invisible in the replay of the failure it predicted.
     #[test]
@@ -770,10 +588,11 @@ mod tests {
             .expect("root")
             .join("absent");
 
-        Preflight::new()
+        let report = Preflight::new()
             .platform("steam")
             .require_path(&missing, "steam userdata")
-            .run_and_emit(&*ctx, Some("op-deadbeef1234"));
+            .run(&*ctx);
+        emit(&*ctx, &report, Some("op-deadbeef1234"), Some("steam"));
 
         let found = query::search(
             &*ctx,

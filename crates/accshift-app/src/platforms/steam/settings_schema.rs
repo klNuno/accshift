@@ -1,7 +1,6 @@
-//! The `steam` entry of `platformSettings`, ported from
-//! `src/lib/platforms/steam/settingsSchema.ts`. The sanitizer itself lives in
-//! [`crate::settings::sanitize_steam_settings`], where the settings store
-//! runs it; this module is the schema the registry hands out.
+//! The Steam settings schema the registry hands out. The sanitizer itself
+//! lives in [`crate::settings::sanitize_steam_settings`], where the settings
+//! store runs it.
 
 use crate::settings::{sanitize_steam_settings, SteamPlatformSettings};
 use serde_json::{Map, Value};

@@ -1,6 +1,4 @@
-//! The account card menu, ported from
-//! `src/lib/shared/contextMenu/{accountAppearanceActions,accountFolderActions,
-//! accountMenuBuilder}.ts`.
+//! The account card menu.
 
 use super::{
     build_context_menu_items, InputRequest, MenuAction, MenuActionBody, MenuCommand, MenuEntry,
@@ -34,14 +32,14 @@ pub fn color_label_key(preset_id: &str) -> Option<&'static str> {
         .map(|(_, key)| *key)
 }
 
-/// What the appearance entries read (`getCurrentColor`, `getExistingNote`).
+/// What the appearance entries read: the current colour and note.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AppearanceInput {
     pub current_color: String,
     pub existing_note: String,
 }
 
-/// `getAccountAppearanceContextActions`: the note and colour submenu.
+/// The note and colour submenu.
 pub fn account_appearance_actions(
     account: &PlatformAccount,
     input: &AppearanceInput,
@@ -88,7 +86,7 @@ pub fn account_appearance_actions(
     )]
 }
 
-/// `AccountFolderChoice`.
+/// A folder an account can move to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountFolderChoice {
     pub id: String,
@@ -96,7 +94,7 @@ pub struct AccountFolderChoice {
     pub label: String,
 }
 
-/// What the folder entry reads (`getFolders`, `getCurrentFolderId`).
+/// What the folder entry reads: the folders and where the account is.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FolderInput {
     /// Every folder of the active platform, in listing order.
@@ -105,8 +103,8 @@ pub struct FolderInput {
     pub current_folder_id: Option<String>,
 }
 
-/// `getAccountFolderContextActions`: "Move to folder", minus wherever the
-/// account already is; nothing when there is nowhere to go.
+/// "Move to folder", minus wherever the account already is; nothing when
+/// there is nowhere to go.
 pub fn account_folder_actions(account: &PlatformAccount, input: &FolderInput) -> Vec<MenuAction> {
     let current = input.current_folder_id.as_deref();
     let mut destinations: Vec<(Option<String>, Text)> = Vec::new();
@@ -148,8 +146,8 @@ pub fn account_folder_actions(account: &PlatformAccount, input: &FolderInput) ->
     )]
 }
 
-/// `collapseCopyActions`: every `platform.copy` entry moves into one "Copy"
-/// submenu placed after the others.
+/// Every `platform.copy` entry moves into one "Copy" submenu placed after
+/// the others.
 fn collapse_copy_actions(actions: Vec<MenuAction>) -> Vec<MenuAction> {
     let (copy, mut rest): (Vec<MenuAction>, Vec<MenuAction>) = actions
         .into_iter()
@@ -173,8 +171,8 @@ fn collapse_copy_actions(actions: Vec<MenuAction>) -> Vec<MenuAction> {
     rest
 }
 
-/// `getRenameAction`: only when the platform can label accounts and the UI
-/// offers an input dialog.
+/// Rename, only when the platform can label accounts and the UI offers an
+/// input dialog.
 fn rename_action(
     account: &PlatformAccount,
     adapter: &PlatformAdapter,
@@ -198,8 +196,8 @@ fn rename_action(
     ))
 }
 
-/// `buildAccountContextMenuItems`: rename, folder move, the platform's own
-/// entries and the appearance submenu, copies collapsed, grouped in
+/// The account menu: rename, folder move, the platform's own entries and the
+/// appearance submenu, copies collapsed, grouped in
 /// [`ACCOUNT_CONTEXT_GROUP_ORDER`]. `folders` is `None` for callers with no
 /// folder world.
 pub fn build_account_context_menu(

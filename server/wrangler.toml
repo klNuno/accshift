@@ -30,7 +30,9 @@ POSTHOG_API_HOST = "https://eu.posthog.com"
 # Forks replace it with their own.
 POSTHOG_PROJECT_ID = "238438"
 
-ALLOWED_ORIGINS = "http://localhost:1420,https://tauri.localhost"
+# Browser origins allowed to call the Worker. The app and the CLI are native
+# clients that send no Origin, so the list is empty.
+ALLOWED_ORIGINS = ""
 ALERT_FROM = "onboarding@resend.dev" # replace with a verified domain once set up
 
 # Expected User-Agent prefix. Requests without it are rejected.

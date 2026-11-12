@@ -6,9 +6,26 @@
 //!
 //! Only a normal run has a window to own the dialog ([`set_owner`]): scenes
 //! and tests never open it.
+//!
+//! Linux and macOS have no such dialog here (rfd picks files, not colours):
+//! the swatch is a preview only ([`swatch_sense`]) and the hex field next to
+//! it edits the colour.
 
 use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::{Arc, Mutex};
+
+/// Whether this OS has the colour dialog a swatch click opens.
+pub const AVAILABLE: bool = cfg!(windows);
+
+/// How a swatch reacts: a button where a click opens the dialog, a plain
+/// preview elsewhere, so no click, focus ring or tab stop leads nowhere.
+pub fn swatch_sense(dialog: bool) -> egui::Sense {
+    if dialog {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    }
+}
 
 static OWNER: AtomicIsize = AtomicIsize::new(0);
 
@@ -93,4 +110,55 @@ fn open(ctx: &egui::Context, owner: isize, [r, g, b]: [u8; 3]) -> Option<Chooser
 #[cfg(not(windows))]
 fn open(_: &egui::Context, _: isize, _: [u8; 3]) -> Option<Chooser> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One frame with a swatch at (0, 0, 28, 24), after `events`.
+    fn swatch(ctx: &egui::Context, dialog: bool, events: Vec<egui::Event>) -> (bool, bool) {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(200.0, 100.0),
+            )),
+            events,
+            ..Default::default()
+        };
+        let mut out = (false, false);
+        let mut output = ctx.run_ui(input, |ui| {
+            let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(28.0, 24.0));
+            let response = ui.interact(rect, egui::Id::unique("swatch"), swatch_sense(dialog));
+            out = (response.clicked(), response.sense.is_focusable());
+        });
+        // No painter here to take the font atlas.
+        output.textures_delta.clear();
+        out
+    }
+
+    fn click(ctx: &egui::Context, dialog: bool) -> (bool, bool) {
+        let at = egui::pos2(10.0, 10.0);
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        swatch(ctx, dialog, vec![egui::Event::PointerMoved(at)]);
+        swatch(ctx, dialog, vec![button(true)]);
+        swatch(ctx, dialog, vec![button(false)])
+    }
+
+    #[test]
+    fn without_a_dialog_the_swatch_is_no_button() {
+        let (clicked, focusable) = click(&egui::Context::default(), false);
+        assert!(!clicked && !focusable);
+    }
+
+    #[test]
+    fn with_a_dialog_the_swatch_is_a_button() {
+        let (clicked, focusable) = click(&egui::Context::default(), true);
+        assert!(clicked && focusable);
+    }
 }

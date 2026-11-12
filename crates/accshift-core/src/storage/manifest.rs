@@ -48,8 +48,8 @@ pub(super) fn legacy_client_store_path(
         return Ok(None);
     };
     let root = match layout.root {
-        StoreRoot::Config => raw_app_config_root(app_handle)?,
-        StoreRoot::Cache => raw_app_cache_root(app_handle)?,
+        StoreRoot::Config => app_config_root(app_handle)?,
+        StoreRoot::Cache => app_cache_root(app_handle)?,
     };
 
     Ok(Some(join_all(root, legacy)))

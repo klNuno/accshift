@@ -177,7 +177,7 @@ impl AppModel {
             b.stores.settings(),
             &b.nav.active_tab,
             &b.accounts.registry,
-            accounts::app_os(b.runtime_os),
+            b.runtime_os,
             b.accounts.add_flow.is_active(),
         );
         let mut tab_changed = false;

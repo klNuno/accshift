@@ -49,15 +49,6 @@ impl Rgba {
         ]
     }
 
-    /// The colour with its alpha multiplied by `factor`, what `opacity` does to
-    /// a single flat fill.
-    pub fn with_alpha_factor(self, factor: f32) -> Rgba {
-        Rgba {
-            a: (self.a * factor).clamp(0.0, 1.0),
-            ..self
-        }
-    }
-
     /// `self` painted over `backdrop` with source-over compositing.
     pub fn over(self, backdrop: Rgba) -> Rgba {
         let a = self.a + backdrop.a * (1.0 - self.a);

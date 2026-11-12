@@ -1,5 +1,5 @@
-//! `src/lib/app/useUiScale.svelte.ts` and the decisions of
-//! `src/lib/app/useThemeApplication.svelte.ts` that are not drawing.
+//! The UI scale (zoom shortcuts, Ctrl+wheel, debounced save) and the
+//! backdrop decisions of the theme.
 
 use crate::platforms::RuntimeOs;
 use std::time::{Duration, Instant};
@@ -8,18 +8,17 @@ pub const UI_SCALE_STEP_PERCENT: i64 = 5;
 pub const UI_SCALE_MIN_PERCENT: i64 = 75;
 pub const UI_SCALE_MAX_PERCENT: i64 = 150;
 pub const WHEEL_ZOOM_THRESHOLD: f64 = 80.0;
-/// The persist debounce of `queuePersistUiScalePercent`.
+/// The UI scale is saved this long after the last change.
 pub const PERSIST_DELAY: Duration = Duration::from_millis(180);
 
-/// `clampUiScalePercent`: round to the 5 % step (JS `Math.round`, halves
-/// up), then clamp to 75..150.
+/// Rounds to the 5 % step (halves up), then clamps to 75..150.
 pub fn clamp_ui_scale_percent(value: f64) -> i64 {
     let step = UI_SCALE_STEP_PERCENT as f64;
     let rounded = ((value / step) + 0.5).floor() * step;
     (rounded as i64).clamp(UI_SCALE_MIN_PERCENT, UI_SCALE_MAX_PERCENT)
 }
 
-/// The wheel's `deltaMode`.
+/// The unit of a wheel delta.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WheelDeltaMode {
     Pixel,
@@ -27,7 +26,7 @@ pub enum WheelDeltaMode {
     Page,
 }
 
-/// `createUiScale`: the zoom shortcuts and the debounced save.
+/// The zoom shortcuts and the debounced save.
 #[derive(Debug, Default)]
 pub struct UiScale {
     wheel_accumulator: f64,
@@ -40,7 +39,7 @@ impl UiScale {
         Self::default()
     }
 
-    /// `setUiScalePercent`: the new live value, or `None` when unchanged.
+    /// Sets the scale: the new live value, or `None` when unchanged.
     /// A changed value schedules its save [`PERSIST_DELAY`] later.
     pub fn set(&mut self, current: i64, value: f64, now: Instant) -> Option<i64> {
         let next = clamp_ui_scale_percent(value);
@@ -52,7 +51,7 @@ impl UiScale {
         Some(next)
     }
 
-    /// `handleCtrlWheelZoom`. `page_height` is `window.innerHeight`.
+    /// Ctrl+wheel zoom. `page_height` is the window's inner height.
     pub fn wheel(
         &mut self,
         ctrl: bool,
@@ -104,8 +103,8 @@ impl UiScale {
         self.persist_at
     }
 
-    /// The value to save now (`persistUiScalePercent`: save only when the
-    /// stored one differs), once the debounce elapsed.
+    /// The value to save now (only when the stored one differs), once the
+    /// debounce elapsed.
     pub fn take_due(&mut self, now: Instant) -> Option<i64> {
         match self.persist_at {
             Some(at) if now >= at => {
@@ -124,13 +123,15 @@ impl UiScale {
     }
 }
 
-/// `liquidBackdropActive`: a Liquid Glass theme on Windows.
+/// True for a Liquid Glass theme on Windows.
 pub fn liquid_backdrop_active(theme_uses_liquid_glass: bool, os: RuntimeOs) -> bool {
     theme_uses_liquid_glass && os == RuntimeOs::Windows
 }
 
-/// `backdropAvailable`: never on Linux; with Liquid Glass, only once a
-/// wallpaper snapshot exists.
+/// Whether the window has a blur behind it: only on Windows, where the
+/// shell applies the acrylic, and with Liquid Glass only once a wallpaper
+/// snapshot exists. Elsewhere a translucent theme would show the raw desktop
+/// through the window, so it draws opaque.
 pub fn backdrop_available(os: RuntimeOs, liquid_active: bool, wallpaper_present: bool) -> bool {
-    os != RuntimeOs::Linux && (!liquid_active || wallpaper_present)
+    os == RuntimeOs::Windows && (!liquid_active || wallpaper_present)
 }

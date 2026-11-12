@@ -1,12 +1,10 @@
-//! `ThemeEditor.svelte`'s script: the fields of the theme being edited, the
+//! The theme editor's state: the fields of the theme being edited, the
 //! draft document they make, its issues, and the save.
 //!
-//! Mounted fresh per open, as the `{#if editing}` block does: the fields
-//! start from the document handed in and the prop is never read again. While
-//! the editor is open the app paints the draft (`previewThemeDocument`);
-//! closing without a save puts back the theme of the settings
-//! (`endThemePreview`), a save keeps what the preview painted
-//! (`commitThemePreview`).
+//! Built fresh on every open: the fields start from the document handed in,
+//! which is never read again. While the editor is open the app paints the
+//! draft; closing without a save puts back the theme of the settings, a save
+//! keeps what the preview painted.
 
 use std::collections::BTreeMap;
 
@@ -33,7 +31,8 @@ const BLOCKING: [ThemeIssueCode; 3] = [
     ThemeIssueCode::CssTooLong,
 ];
 
-/// `String.prototype.trim`: Unicode white space and the BOM.
+/// Trims Unicode white space and the BOM. Unlike `accshift_app::js::trim`
+/// it also trims U+0085, so the two are not interchangeable.
 fn js_trim(s: &str) -> &str {
     s.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}')
 }
@@ -64,12 +63,11 @@ pub enum SaveOutcome {
     Failed,
 }
 
-/// `importFromClipboard` (`SettingsGeneralTab.svelte`): the clipboard read,
-/// then the save.
+/// The General tab's theme import: the clipboard read, then the save.
 pub enum ThemeImport {
     /// Waiting for the clipboard's text, frames so far.
     Reading(u8),
-    /// `saveThemeDocument` on a job.
+    /// The imported document being written on a job.
     Saving {
         job: Pending<Result<(), String>>,
         pending: Box<PendingSave>,
@@ -136,15 +134,15 @@ pub struct ThemeEditor {
     pub glass: bool,
     pub tokens: BTreeMap<TokenKey, String>,
     pub css: String,
-    /// `saveError`: the last save failed.
+    /// The last save failed.
     pub save_error: bool,
-    /// `backgroundOpacity` of the settings, for the contrast check.
+    /// The settings' background opacity, for the contrast check.
     pub background_opacity: f64,
     /// Bumped per open: animations and focus start over.
     pub mount: u64,
-    /// `.editor-body`'s `scrollTop`.
+    /// Scroll offset of the editor's body.
     pub scroll: f32,
-    /// The CSS field's own `scrollTop`.
+    /// Scroll offset of the CSS field.
     pub css_scroll: f32,
     save_job: Option<(Pending<Result<(), String>>, PendingSave)>,
 }
@@ -170,7 +168,7 @@ impl ThemeEditor {
         }
     }
 
-    /// `startFromSelected`: a custom theme opens as it is; a built-in is
+    /// A custom theme opens as it is; a built-in is
     /// read only, so editing one means editing a copy of it.
     pub fn start_from(
         registry: &ThemeRegistry,
@@ -241,8 +239,8 @@ impl ThemeEditor {
         issues.iter().any(|issue| BLOCKING.contains(&issue.code))
     }
 
-    /// `baseOptions`: every theme but this one and those that would loop
-    /// back into it.
+    /// The base theme choices: every theme but this one and those that
+    /// would loop back into it.
     pub fn base_options(&self, registry: &ThemeRegistry, locale: Locale) -> Vec<BaseOption> {
         fn reaches(registry: &ThemeRegistry, start: &ThemeDocument, target: &str) -> bool {
             let mut document = Some(start);
@@ -273,7 +271,7 @@ impl ThemeEditor {
             .collect()
     }
 
-    /// `inheritedFrom`: the theme a token currently comes from.
+    /// The name of the theme a token currently comes from.
     pub fn inherited_from(
         registry: &ThemeRegistry,
         resolved: &ResolvedTokens,
@@ -298,7 +296,7 @@ impl ThemeEditor {
         self.tokens.remove(&key);
     }
 
-    /// `copyToClipboard`: the draft as a theme file.
+    /// The draft as a theme file, for the clipboard.
     pub fn export(&self) -> String {
         serialize_theme_document(&self.draft())
     }
@@ -361,8 +359,8 @@ impl ThemeEditor {
 
 impl super::AppModel {
     /// Once per frame: the clipboard's text once it comes, then the save's
-    /// end. A clipboard with no text sends nothing, which `readText` reads
-    /// as an empty string.
+    /// end. A clipboard with no text sends nothing, which reads as an empty
+    /// string.
     pub(super) fn tick_theme_import(&mut self, ctx: &egui::Context, now: Instant) {
         let jobs = &self.jobs;
         let toasts = &mut self.toasts;
@@ -434,7 +432,7 @@ impl super::AppModel {
 
     /// Once per frame: the save's end, and the preview following the
     /// draft. Once the editor is gone without a save, the settings' theme
-    /// comes back (`onDestroy`: `endThemePreview`).
+    /// comes back.
     pub(super) fn tick_theme_editor(&mut self, now: std::time::Instant) {
         let reduced = self.os_reduced_motion;
         let wallpaper = self.liquid.present();
@@ -453,8 +451,8 @@ impl super::AppModel {
             return;
         };
         if let Some(SaveOutcome::Saved(document)) = editor.poll_save(&mut b.registry) {
-            // `onSaved`, then `commitThemePreview`: the saved theme is the
-            // selected one and the app keeps what the preview painted.
+            // Saved: the saved theme is the selected one and the app keeps
+            // what the preview painted.
             let mut store_ctx = b.stores.context().clone();
             store_ctx.theme_ids = b.registry.all_themes().into_iter().map(|t| t.id).collect();
             b.stores.set_context(store_ctx);
@@ -518,7 +516,7 @@ fn kind_label(kind: TokenKind) -> &'static str {
     }
 }
 
-/// `choiceLabel`: choices that are words of ours get a translation, CSS
+/// A choice's label: choices that are words of ours get a translation, CSS
 /// keywords stay as typed in the theme file.
 pub fn choice_label(locale: Locale, key: TokenKey, choice: &str) -> String {
     let message = match (key, choice) {
@@ -535,12 +533,12 @@ pub fn choice_label(locale: Locale, key: TokenKey, choice: &str) -> String {
     message.map_or_else(|| choice.to_owned(), |m| i18n::translate(locale, m))
 }
 
-/// `tokenLabel`.
+/// A token's translated label.
 pub fn token_label(locale: Locale, key: TokenKey) -> String {
     i18n::translate(locale, &key.spec().label_key())
 }
 
-/// `issueText`.
+/// The translated message of a theme issue.
 pub fn issue_text(locale: Locale, issue: &ThemeIssue) -> String {
     let token = |key: Option<TokenKey>| {
         TranslationValue::Str(key.map(|k| token_label(locale, k)).unwrap_or_default())
@@ -612,7 +610,7 @@ pub fn issue_text(locale: Locale, issue: &ThemeIssue) -> String {
     }
 }
 
-/// `issueByToken`: the issue a row shows, the last one for its token.
+/// The issue a token's row shows: the last one for its token.
 pub fn issue_for(issues: &[ThemeIssue], key: TokenKey) -> Option<&ThemeIssue> {
     issues.iter().rev().find(|issue| issue.token == Some(key))
 }
@@ -622,7 +620,7 @@ pub fn is_error(issue: &ThemeIssue) -> bool {
     issue.level == IssueLevel::Error
 }
 
-/// `toHex`: the colour input's value, `#000000` when the text is no colour.
+/// The colour input's value, `#000000` when the text is no colour.
 pub fn to_hex(value: &str) -> String {
     let Some(rgb) = accshift_theme::contrast::parse_color(value) else {
         return "#000000".into();
@@ -636,7 +634,7 @@ pub fn to_hex(value: &str) -> String {
     )
 }
 
-/// `fromHex`: what a picked colour writes into a token of `kind`.
+/// What a picked colour writes into a token of `kind`.
 pub fn from_hex(hex: &str, kind: TokenKind) -> String {
     if kind != TokenKind::RgbTriplet {
         return hex.to_owned();

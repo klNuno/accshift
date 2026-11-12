@@ -1,5 +1,5 @@
-//! The TS tests of the ported stores (settings, folders, personas, the
-//! small shared stores), as Rust tests.
+//! The client stores: settings, folders, personas and the small shared
+//! stores.
 
 use accshift_app::folders::{FolderStore, ItemRef};
 use accshift_app::personas::{persona_assignments_for_save, AssignmentsForSave, PersonaAssignment};
@@ -19,7 +19,7 @@ use accshift_app::types::ClientStorageSnapshot;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
-// ------------------------------------------------------------ settingsPatch
+// ------------------------------------------------------------ settings patches
 
 fn settings(edit: impl FnOnce(&mut Value)) -> AppSettings {
     let mut value = json!({
@@ -180,7 +180,7 @@ fn diff_reports_the_path_of_each_changed_leaf() {
     );
 }
 
-// ------------------------------------------------------------ apiKeyDraft, onboardingConsent
+// ------------------------------------------------------------ API key draft, onboarding consent
 
 #[test]
 fn clears_the_api_key_input_when_it_still_holds_the_saved_key() {
@@ -397,7 +397,31 @@ fn sends_an_account_back_to_the_root() {
     );
 }
 
-// ------------------------------------------------------------ personaAssignmentsForSave
+#[test]
+fn an_empty_account_load_keeps_the_folder_organisation() {
+    // Regression: Steam answers an empty list while `loginusers.vdf` is
+    // missing, and that load pruned every account out of its folder.
+    let mut stores = move_store();
+    stores.sync_loaded_accounts(&[], "steam");
+    assert_eq!(
+        stores.items_in_folder(Some("old"), "steam"),
+        [ItemRef::account("in-old")]
+    );
+    assert_eq!(
+        stores.items_in_folder(None, "steam"),
+        [ItemRef::folder("smurfs"), ItemRef::account("at-root")]
+    );
+
+    // A load that found accounts still drops the ones that are gone.
+    stores.sync_loaded_accounts(&["at-root".to_string()], "steam");
+    assert!(stores.items_in_folder(Some("old"), "steam").is_empty());
+    assert_eq!(
+        stores.items_in_folder(None, "steam"),
+        [ItemRef::folder("smurfs"), ItemRef::account("at-root")]
+    );
+}
+
+// ------------------------------------------------------------ persona assignments on save
 
 fn steam() -> PersonaAssignment {
     PersonaAssignment {
@@ -493,7 +517,7 @@ fn appends_a_newly_picked_platform_after_the_original_assignments() {
     assert_eq!(save.run(), [steam(), discord(), riot]);
 }
 
-// ------------------------------------------------------------ cachedMapStore
+// ------------------------------------------------------------ string map stores
 
 fn identity(_key: &str, value: &str) -> Option<String> {
     Some(value.to_string())
@@ -567,7 +591,7 @@ fn map_store_remove_deletes_entries() {
     assert_eq!(store.get("acc1"), "");
 }
 
-// ------------------------------------------------------------ accountCardColors
+// ------------------------------------------------------------ account card colors
 
 #[test]
 fn account_card_color_is_empty_for_an_unknown_account() {
@@ -610,7 +634,7 @@ fn account_card_color_presets_have_the_expected_structure() {
     assert_eq!(none.color, "");
 }
 
-// ------------------------------------------------------------ accountCardNotes
+// ------------------------------------------------------------ account card notes
 
 #[test]
 fn account_card_note_is_empty_for_an_unknown_account() {

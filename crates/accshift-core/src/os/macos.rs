@@ -4,7 +4,9 @@ use std::process::{Command, Stdio};
 
 // Secrets live in the Keychain via `keyring`. Shared implementation in
 // os/secrets.rs.
-pub use super::secrets::{decrypt_bytes, decrypt_secret, encrypt_bytes, encrypt_secret};
+pub use super::secrets::{
+    decrypt_bytes, decrypt_secret, delete_bytes, delete_secret, encrypt_bytes, encrypt_secret,
+};
 
 fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
@@ -166,29 +168,4 @@ pub fn launch_steam(
     Ok(())
 }
 
-fn run_osascript(script: &str) -> Result<String, AppError> {
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .map_err(|e| AppError::ProcessStart(e.to_string()))?;
-    if !output.status.success() {
-        // User cancelled (osascript exits 1). An empty string would be read
-        // downstream as "clear the custom path", so signal the cancellation
-        // explicitly and let the caller leave the path alone.
-        return Err(AppError::Cancelled);
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-pub fn select_folder(title: &str) -> Result<String, AppError> {
-    let escaped = title.replace('\\', "\\\\").replace('"', "\\\"");
-    let script = format!("POSIX path of (choose folder with prompt \"{escaped}\")");
-    run_osascript(&script)
-}
-
-pub fn select_file(title: &str, _filter: &str) -> Result<String, AppError> {
-    let escaped = title.replace('\\', "\\\\").replace('"', "\\\"");
-    let script = format!("POSIX path of (choose file with prompt \"{escaped}\")");
-    run_osascript(&script)
-}
+pub use super::picker::{select_file, select_folder};

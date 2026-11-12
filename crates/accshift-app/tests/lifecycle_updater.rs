@@ -2,13 +2,13 @@
 //! and an artifact signed by a key generated here, as `tauri signer` does.
 //! The install side effects go to a recording host; no installer runs.
 
+use accshift_app::lifecycle::process;
 use accshift_app::lifecycle::update_flow::{run_command, ApplyHost, CommandResult, UpdateCommand};
 use accshift_app::lifecycle::updater::{
-    bundle_type, bundle_type_from_marker, escape_msi_property_arg, escape_nsis_current_exe_arg,
-    fallback_targets, installer_for_bundle_type, parse_manifest, updater_arch, updater_os,
-    verify_signature, BundleType, DownloadEvent, Installer, InstallerHost, RemoteReleaseInner,
-    Update, Updater, UpdaterConfig, UpdaterError, WindowsUpdateInstallMode, WindowsUpdaterType,
-    PUBKEY, UPDATER_USER_AGENT,
+    bundle_type, bundle_type_from_marker, escape_nsis_current_exe_arg, fallback_targets,
+    installer_for_bundle_type, parse_manifest, updater_arch, updater_os, verify_signature,
+    BundleType, Installer, InstallerHost, RemoteReleaseInner, Update, Updater, UpdaterConfig,
+    UpdaterError, PUBKEY, UPDATER_USER_AGENT,
 };
 use base64::Engine;
 use semver::Version;
@@ -195,18 +195,12 @@ fn config(
     UpdaterConfig {
         pubkey: pubkey.to_string(),
         endpoints: vec![Url::parse(&server.url("/latest.json")).unwrap()],
-        install_mode: WindowsUpdateInstallMode::Passive,
-        installer_args: Vec::new(),
         current_version: Version::parse(current).unwrap(),
         app_name: "accshift-m5test".into(),
-        target: None,
         timeout: Some(Duration::from_secs(20)),
-        headers: Vec::new(),
-        current_exe_args: vec!["accshift.exe".into(), "--flag".into(), "some space".into()],
-        restart_after_install: true,
+        relaunch_args: vec!["--flag".into(), "some space".into()],
         bundle_type: bundle,
         executable_path: None,
-        allow_downgrades: false,
     }
 }
 
@@ -263,7 +257,7 @@ fn check(config: UpdaterConfig) -> Result<Option<Update>, UpdaterError> {
 // Check and download
 
 #[test]
-fn a_good_signature_is_accepted_and_progress_is_reported() {
+fn a_good_signature_is_accepted() {
     let key = TestKey::new();
     let artifact = fake_setup();
     let signature = key.sign(&artifact);
@@ -281,32 +275,13 @@ fn a_good_signature_is_accepted_and_progress_is_reported() {
     assert_eq!(update.current_version, "1.0.5");
     assert_eq!(update.body.as_deref(), Some("Bug fixes"));
     assert_eq!(
-        update.date_rfc3339().as_deref(),
-        Some("2026-10-01T12:00:00Z")
+        update.date.map(|date| date.unix_timestamp()),
+        Some(1_790_856_000)
     );
     assert_eq!(update.target, os);
     assert_eq!(update.raw_json["version"], "v1.2.0");
 
-    let mut events = Vec::new();
-    let bytes = update
-        .download_with_events(|event| events.push(event))
-        .unwrap();
-    assert_eq!(bytes, artifact);
-    assert_eq!(
-        events.first(),
-        Some(&DownloadEvent::Started {
-            content_length: Some(artifact.len() as u64)
-        })
-    );
-    assert_eq!(events.last(), Some(&DownloadEvent::Finished));
-    let received: usize = events
-        .iter()
-        .map(|event| match event {
-            DownloadEvent::Progress { chunk_length } => *chunk_length,
-            _ => 0,
-        })
-        .sum();
-    assert_eq!(received, artifact.len());
+    assert_eq!(update.download().unwrap(), artifact);
 
     let requests = server.requests();
     assert_eq!(requests.len(), 2);
@@ -330,7 +305,7 @@ fn a_bad_signature_is_refused() {
     let update = check(config(&server, &key.pubkey(), "1.0.5", None))
         .unwrap()
         .unwrap();
-    let error = update.download(|_, _| {}, || {}).unwrap_err();
+    let error = update.download().unwrap_err();
     assert!(matches!(error, UpdaterError::Minisign(_)), "{error:?}");
 }
 
@@ -349,7 +324,7 @@ fn a_signature_from_another_key_is_refused() {
     let update = check(config(&server, &trusted.pubkey(), "1.0.5", None))
         .unwrap()
         .unwrap();
-    let error = update.download(|_, _| {}, || {}).unwrap_err();
+    let error = update.download().unwrap_err();
     assert!(matches!(error, UpdaterError::Minisign(_)), "{error:?}");
 }
 
@@ -397,7 +372,7 @@ fn a_missing_or_undecodable_signature_is_refused() {
     let update = check(config(&server, &key.pubkey(), "1.0.5", None))
         .unwrap()
         .unwrap();
-    let error = update.download(|_, _| {}, || {}).unwrap_err();
+    let error = update.download().unwrap_err();
     assert!(matches!(error, UpdaterError::Minisign(_)), "{error:?}");
 
     // Not base64 at all.
@@ -424,10 +399,6 @@ fn an_older_or_equal_version_is_ignored() {
                 .is_none(),
             "{remote} against {current}"
         );
-        // `allowDowngrades`: anything different counts.
-        let mut downgrade = config(&server, &key.pubkey(), current, None);
-        downgrade.allow_downgrades = true;
-        assert_eq!(check(downgrade).unwrap().is_some(), remote != current);
     }
 }
 
@@ -493,7 +464,7 @@ fn the_installer_key_wins_over_the_plain_platform_key() {
         .unwrap();
     assert_eq!(update.download_url.path(), format!("/artifact/{plain}"));
 
-    // An MSI build falls back to the plain key when its own is missing.
+    // No MSI is built: an MSI marker takes the NSIS setup.
     let update = check(config(
         &server,
         &key.pubkey(),
@@ -502,7 +473,10 @@ fn the_installer_key_wins_over_the_plain_platform_key() {
     ))
     .unwrap()
     .unwrap();
-    assert_eq!(update.download_url.path(), format!("/artifact/{plain}"));
+    assert_eq!(
+        update.download_url.path(),
+        format!("/artifact/{with_installer}")
+    );
 }
 
 #[test]
@@ -528,21 +502,12 @@ fn every_platform_key_of_the_release_matrix_resolves() {
         &keys.iter().map(|key| (*key, "c2ln")).collect::<Vec<_>>(),
     );
     let release = parse_manifest(manifest).unwrap();
-    let mut sorted = keys.map(String::from).to_vec();
-    sorted.sort();
-    assert_eq!(release.platform_keys(), sorted);
     for (os, arch, installer, expected) in [
         (
             "windows",
             "x86_64",
             Some(Installer::Nsis),
             "windows-x86_64-nsis",
-        ),
-        (
-            "windows",
-            "x86_64",
-            Some(Installer::Msi),
-            "windows-x86_64-msi",
         ),
         ("windows", "x86_64", None, "windows-x86_64"),
         (
@@ -586,6 +551,15 @@ fn every_platform_key_of_the_release_matrix_resolves() {
         fallback_targets("linux", "riscv64", None),
         ["linux-riscv64"]
     );
+    // A package install never falls back to the AppImage of the plain key.
+    assert_eq!(
+        fallback_targets("linux", "x86_64", Some(Installer::Deb)),
+        ["linux-x86_64-deb"]
+    );
+    assert_eq!(
+        fallback_targets("linux", "x86_64", Some(Installer::Rpm)),
+        ["linux-x86_64-rpm"]
+    );
 }
 
 #[test]
@@ -609,14 +583,34 @@ fn a_manifest_without_this_platform_fails_even_when_nothing_is_newer() {
             "None of the fallback platforms `[\"{os}-{arch}-nsis\", \"{os}-{arch}\"]` were found in the response `platforms` object"
         )
     );
+}
 
-    let mut custom = config(&server, &key.pubkey(), "1.0.5", None);
-    custom.target = Some("custom-target".into());
-    let error = check(custom).unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "the platform `custom-target` was not found in the response `platforms` object"
+/// The plain `{os}-{arch}` key is the AppImage on Linux: a deb or rpm
+/// install refuses it after the whole download, so the check reports the
+/// missing package key instead of offering it.
+#[test]
+fn a_package_install_without_its_own_key_finds_no_update() {
+    let key = TestKey::new();
+    let (os, arch) = os_arch();
+    let plain = format!("{os}-{arch}");
+    let server = server_with(
+        move |base| static_manifest("1.2.0", base, &[(plain.as_str(), "c2ln")]),
+        Vec::new(),
     );
+    for (bundle, name) in [(BundleType::Deb, "deb"), (BundleType::Rpm, "rpm")] {
+        let error = check(config(&server, &key.pubkey(), "1.0.5", Some(bundle))).unwrap_err();
+        assert!(
+            matches!(&error, UpdaterError::TargetsNotFound(targets) if *targets == [format!("{os}-{arch}-{name}")]),
+            "{error:?}"
+        );
+    }
+    assert!(check(config(
+        &server,
+        &key.pubkey(),
+        "1.0.5",
+        Some(BundleType::AppImage)
+    ))
+    .is_ok());
 }
 
 #[test]
@@ -633,7 +627,6 @@ fn the_dynamic_shape_and_the_name_alias_parse() {
         release.download_url("anything").unwrap().as_str(),
         "https://example.invalid/setup.exe"
     );
-    assert!(release.platform_keys().is_empty());
 
     let error = parse_manifest(json!({"version": "1.0.0", "signature": "c2ln"})).unwrap_err();
     assert_eq!(
@@ -743,46 +736,11 @@ fn a_failed_download_reports_its_status() {
     let update = check(config(&server, &key.pubkey(), "1.0.5", None))
         .unwrap()
         .unwrap();
-    let error = update.download(|_, _| {}, || {}).unwrap_err();
+    let error = update.download().unwrap_err();
     assert_eq!(
         error.to_string(),
         "`Download request failed with status: 500 Internal Server Error`"
     );
-}
-
-#[test]
-fn the_endpoint_variables_are_replaced_raw_and_encoded() {
-    let server = Server::start(|_| (204, Vec::new()));
-    let key = TestKey::new();
-    let mut templated = config(
-        &server,
-        &key.pubkey(),
-        "1.0.5+build.7",
-        Some(BundleType::Nsis),
-    );
-    templated.endpoints = vec![Url::parse(
-        &server.url("/{{target}}/{{arch}}/{{bundle_type}}/latest.json?v={{current_version}}"),
-    )
-    .unwrap()];
-    // The path braces are percent-encoded by the URL parser, the query ones are not.
-    assert!(templated.endpoints[0]
-        .as_str()
-        .contains("%7B%7Btarget%7D%7D"));
-    assert!(check(templated).unwrap().is_none());
-    let (os, arch) = os_arch();
-    assert_eq!(
-        server.requests()[0].path,
-        format!("/{os}/{arch}/nsis/latest.json?v=1.0.5%2Bbuild.7")
-    );
-
-    let updater = Updater::new(config(&server, &key.pubkey(), "1.0.5", None)).unwrap();
-    let url = updater
-        .endpoint_url(
-            &Url::parse("https://example.invalid/{{bundle_type}}/x").unwrap(),
-            "windows",
-        )
-        .unwrap();
-    assert_eq!(url.as_str(), "https://example.invalid/unknown/x");
 }
 
 #[test]
@@ -793,7 +751,7 @@ fn the_config_is_validated_and_matches_tauri_conf() {
         "https://github.com/klNuno/accshift/releases/latest/download/latest.json"
     );
     assert_eq!(accshift.pubkey, PUBKEY);
-    assert_eq!(accshift.install_mode, WindowsUpdateInstallMode::Passive);
+    assert_eq!(accshift.timeout, None);
     // The shipped key decodes: a wrong signature fails on the signature, not the key.
     let key = TestKey::new();
     let error = verify_signature(b"data", &key.sign(b"data"), PUBKEY).unwrap_err();
@@ -818,7 +776,7 @@ fn the_bundle_marker_maps_to_the_installer() {
         (
             "__TAURI_BUNDLE_TYPE_VAR_MSI",
             BundleType::Msi,
-            Installer::Msi,
+            Installer::Nsis,
         ),
         (
             "__TAURI_BUNDLE_TYPE_VAR_DEB",
@@ -874,12 +832,11 @@ impl InstallerHost for RecordingHost {
     }
 }
 
-fn offline_update(version: &str, args: &[&str], mode: WindowsUpdateInstallMode) -> Update {
+fn offline_update(version: &str, relaunch_args: &[&str]) -> Update {
     let server = Server::start(|_| (404, Vec::new()));
     let key = TestKey::new();
     let mut config = config(&server, &key.pubkey(), "1.0.5", Some(BundleType::Nsis));
-    config.install_mode = mode;
-    config.current_exe_args = args.iter().map(OsString::from).collect();
+    config.relaunch_args = relaunch_args.iter().map(OsString::from).collect();
     let (os, arch) = os_arch();
     let platform = format!("{os}-{arch}");
     let release = parse_manifest(static_manifest(
@@ -899,14 +856,9 @@ fn offline_update(version: &str, args: &[&str], mode: WindowsUpdateInstallMode) 
         download_url: url.clone(),
         signature: signature.clone(),
         raw_json: Value::Null,
-        timeout: None,
-        headers: Vec::new(),
         install: accshift_app::lifecycle::updater::InstallContext {
             app_name: config.app_name,
-            install_mode: config.install_mode,
-            installer_args: config.installer_args,
-            current_exe_args: config.current_exe_args,
-            restart_after_install: config.restart_after_install,
+            relaunch_args: config.relaunch_args,
             bundle_type: config.bundle_type,
             executable_path: None,
             pubkey: config.pubkey,
@@ -917,11 +869,7 @@ fn offline_update(version: &str, args: &[&str], mode: WindowsUpdateInstallMode) 
 #[cfg(windows)]
 #[test]
 fn the_windows_install_launches_the_nsis_setup_then_exits() {
-    let update = offline_update(
-        "1.2.0",
-        &["accshift.exe", "--flag", "some space", "/start"],
-        WindowsUpdateInstallMode::Passive,
-    );
+    let update = offline_update("1.2.0", &["--flag", "some space", "/start"]);
     let host = RecordingHost::default();
     update.install(&fake_setup(), &host).unwrap();
     assert_eq!(
@@ -951,18 +899,14 @@ fn the_windows_install_launches_the_nsis_setup_then_exits() {
 
 #[test]
 fn a_zipped_setup_is_refused_as_without_the_plugins_zip_feature() {
-    let update = offline_update("1.3.0", &["accshift.exe"], WindowsUpdateInstallMode::Quiet);
+    let update = offline_update("1.3.0", &[]);
     let error = update.extract(b"PK\x03\x04\x14\x00\x00\x00").unwrap_err();
     assert_eq!(error.to_string(), "invalid updater binary format");
 }
 
 #[test]
 fn an_unknown_payload_is_refused_before_anything_runs() {
-    let update = offline_update(
-        "1.2.0",
-        &["accshift.exe"],
-        WindowsUpdateInstallMode::Passive,
-    );
+    let update = offline_update("1.2.0", &[]);
     let host = RecordingHost::default();
     let error = update.extract(b"not an installer").unwrap_err();
     assert_eq!(error.to_string(), "invalid updater binary format");
@@ -972,80 +916,30 @@ fn an_unknown_payload_is_refused_before_anything_runs() {
     }
 }
 
+/// The `installMode: "passive"` NSIS command line. The relaunch arguments
+/// come from [`process::relaunch_args`]: a launch from the tray or from a
+/// deep link must not come back hidden or replay its link after the update.
 #[test]
-fn the_installer_command_lines_match_the_plugin() {
-    let args = ["accshift.exe", "--flag", "some space"];
-    let nsis = WindowsUpdaterType::nsis("C:\\t\\setup.exe".into(), None);
-    let msi = WindowsUpdaterType::msi("C:\\t\\Accshift 1.2.0.msi".into(), None);
+fn the_installer_command_line_relaunches_without_launch_only_arguments() {
+    let update = offline_update("1.2.0", &["--flag", "some space"]);
     assert_eq!(
-        msi.path(),
-        std::path::Path::new("\"C:\\t\\Accshift 1.2.0.msi\"")
-    );
-
-    let passive = offline_update("1.2.0", &args, WindowsUpdateInstallMode::Passive);
-    assert_eq!(
-        passive.updater_parameters(&nsis),
+        update.updater_parameters(),
         "/P /UPDATE /R /ARGS --flag \"some space\""
     );
-    assert_eq!(
-        passive.updater_parameters(&msi),
-        "/i \"C:\\t\\Accshift 1.2.0.msi\" /passive /promptrestart AUTOLAUNCHAPP=True LAUNCHAPPARGS=\"--flag \"\"some space\"\"\""
-    );
-    let basic = offline_update("1.2.0", &args, WindowsUpdateInstallMode::BasicUi);
-    assert_eq!(
-        basic.updater_parameters(&nsis),
-        "/UPDATE /ARGS --flag \"some space\""
-    );
-    let mut quiet = offline_update("1.2.0", &args, WindowsUpdateInstallMode::Quiet);
-    quiet.install.restart_after_install = false;
-    quiet.install.installer_args = vec!["/D=C:\\Apps".into()];
-    assert_eq!(quiet.updater_parameters(&nsis), "/S /UPDATE /D=C:\\Apps");
-    assert_eq!(
-        quiet.updater_parameters(&msi),
-        "/i \"C:\\t\\Accshift 1.2.0.msi\" /quiet /promptrestart /D=C:\\Apps"
-    );
 
-    use accshift_app::lifecycle::updater::windows_installer_file;
-    assert_eq!(windows_installer_file(&nsis, None), "C:\\t\\setup.exe");
-    assert_eq!(
-        windows_installer_file(&msi, Some("C:\\Windows".into())),
-        "C:\\Windows\\System32\\msiexec.exe"
-    );
-    assert_eq!(windows_installer_file(&msi, None), "msiexec.exe");
-}
-
-/// updater.rs `it_escapes_correctly_for_msi`.
-#[test]
-fn msi_arguments_escape_as_the_plugin_tests() {
-    let cases = [
-        "something",
+    let launch: Vec<OsString> = [
+        "accshift.exe",
+        "--tray",
+        "accshift://switch/steam/x",
         "--flag",
-        "--empty=",
-        "--arg=value",
-        "some space",
-        "--arg value",
-        "--arg=unwrapped space",
-        "--arg=\"wrapped\"",
-        "--arg=\"wrapped space\"",
-        "--arg=midword\"wrapped space\"",
-        "",
-    ];
-    let cases_escaped = [
-        "something",
-        "--flag",
-        "--empty=",
-        "--arg=value",
-        "\"\"some space\"\"",
-        "\"\"--arg value\"\"",
-        "--arg=\"\"unwrapped space\"\"",
-        r#"--arg=""""""wrapped"""""""#,
-        r#"--arg=""""""wrapped space"""""""#,
-        r#"--arg=""midword""""wrapped space"""""""#,
-        "\"\"\"\"",
-    ];
-    for (orig, escaped) in cases.iter().zip(cases_escaped) {
-        assert_eq!(escape_msi_property_arg(orig), escaped);
-    }
+    ]
+    .iter()
+    .map(OsString::from)
+    .collect();
+    let relaunch = process::relaunch_args(&launch);
+    let relaunch: Vec<&str> = relaunch.iter().map(|arg| arg.to_str().unwrap()).collect();
+    let update = offline_update("1.2.0", &relaunch);
+    assert_eq!(update.updater_parameters(), "/P /UPDATE /R /ARGS --flag");
 }
 
 /// updater.rs `it_escapes_correctly_for_nsis`.
@@ -1189,11 +1083,25 @@ fn real_endpoint_manifest_reads() {
     }
     let mut config = UpdaterConfig::accshift();
     config.timeout = Some(Duration::from_secs(30));
+    let manifest: Value = reqwest::blocking::Client::builder()
+        .user_agent(UPDATER_USER_AGENT)
+        .timeout(config.timeout)
+        .build()
+        .unwrap()
+        .get(config.endpoints[0].clone())
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
     let updater = Updater::new(config).unwrap();
-    let release = updater.fetch_release().unwrap().expect("a release");
+    let release = parse_manifest(manifest).unwrap();
     println!("M5-REAL version={}", release.version);
     println!("M5-REAL pub_date={:?}", release.pub_date);
-    println!("M5-REAL platforms={:?}", release.platform_keys());
+    if let RemoteReleaseInner::Static { platforms } = &release.data {
+        let mut keys: Vec<_> = platforms.keys().collect();
+        keys.sort();
+        println!("M5-REAL platforms={keys:?}");
+    }
     let current = Version::parse(accshift_app::lifecycle::updater::APP_VERSION).unwrap();
     println!("M5-REAL newer_than_{current}={}", release.version > current);
     match updater.get_urls(&release, Some(Installer::Nsis)) {
@@ -1202,4 +1110,32 @@ fn real_endpoint_manifest_reads() {
         }
         Err(error) => println!("M5-REAL nsis_error={error}"),
     }
+}
+
+/// `std::env::set_var` races every `getenv` of the other threads (the
+/// update check ran it beside the UI and the job workers): the app never
+/// writes its own environment. The CA store is found by the TLS verifier.
+#[test]
+fn the_app_never_writes_its_environment() {
+    fn scan(dir: &std::path::Path, found: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                scan(&path, found);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                for (index, line) in text.lines().enumerate() {
+                    if line.contains("set_var(") || line.contains("remove_var(") {
+                        found.push(format!("{}:{}", path.display(), index + 1));
+                    }
+                }
+            }
+        }
+    }
+    let mut found = Vec::new();
+    scan(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut found,
+    );
+    assert!(found.is_empty(), "{found:?}");
 }

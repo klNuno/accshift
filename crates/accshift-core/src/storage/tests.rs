@@ -271,3 +271,220 @@ fn purge_migrated_snapshot_backups_removes_only_migrated_session_copies() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn one_corrupt_store_is_set_aside_and_the_others_still_load() {
+    // Regression: one unparsable store file failed the whole snapshot, and
+    // with it the boot, on every launch.
+    let root = unique_test_root("corrupt-store-boot");
+    let ctx = TestCtx { root: root.clone() };
+    let settings = client_store_path(&ctx, STORE_SETTINGS).unwrap();
+    let folders = client_store_path(&ctx, STORE_FOLDERS).unwrap();
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(&settings, b"{\"theme\":\"dark\"}").unwrap();
+    fs::write(&folders, b"{ not json").unwrap();
+
+    let (snapshot, recovered) = load_client_storage_snapshot_reporting(&ctx).unwrap();
+
+    assert_eq!(snapshot.stores[STORE_SETTINGS]["theme"], "dark");
+    assert!(snapshot.stores[STORE_FOLDERS].is_null());
+    assert_eq!(recovered, [STORE_FOLDERS]);
+    assert!(
+        !folders.exists(),
+        "the bad file must not fail the next boot"
+    );
+    assert_eq!(
+        fs::read(folders.with_extension("corrupt")).unwrap(),
+        b"{ not json",
+        "the user's bytes are kept for a manual repair"
+    );
+
+    // The next boot is clean.
+    let (_, recovered) = load_client_storage_snapshot_reporting(&ctx).unwrap();
+    assert!(recovered.is_empty());
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_reset_settings_store_keeps_its_pin_lock() {
+    // Regression: a settings file that no longer parses was moved aside and
+    // loaded empty, so the boot turned the PIN lock off without the PIN.
+    use crate::pin::{read_pin_lock, PinLock, PinSession};
+    let root = unique_test_root("corrupt-settings-pin");
+    let ctx = TestCtx { root: root.clone() };
+    let settings = client_store_path(&ctx, STORE_SETTINGS).unwrap();
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    let hash = format!("{}:{}", "ab".repeat(16), "cd".repeat(32));
+    let damaged = format!(r#"{{"pinEnabled":true,"pinHash":"{hash}","themeId":"da"#);
+    fs::write(&settings, &damaged).unwrap();
+
+    let (snapshot, recovered) = load_client_storage_snapshot_reporting(&ctx).unwrap();
+
+    assert_eq!(recovered, [STORE_SETTINGS]);
+    assert_eq!(
+        snapshot.stores[STORE_SETTINGS],
+        serde_json::json!({ "pinEnabled": true, "pinHash": hash })
+    );
+    assert_eq!(
+        fs::read(settings.with_extension("corrupt")).unwrap(),
+        damaged.as_bytes()
+    );
+    assert_eq!(read_pin_lock(&ctx), PinLock::On(hash.clone()));
+    assert!(PinSession::new().ensure_unlocked(&ctx).is_err());
+
+    // The next boot is clean and still locked.
+    let (_, recovered) = load_client_storage_snapshot_reporting(&ctx).unwrap();
+    assert!(recovered.is_empty());
+    assert_eq!(read_pin_lock(&ctx), PinLock::On(hash));
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_pin_lock_that_cannot_be_written_back_fails_the_boot() {
+    // Regression: the damaged file was moved aside before its PIN was written
+    // back. When that write failed, no settings file was left, the boot
+    // succeeded and the backend read the lock as off.
+    use crate::pin::{read_pin_lock, PinLock, PinSession};
+    let root = unique_test_root("corrupt-settings-pin-write-fails");
+    let ctx = TestCtx { root: root.clone() };
+    let settings = client_store_path(&ctx, STORE_SETTINGS).unwrap();
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    let hash = format!("{}:{}", "ab".repeat(16), "cd".repeat(32));
+    let damaged = format!(r#"{{"pinEnabled":true,"pinHash":"{hash}","themeId":"da"#);
+    fs::write(&settings, &damaged).unwrap();
+    // A directory where the write stages its temp file makes the write fail.
+    let blocker = unique_tmp_path(&settings);
+    fs::create_dir(&blocker).unwrap();
+
+    let error = load_client_storage_snapshot_reporting(&ctx).unwrap_err();
+
+    assert!(error.contains("PIN lock"), "{error}");
+    assert_eq!(fs::read(&settings).unwrap(), damaged.as_bytes());
+    assert!(matches!(read_pin_lock(&ctx), PinLock::Unreadable(_)));
+    assert!(PinSession::new().ensure_unlocked(&ctx).is_err());
+
+    // Once the write goes through, the boot resets the file and stays locked.
+    fs::remove_dir(&blocker).unwrap();
+    let (_, recovered) = load_client_storage_snapshot_reporting(&ctx).unwrap();
+    assert_eq!(recovered, [STORE_SETTINGS]);
+    assert_eq!(read_pin_lock(&ctx), PinLock::On(hash));
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_reset_settings_store_without_a_pin_loads_empty() {
+    let root = unique_test_root("corrupt-settings-no-pin");
+    let ctx = TestCtx { root: root.clone() };
+    let settings = client_store_path(&ctx, STORE_SETTINGS).unwrap();
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(
+        &settings,
+        br#"{"pinEnabled":false,"pinHash":"","themeId":"da"#,
+    )
+    .unwrap();
+
+    let (snapshot, recovered) = load_client_storage_snapshot_reporting(&ctx).unwrap();
+
+    assert_eq!(recovered, [STORE_SETTINGS]);
+    assert!(snapshot.stores[STORE_SETTINGS].is_null());
+    assert!(!settings.exists());
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_corrupt_store_with_a_valid_bak_is_served_not_reset() {
+    let root = unique_test_root("corrupt-store-bak");
+    let ctx = TestCtx { root: root.clone() };
+    let folders = client_store_path(&ctx, STORE_FOLDERS).unwrap();
+    fs::create_dir_all(folders.parent().unwrap()).unwrap();
+    fs::write(&folders, b"{ not json").unwrap();
+    fs::write(folders.with_extension("bak"), b"{\"saved\":true}").unwrap();
+
+    let (snapshot, recovered) = load_client_storage_snapshot_reporting(&ctx).unwrap();
+
+    assert_eq!(snapshot.stores[STORE_FOLDERS]["saved"], true);
+    assert!(recovered.is_empty());
+    assert!(folders.exists(), "a read never moves a recoverable store");
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_debug_build_leaves_the_release_build_data_in_place() {
+    // Regression: a debug build resolved its stores under `dev/` and moved
+    // the files it found at the un-scoped root, which belong to an installed
+    // release build, into it. The release build then booted as a fresh install.
+    // A release test build has no `dev/` scope, so there is nothing to keep
+    // apart from.
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    let root = unique_test_root("debug-keeps-release-data");
+    let ctx = TestCtx { root: root.clone() };
+    let release_files = [
+        root.join("user").join("settings.json"),
+        root.join("state").join("portable-config.json"),
+        root.join("state").join("local-config.json"),
+        root.join("config.json"),
+        root.join("steam").join("profiles.json"),
+        root.join("platforms").join("roblox").join("accounts.json"),
+        root.join("themes").join("mine.json"),
+        root.join("riot-profiles").join("snapshot.bin"),
+        root.join("platforms")
+            .join("riot")
+            .join("snapshots")
+            .join("snapshot.bin"),
+    ];
+    for file in &release_files {
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, b"release data").unwrap();
+    }
+
+    let snapshot = load_client_storage_snapshot(&ctx).unwrap();
+    portable_config_path(&ctx).unwrap();
+    local_config_path(&ctx).unwrap();
+    roblox_accounts_path(&ctx).unwrap();
+    let themes = themes_dir(&ctx).unwrap();
+    let riot = platform_snapshots_dir(&ctx, "riot").unwrap();
+    let legacy = legacy_config_path(&ctx).unwrap();
+
+    for file in &release_files {
+        assert_eq!(
+            fs::read(file).unwrap(),
+            b"release data",
+            "{} must stay where the release build reads it",
+            file.display()
+        );
+    }
+    let dev = root.join(DEV_SCOPE_DIR);
+    for path in [&themes, &riot, &legacy] {
+        assert!(path.starts_with(&dev), "{} is outside dev/", path.display());
+    }
+    assert!(snapshot.stores[STORE_SETTINGS].is_null());
+    assert!(!themes.exists() && !riot.exists());
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_moved_cache_store_migrates_inside_its_own_scope() {
+    let root = unique_test_root("cache-store-layout-move");
+    let ctx = TestCtx { root: root.clone() };
+    let old = app_cache_root(&ctx)
+        .unwrap()
+        .join("steam")
+        .join("profiles.json");
+    fs::create_dir_all(old.parent().unwrap()).unwrap();
+    fs::write(&old, b"{\"a\":1}").unwrap();
+
+    let current = client_store_path(&ctx, STORE_STEAM_PROFILE_CACHE).unwrap();
+
+    assert_eq!(fs::read(&current).unwrap(), b"{\"a\":1}");
+    assert!(!old.exists());
+
+    let _ = fs::remove_dir_all(&root);
+}

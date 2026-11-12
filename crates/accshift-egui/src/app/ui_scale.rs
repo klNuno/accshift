@@ -1,7 +1,6 @@
-//! `useUiScale.svelte.ts`: Ctrl+wheel and the zoom shortcuts change the
-//! live `uiScalePercent`, saved 180 ms after the last change; the zoom
-//! itself is `uiZoomFactor` (`platformShell.svelte.ts`), applied by
-//! [`crate::zoom`].
+//! The UI scale: Ctrl+wheel and the zoom shortcuts change the live scale
+//! percent, saved 180 ms after the last change; the zoom itself is applied
+//! by [`crate::zoom`].
 
 use std::time::Instant;
 
@@ -11,7 +10,7 @@ use egui::{Context, Event, MouseWheelUnit};
 use super::AppModel;
 use crate::ui::anim::Motion;
 
-/// Chromium's `deltaY` for one wheel notch on Windows, in CSS px: egui
+/// The browser's wheel delta for one notch on Windows, in CSS px: egui
 /// reports a notch as one line.
 const PIXELS_PER_LINE: f32 = 100.0;
 
@@ -20,7 +19,7 @@ const PIXELS_PER_LINE: f32 = 100.0;
 pub enum StageRaster {
     /// Not booted yet.
     Unknown,
-    /// Rastered during the boot entrance at this `uiScalePercent`, at the
+    /// Rastered during the boot entrance at this scale percent, at the
     /// window's own scale: drawn scaled until the zoom changes.
     Boot(i64),
     /// Rastered at its final size.
@@ -48,7 +47,7 @@ pub enum ZoomKey {
 }
 
 impl AppModel {
-    /// The live `uiScalePercent`: the stored one unless a change waits for
+    /// The live scale percent: the stored one unless a change waits for
     /// its save.
     fn ui_scale_percent(&self) -> Option<i64> {
         let b = self.booted.as_ref()?;
@@ -58,7 +57,7 @@ impl AppModel {
         )
     }
 
-    /// `zoomIn`, `zoomOut`, `resetZoom`.
+    /// The zoom in, zoom out and reset shortcuts.
     pub(super) fn zoom_key(&mut self, key: ZoomKey, now: Instant) {
         let Some(current) = self.ui_scale_percent() else {
             return;
@@ -73,14 +72,14 @@ impl AppModel {
         }
     }
 
-    /// Once per frame: the wheel events (`handleCtrlWheelZoom` sees every
-    /// one, a wheel without Ctrl resets its sum), the debounced save, then
+    /// Once per frame: the wheel events (every one is seen, a wheel without
+    /// Ctrl resets the sum), the debounced save, then
     /// the zoom for [`crate::zoom`].
     pub(super) fn tick_ui_scale(&mut self, ctx: &Context, now: Instant) {
         if self.booted.is_none() {
             return;
         }
-        // `innerHeight`: the window's CSS height.
+        // The window's CSS height.
         let page_height = crate::zoom::viewport(ctx).y;
         let wheels = ctx.input(|i| {
             i.raw
@@ -127,7 +126,7 @@ impl AppModel {
         };
         let motion = b.theme.motion;
         if let Some(value) = self.ui_scale.take_due(now) {
-            // `persistUiScalePercent`: saved only when the store differs.
+            // Saved only when the store differs.
             if b.stores.settings().ui_scale_percent != value {
                 let mut next = b.stores.settings().clone();
                 next.ui_scale_percent = value;
