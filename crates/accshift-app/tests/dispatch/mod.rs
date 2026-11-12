@@ -111,9 +111,7 @@ pub fn dispatch(
             &a.str("toSteamId"),
             &a.str("appId"),
         )),
-        "steam_get_copyable_games" => {
-            json(b.steam_get_copyable_games(&a.str("fromSteamId"), &a.str("toSteamId")))
-        }
+        "steam_get_copyable_games" => json(b.steam_get_copyable_games(&a.str("fromSteamId"))),
         "steam_open_userdata" => json(b.steam_open_userdata(&a.str("steamId"))),
         "steam_clear_browser_cache" => json(b.steam_clear_browser_cache()),
         "steam_bulk_edit" => match a.decode::<BulkEditRequest>("request") {

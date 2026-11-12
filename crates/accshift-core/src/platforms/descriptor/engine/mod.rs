@@ -51,6 +51,7 @@ mod operations;
 mod reads;
 mod restore;
 mod snapshot;
+mod state_item;
 
 #[allow(unused_imports)]
 use self::fs_probe::*;

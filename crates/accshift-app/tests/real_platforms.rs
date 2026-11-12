@@ -217,7 +217,7 @@ fn steam_lists_the_fixture_accounts_and_its_path_override() {
     assert_eq!(alpha["last_login_at"], 1_700_000_000u64);
 
     // Copyable games: alpha's 730 folder named from its app manifest.
-    let games = real.steam_get_copyable_games(ALPHA, BRAVO).unwrap();
+    let games = real.steam_get_copyable_games(ALPHA).unwrap();
     assert_eq!(games.len(), 1, "{games:?}");
     assert_eq!(games[0].app_id, "730");
     assert_eq!(games[0].name, "Counter-Strike 2");
@@ -225,7 +225,7 @@ fn steam_lists_the_fixture_accounts_and_its_path_override() {
     let value = dispatch(
         &real,
         "steam_get_copyable_games",
-        &json!({ "fromSteamId": ALPHA, "toSteamId": BRAVO }),
+        &json!({ "fromSteamId": ALPHA }),
     )
     .unwrap()
     .unwrap();
@@ -284,9 +284,7 @@ fn steam_commands_check_their_ids_before_touching_anything() {
         invalid
     );
     assert_eq!(
-        real.steam_get_copyable_games(ALPHA, "x")
-            .unwrap_err()
-            .message,
+        real.steam_get_copyable_games("x").unwrap_err().message,
         invalid
     );
     assert_eq!(real.steam_open_userdata("x").unwrap_err().message, invalid);

@@ -1,9 +1,8 @@
-//! Port of `src/lib/theme/themes.ts`: the built-in themes, the registry of
+//! The built-in themes, the registry of
 //! custom ones, the surface opacity rules and the CSS variables a theme writes
 //! on `<html>`.
 //!
-//! The TypeScript keeps its registry in module state; here it is a
-//! [`ThemeRegistry`] value the app owns. Nothing here touches the disk: saving
+//! The registry is a [`ThemeRegistry`] value the app owns. Nothing here touches the disk: saving
 //! and deleting return what the caller must write.
 
 use std::collections::{BTreeMap, HashMap};
@@ -262,7 +261,7 @@ pub struct AppTheme {
     pub css: Option<String>,
     pub display_name: String,
     /// Liquid Glass or a theme that extends it, decided against the registry
-    /// the theme was resolved in (`themeUsesLiquidGlass`).
+    /// the theme was resolved in.
     pub liquid: bool,
     pub document: ThemeDocument,
 }
@@ -324,7 +323,7 @@ impl ThemeRegistry {
         ThemeRegistry::default()
     }
 
-    /// `getThemeDocument`: custom first, then built-in.
+    /// The theme file for an id: custom first, then built-in.
     pub fn document(&self, id: &str) -> Option<&ThemeDocument> {
         self.custom
             .iter()
@@ -332,7 +331,7 @@ impl ThemeRegistry {
             .or_else(|| built_in_document(id))
     }
 
-    /// `themeFromDocument`. Never fails: unknown bases, cycles and holes are
+    /// The theme a file describes. Never fails: unknown bases, cycles and holes are
     /// absorbed by the resolver.
     pub fn theme_from_document(&self, document: &ThemeDocument) -> AppTheme {
         let resolved = resolve_theme_tokens(document, |id| self.document(id), root_tokens());
@@ -356,7 +355,7 @@ impl ThemeRegistry {
             .map(|document| self.theme_from_document(document))
     }
 
-    /// `getThemeDefinition`: the theme, or the default one.
+    /// The theme with this id, or the default one.
     pub fn theme(&self, id: Option<&str>) -> AppTheme {
         id.filter(|id| !id.is_empty())
             .and_then(|id| self.resolve_by_id(id))
@@ -372,7 +371,7 @@ impl ThemeRegistry {
             .collect()
     }
 
-    /// `getAllThemes`: built-ins, then custom themes in load order.
+    /// Every theme: built-ins, then custom themes in load order.
     pub fn all_themes(&self) -> Vec<AppTheme> {
         let mut themes = self.built_in_themes();
         themes.extend(
@@ -394,7 +393,7 @@ impl ThemeRegistry {
         }
     }
 
-    /// `applyCustomThemePayloads`: replaces every custom theme. A file that
+    /// Replaces every custom theme with the files read from disk. A file that
     /// fails to parse, or reuses a built-in id, is skipped.
     pub fn apply_custom_theme_payloads(&mut self, payloads: &[CustomThemePayload]) {
         self.custom.clear();
@@ -422,7 +421,7 @@ impl ThemeRegistry {
         self.refused_css.get(id).map(String::as_str)
     }
 
-    /// First half of `saveThemeDocument`: the payload to write.
+    /// First half of a save: the payload to write.
     /// `keep_refused_css`: an edit of a theme already on disk, whose refused
     /// CSS stays in the file unless the edit brings CSS of its own.
     pub fn prepare_save(
@@ -462,7 +461,7 @@ impl ThemeRegistry {
         })
     }
 
-    /// Second half of `saveThemeDocument`, once the payload is on disk.
+    /// Second half of a save, once the payload is on disk.
     pub fn finish_save(&mut self, pending: PendingSave) {
         if !pending.kept_refused_css {
             self.refused_css.remove(&pending.document.id);
@@ -470,12 +469,12 @@ impl ThemeRegistry {
         self.set_custom(pending.document);
     }
 
-    /// `deleteCustomTheme`, once the file is gone.
+    /// Forgets a custom theme, once its file is gone.
     pub fn delete_custom_theme(&mut self, id: &str) {
         self.custom.retain(|document| document.id != id);
     }
 
-    /// `suggestThemeId`: an id derived from a name, unique in this registry.
+    /// An id derived from a name, unique in this registry.
     pub fn suggest_theme_id(&self, name: &str) -> String {
         let lower = name.to_lowercase();
         let mut slug = String::new();
@@ -505,12 +504,12 @@ impl ThemeRegistry {
     }
 }
 
-/// `exportThemeJson`: the shareable file.
+/// The shareable file of a theme.
 pub fn export_theme_json(theme: &AppTheme) -> String {
     serialize_theme_document(&theme.document)
 }
 
-/// `importThemeJson`.
+/// Reads a shared theme file.
 pub fn import_theme_json(json: &str) -> ThemeParseResult {
     parse_theme_json(json)
 }
@@ -589,8 +588,8 @@ fn js_max(a: f64, b: f64) -> f64 {
     }
 }
 
-/// `resolveThemeSurfaceOpacities`. `backdrop_available` is the TypeScript
-/// `opts.backdropAvailable !== false`.
+/// The surface opacities a theme paints with. `backdrop_available` is false
+/// only when the OS cannot draw the glass backdrop.
 pub fn resolve_theme_surface_opacities(
     theme: &AppTheme,
     background_opacity_percent: f64,
@@ -625,7 +624,7 @@ pub fn resolve_theme_surface_opacities(
     }
 }
 
-/// `hexToRgbTriplet`: "r g b", or "0 0 0" for a malformed token.
+/// A hex colour as an "r g b" triplet, or "0 0 0" for a malformed token.
 fn hex_to_rgb_triplet(color: &str) -> String {
     let trimmed = js::trim(color);
     let hex = trimmed.strip_prefix('#').unwrap_or(trimmed);
@@ -641,7 +640,7 @@ fn hex_to_rgb_triplet(color: &str) -> String {
     format!("{} {} {}", channel(0), channel(2), channel(4))
 }
 
-/// What `applyThemeToDocument` writes on `<html>` for one theme.
+/// What applying one theme writes on `<html>`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThemeApplication {
     /// `data-theme`.
@@ -666,7 +665,7 @@ impl ThemeApplication {
     }
 }
 
-/// `applyThemeToDocument` without a document: every value it would write.
+/// Applying a theme without a document: every value it would write.
 pub fn theme_application(
     theme: &AppTheme,
     background_opacity_percent: f64,

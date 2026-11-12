@@ -1,5 +1,4 @@
-//! Port of the motion mode of `src/lib/theme/motion.ts`: what
-//! `data-motion` on `<html>` says. Listening to the OS setting stays with the
+//! The motion mode: what `data-motion` on `<html>` says. Listening to the OS setting stays with the
 //! app; it calls [`motion_attribute`] again when that setting changes.
 
 /// The animations setting (`AnimationsMode` in the settings types).

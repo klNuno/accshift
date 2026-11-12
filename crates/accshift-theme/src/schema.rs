@@ -1,4 +1,4 @@
-//! Port of `src/lib/theme/schema.ts`: theme files, their parsing, export,
+//! Theme files: their parsing, export,
 //! resolution through `extends`, and validation.
 
 use std::collections::{BTreeMap, HashSet};
@@ -37,7 +37,7 @@ impl ColorScheme {
 /// A theme file, exactly as written on disk and exchanged between users.
 ///
 /// Tokens are keyed by `TokenKey`, so a document can only hold known keys; the
-/// values are unchecked until resolution or validation, as in TypeScript.
+/// values are unchecked until resolution or validation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThemeDocument {
     pub schema_version: u32,
@@ -213,7 +213,7 @@ fn read_tokens(raw: Option<&Value>) -> (BTreeMap<TokenKey, String>, Vec<String>)
     (tokens, rejected)
 }
 
-/// `parseThemeDocument` for a JSON string.
+/// Parses a theme file from its JSON text.
 pub fn parse_theme_json(input: &str) -> ThemeParseResult {
     match serde_json::from_str::<Value>(input) {
         Ok(value) => parse_theme_value(&value),
@@ -224,7 +224,7 @@ pub fn parse_theme_json(input: &str) -> ThemeParseResult {
     }
 }
 
-/// `parseThemeDocument` for an already parsed value (an IPC payload).
+/// Parses a theme file from an already parsed JSON value.
 pub fn parse_theme_value(raw: &Value) -> ThemeParseResult {
     let current = i64::from(THEME_CONTRACT_VERSION);
     let Some(record) = raw.as_object() else {

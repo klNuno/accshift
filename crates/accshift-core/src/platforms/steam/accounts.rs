@@ -1,14 +1,22 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[cfg(not(target_os = "windows"))]
 use super::vdf::vdf_set_nested_value;
-use super::vdf::{localconfig_path, parse_vdf, set_persona_state};
+use super::vdf::{
+    localconfig_path, parse_vdf, set_persona_state, vdf_brace_counts, vdf_tokenize_line,
+};
 use crate::error::AppError;
-use crate::fs_utils;
 use crate::os;
+
+mod games;
+pub use games::{copy_game_settings, get_copyable_games, open_userdata_with_path, CopyableGame};
+#[cfg(test)]
+use games::{copy_game_settings_with, extract_appid_and_name, load_library_paths};
+pub(crate) use games::{
+    list_account_games, load_app_names, steam_user_data_path, NON_GAME_APP_IDS,
+};
 
 const KILL_WAIT_MS: u32 = 5000;
 // Windows exits in 2-5s; the wait stops as soon as it does.
@@ -21,10 +29,6 @@ const GRACEFUL_SHUTDOWN_WAIT_MS: u32 = 12_000;
 // rewriting its VDFs on exit risks corrupting them, so wait longer instead.
 #[cfg(not(windows))]
 const GRACEFUL_SHUTDOWN_WAIT_MS: u32 = 20_000;
-pub(crate) const NON_GAME_APP_IDS: &[&str] = &[
-    "7",   // Steam client internals
-    "760", // Steam community / screenshots
-];
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SteamAccount {
@@ -32,12 +36,6 @@ pub struct SteamAccount {
     pub account_name: String,
     pub persona_name: String,
     pub last_login_at: Option<u64>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct CopyableGame {
-    pub app_id: String,
-    pub name: String,
 }
 
 struct ParsedLoginUser {
@@ -231,19 +229,13 @@ fn switch_autologin_and_relaunch(
             ));
         }
         StopOutcome::NeedsElevation if run_as_admin => {
-            // Windows-only path: elevated relaunch via UAC. The HKCU registry
-            // write is user-scope, so writing now is safe (Steam does not own
-            // it).
-            write_auto_login(next_username)?;
-            if let Err(e) = set_login_user_flags(steam_path, next_username) {
-                // Keep registry and loginusers.vdf consistent: undo the
-                // autologin write rather than relaunch into a mismatched state.
-                let _ = restore_auto_login_user(&previous);
-                return Err(e);
-            }
-            let mut args = parse_launch_options(launch_options);
-            args.extend(extra_args.iter().map(|s| s.to_string()));
-            return os::kill_and_relaunch_steam_elevated(steam_path, &args);
+            return relaunch_elevated(
+                steam_path,
+                next_username,
+                &previous,
+                launch_options,
+                extra_args,
+            );
         }
         StopOutcome::NeedsElevation => return Err(AppError::SteamElevated),
         StopOutcome::NotRunning | StopOutcome::Stopped => {}
@@ -276,25 +268,51 @@ fn switch_autologin_and_relaunch(
     // the game in the old account's session instead of relaunching. The waits
     // in `stop_steam` only track the pids they saw at the start, so re-check
     // by name and put down any newcomer before launching.
-    if is_steam_running() || os::is_process_running(os::steam_web_helper_process_name()) {
+    let leftover =
+        is_steam_running() || os::is_process_running(os::steam_web_helper_process_name());
+    if leftover {
         if let Err(e) = kill_steam_client_processes() {
-            let _ = restore_auto_login_user(&previous);
-            let previous_target = (!previous.trim().is_empty()).then_some(previous.as_str());
-            let _ = set_login_user_flags(steam_path, previous_target);
+            revert_autologin(steam_path, &previous);
             return Err(e);
         }
     }
 
-    if let Err(e) = launch_steam(steam_path, run_as_admin, launch_options, extra_args) {
-        let _ = restore_auto_login_user(&previous);
-        // Also revert the loginusers.vdf flags flipped above, so registry and
-        // VDF stay consistent on the failure path.
-        let previous_target = (!previous.trim().is_empty()).then_some(previous.as_str());
-        let _ = set_login_user_flags(steam_path, previous_target);
+    let launched = launch_steam(steam_path, run_as_admin, launch_options, extra_args);
+    if launched.is_err() {
+        revert_autologin(steam_path, &previous);
+    }
+    launched
+}
+
+/// Windows-only path: elevated relaunch via UAC. The HKCU registry write is
+/// user-scope, so writing it while Steam still runs is safe (Steam does not
+/// own it).
+fn relaunch_elevated(
+    steam_path: &Path,
+    next_username: Option<&str>,
+    previous: &str,
+    launch_options: &str,
+    extra_args: &[&str],
+) -> Result<(), AppError> {
+    write_auto_login(next_username)?;
+    if let Err(e) = set_login_user_flags(steam_path, next_username) {
+        // Keep registry and loginusers.vdf consistent: undo the autologin
+        // write rather than relaunch into a mismatched state.
+        let _ = restore_auto_login_user(previous);
         return Err(e);
     }
+    let mut args = parse_launch_options(launch_options);
+    args.extend(extra_args.iter().map(|s| s.to_string()));
+    os::kill_and_relaunch_steam_elevated(steam_path, &args)
+}
 
-    Ok(())
+/// Puts back the autologin and the loginusers.vdf flags of the account signed
+/// in before the switch, so registry and VDF stay consistent on a failure
+/// path that comes after both were written.
+fn revert_autologin(steam_path: &Path, previous: &str) {
+    let _ = restore_auto_login_user(previous);
+    let previous_target = (!previous.trim().is_empty()).then_some(previous);
+    let _ = set_login_user_flags(steam_path, previous_target);
 }
 
 fn kill_steam_client_processes() -> Result<(), AppError> {
@@ -374,130 +392,6 @@ fn launch_steam(
     os::launch_steam(steam_path, run_as_admin, &args)
 }
 
-pub(crate) fn steam_user_data_path(steam_path: &Path, steam_id: &str) -> Result<PathBuf, AppError> {
-    let account_id = steam_id_to_account_id(steam_id).ok_or(AppError::InvalidSteamId)?;
-    Ok(steam_path.join("userdata").join(account_id.to_string()))
-}
-
-pub(crate) fn list_account_games(userdata_root: &Path) -> Result<HashSet<String>, AppError> {
-    let mut ids = HashSet::new();
-    if !userdata_root.exists() {
-        return Ok(ids);
-    }
-    for entry in fs::read_dir(userdata_root).map_err(|e| AppError::FileRead(e.to_string()))? {
-        let entry = entry.map_err(|e| AppError::FileRead(e.to_string()))?;
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if !name.is_empty() && name.chars().all(|c| c.is_ascii_digit()) {
-                ids.insert(name.to_string());
-            }
-        }
-    }
-    Ok(ids)
-}
-
-// Pulls "appid" and "name" out of an appmanifest in a single pass. Both keys
-// sit in the first handful of lines while the file goes on with hundreds of
-// InstalledDepots entries, so stop as soon as both are found.
-fn extract_appid_and_name(content: &str) -> (Option<String>, Option<String>) {
-    let mut app_id = None;
-    let mut name = None;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if !trimmed.starts_with('"') {
-            continue;
-        }
-        let mut parts = trimmed.split('"');
-        // Elements 1 and 3 of the split: the quoted key and its quoted value.
-        let Some(key) = parts.nth(1) else {
-            continue;
-        };
-        let Some(value) = parts.nth(1) else {
-            continue;
-        };
-        if app_id.is_none() && key.eq_ignore_ascii_case("appid") {
-            app_id = Some(value.to_string());
-        } else if name.is_none() && key.eq_ignore_ascii_case("name") {
-            name = Some(value.to_string());
-        }
-        if app_id.is_some() && name.is_some() {
-            break;
-        }
-    }
-
-    (app_id, name)
-}
-
-fn unescape_vdf_path(input: &str) -> String {
-    input.replace("\\\\", "\\")
-}
-
-fn load_library_paths(steam_path: &Path) -> Vec<PathBuf> {
-    let mut paths = vec![steam_path.to_path_buf()];
-    let libraryfolders_path = steam_path.join("steamapps").join("libraryfolders.vdf");
-    let Ok(content) = fs::read_to_string(libraryfolders_path) else {
-        return paths;
-    };
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if !trimmed.starts_with('"') {
-            continue;
-        }
-        let parts: Vec<&str> = trimmed.split('"').collect();
-        if parts.len() >= 4 && parts[1].eq_ignore_ascii_case("path") {
-            let raw = parts[3].trim();
-            if !raw.is_empty() {
-                paths.push(PathBuf::from(unescape_vdf_path(raw)));
-            }
-        }
-    }
-
-    paths.sort();
-    paths.dedup();
-    paths
-}
-
-pub(crate) fn load_app_names(steam_path: &Path) -> HashMap<String, String> {
-    let mut names = HashMap::new();
-    for library_root in load_library_paths(steam_path) {
-        let steamapps = if library_root
-            .file_name()
-            .and_then(|n| n.to_str())
-            .map(|n| n.eq_ignore_ascii_case("steamapps"))
-            .unwrap_or(false)
-        {
-            library_root
-        } else {
-            library_root.join("steamapps")
-        };
-
-        let Ok(entries) = fs::read_dir(steamapps) else {
-            continue;
-        };
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let file_name = path.file_name().and_then(|v| v.to_str()).unwrap_or("");
-            if !file_name.starts_with("appmanifest_") || !file_name.ends_with(".acf") {
-                continue;
-            }
-            let Ok(content) = fs::read_to_string(&path) else {
-                continue;
-            };
-            let (app_id, name) = extract_appid_and_name(&content);
-            if let (Some(app_id), Some(name)) = (app_id, name) {
-                names.entry(app_id).or_insert(name);
-            }
-        }
-    }
-    names
-}
-
 pub fn get_current_account_name(steam_path: &Path) -> Result<String, AppError> {
     Ok(current_account(&parse_login_users(steam_path)?))
 }
@@ -570,34 +464,6 @@ fn parse_login_users(steam_path: &Path) -> Result<Vec<ParsedLoginUser>, AppError
     Ok(users)
 }
 
-/// Counts the net brace delta of a line, ignoring braces inside quoted
-/// strings. A double-quote toggles the in-string state; a backslash escapes
-/// the next char so an escaped quote does not close the string. Returns
-/// (opens, closes) so callers can reason about a line that both opens and
-/// closes a block.
-fn brace_counts(line: &str) -> (i32, i32) {
-    let mut opens = 0;
-    let mut closes = 0;
-    let mut in_string = false;
-    let mut escaped = false;
-
-    for ch in line.chars() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        match ch {
-            '\\' if in_string => escaped = true,
-            '"' => in_string = !in_string,
-            '{' if !in_string => opens += 1,
-            '}' if !in_string => closes += 1,
-            _ => {}
-        }
-    }
-
-    (opens, closes)
-}
-
 /// Removes the block for `steam_id` from a loginusers.vdf string.
 ///
 /// Brace accounting counts the real `{`/`}` on each line (skipping braces
@@ -620,8 +486,8 @@ fn remove_loginuser_entry(content: &str, steam_id: &str) -> (String, bool) {
     let mut removed = false;
 
     for line in content.lines() {
-        let trimmed = line.trim();
-        let (opens, closes) = brace_counts(line);
+        let (opens, closes) = vdf_brace_counts(line);
+        let (opens, closes) = (opens as i32, closes as i32);
 
         if skipping {
             // The block's own braces were already absorbed when the key line
@@ -650,8 +516,8 @@ fn remove_loginuser_entry(content: &str, steam_id: &str) -> (String, bool) {
         // A top-level account key sits at depth 1 (inside the root "users"
         // block). Match it before counting this line's braces so the key's
         // own inline `{` is attributed to the block being removed.
-        let parts: Vec<&str> = trimmed.split('"').collect();
-        let is_target = depth == 1 && parts.len() >= 2 && parts[1] == steam_id;
+        let is_target = depth == 1
+            && vdf_tokenize_line(line.trim()).first().map(String::as_str) == Some(steam_id);
 
         if is_target {
             removed = true;
@@ -832,124 +698,6 @@ pub fn switch_account_mode(
     // The switch itself succeeded; still surface a persona write failure so
     // the user knows the requested mode did not apply.
     persona_result
-}
-
-pub fn open_userdata_with_path(steam_path: &Path, steam_id: &str) -> Result<(), AppError> {
-    let userdata_path = steam_user_data_path(steam_path, steam_id)?;
-
-    if !userdata_path.exists() {
-        return Err(AppError::UserdataNotFound(
-            userdata_path.display().to_string(),
-        ));
-    }
-
-    let canonical = userdata_path
-        .canonicalize()
-        .map_err(|e| AppError::PathResolve(e.to_string()))?;
-
-    os::open_folder(&canonical)
-}
-
-pub fn copy_game_settings(
-    steam_path: &Path,
-    from_steam_id: &str,
-    to_steam_id: &str,
-    app_id: &str,
-) -> Result<(), AppError> {
-    copy_game_settings_with(
-        steam_path,
-        from_steam_id,
-        to_steam_id,
-        app_id,
-        is_steam_running,
-    )
-}
-
-/// `copy_game_settings` with the Steam probe injected, so the refusal can be
-/// tested without a real client.
-fn copy_game_settings_with(
-    steam_path: &Path,
-    from_steam_id: &str,
-    to_steam_id: &str,
-    app_id: &str,
-    steam_running: impl FnOnce() -> bool,
-) -> Result<(), AppError> {
-    if !app_id.chars().all(|c| c.is_ascii_digit()) || app_id.is_empty() {
-        return Err(AppError::FileRead("Invalid app id".into()));
-    }
-    // A running Steam rewrites userdata from memory and Steam Cloud on exit,
-    // so a copy made now would report success and then be undone.
-    if steam_running() {
-        return Err(AppError::FileRead(
-            "Steam is running and would overwrite the copied settings. Close Steam, then copy \
-             again."
-                .into(),
-        ));
-    }
-
-    let from_root = steam_user_data_path(steam_path, from_steam_id)?;
-    let to_root = steam_user_data_path(steam_path, to_steam_id)?;
-    let source = from_root.join(app_id);
-    let target = to_root.join(app_id);
-
-    if !source.exists() {
-        return Err(AppError::UserdataNotFound(source.display().to_string()));
-    }
-
-    // Stage the copy next to the target, then swap. A failure mid-copy must
-    // not leave the destination account half-deleted.
-    let staging = to_root.join(format!(".{app_id}.copy-staging"));
-    if staging.exists() {
-        fs::remove_dir_all(&staging).map_err(|e| AppError::FileRead(e.to_string()))?;
-    }
-    fs_utils::copy_dir_recursive(&source, &staging, &[]).map_err(AppError::FileRead)?;
-
-    let backup = to_root.join(format!(".{app_id}.copy-backup"));
-    if backup.exists() {
-        fs::remove_dir_all(&backup).map_err(|e| AppError::FileRead(e.to_string()))?;
-    }
-    let had_target = target.exists();
-    if had_target {
-        fs::rename(&target, &backup).map_err(|e| AppError::FileRead(e.to_string()))?;
-    }
-    match fs::rename(&staging, &target) {
-        Ok(()) => {
-            if had_target {
-                let _ = fs::remove_dir_all(&backup);
-            }
-            Ok(())
-        }
-        Err(e) => {
-            if had_target {
-                let _ = fs::rename(&backup, &target);
-            }
-            let _ = fs::remove_dir_all(&staging);
-            Err(AppError::FileRead(e.to_string()))
-        }
-    }
-}
-
-pub fn get_copyable_games(
-    steam_path: &Path,
-    from_steam_id: &str,
-) -> Result<Vec<CopyableGame>, AppError> {
-    let from_root = steam_user_data_path(steam_path, from_steam_id)?;
-    let from_games = list_account_games(&from_root)?;
-    let names = load_app_names(steam_path);
-
-    let mut games: Vec<CopyableGame> = from_games
-        .iter()
-        .filter(|app_id| !NON_GAME_APP_IDS.contains(&app_id.as_str()))
-        .filter_map(|app_id| {
-            names.get(app_id).map(|name| CopyableGame {
-                app_id: app_id.clone(),
-                name: name.clone(),
-            })
-        })
-        .collect();
-
-    games.sort_by_key(|g| g.name.to_lowercase());
-    Ok(games)
 }
 
 /// Delete Steam's web cache with Steam stopped the way a switch stops it

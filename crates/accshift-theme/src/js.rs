@@ -1,4 +1,5 @@
-//! The JavaScript string and number semantics the ported engines lean on:
+//! The JavaScript string and number semantics stored settings and theme
+//! files were written with, kept so they read back the same:
 //! what `trim` strips, how `String(number)` prints, what `parseFloat` reads,
 //! and string lengths counted in UTF-16 code units. The one copy for the
 //! workspace: `accshift-app` re-exports it.

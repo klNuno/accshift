@@ -1,183 +1,33 @@
 use std::collections::HashMap;
 use std::fs;
+use std::iter::Peekable;
 use std::path::{Path, PathBuf};
-
-/// Extract the quoted tokens from a single VDF line, honoring backslash escapes.
-///
-/// VDF quotes tokens with `"` and escapes `\"` and `\\` inside them. A naive
-/// `split('"')` breaks on escaped quotes and truncates values that contain
-/// them. This scanner walks the line character by character, collecting the
-/// content of each `"..."` token and unescaping `\"`, `\\`, `\n` and `\r`.
-///
-/// Returns the tokens in order. A `"key" "value"` line yields two entries.
-pub(crate) fn vdf_tokenize_line(line: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut chars = line.chars().peekable();
-
-    while let Some(&c) = chars.peek() {
-        if c == '"' {
-            chars.next(); // consume opening quote
-            let mut token = String::new();
-            while let Some(ch) = chars.next() {
-                if ch == '\\' {
-                    match chars.next() {
-                        Some('n') => token.push('\n'),
-                        Some('r') => token.push('\r'),
-                        Some('t') => token.push('\t'),
-                        Some('\\') => token.push('\\'),
-                        Some('"') => token.push('"'),
-                        // Unknown escape: keep the following char verbatim.
-                        Some(other) => token.push(other),
-                        None => break,
-                    }
-                } else if ch == '"' {
-                    break; // closing quote
-                } else {
-                    token.push(ch);
-                }
-            }
-            tokens.push(token);
-        } else {
-            chars.next();
-        }
-    }
-
-    tokens
-}
-
-/// Byte span (opening-quote index, closing-quote index) of the `n`-th (0-based)
-/// quoted token on the line, honoring backslash escapes the same way
-/// [`vdf_tokenize_line`] does. Used to rewrite a single token's value in place
-/// without a naive `rfind('"')`, which would lock onto a later quoted token if
-/// one follows on the same physical line.
-fn nth_quoted_token_span(line: &str, n: usize) -> Option<(usize, usize)> {
-    let mut idx = 0;
-    let mut chars = line.char_indices().peekable();
-
-    while let Some(&(i, c)) = chars.peek() {
-        if c == '"' {
-            let open = i;
-            chars.next(); // consume opening quote
-            let mut close = None;
-            while let Some((j, ch)) = chars.next() {
-                if ch == '\\' {
-                    chars.next(); // skip the escaped char
-                } else if ch == '"' {
-                    close = Some(j);
-                    break;
-                }
-            }
-            let close = close?;
-            if idx == n {
-                return Some((open, close));
-            }
-            idx += 1;
-        } else {
-            chars.next();
-        }
-    }
-
-    None
-}
-
-fn vdf_braces_outside_quotes(line: &str) -> (usize, usize) {
-    let mut opens = 0;
-    let mut closes = 0;
-    let mut in_quote = false;
-    let mut escaped = false;
-
-    for ch in line.chars() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if in_quote && ch == '\\' {
-            escaped = true;
-            continue;
-        }
-        if ch == '"' {
-            in_quote = !in_quote;
-            continue;
-        }
-        if in_quote {
-            continue;
-        }
-        match ch {
-            '{' => opens += 1,
-            '}' => closes += 1,
-            _ => {}
-        }
-    }
-
-    (opens, closes)
-}
-
-pub fn parse_vdf(content: &str) -> HashMap<String, HashMap<String, String>> {
-    let mut accounts: HashMap<String, HashMap<String, String>> = HashMap::new();
-    let mut current_id: Option<String> = None;
-    let mut current_account: HashMap<String, String> = HashMap::new();
-    let mut depth = 0;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-
-        let (opens, closes) = vdf_braces_outside_quotes(trimmed);
-        let tokens = vdf_tokenize_line(trimmed);
-
-        if tokens.len() >= 2 {
-            let key = &tokens[0];
-            let value = &tokens[1];
-
-            if depth == 2 && current_id.is_some() {
-                current_account.insert(key.to_lowercase(), value.clone());
-            }
-        } else if tokens.len() == 1 {
-            let key = &tokens[0];
-
-            if depth == 1 && !key.is_empty() && key.chars().all(|c| c.is_ascii_digit()) {
-                current_id = Some(key.clone());
-            }
-        }
-
-        for _ in 0..opens {
-            depth += 1;
-        }
-
-        for _ in 0..closes {
-            if depth == 0 {
-                continue;
-            }
-            depth -= 1;
-            if depth == 1 {
-                if let Some(id) = current_id.take() {
-                    accounts.insert(id, std::mem::take(&mut current_account));
-                } else {
-                    current_account.clear();
-                }
-            }
-        }
-    }
-
-    accounts
-}
+use std::str::CharIndices;
 
 /// A meaningful element of a VDF line: a quoted token, or a brace that opens or
 /// closes a section outside any quoted token.
 #[derive(Debug, Clone, PartialEq)]
 enum VdfItem {
-    Token(String),
+    /// The unescaped content of a `"..."` token, and the byte index of its
+    /// closing quote (`None` when the line ends inside the token).
+    Token {
+        text: String,
+        close: Option<usize>,
+    },
     Open,
     Close,
 }
 
 /// Scan a line into its items, in order, each paired with the byte index it
-/// starts at.
+/// starts at. This is the one VDF tokenizer: every reader and the writer go
+/// through it.
 ///
-/// This is what makes `"key" {` structure rather than noise. The old writer
-/// compared the trimmed line against `{` and `}`, so a file written with the
-/// brace on the header line was walked without ever entering the block and the
-/// write silently changed nothing. Scanning stops at a `//` comment outside
-/// quotes, so a brace inside a comment cannot desync the section stack.
+/// VDF quotes tokens with `"` and escapes `\"`, `\\`, `\n`, `\r` and `\t`
+/// inside them, so a token is read character by character rather than split
+/// on `"`, which would truncate a value holding an escaped quote. Braces count
+/// only outside quotes, which is what makes `"key" {` structure rather than
+/// noise. Scanning stops at a `//` comment outside quotes, so a brace or a
+/// token inside a comment cannot desync a reader.
 fn vdf_scan_line(line: &str) -> Vec<(usize, VdfItem)> {
     let mut items = Vec::new();
     let bytes = line.as_bytes();
@@ -187,26 +37,8 @@ fn vdf_scan_line(line: &str) -> Vec<(usize, VdfItem)> {
         match c {
             '"' => {
                 chars.next(); // consume opening quote
-                let mut token = String::new();
-                while let Some((_, ch)) = chars.next() {
-                    if ch == '\\' {
-                        match chars.next() {
-                            Some((_, 'n')) => token.push('\n'),
-                            Some((_, 'r')) => token.push('\r'),
-                            Some((_, 't')) => token.push('\t'),
-                            Some((_, '\\')) => token.push('\\'),
-                            Some((_, '"')) => token.push('"'),
-                            // Unknown escape: keep the following char verbatim.
-                            Some((_, other)) => token.push(other),
-                            None => break,
-                        }
-                    } else if ch == '"' {
-                        break; // closing quote
-                    } else {
-                        token.push(ch);
-                    }
-                }
-                items.push((i, VdfItem::Token(token)));
+                let (text, close) = vdf_read_token(&mut chars);
+                items.push((i, VdfItem::Token { text, close }));
             }
             '{' => {
                 items.push((i, VdfItem::Open));
@@ -224,6 +56,98 @@ fn vdf_scan_line(line: &str) -> Vec<(usize, VdfItem)> {
     }
 
     items
+}
+
+/// Read a quoted token's content up to its closing quote, unescaping as it
+/// goes. Returns the content and the closing quote's byte index.
+fn vdf_read_token(chars: &mut Peekable<CharIndices<'_>>) -> (String, Option<usize>) {
+    let mut token = String::new();
+    while let Some((j, ch)) = chars.next() {
+        match ch {
+            '\\' => match chars.next() {
+                Some((_, 'n')) => token.push('\n'),
+                Some((_, 'r')) => token.push('\r'),
+                Some((_, 't')) => token.push('\t'),
+                // `\\`, `\"` and any unknown escape keep the following char.
+                Some((_, other)) => token.push(other),
+                None => break,
+            },
+            '"' => return (token, Some(j)),
+            _ => token.push(ch),
+        }
+    }
+    (token, None)
+}
+
+/// The quoted tokens of a single VDF line, unescaped, in order. A
+/// `"key" "value"` line yields two entries.
+pub(crate) fn vdf_tokenize_line(line: &str) -> Vec<String> {
+    vdf_scan_line(line)
+        .into_iter()
+        .filter_map(|(_, item)| match item {
+            VdfItem::Token { text, .. } => Some(text),
+            _ => None,
+        })
+        .collect()
+}
+
+/// How many section braces a line opens and closes, braces inside quoted
+/// tokens left out.
+pub(crate) fn vdf_brace_counts(line: &str) -> (usize, usize) {
+    vdf_scan_line(line)
+        .iter()
+        .fold((0, 0), |(opens, closes), (_, item)| match item {
+            VdfItem::Open => (opens + 1, closes),
+            VdfItem::Close => (opens, closes + 1),
+            VdfItem::Token { .. } => (opens, closes),
+        })
+}
+
+pub fn parse_vdf(content: &str) -> HashMap<String, HashMap<String, String>> {
+    let mut accounts: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let mut current_id: Option<String> = None;
+    let mut current_account: HashMap<String, String> = HashMap::new();
+    let mut depth = 0;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        let (opens, closes) = vdf_brace_counts(trimmed);
+        let tokens = vdf_tokenize_line(trimmed);
+
+        if tokens.len() >= 2 {
+            let key = &tokens[0];
+            let value = &tokens[1];
+
+            if depth == 2 && current_id.is_some() {
+                current_account.insert(key.to_lowercase(), value.clone());
+            }
+        } else if tokens.len() == 1 {
+            let key = &tokens[0];
+
+            if depth == 1 && !key.is_empty() && key.chars().all(|c| c.is_ascii_digit()) {
+                current_id = Some(key.clone());
+            }
+        }
+
+        depth += opens;
+
+        for _ in 0..closes {
+            if depth == 0 {
+                continue;
+            }
+            depth -= 1;
+            if depth == 1 {
+                if let Some(id) = current_id.take() {
+                    accounts.insert(id, std::mem::take(&mut current_account));
+                } else {
+                    current_account.clear();
+                }
+            }
+        }
+    }
+
+    accounts
 }
 
 /// How many leading names of `sections` the open section stack has entered.
@@ -319,7 +243,7 @@ fn vdf_key_exists(content: &str, sections: &[&str], target_key: &str) -> bool {
         let mut pending: Vec<String> = Vec::new();
         for (_, item) in vdf_scan_line(line) {
             match item {
-                VdfItem::Token(token) => pending.push(token),
+                VdfItem::Token { text, .. } => pending.push(text),
                 VdfItem::Open => {
                     let name = vdf_take_section_name(&mut pending, &mut carried);
                     stack.push(name);
@@ -402,23 +326,30 @@ fn vdf_rewrite_pair(
     escaped_value: &str,
 ) -> String {
     let bare_pair = items.len() == 2
-        && matches!(items[0].1, VdfItem::Token(_))
-        && matches!(items[1].1, VdfItem::Token(_));
+        && matches!(items[0].1, VdfItem::Token { .. })
+        && matches!(items[1].1, VdfItem::Token { .. });
 
     if bare_pair {
         let leading: String = line.chars().take_while(|c| c.is_whitespace()).collect();
         return format!("{leading}\"{escaped_key}\"\t\t\"{escaped_value}\"");
     }
 
-    match nth_quoted_token_span(line, value_ordinal) {
-        Some((open, close)) => {
+    let value_span = items
+        .iter()
+        .filter_map(|(open, item)| match item {
+            VdfItem::Token { close, .. } => Some((*open, *close)),
+            _ => None,
+        })
+        .nth(value_ordinal);
+    match value_span {
+        Some((open, Some(close))) => {
             let mut new_line = String::with_capacity(line.len() + escaped_value.len());
             new_line.push_str(&line[..=open]);
             new_line.push_str(escaped_value);
             new_line.push_str(&line[close..]);
             new_line
         }
-        None => line.to_string(),
+        _ => line.to_string(),
     }
 }
 
@@ -485,11 +416,11 @@ pub fn vdf_set_nested_value(
 
         for (at, item) in &items {
             match item {
-                VdfItem::Token(token) => {
+                VdfItem::Token { text, .. } => {
                     if pending.is_empty() {
                         pending_first_ordinal = ordinal;
                     }
-                    pending.push(token.clone());
+                    pending.push(text.clone());
                     ordinal += 1;
                 }
                 VdfItem::Open => {

@@ -53,76 +53,26 @@ fn to_wide_null(s: &str) -> Vec<u16> {
 }
 
 // ---------------------------------------------------------------------------
-// DPAPI encryption (native, replaces PowerShell)
+// DPAPI encryption
 // ---------------------------------------------------------------------------
 
+/// A string secret as stored in the account JSON: the DPAPI ciphertext of its
+/// UTF-8 bytes, base64 encoded. A blank secret stores as an empty string.
 pub fn encrypt_secret(secret: &str) -> Result<String, AppError> {
     if secret.trim().is_empty() {
         return Ok(String::new());
     }
-    let data = secret.as_bytes();
-    let input_blob = CRYPT_INTEGER_BLOB {
-        cbData: data.len() as u32,
-        pbData: data.as_ptr() as *mut u8,
-    };
-    let mut output_blob: CRYPT_INTEGER_BLOB = unsafe { std::mem::zeroed() };
-    let ok = unsafe {
-        CryptProtectData(
-            &input_blob,
-            std::ptr::null(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null(),
-            CRYPTPROTECT_UI_FORBIDDEN,
-            &mut output_blob,
-        )
-    };
-    if ok == 0 {
-        return Err(AppError::ProcessStart("DPAPI encryption failed".into()));
-    }
-    let encrypted =
-        unsafe { std::slice::from_raw_parts(output_blob.pbData, output_blob.cbData as usize) };
-    use windows_sys::Win32::Foundation::LocalFree;
-    let b64 = base64_encode(encrypted);
-    unsafe {
-        LocalFree(output_blob.pbData as _);
-    }
-    Ok(b64)
+    Ok(base64_encode(&encrypt_bytes(secret.as_bytes())?))
 }
 
+/// Reads back what [`encrypt_secret`] stored.
 pub fn decrypt_secret(secret: &str) -> Result<String, AppError> {
     if secret.trim().is_empty() {
         return Ok(String::new());
     }
     let encrypted = base64_decode(secret)
         .map_err(|_| AppError::ProcessStart("Invalid base64 in encrypted secret".into()))?;
-    let input_blob = CRYPT_INTEGER_BLOB {
-        cbData: encrypted.len() as u32,
-        pbData: encrypted.as_ptr() as *mut u8,
-    };
-    let mut output_blob: CRYPT_INTEGER_BLOB = unsafe { std::mem::zeroed() };
-    let ok = unsafe {
-        CryptUnprotectData(
-            &input_blob,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null(),
-            CRYPTPROTECT_UI_FORBIDDEN,
-            &mut output_blob,
-        )
-    };
-    if ok == 0 {
-        return Err(AppError::ProcessStart("DPAPI decryption failed".into()));
-    }
-    let decrypted =
-        unsafe { std::slice::from_raw_parts(output_blob.pbData, output_blob.cbData as usize) };
-    let result = String::from_utf8_lossy(decrypted).into_owned();
-    use windows_sys::Win32::Foundation::LocalFree;
-    unsafe {
-        LocalFree(output_blob.pbData as _);
-    }
-    Ok(result)
+    Ok(String::from_utf8_lossy(&decrypt_bytes(&encrypted)?).into_owned())
 }
 
 /// DPAPI encrypt raw bytes. Returns encrypted bytes (no encoding).
@@ -130,33 +80,20 @@ pub fn encrypt_bytes(data: &[u8]) -> Result<Vec<u8>, AppError> {
     if data.is_empty() {
         return Ok(Vec::new());
     }
-    let input_blob = CRYPT_INTEGER_BLOB {
-        cbData: data.len() as u32,
-        pbData: data.as_ptr() as *mut u8,
-    };
-    let mut output_blob: CRYPT_INTEGER_BLOB = unsafe { std::mem::zeroed() };
-    let ok = unsafe {
-        CryptProtectData(
-            &input_blob,
-            std::ptr::null(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null(),
-            CRYPTPROTECT_UI_FORBIDDEN,
-            &mut output_blob,
-        )
-    };
-    if ok == 0 {
-        return Err(AppError::ProcessStart("DPAPI encryption failed".into()));
-    }
-    let encrypted =
-        unsafe { std::slice::from_raw_parts(output_blob.pbData, output_blob.cbData as usize) };
-    let result = encrypted.to_vec();
-    use windows_sys::Win32::Foundation::LocalFree;
-    unsafe {
-        LocalFree(output_blob.pbData as _);
-    }
-    Ok(result)
+    dpapi(data, "DPAPI encryption failed", |input, output| {
+        // SAFETY: both blobs outlive the call; DPAPI allocates the output.
+        unsafe {
+            CryptProtectData(
+                input,
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                CRYPTPROTECT_UI_FORBIDDEN,
+                output,
+            )
+        }
+    })
 }
 
 /// DPAPI decrypt raw bytes.
@@ -164,33 +101,49 @@ pub fn decrypt_bytes(data: &[u8]) -> Result<Vec<u8>, AppError> {
     if data.is_empty() {
         return Ok(Vec::new());
     }
+    dpapi(data, "DPAPI decryption failed", |input, output| {
+        // SAFETY: both blobs outlive the call; DPAPI allocates the output.
+        unsafe {
+            CryptUnprotectData(
+                input,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                CRYPTPROTECT_UI_FORBIDDEN,
+                output,
+            )
+        }
+    })
+}
+
+/// Hands `data` to a CryptProtectData or CryptUnprotectData `call`, then
+/// copies the output blob out and frees it with LocalFree.
+fn dpapi(
+    data: &[u8],
+    failure: &str,
+    call: impl FnOnce(&CRYPT_INTEGER_BLOB, &mut CRYPT_INTEGER_BLOB) -> i32,
+) -> Result<Vec<u8>, AppError> {
+    use windows_sys::Win32::Foundation::LocalFree;
+
     let input_blob = CRYPT_INTEGER_BLOB {
         cbData: data.len() as u32,
         pbData: data.as_ptr() as *mut u8,
     };
+    // SAFETY: an all-zero blob is the empty output DPAPI expects.
     let mut output_blob: CRYPT_INTEGER_BLOB = unsafe { std::mem::zeroed() };
-    let ok = unsafe {
-        CryptUnprotectData(
-            &input_blob,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null(),
-            CRYPTPROTECT_UI_FORBIDDEN,
-            &mut output_blob,
-        )
-    };
-    if ok == 0 {
-        return Err(AppError::ProcessStart("DPAPI decryption failed".into()));
+    if call(&input_blob, &mut output_blob) == 0 {
+        return Err(AppError::ProcessStart(failure.into()));
     }
-    let decrypted =
-        unsafe { std::slice::from_raw_parts(output_blob.pbData, output_blob.cbData as usize) };
-    let result = decrypted.to_vec();
-    use windows_sys::Win32::Foundation::LocalFree;
+    // SAFETY: on success DPAPI hands back `cbData` bytes at `pbData`, which
+    // stay valid until the LocalFree below.
+    let output =
+        unsafe { std::slice::from_raw_parts(output_blob.pbData, output_blob.cbData as usize) }
+            .to_vec();
     unsafe {
         LocalFree(output_blob.pbData as _);
     }
-    Ok(result)
+    Ok(output)
 }
 
 /// Windows stores the DPAPI ciphertext inline in the account JSON, there is no
@@ -205,75 +158,58 @@ pub fn delete_bytes(_token: &[u8]) -> Result<(), AppError> {
     Ok(())
 }
 
+const BASE64_ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// Standard base64 with `=` padding. Each 3-byte chunk is read as the low 24
+/// bits of a word, then written as four 6-bit digits; a short last chunk
+/// writes one digit per byte plus one, and pads the rest.
 fn base64_encode(data: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-        out.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
-        out.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
-        if chunk.len() > 1 {
-            out.push(CHARS[((triple >> 6) & 0x3F) as usize] as char);
-        } else {
-            out.push('=');
-        }
-        if chunk.len() > 2 {
-            out.push(CHARS[(triple & 0x3F) as usize] as char);
-        } else {
-            out.push('=');
+        let mut word = [0u8; 4];
+        word[1..=chunk.len()].copy_from_slice(chunk);
+        let triple = u32::from_be_bytes(word);
+        for digit in 0..4 {
+            if digit <= chunk.len() {
+                let index = (triple >> (18 - 6 * digit)) & 0x3F;
+                out.push(BASE64_ALPHABET[index as usize] as char);
+            } else {
+                out.push('=');
+            }
         }
     }
     out
 }
 
+/// The inverse of [`base64_encode`]. Line breaks are ignored; one or two `=`
+/// are accepted at the end of the very last chunk only, and anything else that
+/// is not an alphabet digit is an error.
 fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
-    fn val(c: u8) -> Result<u32, ()> {
-        match c {
-            b'A'..=b'Z' => Ok((c - b'A') as u32),
-            b'a'..=b'z' => Ok((c - b'a' + 26) as u32),
-            b'0'..=b'9' => Ok((c - b'0' + 52) as u32),
-            b'+' => Ok(62),
-            b'/' => Ok(63),
-            _ => Err(()),
-        }
+    fn digit(c: u8) -> Result<u32, ()> {
+        let index = BASE64_ALPHABET.iter().position(|&d| d == c).ok_or(())?;
+        Ok(index as u32)
     }
-    let input = input.trim();
     let bytes: Vec<u8> = input
+        .trim()
         .bytes()
         .filter(|&b| b != b'\r' && b != b'\n')
         .collect();
     if !bytes.len().is_multiple_of(4) {
         return Err(());
     }
-    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
     let chunk_count = bytes.len() / 4;
+    let mut out = Vec::with_capacity(chunk_count * 3);
     for (idx, chunk) in bytes.chunks(4).enumerate() {
-        // Padding is only legal in the very last 4-byte chunk.
-        let is_last = idx + 1 == chunk_count;
-        if !is_last && (chunk[2] == b'=' || chunk[3] == b'=') {
+        let pad = chunk.iter().rev().take_while(|&&b| b == b'=').count();
+        if pad > 2 || (pad > 0 && idx + 1 != chunk_count) {
             return Err(());
         }
-        // Reject malformed padding like "AB=C": once a '=' appears at [2],
-        // [3] must also be '='. A bare '=' at [2] with a valid char at [3]
-        // is invalid base64.
-        if chunk[2] == b'=' && chunk[3] != b'=' {
-            return Err(());
+        let mut triple = 0u32;
+        for (at, &c) in chunk[..4 - pad].iter().enumerate() {
+            triple |= digit(c)? << (18 - 6 * at);
         }
-        let a = val(chunk[0])?;
-        let b = val(chunk[1])?;
-        let c = if chunk[2] == b'=' { 0 } else { val(chunk[2])? };
-        let d = if chunk[3] == b'=' { 0 } else { val(chunk[3])? };
-        let triple = (a << 18) | (b << 12) | (c << 6) | d;
-        out.push((triple >> 16) as u8);
-        if chunk[2] != b'=' {
-            out.push((triple >> 8) as u8);
-        }
-        if chunk[3] != b'=' {
-            out.push(triple as u8);
-        }
+        out.extend_from_slice(&triple.to_be_bytes()[1..4 - pad]);
     }
     Ok(out)
 }
@@ -521,7 +457,24 @@ mod quoting_tests {
 
 #[cfg(test)]
 mod base64_tests {
-    use super::base64_decode;
+    use super::{base64_decode, base64_encode};
+
+    #[test]
+    fn encodes_the_standard_alphabet_with_padding() {
+        // RFC 4648 test vectors: the stored secrets use this exact encoding.
+        for (plain, encoded) in [
+            ("", ""),
+            ("f", "Zg=="),
+            ("fo", "Zm8="),
+            ("foo", "Zm9v"),
+            ("foob", "Zm9vYg=="),
+            ("fooba", "Zm9vYmE="),
+            ("foobar", "Zm9vYmFy"),
+        ] {
+            assert_eq!(base64_encode(plain.as_bytes()), encoded, "{plain:?}");
+        }
+        assert_eq!(base64_encode(&[0xfb, 0xff, 0xfe]), "+//+");
+    }
 
     #[test]
     fn decodes_plain_input() {
@@ -556,5 +509,31 @@ mod base64_tests {
     #[test]
     fn rejects_non_multiple_of_four() {
         assert!(base64_decode("TWF").is_err());
+    }
+}
+
+#[cfg(test)]
+mod dpapi_tests {
+    use super::{
+        base64_decode, base64_encode, decrypt_bytes, decrypt_secret, encrypt_bytes, encrypt_secret,
+    };
+
+    #[test]
+    fn a_secret_and_its_bytes_share_one_stored_format() {
+        let secret = "s3cret token \u{e9}";
+        // What the string path stores is the byte path's ciphertext in
+        // base64, so either side reads what the other wrote.
+        let stored = encrypt_secret(secret).unwrap();
+        let bytes = decrypt_bytes(&base64_decode(&stored).unwrap()).unwrap();
+        assert_eq!(bytes, secret.as_bytes());
+
+        let written_as_bytes = base64_encode(&encrypt_bytes(secret.as_bytes()).unwrap());
+        assert_eq!(decrypt_secret(&written_as_bytes).unwrap(), secret);
+    }
+
+    #[test]
+    fn a_blank_secret_stores_and_reads_as_empty() {
+        assert_eq!(encrypt_secret("  ").unwrap(), "");
+        assert_eq!(decrypt_secret(" ").unwrap(), "");
     }
 }
