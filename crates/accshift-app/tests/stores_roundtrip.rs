@@ -1,6 +1,6 @@
-//! Round trip against the former TypeScript stores: every fixture of
+//! Round trip against recorded fixtures: every fixture of
 //! `tests/data/stores/roundtrip.json` is a stored value, an operation and
-//! what the TS store saved after it. The
+//! the JSON saved after it. The
 //! Rust store loads the same value, runs the same operation and must save the
 //! same JSON, byte for byte once serialized the way the backend writes it.
 
@@ -113,8 +113,8 @@ fn run(stores: &mut ClientStores, op: &Value) {
 }
 
 /// `value` with every object's keys sorted. Key order is not part of the
-/// contract: the stores write their maps from `BTreeMap`s, where the TS wrote
-/// insertion order, and serde_json keeps the fixture's order only when another
+/// contract: the stores write their maps from `BTreeMap`s, where the fixtures
+/// keep insertion order, and serde_json keeps the fixture's order only when another
 /// crate of the build turns on `preserve_order` (accshift-theme does).
 fn sorted(value: &Value) -> Value {
     match value {

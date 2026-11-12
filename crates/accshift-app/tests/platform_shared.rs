@@ -1,6 +1,5 @@
-//! `shared/platformPathError.test.ts`, `shared/contextMenu/
-//! accountFolderActions.test.ts`, `riot/adapter.test.ts` and
-//! `roblox/adapter.test.ts` ported, plus checks of the shared menu model.
+//! Platform path errors, the account and folder menu actions, the Riot and
+//! Roblox adapters, plus checks of the shared menu model.
 
 mod support;
 
@@ -29,7 +28,7 @@ fn en(text: &Text) -> String {
     text.resolve(Locale::En)
 }
 
-// ------------------------------------------------ platformPathError.test.ts
+// ------------------------------------------------ platform path errors
 
 #[test]
 fn path_error_splits_code_and_fallback() {
@@ -122,7 +121,7 @@ fn path_error_uncoded_failure_is_generic() {
     );
 }
 
-// ------------------------------------------------ accountFolderActions.test.ts
+// ------------------------------------------------ account and folder actions
 
 fn acc1() -> PlatformAccount {
     PlatformAccount {
@@ -207,7 +206,7 @@ fn folder_moves_to_picked_and_root() {
     );
 }
 
-// ------------------------------------------------ riot/adapter.test.ts
+// ------------------------------------------------ riot adapter
 
 fn riot(extra: serde_json::Value) -> RiotProfile {
     let mut base = json!({ "id": "riot-1", "label": "main", "snapshot_state": "ready" });
@@ -234,7 +233,7 @@ fn riot_missing_stamp_is_none() {
     assert_eq!(to_riot_account(&riot(json!({}))).last_login_at_sec, None);
 }
 
-// ------------------------------------------------ roblox/adapter.test.ts
+// ------------------------------------------------ roblox adapter
 
 #[test]
 fn roblox_converts_ms_to_seconds() {

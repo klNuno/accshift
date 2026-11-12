@@ -3,16 +3,16 @@
 //!
 //! The platform model never resolves a key itself. It hands [`Text`] values to
 //! the UI, which resolves them with the current locale when it draws, so a
-//! language change needs no rebuild of the model. This is the TS
-//! `callbacks.t(key, params)` call, moved from build time to draw time.
+//! language change needs no rebuild of the model.
 
 use crate::i18n::{self, Locale, TranslationValue};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Text {
-    /// `t(key)` when `params` is `None`, `t(key, params)` otherwise. The
-    /// difference matters: `formatTemplate` leaves `{x}` placeholders alone
-    /// without parameters and blanks the unknown ones with them.
+    /// [`i18n::translate`] when `params` is `None`, [`i18n::translate_with`]
+    /// otherwise. The difference matters: [`i18n::format_template`] leaves
+    /// `{x}` placeholders alone without parameters and blanks the unknown
+    /// ones with them.
     Key {
         key: String,
         params: Option<Vec<(String, TranslationValue)>>,

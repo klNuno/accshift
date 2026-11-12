@@ -1,11 +1,9 @@
-//! The `Backend` trait: one blocking method per Tauri command the frontend
-//! calls, minus the window controls the egui shell does itself.
+//! The `Backend` trait: one blocking method per backend command, minus the
+//! window controls the egui shell does itself.
 //!
-//! Method names are the command names. Arguments are the Rust parameters of
-//! the command in `src-tauri/src/commands/*.rs` (the webview sends them in
-//! camelCase, Tauri renames them). Return values serialize to the JSON the
-//! webview receives. Every method blocks: call it from [`crate::jobs`], never
-//! from the UI thread.
+//! Method names are the command names the mock's scenario files record.
+//! Return values serialize to the JSON those files hold. Every method
+//! blocks: call it from [`crate::jobs`], never from the UI thread.
 
 use crate::error::BackendResult;
 use crate::types::*;
@@ -41,8 +39,8 @@ pub trait Backend: Send + Sync {
         message: &str,
         details: Option<&str>,
     ) -> BackendResult<()>;
-    /// Boot milestones and first-run telemetry. The Tauri command also shows
-    /// the window; the egui shell does that part itself.
+    /// Boot milestones and first-run telemetry. The egui shell shows the
+    /// window itself.
     fn finish_boot(&self, source: &str, marks: Option<&Value>) -> BackendResult<()>;
     /// Where downloaded avatars are kept between launches
     /// ([`crate::accounts::avatars::AvatarDiskCache`]). `None` keeps them in

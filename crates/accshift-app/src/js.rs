@@ -1,7 +1,7 @@
-//! The few JavaScript semantics the ported stores lean on, so a value the TS
-//! code normalized one way is normalized the same way here: `String.trim`,
-//! `String.slice` on UTF-16 units, `Number(value)`, `Math.round` and
-//! `Boolean(value)`.
+//! The few JavaScript semantics the stores keep, so a value the earlier
+//! JavaScript app wrote to disk is normalized the way it was then:
+//! `String.trim`, `String.slice` on UTF-16 units, `Number(value)`,
+//! `Math.round` and `Boolean(value)`.
 
 use serde_json::Value;
 
@@ -35,8 +35,7 @@ pub fn nullish_or<'a>(a: Option<&'a Value>, b: Option<&'a Value>) -> Option<&'a 
     }
 }
 
-/// `value` as a record, the way the stores' `asRecord` reads it: anything but
-/// a plain object is empty.
+/// `value` as a record: anything but a plain object is empty.
 pub fn as_record(value: Option<&Value>) -> Option<&serde_json::Map<String, Value>> {
     match value {
         Some(Value::Object(map)) => Some(map),
@@ -118,42 +117,42 @@ pub fn string_to_number(text: &str) -> f64 {
 
 /// `[+-] (digits [. digits?] | . digits) [(e|E) [+-] digits]`.
 fn is_decimal_literal(text: &str) -> bool {
-    let bytes = text.as_bytes();
-    let mut index = 0;
-    if matches!(bytes.first(), Some(b'+' | b'-')) {
-        index += 1;
-    }
-    let int_start = index;
-    while index < bytes.len() && bytes[index].is_ascii_digit() {
-        index += 1;
-    }
-    let int_digits = index - int_start;
+    let rest = without_sign(text.as_bytes());
+    let int_digits = digit_run(rest);
+    let mut rest = &rest[int_digits..];
     let mut frac_digits = 0;
-    if index < bytes.len() && bytes[index] == b'.' {
-        index += 1;
-        let frac_start = index;
-        while index < bytes.len() && bytes[index].is_ascii_digit() {
-            index += 1;
-        }
-        frac_digits = index - frac_start;
+    if let [b'.', fraction @ ..] = rest {
+        frac_digits = digit_run(fraction);
+        rest = &fraction[frac_digits..];
     }
     if int_digits == 0 && frac_digits == 0 {
         return false;
     }
-    if index < bytes.len() && matches!(bytes[index], b'e' | b'E') {
-        index += 1;
-        if matches!(bytes.get(index), Some(b'+' | b'-')) {
-            index += 1;
-        }
-        let exp_start = index;
-        while index < bytes.len() && bytes[index].is_ascii_digit() {
-            index += 1;
-        }
-        if index == exp_start {
+    if let [b'e' | b'E', exponent @ ..] = rest {
+        let exponent = without_sign(exponent);
+        let exp_digits = digit_run(exponent);
+        if exp_digits == 0 {
             return false;
         }
+        rest = &exponent[exp_digits..];
     }
-    index == bytes.len()
+    rest.is_empty()
+}
+
+/// `bytes` past one leading `+` or `-`.
+fn without_sign(bytes: &[u8]) -> &[u8] {
+    match bytes {
+        [b'+' | b'-', rest @ ..] => rest,
+        _ => bytes,
+    }
+}
+
+/// How many ASCII digits `bytes` starts with.
+fn digit_run(bytes: &[u8]) -> usize {
+    bytes
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count()
 }
 
 /// `Math.round`: nearest integer, halves toward positive infinity.
@@ -166,8 +165,8 @@ pub fn round(value: f64) -> f64 {
     }
 }
 
-/// The stores' `clampInt`: `Number(value)`, rounded and clamped, or
-/// `fallback` when it is not finite.
+/// `Number(value)`, rounded and clamped, or `fallback` when it is not
+/// finite.
 pub fn clamp_int(value: Option<&Value>, min: i64, max: i64, fallback: i64) -> i64 {
     let numeric = to_number(value);
     if !numeric.is_finite() {
@@ -194,8 +193,7 @@ pub fn is_hex_color(value: &str, lengths: &[usize]) -> bool {
 }
 
 /// A random 64-bit value from the standard library's per-process hasher keys
-/// and the clock, for ids that only need to be unique, as `Math.random` and
-/// `crypto.randomUUID` are used in the stores.
+/// and the clock, for ids that only need to be unique.
 pub fn random_u64() -> u64 {
     use std::collections::hash_map::RandomState;
     use std::hash::{BuildHasher, Hasher};

@@ -70,7 +70,7 @@ fn build_model(scenario: &str) -> BTreeMap<String, StartupSnapshot> {
             backend.now() as f64 * 1000.0,
         )
         .expect("steam has warnings");
-    // TS settles nothing for an empty list.
+    // Nothing settles for an empty list.
     assert_eq!(load.outcome.is_some(), !accounts.is_empty(), "{scenario}");
     assert!(backend.platform_detect_installed().is_ok());
     out

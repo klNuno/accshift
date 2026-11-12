@@ -1,4 +1,4 @@
-//! The mock backend against the dumped TS mock data.
+//! The mock backend against the recorded scenario data.
 
 mod dispatch;
 
@@ -63,7 +63,7 @@ fn sample_args(command: &str) -> Value {
 }
 
 /// Recorded value with avatar paths rewritten the way the test expects:
-/// `<root>/src/lib/mock/avatars/<file>`, built here independently.
+/// `<root>/` then the avatar dir and the file, built here independently.
 fn expected(value: &Value, root: &Path) -> Value {
     match value {
         Value::String(s) if s.starts_with(AVATAR_DIR) => {
@@ -230,7 +230,7 @@ fn unmocked_guarded_commands_are_refused() {
             );
             refused += 1;
         } else {
-            // Forwarded to the real backend by the TS mock; a no-op here.
+            // Neither guarded nor faked: the mock answers null.
             assert_eq!(answer, Ok(Value::Null), "{command}");
         }
     }

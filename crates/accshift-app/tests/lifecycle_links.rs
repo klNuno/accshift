@@ -1,5 +1,5 @@
-//! Deep links (`deepLinkUrl.test.ts`, `useDeepLink.test.ts`, the boot.rs
-//! tests, the plugin's argument and registry handling) and the single
+//! Deep links (URL parsing, the controller, the boot handling, the argument
+//! and registry handling) and the single
 //! instance service, run with a test identifier only.
 
 use accshift_app::lifecycle::deep_link::{
@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use url::Url;
 
 // ---------------------------------------------------------------------------
-// parseDeepLink (deepLinkUrl.test.ts)
+// URL parsing
 
 fn parsed(url: &str) -> Option<(String, String)> {
     parse_deep_link(url).map(|r| (r.platform_id, r.account_ref))
@@ -343,7 +343,7 @@ fn the_windows_registry_round_trips_a_test_scheme() {
 }
 
 // ---------------------------------------------------------------------------
-// findAccount and the controller (useDeepLink.test.ts)
+// Account lookup and the controller
 
 fn account(id: &str, username: &str, display_name: &str) -> PlatformAccount {
     PlatformAccount {
@@ -378,8 +378,8 @@ fn settings(enabled: bool) -> AppSettings {
     )
 }
 
-/// The app as the controller sees it, answering each action like the TS
-/// mocks, and recording them.
+/// The app as the controller sees it, answering each action with canned
+/// values, and recording them.
 struct App {
     settings: AppSettings,
     registry: PlatformRegistry,
@@ -392,7 +392,8 @@ struct App {
     events: Vec<String>,
     boot_ready: bool,
     pin_locked: bool,
-    /// changeTab does not load the new tab (the TS "has not read it yet" case).
+    /// A tab change does not load the new tab (the "has not read it yet"
+    /// case).
     lazy_tab_load: bool,
 }
 

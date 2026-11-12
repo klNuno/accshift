@@ -1,6 +1,6 @@
-//! Payloads the backend answers with that `accshift-core` does not define,
-//! because the Tauri app built them itself. Each one serializes to the JSON
-//! its webview received from the matching command.
+//! Payloads the backend answers with that `accshift-core` does not define.
+//! Each one serializes to the JSON the mock's scenario files record for the
+//! matching command.
 //!
 //! Payloads `accshift-core` already defines are re-exported here so callers
 //! have one place to import from.
@@ -25,7 +25,6 @@ pub use accshift_core::storage::{ClientStorageSnapshot, StorageManifest};
 pub use accshift_core::themes::CustomTheme;
 
 /// `get_boot_payload`: everything the UI needs before the window shows.
-/// Mirrors `BootPayload` in `src-tauri/src/commands/app.rs`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BootPayload {
@@ -42,8 +41,7 @@ pub struct BootPayload {
 }
 
 /// `get_desktop_wallpaper`: the desktop picture behind the window, for the
-/// glass themes. Mirrors `WallpaperSnapshot` in
-/// `src-tauri/src/commands/backdrop.rs`.
+/// glass themes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WallpaperSnapshot {
@@ -54,7 +52,7 @@ pub struct WallpaperSnapshot {
     pub height: i32,
 }
 
-/// `pin_unlock`. Mirrors `PinUnlockResult` in `src-tauri/src/commands/pin.rs`.
+/// What `pin_unlock` answers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PinUnlockResult {
@@ -66,8 +64,7 @@ pub struct PinUnlockResult {
     pub retry_after_ms: u64,
 }
 
-/// `telemetry_get_state`. Mirrors `TelemetryUiState` in
-/// `src-tauri/src/commands/telemetry.rs`, snake_case on the wire.
+/// What `telemetry_get_state` answers, snake_case on the wire.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TelemetryUiState {
     pub mode_a_enabled: bool,
@@ -77,8 +74,8 @@ pub struct TelemetryUiState {
     pub onboarding_completed: bool,
 }
 
-/// Arguments of `telemetry_track_settings_snapshot`, the `SettingsSnapshot`
-/// of `src/lib/app/telemetryClient.ts`.
+/// Arguments of `telemetry_track_settings_snapshot`: the settings a
+/// telemetry snapshot reports.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsSnapshot {

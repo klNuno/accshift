@@ -1,4 +1,4 @@
-//! `platformAddFlow.test.ts` and the add flow against MockBackend, start to
+//! The add flow model, then the add flow against MockBackend, start to
 //! success, cancel and error, for Steam and for a descriptor platform (GOG).
 
 mod support;
@@ -140,7 +140,7 @@ fn silent_load() -> AddFlowEvent {
     })
 }
 
-// ------------------------------------------------------------ TS tests
+// ------------------------------------------------------------ flow model
 
 #[test]
 fn a_contended_lock_says_another_operation_is_running() {

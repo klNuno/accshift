@@ -1,7 +1,6 @@
-//! Every client store behind one value, plus the small stores of
-//! `src/lib/shared/` (`accountCardColors`, `accountCardNotes`,
-//! `folderCardColors`, `viewMode`, `cachedMapStore`) and
-//! `src/lib/platforms/steam/defaultGameStore.ts`.
+//! Every client store behind one value, plus the small ones: account and
+//! folder card colors, account notes, the view mode and the Steam default
+//! games.
 //!
 //! [`ClientStores`] owns the [`ClientStorage`] and a typed copy of each store
 //! the UI reads. A mutation updates the typed copy and writes its JSON into
@@ -9,7 +8,7 @@
 //! [`ClientStores::take_due_saves`] into the job pool and reports each result
 //! with [`ClientStores::finish_save`]. A typed copy is rebuilt (sanitized)
 //! only when its store changes from outside: a snapshot or a refresh. A
-//! local write keeps the value as written, like the TS caches.
+//! local write keeps the value as written.
 
 use crate::folders::{self, FolderInfo, FolderSection, FolderStore, ItemRef};
 use crate::i18n::Locale;
@@ -30,8 +29,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 /// The platforms shipped with the app, in display order: the platform
-/// registry's chrome entries (`src/lib/platforms/registry.ts`), which also
-/// cover every shipped descriptor.
+/// registry's chrome entries, which also cover every shipped descriptor.
 pub const SHIPPED_PLATFORM_IDS: [&str; 9] = [
     "steam",
     "riot",
@@ -44,7 +42,7 @@ pub const SHIPPED_PLATFORM_IDS: [&str; 9] = [
     "discord",
 ];
 
-/// The built-in theme ids (`BUILT_IN_DOCUMENTS` in `src/lib/theme/themes.ts`).
+/// The built-in theme ids.
 pub const BUILT_IN_THEME_IDS: [&str; 6] = [
     "dark",
     "light",
@@ -105,7 +103,7 @@ impl StoreContext {
 
 // ------------------------------------------------------------ cachedMapStore
 
-/// A string map store (`createCachedMapStore`) with its entry sanitizer.
+/// A string map store with its entry sanitizer.
 #[derive(Debug, Clone)]
 pub struct StringMapStore {
     store_id: StoreId,
@@ -126,7 +124,7 @@ impl StringMapStore {
         self.store_id
     }
 
-    /// `sanitizeMap`: string values under non-blank keys that pass the entry
+    /// Keeps the string values under non-blank keys that pass the entry
     /// sanitizer.
     pub fn load(&mut self, value: Option<&Value>) {
         self.map.clear();
@@ -171,7 +169,7 @@ impl StringMapStore {
         self.put(id, value);
     }
 
-    /// `setMany`: the same value for every id. Returns false (and writes
+    /// Sets the same value for every id. Returns false (and writes
     /// nothing) for an empty list.
     pub fn set_many(&mut self, ids: &[String], value: &str) -> bool {
         if ids.is_empty() {
@@ -256,7 +254,7 @@ pub fn sanitize_card_color(_key: &str, color: &str) -> Option<String> {
 /// `MAX_NOTE_LENGTH`, in UTF-16 units.
 pub const MAX_NOTE_LENGTH: usize = 180;
 
-/// `sanitizeNote`: control characters become spaces, then trim and cut.
+/// A note as stored: control characters become spaces, then trim and cut.
 pub fn sanitize_note(_key: &str, value: &str) -> Option<String> {
     let spaced: String = value
         .chars()
@@ -276,7 +274,7 @@ pub enum ViewMode {
     List,
 }
 
-/// `getViewMode`: `"list"` is the list, anything else the grid.
+/// The stored view mode: `"list"` is the list, anything else the grid.
 pub fn view_mode_from_value(value: Option<&Value>) -> ViewMode {
     if js::as_str(value) == Some("list") {
         ViewMode::List
@@ -303,7 +301,7 @@ pub struct DefaultGame {
     pub name: String,
 }
 
-/// The default game store's `sanitize`: entries with a numeric `appId`.
+/// The stored default games: only entries with a numeric `appId`.
 pub fn sanitize_default_games(value: Option<&Value>) -> BTreeMap<String, DefaultGame> {
     let mut out = BTreeMap::new();
     let Some(record) = js::as_record(value) else {
@@ -434,7 +432,7 @@ impl ClientStores {
         &self.ctx
     }
 
-    /// Replaces the platform and theme lists. Like TS, nothing is
+    /// Replaces the platform and theme lists. Nothing is
     /// re-sanitized until the next write or reload.
     pub fn set_context(&mut self, ctx: StoreContext) {
         self.ctx = ctx;
@@ -481,7 +479,7 @@ impl ClientStores {
     }
 
     /// Applies a refresh and rebuilds the typed stores it touched. Returns
-    /// every changed id, as `refreshClientStorageIfChanged`.
+    /// every changed id.
     pub fn finish_refresh(
         &mut self,
         plan: RefreshPlan,
@@ -492,7 +490,7 @@ impl ClientStores {
         changed
     }
 
-    /// `refreshClientStorageIfChanged`, blocking.
+    /// Reloads the stores changed on disk by someone else, blocking.
     pub fn refresh_blocking(&mut self, backend: &dyn Backend) -> BackendResult<Vec<String>> {
         let changed = self.storage.refresh_blocking(backend);
         self.sync();
@@ -501,18 +499,17 @@ impl ClientStores {
 
     // -------------------------------------------------------- settings
 
-    /// `peekSettings` / `getSettings`.
+    /// The sanitized settings.
     pub fn settings(&self) -> &AppSettings {
         &self.settings
     }
 
-    /// `hasStoredSettings`: false only on a fresh install.
+    /// False only on a fresh install.
     pub fn has_stored_settings(&self) -> bool {
         self.storage.get(CLIENT_STORE_SETTINGS).is_some()
     }
 
-    /// `saveSettings`: sanitized, then written. (The TS boot-theme
-    /// `localStorage` hint has no counterpart here.)
+    /// Saves the settings: sanitized, then written.
     pub fn save_settings(&mut self, next: &AppSettings) {
         let sanitized = settings::sanitize_settings(&next.to_value(), &self.ctx);
         let value = sanitized.to_value();
@@ -520,7 +517,7 @@ impl ClientStores {
         self.write(CLIENT_STORE_SETTINGS, value);
     }
 
-    /// `getCacheDuration`, in milliseconds.
+    /// How long cached account data stays fresh, in milliseconds.
     pub fn cache_duration_ms(&self) -> u64 {
         settings::cache_duration_ms(&self.settings)
     }
@@ -613,7 +610,7 @@ impl ClientStores {
 
     // -------------------------------------------------------- personas
 
-    /// `getPersonas`.
+    /// The saved personas.
     pub fn personas(&self) -> &[Persona] {
         &self.personas
     }
@@ -626,7 +623,7 @@ impl ClientStores {
         self.write(CLIENT_STORE_PERSONAS, value);
     }
 
-    /// `createPersona`: returns the persona as given, with its new id.
+    /// Saves a new persona and returns it as given, with its new id.
     pub fn create_persona(&mut self, input: PersonaInput) -> Persona {
         let persona = Persona {
             id: personas::generate_persona_id(),
@@ -641,7 +638,7 @@ impl ClientStores {
         persona
     }
 
-    /// `updatePersona`.
+    /// Applies a patch to one persona.
     pub fn update_persona(&mut self, id: &str, patch: &PersonaPatch) {
         let list = self
             .personas
@@ -657,7 +654,7 @@ impl ClientStores {
         self.persist_personas(list);
     }
 
-    /// `deletePersona`.
+    /// Deletes one persona.
     pub fn delete_persona(&mut self, id: &str) {
         let list = self
             .personas
@@ -706,7 +703,7 @@ impl ClientStores {
         self.write_map(CLIENT_STORE_ACCOUNT_CARD_COLORS);
     }
 
-    /// `setAccountCardColors`: one write for every id.
+    /// Sets the card color of every id in one write.
     pub fn set_account_card_colors(&mut self, account_ids: &[String], color: &str) {
         if self.account_card_colors.set_many(account_ids, color) {
             self.write_map(CLIENT_STORE_ACCOUNT_CARD_COLORS);
@@ -724,7 +721,7 @@ impl ClientStores {
 
     // -------------------------------------------------------- default game
 
-    /// `getDefaultGame`.
+    /// The default game of a Steam account.
     pub fn default_game(&self, steam_id: &str) -> Option<&DefaultGame> {
         self.default_games.get(steam_id)
     }
@@ -734,7 +731,7 @@ impl ClientStores {
         self.write(CLIENT_STORE_ACCOUNT_DEFAULT_GAME, value);
     }
 
-    /// `setDefaultGame`: ignored unless the app id is numeric.
+    /// Sets the default game of a Steam account, ignored unless the app id is numeric.
     pub fn set_default_game(&mut self, steam_id: &str, game: &DefaultGame) {
         let app_id = js::trim(&game.app_id);
         if !js::is_ascii_digits(app_id) {
@@ -750,7 +747,8 @@ impl ClientStores {
         self.write_default_games();
     }
 
-    /// `clearDefaultGame`: no write when there is none.
+    /// Clears the default game of a Steam account, no write when there is
+    /// none.
     pub fn clear_default_game(&mut self, steam_id: &str) {
         if self.default_games.remove(steam_id).is_some() {
             self.write_default_games();

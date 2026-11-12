@@ -1,6 +1,5 @@
-//! The TS tests of the ported client storage layer
-//! (`src/lib/storage/clientStorage*.test.ts`), as Rust tests. The debounce
-//! timers and in-flight promises of TS become explicit steps: a write is
+//! The client storage layer. The debounce and the writes in flight are
+//! explicit steps: a write is
 //! pending until `take_*_saves` hands it out, in flight until `finish_save`.
 
 use accshift_app::mock::MockBackend;
@@ -31,7 +30,7 @@ fn snapshot(entries: &[(&str, &str)], stores: Value) -> ClientStorageSnapshot {
     }
 }
 
-/// Every store `{}`, so nothing looks missing (the TS boot payload).
+/// Every store `{}`, so nothing looks missing.
 fn booted() -> ClientStorage {
     let stores: BTreeMap<String, Value> = accshift_app::storage::CLIENT_STORE_IDS
         .iter()
@@ -47,7 +46,7 @@ fn later() -> Instant {
     Instant::now() + SAVE_DEBOUNCE + Duration::from_millis(1)
 }
 
-// ------------------------------------------------------------ flushPendingSaves
+// ------------------------------------------------------------ flushing pending saves
 
 #[test]
 fn debounces_a_save_instead_of_persisting_immediately() {
@@ -107,7 +106,7 @@ fn marks_its_own_write_as_seen_so_the_next_focus_finds_no_change() {
 
 // ------------------------------------------------------------ external refresh
 
-/// Both stores recorded as seen, like the TS `beforeEach`.
+/// Both stores recorded as seen.
 fn seen() -> ClientStorage {
     let mut storage = booted();
     storage.replace_manifest(manifest(&[
@@ -267,11 +266,11 @@ fn does_not_mark_a_store_as_seen_when_it_changed_after_the_manifest_read() {
     );
 }
 
-// ------------------------------------------------------------ onClientStoreChange
+// ------------------------------------------------------------ store revisions
 
 #[test]
 fn a_write_changes_its_own_store_revision_only() {
-    // TS tells listeners; here a reader compares revisions.
+    // No listeners: a reader compares revisions.
     let mut storage = booted();
     let settings = storage.revision(CLIENT_STORE_SETTINGS);
     storage.set(CLIENT_STORE_FOLDERS, json!({ "a": 1 }));

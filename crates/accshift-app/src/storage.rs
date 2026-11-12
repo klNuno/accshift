@@ -1,5 +1,5 @@
-//! The client storage layer, ported from `src/lib/storage/clientStorage.ts`
-//! and `storeIds.ts`.
+//! The client storage layer: the client store ids and their in-memory values,
+//! with debounced writes and the manifest that spots external changes.
 //!
 //! [`ClientStorage`] holds the raw JSON of every client store, exactly what
 //! the backend's `load_client_storage_snapshot` hands over and what
@@ -8,11 +8,11 @@
 //! [`ClientStorage::take_due_saves`] into the job pool, runs [`persist`] there
 //! and reports back with [`ClientStorage::finish_save`]. The debounce, the
 //! one-save-at-a-time rule per store, the manifest bookkeeping and the
-//! external-refresh rules are the TS ones.
+//! external-refresh rules all live here.
 //!
-//! Legacy `localStorage` keys cannot be read from Rust. [`initialize`] takes
-//! them as an optional map (`key -> raw string`, as `localStorage.getItem`
-//! returns it) for whoever reads them later.
+//! The WebView2 `localStorage` keys older installs left on disk cannot be read
+//! from here. [`initialize`] takes them as an optional map (`key -> raw
+//! string`) for whoever reads them.
 
 use crate::backend::Backend;
 use crate::error::{BackendError, BackendResult};
@@ -48,7 +48,7 @@ pub use accshift_core::storage::{
 /// A client store id: one of [`CLIENT_STORE_IDS`].
 pub type StoreId = &'static str;
 
-/// Every client store, in the TS order.
+/// Every client store, in a fixed order.
 pub const CLIENT_STORE_IDS: [StoreId; 12] = [
     CLIENT_STORE_SETTINGS,
     CLIENT_STORE_FOLDERS,
@@ -98,10 +98,10 @@ pub const LEGACY_LOCAL_STORAGE_KEYS: [(StoreId, &str); 12] = [
     ),
 ];
 
-/// How long a write waits before it is due, like the TS `scheduleSave`.
+/// How long a write waits before it is due.
 pub const SAVE_DEBOUNCE: Duration = Duration::from_millis(120);
 
-/// Raw legacy `localStorage` values by key, as `getItem` returns them.
+/// Raw legacy `localStorage` values by key.
 pub type LegacyLocalStorage = BTreeMap<String, String>;
 
 /// The [`StoreId`] spelled `id`, if it is one.
@@ -109,7 +109,7 @@ pub fn client_store_id(id: &str) -> Option<StoreId> {
     CLIENT_STORE_IDS.iter().copied().find(|known| *known == id)
 }
 
-/// `isClientStoreId`.
+/// True for the id of a client store.
 pub fn is_client_store_id(id: &str) -> bool {
     client_store_id(id).is_some()
 }
@@ -122,7 +122,7 @@ pub fn legacy_local_storage_key(store_id: &str) -> Option<&'static str> {
         .map(|(_, key)| *key)
 }
 
-/// `readLegacyLocalStorageValue`: the view mode is a bare string, every other
+/// A store's legacy value: the view mode is a bare string, every other
 /// store JSON; a value that does not parse counts as absent.
 pub fn read_legacy_value(store_id: StoreId, legacy: &LegacyLocalStorage) -> Option<Value> {
     let raw = legacy.get(legacy_local_storage_key(store_id)?)?;
@@ -140,14 +140,13 @@ pub struct PendingSave {
     pub value: Value,
 }
 
-/// `persistStore`: writes the store and answers its new fingerprint (`None`
+/// Writes the store and answers its new fingerprint (`None`
 /// from the mock).
 pub fn persist(backend: &dyn Backend, save: &PendingSave) -> BackendResult<Option<String>> {
     backend.save_client_storage_store(save.store_id, &save.value)
 }
 
-/// `emitStorageLog`: an info line under `frontend.storage`. Failures are
-/// dropped, as in TS.
+/// An info line under `frontend.storage`. Failures are dropped.
 pub fn storage_log(backend: &dyn Backend, message: &str, details: Option<&Value>) {
     let details = details.map(Value::to_string);
     let _ = backend.log_app_event("info", "frontend.storage", message, details.as_deref());
@@ -165,7 +164,7 @@ pub struct InitReport {
     pub failed_migrations: Vec<(StoreId, String)>,
 }
 
-/// `initializeClientStorage`, blocking: run it before the first frame or in a
+/// Loads the stores and migrates the legacy keys, blocking: run it before the first frame or in a
 /// job. `boot_snapshot` is the one the boot payload carried; without it the
 /// snapshot is loaded through the backend.
 pub fn initialize(
@@ -268,7 +267,7 @@ impl ClientStorage {
         storage
     }
 
-    /// `applySnapshot`: takes the snapshot's manifest and every store's value,
+    /// Takes the snapshot's manifest and every store's value,
     /// bumping every revision.
     pub fn apply_snapshot(&mut self, snapshot: ClientStorageSnapshot) {
         self.snapshot_store_count = snapshot.stores.len();
@@ -285,12 +284,12 @@ impl ClientStorage {
         *self.revisions.entry(id).or_insert(0) += 1;
     }
 
-    /// `getClientStoreValue`: `None` for a missing or `null` store.
+    /// A store's value, `None` for a missing or `null` store.
     pub fn get(&self, store_id: &str) -> Option<&Value> {
         self.values.get(store_id).filter(|value| !value.is_null())
     }
 
-    /// `getClientStoreRevision`: bumped by every write, snapshot and reload.
+    /// A store's revision, bumped by every write, snapshot and reload.
     pub fn revision(&self, store_id: &str) -> u64 {
         self.revisions.get(store_id).copied().unwrap_or(0)
     }
@@ -300,17 +299,17 @@ impl ClientStorage {
         &self.manifest
     }
 
-    /// Takes `manifest` whole, as the TS migration path does after its saves.
+    /// Takes `manifest` whole, as the migration does after its saves.
     pub fn replace_manifest(&mut self, manifest: StorageManifest) {
         self.manifest = manifest;
     }
 
-    /// `setClientStoreValue` with the 120 ms debounce.
+    /// Sets a store's value and writes it after the 120 ms debounce.
     pub fn set(&mut self, store_id: StoreId, value: Value) {
         self.set_with_delay(store_id, value, SAVE_DEBOUNCE);
     }
 
-    /// `setClientStoreValue(..., { immediate: true })`.
+    /// Sets a store's value and makes its write due now.
     pub fn set_immediate(&mut self, store_id: StoreId, value: Value) {
         self.set_with_delay(store_id, value, Duration::ZERO);
     }
@@ -339,7 +338,7 @@ impl ClientStorage {
         migrated
     }
 
-    /// `hasPendingSave`: a local edit not yet on disk, debounced or writing.
+    /// A local edit not yet on disk, debounced or writing.
     pub fn has_pending_save(&self, store_id: &str) -> bool {
         self.pending.contains_key(store_id) || self.in_flight.contains(store_id)
     }
@@ -364,7 +363,7 @@ impl ClientStorage {
         self.take_saves(|due| due <= now)
     }
 
-    /// `flushPendingSaves`: every pending write, due or not. Writes in flight
+    /// Every pending write, due or not. Writes in flight
     /// are the caller's to wait for; their store is handed out again here once
     /// they are reported, if it changed meanwhile.
     pub fn take_all_saves(&mut self) -> Vec<PendingSave> {
@@ -394,7 +393,7 @@ impl ClientStorage {
     /// Reports a write handed out by `take_*_saves`. The fingerprint the
     /// backend answers marks the write as our own, so the next manifest diff
     /// does not read it back as an external change. A failed write is not
-    /// retried, as in TS: the value stays in memory until the next edit.
+    /// retried: the value stays in memory until the next edit.
     pub fn finish_save(&mut self, store_id: StoreId, result: &BackendResult<Option<String>>) {
         self.in_flight.remove(store_id);
         if let Ok(Some(fingerprint)) = result {
@@ -404,9 +403,8 @@ impl ClientStorage {
         }
     }
 
-    /// Writes every pending store now and waits for each, like awaiting
-    /// `flushPendingSaves` before the window closes. Writes handed to the job
-    /// pool earlier are not awaited here.
+    /// Writes every pending store now and waits for each, for the window
+    /// close. Writes handed to the job pool earlier are not awaited here.
     pub fn flush_blocking(&mut self, backend: &dyn Backend) -> Vec<(StoreId, BackendError)> {
         let mut failures = Vec::new();
         for save in self.take_all_saves() {
@@ -419,7 +417,7 @@ impl ClientStorage {
         failures
     }
 
-    /// `recordManifestEntries`: marks only `keys` of `manifest` as seen.
+    /// Marks only `keys` of `manifest` as seen.
     fn record_manifest_entries(&mut self, manifest: &StorageManifest, keys: &[String]) {
         for key in keys {
             match manifest.stores.get(key) {
@@ -436,7 +434,7 @@ impl ClientStorage {
         self.manifest.schema_version = manifest.schema_version;
     }
 
-    /// First half of `refreshClientStorageIfChanged`, given a fresh manifest.
+    /// First half of a refresh from disk, given a fresh manifest.
     /// Returns `None` when nothing changed. Storage targets that are not
     /// client stores are marked as seen right away; client stores with a write
     /// owed to disk are left alone.
@@ -491,7 +489,7 @@ impl ClientStorage {
         plan.other_targets.into_iter().chain(applied_keys).collect()
     }
 
-    /// `refreshClientStorageIfChanged`, blocking.
+    /// Reloads the stores changed on disk by someone else, blocking.
     pub fn refresh_blocking(&mut self, backend: &dyn Backend) -> BackendResult<Vec<String>> {
         let next = backend.get_storage_manifest()?;
         let Some(plan) = self.begin_refresh(&next) else {
@@ -530,8 +528,8 @@ impl RefreshPlan {
     }
 }
 
-/// `diffManifests`: keys whose fingerprint differs, a missing one reading as
-/// `""`. Sorted by key (TS lists the previous manifest's keys first).
+/// Keys whose fingerprint differs, a missing one reading as `""`. Sorted by
+/// key.
 pub fn diff_manifests(previous: &StorageManifest, next: &StorageManifest) -> Vec<String> {
     let keys: BTreeSet<&String> = previous.stores.keys().chain(next.stores.keys()).collect();
     keys.into_iter()

@@ -1,6 +1,5 @@
-//! The keyboard model: `shared/keyboard/controller.test.ts`,
-//! `app/keyboardBindings.test.ts` and `app/tabCycle.test.ts`, then every
-//! binding of the app table through the resolver in every scope.
+//! The keyboard model: the controller, the tab cycle and the bindings, then
+//! every binding of the app table through the resolver in every scope.
 
 use accshift_app::actions::keyboard::{
     app_bindings, current_key_scope, parse_combo, pick_cycled_tab, Binding, Direction, KeyAction,
@@ -10,7 +9,7 @@ use accshift_app::actions::keyboard::{
 use accshift_app::folders::ItemRef;
 use std::collections::BTreeSet;
 
-/// A host that records every call, the TS `setup()` deps.
+/// A host that records every call.
 struct Host {
     folder: bool,
     active_tab: String,
@@ -161,7 +160,7 @@ fn binding(combo: &str, scopes: Scopes, command: KeyCommand) -> Binding {
     }
 }
 
-// controller.test.ts
+// The keyboard controller.
 
 #[test]
 fn controller_handles_and_consumes_a_binding_that_takes_the_key() {
@@ -311,7 +310,7 @@ fn controller_reads_mod_as_cmd_on_macos_and_refuses_the_stray_modifier() {
     )));
 }
 
-// tabCycle.test.ts
+// The tab cycle.
 
 fn tabs() -> Vec<String> {
     vec!["steam".into(), "riot".into(), "epic".into()]
@@ -357,7 +356,7 @@ fn tab_cycle_returns_none_with_fewer_than_two_tabs() {
     assert_eq!(pick_cycled_tab(&[], "steam", -1), None);
 }
 
-// keyboardBindings.test.ts
+// The key bindings.
 
 #[test]
 fn bindings_leave_keys_without_an_action_to_the_widgets() {
