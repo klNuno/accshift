@@ -44,6 +44,24 @@ fn minimal_descriptor_is_accepted() {
 }
 
 #[test]
+fn windows_roots_require_the_resolvers_install_dir_spelling() {
+    for name in ["INSTALLDIR", "InstallDir", "installDir"] {
+        let result = with_windows(|v| {
+            v["os"]["windows"]["roots"]["files"] = serde_json::json!([format!("${{{name}}}/Demo")]);
+            v["os"]["windows"]["state"]["files"][0]["live"] =
+                serde_json::json!(format!("${{{name}}}/Demo/session.json"));
+        });
+        if name == "installDir" {
+            assert!(result.is_ok());
+        } else {
+            let error = result.unwrap_err();
+            assert_eq!(error.field, "os.windows.roots.files[0]");
+            assert!(error.problem.contains(name), "{}", error.problem);
+        }
+    }
+}
+
+#[test]
 fn wrong_schema_version_names_the_field_and_the_expectation() {
     let err = with_windows(|v| v["schemaVersion"] = serde_json::json!(2)).unwrap_err();
     assert_eq!(err.field, "schemaVersion");

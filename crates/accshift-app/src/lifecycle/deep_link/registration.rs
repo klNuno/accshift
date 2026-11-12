@@ -158,7 +158,6 @@ pub fn wire_scheme_registration(
 /// default`. Runs on every launch.
 #[cfg(target_os = "linux")]
 pub fn register_linux(scheme: &str, product_name: &str) -> Result<(), String> {
-    use std::io::Write;
     use std::process::Command;
     let bin = std::fs::canonicalize(std::env::current_exe().map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
@@ -178,7 +177,31 @@ pub fn register_linux(scheme: &str, product_name: &str) -> Result<(), String> {
     let target_file = target.join(&file_name);
     let mime_type = format!("x-scheme-handler/{scheme}");
 
-    if let Ok(mut desktop_file) = ini::Ini::load_from_file(&target_file) {
+    write_linux_desktop(&target_file, product_name, &qualified_exec, &mime_type)?;
+    Command::new("update-desktop-database")
+        .arg(&target)
+        .status()
+        .map_err(|e| e.to_string())?;
+    Command::new("xdg-mime")
+        .args(["default", &file_name, mime_type.as_str()])
+        .status()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Merge the handler's command and MIME type, without running system tools.
+#[cfg(target_os = "linux")]
+fn write_linux_desktop(
+    target_file: &std::path::Path,
+    product_name: &str,
+    qualified_exec: &str,
+    mime_type: &str,
+) -> Result<(), String> {
+    use std::io::Write;
+    if let Some(mut desktop_file) = ini::Ini::load_from_file(target_file)
+        .ok()
+        .filter(|file| file.section(Some("Desktop Entry")).is_some())
+    {
         if let Some(section) = desktop_file.section_mut(Some("Desktop Entry")) {
             let old_mimes = section.remove("MimeType").unwrap_or_default();
             let mut change = false;
@@ -197,23 +220,15 @@ pub fn register_linux(scheme: &str, product_name: &str) -> Result<(), String> {
             }
             if change {
                 desktop_file
-                    .write_to_file(&target_file)
+                    .write_to_file(target_file)
                     .map_err(|e| e.to_string())?;
             }
         }
     } else {
-        let mut file = std::fs::File::create(&target_file).map_err(|e| e.to_string())?;
-        file.write_all(desktop_template(product_name, &qualified_exec, &mime_type).as_bytes())
+        let mut file = std::fs::File::create(target_file).map_err(|e| e.to_string())?;
+        file.write_all(desktop_template(product_name, qualified_exec, mime_type).as_bytes())
             .map_err(|e| e.to_string())?;
     }
-    Command::new("update-desktop-database")
-        .arg(&target)
-        .status()
-        .map_err(|e| e.to_string())?;
-    Command::new("xdg-mime")
-        .args(["default", &file_name, mime_type.as_str()])
-        .status()
-        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -222,4 +237,34 @@ pub fn desktop_template(name: &str, qualified_exec: &str, mime_type: &str) -> St
     format!(
         "[Desktop Entry]\nType=Application\nName={name}\nExec={qualified_exec}\nTerminal=false\nMimeType={mime_type}\nNoDisplay=true\n"
     )
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_desktop_file_without_its_entry_is_repaired() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("handler.desktop");
+        for initial in ["", "[Other]\nName=unrelated\n"] {
+            std::fs::write(&path, initial).unwrap();
+            write_linux_desktop(
+                &path,
+                "accshift",
+                "\"/app/accshift\" %u",
+                "x-scheme-handler/accshift",
+            )
+            .unwrap();
+            let file = ini::Ini::load_from_file(&path).unwrap();
+            let entry = file
+                .section(Some("Desktop Entry"))
+                .expect("repaired desktop entry");
+            assert_eq!(entry.get("Exec"), Some("/app/accshift %u"));
+            assert!(std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("Exec=\"/app/accshift\" %u\n"));
+            assert_eq!(entry.get("MimeType"), Some("x-scheme-handler/accshift"));
+        }
+    }
 }

@@ -125,9 +125,10 @@ pub(super) fn validate_root_placeholders(
     let known = known_root_placeholders(os);
     for name in root.placeholders() {
         // Windows environment variable names are case-insensitive, and the
-        // resolver folds case when it looks one up, so the check does too.
+        // resolver folds case when it looks one up. The installDir built-in
+        // is matched exactly on every OS.
         let matches = known.iter().any(|candidate| {
-            if os == Os::Windows {
+            if os == Os::Windows && *candidate != INSTALL_DIR {
                 candidate.eq_ignore_ascii_case(&name)
             } else {
                 *candidate == name

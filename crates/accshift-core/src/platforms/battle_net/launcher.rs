@@ -47,13 +47,12 @@ pub(super) fn validate_windows_launcher_path(path: &Path) -> Result<(), String> 
     }
 }
 
-/// `open` launches the bundle, so the override has to be one: a folder whose
-/// name ends in `.app`.
+/// `open` launches the bundle, so the override must name Battle.net's bundle.
 pub(super) fn validate_macos_bundle_path(path: &Path) -> Result<(), String> {
     let is_bundle = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("app"));
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("Battle.net.app"));
     if path.is_dir() && is_bundle {
         Ok(())
     } else {

@@ -240,8 +240,8 @@ impl AccountLoading {
             .expiry(ctx.stores.cache_duration_ms(), ctx.now_ms())
     }
 
-    /// The tab changed: drop everything in flight and point the loader at
-    /// `platform_id`'s adapter.
+    /// The tab changed: reset the loader, priming and deferred work, and point
+    /// the loader at `platform_id`'s adapter. Already running jobs stay queued.
     pub fn switch_tab(&mut self, registry: &PlatformRegistry, platform_id: &str) {
         let adapter = registry.adapter(platform_id).map(|a| a.id().to_string());
         self.loader.set_adapter(adapter);

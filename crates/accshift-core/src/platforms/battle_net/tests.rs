@@ -366,6 +366,8 @@ fn battle_net_path_override_must_name_the_launcher() {
     let _ = std::fs::remove_dir_all(&root);
     let bundle = root.join("Battle.net.app");
     std::fs::create_dir_all(&bundle).unwrap();
+    let other_bundle = root.join("Calculator.app");
+    std::fs::create_dir_all(&other_bundle).unwrap();
     let exe = root.join("Battle.net.exe");
     let launcher = root.join("Battle.net Launcher.exe");
     let other = root.join("Overwatch.exe");
@@ -380,6 +382,7 @@ fn battle_net_path_override_must_name_the_launcher() {
     assert!(validate_windows_launcher_path(&root.join("missing.exe")).is_err());
 
     assert!(validate_macos_bundle_path(&bundle).is_ok());
+    assert!(validate_macos_bundle_path(&other_bundle).is_err());
     // An existing file or a plain folder is not a bundle `open` can launch.
     assert!(validate_macos_bundle_path(&exe).is_err());
     assert!(validate_macos_bundle_path(&root).is_err());
