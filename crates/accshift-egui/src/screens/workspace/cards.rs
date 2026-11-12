@@ -36,8 +36,8 @@ use crate::ui::components::folder_card::{self, entrance, FolderCardEvent, Folder
 use crate::ui::components::list_view::ListEvent;
 use crate::ui::components::onboarding;
 use crate::ui::components::section_header::{self, SectionHeaderEvent, SectionHeaderProps};
+use crate::ui::components::shared;
 use crate::ui::components::TransformScope;
-use crate::ui::css;
 use crate::ui::text::{self, LineHeight, TextStyle};
 
 /// How a dragged folder section fades and shrinks (140 ms ease out).
@@ -741,12 +741,8 @@ impl Workspace {
                         .map(rgba)
                         .unwrap_or(Rgba::TRANSPARENT)
                 };
-                let css_rgba = |c: Rgba| format!("rgba({}, {}, {}, {})", c.r, c.g, c.b, c.a);
-                let gradient = css::gradient(&format!(
-                    "linear-gradient(145deg, {}, {})",
-                    css_rgba(hsl(g.hue, 80, 56)),
-                    css_rgba(hsl(g.hue_fade, 66, 38)),
-                ));
+                let gradient =
+                    shared::linear_gradient("145deg", hsl(g.hue, 80, 56), hsl(g.hue_fade, 66, 38));
                 (hsl(g.hue, 72, 43), gradient)
             })
             .clone();

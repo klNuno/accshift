@@ -28,6 +28,7 @@ use crate::icons;
 use crate::theme::Rgba;
 use crate::ui::anim::{self, Motion, Timing, Transition};
 use crate::ui::components::icon;
+use crate::ui::components::shared::ceil_unit;
 use crate::ui::paint::{Border, BoxStyle, Corners};
 use crate::ui::snap;
 use crate::ui::text::{self, LineHeight, TextStyle};
@@ -147,11 +148,6 @@ fn action_style(v: &Vars) -> TextStyle {
         .line_height(LineHeight::Normal)
         .nowrap(false)
         .color(v.fg.to_color32())
-}
-
-/// A width rounded up to a LayoutUnit, as inline boxes are.
-fn ceil_unit(w: f32, ppp: f32) -> f32 {
-    (w * ppp * 64.0).ceil() / 64.0 / ppp
 }
 
 fn geometry(ctx: &egui::Context, v: &Vars, item: &Item, max_w: f32) -> Geometry {

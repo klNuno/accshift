@@ -46,6 +46,7 @@ use crate::app::vars::Vars;
 use crate::theme::Rgba;
 use crate::ui::anim::{self, Timing, Transition};
 use crate::ui::backdrop_filter::Mark;
+use crate::ui::components::shared::ceil_unit_tolerant;
 use crate::ui::paint::{Border, BoxShadow, BoxStyle, Corners};
 use crate::ui::snap;
 use crate::ui::text::{self, LineHeight, TextStyle, TextTransform};
@@ -426,12 +427,6 @@ fn chip_colors(tone: ChipTone) -> (Rgba, Rgba, Rgba) {
     }
 }
 
-/// A width rounded up to a layout unit (1/64 device px), as Blink sizes an
-/// inline box around its text.
-fn ceil_unit(w: f32, ppp: f32) -> f32 {
-    (w * ppp * 64.0 - 1e-3).ceil() / 64.0 / ppp
-}
-
 /// The height of `text` wrapped in `width`.
 fn text_height(ctx: &Context, text: &str, style: &TextStyle, width: f32) -> f32 {
     let one = style.line_box(ctx).map_or(style.size * 1.5, |l| l.height);
@@ -561,7 +556,7 @@ fn section(
             .color(v.fg_muted.to_color32());
         let (label_w, label_h) = match &progress.label {
             Some(l) => (
-                ceil_unit(text::measure(ctx, l, &label_style).unwrap_or(0.0), ppp),
+                ceil_unit_tolerant(text::measure(ctx, l, &label_style).unwrap_or(0.0), ppp),
                 label_style.line_box(ctx).map_or(13.5, |b| b.height),
             ),
             None => (0.0, 0.0),
@@ -623,7 +618,7 @@ fn section(
                 (bg, fg, border, bw)
             };
             let style = chip_style(fg);
-            let text_w = ceil_unit(text::measure(ctx, &label, &style).unwrap_or(0.0), ppp);
+            let text_w = ceil_unit_tolerant(text::measure(ctx, &label, &style).unwrap_or(0.0), ppp);
             let cw = text_w + 2.0 * (CHIP_PAD + bw);
             if x > 0.0 && x + cw > w {
                 x = 0.0;

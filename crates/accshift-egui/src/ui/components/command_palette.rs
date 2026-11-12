@@ -43,6 +43,7 @@ use crate::ui::backdrop_filter::Mark;
 use crate::ui::components::controls::editing::{self, Editor, Rules};
 use crate::ui::components::controls::field_menu;
 use crate::ui::components::controls::scroll::{self, nearest};
+use crate::ui::components::shared;
 use crate::ui::paint::{Border, BoxShadow, BoxStyle, Corners};
 use crate::ui::snap;
 use crate::ui::text::{self, LineHeight, TextAlign, TextStyle, TextTransform};
@@ -164,8 +165,7 @@ fn line(ctx: &egui::Context, style: &TextStyle) -> f32 {
 
 /// A shaped width as layout holds it: ceiled to 1/64 device px.
 fn width_of(ctx: &egui::Context, s: &str, style: &TextStyle, ppp: f32) -> f32 {
-    let w = text::measure(ctx, s, style).unwrap_or(0.0);
-    (w * ppp * 64.0).ceil() / 64.0 / ppp
+    shared::ceil_unit(text::measure(ctx, s, style).unwrap_or(0.0), ppp)
 }
 
 /// `n * 100vh` as layout holds it: truncated to 1/64 device px (12vh of a
