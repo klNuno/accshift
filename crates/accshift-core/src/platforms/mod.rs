@@ -58,6 +58,7 @@ pub(crate) fn redact_id(value: &str) -> String {
     }
 }
 
+#[cfg(any(windows, target_os = "macos"))]
 pub(crate) fn redact_opt(value: Option<&str>) -> serde_json::Value {
     match value {
         Some(v) => serde_json::Value::String(redact_id(v)),
