@@ -1,8 +1,9 @@
-//! The port of `tauri-plugin-single-instance` 2.4.4 (built with its
-//! `deep-link` feature and without `semver`, as the Tauri app builds it).
+//! One running app per identifier: a second launch hands its arguments to
+//! the first and exits.
 //!
-//! Same names on every OS, so a Tauri instance and an egui instance of the
-//! same identifier find each other: on Windows the named mutex
+//! The names are the ones `tauri-plugin-single-instance` 2.4.4 uses, so a
+//! running older install and this build find each other: on Windows the
+//! named mutex
 //! `{id}-sim` and the hidden message window of class `{id}-sic` titled
 //! `{id}-siw`, reached with `WM_COPYDATA` (`dwData` 1542, `"cwd|arg0|arg1\0"`);
 //! on Linux the D-Bus name `{id}.SingleInstance` at `/{id with . as /}/SingleInstance`
@@ -10,8 +11,7 @@
 //! on macOS the socket `/tmp/{id with . and - as _}_si.sock`, `cwd\0\0arg0\0arg1`.
 //!
 //! [`acquire`] never exits the process: it answers [`Launch::Forwarded`] and
-//! the caller exits (upstream calls `std::process::exit(0)` itself, after
-//! `cleanup_before_exit` on Windows and Linux). Second launches arrive on
+//! the caller exits. Second launches arrive on
 //! [`SingleInstance::try_recv`], from a thread; `wake` runs after each one
 //! (the egui shell passes `request_repaint`).
 
@@ -26,7 +26,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
 
 /// A second launch: its whole `argv` (executable first) and its working
-/// folder, as the plugin callback receives them.
+/// folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecondInstance {
     pub args: Vec<String>,
@@ -57,11 +57,11 @@ pub enum Launch {
     Primary(SingleInstance),
     /// Another instance got this launch's arguments: exit with code 0.
     Forwarded,
-    /// Neither: run without single-instance protection, as upstream does
-    /// when the mutex exists but its window does not (Windows), the D-Bus
-    /// session refuses the name for another reason (Linux) or the socket
-    /// fails otherwise (macOS). The value keeps what upstream leaks for the
-    /// process lifetime (the Windows mutex handle).
+    /// Neither: run without single-instance protection, when the mutex
+    /// exists but its window does not (Windows), the D-Bus session refuses
+    /// the name for another reason (Linux) or the socket fails otherwise
+    /// (macOS). The value keeps what must stay open for the process
+    /// lifetime (the Windows mutex handle).
     Alone(Option<SingleInstance>),
 }
 
@@ -76,9 +76,8 @@ impl std::fmt::Debug for Launch {
 }
 
 /// The running single-instance service. Dropping it, or running its
-/// [`Self::releaser`], is the plugin's `destroy` (`RunEvent::Exit`): release
-/// the mutex and destroy the window, release the D-Bus name, or remove the
-/// socket.
+/// [`Self::releaser`], releases it on exit: the mutex and the window, the
+/// D-Bus name, or the socket.
 pub struct SingleInstance {
     receiver: Receiver<SecondInstance>,
     guard: Arc<Mutex<Option<PlatformGuard>>>,
@@ -130,7 +129,7 @@ pub(crate) enum PlatformLaunch {
     Alone(Option<PlatformGuard>),
 }
 
-/// The plugin's `setup` for `identifier`, forwarding `args` and `cwd` when
+/// Becomes the instance for `identifier`, or forwards `args` and `cwd` when
 /// another instance runs. Tests pass their own identifier and arguments;
 /// the app passes [`current_args`] and [`current_cwd`].
 pub fn acquire(identifier: &str, args: &[String], cwd: &str, wake: Option<Wake>) -> Launch {
@@ -186,7 +185,7 @@ fn platform_acquire(
     PlatformLaunch::Alone(None)
 }
 
-/// `std::env::args()` as upstream forwards it, lossy instead of panicking
+/// This process's arguments, executable first, lossy instead of panicking
 /// on an argument that is not UTF-8.
 pub fn current_args() -> Vec<String> {
     std::env::args_os()
@@ -203,8 +202,8 @@ pub fn current_cwd() -> String {
         .to_string()
 }
 
-/// The Windows names, `{id}-sic`, `{id}-siw`, `{id}-sim`
-/// (platform_impl/windows.rs lines 65-67 without the `semver` suffix).
+/// The Windows names: window class `{id}-sic`, window title `{id}-siw` and
+/// mutex `{id}-sim`.
 pub fn windows_names(identifier: &str) -> (String, String, String) {
     (
         format!("{identifier}-sic"),
@@ -213,13 +212,12 @@ pub fn windows_names(identifier: &str) -> (String, String, String) {
     )
 }
 
-/// The `WM_COPYDATA` payload, `"{cwd}|{args joined by |}\0"`
-/// (platform_impl/windows.rs lines 76-82).
+/// The `WM_COPYDATA` payload, `"{cwd}|{args joined by |}\0"`.
 pub fn windows_payload(args: &[String], cwd: &str) -> String {
     format!("{cwd}|{}\0", args.join("|"))
 }
 
-/// The receiving split of that payload (lines 145-155): text up to the first
+/// The receiving split of that payload: text up to the first
 /// NUL, cut on `|`, the first piece is the cwd.
 pub fn parse_windows_payload(data: &[u8]) -> (String, Vec<String>) {
     let end = data.iter().position(|b| *b == 0).unwrap_or(data.len());
@@ -229,7 +227,7 @@ pub fn parse_windows_payload(data: &[u8]) -> (String, Vec<String>) {
     (cwd, pieces.map(str::to_string).collect())
 }
 
-/// The D-Bus name and object path (platform_impl/linux.rs lines 37-49).
+/// The D-Bus name and object path.
 pub fn dbus_name_and_path(identifier: &str) -> (String, String) {
     let name = format!("{identifier}.SingleInstance");
     let mut path = name.replace('.', "/").replace('-', "_");
@@ -239,7 +237,7 @@ pub fn dbus_name_and_path(identifier: &str) -> (String, String) {
     (name, path)
 }
 
-/// The macOS socket (platform_impl/macos.rs lines 61-72).
+/// The macOS socket path.
 pub fn macos_socket_path(identifier: &str) -> std::path::PathBuf {
     let identifier = identifier.replace(['.', '-'], "_");
     std::path::PathBuf::from(format!("/tmp/{identifier}_si.sock"))

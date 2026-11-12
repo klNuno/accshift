@@ -118,7 +118,7 @@ impl Shell {
         matches!(&self.screen, Screen::App(app) if app.wallpaper_shown())
     }
 
-    /// The close sequence of a normal run (`SHUTDOWN_ORDER`): the geometry
+    /// The close sequence of a normal run: the geometry
     /// save starts, the window hides, the telemetry session ends, the save
     /// gets its 5 s, then every write the UI still holds is flushed and the
     /// single instance is released. The runner exits after. Runs once: an

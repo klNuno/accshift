@@ -1,6 +1,5 @@
-//! `tauri-plugin-process` 2.3.1 (`exit`, `restart`) on Tauri 2.11.5's
-//! `process::restart` (src/process.rs lines 20-89). The spawn and the exit
-//! go through [`ProcessControl`], so tests never relaunch or exit.
+//! Exit and relaunch. The spawn and the exit go through [`ProcessControl`],
+//! so tests never relaunch or exit.
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -36,7 +35,7 @@ impl ProcessControl for SystemProcess {
 /// updater config makes at startup.
 static STARTUP_BINARY: OnceLock<PathBuf> = OnceLock::new();
 
-/// `process::current_binary` (lines 20-27): the AppImage on Linux when
+/// The binary a relaunch starts: the AppImage on Linux when
 /// `APPIMAGE` is set, else the canonical current executable. Kept from the
 /// first call on: once a deb or rpm update has replaced the file,
 /// `/proc/self/exe` names a deleted inode that no longer resolves.
@@ -72,7 +71,7 @@ pub fn resolve_binary(exe: &Path) -> std::io::Result<PathBuf> {
     })
 }
 
-/// `restart_macos_app` (lines 92-130): inside `X.app/Contents/MacOS`, the
+/// macOS relaunch target: inside `X.app/Contents/MacOS`, the
 /// binary `Info.plist` names, which an update may have renamed.
 #[cfg(target_os = "macos")]
 fn macos_bundle_binary(current_binary: &Path) -> Option<PathBuf> {

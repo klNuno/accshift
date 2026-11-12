@@ -1,10 +1,10 @@
-//! The Linux and macOS installs of `tauri-plugin-updater` 2.11.0
-//! (`src/updater.rs` lines 1023-1385). Unlike Windows, nothing exits: the
+//! The Linux and macOS installs, as `tauri-plugin-updater` 2.11.0 does
+//! them. Unlike Windows, nothing exits: the
 //! caller relaunches once the files are replaced.
 //!
 //! Only `std`, `tempfile`, `infer`, `flate2`, `tar`, `dirs` and `osakit`:
 //! the file is type-checked for Linux and macOS from Windows by a stub crate
-//! that includes it by path (see the M5 result's commands).
+//! that includes it by path.
 
 use super::error::{UpdaterError, UpdaterResult};
 use super::Installer;
@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 /// `run_on_main_thread` of the app; the macOS admin prompt runs there.
 pub type MainThread<'a> = &'a dyn Fn(Box<dyn FnOnce() + Send>) -> Result<(), String>;
 
-/// updater.rs lines 1039-1045 (Linux): deb and rpm bundles go through the
+/// Linux: deb and rpm bundles go through the
 /// package manager, everything else is an AppImage.
 #[cfg(target_os = "linux")]
 pub fn install_files(
@@ -30,7 +30,9 @@ pub fn install_files(
     }
 }
 
-/// updater.rs lines 1047-1118.
+/// Replaces the AppImage: the old one moves to a temp folder on its mount
+/// point, the new one is written (or unpacked from a `.tar.gz`), and the old
+/// one moves back when that fails.
 #[cfg(target_os = "linux")]
 fn install_appimage(extract_path: &Path, bytes: &[u8]) -> UpdaterResult<()> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -84,7 +86,7 @@ fn install_appimage(extract_path: &Path, bytes: &[u8]) -> UpdaterResult<()> {
     Err(UpdaterError::TempDirNotOnSameMountPoint)
 }
 
-/// The three temp locations, in order (lines 1051-1055).
+/// The three temp locations, in order.
 #[cfg(target_os = "linux")]
 fn tmp_dir_locations(extract_path: &Path) -> [Option<PathBuf>; 3] {
     [
@@ -94,7 +96,7 @@ fn tmp_dir_locations(extract_path: &Path) -> [Option<PathBuf>; 3] {
     ]
 }
 
-/// updater.rs lines 1120-1128.
+/// Installs a `.deb` through the package manager.
 #[cfg(target_os = "linux")]
 fn install_deb(extract_path: &Path, bytes: &[u8]) -> UpdaterResult<()> {
     if !infer::archive::is_deb(bytes) {
@@ -103,7 +105,7 @@ fn install_deb(extract_path: &Path, bytes: &[u8]) -> UpdaterResult<()> {
     try_tmp_locations(extract_path, bytes, "dpkg", "-i", "deb")
 }
 
-/// updater.rs lines 1130-1136.
+/// Installs a `.rpm` through the package manager.
 #[cfg(target_os = "linux")]
 fn install_rpm(extract_path: &Path, bytes: &[u8]) -> UpdaterResult<()> {
     if !infer::archive::is_rpm(bytes) {
@@ -112,7 +114,8 @@ fn install_rpm(extract_path: &Path, bytes: &[u8]) -> UpdaterResult<()> {
     try_tmp_locations(extract_path, bytes, "rpm", "-U", "rpm")
 }
 
-/// updater.rs lines 1138-1172.
+/// Writes the package to the first temp location that takes it, then
+/// installs it from there.
 #[cfg(target_os = "linux")]
 fn try_tmp_locations(
     extract_path: &Path,
@@ -136,7 +139,7 @@ fn try_tmp_locations(
     Err(UpdaterError::TempDirNotFound)
 }
 
-/// updater.rs lines 1174-1211: pkexec, then a zenity or kdialog password
+/// Runs the package install as root: pkexec, then a zenity or kdialog password
 /// fed to `sudo -S`, then terminal sudo.
 #[cfg(target_os = "linux")]
 fn try_install_with_privileges(
@@ -172,7 +175,7 @@ fn try_install_with_privileges(
     }
 }
 
-/// updater.rs lines 1213-1241.
+/// Asks for the password through zenity, then kdialog.
 #[cfg(target_os = "linux")]
 fn get_password_graphically() -> UpdaterResult<String> {
     use std::process::Command;
@@ -199,7 +202,7 @@ fn get_password_graphically() -> UpdaterResult<String> {
     Err(UpdaterError::AuthenticationFailed)
 }
 
-/// updater.rs lines 1243-1272.
+/// Runs the install through `sudo -S`, the password on its stdin.
 #[cfg(target_os = "linux")]
 fn install_with_sudo(
     pkg_path: &Path,
@@ -224,7 +227,7 @@ fn install_with_sudo(
     Ok(child.wait()?.success())
 }
 
-/// updater.rs lines 1288-1384 (macOS): unpack the `.app.tar.gz` without
+/// macOS: unpack the `.app.tar.gz` without
 /// its first path component, move the current app aside, move the new one
 /// in, asking for admin rights through AppleScript when the move is denied.
 #[cfg(target_os = "macos")]
