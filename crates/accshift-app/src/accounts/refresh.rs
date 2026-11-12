@@ -1,12 +1,11 @@
-//! The settings "refresh now" actions for avatars and bans, ported from
-//! `src/lib/app/useProfileRefresh.ts`.
+//! The settings "refresh now" actions for avatars and bans.
 //!
-//! The TS loop over platforms is [`refresh_avatars_now`] and
+//! The loops over platforms are [`refresh_avatars_now`] and
 //! [`refresh_bans_now`], generic over [`RefreshEnv`] (what the loop asks of
-//! the app and its adapters). The whole run blocks, so the shell runs it on the job pool
-//! with [`run_refresh_job`]: the adapter calls go to the backend, the client
-//! stores the warning loads write are a copy, and the UI applies what came
-//! back with [`apply_refresh_job`].
+//! the app and its adapters). The whole run blocks, so the shell runs it on
+//! the job pool with [`run_refresh_job`]: the adapter calls go to the
+//! backend, the client stores the warning loads write are a copy, and the UI
+//! applies what came back with [`apply_refresh_job`].
 
 use super::loader::LoadOptions;
 use super::profile_cache::{CacheWrite, ProfileCaches};
@@ -25,7 +24,7 @@ use crate::text::Text;
 use serde_json::Value;
 use std::sync::Arc;
 
-/// `AvatarRefreshOutcome`.
+/// How an avatar refresh of one account ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AvatarRefreshOutcome {
     Complete { count: usize },
@@ -33,8 +32,8 @@ pub enum AvatarRefreshOutcome {
     Partial { ok: usize, count: usize },
 }
 
-/// `avatarRefreshOutcome`: an error or a `None` is a miss (an adapter answers
-/// `None` only for a failed fetch).
+/// An error or a `None` is a miss (an adapter answers `None` only for a
+/// failed fetch).
 pub fn avatar_refresh_outcome(
     settled: &[Result<Option<PlatformProfileInfo>, BackendError>],
 ) -> AvatarRefreshOutcome {
@@ -52,15 +51,15 @@ pub fn avatar_refresh_outcome(
     }
 }
 
-/// What the refresh loop asks of the app: `ensureAdapterReady` and the
-/// adapter methods it calls.
+/// What the refresh loop asks of the app: a ready adapter and the adapter
+/// methods it calls.
 pub trait RefreshEnv {
     type Adapter;
-    /// `ensureAdapterReady`.
+    /// The platform's adapter, loaded if needed.
     fn ensure(&mut self, platform_id: &str) -> Option<Self::Adapter>;
-    /// `getProfileInfo` exists.
+    /// Whether the adapter fetches profiles.
     fn has_profile_info(&self, adapter: &Self::Adapter) -> bool;
-    /// `loadWarningStates` exists.
+    /// Whether the adapter loads warnings.
     fn has_warnings(&self, adapter: &Self::Adapter) -> bool;
     fn load_accounts(
         &mut self,
@@ -78,7 +77,7 @@ pub trait RefreshEnv {
         accounts: &[PlatformAccount],
         options: WarningLoadOptions,
     ) -> Result<WarningLoad, BackendError>;
-    /// `getNoAccountsToastMessage`.
+    /// The toast for a platform with no accounts.
     fn no_accounts_toast(&self, adapter: &Self::Adapter) -> Option<Text>;
 }
 
@@ -94,7 +93,8 @@ fn toast(report: &mut RefreshReport, text: Text, kind: ToastKind) {
     report.toasts.push(Toast::new(text, kind));
 }
 
-/// `refreshAvatarsNow`. `ensure` is `ensureAdapterReady`.
+/// Refetches the avatar of every account of every platform that has
+/// profiles.
 pub fn refresh_avatars_now<E: RefreshEnv>(
     defs: &[PlatformDef],
     active_tab: &str,
@@ -177,7 +177,7 @@ pub fn refresh_avatars_now<E: RefreshEnv>(
     report
 }
 
-/// `refreshBansNow`.
+/// Reloads the ban warnings of every platform that has them, forced.
 pub fn refresh_bans_now<E: RefreshEnv>(
     defs: &[PlatformDef],
     active_tab: &str,
@@ -360,7 +360,7 @@ impl RefreshEnv for AdapterEnv<'_> {
     }
 }
 
-/// Whether an adapter has `getProfileInfo`: Steam, Riot and Roblox.
+/// Whether an adapter fetches profiles: Steam, Riot and Roblox.
 pub fn has_profile_info(adapter: &PlatformAdapter) -> bool {
     matches!(adapter.id(), "steam" | "riot" | "roblox")
 }

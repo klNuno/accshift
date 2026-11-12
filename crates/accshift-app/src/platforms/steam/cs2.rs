@@ -1,5 +1,4 @@
-//! CS2 card content, ported from `src/lib/platforms/steam/cs2CardContent.ts`,
-//! and the data half of `cs2Bridge.svelte.ts` (the cached rows, the TTL and
+//! CS2 card content and the CS2 bridge cache (the cached rows, the TTL and
 //! the enabled flag; the settings form is UI work).
 
 use crate::backend::Backend;
@@ -51,8 +50,7 @@ pub fn cs2_username_badge(data: Option<&Cs2BridgeAccount>) -> Option<UsernameBad
     Some(UsernameBadge { tone, label })
 }
 
-/// The bridge cache of `cs2Bridge.svelte.ts`. Loads are silent: on failure
-/// the card shows nothing.
+/// The CS2 bridge cache. Loads are silent: on failure the card shows nothing.
 #[derive(Debug, Clone, Default)]
 pub struct Cs2Bridge {
     data: BTreeMap<String, Cs2BridgeAccount>,
@@ -97,8 +95,7 @@ impl Cs2Bridge {
         self.version += 1;
     }
 
-    /// `loadCs2BridgeData` up to the backend: `None` while the cache is
-    /// fresh.
+    /// Plans a load up to the backend: `None` while the cache is fresh.
     pub fn begin_load(&self, force: bool, now_ms: f64) -> Option<Cs2LoadPlan> {
         if !force
             && self.last_fetch_at > 0.0

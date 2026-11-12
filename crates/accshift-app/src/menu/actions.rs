@@ -1,9 +1,7 @@
-//! Safe actions, ported from `src/lib/shared/contextMenu/actions.ts`.
-//!
-//! `createSafeContextAction` runs a task and turns a failure into a toast of
-//! the error string, except a PIN refusal: the lock screen is already up, so
-//! no toast goes on top. Here a task returns a [`TaskOutcome`], the effects the
-//! UI applies on its thread in order.
+//! Safe actions: a task runs and a failure becomes a toast of the error
+//! string, except a PIN refusal: the lock screen is already up, so no toast
+//! goes on top. A task returns a [`TaskOutcome`], the effects the UI applies
+//! on its thread in order.
 
 use crate::error::BackendError;
 use crate::stores::DefaultGame;
@@ -22,11 +20,11 @@ pub enum TaskEffect {
     SetDefaultGame { steam_id: String, game: DefaultGame },
     /// `clearDefaultGame(steamId)` on the client stores.
     ClearDefaultGame { steam_id: String },
-    /// `reportPinLockedError`: bring the lock screen up.
+    /// Bring the lock screen up.
     PinLocked,
 }
 
-/// What a task did, as effects in the order TS performs them.
+/// What a task did, as effects in order.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct TaskOutcome {
     pub effects: Vec<TaskEffect>,
@@ -48,8 +46,8 @@ impl TaskOutcome {
             .collect()
     }
 
-    /// The `catch` of `createSafeContextAction`: a toast with the error
-    /// message (`String(error)`), nothing for a PIN refusal.
+    /// A failed task: a toast with the error message, nothing for a PIN
+    /// refusal.
     pub fn fail(&mut self, error: &BackendError) {
         if error.is_pin_locked() {
             return;

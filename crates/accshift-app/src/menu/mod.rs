@@ -1,13 +1,12 @@
-//! The context menu model, ported from `src/lib/shared/contextMenu/*.ts` and
-//! the `ContextMenuItem` type of `src/lib/shared/types.ts`.
+//! The context menu model.
 //!
-//! TS entries carry closures. Here an entry carries a [`MenuCommand`]: data
-//! describing what a click does. The UI applies the UI-only commands itself
-//! (copy, confirm, input dialog, folder move, note, colour) and hands a
-//! [`PlatformTask`] to [`crate::platforms::PlatformAdapter::run_task`] on the
-//! job pool, then applies the [`TaskEffect`]s it returns. Drawing the menu is
-//! the UI's job; ids, grouping, order, separators, labels (as [`Text`]) and
-//! enabled state are decided here.
+//! An entry carries a [`MenuCommand`]: data describing what a click does.
+//! The UI applies the UI-only commands itself (copy, confirm, input dialog,
+//! folder move, note, colour) and hands a [`PlatformTask`] to
+//! [`crate::platforms::PlatformAdapter::run_task`] on the job pool, then
+//! applies the [`TaskEffect`]s it returns. Drawing the menu is the UI's job;
+//! ids, grouping, order, separators, labels (as [`Text`]) and enabled state
+//! are decided here.
 
 pub mod account;
 pub mod actions;
@@ -35,11 +34,11 @@ pub enum MenuCommand {
     Close,
     /// `copyToClipboard(value, label)`.
     Copy { value: String, label: Text },
-    /// `confirmAction`: on confirm, run the task as a safe action.
+    /// Ask for confirmation; on confirm, run the task as a safe action.
     Confirm(Box<ConfirmRequest>),
-    /// `openInputDialog` (rename).
+    /// Open the input dialog (rename).
     Input(Box<InputRequest>),
-    /// `moveToFolder`: `None` is the platform root.
+    /// Move the account to a folder: `None` is the platform root.
     MoveToFolder {
         account_id: String,
         folder_id: Option<String>,
@@ -51,11 +50,11 @@ pub enum MenuCommand {
     },
     /// `setColor(color)`: a preset colour, `""` clears.
     SetCardColor { account_id: String, color: String },
-    /// A safe action (`createSafeContextAction`) that talks to the backend.
+    /// A safe action that talks to the backend.
     Task(PlatformTask),
 }
 
-/// `PlatformContextMenuConfirmConfig`.
+/// A confirmation dialog and the task it guards.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConfirmRequest {
     pub title: Text,
@@ -64,7 +63,7 @@ pub struct ConfirmRequest {
     pub on_confirm: PlatformTask,
 }
 
-/// `PlatformContextMenuInputConfig`. The confirmed value goes into
+/// An input dialog. The confirmed value goes into
 /// [`PlatformTask::SetAccountLabel`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct InputRequest {
@@ -87,48 +86,48 @@ impl InputRequest {
     }
 }
 
-/// Work a menu entry hands to the job pool. Each variant is one TS closure.
+/// Work a menu entry hands to the job pool.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlatformTask {
-    /// `switchAccountMode(username, steamId, mode)`: `online` or `invisible`.
+    /// Switch with a persona mode: `online` or `invisible`.
     SteamSwitchMode {
         username: String,
         steam_id: String,
         mode: String,
     },
-    /// `switchAccountAndLaunchGame`, after remembering the game as the
-    /// account's default when `remember` is set.
+    /// Switch and launch a game, after remembering the game as the account's
+    /// default when `remember` is set.
     SteamRunGame {
         username: String,
         steam_id: String,
         app_id: String,
         remember: Option<DefaultGame>,
     },
-    /// `clearDefaultGame`.
+    /// Forget the account's default game.
     SteamClearDefaultGame { steam_id: String },
-    /// `openUserdata`.
+    /// Open the account's userdata folder.
     SteamOpenUserdata { steam_id: String },
-    /// `clearIntegratedBrowserCache` then its toast.
+    /// Clear the integrated browser cache, then its toast.
     SteamClearBrowserCache,
-    /// `copyGameSettings` then its toast.
+    /// Copy game settings between accounts, then its toast.
     SteamCopyGameSettings {
         from_steam_id: String,
         to_steam_id: String,
         app_id: String,
         game_name: String,
     },
-    /// `captureProfile`, its toast and a reload.
+    /// Capture the Riot session, its toast and a reload.
     RiotCapture {
         profile_id: String,
         display_name: String,
     },
-    /// The forget entry of `buildPlatformContextMenu`: forget, toast, remove.
+    /// Forget the account, toast, remove it from the grid.
     Forget {
         platform_id: String,
         account_id: String,
         toast: Text,
     },
-    /// `setAccountLabel` then a reload (rename).
+    /// Set the account label, then a reload (rename).
     SetAccountLabel {
         platform_id: String,
         account_id: String,
@@ -136,7 +135,7 @@ pub enum PlatformTask {
     },
 }
 
-/// A submenu filled on open (`submenuLoader`).
+/// A submenu filled on open.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubmenuLoader {
     /// The account's games, to switch and run one.
@@ -148,7 +147,7 @@ pub enum SubmenuLoader {
     },
 }
 
-/// `ContextMenuSwatchAction`.
+/// One colour swatch.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MenuSwatch {
     pub id: String,
@@ -158,7 +157,7 @@ pub struct MenuSwatch {
     pub command: MenuCommand,
 }
 
-/// `ContextMenuAction`: an entry before grouping.
+/// An entry before grouping.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MenuAction {
     pub id: String,
@@ -169,13 +168,13 @@ pub struct MenuAction {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MenuActionBody {
-    /// `ContextMenuItemAction`.
+    /// A clickable entry.
     Item {
         command: Option<MenuCommand>,
         submenu: Option<Vec<MenuAction>>,
         loader: Option<SubmenuLoader>,
     },
-    /// `ContextMenuSwatchesAction`.
+    /// A row of colour swatches.
     Swatches(Vec<MenuSwatch>),
 }
 
@@ -235,7 +234,7 @@ impl MenuAction {
     }
 }
 
-/// `ContextMenuItem`: what the menu draws, in order, separators included.
+/// What the menu draws, in order, separators included.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MenuEntry {
     Separator,
@@ -254,8 +253,8 @@ pub enum MenuEntry {
 }
 
 impl MenuEntry {
-    /// An entry with something behind it. TS has no disabled state; an item
-    /// with no action and no submenu does nothing when clicked.
+    /// An entry with something behind it. An item with no action and no
+    /// submenu does nothing when clicked.
     pub fn is_enabled(&self) -> bool {
         match self {
             MenuEntry::Separator => false,
@@ -305,9 +304,9 @@ fn to_entry(action: MenuAction, group_order: &[&str]) -> MenuEntry {
     }
 }
 
-/// `buildContextMenuItems`: actions bucketed by group, groups in
-/// `group_order` first (in that order) then by first appearance, a separator
-/// between groups. Loaded submenus go through this again with the same order.
+/// Actions bucketed by group, groups in `group_order` first (in that order)
+/// then by first appearance, a separator between groups. Loaded submenus go
+/// through this again with the same order.
 pub fn build_context_menu_items(actions: Vec<MenuAction>, group_order: &[&str]) -> Vec<MenuEntry> {
     if actions.is_empty() {
         return Vec::new();

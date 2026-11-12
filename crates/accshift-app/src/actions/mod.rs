@@ -1,30 +1,25 @@
 //! What happens when the user acts: dialogs, card actions, navigation,
 //! personas, the command palette, the keyboard model and toasts.
 //!
-//! Ported from the orchestration composables of `src/lib/app/` and the
-//! feature stores they drive. Each TS composable becomes a state struct with
-//! methods. A method that reaches into something another module owns (the
-//! account loader, the add flow, bulk edit, the shell's active tab, the
-//! clipboard) does not call it: it returns [`AppEffect`]s, in the order TS
-//! performs those calls, and the egui `AppModel` applies them after the frame.
-//! What these modules own themselves (dialog state, the history stack, the
-//! toast queue, the stores they write) changes in place.
+//! Each concern is a state struct with methods. A method that reaches into
+//! something another module owns (the account loader, the add flow, bulk
+//! edit, the shell's active tab, the clipboard) does not call it: it returns
+//! [`AppEffect`]s, in call order, and the egui `AppModel` applies them after
+//! the frame. What these modules own themselves (dialog state, the history
+//! stack, the toast queue, the stores they write) changes in place.
 //!
-//! - [`toasts::ToastQueue`] ports `features/notifications/store.svelte.ts` and the
-//!   timer of `Toast.svelte`.
-//! - [`keyboard`] ports `shared/keyboard/{controller,types}.ts` and
-//!   `app/keyboardBindings.ts`: the binding table as data, combo parsing,
-//!   scope resolution and dispatch through a [`keyboard::KeyHost`].
-//! - [`palette`] ports `features/commandPalette/{fuzzy,registry}.ts` and the
-//!   filtering of `CommandPalette.svelte`.
-//! - [`dialogs::AppDialogs`] ports `app/useAppDialogs.svelte.ts`, the validation of
-//!   `InputDialog.svelte`.
+//! - [`toasts::ToastQueue`]: the toast queue and each toast's countdown.
+//! - [`keyboard`]: the binding table as data, combo parsing, scope
+//!   resolution and dispatch through a [`keyboard::KeyHost`].
+//! - [`palette`]: the command palette's fuzzy matching, registry and list.
+//! - [`dialogs::AppDialogs`]: the confirm and input dialogs, with the input
+//!   validation.
 //! - [`card_actions`] holds the bulk edit bar actions on the selected cards.
 //! - [`navigation`] holds the settings panel tab bar.
-//! - [`extension::ExtensionContent`] ports `app/useExtensionContent.svelte.ts`.
-//! - [`personas`] ports `app/usePersonas.svelte.ts`, `app/usePersonaSwitch.svelte.ts`.
-//! - [`onboarding::OnboardingTour`] ports `app/useOnboardingTour.svelte.ts`.
-//! - [`avatar_fallback`] ports `shared/avatarFallback.ts`.
+//! - [`extension::ExtensionContent`]: the extension panel of each card.
+//! - [`personas`]: the saved personas and their switch.
+//! - [`onboarding::OnboardingTour`]: the first-run onboarding and its tour.
+//! - [`avatar_fallback`]: initials and gradient of a card without a picture.
 
 pub mod avatar_fallback;
 pub mod card_actions;
@@ -44,8 +39,8 @@ use crate::platforms::PlatformAccount;
 use crate::stores::ViewMode;
 use crate::text::Text;
 
-/// `loadAccounts(silent, showRefreshedToast, forceRefresh, checkBans,
-/// deferBackground)` with the TS defaults (`deferBackground` true).
+/// The options of an account load (`silent`, `show_refreshed_toast`,
+/// `force_refresh`, `check_bans`), with background work deferred.
 pub fn load_options(
     silent: bool,
     show_refreshed_toast: bool,
@@ -61,16 +56,16 @@ pub fn load_options(
     }
 }
 
-/// One call into something another module owns, in the order TS makes it.
+/// One call into something another module owns, in call order.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppEffect {
-    /// `addToast` / `showToast`.
+    /// Show a toast.
     Toast(Toast),
     /// `loadAccounts(...)` on the active tab.
     LoadAccounts(LoadOptions),
-    /// `handleRefreshClick`.
+    /// Reload the active tab's accounts.
     RefreshAccounts,
-    /// `handleAddAccountClick`.
+    /// Start adding an account.
     AddAccount,
     /// `handleAccountSwitch(account)`.
     SwitchAccount(PlatformAccount),
@@ -98,16 +93,15 @@ pub enum AppEffect {
     ToggleSettingsPanel,
     /// `appNavigation.handleTabChange(tab)`.
     ChangeTab(String),
-    /// `handleNavigateBack` (its add flow cancel comes first in the list).
+    /// Go to the parent folder (its add flow cancel comes first in the list).
     NavigateToParentFolder,
-    /// The removal of an account from the grid (`removeAccount` glue of
-    /// App.svelte: loader, folder sync, items).
+    /// Remove an account from the grid: loader, folder sync, items.
     RemoveAccount(String),
     /// `copyToClipboard(text, label)`: write it, then
     /// [`toasts::copy_result_toast`] with the label resolved.
     CopyToClipboard { text: String, label: Text },
     /// Write several lines to the clipboard, then
-    /// [`card_actions::bulk_urls_copied_toast`] (`copyBulkEditUrls`).
+    /// [`card_actions::bulk_urls_copied_toast`].
     CopyBulkUrls(Vec<String>),
     /// `cardColorVersion += 1`: card colours changed in the stores.
     CardColorsChanged,
@@ -124,7 +118,7 @@ pub enum AppEffect {
         account_id: String,
         label: String,
     },
-    /// A `requestConfirm` settled: route it to whoever holds the ticket.
+    /// A confirmation settled: route it to whoever holds the ticket.
     ConfirmSettled {
         ticket: dialogs::ConfirmTicket,
         allowed: bool,
@@ -161,9 +155,9 @@ pub enum AppEffect {
     /// The view mode changed and was stored; the grid recomputes its padding
     /// when it is the grid.
     ViewModeChanged(ViewMode),
-    /// An entry of a caller-built menu (`openCustomContextMenu`, the persona
+    /// An entry of a caller-built menu (a custom context menu, the persona
     /// cards) was clicked: the id that caller gave it.
     CustomMenu(String),
-    /// `invoke("telemetry_track_persona_switch", ...)`, errors ignored.
+    /// Count a persona switch in telemetry, errors ignored.
     TrackPersonaSwitch { platforms: u64, succeeded: u64 },
 }

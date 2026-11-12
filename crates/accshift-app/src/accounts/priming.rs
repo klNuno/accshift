@@ -1,10 +1,8 @@
-//! Profile priming of the accounts on screen, ported from
-//! `src/lib/app/useVisiblePriming.svelte.ts`.
+//! Profile priming of the accounts on screen.
 //!
-//! The 120 ms debounce timer becomes a deadline: [`VisiblePriming::poll`]
-//! fires it once passed and hands back what the timer callback did, for the
-//! caller to run on the loader. Time is an [`Instant`] passed in, so tests
-//! drive it without sleeping.
+//! The 120 ms debounce is a deadline: [`VisiblePriming::poll`] fires it once
+//! passed and hands back the work to run on the loader. Time is an
+//! [`Instant`] passed in, so tests drive it without sleeping.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -31,7 +29,7 @@ struct Scheduled {
     due_ids: Vec<String>,
 }
 
-/// `createVisiblePriming`.
+/// Debounced priming of the profiles of the accounts on screen.
 #[derive(Debug, Clone, Default)]
 pub struct VisiblePriming {
     timer: Option<Scheduled>,
@@ -44,27 +42,27 @@ impl VisiblePriming {
         Self::default()
     }
 
-    /// `reset`: forget everything, the accounts on screen belong to another
-    /// load or tab.
+    /// Forgets everything: the accounts on screen belong to another load or
+    /// tab.
     pub fn reset(&mut self) {
         self.timer = None;
         self.last_prepared_visible_key.clear();
         self.primed_at.clear();
     }
 
-    /// `pause`: the grid is out of sight. What was primed stays primed.
+    /// The grid is out of sight. What was primed stays primed.
     pub fn pause(&mut self) {
         self.timer = None;
         self.last_prepared_visible_key.clear();
     }
 
-    /// `destroy`.
+    /// Drops the pending work for good.
     pub fn destroy(&mut self) {
         self.timer = None;
     }
 
-    /// `processVisible`: call whenever the inputs may have changed (every
-    /// frame is fine, the visible key deduplicates).
+    /// Call whenever the inputs may have changed (every frame is fine, the
+    /// visible key deduplicates).
     pub fn process_visible(
         &mut self,
         visible_ids: &[String],

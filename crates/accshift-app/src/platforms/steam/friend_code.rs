@@ -1,5 +1,4 @@
-//! CS2 friend codes, ported from `src/lib/platforms/steam/friendCode.ts`
-//! (itself from github.com/emily33901/js-csfriendcode).
+//! CS2 friend codes (algorithm from github.com/emily33901/js-csfriendcode).
 
 const ALPHABET: &[u8; 32] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -9,7 +8,7 @@ const S: [u32; 64] = [
     21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
 ];
 
-/// Minimal MD5 (RFC 1321), as the TS file carries its own.
+/// Minimal MD5 (RFC 1321), so the crate needs no hashing dependency.
 pub fn md5(input: &[u8]) -> [u8; 16] {
     let k: Vec<u32> = (0..64)
         .map(|i| ((f64::from(i + 1)).sin().abs() * 4_294_967_296.0).floor() as u32)
@@ -60,9 +59,9 @@ pub fn md5(input: &[u8]) -> [u8; 16] {
     out
 }
 
-/// `BigInt(text)` for the integers a Steam id can be: decimal, `0x`, `0o`,
-/// `0b`, surrounding whitespace, the empty string as 0. `None` where BigInt
-/// throws, and past i128 (BigInt has no ceiling; no Steam id comes close).
+/// Parses the integers a Steam id can be: decimal, `0x`, `0o`, `0b`,
+/// surrounding whitespace, the empty string as 0. `None` for anything else
+/// and past i128 (no Steam id comes close).
 fn parse_big_int(text: &str) -> Option<i128> {
     let trimmed = crate::js::trim(text);
     if trimmed.is_empty() {
@@ -100,8 +99,8 @@ fn make_u64(hi: u128, lo: u128) -> u128 {
     (hi << 32) | lo
 }
 
-/// `encodeFriendCode`: the CS2 friend code of a SteamID64, empty for an id
-/// that is not an integer.
+/// The CS2 friend code of a SteamID64, empty for an id that is not an
+/// integer.
 pub fn encode_friend_code(steam_id64: &str) -> String {
     let Some(mut steam_id) = parse_big_int(steam_id64) else {
         return String::new();

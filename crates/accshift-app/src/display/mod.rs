@@ -1,19 +1,17 @@
-//! What the grid shows, ported from `src/lib/app/useDisplayPipeline.svelte.ts`
-//! and `src/lib/app/folderNavigation.svelte.ts`.
+//! What the grid shows.
 //!
 //! - [`FolderNavigation`]: the open folder, its items and the raw search
-//!   query (`createFolderNavigation`).
+//!   query.
 //! - [`DisplayPipeline`]: the debounced search, the collapsed sections and
 //!   [`DisplayPipeline::compute`], which turns the folder store, the loaded
-//!   accounts and the drag preview into [`DisplayLists`] (the TS deriveds).
+//!   accounts and the drag preview into [`DisplayLists`].
 //! - [`build_display_view`]: the lists plus every card's data as one flat
-//!   [`DisplayView`], so the grid only lays out and draws. That part is the
-//!   `{#if}` and `{#each}` logic of `AppWorkspace.svelte`.
+//!   [`DisplayView`], so the grid only lays out and draws.
 //!
-//! The Svelte deriveds become one explicit `compute` call. The 80 ms search
+//! Everything is recomputed by one explicit `compute` call. The 80 ms search
 //! debounce is a deadline the UI checks each frame ([`DisplayPipeline::tick`]).
-//! There is no sorting step: the order is the folder store's `itemOrder`, as
-//! in TS, where `syncAccounts` appends new accounts at the end.
+//! There is no sorting step: the order is the folder store's item order,
+//! where an account sync appends new accounts at the end.
 
 mod fold_table;
 mod view;
@@ -29,10 +27,10 @@ use crate::stores::ClientStores;
 use std::collections::{BTreeSet, HashSet};
 use std::time::{Duration, Instant};
 
-/// `SEARCH_DEBOUNCE_MS`.
+/// How long the search waits for typing to stop.
 pub const SEARCH_DEBOUNCE: Duration = Duration::from_millis(80);
 
-/// `ROOT_SECTION_KEY`.
+/// The collapse key of the root section.
 pub const ROOT_SECTION_KEY: &str = "__root__";
 
 // ------------------------------------------------------------ search
@@ -62,11 +60,10 @@ fn fold_char(c: char, out: &mut String) {
     }
 }
 
-/// `foldSearchText`: accent and case insensitive comparison base (NFD, the
-/// combining diacritics U+0300..U+036F removed, lowercased).
+/// Accent and case insensitive comparison base (NFD, the combining
+/// diacritics U+0300..U+036F removed, lowercased).
 ///
-/// The NFD step is a per character table generated from Node's
-/// `normalize("NFD")`; canonical reordering of the marks that remain (outside
+/// The NFD step is a generated per character table; canonical reordering of the marks that remain (outside
 /// U+0300..U+036F) across characters is not applied.
 pub fn fold_search_text(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
@@ -76,7 +73,7 @@ pub fn fold_search_text(value: &str) -> String {
     out.to_lowercase()
 }
 
-/// `matchesSearch`: the id, username, display name or card note contains the
+/// Whether the id, username, display name or card note contains the
 /// query, folded.
 pub fn matches_search(account: &PlatformAccount, query: &str, note: &str) -> bool {
     let q = fold_search_text(query);
@@ -86,7 +83,7 @@ pub fn matches_search(account: &PlatformAccount, query: &str, note: &str) -> boo
         || fold_search_text(note).contains(&q)
 }
 
-/// `findMatchingFolderItems`: walks the platform's folder tree breadth first
+/// Walks the platform's folder tree breadth first
 /// and keeps the folders whose name matches.
 pub fn find_matching_folder_items(
     stores: &ClientStores,
@@ -125,7 +122,7 @@ pub fn find_matching_folder_items(
 
 // ------------------------------------------------------------ sections
 
-/// `sectionCollapseKey`: the folder id, or [`ROOT_SECTION_KEY`].
+/// The folder id, or [`ROOT_SECTION_KEY`].
 pub fn section_collapse_key(section: &FolderSection) -> &str {
     section
         .folder
@@ -133,7 +130,7 @@ pub fn section_collapse_key(section: &FolderSection) -> &str {
         .map_or(ROOT_SECTION_KEY, |folder| folder.id.as_str())
 }
 
-/// `collectVisibleAccountIds`: account ids on screen in display order. A
+/// The account ids on screen in display order. A
 /// collapsed section shows only its header, so its accounts are left out.
 pub fn collect_visible_account_ids(
     sections: Option<&[FolderSection]>,
@@ -165,14 +162,14 @@ pub fn collect_visible_account_ids(
 
 // ------------------------------------------------------------ navigation
 
-/// `createFolderNavigation`.
+/// The open folder, its items and the raw search query.
 #[derive(Debug, Clone, Default)]
 pub struct FolderNavigation {
     current_folder_id: Option<String>,
     current_items: Vec<ItemRef>,
     search_query: String,
-    /// Bumped by each [`FolderNavigation::refresh_current_items`]: what the
-    /// TS deriveds subscribe to through `void navigation.currentItems`.
+    /// Bumped by each [`FolderNavigation::set_current_items`], so callers
+    /// can tell the items changed.
     items_version: u64,
 }
 
@@ -186,7 +183,7 @@ impl FolderNavigation {
     }
 
     /// Does not refresh the items; call
-    /// [`FolderNavigation::refresh_current_items`] after, as TS callers do.
+    /// [`FolderNavigation::refresh_current_items`] after.
     pub fn set_current_folder_id(&mut self, folder_id: Option<String>) {
         self.current_folder_id = folder_id;
     }
@@ -204,19 +201,19 @@ impl FolderNavigation {
         self.items_version
     }
 
-    /// `folderPath`: the breadcrumb, root first.
+    /// The breadcrumb, root first.
     pub fn folder_path<'a>(&self, stores: &'a ClientStores) -> Vec<&'a FolderInfo> {
         stores
             .folders()
             .folder_path(self.current_folder_id.as_deref())
     }
 
-    /// `folderItems`.
+    /// The folders of the open folder.
     pub fn folder_items(&self) -> Vec<ItemRef> {
         self.items_of(ItemKind::Folder)
     }
 
-    /// `accountItems`.
+    /// The accounts of the open folder.
     pub fn account_items(&self) -> Vec<ItemRef> {
         self.items_of(ItemKind::Account)
     }
@@ -238,12 +235,12 @@ impl FolderNavigation {
         self.search_query = query.into();
     }
 
-    /// `isSearching`: the raw query has a non-blank character.
+    /// The raw query has a non-blank character.
     pub fn is_searching(&self) -> bool {
         !crate::js::trim(&self.search_query).is_empty()
     }
 
-    /// `refreshCurrentItems`.
+    /// Rereads the open folder's items from the stores.
     pub fn refresh_current_items(&mut self, stores: &ClientStores, active_tab: &str) {
         let items = stores
             .items_in_folder(self.current_folder_id.as_deref(), active_tab)
@@ -254,7 +251,7 @@ impl FolderNavigation {
 
 // ------------------------------------------------------------ pipeline
 
-/// `drag`: the drag in progress, if any.
+/// The drag in progress, if any.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DragPreview<'a> {
     pub is_dragging: bool,
@@ -279,36 +276,36 @@ impl DragPreview<'_> {
 pub struct PipelineInput<'a> {
     pub navigation: &'a FolderNavigation,
     pub drag: DragPreview<'a>,
-    /// `loader.accounts`.
+    /// The loaded accounts.
     pub accounts: &'a [PlatformAccount],
-    /// `addFlow.pendingSetupAccount`.
+    /// The account an add flow is setting up.
     pub pending_setup_account: Option<&'a PlatformAccount>,
-    /// `settings.accountDisplay.expandedFolders`.
+    /// Whether the root shows every folder as a section.
     pub expanded_folders: bool,
     pub active_tab: &'a str,
     /// Folders and card notes.
     pub stores: &'a ClientStores,
 }
 
-/// The TS deriveds of one pass.
+/// What one pass computes.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct DisplayLists {
-    /// `displayFolderItems`.
+    /// The flat folder cards.
     pub folder_items: Vec<ItemRef>,
-    /// `displayAccountItemsWithPending`.
+    /// The flat account cards, the pending setup card included.
     pub account_items: Vec<ItemRef>,
-    /// `displaySections`: `Some` in expanded (sections) mode.
+    /// `Some` in expanded (sections) mode.
     pub sections: Option<Vec<FolderSection>>,
-    /// `visibleRenderedAccountIds`.
+    /// The account ids on screen, in display order.
     pub visible_account_ids: Vec<String>,
-    /// `renderedAccountCount`.
+    /// The loaded accounts plus the pending setup card.
     pub rendered_account_count: usize,
-    /// `isSearchLayout`: the debounced query is not blank.
+    /// The debounced query is not blank.
     pub search_layout: bool,
 }
 
 impl DisplayLists {
-    /// `renderedItemCount` of `AppWorkspace.svelte`.
+    /// The number of cards the grid lays out.
     pub fn rendered_item_count(&self) -> usize {
         match &self.sections {
             Some(sections) => sections
@@ -320,7 +317,7 @@ impl DisplayLists {
     }
 }
 
-/// `createDisplayPipeline`: the state the deriveds keep between passes.
+/// The state kept between passes.
 #[derive(Debug, Clone, Default)]
 pub struct DisplayPipeline {
     debounced_query: String,
@@ -349,7 +346,7 @@ impl DisplayPipeline {
         Self::default()
     }
 
-    /// The search `$effect`: a blank query applies at once, any other after
+    /// A blank query applies at once, any other after
     /// [`SEARCH_DEBOUNCE`], each new value restarting the wait.
     pub fn set_query(&mut self, raw: &str, now: Instant) {
         if crate::js::trim(raw).is_empty() {
@@ -387,12 +384,12 @@ impl DisplayPipeline {
         &self.debounced_query
     }
 
-    /// `isSearchLayout`.
+    /// Whether the debounced query is not blank.
     pub fn is_search_layout(&self) -> bool {
         !crate::js::trim(&self.debounced_query).is_empty()
     }
 
-    /// `collapsedSections`.
+    /// The collapse keys of the collapsed sections.
     pub fn collapsed_sections(&self) -> &BTreeSet<String> {
         &self.collapsed
     }
@@ -411,96 +408,46 @@ impl DisplayPipeline {
         self.collapsed.clear();
     }
 
-    /// Every derived of `createDisplayPipeline` for the current inputs.
+    /// The display lists for the current inputs.
     pub fn compute(&mut self, input: &PipelineInput<'_>) -> DisplayLists {
         let search_layout = self.is_search_layout();
         let expanded_mode = input.expanded_folders
             && input.navigation.current_folder_id().is_none()
             && !search_layout;
-        let raw_sections = expanded_mode.then(|| input.stores.root_sections(input.active_tab));
-
-        let folder_items = if raw_sections.is_some() {
-            Vec::new()
-        } else if search_layout {
-            let q = crate::js::trim(&self.debounced_query);
-            if q.is_empty() {
-                Vec::new()
-            } else {
-                find_matching_folder_items(input.stores, input.active_tab, &fold_search_text(q))
-            }
-        } else {
-            move_to_preview(
-                &input.navigation.folder_items(),
-                input.drag.moving(ItemKind::Folder),
-            )
-        };
-
-        // `filteredAccountItems`: the search flattens folders, so it walks
-        // every loaded account rather than the open folder.
-        let q = crate::js::trim(&self.debounced_query).to_lowercase();
-        let filtered = if q.is_empty() {
-            input.navigation.account_items()
-        } else {
-            input
-                .accounts
-                .iter()
-                .filter(|account| {
-                    matches_search(account, &q, input.stores.account_card_note(&account.id))
-                })
-                .map(|account| ItemRef::account(account.id.clone()))
-                .collect()
-        };
-
-        let display_accounts = if raw_sections.is_some() {
-            Vec::new()
-        } else if search_layout {
-            filtered
-        } else {
-            move_to_preview(&filtered, input.drag.moving(ItemKind::Account))
-        };
-
         let pending = input.pending_setup_account;
-        let mut account_items = display_accounts;
-        if let Some(pending) = pending {
-            if !account_items
-                .iter()
-                .any(|item| item.kind == ItemKind::Account && item.id == pending.id)
-            {
-                account_items.push(ItemRef::account(pending.id.clone()));
-            }
-        }
-
-        let sections = raw_sections.map(|mut sections| {
-            let Some(pending) = pending else {
-                return sections;
-            };
-            let placed = sections.iter().any(|section| {
-                section
-                    .account_items
-                    .iter()
-                    .any(|item| item.id == pending.id)
-            });
-            if !placed {
-                if let Some(root) = sections.iter_mut().find(|section| section.folder.is_none()) {
-                    root.account_items
-                        .push(ItemRef::account(pending.id.clone()));
-                }
+        let sections = expanded_mode.then(|| {
+            let mut sections = input.stores.root_sections(input.active_tab);
+            if let Some(pending) = pending {
+                place_in_root_section(&mut sections, &pending.id);
             }
             sections
         });
 
+        // In sections mode the sections carry every item.
+        let (folder_items, mut account_items) = if sections.is_some() {
+            (Vec::new(), Vec::new())
+        } else {
+            (
+                self.folder_items(input, search_layout),
+                self.account_items(input, search_layout),
+            )
+        };
+        if let Some(pending) = pending {
+            let listed = account_items
+                .iter()
+                .any(|item| item.kind == ItemKind::Account && item.id == pending.id);
+            if !listed {
+                account_items.push(ItemRef::account(pending.id.clone()));
+            }
+        }
+
         // A drag only churns the preview order, never the visible set: keep
         // the previous list while one runs.
-        let visible_account_ids = if input.drag.is_dragging && !self.last_visible_ids.is_empty() {
-            self.last_visible_ids.clone()
-        } else {
-            let ids =
+        if !input.drag.is_dragging || self.last_visible_ids.is_empty() {
+            self.last_visible_ids =
                 collect_visible_account_ids(sections.as_deref(), &account_items, &self.collapsed);
-            if ids != self.last_visible_ids {
-                self.last_visible_ids = ids;
-            }
-            self.last_visible_ids.clone()
-        };
+        }
+        let visible_account_ids = self.last_visible_ids.clone();
 
         let in_list = |id: &str| input.accounts.iter().any(|account| account.id == id);
         let rendered_account_count = input.accounts.len()
@@ -514,5 +461,56 @@ impl DisplayPipeline {
             rendered_account_count,
             search_layout,
         }
+    }
+
+    /// The flat folder cards: the folders whose name matches the search
+    /// anywhere in the tree, else the open folder's, in drag preview order.
+    fn folder_items(&self, input: &PipelineInput<'_>, search_layout: bool) -> Vec<ItemRef> {
+        if search_layout {
+            let query = fold_search_text(crate::js::trim(&self.debounced_query));
+            return find_matching_folder_items(input.stores, input.active_tab, &query);
+        }
+        move_to_preview(
+            &input.navigation.folder_items(),
+            input.drag.moving(ItemKind::Folder),
+        )
+    }
+
+    /// The flat account cards. The search flattens folders, so it walks every
+    /// loaded account rather than the open folder, and ignores the drag.
+    fn account_items(&self, input: &PipelineInput<'_>, search_layout: bool) -> Vec<ItemRef> {
+        if !search_layout {
+            return move_to_preview(
+                &input.navigation.account_items(),
+                input.drag.moving(ItemKind::Account),
+            );
+        }
+        let query = crate::js::trim(&self.debounced_query).to_lowercase();
+        input
+            .accounts
+            .iter()
+            .filter(|account| {
+                matches_search(account, &query, input.stores.account_card_note(&account.id))
+            })
+            .map(|account| ItemRef::account(account.id.clone()))
+            .collect()
+    }
+}
+
+/// Adds the pending setup account to the root section, unless a section
+/// already holds it.
+fn place_in_root_section(sections: &mut [FolderSection], account_id: &str) {
+    let placed = sections.iter().any(|section| {
+        section
+            .account_items
+            .iter()
+            .any(|item| item.id == account_id)
+    });
+    if placed {
+        return;
+    }
+    if let Some(root) = sections.iter_mut().find(|section| section.folder.is_none()) {
+        root.account_items
+            .push(ItemRef::account(account_id.to_string()));
     }
 }

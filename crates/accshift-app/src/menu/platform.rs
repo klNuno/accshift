@@ -1,12 +1,11 @@
-//! The copy and forget entries every platform shares, ported from
-//! `src/lib/shared/contextMenu/platformMenuBuilder.ts`.
+//! The copy and forget entries every platform shares.
 
 use super::{ConfirmRequest, MenuAction, MenuCommand, PlatformTask};
 use crate::i18n::TranslationValue;
 use crate::platforms::PlatformAccount;
 use crate::text::Text;
 
-/// `CopyItemConfig`.
+/// One copy entry: what it shows and what it copies.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CopyItemConfig {
     pub field: String,
@@ -27,7 +26,7 @@ impl CopyItemConfig {
     }
 }
 
-/// `ForgetConfig`. The TS `action` closure is the forget task itself.
+/// The forget entry; its task is the forget itself.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ForgetConfig {
     pub title_key: String,
@@ -81,8 +80,8 @@ fn merged_params(
     params
 }
 
-/// `buildPlatformContextMenu`: one copy entry per item (`platform.copy`),
-/// then the forget entry (`platform.danger`) behind a confirmation.
+/// One copy entry per item (`platform.copy`), then the forget entry
+/// (`platform.danger`) behind a confirmation.
 pub fn build_platform_context_menu(
     platform_id: &str,
     account: &PlatformAccount,

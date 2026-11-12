@@ -1,8 +1,5 @@
-//! The platform model: what the Svelte front-end computes in TypeScript
-//! before anything reaches a component, so the egui UI only draws.
-//!
-//! Ported from `src/lib/shared/platform.ts` (the types below), the registry
-//! and adapters under `src/lib/platforms/`, and the shared helpers they use.
+//! The platform model: everything computed before a widget draws, so the
+//! egui UI only draws.
 //!
 //! - [`registry::PlatformRegistry`] holds the platform list (shipped plus the
 //!   user's descriptors) and one [`adapter::PlatformAdapter`] per platform.
@@ -36,7 +33,7 @@ pub use crate::folders::FolderSection as DisplaySection;
 pub use adapter::PlatformAdapter;
 pub use registry::{PlatformDef, PlatformRegistry};
 
-/// `PlatformAccount`: one account as every platform hands it to the UI.
+/// One account as every platform hands it to the UI.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlatformAccount {
@@ -56,7 +53,7 @@ pub struct StartupSnapshot {
     pub current_account: String,
 }
 
-/// `RuntimeOs`.
+/// The OS the backend runs on.
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]
@@ -85,7 +82,7 @@ impl RuntimeOs {
     }
 }
 
-/// `toRuntimeOs`: the backend's OS name, `Unknown` for any other.
+/// The backend's OS name, `Unknown` for any other.
 pub fn to_runtime_os(value: Option<&str>) -> RuntimeOs {
     match value {
         Some("windows") => RuntimeOs::Windows,
@@ -95,7 +92,7 @@ pub fn to_runtime_os(value: Option<&str>) -> RuntimeOs {
     }
 }
 
-/// `PathPlaceholder`: one hint, or one per system.
+/// A launcher path hint: one for every system, or one per system.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathPlaceholder {
     Text(String),
@@ -115,8 +112,8 @@ impl PathPlaceholder {
     }
 }
 
-/// `resolvePathPlaceholder`: the system's own hint, else the Windows, Linux
-/// then macOS one, else empty.
+/// The system's own hint, else the Windows, Linux then macOS one, else
+/// empty.
 pub fn resolve_path_placeholder(placeholder: Option<&PathPlaceholder>, os: RuntimeOs) -> String {
     let Some(placeholder) = placeholder else {
         return String::new();
@@ -128,15 +125,15 @@ pub fn resolve_path_placeholder(placeholder: Option<&PathPlaceholder>, os: Runti
         .to_string()
 }
 
-/// `profileRefresh` capability.
+/// How a platform refreshes profiles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ProfileRefresh {
     pub avatars: bool,
     pub bans: bool,
 }
 
-/// `PlatformSettingsSchema`: defaults and the sanitizer of the platform's
-/// `platformSettings[id]` entry. Only Steam has one.
+/// Defaults and the sanitizer of the platform's `platformSettings[id]`
+/// entry. Only Steam has one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlatformSettingsSchema {
     Steam,
@@ -164,8 +161,8 @@ impl PlatformSettingsSchema {
     }
 }
 
-/// `PlatformCapabilities`: what the app layer may offer for a platform,
-/// without loading its adapter.
+/// What the app layer may offer for a platform, without loading its
+/// adapter.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PlatformCapabilities {
     /// A multi-select bulk edit bar (titlebar button plus bar). The bar
@@ -188,7 +185,7 @@ pub struct PlatformCapabilities {
     pub settings: Option<PlatformSettingsSchema>,
 }
 
-/// `PlatformProfileInfo`. `None` from a fetch means "no data, keep the avatar
+/// A fetched profile. `None` from a fetch means "no data, keep the avatar
 /// on screen"; `avatar_url: None` means the profile has no avatar.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PlatformProfileInfo {
@@ -197,8 +194,8 @@ pub struct PlatformProfileInfo {
     pub avatar_loading: bool,
 }
 
-/// `CachedPlatformProfile`. `url: None` is a cached "no avatar" result that
-/// still suppresses refetches.
+/// A cached profile. `url: None` is a cached "no avatar" result that still
+/// suppresses refetches.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CachedPlatformProfile {
     pub url: Option<String>,
@@ -206,7 +203,7 @@ pub struct CachedPlatformProfile {
     pub expired: bool,
 }
 
-/// `PlatformAddFlowState`, plus whatever string a newer backend sends.
+/// The state of an add flow, plus whatever string a newer backend sends.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AddFlowState {
     WaitingForClient,
@@ -233,11 +230,11 @@ impl AddFlowState {
     }
 }
 
-/// `PlatformAddFlowStatus`.
+/// The status of one add flow.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddFlowStatus {
     pub setup_id: String,
-    /// The raw state string, as TS keeps it.
+    /// The raw state string, as the backend sent it.
     pub state: String,
     pub account_id: Option<String>,
     pub account_display_name: Option<String>,
@@ -250,13 +247,13 @@ impl AddFlowStatus {
     }
 }
 
-/// `PlatformAddAccountResult`.
+/// What adding an account returned.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AddAccountResult {
     pub setup_status: Option<AddFlowStatus>,
 }
 
-/// `WarningRefreshOutcome`: how a forced warning refresh ended.
+/// How a forced warning refresh ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WarningRefreshOutcome {
     /// Every requested account came back.
@@ -273,7 +270,7 @@ pub enum WarningRefreshOutcome {
     NoApiKey,
 }
 
-/// `PlatformWarningLoadOptions` minus the translator (texts are keys).
+/// How to load warnings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WarningLoadOptions {
     pub force_refresh: bool,
@@ -281,7 +278,7 @@ pub struct WarningLoadOptions {
 }
 
 impl Default for WarningLoadOptions {
-    /// TS defaults: not forced, silent.
+    /// Not forced, silent.
     fn default() -> Self {
         Self {
             force_refresh: false,
@@ -290,7 +287,7 @@ impl Default for WarningLoadOptions {
     }
 }
 
-/// `PlatformBulkEditResult`: the counts the app layer reads.
+/// The counts of a bulk edit the app layer reads.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PlatformBulkEditResult {
     pub succeeded: usize,

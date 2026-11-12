@@ -1,10 +1,10 @@
 //! The fallback avatar of a card without a picture: initials over a gradient
-//! derived from the account. Ported from `src/lib/shared/avatarFallback.ts`.
+//! derived from the account.
 
 use crate::js;
 use std::collections::HashMap;
 
-/// `bitCycleHash`: every bit of every UTF-16 unit, low bit first.
+/// Hashes every bit of every UTF-16 unit, low bit first.
 fn bit_cycle_hash(text: &str, mult: u64, modulo: u64, seed: u64) -> u64 {
     let mut acc = seed % modulo;
     for unit in text.encode_utf16() {
@@ -16,8 +16,8 @@ fn bit_cycle_hash(text: &str, mult: u64, modulo: u64, seed: u64) -> u64 {
     acc
 }
 
-/// `normalizeSeed` without the NFKC step: trimmed, lowercase, whitespace
-/// runs folded to one space.
+/// Trimmed, lowercase, whitespace runs folded to one space (no Unicode
+/// normalization).
 fn normalize_seed(seed: &str) -> String {
     js::trim(seed)
         .to_lowercase()
@@ -26,8 +26,7 @@ fn normalize_seed(seed: &str) -> String {
         .join(" ")
 }
 
-/// `getAvatarInitials`: the first letter of the first two words, uppercase;
-/// `?` for a blank name.
+/// The first letter of the first two words, uppercase; `?` for a blank name.
 pub fn avatar_initials(name: &str) -> String {
     let mut parts = name.split_whitespace();
     let Some(first) = parts.next() else {
@@ -40,7 +39,7 @@ pub fn avatar_initials(name: &str) -> String {
     initials.to_uppercase()
 }
 
-/// `getAvatarSeed`: the shown name (display name, else username, else
+/// The gradient seed: the shown name (display name, else username, else
 /// `unknown`), the id and the name reversed.
 pub fn avatar_seed(display_name: &str, username: &str, account_id: &str) -> String {
     let primary = if !display_name.is_empty() {
@@ -68,7 +67,7 @@ pub struct AvatarGradient {
 }
 
 impl AvatarGradient {
-    /// `getAvatarGradientStyle`'s CSS, for parity checks.
+    /// The gradient as a CSS declaration, for parity checks.
     pub fn css(&self) -> String {
         let AvatarGradient { hue, hue_fade } = *self;
         format!(
@@ -90,7 +89,7 @@ pub fn avatar_gradient(seed: &str) -> AvatarGradient {
     }
 }
 
-/// `gradientCache`: one hash per distinct seed, cleared past 1000 seeds.
+/// One hash per distinct seed, cleared past 1000 seeds.
 #[derive(Debug, Clone, Default)]
 pub struct GradientCache {
     entries: HashMap<String, AvatarGradient>,

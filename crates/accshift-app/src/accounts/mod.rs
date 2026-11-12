@@ -1,24 +1,23 @@
 //! Account loading, profiles and avatars: what turns backend data into the
 //! accounts a grid shows.
 //!
-//! - [`loader::AccountLoader`] (`useAccountLoader.svelte.ts`): the accounts
-//!   of the active tab, the current one, switch, add, removal, warnings and
-//!   the guards that keep stale results out.
-//! - [`avatars`] (`useAvatarLoader.svelte.ts`): per account avatar state, and
-//!   the image fetch and cache that hands bytes or files to the UI.
-//! - [`profile_cache`] (`shared/profileCache.ts` and the Steam and Roblox
-//!   `profileCache.ts`): the persisted profile caches with expiry, retries
-//!   and in-flight sharing.
-//! - [`priming::VisiblePriming`] (`useVisiblePriming.svelte.ts`).
-//! - [`refresh`] (`useProfileRefresh.ts`): the settings "refresh now" runs.
-//! - [`loading::AccountLoading`] (`useAccountLoading.svelte.ts` and
-//!   `detectedPlatforms.svelte.ts`): drives the loader through [`crate::jobs`]
-//!   and turns finished jobs into [`LoadingEvent`]s.
+//! - [`loader::AccountLoader`]: the accounts of the active tab, the current
+//!   one, switch, add, removal, warnings and the guards that keep stale
+//!   results out.
+//! - [`avatars`]: per account avatar state, and the image fetch and cache
+//!   that hands bytes or files to the UI.
+//! - [`profile_cache`]: the persisted Steam and Roblox profile caches with
+//!   expiry, retries and in-flight sharing.
+//! - [`priming::VisiblePriming`]: profile priming of the accounts on screen.
+//! - [`refresh`]: the settings "refresh now" runs.
+//! - [`loading::AccountLoading`]: drives the loader through [`crate::jobs`],
+//!   keeps what launcher detection found and turns finished jobs into
+//!   [`LoadingEvent`]s.
 //!
-//! Svelte state becomes plain fields; each async TS function becomes a
-//! `begin_*` that returns a ticket, the blocking work run on the job pool,
-//! and a `finish_*` that applies the result on the UI thread. Every ticket
-//! carries the generation counter TS compares after each `await`.
+//! Each async operation is a `begin_*` that returns a ticket, the blocking
+//! work run on the job pool, and a `finish_*` that applies the result on the
+//! UI thread. Every ticket carries a generation counter, compared on finish
+//! so a stale result is dropped.
 
 pub mod avatars;
 pub mod loader;
@@ -64,7 +63,7 @@ pub enum LoadingEvent {
     DismissToast(Text),
 
     /// A load of `platform_id` landed and its folder sync ran: refresh the
-    /// navigation items and the grid padding (`onAfterLoad`).
+    /// navigation items and the grid padding.
     AccountsLoaded {
         platform_id: String,
     },
@@ -77,9 +76,9 @@ pub enum LoadingEvent {
     Cs2Check {
         steam_id: String,
     },
-    /// `invoke("minimize_window")` after a switch, when the setting asks.
+    /// Minimize the window after a switch, when the setting asks.
     MinimizeWindow,
-    /// A switch finished; `succeeded` is what `handleAccountSwitch` returns.
+    /// A switch finished; `succeeded` is whether it switched.
     SwitchFinished {
         account_id: String,
         succeeded: bool,
