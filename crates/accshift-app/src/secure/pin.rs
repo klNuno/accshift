@@ -1,11 +1,9 @@
-//! The PIN helpers of the frontend, ported from `src/lib/shared/pin.ts` and
-//! `src/lib/shared/pinSession.ts`.
+//! The PIN helpers of the app.
 //!
 //! Hashing and verification are `accshift_core::pin`, the very code the CLI
 //! and the backend run (PBKDF2-HMAC-SHA256, 100 000 rounds, 16-byte salt,
-//! `salt_hex:hash_hex`, legacy unsalted SHA-256 accepted for migration): the
-//! TS file was a second copy of it and pin.test.ts pins both on the same
-//! vectors. This module adds the frontend's view on top: the
+//! `salt_hex:hash_hex`, legacy unsalted SHA-256 accepted for migration).
+//! This module adds the app's view on top: the
 //! `{ matches, rehashed }` verdict, the backend unlock with its local
 //! fallback, and the wait after a wrong code.
 //!
@@ -18,10 +16,10 @@ use accshift_core::pin::{self as core_pin, PinVerdict};
 
 pub use accshift_core::pin::{hash_pin_code, is_valid_pin_hash, sanitize_pin_digits};
 
-/// `PIN_CODE_LENGTH` (pin.ts line 1).
+/// The digits in a PIN.
 pub const PIN_CODE_LENGTH: usize = core_pin::PIN_CODE_LENGTH;
 
-/// `PinVerification` (pin.ts lines 67-76).
+/// The verdict on a typed code.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PinVerification {
     /// The attempt matches the stored hash.
@@ -32,7 +30,7 @@ pub struct PinVerification {
     pub rehashed: Option<String>,
 }
 
-/// `verifyPinCode` (pin.ts lines 87-107): a legacy hash that verifies comes
+/// Checks a code against a stored hash: a legacy hash that verifies comes
 /// back with its PBKDF2 replacement.
 pub fn verify_pin_code(code: &str, stored_hash: &str) -> PinVerification {
     match core_pin::verify_pin_code(code, stored_hash) {
@@ -51,12 +49,12 @@ pub fn verify_pin_code(code: &str, stored_hash: &str) -> PinVerification {
     }
 }
 
-/// `isPinLockedError` on a backend error.
+/// The backend refused for want of the PIN.
 pub fn is_pin_locked_error(error: &BackendError) -> bool {
     error.is_pin_locked()
 }
 
-/// `PinCheck` (pinSession.ts lines 45-52).
+/// The outcome of an unlock attempt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PinCheck {
     Match {
@@ -71,11 +69,11 @@ pub enum PinCheck {
     },
 }
 
-/// `unlockPinSession` (pinSession.ts lines 63-82): the backend checks the
+/// Unlocks with a code: the backend checks the
 /// code and unlocks its session; when it holds no PIN (`not_configured`) or
 /// the call fails, the hash this window holds decides. Blocks.
 pub fn unlock_pin_session(backend: &dyn Backend, code: &str, stored_hash: &str) -> PinCheck {
-    // A failed call is ignored like the TS `console.error`: the local hash
+    // A failed call is ignored: the local hash
     // decides below. The error is not logged, it could echo the request.
     if let Ok(result) = backend.pin_unlock(code) {
         match result.status.as_str() {
@@ -115,17 +113,17 @@ pub fn unlock_pin_session(backend: &dyn Backend, code: &str, stored_hash: &str) 
     }
 }
 
-/// `lockPinSession` (pinSession.ts lines 85-89). Fire and forget: the screen
+/// Locks the backend's PIN session. Fire and forget: the screen
 /// locks either way, so a failure is swallowed.
 pub fn lock_pin_session(backend: &dyn Backend) {
     let _ = backend.pin_lock();
 }
 
-/// `PIN_FAILURE_DELAY_MS` (pinSession.ts line 92): the shortest wait after
+/// The shortest wait after
 /// a wrong code, whatever the backend says.
 pub const PIN_FAILURE_DELAY_MS: u64 = 1200;
 
-/// What `pinFailureWait` returns.
+/// The wait after a wrong code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PinFailureWait {
     pub wait_ms: u64,
@@ -134,7 +132,7 @@ pub struct PinFailureWait {
 }
 
 impl PinCheck {
-    /// `pinFailureWait` (pinSession.ts lines 99-107). `None` for a match.
+    /// The wait this check imposes. `None` for a match.
     pub fn failure_wait(&self) -> Option<PinFailureWait> {
         let (retry_after_ms, retry_later) = match *self {
             PinCheck::Match { .. } => return None,

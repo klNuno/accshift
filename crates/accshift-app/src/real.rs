@@ -1,16 +1,15 @@
-//! The real backend: every command runs on `accshift-core` the way
-//! `src-tauri/src/commands` does, on the same app directories.
+//! The real backend: every command runs on `accshift-core`, on the user's
+//! app directories.
 //!
-//! The state the Tauri app keeps with `.manage(..)` (`BootState`,
-//! `PinSession`, the HTTP client, `TelemetryState`) lives in
-//! [`RealBackend`]. Window work (show, backdrop subclass, geometry, the boot
-//! failsafe) is the shell's.
+//! The process state (boot state, PIN session, HTTP client, telemetry)
+//! lives in [`RealBackend`]. Window work (show, backdrop subclass,
+//! geometry, the boot failsafe) is the shell's.
 //!
-//! Every method blocks the calling thread, as the Tauri command body blocks
-//! its blocking-pool thread: call them from `crate::jobs`, never the UI
-//! thread. Switch, forget, setup, Steam tools, Riot capture and the Roblox
-//! cookie add take the same cross-process lock file as the Tauri app and the
-//! CLI (`accshift_core::lock`), so two apps can never switch together.
+//! Every method blocks the calling thread: call them from `crate::jobs`,
+//! never the UI thread. Switch, forget, setup, Steam tools, Riot capture and
+//! the Roblox cookie add take the cross-process lock file the CLI and older
+//! installs also take (`accshift_core::lock`), so two apps can never switch
+//! together.
 
 mod app;
 mod boot;
@@ -48,8 +47,7 @@ use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-/// Cross-process lock budget of every mutating command (`LOCK_TIMEOUT` in
-/// `src-tauri/src/commands/mod.rs`).
+/// Cross-process lock budget of every mutating command.
 pub const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// See the module documentation. One per process: the PIN session, the boot
@@ -65,8 +63,7 @@ pub struct RealBackend {
 
 impl RealBackend {
     /// On the user's real app directories, with the HTTP client built up
-    /// front like the Tauri app does before its first plugin, and telemetry
-    /// pointed at the build-time endpoint
+    /// front and telemetry pointed at the build-time endpoint
     /// (`accshift_core::telemetry::TELEMETRY_URL`). The queue itself starts
     /// with [`Self::start_telemetry`].
     pub fn new() -> Result<Self, String> {
@@ -276,8 +273,7 @@ impl Backend for RealBackend {
     fn open_logs_folder(&self) -> BackendResult<()> {
         utility::open_logs_folder(&self.ctx)
     }
-    /// Captures on the calling thread (a job thread): see
-    /// `real/wallpaper.rs` for how that differs from the Tauri command.
+    /// Captures on the calling thread (a job thread): see `real/wallpaper.rs`.
     fn get_desktop_wallpaper(&self) -> BackendResult<Option<WallpaperSnapshot>> {
         Ok(wallpaper::desktop_wallpaper())
     }
@@ -467,9 +463,8 @@ impl Backend for RealBackend {
     }
 }
 
-/// What the Tauri app answers for a command it does not register on this OS
-/// (`Command <name> not found`, tauri `webview/mod.rs`): the Riot and Roblox
-/// commands off Windows.
+/// The error of a command this OS does not have (`Command <name> not
+/// found`): the Riot and Roblox commands off Windows.
 #[cfg_attr(windows, allow(dead_code))]
 pub(crate) fn not_registered(command: &str) -> BackendError {
     BackendError::new(format!("Command {command} not found"))

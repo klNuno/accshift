@@ -1,9 +1,8 @@
-//! What `src-tauri/src/lib.rs` (`run`, the `setup` closure) and
-//! `src-tauri/src/boot.rs` do for the backend, without the window: the boot
-//! state, the log session and panic hook, the startup maintenance thread and
-//! the shared HTTP client. The window steps (`build_main_window`, the close
-//! handler, the geometry saver, the boot failsafe that shows the window) and
-//! the deep links belong to the egui shell.
+//! The backend's part of boot: the boot state, the log session and panic
+//! hook, the startup maintenance thread and the shared HTTP client. The
+//! window steps (the window, the close handler, the geometry saver, the boot
+//! failsafe that shows the window) and the deep links belong to the egui
+//! shell.
 
 use super::RealBackend;
 use accshift_core::{logging, AppCtx};
@@ -27,9 +26,8 @@ impl BootState {
     }
 }
 
-/// `boot::build_http_client`, boot.rs lines 117-133: 10 s per request, 5 s to
-/// connect. The Tauri app exits when it cannot build one; here the caller
-/// gets the error.
+/// The shared HTTP client: 10 s per request, 5 s to connect. The caller
+/// gets the error when it cannot be built.
 pub(super) fn build_http_client() -> Result<reqwest::Client, String> {
     accshift_core::http::client_builder()
         .timeout(Duration::from_secs(10))
@@ -39,8 +37,8 @@ pub(super) fn build_http_client() -> Result<reqwest::Client, String> {
 }
 
 impl RealBackend {
-    /// The steps of the Tauri `setup` closure that only need the app
-    /// directories (lib.rs lines 121-153): rotate the log chain, write
+    /// The boot steps that only need the app directories: rotate the log
+    /// chain, write
     /// "App setup started", install the panic hook. Call once per process,
     /// before the first frame; tests never call it (it replaces the
     /// process-wide panic hook).
@@ -56,11 +54,10 @@ impl RealBackend {
         logging::install_panic_hook(self.ctx.clone());
     }
 
-    /// `boot::spawn_snapshot_upgrade` (boot.rs lines 747-858) and the Riot
-    /// rollback sweep (lines 860-885): arms the keyring index, then on a
+    /// The startup maintenance: arms the keyring index, then on a
     /// background thread re-encrypts legacy plaintext snapshots, purges the
-    /// plaintext backups, sweeps Riot rollback copies, deletes the Tauri
-    /// app's WebView2 caches and frees orphaned keyring entries, each locked
+    /// plaintext backups, sweeps Riot rollback copies, deletes the WebView2
+    /// caches older installs left and frees orphaned keyring entries, each locked
     /// step under the cross-process write lock. Call
     /// once after [`Self::begin_session`]. Touches the real keyring, so
     /// tests never call it.
@@ -68,9 +65,8 @@ impl RealBackend {
         spawn_snapshot_upgrade(self.ctx.clone())
     }
 
-    /// The telemetry half of `finish_boot` (app.rs lines 153-167:
-    /// `emit_first_run_once`, `AppLaunched`, `emit_accounts_snapshots`), in
-    /// `real/telemetry.rs`.
+    /// The telemetry of the first boot (first run, app launched, account
+    /// snapshots), in `real/telemetry.rs`.
     pub(super) fn after_first_boot(&self) {
         self.record_first_boot();
     }
@@ -266,7 +262,7 @@ fn sweep_riot_rollback_copies(upgrade_ctx: &AppCtx) {
 #[cfg(not(windows))]
 fn sweep_riot_rollback_copies(_upgrade_ctx: &AppCtx) {}
 
-/// The Tauri app's WebView2 caches, dead weight since the egui app
+/// The WebView2 caches older installs left, dead weight now
 /// (`legacy_web_storage::prune_webview2_caches`).
 #[cfg(windows)]
 fn prune_webview_caches(upgrade_ctx: &AppCtx) {

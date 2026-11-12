@@ -1,19 +1,17 @@
-//! `tauri-plugin-updater` 2.11.0 `src/error.rs`, the variants this port can
-//! produce, with the same `Display` strings.
+//! The updater errors, with the `Display` strings of `tauri-plugin-updater`
+//! 2.11.0.
 //!
-//! The TS side never saw a variant: the plugin serialized the error through
-//! `Display` and `useAppUpdater` sorted the string with regular expressions
-//! ([`super::super::update_flow::classify_update_check_error`]). The strings
-//! are therefore the contract. The plugin's `#[error(transparent)]` variants
-//! keep the source's own message here; they hold it as text so this file
-//! needs nothing but `std` (it is shared with the Linux and macOS installers).
+//! The update flow sorts an error by its text with regular expressions
+//! ([`super::super::update_flow::classify_update_check_error`]), so the
+//! strings are the contract. Variants that wrap another error keep its own
+//! message as text, so this file needs nothing but `std` (it is shared with
+//! the Linux and macOS installers).
 
 use std::fmt;
 
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum UpdaterError {
-    /// error.rs line 13.
     EmptyEndpoints,
     /// Transparent `std::io::Error`.
     Io(std::io::Error),
@@ -21,43 +19,29 @@ pub enum UpdaterError {
     Semver(String),
     /// Transparent `serde_json::Error`.
     Serialization(String),
-    /// error.rs line 25.
     ReleaseNotFound,
-    /// error.rs line 28.
     UnsupportedArch,
-    /// error.rs line 31.
     UnsupportedOs,
-    /// error.rs line 34.
     FailedToDetermineExtractPath,
     /// Transparent `url::ParseError`.
     UrlParse(String),
     /// Transparent `reqwest::Error`.
     Reqwest(String),
-    /// error.rs line 43.
     TargetNotFound(String),
-    /// error.rs lines 46-49.
     TargetsNotFound(Vec<String>),
-    /// error.rs line 51, "`{0}`".
+    /// Displays the message alone.
     Network(String),
     /// Transparent `minisign_verify::Error`.
     Minisign(String),
     /// Transparent `base64::DecodeError`.
     Base64(String),
-    /// error.rs line 60.
     SignatureUtf8(String),
-    /// error.rs line 67.
     TempDirNotOnSameMountPoint,
-    /// error.rs line 69.
     BinaryNotFoundInArchive,
-    /// error.rs line 71.
     TempDirNotFound,
-    /// error.rs line 73.
     AuthenticationFailed,
-    /// error.rs line 77.
     PackageInstallFailed,
-    /// error.rs line 79.
     InvalidUpdaterFormat,
-    /// error.rs line 90.
     InsecureTransportProtocol,
 }
 

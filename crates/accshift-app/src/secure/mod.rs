@@ -1,12 +1,10 @@
 //! The security layer of the app: the PIN, the inactivity timer and the
 //! secure screen that combines them.
 //!
-//! - [`pin`]: `pin.ts` and `pinSession.ts` over `accshift_core::pin`.
-//! - The inactivity timer of `useInactivityBlur.svelte.ts` is
-//!   [`InactivityBlur`].
-//! - [`SecureScreen`]: `useSecureScreen.svelte.ts` plus the logic of
-//!   `AppScreenOverlays.svelte`.
-//! - [`ScreenCover`]: what App.svelte hides behind the secure screen and the
+//! - [`pin`]: the PIN checks and session over `accshift_core::pin`.
+//! - [`InactivityBlur`]: the inactivity timer.
+//! - [`SecureScreen`]: the AFK cover and the PIN lock overlay.
+//! - [`ScreenCover`]: what the app hides behind the secure screen and the
 //!   streamer overlay.
 
 pub mod inactivity;
@@ -16,31 +14,28 @@ pub mod screen;
 pub use inactivity::InactivityBlur;
 pub use screen::{SecureEvent, SecureInputs, SecureScreen, WindowView};
 
-/// What the secure screen and streamer mode take away from the app, as
-/// App.svelte applies it.
+/// What the secure screen and streamer mode take away from the app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ScreenCover {
-    /// `.app-stage.locked` (line 783): pointer events off under the PIN.
+    /// Pointer events off under the PIN.
     pub stage_locked: bool,
-    /// `.app-shell.obscured` (line 789): the app is blurred.
+    /// The app is blurred.
     pub shell_obscured: bool,
-    /// `inert` on `.app-shell` (line 790): no focus, no click, no key reaches
-    /// the app.
+    /// The app is inert: no focus, no click, no key reaches it.
     pub shell_inert: bool,
-    /// `.inactivity-frost.visible` (line 822).
+    /// The inactivity frost is drawn.
     pub frost_visible: bool,
-    /// The keyboard scope is `locked` (line 561): only the overlay keys.
+    /// The keyboard scope is `locked`: only the overlay keys.
     pub keys_locked: bool,
-    /// `isGridHidden` for visible priming (line 426): no avatar priming.
+    /// The grid is hidden: no avatar priming.
     pub grid_hidden: bool,
-    /// Titlebar, panels and onboarding are not drawn (`renderSuspended`,
-    /// lines 780, 816, 935, 979).
+    /// Titlebar, panels and onboarding are not drawn.
     pub render_suspended: bool,
 }
 
 impl ScreenCover {
     /// `streamer_active` is [`crate::streamer::StreamerModeController::active`],
-    /// `settings_open` is `settingsPanel.showSettings`.
+    /// `settings_open` says the settings panel is open.
     pub fn compute(secure: &SecureScreen, streamer_active: bool, settings_open: bool) -> Self {
         let suspended = secure.render_suspended();
         Self {

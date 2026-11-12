@@ -1,5 +1,5 @@
 //! App lifecycle commands: boot payload, logs, `finish_boot` and client
-//! storage. Port of `src-tauri/src/commands/app.rs`.
+//! storage.
 
 use super::{RealBackend, LOCK_TIMEOUT};
 use crate::error::BackendResult;
@@ -16,12 +16,13 @@ pub const UI_LOG_CAP: u32 = 2_000;
 /// (`WEBVIEW_DETAILS_MAX_BYTES`).
 pub const UI_DETAILS_MAX_BYTES: usize = 4_096;
 
-/// `get_runtime_os`, app.rs lines 6-9.
+/// Backs `Backend::get_runtime_os`.
 pub(super) fn runtime_os() -> String {
     std::env::consts::OS.to_string()
 }
 
-/// `migrate_legacy_config_inner`, app.rs lines 26-32.
+/// Migrates a config left by an older install: `none`, `migrated` or
+/// `error:{reason}`.
 pub(super) fn migrate_legacy_config(c: &dyn AppContext) -> String {
     match config::migrate_legacy_config(c) {
         None => "none".to_string(),
@@ -30,7 +31,7 @@ pub(super) fn migrate_legacy_config(c: &dyn AppContext) -> String {
     }
 }
 
-/// `get_boot_payload`, app.rs lines 51-74.
+/// Backs `Backend::get_boot_payload`.
 pub(super) fn boot_payload(c: &dyn AppContext) -> BackendResult<BootPayload> {
     // Migration must land before anything reads config or stores.
     let migration = migrate_legacy_config(c);
@@ -50,8 +51,8 @@ pub(super) fn boot_payload(c: &dyn AppContext) -> BackendResult<BootPayload> {
     })
 }
 
-/// `log_app_event`, app.rs lines 84-117. The cap counts per backend
-/// instance, which is one per process like the Tauri command's static.
+/// Backs `Backend::log_app_event`. The cap counts per backend
+/// instance, which is one per process.
 pub(super) fn log_app_event(
     backend: &RealBackend,
     level: &str,
@@ -78,7 +79,7 @@ pub(super) fn log_app_event(
     Ok(())
 }
 
-/// `finish_boot`, app.rs lines 119-170, minus `show_main_window` (the egui
+/// Backs `Backend::finish_boot`, minus `show_main_window` (the egui
 /// shell shows its own window).
 pub(super) fn finish_boot(
     backend: &RealBackend,
@@ -110,7 +111,7 @@ pub(super) fn finish_boot(
     Ok(())
 }
 
-/// `load_client_storage_snapshot`, app.rs lines 243-263.
+/// Backs `Backend::load_client_storage_snapshot`.
 pub(super) fn load_snapshot(c: &dyn AppContext) -> BackendResult<ClientStorageSnapshot> {
     let snapshot = storage::load_client_storage_snapshot(c)?;
     let details = serde_json::json!({
@@ -129,7 +130,7 @@ pub(super) fn load_snapshot(c: &dyn AppContext) -> BackendResult<ClientStorageSn
     Ok(snapshot)
 }
 
-/// `save_client_storage_store`, app.rs lines 265-299.
+/// Backs `Backend::save_client_storage_store`.
 pub(super) fn save_store(
     backend: &RealBackend,
     store_id: &str,
@@ -160,7 +161,7 @@ pub(super) fn save_store(
     Ok(Some(fingerprint))
 }
 
-/// `get_storage_manifest`, app.rs lines 301-320.
+/// Backs `Backend::get_storage_manifest`.
 pub(super) fn manifest(c: &dyn AppContext) -> BackendResult<StorageManifest> {
     let manifest = storage::build_storage_manifest(c)?;
     let details = serde_json::json!({

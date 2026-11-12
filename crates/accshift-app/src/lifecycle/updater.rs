@@ -1,12 +1,12 @@
-//! The port of `tauri-plugin-updater` 2.11.0, the version the Tauri app
-//! builds (Cargo.lock), with the settings of `crates/accshift-egui/tauri.conf.json`.
+//! A port of `tauri-plugin-updater` 2.11.0 with the settings of
+//! `crates/accshift-egui/tauri.conf.json`, so installs made by older
+//! releases keep updating.
 //!
 //! Same contract on the wire and on disk: the same `latest.json` shapes
 //! (`platforms` map or a single `url` and `signature`), the same target keys
 //! (`windows-x86_64-nsis` then `windows-x86_64`), the same minisign check
 //! with the same public key, the same installer launch (`ShellExecuteW` on
-//! the NSIS setup with `/P /UPDATE /R /ARGS ...`, then exit). Source lines
-//! cited below are in the plugin's `src/updater.rs` unless named otherwise.
+//! the NSIS setup with `/P /UPDATE /R /ARGS` and the arguments, then exit).
 //!
 //! Blocking: [`Updater::check`] and [`Update::download`] use
 //! `reqwest::blocking`, so call them from a [`crate::jobs::Jobs`] thread,
@@ -34,8 +34,8 @@ use std::time::Duration;
 use time::OffsetDateTime;
 use url::Url;
 
-/// updater.rs line 44: `tauri-plugin-updater/{CARGO_PKG_VERSION}`. The
-/// release host sees the same client.
+/// The user agent of the update requests, the one older installs send, so
+/// the release host sees one client.
 pub const UPDATER_USER_AGENT: &str = "tauri-plugin-updater/2.11.0";
 /// `plugins.updater.pubkey` of tauri.conf.json: the base64 of the minisign
 /// public key file.
@@ -46,7 +46,7 @@ pub const ENDPOINTS: &[&str] =
 /// The `current_version` the check compares against: the workspace version,
 /// which `version` of crates/accshift-egui/tauri.conf.json repeats.
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-/// `productName`: `package_info().name`, the prefix of the installer temp
+/// The `productName` of tauri.conf.json, the prefix of the installer temp
 /// folder. crates/accshift-egui/tauri.linux.conf.json overrides it.
 #[cfg(target_os = "linux")]
 pub const PRODUCT_NAME: &str = "accshift";
@@ -54,10 +54,10 @@ pub const PRODUCT_NAME: &str = "accshift";
 pub const PRODUCT_NAME: &str = "Accshift";
 
 /// The NSIS setup arguments of `installMode: "passive"` with a restart
-/// after install (config.rs lines 41-58), the only mode accshift sets.
+/// after install, the only mode accshift sets.
 const NSIS_ARGS: [&str; 3] = ["/P", "/UPDATE", "/R"];
 
-/// updater.rs lines 47-69.
+/// The installer kind a release target key may name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Installer {
     AppImage,
@@ -79,8 +79,7 @@ impl Installer {
     }
 }
 
-/// tauri-utils 2.9.3 `platform::BundleType`, the kinds the bundler patches
-/// into the binary.
+/// The bundle kinds the Tauri bundler patches into the binary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BundleType {
     Deb,
@@ -91,16 +90,15 @@ pub enum BundleType {
     App,
 }
 
-/// tauri-utils 2.9.3 `src/platform.rs` line 349. The Tauri bundler finds
-/// this exact byte string in the executable and overwrites its last three
-/// letters with the bundle kind (`NSS`, `MSI`, `DEB`, `RPM`, `APP`), so the
-/// egui binary bundled by the same tool learns it was installed by NSIS and
-/// asks for `windows-x86_64-nsis` first, like the Tauri one. `static mut`
-/// for the same reason as upstream: an immutable static is folded away.
+/// The bundle marker. The Tauri bundler finds this exact byte string in the
+/// executable and overwrites its last three letters with the bundle kind
+/// (`NSS`, `MSI`, `DEB`, `RPM`, `APP`), so the binary learns it was
+/// installed by NSIS and asks for `windows-x86_64-nsis` first. `static mut`
+/// because the compiler folds an immutable static away.
 #[used]
 static mut TAURI_BUNDLE_TYPE: &str = "__TAURI_BUNDLE_TYPE_VAR_UNK";
 
-/// tauri-utils 2.9.3 `platform::bundle_type`, lines 353-370.
+/// The bundle kind the bundler wrote into this binary, if any.
 pub fn bundle_type() -> Option<BundleType> {
     // SAFETY: read only; the value is only ever changed in the file on disk.
     let marker: &str = unsafe { std::ptr::read_volatile(&raw const TAURI_BUNDLE_TYPE) };
@@ -125,8 +123,8 @@ pub fn bundle_type_from_marker(marker: &str) -> Option<BundleType> {
     }
 }
 
-/// updater.rs lines 1502-1512. No MSI is built: an MSI marker asks for the
-/// NSIS setup, the only Windows installer the release ships.
+/// The installer to ask the release for. No MSI is built: an MSI marker asks
+/// for the NSIS setup, the only Windows installer the release ships.
 pub fn installer_for_bundle_type(bundle: Option<BundleType>) -> Option<Installer> {
     Some(match bundle? {
         BundleType::Deb => Installer::Deb,
@@ -137,7 +135,7 @@ pub fn installer_for_bundle_type(bundle: Option<BundleType>) -> Option<Installer
     })
 }
 
-/// updater.rs lines 1395-1406 (`darwin`, not `macos`, as upstream).
+/// The OS part of a release target key (`darwin`, not `macos`).
 pub fn updater_os() -> Option<&'static str> {
     if cfg!(target_os = "linux") {
         Some("linux")
@@ -150,7 +148,7 @@ pub fn updater_os() -> Option<&'static str> {
     }
 }
 
-/// updater.rs lines 1408-1422.
+/// The architecture part of a release target key.
 pub fn updater_arch() -> Option<&'static str> {
     if cfg!(target_arch = "x86") {
         Some("i686")
@@ -167,14 +165,15 @@ pub fn updater_arch() -> Option<&'static str> {
     }
 }
 
-/// updater.rs lines 71-77.
+/// One platform entry of the manifest: the download and its signature.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct ReleaseManifestPlatform {
     pub url: Url,
     pub signature: String,
 }
 
-/// updater.rs lines 79-86.
+/// The two manifest shapes: one `url` and `signature` for every platform,
+/// or a `platforms` map keyed by target.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RemoteReleaseInner {
     Dynamic(ReleaseManifestPlatform),
@@ -183,7 +182,7 @@ pub enum RemoteReleaseInner {
     },
 }
 
-/// updater.rs lines 88-127: a parsed `latest.json`.
+/// A parsed `latest.json`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RemoteRelease {
     pub version: Version,
@@ -193,7 +192,7 @@ pub struct RemoteRelease {
 }
 
 impl RemoteRelease {
-    /// updater.rs lines 105-114.
+    /// The download URL for `target`.
     pub fn download_url(&self, target: &str) -> UpdaterResult<&Url> {
         match &self.data {
             RemoteReleaseInner::Dynamic(platform) => Ok(&platform.url),
@@ -204,7 +203,7 @@ impl RemoteRelease {
         }
     }
 
-    /// updater.rs lines 117-126.
+    /// The signature for `target`.
     pub fn signature(&self, target: &str) -> UpdaterResult<&String> {
         match &self.data {
             RemoteReleaseInner::Dynamic(platform) => Ok(&platform.signature),
@@ -216,7 +215,8 @@ impl RemoteRelease {
     }
 }
 
-/// updater.rs lines 1454-1500, with the same error messages.
+/// Reads either manifest shape, with the error messages older releases
+/// gave.
 impl<'de> Deserialize<'de> for RemoteRelease {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -260,7 +260,7 @@ impl<'de> Deserialize<'de> for RemoteRelease {
     }
 }
 
-/// updater.rs lines 1514-1521: a leading `v` is dropped.
+/// Parses the manifest version; a leading `v` is dropped.
 fn parse_version<'de, D>(deserializer: D) -> Result<Version, D::Error>
 where
     D: Deserializer<'de>,
@@ -274,7 +274,7 @@ pub fn parse_manifest(json: serde_json::Value) -> UpdaterResult<RemoteRelease> {
     serde_json::from_value(json).map_err(|e| UpdaterError::Serialization(e.to_string()))
 }
 
-/// updater.rs lines 1524-1534: base64 of the key file, base64 of the `.sig`
+/// Base64 of the key file, base64 of the `.sig`
 /// file, legacy (non-prehashed) signatures accepted.
 pub fn verify_signature(data: &[u8], release_signature: &str, pub_key: &str) -> UpdaterResult<()> {
     let pub_key_decoded = base64_to_string(pub_key)?;
@@ -288,7 +288,7 @@ pub fn verify_signature(data: &[u8], release_signature: &str, pub_key: &str) -> 
         .map_err(|e| UpdaterError::Minisign(e.to_string()))
 }
 
-/// updater.rs lines 1536-1543.
+/// Decodes base64 into UTF-8 text.
 fn base64_to_string(base64_string: &str) -> UpdaterResult<String> {
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(base64_string)
@@ -296,7 +296,7 @@ fn base64_to_string(base64_string: &str) -> UpdaterResult<String> {
     String::from_utf8(decoded).map_err(|_| UpdaterError::SignatureUtf8(base64_string.into()))
 }
 
-/// What `UpdaterBuilder` collects (updater.rs lines 150-405), reduced to
+/// The updater settings, reduced to
 /// what accshift sets: no headers, no custom target, no endpoint templates,
 /// no installer arguments, no downgrades.
 #[derive(Clone)]
@@ -304,14 +304,14 @@ pub struct UpdaterConfig {
     pub pubkey: String,
     pub endpoints: Vec<Url>,
     pub current_version: Version,
-    /// `productName`: the prefix of the installer temp folder.
+    /// The `productName`: the prefix of the installer temp folder.
     pub app_name: String,
-    /// `None`: no timeout, as the async client the plugin uses.
+    /// `None`: no timeout.
     pub timeout: Option<Duration>,
     /// What the NSIS setup passes the relaunched app after `/ARGS`
     /// ([`process::relaunch_args`]).
     pub relaunch_args: Vec<OsString>,
-    /// `bundle_type()`, read once.
+    /// [`bundle_type`], read once.
     pub bundle_type: Option<BundleType>,
     /// The binary the update replaces ([`process::current_binary`]).
     pub executable_path: Option<PathBuf>,
@@ -338,7 +338,7 @@ impl UpdaterConfig {
         }
     }
 
-    /// config.rs `validate_endpoints`: anything but https is refused in a
+    /// Anything but https is refused in a
     /// release build and only warned about in a debug one.
     pub fn validate(&self) -> UpdaterResult<()> {
         if self.endpoints.is_empty() {
@@ -353,7 +353,7 @@ impl UpdaterConfig {
     }
 }
 
-/// updater.rs lines 1424-1452: the folder the update replaces. The
+/// The folder the update replaces: the
 /// executable's folder, or the `.app` on macOS; Linux uses the file itself.
 pub fn extract_path_from_executable(executable_path: &Path) -> UpdaterResult<PathBuf> {
     let extract_path = executable_path
@@ -382,7 +382,7 @@ pub struct Updater {
 }
 
 impl Updater {
-    /// `UpdaterBuilder::build` (updater.rs lines 365-405).
+    /// Validates the settings and pins the architecture.
     pub fn new(config: UpdaterConfig) -> UpdaterResult<Self> {
         config.validate()?;
         let arch = updater_arch().ok_or(UpdaterError::UnsupportedArch)?;
@@ -401,7 +401,7 @@ impl Updater {
             .map_err(|e| UpdaterError::Reqwest(e.to_string()))
     }
 
-    /// `Updater::check`, updater.rs lines 432-606. `Ok(None)`: no update
+    /// Fetches the manifest from each endpoint in turn. `Ok(None)`: no update
     /// (204, or the release is not newer). rustls-platform-verifier finds
     /// the system CA store itself: no `SSL_CERT_*` variable is set here,
     /// which would race the `getenv` of other threads.
@@ -437,8 +437,8 @@ impl Updater {
                             Err(error) => last_error = Some(error),
                         }
                     }
-                    // A non-success status only logs upstream (line 545):
-                    // it is not kept as the last error.
+                    // A non-success status is only logged, not kept as the
+                    // last error.
                 }
                 Err(error) => last_error = Some(UpdaterError::Reqwest(error.to_string())),
             }
@@ -449,7 +449,7 @@ impl Updater {
         }
         let release = remote_release.ok_or(UpdaterError::ReleaseNotFound)?;
 
-        // Resolved before the version test, as upstream (lines 581-582): a
+        // Resolved before the version test: a
         // manifest without this platform fails even when nothing is newer.
         let installer = installer_for_bundle_type(self.config.bundle_type);
         let (download_url, signature) = self.get_urls(&release, installer)?;
@@ -476,7 +476,8 @@ impl Updater {
         }))
     }
 
-    /// updater.rs lines 608-638.
+    /// The download URL and signature of the first target key the release
+    /// has.
     pub fn get_urls<'a>(
         &self,
         release: &'a RemoteRelease,
@@ -495,7 +496,7 @@ impl Updater {
     }
 }
 
-/// `[{os}-{arch}-{installer}, {os}-{arch}]`, updater.rs lines 618-626. A
+/// `[{os}-{arch}-{installer}, {os}-{arch}]`. A
 /// deb or rpm install only takes its own key: the plain Linux key is the
 /// AppImage, which the package install refuses after the whole download.
 pub fn fallback_targets(os: &str, arch: &str, installer: Option<Installer>) -> Vec<String> {
@@ -527,7 +528,7 @@ pub struct InstallContext {
     pub pubkey: String,
 }
 
-/// updater.rs lines 640-668: an available update.
+/// An available update.
 #[derive(Debug, Clone)]
 pub struct Update {
     pub body: Option<String>,
@@ -545,8 +546,8 @@ pub struct Update {
 /// launch, the exit, the macOS main-thread hop. [`SystemInstaller`] is the
 /// real one; tests record calls instead.
 pub trait InstallerHost {
-    /// `on_before_exit`: the plugin runs `app.cleanup_before_exit()` (hides
-    /// the windows on Windows).
+    /// Runs right before the installer starts (hides the windows on
+    /// Windows).
     fn before_exit(&self);
     /// `ShellExecuteW(null, "open", file, parameters, null, SW_SHOW)`;
     /// an `Err` when it answers 32 or less.
@@ -617,7 +618,7 @@ fn encode_wide(text: impl AsRef<OsStr>) -> Vec<u16> {
 }
 
 impl Update {
-    /// `Update::download`, updater.rs lines 680-743: the bytes, verified
+    /// Downloads the bytes, verified
     /// against the release signature.
     pub fn download(&self) -> UpdaterResult<Vec<u8>> {
         let client = accshift_core::http::blocking_client_builder()
@@ -645,7 +646,7 @@ impl Update {
         Ok(buffer)
     }
 
-    /// `Update::install`, updater.rs lines 751-753. Windows: launches the
+    /// Installs the downloaded bytes. Windows: launches the
     /// installer then calls `host.exit(0)`. Linux and macOS: replaces the
     /// app in place; the caller relaunches.
     pub fn install(&self, bytes: &[u8], host: &dyn InstallerHost) -> UpdaterResult<()> {
@@ -669,7 +670,7 @@ impl Update {
             .executable_path
             .clone()
             .ok_or(UpdaterError::FailedToDetermineExtractPath)?;
-        // updater.rs lines 379-383: Linux replaces the file itself.
+        // Linux replaces the file itself.
         let extract_path = if cfg!(target_os = "linux") {
             executable
         } else {
@@ -689,7 +690,7 @@ impl Update {
         Err(UpdaterError::UnsupportedOs)
     }
 
-    /// The NSIS command line, updater.rs lines 879-939: `/P /UPDATE /R`,
+    /// The NSIS command line: `/P /UPDATE /R`,
     /// then `/ARGS` and the relaunch arguments.
     pub fn updater_parameters(&self) -> OsString {
         let mut args: Vec<OsString> = NSIS_ARGS.iter().map(OsString::from).collect();
@@ -703,8 +704,8 @@ impl Update {
         join_os(&args, " ")
     }
 
-    /// updater.rs lines 947-998 without the plugin's `zip` feature, off in
-    /// the Tauri app too: the release feed serves the NSIS setup itself.
+    /// Writes the setup to disk. No zip support: the release feed serves the
+    /// NSIS setup itself.
     pub fn extract(&self, bytes: &[u8]) -> UpdaterResult<NsisSetup> {
         if !infer::app::is_exe(bytes) {
             return Err(UpdaterError::InvalidUpdaterFormat);
@@ -713,7 +714,7 @@ impl Update {
         Ok(NsisSetup { path, temp })
     }
 
-    /// updater.rs lines 956-965: kept on purpose (`keep`), the installer
+    /// Kept on purpose (`keep`): the installer
     /// runs after this process exits.
     fn make_temp_dir(&self) -> UpdaterResult<PathBuf> {
         Ok(tempfile::Builder::new()
@@ -725,7 +726,7 @@ impl Update {
             .keep())
     }
 
-    /// updater.rs lines 1000-1021: `{app}-{version}-installer{ext}` in a
+    /// `{app}-{version}-installer{ext}` in a
     /// kept temp folder; the file itself is deleted when the value drops.
     fn write_to_temp(
         &self,
@@ -748,7 +749,7 @@ impl Update {
     }
 }
 
-/// The NSIS setup on disk, updater.rs lines 786-810.
+/// The NSIS setup on disk.
 #[derive(Debug)]
 pub struct NsisSetup {
     pub path: PathBuf,
@@ -786,7 +787,7 @@ fn join_os(parts: &[OsString], separator: &str) -> OsString {
     joined
 }
 
-/// updater.rs lines 1572-1609: std's Windows argument quoting, plus `/`
+/// std's Windows argument quoting, plus `/`
 /// forcing quotes so NSIS does not read an option. Works on UTF-16 units on
 /// Windows and on the lossy text elsewhere.
 pub fn escape_nsis_current_exe_arg(arg: impl AsRef<OsStr>) -> OsString {

@@ -1,4 +1,4 @@
-//! Steam and CS2 bridge commands. Port of `src-tauri/src/commands/steam.rs`.
+//! Steam and CS2 bridge commands.
 
 use super::runtime::{block_on, locked};
 use super::RealBackend;
@@ -12,28 +12,28 @@ use accshift_core::platforms::ids;
 use accshift_core::platforms::steam::{self, cs2_bridge};
 use std::collections::BTreeMap;
 
-/// `steam_set_api_key`, steam.rs lines 6-16. Encrypts the key into the
+/// Backs `Backend::steam_set_api_key`. Encrypts the key into the
 /// keyring and rotates the previous entry.
 pub(super) fn set_api_key(backend: &RealBackend, key: &str) -> BackendResult<()> {
     Ok(steam::set_api_key(backend.ctx.clone(), key.to_string())?)
 }
 
-/// `steam_has_api_key`, steam.rs lines 18-21.
+/// Backs `Backend::steam_has_api_key`.
 pub(super) fn has_api_key(backend: &RealBackend) -> bool {
     steam::has_api_key(backend.ctx.clone())
 }
 
-/// `steam_open_api_key_page`, steam.rs lines 23-31.
+/// Backs `Backend::steam_open_api_key_page`.
 pub(super) fn open_api_key_page() -> BackendResult<()> {
     Ok(steam::open_steam_api_key_page()?)
 }
 
-/// `cs2_bridge_get_settings`, steam.rs lines 33-38.
+/// Backs `Backend::cs2_bridge_get_settings`.
 pub(super) fn cs2_get_settings(backend: &RealBackend) -> Cs2BridgeSettings {
     cs2_bridge::get_settings(&*backend.ctx)
 }
 
-/// `cs2_bridge_set_settings`, steam.rs lines 40-53. `token`: `None` keeps the
+/// Backs `Backend::cs2_bridge_set_settings`. `token`: `None` keeps the
 /// stored one (unless the URL moved), `Some("")` clears it.
 pub(super) fn cs2_set_settings(
     backend: &RealBackend,
@@ -50,14 +50,14 @@ pub(super) fn cs2_set_settings(
     .map_err(|e| PlatformError::from(e).into())
 }
 
-/// `cs2_bridge_test`, steam.rs lines 55-64: never an error, the failure is
+/// Backs `Backend::cs2_bridge_test`: never an error, the failure is
 /// in the result.
 pub(super) fn cs2_test(backend: &RealBackend) -> BackendResult<Cs2BridgeTestResult> {
     let client = backend.http_client()?;
     Ok(block_on(cs2_bridge::test_connection(&*backend.ctx, client)))
 }
 
-/// `cs2_bridge_fetch`, steam.rs lines 66-76, failures recorded as
+/// Backs `Backend::cs2_bridge_fetch`, failures recorded as
 /// `cs2_bridge_fetch` on Steam.
 pub(super) fn cs2_fetch(backend: &RealBackend) -> BackendResult<Vec<Cs2BridgeAccount>> {
     let client = backend.http_client()?;
@@ -66,7 +66,7 @@ pub(super) fn cs2_fetch(backend: &RealBackend) -> BackendResult<Vec<Cs2BridgeAcc
     backend.track_operation("cs2_bridge_fetch", Some(ids::STEAM), result)
 }
 
-/// `cs2_bridge_check`, steam.rs lines 78-89: `None` while the bridge is off.
+/// Backs `Backend::cs2_bridge_check`: `None` while the bridge is off.
 pub(super) fn cs2_check(
     backend: &RealBackend,
     steam_id: &str,
@@ -76,7 +76,7 @@ pub(super) fn cs2_check(
         .map_err(|e| PlatformError::from(e).into())
 }
 
-/// `steam_switch_account_and_launch_game`, steam.rs lines 91-114: the PIN
+/// Backs `Backend::steam_switch_account_and_launch_game`: the PIN
 /// check, the switch, then the game, all under the operation lock on this
 /// thread.
 pub(super) fn switch_and_launch_game(
@@ -100,7 +100,7 @@ pub(super) fn switch_and_launch_game(
     })?)
 }
 
-/// `steam_get_profile_info`, steam.rs lines 116-122.
+/// Backs `Backend::steam_get_profile_info`.
 pub(super) fn profile_info(
     backend: &RealBackend,
     steam_id: &str,
@@ -112,9 +112,8 @@ pub(super) fn profile_info(
     ))?)
 }
 
-/// `steam_get_profile_infos`, steam.rs lines 124-142: ids without a profile
-/// are absent; failures recorded as `avatar_refresh`. The Tauri command
-/// answers a `HashMap`; the webview gets the same JSON object either way.
+/// Backs `Backend::steam_get_profile_infos`: ids without a profile
+/// are absent; failures recorded as `avatar_refresh`.
 pub(super) fn profile_infos(
     backend: &RealBackend,
     steam_ids: &[String],
@@ -129,7 +128,7 @@ pub(super) fn profile_infos(
     backend.track_operation("avatar_refresh", Some(ids::STEAM), result)
 }
 
-/// `steam_get_player_bans`, steam.rs lines 144-157, failures recorded as
+/// Backs `Backend::steam_get_player_bans`, failures recorded as
 /// `ban_check`. No API key answers an empty list.
 pub(super) fn player_bans(
     backend: &RealBackend,
@@ -144,7 +143,7 @@ pub(super) fn player_bans(
     backend.track_operation("ban_check", Some(ids::STEAM), result)
 }
 
-/// `steam_copy_game_settings`, steam.rs lines 159-172.
+/// Backs `Backend::steam_copy_game_settings`.
 pub(super) fn copy_game_settings(
     backend: &RealBackend,
     from_steam_id: &str,
@@ -162,7 +161,7 @@ pub(super) fn copy_game_settings(
     backend.track_operation("game_settings_copy", Some(ids::STEAM), result)
 }
 
-/// `steam_get_copyable_games`, steam.rs lines 174-181.
+/// Backs `Backend::steam_get_copyable_games`.
 pub(super) fn copyable_games(
     backend: &RealBackend,
     from_steam_id: &str,
@@ -173,7 +172,7 @@ pub(super) fn copyable_games(
     )?)
 }
 
-/// `steam_open_userdata`, steam.rs lines 183-189.
+/// Backs `Backend::steam_open_userdata`.
 pub(super) fn open_userdata(backend: &RealBackend, steam_id: &str) -> BackendResult<()> {
     Ok(steam::open_userdata(
         backend.ctx.clone(),
@@ -181,13 +180,13 @@ pub(super) fn open_userdata(backend: &RealBackend, steam_id: &str) -> BackendRes
     )?)
 }
 
-/// `steam_clear_browser_cache`, steam.rs lines 191-200: stops Steam, then
+/// Backs `Backend::steam_clear_browser_cache`: stops Steam, then
 /// deletes its browser cache, under the operation lock.
 pub(super) fn clear_browser_cache(backend: &RealBackend) -> BackendResult<()> {
     Ok(locked(&backend.ctx, steam::clear_integrated_browser_cache)?)
 }
 
-/// `steam_bulk_edit`, steam.rs lines 202-213, failures recorded as
+/// Backs `Backend::steam_bulk_edit`, failures recorded as
 /// `bulk_edit`.
 pub(super) fn bulk_edit(
     backend: &RealBackend,
@@ -197,7 +196,7 @@ pub(super) fn bulk_edit(
     backend.track_operation("bulk_edit", Some(ids::STEAM), result)
 }
 
-/// `steam_get_account_games`, steam.rs lines 215-221.
+/// Backs `Backend::steam_get_account_games`.
 pub(super) fn account_games(
     backend: &RealBackend,
     steam_id: &str,
