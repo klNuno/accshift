@@ -1,6 +1,5 @@
-//! The command palette, ported from
-//! `src/lib/features/commandPalette/{fuzzy,registry}.ts` and the filtering,
-//! grouping and selection of `CommandPalette.svelte`.
+//! The command palette: fuzzy matching, the command registry, and the
+//! filtering, grouping and selection of the palette list.
 
 use crate::display::fold_search_text;
 use crate::folders::FolderInfo;
@@ -13,13 +12,13 @@ use std::collections::{BTreeSet, HashMap};
 
 // ------------------------------------------------------------- fuzzy
 
-/// `foldText`: NFD, combining diacritics dropped, lowercased. The same fold
-/// as the grid search.
+/// NFD, combining diacritics dropped, lowercased. The same fold as the grid
+/// search.
 pub fn fold_text(text: &str) -> String {
     fold_search_text(text)
 }
 
-/// `scoreFolded` over UTF-16 units, as JS indexes strings.
+/// The fuzzy score of `query` in `target`, over UTF-16 units.
 fn score_folded(query: &[u16], target: &[u16]) -> Option<i64> {
     if query.is_empty() {
         return Some(0);
@@ -56,7 +55,7 @@ fn utf16(text: &str) -> Vec<u16> {
     text.encode_utf16().collect()
 }
 
-/// The folded targets, memoised like `foldCache` (cleared at 4096 entries).
+/// The folded targets, memoised (cleared at 4096 entries).
 #[derive(Debug, Clone, Default)]
 pub struct FoldCache {
     entries: HashMap<String, Vec<u16>>,
@@ -78,8 +77,8 @@ impl FoldCache {
     }
 }
 
-/// `fuzzyScoreAll`: the best score over a title and its keywords; a keyword
-/// hit counts 2 less than the same title hit.
+/// The best score over a title and its keywords; a keyword hit counts 2 less
+/// than the same title hit.
 pub fn fuzzy_score_all(
     cache: &mut FoldCache,
     query: &str,
@@ -100,7 +99,7 @@ pub fn fuzzy_score_all(
 
 // ---------------------------------------------------------- registry
 
-/// `PaletteSection`.
+/// The group a command is listed under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PaletteSection {
     Accounts,
@@ -126,7 +125,7 @@ impl PaletteSection {
     }
 }
 
-/// What running a command does (the TS `run` closures).
+/// What running a command does.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PaletteAction {
     /// Cancel a conflicting add flow, then switch.
@@ -147,7 +146,7 @@ pub enum PaletteAction {
     ToggleSettings,
 }
 
-/// `PaletteCommand`.
+/// One palette entry.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PaletteCommand {
     pub id: String,
@@ -194,7 +193,7 @@ impl PaletteCommand {
     }
 }
 
-/// What the registry reads (`RegistryDeps` getters).
+/// What the registry reads.
 #[derive(Debug, Clone)]
 pub struct RegistryInput<'a> {
     pub accounts: &'a [PlatformAccount],
@@ -208,7 +207,7 @@ pub struct RegistryInput<'a> {
     pub current_folder_id: Option<&'a str>,
     pub bulk_edit_available: bool,
     pub personas_enabled: bool,
-    /// `getUpdateCtaLabel()` is non-empty.
+    /// An update is ready to install.
     pub update_ready: bool,
     pub view_mode: ViewMode,
     pub is_mac: bool,
@@ -411,7 +410,7 @@ fn navigation_commands(input: &RegistryInput<'_>) -> Vec<PaletteCommand> {
     commands
 }
 
-/// `getCommands`: accounts, then actions, then navigation.
+/// Every command: accounts, then actions, then navigation.
 pub fn palette_commands(input: &RegistryInput<'_>) -> Vec<PaletteCommand> {
     let mut commands = account_commands(input);
     commands.extend(action_commands(input));
@@ -432,13 +431,12 @@ pub enum PaletteRow {
     Command { index: usize, command: usize },
 }
 
-/// Alphabetical tie-break. TS uses `localeCompare` in the UI locale; this
-/// compares the folded titles, then the raw ones.
+/// Alphabetical tie-break: the folded titles, then the raw ones.
 fn collate(a: &str, b: &str) -> Ordering {
     fold_text(a).cmp(&fold_text(b)).then_with(|| a.cmp(b))
 }
 
-/// `CommandPalette.svelte` state: the query and the highlighted row.
+/// The palette state: the query and the highlighted row.
 #[derive(Debug, Clone, Default)]
 pub struct CommandPalette {
     query: String,
@@ -468,9 +466,9 @@ impl CommandPalette {
         self.active_index
     }
 
-    /// `filtered`: idle, the first accounts then every other command; with a
-    /// query, the matches by score (accounts +4, actions +2), ties
-    /// alphabetical. Indices into `commands`.
+    /// Idle, the first accounts then every other command; with a query, the
+    /// matches by score (accounts +4, actions +2), ties alphabetical.
+    /// Indices into `commands`.
     pub fn filtered(&mut self, commands: &[PaletteCommand], locale: Locale) -> Vec<usize> {
         let query = crate::js::trim(&self.query).to_string();
         if query.is_empty() {
@@ -505,8 +503,7 @@ impl CommandPalette {
         scored.into_iter().map(|(index, _, _)| index).collect()
     }
 
-    /// `rows`: section headers interleaved with their commands, in section
-    /// order.
+    /// Section headers interleaved with their commands, in section order.
     pub fn rows(&mut self, commands: &[PaletteCommand], locale: Locale) -> Vec<PaletteRow> {
         let filtered = self.filtered(commands, locale);
         let mut rows = Vec::new();
@@ -529,7 +526,7 @@ impl CommandPalette {
         rows
     }
 
-    /// `flatCommands`: the commands in row order.
+    /// The commands in row order.
     pub fn flat_commands(&mut self, commands: &[PaletteCommand], locale: Locale) -> Vec<usize> {
         self.rows(commands, locale)
             .into_iter()
@@ -540,7 +537,7 @@ impl CommandPalette {
             .collect()
     }
 
-    /// `moveActive`: wraps around.
+    /// Moves the highlight, wrapping around.
     pub fn move_active(&mut self, delta: i64, count: usize) {
         if count == 0 {
             return;
@@ -572,7 +569,7 @@ impl CommandPalette {
     }
 }
 
-/// `runCommand`: nothing for a disabled command.
+/// The action of a command, nothing for a disabled one.
 pub fn run_command(command: &PaletteCommand) -> Option<PaletteAction> {
     (!command.disabled).then(|| command.action.clone())
 }

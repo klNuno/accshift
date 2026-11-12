@@ -1,6 +1,6 @@
-//! Fill-style 24x24 SVG paths for platform logos, ported from
-//! `src/lib/shared/platformIcons.ts` (generated from it, do not edit by hand).
-//! The titlebar tabs and the personas editor share these; inline copies drift.
+//! Fill-style 24x24 SVG paths for platform logos. Generated data, do not
+//! edit by hand. The titlebar tabs and the personas editor share these;
+//! inline copies drift.
 
 /// `PLATFORM_ICON_PATHS`, as `(platform id, path data)`.
 pub const PLATFORM_ICON_PATHS: [(&str, &str); 9] = [

@@ -5,8 +5,7 @@ use crate::accounts::{Toast, ToastKind};
 use crate::stores::ClientStores;
 use crate::text::Text;
 
-/// `copyBulkEditUrls`: nothing for an empty list, otherwise the clipboard
-/// write, one URL per line.
+/// Copies the URLs to the clipboard, one per line; nothing for an empty list.
 pub fn copy_bulk_edit_urls(urls: &[String]) -> Vec<AppEffect> {
     if urls.is_empty() {
         return Vec::new();
@@ -27,8 +26,8 @@ pub fn bulk_urls_copied_toast(count: usize, write_ok: bool) -> Toast {
     }
 }
 
-/// `applyBulkEditCardColor`: writes every selected id in the store (an empty
-/// colour clears), then the version bump and the toast.
+/// Writes the colour on every selected id (an empty colour clears it), then
+/// bumps the version and shows the toast.
 pub fn apply_bulk_edit_card_color(
     stores: &mut ClientStores,
     selected_ids: &[String],

@@ -1,5 +1,5 @@
-//! Riot, ported from `src/lib/platforms/riot/{adapter,accountCache,profile,
-//! contextMenu,riotApi,types}.ts`.
+//! Riot: account mapping, the profile cache of the last load, profile info
+//! and menu entries.
 
 use super::{PlatformAccount, PlatformProfileInfo, StartupSnapshot};
 use crate::menu::platform::{build_platform_context_menu, ForgetConfig};
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-/// `RiotProfile`. `snapshot_state` is `setup_pending`, `awaiting_capture`,
+/// A Riot profile. `snapshot_state` is `setup_pending`, `awaiting_capture`,
 /// `capturing`, `ready` or whatever a newer backend sends.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct RiotProfile {
@@ -45,7 +45,7 @@ impl RiotProfile {
     }
 }
 
-/// `getRiotAlias`: `name#tag`, `name`, or empty.
+/// `name#tag`, `name`, or empty.
 fn riot_alias(profile: &RiotProfile) -> String {
     let name = crate::js::trim(profile.account_name.as_deref().unwrap_or_default());
     let tag_line = crate::js::trim(profile.account_tag_line.as_deref().unwrap_or_default());
@@ -59,7 +59,7 @@ fn riot_alias(profile: &RiotProfile) -> String {
     }
 }
 
-/// `profileStatusLabel`. English, as TS has it.
+/// The status label, in English.
 fn status_label(profile: &RiotProfile) -> &'static str {
     match profile.snapshot_state.as_str() {
         "setup_pending" => "Waiting for connection",
@@ -69,7 +69,7 @@ fn status_label(profile: &RiotProfile) -> &'static str {
     }
 }
 
-/// `profileSecondaryLabel`.
+/// The secondary label: nothing once ready, else the label and the status.
 fn secondary_label(profile: &RiotProfile) -> String {
     if profile.snapshot_state == "ready" {
         return String::new();
@@ -83,8 +83,8 @@ fn secondary_label(profile: &RiotProfile) -> String {
     format!("{label} \u{b7} {status}")
 }
 
-/// `toRiotAccount`. Riot stamps milliseconds; the last use wins over the
-/// last capture.
+/// A Riot profile as a platform account. Riot stamps milliseconds; the last
+/// use wins over the last capture.
 pub fn to_riot_account(profile: &RiotProfile) -> PlatformAccount {
     let alias = riot_alias(profile);
     PlatformAccount {
@@ -117,14 +117,14 @@ pub fn to_riot_snapshot(raw: &Value) -> (StartupSnapshot, Vec<RiotProfile>) {
     (snapshot, profiles)
 }
 
-/// `accountCache.ts`: the profiles of the last load, by id.
+/// The profiles of the last load, by id.
 #[derive(Debug, Clone, Default)]
 pub struct RiotProfileCache {
     profiles: BTreeMap<String, RiotProfile>,
 }
 
 impl RiotProfileCache {
-    /// `rememberRiotProfiles`: replaces the whole cache.
+    /// Replaces the whole cache.
     pub fn remember(&mut self, profiles: &[RiotProfile]) {
         self.profiles = profiles
             .iter()
@@ -132,19 +132,17 @@ impl RiotProfileCache {
             .collect();
     }
 
-    /// `getCachedRiotProfileMeta`.
     pub fn get(&self, profile_id: &str) -> Option<&RiotProfile> {
         self.profiles.get(profile_id)
     }
 
-    /// `forgetCachedRiotProfile`.
     pub fn forget(&mut self, profile_id: &str) {
         self.profiles.remove(profile_id);
     }
 }
 
-/// `getRiotProfile`: no avatar (shared fallback gradients), the alias or the
-/// label, and a spinner while the session is being set up or saved.
+/// No avatar (shared fallback gradients), the alias or the label, and a
+/// spinner while the session is being set up or saved.
 pub fn riot_profile_info(profile: Option<&RiotProfile>) -> Option<PlatformProfileInfo> {
     let profile = profile?;
     let alias = riot_alias(profile);
@@ -162,11 +160,10 @@ pub fn riot_profile_info(profile: Option<&RiotProfile>) -> Option<PlatformProfil
     })
 }
 
-/// `getNoAccountsToastMessage`.
+/// The toast for a Riot tab with no profiles.
 pub const NO_ACCOUNTS_TOAST_KEY: &str = "toast.noRiotProfilesFound";
 
-/// `getRiotContextMenuItems`: capture (or recapture), then forget. No copy
-/// entries.
+/// Capture (or recapture), then forget. No copy entries.
 pub fn riot_context_menu_actions(
     account: &PlatformAccount,
     profile: Option<&RiotProfile>,

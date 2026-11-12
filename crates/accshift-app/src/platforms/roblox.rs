@@ -1,5 +1,4 @@
-//! Roblox, ported from `src/lib/platforms/roblox/{adapter,contextMenu,
-//! robloxApi,types,warnings}.ts`. The profile cache is M2 work.
+//! Roblox: account mapping, profile info, menu entries and session warnings.
 
 use super::warnings::{WarningChip, WarningLoad, WarningPresentation, WarningTone};
 use super::{PlatformAccount, PlatformProfileInfo, StartupSnapshot};
@@ -23,7 +22,7 @@ pub fn is_session_expired_error(message: &str) -> bool {
     message.to_lowercase().contains(SESSION_EXPIRED_PATTERN)
 }
 
-/// `toRobloxAccount` on the camelCase `RobloxAccount` payload.
+/// The camelCase `RobloxAccount` payload as a platform account.
 /// `lastLoginAt` is milliseconds despite its name.
 pub fn to_roblox_account(raw: &Value) -> PlatformAccount {
     let text = |name: &str| raw.get(name).and_then(Value::as_str).unwrap_or_default();
@@ -63,8 +62,8 @@ pub fn to_roblox_snapshot(raw: &Value) -> StartupSnapshot {
     }
 }
 
-/// `getProfileInfo` after the fetch: `None` is a failed fetch; a profile with
-/// no picture or an unsafe URL still resolves, avatar-less.
+/// A fetched profile: `None` is a failed fetch; a profile with no picture or
+/// an unsafe URL still resolves, avatar-less.
 pub fn to_roblox_profile_info(info: Option<&RobloxProfileInfo>) -> Option<PlatformProfileInfo> {
     let info = info?;
     let avatar = info
@@ -78,17 +77,17 @@ pub fn to_roblox_profile_info(info: Option<&RobloxProfileInfo>) -> Option<Platfo
     })
 }
 
-/// `getNoAccountsToastMessage`.
+/// The toast for a Roblox tab with no accounts.
 pub const NO_ACCOUNTS_TOAST_KEY: &str = "toast.noRobloxAccountsFound";
-/// `getNoAccountsHintMessage`.
+/// The hint for a Roblox tab with no accounts.
 pub const NO_ACCOUNTS_HINT_KEY: &str = "roblox.noAccountsHint";
 
-/// `getSwitchErrorToastMessage`.
+/// The dedicated toast for a failed switch, `None` for the generic one.
 pub fn switch_error_toast(message: &str) -> Option<Text> {
     is_session_expired_error(message).then(|| Text::key("roblox.sessionExpiredSwitchError"))
 }
 
-/// `getRobloxContextMenuItems`: username and user id copies, then forget.
+/// Username and user id copies, then forget.
 pub fn roblox_context_menu_actions(account: &PlatformAccount) -> Vec<MenuAction> {
     let username = if account.username.is_empty() {
         account.id.clone()
@@ -119,16 +118,16 @@ pub fn roblox_context_menu_actions(account: &PlatformAccount) -> Vec<MenuAction>
     build_platform_context_menu("roblox", account, &copy_items, &forget, Some(display))
 }
 
-/// The module state of `warnings.ts`: dead sessions this session knows of.
-/// Roblox cookies carry no readable expiry, so the backend probes them over
-/// the network, once per session unless forced.
+/// The dead sessions this session knows of. Roblox cookies carry no readable
+/// expiry, so the backend probes them over the network, once per session
+/// unless forced.
 #[derive(Debug, Clone, Default)]
 pub struct RobloxSessions {
     dead: BTreeSet<String>,
     checked_this_session: bool,
 }
 
-/// `expiredPresentation`.
+/// The warning of an expired session.
 pub fn expired_presentation() -> WarningPresentation {
     WarningPresentation {
         tooltip: Text::key("roblox.sessionExpiredTooltip"),
@@ -143,18 +142,18 @@ pub fn expired_presentation() -> WarningPresentation {
 }
 
 impl RobloxSessions {
-    /// `markRobloxSessionExpired`: a switch refused with HTTP 401 proves the
-    /// cookie dead, whatever the health-check setting.
+    /// A switch refused with HTTP 401 proves the cookie dead, whatever the
+    /// health-check setting.
     pub fn mark_expired(&mut self, user_id: &str) {
         self.dead.insert(user_id.to_string());
     }
 
-    /// `clearRobloxSessionExpired`: a fresh cookie or a successful switch.
+    /// A fresh cookie or a successful switch.
     pub fn clear_expired(&mut self, user_id: &str) {
         self.dead.remove(user_id);
     }
 
-    /// `getCachedRobloxWarningStates` (`toWarningMap`).
+    /// The known dead sessions as a warning map.
     pub fn warning_map(&self) -> WarningLoad {
         WarningLoad {
             warnings: self
@@ -167,8 +166,8 @@ impl RobloxSessions {
         }
     }
 
-    /// `loadRobloxWarningStates` up to the probe: whether to run it. The
-    /// setting gates the probe only; marks from failed switches still show.
+    /// Whether a warning load runs the probe. The setting gates the probe
+    /// only; marks from failed switches still show.
     pub fn needs_probe(
         &self,
         settings: &AppSettings,
